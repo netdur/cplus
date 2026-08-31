@@ -1,0 +1,263 @@
+// facet_win32/anim — the verb that moves on its own.
+//
+// `progress.animate_progress(to, duration, easing)` is not a set with a
+// comment: the application states HOW LONG and WHICH CURVE, and a progress bar
+// that jumps to the value has answered neither. Windows has no property
+// animation to hand the request to — a common control's position is a message
+// and the message takes effect immediately — so the tween is driven here.
+//
+// (The classic bar does animate a PBM_SETPOS over a few frames of its own, and
+// that is exactly the trap: it looks like the verb works, at a duration and a
+// curve nobody asked for. `PBM_SETPOS` twice in a row also refuses to animate
+// backwards. Neither is the application's animation.)
+//
+// A TIMER WITH NO WINDOW. `SetTimer(NULL, 0, ms, proc)` calls the proc from the
+// message loop's own DispatchMessage, which is where every other tick in this
+// package already runs. The alternative — a timer on the bar — does not work:
+// a system control has its own window procedure and WM_TIMER never reaches
+// this package's.
+//
+// ---- one outstanding tween ----------------------------------------------------
+//
+// A second `animate_progress` before the first finishes REPLACES it, which is
+// what the verb means: an application animating to 0.7 and then to 0.9 wants to
+// end at 0.9, not to queue. The limit that IS real is that the state is one
+// static set, so it holds ONE BAR — two bars animating at once and the second
+// takes the tween. Written down rather than discovered, and the same limit
+// facet_gtk records for the same verb.
+
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "./sys" as sys;
+
+// The CRT's own, not a series. facet_gtk approximates because it would rather
+// not link libm; this package already links the CRT for `malloc`, so the
+// accurate ones are free.
+extern fn sin(x: f64) -> f64;
+extern fn cos(x: f64) -> f64;
+
+// Sixty steps a second — the rate a desktop compositor presents at, and the
+// same interval facet_gtk ticks its copy of this tween at.
+fn frame_ms() -> u32 { return 16 as u32; }
+
+static BAR: usize = 0;
+static TIMER: u64 = 0;
+static FROM: f64 = 0.0f64;
+static TO: f64 = 0.0f64;
+static STEP: i64 = 0;
+static STEPS: i64 = 0;
+static CURVE: vocab::Easing = #zero::[vocab::Easing]();
+
+fn animating() -> bool { return BAR != (0 as usize); }
+
+// How many frames a duration is worth. At least one, because a zero duration is
+// a jump and a jump is a tween of one step — the alternative is a branch that
+// makes the "no animation" path a different code path from the animated one.
+fn steps_for(d: vocab::Duration) -> i64 {
+    let frames: f64 = d.seconds * (60.0 as f64);
+    if frames < (1.0 as f64) { return 1 as i64; }
+    return (frames + (0.5 as f64)) as i64;
+}
+
+fn clamped(v: f64) -> f64 {
+    if v < (0.0 as f64) { return 0.0f64; }
+    if v > (1.0 as f64) { return 1.0f64; }
+    return v;
+}
+
+// Start (or restart) the tween on the progress bar `v`.
+//
+// A ZERO DURATION IS A SET, and that is not a shortcut — it is the difference
+// between a create and an animation. `create` configures a control with every
+// bit raised, `P_ANIMATE_PROGRESS` among them, so a bar that has never been
+// animated would otherwise start a tween the moment it is made — and because
+// the state is one static set, A NEW BAR WOULD TAKE THE TWEEN AWAY from one
+// mid-animation. The default `animate_duration` is zero, so this branch is what
+// every create lands in. All four other backends gate the same verb on the same
+// test.
+fn animate_progress(v: *u8, to: f64, duration: vocab::Duration, curve: vocab::Easing) {
+    if v == (0 as *u8) { return; }
+    if duration.seconds <= (0.0 as f64) {
+        write_fraction(v, clamped(to));
+        return;
+    }
+    let running: bool = animating();
+    BAR = { #addr(v) };
+    FROM = read_fraction(v);
+    TO = to;
+    STEPS = steps_for(duration);
+    CURVE = curve;
+    // A tween already running is REPLACED rather than joined: resetting the
+    // step counter is what the live timer reads, so it finishes THIS tween
+    // instead of the previous one and no second timer is created.
+    STEP = 0 as i64;
+    if running { return; }
+    TIMER = { u::SetTimer(0 as *u8, 0 as u64, frame_ms(), tick_addr()) };
+    return;
+}
+
+// A function's address needs an `fn(...)`-typed binding before it can be cast
+// — the same shape `window::proc_addr` uses for the window procedure.
+fn tick_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, u32) = progress_step;
+    return f as *u8;
+}
+
+fn stop() {
+    if TIMER != (0 as u64) { let _k: i32 = { u::KillTimer(0 as *u8, TIMER) }; }
+    TIMER = 0 as u64;
+    BAR = 0 as usize;
+    STEP = 0 as i64;
+    return;
+}
+
+fn progress_step(w: *u8, msg: u32, id: u64, ticks: u32) {
+    if BAR == (0 as usize) { stop(); return; }
+    STEP = STEP +% (1 as i64);
+    let t: f64 = (STEP as f64) / (STEPS as f64);
+    let at: f64 = clamped(FROM + ((TO - FROM) * eased(t, CURVE)));
+    write_fraction(BAR as *u8, at);
+    if STEP >= STEPS {
+        // LAND EXACTLY. An eased last step is a fraction short, and a bar that
+        // stops at 0.998 is a bar that never finished.
+        write_fraction(BAR as *u8, clamped(TO));
+        stop();
+    }
+    return;
+}
+
+// The bar's own scale. `controls` states the range once as `slider_steps()` and
+// this has to agree with it — a tween written in a different unit would move
+// the bar to a hundredth of where it was asked to go.
+fn steps() -> i32 { return 1000 as i32; }
+
+fn write_fraction(v: *u8, f: f64) {
+    let pos: i32 = (f * (steps() as f64) + (0.5 as f64)) as i32;
+    let _r: i64 = { u::SendMessageA(v, sys::pbm_setpos(), pos as u64, 0 as i64) };
+    return;
+}
+
+fn read_fraction(v: *u8) -> f64 {
+    let pos: i64 = { u::SendMessageA(v, pbm_getpos(), 0 as u64, 0 as i64) };
+    return (pos as f64) / (steps() as f64);
+}
+
+fn pbm_getpos() -> u32 { return 0x0408 as u32; }
+
+// ---- the eleven curves ---------------------------------------------------------
+//
+// `t` runs 0..1 and the answer runs 0..1, except where the curve deliberately
+// overshoots — Spring does, and that is the point of it.
+fn eased(t: f64, curve: vocab::Easing) -> f64 {
+    let x: f64 = t;
+    if x <= (0.0 as f64) { return 0.0f64; }
+    if x >= (1.0 as f64) { return 1.0f64; }
+    let half_pi: f64 = 1.5707963267948966f64;
+    return match curve {
+        vocab::Easing::Linear => x,
+        vocab::Easing::SinIn => (1.0 as f64) - { cos(x * half_pi) },
+        vocab::Easing::SinOut => { sin(x * half_pi) },
+        vocab::Easing::SinInOut =>
+            ((1.0 as f64) - { cos(x * (half_pi * (2.0 as f64))) }) / (2.0 as f64),
+        vocab::Easing::CubicIn => x * x * x,
+        vocab::Easing::CubicOut => {
+            let inv: f64 = (1.0 as f64) - x;
+            (1.0 as f64) - (inv * inv * inv)
+        }
+        vocab::Easing::CubicInOut => {
+            if x < (0.5 as f64) { (4.0 as f64) * x * x * x }
+            else {
+                let inv: f64 = ((0.0 as f64) - ((2.0 as f64) * x)) + (2.0 as f64);
+                (1.0 as f64) - ((inv * inv * inv) / (2.0 as f64))
+            }
+        }
+        // A bounce is the OUT curve read backwards, which is how every toolkit
+        // defines the pair — writing two tables is how they come to disagree.
+        vocab::Easing::BounceIn => (1.0 as f64) - bounce_out((1.0 as f64) - x),
+        vocab::Easing::BounceOut => bounce_out(x),
+        // A spring OVERSHOOTS and settles. `SpringOut` is the familiar one (the
+        // thing arrives, goes past, comes back); `SpringIn` is its mirror, and
+        // it dips below zero on the way out — which for a progress fraction is
+        // clamped by the CALLER, not here, because clamping a curve is how a
+        // spring stops being one.
+        vocab::Easing::SpringIn => (1.0 as f64) - spring_out((1.0 as f64) - x),
+        vocab::Easing::SpringOut => spring_out(x),
+    };
+}
+
+// The four-segment bounce every toolkit uses, with the same constants.
+fn bounce_out(x: f64) -> f64 {
+    let n1: f64 = 7.5625f64;
+    let d1: f64 = 2.75f64;
+    if x < ((1.0 as f64) / d1) { return n1 * x * x; }
+    if x < ((2.0 as f64) / d1) {
+        let y: f64 = x - ((1.5 as f64) / d1);
+        return n1 * y * y + (0.75 as f64);
+    }
+    if x < ((2.5 as f64) / d1) {
+        let y: f64 = x - ((2.25 as f64) / d1);
+        return n1 * y * y + (0.9375 as f64);
+    }
+    let y: f64 = x - ((2.625 as f64) / d1);
+    return n1 * y * y + (0.984375 as f64);
+}
+
+// A decaying sine — the standard "back" overshoot, which settles at 1 from
+// above.
+fn spring_out(x: f64) -> f64 {
+    let c: f64 = 1.70158f64;
+    let c3: f64 = c + (1.0 as f64);
+    let inv: f64 = x - (1.0 as f64);
+    return (1.0 as f64) + c3 * inv * inv * inv + c * inv * inv;
+}
+
+#[test]
+fn a_zero_duration_is_a_jump_not_a_tween() {
+    // The create path. Every bit is raised on create, `P_ANIMATE_PROGRESS`
+    // included, and the default duration is zero — so this must not start a
+    // timer, or every progress bar made would steal the tween from one that
+    // was running.
+    animate_progress(0 as *u8, 0.5f64, vocab::Duration::zero(),
+                     vocab::Easing::SinInOut);
+    assert !animating();
+    assert TIMER == (0 as u64);
+    return;
+}
+
+#[test]
+fn a_null_bar_starts_nothing() {
+    animate_progress(0 as *u8, 0.5f64, vocab::Duration::animation(),
+                     vocab::Easing::Linear);
+    assert !animating();
+    return;
+}
+
+#[test]
+fn the_curves_all_start_at_zero_and_end_at_one() {
+    // Both ends are pinned before the curve is consulted, which is what keeps a
+    // spring's overshoot from leaving the bar short of its target.
+    assert eased(0.0f64, vocab::Easing::SpringOut) == (0.0 as f64);
+    assert eased(1.0f64, vocab::Easing::SpringOut) == (1.0 as f64);
+    assert eased(0.0f64, vocab::Easing::BounceIn) == (0.0 as f64);
+    assert eased(1.0f64, vocab::Easing::BounceIn) == (1.0 as f64);
+    assert eased(0.5f64, vocab::Easing::Linear) == (0.5 as f64);
+    return;
+}
+
+#[test]
+fn a_duration_becomes_at_least_one_step() {
+    // A tween of zero steps divides by zero on the first tick. Any duration
+    // short enough to round to no frames is one frame instead.
+    assert steps_for(vocab::Duration::zero()) == (1 as i64);
+    assert steps_for(vocab::Duration { seconds: 1.0f64 }) == (60 as i64);
+    return;
+}
+
+#[test]
+fn the_tween_writes_in_the_same_unit_the_bar_was_ranged_in() {
+    // `controls::create_progress` sets the bar's range to `slider_steps()`.
+    // A tween written in a different unit moves it to a fraction of where it
+    // was asked to go, and nothing about the bar would say why.
+    assert steps() == (1000 as i32);
+    return;
+}

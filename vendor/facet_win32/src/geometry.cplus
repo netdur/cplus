@@ -1,0 +1,259 @@
+// facet_win32/geometry — frames, and where a child window is put.
+//
+// facet owns ALL layout: `flex_layout` computes an absolute frame for every
+// node and the backend's only job is to put the window there. On AppKit that
+// is `setFrame:`, on GTK a `GtkFixed` position; here it is `SetWindowPos` on a
+// child HWND, whose geometry is host-relative and owned by nobody but us.
+//
+// That makes Win32 the EASIEST of the three for this file. A child window has
+// no layout manager to fight, no size negotiation to suppress and no natural
+// size it will impose — the three things facet_gtk's geometry spends most of
+// its length switching off. What Win32 asks for instead is z-order discipline,
+// which lives in `views::insert` rather than here.
+//
+// ORIGIN. flex and Win32 both put (0,0) at the TOP-LEFT with y growing
+// downward, so — as in facet_gtk and unlike facet_appkit — there is no flip
+// anywhere in this file. Said out loud because AppKit's `geometry` is mostly
+// flip arithmetic and a reader arriving from it will look for the same.
+
+import "stdlib/option" as option;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./controls" as controls;
+
+// ---- seeing what was computed ------------------------------------------------
+//
+//     set FACET_WIN32_FRAMES=1 && facet_gallery.exe
+//
+// One line per node: its key, its kind, the frame flex computed, and whether it
+// has a window at all. Off by default and costing one bool read when it is.
+//
+// THIS IS THE ONE DIAGNOSTIC THIS PACKAGE HAS, and it is here for the reason
+// facet_gtk's is: a backend under an external layout engine fails in a way a
+// screenshot cannot explain — every control in the right place and none of
+// them visible, because a leaf measured 0x0 and flex believed it. `w=0` or
+// `h=0` on a line whose kind has a body IS that bug, and it is visible here in
+// a second.
+//
+// `view=-` on a backed kind is the other one: a node facet laid out and this
+// package never gave a window to.
+
+static FRAMES_READ: bool = false;
+static FRAMES_ON: bool = false;
+
+fn tracing_frames() -> bool {
+    if !FRAMES_READ {
+        FRAMES_READ = true;
+        FRAMES_ON = env::has_var("FACET_WIN32_FRAMES");
+    }
+    return FRAMES_ON;
+}
+
+fn trace_node(n: *core::Node, depth: usize) {
+    if !tracing_frames() { return; }
+    let f: flex::Frame = { (*n).frame() };
+    var line: text::Text = text::repeating("  ", depth);
+    let k: str = { (*n).key() };
+    let kind: u32 = core::kind_of(n);
+    let x: i32 = f.left as i32;
+    let y: i32 = f.top as i32;
+    let w: i32 = f.width as i32;
+    let h: i32 = f.height as i32;
+    let view: str = if core::view_of(n) == (0 as *u8) { "-" } else { "+" };
+    let name: str = if k == "" { "(unkeyed)" } else { k };
+    line = line.appending("${name}  kind=${kind}  ${x},${y} ${w}x${h}  view=${view}");
+    io::eprintln(line.view());
+    return;
+}
+
+fn trace_tree(n: *core::Node, depth: usize) {
+    if !tracing_frames() { return; }
+    trace_node(n, depth);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { trace_tree(c, depth +% (1 as usize)); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// A frame is fractional; a window rect is not. ROUND rather than truncate: a
+// 99.6pt column truncated to 99 loses a pixel at every nesting level, and
+// facet's trees nest deeply enough for that to be visible as drift. The same
+// call, for the same reason, as facet_gtk's `round_i32`.
+fn round_i32(v: f64) -> i32 {
+    if v <= (0.0 as f64) { return 0 as i32; }
+    return (v + (0.5 as f64)) as i32;
+}
+
+// Place `child` in `host` at a host-relative rect. Idempotent, and CHEAP when
+// nothing moved: `SetWindowPos` on an unchanged rect still generates
+// WM_WINDOWPOSCHANGING/CHANGED and, on a control that repaints from them, a
+// visible flicker on every sync. So the rect is compared first.
+//
+// SWP_NOZORDER is essential, not an optimisation. Z-order here IS the child
+// order — `views::insert` sets it and `component::raise` moves a node through
+// it — so a placement that also normalised z-order would silently undo both on
+// the next layout pass.
+fn place(host: *u8, child: *u8, x: f64, y: f64, w: f64, h: f64) {
+    if child == (0 as *u8) { return; }
+    let nx: i32 = round_i32(x);
+    let ny: i32 = round_i32(y);
+    let nw: i32 = round_i32(w);
+    let nh: i32 = round_i32(h);
+    if same_rect(child, host, nx, ny, nw, nh) { return; }
+    // THE VACATED PIXELS ARE THE PARENT'S PROBLEM. A control that shrinks or
+    // moves leaves whatever it was covering exactly as it was — Windows
+    // repaints the window that MOVED, not the ground it uncovered — so the old
+    // rectangle is invalidated in the host before the move. Same bug class as
+    // the missing erase: stale pixels that read as duplicated content.
+    invalidate_old(host, child);
+    // The parent may not be set yet on the very first placement — `insert`
+    // runs before the layout walk for a fresh mount, but a node moved between
+    // hosts is placed against the new one.
+    if { u::GetParent(child) } != host { let _p: *u8 = { u::SetParent(child, host) }; }
+    let flags: u32 = sys::swp_nozorder() | sys::swp_noactivate();
+    let _r: i32 = { u::SetWindowPos(child, sys::hwnd_top(), nx, ny, nw, nh, flags) };
+    return;
+}
+
+// Is the window already exactly there? `GetWindowRect` answers in SCREEN
+// coordinates, so the host's own origin has to come off before the comparison
+// — comparing screen against host-relative would answer "different" every time
+// and defeat the guard entirely.
+fn same_rect(child: *u8, host: *u8, x: i32, y: i32, w: i32, h: i32) -> bool {
+    var cr: u::tagRECT = zero_rect();
+    if { u::GetWindowRect(child, #addr_of(cr)) } == (0 as i32) { return false; }
+    var hr: u::tagRECT = zero_rect();
+    if host != (0 as *u8) {
+        if { u::GetWindowRect(host, #addr_of(hr)) } == (0 as i32) { return false; }
+    }
+    let cx: i32 = cr.left -% hr.left;
+    let cy: i32 = cr.top -% hr.top;
+    let cw: i32 = cr.right -% cr.left;
+    let ch: i32 = cr.bottom -% cr.top;
+    return cx == x && cy == y && cw == w && ch == h;
+}
+
+fn zero_rect() -> u::tagRECT {
+    return u::tagRECT { left: 0 as i32, top: 0 as i32, right: 0 as i32, bottom: 0 as i32 };
+}
+
+// Walk a node's children and place each one against `host`.
+//
+// A node WITHOUT a window passes its children through to the same host, with
+// the host's origin unchanged — which is what makes an unkeyed pure-layout
+// column cost no window. Frames are absolute, so the subtraction is what turns
+// them host-relative, and it has to use the frame of the node that OWNS the
+// host rather than the node being walked.
+fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = { (*c).frame() };
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) {
+                    // Visibility BEFORE the placement: a hidden window still
+                    // takes a rect, and showing it at a stale one is the
+                    // 0x0-on-restore bug facet's own `relayout` note warns
+                    // about, seen from the backend side.
+                    show_window(v, !core::is_hidden(c));
+                    place(host, v, cf.left - host_abs.left, cf.top - host_abs.top,
+                          cf.width, cf.height);
+                    // A list re-lays its own rows: they are realised windows in
+                    // its viewport rather than facet children, so this walk
+                    // would never otherwise reach them. See `set_rows_hook`.
+                    lay_rows(v, c);
+                    // A scroll's children go into its DOCUMENT — the one kind
+                    // whose window and whose child host differ.
+                    reposition_children(c, controls::document_host(v), cf);
+                } else {
+                    reposition_children(c, host, host_abs);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// `ShowWindow` is not idempotent-free either — it posts WM_SHOWWINDOW and can
+// repaint — so the style bit is read first. WS_VISIBLE is the honest question:
+// it is what ShowWindow actually writes.
+fn show_window(v: *u8, on: bool) {
+    let style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    let visible: bool = (style & sys::ws_visible()) != (0 as u32);
+    if visible == on { return; }
+    let _r: i32 = { u::ShowWindow(v, if on { sys::sw_show() } else { sys::sw_hide() }) };
+    return;
+}
+
+#[test]
+fn rounding_is_nearest_and_never_negative() {
+    assert round_i32(99.6f64) == (100 as i32);
+    assert round_i32(99.4f64) == (99 as i32);
+    // A frame can come out slightly negative from accumulated subtraction; a
+    // window rect cannot be, and clamping here is what keeps a stray -1 from
+    // becoming a 4-billion-pixel unsigned width somewhere downstream.
+    assert round_i32(0.0f64 - 3.0f64) == (0 as i32);
+    return;
+}
+
+// ---- the rows hook ---------------------------------------------------------------
+//
+// A LIST'S ROWS ARE NOT ITS CHILDREN. They are realised into the viewport by
+// `recycler`, one window per visible row, and `reposition_children` cannot
+// reach them — a list node's facet children are whatever the application put
+// inside the control, which for a data list is nothing at all.
+//
+// So the walk has to tell the recycler when a list moved or resized, and it
+// cannot call it directly: `recycler` imports THIS module for `place` and
+// `reposition_children`, so an import back would be a cycle. A hook filled at
+// install is how facet's own core breaks the same shape (`core::touch` reaching
+// a backend through `SYNC_REQUEST_FN`), and it is the same answer here.
+static ROWS_HOOK: fn(*u8, *core::Node) = #zero::[fn(*u8, *core::Node)]();
+
+fn set_rows_hook(f: fn(*u8, *core::Node)) { ROWS_HOOK = f; return; }
+
+fn lay_rows(v: *u8, n: *core::Node) {
+    let f: fn(*u8, *core::Node) = ROWS_HOOK;
+    if f == (0 as fn(*u8, *core::Node)) { return; }
+    f(v, n);
+    return;
+}
+
+// Invalidate the rectangle `child` currently occupies, in `host`'s coordinate
+// space, so the host erases it on the next paint. Called before a move.
+//
+// `erase: true` is the point of the call — an invalidate that did not erase
+// would repaint the host's own content over stale pixels without clearing
+// them first, which is the bug this exists to avoid rather than a cheaper
+// version of the fix.
+fn invalidate_old(host: *u8, child: *u8) {
+    if host == (0 as *u8) || child == (0 as *u8) { return; }
+    var cr: u::tagRECT = zero_rect();
+    if { u::GetWindowRect(child, #addr_of(cr)) } == (0 as i32) { return; }
+    var hr: u::tagRECT = zero_rect();
+    if { u::GetWindowRect(host, #addr_of(hr)) } == (0 as i32) { return; }
+    var local: u::tagRECT = u::tagRECT {
+        left: cr.left -% hr.left, top: cr.top -% hr.top,
+        right: cr.right -% hr.left, bottom: cr.bottom -% hr.top,
+    };
+    if local.right <= local.left { return; }
+    if local.bottom <= local.top { return; }
+    let _i: i32 = { u::InvalidateRect(host, #addr_of(local), 1 as i32) };
+    return;
+}

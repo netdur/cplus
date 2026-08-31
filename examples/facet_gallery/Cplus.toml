@@ -52,3 +52,10 @@ objc         = "*"
 appkit       = "*"
 quartzcore   = "*"
 webkit       = "*"
+
+[windows.dependencies]
+facet_win32 = "*"
+# The Win32 reader behind facet_agent, restated here for the same reason as the
+# blocks above: a consumer names the whole closure, not just its tier.
+agent_win32 = "*"
+win32       = "*"

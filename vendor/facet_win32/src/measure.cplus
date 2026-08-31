@@ -1,0 +1,534 @@
+// facet_win32/measure — how big a control would like to be.
+//
+// flex sizes a LEAF from its measure callback, and a node without one measures
+// 0x0. That is not a subtle failure: a `label("Save")` in a column becomes a
+// zero-height strip and simply does not appear, with everything about it
+// correct except its size. All three other backends record finding this the
+// same way — by seeing nothing — and this package found it the same way again,
+// with `FACET_WIN32_FRAMES=1` printing five controls at `20,20 0x0 view=+`.
+//
+// WIN32 HAS NO `gtk_widget_measure` AND NO `fittingSize`. A control will not
+// tell you how big it wants to be; there is no such message. So the size is
+// COMPUTED — the text is measured in the control's own font, and the padding
+// each kind wears around that text is stated here.
+//
+// That makes this file the one place in the package with hard-coded numbers,
+// and it is worth saying why they are not a smell. `DrawText` answers the
+// TEXT's box exactly; what it cannot know is that a push button puts 8 points
+// either side of its label, or that a check box reserves 13 pixels and a gap
+// for the box itself. Those are the platform's own metrics and Win32 exposes
+// them through `GetSystemMetrics` where it exposes them at all — which is what
+// this file uses wherever there is a metric to ask for, and states as a
+// constant only where there is not. Each constant says which of the two it is.
+//
+// THE FONT MATTERS. A control drawn in the shell dialog font and measured in
+// the device context's default (a 10-point bitmap face from 1985) comes out
+// visibly too narrow, and the text is then clipped by its own layout. So every
+// measurement selects the control's real font — `WM_GETFONT` — into the DC
+// first.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/label" as label;
+import "facet/text_button" as text_button;
+import "facet/symbol" as symbol;
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "win32/wingdi" as gdi;
+import "./sys" as sys;
+import "./controls" as controls;
+
+// ---- system metrics -------------------------------------------------------------
+//
+// SM_CXMENUCHECK 71 / SM_CYMENUCHECK 72 are the check-mark box the shell uses.
+// Not the check BOX of a BS_AUTOCHECKBOX, which has no metric of its own — but
+// it is the platform's own idea of how big a tick is, which beats a number
+// invented here.
+fn sm_cxmenucheck() -> i32 { return 71 as i32; }
+
+fn metric(i: i32) -> i32 { return { u::GetSystemMetrics(i) }; }
+
+// ---- measuring text --------------------------------------------------------------
+
+// Measure `s` in `v`'s own font. `wrap_at` is the width to wrap within, or 0
+// for a single unwrapped line.
+//
+// `DT_CALCRECT` makes DrawText measure instead of draw, writing the box it
+// would have used back into the rect. With `DT_WORDBREAK` and a rect whose
+// width is set, that box is the WRAPPED height — which is the whole reason a
+// wrapping label can answer how tall it is.
+// The extent of whatever the CONTROL is currently displaying, read straight out
+// of it. Wide throughout — the text never becomes a C+ `str`, so there is no
+// conversion to get wrong, and the string GDI measures is byte-for-byte the one
+// the control will draw.
+fn own_text_extent(v: *u8, out_w: *i32, out_h: *i32) {
+    { *out_w = 0 as i32 };
+    { *out_h = 0 as i32 };
+    if v == (0 as *u8) { return; }
+    let n: i32 = { u::GetWindowTextLengthW(v) };
+    if n <= (0 as i32) { return; }
+    let buf: *u8 = { m_malloc(((n as usize) +% (1 as usize)) *% (2 as usize)) };
+    if buf.is_null() { return; }
+    let w16: *u16 = buf as *u16;
+    let got: i32 = { u::GetWindowTextW(v, w16, n +% (1 as i32)) };
+    if got > (0 as i32) {
+        let hdc: *u8 = { u::GetDC(v) };
+        if hdc != (0 as *u8) {
+            let font: *u8 = { u::SendMessageA(v, 0x0031 as u32, 0 as u64, 0 as i64) } as *u8;
+            var old: *u8 = 0 as *u8;
+            if font != (0 as *u8) { old = { gdi::SelectObject(hdc, font) }; }
+            var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                             right: 0 as i32, bottom: 0 as i32 };
+            let flags: u32 = sys::dt_calcrect() | sys::dt_noprefix()
+                           | sys::dt_singleline();
+            let _d: i32 = { u::DrawTextW(hdc, w16, got, #addr_of(r), flags) };
+            { *out_w = r.right -% r.left };
+            { *out_h = r.bottom -% r.top };
+            if old != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, old) }; }
+            let _rr: i32 = { u::ReleaseDC(v, hdc) };
+        }
+    }
+    { m_free(buf) };
+    return;
+}
+
+#[link_name = "malloc"]
+extern fn m_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn m_free(p: *u8);
+
+fn text_extent(v: *u8, s: str, wrap_at: i32, out_w: *i32, out_h: *i32) {
+    { *out_w = 0 as i32 };
+    { *out_h = 0 as i32 };
+    let hdc: *u8 = { u::GetDC(v) };
+    if hdc == (0 as *u8) { return; }
+    // The control's OWN font — see the header. `WM_GETFONT` answers 0 for a
+    // control nobody set a font on, which means the system font, and
+    // `SelectObject(0)` would be an error rather than a no-op — so the select
+    // only happens when there is something to select.
+    let font: *u8 = { u::SendMessageA(v, 0x0031 as u32, 0 as u64, 0 as i64) } as *u8;
+    var old: *u8 = 0 as *u8;
+    if font != (0 as *u8) { old = { gdi::SelectObject(hdc, font) }; }
+
+    var flags: u32 = sys::dt_calcrect() | sys::dt_noprefix();
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if wrap_at > (0 as i32) {
+        flags = flags | sys::dt_wordbreak();
+        r.right = wrap_at;
+    } else {
+        flags = flags | sys::dt_singleline();
+    }
+    // MEASURED WIDE, because it is DRAWN wide. `DrawTextA` decodes its bytes as
+    // the system ANSI codepage while a C+ `str` is UTF-8, so a string with any
+    // character above 0x7F measures as MORE characters than it draws — and the
+    // control is then given a box too wide for its text, or the label is
+    // ellipsised for a width it does not need. The two halves have to agree.
+    let w16: *u16 = controls::to_wide(s);
+    if w16 != (0 as *u16) {
+        let _d: i32 = { u::DrawTextW(hdc, w16, 0 -% (1 as i32), #addr_of(r), flags) };
+        { *out_w = r.right -% r.left };
+        { *out_h = r.bottom -% r.top };
+        controls::free_wide(w16);
+    }
+    if old != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, old) }; }
+    let _r: i32 = { u::ReleaseDC(v, hdc) };
+    return;
+}
+
+// AN EMPTY STRING STILL HAS A HEIGHT. `DrawText` measures "" as 0x0, so a
+// label with no text yet would collapse the row it is in and then never grow
+// back, because nothing re-measures a node whose style did not change. One
+// line of the control's own font is the honest floor.
+fn line_height(v: *u8) -> i32 {
+    var w: i32 = 0 as i32;
+    var h: i32 = 0 as i32;
+    text_extent(v, "Mg", 0 as i32, #addr_of(w), #addr_of(h));
+    if h <= (0 as i32) { return 16 as i32; }
+    return h;
+}
+
+// ---- what a node's text IS --------------------------------------------------------
+//
+// Asked of the NODE rather than of the window, because a control's text is
+// written on the sync AFTER the measure pass that decided its box — reading
+// `GetWindowText` here would measure the previous string on every change.
+fn text_of(n: *core::Node) -> str {
+    let kind: u32 = core::kind_of(n);
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return ""; }
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return ""; }
+    if kind == props::K_LABEL { return { (*(p as *props::LabelProps)).text }.view(); }
+    if kind == props::K_BUTTON { return { (*(p as *props::ButtonProps)).title }.view(); }
+    if kind == props::K_RADIO { return { (*(p as *props::RadioProps)).text }.view(); }
+    if kind == text_button::K_TEXT_BUTTON {
+        return { (*(p as *text_button::TextButtonProps)).title }.view();
+    }
+    // A COMBO IS AS WIDE AS ITS WIDEST ITEM, not as its title: the closed box
+    // has to hold whatever the user picks, and one sized to the title clips
+    // every longer option the moment it is chosen.
+    if kind == props::K_POPUP { return widest_item(p as *props::PopupProps); }
+    // A check box and a toggle carry no text of their own in facet's model — the
+    // label beside one is a separate node — so they measure as the BOX alone,
+    // which `check_box_width` supplies as padding.
+    if kind == props::K_CHECKBOX { return ""; }
+    if kind == props::K_TOGGLE { return ""; }
+    return "";
+}
+
+// ---- the kinds with no text at all ---------------------------------------------------
+//
+// A trackbar, a progress bar and a marquee draw no string, so measuring their
+// text answers a zero-height control that vanishes. Their height is a fact
+// about the CONTROL rather than about anything facet said, and Win32 does not
+// expose it as a metric — these are the shell's own dimensions, stated.
+fn fixed_height(kind: u32) -> i32 {
+    if kind == props::K_SLIDER { return 30 as i32; }
+    // An up-down control is the shell's own arrows and has no text to measure;
+    // SM_CXVSCROLL wide is what a spinner is beside an edit box.
+    if kind == props::K_STEPPER { return 22 as i32; }
+    if kind == props::K_PROGRESS { return 18 as i32; }
+    if kind == props::K_SPINNER { return 18 as i32; }
+    return 0 as i32;
+}
+
+// ---- per-kind padding ---------------------------------------------------------------
+//
+// What the control wears AROUND its text. Each constant says whether it is a
+// platform metric or a stated number, per the header.
+
+// A push button's text inset. No metric exists for it; 8 points either side
+// and 4 above and below is what the shell's own dialogs use, and it is what
+// makes a button look like a button rather than a rectangle the width of its
+// word.
+fn button_pad_x() -> i32 { return 16 as i32; }
+fn button_pad_y() -> i32 { return 8 as i32; }
+
+// A check box: the box itself plus the gap before the text. `SM_CXMENUCHECK`
+// is the platform's own tick size — the nearest real metric — and the gap is
+// stated.
+fn check_box_width() -> i32 { return metric(sm_cxmenucheck()) +% (4 as i32); }
+
+// An edit control's border and text inset. `WS_BORDER` is one pixel a side and
+// the editor keeps a two-pixel margin inside that.
+fn edit_pad_x() -> i32 { return 8 as i32; }
+fn edit_pad_y() -> i32 { return 6 as i32; }
+
+// ---- the kinds that measure themselves -------------------------------------------
+//
+// Named one by one rather than "everything with a window". A scroll view or a
+// canvas has a natural size too and it means something else: a surface is sized
+// by its container, and asking it how big it would like to be is not a useful
+// question.
+fn has_intrinsic_size(kind: u32) -> bool {
+    if kind == props::K_LABEL { return true; }
+    if kind == props::K_BUTTON { return true; }
+    if kind == props::K_CHECKBOX { return true; }
+    if kind == props::K_TOGGLE { return true; }
+    if kind == props::K_TEXT_FIELD { return true; }
+    if kind == props::K_RADIO { return true; }
+    if kind == props::K_DATE_PICKER { return true; }
+    if kind == props::K_TIME_PICKER { return true; }
+    if kind == props::K_STEPPER { return true; }
+    if kind == text_button::K_TEXT_BUTTON { return true; }
+    if kind == props::K_POPUP { return true; }
+    if kind == props::K_SEARCH_FIELD { return true; }
+    if kind == props::K_TEXT_AREA { return true; }
+    // THE THREE WITH NO TEXT still measure themselves — through `fixed_height`
+    // rather than through a string. Leaving them out of this list is what made
+    // a slider and a progress bar lay out at 0x0 with `fills_line` and
+    // `fixed_height` both already answering for them: neither is consulted
+    // unless the node was given a measure callback at all.
+    if kind == props::K_SLIDER { return true; }
+    if kind == props::K_PROGRESS { return true; }
+    if kind == props::K_SPINNER { return true; }
+    // A SWITCH AND A GLYPH are both fixed affordances — see `square_side` and
+    // `toggle_size`. Neither draws a string the layout could measure, so
+    // leaving them out here is the same 0x0 the slider had: the callback is
+    // never installed, and `fixed_height` is never consulted.
+    if kind == symbol::K_SYMBOL { return true; }
+    if kind == props::K_ICON_BUTTON { return true; }
+    return false;
+}
+
+// Controls MEANT TO FILL their line. A text field's natural width is its text,
+// which for an empty field is nothing — so a field laid out at its natural
+// width is a stub rather than a control. facet_gtk hits this from the GTK side
+// and facet_appkit from the AppKit side (`fittingSize` answers 0); all three
+// answer it the same way, with a floor stated here rather than left to the
+// platform's idea of small.
+fn fills_line(kind: u32) -> bool {
+    if kind == props::K_TEXT_FIELD { return true; }
+    // A trackbar's natural width is its trough MINIMUM and a progress bar has
+    // none at all, so both laid out at what they ask for are stubs rather than
+    // controls. The other two backends state the same floor from their own
+    // side — GTK's `fills_line`, AppKit's `fittingSize` answering zero.
+    if kind == props::K_SLIDER { return true; }
+    if kind == props::K_PROGRESS { return true; }
+    if kind == props::K_SPINNER { return true; }
+    if kind == props::K_SEARCH_FIELD { return true; }
+    if kind == props::K_TEXT_AREA { return true; }
+    return false;
+}
+
+// The measure callback flex calls. `context` is flex's spare slot and carries
+// the HWND: facet's own Data rides the attachment, so nothing else wants it.
+fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
+                avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
+    if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
+    let n: *core::Node = { u::GetPropA(ctx, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
+    let kind: u32 = core::kind_of(n);
+    let s: str = text_of(n);
+
+    // `avail_w == avail_w` is the NaN test — flex passes NaN for "no
+    // constraint", and NaN is the one value not equal to itself.
+    let bounded: bool = avail_w == avail_w && avail_w > (0.0 as f64);
+
+    var pad_x: i32 = 0 as i32;
+    var pad_y: i32 = 0 as i32;
+    if kind == props::K_BUTTON { pad_x = button_pad_x(); pad_y = button_pad_y(); }
+    // A TEXT BUTTON HAS NO CHROME, so it wears no horizontal inset — that is
+    // what distinguishes it from a `button`, and padding it would put the gap
+    // back that the kind exists to remove.
+    if kind == text_button::K_TEXT_BUTTON { pad_y = button_pad_y(); }
+    if kind == props::K_CHECKBOX || kind == props::K_TOGGLE {
+        pad_x = check_box_width();
+    }
+    if kind == props::K_TEXT_FIELD { pad_x = edit_pad_x(); pad_y = edit_pad_y(); }
+    if kind == props::K_SEARCH_FIELD { pad_x = edit_pad_x(); pad_y = edit_pad_y(); }
+    if kind == props::K_RADIO { pad_x = check_box_width(); }
+    // A combo box wears the drop-down arrow to the right of its text; the arrow
+    // is a scroll-bar width by construction, which is a real metric (SM_CXVSCROLL 2).
+    if kind == props::K_POPUP { pad_x = metric(2 as i32) +% (12 as i32); pad_y = edit_pad_y(); }
+
+    // A PICKER MEASURES ITS OWN DISPLAYED STRING. It has no facet-side text to
+    // measure — `date` is a `vocab::Date` and the control formats it, by the
+    // node's `format` when it stated one and by the USER'S LOCALE otherwise —
+    // so guessing a representative string here would be wrong in every locale
+    // but one. Asking the control is the only answer that stays right.
+    //
+    // Without this both pickers measured the empty string and laid out at
+    // ZERO WIDTH: created, placed, invisible, and reported by nothing.
+    if kind == props::K_DATE_PICKER || kind == props::K_TIME_PICKER {
+        var pw: i32 = 0 as i32;
+        var ph: i32 = 0 as i32;
+        own_text_extent(ctx, #addr_of(pw), #addr_of(ph));
+        if ph <= (0 as i32) { ph = line_height(ctx); }
+        // The DROP ARROW on a date picker, and the SPIN on a time one. Both sit
+        // to the right of the text and neither is in the text's extent.
+        pw = pw +% metric(2 as i32) +% edit_pad_x();
+        return flex::Size { width: pw as f64, height: (ph +% edit_pad_y()) as f64 };
+    }
+
+    // A SWITCH IS A FIXED SHAPE, not a stretched one. It has a stated aspect —
+    // twice as wide as it is tall — and a switch given the whole line is a
+    // lozenge rather than a switch, which is exactly what the `fixed_height`
+    // path below would produce.
+    if kind == props::K_TOGGLE {
+        let side: f64 = controls::toggle_height() as f64;
+        return flex::Size { width: side * (2.0 as f64), height: side };
+    }
+    // A GLYPH IS SQUARE, at the size its font was made at — the codepoint is
+    // drawn by the text stack, so the font's own line height IS the icon's
+    // side and nothing else has to be stated.
+    if kind == symbol::K_SYMBOL || kind == props::K_ICON_BUTTON {
+        var side: i32 = line_height(ctx);
+        if side <= (0 as i32) { side = 16 as i32; }
+        if kind == props::K_ICON_BUTTON { side = side +% button_pad_y(); }
+        return flex::Size { width: side as f64, height: side as f64 };
+    }
+
+    // A kind with no text at all is its stated height and whatever width it was
+    // offered — see `fixed_height`. Measuring the empty string would answer
+    // zero and the control would vanish.
+    let fixed: i32 = fixed_height(kind);
+    if fixed > (0 as i32) {
+        var fw: f64 = 120.0f64;
+        if bounded { fw = avail_w; }
+        return flex::Size { width: fw, height: fixed as f64 };
+    }
+
+    // Width first, unwrapped: what the control would like.
+    var tw: i32 = 0 as i32;
+    var th: i32 = 0 as i32;
+    text_extent(ctx, s, 0 as i32, #addr_of(tw), #addr_of(th));
+    if th <= (0 as i32) { th = line_height(ctx); }
+
+    var w: f64 = (tw +% pad_x +% ellipsis_slack(kind)) as f64;
+    if fills_line(kind) && bounded { w = avail_w; }
+    if bounded && w > avail_w { w = avail_w; }
+
+    // Height AGAINST that width, and only for a kind that WRAPS. A label is
+    // the one that does; a button laid out narrow does not grow a second line
+    // unless it was given BS_MULTILINE, and measuring it as if it did makes
+    // every cramped button twice as tall as it draws.
+    var h: f64 = (th +% pad_y) as f64;
+    // `auto_size` MAKES AN EDITOR GROW WITH ITS TEXT. It is the one kind whose
+    // height is a function of content it does not otherwise measure — a text
+    // area is `fills_line` and would sit at one line's height forever — so it
+    // measures its own string, wrapped to the width it was offered, the same
+    // way a wrapping label does below.
+    if kind == props::K_TEXT_AREA && auto_sizes(n) && bounded {
+        let inner: i32 = (avail_w as i32) -% pad_x;
+        if inner > (0 as i32) {
+            var ww: i32 = 0 as i32;
+            var wh: i32 = 0 as i32;
+            text_extent(ctx, area_text(n), inner, #addr_of(ww), #addr_of(wh));
+            if wh > (0 as i32) { h = (wh +% pad_y) as f64; }
+        }
+    }
+    if kind == props::K_LABEL && wraps(n) && bounded {
+        let inner: i32 = (avail_w as i32) -% pad_x;
+        if inner > (0 as i32) {
+            var ww: i32 = 0 as i32;
+            var wh: i32 = 0 as i32;
+            text_extent(ctx, s, inner, #addr_of(ww), #addr_of(wh));
+            if wh > (0 as i32) { h = (wh +% pad_y) as f64; }
+        }
+    }
+    return flex::Size { width: w, height: h };
+}
+
+// Does this label wrap? The same question `controls::break_bits` answers in
+// style bits, asked of the node — and it has to agree with that function or a
+// label is measured for one shape and drawn in another.
+fn auto_sizes(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    if { (*d).kind } != props::K_TEXT_AREA { return false; }
+    let p: *props::TextAreaProps = { (*d).props } as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return false; }
+    return match { (*p).auto_size } {
+        vocab::AutoSize::TextChanges => true,
+        vocab::AutoSize::Disabled => false,
+    };
+}
+
+fn area_text(n: *core::Node) -> str {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return ""; }
+    let p: *props::TextAreaProps = { (*d).props } as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return ""; }
+    return { (*p).input_view.text }.view();
+}
+
+// TWO PIXELS, and they are not a fudge for a layout that looks tight.
+//
+// A label defaults to `TailTruncation`, which is `SS_ENDELLIPSIS` on the
+// static — and a static decides whether to ellipsise by comparing the string
+// against its own client width. `DT_CALCRECT` answers the extent GDI computes
+// for the string on its own; the control's fit test is not the same test, and
+// for some glyph runs it comes out a fraction wider. The box is then EXACTLY
+// the measured width and the control ellipsises a string that fits.
+//
+// Measured, in the probe: `unchecked` measured 84 and was placed at 84 and
+// drew as `unche…ed`, while `clicks: 0` measured 60, was placed at 60 and drew
+// whole. Same font, same style bits (0x5400430C), same measure path — the two
+// strings simply fall on opposite sides of the boundary. Nothing about the
+// measurement was wrong, so there is nothing to correct there; what is needed
+// is that the box is never EXACTLY the ink width.
+//
+// Only for kinds that can ellipsise. A control that clips instead loses two
+// pixels of nothing, and two points of slack is below the noise floor of any
+// layout while an ellipsised label is a visible defect.
+fn ellipsis_slack(kind: u32) -> i32 {
+    if kind == props::K_LABEL { return 2 as i32; }
+    if kind == props::K_BUTTON { return 2 as i32; }
+    if kind == text_button::K_TEXT_BUTTON { return 2 as i32; }
+    if kind == props::K_RADIO { return 2 as i32; }
+    return 0 as i32;
+}
+
+fn wraps(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    if { (*d).kind } != props::K_LABEL { return false; }
+    let p: *props::LabelProps = { (*d).props } as *props::LabelProps;
+    if p == (0 as *props::LabelProps) { return false; }
+    return controls::break_wraps({ (*p).line_break });
+}
+
+// Arm a node to measure itself through its window. Called from `views::create`
+// for every kind that has an intrinsic size.
+fn arm(v: *u8, n: *core::Node) {
+    if !has_intrinsic_size(core::kind_of(n)) { return; }
+    { (*n).set_context(v) };
+    { (*n).set_measure(measure_view) };
+    return;
+}
+
+// A node that measures ITSELF has just been written to, so its measurement is
+// stale — and nothing else in the pipeline knows that. flex's incremental cache
+// prunes a subtree whose STYLE is unchanged, and `set_text` changes no style:
+// it changes what the control would answer if asked again. Without this the
+// label keeps the box it was given for its OLD string. facet_gtk records the
+// identical call for the identical reason.
+fn remeasure(n: *core::Node) {
+    if !has_intrinsic_size(core::kind_of(n)) { return; }
+    { (*n).mark_content_changed() };
+    return;
+}
+
+// The longest of a popup's items, by byte length. Bytes and not glyphs: this
+// picks WHICH string to measure, and the real width comes from `DrawText` on
+// the one it picked — so a multi-byte string that is shorter in glyphs than in
+// bytes costs a slightly-too-wide box rather than a wrong one.
+fn widest_item(p: *props::PopupProps) -> str {
+    if p == (0 as *props::PopupProps) { return ""; }
+    let items: *vocab::TextList = #addr_of((*p).items);
+    let n: usize = { (*items).count() };
+    var best: str = "";
+    var best_len: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i < n {
+        let s: str = { (*items).at(i) };
+        let l: usize = { #str_len(s) };
+        if l > best_len { best_len = l; best = s; }
+        i = i +% (1 as usize);
+    }
+    // No items yet — the title is what the closed box shows until there are.
+    if best_len == (0 as usize) { return { (*p).title }.view(); }
+    return best;
+}
+
+#[test]
+fn only_the_ellipsising_kinds_get_slack() {
+    // The kinds that carry `SS_ENDELLIPSIS`/`BS_` truncation. A kind that
+    // clips or scrolls instead must not silently grow — a text field is
+    // `fills_line` and two extra points would be two points of the line it
+    // does not need.
+    assert ellipsis_slack(props::K_LABEL) == (2 as i32);
+    assert ellipsis_slack(props::K_BUTTON) == (2 as i32);
+    assert ellipsis_slack(text_button::K_TEXT_BUTTON) == (2 as i32);
+    assert ellipsis_slack(props::K_RADIO) == (2 as i32);
+    assert ellipsis_slack(props::K_TEXT_FIELD) == (0 as i32);
+    assert ellipsis_slack(props::K_TEXT_AREA) == (0 as i32);
+    assert ellipsis_slack(props::K_SLIDER) == (0 as i32);
+    assert ellipsis_slack(symbol::K_SYMBOL) == (0 as i32);
+    return;
+}
+
+#[test]
+fn a_picker_measures_wider_than_nothing() {
+    // Both pickers used to measure the empty string, so `text_of` answered ""
+    // and they laid out at ZERO WIDTH — created, placed and invisible. They
+    // measure their own displayed text now; what this pins is that they are
+    // still in `has_intrinsic_size`, which is what installs the callback at
+    // all. Leaving a kind out of that list is the failure mode the slider and
+    // the progress bar already had once.
+    assert has_intrinsic_size(props::K_DATE_PICKER);
+    assert has_intrinsic_size(props::K_TIME_PICKER);
+    // A null window answers nothing rather than crashing — `apply` runs on
+    // nodes whose create failed.
+    var w: i32 = 9 as i32;
+    var h: i32 = 9 as i32;
+    own_text_extent(0 as *u8, #addr_of(w), #addr_of(h));
+    assert w == (0 as i32);
+    assert h == (0 as i32);
+    return;
+}

@@ -1,0 +1,511 @@
+// facet_win32/menus — the app menu bar, and a node's context menu.
+//
+// ---- an HMENU IS NOT A WINDOW ---------------------------------------------------
+//
+// Every other control in this package is an HWND: it has a node bound to it
+// with `SetPropA`, it gets its own messages, and `input` finds its way back to
+// facet by walking the window chain. A menu has none of that. An `HMENU` is an
+// opaque handle with no properties, no window and no messages of its own — it
+// reports a click as `WM_COMMAND` on the OWNING WINDOW with a COMMAND ID in the
+// low word of wParam and lParam ZERO.
+//
+// That zero is the whole difference. A control notification carries the
+// sending HWND in lParam, which is how `input::on_command` resolves a control
+// with no id table at all. A menu carries nothing but a number, so the number
+// has to mean something: this file keeps a table from command id to the facet
+// node that owns the item, and the WNDPROC consults it exactly when lParam is
+// zero.
+//
+// ---- WHY A TABLE IS SAFE HERE ------------------------------------------------------
+//
+// A per-control id table was rejected for controls (`input`'s header says so)
+// because the message already carries the identity. Here it does not, and the
+// table is bounded by the number of menu ITEMS an application declares — a
+// count that is written in the source and does not grow at runtime.
+//
+// Ids start at 0x100. Below that is where Windows' own dialog answers live
+// (IDOK is 1, IDCANCEL 2), and a menu item sharing a number with IDCANCEL is a
+// menu item that fires when a dialog is dismissed.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/menu" as fmenu;
+import "facet/menu_item" as fmenu_item;
+import "facet/context_menu_item" as fctx_item;
+import "facet/screen" as screen;
+import "win32/winuser" as u;
+import "./sys" as sys;
+
+// ---- menu flags ---------------------------------------------------------------------
+
+fn mf_string() -> u32 { return 0x0000 as u32; }
+fn mf_popup() -> u32 { return 0x0010 as u32; }
+fn mf_separator() -> u32 { return 0x0800 as u32; }
+fn mf_grayed() -> u32 { return 0x0001 as u32; }
+fn mf_enabled() -> u32 { return 0x0000 as u32; }
+fn mf_bycommand() -> u32 { return 0x0000 as u32; }
+
+// TrackPopupMenu: return the choice rather than posting it, and align to the
+// pointer. `TPM_RETURNCMD` is what makes a context menu answerable in one call
+// instead of through a message that arrives later on a window that may have
+// gone.
+fn tpm_leftalign() -> u32 { return 0x0000 as u32; }
+fn tpm_topalign() -> u32 { return 0x0000 as u32; }
+fn tpm_returncmd() -> u32 { return 0x0100 as u32; }
+fn tpm_rightbutton() -> u32 { return 0x0002 as u32; }
+
+// ---- the command table -----------------------------------------------------------
+
+struct Command {
+    // The facet node whose props carry the handler. Zero for an app-menu item,
+    // which is a `screen::MenuItem` rather than a node.
+    node: usize,
+    // The app-menu item's handler and context, for the other case.
+    on_click: fn(*u8, *u8),
+    ctx: usize,
+    live: bool,
+}
+
+static COMMANDS: vec::Vec[Command] = #zero::[vec::Vec[Command]]();
+
+fn first_command_id() -> u32 { return 0x100 as u32; }
+
+fn id_of_slot(slot: usize) -> u32 { return first_command_id() +% (slot as u32); }
+
+fn slot_of_id(id: u32) -> usize {
+    if id < first_command_id() { return COMMANDS.count(); }
+    return (id -% first_command_id()) as usize;
+}
+
+// Every id is minted fresh when a menu is (re)built. The table is CLEARED
+// first: a rebuilt menu bar has different items, and a stale row would fire a
+// handler for an item that is no longer on screen.
+fn reset_commands() {
+    COMMANDS = vec::new::[Command]();
+    return;
+}
+
+fn add_node_command(n: *core::Node) -> u32 {
+    let slot: usize = COMMANDS.count();
+    let _e: status::Status = COMMANDS.append(Command {
+        node: { #addr(n as *u8) }, on_click: props::no_handler,
+        ctx: 0 as usize, live: true,
+    });
+    return id_of_slot(slot);
+}
+
+fn add_app_command(f: fn(*u8, *u8), ctx: *u8) -> u32 {
+    let slot: usize = COMMANDS.count();
+    let _e: status::Status = COMMANDS.append(Command {
+        node: 0 as usize, on_click: f, ctx: { #addr(ctx) }, live: true,
+    });
+    return id_of_slot(slot);
+}
+
+// Fire the command an id names. Called from the WNDPROC when WM_COMMAND
+// arrives with lParam zero — see the header for why that is the test.
+fn fire(id: u32) -> bool {
+    let slot: usize = slot_of_id(id);
+    if slot >= COMMANDS.count() { return false; }
+    return match COMMANDS.at_ptr(slot) {
+        option::Option[*Command]::Some(c) => {
+            if !{ (*c).live } { false } else { fire_command(c) }
+        }
+        option::Option[*Command]::None => false,
+    };
+}
+
+fn fire_command(c: *Command) -> bool {
+    let n: *core::Node = { (*c).node } as *core::Node;
+    if n != (0 as *core::Node) { return fire_node_item(n); }
+    let f: fn(*u8, *u8) = { (*c).on_click };
+    if f == props::no_handler || f == (0 as fn(*u8, *u8)) { return false; }
+    f(0 as *u8, { (*c).ctx } as *u8);
+    return true;
+}
+
+// A `menu_item` or a `context_menu_item` node. Both carry the same two fields
+// under different props, and the KIND is what says which — a viewless node has
+// no window to ask.
+fn fire_node_item(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let kind: u32 = { (*d).kind };
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return false; }
+    if kind == props::K_MENU_ITEM {
+        let q: *props::MenuItemProps = p as *props::MenuItemProps;
+        let f: fn(*u8, *u8) = { (*q).on_clicked };
+        if f == props::no_handler { return false; }
+        f(n as *u8, { (*q).on_clicked_ctx });
+        return true;
+    }
+    if kind == props::K_CONTEXT_MENU_ITEM {
+        // A context-menu item EMBEDS the plain menu item rather than restating
+        // it, so its text and handler live one level down.
+        let q: *props::ContextMenuItemProps = p as *props::ContextMenuItemProps;
+        let f: fn(*u8, *u8) = { (*q).menu_item.on_clicked };
+        if f == props::no_handler { return false; }
+        f(n as *u8, { (*q).menu_item.on_clicked_ctx });
+        return true;
+    }
+    return false;
+}
+
+// ---- building a menu from nodes ---------------------------------------------------
+
+fn append_text(menu: *u8, flags: u32, id: u32, t: text::Text) {
+    match t.c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let _r: i32 = { u::AppendMenuA(menu, flags, id as u64, cs.as_ptr() as *i8) };
+        }
+        option::Option[text::CString]::None => { }
+    }
+    return;
+}
+
+fn item_text(n: *core::Node) -> text::Text {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return text::from_str(""); }
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return text::from_str(""); }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_MENU_ITEM {
+        return { (*(p as *props::MenuItemProps)).text }.clone();
+    }
+    if kind == props::K_CONTEXT_MENU_ITEM {
+        let q: *props::ContextMenuItemProps = p as *props::ContextMenuItemProps;
+        return with_shortcut({ (*q).menu_item.text }.clone(),
+                             { (*q).shortcut_key }.clone(),
+                             { (*q).shortcut_modifiers });
+    }
+    if kind == props::K_MENU {
+        return { (*(p as *props::MenuProps)).text }.clone();
+    }
+    return text::from_str("");
+}
+
+// A SHORTCUT IS PART OF THE ITEM'S STRING, separated by a TAB.
+//
+// That is not a formatting convention this package invented — it is how a
+// Win32 menu is told where the accelerator column starts. `AppendMenu` right-
+// aligns everything after the first `	`, which is why every Windows menu's
+// shortcuts line up without anyone measuring them.
+//
+// IT IS THE LABEL AND NOT THE BINDING. Appending the text does not make the key
+// work: an accelerator has to be in an HACCEL table and pumped through
+// `TranslateAccelerator`, which this package does not do yet (§2). So the item
+// SAYS Ctrl+S and pressing Ctrl+S does nothing unless the application also
+// handled the key itself. Showing it anyway is right — the menu is where a user
+// learns the shortcut exists — but a reader must not take the label for the
+// binding.
+fn with_shortcut(take label: text::Text, key: text::Text,
+                 mods: vocab::KeyModifiers) -> text::Text {
+    if key.view() == "" { return label; }
+    let m: str = match mods {
+        vocab::KeyModifiers::Alt => "Alt+",
+        vocab::KeyModifiers::Ctrl => "Ctrl+",
+        vocab::KeyModifiers::Shift => "Shift+",
+        // CMD AND WINDOWS BOTH BECOME THE WINDOWS KEY. `Cmd` is facet's name
+        // for the platform's primary modifier and on Windows that is Ctrl —
+        // but a node that said `Cmd` on a menu item meant "the Mac one", and
+        // rendering it as Ctrl would collide with an item that really said
+        // Ctrl. `Win+` is the honest spelling of the key that exists here.
+        vocab::KeyModifiers::Cmd => "Win+",
+        vocab::KeyModifiers::Windows => "Win+",
+        vocab::KeyModifiers::None => "",
+    };
+    return label.appending("	").appending(m).appending(key.view());
+}
+
+// Fill `menu` from `parent`'s child nodes. Recurses for a nested `menu`, which
+// becomes a submenu — the one place the tree shape and the HMENU shape agree.
+fn fill_from_children(menu: *u8, parent: *core::Node) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(parent);
+    while i < count {
+        match core::child_of(parent, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let kind: u32 = core::kind_of(c);
+                if kind == props::K_MENU {
+                    let sub: *u8 = { u::CreatePopupMenu() };
+                    if sub != (0 as *u8) {
+                        fill_from_children(sub, c);
+                        // A POPUP'S "id" IS THE SUBMENU HANDLE, not a command.
+                        // `MF_POPUP` reinterprets the id argument, which is why
+                        // a submenu needs no entry in the command table.
+                        append_text(menu, mf_string() | mf_popup(),
+                                    { #addr(sub) } as u32, item_text(c));
+                    }
+                } else {
+                    if kind == props::K_MENU_ITEM || kind == props::K_CONTEXT_MENU_ITEM {
+                        let t: text::Text = item_text(c);
+                        // AN EMPTY TITLE IS A SEPARATOR. facet has no separator
+                        // kind for these — the ledger's menu item carries only a
+                        // text — so an item that names nothing is the rule
+                        // between groups, which is what every menu vocabulary
+                        // means by a blank entry.
+                        if t.view() == "" {
+                            let _r: i32 = { u::AppendMenuA(menu, mf_separator(),
+                                                           0 as u64, 0 as *i8) };
+                        } else {
+                            append_text(menu, mf_string(), add_node_command(c), t);
+                        }
+                    }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- the window's menu bar ----------------------------------------------------------
+
+// Does this node hold `menu` children? Asked before rebuilding a bar, because
+// every node in a tree gets `touch_all` at some point and almost none of them
+// have anything to do with a menu.
+fn holds_a_menu(n: *core::Node) -> bool {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_MENU { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// Build the bar for `win` from the `menu` children under `root`.
+//
+// THE OLD BAR IS DESTROYED. `SetMenu` does not free what it replaces, and a
+// menu rebuilt on every model change would leak an HMENU and everything under
+// it each time.
+fn build_bar(win: *u8, root: *core::Node) {
+    if win == (0 as *u8) { return; }
+    if root == (0 as *core::Node) { return; }
+    reset_commands();
+    let bar: *u8 = { u::CreateMenu() };
+    if bar == (0 as *u8) { return; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(root);
+    while i < count {
+        match core::child_of(root, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_MENU {
+                    let sub: *u8 = { u::CreatePopupMenu() };
+                    if sub != (0 as *u8) {
+                        fill_from_children(sub, c);
+                        append_text(bar, mf_string() | mf_popup(),
+                                    { #addr(sub) } as u32, item_text(c));
+                    }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let old: *u8 = { u::GetMenu(win) };
+    let _s: i32 = { u::SetMenu(win, bar) };
+    if old != (0 as *u8) { let _d: i32 = { u::DestroyMenu(old) }; }
+    // The bar occupies client space, so the layout has to be re-run against
+    // what is left. `DrawMenuBar` is what makes the change visible at all.
+    let _r: i32 = { u::DrawMenuBar(win) };
+    return;
+}
+
+// ---- the app menu, which is a different shape --------------------------------------
+//
+// `screen::AppMenu` is a FLAT list of `screen::MenuItem`, each naming the menu
+// it belongs to by string. So the bar is grouped here rather than walked: one
+// popup per distinct `menu` name, in first-seen order, which is the order the
+// application wrote them in.
+fn build_app_menu(win: *u8, m: *screen::AppMenu) {
+    if win == (0 as *u8) { return; }
+    if m == (0 as *screen::AppMenu) { return; }
+    reset_commands();
+    let bar: *u8 = { u::CreateMenu() };
+    if bar == (0 as *u8) { return; }
+    let items: *vec::Vec[screen::MenuItem] = #addr_of((*m).items);
+    let n: usize = { (*items).count() };
+    var made: vec::Vec[text::Text] = vec::new::[text::Text]();
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*items).at_ptr(i) } {
+            option::Option[*screen::MenuItem]::Some(it) => {
+                let group: str = { (*it).menu }.view();
+                if !already_made(made, group) {
+                    let _a: status::Status = made.append(text::from_str(group));
+                    let popup: *u8 = { u::CreatePopupMenu() };
+                    if popup != (0 as *u8) {
+                        fill_group(popup, items, group);
+                        append_text(bar, mf_string() | mf_popup(),
+                                    { #addr(popup) } as u32, text::from_str(group));
+                    }
+                }
+            }
+            option::Option[*screen::MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let old: *u8 = { u::GetMenu(win) };
+    let _s: i32 = { u::SetMenu(win, bar) };
+    if old != (0 as *u8) { let _d: i32 = { u::DestroyMenu(old) }; }
+    let _r: i32 = { u::DrawMenuBar(win) };
+    return;
+}
+
+fn already_made(made: vec::Vec[text::Text], group: str) -> bool {
+    var i: usize = 0 as usize;
+    let n: usize = made.count();
+    while i < n {
+        match made.at_ptr(i) {
+            option::Option[*text::Text]::Some(t) => {
+                if { (*t).view() } == group { return true; }
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn fill_group(popup: *u8, items: *vec::Vec[screen::MenuItem], group: str) {
+    var i: usize = 0 as usize;
+    let n: usize = { (*items).count() };
+    while i < n {
+        match { (*items).at_ptr(i) } {
+            option::Option[*screen::MenuItem]::Some(it) => {
+                if { (*it).menu }.view() == group {
+                    if { (*it).is_separator } {
+                        let _r: i32 = { u::AppendMenuA(popup, mf_separator(),
+                                                       0 as u64, 0 as *i8) };
+                    } else {
+                        let id: u32 = add_app_command({ (*it).on_click },
+                                                      { (*it).click_ctx });
+                        append_text(popup, mf_string(), id, { (*it).title }.clone());
+                    }
+                }
+            }
+            option::Option[*screen::MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- a node's context menu -------------------------------------------------------
+//
+// Shown on demand rather than attached: `TrackPopupMenu` with `TPM_RETURNCMD`
+// blocks until the user chooses and ANSWERS the command id, so the whole
+// interaction is one call and there is no menu to keep alive between them.
+//
+// That is also why the command table is rebuilt here: a context menu's ids only
+// have to be valid for the duration of this call.
+fn show_context_menu(owner: *u8, n: *core::Node) -> bool {
+    if owner == (0 as *u8) || n == (0 as *core::Node) { return false; }
+    let holder: *core::Node = context_menu_under(n);
+    if holder == (0 as *core::Node) { return false; }
+    reset_commands();
+    let popup: *u8 = { u::CreatePopupMenu() };
+    if popup == (0 as *u8) { return false; }
+    fill_from_children(popup, holder);
+    var pt: u::tagPOINT = u::tagPOINT { x: 0 as i32, y: 0 as i32 };
+    let _g: i32 = { u::GetCursorPos(#addr_of(pt)) };
+    let chosen: i32 = { u::TrackPopupMenu(popup,
+                                          tpm_returncmd() | tpm_rightbutton(),
+                                          pt.x, pt.y, 0 as i32, owner,
+                                          0 as *u::tagRECT) };
+    let _d: i32 = { u::DestroyMenu(popup) };
+    if chosen <= (0 as i32) { return false; }
+    return fire(chosen as u32);
+}
+
+// The `context_menu` child of `n`, if it has one. A context menu DECORATES the
+// node it sits under — right-clicking that node is what opens it — so the
+// children are already there, built long before mount, even though none of them
+// will ever get a window.
+fn context_menu_under(n: *core::Node) -> *core::Node {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_CONTEXT_MENU { return c; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *core::Node;
+}
+
+fn has_context_menu(n: *core::Node) -> bool {
+    return context_menu_under(n) != (0 as *core::Node);
+}
+
+// The bits that mean "a menu under this node changed". A viewless child cannot
+// say which of its host's verbs it affected, so `mount` raises `touch_all` on
+// the host — which is why what this tests for is the bits a MENU carries, on a
+// node that holds one.
+fn menu_bits() -> u64 {
+    return fmenu::P_TEXT | fmenu::P_PRIORITY | fmenu_item::P_TEXT
+         | fmenu_item::P_ICON | fctx_item::P_TEXT | fctx_item::P_ICON
+         // A shortcut is part of the item's STRING here — see `with_shortcut` —
+         // so changing one is a rebuild exactly as changing the text is.
+         | fctx_item::P_SHORTCUT;
+}
+
+fn command_table_size() -> usize { return COMMANDS.count(); }
+
+#[test]
+fn command_ids_start_above_the_dialog_answers() {
+    // IDOK is 1 and IDCANCEL is 2. A menu item numbered 2 fires when any dialog
+    // in the process is cancelled — a bug that only appears once an app grows
+    // its first dialog, long after the menu was written.
+    assert first_command_id() > (2 as u32);
+    assert id_of_slot(0 as usize) == first_command_id();
+    return;
+}
+
+#[test]
+fn an_id_round_trips_to_its_slot() {
+    assert slot_of_id(id_of_slot(0 as usize)) == (0 as usize);
+    assert slot_of_id(id_of_slot(7 as usize)) == (7 as usize);
+    return;
+}
+
+#[test]
+fn an_id_below_the_first_names_no_slot() {
+    // WM_COMMAND also carries accelerator and dialog ids. One that is not ours
+    // must answer "no slot" rather than index the table negatively.
+    reset_commands();
+    let _a: u32 = add_app_command(props::no_handler, 0 as *u8);
+    assert slot_of_id(1 as u32) >= command_table_size();
+    assert fire(1 as u32) == false;
+    return;
+}
+
+#[test]
+fn a_rebuilt_menu_forgets_the_old_ids() {
+    // A stale row fires a handler for an item that is no longer on screen —
+    // which is what makes `reset_commands` part of every build rather than an
+    // optimisation.
+    reset_commands();
+    let _a: u32 = add_app_command(props::no_handler, 0 as *u8);
+    let _b: u32 = add_app_command(props::no_handler, 0 as *u8);
+    assert command_table_size() == (2 as usize);
+    reset_commands();
+    assert command_table_size() == (0 as usize);
+    return;
+}

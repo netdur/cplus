@@ -1,0 +1,76 @@
+[package]
+name    = "facet_win32"
+version = "0.0.1"
+edition = "2026"
+
+# facet_win32 — facet's Win32 backend, the Windows sibling of facet_appkit
+# (macOS), facet_gtk (Linux) and facet_android.
+#
+# It reads facet's contract and implements it with user32/gdi32/comctl32, or
+# states plainly in MANIFEST.md that Win32 cannot. Nothing else lives here: no
+# second vocabulary, no side door that looks portable. An application may still
+# drop beneath facet and call Win32 directly; that is a visible choice made in
+# the application, not something this package offers as a shortcut.
+#
+#   facet_win32 the registration surface: install() and nothing else
+#   views       the Renderer's five verbs
+#   controls    one HWND body per node kind
+#   input       the READ half: WM_COMMAND / WM_NOTIFY, the gesture and key bands
+#   paint       the shared band (background / radius / opacity / enabled / tooltip)
+#   geometry    computed frames -> MoveWindow placements, and a scroll's extent
+#   scheduler   schedule + the Scheduler service, over the message queue
+#   window      the host HWND, the message loop, and the menus
+#
+# The registration surface is the one the other three fill, and no wider:
+#   mount::install(Renderer)                 create / apply / insert / remove / schedule
+#   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
+#   theme::set_is_dark_fn / set_theme_changed_fn
+#   gestures::install_key_reader
+#   component::install_sender_readers
+# A hook family appearing outside those is drift by definition.
+#
+# WHAT MAKES THIS BACKEND DIFFERENT from the other three, and it is one fact:
+# a Win32 child control is a WINDOW, not a view. Three consequences shape every
+# file:
+#
+#   1. THE PARENT OWNS THE EVENT. A BUTTON does not call you back; it sends
+#      WM_COMMAND to its parent, and a trackbar sends WM_HSCROLL. So the read
+#      half is a WNDPROC on the HOST rather than a controller per control —
+#      the one place this package's shape genuinely departs from facet_gtk's.
+#   2. A CONTROL HWND IS NOT PAINTABLE BY US. It draws itself; the shared
+#      band's decorative half (background, corner radius, gradient) is
+#      answered on the container BEHIND it, which is what `paint` composes
+#      into the panel's WM_PAINT. What a control HWND genuinely cannot wear
+#      is recorded in MANIFEST.md rather than faked.
+#   3. Z-ORDER IS THE CHILD ORDER. There is no child list to splice: `insert`
+#      is SetParent plus a SetWindowPos that names the sibling to follow.
+#      Paint order and `component::raise` are the same mechanism, as they are
+#      on a GtkFixed.
+#
+# ORIGIN. flex and Win32 both put (0,0) at the TOP-LEFT with y growing
+# downward, so — as in facet_gtk and unlike facet_appkit — there is no flip
+# anywhere in this package.
+#
+# Not prebuilt while the backend is young: source mode is the configuration
+# every change is verified in, and a stale slice is worse than a slower build.
+# Revisit when the coverage number settles.
+[build]
+prebuild = false
+
+[dependencies]
+stdlib      = "*"
+flex_layout = "*"
+facet       = "*"
+# The Win32 binding: the curated facade plus the generated SDK surface
+# (winuser / wingdi / commctrl), which is where this package gets its typed
+# structs — tagWNDCLASSEXA, tagMSG, tagPAINTSTRUCT — rather than laying them
+# out by hand.
+win32       = "*"
+
+[link]
+# user32/gdi32/comctl32 ship with Windows and sit on the linker's default
+# search path, so — unlike facet_gtk, which needs GTK installed — this needs
+# nothing installed. Named anyway: `win32`'s own manifest names them for its
+# modules, and a direct reference from THIS package is resolved from this
+# package's link line.
+libs = ["user32", "gdi32", "comctl32", "uxtheme", "dwmapi", "advapi32"]

@@ -1,0 +1,1036 @@
+// facet_win32/window — the host HWND, the WNDPROC every facet window shares,
+// the message loop, and the layout pass.
+//
+// THE WNDPROC IS THE BACKEND'S EAR. On GTK a control connects its own signal;
+// here a control tells its PARENT, so one procedure sees every button click,
+// every edit change and every paint in the tree. `input` owns what to do with
+// a notification and `paint` owns what a panel draws — this file owns the
+// dispatch, so neither of them has to know a message id.
+//
+// TWO CLASSES, and the difference is what they are for:
+//
+//   FacetWin32Window   a top-level window. Carries the chrome, the close
+//                      request and the size that drives the layout pass.
+//   FacetWin32Panel    a child container — the GtkFixed analogue. Neither
+//                      clips its children's layout nor negotiates for space,
+//                      because facet decided both.
+//
+// They share one WNDPROC because they answer the same messages; what differs
+// is WM_SIZE (a top-level window re-lays; a panel's size was given to it by
+// the walk that is already running) and WM_CLOSE.
+//
+// ORIGIN. flex and Win32 both put (0,0) at the top-left with y growing
+// downward, so there is no flip anywhere in this package.
+
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/screen" as screen;
+import "facet/application" as app;
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "win32/libloaderapi" as ll;
+import "./sys" as sys;
+import "./paint" as paint;
+import "./input" as input;
+import "./geometry" as geometry;
+import "./controls" as controls;
+import "./observers" as observers;
+import "./menus" as menus;
+import "./recycler" as recycler;
+
+fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
+
+// ---- the window table ----------------------------------------------------------
+//
+// A fixed table rather than a Vec: the count is small, the slots are two words,
+// and a table with no allocation cannot fail to open a window because memory
+// ran out. facet_gtk's window tier is the same shape.
+const MAX_WINDOWS: usize = 16 as usize;
+
+static ROOTS: [usize; 16] = [0 as usize; 16];
+static WINDOWS: [usize; 16] = [0 as usize; 16];
+// The close question and the close notification, per window.
+//
+// TWO HOOKS AND NOT ONE, because they are asked at different moments and only
+// one of them can say no: `should_close` runs on WM_CLOSE and may refuse (an
+// app with unsaved work), `will_close` runs once the answer was yes and the
+// window is definitely going. Collapsing them would make "are you sure?" and
+// "clean up" the same callback, and a refusal would then have already torn
+// down what it was refusing to lose.
+static SHOULD_CLOSE: [usize; 16] = [0 as usize; 16];
+static SHOULD_CLOSE_CTX: [usize; 16] = [0 as usize; 16];
+static WILL_CLOSE: [usize; 16] = [0 as usize; 16];
+static WILL_CLOSE_CTX: [usize; 16] = [0 as usize; 16];
+static OPEN_WINDOWS: i64 = 0 as i64;
+
+fn free_slot() -> usize {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] == (0 as usize) { return i; }
+        i = i +% (1 as usize);
+    }
+    return MAX_WINDOWS;
+}
+
+fn slot_of_window(w: *u8) -> usize {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) && WINDOWS[i] == { #addr(w) } { return i; }
+        i = i +% (1 as usize);
+    }
+    return MAX_WINDOWS;
+}
+
+fn slot_of_root(r: *core::Node) -> usize {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] == { #addr(r as *u8) } { return i; }
+        i = i +% (1 as usize);
+    }
+    return MAX_WINDOWS;
+}
+
+fn open_window_count() -> i64 { return OPEN_WINDOWS; }
+
+// ---- the shared WNDPROC ----------------------------------------------------------
+
+fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    // A CONTROL NOTIFICATION. lParam IS the sending control's HWND for a
+    // control notification and 0 for a menu or accelerator — which is how the
+    // two are told apart, and why this package needs no per-control id table.
+    if msg == sys::wm_command() {
+        let ctl: *u8 = l as *u8;
+        // lParam ZERO IS A MENU OR AN ACCELERATOR, not a control. A control
+        // notification always carries its own HWND there, which is how the rest
+        // of this package resolves one without an id table; a menu carries only
+        // a command id, so the id is what has to mean something. See
+        // `menus`' header.
+        if ctl == (0 as *u8) {
+            let id: u32 = (w & (0xFFFF as u64)) as u32;
+            if menus::fire(id) { return 0 as i64; }
+            return { u::DefWindowProcA(hwnd, msg, w, l) };
+        }
+        if ctl != (0 as *u8) {
+            let code: u32 = ((w >> (16 as u64)) & (0xFFFF as u64)) as u32;
+            if input::on_command(ctl, code) { return 0 as i64; }
+        }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    // THE COMMON CONTROLS report through WM_NOTIFY — a third door beside
+    // WM_COMMAND and the scroll messages. See `input::on_notify`.
+    if msg == sys::wm_notify() {
+        var cd: i64 = 0 as i64;
+        if input::on_customdraw(l as *u8, #addr_of(cd)) { return cd; }
+        if input::on_notify(l as *u8) { return 0 as i64; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    // A TRACKBAR REPORTS THROUGH THE SCROLL MESSAGES, not WM_COMMAND — see
+    // `input::on_scroll`. The sending control is lParam and the low word of
+    // wParam is what the user did.
+    if msg == sys::wm_hscroll() || msg == sys::wm_vscroll() {
+        let ctl: *u8 = l as *u8;
+        if ctl != (0 as *u8) {
+            let code: u32 = (w & (0xFFFF as u64)) as u32;
+            if input::on_scroll(ctl, code) { return 0 as i64; }
+        }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    // A CONTROL ASKING ITS PARENT FOR ITS COLOURS, just before it draws. The
+    // only door into a system control's appearance short of owner-drawing it —
+    // see `paint`'s header.
+    if msg == sys::wm_ctlcolorstatic() || msg == sys::wm_ctlcoloredit()
+       || msg == sys::wm_ctlcolorbtn() || msg == sys::wm_ctlcolorlistbox() {
+        let brush: *u8 = paint::ctl_color(l as *u8, w as *u8);
+        if brush != (0 as *u8) { return { #addr(brush) } as i64; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    // AN OWNER-DRAWN CONTROL ASKS ITS PARENT TO PAINT IT. `text_button` is the
+    // one kind that takes this route — see `controls::draw_text_button` for why
+    // it is worth the WNDPROC branch.
+    if msg == sys::wm_drawitem() {
+        if controls::draw_text_button(l as *u8) { return 1 as i64; }
+        if controls::draw_icon_button(l as *u8) { return 1 as i64; }
+        if controls::draw_toggle(l as *u8) { return 1 as i64; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    if msg == sys::wm_paint() {
+        var ps: u::tagPAINTSTRUCT = zero_paintstruct();
+        let hdc: *u8 = { u::BeginPaint(hwnd, #addr_of(ps)) };
+        if hdc != (0 as *u8) {
+            let pn: *core::Node = input::node_of_window(hwnd);
+            controls::paint_node(hwnd, pn, hdc);
+            // THE ROW FURNITURE IS PAINTED HERE rather than in `paint_node`,
+            // and the reason is a cycle: `recycler` imports `controls`, so
+            // `controls` cannot import `recycler` back. This module already
+            // imports both, so it is where the two meet. Separators and the
+            // refresh strip belong to the VIEWPORT — a row is a child window
+            // and cannot draw outside itself.
+            if pn != (0 as *core::Node) {
+                if recycler::holds_rows(pn) {
+                    recycler::draw_separators(hwnd, pn, hdc);
+                    recycler::draw_refresh_bar(hwnd, pn, hdc);
+                }
+            }
+            let _e: i32 = { u::EndPaint(hwnd, #addr_of(ps)) };
+        }
+        return 0 as i64;
+    }
+
+    // WM_ERASEBKGND IS ANSWERED AND NOT PASSED ON. The default erases the
+    // client area with the class background brush, which this package sets to
+    // null — but answering the message is what stops the DEFAULT from running
+    // and repainting a grey rectangle under everything for one frame. Returning
+    // non-zero says "erased"; WM_PAINT then draws what is actually there.
+    // ERASE, AND MEAN IT. This used to return "erased" and erase nothing, which
+    // left every stale pixel where it was — the reason a label's new text drew
+    // over its old. wParam is the device context to paint into; returning
+    // non-zero says the job is done and stops DefWindowProc redoing it.
+    if msg == sys::wm_erasebkgnd() {
+        paint::erase(hwnd, w as *u8);
+        return 1 as i64;
+    }
+
+    if msg == sys::wm_dpichanged() { fire_observers(OBS_DENSITY); return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+
+    // THE POINTER BAND. A gesture lands on a PANEL, which is our own class, so
+    // these arrive here rather than through a controller attached to a widget.
+    if msg == sys::wm_lbuttondown() || msg == sys::wm_lbuttonup()
+       || msg == sys::wm_lbuttondblclk() || msg == sys::wm_rbuttonup()
+       || msg == sys::wm_mousemove() || msg == input::wm_mouseleave()
+       // WM_CAPTURECHANGED is the CANCEL edge — see `input::fire_canvas`. It
+       // belongs with the pointer messages because that is what it is about,
+       // even though nothing else in the band reads it.
+       || msg == input::wm_capturechanged() {
+        if input::on_mouse(hwnd, msg, w, l) { return 0 as i64; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    // A LONG PRESS runs on a timer set on the PRESSED window, so it arrives
+    // here beside the mouse messages it belongs with rather than on the
+    // scheduler's own pump.
+    if msg == sys::wm_timer() {
+        if w == input::long_press_timer() {
+            let _t: bool = input::on_long_press_timer(hwnd);
+            return 0 as i64;
+        }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    // THE WHEEL IS HIT-TESTED, because Windows sends it to the FOCUSED window
+    // rather than the one under the pointer — see `input::on_wheel`.
+    //
+    // CTRL-WHEEL IS THE DESKTOP'S PINCH. A mouse cannot pinch, and every
+    // Windows application that zooms does it this way — so `on_pinch` is
+    // answered by the gesture a desktop user actually performs rather than
+    // left unfired waiting for a touchscreen.
+    if msg == sys::wm_mousewheel() {
+        if input::on_pinch_wheel(w, l) { return 0 as i64; }
+        if input::on_wheel(w, l) { return 0 as i64; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    if msg == sys::wm_setfocus() {
+        let _t: bool = input::on_focus_change(hwnd, true);
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+    if msg == sys::wm_killfocus() {
+        let _t: bool = input::on_focus_change(hwnd, false);
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    // The key band fires on the FOCUSED window, which is where this arrives.
+    // Taking it stops the event: it reaches neither DefWindowProc nor the
+    // window's own key handling, which is what lets an app claim a shortcut.
+    if msg == sys::wm_keydown() {
+        if input::on_key(hwnd, w) { return 0 as i64; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    if msg == sys::wm_size() {
+        fire_observers(OBS_SIZE);
+        // Only a TOP-LEVEL window re-lays. A panel's size was handed to it by
+        // the layout walk that is running right now, and re-entering the walk
+        // from inside it is how a layout loop starts.
+        let slot: usize = slot_of_window(hwnd);
+        if slot < MAX_WINDOWS { relayout_from_client(slot); }
+        return 0 as i64;
+    }
+
+    if msg == 0x0006 as u32 { fire_observers(OBS_ACTIVE); return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+
+    // THE APP IS ASKED BEFORE THE WINDOW GOES. WM_CLOSE is a REQUEST — the
+    // default handler is what actually destroys the window — so refusing is
+    // simply not passing it on, and an app with unsaved work keeps its window
+    // by answering false.
+    if msg == sys::wm_close() {
+        let slot: usize = slot_of_window(hwnd);
+        if slot >= MAX_WINDOWS { return 0 as i64; }
+        if !ask_should_close(slot) { return 0 as i64; }
+        notify_will_close(slot);
+        close_slot(slot);
+        return 0 as i64;
+    }
+
+    if msg == sys::wm_destroy() {
+        // The LAST window ends the loop. `PostQuitMessage` is what breaks
+        // `GetMessage`, and posting it while another window is still up would
+        // take the whole app down with one of them.
+        if OPEN_WINDOWS <= (0 as i64) { { u::PostQuitMessage(0 as i32) }; }
+        return 0 as i64;
+    }
+
+    return { u::DefWindowProcA(hwnd, msg, w, l) };
+}
+
+fn zero_paintstruct() -> u::tagPAINTSTRUCT {
+    return u::tagPAINTSTRUCT {
+        hdc: 0 as *u8, fErase: 0 as i32,
+        rcPaint: u::tagRECT { left: 0 as i32, top: 0 as i32,
+                              right: 0 as i32, bottom: 0 as i32 },
+        fRestore: 0 as i32, fIncUpdate: 0 as i32, rgbReserved: 0 as *u8,
+    };
+}
+
+// ---- class registration -----------------------------------------------------------
+
+static CLASSES_REGISTERED: bool = false;
+
+// hbrBackground IS NULL on both classes, deliberately. A class brush makes
+// Windows erase the client area before every paint, in a colour facet never
+// chose — so a node with no background would flash the system grey rather than
+// letting its parent's pixels stand, which is what facet's model says "no
+// background" means.
+fn register_classes() {
+    if CLASSES_REGISTERED { return; }
+    CLASSES_REGISTERED = true;
+    register_one(sys::window_class(), sys::cs_hredraw() | sys::cs_vredraw()
+                                      | sys::cs_dblclks());
+    register_one(sys::panel_class(), sys::cs_hredraw() | sys::cs_vredraw()
+                                     | sys::cs_dblclks());
+    return;
+}
+
+// A function used as a VALUE has to be bound to a `fn(...)`-typed local before
+// its address can be taken (E0312). One place, named, rather than the cast
+// repeated at each class registration.
+fn proc_addr() -> *u8 {
+    let p: fn(*u8, u32, u64, i64) -> i64 = wnd_proc;
+    return p as *u8;
+}
+
+fn register_one(name: *u8, style: i32) {
+    var wc: u::tagWNDCLASSEXA = u::tagWNDCLASSEXA {
+        cbSize: 80 as u32,
+        style: style as u32,
+        lpfnWndProc: proc_addr(),
+        cbClsExtra: 0 as i32,
+        cbWndExtra: 0 as i32,
+        hInstance: hinstance(),
+        hIcon: 0 as *u8,
+        hCursor: { u::LoadCursorA(0 as *u8, sys::idc_arrow() as *i8) },
+        hbrBackground: 0 as *u8,
+        lpszMenuName: 0 as *i8,
+        lpszClassName: name as *i8,
+        hIconSm: 0 as *u8,
+    };
+    let _a: u16 = { u::RegisterClassExA(#addr_of(wc)) };
+    return;
+}
+
+// ---- opening -----------------------------------------------------------------------
+
+fn style_for(c: *screen::Chrome) -> u32 {
+    var s: u32 = sys::ws_clipchildren() | sys::ws_clipsiblings();
+    let bar: screen::Bar = { (*c).bar };
+    let decorated: bool = match bar {
+        screen::Bar::Native => true,
+        screen::Bar::Blended => true,
+        screen::Bar::Hidden => false,
+        screen::Bar::Custom => false,
+    };
+    if !decorated {
+        // A window with no frame at all. `WS_POPUP` rather than a stripped
+        // overlapped window: an overlapped window with no caption still
+        // reserves the non-client metrics, so the client area comes out
+        // smaller than asked for by exactly the border width.
+        return s | sys::ws_popup();
+    }
+    s = s | sys::ws_caption() | sys::ws_sysmenu() | sys::ws_thickframe();
+    // THERE IS NO PER-BUTTON SWITCH on a Win32 caption either — the buttons are
+    // the style bits, and naming only the ones that are wanted is how a window
+    // says it cannot be maximised. Same shape as GTK's decoration-layout
+    // string, said in bits.
+    if { (*c).minimizable } { s = s | sys::ws_minimizebox(); }
+    if { (*c).maximizable } { s = s | sys::ws_maximizebox(); }
+    return s;
+}
+
+// Turn the CLIENT size an application asked for into the OUTER size
+// `CreateWindowEx` takes.
+//
+// `Chrome.width/height` is the content area — that is what every other backend
+// means by it and what an application lays out against. Passing it straight to
+// `CreateWindowEx` would make the window that size INCLUDING its caption and
+// borders, so every window would come up about 39 points short and the layout
+// would be squeezed by the exact height of the title bar.
+fn outer_size(style: u32, w: f64, h: f64, out_w: *i32, out_h: *i32) {
+    var r: u::tagRECT = u::tagRECT {
+        left: 0 as i32, top: 0 as i32,
+        right: geometry::round_i32(w), bottom: geometry::round_i32(h),
+    };
+    let _a: i32 = { u::AdjustWindowRectEx(#addr_of(r), style, 0 as i32, 0 as u32) };
+    { *out_w = r.right -% r.left };
+    { *out_h = r.bottom -% r.top };
+    return;
+}
+
+fn default_should_close(ctx: *u8) -> bool { return true; }
+fn default_will_close(ctx: *u8) { return; }
+
+fn open_window(root: *core::Node, take chrome: screen::Chrome,
+               should_close: fn(*u8) -> bool = default_should_close,
+               should_close_ctx: *u8 = 0 as *u8,
+               will_close: fn(*u8) = default_will_close,
+               will_close_ctx: *u8 = 0 as *u8) -> *u8 {
+    if root == (0 as *core::Node) { return 0 as *u8; }
+    let slot: usize = free_slot();
+    if slot >= MAX_WINDOWS { return 0 as *u8; }
+    register_classes();
+    var c: screen::Chrome = chrome;
+    let style: u32 = style_for(#addr_of(c));
+    var ow: i32 = 0 as i32;
+    var oh: i32 = 0 as i32;
+    outer_size(style, c.width, c.height, #addr_of(ow), #addr_of(oh));
+
+    var title: text::Text = c.title_text.clone();
+    let win: *u8 = create_titled(style, title, ow, oh);
+    if win == (0 as *u8) { return 0 as *u8; }
+
+    // MOUNT, THEN PLACE. `mount::mount` opens the window on the APP's record
+    // too, so the native handle is recorded against it immediately after —
+    // this is the bug facet_gtk's handoff lists first, where a backend laid
+    // everything out correctly and never called `mount`, giving every node a
+    // frame, a position and no window at all.
+    let mounted: bool = mount::mount(root);
+    app::set_window_native(root, win);
+
+    // The root's own window, if it has one, is parented to the frame; a keyless
+    // container root has none, and the frame itself becomes its children's host.
+    if mounted {
+        let rv: *u8 = core::view_of(root);
+        if rv != (0 as *u8) {
+            let _p: *u8 = { u::SetParent(rv, win) };
+            let _s: i32 = { u::ShowWindow(rv, sys::sw_show()) };
+        }
+    }
+
+    // THE CAPTION FOLLOWS THE APPEARANCE. The client area is ours and already
+    // paints from `paint::DARK`; the title bar belongs to the desktop window
+    // manager and has to be asked separately, or a dark app wears a white one.
+    apply_caption_appearance(win, is_dark());
+    ROOTS[slot] = { #addr(root as *u8) };
+    WINDOWS[slot] = { #addr(win) };
+    SHOULD_CLOSE[slot] = { #addr(should_close as *u8) };
+    SHOULD_CLOSE_CTX[slot] = { #addr(should_close_ctx) };
+    WILL_CLOSE[slot] = { #addr(will_close as *u8) };
+    WILL_CLOSE_CTX[slot] = { #addr(will_close_ctx) };
+    OPEN_WINDOWS = OPEN_WINDOWS + (1 as i64);
+    // THE MENU BEFORE THE FIRST LAYOUT. A bar takes height off the client area,
+    // so laying out first and adding it after would leave every node one bar
+    // too low until something else forced a re-lay.
+    rebuild_menu(slot);
+    let _s: i32 = { u::ShowWindow(win, sys::sw_shownormal()) };
+    relayout_from_client(slot);
+    return win;
+}
+
+// CREATED WITH NO TITLE, then titled through the wide call.
+//
+// `CreateWindowExA` decodes the name as the system ANSI codepage, which turns
+// an em-dash into three characters — seen in a screenshot as
+// `facet_win32 â€" first light`. There is a `CreateWindowExW`, but it wants the
+// CLASS name wide too, and this package registers its classes with the ANSI
+// call; mixing the two silently fails to find the class and answers a null
+// window. Creating untitled and then calling `set_window_text` keeps one
+// registration and one conversion.
+fn create_titled(style: u32, t: text::Text, w: i32, h: i32) -> *u8 {
+    let win: *u8 = { u::CreateWindowExA(0 as u32, sys::window_class() as *i8,
+                                        { #str_ptr("\0") } as *i8, style,
+                                        sys::cw_usedefault(), sys::cw_usedefault(),
+                                        w, h, 0 as *u8, 0 as *u8, hinstance(),
+                                        0 as *u8) };
+    if win == (0 as *u8) { return 0 as *u8; }
+    controls::set_window_text(win, t);
+    return win;
+}
+
+// The plain door the runtime facade uses.
+fn open(root: *core::Node, title: str, width: f64, height: f64) -> bool {
+    var c: screen::Chrome = screen::Chrome::new(title: title, width: width,
+                                                height: height);
+    return open_window(root, c) != (0 as *u8);
+}
+
+fn ask_should_close(slot: usize) -> bool {
+    let f: fn(*u8) -> bool = SHOULD_CLOSE[slot] as fn(*u8) -> bool;
+    if f == (0 as fn(*u8) -> bool) { return true; }
+    return f(SHOULD_CLOSE_CTX[slot] as *u8);
+}
+
+fn notify_will_close(slot: usize) {
+    let f: fn(*u8) = WILL_CLOSE[slot] as fn(*u8);
+    if f == (0 as fn(*u8)) { return; }
+    f(WILL_CLOSE_CTX[slot] as *u8);
+    return;
+}
+
+fn close_slot(slot: usize) {
+    if slot >= MAX_WINDOWS { return; }
+    let root: *core::Node = ROOTS[slot] as *core::Node;
+    let win: *u8 = WINDOWS[slot] as *u8;
+    ROOTS[slot] = 0 as usize;
+    WINDOWS[slot] = 0 as usize;
+    // The hooks go with the slot. A slot reused by the NEXT window would
+    // otherwise inherit the last one's close question, and refuse to close for
+    // a reason belonging to a window that is already gone.
+    SHOULD_CLOSE[slot] = 0 as usize;
+    SHOULD_CLOSE_CTX[slot] = 0 as usize;
+    WILL_CLOSE[slot] = 0 as usize;
+    WILL_CLOSE_CTX[slot] = 0 as usize;
+    if OPEN_WINDOWS > (0 as i64) { OPEN_WINDOWS = OPEN_WINDOWS - (1 as i64); }
+    if root != (0 as *core::Node) { mount::unmount(root); }
+    if win != (0 as *u8) { let _d: i32 = { u::DestroyWindow(win) }; }
+    return;
+}
+
+fn close_window_of(root: *core::Node) {
+    let slot: usize = slot_of_root(root);
+    if slot < MAX_WINDOWS { close_slot(slot); }
+    return;
+}
+
+fn window_of_root(root: *core::Node) -> *u8 {
+    let slot: usize = slot_of_root(root);
+    if slot >= MAX_WINDOWS { return 0 as *u8; }
+    return WINDOWS[slot] as *u8;
+}
+
+// ---- the message loop ---------------------------------------------------------------
+
+fn run_loop() {
+    if OPEN_WINDOWS <= (0 as i64) { return; }   // nothing to wait for
+    var msg: u::tagMSG = u::tagMSG {
+        hwnd: 0 as *u8, message: 0 as u32, wParam: 0 as u64, lParam: 0 as i64,
+        time: 0 as u32, pt: u::tagPOINT { x: 0 as i32, y: 0 as i32 },
+    };
+    // `GetMessage` answers 0 for WM_QUIT and -1 for an error. Testing `> 0` is
+    // the only correct loop: `!= 0` spins forever on the error, which is the
+    // classic Win32 message-loop bug.
+    while { u::GetMessageA(#addr_of(msg), 0 as *u8, 0 as u32, 0 as u32) } > (0 as i32) {
+        let _t: i32 = { u::TranslateMessage(#addr_of(msg)) };
+        let _d: i64 = { u::DispatchMessageA(#addr_of(msg)) };
+    }
+    return;
+}
+
+fn stop_loop() { { u::PostQuitMessage(0 as i32) }; return; }
+
+// ---- layout ---------------------------------------------------------------------------
+
+static WT_READ: bool = false;
+static WT_ON: bool = false;
+
+fn timing() -> bool {
+    if !WT_READ { WT_READ = true; WT_ON = env::has_var("FACET_WIN32_SYNC"); }
+    return WT_ON;
+}
+
+// The host a root's children are placed into: its own window when it has one,
+// the frame when it does not. Mirrors the mount walk's pass-through.
+fn host_for(slot: usize) -> *u8 {
+    let root: *core::Node = ROOTS[slot] as *core::Node;
+    let rv: *u8 = core::view_of(root);
+    // `document_host` because a root may itself be a `scroll`, and then its
+    // children belong in the document rather than in the scroll view.
+    if rv != (0 as *u8) { return controls::document_host(rv); }
+    return WINDOWS[slot] as *u8;
+}
+
+fn relayout(slot: usize, width: f64, height: f64) {
+    let root: *core::Node = ROOTS[slot] as *core::Node;
+    if root == (0 as *core::Node) { return; }
+    { (*root).calculate_layout(width: width, height: height) };
+    let rf: flex::Frame = { (*root).frame() };
+    let rv: *u8 = core::view_of(root);
+    if rv != (0 as *u8) {
+        geometry::place(WINDOWS[slot] as *u8, rv, 0.0f64, 0.0f64, width, height);
+    }
+    // The ROOT is the one node `reposition_children` never visits, and a
+    // screen's own size is the commonest thing to observe.
+    observers::note_size(root);
+    geometry::reposition_children(root, host_for(slot), rf);
+    geometry::trace_tree(root, 0 as usize);
+    return;
+}
+
+// Lay a window out at its CLIENT size — the area inside the caption and
+// borders, which is the size facet was given and the only one it should ever
+// see. `GetWindowRect` would include the frame and push everything down by the
+// title bar's height.
+fn relayout_from_client(slot: usize) {
+    if slot >= MAX_WINDOWS { return; }
+    let win: *u8 = WINDOWS[slot] as *u8;
+    if win == (0 as *u8) { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(win, #addr_of(r)) } == (0 as i32) { return; }
+    let w: f64 = (r.right -% r.left) as f64;
+    let h: f64 = (r.bottom -% r.top) as f64;
+    if w <= (0.0 as f64) || h <= (0.0 as f64) { return; }
+    relayout(slot, w, h);
+    return;
+}
+
+// Re-lay every open window at its current size. The sync path calls this after
+// applying dirty bits — a write that changes a measured control changes the
+// layout, and nothing else in the pipeline knows that.
+fn relayout_all() {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) { relayout_from_client(i); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- appearance -------------------------------------------------------------------------
+//
+// THE REGISTRY IS THE ONLY HONEST READ, and the previous answer here was wrong
+// in a way that took a screenshot to notice.
+//
+// It derived the appearance from `GetSysColor(COLOR_WINDOW)`, reasoning that a
+// dark theme has a dark window background. It does not. Windows 10 and 11 dark
+// mode is an APPLICATION-LEVEL opt-in: the system colours stay light for every
+// app that has not opted in, so `COLOR_WINDOW` is white on a fully dark
+// desktop. The old code therefore answered "light" on a dark machine, always,
+// and every adaptive colour in every facet app resolved to its light side.
+//
+// `AppsUseLightTheme` is the real setting — a DWORD under
+// `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, 0 for
+// dark. The old comment dismissed it as "binding advapi32 for one DWORD", which
+// is exactly what this is and exactly what it is worth: one call, against the
+// value the Settings app actually writes.
+//
+// HKEY_CURRENT_USER is 0x80000001 — a predefined handle, not something to open.
+// RRF_RT_REG_DWORD (0x10) makes the call refuse any other type rather than
+// reinterpreting one.
+extern fn RegGetValueA(key: *u8, subkey: *i8, value: *i8, flags: u32,
+                       kind: *u32, data: *u8, size: *u32) -> i32;
+
+fn hkey_current_user() -> *u8 { return 0x80000001 as *u8; }
+fn rrf_rt_reg_dword() -> u32 { return 0x00000010 as u32; }
+
+fn personalize_key() -> *u8 {
+    return { #str_ptr("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\0") };
+}
+
+fn apps_use_light_value() -> *u8 { return { #str_ptr("AppsUseLightTheme\0") }; }
+
+fn is_dark() -> bool {
+    var value: u32 = 1 as u32;
+    var size: u32 = 4 as u32;
+    let rc: i32 = { RegGetValueA(hkey_current_user(), personalize_key() as *i8,
+                                 apps_use_light_value() as *i8, rrf_rt_reg_dword(),
+                                 0 as *u32, #addr_of(value) as *u8,
+                                 #addr_of(size)) };
+    // ERROR_SUCCESS is 0. A missing value means a machine that has never been
+    // switched — Windows only writes it when the user changes the setting — and
+    // the default there is LIGHT, which is what the initialiser above says.
+    if rc != (0 as i32) { return false; }
+    return value == (0 as u32);
+}
+
+fn sync_appearance() {
+    let dark: bool = is_dark();
+    paint::set_dark(dark);
+    // EVERY OPEN WINDOW, not just the next one to open: an appearance flip
+    // arrives while windows are already up, and a caption that only followed at
+    // creation would stay on the side it was born with.
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) { apply_caption_appearance(WINDOWS[i] as *u8, dark); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+
+// ================================================================================
+// The facade surface — what `facet_runtime/runtime_windows` asks of a host.
+// ================================================================================
+//
+// Everything below this line exists because the runtime facade calls it. It is
+// the same list facet_gtk's `window` answers, and the shapes are the facade's
+// rather than this package's.
+
+// The first window that is up, for a verb that names no root at all.
+fn any_window() -> *u8 {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) { return WINDOWS[i] as *u8; }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// Close by HWND, for a caller that holds the window rather than the root — the
+// sheet in `dialogs` is the one that does.
+fn close_window(w: *u8) {
+    if w == (0 as *u8) { return; }
+    let slot: usize = slot_of_window(w);
+    if slot < MAX_WINDOWS { close_slot(slot); }
+    return;
+}
+
+// ---- observers -------------------------------------------------------------------
+//
+// THREE KINDS IN ONE TABLE, told apart by a tag. facet_gtk keeps them apart
+// because each is a different `notify::` connection on a GTK window; here all
+// three are messages arriving at one WNDPROC, so one table and one fire point
+// is the honest shape — a second table would be a second thing to forget to
+// fire.
+//
+// The tag is what the WNDPROC has just seen, not what the observer is watching
+// for: `fire_observers(OBS_ACTIVE)` on WM_ACTIVATE, and every active-observer
+// runs. That keeps the dispatch a single comparison per entry.
+
+const OBS_ACTIVE: i32 = 1 as i32;
+const OBS_SIZE: i32 = 2 as i32;
+const OBS_SUSPENDED: i32 = 3 as i32;
+const OBS_DENSITY: i32 = 4 as i32;
+
+struct Observer { kind: i32, f: fn(*u8), ctx: usize, live: bool }
+
+static OBSERVERS: vec::Vec[Observer] = #zero::[vec::Vec[Observer]]();
+
+fn observer_slot() -> usize {
+    var i: usize = 0 as usize;
+    let n: usize = OBSERVERS.count();
+    while i < n {
+        match OBSERVERS.at_ptr(i) {
+            option::Option[*Observer]::Some(o) => { if !{ (*o).live } { return i; } }
+            option::Option[*Observer]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _e: status::Status = OBSERVERS.append(
+        Observer { kind: 0 as i32, f: 0 as fn(*u8), ctx: 0 as usize, live: false });
+    return n;
+}
+
+// The token is the slot +1, so zero is never a live token — `cancel_observe`
+// reads zero as "nothing to cancel", and an application that stores a token it
+// never got must not remove someone else's.
+fn add_observer(kind: i32, cb: fn(*u8), ctx: *u8) -> u64 {
+    if cb == (0 as fn(*u8)) { return 0 as u64; }
+    let slot: usize = observer_slot();
+    match OBSERVERS.at_ptr(slot) {
+        option::Option[*Observer]::Some(o) => {
+            { (*o).kind = kind };
+            { (*o).f = cb };
+            { (*o).ctx = { #addr(ctx) } };
+            { (*o).live = true };
+        }
+        option::Option[*Observer]::None => { return 0 as u64; }
+    }
+    return (slot +% (1 as usize)) as u64;
+}
+
+fn cancel_observe(token: u64) {
+    if token == (0 as u64) { return; }
+    let slot: usize = (token as usize) -% (1 as usize);
+    match OBSERVERS.at_ptr(slot) {
+        option::Option[*Observer]::Some(o) => { { (*o).live = false }; }
+        option::Option[*Observer]::None => { }
+    }
+    return;
+}
+
+fn fire_observers(kind: i32) {
+    let n: usize = OBSERVERS.count();
+    if n == (0 as usize) { return; }
+    var i: usize = 0 as usize;
+    while i < n {
+        match OBSERVERS.at_ptr(i) {
+            option::Option[*Observer]::Some(o) => {
+                if { (*o).live } && { (*o).kind } == kind {
+                    let f: fn(*u8) = { (*o).f };
+                    if f != (0 as fn(*u8)) { f({ (*o).ctx } as *u8); }
+                }
+            }
+            option::Option[*Observer]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn observe_active(cb: fn(*u8), ctx: *u8) -> u64 { return add_observer(OBS_ACTIVE, cb, ctx); }
+fn observe_size_changed(cb: fn(*u8), ctx: *u8) -> u64 { return add_observer(OBS_SIZE, cb, ctx); }
+
+// SUSPENDED IS REGISTERED AND NEVER FIRED, and that is a decision rather than a
+// gap — see MANIFEST.md §1. A Win32 desktop process has no suspended state: the
+// lifecycle facet's `suspended` names is the mobile one (UIKit's background,
+// Android's onStop), and the nearest desktop neighbours — minimised, or the
+// session locking — are different facts that would be a lie under this name.
+//
+// It still takes a token, because a facade that could not register one would
+// have to special-case this platform, and an observation that never fires is
+// exactly what "this never happens here" should look like.
+// THE SCALE FACTOR CHANGED — a window dragged to a monitor at a different DPI,
+// or the user moving the slider. Win32 says so with WM_DPICHANGED, which is a
+// real message and a real event, so this one fires where `observe_suspended`
+// below does not.
+fn observe_density(cb: fn(*u8), ctx: *u8) -> u64 { return add_observer(OBS_DENSITY, cb, ctx); }
+
+fn observe_suspended(cb: fn(*u8), ctx: *u8) -> u64 {
+    return add_observer(OBS_SUSPENDED, cb, ctx);
+}
+
+fn is_suspended() -> bool { return false; }
+
+fn observer_table_size() -> usize { return OBSERVERS.count(); }
+
+// ---- window queries ----------------------------------------------------------------
+
+fn is_active(root: *core::Node) -> bool {
+    let w: *u8 = window_of_root(root);
+    if w == (0 as *u8) { return false; }
+    return { u::GetActiveWindow() } == w;
+}
+
+// The scale factor, as facet means it: 1.0 at 96 DPI, 2.0 at 192.
+//
+// `GetDpiForWindow` is the PER-MONITOR answer and the only correct one on a
+// multi-display machine — the older `GetDeviceCaps(LOGPIXELSX)` answers for the
+// primary display whatever window you ask about, so a window dragged to a
+// second monitor keeps the first one's scale.
+fn density_of(root: *core::Node) -> f64 {
+    let w: *u8 = window_of_root(root);
+    if w == (0 as *u8) { return 1.0f64; }
+    let dpi: u32 = { u::GetDpiForWindow(w) };
+    if dpi == (0 as u32) { return 1.0f64; }
+    return (dpi as f64) / (96.0 as f64);
+}
+
+// ---- the app-wide appearance --------------------------------------------------------
+
+// `#zero` rather than a named variant: a static initializer must be a literal,
+// and `Appearance::Unspecified` is variant zero — which is also the right
+// DEFAULT, meaning "follow the system" rather than either fixed side. The same
+// spelling facet_gtk uses for the same static and the same reason.
+static APPEARANCE: vocab::Appearance = #zero::[vocab::Appearance]();
+
+// `DwmSetWindowAttribute` with DWMWA_USE_IMMERSIVE_DARK_MODE (20) is the only
+// thing on Windows that makes the TITLE BAR follow the app's appearance. Client
+// pixels are ours and already follow `paint::DARK`; the caption belongs to the
+// desktop window manager and has to be asked separately, or a dark app wears a
+// white title bar.
+extern fn DwmSetWindowAttribute(hwnd: *u8, attr: u32, value: *u8, size: u32) -> i32;
+
+fn dwmwa_dark_mode() -> u32 { return 20 as u32; }
+
+fn apply_caption_appearance(w: *u8, dark: bool) {
+    if w == (0 as *u8) { return; }
+    var on: i32 = if dark { 1 as i32 } else { 0 as i32 };
+    // The call is a no-op on builds older than 20H1 and answers a failure code
+    // rather than trapping, which is why the result is discarded: an older
+    // Windows keeps its light caption and everything else still works.
+    let _r: i32 = { DwmSetWindowAttribute(w, dwmwa_dark_mode(),
+                                          #addr_of(on) as *u8, 4 as u32) };
+    return;
+}
+
+fn set_app_appearance(a: vocab::Appearance) {
+    APPEARANCE = a;
+    sync_appearance();
+    return;
+}
+
+fn app_appearance() -> vocab::Appearance { return APPEARANCE; }
+
+// ---- the app menu ---------------------------------------------------------------------
+//
+// NOT BUILT — MANIFEST.md §2. `HMENU`, `CreateMenu` and `SetMenu` are all bound
+// in the `win32` package and none of them are called yet, so an application's
+// menu items are accepted and dropped.
+//
+// It takes the call rather than not existing, because the facade installs a
+// menu unconditionally and a missing function is a build error on this platform
+// alone — which would make the facade platform-shaped in the one place it is
+// meant not to be. An empty body is a visible gap; a missing one is a port that
+// does not compile.
+// The app menu, on every open window. An `AppMenu` is app-wide and the bar is
+// per-window on this platform, so "install" means "put it on all of them".
+static APP_MENU: usize = 0 as usize;
+
+fn install_app_menu(m: *screen::AppMenu) {
+    APP_MENU = { #addr(m as *u8) };
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) {
+            menus::build_app_menu(WINDOWS[i] as *u8, m);
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// A `menu` subtree changed under some node. The BAR is rebuilt whole rather
+// than edited: an HMENU has no per-item update that keeps ids stable, so
+// editing one would leave the command table describing a menu that no longer
+// matches it.
+fn menus_changed() {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) { rebuild_menu(i); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn rebuild_menu(slot: usize) {
+    let win: *u8 = WINDOWS[slot] as *u8;
+    let root: *core::Node = ROOTS[slot] as *core::Node;
+    // A DECLARED `menu` SUBTREE WINS over the app menu: it is the more specific
+    // statement, and a screen that built its own bar meant that bar.
+    if root != (0 as *core::Node) && menus::holds_a_menu(root) {
+        menus::build_bar(win, root);
+        relayout_from_client(slot);
+        return;
+    }
+    if APP_MENU != (0 as usize) {
+        menus::build_app_menu(win, APP_MENU as *screen::AppMenu);
+        relayout_from_client(slot);
+    }
+    return;
+}
+
+#[test]
+fn a_hidden_bar_is_a_popup_not_a_stripped_frame() {
+    // An overlapped window with the caption removed still reserves the
+    // non-client metrics, so its client area comes out smaller than asked for.
+    // WS_POPUP is the one that genuinely has no frame.
+    var c: screen::Chrome = screen::Chrome::new(title: "x", width: 100.0f64,
+                                                height: 100.0f64);
+    c.bar = screen::Bar::Hidden;
+    let s: u32 = style_for(#addr_of(c));
+    assert (s & sys::ws_popup()) != (0 as u32);
+    assert (s & sys::ws_caption()) == (0 as u32);
+    return;
+}
+
+#[test]
+fn a_window_that_cannot_maximise_does_not_carry_the_bit() {
+    var c: screen::Chrome = screen::Chrome::new(title: "x", width: 100.0f64,
+                                                height: 100.0f64);
+    c.maximizable = false;
+    c.minimizable = true;
+    let s: u32 = style_for(#addr_of(c));
+    assert (s & sys::ws_maximizebox()) == (0 as u32);
+    assert (s & sys::ws_minimizebox()) != (0 as u32);
+    // And the frame is still there — the asymmetry facet_gtk found the hard
+    // way, where `maximizable: false` built a header and the default did not.
+    assert (s & sys::ws_caption()) != (0 as u32);
+    return;
+}
+
+#[test]
+fn every_host_clips_its_children() {
+    var c: screen::Chrome = screen::Chrome::new(title: "x", width: 100.0f64,
+                                                height: 100.0f64);
+    let s: u32 = style_for(#addr_of(c));
+    // Without this the window's own paint runs over every control in it and
+    // they flicker back on the next message.
+    assert (s & sys::ws_clipchildren()) != (0 as u32);
+    return;
+}
+
+// ---- FACET_WIN32_THEME=1 -------------------------------------------------------
+//
+// IS THIS PROCESS USING VISUAL STYLES? The one question that decides whether
+// controls draw like Windows 11 or like Windows 95, and it is not a question
+// about code at all — it is about whether the executable declared a dependency
+// on Common Controls VERSION 6.
+//
+// comctl32 v5 is what a process gets by default and it draws the bevelled
+// buttons and 3D check boxes of 1995. v6 is side-by-side and is loaded only
+// when the binary asks, through an application manifest — embedded as an
+// RT_MANIFEST resource, or beside the exe as `<name>.manifest`.
+//
+// `IsAppThemed` answers whether that happened. It is worth a diagnostic rather
+// than an eye because the failure is SILENT and total: every call in this
+// package behaves identically either way, the same `CreateWindowExA("BUTTON")`
+// produces both, and the only symptom is that the application looks two
+// decades old.
+//
+// `IsThemeActive` is the neighbouring question — whether the USER has a theme
+// on at all — and the pair tells the two apart: themes off system-wide is not
+// the same failure as a manifest nobody wrote.
+extern fn IsAppThemed() -> i32;
+extern fn IsThemeActive() -> i32;
+
+fn report_theme(icc: i32) {
+    if !env::has_var("FACET_WIN32_THEME") { return; }
+    io::eprintln("[theme] AppsUseLightTheme says dark=${is_dark()}");
+    io::eprintln("[theme] InitCommonControlsEx=${icc}");
+    let app_themed: i32 = { IsAppThemed() };
+    let sys_themed: i32 = { IsThemeActive() };
+    report_comctl_path();
+    io::eprintln("[theme] IsAppThemed=${app_themed} IsThemeActive=${sys_themed}");
+    // `IsAppThemed` IS NOT THE SIGNAL, and believing it cost an afternoon. It
+    // answered 0 on a process that had demonstrably loaded comctl32 6.0, and 0
+    // on a C program that was drawing themed controls at the time. Whatever it
+    // actually reports, it is not "will my controls be themed".
+    //
+    // THE LOADED comctl32 IS. Version 5.82 is the 1995 renderer and 6.0 is the
+    // themed one, they live at different WinSxS paths, and the path is
+    // therefore the version. `report_comctl_path` prints it above.
+    return;
+}
+
+// WHICH comctl32 IS LOADED, by path. The one fact that separates a themed
+// process from a classic one, and the only way to see it from inside: version 5
+// lives in System32 and version 6 in WinSxS, so the PATH is the version.
+extern fn GetModuleHandleA(name: *i8) -> *u8;
+extern fn GetModuleFileNameA(module: *u8, buf: *i8, size: u32) -> u32;
+#[link_name = "malloc"]
+extern fn path_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn path_free(p: *u8);
+
+fn report_comctl_path() {
+    if !env::has_var("FACET_WIN32_THEME") { return; }
+    let h: *u8 = { GetModuleHandleA({ #str_ptr("comctl32.dll\0") } as *i8) };
+    if h == (0 as *u8) { io::eprintln("[theme] comctl32 not loaded"); return; }
+    let buf: *u8 = { path_malloc(512 as usize) };
+    if buf.is_null() { return; }
+    let n: u32 = { GetModuleFileNameA(h, buf as *i8, 512 as u32) };
+    if n == (0 as u32) { { path_free(buf) }; io::eprintln("[theme] comctl32 path unavailable"); return; }
+    let p: str = { #str_from_raw_parts(buf, n as usize) };
+    io::eprintln("[theme] comctl32 <- ${p}");
+    return;
+}

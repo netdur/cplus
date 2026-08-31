@@ -64,3 +64,6 @@ agent_android = "*"
 facet_android = "*"
 android_view  = "*"
 jni           = "*"
+
+[windows.dependencies]
+agent_win32 = "*"

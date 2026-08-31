@@ -1,0 +1,207 @@
+// facet_win32 test root. Importing is what compiles a module into the gate, so
+// every module is imported here whether or not this file names it again.
+//
+// ---- what can be asserted here, and what cannot -------------------------------
+//
+// NOTHING IN THIS FILE MAKES A WINDOW. A suite that needs a window station and
+// a desktop is a suite that stops running under CI and over a remote session.
+// So what is pinned here is everything the backend DECIDES — the style bits,
+// the colour resolution, the break/align mappings, the slot tables — and
+// nothing that needs user32 to have a display.
+//
+// The other half is `playground/win32_probe`, and it is an APP on purpose:
+// whether the button reported its click, whether the field kept its caret,
+// whether the layout looks right — none of that is assertable by a process
+// with no hands. The division is this repo's standing rule: pin the state
+// machine in a test, then hand a human a probe.
+//
+// This file is skipped by `parity.py`, which is why the coverage number is not
+// inflated by a test naming a prop bit.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/label" as label;
+import "facet/screen" as screen;
+import "./sys" as sys;
+import "./paint" as paint;
+import "./geometry" as geometry;
+import "./controls" as controls;
+import "./input" as input;
+import "./measure" as measure;
+import "./fonts" as fonts;
+import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
+import "facet/popup" as popup;
+import "facet/radio" as radio;
+import "./observers" as observers;
+import "./scheduler" as scheduler;
+import "./views" as views;
+import "./window" as window;
+import "./recycler" as recycler;
+import "./dialogs" as dialogs;
+import "./facet_win32" as backend;
+
+// ---- the seam ------------------------------------------------------------------
+
+#[test]
+fn the_renderer_fills_every_verb() {
+    // A null verb is a backend that silently does nothing for that half of the
+    // seam, and `mount` guards none of them — it calls what it was given.
+    let r: mount::Renderer = backend::renderer();
+    assert r.create != (0 as fn(*u8, *core::Node) -> *u8);
+    assert r.apply != (0 as fn(*u8, *core::Node));
+    assert r.insert != (0 as fn(*u8, *u8, *u8, usize));
+    assert r.remove != (0 as fn(*u8, *u8, *u8));
+    assert r.schedule != (0 as fn(*u8));
+    assert r.view_release != (0 as fn(*u8));
+    return;
+}
+
+// ---- which kinds get a window ----------------------------------------------------
+
+#[test]
+fn a_viewless_kind_gets_no_window() {
+    // A span is a run inside its label's string; a menu item is a row in a
+    // menu. Giving one a window is not a missing feature, it is an empty box
+    // in the layout — which is what facet_android did to a swipeable's actions
+    // until the swipe was built.
+    assert views::non_view_kind(props::K_SPAN);
+    assert views::non_view_kind(props::K_MENU_ITEM);
+    assert views::non_view_kind(props::K_TOOLBAR_ITEM);
+    assert views::non_view_kind(props::K_LABEL) == false;
+    assert views::non_view_kind(props::K_BUTTON) == false;
+    return;
+}
+
+#[test]
+fn a_keyed_container_gets_a_window_and_an_unkeyed_one_does_not() {
+    // A key is an ADDRESS: `find("body")` has to reach something. An unkeyed
+    // pure-layout container costs no window and passes its children through to
+    // the nearest host, which is what makes a column inside a scroll free.
+    var keyed: core::Node = core::node_with("body", core::K_NODE, 0 as *u8,
+                                            core::no_release);
+    assert views::wants_view(#addr_of(keyed));
+    var bare: core::Node = core::node_with("", core::K_NODE, 0 as *u8,
+                                           core::no_release);
+    assert views::wants_view(#addr_of(bare)) == false;
+    return;
+}
+
+#[test]
+fn a_painted_container_gets_a_window_even_unkeyed() {
+    // The incomplete-rule bug, pinned. facet_appkit rendered every filled pill
+    // on a card sheet as bare floating words; facet_android inherited it by
+    // testing `background_color` alone and losing four brushed swatches.
+    var n: core::Node = core::node_with("", core::K_NODE, 0 as *u8,
+                                        core::no_release);
+    core::set_background_color(#addr_of(n), vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    assert views::wants_view(#addr_of(n));
+    return;
+}
+
+// ---- the rearm mask ---------------------------------------------------------------
+
+#[test]
+fn the_rearm_mask_carries_handlers_as_well_as_gestures() {
+    // This package builds no windows in tests, so the only place a missing bit
+    // can be caught is the mask itself — and a missing bit here is a handler
+    // that never fires, which is silent at runtime and looks like an
+    // application bug. facet_gtk shipped exactly this gap: `on_focus` is not a
+    // gesture, so a node that gained one after mount was never re-armed.
+    let m: u64 = views::rearm_bits();
+    assert (m & core::C_GESTURES) != (0 as u64);
+    assert (m & props::C_HANDLERS) != (0 as u64);
+    assert (m & props::C_INPUT_TRANSPARENT) != (0 as u64);
+    return;
+}
+
+// ---- measurement --------------------------------------------------------------------
+
+#[test]
+fn the_kinds_that_measure_themselves_are_the_ones_with_text() {
+    // A leaf with no measure callback is 0x0 and simply does not appear. All
+    // four backends record finding this by seeing nothing; this package found
+    // it again with FACET_WIN32_FRAMES printing five controls at `20,20 0x0`.
+    assert measure::has_intrinsic_size(props::K_LABEL);
+    assert measure::has_intrinsic_size(props::K_BUTTON);
+    assert measure::has_intrinsic_size(props::K_TEXT_FIELD);
+    // A surface is sized by its container; asking a scroll view how big it
+    // would LIKE to be is not a useful question.
+    assert measure::has_intrinsic_size(props::K_SCROLL) == false;
+    assert measure::has_intrinsic_size(props::K_BOX) == false;
+    return;
+}
+
+#[test]
+fn a_text_field_fills_its_line() {
+    // An empty field's natural width is nothing, so a field laid out at it is a
+    // stub rather than a control. facet_gtk hits this from the GTK side and
+    // facet_appkit from the AppKit side; all three state a floor.
+    assert measure::fills_line(props::K_TEXT_FIELD);
+    assert measure::fills_line(props::K_LABEL) == false;
+    return;
+}
+
+#[test]
+fn measuring_and_drawing_agree_about_wrapping() {
+    // `measure::wraps` and `controls::break_bits` are two readers of one
+    // decision, and in separate files they drift — which is the trap this
+    // repo's own SKILL names for a list row's height and its builder. Pinned
+    // so they cannot.
+    assert controls::break_wraps(vocab::LineBreak::WordWrap);
+    assert controls::break_wraps(vocab::LineBreak::CharacterWrap);
+    assert controls::break_wraps(vocab::LineBreak::TailTruncation) == false;
+    assert controls::break_wraps(vocab::LineBreak::NoWrap) == false;
+    return;
+}
+
+// ---- the font bits, per kind ----------------------------------------------------
+
+#[test]
+fn font_bits_are_not_the_same_numbers_across_kinds() {
+    // THE BUG THIS PINS. `fonts::font_bits` returned label's constants for
+    // every kind, with a comment claiming the generated modules number their
+    // bits identically. They do not — a module numbers from one in DECLARATION
+    // order, and the kinds declare different props:
+    //
+    //     label       P_FONT_SIZE 32
+    //     button      P_FONT_SIZE 512
+    //     text_field  P_FONT_SIZE 2048
+    //
+    // So a button's font size was tested against label's mask, which does not
+    // contain it, and changing a button's font after mount silently did
+    // nothing. Create worked because create passes every bit.
+    assert label::P_FONT_SIZE != button::P_FONT_SIZE;
+    assert button::P_FONT_SIZE != text_field::P_FONT_SIZE;
+    return;
+}
+
+#[test]
+fn every_kind_with_font_bits_has_its_own_mask() {
+    // A kind whose mask does not contain its OWN size bit is a kind whose font
+    // never updates. Asserted per kind rather than in aggregate, because the
+    // failure is per kind and silent.
+    assert (fonts::font_bits(props::K_LABEL) & label::P_FONT_SIZE) != (0 as u64);
+    assert (fonts::font_bits(props::K_BUTTON) & button::P_FONT_SIZE) != (0 as u64);
+    assert (fonts::font_bits(props::K_TEXT_FIELD) & text_field::P_FONT_SIZE) != (0 as u64);
+    assert (fonts::font_bits(props::K_TEXT_AREA) & text_area::P_FONT_SIZE) != (0 as u64);
+    assert (fonts::font_bits(props::K_SEARCH_FIELD) & search_field::P_FONT_SIZE) != (0 as u64);
+    assert (fonts::font_bits(props::K_POPUP) & popup::P_FONT_SIZE) != (0 as u64);
+    assert (fonts::font_bits(props::K_RADIO) & radio::P_FONT_SIZE) != (0 as u64);
+    return;
+}
+
+#[test]
+fn a_kind_with_no_font_asks_for_no_reapply() {
+    // A checkbox has no font props to read, so a mask for it would make
+    // `configure` call `apply` on every write for a spec that is always empty.
+    assert fonts::font_bits(props::K_CHECKBOX) == (0 as u64);
+    assert fonts::font_bits(props::K_SCROLL) == (0 as u64);
+    return;
+}

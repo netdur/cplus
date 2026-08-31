@@ -1,0 +1,1712 @@
+// facet_win32/recycler — `list`, `table` and `collection` over a virtualising
+// panel this package builds itself.
+//
+// ---- why there is no control to lean on ------------------------------------------
+//
+// The other three backends each had one. NSTableView asks a DATA SOURCE for a
+// view for row N; GtkListView owns a pool of GtkListItems and hands one to a
+// FACTORY to bind to a position; a RecyclerView does the Android version of the
+// same. In each case the platform owns the scrolling, the pooling and the
+// virtualisation, and the backend supplies row content.
+//
+// Win32's `SysListView32` LOOKS like the same offer and is not. Its owner-data
+// mode (`LVS_OWNERDATA`) is genuinely virtual — it asks for row N when it needs
+// to draw it — but what it asks for is TEXT, through `LVN_GETDISPINFO`, and
+// what facet has is a NODE TREE. A facet row is an arbitrary subtree with real
+// controls in it, and a list view cannot host child windows inside its rows at
+// all. `LVS_OWNERDRAWFIXED` moves the problem without solving it: WM_DRAWITEM
+// hands over a device context, which is a place to paint, not a place to put a
+// button.
+//
+// So the virtualisation is BUILT HERE, over an ordinary scrolling panel. That
+// is the one place this package does more work than its siblings rather than
+// less, and it is worth being plain about why: the platform has a virtual list
+// and facet's row model cannot fit through it.
+//
+// ---- what is borrowed anyway ------------------------------------------------------
+//
+// facet's own seam, which is the portable half of every backend's recycler:
+//
+//   `mount::realise(node, host)`   build a subtree's windows with no facet parent
+//   `mount::unrealise(node)`       the matching teardown
+//   `mount::sync_from(node)`       apply dirty bits over a subtree `sync` never reaches
+//   `props.bind(i, row, ctx)`      write row `i`'s data INTO an existing row
+//   `props.row_kind(i, ctx)`       which SHAPE row `i` has, so a pooled row is
+//                                  only reused for a row of its own shape
+//
+// A bind does the cheap thing when the application made one possible — the
+// pooled row keeps its windows and only its DATA is rewritten — and the honest
+// thing when it did not: unrealise the old subtree, build a new one, realise
+// it. `set_row_bind` is optional in the contract and its absence is not an
+// error, which is exactly what that branch is.
+
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "stdlib/box" as box;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/list" as flist;
+import "facet/tree" as ftree;
+import "facet/collection" as fcollection;
+import "facet/table" as ftable;
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./controls" as controls;
+import "./paint" as paint;
+import "./geometry" as geometry;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+
+// ---- a realised row --------------------------------------------------------------
+//
+// `row` is the DATA index this cell currently shows, or -1 when it is free.
+// `kind` is what `row_kind` answered for that index — a free cell keeps it, so
+// a cell can be reused for a row of the same shape without rebuilding.
+//
+// `node` is a BOXED subtree this module owns. It has to be boxed: `realise`
+// takes a pointer and the tree has to outlive the call, and a row built on the
+// stack would be freed the moment the builder returned.
+
+struct Cell {
+    row: i64,
+    kind: usize,
+    node: usize,
+    top: f64,
+    height: f64,
+}
+
+struct ListState {
+    cells: vec::Vec[Cell],
+    // The scroll offset in points, and the total content height. Both are
+    // derived from the row map and kept here so a scroll message can move the
+    // rows without recomputing the map.
+    scroll: f64,
+    content: f64,
+    // The prefix sums, when heights are UNEVEN. Empty when every row is the
+    // same height, which is the common case and needs no array at all — see
+    // `offset_of`.
+    offsets: vec::Vec[f64],
+    uniform: f64,
+    count: i64,
+    selected: i64,
+    // THE SECOND MAP. Empty for a sequence; a pre-order flattening of the
+    // expanded model for a tree. `is_tree` says which map is live, because the
+    // machinery below them cannot tell from the state alone.
+    tree_rows: vec::Vec[TreeRow],
+    is_tree: bool,
+    // Whether the refresh strip is up. Kept here rather than read from the
+    // props each paint because `begin_refresh` and `end_refresh` are
+    // imperative bits that are raised and cleared, so the props alone cannot
+    // say whether the strip is currently showing.
+    refreshing: bool,
+    // Whether the visible window is currently inside the remaining-items
+    // threshold. Kept so the handler fires on the EDGE rather than on every
+    // scroll message inside the band — see `fire_threshold`.
+    in_threshold: bool,
+}
+
+fn new_state() -> ListState {
+    return ListState {
+        cells: vec::new::[Cell](),
+        scroll: 0.0f64,
+        content: 0.0f64,
+        offsets: vec::new::[f64](),
+        uniform: 0.0f64,
+        count: 0 as i64,
+        selected: (0 as i64) -% (1 as i64),
+        tree_rows: vec::new::[TreeRow](),
+        is_tree: false,
+        refreshing: false,
+        in_threshold: false,
+    };
+}
+
+fn state_of(v: *u8) -> *ListState {
+    if v == (0 as *u8) { return 0 as *ListState; }
+    return { u::GetPropA(v, sys::prop_list() as *i8) } as *ListState;
+}
+
+// ---- the row map -------------------------------------------------------------------
+//
+// TWO SHAPES, and which one is live is a property of the data rather than a
+// setting. A list whose rows are all one height needs no table: the offset is
+// `i * h` and the row at `y` is `y / h`, both O(1) and both exact. A list with
+// `row_height_of` answering differently per row needs the prefix sums, which
+// cost one array and one build per count change.
+//
+// The uneven path was NOT built as a general case that the uniform one falls
+// out of. A 20,000-row list is the case that matters and it is almost always
+// uniform; making it walk an array of 20,000 doubles to find a scroll position
+// would be paying for a generality it does not use.
+
+fn default_row_height() -> f64 { return 24.0f64; }
+
+// ---- the row source, read WITHOUT a cast ---------------------------------------
+//
+// THIS REPLACES A TYPE CONFUSION, and it is worth writing down because the bug
+// compiled, ran, and would have called a garbage function pointer.
+//
+// `list_props` used to accept `K_LIST`, `K_TABLE` and `K_COLLECTION` and cast
+// all three to `*ListProps`, on a comment claiming "their props structs share
+// this prefix". They do not share ANY prefix:
+//
+//   ListProps        has_uneven_rows: bool, horizontal_scroll_bars, ... count, row
+//   CollectionProps  five EMBEDDED structs, then count, row
+//   TableProps       has_uneven_rows, style, row_height — and NOTHING ELSE
+//
+// So a collection's `count` read whatever a `ScrollBars` enum and four bools
+// happened to be, and its `row` read a pointer from the middle of an embedded
+// struct AND CALLED IT. A table is worse: `TableProps` is three fields, and
+// `.count` reads past the end of the allocation.
+//
+// A TABLE IS NOT A ROW SOURCE AT ALL — that is the other half of the mistake.
+// Its children are ordinary facet nodes and `table` only imposes a row height
+// on them, which is what facet_gtk's `apply_table` does. It has no `count` and
+// no `row` because it never needed them.
+//
+// So the row verbs are resolved into a plain struct per call, by a function
+// that reads the RIGHT props for the kind. No cast survives, and a kind that is
+// not a row source answers `live: false` rather than a pointer.
+
+struct SeqSource {
+    live: bool,
+    count: i64,
+    row: fn(usize, *u8) -> flex::Node,
+    row_ctx: usize,
+    bind: fn(usize, *flex::Node, *u8),
+    row_height_of: fn(usize, *u8) -> f64,
+    row_height_of_ctx: usize,
+    row_kind: fn(usize, *u8) -> usize,
+    row_kind_ctx: usize,
+    row_height: i64,
+    selection_mode: vocab::SelectionMode,
+    selected_index: i64,
+    on_item_selected: fn(*u8, *u8),
+    on_item_selected_ctx: usize,
+    // The control half — how it scrolls, what rules its rows, and whether it
+    // can refresh. A COLLECTION ANSWERS SOME OF THESE AND NOT OTHERS, which is
+    // the whole reason they are resolved here rather than cast to: a collection
+    // has scroll bars (on its embedded `ItemsViewProps`) and has no separator
+    // and no refresh at all, so it says so with a value rather than by reading
+    // a field that is not there.
+    vertical_scroll_bars: vocab::ScrollBars,
+    horizontal_scroll_bars: vocab::ScrollBars,
+    separator: bool,
+    separator_color: vocab::Color,
+    is_refreshable: bool,
+    can_refresh: bool,
+    refresh_color: vocab::Color,
+    on_refreshing: fn(*u8, *u8),
+    on_refreshing_ctx: usize,
+    scroll_to_index: i64,
+}
+
+fn no_source() -> SeqSource {
+    return SeqSource {
+        live: false, count: 0 as i64, row: props::no_row, row_ctx: 0 as usize,
+        bind: props::no_bind, row_height_of: props::no_row_height_of,
+        row_height_of_ctx: 0 as usize, row_kind: props::no_row_kind,
+        row_kind_ctx: 0 as usize, row_height: 0 as i64,
+        selection_mode: vocab::SelectionMode::None,
+        selected_index: (0 as i64) -% (1 as i64),
+        on_item_selected: props::no_handler, on_item_selected_ctx: 0 as usize,
+        vertical_scroll_bars: vocab::ScrollBars::Default,
+        horizontal_scroll_bars: vocab::ScrollBars::Default,
+        separator: false, separator_color: vocab::Color::clear(),
+        is_refreshable: false, can_refresh: false,
+        refresh_color: vocab::Color::clear(),
+        on_refreshing: props::no_handler, on_refreshing_ctx: 0 as usize,
+        scroll_to_index: (0 as i64) -% (1 as i64),
+    };
+}
+
+fn source_of(n: *core::Node) -> SeqSource {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return no_source(); }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return no_source(); }
+    let k: u32 = { (*d).kind };
+    if k == props::K_LIST {
+        let p: *props::ListProps = raw as *props::ListProps;
+        return SeqSource {
+            live: true, count: { (*p).count }, row: { (*p).row },
+            row_ctx: { #addr((*p).row_ctx) }, bind: { (*p).bind },
+            row_height_of: { (*p).row_height_of },
+            row_height_of_ctx: { #addr((*p).row_height_of_ctx) },
+            row_kind: { (*p).row_kind },
+            row_kind_ctx: { #addr((*p).row_kind_ctx) },
+            row_height: { (*p).row_height },
+            selection_mode: { (*p).selection_mode },
+            selected_index: { (*p).selected_index },
+            on_item_selected: { (*p).on_item_selected },
+            on_item_selected_ctx: { #addr((*p).on_item_selected_ctx) },
+            vertical_scroll_bars: { (*p).vertical_scroll_bars },
+            horizontal_scroll_bars: { (*p).horizontal_scroll_bars },
+            // `Separator::Default` MEANS SHOWN. facet's enum is
+            // Default-or-None rather than a bool, which is the same shape
+            // `ScrollBars` has and means the same thing: the platform's usual
+            // answer, or explicitly nothing.
+            separator: match { (*p).separator } {
+                vocab::Separator::Default => true,
+                vocab::Separator::None => false,
+            },
+            separator_color: { (*p).separator_color },
+            is_refreshable: { (*p).is_refreshable },
+            can_refresh: { (*p).can_refresh },
+            refresh_color: { (*p).refresh_color },
+            on_refreshing: { (*p).on_refreshing },
+            on_refreshing_ctx: { #addr((*p).on_refreshing_ctx) },
+            scroll_to_index: { (*p).scroll_to_index },
+        };
+    }
+    if k == props::K_COLLECTION {
+        let p: *props::CollectionProps = raw as *props::CollectionProps;
+        return SeqSource {
+            live: true, count: { (*p).count }, row: { (*p).row },
+            row_ctx: { #addr((*p).row_ctx) }, bind: { (*p).bind },
+            row_height_of: { (*p).row_height_of },
+            row_height_of_ctx: { #addr((*p).row_height_of_ctx) },
+            row_kind: { (*p).row_kind },
+            row_kind_ctx: { #addr((*p).row_kind_ctx) },
+            // A collection sizes its items through `item_sizing` rather than a
+            // stated row height, so there is no single number to impose and the
+            // measured default applies.
+            row_height: 0 as i64,
+            selection_mode: { (*p).selectable_items_view.selection_mode },
+            selected_index: { (*p).selected_index },
+            on_item_selected: { (*p).selectable_items_view.on_selection_changed },
+            on_item_selected_ctx:
+                { #addr((*p).selectable_items_view.on_selection_changed_ctx) },
+            vertical_scroll_bars: { (*p).items_view.vertical_scroll_bars },
+            horizontal_scroll_bars: { (*p).items_view.horizontal_scroll_bars },
+            // A COLLECTION HAS NO SEPARATOR AND NO REFRESH. Neither verb is on
+            // any of its five embedded structs — that is a real difference
+            // between the kinds, not an omission here, and answering `false`
+            // is what says so.
+            separator: false, separator_color: vocab::Color::clear(),
+            is_refreshable: false, can_refresh: false,
+            refresh_color: vocab::Color::clear(),
+            on_refreshing: props::no_handler, on_refreshing_ctx: 0 as usize,
+            scroll_to_index: { (*p).items_view.scroll_to_index },
+        };
+    }
+    // `table` deliberately falls through: it is not a row source. See the
+    // header, and `controls::apply_table` for what it IS.
+    return no_source();
+}
+
+fn height_of_row(p: *SeqSource, i: usize) -> f64 {
+    let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
+    if f != props::no_row_height_of {
+        let h: f64 = f(i, { (*p).row_height_of_ctx } as *u8);
+        // ZERO MEANS "NO ANSWER", not a zero-height row — facet's own props
+        // file says so at the default's declaration. A row that measured zero
+        // would be invisible and unreachable.
+        if h > (0.0 as f64) { return h; }
+    }
+    let stated: i64 = { (*p).row_height };
+    if stated > (0 as i64) { return stated as f64; }
+    return default_row_height();
+}
+
+// Rebuild the map from the props. Called when the count, the heights or the
+// stated row height change — never per scroll.
+fn rebuild_map(s: *ListState, p: *SeqSource) {
+    let count: i64 = { (*p).count };
+    { (*s).count = count };
+    { (*s).offsets = vec::new::[f64]() };
+    { (*s).content = 0.0f64 };
+    { (*s).uniform = 0.0f64 };
+    if count <= (0 as i64) { return; }
+    let n: usize = count as usize;
+    let first: f64 = height_of_row(p, 0 as usize);
+    // Is every row the same height? Asked by SAMPLING rather than by walking:
+    // a `row_height_of` that is absent is uniform by construction, and one that
+    // is present is asked for every row anyway when it turns out not to be.
+    let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
+    if f == props::no_row_height_of {
+        { (*s).uniform = first };
+        { (*s).content = first * (n as f64) };
+        return;
+    }
+    var total: f64 = 0.0f64;
+    var even: bool = true;
+    var i: usize = 0 as usize;
+    while i < n {
+        let h: f64 = height_of_row(p, i);
+        if h != first { even = false; }
+        let _e: status::Status = { (*s).offsets.append(total) };
+        total = total + h;
+        i = i +% (1 as usize);
+    }
+    { (*s).content = total };
+    if even {
+        // The application answered per row and every answer was the same. Drop
+        // the array: it is a second copy of one number.
+        { (*s).uniform = first };
+        { (*s).offsets = vec::new::[f64]() };
+    }
+    return;
+}
+
+fn offset_of(s: *ListState, i: usize) -> f64 {
+    if { (*s).uniform } > (0.0 as f64) { return { (*s).uniform } * (i as f64); }
+    return match { (*s).offsets.at(i) } {
+        option::Option[f64]::Some(o) => o,
+        option::Option[f64]::None => 0.0f64,
+    };
+}
+
+// `p` IS ONLY REACHED ON THE UNEVEN PATH, which a tree never takes — a tree
+// states one height for every row, so `rebuild_tree_map` always sets `uniform`
+// and this returns before looking at the props. That is what makes it safe to
+// call with the null a tree has for `ListProps`, and it is stated because it
+// is otherwise luck.
+fn height_at(s: *ListState, i: usize, p: *SeqSource) -> f64 {
+    if { (*s).uniform } > (0.0 as f64) { return { (*s).uniform }; }
+    return height_of_row(p, i);
+}
+
+// The first row whose bottom is past `y`. Binary search on the uneven path;
+// arithmetic on the uniform one.
+// Same contract as `height_at` about `p`: the uniform path answers first, and a
+// tree is always uniform.
+fn row_at(s: *ListState, y: f64, p: *SeqSource) -> i64 {
+    let count: i64 = { (*s).count };
+    if count <= (0 as i64) { return 0 as i64; }
+    if y <= (0.0 as f64) { return 0 as i64; }
+    let uni: f64 = { (*s).uniform };
+    if uni > (0.0 as f64) {
+        let idx: i64 = (y / uni) as i64;
+        if idx >= count { return count -% (1 as i64); }
+        return idx;
+    }
+    var lo: i64 = 0 as i64;
+    var hi: i64 = count -% (1 as i64);
+    while lo < hi {
+        let mid: i64 = lo + (hi -% lo) / (2 as i64);
+        let top: f64 = offset_of(s, mid as usize);
+        let bot: f64 = top + height_at(s, mid as usize, p);
+        if bot <= y { lo = mid + (1 as i64); } else { hi = mid; }
+    }
+    return lo;
+}
+
+// ---- the cell pool -------------------------------------------------------------------
+
+fn free_cell_of_kind(s: *ListState, kind: usize) -> i64 {
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).cells.count() };
+    while i < n {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => {
+                if { (*c).row } < (0 as i64) && { (*c).kind } == kind {
+                    return i as i64;
+                }
+            }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return (0 as i64) -% (1 as i64);
+}
+
+// The WINDOW of a pooled cell, which is what a row-lifecycle handler is handed
+// as its sender. A cell holds the row's NODE; the window is the node's view.
+fn view_of_cell(s: *ListState, i: usize) -> *u8 {
+    return match { (*s).cells.at_ptr(i) } {
+        option::Option[*Cell]::Some(c) => {
+            let rp: *core::Node = { (*c).node } as *core::Node;
+            if rp == (0 as *core::Node) { 0 as *u8 } else { core::view_of(rp) }
+        }
+        option::Option[*Cell]::None => 0 as *u8,
+    };
+}
+
+fn cell_showing(s: *ListState, row: i64) -> i64 {
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).cells.count() };
+    while i < n {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => { if { (*c).row } == row { return i as i64; } }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return (0 as i64) -% (1 as i64);
+}
+
+fn kind_of_row(p: *SeqSource, i: usize) -> usize {
+    let f: fn(usize, *u8) -> usize = { (*p).row_kind };
+    if f == props::no_row_kind { return 0 as usize; }
+    return f(i, { (*p).row_kind_ctx } as *u8);
+}
+
+// Build row `i`'s subtree, box it, realise it into the viewport, and hand back
+// the boxed pointer.
+//
+// THE INDEX IS WRITTEN ONTO THE ROOT before the realise. `component::
+// item_index_of(sender)` walks up from whatever was clicked looking for a node
+// carrying one, so a row that never got an index reports None and the
+// application's handler cannot tell which row fired.
+fn build_row(v: *u8, p: *SeqSource, i: usize) -> *core::Node {
+    let f: fn(usize, *u8) -> flex::Node = { (*p).row };
+    if f == props::no_row { return 0 as *core::Node; }
+    var n: core::Node = f(i, { (*p).row_ctx } as *u8);
+    let rp: *core::Node = match box::new::[core::Node](n) {
+        option::Option[box::Box[core::Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp == (0 as *core::Node) { return 0 as *core::Node; }
+    core::set_item_index(rp, i);
+    let _view: *u8 = mount::realise(rp, controls::document_host(v));
+    return rp;
+}
+
+// WRITTEN INTO `Data.key` DIRECTLY, and that is worth a word because facet
+// exposes no setter for it. `key` is an owned `text::Text` — facet's own
+// comment records that it used to be a `str` and was changed precisely because
+// a computed key is a use-after-free otherwise — so the Text `row_id` returns
+// is MOVED in rather than viewed. There is no interning: facet considered it
+// for this field and rejected it.
+//
+// A `core::set_key` would be the better door and facet should grow one; until
+// it does, this is the only way a backend can name a row it did not build, and
+// an unnamed row is one `describe_ui` cannot see and an agent cannot click.
+fn name_row(rp: *core::Node, item: *ftree::TreeNode, p: *ftree::TreeProps) {
+    let d: *core::Data = core::node_data(rp);
+    if d == (0 as *core::Data) { return; }
+    // A row the application already keyed keeps that key: `row_id` names rows
+    // the builder left anonymous, it does not override a stated address.
+    if { (*d).key.view() } != "" { return; }
+    let f: fn(*ftree::TreeNode, *u8) -> text::Text = { (*p).row_id };
+    if f != ftree::no_row_id {
+        let t: text::Text = f(item, { (*p).row_id_ctx });
+        if t.view() != "" { { (*d).key = t }; return; }
+    }
+    { (*d).key = { (*item).id }.clone() };
+    return;
+}
+
+fn drop_row(rp: *core::Node) {
+    if rp == (0 as *core::Node) { return; }
+    mount::unrealise(rp);
+    let _gone: box::Box[core::Node] = box::from_raw::[core::Node](rp as *u8);
+    return;
+}
+
+// Point a free cell at row `i`. Cheap when the application supplied a `bind`
+// and the shapes match; a rebuild otherwise.
+fn fill_cell(v: *u8, s: *ListState, p: *SeqSource, slot: usize, i: usize) {
+    let kind: usize = kind_of_row(p, i);
+    match { (*s).cells.at_ptr(slot) } {
+        option::Option[*Cell]::Some(c) => {
+            let bind: fn(usize, *flex::Node, *u8) = { (*p).bind };
+            let same: bool = { (*c).kind } == kind && { (*c).node } != (0 as usize);
+            if bind != props::no_bind && same {
+                let rp: *core::Node = { (*c).node } as *core::Node;
+                // `bind` SHARES `row_ctx` — `set_row_bind` writes the ctx it was
+                // given into that same slot, because a row builder and a row
+                // binder are two verbs of one object and facet gave them one
+                // context rather than two that could disagree.
+                bind(i, rp, { (*p).row_ctx } as *u8);
+                core::set_item_index(rp, i);
+                // THE ROW IS NOT IN A WINDOW, so the ordinary sync will never
+                // reach it — `sync_from` is the door facet opened for exactly
+                // this. Without it a bound row keeps showing the previous
+                // row's data, with every dirty bit set and nobody to carry it.
+                mount::sync_from(rp);
+                { (*c).row = i as i64 };
+                return;
+            }
+            // No bind, or a different shape: tear the old subtree down and
+            // build the new one. Honest rather than cheap, and the contract
+            // says `set_row_bind` is optional.
+            drop_row({ (*c).node } as *core::Node);
+            let rp: *core::Node = build_row(v, p, i);
+            { (*c).node = { #addr(rp as *u8) } };
+            { (*c).kind = kind };
+            { (*c).row = i as i64 };
+        }
+        option::Option[*Cell]::None => { }
+    }
+    return;
+}
+
+fn free_cell(s: *ListState, slot: usize) {
+    match { (*s).cells.at_ptr(slot) } {
+        option::Option[*Cell]::Some(c) => {
+            // THE SUBTREE IS KEPT, which is the whole of what pooling is: a
+            // freed cell holds its windows and its shape, and the next row of
+            // that shape rebinds into it rather than rebuilding.
+            { (*c).row = (0 as i64) -% (1 as i64) };
+            // Off-screen rather than destroyed. A hidden window costs nothing
+            // to keep and everything to rebuild.
+            let rp: *core::Node = { (*c).node } as *core::Node;
+            if rp != (0 as *core::Node) {
+                let view: *u8 = core::view_of(rp);
+                if view != (0 as *u8) {
+                    let _s: i32 = { u::ShowWindow(view, sys::sw_hide()) };
+                }
+            }
+        }
+        option::Option[*Cell]::None => { }
+    }
+    return;
+}
+
+
+// ---- the two maps meet the one machine -------------------------------------------
+//
+// Three questions differ between a sequence and a tree, and only three: what
+// SHAPE a row has, how to BUILD one, and how to REBIND a pooled cell to a
+// different row. Everything else the machine does — which rows are visible,
+// where they sit, which cell is free, when to release — is answered from
+// `ListState` alone and never asks what kind of map filled it.
+//
+// So the fork is here, in three functions, rather than in `layout_rows`. That
+// is what keeps the second map from being a second recycler.
+
+fn row_shape(s: *ListState, n: *core::Node, i: usize) -> usize {
+    if { (*s).is_tree } {
+        // A tree has no `row_kind`: every row is one shape, which is what one
+        // reuse pool means. A tree that wanted per-depth shapes would say so
+        // through the same verb a list uses, and it does not have one.
+        return 0 as usize;
+    }
+    var src: SeqSource = source_of(n);
+    if !src.live { return 0 as usize; }
+    return kind_of_row(#addr_of(src), i);
+}
+
+fn make_row(v: *u8, s: *ListState, n: *core::Node, i: usize) -> *core::Node {
+    if { (*s).is_tree } {
+        let tp: *ftree::TreeProps = tree_props(n);
+        if tp == (0 as *ftree::TreeProps) { return 0 as *core::Node; }
+        return build_tree_row(v, s, tp, i);
+    }
+    var src: SeqSource = source_of(n);
+    if !src.live { return 0 as *core::Node; }
+    return build_row(v, #addr_of(src), i);
+}
+
+fn rebind_cell(v: *u8, s: *ListState, n: *core::Node, slot: usize, i: usize) {
+    if { (*s).is_tree } {
+        // A TREE'S BIND TAKES THE NODE, and its argument order differs from a
+        // list's — `(node, ctx, row)` against `(index, row, ctx)`. Two verbs
+        // that mean the same thing and do not share a signature, so they cannot
+        // share a call.
+        let tp: *ftree::TreeProps = tree_props(n);
+        if tp == (0 as *ftree::TreeProps) { return; }
+        let item: *ftree::TreeNode = tree_node_at(s, i);
+        if item == (0 as *ftree::TreeNode) { return; }
+        match { (*s).cells.at_ptr(slot) } {
+            option::Option[*Cell]::Some(c) => {
+                let bind: fn(*ftree::TreeNode, *u8, *flex::Node) = { (*tp).bind };
+                let rp: *core::Node = { (*c).node } as *core::Node;
+                if bind != ftree::no_bind && rp != (0 as *core::Node) {
+                    bind(item, { (*tp).bind_ctx }, rp);
+                    core::set_item_index(rp, i);
+                    mount::sync_from(rp);
+                    { (*c).row = i as i64 };
+                    return;
+                }
+                drop_row(rp);
+                let fresh: *core::Node = build_tree_row(v, s, tp, i);
+                { (*c).node = { #addr(fresh as *u8) } };
+                { (*c).row = i as i64 };
+            }
+            option::Option[*Cell]::None => { }
+        }
+        return;
+    }
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    fill_cell(v, s, #addr_of(src), slot, i);
+    return;
+}
+
+// Which model is live, for the parts of `layout_rows` that only need to know
+// whether there is one at all.
+fn has_model(s: *ListState, n: *core::Node) -> bool {
+    if { (*s).is_tree } { return tree_props(n) != (0 as *ftree::TreeProps); }
+    return source_of(n).live;
+}
+// ---- the visible window ----------------------------------------------------------------
+
+// Realise what is on screen, free what is not, and place both. The one function
+// that does the work; everything else here is bookkeeping for it.
+fn layout_rows(v: *u8, n: *core::Node) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    // EITHER MAP will do — see `row_shape` / `make_row` / `rebind_cell`. The
+    // visible-window arithmetic below reads `ListState` alone and never asks
+    // which one filled it.
+    if !has_model(s, n) { return; }
+    // Resolved once for the whole pass. A tree answers `live: false` here and
+    // never reaches the row verbs — its heights come from `uniform`, which
+    // `rebuild_tree_map` always sets.
+    var src: SeqSource = source_of(n);
+    let p: *SeqSource = #addr_of(src);
+    let count: i64 = { (*s).count };
+
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return; }
+    let vw: f64 = (vr.right -% vr.left) as f64;
+    // THE REFRESH STRIP TAKES ROOM FROM THE ROWS. It cannot be an overlay: the
+    // rows are child windows and a child is painted OVER its parent, so a strip
+    // drawn in the viewport's WM_PAINT would be covered by the first row. So
+    // the rows start below it while it is up, and the visible-window arithmetic
+    // is done against the reduced height — otherwise the last row is built and
+    // then placed off the bottom.
+    let strip: f64 = strip_height(s);
+    let vh: f64 = ((vr.bottom -% vr.top) as f64) - strip;
+    if vh <= (0.0 as f64) { return; }
+
+    // Clamp the scroll: a count that shrank under a scrolled list would
+    // otherwise leave the viewport past the end, showing nothing at all.
+    var top: f64 = { (*s).scroll };
+    let max_scroll: f64 = if { (*s).content } > vh { { (*s).content } - vh } else { 0.0f64 };
+    if top > max_scroll { top = max_scroll; }
+    if top < (0.0 as f64) { top = 0.0f64; }
+    { (*s).scroll = top };
+
+    var first: i64 = 0 as i64;
+    var last: i64 = (0 as i64) -% (1 as i64);
+    if count > (0 as i64) {
+        first = row_at(s, top, p);
+        last = row_at(s, top + vh, p);
+        // ONE ROW OF SLACK either side. A row scrolled halfway in is a row that
+        // has to already exist, and building it on the frame it becomes visible
+        // is the stutter every list of this shape has.
+        if first > (0 as i64) { first = first -% (1 as i64); }
+        if last < (count -% (1 as i64)) { last = last + (1 as i64); }
+    }
+
+    // FREE FIRST, then fill — so a row leaving the window releases its cell
+    // before a row entering asks for one. The other order needs twice the pool.
+    var i: usize = 0 as usize;
+    let cells: usize = { (*s).cells.count() };
+    while i < cells {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => {
+                let r: i64 = { (*c).row };
+                if r >= (0 as i64) && (r < first || r > last) {
+                    // BEFORE the cell is freed, while it still points at the
+                    // row that is leaving — after `free_cell` there is nothing
+                    // to hand the handler.
+                    fire_item_visibility(n, view_of_cell(s, i), false);
+                    free_cell(s, i);
+                }
+            }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+
+    var r: i64 = first;
+    while r <= last {
+        if cell_showing(s, r) < (0 as i64) {
+            let kind: usize = row_shape(s, n, r as usize);
+            var slot: i64 = free_cell_of_kind(s, kind);
+            if slot < (0 as i64) {
+                // No pooled cell of this shape: grow the pool by one. It grows
+                // to the number of rows the viewport can hold PLUS the slack,
+                // and then stops — which is the property that makes a
+                // 20,000-row list cost the same as a 50-row one.
+                let rp: *core::Node = make_row(v, s, n, r as usize);
+                let _e: status::Status = { (*s).cells.append(Cell {
+                    row: r, kind: kind, node: { #addr(rp as *u8) },
+                    top: 0.0f64, height: 0.0f64,
+                }) };
+            } else {
+                rebind_cell(v, s, n, slot as usize, r as usize);
+            }
+            // Both paths, for the reason `fire_item_visibility` states: firing
+            // only on the fresh build would report an item appearing exactly
+            // when the list was too slow to recycle.
+            let made: i64 = cell_showing(s, r);
+            if made >= (0 as i64) {
+                fire_item_visibility(n, view_of_cell(s, made as usize), true);
+            }
+        }
+        r = r + (1 as i64);
+    }
+
+    // Place every live cell against the viewport, with the scroll taken off.
+    var j: usize = 0 as usize;
+    let live: usize = { (*s).cells.count() };
+    while j < live {
+        match { (*s).cells.at_ptr(j) } {
+            option::Option[*Cell]::Some(c) => {
+                let rr: i64 = { (*c).row };
+                if rr >= (0 as i64) {
+                    let rp: *core::Node = { (*c).node } as *core::Node;
+                    if rp != (0 as *core::Node) {
+                        let y: f64 = offset_of(s, rr as usize) - top + strip;
+                        let h: f64 = height_at(s, rr as usize, p);
+                        { (*c).top = y };
+                        { (*c).height = h };
+                        place_row(v, rp, y, vw, h);
+                    }
+                }
+            }
+            option::Option[*Cell]::None => { }
+        }
+        j = j +% (1 as usize);
+    }
+    sync_scrollbar(v, s, vh);
+    trace_rows(s, first, last);
+    fire_threshold(v, n, last, count);
+    return;
+}
+
+// A row's own layout, then its windows.
+//
+// THE ROW IS LAID OUT AT THE VIEWPORT'S WIDTH, not at whatever flex last gave
+// it. A row built off-screen has no frame, and `calculate_layout` is what turns
+// its tree into positions — so the row is a little layout root of its own,
+// which is exactly what `realise` made it.
+fn place_row(v: *u8, rp: *core::Node, y: f64, width: f64, height: f64) {
+    { (*rp).calculate_layout(width: width, height: height) };
+    let view: *u8 = core::view_of(rp);
+    let host: *u8 = controls::document_host(v);
+    let own: flex::Frame = { (*rp).frame() };
+    if view != (0 as *u8) {
+        let _s: i32 = { u::ShowWindow(view, sys::sw_show()) };
+        geometry::place(host, view, 0.0f64, y, width, height);
+        // The row IS the host for its own children, so their absolute frames
+        // are relative to the row's own origin — which is what passing the
+        // row's frame subtracts.
+        geometry::reposition_children(rp, controls::document_host(view), own);
+    } else {
+        // A row whose root is a bare container has no window of its own, so its
+        // children go into the VIEWPORT and have to carry the row's offset
+        // themselves. A host frame with `top` pushed back by `y` is how that is
+        // said: `reposition_children` subtracts it, so every child lands `y`
+        // lower than its own frame.
+        var shifted: flex::Frame = own;
+        shifted.left = 0.0f64;
+        shifted.top = 0.0f64 - y;
+        geometry::reposition_children(rp, host, shifted);
+    }
+    return;
+}
+
+// ---- scroll bar ------------------------------------------------------------------------
+
+fn sb_vert() -> i32 { return 1 as i32; }
+
+// SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL
+fn sif_all() -> u32 { return 0x17 as u32; }
+
+// SCROLLINFO is six DWORDs and an int: cbSize, fMask, nMin, nMax, nPage, nPos,
+// nTrackPos — 28 bytes, all 4-byte fields, no inline arrays. Laid out by hand
+// because `cpc-bindgen` did not carry it and it is the one struct this file
+// needs.
+fn scrollinfo_bytes() -> usize { return 28 as usize; }
+
+extern fn SetScrollInfo(hwnd: *u8, bar: i32, info: *u8, redraw: i32) -> i32;
+extern fn GetScrollInfo(hwnd: *u8, bar: i32, info: *u8) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, v: i32, n: usize) -> *u8;
+
+fn put_u32(p: *u8, at: usize, v: u32) {
+    let q: *u32 = { (p + at) } as *u32;
+    { *q = v };
+    return;
+}
+
+fn get_i32(p: *u8, at: usize) -> i32 {
+    let q: *i32 = { (p + at) } as *i32;
+    return { *q };
+}
+
+fn sync_scrollbar(v: *u8, s: *ListState, viewport_h: f64) {
+    let info: *u8 = { malloc(scrollinfo_bytes()) };
+    if info.is_null() { return; }
+    let _z: *u8 = { memset(info, 0 as i32, scrollinfo_bytes()) };
+    put_u32(info, 0 as usize, scrollinfo_bytes() as u32);
+    put_u32(info, 4 as usize, sif_all());
+    put_u32(info, 8 as usize, 0 as u32);
+    // nMax is INCLUSIVE and nPage is subtracted from it by the control, which
+    // is why the range is the whole content and not the content minus a page.
+    // Getting this wrong scrolls to a stop one page early, every time.
+    put_u32(info, 12 as usize, { (*s).content } as u32);
+    put_u32(info, 16 as usize, viewport_h as u32);
+    put_u32(info, 20 as usize, { (*s).scroll } as u32);
+    let _r: i32 = { SetScrollInfo(v, sb_vert(), info, 1 as i32) };
+    { free(info) };
+    return;
+}
+
+// SB_LINEUP 0, SB_LINEDOWN 1, SB_PAGEUP 2, SB_PAGEDOWN 3, SB_THUMBTRACK 5,
+// SB_TOP 6, SB_BOTTOM 7.
+fn on_vscroll(v: *u8, n: *core::Node, code: u32) -> bool {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    let _g: i32 = { u::GetClientRect(v, #addr_of(vr)) };
+    let page: f64 = (vr.bottom -% vr.top) as f64;
+    let line: f64 = if { (*s).uniform } > (0.0 as f64) { { (*s).uniform } }
+                    else { default_row_height() };
+    var to: f64 = { (*s).scroll };
+    if code == (0 as u32) { to = to - line; }
+    if code == (1 as u32) { to = to + line; }
+    if code == (2 as u32) { to = to - page; }
+    if code == (3 as u32) { to = to + page; }
+    if code == (6 as u32) { to = 0.0f64; }
+    if code == (7 as u32) { to = { (*s).content }; }
+    if code == (5 as u32) || code == (4 as u32) {
+        // THE THUMB POSITION IS READ FROM THE CONTROL, not from the message.
+        // wParam's high word is 16 bits, so a list taller than 65,535 points
+        // reports a truncated position and the thumb jumps to the wrong place
+        // on every drag past that. `SIF_TRACKPOS` has the full value.
+        let info: *u8 = { malloc(scrollinfo_bytes()) };
+        if info.is_null() { return false; }
+        let _z: *u8 = { memset(info, 0 as i32, scrollinfo_bytes()) };
+        put_u32(info, 0 as usize, scrollinfo_bytes() as u32);
+        put_u32(info, 4 as usize, 0x10 as u32);   // SIF_TRACKPOS
+        if { GetScrollInfo(v, sb_vert(), info) } != (0 as i32) {
+            to = get_i32(info, 24 as usize) as f64;
+        }
+        { free(info) };
+    }
+    { (*s).scroll = to };
+    layout_rows(v, n);
+    fire_scrolled(v, n);
+    return true;
+}
+
+// ---- the contract's verbs ------------------------------------------------------------
+
+fn create_sequence(n: *core::Node) -> *u8 {
+    let v: *u8 = controls::make_child(sys::panel_class(), controls::empty_title(),
+                                      sys::ws_clipchildren() | sys::ws_vscroll(),
+                                      0 as u32);
+    if v == (0 as *u8) { return 0 as *u8; }
+    match box::new::[ListState](new_state()) {
+        option::Option[box::Box[ListState]]::Some(b) => {
+            let _r: i32 = { u::SetPropA(v, sys::prop_list() as *i8,
+                                        b.into_raw() as *u8) };
+        }
+        option::Option[box::Box[ListState]]::None => { }
+    }
+    return v;
+}
+
+// The bits that change WHAT IS SHOWN, as against how it looks. Any of them
+// rebuilds the map and re-lays the window.
+fn model_bits() -> u64 {
+    // `row_height_of` and `row_kind` have no bits of their own — the generated
+    // setters raise P_ROW, because all three describe how a row is BUILT and a
+    // change to any of them invalidates the same thing.
+    return flist::P_COUNT | flist::P_ROW | flist::P_ROW_HEIGHT
+         | flist::P_HAS_UNEVEN_ROWS | flist::P_INVALIDATE_ROW
+         | flist::P_SPLICE_ROWS;
+}
+
+fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    let p: *SeqSource = #addr_of(src);
+    if (dirty & model_bits()) != (0 as u64) {
+        rebuild_map(s, p);
+        // EVERY LIVE CELL IS RELEASED when the model changes. A cell still
+        // pointing at row 40 of a list that now has 12 rows is showing data
+        // that is gone, and `fill_cell` would rebind it only if it happened to
+        // fall inside the new visible window.
+        release_all(s);
+        layout_rows(v, n);
+        return;
+    }
+    if (dirty & flist::P_SELECTED_INDEX) != (0 as u64) {
+        { (*s).selected = { (*p).selected_index } };
+    }
+    // SWITCHING TO `None` CLEARS THE SELECTION. A list that stops being
+    // selectable while a row is highlighted would keep drawing the highlight,
+    // and nothing the application can do would clear it.
+    if (dirty & flist::P_SELECTION_MODE) != (0 as u64) {
+        let selectable: bool = match { (*p).selection_mode } {
+            vocab::SelectionMode::None => false,
+            vocab::SelectionMode::Single => true,
+            vocab::SelectionMode::Multiple => true,
+        };
+        if !selectable {
+            { (*s).selected = (0 as i64) -% (1 as i64) };
+            write_selected(n, (0 as i64) -% (1 as i64));
+            let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+        }
+    }
+    if (dirty & (flist::P_VERTICAL_SCROLL_BARS | flist::P_HORIZONTAL_SCROLL_BARS))
+       != (0 as u64) {
+        apply_bars(v, { (*p).vertical_scroll_bars }, { (*p).horizontal_scroll_bars });
+    }
+    if (dirty & flist::P_SCROLL_TO) != (0 as u64) {
+        scroll_to_row(v, n, { (*p).scroll_to_index });
+    }
+    if (dirty & (flist::P_SEPARATOR | flist::P_SEPARATOR_COLOR)) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    // The imperative pair wins over the state bit, which is why they are read
+    // after it: `begin_refresh` says start regardless of what `is_refreshing`
+    // held a moment ago.
+    if (dirty & flist::P_IS_REFRESHING) != (0 as u64) {
+        set_refreshing(v, n, refreshing_of(n));
+    }
+    if (dirty & flist::P_BEGIN_REFRESH) != (0 as u64) { set_refreshing(v, n, true); }
+    if (dirty & flist::P_END_REFRESH) != (0 as u64) { set_refreshing(v, n, false); }
+    if (dirty & (flist::P_IS_REFRESHABLE | flist::P_CAN_REFRESH | flist::P_REFRESH_COLOR))
+       != (0 as u64) {
+        // Permission and colour are both read at the moment they are used —
+        // see `refresh_requested` and `draw_refresh_bar` — so all an apply
+        // owes them is the repaint.
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+fn refreshing_of(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    if { (*d).kind } != props::K_LIST { return false; }
+    return { (*(raw as *props::ListProps)).is_refreshing };
+}
+
+fn release_all(s: *ListState) {
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).cells.count() };
+    while i < n {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => { free_cell(s, i); }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- selection ---------------------------------------------------------------------------
+//
+// A ROW'S CLICK IS THE LIST'S SELECTION, which is facet's own rule and not this
+// package's invention: the control owns the mouse inside its own rows, so a
+// `.gesture(on_click:)` on something in a row is a handler nothing will deliver
+// to. The index comes from the row root's item slot, which `build_row` wrote.
+fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    // A TREE SELECTS BY IDENTITY, not by row: its handler is handed the node and
+    // its `selected` is an id, because a flattened index changes the moment a
+    // branch above it expands.
+    if { (*s).is_tree } { return on_tree_row_click(v, n, index); }
+    var src: SeqSource = source_of(n);
+    if !src.live { return false; }
+    let mode: vocab::SelectionMode = src.selection_mode;
+    let selectable: bool = match mode {
+        vocab::SelectionMode::None => false,
+        vocab::SelectionMode::Single => true,
+        vocab::SelectionMode::Multiple => true,
+    };
+    // A TAP IS NOT A SELECTION. `on_item_tapped` fires for every click on a
+    // row — including one in a list whose `selection_mode` is None, which is
+    // the case that makes the two verbs different rather than redundant. So it
+    // is reported before the selectable gate.
+    fire_item_tapped(v, n, index);
+    if !selectable { return false; }
+    { (*s).selected = index as i64 };
+    // THE SELECTION IS WRITTEN BACK THROUGH THE REAL PROPS, not through the
+    // resolved copy — `SeqSource` is a snapshot for reading and writing to it
+    // would update nothing the application can see.
+    write_selected(n, index as i64);
+    let h: fn(*u8, *u8) = src.on_item_selected;
+    if h == props::no_handler { return false; }
+    h(v, src.on_item_selected_ctx as *u8);
+    return true;
+}
+
+fn fire_item_tapped(v: *u8, n: *core::Node, index: usize) {
+    let p: *props::ListProps = controls::props_of(n, props::K_LIST) as *props::ListProps;
+    if p == (0 as *props::ListProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_item_tapped };
+    if h == props::no_handler { return; }
+    // The ROW's window is the sender, so `component::item_index_of` can read
+    // which row it was — the same contract `fire_item_visibility` uses.
+    h(row_view_at(v, n, index), { (*p).on_item_tapped_ctx });
+    return;
+}
+
+fn row_view_at(v: *u8, n: *core::Node, index: usize) -> *u8 {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return v; }
+    let at: i64 = cell_showing(s, index as i64);
+    if at < (0 as i64) { return v; }
+    let w: *u8 = view_of_cell(s, at as usize);
+    if w == (0 as *u8) { return v; }
+    return w;
+}
+
+fn selected_of(v: *u8) -> i64 {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return (0 as i64) -% (1 as i64); }
+    return { (*s).selected };
+}
+
+fn holds_rows(n: *core::Node) -> bool {
+    let k: u32 = core::kind_of(n);
+    if k == ftree::K_TREE { return true; }
+    // NOT `table` — it is not a row source; see `controls::apply_table`.
+    return k == props::K_LIST || k == props::K_COLLECTION;
+}
+
+#[test]
+fn a_uniform_list_needs_no_offset_table() {
+    // The 20,000-row case, and the reason the two shapes are separate: an
+    // offset array for a list whose rows are all one height is a second copy of
+    // one number, walked instead of multiplied.
+    var s: ListState = new_state();
+    s.uniform = 20.0f64;
+    s.count = 20000 as i64;
+    assert offset_of(#addr_of(s), 0 as usize) == (0.0 as f64);
+    assert offset_of(#addr_of(s), 100 as usize) == (2000.0 as f64);
+    assert s.offsets.count() == (0 as usize);
+    return;
+}
+
+#[test]
+fn the_row_at_a_scroll_position_is_arithmetic_when_uniform() {
+    var s: ListState = new_state();
+    s.uniform = 20.0f64;
+    s.count = 100 as i64;
+    var empty: SeqSource = no_source();
+    let p: *SeqSource = #addr_of(empty);
+    assert row_at(#addr_of(s), 0.0f64, p) == (0 as i64);
+    assert row_at(#addr_of(s), 25.0f64, p) == (1 as i64);
+    // Past the end clamps to the last row rather than running off it.
+    assert row_at(#addr_of(s), 99999.0f64, p) == (99 as i64);
+    return;
+}
+
+#[test]
+fn a_negative_scroll_reads_as_the_top() {
+    var s: ListState = new_state();
+    s.uniform = 20.0f64;
+    s.count = 10 as i64;
+    var empty: SeqSource = no_source();
+    let p: *SeqSource = #addr_of(empty);
+    assert row_at(#addr_of(s), 0.0f64 - 50.0f64, p) == (0 as i64);
+    return;
+}
+
+#[test]
+fn an_empty_list_answers_row_zero_and_not_a_crash() {
+    var s: ListState = new_state();
+    var empty: SeqSource = no_source();
+    let p: *SeqSource = #addr_of(empty);
+    assert row_at(#addr_of(s), 10.0f64, p) == (0 as i64);
+    return;
+}
+
+
+// ================================================================================
+// THE SECOND MAP — a tree
+// ================================================================================
+//
+// TWO SLOT MAPS, ONE MACHINE. Everything below the map — the cells, the pool,
+// the visible window, the scroll bar, the placement — is the sequence's, used
+// unchanged. What differs is only how a row INDEX becomes a row: a sequence
+// answers `row(i)` and a tree answers `row(node)` after a walk.
+//
+// facet_gtk's recycler says why they cannot be one protocol, and it is worth
+// repeating rather than re-deriving: "a list is count plus index and a tree is
+// parent → children plus expansion plus stable identity". Flattening a tree
+// into a count is exactly what this map does, but the flattening has to be
+// redone whenever the EXPANSION changes, which a sequence has no equivalent of.
+//
+// THE WALK IS PRE-ORDER AND SKIPS COLLAPSED SUBTREES. A branch that is not
+// expanded contributes one row — itself — and none of its children, which is
+// what makes a tree of a million nodes cost the same as its visible depth.
+
+struct TreeRow {
+    node: usize,
+    depth: usize,
+}
+
+// Flatten the expanded model into the row list. Called when the root, the
+// expansion set or the row builder changes — never per scroll.
+fn rebuild_tree_map(s: *ListState, p: *ftree::TreeProps) {
+    { (*s).tree_rows = vec::new::[TreeRow]() };
+    { (*s).offsets = vec::new::[f64]() };
+    let root: *ftree::TreeNode = #addr_of((*p).root);
+    // THE ROOT ITSELF IS NOT A ROW. It is the container the model hangs from,
+    // and a tree that showed it would put an unnamed parent above every real
+    // item. Its CHILDREN are the top level.
+    walk_children(s, p, root, 0 as usize);
+    let n: usize = { (*s).tree_rows.count() };
+    { (*s).count = n as i64 };
+    let h: f64 = tree_row_height(p);
+    { (*s).uniform = h };
+    { (*s).content = h * (n as f64) };
+    return;
+}
+
+fn walk_children(s: *ListState, p: *ftree::TreeProps, parent: *ftree::TreeNode,
+                 depth: usize) {
+    var i: usize = 0 as usize;
+    let n: usize = { (*parent).child_count() };
+    while i < n {
+        match { (*parent).child_ptr(i) } {
+            option::Option[*ftree::TreeNode]::Some(c) => {
+                let _e: status::Status = { (*s).tree_rows.append(
+                    TreeRow { node: { #addr(c as *u8) }, depth: depth }) };
+                // DESCEND ONLY INTO AN EXPANDED BRANCH. `is_branch` says a node
+                // may have children — it is true BEFORE they exist, which is
+                // what makes lazy loading expressible — so the question asked
+                // here is the expansion set, not the child count.
+                if is_expanded_id(p, { (*c).id }.view()) {
+                    walk_children(s, p, c, depth +% (1 as usize));
+                }
+            }
+            option::Option[*ftree::TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn is_expanded_id(p: *ftree::TreeProps, id: str) -> bool {
+    let set: *vocab::TextList = #addr_of((*p).expanded);
+    var i: usize = 0 as usize;
+    let n: usize = { (*set).count() };
+    while i < n {
+        if { (*set).at(i) } == id { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// A tree states one height for every row; `0` means "let the backend decide",
+// which here is the same default a list falls back to.
+fn tree_row_height(p: *ftree::TreeProps) -> f64 {
+    let h: f64 = { (*p).row_height };
+    if h > (0.0 as f64) { return h; }
+    return default_row_height();
+}
+
+fn tree_props(n: *core::Node) -> *ftree::TreeProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *ftree::TreeProps; }
+    if { (*d).kind } != ftree::K_TREE { return 0 as *ftree::TreeProps; }
+    return { (*d).props } as *ftree::TreeProps;
+}
+
+fn tree_node_at(s: *ListState, i: usize) -> *ftree::TreeNode {
+    return match { (*s).tree_rows.at_ptr(i) } {
+        option::Option[*TreeRow]::Some(r) => { (*r).node } as *ftree::TreeNode,
+        option::Option[*TreeRow]::None => 0 as *ftree::TreeNode,
+    };
+}
+
+// Build row `i` of a tree. The sequence's `build_row` with one substitution —
+// the builder takes the NODE rather than the index — and the same reason for
+// boxing and for writing the index onto the root before realising.
+fn build_tree_row(v: *u8, s: *ListState, p: *ftree::TreeProps, i: usize) -> *core::Node {
+    let item: *ftree::TreeNode = tree_node_at(s, i);
+    if item == (0 as *ftree::TreeNode) { return 0 as *core::Node; }
+    let f: fn(*ftree::TreeNode, *u8) -> flex::Node = { (*p).row };
+    if f == ftree::no_row { return 0 as *core::Node; }
+    var n: core::Node = f(item, { (*p).row_ctx });
+    let rp: *core::Node = match box::new::[core::Node](n) {
+        option::Option[box::Box[core::Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp == (0 as *core::Node) { return 0 as *core::Node; }
+    core::set_item_index(rp, i);
+    // THE ROW'S NAME ON THE AGENT SURFACE. A row the application's `row`
+    // builder gave no key to is invisible to `describe_ui` and cannot be
+    // clicked over the socket — which is a tree nobody can drive. `row_id` is
+    // the verb for it, and a tree that states none falls back to the model
+    // node's own id. facet_gtk names its rows the same way.
+    name_row(rp, item, p);
+    let _view: *u8 = mount::realise(rp, controls::document_host(v));
+    return rp;
+}
+
+fn create_tree(n: *core::Node) -> *u8 { return create_sequence(n); }
+
+// The bits that change WHAT THE TREE SHOWS. `P_EXPANDED` is the one a sequence
+// has no counterpart for: expanding a branch changes which rows exist without
+// changing the model at all.
+fn tree_model_bits() -> u64 {
+    return ftree::P_ROOT | ftree::P_ROW | ftree::P_ROW_HEIGHT | ftree::P_EXPANDED;
+}
+
+fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    let p: *ftree::TreeProps = tree_props(n);
+    if p == (0 as *ftree::TreeProps) { return; }
+    { (*s).is_tree = true };
+    if (dirty & tree_model_bits()) != (0 as u64) {
+        rebuild_tree_map(s, p);
+        release_all(s);
+        layout_rows(v, n);
+    }
+    return;
+}
+
+// A click on a tree row. The index is the FLATTENED one, which is what the
+// cells carry; the handler is handed the node it stands for.
+fn on_tree_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    let p: *ftree::TreeProps = tree_props(n);
+    if p == (0 as *ftree::TreeProps) { return false; }
+    let item: *ftree::TreeNode = tree_node_at(s, index);
+    if item == (0 as *ftree::TreeNode) { return false; }
+    { (*s).selected = index as i64 };
+    { (*p).selected = { (*item).id }.clone() };
+    let f: fn(*ftree::TreeNode, *u8) = { (*p).on_select };
+    if f == ftree::no_select { return false; }
+    f(item, { (*p).on_select_ctx });
+    return true;
+}
+// ---- FACET_WIN32_ROWS=1 -----------------------------------------------------------
+//
+// HOW MANY CELLS A LIST IS HOLDING, printed once per layout pass. The one
+// number that says whether this file is doing its job: a 20,000-row list and a
+// 50-row list must hold the SAME handful, and if the count tracks the model
+// then nothing here is virtualising and every row is live.
+//
+// facet_gtk's handoff ends on exactly this measurement — "GtkListView keeps 205
+// cells for a viewport that holds seven" — and records that guessing at it from
+// outside did not help. A number is the only thing that settles it.
+static ROWS_READ: bool = false;
+static ROWS_ON: bool = false;
+
+fn tracing_rows() -> bool {
+    if !ROWS_READ { ROWS_READ = true; ROWS_ON = env::has_var("FACET_WIN32_ROWS"); }
+    return ROWS_ON;
+}
+
+fn trace_rows(s: *ListState, first: i64, last: i64) {
+    if !tracing_rows() { return; }
+    var live: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).cells.count() };
+    while i < n {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => { if { (*c).row } >= (0 as i64) { live = live +% (1 as usize); } }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let count: i64 = { (*s).count };
+    io::eprintln("[rows] model=${count} visible=${first}..${last} cells=${n} live=${live}");
+    return;
+}
+
+// Scroll by `lines` rows, positive being downward — the door the wheel uses.
+// A list with nothing to scroll answers false, so the wheel falls through to
+// whatever is behind rather than being swallowed.
+fn scroll_by(v: *u8, n: *core::Node, lines: f64) -> bool {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return false; }
+    let vh: f64 = (vr.bottom -% vr.top) as f64;
+    if { (*s).content } <= vh { return false; }
+    let step: f64 = if { (*s).uniform } > (0.0 as f64) { { (*s).uniform } }
+                    else { default_row_height() };
+    { (*s).scroll = { (*s).scroll } + lines * step };
+    // `layout_rows` clamps — a wheel past either end settles at the end rather
+    // than running off it, and the clamp lives there because the scroll bar
+    // needs the same one.
+    layout_rows(v, n);
+    // REPORTED FROM THE TWO SCROLL DOORS, not from `layout_rows`. That function
+    // is the common bottom of both, but it is also called by every model
+    // change — and a rebuild is not a scroll.
+    fire_scrolled(v, n);
+    return true;
+}
+
+// Write the selection back into whichever props struct the kind really has.
+// The counterpart to `source_of`, and separate for the same reason: there is no
+// shared layout to cast to.
+fn write_selected(n: *core::Node, index: i64) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let k: u32 = { (*d).kind };
+    if k == props::K_LIST { { (*(raw as *props::ListProps)).selected_index = index }; return; }
+    if k == props::K_COLLECTION {
+        { (*(raw as *props::CollectionProps)).selected_index = index };
+    }
+    return;
+}
+
+// ---- the list's remaining verbs ------------------------------------------------------
+//
+// Everything above this line is about WHICH ROWS EXIST and where they sit.
+// These are about the list as a control: how it scrolls, what separates its
+// rows, and what it does while it is refreshing.
+
+// `scroll_to` names a ROW, not an offset — so it resolves through the same map
+// the layout uses, which is what makes it correct on the uneven path too. A row
+// past the end clamps rather than being ignored: an application scrolling to
+// the last row of a list that just shrank means "the end".
+fn scroll_to_row(v: *u8, n: *core::Node, at: i64) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    var i: i64 = at;
+    if i < (0 as i64) { i = 0 as i64; }
+    let n_rows: i64 = row_count(s);
+    if n_rows == (0 as i64) { return; }
+    if i >= n_rows { i = n_rows -% (1 as i64); }
+    { (*s).scroll = offset_of(s, i as usize) };
+    // `layout_rows` clamps to the content, so a scroll_to near the end lands at
+    // the end rather than past it.
+    layout_rows(v, n);
+    return;
+}
+
+fn strip_height(s: *ListState) -> f64 {
+    if { (*s).refreshing } { return refresh_bar_height() as f64; }
+    return 0.0f64;
+}
+
+fn row_count(s: *ListState) -> i64 {
+    if { (*s).is_tree } { return { (*s).tree_rows.count() } as i64; }
+    return { (*s).count };
+}
+
+// The two scroll-bar verbs. A viewport's bars are STYLE BITS, the same as
+// `scroll`'s own — and the horizontal one is worth a word: this recycler lays
+// rows out at the viewport's full width, so a horizontal bar has nothing to
+// scroll to. Setting the style is still right, because the application asked
+// for the bar and the alternative is to silently disagree; what it will not do
+// is make a row wider than its viewport.
+fn apply_bars(v: *u8, vertical: vocab::ScrollBars, horizontal: vocab::ScrollBars) {
+    var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    style = style & ~(sys::ws_vscroll() | sys::ws_hscroll());
+    if controls::bars_shown(vertical) { style = style | sys::ws_vscroll(); }
+    if controls::bars_shown(horizontal) { style = style | sys::ws_hscroll(); }
+    let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+    return;
+}
+
+// ---- separators ----------------------------------------------------------------------
+//
+// A HAIRLINE BETWEEN ROWS, drawn by the VIEWPORT rather than by the rows. The
+// rows are child windows and a child cannot draw outside itself — a separator
+// belonging to row N would have to paint on row N+1's first pixel, which it
+// does not own. The viewport owns the whole column, so it draws them all.
+//
+// That also makes the line survive recycling: a cell rebound to a different row
+// does not have to remember whether it drew one.
+fn draw_separators(v: *u8, n: *core::Node, hdc: *u8) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    if !src.separator { return; }
+    var has: bool = false;
+    var c: u32 = paint::resolve(src.separator_color, #addr_of(has));
+    // COLOR_3DLIGHT — a hairline, not a rule. An unstated separator colour that
+    // came out as window text would draw a black grid.
+    if !has { c = { u::GetSysColor(22 as i32) }; }
+    let brush: *u8 = paint::brush_for(c);
+    if brush == (0 as *u8) { return; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return; }
+    let n_rows: i64 = row_count(s);
+    let p: *SeqSource = #addr_of(src);
+    var i: i64 = 0 as i64;
+    while i < n_rows {
+        // The line sits at the row's BOTTOM, which is the next row's top, and
+        // the last row has none — a trailing rule under the final row reads as
+        // an empty row rather than as a separator.
+        let bottom: f64 = offset_of(s, i as usize)
+                        + height_at(s, i as usize, p) - { (*s).scroll }
+                        + strip_height(s);
+        if bottom > (0.0 as f64) && bottom < ((vr.bottom -% vr.top) as f64) {
+            if i < (n_rows -% (1 as i64)) {
+                var line: u::tagRECT = u::tagRECT {
+                    left: vr.left, top: bottom as i32,
+                    right: vr.right, bottom: (bottom as i32) +% (1 as i32),
+                };
+                let _f: i32 = { u::FillRect(hdc, #addr_of(line), brush) };
+            }
+        }
+        i = i +% (1 as i64);
+    }
+    return;
+}
+
+// ---- refresh -------------------------------------------------------------------------
+//
+// PULL-TO-REFRESH IS A TOUCH GESTURE and a desktop mouse cannot make it: there
+// is no overscroll to pull against, and a wheel past the top is not a gesture,
+// it is the end of the list. So `is_refreshable` and `can_refresh` are honoured
+// as PERMISSION rather than as an affordance — they gate whether a refresh can
+// be started at all — and the gesture that starts one is F5, which is what a
+// Windows application means by refresh.
+//
+// The STATE half is real and drawn: `is_refreshing` puts a marquee strip across
+// the top of the viewport, which is the same barber's pole a `spinner` is here.
+// `begin_refresh` and `end_refresh` are the imperative pair that set it.
+fn refresh_bar_height() -> i32 { return 4 as i32; }
+
+fn set_refreshing(v: *u8, n: *core::Node, on: bool) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    if { (*s).refreshing } == on { return; }
+    { (*s).refreshing = on };
+    write_refreshing(n, on);
+    // The strip is inside the viewport, so the rows move down by its height
+    // while it is up — otherwise it draws over the first row.
+    layout_rows(v, n);
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return;
+}
+
+fn write_refreshing(n: *core::Node, on: bool) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    if { (*d).kind } != props::K_LIST { return; }
+    { (*(raw as *props::ListProps)).is_refreshing = on };
+    return;
+}
+
+// The strip itself. Not animated — an animated one would want a timer per
+// list, and `anim` holds one tween for the whole process. A static bar in the
+// refresh colour says "refreshing" without claiming progress it does not have.
+fn draw_refresh_bar(v: *u8, n: *core::Node, hdc: *u8) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    if !{ (*s).refreshing } { return; }
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    var has: bool = false;
+    var c: u32 = paint::resolve(src.refresh_color, #addr_of(has));
+    if !has { c = { u::GetSysColor(13 as i32) }; }        // COLOR_HIGHLIGHT
+    let brush: *u8 = paint::brush_for(c);
+    if brush == (0 as *u8) { return; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return; }
+    var bar: u::tagRECT = u::tagRECT {
+        left: vr.left, top: vr.top,
+        right: vr.right, bottom: vr.top +% refresh_bar_height(),
+    };
+    let _f: i32 = { u::FillRect(hdc, #addr_of(bar), brush) };
+    return;
+}
+
+// F5 on a list that allows it. `is_refreshable` is the kind's permission and
+// `can_refresh` is the momentary one — an application that is already loading
+// sets `can_refresh` false, and both have to be true for the key to do
+// anything.
+fn refresh_requested(v: *u8, n: *core::Node) -> bool {
+    var src: SeqSource = source_of(n);
+    if !src.live { return false; }
+    if !src.is_refreshable { return false; }
+    if !src.can_refresh { return false; }
+    set_refreshing(v, n, true);
+    let h: fn(*u8, *u8) = src.on_refreshing;
+    if h == props::no_handler { return true; }
+    h(v, src.on_refreshing_ctx as *u8);
+    return true;
+}
+
+// ---- the list's control half ---------------------------------------------------------
+
+#[test]
+fn a_collection_says_it_has_no_separator_rather_than_reading_one() {
+    // THE POINT OF `SeqSource`. `CollectionProps` has no `separator` and no
+    // refresh at all — they are not on any of its five embedded structs. The
+    // old code cast a collection to `*ListProps` and would have read whichever
+    // bytes happened to sit at the separator's offset.
+    var c: core::Node = fcollection::collection(key: "c");
+    let src: SeqSource = source_of(#addr_of(c));
+    assert src.live;
+    assert !src.separator;
+    assert !src.is_refreshable;
+    assert !src.can_refresh;
+    assert src.on_refreshing == props::no_handler;
+    return;
+}
+
+#[test]
+fn a_list_reads_its_separator_and_refresh_from_its_own_props() {
+    var l: core::Node = flist::list(key: "l", refreshable: true, refresh: true);
+    let src: SeqSource = source_of(#addr_of(l));
+    assert src.live;
+    // `Separator::Default` is the unstated value and it MEANS SHOWN — the enum
+    // is Default-or-None, not on-or-off, and reading Default as "no separator"
+    // would silently drop the line from every list that said nothing.
+    assert src.separator;
+    assert src.is_refreshable;
+    assert src.can_refresh;
+    return;
+}
+
+#[test]
+fn a_table_is_still_not_a_row_source() {
+    // The type confusion this struct replaced. A `TableProps` is three fields;
+    // reading `.count` off it goes past the end of the allocation.
+    var t: core::Node = ftable::table(key: "t");
+    let src: SeqSource = source_of(#addr_of(t));
+    assert !src.live;
+    return;
+}
+
+#[test]
+fn the_refresh_strip_takes_room_only_while_it_is_up() {
+    // The rows start below the strip, because a child window paints OVER its
+    // parent and an overlay would be covered by the first row.
+    var s: ListState = new_state();
+    assert strip_height(#addr_of(s)) == (0.0 as f64);
+    { s.refreshing = true };
+    assert strip_height(#addr_of(s)) == (refresh_bar_height() as f64);
+    return;
+}
+
+#[test]
+fn scrolling_to_a_row_past_the_end_lands_on_the_last_one() {
+    // An application scrolling to the last row of a list that just shrank means
+    // "the end", not "nowhere".
+    var s: ListState = new_state();
+    { s.count = 10 as i64 };
+    { s.uniform = 20.0f64 };
+    assert row_count(#addr_of(s)) == (10 as i64);
+    assert offset_of(#addr_of(s), 9 as usize) == (180.0 as f64);
+    return;
+}
+
+#[test]
+fn scroll_to_on_a_dead_window_is_quiet() {
+    // `apply` runs on nodes whose create failed, so every one of these has to
+    // survive a null window rather than assume one.
+    var l: core::Node = flist::list(key: "l");
+    scroll_to_row(0 as *u8, #addr_of(l), 3 as i64);
+    draw_separators(0 as *u8, #addr_of(l), 0 as *u8);
+    draw_refresh_bar(0 as *u8, #addr_of(l), 0 as *u8);
+    assert !refresh_requested(0 as *u8, #addr_of(l));
+    return;
+}
+
+#[test]
+fn refresh_needs_both_permissions() {
+    // `is_refreshable` is the kind's permission and `can_refresh` the momentary
+    // one — an application already loading sets the second false, and F5 must
+    // then do nothing.
+    var a: core::Node = flist::list(key: "a", refreshable: true, refresh: false);
+    let sa: SeqSource = source_of(#addr_of(a));
+    assert sa.is_refreshable;
+    assert !sa.can_refresh;
+    var b: core::Node = flist::list(key: "b", refreshable: false, refresh: true);
+    let sb: SeqSource = source_of(#addr_of(b));
+    assert !sb.is_refreshable;
+    return;
+}
+
+// ---- the row lifecycle, and the scroll observer --------------------------------------
+//
+// This recycler is the one place that knows exactly when a row enters and
+// leaves the visible window, because it is the thing that decides. The other
+// three backends have to infer it from a factory callback; here it is the
+// free-then-fill loop in `layout_rows`.
+//
+// BOTH THE REBIND AND THE FRESH BUILD COUNT AS APPEARING. Firing only when a
+// new cell is made would report an item appearing exactly when the list was too
+// slow to recycle, which is the opposite of the truth. facet_gtk states the
+// same rule from its side.
+//
+// The sender is the ROW'S window, not the list's: a handler that wants to know
+// which row it was is holding the thing it was given, and `item_of` reads the
+// index off it.
+fn fire_item_visibility(n: *core::Node, host: *u8, appearing: bool) {
+    if n == (0 as *core::Node) { return; }
+    // ONLY `list` DECLARES THESE TWO. `props_of` answers null for any other
+    // kind, so a collection, a table or a tree — which share this recycler and
+    // do NOT have the verbs — falls out here rather than reading another
+    // kind's block. That is the same discipline `SeqSource` exists for.
+    let p: *props::ListProps = controls::props_of(n, props::K_LIST) as *props::ListProps;
+    if p == (0 as *props::ListProps) { return; }
+    if appearing {
+        let h: fn(*u8, *u8) = { (*p).on_item_appearing };
+        if h != props::no_handler { h(host, { (*p).on_item_appearing_ctx }); }
+        return;
+    }
+    let h: fn(*u8, *u8) = { (*p).on_item_disappearing };
+    if h != props::no_handler { h(host, { (*p).on_item_disappearing_ctx }); }
+    return;
+}
+
+// `observe_scrolled` on the list itself and on its embedded `ItemsViewProps`.
+// A list has BOTH — its own and the items-view one — and a collection has only
+// the second, which is why this reads the kind rather than a resolved copy.
+fn fire_scrolled(v: *u8, n: *core::Node) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let k: u32 = { (*d).kind };
+    if k == props::K_LIST {
+        let p: *props::ListProps = raw as *props::ListProps;
+        let h: fn(*u8, *u8) = { (*p).observe_scrolled };
+        if h != props::no_handler { h(v, { (*p).observe_scrolled_ctx }); }
+        return;
+    }
+    if k == props::K_COLLECTION {
+        let p: *props::CollectionProps = raw as *props::CollectionProps;
+        let h: fn(*u8, *u8) = { (*p).items_view.observe_scrolled };
+        if h != props::no_handler { h(v, { (*p).items_view.observe_scrolled_ctx }); }
+    }
+    return;
+}
+
+// THE THRESHOLD FIRES ON THE EDGE, not on every frame past it. `ItemsView`'s
+// contract is "tell me when I am within N of the end so I can load more", and
+// an application that loads on every scroll message inside that band issues one
+// request per pixel.
+fn fire_threshold(v: *u8, n: *core::Node, last: i64, count: i64) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    if { (*d).kind } != props::K_COLLECTION { return; }
+    let p: *props::CollectionProps = raw as *props::CollectionProps;
+    let want: i64 = { (*p).items_view.remaining_threshold };
+    // A threshold of zero is OFF, which is the default and what an application
+    // that never asked for this means.
+    if want <= (0 as i64) { return; }
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    let inside: bool = (count -% (1 as i64) -% last) <= want;
+    if inside == { (*s).in_threshold } { return; }
+    { (*s).in_threshold = inside };
+    if !inside { return; }
+    let h: fn(*u8, *u8) = { (*p).items_view.on_remaining_items_threshold_reached };
+    if h != props::no_handler {
+        h(v, { (*p).items_view.on_remaining_items_threshold_reached_ctx });
+    }
+    return;
+}

@@ -1,0 +1,203 @@
+// facet_win32 — facet's Win32 backend, the Windows sibling of facet_appkit,
+// facet_gtk and facet_android.
+//
+// facet owns the description tree and ALL layout (the shared `flex_layout`
+// engine). This package answers one question per verb the contract declares:
+// implement it with what user32/gdi32/comctl32 offers, or state plainly in
+// MANIFEST.md that Win32 cannot. It holds nothing else — no second vocabulary,
+// no portable-looking side door. An application may still drop beneath facet
+// and call Win32 directly; that is a visible choice made in the application,
+// not something this package offers as a shortcut.
+//
+// This file is the whole registration surface: `install()`, and nothing else a
+// backend could smuggle a hook through.
+//
+//   mount::install(Renderer)                 create / apply / insert / remove / schedule
+//   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
+//   theme::set_is_dark_fn                    the system appearance read
+//   theme::set_theme_changed_fn              repaint the running app's chrome
+//   gestures::install_key_reader             input.cplus — the key band's readers
+//   component::install_sender_readers        input.cplus — key / item / raise
+//
+// The sender readers are PARTIALLY filled, which is not the same as
+// half-wired: `component::SenderReaders` declares a zero field as keeping
+// facet's portable default, and the three drag-and-drop readers are left zero
+// because there is no IDropTarget in this package yet. A zero reader answers
+// "no backend told me"; a filled one answering empty would be a lie.
+//
+// STATUS. Read MANIFEST.md, which is a MEASUREMENT
+// (`python3 vendor/facet_gtk/tools/parity.py`, which measures every backend)
+// rather than a claim. This backend is at FIRST LIGHT: the seam is complete
+// and a first set of kinds have bodies; every other kind gets a panel that
+// honours the band and holds its children. That is a floor, not a finished
+// backend, and the tool prints the number so it cannot be overstated.
+
+import "stdlib/option" as option;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/theme" as theme;
+import "facet/application" as app;
+import "./views" as views;
+import "./input" as input;
+import "./paint" as paint;
+import "./scheduler" as scheduler;
+import "./window" as window;
+import "./geometry" as geometry;
+import "./recycler" as recycler;
+
+fn renderer() -> mount::Renderer {
+    return mount::Renderer {
+        ctx: 0 as *u8,
+        create: views::create,
+        view_release: views::view_release,
+        apply: views::apply,
+        insert: views::insert,
+        remove: views::remove,
+        schedule: scheduler::schedule,
+    };
+}
+
+// Install the backend. Idempotent: a facade doing belt-and-braces registration
+// must not register the window classes twice or arm the pump twice.
+static INSTALLED: bool = false;
+
+fn install() {
+    if INSTALLED { return; }
+    INSTALLED = true;
+    // COMMON CONTROLS BEFORE ANY WINDOW IS MADE. `create` runs during
+    // `mount::mount`, and the progress bar, trackbar and list view classes do
+    // not exist until comctl32 has been initialised — a `CreateWindowEx`
+    // against an unregistered class answers null, which reaches facet as a
+    // node it laid out and never drew.
+    let icc: i32 = init_common_controls();
+    mount::install(renderer());
+    services::install_scheduler(scheduler::scheduler());
+    input::install();
+    // The layout walk cannot reach a list's rows on its own — see
+    // `geometry::set_rows_hook`.
+    geometry::set_rows_hook(recycler::layout_rows);
+    theme::set_is_dark_fn(window::is_dark);
+    theme::set_theme_changed_fn(theme_changed);
+    window::sync_appearance();
+    window::report_theme(icc);
+    return;
+}
+
+fn installed() -> bool { return INSTALLED; }
+
+// Tests and teardown: back to facet's portable no-backend posture.
+fn uninstall() {
+    mount::uninstall();
+    services::uninstall_scheduler();
+    input::uninstall();
+    theme::set_is_dark_fn(0 as fn() -> bool);
+    theme::set_theme_changed_fn(0 as fn());
+    INSTALLED = false;
+    return;
+}
+
+// `INITCOMMONCONTROLSEX` is two DWORDs — a size and a class mask. Laid out by
+// hand rather than bound, because it is the only comctl32 struct this package
+// needs and it is eight bytes.
+//
+// WHICH CLASSES, and this is the third time in this package a COMMENT ASSERTING
+// COVERAGE WAS THE BUG. It used to pass `ICC_WIN95_CLASSES` alone, on the note
+// that it "covers every common control facet's vocabulary reaches for". It does
+// not. `ICC_WIN95_CLASSES` is 0x000000FF and `ICC_DATE_CLASSES` is 0x00000100 —
+// one bit OUTSIDE it. So `SysDateTimePick32` was never registered, both pickers
+// failed to create, and a `date_picker` node laid out an empty gap. Nothing
+// reported an error: `CreateWindowExA` on an unregistered class returns null,
+// and a null view is a node this package skips.
+//
+// `ICC_STANDARD_CLASSES` (0x00004000) is here for a different reason. Button,
+// edit, static and combobox are user32's and always exist — but comctl32 v6
+// SUPERCLASSES them, and that superclass is what draws the themed versions.
+// Given how much of this package's appearance is those four, asking for them
+// explicitly rather than relying on the manifest alone is cheap insurance.
+// THE STRUCT AND THE FUNCTION MAY NOT SHARE A NAME. Both were called
+// `InitCommonControlsEx` — the C struct tag and the C entry point do, in the
+// SDK — and the call then resolved to the type rather than to comctl32. It
+// compiled, it returned, and comctl32 was never initialised: every control
+// stayed on the v5 code path and `IsAppThemed` answered 0 for the life of the
+// process.
+//
+// Measured in C, which is what found it: `IsAppThemed` is 0 BEFORE
+// `InitCommonControlsEx` and 1 after, with no manifest involved at all.
+// `#[repr(C)]` is not optional here. Without it C+ is free to lay the fields
+// out as it likes, and comctl32 reads `dwSize` at offset 0 and `dwICC` at 4 —
+// a different layout makes the call succeed and initialise NOTHING, which is
+// exactly the failure this file spent an afternoon on: `InitCommonControlsEx`
+// returned 1 and `IsAppThemed` stayed 0.
+#[repr(C)] struct IccEx { size: u32, icc: u32 }
+
+extern fn InitCommonControlsEx(p: *u8) -> i32;
+
+fn icc_win95() -> u32 { return 0x000000FF as u32; }
+fn icc_date() -> u32 { return 0x00000100 as u32; }
+fn icc_standard() -> u32 { return 0x00004000 as u32; }
+
+fn init_common_controls() -> i32 {
+    let want: u32 = icc_win95() | icc_date() | icc_standard();
+    var c: IccEx = IccEx { size: 8 as u32, icc: want };
+    return { InitCommonControlsEx(#addr_of(c) as *u8) };
+}
+
+// ---- theme changed -----------------------------------------------------------
+//
+// A palette swap or an appearance flip. Colours are resolved at APPLY time —
+// `paint::resolve` picks the side of an adaptive pair from the live appearance
+// — so chrome that used a theme role has to be re-applied.
+//
+// The tree IS the registry: marking the restyle bits routes the repaint
+// through the ordinary sync, so there is one code path for "the colour
+// changed" whatever changed it.
+fn theme_changed() {
+    window::sync_appearance();
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) { repaint_walk(r); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn repaint_walk(n: *core::Node) {
+    // EVERY STATE BIT, not the two shared-band colours: a colour on a CONTROL
+    // is a per-kind prop, so a label carrying an adaptive pair as its TEXT
+    // colour would otherwise keep the side it was mounted with.
+    //
+    // `C_RESTYLE` is every fact and no VERB, and NOT `all_bits()`, which is
+    // also the create sentinel. Passing that here would make every appearance
+    // flip look like a create and re-issue focus — the AppKit backend shipped
+    // exactly that bug; it is written down there, copied to facet_gtk on
+    // purpose, and copied here for the same reason.
+    core::touch(n, paint::restyle_bits());
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { repaint_walk(c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- hosting -----------------------------------------------------------------
+//
+// ONE ENTRY, and the mount is inside it. `window::open` mounts because
+// `mount::mount` is what opens the window on the app's record — the two have to
+// happen together or `app::newest_window_root()` answers about a window that is
+// not there yet. facet_gtk's handoff lists getting this wrong as the first bug
+// its gallery found: every node had a frame, a position and no widget, and the
+// window came up the right size, correct, and completely empty.
+fn open_window(root: *core::Node, title: str, width: f64, height: f64) -> bool {
+    if !INSTALLED { install(); }
+    return window::open(root, title, width, height);
+}

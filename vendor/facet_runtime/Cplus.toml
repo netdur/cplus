@@ -62,3 +62,10 @@ webkit      = "*"
 facet_android = "*"
 android_view  = "*"
 jni           = "*"
+
+[windows.dependencies]
+facet_win32 = "*"
+# facet_win32's transitive deps — same flat-set rule: the resolver validates
+# every import in a build against ONE flat set taken from the consuming
+# manifest, so a tier's own dependencies are not enough.
+win32       = "*"

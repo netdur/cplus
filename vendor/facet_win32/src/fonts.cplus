@@ -1,0 +1,584 @@
+// facet_win32/fonts — a control's typeface, and the cache behind it.
+//
+// Every control drew in the system font until this file existed: an 18-point
+// bold title measured and painted at the same 16 pixels as its body text, which
+// the first probe made visible in one screenshot.
+//
+// `WM_SETFONT` is the whole mechanism. A control holds ONE HFONT and asks it
+// for every string it draws, so a font is set once per control and re-set only
+// when a font bit is dirty.
+//
+// ---- WHY NOT `CreateFontIndirectA` -------------------------------------------
+//
+// Because the bound `tagLOGFONTA` IS THE WRONG SIZE, and using it would read
+// past the end of the struct.
+//
+// C declares `CHAR lfFaceName[LF_FACESIZE]` — a 32-byte array INSIDE the
+// struct, which is what makes `sizeof(LOGFONTA)` 60. `cpc-bindgen` has no way
+// to express an inline fixed array in a `#[repr(C)]` field, so it lowered it to
+// `opaque lfFaceName: *u8` and the struct came out 40 bytes with a pointer
+// where the name should be. `CreateFontIndirectA` would read a face name from
+// whatever those eight bytes pointed at and then keep reading.
+//
+// `CreateFontA` takes all fourteen fields as ARGUMENTS and builds the LOGFONT
+// itself, on its own side of the ABI, correctly. So there is no struct to lay
+// out and nothing to get wrong. Worth the note because the indirect call is the
+// one every Win32 example uses, and reaching for it here is a memory bug rather
+// than a style choice.
+//
+// ---- HEIGHT IS NEGATIVE, AND THAT IS NOT A TRICK -----------------------------
+//
+// A positive `cHeight` is the CELL height — ascent plus descent plus internal
+// leading — and a negative one is the CHARACTER height, which is what a point
+// size means everywhere else. Passing facet's point size straight in as a
+// positive number gives a font about 20% smaller than asked for, consistently,
+// on every control.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "facet/text_button" as text_button;
+import "facet/symbol" as symbol;
+import "facet/icon_button" as icon_button;
+import "facet/date_picker" as date_picker;
+import "facet/time_picker" as time_picker;
+import "./controls" as controls;
+import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
+import "facet/popup" as popup;
+import "facet/radio" as radio;
+import "win32/winuser" as u;
+import "win32/wingdi" as gdi;
+import "./sys" as sys;
+
+// ---- what a node asks for ------------------------------------------------------
+//
+// Four facts and a fifth that says whether any of them were stated. A node that
+// asked for NOTHING gets no font set at all, which leaves the control wearing
+// the shell's — the honest reading of `font_size: 0` and `FontWeight::Default`,
+// and better than resolving them to numbers of our own.
+
+struct FontSpec {
+    size: f64,
+    weight: vocab::FontWeight,
+    italic: bool,
+    // UNDERLINE AND STRIKETHROUGH ARE THE FONT'S, not the control's. Win32 has no
+    // per-control decoration — `CreateFontA` takes `bUnderline` and
+    // `bStrikeOut`, so a decorated label is a different HFONT rather than a
+    // different draw. That also means they participate in the cache key.
+    underline: bool,
+    strike: bool,
+    family: text::Text,
+    stated: bool,
+}
+
+fn no_font() -> FontSpec {
+    return FontSpec {
+        size: 0.0f64, weight: vocab::FontWeight::Default, italic: false,
+        underline: false, strike: false,
+        family: text::from_str(""), stated: false,
+    };
+}
+
+// What a node asks for, per kind.
+//
+// EVERY KIND `font_bits` CLAIMS MUST BE READ HERE, and the pair is the whole
+// contract: a kind in one list and not the other either re-applies a font it
+// cannot describe, or describes one nothing re-applies. The second is what the
+// old code did for four kinds.
+fn spec_of(n: *core::Node) -> FontSpec {
+    let kind: u32 = core::kind_of(n);
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return no_font(); }
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return no_font(); }
+    if kind == props::K_LABEL {
+        let q: *props::LabelProps = p as *props::LabelProps;
+        // A label is the one kind that carries a DECORATION, and it rides the
+        // font rather than the control — see `FontSpec`.
+        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+                           { (*q).is_italic }, { (*q).font_family }.clone(),
+                           { (*q).text_decoration });
+    }
+    if kind == props::K_BUTTON {
+        let q: *props::ButtonProps = p as *props::ButtonProps;
+        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+                           { (*q).is_italic }, { (*q).font_family }.clone());
+    }
+    if kind == props::K_RADIO {
+        let q: *props::RadioProps = p as *props::RadioProps;
+        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+                           { (*q).is_italic }, { (*q).font_family }.clone());
+    }
+    if kind == props::K_POPUP {
+        let q: *props::PopupProps = p as *props::PopupProps;
+        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+                           { (*q).is_italic }, { (*q).font_family }.clone());
+    }
+    // BOTH PICKERS CARRY A FULL TYPOGRAPHY SURFACE and a DATETIMEPICK32 wears
+    // whatever font it is given, so this is the same read as a button's — it
+    // was missing for no better reason than that the two kinds were added
+    // after `spec_of` was written.
+    if kind == props::K_DATE_PICKER {
+        let q: *props::DatePickerProps = p as *props::DatePickerProps;
+        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+                           { (*q).is_italic }, { (*q).font_family }.clone());
+    }
+    if kind == props::K_TIME_PICKER {
+        let q: *props::TimePickerProps = p as *props::TimePickerProps;
+        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+                           { (*q).is_italic }, { (*q).font_family }.clone());
+    }
+    // AN ICON BUTTON'S SOURCE IS A GLYPH WHEN IT LOOKS LIKE ONE. `source` is a
+    // file path on gtk and android and an SF Symbol name on appkit; here it is
+    // drawn as text, so the only question is WHICH FACE.
+    //
+    // The rule is narrow on purpose: a single character in the Unicode
+    // private-use area (U+E000..U+F8FF) is where both Material Symbols and
+    // Segoe Fluent Icons live, and nothing else does. That gets the bundled
+    // icon face; anything else — a word, a path — keeps the UI font, because
+    // rendering ordinary text in an icon font produces a row of wrong pictures
+    // rather than a missing one.
+    //
+    // Without this an `icon_button(icons::star)` drew a `.notdef` sliver: the
+    // codepoint is real, and Segoe UI simply has no glyph at it.
+    if kind == props::K_ICON_BUTTON {
+        let q: *props::IconButtonProps = p as *props::IconButtonProps;
+        if is_private_use_glyph({ (*q).source }.view()) {
+            return stated_spec(0.0f64, vocab::FontWeight::Default, false,
+                               text::from_str(controls::bundled_family()));
+        }
+        return no_font();
+    }
+    if kind == symbol::K_SYMBOL {
+        let q: *symbol::SymbolProps = p as *symbol::SymbolProps;
+        // An empty `font` means the BUNDLED family, which is what `symbol`
+        // declares as its portable tier.
+        var fam: text::Text = { (*q).font }.clone();
+        if fam.view() == "" { fam = text::from_str(controls::bundled_family()); }
+        return stated_spec({ (*q).size }, vocab::FontWeight::Default, false, fam);
+    }
+    if kind == text_button::K_TEXT_BUTTON {
+        let q: *text_button::TextButtonProps = p as *text_button::TextButtonProps;
+        // UNDERLINE IS THE POINT of the link posture, which is why this kind
+        // declares a decoration at all — so it rides the font here exactly as a
+        // label's does.
+        return stated_spec({ (*q).font_size }, { (*q).font_weight },
+                           { (*q).is_italic }, { (*q).font_family }.clone(),
+                           { (*q).text_decoration });
+    }
+    // The three INPUT kinds carry their font on the embedded `InputViewProps`
+    // rather than restating it, so the read is one level down.
+    if kind == props::K_TEXT_FIELD {
+        let q: *props::TextFieldProps = p as *props::TextFieldProps;
+        return input_spec(#addr_of((*q).input_view));
+    }
+    if kind == props::K_TEXT_AREA {
+        let q: *props::TextAreaProps = p as *props::TextAreaProps;
+        return input_spec(#addr_of((*q).input_view));
+    }
+    if kind == props::K_SEARCH_FIELD {
+        let q: *props::SearchFieldProps = p as *props::SearchFieldProps;
+        return input_spec(#addr_of((*q).input_view));
+    }
+    return no_font();
+}
+
+// One character, in U+E000..U+F8FF. Decoded from UTF-8 by hand rather than
+// through a `chars()` pass: this runs on every apply of every icon button and
+// only ever needs to answer a question about the FIRST character and the
+// length.
+fn is_private_use_glyph(s: str) -> bool {
+    // A private-use codepoint is U+E000..U+F8FF, which in UTF-8 is exactly
+    // three bytes starting 0xEE or 0xEF. Any other length is a word or a path.
+    if s.count() != (3 as usize) { return false; }
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let p: *u8 = cs.as_ptr();
+            let b0: u32 = { *p } as u32;
+            if b0 != (0xEE as u32) && b0 != (0xEF as u32) { return false; }
+            let b1: u32 = { *{ (p + (1 as usize)) } } as u32;
+            let b2: u32 = { *{ (p + (2 as usize)) } } as u32;
+            let cp: u32 = ((b0 & (0x0F as u32)) << (12 as u32))
+                        | ((b1 & (0x3F as u32)) << (6 as u32))
+                        | (b2 & (0x3F as u32));
+            return cp >= (0xE000 as u32) && cp <= (0xF8FF as u32);
+        }
+        option::Option[text::CString]::None => { return false; }
+    }
+}
+
+fn input_spec(iv: *props::InputViewProps) -> FontSpec {
+    return stated_spec({ (*iv).font_size }, { (*iv).font_weight },
+                       { (*iv).is_italic }, { (*iv).font_family }.clone());
+}
+
+fn stated_spec(size: f64, weight: vocab::FontWeight, italic: bool,
+               take family: text::Text,
+               decoration: vocab::TextDecoration = vocab::TextDecoration::None) -> FontSpec {
+    var f: FontSpec = FontSpec {
+        size: size, weight: weight, italic: italic,
+        underline: false, strike: false,
+        family: family, stated: false,
+    };
+    match decoration {
+        vocab::TextDecoration::Underline => { f.underline = true; f.stated = true; }
+        vocab::TextDecoration::Strikethrough => { f.strike = true; f.stated = true; }
+        vocab::TextDecoration::None => { }
+    }
+    if size > (0.0 as f64) { f.stated = true; }
+    if italic { f.stated = true; }
+    if f.family.view() != "" { f.stated = true; }
+    // `Default` is facet's word for "unstated", so it is the one weight that
+    // does NOT make a font. Every other named weight does, even `Regular` —
+    // asking for regular explicitly is a decision, and on a control whose class
+    // defaults to bold it is a visible one.
+    let named: bool = match weight {
+        vocab::FontWeight::Default => false,
+        vocab::FontWeight::UltraLight => true,
+        vocab::FontWeight::Thin => true,
+        vocab::FontWeight::Light => true,
+        vocab::FontWeight::Regular => true,
+        vocab::FontWeight::Medium => true,
+        vocab::FontWeight::Semibold => true,
+        vocab::FontWeight::Bold => true,
+        vocab::FontWeight::Heavy => true,
+        vocab::FontWeight::Black => true,
+    };
+    if named { f.stated = true; }
+    return f;
+}
+
+// facet's named weights -> the LOGFONT numbers, which are the CSS numbers.
+// The same table `facet_gtk::paint::css_weight` and `pango_weight` are, and
+// deliberately not a second one that could drift.
+fn win_weight(w: vocab::FontWeight) -> i32 {
+    return match w {
+        vocab::FontWeight::Default => 400 as i32,
+        vocab::FontWeight::UltraLight => 100 as i32,
+        vocab::FontWeight::Thin => 200 as i32,
+        vocab::FontWeight::Light => 300 as i32,
+        vocab::FontWeight::Regular => 400 as i32,
+        vocab::FontWeight::Medium => 500 as i32,
+        vocab::FontWeight::Semibold => 600 as i32,
+        vocab::FontWeight::Bold => 700 as i32,
+        vocab::FontWeight::Heavy => 800 as i32,
+        vocab::FontWeight::Black => 900 as i32,
+    };
+}
+
+// The default UI point size when a node named a weight or a family but no size.
+// Windows has no call that answers "the shell's font size" without going
+// through `SystemParametersInfo` and the `NONCLIENTMETRICS` struct — which has
+// the same inline-array problem `tagLOGFONTA` does — so this is stated.
+// 9 point is the Segoe UI default every stock Windows theme uses.
+fn default_point_size() -> f64 { return 9.0f64; }
+
+// Points -> the negative character height `CreateFontA` wants, at the window's
+// own DPI. Per-monitor: a window dragged to a 150% display gets a bigger font
+// on the next apply, because `GetDpiForWindow` answers about THAT monitor.
+fn height_for(v: *u8, points: f64) -> i32 {
+    var pt: f64 = points;
+    if pt <= (0.0 as f64) { pt = default_point_size(); }
+    var dpi: u32 = { u::GetDpiForWindow(v) };
+    if dpi == (0 as u32) { dpi = 96 as u32; }
+    let px: f64 = pt * (dpi as f64) / (72.0 as f64);
+    // NEGATIVE — the character height rather than the cell height. See the
+    // header; this is the sign that makes a 9pt font look like 9pt.
+    return 0 -% (px + (0.5 as f64)) as i32;
+}
+
+// ---- the cache -------------------------------------------------------------------
+//
+// An HFONT is a GDI object and a control does not own the one it is given: the
+// caller keeps it and must not delete it while any control still holds it. So
+// fonts are cached by their SPEC and never freed, exactly like `paint`'s
+// brushes and for the same reason — bounded by how many distinct fonts a tree
+// asks for, which is a design decision, rather than by how often it repaints,
+// which is time.
+
+const MAX_FONTS: usize = 32 as usize;
+
+static F_HEIGHT: [i32; 32] = [0 as i32; 32];
+static F_WEIGHT: [i32; 32] = [0 as i32; 32];
+static F_ITALIC: [bool; 32] = [false; 32];
+static F_UNDER: [bool; 32] = [false; 32];
+static F_STRIKE: [bool; 32] = [false; 32];
+static F_FAMILY: [usize; 32] = [0 as usize; 32];
+static F_HANDLE: [usize; 32] = [0 as usize; 32];
+static F_USED: [bool; 32] = [false; 32];
+
+// The family is compared by its INTERNED bytes, so a slot match is a pointer
+// compare rather than a string compare on every apply. `text::intern` is a
+// process-lifetime table, which is the right lifetime for a face name that a
+// cached font already outlives.
+fn family_key(s: str) -> usize {
+    if s == "" { return 0 as usize; }
+    return { #addr(#str_ptr(text::intern(s))) };
+}
+
+fn font_for(v: *u8, spec: FontSpec) -> *u8 {
+    let h: i32 = height_for(v, spec.size);
+    let w: i32 = win_weight(spec.weight);
+    let fam: usize = family_key(spec.family.view());
+    var i: usize = 0 as usize;
+    while i < MAX_FONTS {
+        if F_USED[i] && F_HEIGHT[i] == h && F_WEIGHT[i] == w
+           && F_ITALIC[i] == spec.italic && F_FAMILY[i] == fam
+           && F_UNDER[i] == spec.underline && F_STRIKE[i] == spec.strike {
+            return F_HANDLE[i] as *u8;
+        }
+        i = i +% (1 as usize);
+    }
+    var j: usize = 0 as usize;
+    while j < MAX_FONTS {
+        if !F_USED[j] {
+            let handle: *u8 = create_font(h, w, spec.italic, spec.underline,
+                                          spec.strike, spec.family.view());
+            if handle == (0 as *u8) { return 0 as *u8; }
+            F_HEIGHT[j] = h;
+            F_WEIGHT[j] = w;
+            F_ITALIC[j] = spec.italic;
+            F_UNDER[j] = spec.underline;
+            F_STRIKE[j] = spec.strike;
+            F_FAMILY[j] = fam;
+            F_HANDLE[j] = { #addr(handle) };
+            F_USED[j] = true;
+            return handle;
+        }
+        j = j +% (1 as usize);
+    }
+    // THE TABLE IS FULL, and the answer is null rather than an eviction. A font
+    // handed to a control and then deleted to make room is a use-after-free the
+    // cache exists to avoid — so a thirty-third font leaves that control in the
+    // shell's, which is a visible narrowing rather than a crash.
+    return 0 as *u8;
+}
+
+// DEFAULT_CHARSET (1), OUT_DEFAULT_PRECIS (0), CLIP_DEFAULT_PRECIS (0),
+// CLEARTYPE_QUALITY (5), DEFAULT_PITCH | FF_DONTCARE (0).
+//
+// CLEARTYPE_QUALITY and not DEFAULT_QUALITY: the default leaves antialiasing to
+// a per-font flag most faces do not set, so text comes out aliased on a display
+// where every other application's is smooth.
+fn create_font(height: i32, weight: i32, italic: bool, underline: bool,
+               strike: bool, family: str) -> *u8 {
+    let it: u32 = if italic { 1 as u32 } else { 0 as u32 };
+    let un: u32 = if underline { 1 as u32 } else { 0 as u32 };
+    let st: u32 = if strike { 1 as u32 } else { 0 as u32 };
+    if family == "" {
+        return { gdi::CreateFontA(height, 0 as i32, 0 as i32, 0 as i32, weight,
+                                  it, un, st,
+                                  1 as u32, 0 as u32, 0 as u32, 5 as u32, 0 as u32,
+                                  default_face() as *i8) };
+    }
+    match text::from_str(family).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            return { gdi::CreateFontA(height, 0 as i32, 0 as i32, 0 as i32, weight,
+                                      it, un, st,
+                                      1 as u32, 0 as u32, 0 as u32, 5 as u32, 0 as u32,
+                                      cs.as_ptr() as *i8) };
+        }
+        option::Option[text::CString]::None => { return 0 as *u8; }
+    }
+}
+
+// The shell's own UI face. Named rather than left empty: an empty face name
+// makes GDI pick by the other attributes alone, which lands on the ancient
+// bitmap "System" font rather than on what the rest of Windows is using.
+fn default_face() -> *u8 { return { #str_ptr("Segoe UI\0") }; }
+
+// ---- applying ---------------------------------------------------------------------
+
+// The bits that mean "this node's font changed" — PER KIND, because they are
+// not the same numbers.
+//
+// This function used to return `label`'s constants for everything, with a
+// comment asserting that "the per-kind constants are the SAME NUMBERS across
+// kinds — every generated module numbers its bits from one". That is false, and
+// the comment is why it went unchecked:
+//
+//     label       P_FONT_WEIGHT 2     P_FONT_SIZE 32
+//     button      P_FONT_WEIGHT 32    P_FONT_SIZE 512
+//     text_field  P_FONT_WEIGHT 128   P_FONT_SIZE 2048
+//
+// A generated module numbers its bits from one in DECLARATION order, and the
+// kinds declare different props, so the same verb lands on a different bit in
+// each. Label's mask is 62; a button's `P_FONT_SIZE` is 512 and is not in it.
+//
+// The consequence was exact and silent: changing a button's, field's, editor's
+// or search field's font AFTER MOUNT never re-applied it. Create worked,
+// because create passes every bit; every later write did nothing, forever, with
+// no error. Label worked, which is why it looked right.
+//
+// A kind with no font of its own answers zero, and `views::configure` then
+// never calls `apply` for it — which is correct rather than merely cheap: a
+// checkbox has no font props to read.
+fn font_bits(kind: u32) -> u64 {
+    if kind == props::K_LABEL {
+        return label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
+             | label::P_IS_ITALIC | label::P_FONT_SCALES
+             | label::P_TEXT_DECORATION;
+    }
+    if kind == props::K_BUTTON {
+        return button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
+             | button::P_IS_ITALIC | button::P_FONT_SCALES;
+    }
+    if kind == props::K_TEXT_FIELD {
+        return text_field::P_FONT_SIZE | text_field::P_FONT_WEIGHT
+             | text_field::P_FONT_FAMILY | text_field::P_IS_ITALIC
+             | text_field::P_FONT_SCALES;
+    }
+    if kind == props::K_TEXT_AREA {
+        return text_area::P_FONT_SIZE | text_area::P_FONT_WEIGHT
+             | text_area::P_FONT_FAMILY | text_area::P_IS_ITALIC
+             | text_area::P_FONT_SCALES;
+    }
+    if kind == props::K_SEARCH_FIELD {
+        return search_field::P_FONT_SIZE | search_field::P_FONT_WEIGHT
+             | search_field::P_FONT_FAMILY | search_field::P_IS_ITALIC
+             | search_field::P_FONT_SCALES;
+    }
+    if kind == props::K_POPUP {
+        return popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
+             | popup::P_IS_ITALIC | popup::P_FONT_SCALES;
+    }
+    if kind == props::K_RADIO {
+        return radio::P_FONT_SIZE | radio::P_FONT_WEIGHT | radio::P_FONT_FAMILY
+             | radio::P_IS_ITALIC | radio::P_FONT_SCALES;
+    }
+    if kind == text_button::K_TEXT_BUTTON {
+        return text_button::P_FONT_SIZE | text_button::P_FONT_WEIGHT
+             | text_button::P_FONT_FAMILY | text_button::P_IS_ITALIC
+             | text_button::P_FONT_SCALES | text_button::P_TEXT_DECORATION;
+    }
+    // A SYMBOL'S SIZE AND FAMILY ARE ITS FONT. That is the whole of how a glyph
+    // is drawn here — the codepoint is the text and everything about its
+    // appearance rides the face, which is why `symbol` has no separate
+    // typography surface.
+    // An icon button's face follows its SOURCE — see `spec_of` — so a change
+    // of source is a change of font.
+    if kind == props::K_ICON_BUTTON { return icon_button::P_SOURCE; }
+    if kind == props::K_DATE_PICKER {
+        return date_picker::P_FONT_SIZE | date_picker::P_FONT_WEIGHT
+             | date_picker::P_FONT_FAMILY | date_picker::P_IS_ITALIC
+             | date_picker::P_FONT_SCALES;
+    }
+    if kind == props::K_TIME_PICKER {
+        return time_picker::P_FONT_SIZE | time_picker::P_FONT_WEIGHT
+             | time_picker::P_FONT_FAMILY | time_picker::P_IS_ITALIC
+             | time_picker::P_FONT_SCALES;
+    }
+    if kind == symbol::K_SYMBOL { return symbol::P_SIZE | symbol::P_FONT; }
+    return 0 as u64;
+}
+
+// EVERY CONTROL GETS A FONT, including one whose node stated none.
+//
+// This used to return early on an unstated font, reasoning that the control
+// would keep "the shell's own". It does not. A window that never receives
+// WM_SETFONT draws in the stock SYSTEM font — a bitmap face from 1985 — and
+// every control in the probe came out blocky and semi-bold because of it.
+// Windows does not inherit a UI font; each control is told or it gets that.
+//
+// So an unstated font resolves to the shell's default face at the default
+// size, which is what `spec_of` leaves in the zeroes and what `height_for` and
+// `create_font` already fall back to. `stated` still matters — it is what
+// `font_bits` gates the re-apply on — but it no longer gates the FIRST apply.
+fn apply(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    let spec: FontSpec = spec_of(n);
+    let f: *u8 = font_for(v, spec);
+    if f == (0 as *u8) { return; }
+    // wParam is the font; lParam non-zero asks for a redraw, which is wanted
+    // because the control is already on screen wearing the old one.
+    let _r: i64 = { u::SendMessageA(v, sys::wm_setfont(), { #addr(f) } as u64,
+                                    1 as i64) };
+    return;
+}
+
+#[test]
+fn a_point_size_becomes_a_negative_height() {
+    // The sign is the whole of it — see the header. A positive height is the
+    // CELL height and comes out about a fifth too small, consistently, on
+    // every control.
+    //
+    // A null window answers 96 DPI, so 9pt is 12px: 9 * 96 / 72 = 12.
+    assert height_for(0 as *u8, 9.0f64) == (0 -% (12 as i32));
+    assert height_for(0 as *u8, 18.0f64) == (0 -% (24 as i32));
+    return;
+}
+
+#[test]
+fn an_unstated_size_falls_back_to_the_shell_default() {
+    // `font_size: 0` is facet's "unstated", not a zero-height font.
+    assert height_for(0 as *u8, 0.0f64) == height_for(0 as *u8, default_point_size());
+    return;
+}
+
+#[test]
+fn only_default_weight_means_unstated() {
+    // Asking for `Regular` explicitly is a DECISION, and on a control whose
+    // class defaults to bold it is a visible one — so it makes a font where
+    // `Default` does not.
+    let none: FontSpec = stated_spec(0.0f64, vocab::FontWeight::Default, false,
+                                     text::from_str(""));
+    assert none.stated == false;
+    let reg: FontSpec = stated_spec(0.0f64, vocab::FontWeight::Regular, false,
+                                    text::from_str(""));
+    assert reg.stated;
+    let bold: FontSpec = stated_spec(0.0f64, vocab::FontWeight::Bold, false,
+                                     text::from_str(""));
+    assert bold.stated;
+    return;
+}
+
+#[test]
+fn a_size_or_an_italic_or_a_family_is_enough_to_state_a_font() {
+    assert stated_spec(13.0f64, vocab::FontWeight::Default, false,
+                       text::from_str("")).stated;
+    assert stated_spec(0.0f64, vocab::FontWeight::Default, true,
+                       text::from_str("")).stated;
+    assert stated_spec(0.0f64, vocab::FontWeight::Default, false,
+                       text::from_str("Consolas")).stated;
+    return;
+}
+
+#[test]
+fn the_weights_are_the_css_numbers() {
+    // The same table facet_gtk's `css_weight` and `pango_weight` are. A second
+    // mapping is the thing that drifts, and a bold that came out 600 on one
+    // platform and 700 on another is a difference nobody would think to look
+    // for.
+    assert win_weight(vocab::FontWeight::Regular) == (400 as i32);
+    assert win_weight(vocab::FontWeight::Bold) == (700 as i32);
+    assert win_weight(vocab::FontWeight::Default) == (400 as i32);
+    return;
+}
+
+#[test]
+fn only_a_lone_private_use_codepoint_takes_the_icon_face() {
+    // The rule that decides whether an `icon_button`'s source is a GLYPH or a
+    // string. Too loose and every worded button renders as a row of wrong
+    // pictures; too tight and a Material codepoint draws `.notdef`, which is
+    // what the probe showed as a thin vertical sliver.
+    assert is_private_use_glyph("");         // icons::star, U+F09A
+    assert is_private_use_glyph("");         // icons::settings, U+E8B8
+    assert is_private_use_glyph("");           // U+E000, first private-use
+    assert is_private_use_glyph("");           // U+F8FF, last private-use
+    assert !is_private_use_glyph("");
+    assert !is_private_use_glyph("star");
+    assert !is_private_use_glyph("assets/star.png");
+    // Three BYTES but not private use: an ordinary BMP character above U+07FF
+    // is three bytes in UTF-8 too, so a length test alone is not enough.
+    assert !is_private_use_glyph("中");
+    // One byte and two bytes are never private use.
+    assert !is_private_use_glyph("A");
+    assert !is_private_use_glyph("é");
+    return;
+}

@@ -1,0 +1,2673 @@
+// facet_win32/controls — one HWND body per node kind, and the helpers that
+// make one.
+//
+// The shape is facet_gtk's `controls.cplus`, verb for verb: a `create_*` that
+// builds a fully-formed window and an `apply_*` that re-reads the node and
+// writes only what the dirty word names. `views::configure` calls the band
+// first and then dispatches here, so a kind never has to think about
+// background, opacity or enabled-ness — those are `paint`'s, once, for
+// everything.
+//
+// WHAT A WIN32 CONTROL IS, and it is the fact that shapes this file: a child
+// control is a WINDOW with its own class and its own WNDPROC, living in the
+// same coordinate space as its host. That buys the native look, the caret, IME
+// and the accessibility tree for free — the things facet_appkit's
+// `text_input.cplus` spends 1,671 lines on — and costs the decorative half of
+// the shared band, because a control paints itself and will not let us paint
+// under it. What it genuinely cannot wear is recorded in MANIFEST.md; what it
+// can is answered through WM_CTLCOLOR*, which is `paint`'s door.
+//
+// A KIND WITH NO BODY YET gets a plain panel: it holds children and honours
+// the band, which is more than a null window and less than a claim. Same
+// posture as facet_gtk — honest, and visible in the coverage tool rather than
+// hidden behind a placeholder rectangle.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "facet/toggle" as toggle;
+import "facet/checkbox" as checkbox;
+import "facet/table" as table;
+import "facet/text_button" as text_button;
+import "facet/date_picker" as date_picker;
+import "facet/time_picker" as time_picker;
+import "facet/stepper" as stepper;
+import "facet/tabs" as tabs;
+import "facet/refreshable" as refreshable;
+import "facet/page_dots" as page_dots;
+import "facet/bordered" as bordered;
+import "facet/scroll" as scroll;
+import "facet/symbol" as symbol;
+import "facet/icon_button" as icon_button;
+import "stdlib/io" as io;
+import "./paint" as paint;
+import "./anim" as anim;
+import "facet/radio" as radio;
+import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
+import "facet/slider" as slider;
+import "facet/progress" as progress;
+import "facet/spinner" as spinner;
+import "facet/popup" as popup;
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "win32/wingdi" as gdi;
+import "win32/libloaderapi" as ll;
+import "./sys" as sys;
+
+// ---- reaching a node's props -------------------------------------------------
+//
+// The kind is checked, not assumed: a cursor of the wrong kind is facet's own
+// silent-None rule and the same discipline belongs on this side of the seam.
+fn props_of(n: *core::Node, kind: u32) -> *u8 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    if { (*d).kind } != kind { return 0 as *u8; }
+    return { (*d).props };
+}
+
+// ---- making a window ---------------------------------------------------------
+
+// The module handle every `CreateWindowEx` needs. `GetModuleHandleA(0)` is the
+// running executable, which is where this package's own class is registered.
+fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
+
+// A child window, unparented for now.
+//
+// PARENT IS NULL AT CREATE and that is deliberate. `mount`'s walk creates
+// top-down and inserts as it goes, but the host a node ends up under is
+// `views::insert`'s decision — a scroll's children go to its document, an
+// unbacked container passes its children through. Creating against a guessed
+// parent and re-parenting later costs a WM_SIZE and a repaint per node; the
+// message-only parent costs nothing and is thrown away by the first
+// `SetParent`.
+//
+// WS_VISIBLE is NOT set here. A window that appears before it has a frame
+// flashes at 0,0 in its host's corner for one message turn — visible on every
+// mount, and exactly what `geometry::show_window` exists to sequence properly.
+fn make_child(class: *u8, title: *u8, style: u32, exstyle: u32) -> *u8 {
+    let s: u32 = style | sys::ws_child() | sys::ws_clipsiblings();
+    return { u::CreateWindowExA(exstyle, class as *i8, title as *i8, s,
+                                0 as i32, 0 as i32, 0 as i32, 0 as i32,
+                                message_only_parent(), 0 as *u8, hinstance(),
+                                0 as *u8) };
+}
+
+// HWND_MESSAGE. A child window must have a parent at creation, and this is the
+// one parent that costs nothing: it never renders, never lays out and never
+// paints, so a window parked here between `create` and `insert` is inert.
+fn message_only_parent() -> *u8 { return ((0 as i64) -% (3 as i64)) as *u8; }
+
+// The empty C string, for a window created with no title.
+fn empty_title() -> *u8 { return { #str_ptr("\0") }; }
+
+// ---- text goes out WIDE ------------------------------------------------------------
+//
+// THE ANSI ENTRY POINTS CANNOT CARRY A C+ STRING, and this was wrong from the
+// first commit.
+//
+// `vendor/win32`'s manifest chose the `*A` calls so that "plain NUL-terminated
+// C+ strings pass straight through (no UTF-16)". That is true for ASCII and
+// false for everything else: an `*A` call decodes its bytes as the system
+// ANSI codepage — CP1252 on a Western install — while a C+ `str` is UTF-8. So
+// every byte above 0x7F is decoded as the wrong character, one per byte.
+//
+// Seen in a screenshot as a window titled `facet_win32 â€" first light`. The
+// em-dash is UTF-8 `E2 80 94`; CP1252 reads those three bytes as `â`, `€` and
+// `"`. Not a font problem and not a rendering problem — the string was already
+// wrong before it reached the control.
+//
+// So text goes out through the `*W` calls, converted with
+// `MultiByteToWideChar(CP_UTF8)`. That is the same conversion
+// `stdlib/fs_sys_windows` does for every path it opens, and for the same
+// reason.
+//
+// WHAT STAYS ANSI: class names and property keys. Those are ASCII literals this
+// package writes itself, they are compared as bytes rather than displayed, and
+// converting them would buy nothing.
+
+fn cp_utf8() -> u32 { return 65001 as u32; }
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+extern fn MultiByteToWideChar(codepage: u32, flags: u32, mb: *u8, mb_len: i32,
+                              wc: *u16, wc_len: i32) -> i32;
+
+// UTF-8 -> a NUL-terminated UTF-16 buffer the caller must free.
+//
+// `-1` for the input length means "the source is NUL-terminated, and count the
+// terminator too" — which is what makes the result NUL-terminated without
+// writing one by hand.
+fn to_wide(s: str) -> *u16 {
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let need: i32 = { MultiByteToWideChar(cp_utf8(), 0 as u32, cs.as_ptr(),
+                                                  0 -% (1 as i32),
+                                                  0 as *u16, 0 as i32) };
+            if need <= (0 as i32) { return 0 as *u16; }
+            let buf: *u8 = { malloc((need as usize) *% (2 as usize)) };
+            if buf.is_null() { return 0 as *u16; }
+            let w: *u16 = buf as *u16;
+            let got: i32 = { MultiByteToWideChar(cp_utf8(), 0 as u32, cs.as_ptr(),
+                                                 0 -% (1 as i32), w, need) };
+            if got <= (0 as i32) { { free(buf) }; return 0 as *u16; }
+            return w;
+        }
+        option::Option[text::CString]::None => { return 0 as *u16; }
+    }
+}
+
+fn free_wide(w: *u16) {
+    if w == (0 as *u16) { return; }
+    { free(w as *u8) };
+    return;
+}
+// A node's text, converted and handed to the WIDE entry point — see above for
+// why it cannot go out as bytes.
+fn set_window_text(v: *u8, t: text::Text) {
+    let w: *u16 = to_wide(t.view());
+    if w == (0 as *u16) { return; }
+    let _r: i32 = { u::SetWindowTextW(v, w) };
+    free_wide(w);
+    return;
+}
+
+// ---- the panel: this package's GtkFixed --------------------------------------
+//
+// A container that neither clips its children's layout nor negotiates for
+// space, because facet decided both. It exists to be a HOST and to own the
+// rectangle the shared band paints on.
+//
+// WS_CLIPCHILDREN keeps the band's paint out of the rectangles its children
+// own; without it every control on a panel is painted over by its own parent
+// and flickers back on the next message. See `sys::ws_clipchildren`.
+fn create_panel(n: *core::Node) -> *u8 {
+    return make_child(sys::panel_class(), empty_title(),
+                      sys::ws_clipchildren(), 0 as u32);
+}
+
+fn create_box(n: *core::Node) -> *u8 { return create_panel(n); }
+
+// A `box` is a coloured rectangle and nothing else — the band already answers
+// its colour, so there is no per-kind write left to make.
+fn apply_box(v: *u8, n: *core::Node, dirty: u64) { return; }
+
+// ---- the scroll document -----------------------------------------------------
+//
+// The ONE kind whose window and whose child host differ: a scroll's children
+// belong in its document, not in the scroll view. Every other kind answers
+// itself, so there is still one child model below this line.
+fn document_host(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return v; }
+    let d: *u8 = { u::GetPropA(v, sys::prop_doc() as *i8) };
+    if d == (0 as *u8) { return v; }
+    return d;
+}
+
+fn create_scroll(n: *core::Node) -> *u8 {
+    // The viewport carries the scroll bars; the document is a panel inside it
+    // that is as big as the content and moves under the viewport. Two windows,
+    // because a Win32 scroll bar is a style on a window rather than a
+    // container — so the thing that scrolls and the thing that holds the
+    // content cannot be the same window.
+    let view: *u8 = make_child(sys::panel_class(), empty_title(),
+                               sys::ws_clipchildren(), 0 as u32);
+    if view == (0 as *u8) { return 0 as *u8; }
+    let doc: *u8 = make_child(sys::panel_class(), empty_title(),
+                              sys::ws_clipchildren(), 0 as u32);
+    if doc == (0 as *u8) { return view; }
+    let _p: *u8 = { u::SetParent(doc, view) };
+    let _s: i32 = { u::ShowWindow(doc, sys::sw_show()) };
+    let _r: i32 = { u::SetPropA(view, sys::prop_doc() as *i8, doc) };
+    return view;
+}
+
+fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) { return; }
+
+// ---- label -------------------------------------------------------------------
+//
+// A STATIC, and `SS_NOTIFY` on every one of them.
+//
+// Without it a static answers WM_NCHITTEST with HTTRANSPARENT — the mouse goes
+// straight through to whatever is behind — so a label is unclickable AND
+// invisible to a hit test that wanted to find it. facet's own rule runs the
+// other way (`set_input_transparent(true)` is opt-IN, for decoration inside a
+// clickable card), so the platform default is the wrong one here and every
+// label states the opposite.
+fn create_label(n: *core::Node) -> *u8 {
+    return make_child(sys::static_class(), empty_title(),
+                      sys::ss_notify() | sys::ss_left(), 0 as u32);
+}
+
+fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
+    if p == (0 as *props::LabelProps) { return; }
+    if (dirty & (label::P_TEXT | label::P_TEXT_TRANSFORM)) != (0 as u64) {
+        // A LABEL'S TRANSFORM IS APPLIED TO THE STRING. A static has no
+        // ES_UPPERCASE — that is an EDIT style, and it converts as the user
+        // types, which a label has no equivalent of. So the case is changed on
+        // the way in, and the node keeps whatever the application set.
+        set_window_text(v, transformed({ (*p).text }.clone(),
+                                       { (*p).text_transform }));
+    }
+    if (dirty & label::P_TEXT_COLOR) != (0 as u64) {
+        // The colour is answered from WM_CTLCOLORSTATIC when the control next
+        // draws; this is what makes it draw again.
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    if (dirty & label::P_VERTICAL_ALIGN) != (0 as u64) {
+        // SS_CENTERIMAGE (0x0200) vertically centres a static's text in its
+        // box. It is the only vertical placement a static has: top is the
+        // default and there is no bottom, which MANIFEST.md §1 records.
+        var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+        let centred: bool = match { (*p).vertical_align } {
+            vocab::TextAlign::Center => true,
+            vocab::TextAlign::Start => false,
+            vocab::TextAlign::End => false,
+            vocab::TextAlign::Justify => false,
+        };
+        if centred { style = style | (0x0200 as u32); }
+        else { style = style & ~(0x0200 as u32); }
+        let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    // Alignment is a STYLE BIT on a static, not a property — so it is read,
+    // masked and written back rather than set. A static whose style changes
+    // does not repaint itself, which is why the invalidate is not optional.
+    if (dirty & (label::P_TEXT_ALIGN | label::P_LINE_BREAK | label::P_MAX_LINES))
+       != (0 as u64) {
+        var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+        style = style & ~(sys::ss_center() | sys::ss_right()
+                          | sys::ss_leftnowordwrap() | sys::ss_endellipsis());
+        style = style | align_bits({ (*p).text_align });
+        style = style | break_bits({ (*p).line_break }, { (*p).max_lines });
+        let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+fn align_bits(a: vocab::TextAlign) -> u32 {
+    return match a {
+        vocab::TextAlign::Start => sys::ss_left(),
+        vocab::TextAlign::Center => sys::ss_center(),
+        vocab::TextAlign::End => sys::ss_right(),
+        vocab::TextAlign::Justify => sys::ss_left(),
+    };
+}
+
+// WRAPPING AND TRUNCATING ARE ONE DECISION, and `line_break` makes it — the
+// same finding facet_gtk records after a `TailTruncation` label with no line
+// limit came out wrapping and ellipsizing at once.
+//
+// A plain SS_LEFT static WRAPS. `SS_LEFTNOWORDWRAP` is the one that does not,
+// and `SS_END_ELLIPSIS` is what puts the dots on. facet's default is
+// TailTruncation with `max_lines: 0`, which reads as "one line, cut short".
+fn break_bits(b: vocab::LineBreak, max_lines: i64) -> u32 {
+    return match b {
+        vocab::LineBreak::WordWrap => 0 as u32,
+        vocab::LineBreak::CharacterWrap => 0 as u32,
+        vocab::LineBreak::TailTruncation => sys::ss_leftnowordwrap() | sys::ss_endellipsis(),
+        vocab::LineBreak::HeadTruncation => sys::ss_leftnowordwrap() | sys::ss_endellipsis(),
+        vocab::LineBreak::MiddleTruncation => sys::ss_leftnowordwrap() | sys::ss_endellipsis(),
+        vocab::LineBreak::NoWrap => sys::ss_leftnowordwrap(),
+    };
+}
+
+// ---- button ------------------------------------------------------------------
+
+fn create_button(n: *core::Node) -> *u8 {
+    return make_child(sys::button_class(), empty_title(),
+                      sys::bs_pushbutton() | sys::bs_multiline() | sys::ws_tabstop()
+                      | sys::bs_notify(),
+                      0 as u32);
+}
+
+fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
+    if p == (0 as *props::ButtonProps) { return; }
+    if (dirty & (button::P_TITLE | button::P_TEXT_TRANSFORM)) != (0 as u64) {
+        set_window_text(v, transformed({ (*p).title }.clone(),
+                                       { (*p).text_transform }));
+    }
+    if (dirty & button::P_TEXT_COLOR) != (0 as u64) {
+        // Answered from WM_CTLCOLORBTN when the control next draws.
+        //
+        // A THEMED PUSH BUTTON IGNORES IT, and that is a §1 row rather than a
+        // bug here: comctl32 v6 draws a button through the theme engine, which
+        // paints its own text colour and never asks the parent. The invalidate
+        // is still right — an owner-drawn or unthemed button does honour it.
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    if (dirty & button::P_TOGGLES) != (0 as u64) {
+        // A BUTTON THAT LATCHES. `BS_PUSHLIKE` makes a check box draw as a push
+        // button and keep its pressed state, which is exactly what facet's
+        // `toggles` means — so the STYLE changes rather than the class, and
+        // `BM_SETCHECK` then carries the state a plain push button has no room
+        // for.
+        var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+        style = style & ~(sys::bs_pushbutton() | sys::bs_autocheckbox());
+        if { (*p).toggles } { style = style | sys::bs_autocheckbox() | sys::bs_pushlike(); }
+        else { style = style & ~sys::bs_pushlike(); }
+        let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    if (dirty & button::P_ON) != (0 as u64) {
+        if { (*p).toggles } { set_checked(v, { (*p).on }); }
+    }
+    if (dirty & button::P_LINE_BREAK) != (0 as u64) {
+        // BS_MULTILINE is the only line-break control a BUTTON has: it wraps
+        // or it does not. The truncating modes have no spelling, which §1
+        // records.
+        var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+        if break_wraps({ (*p).line_break }) { style = style | sys::bs_multiline(); }
+        else { style = style & ~sys::bs_multiline(); }
+        let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+// ---- checkbox / toggle -------------------------------------------------------
+//
+// BOTH ARE AN AUTOCHECKBOX, and the difference is recorded rather than faked: a
+// Win32 toggle switch is a WinUI/XAML control, not a user32 one, so a `toggle`
+// wears a check box here. MANIFEST.md §1 carries the row. `BS_AUTOCHECKBOX`
+// rather than `BS_CHECKBOX` so the control tracks its own state on a click —
+// facet reads the state back on the notification, and a manual `BM_SETCHECK`
+// round trip would make the control lag the finger by one message.
+fn create_checkbox(n: *core::Node) -> *u8 {
+    return make_child(sys::button_class(), empty_title(),
+                      sys::bs_autocheckbox() | sys::ws_tabstop(), 0 as u32);
+}
+
+fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CheckboxProps =
+        props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+    if p == (0 as *props::CheckboxProps) { return; }
+    if (dirty & checkbox::P_ON) != (0 as u64) {
+        set_checked(v, { (*p).on });
+    }
+    return;
+}
+
+
+fn set_checked(v: *u8, on: bool) {
+    let w: u64 = if on { 1 as u64 } else { 0 as u64 };
+    let _r: i64 = { u::SendMessageA(v, sys::bm_setcheck(), w, 0 as i64) };
+    return;
+}
+
+fn is_checked(v: *u8) -> bool {
+    return { u::SendMessageA(v, sys::bm_getcheck(), 0 as u64, 0 as i64) } == (1 as i64);
+}
+
+// ---- text field --------------------------------------------------------------
+
+fn create_text_field(n: *core::Node) -> *u8 {
+    return make_child(sys::edit_class(), empty_title(),
+                      sys::es_autohscroll() | sys::ws_tabstop() | sys::ws_border(),
+                      0 as u32);
+}
+
+fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TextFieldProps =
+        props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    if p == (0 as *props::TextFieldProps) { return; }
+    // THE ONE EXCEPTION facet's own SKILL names: a field being EDITED cannot be
+    // written, because its editor owns the string. Writing the same bytes back
+    // would still collapse the selection and move the caret to the end on every
+    // sync — so a field that has focus keeps what the user is typing.
+    if (dirty & text_field::P_TEXT) != (0 as u64) {
+        if { u::GetFocus() } != v { set_window_text(v, { (*p).input_view.text }.clone()); }
+    }
+    apply_input_view(v, #addr_of((*p).input_view), dirty, text_field_bits());
+    if (dirty & (text_field::P_TEXT_ALIGN | text_field::P_IS_SECURE)) != (0 as u64) {
+        apply_field_style(v, { (*p).text_align }, { (*p).is_secure });
+    }
+    if (dirty & text_field::P_PLACEHOLDER) != (0 as u64) {
+        // EM_SETCUEBANNER TAKES UTF-16 AND HAS NO ANSI FORM. There is no
+        // `EM_SETCUEBANNERA` — the message is wide whatever the control's own
+        // character set is, so the string has to be converted here.
+        //
+        // This used to pass the UTF-8 bytes and claim in a comment that an
+        // ASCII placeholder would survive. It does not: the control reads the
+        // bytes as wide characters, so two ASCII bytes become one CJK glyph and
+        // `type here` renders as 裁数集牭eN. Visible in a screenshot the moment
+        // anyone looked at it.
+        let w: *u16 = to_wide({ (*p).input_view.placeholder }.view());
+        if w != (0 as *u16) {
+            let _r: i64 = { u::SendMessageW(v, sys::em_setcuebanner(),
+                                            1 as u64, { #addr(w as *u8) } as i64) };
+            free_wide(w);
+        }
+    }
+    return;
+}
+
+
+// ---- radio -----------------------------------------------------------------------
+//
+// `BS_AUTORADIOBUTTON`, and the GROUP is the thing to get right.
+//
+// Win32 groups radio buttons by ADJACENCY: `WS_GROUP` marks the first of a run,
+// and every sibling after it belongs to that run until the next `WS_GROUP`.
+// facet groups them by NAME — `RadioProps.group` — which does not have to
+// follow the child order at all.
+//
+// So the auto-exclusion is NOT left to Win32. The style is `BS_AUTORADIOBUTTON`
+// for the look and the click behaviour, and `input::fire_radio` clears the
+// others in the same NAMED group itself. Relying on the platform's grouping
+// would silently give the right answer whenever a designer happened to put the
+// group's members next to each other, and the wrong one the day they did not.
+fn create_radio(n: *core::Node) -> *u8 {
+    return make_child(sys::button_class(), empty_title(),
+                      sys::bs_autoradiobutton() | sys::ws_tabstop(), 0 as u32);
+}
+
+fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+    if p == (0 as *props::RadioProps) { return; }
+    if (dirty & (radio::P_TEXT | radio::P_TEXT_TRANSFORM)) != (0 as u64) {
+        set_window_text(v, transformed({ (*p).text }.clone(),
+                                       { (*p).text_transform }));
+    }
+    if (dirty & radio::P_TEXT_COLOR) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    if (dirty & radio::P_GROUP) != (0 as u64) {
+        // NOTHING TO WRITE. The group is facet's own name and the exclusion is
+        // done by `input::fire_radio` walking for it — Win32 groups by
+        // ADJACENCY and cannot be told a name. The bit is named so a group
+        // change re-reads through the same path a click does.
+    }
+    if (dirty & radio::P_ON) != (0 as u64) { set_checked(v, { (*p).on }); }
+    return;
+}
+
+fn radio_group_of(n: *core::Node) -> str {
+    let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+    if p == (0 as *props::RadioProps) { return ""; }
+    return { (*p).group }.view();
+}
+
+fn set_radio_on(n: *core::Node, on: bool) {
+    let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+    if p == (0 as *props::RadioProps) { return; }
+    { (*p).on = on };
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) { set_checked(v, on); }
+    return;
+}
+
+// ---- text area ---------------------------------------------------------------------
+//
+// An `EDIT` with `ES_MULTILINE`, and the three styles beside it are not
+// optional: without `ES_AUTOVSCROLL` the control refuses text past the bottom
+// of its box rather than scrolling, and without `ES_WANTRETURN` the Enter key
+// goes to the window's default button instead of starting a line — in an
+// editor, which is the one control where Enter obviously means a newline.
+fn create_text_area(n: *core::Node) -> *u8 {
+    return make_child(sys::edit_class(), empty_title(),
+                      sys::es_multiline() | sys::es_autovscroll()
+                      | sys::es_wantreturn() | sys::ws_vscroll()
+                      | sys::ws_tabstop() | sys::ws_border(),
+                      0 as u32);
+}
+
+fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TextAreaProps =
+        props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    // THE SAME EXCEPTION a text field makes, and for the same reason: the
+    // editor owns the string while it is being typed into, and writing the
+    // same bytes back would still collapse the selection and jump the caret to
+    // the end on every sync.
+    if (dirty & text_area::P_TEXT) != (0 as u64) {
+        if { u::GetFocus() } != v { set_window_text(v, { (*p).input_view.text }.clone()); }
+    }
+    apply_input_view(v, #addr_of((*p).input_view), dirty, text_area_bits());
+    if (dirty & text_area::P_TEXT_ALIGN) != (0 as u64) {
+        apply_field_style(v, { (*p).text_align }, false);
+    }
+    return;
+}
+
+// ---- search field ---------------------------------------------------------------
+//
+// A plain `EDIT`. Windows has no search-field class — the magnifier and the
+// clear button in Explorer's box are Explorer's own drawing, not a control
+// anyone can create — so this is a field that behaves like one and does not
+// look like one. MANIFEST.md §1 carries the row.
+fn create_search_field(n: *core::Node) -> *u8 {
+    return make_child(sys::edit_class(), empty_title(),
+                      sys::es_autohscroll() | sys::ws_tabstop() | sys::ws_border(),
+                      0 as u32);
+}
+
+fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SearchFieldProps =
+        props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
+    if p == (0 as *props::SearchFieldProps) { return; }
+    if (dirty & search_field::P_TEXT) != (0 as u64) {
+        if { u::GetFocus() } != v { set_window_text(v, { (*p).input_view.text }.clone()); }
+    }
+    apply_input_view(v, #addr_of((*p).input_view), dirty, search_field_bits());
+    if (dirty & search_field::P_TEXT_ALIGN) != (0 as u64) {
+        apply_field_style(v, { (*p).text_align }, false);
+    }
+    return;
+}
+
+
+// ---- the input family's shared half -------------------------------------------------
+//
+// `text_field`, `text_area` and `search_field` all embed `InputViewProps`, so
+// the verbs it declares are answered ONCE here rather than three times. The
+// bits differ per kind — a generated module numbers from one in declaration
+// order — so the caller passes its own, which is the whole reason this takes a
+// mask instead of reading one.
+
+// EM_ messages this family needs beyond the ones `sys` already carries.
+fn em_limittext() -> u32 { return 0x00C5 as u32; }
+fn em_setpasswordchar() -> u32 { return 0x00CC as u32; }
+
+// The style bits an EDIT reads for alignment and case. Changing them needs the
+// control redrawn — a style write does not repaint on its own.
+fn edit_align_bits(a: vocab::TextAlign) -> u32 {
+    return match a {
+        vocab::TextAlign::Start => sys::es_left(),
+        vocab::TextAlign::Center => sys::es_center(),
+        vocab::TextAlign::End => sys::es_right(),
+        vocab::TextAlign::Justify => sys::es_left(),
+    };
+}
+
+// ES_UPPERCASE 0x0008 / ES_LOWERCASE 0x0010 — the control converts as the user
+// TYPES, which is what a text transform on an editable field means. A label's
+// transform is a different thing and is applied to the string instead.
+fn es_uppercase() -> u32 { return 0x0008 as u32; }
+fn es_lowercase() -> u32 { return 0x0010 as u32; }
+
+fn edit_case_bits(t: vocab::TextTransform) -> u32 {
+    return match t {
+        vocab::TextTransform::Default => 0 as u32,
+        vocab::TextTransform::None => 0 as u32,
+        vocab::TextTransform::Uppercase => es_uppercase(),
+        vocab::TextTransform::Lowercase => es_lowercase(),
+    };
+}
+
+// Apply everything `InputViewProps` declares that Win32 can answer. `bits` is
+// the CALLER's kind's mask — see the note above.
+struct InputBits {
+    text: u64,
+    placeholder: u64,
+    read_only: u64,
+    max_length: u64,
+    cursor: u64,
+    selection: u64,
+    text_color: u64,
+    transform: u64,
+    align: u64,
+    secure: u64,
+}
+
+fn apply_input_view(v: *u8, iv: *props::InputViewProps, dirty: u64, b: InputBits) {
+    if (dirty & b.read_only) != (0 as u64) {
+        let ro: u64 = if { (*iv).is_read_only } { 1 as u64 } else { 0 as u64 };
+        let _r: i64 = { u::SendMessageA(v, sys::em_setreadonly(), ro, 0 as i64) };
+    }
+    if (dirty & b.max_length) != (0 as u64) {
+        // ZERO IS NO LIMIT, and EM_LIMITTEXT reads 0 as "the default maximum"
+        // rather than "unlimited" — which for a single-line edit is 32k and for
+        // a multiline one is 64k. The distinction only matters past those, and
+        // passing 0 is what asks for them.
+        let n: i64 = { (*iv).max_length };
+        let lim: u64 = if n > (0 as i64) { n as u64 } else { 0 as u64 };
+        let _r: i64 = { u::SendMessageA(v, em_limittext(), lim, 0 as i64) };
+    }
+    // THE CARET AND THE SELECTION ARE ONE MESSAGE. `EM_SETSEL` takes a start and
+    // an end, so a cursor position is a selection of length zero and there is
+    // no way to write one without the other — which is why both bits run the
+    // same call rather than each writing half of it.
+    if (dirty & (b.cursor | b.selection)) != (0 as u64) {
+        // NOT WHILE IT HAS FOCUS. Moving the caret under someone who is typing
+        // is the same intrusion as rewriting their text, and for the same
+        // reason: the editor owns both while it is being used.
+        if { u::GetFocus() } != v {
+            let start: i64 = { (*iv).cursor_position };
+            let len: i64 = { (*iv).selection_length };
+            let end: i64 = start + len;
+            let _r: i64 = { u::SendMessageA(v, sys::em_setsel(), start as u64,
+                                            end as i64) };
+        }
+    }
+    if (dirty & b.text_color) != (0 as u64) {
+        // The colour itself is answered from WM_CTLCOLOR* when the control next
+        // draws — see `paint::ctl_color`. This is what makes it draw again.
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    if (dirty & (b.transform | b.align | b.secure)) != (0 as u64) {
+        var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+        style = style & ~(sys::es_center() | sys::es_right()
+                          | es_uppercase() | es_lowercase() | sys::es_password());
+        style = style | edit_case_bits({ (*iv).text_transform });
+        let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+// A field's own alignment and secrecy, which live on the FIELD rather than on
+// the embedded input view — so they are written beside it rather than in it.
+fn apply_field_style(v: *u8, align: vocab::TextAlign, secure: bool) {
+    var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    style = style & ~(sys::es_center() | sys::es_right());
+    style = style | edit_align_bits(align);
+    let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+    // ES_PASSWORD IS NOT A STYLE YOU CAN TURN ON LATER. The control reads it
+    // when it is created; flipping the bit on a live EDIT changes nothing.
+    // `EM_SETPASSWORDCHAR` is the runtime spelling — a non-zero character turns
+    // masking on and zero turns it off — and it is what makes `is_secure`
+    // answerable after mount rather than only at create.
+    let ch: u64 = if secure { 0x25CF as u64 } else { 0 as u64 };
+    let _p: i64 = { u::SendMessageA(v, em_setpasswordchar(), ch, 0 as i64) };
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return;
+}
+// Each kind's own bit numbers, handed to the shared body. Written out per kind
+// rather than derived, because they ARE different numbers — see `fonts`'
+// header for what assuming otherwise cost.
+fn text_field_bits() -> InputBits {
+    return InputBits {
+        text: text_field::P_TEXT, placeholder: text_field::P_PLACEHOLDER,
+        read_only: text_field::P_IS_READ_ONLY, max_length: text_field::P_MAX_LENGTH,
+        cursor: text_field::P_CURSOR_POSITION,
+        selection: text_field::P_SELECTION_LENGTH,
+        text_color: text_field::P_TEXT_COLOR,
+        transform: text_field::P_TEXT_TRANSFORM,
+        align: text_field::P_TEXT_ALIGN, secure: text_field::P_IS_SECURE,
+    };
+}
+
+fn text_area_bits() -> InputBits {
+    return InputBits {
+        text: text_area::P_TEXT, placeholder: text_area::P_PLACEHOLDER,
+        read_only: text_area::P_IS_READ_ONLY, max_length: text_area::P_MAX_LENGTH,
+        cursor: text_area::P_CURSOR_POSITION,
+        selection: text_area::P_SELECTION_LENGTH,
+        text_color: text_area::P_TEXT_COLOR,
+        transform: text_area::P_TEXT_TRANSFORM,
+        align: text_area::P_TEXT_ALIGN,
+        // An editor is never a password box; there is no `is_secure` on it and
+        // zero is a mask no bit can match.
+        secure: 0 as u64,
+    };
+}
+
+fn search_field_bits() -> InputBits {
+    return InputBits {
+        text: search_field::P_TEXT, placeholder: search_field::P_PLACEHOLDER,
+        read_only: search_field::P_IS_READ_ONLY,
+        max_length: search_field::P_MAX_LENGTH,
+        cursor: search_field::P_CURSOR_POSITION,
+        selection: search_field::P_SELECTION_LENGTH,
+        text_color: search_field::P_TEXT_COLOR,
+        transform: search_field::P_TEXT_TRANSFORM,
+        align: search_field::P_TEXT_ALIGN, secure: 0 as u64,
+    };
+}
+// ---- slider ------------------------------------------------------------------------
+//
+// A trackbar, and the RANGE IS AN INTEGER one — `TBM_SETRANGEMIN` and
+// `TBM_SETRANGEMAX` take a signed 32-bit position and there is no float
+// spelling. facet's slider is `f64` from minimum to maximum.
+//
+// So the control runs over a FIXED number of steps and the value is mapped in
+// and out. 1000 steps is past what a pointer can resolve on any real track
+// width (a 300-pixel slider has 300 positions a hand can reach) and keeps the
+// arithmetic exact for the common 0..1 and 0..100 ranges.
+fn slider_steps() -> i32 { return 1000 as i32; }
+
+fn create_slider(n: *core::Node) -> *u8 {
+    let v: *u8 = make_child(sys::trackbar_class(), empty_title(),
+                            sys::tbs_horz() | sys::tbs_noticks() | sys::ws_tabstop(),
+                            0 as u32);
+    if v == (0 as *u8) { return 0 as *u8; }
+    let _a: i64 = { u::SendMessageA(v, sys::tbm_setrangemin(), 0 as u64, 0 as i64) };
+    let _b: i64 = { u::SendMessageA(v, sys::tbm_setrangemax(), 1 as u64,
+                                    slider_steps() as i64) };
+    return v;
+}
+
+fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return; }
+    if (dirty & (slider::P_VALUE | slider::P_MINIMUM | slider::P_MAXIMUM))
+       != (0 as u64) {
+        let pos: i32 = slider_pos_of({ (*p).value }, { (*p).minimum }, { (*p).maximum });
+        // wParam 1 redraws. The control is on screen and a value written
+        // without it leaves the thumb where it was.
+        let _r: i64 = { u::SendMessageA(v, sys::tbm_setpos(), 1 as u64, pos as i64) };
+    }
+    // The colours are answered in `slider_customdraw`, which the control asks
+    // on its next paint — so all an apply owes them is that paint.
+    if (dirty & (slider::P_MINIMUM_TRACK_COLOR | slider::P_MAXIMUM_TRACK_COLOR
+                 | slider::P_THUMB_COLOR)) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+// value -> step. A zero-width range answers step 0 rather than dividing by it:
+// `minimum == maximum` is a slider with one position, which is a legal thing to
+// say and not an error.
+fn slider_pos_of(value: f64, minimum: f64, maximum: f64) -> i32 {
+    let span: f64 = maximum - minimum;
+    if span <= (0.0 as f64) { return 0 as i32; }
+    var t: f64 = (value - minimum) / span;
+    if t < (0.0 as f64) { t = 0.0f64; }
+    if t > (1.0 as f64) { t = 1.0f64; }
+    return (t * (slider_steps() as f64) + (0.5 as f64)) as i32;
+}
+
+// step -> value, the way back. Read by `input` when the thumb moves.
+fn slider_value_of(pos: i32, minimum: f64, maximum: f64) -> f64 {
+    let span: f64 = maximum - minimum;
+    if span <= (0.0 as f64) { return minimum; }
+    return minimum + span * ((pos as f64) / (slider_steps() as f64));
+}
+
+fn slider_range_of(n: *core::Node, out_min: *f64, out_max: *f64) {
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { { *out_min = 0.0f64 }; { *out_max = 1.0f64 }; return; }
+    { *out_min = { (*p).minimum } };
+    { *out_max = { (*p).maximum } };
+    return;
+}
+
+// ---- progress ---------------------------------------------------------------------
+//
+// facet's `progress` is 0..1; the control's range is whatever it is told, so it
+// is told 0..1000 and the fraction is scaled. Same reasoning as the slider's,
+// and the same constant.
+fn create_progress(n: *core::Node) -> *u8 {
+    let v: *u8 = make_child(sys::progress_class(), empty_title(), 0 as u32, 0 as u32);
+    if v == (0 as *u8) { return 0 as *u8; }
+    // PBM_SETRANGE32 takes the two bounds as wParam and lParam, unlike the
+    // 16-bit PBM_SETRANGE it replaced — which is why the 32 is in the name and
+    // why a range past 65535 needs this one.
+    let _r: i64 = { u::SendMessageA(v, sys::pbm_setrange32(), 0 as u64,
+                                    slider_steps() as i64) };
+    return v;
+}
+
+fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ProgressProps =
+        props_of(n, props::K_PROGRESS) as *props::ProgressProps;
+    if p == (0 as *props::ProgressProps) { return; }
+    if (dirty & progress::P_PROGRESS) != (0 as u64) {
+        var t: f64 = { (*p).progress };
+        if t < (0.0 as f64) { t = 0.0f64; }
+        if t > (1.0 as f64) { t = 1.0f64; }
+        let pos: i32 = (t * (slider_steps() as f64) + (0.5 as f64)) as i32;
+        let _r: i64 = { u::SendMessageA(v, sys::pbm_setpos(), pos as u64, 0 as i64) };
+    }
+    if (dirty & progress::P_PROGRESS_COLOR) != (0 as u64) {
+        apply_progress_color(v, { (*p).progress_color });
+    }
+    if (dirty & progress::P_ANIMATE_PROGRESS) != (0 as u64) {
+        // `animate_progress` writes `progress` too, so both bits arrive
+        // together and this runs after the plain set above — which is right:
+        // the tween reads the bar's CURRENT position as its start, and the set
+        // has already put it at the destination. So the tween has to be the
+        // one that decides, and it starts from where the bar was.
+        anim::animate_progress(v, { (*p).progress }, { (*p).animate_duration },
+                               { (*p).animate_easing });
+    }
+    return;
+}
+
+// ---- spinner -----------------------------------------------------------------------
+//
+// A MARQUEE progress bar — the barber's pole. Windows has no separate
+// indeterminate-activity control; `PBS_MARQUEE` is what every shell dialog uses
+// for "working, no idea how long".
+//
+// It is a BAR and not a ring, which is the narrowing: an application expecting
+// the small circular spinner the other three backends draw gets a horizontal
+// strip. MANIFEST.md §1 records it rather than leaving it to be discovered.
+fn create_spinner(n: *core::Node) -> *u8 {
+    return make_child(sys::progress_class(), empty_title(), sys::pbs_marquee(),
+                      0 as u32);
+}
+
+fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SpinnerProps =
+        props_of(n, props::K_SPINNER) as *props::SpinnerProps;
+    if p == (0 as *props::SpinnerProps) { return; }
+    if (dirty & spinner::P_IS_RUNNING) != (0 as u64) {
+        let on: u64 = if { (*p).is_running } { 1 as u64 } else { 0 as u64 };
+        // lParam is the step interval in milliseconds; 30 is what the shell
+        // uses and it is ignored entirely when wParam turns the marquee off.
+        let _r: i64 = { u::SendMessageA(v, sys::pbm_setmarquee(), on, 30 as i64) };
+    }
+    // A spinner IS a marquee progress bar here, so its colour takes the same
+    // door — see `apply_progress_color` for what that costs.
+    if (dirty & spinner::P_COLOR) != (0 as u64) {
+        apply_progress_color(v, { (*p).color });
+    }
+    return;
+}
+
+// ---- popup -------------------------------------------------------------------------
+//
+// `CBS_DROPDOWNLIST` and not `CBS_DROPDOWN`: the second one lets the user TYPE
+// into the box, which is a combo box, and facet's `popup` is a chooser among
+// stated items. A typed value would be a selection facet has no index for.
+//
+// THE HEIGHT PASSED AT CREATE IS THE DROPPED-DOWN HEIGHT. A combo box sizes its
+// own closed box from its font and treats the rest as the list — so a combo
+// created at the frame flex computed would show a list one row tall and clip
+// every item after the first. The list height is stated here and the closed box
+// is placed by the ordinary layout walk.
+fn combo_list_height() -> i32 { return 200 as i32; }
+
+fn cb_showdropdown() -> u32 { return 0x014F as u32; }
+fn cb_droppedstate() -> u32 { return 0x0157 as u32; }
+
+fn create_popup(n: *core::Node) -> *u8 {
+    let v: *u8 = make_child(sys::combo_class(), empty_title(),
+                            sys::cbs_dropdownlist() | sys::ws_tabstop()
+                            | sys::ws_vscroll(),
+                            0 as u32);
+    if v == (0 as *u8) { return 0 as *u8; }
+    let _r: i32 = { u::SetWindowPos(v, sys::hwnd_top(), 0 as i32, 0 as i32,
+                                    0 as i32, combo_list_height(),
+                                    sys::swp_nomove() | sys::swp_nozorder()
+                                    | sys::swp_noactivate()) };
+    return v;
+}
+
+fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    // FIRST, and on every font change: an owner-drawn combo with a zero item
+    // height is never asked to draw anything at all. See `on_measure_item`.
+    if (dirty & popup::P_ITEMS) != (0 as u64) {
+        // THE WHOLE LIST IS REPLACED. A combo box has no "set item n" — only
+        // add, insert and delete — so an items change is a reset plus a refill,
+        // and the selection has to be written back afterwards because
+        // CB_RESETCONTENT clears it.
+        let _c: i64 = { u::SendMessageA(v, sys::cb_resetcontent(), 0 as u64, 0 as i64) };
+        let items: *vocab::TextList = #addr_of((*p).items);
+        var i: usize = 0 as usize;
+        let n_items: usize = { (*items).count() };
+        while i < n_items {
+            combo_add(v, { (*items).at(i) });
+            i = i +% (1 as usize);
+        }
+        combo_select(v, { (*p).selected_index });
+    }
+    if (dirty & popup::P_SELECTED_INDEX) != (0 as u64) {
+        combo_select(v, { (*p).selected_index });
+    }
+    if (dirty & popup::P_IS_OPEN) != (0 as u64) {
+        // The list is DROPPED, not shown — `CB_SHOWDROPDOWN` is the same call
+        // the control makes for itself when the arrow is clicked, so an
+        // application opening its own popup and a user opening it land in the
+        // identical state.
+        let w: u64 = if { (*p).is_open } { 1 as u64 } else { 0 as u64 };
+        if combo_dropped(v) != { (*p).is_open } {
+            let _r: i64 = { u::SendMessageA(v, cb_showdropdown(), w, 0 as i64) };
+        }
+    }
+    return;
+}
+
+// Asked rather than remembered. A user can close the list by clicking away and
+// the control does not report it as a selection, so a cached flag drifts — and
+// re-sending `CB_SHOWDROPDOWN` for a state the control is already in closes a
+// list the user just opened.
+fn combo_dropped(v: *u8) -> bool {
+    return { u::SendMessageA(v, cb_droppedstate(), 0 as u64, 0 as i64) } != (0 as i64);
+}
+
+fn combo_add(v: *u8, s: str) {
+    // The CString has to outlive the call — an inline temporary is freed at the
+    // end of the expression and CB_ADDSTRING reads freed bytes.
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let _r: i64 = { u::SendMessageA(v, sys::cb_addstring(), 0 as u64,
+                                            cs.as_ptr() as i64) };
+        }
+        option::Option[text::CString]::None => { }
+    }
+    return;
+}
+
+// CB_SETCURSEL takes -1 for "nothing selected", which is exactly what facet's
+// `selected_index` of -1 means — so the two agree without a translation.
+fn combo_select(v: *u8, index: i64) {
+    let _r: i64 = { u::SendMessageA(v, sys::cb_setcursel(), index as u64, 0 as i64) };
+    return;
+}
+
+fn combo_selection(v: *u8) -> i64 {
+    return { u::SendMessageA(v, sys::cb_getcursel(), 0 as u64, 0 as i64) };
+}
+
+fn popup_selected_slot(n: *core::Node) -> *i64 {
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return 0 as *i64; }
+    return #addr_of((*p).selected_index);
+}
+
+// ---- the date and time pickers ------------------------------------------------------
+//
+// `SysDateTimePick32`, which is one control wearing two faces: `DTS_SHORTDATE`
+// gives a date field with a drop-down calendar and `DTS_TIMEFORMAT` gives a
+// time field with a spinner. facet declares them as two kinds because they
+// carry different values, and that is the only difference here.
+//
+// SYSTEMTIME is eight WORDs — year, month, dayOfWeek, day, hour, minute,
+// second, milliseconds — 16 bytes, no inline arrays, so it is laid out by hand
+// rather than bound.
+fn systemtime_bytes() -> usize { return 16 as usize; }
+
+fn dts_shortdate() -> u32 { return 0x0000 as u32; }
+fn dts_timeformat() -> u32 { return 0x0009 as u32; }
+
+// DTM_SETSYSTEMTIME is WM_USER+2, DTM_GETSYSTEMTIME WM_USER+1,
+// DTM_SETRANGE WM_USER+4, DTM_SETFORMATA WM_USER+5. WM_USER is 0x400.
+fn dtm_getsystemtime() -> u32 { return 0x0401 as u32; }
+fn dtm_setsystemtime() -> u32 { return 0x0402 as u32; }
+fn dtm_setrange() -> u32 { return 0x0404 as u32; }
+fn dtm_setformat() -> u32 { return 0x0405 as u32; }
+
+// GDT_VALID — the control holds a real value rather than being blank.
+fn gdt_valid() -> u64 { return 0 as u64; }
+
+fn put_word(p: *u8, at: usize, v: u16) {
+    let q: *u16 = { (p + at) } as *u16;
+    { *q = v };
+    return;
+}
+
+fn read_word(p: *u8, at: usize) -> u16 {
+    let q: *u16 = { (p + at) } as *u16;
+    return { *q };
+}
+
+fn create_date_picker(n: *core::Node) -> *u8 {
+    return make_child(sys::datetime_class(), empty_title(),
+                      dts_shortdate() | sys::ws_tabstop(), 0 as u32);
+}
+
+fn write_date(v: *u8, msg: u32, d: vocab::Date) {
+    // A ZERO DATE IS NOT A DATE. `Date::zero()` is what a picker carries before
+    // anyone set one, and year 0 month 0 is not a value SYSTEMTIME accepts —
+    // writing it makes the control blank rather than showing today, which is
+    // the more useful default and what it already shows.
+    if d.year <= (0 as i64) { return; }
+    let st: *u8 = { dt_malloc(systemtime_bytes()) };
+    if st.is_null() { return; }
+    let _z: *u8 = { dt_memset(st, 0 as i32, systemtime_bytes()) };
+    put_word(st, 0 as usize, d.year as u16);
+    put_word(st, 2 as usize, d.month as u16);
+    put_word(st, 6 as usize, d.day as u16);
+    let _r: i64 = { u::SendMessageA(v, msg, gdt_valid(), { #addr(st) } as i64) };
+    { dt_free(st) };
+    return;
+}
+
+// Reading back what the user picked. The control is the truth while the user
+// is in it — the same direction `input::fire_text_changed` runs — so the
+// notification handlers ask the control rather than trusting the node.
+//
+// GDT_NONE (1) is a picker showing NO DATE, which is a real state its check box
+// puts it in. It answers `Date::zero()`, which is the same "no date" the write
+// side refuses to send.
+fn gdt_none() -> i64 { return 1 as i64; }
+
+fn date_of(v: *u8) -> vocab::Date {
+    let st: *u8 = { dt_malloc(systemtime_bytes()) };
+    if st.is_null() { return vocab::Date::zero(); }
+    let _z: *u8 = { dt_memset(st, 0 as i32, systemtime_bytes()) };
+    let r: i64 = { u::SendMessageA(v, dtm_getsystemtime(), 0 as u64,
+                                   { #addr(st) } as i64) };
+    if r == gdt_none() { { dt_free(st) }; return vocab::Date::zero(); }
+    let d: vocab::Date = vocab::Date {
+        year: read_word(st, 0 as usize) as i64,
+        month: read_word(st, 2 as usize) as i64,
+        day: read_word(st, 6 as usize) as i64,
+    };
+    { dt_free(st) };
+    return d;
+}
+
+// A TIME IS A DURATION SINCE MIDNIGHT in facet's vocabulary, not a clock
+// struct — so the SYSTEMTIME's hour, minute and second fold into seconds and
+// the date half is ignored, which is what a time picker's SYSTEMTIME carries
+// anyway.
+fn time_of(v: *u8) -> vocab::Duration {
+    let st: *u8 = { dt_malloc(systemtime_bytes()) };
+    if st.is_null() { return vocab::Duration::zero(); }
+    let _z: *u8 = { dt_memset(st, 0 as i32, systemtime_bytes()) };
+    let r: i64 = { u::SendMessageA(v, dtm_getsystemtime(), 0 as u64,
+                                   { #addr(st) } as i64) };
+    if r == gdt_none() { { dt_free(st) }; return vocab::Duration::zero(); }
+    let secs: f64 = (read_word(st, 8 as usize) as f64) * (3600.0 as f64)
+                  + (read_word(st, 10 as usize) as f64) * (60.0 as f64)
+                  + (read_word(st, 12 as usize) as f64);
+    { dt_free(st) };
+    return vocab::Duration { seconds: secs };
+}
+
+fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::DatePickerProps =
+        props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if p == (0 as *props::DatePickerProps) { return; }
+    if (dirty & date_picker::P_DATE) != (0 as u64) {
+        write_date(v, dtm_setsystemtime(), { (*p).date });
+    }
+    if (dirty & (date_picker::P_MINIMUM_DATE | date_picker::P_MAXIMUM_DATE))
+       != (0 as u64) {
+        write_range(v, { (*p).minimum_date }, { (*p).maximum_date });
+    }
+    if (dirty & date_picker::P_FORMAT) != (0 as u64) {
+        set_dt_format(v, { (*p).format }.clone());
+    }
+    if (dirty & date_picker::P_TEXT_COLOR) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    if (dirty & date_picker::P_IS_OPEN) != (0 as u64) {
+        set_calendar_open(v, { (*p).is_open });
+    }
+    return;
+}
+
+// OPENING AND CLOSING ARE NOT SYMMETRIC, which is the whole of why this is a
+// function and not two messages.
+//
+// Closing has a message: `DTM_CLOSEMONTHCAL`. Opening does not — there is no
+// `DTM_OPENMONTHCAL`, and the only documented way in is the keyboard gesture
+// the control already answers, F4. Synthesising that key is not a trick around
+// a missing API; it IS the API, in the sense that it is the one input the
+// control defines for this.
+//
+// The state is ASKED rather than remembered: `DTM_GETMONTHCAL` answers the
+// calendar's window, or null when it is closed. A user can dismiss the
+// calendar by clicking away, and a cached flag would then send F4 to reopen a
+// picker the application believes is already open.
+fn dtm_getmonthcal() -> u32 { return 0x0408 as u32; }
+fn dtm_closemonthcal() -> u32 { return 0x040D as u32; }
+fn vk_f4() -> u64 { return 0x73 as u64; }
+
+fn calendar_open(v: *u8) -> bool {
+    return { u::SendMessageA(v, dtm_getmonthcal(), 0 as u64, 0 as i64) } != (0 as i64);
+}
+
+fn set_calendar_open(v: *u8, want: bool) {
+    if calendar_open(v) == want { return; }
+    if !want {
+        let _r: i64 = { u::SendMessageA(v, dtm_closemonthcal(), 0 as u64, 0 as i64) };
+        return;
+    }
+    // The control has to be focused for the key to reach it, which is also
+    // what a user opening it by hand would have done.
+    let _f: *u8 = { u::SetFocus(v) };
+    let _d: i64 = { u::SendMessageA(v, sys::wm_keydown(), vk_f4(), 0 as i64) };
+    let _u: i64 = { u::SendMessageA(v, sys::wm_keyup(), vk_f4(), 0 as i64) };
+    return;
+}
+
+// GDTR_MIN 0x0001, GDTR_MAX 0x0002 — the flags say WHICH ends of the pair are
+// real, so a picker with only a minimum says so rather than pinning the maximum
+// to a zero date.
+fn write_range(v: *u8, lo: vocab::Date, hi: vocab::Date) {
+    let buf: *u8 = { dt_malloc(systemtime_bytes() *% (2 as usize)) };
+    if buf.is_null() { return; }
+    let _z: *u8 = { dt_memset(buf, 0 as i32, systemtime_bytes() *% (2 as usize)) };
+    var flags: u64 = 0 as u64;
+    if lo.year > (0 as i64) {
+        flags = flags | (0x0001 as u64);
+        put_word(buf, 0 as usize, lo.year as u16);
+        put_word(buf, 2 as usize, lo.month as u16);
+        put_word(buf, 6 as usize, lo.day as u16);
+    }
+    if hi.year > (0 as i64) {
+        flags = flags | (0x0002 as u64);
+        put_word(buf, systemtime_bytes(), hi.year as u16);
+        put_word(buf, systemtime_bytes() +% (2 as usize), hi.month as u16);
+        put_word(buf, systemtime_bytes() +% (6 as usize), hi.day as u16);
+    }
+    if flags != (0 as u64) {
+        let _r: i64 = { u::SendMessageA(v, dtm_setrange(), flags,
+                                        { #addr(buf) } as i64) };
+    }
+    { dt_free(buf) };
+    return;
+}
+
+// An EMPTY FORMAT RESTORES THE DEFAULT, which is what facet means by an unset
+// one — `DTM_SETFORMAT` with a null string is the control's own word for "use
+// the locale's".
+fn set_dt_format(v: *u8, f: text::Text) {
+    if f.view() == "" {
+        let _r: i64 = { u::SendMessageA(v, dtm_setformat(), 0 as u64, 0 as i64) };
+        return;
+    }
+    match f.c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let _r: i64 = { u::SendMessageA(v, dtm_setformat(), 0 as u64,
+                                            cs.as_ptr() as i64) };
+        }
+        option::Option[text::CString]::None => { }
+    }
+    return;
+}
+
+fn create_time_picker(n: *core::Node) -> *u8 {
+    return make_child(sys::datetime_class(), empty_title(),
+                      dts_timeformat() | sys::ws_tabstop(), 0 as u32);
+}
+
+fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TimePickerProps =
+        props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
+    if p == (0 as *props::TimePickerProps) { return; }
+    if (dirty & time_picker::P_TIME) != (0 as u64) {
+        // facet carries a time as a DURATION since midnight, which is the right
+        // model for "a time of day" and not what SYSTEMTIME wants — so it is
+        // split into hours, minutes and seconds here.
+        let total: f64 = { (*p).time.seconds };
+        if total >= (0.0 as f64) {
+            let secs: i64 = total as i64;
+            let st: *u8 = { dt_malloc(systemtime_bytes()) };
+            if !st.is_null() {
+                let _z: *u8 = { dt_memset(st, 0 as i32, systemtime_bytes()) };
+                // The DATE half still has to be valid even for a time-only
+                // control: a zero year makes the whole structure invalid and
+                // the control refuses it.
+                put_word(st, 0 as usize, 2000 as u16);
+                put_word(st, 2 as usize, 1 as u16);
+                put_word(st, 6 as usize, 1 as u16);
+                put_word(st, 8 as usize, ((secs / (3600 as i64)) % (24 as i64)) as u16);
+                put_word(st, 10 as usize, ((secs / (60 as i64)) % (60 as i64)) as u16);
+                put_word(st, 12 as usize, (secs % (60 as i64)) as u16);
+                let _r: i64 = { u::SendMessageA(v, dtm_setsystemtime(), gdt_valid(),
+                                                { #addr(st) } as i64) };
+                { dt_free(st) };
+            }
+        }
+    }
+    if (dirty & time_picker::P_FORMAT) != (0 as u64) {
+        set_dt_format(v, { (*p).format }.clone());
+    }
+    if (dirty & time_picker::P_TEXT_COLOR) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+#[link_name = "malloc"]
+extern fn dt_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn dt_free(p: *u8);
+#[link_name = "memset"]
+extern fn dt_memset(p: *u8, v: i32, n: usize) -> *u8;
+
+// ---- stepper -------------------------------------------------------------------------
+//
+// `msctls_updown32` — the two arrows. UDS_SETBUDDYINT would pair it with an
+// edit control showing the number; facet's `stepper` is the arrows alone, and
+// the value it carries is read by the application rather than displayed.
+//
+// THE RANGE IS 32-BIT AND facet's IS f64, the same mismatch the slider has. The
+// stepper's is worse in one way and better in another: its increment is stated,
+// so the control can run over the REAL range in whole increments rather than a
+// fixed step count — which is exact whenever the increment divides the range,
+// and that is what a stepper is for.
+fn uds_setrange32() -> u32 { return 0x046F as u32; }
+fn udm_setpos32() -> u32 { return 0x0471 as u32; }
+fn udm_getpos32() -> u32 { return 0x0472 as u32; }
+
+fn stepper_steps(p: *props::StepperProps) -> i32 {
+    let span: f64 = { (*p).maximum } - { (*p).minimum };
+    var inc: f64 = { (*p).increment };
+    if inc <= (0.0 as f64) { inc = 1.0f64; }
+    if span <= (0.0 as f64) { return 0 as i32; }
+    return (span / inc) as i32;
+}
+
+fn create_stepper(n: *core::Node) -> *u8 {
+    return make_child(sys::updown_class(), empty_title(),
+                      sys::ws_tabstop(), 0 as u32);
+}
+
+fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::StepperProps =
+        props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
+    if (dirty & (stepper::P_MINIMUM | stepper::P_MAXIMUM | stepper::P_INCREMENT))
+       != (0 as u64) {
+        let _r: i64 = { u::SendMessageA(v, uds_setrange32(), 0 as u64,
+                                        stepper_steps(p) as i64) };
+    }
+    if (dirty & stepper::P_VALUE) != (0 as u64) {
+        var inc: f64 = { (*p).increment };
+        if inc <= (0.0 as f64) { inc = 1.0f64; }
+        let step: i32 = (({ (*p).value } - { (*p).minimum }) / inc) as i32;
+        let _r: i64 = { u::SendMessageA(v, udm_setpos32(), 0 as u64, step as i64) };
+    }
+    return;
+}
+
+fn stepper_value_of(v: *u8, p: *props::StepperProps) -> f64 {
+    let step: i64 = { u::SendMessageA(v, udm_getpos32(), 0 as u64, 0 as i64) };
+    var inc: f64 = { (*p).increment };
+    if inc <= (0.0 as f64) { inc = 1.0f64; }
+    return { (*p).minimum } + (step as f64) * inc;
+}
+
+// ---- tabs ----------------------------------------------------------------------------
+//
+// `SysTabControl32` draws the bar; the PAGES are facet's own children, placed by
+// the layout walk like any other node. That division is the same one `table`
+// makes — the control styles, facet supplies content — and it is why `tabs` is
+// six props rather than a container protocol.
+
+// ---- tabs: the strip is THIS PACKAGE'S, not the tab control's -------------------------
+//
+// This kind was a `SysTabControl32`, and that was wrong in a way nothing about
+// it said: A TAB CONTROL WITH NO ITEMS INSERTED SHOWS NO TABS. The control was
+// created, sized, and given a selection index it had nothing to select — an
+// empty strip with the panes laid out over it.
+//
+// The reason no items were ever inserted is the same reason facet_gtk dropped
+// GtkNotebook and facet_appkit dropped NSTabView, and it is worth stating
+// because all three arrived at it separately: FACET'S `tabs` DECLARES NO TITLES
+// AND NO PAGES. Its panes are ordinary children laid out by flex, and their
+// titles are the children's KEYS — a key being the one name every node has. A
+// native tab control wants to own both, so handing it facet's tree means either
+// duplicating the children into its pages or lying to it about them.
+//
+// So the strip is drawn — in the node's own WM_PAINT, on a panel, exactly as
+// `page_dots` and `bordered` draw. That also makes the five colour verbs
+// ordinary: the pixels are ours, so there is no themed control refusing a
+// colour message.
+//
+// The panes are shown ONE AT A TIME through `Display::None`, which is flex's
+// own word for "not in the layout". Hiding the others with `is_visible` would
+// leave them taking space and give the showing pane a fraction of the box.
+
+fn strip_height() -> i32 { return 30 as i32; }
+
+fn create_tabs(n: *core::Node) -> *u8 { return create_panel(n); }
+
+fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return; }
+    // THE STRIP LIVES IN THE NODE'S PADDING, which is how flex is told it is
+    // there. Without this a pane is laid out over the strip. Set once, on
+    // create — `paint::all_bits` is the create sentinel.
+    if dirty == paint::all_bits() {
+        { (*n).set_padding(flex::Edge::Top,
+                           flex::StyleLength::points(strip_height() as f64)) };
+    }
+    if (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {
+        show_selected_pane(n, { (*p).selected_index });
+    }
+    let colours: u64 = tabs::P_BAR_BACKGROUND | tabs::P_BAR_BACKGROUND_COLOR
+                     | tabs::P_BAR_TEXT_COLOR | tabs::P_SELECTED_TAB_COLOR
+                     | tabs::P_UNSELECTED_TAB_COLOR | tabs::P_SELECTED_INDEX;
+    if (dirty & colours) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+fn show_selected_pane(n: *core::Node, at: i64) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if (i as i64) == at { { (*c).set_display(flex::Display::Flex) }; }
+                else { { (*c).set_display(flex::Display::None) }; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Every tab the same width, which is what a strip of equal buttons means and
+// saves measuring each title. A strip with no panes has no tabs and divides by
+// nothing.
+fn tab_width(v: *u8, count: usize) -> i32 {
+    if count == (0 as usize) { return 0 as i32; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return 0 as i32; }
+    return (r.right -% r.left) / (count as i32);
+}
+
+fn draw_tab_strip(v: *u8, n: *core::Node, hdc: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *props::TabsProps = { (*d).props } as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return; }
+    let count: usize = core::child_count_of(n);
+    if count == (0 as usize) { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    let h: i32 = strip_height();
+    let w: i32 = (r.right -% r.left) / (count as i32);
+
+    // THE BAR FIRST, under the tabs. `bar_background_color` wins over
+    // `bar_background` when both are set, because it is the more specific verb
+    // — the same precedence facet_gtk states for the same pair.
+    var bhas: bool = false;
+    var bar: u32 = paint::resolve({ (*p).bar_background_color }, #addr_of(bhas));
+    if !bhas {
+        bar = paint::resolve({ (*p).bar_background.start }, #addr_of(bhas));
+    }
+    if bhas {
+        let bb: *u8 = paint::brush_for(bar);
+        if bb != (0 as *u8) {
+            var strip: u::tagRECT = u::tagRECT { left: r.left, top: r.top,
+                                                 right: r.right, bottom: r.top +% h };
+            let _f: i32 = { u::FillRect(hdc, #addr_of(strip), bb) };
+        }
+    }
+
+    let font: *u8 = { u::SendMessageA(v, 0x0031 as u32, 0 as u64, 0 as i64) } as *u8;
+    var oldf: *u8 = 0 as *u8;
+    if font != (0 as *u8) { oldf = { gdi::SelectObject(hdc, font) }; }
+    let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
+
+    let at: i64 = { (*p).selected_index };
+    var i: usize = 0 as usize;
+    while i < count {
+        let on: bool = (i as i64) == at;
+        var tab: u::tagRECT = u::tagRECT {
+            left: r.left +% ((i as i32) *% w), top: r.top,
+            right: r.left +% (((i as i32) +% (1 as i32)) *% w), bottom: r.top +% h,
+        };
+        var thas: bool = false;
+        var tc: u32 = paint::resolve(
+            if on { { (*p).selected_tab_color } } else { { (*p).unselected_tab_color } },
+            #addr_of(thas));
+        if !thas && on {
+            // Only the SELECTED tab gets a default fill. An unselected tab with
+            // no stated colour is the bar showing through, which is what a tab
+            // strip looks like — filling it too would draw a row of identical
+            // boxes with nothing to say which is current.
+            tc = { u::GetSysColor(5 as i32) };                // COLOR_WINDOW
+            thas = true;
+        }
+        if thas {
+            let tb: *u8 = paint::brush_for(tc);
+            if tb != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(tab), tb) }; }
+        }
+        var fhas: bool = false;
+        var fg: u32 = paint::resolve({ (*p).bar_text_color }, #addr_of(fhas));
+        if !fhas { fg = { u::GetSysColor(8 as i32) }; }       // COLOR_WINDOWTEXT
+        let _t: u32 = { gdi::SetTextColor(hdc, fg) };
+        // THE TAB'S TITLE IS THE PANE'S KEY. facet's `tabs` declares no title
+        // of its own, and a key is the one name every node has.
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(pane) => {
+                let w16: *u16 = to_wide({ (*pane).key() });
+                if w16 != (0 as *u16) {
+                    let flags: u32 = sys::dt_center() | sys::dt_vcenter()
+                                   | sys::dt_singleline() | sys::dt_noprefix()
+                                   | sys::dt_end_ellipsis();
+                    let _dd: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                                  #addr_of(tab), flags) };
+                    free_wide(w16);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
+    return;
+}
+
+// Which tab a point is in, or -1. Called from the pointer band — the strip is
+// painted rather than built from windows, so there is no child to receive the
+// click and the panel has to hit-test it.
+fn tab_at(v: *u8, n: *core::Node, x: i32, y: i32) -> i64 {
+    if y >= strip_height() { return (0 as i64) -% (1 as i64); }
+    let count: usize = core::child_count_of(n);
+    if count == (0 as usize) { return (0 as i64) -% (1 as i64); }
+    let w: i32 = tab_width(v, count);
+    if w <= (0 as i32) { return (0 as i64) -% (1 as i64); }
+    let at: i64 = (x / w) as i64;
+    if at < (0 as i64) || at >= (count as i64) { return (0 as i64) -% (1 as i64); }
+    return at;
+}
+
+fn tabs_selection(v: *u8) -> i64 {
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return 0 as i64; }
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return 0 as i64; }
+    return { (*p).selected_index };
+}
+
+
+// ---- page_dots and bordered: the two kinds this package DRAWS ------------------------
+//
+// Both are a panel whose WM_PAINT does more than the shared band. Neither has a
+// Win32 control behind it — there is no page-indicator class, and `bordered` is
+// a stroke around arbitrary content rather than a widget — so they are drawn,
+// which a panel can do because it owns its own pixels.
+//
+// This is the SAME door §2's ceiling describes for controls, used where there is
+// no control to fight: nothing here has to reproduce focus, a caret or an
+// accessibility role, because neither kind has any.
+
+fn draw_page_dots(v: *u8, n: *core::Node, hdc: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *props::PageDotsProps = { (*d).props } as *props::PageDotsProps;
+    if p == (0 as *props::PageDotsProps) { return; }
+    var count: i64 = { (*p).count };
+    if count <= (0 as i64) { return; }
+    // HIDE A SINGLE DOT. One page has no navigation to indicate, and a lone dot
+    // reads as a bullet rather than a control.
+    if count == (1 as i64) && { (*p).hides_single } { return; }
+    let cap: i64 = { (*p).max_dots };
+    if cap > (0 as i64) && count > cap { count = cap; }
+
+    var size: f64 = { (*p).dot_size };
+    if size <= (0.0 as f64) { size = 8.0f64; }
+    let gap: f64 = size;
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    let total: f64 = (count as f64) * size + ((count -% (1 as i64)) as f64) * gap;
+    var x: f64 = (((r.right -% r.left) as f64) - total) / (2.0 as f64);
+    let y: f64 = (((r.bottom -% r.top) as f64) - size) / (2.0 as f64);
+
+    var on: bool = false;
+    var dim: u32 = paint::resolve({ (*p).dot_color }, #addr_of(on));
+    if !on { dim = { u::GetSysColor(17 as i32) }; }        // COLOR_GRAYTEXT
+    var lit: u32 = paint::resolve({ (*p).selected_dot_color }, #addr_of(on));
+    if !on { lit = { u::GetSysColor(13 as i32) }; }        // COLOR_HIGHLIGHT
+
+    let round: bool = match { (*p).dot_shape } {
+        vocab::DotShape::Circle => true,
+        vocab::DotShape::Square => false,
+    };
+    let pos: i64 = { (*p).position };
+    var i: i64 = 0 as i64;
+    while i < count {
+        let c: u32 = if i == pos { lit } else { dim };
+        let b: *u8 = paint::brush_for(c);
+        if b != (0 as *u8) {
+            var dot: u::tagRECT = u::tagRECT {
+                left: x as i32, top: y as i32,
+                right: (x + size) as i32, bottom: (y + size) as i32,
+            };
+            if round { paint::fill_ellipse(hdc, dot, b); }
+            else { let _f: i32 = { u::FillRect(hdc, #addr_of(dot), b) }; }
+        }
+        x = x + size + gap;
+        i = i + (1 as i64);
+    }
+    return;
+}
+
+fn create_page_dots(n: *core::Node) -> *u8 { return create_panel(n); }
+
+fn apply_page_dots(v: *u8, n: *core::Node, dirty: u64) {
+    // EVERY PROP THIS KIND HAS IS PAINT. There is no control to write to, so
+    // the whole apply is "draw again" — and naming the bits is what says the
+    // verbs are answered rather than ignored.
+    let touched: u64 = page_dots::P_COUNT | page_dots::P_HIDES_SINGLE
+                     | page_dots::P_DOT_COLOR | page_dots::P_DOT_SIZE
+                     | page_dots::P_DOT_SHAPE | page_dots::P_MAX_DOTS
+                     | page_dots::P_POSITION | page_dots::P_SELECTED_DOT_COLOR;
+    if (dirty & touched) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+fn create_bordered(n: *core::Node) -> *u8 { return create_panel(n); }
+
+fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
+    let touched: u64 = bordered::P_STROKE | bordered::P_STROKE_WIDTH
+                     | bordered::P_STROKE_SHAPE | bordered::P_STROKE_DASH
+                     | bordered::P_STROKE_DASH_OFFSET | bordered::P_STROKE_CAP
+                     | bordered::P_STROKE_JOIN | bordered::P_STROKE_MITER_LIMIT;
+    if (dirty & touched) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+// The stroke a `bordered` draws around its content, after the shared band has
+// filled the background.
+//
+// PS_INSIDEFRAME keeps the whole pen width INSIDE the rectangle. The default
+// centres it on the path, so half a wide stroke falls outside the node's own
+// box and is clipped — a 6-point border drawing as 3 with no explanation.
+fn draw_bordered(v: *u8, n: *core::Node, hdc: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *props::BorderedProps = { (*d).props } as *props::BorderedProps;
+    if p == (0 as *props::BorderedProps) { return; }
+    var w: f64 = { (*p).stroke_width };
+    if w <= (0.0 as f64) { return; }
+    var has: bool = false;
+    let c: u32 = paint::resolve({ (*p).stroke.start }, #addr_of(has));
+    if !has { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    paint::stroke_rect(hdc, r, c, w as i32,
+                       paint::uniform_radius({ (*p).stroke_shape.corners }));
+    return;
+}
+
+// ---- scroll -------------------------------------------------------------------------
+//
+// The viewport and its document already exist (`create_scroll`); this is the
+// half that makes them move.
+fn apply_scroll_props(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    if (dirty & (scroll::P_HORIZONTAL_SCROLL_BARS | scroll::P_VERTICAL_SCROLL_BARS
+                 | scroll::P_AXIS)) != (0 as u64) {
+        var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+        style = style & ~(sys::ws_vscroll() | sys::ws_hscroll());
+        if bars_shown({ (*p).vertical_scroll_bars }) { style = style | sys::ws_vscroll(); }
+        if bars_shown({ (*p).horizontal_scroll_bars }) { style = style | sys::ws_hscroll(); }
+        let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+    }
+    if (dirty & (scroll::P_SCROLL_X | scroll::P_SCROLL_Y)) != (0 as u64) {
+        // The document is MOVED rather than the viewport scrolled: a GtkFixed
+        // analogue has no scroll origin of its own, so `scroll_x`/`scroll_y`
+        // become the document's offset inside its host.
+        let doc: *u8 = document_host(v);
+        if doc != v {
+            let _m: i32 = { u::SetWindowPos(doc, sys::hwnd_top(),
+                                            (0.0f64 - { (*p).scroll_x }) as i32,
+                                            (0.0f64 - { (*p).scroll_y }) as i32,
+                                            0 as i32, 0 as i32,
+                                            sys::swp_nosize() | sys::swp_nozorder()
+                                            | sys::swp_noactivate()) };
+            // THE OFFSET MOVED, so the observer is told. A `scroll` has no
+            // scroll bar of its own to report from — the document is moved
+            // inside its host — so this write IS the scroll event.
+            let h: fn(*u8, *u8) = { (*p).observe_scrolled };
+            if h != props::no_handler { h(v, { (*p).observe_scrolled_ctx }); }
+        }
+    }
+    return;
+}
+
+// `Never` is the only value that means no bar. `Default` and `Always` both show
+// one — the difference between them is auto-hiding, which a Win32 scroll bar
+// does not do, so they are the same answer here and §1 records the narrowing.
+fn bars_shown(b: vocab::ScrollBars) -> bool {
+    return match b {
+        vocab::ScrollBars::Never => false,
+        vocab::ScrollBars::Always => true,
+        vocab::ScrollBars::Default => true,
+    };
+}
+
+// ---- toggle: a switch, drawn ---------------------------------------------------------
+//
+// This kind was a checkbox, and a checkbox answers `on` and NOTHING ELSE — its
+// three colour verbs describe a pill and a thumb that a checkbox does not have.
+// Windows has no switch control before WinUI, so the shape every other backend
+// shows (NSSwitch, GtkSwitch, UISwitch, SwitchMaterial) has to be drawn.
+//
+// `BS_OWNERDRAW` KEEPS THE BUTTON and gives up only the pixels: focus, the tab
+// order, space and enter, and the accessibility role all survive, which is the
+// same trade `text_button` makes and for the same reason.
+//
+// WHAT IT COSTS is the auto-check. `BS_AUTOCHECKBOX` flipped the control's own
+// check state on click and `fire_toggle` read it back; an owner-draw button has
+// no check state, so the flip moves here — the node's `on` is the truth and the
+// click inverts it. That is one line, and it is also more honest: the node was
+// always the truth and the control was a copy of it.
+fn create_toggle(n: *core::Node) -> *u8 {
+    return make_child(sys::button_class(), empty_title(),
+                      sys::bs_ownerdraw_style() | sys::ws_tabstop(), 0 as u32);
+}
+
+fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
+    if p == (0 as *props::ToggleProps) { return; }
+    let touched: u64 = toggle::P_ON | toggle::P_ON_COLOR | toggle::P_OFF_COLOR
+                     | toggle::P_THUMB_COLOR;
+    if (dirty & touched) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+// What a click means now that the control keeps no state of its own. Called
+// from `input::fire_toggle`, which used to read `is_checked`.
+fn flip_toggle(v: *u8, p: *props::ToggleProps) -> bool {
+    let now: bool = !{ (*p).on };
+    { (*p).on = now };
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return now;
+}
+
+// The pill and the thumb.
+//
+// THE TRACK IS THE SHORTER DIMENSION'S HEIGHT, centred — a switch has a fixed
+// aspect and stretching it to whatever box layout gave the node produces a
+// lozenge rather than a switch. The measured size (`measure::has_intrinsic_size`)
+// asks for the right box; this only refuses to look wrong when it does not get
+// it.
+fn draw_toggle(di: *u8) -> bool {
+    if di == (0 as *u8) { return false; }
+    let v: *u8 = read_ptr_at(di, di_off_hwnd());
+    let hdc: *u8 = read_ptr_at(di, di_off_hdc());
+    if v == (0 as *u8) || hdc == (0 as *u8) { return false; }
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
+    if p == (0 as *props::ToggleProps) { return false; }
+    let state: u32 = read_u32_at(di, di_off_state());
+    var r: u::tagRECT = u::tagRECT {
+        left: read_u32_at(di, di_off_rect()) as i32,
+        top: read_u32_at(di, di_off_rect() +% (4 as usize)) as i32,
+        right: read_u32_at(di, di_off_rect() +% (8 as usize)) as i32,
+        bottom: read_u32_at(di, di_off_rect() +% (12 as usize)) as i32,
+    };
+    // The parent's background first — the pill does not fill its box, so what
+    // is left over has to be something.
+    let back: *u8 = paint::brush_for(paint::effective_bg(v));
+    if back != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), back) }; }
+
+    let on: bool = { (*p).on };
+    var h: i32 = r.bottom -% r.top;
+    if h > toggle_height() { h = toggle_height(); }
+    if h < (8 as i32) { h = 8 as i32; }
+    let w: i32 = h *% (2 as i32);
+    let top: i32 = r.top +% (((r.bottom -% r.top) -% h) / (2 as i32));
+    var track: u::tagRECT = u::tagRECT {
+        left: r.left, top: top, right: r.left +% w, bottom: top +% h,
+    };
+
+    var has: bool = false;
+    var c: u32 = paint::resolve(if on { { (*p).on_color } } else { { (*p).off_color } },
+                                #addr_of(has));
+    if !has {
+        // COLOR_HIGHLIGHT on, COLOR_3DSHADOW off — the accent and the recess,
+        // which is the pair every switch in the shell uses.
+        c = if on { { u::GetSysColor(13 as i32) } } else { { u::GetSysColor(16 as i32) } };
+    }
+    if (state & ods_disabled()) != (0 as u32) { c = { u::GetSysColor(15 as i32) }; }
+    let tb: *u8 = paint::brush_for(c);
+    if tb != (0 as *u8) {
+        // A FULLY ROUNDED TRACK: the radius is half the height, which is what
+        // makes a rectangle a pill rather than a rounded box.
+        paint::paint_rounded(hdc, track, tb, (h as f64) / (2.0 as f64));
+    }
+
+    var thas: bool = false;
+    var tc: u32 = paint::resolve({ (*p).thumb_color }, #addr_of(thas));
+    if !thas { tc = { u::GetSysColor(5 as i32) }; }          // COLOR_WINDOW
+    let thumb_brush: *u8 = paint::brush_for(tc);
+    if thumb_brush != (0 as *u8) {
+        let inset: i32 = 2 as i32;
+        let d: i32 = h -% (inset *% (2 as i32));
+        let x: i32 = if on { track.right -% inset -% d } else { track.left +% inset };
+        var thumb: u::tagRECT = u::tagRECT {
+            left: x, top: top +% inset, right: x +% d, bottom: top +% inset +% d,
+        };
+        paint::fill_ellipse(hdc, thumb, thumb_brush);
+    }
+    if (state & ods_focus()) != (0 as u32) {
+        let _fr: i32 = { u::DrawFocusRect(hdc, #addr_of(track)) };
+    }
+    return true;
+}
+
+// The switch's own height. A switch does not grow with its box — it is a fixed
+// affordance, and `measure` reports this so layout gives it the right room.
+fn toggle_height() -> i32 { return 20 as i32; }
+
+// ---- the glyph tier: `symbol` and `icon_button` --------------------------------------
+//
+// Both draw a GLYPH rather than a bitmap, which is what makes them reachable
+// while `image` is not: a codepoint goes through the text stack this package
+// already has, where a PNG needs a decoder (WIC or GDI+, §2).
+//
+// THE BUNDLED FONT IS REGISTERED PRIVATELY. `AddFontResourceExA` with
+// `FR_PRIVATE` makes the face available to THIS PROCESS only — it is not
+// installed for the user, needs no elevation, and goes away when the process
+// does. Installing a font system-wide to draw an icon would be an
+// extraordinary thing for a UI toolkit to do.
+
+fn fr_private() -> u32 { return 0x10 as u32; }
+
+extern fn AddFontResourceExA(file: *i8, flags: u32, reserved: *u8) -> i32;
+
+static SYMBOL_FONT_TRIED: bool = false;
+static SYMBOL_FONT_OK: bool = false;
+
+fn bundled_family() -> str { return "Material Symbols Outlined"; }
+
+// UP THE TREE, not at a guessed depth. A hard-coded `../../` is right for an
+// example run from `examples/<name>/` and wrong for everything else — the
+// suite's own binary runs from somewhere else again. Walking up costs a handful
+// of failed opens, once per process. Four levels is the depth of this tree from
+// any package or example directory with room to spare.
+fn try_font_at(rel: str) -> bool {
+    var prefix: text::Text = text::from_str("");
+    var depth: usize = 0 as usize;
+    while depth < (5 as usize) {
+        let path: text::Text = "${prefix}${rel}";
+        match path.c_str() {
+            option::Option[text::CString]::Some(cs) => {
+                if { AddFontResourceExA(cs.as_ptr() as *i8, fr_private(), 0 as *u8) }
+                   > (0 as i32) {
+                    return true;
+                }
+            }
+            option::Option[text::CString]::None => { }
+        }
+        prefix = prefix.appending("../");
+        depth = depth +% (1 as usize);
+    }
+    return false;
+}
+
+fn register_bundled_font() -> bool {
+    if SYMBOL_FONT_TRIED { return SYMBOL_FONT_OK; }
+    SYMBOL_FONT_TRIED = true;
+    if try_font_at("assets/MaterialSymbolsOutlined.ttf") {
+        SYMBOL_FONT_OK = true;
+        return true;
+    }
+    if try_font_at("vendor/facet/assets/MaterialSymbolsOutlined.ttf") {
+        SYMBOL_FONT_OK = true;
+        return true;
+    }
+    // ONCE, AND NAMING THE FILE. A symbol that fails silently is
+    // indistinguishable from a symbol that is not there — facet_gtk records
+    // that verb spending its whole life indistinguishable from working.
+    io::eprintln("facet_win32: the bundled symbol font was not found (assets/MaterialSymbolsOutlined.ttf, or vendor/facet/assets/) — symbol(icons::*) renders as codepoint boxes. Ship the font beside the binary to fix it.");
+    return false;
+}
+
+// ---- symbol ---------------------------------------------------------------------------
+//
+// A STATIC that draws one glyph, in the icon font, at the stated size. Owner-
+// drawing it would buy nothing: a symbol has no interaction, so the only thing
+// it needs is text with a font and a colour, which a static answers.
+fn create_symbol(n: *core::Node) -> *u8 {
+    let _f: bool = register_bundled_font();
+    return make_child(sys::static_class(), empty_title(),
+                      sys::ss_notify() | sys::ss_center(), 0 as u32);
+}
+
+// The glyph as a string. A codepoint above the BMP would need a surrogate pair;
+// the Material Symbols range is entirely inside it, so one UTF-16 unit is the
+// whole character — and this is the one place this package builds a wide string
+// without converting from UTF-8, because the input IS a code unit.
+fn symbol_text(p: *symbol::SymbolProps) -> *u16 {
+    let buf: *u8 = { glyph_malloc(4 as usize) };
+    if buf.is_null() { return 0 as *u16; }
+    let w: *u16 = buf as *u16;
+    { *w = { (*p).icon } as u16 };
+    let term: *u16 = { (w + (1 as usize)) };
+    { *term = 0 as u16 };
+    return w;
+}
+
+fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
+    if p == (0 as *symbol::SymbolProps) { return; }
+    if (dirty & (symbol::P_ICON | symbol::P_NAME)) != (0 as u64) {
+        let bundled: bool = match { (*p).set } {
+            symbol::IconSet::Bundled => true,
+            symbol::IconSet::System => false,
+        };
+        if bundled {
+            let w: *u16 = symbol_text(p);
+            if w != (0 as *u16) {
+                let _r: i32 = { u::SetWindowTextW(v, w) };
+                { glyph_free(w as *u8) };
+            }
+        } else {
+            // THE SYSTEM TIER IS SEGOE FLUENT ICONS, which `symbol.cplus` names
+            // for this platform. Its names are its own — `` style
+            // codepoints rather than words — so an application asking for one
+            // is writing platform-specific code, which the contract says is a
+            // deliberate, visible choice.
+            set_window_text(v, { (*p).name }.clone());
+        }
+    }
+    if (dirty & (symbol::P_SIZE | symbol::P_FONT | symbol::P_FILL)) != (0 as u64) {
+        // The size and family ride the FONT, which `fonts::apply` sets from the
+        // same props — this is what asks for it again.
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    if (dirty & symbol::P_COLOR) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+// ---- icon_button ----------------------------------------------------------------------
+//
+// A GLYPH AND A CIRCLE and nothing else — no background, which is what an icon
+// button is everywhere. Owner-drawn for the reason `text_button` is: a themed
+// BUTTON draws a bezel that cannot be turned off, and a STATIC cannot hold
+// focus.
+//
+// `source` is an SF Symbol name on macOS and a file elsewhere. Here it is read
+// as a SYMBOL NAME first — Segoe Fluent Icons is the platform's own set — and a
+// path falls through to §2's missing image pipeline rather than being guessed
+// at.
+fn create_icon_button(n: *core::Node) -> *u8 {
+    let _f: bool = register_bundled_font();
+    return make_child(sys::button_class(), empty_title(),
+                      sys::bs_ownerdraw_style() | sys::ws_tabstop()
+                      | sys::bs_notify(), 0 as u32);
+}
+
+fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::IconButtonProps =
+        props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return; }
+    if (dirty & icon_button::P_SOURCE) != (0 as u64) {
+        set_window_text(v, { (*p).source }.clone());
+    }
+    if (dirty & icon_button::P_TOGGLES) != (0 as u64) {
+        var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+        if { (*p).toggles } { style = style | sys::bs_autocheckbox() | sys::bs_pushlike(); }
+        let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+    }
+    if (dirty & icon_button::P_ON) != (0 as u64) {
+        if { (*p).toggles } { set_checked(v, { (*p).on }); }
+    }
+    let repaint: u64 = icon_button::P_FIT | icon_button::P_BORDER_COLOR
+                     | icon_button::P_BORDER_WIDTH | icon_button::P_CORNER_RADIUS
+                     | icon_button::P_BORDERED;
+    if (dirty & repaint) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+// The owner-draw for an icon button. Shares `draw_text_button`'s shape — the
+// background is the parent's, the focus ring is ours, the press nudges — and
+// differs in drawing a BORDER when the node asked for one, which is the verb
+// this kind has and a text button does not.
+fn draw_icon_button(di: *u8) -> bool {
+    if di == (0 as *u8) { return false; }
+    let v: *u8 = read_ptr_at(di, di_off_hwnd());
+    let hdc: *u8 = read_ptr_at(di, di_off_hdc());
+    if v == (0 as *u8) || hdc == (0 as *u8) { return false; }
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    let p: *props::IconButtonProps =
+        props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return false; }
+    let state: u32 = read_u32_at(di, di_off_state());
+    var r: u::tagRECT = u::tagRECT {
+        left: read_u32_at(di, di_off_rect()) as i32,
+        top: read_u32_at(di, di_off_rect() +% (4 as usize)) as i32,
+        right: read_u32_at(di, di_off_rect() +% (8 as usize)) as i32,
+        bottom: read_u32_at(di, di_off_rect() +% (12 as usize)) as i32,
+    };
+    // `is_opaque` IS NOT A CHOICE HERE, and the reason is structural rather
+    // than a missing API: a child window OWNS ITS PIXELS. The parent does not
+    // paint under it, so a button that skips its own erase does not become
+    // transparent — it keeps whatever it drew last, and a glyph that changes
+    // leaves the old one behind. That is the identical failure the duplicate
+    // label had, and the fix there was the same: always erase, to the
+    // INHERITED background, which is what `effective_bg` answers.
+    //
+    // So the background is always painted, in the colour the node would have
+    // shown through to. facet_gtk records the same verb absent for this kind
+    // from the other side. MANIFEST §1.
+    let bg: u32 = paint::effective_bg(v);
+    let brush: *u8 = paint::brush_for(bg);
+    if brush != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), brush) }; }
+
+    if { (*p).bordered } {
+        var bhas: bool = false;
+        let bc: u32 = paint::resolve({ (*p).border_color }, #addr_of(bhas));
+        var bw: f64 = { (*p).border_width };
+        if bw <= (0.0 as f64) { bw = 1.0f64; }
+        if bhas {
+            paint::stroke_rect(hdc, r, bc, bw as i32,
+                               paint::uniform_radius({ (*p).corner_radius }));
+        }
+    }
+
+    let font: *u8 = { u::SendMessageA(v, 0x0031 as u32, 0 as u64, 0 as i64) } as *u8;
+    var oldf: *u8 = 0 as *u8;
+    if font != (0 as *u8) { oldf = { gdi::SelectObject(hdc, font) }; }
+    var has: bool = false;
+    // AN ICON BUTTON HAS NO COLOUR VERB of its own — the ledger's ImageButton
+    // carries a source and a border and no tint, because its content was always
+    // a bitmap. So the glyph takes the control text colour, which is what an
+    // unstyled button's label wears.
+    var fg: u32 = { u::GetSysColor(18 as i32) };   // COLOR_BTNTEXT
+    let _unused: bool = has;   // COLOR_BTNTEXT
+    if (state & ods_disabled()) != (0 as u32) { fg = { u::GetSysColor(17 as i32) }; }
+    let _t: u32 = { gdi::SetTextColor(hdc, fg) };
+    let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
+    if (state & ods_selected()) != (0 as u32) {
+        r.left = r.left +% (1 as i32);
+        r.top = r.top +% (1 as i32);
+    }
+    let w16: *u16 = to_wide({ (*p).source }.view());
+    if w16 != (0 as *u16) {
+        let flags: u32 = sys::dt_center() | sys::dt_vcenter()
+                       | sys::dt_singleline() | sys::dt_noprefix();
+        let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                     #addr_of(r), flags) };
+        free_wide(w16);
+    }
+    if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
+    if (state & ods_focus()) != (0 as u32) {
+        let _r: i32 = { u::DrawFocusRect(hdc, #addr_of(r)) };
+    }
+    return true;
+}
+
+#[link_name = "malloc"]
+extern fn glyph_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn glyph_free(p: *u8);
+// ---- the kind table ----------------------------------------------------------
+//
+// Named here rather than in `views` so that "which kinds have a body" is one
+// list in the file that owns the bodies. `views` asks; this answers.
+
+fn has_body(kind: u32) -> bool {
+    if kind == props::K_RADIO { return true; }
+    if kind == props::K_TEXT_AREA { return true; }
+    if kind == props::K_SEARCH_FIELD { return true; }
+    if kind == props::K_SLIDER { return true; }
+    if kind == props::K_PROGRESS { return true; }
+    if kind == props::K_SPINNER { return true; }
+    if kind == props::K_POPUP { return true; }
+    if kind == props::K_LABEL { return true; }
+    if kind == props::K_BUTTON { return true; }
+    if kind == props::K_CHECKBOX { return true; }
+    if kind == props::K_TOGGLE { return true; }
+    if kind == props::K_TEXT_FIELD { return true; }
+    if kind == props::K_BOX { return true; }
+    if kind == props::K_SCROLL { return true; }
+    return false;
+}
+
+#[test]
+fn a_truncating_label_does_not_also_wrap() {
+    // The bug facet_gtk records from the other side: facet's DEFAULT is
+    // TailTruncation with no line limit, and a static that both wraps and
+    // ellipsizes measures nonsense. NOWRAP must be present on every
+    // truncating mode.
+    let b: u32 = break_bits(vocab::LineBreak::TailTruncation, 0 as i64);
+    assert (b & sys::ss_leftnowordwrap()) != (0 as u32);
+    assert (b & sys::ss_endellipsis()) != (0 as u32);
+    // And a wrapping mode must NOT carry it, or nothing ever wraps.
+    let w: u32 = break_bits(vocab::LineBreak::WordWrap, 0 as i64);
+    assert (w & sys::ss_leftnowordwrap()) == (0 as u32);
+    return;
+}
+
+#[test]
+fn alignment_maps_onto_the_static_styles() {
+    assert align_bits(vocab::TextAlign::Start) == sys::ss_left();
+    assert align_bits(vocab::TextAlign::Center) == sys::ss_center();
+    assert align_bits(vocab::TextAlign::End) == sys::ss_right();
+    return;
+}
+
+// Does this line-break mode WRAP? Asked by `measure`, which has to agree with
+// `break_bits` above or a label is measured for one shape and drawn in
+// another. One reading, two callers — the drift facet_gtk warns about when a
+// row's height and its builder end up in separate files.
+fn break_wraps(b: vocab::LineBreak) -> bool {
+    return (break_bits(b, 0 as i64) & sys::ss_leftnowordwrap()) == (0 as u32);
+}
+
+// A label's text with its transform applied. `Default` and `None` both mean
+// "leave it alone" — the enum carries two words for one state because the
+// ledger did.
+fn transformed(take t: text::Text, tr: vocab::TextTransform) -> text::Text {
+    return match tr {
+        vocab::TextTransform::Uppercase => t.uppercased(),
+        vocab::TextTransform::Lowercase => t.lowercased(),
+        vocab::TextTransform::Default => t,
+        vocab::TextTransform::None => t,
+    };
+}
+
+
+// ---- text_button --------------------------------------------------------------------
+//
+// A button that is only its text — facet's own kind, declared because the
+// ledger's Button always draws its bezel and clearing three colour rows does
+// not remove it.
+//
+// OWNER-DRAWN, and the alternative is worth stating because it is the obvious
+// one. A `STATIC` with `SS_NOTIFY` gives clickable text with no chrome in one
+// line, answers colour through WM_CTLCOLORSTATIC, and takes a font — nearly
+// every prop this kind declares. What it cannot do is HOLD FOCUS: a static is
+// not a tab stop and never receives a keyboard activation, so a text button
+// built that way is unreachable without a mouse. That is an accessibility
+// regression, not a cosmetic one.
+//
+// `BS_OWNERDRAW` keeps everything a BUTTON is — focus, the tab order, space and
+// enter, the accessibility role — and hands us WM_DRAWITEM to paint. Since this
+// package already resolves fonts and colours and measures text, drawing a
+// string is the smallest part of it.
+//
+// A THEMED BUTTON CANNOT BE ASKED NOT TO DRAW ITS BEZEL. `BS_FLAT` is ignored
+// by the theme engine, which owns every pixel of a themed control's frame — the
+// same wall §1 records for `border_color`. Owner-draw is the way past it.
+fn create_text_button(n: *core::Node) -> *u8 {
+    return make_child(sys::button_class(), empty_title(),
+                      sys::bs_ownerdraw_style() | sys::ws_tabstop(), 0 as u32);
+}
+
+fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *text_button::TextButtonProps =
+        props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if p == (0 as *text_button::TextButtonProps) { return; }
+    // THE TITLE IS STILL THE WINDOW TEXT even though we draw it ourselves: it
+    // is what the accessibility tree reads, and an owner-drawn button with no
+    // window text is an unnamed button to a screen reader.
+    if (dirty & (text_button::P_TITLE | text_button::P_TEXT_TRANSFORM))
+       != (0 as u64) {
+        set_window_text(v, transformed({ (*p).title }.clone(),
+                                       { (*p).text_transform }));
+    }
+    if (dirty & (text_button::P_TEXT_COLOR | text_button::P_TEXT_ALIGN
+                 | text_button::P_LINE_BREAK | text_button::P_ON)) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+// What `window`'s WNDPROC draws on WM_DRAWITEM for one of these.
+//
+// DRAWITEMSTRUCT is laid out by hand — `cpc-bindgen` did not carry it, and it
+// is words and pointers with one inline RECT, which is four LONGs and so is
+// expressible:
+//
+//   0   CtlType     UINT
+//   4   CtlID       UINT
+//   8   itemID      UINT
+//   12  itemAction  UINT
+//   16  itemState   UINT
+//   24  hwndItem    HWND   (aligned to 8)
+//   32  hDC         HDC
+//   40  rcItem      RECT
+//   56  itemData    ULONG_PTR
+fn di_off_state() -> usize { return 16 as usize; }
+fn di_off_hwnd() -> usize { return 24 as usize; }
+fn di_off_hdc() -> usize { return 32 as usize; }
+fn di_off_rect() -> usize { return 40 as usize; }
+
+// ODS_SELECTED 0x0001, ODS_DISABLED 0x0004, ODS_FOCUS 0x0010.
+fn ods_selected() -> u32 { return 0x0001 as u32; }
+fn ods_disabled() -> u32 { return 0x0004 as u32; }
+fn ods_focus() -> u32 { return 0x0010 as u32; }
+
+fn read_u32_at(p: *u8, at: usize) -> u32 {
+    let q: *u32 = { (p + at) } as *u32;
+    return { *q };
+}
+
+fn read_ptr_at(p: *u8, at: usize) -> *u8 {
+    let q: *usize = { (p + at) } as *usize;
+    return { *q } as *u8;
+}
+
+fn draw_text_button(di: *u8) -> bool {
+    if di == (0 as *u8) { return false; }
+    let v: *u8 = read_ptr_at(di, di_off_hwnd());
+    let hdc: *u8 = read_ptr_at(di, di_off_hdc());
+    if v == (0 as *u8) || hdc == (0 as *u8) { return false; }
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    let p: *text_button::TextButtonProps =
+        props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if p == (0 as *text_button::TextButtonProps) { return false; }
+    let state: u32 = read_u32_at(di, di_off_state());
+    var r: u::tagRECT = u::tagRECT {
+        left: read_u32_at(di, di_off_rect()) as i32,
+        top: read_u32_at(di, di_off_rect() +% (4 as usize)) as i32,
+        right: read_u32_at(di, di_off_rect() +% (8 as usize)) as i32,
+        bottom: read_u32_at(di, di_off_rect() +% (12 as usize)) as i32,
+    };
+
+    // THE BACKGROUND IS THE PARENT'S. A text button has no chrome, which is the
+    // whole point of the kind — so what is painted behind the text is whatever
+    // the node inherits, exactly as a label does.
+    let bg: u32 = paint::effective_bg(v);
+    let brush: *u8 = paint::brush_for(bg);
+    if brush != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), brush) }; }
+
+    // The font this control was given. `WM_GETFONT` answers what `fonts::apply`
+    // set, so an owner-drawn button wears the same typeface every other control
+    // does without asking for it again.
+    let font: *u8 = { u::SendMessageA(v, 0x0031 as u32, 0 as u64, 0 as i64) } as *u8;
+    var oldf: *u8 = 0 as *u8;
+    if font != (0 as *u8) { oldf = { gdi::SelectObject(hdc, font) }; }
+
+    var has: bool = false;
+    var fg: u32 = paint::resolve({ (*p).text_color }, #addr_of(has));
+    if !has {
+        // COLOR_HOTLIGHT (26) rather than window text: an unstyled text button
+        // is the link posture, and that is the colour the shell uses for one.
+        fg = { u::GetSysColor(26 as i32) };
+    }
+    // DISABLED WINS over whatever the node asked for — a disabled control that
+    // still draws in its accent colour reads as enabled.
+    if (state & ods_disabled()) != (0 as u32) { fg = { u::GetSysColor(17 as i32) }; }
+    let _t: u32 = { gdi::SetTextColor(hdc, fg) };
+    let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
+
+    var flags: u32 = sys::dt_vcenter() | sys::dt_noprefix();
+    if break_wraps({ (*p).line_break }) { flags = flags | sys::dt_wordbreak(); }
+    else { flags = flags | sys::dt_singleline() | sys::dt_end_ellipsis(); }
+    flags = flags | dt_align_of({ (*p).text_align });
+
+    // PRESSED NUDGES THE TEXT, which is the only press feedback a control with
+    // no chrome can give. One point down and right, the same as a push button's
+    // own label does.
+    if (state & ods_selected()) != (0 as u32) {
+        r.left = r.left +% (1 as i32);
+        r.top = r.top +% (1 as i32);
+    }
+    let w16: *u16 = to_wide({ (*p).title }.view());
+    if w16 != (0 as *u16) {
+        let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                     #addr_of(r), flags) };
+        free_wide(w16);
+    }
+    if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
+
+    // THE FOCUS RING IS OURS TOO. An owner-drawn button gets no focus
+    // indication at all unless it draws one, and a keyboard user then cannot
+    // see where they are — which is the accessibility half this kind chose
+    // owner-draw to keep.
+    if (state & ods_focus()) != (0 as u32) {
+        let _r: i32 = { u::DrawFocusRect(hdc, #addr_of(r)) };
+    }
+    return true;
+}
+
+fn dt_align_of(a: vocab::TextAlign) -> u32 {
+    return match a {
+        vocab::TextAlign::Start => sys::dt_left(),
+        vocab::TextAlign::Center => sys::dt_center(),
+        vocab::TextAlign::End => sys::dt_right(),
+        vocab::TextAlign::Justify => sys::dt_left(),
+    };
+}
+// ---- table ---------------------------------------------------------------------
+//
+// A TABLE IS NOT A ROW SOURCE. `TableProps` is three fields — `has_uneven_rows`,
+// `style`, `row_height` — with no `count` and no `row`, because a table's rows
+// are its ordinary facet CHILDREN. It styles them; it does not build them.
+//
+// This package originally routed `table` through the recycler alongside `list`
+// and `collection`, casting its props to `ListProps`. That read three fields as
+// twenty and would have called a function pointer from past the end of the
+// allocation. The same walk facet_gtk's `apply_table` does is the right answer.
+fn create_table(n: *core::Node) -> *u8 { return create_panel(n); }
+
+fn apply_table(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TableProps = props_of(n, props::K_TABLE) as *props::TableProps;
+    if p == (0 as *props::TableProps) { return; }
+    // `style` IS THE ROW HEIGHT AND THE SEPARATOR, which is what `TableView.Intent`
+    // means everywhere: a Settings table has taller rows than a Data one, and a
+    // Menu table has none of the padding either. Win32 has no table control to
+    // hand the intent to — a `table` here is a panel holding its children — so
+    // the intent becomes the DEFAULT ROW HEIGHT it implies, which a stated
+    // `row_height` then overrides.
+    if (dirty & (table::P_STYLE | table::P_ROW_HEIGHT | table::P_HAS_UNEVEN_ROWS))
+       != (0 as u64) {
+        // `has_uneven_rows` is the SWITCH on the height: a table that says its
+        // rows differ is a table whose stated height is a floor rather than a
+        // measurement, so the height is simply not imposed.
+        var h: f64 = { (*p).row_height } as f64;
+        if h < (1.0 as f64) { h = style_row_height({ (*p).style }); }
+        let impose: bool = h >= (1.0 as f64) && !{ (*p).has_uneven_rows };
+        if !impose { return; }
+        var i: usize = 0 as usize;
+        let count: usize = core::child_count_of(n);
+        while i < count {
+            match core::child_of(n, i) {
+                option::Option[*core::Node]::Some(c) => {
+                    { (*c).set_height(flex::StyleLength::points(h)) };
+                }
+                option::Option[*core::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+    }
+    return;
+}
+
+// The row height each intent implies. These are the shell's own metrics for
+// the four shapes: a settings row holds a control and a subtitle, a data row
+// holds one line, and a menu row is a menu item.
+fn style_row_height(st: vocab::TableStyle) -> f64 {
+    return match st {
+        vocab::TableStyle::Data => 24.0f64,
+        vocab::TableStyle::Form => 32.0f64,
+        vocab::TableStyle::Menu => 22.0f64,
+        vocab::TableStyle::Settings => 44.0f64,
+    };
+}
+
+
+// ---- refreshable ---------------------------------------------------------------------
+//
+// A `RefreshView` around arbitrary content. It holds its children like any
+// panel; what it adds is the INDICATOR, which is the same hairline strip the
+// recycler draws for a list's refresh and for the same reason — the content is
+// child windows, and a child paints over its parent, so an overlay would be
+// covered.
+//
+// The gesture that starts one is F5 (`input::fire_refreshable`); pull-to-refresh
+// is a touch gesture a mouse cannot make. MANIFEST §1.
+fn create_refreshable(n: *core::Node) -> *u8 { return create_panel(n); }
+
+fn apply_refreshable(v: *u8, n: *core::Node, dirty: u64) {
+    let touched: u64 = refreshable::P_IS_REFRESHING | refreshable::P_IS_REFRESHABLE
+                     | refreshable::P_REFRESH_COLOR;
+    if (dirty & touched) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+fn draw_refreshable(v: *u8, n: *core::Node, hdc: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *props::RefreshableProps = { (*d).props } as *props::RefreshableProps;
+    if p == (0 as *props::RefreshableProps) { return; }
+    if !{ (*p).is_refreshing } { return; }
+    var has: bool = false;
+    var c: u32 = paint::resolve({ (*p).refresh_color }, #addr_of(has));
+    if !has { c = { u::GetSysColor(13 as i32) }; }        // COLOR_HIGHLIGHT
+    let brush: *u8 = paint::brush_for(c);
+    if brush == (0 as *u8) { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    var bar: u::tagRECT = u::tagRECT {
+        left: r.left, top: r.top, right: r.right, bottom: r.top +% (4 as i32),
+    };
+    let _f: i32 = { u::FillRect(hdc, #addr_of(bar), brush) };
+    return;
+}
+
+// ---- what a panel paints -------------------------------------------------------------
+//
+// THE BAND FIRST, THEN THE KIND. A `bordered` strokes over the background it was
+// given and a `page_dots` draws on top of one — the same order
+// `views::configure` uses for writes, for the same reason.
+//
+// The dispatch lives here rather than in `paint` because `controls` already
+// imports `paint`, and an import back would be a cycle. `window`'s WM_PAINT
+// calls this.
+fn paint_node(v: *u8, n: *core::Node, hdc: *u8) {
+    if n == (0 as *core::Node) { return; }
+    paint::paint_band_background(v, n, hdc);
+    let kind: u32 = core::kind_of(n);
+    if kind == props::K_PAGE_DOTS { draw_page_dots(v, n, hdc); return; }
+    if kind == props::K_BORDERED { draw_bordered(v, n, hdc); return; }
+    if kind == props::K_TABS { draw_tab_strip(v, n, hdc); return; }
+    if kind == props::K_REFRESHABLE { draw_refreshable(v, n, hdc); return; }
+    return;
+}
+
+// ---- the colour verbs on system controls ---------------------------------------------
+//
+// A themed control draws itself from the theme's bitmaps and ignores every
+// colour it is told. That is the wall, and there are exactly two ways past it:
+// drop the control out of visual styles (`paint::go_classic`) so the classic
+// colour messages work again, or take the drawing over entirely (owner-draw,
+// custom-draw). Which one is right depends on how much of the control's look
+// the verb touches.
+//
+// PROGRESS takes the first door. `PBM_SETBARCOLOR` is a real message that a
+// classic bar honours, and one flat colour is the whole of what
+// `progress_color` asks for — nothing is lost by drawing classically that the
+// prop was not already overriding.
+
+fn pbm_setbarcolor() -> u32 { return 0x0409 as u32; }
+fn pbm_setbkcolor() -> u32 { return 0x2001 as u32; }
+fn pbs_marquee_bit() -> u32 { return 0x08 as u32; }
+
+fn apply_progress_color(v: *u8, c: vocab::Color) {
+    var has: bool = false;
+    let rgb: u32 = paint::resolve(c, #addr_of(has));
+    // AN UNSTATED COLOUR PAYS NOTHING. Only a node that actually asked to be
+    // recoloured trades the modern look for the classic renderer.
+    if !has { return; }
+    paint::go_classic(v);
+    let _r: i64 = { u::SendMessageA(v, pbm_setbarcolor(), 0 as u64, rgb as i64) };
+    return;
+}
+
+// ---- slider: custom-draw, because the verbs are three DIFFERENT pixels -----------------
+//
+// A trackbar has no colour message at all — classic or themed — so the first
+// door is not available. `NM_CUSTOMDRAW` is: the control asks, per part, who is
+// drawing, and answering `CDRF_SKIPDEFAULT` for the channel and the thumb lets
+// this package fill them itself while the control keeps its hit-testing, its
+// keyboard handling and its accessibility role.
+//
+// `minimum_track_color` is the filled part BEFORE the thumb and
+// `maximum_track_color` the empty part after it. A trackbar draws one channel
+// and does not know about the split, so the channel rect is cut at the thumb's
+// centre and the two halves are filled separately — which is the whole reason
+// this is custom-draw and not one colour message.
+fn nm_customdraw() -> i32 { return (0 as i32) -% (12 as i32); }
+fn cdds_prepaint() -> u32 { return 0x00000001 as u32; }
+fn cdds_itemprepaint() -> u32 { return 0x00010001 as u32; }
+fn cdrf_notifyitemdraw() -> i64 { return 0x00000020 as i64; }
+fn cdrf_skipdefault() -> i64 { return 0x00000004 as i64; }
+fn cdrf_dodefault() -> i64 { return 0 as i64; }
+fn tbcd_channel() -> u64 { return 3 as u64; }
+fn tbcd_thumb() -> u64 { return 2 as u64; }
+
+// NMCUSTOMDRAW after the NMHDR (24 bytes: hwndFrom, idFrom, code, padded):
+//   0   hdr        NMHDR      { HWND, UINT_PTR, int } -> 24 with padding
+//   24  dwDrawStage DWORD
+//   32  hdc        HDC
+//   40  rc         RECT
+//   56  dwItemSpec  DWORD_PTR
+//   64  uItemState  UINT
+//   72  lItemlParam LPARAM
+fn cd_off_stage() -> usize { return 24 as usize; }
+fn cd_off_hdc() -> usize { return 32 as usize; }
+fn cd_off_rect() -> usize { return 40 as usize; }
+fn cd_off_itemspec() -> usize { return 56 as usize; }
+
+fn slider_customdraw(v: *u8, nm: *u8) -> i64 {
+    let stage: u32 = read_u32_at(nm, cd_off_stage());
+    if stage == cdds_prepaint() { return cdrf_notifyitemdraw(); }
+    if stage != cdds_itemprepaint() { return cdrf_dodefault(); }
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return cdrf_dodefault(); }
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return cdrf_dodefault(); }
+    let hdc: *u8 = read_ptr_at(nm, cd_off_hdc());
+    if hdc == (0 as *u8) { return cdrf_dodefault(); }
+    let spec: u64 = read_ptr_at(nm, cd_off_itemspec()) as u64;
+    var r: u::tagRECT = u::tagRECT {
+        left: read_u32_at(nm, cd_off_rect()) as i32,
+        top: read_u32_at(nm, cd_off_rect() +% (4 as usize)) as i32,
+        right: read_u32_at(nm, cd_off_rect() +% (8 as usize)) as i32,
+        bottom: read_u32_at(nm, cd_off_rect() +% (12 as usize)) as i32,
+    };
+
+    if spec == tbcd_thumb() {
+        var has: bool = false;
+        let c: u32 = paint::resolve({ (*p).thumb_color }, #addr_of(has));
+        if !has { return cdrf_dodefault(); }
+        let b: *u8 = paint::brush_for(c);
+        if b == (0 as *u8) { return cdrf_dodefault(); }
+        let _f: i32 = { u::FillRect(hdc, #addr_of(r), b) };
+        return cdrf_skipdefault();
+    }
+
+    if spec == tbcd_channel() {
+        var lo_has: bool = false;
+        var hi_has: bool = false;
+        var lo: u32 = paint::resolve({ (*p).minimum_track_color }, #addr_of(lo_has));
+        var hi: u32 = paint::resolve({ (*p).maximum_track_color }, #addr_of(hi_has));
+        if !lo_has && !hi_has { return cdrf_dodefault(); }
+        // ONE STATED COLOUR STILL TAKES THE WHOLE CHANNEL. Filling only the
+        // half that was asked for and letting the theme draw the rest cannot
+        // work — the default draw paints the entire channel and would cover
+        // it. So once either colour is stated this package owns both halves,
+        // and the unstated one falls back to the system colour a classic
+        // trackbar uses for it.
+        if !lo_has { lo = { u::GetSysColor(13 as i32) }; }   // COLOR_HIGHLIGHT
+        if !hi_has { hi = { u::GetSysColor(16 as i32) }; }   // COLOR_3DSHADOW
+        // WHERE THE THUMB IS, as a fraction — the channel rect is the whole
+        // track, so the split has to be computed from the value rather than
+        // read off the rect.
+        let span: f64 = { (*p).maximum } - { (*p).minimum };
+        var t: f64 = 0.0f64;
+        if span > (0.0 as f64) { t = ({ (*p).value } - { (*p).minimum }) / span; }
+        if t < (0.0 as f64) { t = 0.0f64; }
+        if t > (1.0 as f64) { t = 1.0f64; }
+        let cut: i32 = r.left +% ((((r.right -% r.left) as f64) * t) as i32);
+        let bl: *u8 = paint::brush_for(lo);
+        if bl != (0 as *u8) {
+            var lr: u::tagRECT = u::tagRECT { left: r.left, top: r.top,
+                                              right: cut, bottom: r.bottom };
+            let _f: i32 = { u::FillRect(hdc, #addr_of(lr), bl) };
+        }
+        let bh: *u8 = paint::brush_for(hi);
+        if bh != (0 as *u8) {
+            var hr: u::tagRECT = u::tagRECT { left: cut, top: r.top,
+                                              right: r.right, bottom: r.bottom };
+            let _f: i32 = { u::FillRect(hdc, #addr_of(hr), bh) };
+        }
+        return cdrf_skipdefault();
+    }
+    return cdrf_dodefault();
+}
+
+#[test]
+fn a_click_below_the_strip_is_not_a_tab() {
+    // The panes live under the strip and are ordinary children with their own
+    // windows. A point past `strip_height` belongs to whatever is there, and
+    // claiming it would eat every click in the selected pane.
+    var t: core::Node = tabs::tabs(key: "t");
+    let _a: status::Status = t.add_child(core::node_with("A", props::K_BOX,
+                                                        0 as *u8, props::release_box_props));
+    assert tab_at(0 as *u8, #addr_of(t), 0 as i32, strip_height()) < (0 as i64);
+    assert tab_at(0 as *u8, #addr_of(t), 0 as i32,
+                  strip_height() +% (40 as i32)) < (0 as i64);
+    return;
+}
+
+#[test]
+fn a_tabs_node_with_no_panes_has_no_tabs() {
+    // Not an error state — a `tabs` is built before its panes are added, and
+    // dividing the strip by zero of them is how that becomes a crash.
+    var t: core::Node = tabs::tabs(key: "t");
+    assert tab_at(0 as *u8, #addr_of(t), 10 as i32, 5 as i32) < (0 as i64);
+    assert tab_width(0 as *u8, 0 as usize) == (0 as i32);
+    return;
+}
+
+#[test]
+fn the_selected_pane_is_the_only_one_in_the_layout() {
+    // `Display::None` rather than `is_visible`: a hidden-but-present pane still
+    // takes space, and the showing pane would get a fraction of the box.
+    var t: core::Node = tabs::tabs(key: "t");
+    let _a: status::Status = t.add_child(core::node_with("A", props::K_BOX, 0 as *u8,
+                                                        props::release_box_props));
+    let _b: status::Status = t.add_child(core::node_with("B", props::K_BOX, 0 as *u8,
+                                                        props::release_box_props));
+    show_selected_pane(#addr_of(t), 1 as i64);
+    match core::child_of(#addr_of(t), 0 as usize) {
+        option::Option[*core::Node]::Some(c) => {
+            assert match { (*c).display() } {
+                flex::Display::None => true,
+                flex::Display::Flex => false,
+                flex::Display::Grid => false,
+            };
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    match core::child_of(#addr_of(t), 1 as usize) {
+        option::Option[*core::Node]::Some(c) => {
+            assert match { (*c).display() } {
+                flex::Display::None => false,
+                flex::Display::Flex => true,
+                flex::Display::Grid => false,
+            };
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- the switch keeps its state on the NODE ------------------------------------------
+
+#[test]
+fn flipping_a_toggle_inverts_the_node() {
+    // An owner-drawn button has no check state to read back, so the node is the
+    // truth. `input::fire_toggle` used to read `is_checked` off the control;
+    // this is what replaced it.
+    var n: core::Node = toggle::toggle(false, key: "t");
+    let p: *props::ToggleProps = props_of(#addr_of(n), props::K_TOGGLE) as *props::ToggleProps;
+    assert p != (0 as *props::ToggleProps);
+    assert flip_toggle(0 as *u8, p);
+    assert { (*p).on };
+    assert !flip_toggle(0 as *u8, p);
+    assert !{ (*p).on };
+    return;
+}
+
+// ---- a picker's calendar -------------------------------------------------------------
+
+#[test]
+fn a_null_picker_is_asked_nothing() {
+    // Every one of these sends a message; a null window makes SendMessage
+    // answer zero rather than crash, and the readers have to survive that
+    // because `apply` runs on a node whose create failed.
+    assert !calendar_open(0 as *u8);
+    let d: vocab::Date = date_of(0 as *u8);
+    assert d.year == (0 as i64);
+    let t: vocab::Duration = time_of(0 as *u8);
+    assert t.seconds == (0.0 as f64);
+    return;
+}
+
+#[test]
+fn a_time_is_seconds_since_midnight_not_a_clock() {
+    // facet's `time` is a Duration. A backend that answered a clock struct
+    // would typecheck and be wrong by a factor of sixty somewhere.
+    let p: *u8 = { dt_malloc(systemtime_bytes()) };
+    assert !p.is_null();
+    let _z: *u8 = { dt_memset(p, 0 as i32, systemtime_bytes()) };
+    put_word(p, 8 as usize, 13 as u16);      // hour
+    put_word(p, 10 as usize, 30 as u16);     // minute
+    put_word(p, 12 as usize, 5 as u16);      // second
+    let secs: f64 = (read_word(p, 8 as usize) as f64) * (3600.0 as f64)
+                  + (read_word(p, 10 as usize) as f64) * (60.0 as f64)
+                  + (read_word(p, 12 as usize) as f64);
+    assert secs == (48605.0 as f64);
+    { dt_free(p) };
+    return;
+}
+
+// ---- the scroll-bar vocabulary -------------------------------------------------------
+
+#[test]
+fn only_never_means_no_scroll_bar() {
+    // `Default` and `Always` differ by AUTO-HIDING, which a Win32 scroll bar
+    // does not do — so they are the same answer here and §1 records it. Getting
+    // this backwards hides the bar on every list that said nothing.
+    assert !bars_shown(vocab::ScrollBars::Never);
+    assert bars_shown(vocab::ScrollBars::Default);
+    assert bars_shown(vocab::ScrollBars::Always);
+    return;
+}
+
+#[test]
+fn a_pane_key_is_readable_as_the_tab_title() {
+    // What `draw_tab_strip` reads for each tab's label. If a pane's key does
+    // not survive being added as a child, the strip draws boxes with no words
+    // in them — which is exactly what the first screenshot showed.
+    var t: core::Node = tabs::tabs(key: "t");
+    let _a: status::Status = t.add_child(core::node_with("First", props::K_BOX, 0 as *u8,
+                                                        props::release_box_props));
+    let _b: status::Status = t.add_child(core::node_with("Second", props::K_BOX, 0 as *u8,
+                                                        props::release_box_props));
+    assert core::child_count_of(#addr_of(t)) == (2 as usize);
+    match core::child_of(#addr_of(t), 0 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).key() } == "First"; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    match core::child_of(#addr_of(t), 1 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).key() } == "Second"; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_hidden_pane_still_has_a_tab() {
+    // `show_selected_pane` puts every unselected pane at `Display::None`. If
+    // that took them out of the child list the strip would shrink to one tab
+    // as soon as a selection was made.
+    var t: core::Node = tabs::tabs(key: "t");
+    let _a: status::Status = t.add_child(core::node_with("A", props::K_BOX, 0 as *u8,
+                                                        props::release_box_props));
+    let _b: status::Status = t.add_child(core::node_with("B", props::K_BOX, 0 as *u8,
+                                                        props::release_box_props));
+    let _c: status::Status = t.add_child(core::node_with("C", props::K_BOX, 0 as *u8,
+                                                        props::release_box_props));
+    show_selected_pane(#addr_of(t), 0 as i64);
+    assert core::child_count_of(#addr_of(t)) == (3 as usize);
+    match core::child_of(#addr_of(t), 2 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).key() } == "C"; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_pane_built_the_way_an_application_builds_one_keeps_its_key() {
+    // The test above used `core::node_with` directly and passed while the
+    // probe drew three blank tabs, so it was testing the wrong path. THIS is
+    // the path an application takes: `column(key:)`, with the key arriving as
+    // a `str` PARAMETER rather than as a literal at the call site.
+    var t: core::Node = tabs::tabs(key: "t");
+    let _a: status::Status = t.add_child(keyed_column("First"));
+    let _b: status::Status = t.add_child(keyed_column("Second"));
+    match core::child_of(#addr_of(t), 0 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).key() } == "First"; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    match core::child_of(#addr_of(t), 1 as usize) {
+        option::Option[*core::Node]::Some(c) => { assert { (*c).key() } == "Second"; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    return;
+}
+
+fn keyed_column(title: str) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    return core::column(b, key: title);
+}

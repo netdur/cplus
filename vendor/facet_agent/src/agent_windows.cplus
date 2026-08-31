@@ -1,0 +1,321 @@
+// facet agent facade for WINDOWS. `import "facet_agent/agent"` resolves HERE on
+// a windows target, through the same filename override that picks
+// `agent_linux.cplus` on Linux and `runtime_windows.cplus` in the runtime tier.
+//
+// WHY IT EXISTS: `agent.cplus` is written against `agent_appkit`, so on Windows
+// the module named a package that is not in the build and the whole tier
+// failed to compile — `E0866: import agent_appkit/agent_appkit is not
+// available on platform windows`. A facet app on Win32 therefore could not
+// serve an agent at all, whatever it wrote. `facet_runtime/runtime_windows.cplus`
+// already calls `app::agent_serve_once(sock)` when `app.agent_mcp(path)` was
+// given; the seam was there and nothing filled it.
+//
+// THE TRANSPORT IS A PORT, not a path — the same answer `agent_ios.cplus`
+// gives, for a different reason.
+//
+// iOS uses a port because a Unix socket lives in the app's sandbox where
+// nothing can reach it. Here the reason is simpler and harder: stdlib has no
+// AF_UNIX on Windows at all. `netsys_windows.cplus` says so directly — "there
+// is no AF_UNIX socket to pair even where the address family exists" — and its
+// own socket pair is a loopback TCP connection for exactly that reason. Windows
+// 10 1803 did add AF_UNIX to Winsock, but nothing in this tree binds it, and
+// `mcp::serve_uds` would fail at `socket()` rather than at anything a caller
+// could read.
+//
+// So the path an application passes is read as a PORT NUMBER, and a path that
+// is not one gets the default. An app that writes `app.agent_mcp("/tmp/x.sock")`
+// — which is the line every macOS and Linux example carries — gets port 8787
+// rather than a silent failure.
+//
+// Bound to loopback by `serve_tcp`, never to every interface: this surface can
+// read a UI and press its buttons.
+//
+// Everything below the backend — agent_core, agent_mcp, agent_inapp — is
+// portable and is the same code on every platform. What differs is the READER,
+// and `agent_win32` is the sibling of `agent_appkit` that walks an HWND tree.
+//
+// `policy_for` is shared rather than merely similar: it is facet's vocabulary
+// translated into agent_core's, identical to the AppKit module's on purpose. A
+// second translation table would be the thing that drifts.
+import "facet/application" as app;
+import "agent_win32/agent_win32" as agent_win32;
+import "agent_core/events" as events;
+import "agent_core/auth" as auth;
+import "agent_core/identity" as identity;
+import "facet/vocabulary" as vocab;
+import "agent_inapp/agent_inapp" as inapp;
+import "agent_mcp/agent_mcp" as mcp;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/thread" as thread;
+
+static AGENT_SURFACE: agent_win32::Surface = #zero::[agent_win32::Surface]();
+static AGENT_SERVING: bool = false;
+
+// Register the serving hooks with the runtime. Call once, before `app.run`.
+//
+// ONE install struct, filled here — the same shape every other backend seam
+// uses. Stage 3 replaced the old `set_agent_attach_fn` / `set_agent_serve_fn`
+// pair with `app::install_agent`, and a hook family outside the install
+// structs is drift by definition.
+fn enable() {
+    app::install_agent(app::AgentHooks {
+        attach_window: attach_window,
+        serve_once: serve_once,
+        pin_policy: pin_policy,
+    });
+    return;
+}
+
+// Back to the portable no-op: an app that stops serving has no surface, and
+// the runtime's hooks answer nothing rather than reaching a dead one.
+fn disable() {
+    app::install_agent(app::AgentHooks {
+        attach_window: 0 as fn(*u8),
+        serve_once: 0 as fn(str),
+        pin_policy: 0 as fn(*u8, vocab::Agent),
+    });
+    return;
+}
+
+// Open the already-attached Facet surface for an assistant embedded in this
+// process. No socket and no MCP loopback: it drives the same backend vtable as
+// the external bridge, with the same grant model.
+//
+// Call `enable()` before App::run so each mounted window is attached. The
+// returned session borrows process-lifetime AGENT_SURFACE; it remains valid as
+// navigation retargets that surface in place.
+//
+// The default is `operator()`: the embedded assistant reads and drives the app
+// and gets nothing from a node behind a tier. That is not distrust of code
+// compiled into this binary — see agent_inapp's header. It is the developer
+// bounding what MODEL OUTPUT can reach, in-process, on purpose.
+fn in_app() -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open(surf, agent_win32::mcp_backend());
+}
+
+// The wider session an app opens once the user has approved something — the
+// autofill grant, or a look-but-do-not-touch one for a background summary.
+//
+// A NEW session rather than a widened one: a permission the user approved for
+// one task should not outlive the task, and the shortest way to guarantee that
+// is for the authority to live in a value the app drops.
+fn in_app_with_grant(grant: auth::Grant) -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open_with_grant(surf, agent_win32::mcp_backend(), grant);
+}
+
+// THE ONE PLACE the two vocabularies meet. facet's `vocab::Agent` is what a
+// developer writes; agent_core's `policy_*` is what a backend pins and reads.
+// They are separate on purpose — facet must not import the agent stack — so
+// this function is the translation, and it is in the module that already
+// depends on both.
+//
+// `Hidden` maps to EXCLUDE rather than to a tier: it takes the subtree out of
+// the agent's world instead of gating its content, which is a different
+// mechanism for a different job (the assistant's own panel is not the
+// application's content, while a card number is).
+fn policy_for(a: vocab::Agent) -> u32 {
+    return match a {
+        vocab::Agent::Open => identity::policy_none(),
+        vocab::Agent::Protected => identity::policy_protected(),
+        vocab::Agent::Private => identity::policy_private(),
+        vocab::Agent::Hidden => identity::policy_exclude(),
+    };
+}
+
+// Pin a mounted node's declared tier onto its platform view. Called by paint
+// for every node whose C_AGENT bit is up.
+fn pin_policy(view: *u8, a: vocab::Agent) {
+    agent_win32::set_agent_policy(view, policy_for(a));
+    return;
+}
+
+// Walk `win`'s live view tree into the surface, replacing the previous
+// screen's (its retained views are released by the drop).
+fn attach_window(win: *u8) {
+    AGENT_SURFACE = agent_win32::open(win);
+    return;
+}
+
+// The default channel policy: the developer opted in by giving a socket path,
+// so both channels are admitted — as ORDINARY OPERATORS. Read the app, drive
+// the app, and nothing from a node the application put behind a tier.
+//
+// `operator()` and not something wider is the whole of the default's opinion.
+// A grant that reached protected content would make `app.agent_mcp(path)` — one
+// line, written to get an agent talking at all — silently the line that hands
+// a card number to whatever connects. Widening is an app supplying its own
+// policy, which is a place a reader can find it.
+fn admit(req: auth::Request) -> auth::Grant {
+    return auth::operator();
+}
+
+// THE APP'S OWN POLICY, if it has one.
+//
+// `admit` above is a DEFAULT, and its comment argues carefully for why that
+// default is `operator()` and not something wider. What it could not do is let
+// an app be narrower — there was no way to supply a policy at all, so every
+// facet app that called `app.agent_mcp(path)` served every connection the same
+// grant with no way to say otherwise. An app that wants to ask its user first,
+// or to check a token, or to refuse outright, had nowhere to put that.
+//
+// A function pointer and not a closure, matching `auth::AuthGate`: C+ has no
+// closures, and per-caller behaviour comes from the `Request` rather than from
+// captured state.
+//
+// SET IT BEFORE `enable()`. The serve thread reads it once when it starts; a
+// policy installed afterwards would leave a window in which the default served.
+static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
+    #zero::[fn(auth::Request) -> auth::Grant]();
+
+fn set_policy(f: fn(auth::Request) -> auth::Grant) {
+    AGENT_POLICY = f;
+    return;
+}
+
+fn effective_policy() -> fn(auth::Request) -> auth::Grant {
+    if AGENT_POLICY == (0 as fn(auth::Request) -> auth::Grant) { return admit; }
+    return AGENT_POLICY;
+}
+
+// The port an application's path is read as — see the header. Shared with
+// `agent_ios.cplus`'s reading, digit for digit, because an app that moves
+// between the two should not find the same string meaning two things.
+const DEFAULT_PORT: u16 = 8787u16;
+
+fn port_of(path: str) -> u16 {
+    var n: u32 = 0 as u32;
+    var any: bool = false;
+    let bytes: *u8 = #str_ptr(path);
+    let len: usize = #str_len(path);
+    var i: usize = 0 as usize;
+    while i < len {
+        let c: u8 = { *(bytes + i) };
+        if c < ('0' as u8) || c > ('9' as u8) { return DEFAULT_PORT; }
+        n = n * (10 as u32) + ((c -% ('0' as u8)) as u32);
+        if n > (65535 as u32) { return DEFAULT_PORT; }
+        any = true;
+        i = i +% (1 as usize);
+    }
+    if !any { return DEFAULT_PORT; }
+    return n as u16;
+}
+
+struct AgentServe {
+    port: u16,
+}
+
+fn serve_main(take job: AgentServe) -> i32 {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return mcp::serve_tcp(surf, agent_win32::mcp_backend(), sub, effective_policy(), job.port);
+}
+
+// Start the serve worker exactly once per process. The accept loop lives for
+// the app's life.
+fn serve_once(path: str) {
+    if AGENT_SERVING { return; }
+    AGENT_SERVING = true;
+    let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
+        AgentServe { port: port_of(path) },
+        serve_main,
+    );
+    return;
+}
+
+// ---- tests ------------------------------------------------------------------
+
+#[test]
+fn enable_fills_the_install_struct_and_disable_empties_it() {
+    // The seam's own rule: zero fields keep the portable no-op, so a runtime
+    // with no agent enabled must reach nothing rather than reach a null.
+    disable();
+    app::agent_attach(0 as *u8);      // inert, not a trap
+    app::agent_serve_once("8787");
+    enable();
+    // `attach_window` with a null window is what the runtime does before any
+    // window exists; the surface opens empty rather than refusing.
+    app::agent_attach(0 as *u8);
+    disable();
+    return;
+}
+
+#[test]
+fn every_facet_tier_maps_to_the_policy_the_core_reads() {
+    // THE TRANSLATION, which is the one thing in this file a wrong answer
+    // would make dangerous rather than merely broken. A `Private` that mapped
+    // to `policy_none` is a CVC readable by every agent that connects, and
+    // nothing downstream would notice — agent_core would be enforcing exactly
+    // what it was told.
+    assert policy_for(vocab::Agent::Open) == identity::policy_none();
+    assert policy_for(vocab::Agent::Protected) == identity::policy_protected();
+    assert policy_for(vocab::Agent::Private) == identity::policy_private();
+    // Hidden is EXCLUSION, not a tier: it takes the subtree out of the agent's
+    // world rather than gating its content. Mapping it to a tier would leave
+    // the assistant's own Send button in the tree, visible and named.
+    assert policy_for(vocab::Agent::Hidden) == identity::policy_exclude();
+    // And the four are distinct: a pair that collided would silently merge two
+    // decisions a developer made separately.
+    assert identity::policy_none() != identity::policy_protected();
+    assert identity::policy_protected() != identity::policy_private();
+    assert identity::policy_private() != identity::policy_exclude();
+    return;
+}
+
+#[test]
+fn the_pinned_tier_is_what_the_agent_surface_reads_back() {
+    // The round trip across the package boundary, on a real window: facet's
+    // enum in, agent_core's policy out, through the same call `paint` makes at
+    // mount. Both halves are tested on their own; this is the join.
+    //
+    // A MESSAGE-ONLY WINDOW, which is what makes this runnable with no display
+    // — it never renders and is never enumerated, so the suite does not need a
+    // desktop the way the GTK sibling's `gtk_init_check` guard does.
+    let probe: *u8 = { CreateWindowExA(0 as u32, #str_ptr("STATIC\0"),
+                                       #str_ptr("\0"), 0 as u32,
+                                       0 as i32, 0 as i32, 0 as i32, 0 as i32,
+                                       hwnd_message(), 0 as *u8,
+                                       0 as *u8, 0 as *u8) };
+    if probe == (0 as *u8) {
+        // No window station at all — a service, or a session with no desktop.
+        // Saying so is the point: a silent pass here would look like the round
+        // trip worked.
+        io::eprintln("facet_agent: no window station — the pin round trip is skipped.");
+        return;
+    }
+    pin_policy(probe, vocab::Agent::Private);
+    assert agent_win32::get_agent_policy(probe) == identity::policy_private();
+    pin_policy(probe, vocab::Agent::Protected);
+    assert agent_win32::get_agent_policy(probe) == identity::policy_protected();
+    // Clearing is a write too, not an absence.
+    pin_policy(probe, vocab::Agent::Open);
+    assert agent_win32::get_agent_policy(probe) == identity::policy_none();
+    // ...and `Hidden` takes the subtree out of the agent's world rather than
+    // gating its content, which is a different mechanism for a different job.
+    pin_policy(probe, vocab::Agent::Hidden);
+    assert agent_win32::get_agent_policy(probe) == identity::policy_exclude();
+    let _d: i32 = { DestroyWindow(probe) };
+    return;
+}
+
+#[test]
+fn a_path_that_is_not_a_port_gets_the_default() {
+    // The line every macOS and Linux example carries. It must not fail
+    // silently here — a socket path is not a port and there is nothing to
+    // parse out of it, so the default is the only honest answer.
+    assert port_of("/tmp/facet-gallery.sock") == DEFAULT_PORT;
+    assert port_of("") == DEFAULT_PORT;
+    assert port_of("9000") == (9000 as u16);
+    // Out of range is not a port either.
+    assert port_of("70000") == DEFAULT_PORT;
+    return;
+}
+
+fn hwnd_message() -> *u8 { return ((0 as i64) -% (3 as i64)) as *u8; }
+
+extern fn CreateWindowExA(ex: u32, class: *u8, title: *u8, style: u32,
+                          x: i32, y: i32, w: i32, h: i32,
+                          parent: *u8, menu: *u8, inst: *u8, param: *u8) -> *u8;
+extern fn DestroyWindow(hwnd: *u8) -> i32;
