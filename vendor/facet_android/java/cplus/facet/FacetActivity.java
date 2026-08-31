@@ -36,7 +36,39 @@ public class FacetActivity extends android.app.Activity {
             getWindow().setDecorFitsSystemWindows(false);
         }
         setContentView(nativeCreateView(this));
+        // AFTER setContentView, and that ordering is the whole cold-start
+        // story: `nativeCreateView` runs the app's entry, so by the time this
+        // line executes a package has had its chance to subscribe. The latch in
+        // facet's app_events makes it safe even if it has not.
+        deliverPayload(getIntent());
     }
+
+    // A NOTIFICATION TAPPED WHILE THE APP IS RUNNING lands here rather than in
+    // onCreate. `setIntent` so a later `getIntent()` sees the new one instead of
+    // the launch intent, which is the default and would replay a stale payload.
+    @Override protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        deliverPayload(intent);
+    }
+
+    // The payload a notification carried, if this intent is one. Opaque here:
+    // facet does not know what it means, only who to hand it to.
+    private void deliverPayload(android.content.Intent i) {
+        if (i == null) return;
+        String p = i.getStringExtra(PAYLOAD_EXTRA);
+        if (p == null || p.length() == 0) return;
+        // ONCE. A rotation re-runs onCreate against the same intent, and a
+        // payload delivered twice is a deep link followed twice.
+        i.removeExtra(PAYLOAD_EXTRA);
+        nativeNotificationTap(p);
+    }
+
+    // The extra a notification's PendingIntent carries. Shared with
+    // vendor/notifications, which writes it; the string is the contract.
+    public static final String PAYLOAD_EXTRA = "cplus.payload";
+
+    private static native void nativeNotificationTap(String payload);
 
     // The system bars and the display cutout, in pixels, packed into one long
     // as left/top/right/bottom, 16 bits each.

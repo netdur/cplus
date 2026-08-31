@@ -7,7 +7,7 @@ bite. For a fast start see [tutorial.md](tutorial.md); for signatures see
 ## What this package is, and what it is not
 
 It owns everything from *"a notification exists"* onward: building one,
-scheduling it, cancelling it, and — when that tier lands — routing its tap.
+scheduling it, cancelling it, and routing its tap back into the app.
 
 It does **not** own how a remote one got there. A push token is a device
 credential and a round trip to a server you own: an `aps-environment`
@@ -139,6 +139,34 @@ On Android they happen to be the same call (`NotificationManager.cancelAll`,
 plus this package's own timer list for the first). The facade keeps them apart
 because Apple's centre distinguishes pending from delivered, and collapsing them
 would lose that.
+
+## Taps, and why a cold one is the hard case
+
+`on_tap(f)` hands `f` the notification's `payload`. Both platforms deliver, by
+completely different roads: a `UNUserNotificationCenterDelegate` method on
+Apple, and on Android a `PendingIntent` that starts the Activity —
+`onNewIntent` if it is running, the launch intent's extra if the process was
+dead.
+
+**The dead case is the one that breaks elsewhere.** A tap on a notification
+while the app is not running LAUNCHES it, and the payload arrives around process
+start — before any package's `init` has subscribed to anything. Deliver it only
+forward and taps work on a warm app and silently do nothing on a cold one, which
+only reproduces from a killed process and is among the most-reported bugs in
+every mobile framework there is.
+
+So `facet/app_events` **latches** it: the last tap is remembered and handed to a
+handler at registration. `on_tap` is therefore safe to call whenever — startup,
+a screen's `on_attach`, after a route change — and if a tap already happened
+your handler runs before `on_tap` returns.
+
+Edges do not latch. `E_FOREGROUND` replayed at registration would tell a
+subscriber the app just came to the front when it has been there for an hour.
+The test is whether the event describes a state of the world that is still true.
+
+**One handler, not a list.** A tap is a routing decision, and two routers
+disagreeing about one payload is a bug rather than a feature. Fan out on your
+own side, where you can say which wins.
 
 ## Testing your integration
 

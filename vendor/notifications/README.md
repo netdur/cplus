@@ -52,6 +52,8 @@ if o == notifications::Outcome::NotPermitted {
   says to present it. This package installs one. Without it the code is correct
   and nothing happens, which is the most common "notifications don't work"
   report there is.
+- **Register `on_tap` whenever you like.** A tap that launched the app fired
+  before anything subscribed; the latch replays it at registration.
 - **On Android a missing channel drops the notification silently.** This package
   creates one before every post, so you never meet it — but it is why `channel`
   is never passed through unchecked.
@@ -79,8 +81,9 @@ handled exactly like a local one), and media/transport-control notifications
 (sticky + actions covers the ask; the rest comes from a `MediaSession`).
 See `plans/notifications.md` §6 and §9.
 
-**Not yet:** tapping a notification does nothing. The payload is already
-attached; routing it back into the app is the next tier.
+**Taps work, cold and warm.** `on_tap` hands back the payload the notification
+carried. A tap on a *dead* app launches it and still reaches your handler —
+`facet/app_events` latches the payload, so registering late is safe.
 
 ## Tests
 

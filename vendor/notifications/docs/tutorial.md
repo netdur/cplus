@@ -69,6 +69,21 @@ let _p: notifications::Outcome = notifications::pending({ #addr_of(ids) as *vec:
 
 It appends to a Vec you own, so you can accumulate across calls.
 
+## Route a tap
+
+```cplus
+fn tapped(payload: str, ctx: *u8) {
+    // `payload` is whatever you put in the notification.
+    return;
+}
+
+let _t: notifications::Outcome = notifications::on_tap(tapped);
+```
+
+Safe to call at any point — startup, a screen's `on_attach`, after a route
+change. If a tap already happened, including the one that launched the app, your
+handler is called before `on_tap` returns.
+
 ## Read the outcome
 
 ```cplus
@@ -95,5 +110,6 @@ asking, the other by hiding the feature.
   that works.
 - **On Android a scheduled notification does not survive the app being
   killed.** See [guide.md](guide.md#deferred-delivery-on-android).
-- **Tapping does nothing yet.** The payload is attached and routing is the next
-  tier.
+- **A tap can arrive before you subscribe.** One that launched the app fired
+  around process start; `on_tap` is handed it at registration, so there is no
+  ordering to get right.

@@ -378,6 +378,13 @@ impl Env {
         { (*(*this._env)).CallVoidMethodA(this._env, obj, mid, #addr_of(args[0])); };
     }
 
+    fn call_object_2(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8,
+                     arg0: jni::JValue, arg1: jni::JValue) -> jni::jobject {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 2] = [arg0, arg1];
+        return { (*(*this._env)).CallObjectMethodA(this._env, obj, mid, #addr_of(args[0])) };
+    }
+
     // ---- object arrays --------------------------------------------------------
     //
     // `Activity.requestPermissions(String[], int)` is the only caller so far,

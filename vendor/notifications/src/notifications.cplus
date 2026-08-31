@@ -20,6 +20,7 @@ import "stdlib/status" as status;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "permissions/permissions" as permissions;
+import "facet/app_events" as ev;
 
 // ---- what happened ------------------------------------------------------------
 //
@@ -229,6 +230,79 @@ fn clear_shown() -> Outcome {
 fn pending(out: *vec::Vec[str]) -> Outcome {
     if out.is_null() { return Outcome::InvalidInput; }
     return Outcome::from_code({ cplus_notifications_pending_v1({ out as *u8 }) });
+}
+
+// ---- taps ----------------------------------------------------------------------
+//
+// A tap hands back the notification's `payload` and nothing else. The tap is a
+// ROUTING EVENT — an application that needs more than a string puts more in the
+// string — and keeping it to one argument is what lets both platforms deliver
+// through the same door despite arriving by completely different roads:
+// `UNUserNotificationCenterDelegate` on Apple, the Activity's intent on Android.
+//
+// THE COLD-START CASE IS HANDLED, and it is the reason this rides
+// `facet/app_events` rather than a callback of its own. A tap on a notification
+// while the app is DEAD launches it, and the payload arrives around process
+// start — before this package, or the application, has subscribed to anything.
+// `app_events` LATCHES that kind, so a handler registered later is still handed
+// it. Without the latch, taps would work on a warm app and silently do nothing
+// on a cold one, which only reproduces from a killed process.
+//
+// So `on_tap` is safe to call whenever: at startup, from a screen's
+// `on_attach`, or after a route change.
+
+// The application's handler slot. ONE, not a list: a tap is a routing decision
+// and two routers disagreeing about one payload is a bug, not a feature. An
+// application that wants to fan out does it on its own side, where it can say
+// which wins.
+static TAP: fn(str, *u8) = 0 as fn(str, *u8);
+static TAP_CTX: *u8 = 0 as *u8;
+static SUBSCRIBED: bool = false;
+
+// Route taps to `f`. `InvalidInput` for a null handler; `Ok` otherwise, and a
+// second call REPLACES the first.
+//
+// If a tap already happened — including the one that launched the app — the
+// handler is called before this returns.
+fn on_tap(f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> Outcome {
+    if f == (0 as fn(str, *u8)) { return Outcome::InvalidInput; }
+    TAP = f;
+    TAP_CTX = ctx;
+    if !SUBSCRIBED {
+        SUBSCRIBED = true;
+        // Subscribing REPLAYS whatever `app_events` has latched, so a launch
+        // tap reaches `_on_app_event` here and then the handler above.
+        let _s: status::Status = ev::on_app_event(_on_app_event, 0 as *u8);
+        return Outcome::Ok;
+    }
+    // Already subscribed, so the replay has been and gone. Hand the last tap
+    // over directly, so swapping handlers mid-run does not lose a payload that
+    // arrived before the swap.
+    if LAST_TAP != "" { f(LAST_TAP, ctx); }
+    return Outcome::Ok;
+}
+
+// Stop routing taps. The subscription stays: it is one slot in a sixteen-slot
+// list, costs nothing idle, and taking it out would drop the latch replay for a
+// handler installed later.
+fn off_tap() -> Outcome {
+    TAP = 0 as fn(str, *u8);
+    TAP_CTX = 0 as *u8;
+    return Outcome::Ok;
+}
+
+// The last payload seen, interned. Held so a handler installed after a tap —
+// or swapped for another — is not the one call that misses it.
+static LAST_TAP: str = "";
+
+fn _on_app_event(e: *ev::AppEvent, ctx: *u8) {
+    if { (*e).kind } != ev::E_NOTIFICATION_TAP { return; }
+    // INTERNED before anything else: `AppEvent.text` is borrowed for this
+    // dispatch and not one instant longer.
+    LAST_TAP = text::intern({ (*e).text });
+    let f: fn(str, *u8) = TAP;
+    if f != (0 as fn(str, *u8)) { f(LAST_TAP, TAP_CTX); }
+    return;
 }
 
 // ---- the seam -----------------------------------------------------------------

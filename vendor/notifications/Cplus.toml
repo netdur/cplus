@@ -22,6 +22,14 @@ edition = "2026"
 
 [dependencies]
 stdlib      = "*"
+# THE TAP RIDES `facet/app_events`, on every platform. A notification tapped
+# while the app is dead launches it and the payload arrives before anything has
+# subscribed; app_events LATCHES that kind, which is what makes a cold tap and a
+# warm one indistinguishable to a caller. facet is the portable core here, not a
+# backend.
+facet       = "*"
+flex_layout = "*"
+events      = "*"
 # THE GATE, and a deliberate coupling rather than a convenience. Scheduling
 # without the permission does not fail loudly on either platform — it is
 # accepted and never shown — so a package that let that through would be
@@ -37,6 +45,3 @@ objc = "*"
 [android.dependencies]
 jni          = "*"
 android_view = "*"
-facet        = "*"
-flex_layout  = "*"
-events       = "*"

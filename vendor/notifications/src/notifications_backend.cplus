@@ -39,6 +39,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
 import "./notifications" as notify;
+import "facet/app_events" as ev;
 
 #[link_name = "dlopen"]
 extern fn _dlopen(path: *u8, mode: i32) -> *u8;
@@ -107,6 +108,57 @@ fn _present_options() -> u64 {
     return (16 as u64) + (2 as u64) + (8 as u64);
 }
 
+// `userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:`
+//
+// THE TAP. Reaches here for a warm app and for a cold one alike — a tap that
+// launches the process calls this after launch, so a delegate set before the
+// run loop turned sees it. `backend::install` runs before `UIApplicationMain`,
+// which is what makes that true rather than hopeful.
+//
+// The payload comes back out of the notification's `userInfo` under the one key
+// this package writes. Anything else in there was not put there by us and is
+// left alone.
+fn _imp_did_receive_response(self_obj: *u8, cmd: *u8, centre: *u8,
+                             response: *u8, handler: *u8) {
+    // The Text is held for the whole dispatch: `fire_text` hands its view to
+    // every subscriber and `app_events` interns a copy into the latch, so the
+    // owner has to outlive the fire and no longer.
+    var payload: text::Text = _payload_of(response);
+    if { payload.is_empty() } == false {
+        ev::fire_text(ev::E_NOTIFICATION_TAP, { payload.view() });
+    }
+    // THE COMPLETION HANDLER MUST BE CALLED, always and exactly once. UIKit
+    // logs a warning and may hold the notification open otherwise; it takes no
+    // argument, so this is the same read-the-invoke-pointer shape as the
+    // presentation handler above.
+    if handler.is_null() { return; }
+    let invoke: *u8 = { *((handler + (16 as usize)) as **u8) };
+    if invoke.is_null() { return; }
+    let f: fn(*u8) = { invoke as fn(*u8) };
+    f(handler);
+    return;
+}
+
+// `response.notification.request.content.userInfo[PAYLOAD_KEY]`, copied out of
+// the NSString. OWNED rather than a view: `bridge` has no `to_str`, and a view
+// into an autoreleased NSString would outlive the pool this runs inside.
+// Empty for a notification this package did not schedule.
+fn _payload_of(response: *u8) -> text::Text {
+    if response.is_null() { return text::new(); }
+    let note: *u8 = { rt::msg_id(response, rt::sel(#str_ptr("notification\0"))) };
+    if note.is_null() { return text::new(); }
+    let req: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("request\0"))) };
+    if req.is_null() { return text::new(); }
+    let content: *u8 = { rt::msg_id(req, rt::sel(#str_ptr("content\0"))) };
+    if content.is_null() { return text::new(); }
+    let info: *u8 = { rt::msg_id(content, rt::sel(#str_ptr("userInfo\0"))) };
+    if info.is_null() { return text::new(); }
+    let v: *u8 = { rt::msg_id_id(info, rt::sel(#str_ptr("objectForKey:\0")),
+                                 bridge::nsstring(PAYLOAD_KEY)) };
+    if v.is_null() { return text::new(); }
+    return bridge::to_text(v);
+}
+
 // `userNotificationCenter:willPresentNotification:withCompletionHandler:`
 //
 // The completion handler is a BLOCK taking the options mask. It is invoked
@@ -139,6 +191,9 @@ fn _delegate_class() -> *u8 {
     let _a: i8 = synth::add_method_v_3id(cls,
         rt::sel(#str_ptr("userNotificationCenter:willPresentNotification:withCompletionHandler:\0")),
         _imp_will_present, #str_ptr("v@:@@@\0"));
+    let _t: i8 = synth::add_method_v_3id(cls,
+        rt::sel(#str_ptr("userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:\0")),
+        _imp_did_receive_response, #str_ptr("v@:@@@\0"));
     // CONFORMANCE, not merely the method. UIKit checks the protocol list on
     // some paths and a class that answers every message while claiming nothing
     // is refused — the trap `facet_uikit`'s scene delegate records.

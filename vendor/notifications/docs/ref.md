@@ -86,7 +86,7 @@ struct Notification {
 | `title` | Required |
 | `body` | Optional second line |
 | `when` | See `When` |
-| `payload` | Opaque; handed back on tap. A `str` rather than a URL, so `"order:1234"` needs no invented scheme. **Attached but not yet routed** |
+| `payload` | Opaque; handed back to `on_tap`. A `str` rather than a URL, so `"order:1234"` needs no invented scheme |
 | `channel` | **Android only.** Importance, sound, vibration. `""` takes the package default, created lazily. Ignored on Apple — an Apple *category* is the action set and becomes its own field when actions land |
 
 ### `new`
@@ -160,6 +160,30 @@ not the platform's — Apple can be asked and Android cannot, so the record is t
 only answer available on both. It may outlive a notification the system already
 delivered; it will not under-report.
 
+### `on_tap`
+
+```cplus
+fn on_tap(f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> Outcome
+```
+
+Route notification taps to `f`, which receives the notification's `payload`.
+`InvalidInput` for a null handler. A second call **replaces** the first — one
+slot, not a list, because a tap is a routing decision and two routers
+disagreeing about one payload is a bug.
+
+**Safe to call at any time.** If a tap already happened — including the one that
+launched the app from a dead process — `f` is called before this returns.
+`facet/app_events` latches the payload, so there is no ordering to get right.
+
+### `off_tap`
+
+```cplus
+fn off_tap() -> Outcome
+```
+
+Stop routing. The underlying subscription stays: it costs nothing idle, and
+removing it would drop the latch replay for a handler installed later.
+
 ---
 
 ## Package metadata
@@ -179,5 +203,4 @@ delivered; it will not under-report.
 |---|---|
 | Push token registration | An entitlement + provisioning profile on Apple; Firebase on Android. `plans/notifications.md` §6 |
 | Media / transport controls | Sticky + actions covers the shade; the rest is a `MediaSession`. §9 |
-| Tap routing | Next tier — the payload is attached, `E_NOTIFICATION_TAP` is not built |
 | Actions, images, sticky, badges, grouping | Later tiers. §9 has the list |

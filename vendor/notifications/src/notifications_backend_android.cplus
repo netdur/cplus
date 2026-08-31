@@ -163,7 +163,90 @@ fn _small_icon(env: rt::Env) -> i32 {
 // Build and post. `notify(String tag, int id, Notification)` rather than the
 // int-only overload, because this package's ids are strings and hashing them to
 // an int would make two notifications collide silently.
-fn _post(id: str, title: str, body: str, channel: str) -> i32 {
+// THE TAP'S ROAD BACK, and it is an Intent rather than a callback.
+//
+// A tap fires the notification's `PendingIntent`, which starts the Activity —
+// `onNewIntent` if it is already running, `getIntent()` in `onCreate` if the
+// process was dead. `FacetActivity` reads the extra and calls a native that
+// fires `E_NOTIFICATION_TAP`; the latch in app_events covers the cold case.
+//
+// FLAG_IMMUTABLE is not optional: from API 31 a mutable PendingIntent throws.
+// FLAG_UPDATE_CURRENT so re-scheduling one id updates its extras rather than
+// keeping the first payload — PendingIntents are MATCHED IGNORING EXTRAS, which
+// is also why the request code is derived from the id: two notifications
+// sharing a code would share one PendingIntent and the second's payload would
+// silently win for both.
+//
+// FLAG_ACTIVITY_SINGLE_TOP so a running Activity gets `onNewIntent` rather than
+// a second instance stacked on itself.
+fn _pending_intent(env: rt::Env, ctx: jni::jobject, id: str, payload: str) -> jni::jobject {
+    if payload == "" { return 0 as jni::jobject; }
+    // The Activity's own class, asked of the object rather than named: this
+    // package should not have to know that facet's Activity is called
+    // `cplus.facet.FacetActivity`.
+    let klass: jni::jobject = env.call_object_0(ctx, #str_ptr("java/lang/Object\0"),
+        #str_ptr("getClass\0"), #str_ptr("()Ljava/lang/Class;\0"));
+    if klass == (0 as jni::jobject) { return 0 as jni::jobject; }
+
+    let intent: jni::jobject = env.new_object_2(#str_ptr("android/content/Intent\0"),
+        #str_ptr("(Landroid/content/Context;Ljava/lang/Class;)V\0"),
+        rt::arg_object(ctx), rt::arg_object(klass));
+    env.delete_local_ref(klass);
+    if intent == (0 as jni::jobject) { return 0 as jni::jobject; }
+
+    // FLAG_ACTIVITY_SINGLE_TOP = 0x20000000.
+    let _f: jni::jobject = env.call_object_1(intent, #str_ptr("android/content/Intent\0"),
+        #str_ptr("setFlags\0"), #str_ptr("(I)Landroid/content/Intent;\0"),
+        rt::arg_int(536870912 as i32));
+
+    let key: jni::jstring = env.new_string_utf(#str_ptr(_nul(PAYLOAD_EXTRA)));
+    let val: jni::jstring = env.new_string_utf(#str_ptr(_nul(payload)));
+    let _e: jni::jobject = env.call_object_2(intent, #str_ptr("android/content/Intent\0"),
+        #str_ptr("putExtra\0"),
+        #str_ptr("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;\0"),
+        rt::arg_object(key), rt::arg_object(val));
+    env.delete_local_ref(key);
+    env.delete_local_ref(val);
+
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/app/PendingIntent\0"));
+    if cls == (0 as jni::jclass) { env.delete_local_ref(intent); return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static(cls, #str_ptr("getActivity\0"),
+        #str_ptr("(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;\0"));
+    if mid == (0 as jni::jmethodID) { env.delete_local_ref(intent); return 0 as jni::jobject; }
+    // FLAG_IMMUTABLE 0x04000000 | FLAG_UPDATE_CURRENT 0x08000000.
+    let flags: i32 = (67108864 as i32) + (134217728 as i32);
+    var args: [jni::JValue; 4] = [rt::arg_object(ctx), rt::arg_int(_request_code(id)),
+                                  rt::arg_object(intent), rt::arg_int(flags)];
+    let pi: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid,
+                                                                    #addr_of(args[0])) };
+    env.delete_local_ref(intent);
+    return pi;
+}
+
+// The extra `FacetActivity.PAYLOAD_EXTRA` reads. The string is the contract
+// between this package and facet's Activity; both sides spell it out rather
+// than sharing a constant across a dependency that does not exist.
+const PAYLOAD_EXTRA: str = "cplus.payload";
+
+// A stable per-id request code. FNV-1a over the bytes, truncated: PendingIntents
+// are matched ignoring extras, so two live notifications must not share one.
+// A collision costs a wrong payload on one tap, not a crash — and the
+// alternative, a counter, would break replacement across a process restart.
+fn _request_code(id: str) -> i32 {
+    var h: u32 = 2166136261 as u32;
+    var i: usize = 0 as usize;
+    let n: usize = #str_len(id);
+    let p: *u8 = #str_ptr(id);
+    while i < n {
+        h = h ^ ({ *(p + i) } as u32);
+        h = h *% (16777619 as u32);
+        i = i +% (1 as usize);
+    }
+    // Positive: a negative request code is legal but reads as a bug in a log.
+    return { (h & (2147483647 as u32)) as i32 };
+}
+
+fn _post(id: str, title: str, body: str, channel: str, payload: str) -> i32 {
     if !_ready() { return notify::Outcome::Unsupported.to_code(); }
     let env: rt::Env = _env();
     if env.raw().is_null() { return notify::Outcome::Unsupported.to_code(); }
@@ -212,6 +295,16 @@ fn _post(id: str, title: str, body: str, channel: str) -> i32 {
         #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setAutoCancel\0"),
         #str_ptr("(Z)Landroid/app/Notification$Builder;\0"), rt::arg_bool(true));
 
+    // The tap's road back, attached before the build.
+    let pi: jni::jobject = _pending_intent(env, ctx, id, payload);
+    if pi != (0 as jni::jobject) {
+        let _b5: jni::jobject = env.call_object_1(b,
+            #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setContentIntent\0"),
+            #str_ptr("(Landroid/app/PendingIntent;)Landroid/app/Notification$Builder;\0"),
+            rt::arg_object(pi));
+        env.delete_local_ref(pi);
+    }
+
     let n: jni::jobject = env.call_object_0(b,
         #str_ptr("android/app/Notification$Builder\0"), #str_ptr("build\0"),
         #str_ptr("()Landroid/app/Notification;\0"));
@@ -243,6 +336,7 @@ struct _Timer {
     title: str,
     body: str,
     channel: str,
+    payload: str,
     handle: services::Cancellable,
     live: bool,
 }
@@ -279,7 +373,7 @@ fn _fire(ctx: *u8) {
                 if { (*t).live } && { (*t).token } == { ctx as u64 } {
                     { (*t).live = false };
                     let _rc: i32 = _post({ (*t).id }, { (*t).title }, { (*t).body },
-                                         { (*t).channel });
+                                         { (*t).channel }, { (*t).payload });
                     return;
                 }
             }
@@ -304,6 +398,7 @@ export extern fn cplus_notifications_schedule_v1(
     let title: str = { #str_from_raw_parts(title_ptr, title_len) };
     let body: str = { #str_from_raw_parts(body_ptr, body_len) };
     let channel: str = { #str_from_raw_parts(channel_ptr, channel_len) };
+    let payload: str = { #str_from_raw_parts(payload_ptr, payload_len) };
 
     if !_ready() { return notify::Outcome::Unsupported.to_code(); }
 
@@ -314,7 +409,7 @@ export extern fn cplus_notifications_schedule_v1(
     if existing >= (0 as i64) { _cancel_timer(existing); }
 
     if delay_seconds <= 0.0f64 {
-        return _post(id, title, body, channel);
+        return _post(id, title, body, channel, payload);
     }
 
     // DEFERRED, and it does not survive the process — see the file header. The
@@ -327,7 +422,8 @@ export extern fn cplus_notifications_schedule_v1(
     let _a: status::Status = (*reg).append(_Timer {
         token: token,
         id: text::intern(id), title: text::intern(title), body: text::intern(body),
-        channel: text::intern(channel), handle: h, live: true,
+        channel: text::intern(channel), payload: text::intern(payload),
+        handle: h, live: true,
     });
     return notify::Outcome::Ok.to_code();
 }

@@ -281,6 +281,25 @@ fn c_len(p: *u8, cap: usize) -> usize {
     return cap;
 }
 
+// A NOTIFICATION WAS TAPPED. `FacetActivity.deliverPayload` calls this from
+// `onCreate` (cold) or `onNewIntent` (warm) — see the override for why it fires
+// once per intent.
+//
+// The payload is read into a stack buffer and the `str` handed to the fan-out
+// VIEWS it, which is the borrow `AppEvent.text` documents. The LATCH in
+// app_events interns a copy, so a subscriber arriving later still gets it.
+export extern fn facet_android_notification_tap(envp: *jni::JNIEnv, cls: jni::jobject,
+                                                payload: jni::jobject) {
+    let env: rt::Env = rt::from_native(envp);
+    e::set_env(env);
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let ptr: *u8 = { #addr_of(buf) as *u8 };
+    if !env.string_utf_into(payload, ptr, 1024 as usize) { return; }
+    ev::fire_text(ev::E_NOTIFICATION_TAP,
+                  { #str_from_raw_parts(ptr, c_len(ptr, 1024 as usize)) });
+    return;
+}
+
 // A WIDGET ASKED FOR A LAYOUT. facet places views only when its own geometry
 // changes, so this is the door a widget's internal change comes through — see
 // FacetHost.requestLayout.
