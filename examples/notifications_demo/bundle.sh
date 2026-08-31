@@ -40,12 +40,28 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <dict>
 	<key>CFBundleExecutable</key><string>Notifications</string>
 	<key>CFBundleIdentifier</key><string>dev.cplus.notificationsdemo</string>
-	<key>CFBundleName</key><string>Notifications</string>
+	<key>CFBundleName</key><string>C+ Notifications Demo</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>1.0</string>
 	<key>CFBundleVersion</key><string>1</string>
 	<key>LSMinimumSystemVersion</key><string>12.0</string>
 	<key>NSHighResolutionCapable</key><true/>
+	<!-- MACOS DOES HAVE A STICKY NOTIFICATION, and this is how you ask for it.
+	     `alert` makes this app's notifications the persistent kind that stay on
+	     screen until somebody interacts with them, rather than `banner`, which
+	     fades after a few seconds and drops into Notification Centre.
+
+	     IT IS APP-WIDE, NOT PER-NOTIFICATION — a plist key, not an API — which
+	     is why the package's `sticky` field is still Android-only. A person can
+	     override it in System Settings > Notifications, and that override wins.
+
+	     This also affects whether anything appears on screen at all: an app
+	     whose style resolves to none is delivered straight to Notification
+	     Centre, which looks exactly like a broken notification. -->
+	<key>NSUserNotificationAlertStyle</key><string>alert</string>
+	<!-- The NAME System Settings lists this app under. It was "Notifications",
+	     which is unfindable in a pane called Notifications — every row there is
+	     a notification setting. Named for what it is instead. -->
 </dict>
 </plist>
 PLIST
