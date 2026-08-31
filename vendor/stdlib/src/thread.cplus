@@ -506,6 +506,31 @@ impl Scope {
     // Join every worker, then release their cells. This is the guarantee the
     // type is for: it runs at scope exit, on every path, and nothing the
     // caller can write skips it.
+    //
+    // A SCOPE IS A CANCELLATION BOUNDARY, and that is a decision rather than an
+    // oversight (§4 of the cancellation report, settled 2026-08-31).
+    //
+    // Cancel the thread that owns a scope while its workers are still running,
+    // and this still joins — so the parent BLOCKS until every worker finishes
+    // on its own, in the middle of a teardown that asked to be quick. The
+    // cancel token is per-thread (`@__cplus_cancel_slot`, set by the trampoline
+    // around a worker body), so a cancelled parent does not reach a worker it
+    // lent data to, and nothing here tries to make it.
+    //
+    // The alternative — propagate the request into lent workers, so a scope is
+    // a cancellation TREE — was considered and refused. The borrow's soundness
+    // rests entirely on this join: `#[keeps(this)]` tells the borrow checker
+    // the loan lasts as long as the scope, and the only thing that makes that
+    // true is that dropping the scope waits. A cancellation that could race the
+    // join would be a fast teardown that sometimes frees lent data while a
+    // worker is still reading it — trading a hang for a use-after-free, which
+    // is the wrong direction for the one API in this file whose whole purpose
+    // is to make that impossible.
+    //
+    // So: `lend` is a commitment to wait. A worker that should be stoppable
+    // takes its own `JoinHandle` through `spawn`/`spawn_with` and polls
+    // `thread::cancelled()`; it just cannot borrow a parent local while doing
+    // it, which is the same trade every other cancellable worker makes.
     fn drop(ref this) {
         var i: usize = 0 as usize;
         while i < this._tids.count() {
@@ -563,6 +588,39 @@ fn scope_lends_a_local_and_joins_before_it_ends() {
         assert s.count() == (1 as usize);
     }
     assert c.v == 1000000;
+}
+
+// The parent thread of a scope, cancelled while its worker is still counting.
+// Returns the value the worker wrote, which is only correct if the join waited.
+fn _scope_owner(take x: i64) -> i64 {
+    var c: _Cell = _Cell { v: 0 as i64 };
+    {
+        var s: Scope = scope();
+        let _r: status::Status = s.lend::[_Cell](c, _add_one_million);
+        // Cancellation lands somewhere around here. `Scope::drop` runs at the
+        // closing brace whatever the token says.
+    }
+    return c.v;
+}
+
+#[test]
+fn a_cancelled_scope_owner_still_joins_its_workers() {
+    // §4 OF THE CANCELLATION REPORT, PINNED. A scope is a cancellation
+    // BOUNDARY: the token is per-thread, so cancelling the owner does not reach
+    // a worker it lent data to, and `Scope::drop` joins regardless. The parent
+    // therefore waits — which is the behaviour chosen over propagating the
+    // request into lent workers.
+    //
+    // The choice is not a preference. `#[keeps(this)]` tells the borrow checker
+    // the loan lasts as long as the scope, and the only thing that makes that
+    // TRUE is that dropping the scope waits. A cancellation able to race the
+    // join would trade this hang for a use-after-free on lent data.
+    //
+    // So the assertion is the full count: a cancelled owner that returned
+    // early, or a join that gave up, would read a torn value mid-count.
+    let h: JoinHandle[i64] = spawn_with::[i64, i64](0 as i64, _scope_owner);
+    h.cancel();
+    assert h.join() == (1000000 as i64);
 }
 
 #[test]

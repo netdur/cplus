@@ -943,6 +943,12 @@ fn worker(take x: i64) -> i64 {
   deadline is on the asking rather than a kill.
 - `thread::cancelled()` works inside `async fn` bodies too — the token is
   ambient to the thread, not to the coroutine.
+- **A `thread::Scope` is a cancellation boundary.** Cancelling the thread that
+  owns one does not reach the workers it lent data to; `Scope::drop` still
+  joins, so the parent waits. The borrow's soundness rests on that join, and a
+  cancellation racing it would trade a hang for a use-after-free. A worker that
+  must be stoppable takes its own `JoinHandle` and cannot borrow a parent
+  local.
 
 ### Interface default method bodies
 

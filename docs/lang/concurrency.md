@@ -87,6 +87,17 @@ are outstanding. The join is in `Scope`'s `drop`, which is what makes the
 lifetime sound: the borrow cannot outlive the scope, so the worker cannot
 outlive the data.
 
+**A scope is a cancellation boundary.** Cancel the thread that owns one while
+its workers are still running and the drop still joins — the parent blocks
+until every worker finishes on its own, in the middle of a teardown that asked
+to be quick. The cancel token is per-thread, so a cancelled parent does not
+reach a worker it lent data to, and nothing tries to make it: the borrow's
+soundness rests entirely on that join, and a cancellation that could race it
+would trade a hang for a use-after-free on lent data. `lend` is a commitment to
+wait. A worker that must be stoppable takes its own `JoinHandle` through
+`spawn` / `spawn_with` and polls `thread::cancelled()` — it just cannot borrow
+a parent local while doing so.
+
 Two workers cannot lend the *same* local: the second `lend` is **E0381**,
 "cannot borrow `a` exclusively while it is borrowed by `s`". That is
 aliasing XOR mutability arriving at the thread boundary. Lending two
