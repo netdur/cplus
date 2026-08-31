@@ -23,6 +23,20 @@
 	     and every windowing API on iPadOS hangs off a scene. It must not name a
 	     storyboard — UIKit would wait for a nib facet has not got and the
 	     screen stays black. -->
+	<!-- THE DEEP LINK'S REGISTRATION. Without this key the scheme belongs to
+	     nobody, the app is never launched for it, and `applinks::on_link` is
+	     correct and silent. A UNIVERSAL LINK is not this key: `https://…` needs
+	     the com.apple.developer.associated-domains entitlement, a paid team and
+	     an apple-app-site-association file on the domain — none of which a
+	     simulator build can have. See vendor/applinks/docs/guide.md. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key><string>dev.cplus.notificationsdemo.ios.link</string>
+			<key>CFBundleURLSchemes</key>
+			<array><string>cplusdemo</string></array>
+		</dict>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key><false/>

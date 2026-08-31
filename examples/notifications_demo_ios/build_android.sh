@@ -23,7 +23,8 @@ rm -rf out && mkdir -p out/lib/arm64-v8a
 # archive; the prebuilt ones are named here. `permissions` is PREBUILT — the
 # default since 2026-08-16 — so its object code lives in its own slice and
 # leaving it out fails at link naming `permissions.src.permissions.state`.
-DEPS="$V/permissions/lib/$T/libpermissions.a \
+DEPS="$V/applinks/lib/$T/libapplinks.a \
+      $V/permissions/lib/$T/libpermissions.a \
       $V/notifications/lib/$T/libnotifications.a \
       $V/facet_runtime/lib/$T/libfacet_runtime.a \
       $V/android_view/lib/$T/libandroid_view.a \

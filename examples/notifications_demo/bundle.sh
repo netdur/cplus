@@ -62,6 +62,32 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<!-- The NAME System Settings lists this app under. It was "Notifications",
 	     which is unfindable in a pane called Notifications — every row there is
 	     a notification setting. Named for what it is instead. -->
+
+	<!-- THE DEEP LINK'S REGISTRATION, and it is the whole of what makes
+	     `open "cplusdemo://record/42"` reach this app. Without this key
+	     LaunchServices has never heard of the scheme, the app is never asked,
+	     and `applinks::on_link` is perfectly correct and perfectly silent —
+	     which is the commonest way for a deep link to "not work".
+
+	     LaunchServices caches this at REGISTRATION time, not at open time. A
+	     bundle that has already been seen with a different plist keeps the old
+	     claim, so after adding or changing a scheme, re-register it:
+
+	         /System/Library/Frameworks/CoreServices.framework/Frameworks\
+	           /LaunchServices.framework/Support/lsregister -f out/Notifications.app
+
+	     A UNIVERSAL LINK is NOT this key. `https://…` needs the
+	     com.apple.developer.associated-domains entitlement, a paid team, and an
+	     apple-app-site-association file on the domain — none of which a
+	     locally-built demo can have. See vendor/applinks/docs/guide.md. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key><string>dev.cplus.notificationsdemo.link</string>
+			<key>CFBundleURLSchemes</key>
+			<array><string>cplusdemo</string></array>
+		</dict>
+	</array>
 </dict>
 </plist>
 PLIST
@@ -74,5 +100,10 @@ cp target/debug/notifications_demo "$APP/Contents/MacOS/Notifications"
 # gone. `-` is the ad-hoc identity, which is stable enough for that.
 codesign --force --sign - "$APP" >/dev/null 2>&1 || \
   echo "codesign unavailable — TCC decisions will not persist across rebuilds" >&2
+
+# LaunchServices caches a bundle's URL claims. Re-register so a scheme added or
+# changed since the last build is the one that takes effect.
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+[ -x "$LSREG" ] && "$LSREG" -f "$APP" >/dev/null 2>&1 || true
 
 echo "built $APP"

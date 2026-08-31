@@ -42,11 +42,14 @@ import "facet/vocabulary" as vocab;
 import "facet_runtime/runtime" as runtime;
 import "permissions/permissions" as permissions;
 import "notifications/notifications" as notifications;
+import "applinks/applinks" as applinks;
+import "stdlib/url" as url;
 
 const PERM_KEY: str = "perm";
 const STATUS_KEY: str = "status";
 const PENDING_KEY: str = "pending";
 const TAP_KEY: str = "tap";
+const LINK_KEY: str = "link";
 
 // ---- the readouts -------------------------------------------------------------
 
@@ -117,6 +120,26 @@ fn tapped(payload: str, action: str, ctx: *u8) {
         return;
     }
     set_label(TAP_KEY, text::from_str("tapped [${action}]: ${payload}").view());
+    return;
+}
+
+// A DEEP LINK LANDED, beside the notification tap on purpose: the two are the
+// same shape from an app's side, and they reach it down the same latched
+// channel. On iOS a link has FOUR doors — warm and cold, custom scheme and
+// universal link — and this handler cannot tell which one it came through,
+// which is the whole of what facet_uikit's scene delegate is for.
+//
+//     xcrun simctl openurl booted "cplusdemo://record/42?from=simctl"
+//
+// The URL arrives WHOLE. `stdlib/url` takes it apart, and `segment` is what
+// makes the route readable: `record` is the URL's HOST, not the first path
+// component, and an app that matched on `path` would never find it.
+fn linked(u: str, ctx: *u8) {
+    let route: str = match url::parse(u) {
+        option::Option[url::Url]::Some(parsed) => parsed.segment(0 as usize),
+        option::Option::None => "?",
+    };
+    set_label(LINK_KEY, text::from_str("link [${route}]: ${u}").view());
     return;
 }
 
@@ -459,6 +482,7 @@ impl Demo: component::Component {
         b.add(ui::label("...", key: STATUS_KEY, font_size: 13.0).padding(4.0));
         b.add(ui::label("...", key: PENDING_KEY, font_size: 13.0).padding(2.0));
         b.add(ui::label("tapped: —", key: TAP_KEY, font_size: 13.0).padding(2.0));
+        b.add(ui::label("link: —", key: LINK_KEY, font_size: 13.0).padding(2.0));
         return core::column(b).padding(16.0);
     }
 }
@@ -470,6 +494,10 @@ impl Demo: component::Lifecycle {
         // Registered before anything is posted — see `register_the_actions`.
         register_the_actions();
         let _t: notifications::Outcome = notifications::on_tap(tapped);
+        // Same late registration, same reason: a link that launched this
+        // process was delivered before this component existed, and applinks
+        // latches it so registering here still receives it.
+        let _l: applinks::Outcome = applinks::on_link(linked, scheme: "cplusdemo");
         refresh();
         return;
     }

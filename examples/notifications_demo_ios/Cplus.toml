@@ -42,6 +42,7 @@ flex_layout   = "*"
 events        = "*"
 permissions   = "*"
 notifications = "*"
+applinks      = "*"
 
 # The resolver validates every import against ONE flat set taken from THIS
 # manifest, so the backend's closure and permissions' own `objc` are named here.
