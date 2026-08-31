@@ -261,3 +261,112 @@ fn the_tween_writes_in_the_same_unit_the_bar_was_ranged_in() {
     assert steps() == (1000 as i32);
     return;
 }
+
+// ================================================================================
+// carousel.animates_scroll — sliding a page instead of jumping to it
+// ================================================================================
+//
+// A SECOND TWEEN, with its own state, and that is deliberate rather than
+// duplication. The progress tween above moves a NUMBER inside a control; this
+// moves a WINDOW. They have different subjects, different end conditions and
+// different callers, and sharing one set of statics would mean a progress bar
+// animating cancelled a carousel mid-slide — the two are unrelated and a user
+// would see one interrupt the other for no reason they could name.
+//
+// One slide at a time is still the rule, for the reason the progress tween
+// gives: a second carousel starting a slide REPLACES the first, because a
+// pointer can only be doing one thing.
+
+static SLIDE_DOC: usize = 0;
+static SLIDE_FROM: f64 = 0.0f64;
+static SLIDE_TO: f64 = 0.0f64;
+static SLIDE_STEP: i64 = 0;
+static SLIDE_STEPS: i64 = 0;
+static SLIDE_TIMER: u64 = 0;
+static SLIDE_DONE: fn(*u8) = no_slide_done;
+static SLIDE_DONE_CTX: usize = 0;
+
+fn no_slide_done(ctx: *u8) { return; }
+
+fn sliding() -> bool { return SLIDE_DOC != (0 as usize); }
+
+fn slide_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, u32) = slide_step;
+    return f as *u8;
+}
+
+// Slide `doc` from where it is to `to`, then call `done`. A zero duration is a
+// SET — same rule as the progress tween, and for the same reason: `create`
+// raises every bit, so a carousel would otherwise slide on the frame it was
+// made.
+fn slide_to(doc: *u8, from: f64, to: f64, duration: vocab::Duration,
+            done: fn(*u8), ctx: *u8) {
+    if doc == (0 as *u8) { return; }
+    if duration.seconds <= (0.0 as f64) {
+        place_doc(doc, to);
+        done(ctx as *u8);
+        return;
+    }
+    let running: bool = sliding();
+    SLIDE_DOC = { #addr(doc) };
+    SLIDE_FROM = from;
+    SLIDE_TO = to;
+    SLIDE_STEPS = steps_for(duration);
+    SLIDE_STEP = 0 as i64;
+    SLIDE_DONE = done;
+    SLIDE_DONE_CTX = { #addr(ctx) };
+    if running { return; }
+    SLIDE_TIMER = { u::SetTimer(0 as *u8, 0 as u64, frame_ms(), slide_addr()) };
+    return;
+}
+
+fn slide_stop() {
+    if SLIDE_TIMER != (0 as u64) { let _k: i32 = { u::KillTimer(0 as *u8, SLIDE_TIMER) }; }
+    SLIDE_TIMER = 0 as u64;
+    SLIDE_DOC = 0 as usize;
+    SLIDE_STEP = 0 as i64;
+    return;
+}
+
+fn slide_step(w: *u8, msg: u32, id: u64, ticks: u32) {
+    if SLIDE_DOC == (0 as usize) { slide_stop(); return; }
+    SLIDE_STEP = SLIDE_STEP +% (1 as i64);
+    let t: f64 = (SLIDE_STEP as f64) / (SLIDE_STEPS as f64);
+    // A CAROUSEL EASES OUT. It is a flick: fast at the start, settling at the
+    // end. `SinInOut` would make it start slowly, which reads as lag.
+    let at: f64 = SLIDE_FROM + ((SLIDE_TO - SLIDE_FROM) * eased(t, vocab::Easing::CubicOut));
+    place_doc(SLIDE_DOC as *u8, at);
+    if SLIDE_STEP >= SLIDE_STEPS {
+        // LAND EXACTLY. An eased last step is a fraction short, and a carousel
+        // resting one pixel off its page is a carousel that does not rest.
+        place_doc(SLIDE_DOC as *u8, SLIDE_TO);
+        let f: fn(*u8) = SLIDE_DONE;
+        let ctx: usize = SLIDE_DONE_CTX;
+        slide_stop();
+        f(ctx as *u8);
+    }
+    return;
+}
+
+fn place_doc(doc: *u8, x: f64) {
+    let _m: i32 = { u::SetWindowPos(doc, sys::hwnd_top(), x as i32, 0 as i32,
+                                    0 as i32, 0 as i32,
+                                    sys::swp_nosize() | sys::swp_nozorder()
+                                    | sys::swp_noactivate()) };
+    return;
+}
+
+#[test]
+fn a_slide_and_a_progress_tween_do_not_share_state() {
+    // The reason they are separate sets: a progress bar animating must not
+    // cancel a carousel mid-slide. Neither starts on a null subject, which is
+    // what makes this assertable without a window.
+    slide_to(0 as *u8, 0.0f64, 100.0f64, vocab::Duration { seconds: 0.25f64 },
+             no_slide_done, 0 as *u8);
+    assert !sliding();
+    animate_progress(0 as *u8, 0.5f64, vocab::Duration { seconds: 0.25f64 },
+                     vocab::Easing::Linear);
+    assert !animating();
+    assert !sliding();
+    return;
+}

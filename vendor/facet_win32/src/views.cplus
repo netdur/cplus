@@ -123,6 +123,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == symbol::K_SYMBOL { return controls::create_symbol(n); }
     if kind == props::K_REFRESHABLE { return controls::create_refreshable(n); }
     if kind == split::K_SPLIT { return controls::create_split(n); }
+    if kind == props::K_CAROUSEL { return controls::create_carousel(n); }
     if kind == props::K_ICON_BUTTON { return controls::create_icon_button(n); }
     if kind == props::K_LIST { return recycler::create_sequence(n); }
     if kind == props::K_TABLE { return controls::create_table(n); }
@@ -160,6 +161,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == symbol::K_SYMBOL { controls::apply_symbol(v, n, dirty); return; }
     if kind == props::K_REFRESHABLE { controls::apply_refreshable(v, n, dirty); return; }
     if kind == split::K_SPLIT { controls::apply_split(v, n, dirty); return; }
+    if kind == props::K_CAROUSEL { controls::apply_carousel(v, n, dirty); return; }
     if kind == props::K_ICON_BUTTON { controls::apply_icon_button(v, n, dirty); return; }
     if kind == props::K_LIST { recycler::apply_sequence(v, n, dirty); return; }
     if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }

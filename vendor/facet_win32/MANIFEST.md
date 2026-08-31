@@ -16,8 +16,8 @@ backend from an abandoned one:
 
 **Status 2026-08-29: EVERY DECLARED VERB IS NOW EITHER ANSWERED OR ARGUED.**
 That is the doctrine's own bar, and it is the first time this package clears it:
-`parity.py win32` prints no `not yet` row for any kind. What is left is 138
-prop bits and 23 handlers with an argument attached in §1 or §2 below, and the
+`parity.py win32` prints no `not yet` row for any kind. What is left is 123
+prop bits and 16 handlers with an argument attached in §1 or §2 below, and the
 argument is the deliverable — a reader can tell what Win32 refuses from what
 this package has not reached.
 
@@ -28,6 +28,10 @@ different pixels (`slider`), and this package's own painting where there is no
 control at all (`tabs`, `page_dots`, `bordered`, and the list's separators).
 `recycler.cplus` virtualises lists, collections and trees over an ordinary
 scrolling panel — measured at twelve cells for a twenty-thousand-row model.
+`subclass.cplus` reads the messages a system control keeps to itself, which is
+what `on_submit` and `on_selection_changed` needed. `split` and `carousel` are
+drawn and paged here, both for the reason `tabs` is: Win32 has no such control
+and every toolkit that has one drew it.
 `facet_runtime/runtime_windows.cplus` lands with it, so an application reaches
 this backend the ordinary way rather than by calling the package directly.
 
@@ -36,8 +40,8 @@ Two probes under `playground/`, and the division is deliberate:
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
 
 ```
-360 declared prop bits     219 answered    60%   (gtk 356, appkit 334, uikit 321, android 319)
- 68 declared handlers       45 fired       66%   (gtk  68, appkit  68, uikit  65, android  67)
+362 declared prop bits     239 answered    66%   (gtk 358, appkit 336, uikit 323, android 321)
+ 68 declared handlers       52 fired       76%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
 `python3 vendor/facet_gtk/tools/parity.py win32` prints it. Without the
@@ -328,6 +332,24 @@ colour — have nowhere to be drawn.
 
 `popup.is_open` and `selected_index` are unaffected and still answered —
 `CB_SHOWDROPDOWN` and `CB_GETDROPPEDSTATE` are ordinary messages.
+
+### `carousel.bounces` and `carousel.scroll_anchor`
+
+`bounces` is the rubber-band at the ends of an overscroll. It is a TOUCH
+affordance — the finger keeps going, the content follows and springs back — and
+there is no overscroll on a desktop to rubber-band against: a wheel notch past
+the last page is not a gesture with distance, it is the end of the list.
+facet_gtk records the same verb absent for the same kind, which is the whole of
+why it is here rather than approximated.
+
+`scroll_anchor` (`ItemsUpdatingScrollMode`) says where the viewport stays when
+items are inserted around it — keep the item, keep the offset, or jump to the
+last. Answering it needs the carousel to observe INSERTS AND REMOVES against
+its own children and adjust before the next layout, and this package's carousel
+does not watch its child list at all: it reads `child_count_of` when it is
+asked to move. That is §2 rather than §1 — Win32 puts nothing in the way — and
+it is written here rather than left as a gap because the verb silently doing
+nothing is indistinguishable from the default mode.
 
 ### `date_picker.is_open` — opening and closing are NOT symmetric
 

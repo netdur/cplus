@@ -837,12 +837,17 @@ fn notches_of(w: u64) -> i32 {
 
 // The nearest scrollable window at or above `v`. A list is the only kind that
 // scrolls itself so far; a `scroll` will join it when its extent lands.
+// THE NEAREST ANCESTOR THAT SCROLLS, which is either a row source or a
+// carousel. Whichever is found FIRST wins — a carousel of lists and a list of
+// carousels both behave the way the pointer says, because the search starts at
+// the window under it and walks outward.
 fn scrollable_above(v: *u8) -> *u8 {
     var cur: *u8 = v;
     while cur != (0 as *u8) {
         let n: *core::Node = node_of_window(cur);
         if n != (0 as *core::Node) {
             if recycler::holds_rows(n) { return cur; }
+            if core::kind_of(n) == props::K_CAROUSEL { return cur; }
         }
         cur = { u::GetParent(cur) };
     }
@@ -868,6 +873,13 @@ fn on_wheel(w: u64, l: i64) -> bool {
     if n == (0 as *core::Node) { return false; }
     let notches: i32 = notches_of(w);
     if notches == (0 as i32) { return false; }
+    // A CAROUSEL STEPS BY PAGES, not by lines — one notch is one item, which is
+    // what makes it a carousel rather than a scroll view. It answers false at
+    // its ends when it does not wrap, so the wheel falls through to whatever is
+    // behind instead of being swallowed by something that has stopped moving.
+    if core::kind_of(n) == props::K_CAROUSEL {
+        return controls::carousel_step(host, n, (0 as i64) -% (notches as i64));
+    }
     // A POSITIVE delta is a scroll AWAY from the user, which is scrolling UP —
     // towards row zero. The sign flip is the whole of the mapping and getting
     // it wrong is a list that scrolls the wrong way, which reads as broken
