@@ -45,6 +45,7 @@ import "./controls" as controls;
 import "./observers" as observers;
 import "./menus" as menus;
 import "./recycler" as recycler;
+import "./dnd" as dnd;
 
 fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
 
@@ -163,6 +164,17 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
         if controls::draw_text_button(l as *u8) { return 1 as i64; }
         if controls::draw_icon_button(l as *u8) { return 1 as i64; }
         if controls::draw_toggle(l as *u8) { return 1 as i64; }
+        return { u::DefWindowProcA(hwnd, msg, w, l) };
+    }
+
+    // A FILE DROPPED ON THIS WINDOW. The shell sends one message, at the drop
+    // — there is no travelling edge — so this is the whole of the receiving
+    // half. See `dnd`.
+    if msg == dnd::wm_dropfiles() {
+        let dn: *core::Node = input::node_of_window(hwnd);
+        if dn != (0 as *core::Node) {
+            if dnd::on_drop_files(hwnd, w, dn) { return 0 as i64; }
+        }
         return { u::DefWindowProcA(hwnd, msg, w, l) };
     }
 

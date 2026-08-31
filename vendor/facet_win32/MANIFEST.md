@@ -534,7 +534,9 @@ So the state of this band is read HERE and nowhere else:
 | `on_long_press` | wired, on a timer set on the pressed window. Suppresses the click that would otherwise follow — firing both is how a long press on a card also opens whatever a tap opens |
 | `on_pinch` | ctrl-wheel; see above |
 | `on_key` | wired on the focused window; `key_chars` is empty by decision (§1) |
-| drag and drop (5 verbs) | NOT wired — needs `IDropTarget` |
+| `on_drop` | wired, for FILES — `WM_DROPFILES`, and the three sender readers (`dropped_text`, `drop_position`, `drag_targeted`) with it. See `dnd.cplus` and the entry below |
+| `on_drag_over` / `on_drag_leave` | NOT wired — the shell sends ONE message, at the drop, and nothing while the pointer is travelling |
+| `on_drag_start` / `on_drop_completed` | NOT wired — the drag SOURCE half is `DoDragDrop`, which is COM |
 
 The one-mouse assumption is stated rather than hidden: the press position, the
 moved flag and the long-press latch are statics, not a table keyed by pointer
@@ -669,6 +671,35 @@ theme's grey; there is no message for it.
 A single-line `EDIT` centres its text vertically and a multiline one starts at
 the top, and neither is adjustable. The verb is answered for a `label`, where
 `SS_CENTERIMAGE` genuinely does it.
+
+### The drag half of drag-and-drop, and the two travelling edges
+
+`dnd.cplus` answers the receiving side through `WM_DROPFILES`: a node with an
+`on_drop` becomes a shell drop target, a dropped file's paths arrive as text
+(one per line, so three files is three lines rather than a container facet does
+not have), and the position comes back in the node's own coordinates.
+
+Three of facet's five drag verbs are not answered, in two groups with different
+reasons.
+
+**`on_drag_over` and `on_drag_leave`.** `WM_DROPFILES` has no travelling edge —
+the shell sends one message, at the drop. There is nothing to report while the
+pointer is on its way, and inventing one from `WM_MOUSEMOVE` would fire for a
+pointer that is not dragging anything.
+
+**`on_drag_start` and `on_drop_completed`.** These are the drag SOURCE, which is
+`DoDragDrop` — and that means an `IDropSource` and an `IDataObject`, both COM
+objects this package would have to lay out by hand: a vtable of function
+pointers, refcounting, and `IDataObject::GetData` reached through two more
+vtable calls.
+
+**Why `IDropTarget` was not taken for the whole thing.** It would answer all
+five and every format, and it is the same COM cost. This package has no COM
+anywhere — `imaging` chose GDI+'s flat C API over WIC on the same grounds — and
+introducing it should be a decision made on its own merits rather than as a
+side effect of wanting two edges. What it would buy is written here so that
+decision can be made with the price in view: five verbs, plus dropped TEXT
+(not only files) and cross-application drags of anything.
 
 ### `image.is_animation_playing`
 

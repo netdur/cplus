@@ -268,7 +268,8 @@ fn prop_font() -> *u8 { return { #str_ptr("facet-win32-font\0") }; }
 fn prop_brush() -> *u8 { return { #str_ptr("facet-win32-brush\0") }; }
 // Set on a control that has been dropped out of visual styles — see
 // `paint::go_classic`.
-fn prop_imagelist() -> *u8 { return { #str_ptr("facet-win32-imagelist ") }; }
+fn prop_drop() -> *u8 { return { #str_ptr("facet-win32-drop\0") }; }
+fn prop_imagelist() -> *u8 { return { #str_ptr("facet-win32-imagelist\0") }; }
 fn prop_classic() -> *u8 { return { #str_ptr("facet-win32-classic\0") }; }
 
 // ---- this package's own window class -----------------------------------------
@@ -394,3 +395,37 @@ fn free_wide(w: *u16) {
     { free(w as *u8) };
     return;
 }
+
+// The other direction, which nothing needed until a DROP arrived. The shell
+// hands paths as UTF-16 and facet's strings are UTF-8, so a path with any
+// character above ASCII — which on a Windows desktop is most users' own name —
+// would otherwise arrive mangled in exactly the way `to_wide`'s header
+// describes for the outbound side.
+extern fn WideCharToMultiByte(codepage: u32, flags: u32, wide: *u16, wide_len: i32,
+                              mb: *u8, mb_len: i32, default_char: *u8,
+                              used_default: *i32) -> i32;
+
+fn from_wide(w: *u16) -> text::Text {
+    if w == (0 as *u16) { return text::new(); }
+    let need: i32 = { WideCharToMultiByte(cp_utf8(), 0 as u32, w, 0 -% (1 as i32),
+                                          0 as *u8, 0 as i32, 0 as *u8, 0 as *i32) };
+    if need <= (0 as i32) { return text::new(); }
+    let buf: *u8 = { sys_malloc(need as usize) };
+    if buf.is_null() { return text::new(); }
+    let got: i32 = { WideCharToMultiByte(cp_utf8(), 0 as u32, w, 0 -% (1 as i32),
+                                         buf, need, 0 as *u8, 0 as *i32) };
+    var out: text::Text = text::new();
+    // `need` INCLUDES THE TERMINATOR and a `str` must not, so the length is one
+    // short of what the sizing call answered — a copy that kept it would put a
+    // NUL inside every path this returns.
+    if got > (1 as i32) {
+        out = text::from_str({ #str_from_raw_parts(buf, (got -% (1 as i32)) as usize) });
+    }
+    { sys_free(buf) };
+    return out;
+}
+
+#[link_name = "malloc"]
+extern fn sys_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn sys_free(p: *u8);

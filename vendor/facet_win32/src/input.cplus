@@ -42,6 +42,7 @@ import "win32/winuser" as u;
 import "./sys" as sys;
 import "./controls" as controls;
 import "./recycler" as recycler;
+import "./dnd" as dnd;
 import "./menus" as menus;
 
 // ---- binding a node onto its window -------------------------------------------
@@ -85,6 +86,10 @@ fn arm(v: *u8, n: *core::Node) {
     if n == (0 as *core::Node) { return; }
     bind_node(v, n);
     apply_input_transparency(v, n);
+    // A NODE THAT TAKES DROPS BECOMES A SHELL DROP TARGET, and one that stops
+    // taking them stops being one — `arm` is called again on `C_GESTURES`, so
+    // both directions are covered here rather than only at create.
+    dnd::arm(v, gestures_at(v));
     return;
 }
 
@@ -1012,10 +1017,12 @@ fn sender_readers() -> component::SenderReaders {
         raise: raise,
         key_of: key_of,
         item_of: item_of,
-        // Not answered yet — see the note above. Zero keeps facet's default.
-        dropped_text: 0 as fn(*u8) -> text::Text,
-        drop_position: 0 as fn(*u8) -> option::Option[vocab::Point],
-        drag_targeted: 0 as fn(*u8) -> bool,
+        // The drop half is answered — see `dnd`. The SOURCE half is not, and
+        // that is a different absence with a different reason (COM), recorded
+        // in MANIFEST §2 rather than left as a zero here.
+        dropped_text: dnd::dropped_text,
+        drop_position: dnd::drop_position,
+        drag_targeted: dnd::drag_targeted,
     };
 }
 
