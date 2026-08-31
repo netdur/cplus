@@ -22,10 +22,16 @@
 // `mcp::serve_uds` would fail at `socket()` rather than at anything a caller
 // could read.
 //
-// So the path an application passes is read as a PORT NUMBER, and a path that
-// is not one gets the default. An app that writes `app.agent_mcp("/tmp/x.sock")`
-// — which is the line every macOS and Linux example carries — gets port 8787
-// rather than a silent failure.
+// So the address is a LOOPBACK PORT derived from the pid
+// (`agent_mcp::loopback_port`), and what the application passes is an ID — a
+// NAME for this surface, the same argument every other platform takes. A fixed
+// port is what that replaces: two instances of one app would fight over it and
+// whichever bound first would answer for both.
+//
+// The framing is HTTP rather than the private line protocol, for the reason
+// `agent_ios.cplus` gives: when the loopback port is the only door, the framing
+// has to be something an MCP client already speaks. A client points at
+// `http://127.0.0.1:<port>/` and needs no bridge.
 //
 // Bound to loopback by `serve_tcp`, never to every interface: this surface can
 // read a UI and press its buttons.
@@ -45,6 +51,9 @@ import "agent_core/identity" as identity;
 import "facet/vocabulary" as vocab;
 import "agent_inapp/agent_inapp" as inapp;
 import "agent_mcp/agent_mcp" as mcp;
+import "agent_mcp/inspect" as mcp_inspect;
+import "./inspect_tree" as itree;
+import "./inspect_platform" as iplatform;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
 import "stdlib/thread" as thread;
@@ -180,49 +189,70 @@ fn effective_policy() -> fn(auth::Request) -> auth::Grant {
     return AGENT_POLICY;
 }
 
-// The port an application's path is read as — see the header. Shared with
-// `agent_ios.cplus`'s reading, digit for digit, because an app that moves
-// between the two should not find the same string meaning two things.
-const DEFAULT_PORT: u16 = 8787u16;
-
-fn port_of(path: str) -> u16 {
-    var n: u32 = 0 as u32;
-    var any: bool = false;
-    let bytes: *u8 = #str_ptr(path);
-    let len: usize = #str_len(path);
-    var i: usize = 0 as usize;
-    while i < len {
-        let c: u8 = { *(bytes + i) };
-        if c < ('0' as u8) || c > ('9' as u8) { return DEFAULT_PORT; }
-        n = n * (10 as u32) + ((c -% ('0' as u8)) as u32);
-        if n > (65535 as u32) { return DEFAULT_PORT; }
-        any = true;
-        i = i +% (1 as usize);
-    }
-    if !any { return DEFAULT_PORT; }
-    return n as u16;
-}
-
+// The BOUND descriptor, not a port — binding moved to `serve_once` so a
+// failure reaches a caller instead of dying in a thread nobody joins.
 struct AgentServe {
-    port: u16,
+    fd: i32,
 }
 
 fn serve_main(take job: AgentServe) -> i32 {
     var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
-    return mcp::serve_tcp(surf, agent_win32::mcp_backend(), sub, effective_policy(), job.port);
+    // HTTP, NOT THE PRIVATE FRAMING — the same call `agent_ios.cplus` makes and
+    // for the same reason: this platform has no Unix socket a client could
+    // reach, so the loopback port is the ONLY door, which makes it the one
+    // place the framing has to be something an MCP client already speaks. A
+    // client points at `http://127.0.0.1:<port>/` and needs no bridge.
+    return mcp::accept_loop(surf, agent_win32::mcp_backend(), sub, effective_policy(),
+                            job.fd, false, http: true);
 }
 
 // Start the serve worker exactly once per process. The accept loop lives for
 // the app's life.
-fn serve_once(path: str) {
+fn serve_once(id: str) {
     if AGENT_SERVING { return; }
+    // Clear out what dead processes left behind. A descriptor carries the pid,
+    // so a name is never reused and nothing else would ever remove these.
+    let _swept: usize = mcp::sweep_stale();
+    if !mcp::valid_id(id) {
+        let bad: text::Text = "facet: agent surface not served — \"${id}\" is not a valid id (a NAME, not a path)";
+        io::eprintln(bad.view());
+        return;
+    }
+    // THE PORT IS DERIVED FROM THE PID, not passed in. A fixed port is what
+    // this replaces — two instances of the same app would fight over it, and
+    // whichever bound first would answer for both.
+    let port: u16 = mcp::loopback_port(mcp::current_pid());
+    // BOUND ON THIS THREAD so a failure is something a caller can hear. It used
+    // to bind inside the spawned thread whose return value nobody reads, so
+    // every setup failure was silent and looked exactly like an app nobody had
+    // connected to yet.
+    let fd: i32 = mcp::bind_tcp(port);
+    if fd < 0 {
+        let why: text::Text = "facet: agent surface not served on port ${port} — ${mcp::bind_reason(fd)}";
+        io::eprintln(why.view());
+        return;
+    }
     AGENT_SERVING = true;
+    // The platform half — the overlay, the native rows, and the synchronous
+    // main-thread hop `core::touch` requires. Without it the inspector connects,
+    // lists the tree and cannot highlight or write anything.
+    iplatform::install();
+    // THE INSPECTOR'S VERBS, published with the others and not by an
+    // application remembering to. Serving IS the opt-in.
+    mcp_inspect::publish();
+    // AND THE WALKER, here rather than in application code. The toolkit is what
+    // knows what a tree is.
+    mcp_inspect::set_backend(itree::local_backend());
+    mcp::set_server_name(id);
+    let addr: text::Text = "http://127.0.0.1:${port}/";
+    let _d: bool = mcp::write_descriptor(id, mcp::current_pid(), "http", addr.view());
     let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
-        AgentServe { port: port_of(path) },
+        AgentServe { fd: fd },
         serve_main,
     );
-    return;
+    let ok: text::Text = "facet: agent surface on ${addr} — ${mcp::verb_summary()}";
+    io::eprintln(ok.view());
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -300,18 +330,6 @@ fn the_pinned_tier_is_what_the_agent_surface_reads_back() {
     return;
 }
 
-#[test]
-fn a_path_that_is_not_a_port_gets_the_default() {
-    // The line every macOS and Linux example carries. It must not fail
-    // silently here — a socket path is not a port and there is nothing to
-    // parse out of it, so the default is the only honest answer.
-    assert port_of("/tmp/facet-gallery.sock") == DEFAULT_PORT;
-    assert port_of("") == DEFAULT_PORT;
-    assert port_of("9000") == (9000 as u16);
-    // Out of range is not a port either.
-    assert port_of("70000") == DEFAULT_PORT;
-    return;
-}
 
 fn hwnd_message() -> *u8 { return ((0 as i64) -% (3 as i64)) as *u8; }
 
