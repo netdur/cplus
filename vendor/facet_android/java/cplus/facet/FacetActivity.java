@@ -41,6 +41,9 @@ public class FacetActivity extends android.app.Activity {
         // line executes a package has had its chance to subscribe. The latch in
         // facet's app_events makes it safe even if it has not.
         deliverPayload(getIntent());
+        // A button pressed while this process was dead parked its payload; the
+        // native exists now.
+        drainPendingPayload();
     }
 
     // A NOTIFICATION TAPPED WHILE THE APP IS RUNNING lands here rather than in
@@ -68,7 +71,22 @@ public class FacetActivity extends android.app.Activity {
     // vendor/notifications, which writes it; the string is the contract.
     public static final String PAYLOAD_EXTRA = "cplus.payload";
 
-    private static native void nativeNotificationTap(String payload);
+    static native void nativeNotificationTap(String payload);
+
+    // A PAYLOAD THAT ARRIVED WITH NO NATIVE TO GIVE IT TO.
+    //
+    // `FacetNotificationReceiver` runs in this app's process, but a broadcast
+    // can start that process from cold — and the .so is loaded in onCreate
+    // below, so the receiver may fire before any native exists. It parks the
+    // payload here and this drains it once the library is up.
+    static String pendingPayload = null;
+
+    private void drainPendingPayload() {
+        String p = pendingPayload;
+        if (p == null) return;
+        pendingPayload = null;
+        nativeNotificationTap(p);
+    }
 
     // The system bars and the display cutout, in pixels, packed into one long
     // as left/top/right/bottom, 16 bits each.
