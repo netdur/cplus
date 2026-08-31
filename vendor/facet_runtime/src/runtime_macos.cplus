@@ -1395,6 +1395,12 @@ fn the_terminate_seam_yields_to_an_application_that_owns_the_delegate() {
     // (a) AN APPLICATION'S OWN DELEGATE WINS. It is answering this selector
     // itself, or wants to, and replacing it would silently break whatever else
     // it answers — so the seam declines rather than taking it.
+    // FORGET FIRST. `facet_appkit`'s event wiring arms the URL half of this
+    // same delegate at backend-install time, and if it has run in this process
+    // the seam is already ours — the call below would answer true from its own
+    // cache without ever looking at the squatter. Dropping the cache is what
+    // makes the refusal a real decision again rather than a replay.
+    akx::t_forget_delegate();
     let squatter: *u8 = rt::msg_id(rt::msg_id(rt::get_class(#str_ptr("NSObject\0")),
                                               rt::sel(#str_ptr("alloc\0"))),
                                    rt::sel(#str_ptr("init\0")));
