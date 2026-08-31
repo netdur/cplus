@@ -16804,6 +16804,14 @@ impl<'a> FnState<'a> {
         let fut_llvm = self.lty(&fut_ty);
         let hdl = self.next_tmp();
         self.emit(&format!("{hdl} = extractvalue {fut_llvm} {fut_val}, 0"));
+        // HAND THE FRAME TO THE REACTOR. Nothing awaits a spawned task, so no
+        // cancel cascade reaches it and the value it came in on is about to be
+        // nulled below — without this the frame would have no owner at all,
+        // which is the leak §2 of the cancellation report describes.
+        // `reactor::teardown` destroys whatever is still registered.
+        self.emit(&format!(
+            "call void @stdlib_reactor_register_spawned_v1(ptr {hdl})"
+        ));
         if Self::is_place_expr(&args[0]) {
             let (slot, _) = self.gen_place(&args[0]);
             let fld = self.next_tmp();

@@ -462,6 +462,63 @@ fn a_spawn_local_task_actually_runs() {
     assert atomic::load_u64(#addr_of(_SPAWNED_RAN), atomic::Ordering::Acquire) == (1 as u64);
 }
 
+// TEARDOWN OWNS WHAT NOTHING AWAITS, which is §2 of the cancellation report.
+//
+// A `spawn_local` task is reached by no cascade — nothing awaits it — so before
+// v0.0.30 its frame was nobody's and `teardown` freed the reactor's arrays
+// around it. The reactor registers spawned frames now, and `destroy_spawned`
+// runs before those arrays go.
+//
+// The probe local is the part worth asserting: destroying a frame is only right
+// if it runs the drops of the locals live at its suspend point, and a teardown
+// that merely `free`d the frame would leak them while looking identical from
+// outside.
+async fn _spawned_that_parks_with_a_probe() -> i32 {
+    let p: _AsyncProbe = _AsyncProbe { _v: 9 as i64 };
+    await _long_nap();
+    return p._v as i32;
+}
+
+#[test]
+fn teardown_destroys_a_spawned_task_nothing_awaits_and_runs_its_drops() {
+    // A FRESH REACTOR, because an earlier check in this file may have left a
+    // parked frame in this thread's kqueue.
+    reactor::teardown();
+    let before: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    assert reactor::spawned_count() == (0 as i32);
+
+    // Runs eagerly to its first suspend at the call site, so by here it is
+    // parked on an hour-long timer and owned by the reactor.
+    spawn_local::[i32](_spawned_that_parks_with_a_probe());
+    assert reactor::spawned_count() == (1 as i32);
+
+    reactor::teardown();
+    let after: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    assert after == before +% (1 as u64);
+    assert reactor::spawned_count() == (0 as i32);
+}
+
+#[test]
+fn the_spawned_table_grows_and_teardown_destroys_every_one() {
+    // TWENTY, past the table's initial capacity of eight, so the realloc path
+    // is the one under test as well as the destroy loop. A teardown that freed
+    // the array without walking it would leak twenty frames and twenty probes
+    // while looking exactly like this from outside — which is what the drop
+    // count is here to tell apart.
+    reactor::teardown();
+    let before: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    var i: i32 = 0;
+    while i < (20 as i32) {
+        spawn_local::[i32](_spawned_that_parks_with_a_probe());
+        i = i +% (1 as i32);
+    }
+    assert reactor::spawned_count() == (20 as i32);
+    reactor::teardown();
+    let after: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    assert after == before +% (20 as u64);
+    assert reactor::spawned_count() == (0 as i32);
+}
+
 // ---- the deadlines ----
 //
 // A DEADLINE THAT DOES NOT EXPIRE MUST CHANGE NOTHING, which is half of what

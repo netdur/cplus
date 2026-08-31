@@ -135,7 +135,9 @@ extern fn __cplus_reactor_set_state(p: *u8);
 //   udata   void*      @ 24
 // total size: 32 bytes.
 
-fn header_bytes() -> usize { return 96 as usize; }
+// 112, not 96: the last three slots are the SPAWNED TABLE (v0.0.30). See
+// `register_spawned` for what owns what.
+fn header_bytes() -> usize { return 112 as usize; }
 fn kevent_bytes() -> usize { return 32 as usize; }
 
 fn off_kqfd() -> usize { return 0 as usize; }
@@ -153,6 +155,9 @@ fn off_n_awaiters() -> usize { return 72 as usize; }
 fn off_cap_awaiters() -> usize { return 76 as usize; }
 fn off_awaitee_hdls() -> usize { return 80 as usize; }
 fn off_awaiter_hdls() -> usize { return 88 as usize; }
+fn off_n_spawned() -> usize { return 96 as usize; }
+fn off_cap_spawned() -> usize { return 100 as usize; }
+fn off_spawned_hdls() -> usize { return 104 as usize; }
 
 // EVFILT_READ = -1, EVFILT_WRITE = -2, EVFILT_TIMER = -7 (macOS sys/event.h).
 fn evfilt_read() -> i16 { return (0 as i16) -% (1 as i16); }
@@ -207,6 +212,14 @@ fn ensure() -> *u8 {
     { *ae_slot = malloc((8 *% 8) as usize); }
     let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
     { *ar_slot = malloc((8 *% 8) as usize); }
+    // v0.0.30: the spawned table. One array of frame handles the reactor OWNS
+    // — see `register_spawned`.
+    let ns_slot: *i32 = { (state + off_n_spawned()) as *i32 };
+    { *ns_slot = 0 as i32; }
+    let cs_slot: *i32 = { (state + off_cap_spawned()) as *i32 };
+    { *cs_slot = 8 as i32; }
+    let sh_slot: **u8 = { (state + off_spawned_hdls()) as **u8 };
+    { *sh_slot = malloc((8 *% 8) as usize); }
     { #reactor_set_state(state); }
     let _x: *u8 = null_p;
     return state;
@@ -270,6 +283,16 @@ export extern fn stdlib_reactor_unregister_awaiter_v1(awaitee: *u8) {
 // the queue when the drive loop resumes it directly and destroys it at
 // completion, and the stale entry would make the NEXT executor on this
 // thread call `coro_done` on freed memory (found by ASan, 2026-08-22).
+// The codegen door for `#reactor_spawn_local`. Stable symbol, like every other
+// entry point here: the intrinsic emits a call to this name.
+export extern fn stdlib_reactor_register_spawned_v1(hdl: *u8) {
+    register_spawned(hdl);
+}
+
+export extern fn stdlib_reactor_unregister_spawned_v1(hdl: *u8) {
+    unregister_spawned(hdl);
+}
+
 export extern fn stdlib_reactor_unregister_pending_v1(hdl: *u8) {
     unregister_pending(hdl);
 }
@@ -464,12 +487,133 @@ fn poll_one_event_cancellable() -> i32 {
 // thread starts fresh. Frames the arrays referenced are NOT destroyed here:
 // the cancelling executor destroys the task tree it owns (the cascade
 // through the awaits' cancel edges), and this purge is what guarantees no
-// reactor entry can reach those freed frames afterwards. A `spawn_local`
-// task the cascade does not reach is LEAKED by teardown (nobody owns its
-// frame) — recorded in the cancellation report as the phase-2 residual.
+// reactor entry can reach those freed frames afterwards. A `spawn_local` task
+// the cascade does not reach is DESTROYED here too, by `destroy_spawned` — the
+// reactor owns those frames (see `register_spawned`), which is what closes §2
+// of the cancellation report.
+// ---- spawned tasks: the frames the reactor OWNS (v0.0.30) ----
+//
+// WHY THE REACTOR OWNS THEM, and it stopped being a choice. `spawn_local` hands
+// over a future nothing awaits: no cascade reaches it, and until v0.0.30 no
+// destructor did either, so the frame was simply nobody's and `teardown` freed
+// the arrays around it — the leak recorded as §2 of the cancellation report.
+//
+// Giving `Future` a destructor removed the "nobody" option. The frame is now
+// always owned by something, so a `spawn_local` that did not hand ownership on
+// would have its own local destroy the task the reactor was about to drive.
+// `#reactor_spawn_local` moves the handle out of the value; this is where it
+// lands, and `teardown` is what finally destroys it.
+//
+// A FLAT ARRAY WITH NULL HOLES rather than a compacting one: `unregister_
+// spawned` nulls in place, so an entry's index never moves under an iteration.
+// The table is small — an app spawning thousands of background tasks per
+// reactor lifetime is not the shape this serves.
+fn register_spawned(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let state: *u8 = ensure();
+    let ns_slot: *i32 = { (state + off_n_spawned()) as *i32 };
+    let cs_slot: *i32 = { (state + off_cap_spawned()) as *i32 };
+    let sh_slot: **u8 = { (state + off_spawned_hdls()) as **u8 };
+    var n: i32 = { *ns_slot };
+    var cap: i32 = { *cs_slot };
+    // Reuse a hole before growing: a long-lived reactor spawning and
+    // completing tasks in a loop would otherwise grow without bound.
+    let hs0: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        if ptr_is_null({ *(hs0 + (s as usize)) }) {
+            let dst0: **u8 = { hs0 + (s as usize) };
+            { *dst0 = hdl; }
+            return;
+        }
+        s = s +% (1 as i32);
+    }
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let grown: *u8 = { realloc(*sh_slot, (cap *% 8) as usize) };
+        { *sh_slot = grown; }
+        { *cs_slot = cap; }
+    }
+    let hs: **u8 = { *sh_slot as **u8 };
+    let dst: **u8 = { hs + (n as usize) };
+    { *dst = hdl; }
+    { *ns_slot = n +% (1 as i32); }
+}
+
+// Give up ownership of `hdl` WITHOUT destroying it. The door for a spawned
+// frame that something else has already freed — a completed task the drive loop
+// reaped, say — so `teardown` cannot destroy it a second time.
+fn unregister_spawned(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        let slot: **u8 = { hs + (s as usize) };
+        if { *slot } == hdl { { *slot = 0 as *u8; } }
+        s = s +% (1 as i32);
+    }
+}
+
+// How many spawned frames this reactor still owns. Read by the tests, which is
+// the only way to see that teardown had something to do.
+fn spawned_count() -> i32 {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return 0 as i32; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var live: i32 = 0;
+    var s: i32 = 0;
+    while s < n {
+        if !ptr_is_null({ *(hs + (s as usize)) }) { live = live +% (1 as i32); }
+        s = s +% (1 as i32);
+    }
+    return live;
+}
+
+// Destroy every spawned frame this reactor still owns, running each one's
+// cancel edges — the drops of the locals live at its suspend point, cascading
+// through whatever it was awaiting. Called by `teardown` BEFORE the arrays go,
+// because a cancel edge unregisters awaiter and pending entries and those
+// arrays have to still be there when it does.
+fn destroy_spawned() {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        let slot: **u8 = { hs + (s as usize) };
+        let h: *u8 = { *slot };
+        // NULLED BEFORE THE DESTROY, not after: the cancel edges run arbitrary
+        // drops, and one of those could re-enter here. An entry already taken
+        // is an entry nothing can take twice.
+        { *slot = 0 as *u8; }
+        if !ptr_is_null(h) {
+            unregister_pending(h);
+            unregister_awaiter(h);
+            { #coro_destroy(h); }
+        }
+        s = s +% (1 as i32);
+    }
+    { *ns_slot = 0 as i32; }
+}
+
 fn teardown() {
     let cur: *u8 = { #reactor_get_state() };
     if ptr_is_null(cur) { return; }
+    // THE SPAWNED FRAMES FIRST, while the arrays their cancel edges write to
+    // are still allocated. This is §2 of the cancellation report: they used to
+    // be freed out from under nobody.
+    destroy_spawned();
     let kqfd: i32 = { *((cur + off_kqfd()) as *i32) };
     { close(kqfd); }
     { free(*((cur + off_waiter_fds()) as **u8)); }
@@ -479,6 +623,7 @@ fn teardown() {
     { free(*((cur + off_waiter_filters()) as **u8)); }
     { free(*((cur + off_awaitee_hdls()) as **u8)); }
     { free(*((cur + off_awaiter_hdls()) as **u8)); }
+    { free(*((cur + off_spawned_hdls()) as **u8)); }
     { free(cur); }
     { #reactor_set_state(0 as *u8); }
 }
