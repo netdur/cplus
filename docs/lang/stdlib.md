@@ -112,6 +112,7 @@ rather than compare strings.
 | Module | Surface |
 |---|---|
 | `base64` | `encode` `encode_bytes` `encode_url` · `decode` `decode_url` `decode_url_text` (→ `Option`) |
+| `url` | `parse` (→ `Option[Url]`) · `decode` `decode_form` · `Url::is_scheme` `is_web` `segment` `segment_count` `query_value` `has_query`. Fields VIEW the parsed string, so it needs a named owner. `segment(0)` is the HOST, which is what routing wants |
 | `crypto` | `Digest` / `Digest512` · `sha256` `sha512` (`_bytes` variants) · `hmac_sha256` `hmac_sha512` · `random_bytes` `random_hex` · `Digest::hex` `equals` (constant-time byte compare) |
 
 ## 7. The ones that are mostly shims

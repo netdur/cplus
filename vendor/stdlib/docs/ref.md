@@ -838,6 +838,65 @@ information.
 
 ---
 
+## url
+
+Take a URL apart. Views, not copies — `parse` allocates nothing.
+
+```cplus
+import "stdlib/url" as url;
+
+url::parse(s)                     // Option[Url]
+url::decode("a%20b")              // Text — percent only: the PATH rule
+url::decode_form("a+b")           // Text — percent + `+` as space: the QUERY rule
+```
+
+```cplus
+struct Url { scheme: str, host: str, port: u16, path: str, query: str, fragment: str }
+```
+
+| | |
+|---|---|
+| `is_scheme(name)` | case-insensitive, which is the only correct way to test one |
+| `is_web()` | http or https |
+| `segment(i)` / `segment_count()` | route components, **host first**; `""` past the end |
+| `query_value(key)` | `Option[Text]`, decoded; first occurrence wins |
+| `has_query(key)` | present at all, with or without a value |
+
+**Every field views the string that was parsed**, so the source has to outlive
+the `Url` — which means a named owner rather than a temporary:
+
+```cplus
+let s: str = incoming.view();     // named
+match url::parse(s) { ... }
+```
+
+**`segment`, not `path`, for routing.** `myapp://record/42` does not have
+"record" in its path — it is the HOST, because `//` opens an authority whatever
+the scheme is. `segment(0)` reads the host when there is one and the first path
+component when there is not, so `myapp://record/42`, `myapp:///record/42` and
+`myapp:record/42` all route identically. Empty segments are skipped, so a
+trailing or doubled `/` changes nothing.
+
+**Strict about structure, lenient about content.** A missing or malformed
+scheme is `None`, because a string that is not a URL must not parse as one with
+an empty scheme — that is how a relative path becomes a link. A port that is
+not a number is `None` too, because misreading it corrupts the host beside it.
+Decoding goes the other way: `%zz` decodes to a literal `%zz` rather than
+failing. Unlike `base64`, nothing here is signed, and a link that refuses to
+open because somebody typed a `%` into a title is a worse failure than a `%`
+that survives into the title.
+
+`decode` and `decode_form` differ only in `+`, and getting that backwards turns
+a filename with a `+` in it into one with a space. `+` means a space in
+`application/x-www-form-urlencoded`, which is what a query string is in
+practice, and a literal `+` everywhere else. `query_value` uses the form rule.
+
+Userinfo (`https://user:pw@host/`) is dropped rather than handed back. IPv6
+literals lose their brackets: `http://[::1]:8080/` answers host `::1`, port
+8080.
+
+---
+
 ## crypto
 
 SHA-2 digests, HMAC and the system CSPRNG, over CommonCrypto (libSystem — no
