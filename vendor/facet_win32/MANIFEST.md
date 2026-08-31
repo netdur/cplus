@@ -34,7 +34,8 @@ what `on_submit` and `on_selection_changed` needed. `split` and `carousel` are
 drawn and paged here, both for the reason `tabs` is: Win32 has no such control
 and every toolkit that has one drew it. `imaging.cplus` decodes through GDI+'s
 flat C API, which is what `image`, `slider.thumb_image` and a file-sourced
-`icon_button` were all waiting on.
+`icon_button` were all waiting on — and plays an animated GIF on its own
+per-frame delays rather than a fixed interval.
 `facet_runtime/runtime_windows.cplus` lands with it, so an application reaches
 this backend the ordinary way rather than by calling the package directly.
 
@@ -43,7 +44,7 @@ Two probes under `playground/`, and the division is deliberate:
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
 
 ```
-362 declared prop bits     248 answered    68%   (gtk 358, appkit 336, uikit 323, android 321)
+362 declared prop bits     249 answered    68%   (gtk 358, appkit 336, uikit 323, android 321)
  68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
@@ -711,23 +712,6 @@ introducing it should be a decision made on its own merits rather than as a
 side effect of wanting two edges. What it would buy is written here so that
 decision can be made with the price in view: five verbs, plus dropped TEXT
 (not only files) and cross-application drags of anything.
-
-### `image.is_animation_playing`
-
-An animated GIF's own frames. GDI+ can do it — `GdipImageGetFrameCount` and
-`GdipImageSelectActiveFrame` over the frame-dimension GUID — and the timer to
-drive it already exists in `anim.cplus`.
-
-What stops it being a small addition is the FRAME DELAYS. They are not evenly
-spaced, and reading them means `GdipGetPropertyItemSize` then
-`GdipGetPropertyItem` for `PropertyTagFrameDelay` (0x5100), which answers a
-variable-length struct of hundredths of a second that has to be laid out by
-hand. A fixed interval instead would play every animation at the wrong speed —
-facet_gtk's `anim` records the identical hazard from the GdkPixbuf side and
-lets the ITERATOR decide the timing for exactly this reason.
-
-Shipping a decoder that plays animations at the wrong speed is worse than
-saying it does not play them, so this is written down rather than approximated.
 
 ### The SHARED BAND's five remaining bits, each for its own reason
 

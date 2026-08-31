@@ -2825,7 +2825,13 @@ fn create_image(n: *core::Node) -> *u8 { return create_panel(n); }
 fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ImageProps = props_of(n, props::K_IMAGE) as *props::ImageProps;
     if p == (0 as *props::ImageProps) { return; }
-    let touched: u64 = image::P_SOURCE | image::P_FIT | image::P_IS_OPAQUE;
+    if (dirty & (image::P_IS_ANIMATION_PLAYING | image::P_SOURCE)) != (0 as u64) {
+        // A NEW SOURCE RESTARTS THE ANIMATION rather than continuing at the old
+        // frame index, which would be a frame number into a different file.
+        imaging::set_playing(v, { (*p).source }.view(), { (*p).is_animation_playing });
+    }
+    let touched: u64 = image::P_SOURCE | image::P_FIT | image::P_IS_OPAQUE
+                     | image::P_IS_ANIMATION_PLAYING;
     if (dirty & touched) != (0 as u64) {
         // A new source is a new size, and the layout is asked again by
         // `views::apply` — which calls `measure::remeasure` after every
@@ -2853,7 +2859,10 @@ fn draw_image(v: *u8, n: *core::Node, hdc: *u8) {
         let b: *u8 = paint::brush_for(paint::effective_bg(v));
         if b != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), b) }; }
     }
-    let _drew: bool = imaging::draw(hdc, r, { (*p).source }.view(), { (*p).fit });
+    // `draw_for` rather than `draw`: this window may be PLAYING, and the
+    // animation's current frame wins over the cached still.
+    let _drew: bool = imaging::draw_for(v, hdc, r, { (*p).source }.view(),
+                                        { (*p).fit });
     return;
 }
 

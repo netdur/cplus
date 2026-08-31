@@ -56,6 +56,13 @@ extern fn GdipCreateHBITMAPFromBitmap(bitmap: usize, hbm: *usize, background: u3
 extern fn GdipGetImageWidth(image: usize, w: *u32) -> i32;
 extern fn GdipGetImageHeight(image: usize, h: *u32) -> i32;
 extern fn GdipDisposeImage(image: usize) -> i32;
+// The animation half. `GdipImageGetFrameCount` and `GdipImageSelectActiveFrame`
+// both take a FRAME DIMENSION — a GUID naming which axis of a multi-frame image
+// to walk. A GIF's is TIME; a TIFF's would be PAGE.
+extern fn GdipImageGetFrameCount(image: usize, dimension: *u8, count: *u32) -> i32;
+extern fn GdipImageSelectActiveFrame(image: usize, dimension: *u8, index: u32) -> i32;
+extern fn GdipGetPropertyItemSize(image: usize, propid: u32, size: *u32) -> i32;
+extern fn GdipGetPropertyItem(image: usize, propid: u32, size: u32, buf: *u8) -> i32;
 
 fn gp_ok() -> i32 { return 0 as i32; }
 
@@ -87,6 +94,122 @@ fn ensure_gdiplus() -> bool {
     GDIPLUS_TOKEN = token;
     GDIPLUS_OK = true;
     return true;
+}
+
+// ---- animation ------------------------------------------------------------------
+//
+// A GIF's own frames. The frames are easy; THE DELAYS ARE THE WORK, and they
+// are the reason this was recorded as debt rather than approximated: an
+// animation's frames are not evenly spaced, and a fixed interval plays every
+// one of them at the wrong speed. facet_gtk states the same hazard from the
+// GdkPixbuf side and lets the iterator decide the timing for exactly this
+// reason.
+//
+// `PropertyTagFrameDelay` (0x5100) answers an array of UINT32, one per frame,
+// in HUNDREDTHS OF A SECOND. Reading it is a two-call dance — ask the size,
+// allocate, ask again — and what comes back is a `PropertyItem` header
+// followed by the values:
+//
+//   0   PROPID id       (4)
+//   4   ULONG  length   (4)   bytes of `value`, not entries
+//   8   WORD   type     (2)   + 2 padding
+//   16  VOID*  value    (8)   points INTO the same buffer, past the header
+//
+// FrameDimensionTime, {6AEDBD6D-3FB5-418A-83A6-7F45229DC872}, laid out in the
+// mixed-endian form a GUID actually has: the first three fields are
+// little-endian integers and the last eight bytes are in order.
+fn frame_delay_tag() -> u32 { return 0x5100 as u32; }
+fn pi_off_length() -> usize { return 4 as usize; }
+fn pi_off_value() -> usize { return 16 as usize; }
+
+fn frame_dimension_time(buf: *u8) {
+    // Data1 = 0x6AEDBD6D
+    put_u8(buf, 0 as usize, 0x6D as u8);
+    put_u8(buf, 1 as usize, 0xBD as u8);
+    put_u8(buf, 2 as usize, 0xED as u8);
+    put_u8(buf, 3 as usize, 0x6A as u8);
+    // Data2 = 0x3FB5
+    put_u8(buf, 4 as usize, 0xB5 as u8);
+    put_u8(buf, 5 as usize, 0x3F as u8);
+    // Data3 = 0x418A
+    put_u8(buf, 6 as usize, 0x8A as u8);
+    put_u8(buf, 7 as usize, 0x41 as u8);
+    // Data4, in order
+    put_u8(buf, 8 as usize, 0x83 as u8);
+    put_u8(buf, 9 as usize, 0xA6 as u8);
+    put_u8(buf, 10 as usize, 0x7F as u8);
+    put_u8(buf, 11 as usize, 0x45 as u8);
+    put_u8(buf, 12 as usize, 0x22 as u8);
+    put_u8(buf, 13 as usize, 0x9D as u8);
+    put_u8(buf, 14 as usize, 0xC8 as u8);
+    put_u8(buf, 15 as usize, 0x72 as u8);
+    return;
+}
+
+fn put_u8(p: *u8, at: usize, v: u8) {
+    let q: *u8 = { (p + at) };
+    { *q = v };
+    return;
+}
+
+fn read_u32_at(p: *u8, at: usize) -> u32 {
+    let q: *u32 = { (p + at) } as *u32;
+    return { *q };
+}
+
+// How many frames, and how long each stays up. `out_delays` is filled with
+// MILLISECONDS — the caller schedules in those and the property is in
+// hundredths, so the conversion happens once, here.
+//
+// A DELAY OF ZERO IS NOT ZERO. Encoders write 0 for "as fast as possible" and
+// every browser clamps it; 100ms is the de facto floor and what a GIF with no
+// stated delay is played at everywhere. Honouring a literal zero would spin the
+// timer at the frame rate of the machine.
+fn frame_delay_floor_ms() -> u32 { return 100 as u32; }
+
+fn frame_count(bmp: usize) -> u32 {
+    let dim: *u8 = { img_malloc(16 as usize) };
+    if dim.is_null() { return 0 as u32; }
+    frame_dimension_time(dim);
+    var n: u32 = 0 as u32;
+    let rc: i32 = { GdipImageGetFrameCount(bmp, dim, #addr_of(n)) };
+    { img_free(dim) };
+    if rc != gp_ok() { return 0 as u32; }
+    return n;
+}
+
+fn select_frame(bmp: usize, index: u32) -> bool {
+    let dim: *u8 = { img_malloc(16 as usize) };
+    if dim.is_null() { return false; }
+    frame_dimension_time(dim);
+    let rc: i32 = { GdipImageSelectActiveFrame(bmp, dim, index) };
+    { img_free(dim) };
+    return rc == gp_ok();
+}
+
+// The delay for frame `i`, in milliseconds.
+fn frame_delay_ms(bmp: usize, i: u32) -> u32 {
+    var size: u32 = 0 as u32;
+    if { GdipGetPropertyItemSize(bmp, frame_delay_tag(), #addr_of(size)) } != gp_ok() {
+        return frame_delay_floor_ms();
+    }
+    if size == (0 as u32) { return frame_delay_floor_ms(); }
+    let buf: *u8 = { img_malloc(size as usize) };
+    if buf.is_null() { return frame_delay_floor_ms(); }
+    var ms: u32 = frame_delay_floor_ms();
+    if { GdipGetPropertyItem(bmp, frame_delay_tag(), size, buf) } == gp_ok() {
+        let bytes: u32 = read_u32_at(buf, pi_off_length());
+        // `value` POINTS INTO THIS BUFFER, past the header — it is not an
+        // offset, so it is read as the pointer it is.
+        let vp: *usize = { (buf + pi_off_value()) } as *usize;
+        let values: *u8 = { *vp } as *u8;
+        if !values.is_null() && ((i +% (1 as u32)) *% (4 as u32)) <= bytes {
+            let hundredths: u32 = read_u32_at(values, (i as usize) *% (4 as usize));
+            if hundredths > (0 as u32) { ms = hundredths *% (10 as u32); }
+        }
+    }
+    { img_free(buf) };
+    return ms;
 }
 
 // ---- the cache -----------------------------------------------------------------
@@ -249,9 +372,19 @@ fn centred(dest: u::tagRECT, w: i32, h: i32) -> u::tagRECT {
 // Draw `path` into `dest` on `hdc`. Answers false when there was nothing to
 // draw, so a caller can decide what an absent picture looks like.
 fn draw(hdc: *u8, dest: u::tagRECT, path: str, fit: vocab::ImageFit) -> bool {
+    return draw_for(0 as *u8, hdc, dest, path, fit);
+}
+
+// The same, for a window that may be PLAYING. A playing frame wins over the
+// cached still — the still is frame zero, and drawing it would freeze the
+// animation on the first frame while the timer went on ticking.
+fn draw_for(v: *u8, hdc: *u8, dest: u::tagRECT, path: str,
+            fit: vocab::ImageFit) -> bool {
     var sw: i32 = 0 as i32;
     var sh: i32 = 0 as i32;
-    let hbm: *u8 = bitmap_for(path, #addr_of(sw), #addr_of(sh));
+    var hbm: *u8 = 0 as *u8;
+    if v != (0 as *u8) { hbm = animated_frame(v, #addr_of(sw), #addr_of(sh)); }
+    if hbm == (0 as *u8) { hbm = bitmap_for(path, #addr_of(sw), #addr_of(sh)); }
     if hbm == (0 as *u8) { return false; }
     let mem: *u8 = { gdi::CreateCompatibleDC(hdc) };
     if mem == (0 as *u8) { return false; }
@@ -360,5 +493,144 @@ fn the_cache_evicts_the_oldest_rather_than_growing() {
     // `free_or_oldest` is what bounds this; with everything empty it answers
     // the first slot, which is what makes a cold cache fill in order.
     assert free_or_oldest() < CACHE_SLOTS;
+    return;
+}
+
+// ---- playing an animation ---------------------------------------------------------
+//
+// ONE ANIMATION AT A TIME, and it is stated rather than discovered — the same
+// rule `anim.cplus` gives for its tween. A second `image` starting to play
+// replaces the first. Two animated GIFs on one screen is a thing an application
+// can ask for and this does not do it; what it does not do is pretend.
+//
+// THE GDI+ BITMAP IS KEPT ALIVE, which is the difference from the still path.
+// `bitmap_for` decodes, converts to an HBITMAP and disposes the GpBitmap
+// immediately — there is nothing left to ask for another frame. An animation
+// holds the GpBitmap, selects a frame on it, and converts THAT to a fresh
+// HBITMAP each tick.
+//
+// The timer is windowless, as `anim`'s is, and rescheduled EVERY FRAME rather
+// than set once: the delays differ per frame, so a repeating timer at one
+// interval is the wrong-speed playback this was recorded as refusing to ship.
+
+static ANIM_BITMAP: usize = 0;      // GpBitmap, ours to dispose
+static ANIM_HBM: usize = 0;         // the current frame's HBITMAP
+static ANIM_VIEW: usize = 0;        // the window to invalidate
+static ANIM_FRAME: u32 = 0;
+static ANIM_FRAMES: u32 = 0;
+static ANIM_TIMER: u64 = 0;
+
+fn animating() -> bool { return ANIM_BITMAP != (0 as usize); }
+
+fn tick_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, u32) = anim_tick;
+    return f as *u8;
+}
+
+// Start `path` playing into `v`, or stop whatever is playing there.
+fn set_playing(v: *u8, path: str, playing: bool) {
+    if !playing {
+        if ANIM_VIEW == { #addr(v) } { stop_animation(); }
+        return;
+    }
+    if ANIM_VIEW == { #addr(v) } && animating() { return; }
+    stop_animation();
+    if !ensure_gdiplus() { return; }
+    let wide: *u16 = sys::to_wide(path);
+    if wide == (0 as *u16) { return; }
+    var bmp: usize = 0 as usize;
+    let rc: i32 = { GdipCreateBitmapFromFile(wide, #addr_of(bmp)) };
+    sys::free_wide(wide);
+    if rc != gp_ok() || bmp == (0 as usize) { return; }
+    let frames: u32 = frame_count(bmp);
+    // ONE FRAME IS A STILL. Playing it would set a timer that redraws the same
+    // pixels forever.
+    if frames <= (1 as u32) { let _d: i32 = { GdipDisposeImage(bmp) }; return; }
+    ANIM_BITMAP = bmp;
+    ANIM_VIEW = { #addr(v) };
+    ANIM_FRAME = 0 as u32;
+    ANIM_FRAMES = frames;
+    show_frame();
+    return;
+}
+
+fn stop_animation() {
+    if ANIM_TIMER != (0 as u64) { let _k: i32 = { u::KillTimer(0 as *u8, ANIM_TIMER) }; }
+    ANIM_TIMER = 0 as u64;
+    if ANIM_HBM != (0 as usize) { let _o: i32 = { gdi::DeleteObject(ANIM_HBM as *u8) }; }
+    ANIM_HBM = 0 as usize;
+    if ANIM_BITMAP != (0 as usize) { let _d: i32 = { GdipDisposeImage(ANIM_BITMAP) }; }
+    ANIM_BITMAP = 0 as usize;
+    ANIM_VIEW = 0 as usize;
+    ANIM_FRAME = 0 as u32;
+    ANIM_FRAMES = 0 as u32;
+    return;
+}
+
+fn show_frame() {
+    if ANIM_BITMAP == (0 as usize) { return; }
+    if !select_frame(ANIM_BITMAP, ANIM_FRAME) { stop_animation(); return; }
+    var hbm: usize = 0 as usize;
+    if { GdipCreateHBITMAPFromBitmap(ANIM_BITMAP, #addr_of(hbm), 0 as u32) } != gp_ok() {
+        stop_animation();
+        return;
+    }
+    // THE OLD FRAME GOES AFTER THE NEW ONE EXISTS. Deleting first would leave
+    // a window between them where a paint has nothing to draw.
+    let old: usize = ANIM_HBM;
+    ANIM_HBM = hbm;
+    if old != (0 as usize) { let _o: i32 = { gdi::DeleteObject(old as *u8) }; }
+    if ANIM_VIEW != (0 as usize) {
+        let _i: i32 = { u::InvalidateRect(ANIM_VIEW as *u8, 0 as *u::tagRECT, 1 as i32) };
+    }
+    // RESCHEDULED PER FRAME, at THIS frame's delay.
+    var ms: u32 = frame_delay_ms(ANIM_BITMAP, ANIM_FRAME);
+    if ms < (10 as u32) { ms = frame_delay_floor_ms(); }
+    ANIM_TIMER = { u::SetTimer(0 as *u8, 0 as u64, ms, tick_addr()) };
+    return;
+}
+
+fn anim_tick(w: *u8, msg: u32, id: u64, ticks: u32) {
+    if ANIM_BITMAP == (0 as usize) { stop_animation(); return; }
+    if ANIM_TIMER != (0 as u64) { let _k: i32 = { u::KillTimer(0 as *u8, ANIM_TIMER) }; }
+    ANIM_TIMER = 0 as u64;
+    ANIM_FRAME = ANIM_FRAME +% (1 as u32);
+    if ANIM_FRAME >= ANIM_FRAMES { ANIM_FRAME = 0 as u32; }
+    show_frame();
+    return;
+}
+
+// The frame a playing animation is showing, for `draw` to use instead of the
+// cached still. Null when this window is not the one playing.
+fn animated_frame(v: *u8, out_w: *i32, out_h: *i32) -> *u8 {
+    { *out_w = 0 as i32 };
+    { *out_h = 0 as i32 };
+    if ANIM_HBM == (0 as usize) { return 0 as *u8; }
+    if ANIM_VIEW != { #addr(v) } { return 0 as *u8; }
+    var w: u32 = 0 as u32;
+    var h: u32 = 0 as u32;
+    let _rw: i32 = { GdipGetImageWidth(ANIM_BITMAP, #addr_of(w)) };
+    let _rh: i32 = { GdipGetImageHeight(ANIM_BITMAP, #addr_of(h)) };
+    { *out_w = w as i32 };
+    { *out_h = h as i32 };
+    return ANIM_HBM as *u8;
+}
+
+#[test]
+fn a_still_is_not_played() {
+    // One frame is a still, and starting a timer for it would redraw the same
+    // pixels forever.
+    set_playing(0 as *u8, "Z:/no/such.gif", true);
+    assert !animating();
+    stop_animation();
+    return;
+}
+
+#[test]
+fn a_zero_delay_is_clamped_rather_than_honoured() {
+    // Encoders write 0 for "as fast as possible" and every browser clamps it.
+    // Honouring a literal zero would spin the timer at the machine's frame
+    // rate — which is the wrong-speed playback this feature was held back for.
+    assert frame_delay_floor_ms() == (100 as u32);
     return;
 }
