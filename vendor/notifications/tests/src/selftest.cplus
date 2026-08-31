@@ -63,22 +63,31 @@ fn clearing_what_is_shown_also_reaches_the_centre() -> bool {
 
 // ---- the gate ----------------------------------------------------------------
 
-fn scheduling_without_the_permission_reports_rather_than_pretending() -> bool {
-    // A fresh install is NotDetermined, and this package refuses rather than
-    // handing UNUserNotificationCenter a request it will accept and never show.
-    // If the permission HAS been granted on this simulator, the same call must
-    // succeed instead — written as a fork so the check says something true in
-    // both worlds rather than only in a fresh one.
+fn the_gate_refuses_only_a_definite_no() -> bool {
+    // WAS `scheduling_without_the_permission_reports_rather_than_pretending`,
+    // and it failed the moment the gate changed — correctly, because its
+    // premise was the thing that changed rather than the code under it.
+    //
+    // A fresh simulator install is NotDetermined, which this package reads as
+    // `Unknown` — and `Unknown` now PROCEEDS. Apple has no synchronous read of
+    // the notification permission, so a cold cache answers `Unknown` on the
+    // first call of a process; refusing there failed the first `schedule` of
+    // every run for an authorised app. The guide has the reasoning.
+    //
+    // So the assertion is the CONTRACT rather than one outcome: refuse for a
+    // definite no, proceed otherwise, and never the reverse.
     let o: notify::Outcome = notify::schedule(
         notify::Notification::new("ios:probe", "Probe", body: "from the runner",
                                   when: notify::When::After(3600.0f64)));
-    let allowed: bool = match permissions::state(of: permissions::NOTIFICATIONS) {
-        permissions::State::Granted => true,
-        permissions::State::Limited => true,
-        _ => false,
+    return match permissions::state(of: permissions::NOTIFICATIONS) {
+        // A definite no must be reported, never silently accepted.
+        permissions::State::Denied => o == notify::Outcome::NotPermitted,
+        permissions::State::Blocked => o == notify::Outcome::NotPermitted,
+        permissions::State::Unsupported => o == notify::Outcome::NotPermitted,
+        // Everything else proceeds, including the cold-cache `Unknown` this
+        // runner sees on a fresh install.
+        _ => o == notify::Outcome::Ok,
     };
-    if allowed { return o == notify::Outcome::Ok; }
-    return o == notify::Outcome::NotPermitted;
 }
 
 fn a_malformed_notification_is_refused_before_the_permission_is_read() -> bool {
@@ -133,8 +142,8 @@ fn run_all() -> i32 {
           a_bundled_app_gets_a_centre_where_a_bare_binary_does_not());
     check("clearing what is shown also reaches the centre",
           clearing_what_is_shown_also_reaches_the_centre());
-    check("scheduling without the permission reports rather than pretending",
-          scheduling_without_the_permission_reports_rather_than_pretending());
+    check("the gate refuses only a definite no",
+          the_gate_refuses_only_a_definite_no());
     check("a malformed notification is refused before the permission is read",
           a_malformed_notification_is_refused_before_the_permission_is_read());
     check("pending answers and appends",
