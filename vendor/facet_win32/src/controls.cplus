@@ -192,6 +192,10 @@ fn create_label(n: *core::Node) -> *u8 {
 fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
     if p == (0 as *props::LabelProps) { return; }
+    if (dirty & (label::P_CHARACTER_SPACING | label::P_TEXT
+                 | label::P_TEXT_ALIGN | label::P_LINE_BREAK)) != (0 as u64) {
+        set_label_drawn(v, sys::ss_left(), label_wants_draw(p));
+    }
     if (dirty & (label::P_TEXT | label::P_TEXT_TRANSFORM)) != (0 as u64) {
         // A LABEL'S TRANSFORM IS APPLIED TO THE STRING. A static has no
         // ES_UPPERCASE — that is an EDIT style, and it converts as the user
@@ -316,6 +320,16 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
         let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
     return;
+    // NATIVE UNTIL ASKED OTHERWISE — see the owner-draw section. Re-evaluated
+    // on every apply rather than latched, so a node that drops the verb goes
+    // back to the theme.
+    let looks: u64 = button::P_BORDERED | button::P_BORDER_COLOR
+                   | button::P_BORDER_WIDTH | button::P_CORNER_RADIUS
+                   | button::P_CHARACTER_SPACING | button::P_TEXT_COLOR
+                   | button::P_TITLE | button::P_LINE_BREAK;
+    if (dirty & looks) != (0 as u64) {
+        set_owner_drawn(v, sys::bs_pushbutton(), button_wants_draw(p));
+    }
     if (dirty & (button::P_IMAGE | button::P_CONTENT_LAYOUT)) != (0 as u64) {
         apply_button_image(v, { (*p).image }.view(), { (*p).content_layout });
     }
@@ -335,6 +349,7 @@ fn create_checkbox(n: *core::Node) -> *u8 {
 }
 
 fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
+    apply_checkbox_look(v, n, dirty);
     let p: *props::CheckboxProps =
         props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
     if p == (0 as *props::CheckboxProps) { return; }
@@ -413,12 +428,35 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
 // others in the same NAMED group itself. Relying on the platform's grouping
 // would silently give the right answer whenever a designer happened to put the
 // group's members next to each other, and the wrong one the day they did not.
+fn apply_radio_look(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+    if p == (0 as *props::RadioProps) { return; }
+    let looks: u64 = radio::P_BORDER_COLOR | radio::P_BORDER_WIDTH
+                   | radio::P_CORNER_RADIUS | radio::P_CHARACTER_SPACING
+                   | radio::P_TEXT_COLOR | radio::P_TEXT;
+    if (dirty & looks) != (0 as u64) {
+        set_owner_drawn(v, sys::bs_autoradiobutton(), radio_wants_draw(p));
+    }
+    return;
+}
+
+fn apply_checkbox_look(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CheckboxProps =
+        props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+    if p == (0 as *props::CheckboxProps) { return; }
+    if (dirty & checkbox::P_COLOR) != (0 as u64) {
+        set_owner_drawn(v, sys::bs_autocheckbox(), checkbox_wants_draw(p));
+    }
+    return;
+}
+
 fn create_radio(n: *core::Node) -> *u8 {
     return make_child(sys::button_class(), empty_title(),
                       sys::bs_autoradiobutton() | sys::ws_tabstop(), 0 as u32);
 }
 
 fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
+    apply_radio_look(v, n, dirty);
     let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
     if p == (0 as *props::RadioProps) { return; }
     if (dirty & (radio::P_TEXT | radio::P_TEXT_TRANSFORM)) != (0 as u64) {
@@ -2938,6 +2976,361 @@ fn apply_keyboard(v: *u8, k: vocab::Keyboard) {
     return;
 }
 
+// ---- CONDITIONAL OWNER-DRAW: native until the application asks otherwise ----------
+//
+// §1 records that a themed control's frame belongs to the theme engine, which
+// owns every pixel of it and takes no colour message. That is true and it is
+// not the whole answer, because there is a second door this package already
+// uses elsewhere: TAKE THE PIXELS.
+//
+// The reason not to take them for `button`, `radio` and `checkbox` is that they
+// are the controls whose native look matters most — the hover fade, the focus
+// ring, the accent, the pressed state are what makes an application look like
+// it belongs on the platform, and a hand-drawn imitation of them is worse than
+// the real thing in every case.
+//
+// SO IT IS CONDITIONAL, and the condition is the application's own words: a
+// control that has been given a border, a corner radius or a letter spacing has
+// ASKED for an appearance the theme does not offer. One that has not stays
+// exactly as native as it was.
+//
+// This is the same rule `paint::go_classic` follows for a progress bar's colour
+// and for the same reason: the cost is paid by the node that wanted the verb,
+// never by the node that did not. A package that owner-drew every button to
+// answer `border_color` would trade the whole platform's look for a prop
+// almost nobody sets.
+//
+// THE STYLE IS FLIPPED, NOT THE WINDOW. `BS_OWNERDRAW` is a style bit like any
+// other, so a control can move between the two paths on an `apply` without
+// being destroyed and rebuilt — which matters because rebuilding would lose its
+// focus, its selection and its place in the tab order.
+
+// Does this node want its own pixels? Asked of the props rather than remembered,
+// so a node that gains or loses the verb moves between the paths on the next
+// apply.
+fn button_wants_draw(p: *props::ButtonProps) -> bool {
+    // `bordered` DEFAULTS TO TRUE, because a native push button IS bordered —
+    // so the flag being set is the ordinary state and means nothing. It is the
+    // INVERSE that the theme cannot do: `BS_FLAT` is ignored by the theme
+    // engine (§1 records this for the same reason), so a button asked to have
+    // no border can only get one by being drawn.
+    //
+    // A test caught this. The first version read the flag straight and would
+    // have owner-drawn EVERY button in every application — exactly the trade
+    // this gate exists to refuse.
+    if !{ (*p).bordered } { return true; }
+    if { (*p).border_width } > (0.0 as f64) { return true; }
+    if { (*p).character_spacing } != (0.0 as f64) { return true; }
+    var has: bool = false;
+    let _c: u32 = paint::resolve({ (*p).border_color }, #addr_of(has));
+    if has { return true; }
+    return paint::radius_stated({ (*p).corner_radius });
+}
+
+fn radio_wants_draw(p: *props::RadioProps) -> bool {
+    if { (*p).border_width } > (0.0 as f64) { return true; }
+    if { (*p).character_spacing } != (0.0 as f64) { return true; }
+    var has: bool = false;
+    let _c: u32 = paint::resolve({ (*p).border_color }, #addr_of(has));
+    if has { return true; }
+    return paint::radius_stated({ (*p).corner_radius });
+}
+
+fn checkbox_wants_draw(p: *props::CheckboxProps) -> bool {
+    var has: bool = false;
+    let _c: u32 = paint::resolve({ (*p).color }, #addr_of(has));
+    return has;
+}
+
+// Move a BUTTON-class control between its native style and `BS_OWNERDRAW`.
+// The type bits are the low nibble, so the old type has to be cleared rather
+// than OR-ed over — `BS_AUTOCHECKBOX | BS_OWNERDRAW` is neither.
+fn bs_typemask() -> u32 { return 0x0F as u32; }
+
+fn set_owner_drawn(v: *u8, native_type: u32, drawn: bool) {
+    var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    let want: u32 = if drawn { sys::bs_ownerdraw_style() } else { native_type };
+    if (style & bs_typemask()) == want { return; }
+    style = (style & ~bs_typemask()) | want;
+    let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+    // THE STYLE IS CACHED BY THE CONTROL until it is asked to redraw itself.
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return;
+}
+
+// ---- the three draws --------------------------------------------------------------
+//
+// Each keeps what the CONTROL is — focus, the tab order, space and enter, the
+// accessibility role — and gives up only the pixels, which is the same trade
+// `text_button` makes and the reason all four go through `WM_DRAWITEM`.
+
+fn draw_button(di: *u8) -> bool {
+    if di == (0 as *u8) { return false; }
+    let v: *u8 = read_ptr_at(di, di_off_hwnd());
+    let hdc: *u8 = read_ptr_at(di, di_off_hdc());
+    if v == (0 as *u8) || hdc == (0 as *u8) { return false; }
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
+    if p == (0 as *props::ButtonProps) { return false; }
+    let state: u32 = read_u32_at(di, di_off_state());
+    var r: u::tagRECT = u::tagRECT {
+        left: read_u32_at(di, di_off_rect()) as i32,
+        top: read_u32_at(di, di_off_rect() +% (4 as usize)) as i32,
+        right: read_u32_at(di, di_off_rect() +% (8 as usize)) as i32,
+        bottom: read_u32_at(di, di_off_rect() +% (12 as usize)) as i32,
+    };
+    // A BUTTON HAS A FACE, unlike a text button — it is a raised control and
+    // the fill is what makes it one. COLOR_BTNFACE unless the node stated a
+    // background, which the band resolves.
+    var bg: u32 = paint::effective_bg(v);
+    var bhas: bool = false;
+    let stated: u32 = paint::resolve(core::background_color(n), #addr_of(bhas));
+    if bhas { bg = stated; } else { bg = { u::GetSysColor(15 as i32) }; }
+    // PRESSED AND HOVER ARE OURS NOW. A themed button fades between them; this
+    // steps, which is what a classic button does and what an application asking
+    // for a flat bordered button expects to see.
+    if (state & ods_selected()) != (0 as u32) { bg = paint::shade(bg, 0.88f64); }
+    let brush: *u8 = paint::brush_for(bg);
+    let radius: f64 = paint::uniform_radius({ (*p).corner_radius });
+    if brush != (0 as *u8) {
+        if radius > (0.0 as f64) { paint::paint_rounded(hdc, r, brush, radius); }
+        else { let _f: i32 = { u::FillRect(hdc, #addr_of(r), brush) }; }
+    }
+    // A BORDERLESS BUTTON IS A REAL REQUEST and the reason this control is
+    // being drawn at all in the commonest case — so `bordered` false draws
+    // nothing here rather than falling through to a default outline.
+    if { (*p).bordered } {
+        var has: bool = false;
+        let bc: u32 = paint::resolve({ (*p).border_color }, #addr_of(has));
+        var bw: f64 = { (*p).border_width };
+        if bw <= (0.0 as f64) { bw = 1.0f64; }
+        // An unstated colour is the shell's own outline, not nothing —
+        // `bordered` said to draw one, so refusing for want of a colour would
+        // answer half the pair.
+        let colour: u32 = if has { bc } else { { u::GetSysColor(16 as i32) } };
+        paint::stroke_rect(hdc, r, colour, bw as i32, radius);
+    }
+    draw_button_label(hdc, v, r, state, { (*p).title }.view(),
+                      { (*p).text_color }, { (*p).character_spacing },
+                      // A BUTTON DECLARES NO ALIGNMENT — its title is centred,
+                      // which is what a push button is. `text_button` is the
+                      // kind that has one.
+                      vocab::TextAlign::Center, { (*p).line_break });
+    if (state & ods_focus()) != (0 as u32) {
+        let _fr: i32 = { u::DrawFocusRect(hdc, #addr_of(r)) };
+    }
+    return true;
+}
+
+// The label half, shared by all three — same font, same spacing rule, same
+// disabled colour. Written once because three copies is how they come to
+// disagree about what disabled looks like.
+fn draw_button_label(hdc: *u8, v: *u8, r: u::tagRECT, state: u32, title: str,
+                     colour: vocab::Color, spacing: f64,
+                     align: vocab::TextAlign, brk: vocab::LineBreak) {
+    let font: *u8 = { u::SendMessageA(v, 0x0031 as u32, 0 as u64, 0 as i64) } as *u8;
+    var oldf: *u8 = 0 as *u8;
+    if font != (0 as *u8) { oldf = { gdi::SelectObject(hdc, font) }; }
+    var has: bool = false;
+    var fg: u32 = paint::resolve(colour, #addr_of(has));
+    if !has { fg = { u::GetSysColor(18 as i32) }; }          // COLOR_BTNTEXT
+    if (state & ods_disabled()) != (0 as u32) { fg = { u::GetSysColor(17 as i32) }; }
+    let _t: u32 = { gdi::SetTextColor(hdc, fg) };
+    let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
+    let extra: i32 = spacing as i32;
+    var prev: i32 = 0 as i32;
+    if extra != (0 as i32) { prev = { gdi::SetTextCharacterExtra(hdc, extra) }; }
+    var flags: u32 = sys::dt_vcenter() | sys::dt_noprefix() | dt_align_of(align);
+    if break_wraps(brk) { flags = flags | sys::dt_wordbreak(); }
+    else { flags = flags | sys::dt_singleline() | sys::dt_end_ellipsis(); }
+    var box: u::tagRECT = r;
+    if (state & ods_selected()) != (0 as u32) {
+        box.left = box.left +% (1 as i32);
+        box.top = box.top +% (1 as i32);
+    }
+    let w16: *u16 = sys::to_wide(title);
+    if w16 != (0 as *u16) {
+        let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                     #addr_of(box), flags) };
+        sys::free_wide(w16);
+    }
+    if extra != (0 as i32) { let _e: i32 = { gdi::SetTextCharacterExtra(hdc, prev) }; }
+    if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
+    return;
+}
+
+// A radio and a check box are the same drawing with a different indicator, so
+// they share everything but the glyph.
+fn indicator_side() -> i32 { return 13 as i32; }
+
+fn draw_toggle_like(di: *u8, round: bool) -> bool {
+    if di == (0 as *u8) { return false; }
+    let v: *u8 = read_ptr_at(di, di_off_hwnd());
+    let hdc: *u8 = read_ptr_at(di, di_off_hdc());
+    if v == (0 as *u8) || hdc == (0 as *u8) { return false; }
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    let state: u32 = read_u32_at(di, di_off_state());
+    var r: u::tagRECT = u::tagRECT {
+        left: read_u32_at(di, di_off_rect()) as i32,
+        top: read_u32_at(di, di_off_rect() +% (4 as usize)) as i32,
+        right: read_u32_at(di, di_off_rect() +% (8 as usize)) as i32,
+        bottom: read_u32_at(di, di_off_rect() +% (12 as usize)) as i32,
+    };
+    let back: *u8 = paint::brush_for(paint::effective_bg(v));
+    if back != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), back) }; }
+
+    // `ODS_CHECKED` is the control's own state, which is still authoritative:
+    // owner-draw takes the PIXELS and `BS_AUTO*` keeps the check.
+    let on: bool = (state & ods_checked()) != (0 as u32);
+    let side: i32 = indicator_side();
+    let top: i32 = r.top +% (((r.bottom -% r.top) -% side) / (2 as i32));
+    var box: u::tagRECT = u::tagRECT { left: r.left, top: top,
+                                       right: r.left +% side, bottom: top +% side };
+    // The indicator's own colours: the node's stated one for the mark, the
+    // window colour behind it, and the shell's border around it.
+    var mark: u32 = { u::GetSysColor(13 as i32) };           // COLOR_HIGHLIGHT
+    var accent: bool = false;
+    var spacing: f64 = 0.0f64;
+    var title: str = "";
+    var colour: vocab::Color = vocab::Color::none();
+    if round {
+        let rp: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+        if rp == (0 as *props::RadioProps) { return false; }
+        spacing = { (*rp).character_spacing };
+        title = { (*rp).text }.view();
+        colour = { (*rp).text_color };
+        var bh: bool = false;
+        let bc: u32 = paint::resolve({ (*rp).border_color }, #addr_of(bh));
+        if bh { mark = bc; accent = true; }
+    } else {
+        let cp: *props::CheckboxProps =
+            props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+        if cp == (0 as *props::CheckboxProps) { return false; }
+        var ch: bool = false;
+        let cc: u32 = paint::resolve({ (*cp).color }, #addr_of(ch));
+        if ch { mark = cc; accent = true; }
+    }
+    let _unused: bool = accent;
+    let face: *u8 = paint::brush_for({ u::GetSysColor(5 as i32) });   // COLOR_WINDOW
+    if face != (0 as *u8) {
+        if round { paint::fill_ellipse(hdc, box, face); }
+        else { let _f: i32 = { u::FillRect(hdc, #addr_of(box), face) }; }
+    }
+    paint::stroke_rect(hdc, box, { u::GetSysColor(16 as i32) }, 1 as i32,
+                       if round { (side as f64) / (2.0 as f64) } else { 0.0f64 });
+    if on {
+        let inset: i32 = 3 as i32;
+        var dot: u::tagRECT = u::tagRECT {
+            left: box.left +% inset, top: box.top +% inset,
+            right: box.right -% inset, bottom: box.bottom -% inset,
+        };
+        let mb: *u8 = paint::brush_for(mark);
+        if mb != (0 as *u8) {
+            if round { paint::fill_ellipse(hdc, dot, mb); }
+            else { let _f: i32 = { u::FillRect(hdc, #addr_of(dot), mb) }; }
+        }
+    }
+    // The label sits after the indicator, with the same gap the shell uses.
+    if title != "" {
+        var text_box: u::tagRECT = u::tagRECT {
+            left: box.right +% (6 as i32), top: r.top,
+            right: r.right, bottom: r.bottom,
+        };
+        draw_button_label(hdc, v, text_box, state, title, colour, spacing,
+                          vocab::TextAlign::Start, vocab::LineBreak::TailTruncation);
+    }
+    if (state & ods_focus()) != (0 as u32) {
+        let _fr: i32 = { u::DrawFocusRect(hdc, #addr_of(r)) };
+    }
+    return true;
+}
+
+fn ods_checked() -> u32 { return 0x0008 as u32; }
+
+fn draw_radio(di: *u8) -> bool {
+    let v: *u8 = read_ptr_at(di, di_off_hwnd());
+    if v == (0 as *u8) { return false; }
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    if core::kind_of(n) != props::K_RADIO { return false; }
+    return draw_toggle_like(di, true);
+}
+
+fn draw_checkbox(di: *u8) -> bool {
+    let v: *u8 = read_ptr_at(di, di_off_hwnd());
+    if v == (0 as *u8) { return false; }
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    if core::kind_of(n) != props::K_CHECKBOX { return false; }
+    return draw_toggle_like(di, false);
+}
+
+// A LABEL takes its pixels for one verb only. `character_spacing` is a DC call
+// and a STATIC acquires its own DC when it paints, so there is nowhere to put
+// the value that the control would read — owner-draw is the only door.
+//
+// The gate matters more here than anywhere else in this file. A label is the
+// commonest node in any tree and this package has had two paint bugs in the
+// STATIC path already (a stale tail beside a shrunken control, and a
+// background that was never erased). An unstyled label does not go near this
+// code.
+//
+// `line_height` is NOT answered by it and stays argued: GDI has no line
+// spacing at any entry point, so honouring it means breaking the text into
+// lines by hand and placing each one — a second line-breaker beside the one
+// `DrawText` already has, which would disagree with it about where a word
+// wraps. §1 keeps it, with DirectWrite named as what it would take.
+fn label_wants_draw(p: *props::LabelProps) -> bool {
+    return { (*p).character_spacing } != (0.0 as f64);
+}
+
+fn ss_ownerdraw() -> u32 { return 0x0D as u32; }
+fn ss_typemask() -> u32 { return 0x1F as u32; }
+
+fn set_label_drawn(v: *u8, native_type: u32, drawn: bool) {
+    var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    let want: u32 = if drawn { ss_ownerdraw() } else { native_type };
+    if (style & ss_typemask()) == want { return; }
+    // A STATIC'S TYPE IS FIVE BITS, not the four a BUTTON's is. The types run
+    // past 0x0F — `SS_ETCHEDHORZ` is 0x10, `SS_ETCHEDVERT` 0x11,
+    // `SS_ETCHEDFRAME` 0x12 — so a four-bit mask would clear only part of an
+    // etched static's type and leave a style that is neither.
+    style = (style & ~ss_typemask()) | want;
+    let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return;
+}
+
+fn draw_label(di: *u8) -> bool {
+    if di == (0 as *u8) { return false; }
+    let v: *u8 = read_ptr_at(di, di_off_hwnd());
+    let hdc: *u8 = read_ptr_at(di, di_off_hdc());
+    if v == (0 as *u8) || hdc == (0 as *u8) { return false; }
+    let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
+    if p == (0 as *props::LabelProps) { return false; }
+    var r: u::tagRECT = u::tagRECT {
+        left: read_u32_at(di, di_off_rect()) as i32,
+        top: read_u32_at(di, di_off_rect() +% (4 as usize)) as i32,
+        right: read_u32_at(di, di_off_rect() +% (8 as usize)) as i32,
+        bottom: read_u32_at(di, di_off_rect() +% (12 as usize)) as i32,
+    };
+    // ERASED FIRST, ALWAYS. A child window owns its pixels and the parent does
+    // not paint underneath — the bug this package already shipped once was a
+    // label that kept its old text beside its new.
+    let back: *u8 = paint::brush_for(paint::effective_bg(v));
+    if back != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), back) }; }
+    draw_button_label(hdc, v, r, read_u32_at(di, di_off_state()),
+                      transformed({ (*p).text }.clone(),
+                                  { (*p).text_transform }).view(),
+                      paint::text_color_of(n), { (*p).character_spacing },
+                      { (*p).text_align }, { (*p).line_break });
+    return true;
+}
+
 // ---- image -----------------------------------------------------------------------
 //
 // A PANEL that draws its picture — there is no Win32 image control worth the
@@ -3442,5 +3835,107 @@ fn a_divider_with_no_stated_thickness_is_still_grabbable() {
     let p: *split::SplitProps = split_props(#addr_of(sp));
     { (*p).divider_thickness = 0.0f64 };
     assert split_thickness(p) > (0.0 as f64);
+    return;
+}
+
+// ---- conditional owner-draw ------------------------------------------------------
+
+#[test]
+fn a_button_nobody_styled_stays_native() {
+    // THE WHOLE POINT OF THE GATE. Owner-drawing every button to answer
+    // `border_color` would trade the platform's hover, focus ring and accent
+    // for a prop almost nobody sets.
+    var b: core::Node = button::button("Go", key: "b");
+    let p: *props::ButtonProps = props_of(#addr_of(b), props::K_BUTTON) as *props::ButtonProps;
+    assert p != (0 as *props::ButtonProps);
+    assert !button_wants_draw(p);
+    return;
+}
+
+#[test]
+fn any_appearance_verb_takes_the_pixels() {
+    var b: core::Node = button::button("Go", key: "b");
+    let p: *props::ButtonProps = props_of(#addr_of(b), props::K_BUTTON) as *props::ButtonProps;
+    // Each of these ALONE is enough — an application that stated any one of
+    // them has asked for something the theme does not offer.
+    // `bordered` is TRUE by default and means the ordinary frame; it is
+    // switching it OFF that the theme cannot do.
+    { (*p).bordered = false };
+    assert button_wants_draw(p);
+    { (*p).bordered = true };
+    assert !button_wants_draw(p);
+    { (*p).border_width = 2.0f64 };
+    assert button_wants_draw(p);
+    { (*p).border_width = 0.0f64 };
+    { (*p).character_spacing = 1.5f64 };
+    assert button_wants_draw(p);
+    { (*p).character_spacing = 0.0f64 };
+    { (*p).border_color = vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64) };
+    assert button_wants_draw(p);
+    return;
+}
+
+#[test]
+fn a_checkbox_takes_its_pixels_only_for_a_colour() {
+    // `checkbox` declares ONE appearance verb, so the gate is that verb.
+    var c: core::Node = checkbox::checkbox(false, key: "c");
+    let p: *props::CheckboxProps =
+        props_of(#addr_of(c), props::K_CHECKBOX) as *props::CheckboxProps;
+    assert !checkbox_wants_draw(p);
+    { (*p).color = vocab::Color::rgba(0.0f64, 0.5f64, 1.0f64) };
+    assert checkbox_wants_draw(p);
+    return;
+}
+
+#[test]
+fn the_style_type_is_replaced_and_not_merged() {
+    // `BS_AUTOCHECKBOX | BS_OWNERDRAW` is neither control. The type lives in
+    // the low nibble and has to be cleared before the new one goes in — an OR
+    // would leave a style that draws nothing recognisable.
+    assert (sys::bs_autocheckbox() & bs_typemask()) == sys::bs_autocheckbox();
+    assert (sys::bs_ownerdraw_style() & bs_typemask()) == sys::bs_ownerdraw_style();
+    assert sys::bs_autocheckbox() != sys::bs_ownerdraw_style();
+    // ...and the mask does not reach the bits that are NOT the type, so
+    // BS_NOTIFY and WS_TABSTOP survive the swap.
+    assert (sys::bs_notify() & bs_typemask()) == (0 as u32);
+    assert (sys::ws_tabstop() & bs_typemask()) == (0 as u32);
+    return;
+}
+
+#[test]
+fn a_label_nobody_styled_stays_a_plain_static() {
+    // The gate that keeps the commonest node in any tree away from this
+    // package's own drawing code. Two paint bugs have already come out of the
+    // STATIC path; an unstyled label must not be near a third.
+    var l: core::Node = label::label("hello", key: "l");
+    let p: *props::LabelProps = props_of(#addr_of(l), props::K_LABEL) as *props::LabelProps;
+    assert p != (0 as *props::LabelProps);
+    assert !label_wants_draw(p);
+    { (*p).character_spacing = 2.0f64 };
+    assert label_wants_draw(p);
+    return;
+}
+
+#[test]
+fn a_statics_type_is_five_bits_and_not_four() {
+    // The first version of this test asserted that a four-bit mask could not
+    // tell `SS_LEFTNOWORDWRAP` (0x0C) from `SS_OWNERDRAW` (0x0D). It can —
+    // both are under 0x10 — and the test failed, which is the whole point of
+    // having written it.
+    //
+    // The real reason the mask is 0x1F is that static types run PAST 0x0F:
+    // `SS_ETCHEDHORZ` is 0x10, `SS_ETCHEDVERT` 0x11, `SS_ETCHEDFRAME` 0x12. A
+    // four-bit mask clears only part of one of those and leaves a style that
+    // is neither the old type nor the new.
+    assert ss_ownerdraw() == (0x0D as u32);
+    assert (sys::ss_leftnowordwrap() & ss_typemask()) == sys::ss_leftnowordwrap();
+    // An etched static is the case a four-bit mask gets wrong.
+    let etched_frame: u32 = 0x12 as u32;
+    assert (etched_frame & ss_typemask()) == etched_frame;
+    assert (etched_frame & bs_typemask()) != etched_frame;
+    // ...and the mask leaves SS_NOTIFY and the ellipsis bits alone, so a label
+    // that swaps type keeps both.
+    assert (sys::ss_notify() & ss_typemask()) == (0 as u32);
+    assert (sys::ss_endellipsis() & ss_typemask()) == (0 as u32);
     return;
 }

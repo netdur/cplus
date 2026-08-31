@@ -164,6 +164,10 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
         if controls::draw_text_button(l as *u8) { return 1 as i64; }
         if controls::draw_icon_button(l as *u8) { return 1 as i64; }
         if controls::draw_toggle(l as *u8) { return 1 as i64; }
+        if controls::draw_button(l as *u8) { return 1 as i64; }
+        if controls::draw_radio(l as *u8) { return 1 as i64; }
+        if controls::draw_checkbox(l as *u8) { return 1 as i64; }
+        if controls::draw_label(l as *u8) { return 1 as i64; }
         return { u::DefWindowProcA(hwnd, msg, w, l) };
     }
 

@@ -826,3 +826,53 @@ fn go_classic(v: *u8) {
     return;
 }
 
+// Was a corner radius actually STATED? `Corners::none()` and a radius of zero
+// are the same picture, and the difference decides whether a control keeps its
+// native drawing — see `controls::button_wants_draw`.
+fn radius_stated(c: vocab::Corners) -> bool {
+    return uniform_radius(c) > (0.0 as f64);
+}
+
+// A COLORREF made darker (or lighter) by a factor, per channel. The pressed
+// state of an owner-drawn button, and nothing else — a themed control fades
+// between states and this steps, which is what a flat bordered button should
+// do anyway.
+fn shade(c: u32, factor: f64) -> u32 {
+    let b: u32 = shade_channel((c >> (16 as u32)) & (0xFF as u32), factor);
+    let g: u32 = shade_channel((c >> (8 as u32)) & (0xFF as u32), factor);
+    let r: u32 = shade_channel(c & (0xFF as u32), factor);
+    return r | (g << (8 as u32)) | (b << (16 as u32));
+}
+
+fn shade_channel(v: u32, factor: f64) -> u32 {
+    var out: f64 = (v as f64) * factor;
+    if out < (0.0 as f64) { out = 0.0f64; }
+    if out > (255.0 as f64) { out = 255.0f64; }
+    return out as u32;
+}
+
+#[test]
+fn shading_darkens_every_channel_and_clamps() {
+    // A COLORREF is BGR, so a shade that read the channels in the wrong order
+    // would tint the pressed state rather than darken it.
+    let red: u32 = colorref(1.0f64, 0.0f64, 0.0f64);
+    let dark: u32 = shade(red, 0.5f64);
+    assert (dark & (0xFF as u32)) == (127 as u32);       // red channel halved
+    assert ((dark >> (8 as u32)) & (0xFF as u32)) == (0 as u32);
+    assert ((dark >> (16 as u32)) & (0xFF as u32)) == (0 as u32);
+    // Brightening past full clamps rather than wrapping — a wrap would make a
+    // pressed white button black.
+    let white: u32 = colorref(1.0f64, 1.0f64, 1.0f64);
+    let over: u32 = shade(white, 2.0f64);
+    assert (over & (0xFF as u32)) == (255 as u32);
+    return;
+}
+
+#[test]
+fn an_unstated_radius_is_not_a_radius() {
+    // `Corners::none()` and a stated zero are the same picture, and the
+    // difference decides whether a control keeps its native drawing.
+    assert !radius_stated(vocab::Corners::none());
+    assert radius_stated(vocab::Corners::all(6.0f64));
+    return;
+}

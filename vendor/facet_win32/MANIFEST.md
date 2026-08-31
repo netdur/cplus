@@ -44,7 +44,7 @@ Two probes under `playground/`, and the division is deliberate:
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
 
 ```
-362 declared prop bits     276 answered    76%   (gtk 358, appkit 336, uikit 323, android 321)
+362 declared prop bits     287 answered    79%   (gtk 358, appkit 336, uikit 323, android 321)
  68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
@@ -676,22 +676,46 @@ DEVICE CONTEXT call, so it applies to whatever is drawn next rather than to a
 control, and a system control acquires its own DC when it paints — there is
 nowhere to put the value that the control would read.
 
-Both are answerable by owner-drawing, and `character_spacing` IS answered on
-the kinds this package already owner-draws — see `text_button`, where the DC is
-ours and `SetTextCharacterExtra` applies to exactly the text about to be drawn.
-What stays absent is the SYSTEM controls, which is what the paragraph above is
-about. `line_height` needs DirectWrite on any kind, and on a wrapping label it
-is the one that would be missed most.
+`character_spacing` is ANSWERED wherever the DC is ours — `text_button`,
+`button`, `radio` and `label` all reach it through `SetTextCharacterExtra` on
+exactly the text about to be drawn. What stays absent is the kinds whose pixels
+cannot be taken: an `EDIT` has a caret, a selection and its own scrolling, and
+a `SysDateTimePick32` and a `COMBOBOX` are argued elsewhere.
 
-### A CONTROL'S OWN BORDER — `border_color`, `border_width`, `corner_radius`
+`line_height` stays absent on every kind, including the drawn ones. GDI has no
+line spacing at any entry point, so honouring it means breaking the text into
+lines by hand and placing each — a second line-breaker beside the one
+`DrawText` already has, which would disagree with it about where a word wraps.
+DirectWrite is what it would take.
 
-Distinct from the shared band's corner radius, which this package DOES answer on
-a panel it paints itself. On a system control these are the same wall as
-`opacity`: comctl32 v6 draws the control through the theme engine, which owns
-every pixel of its frame and does not ask.
+### A CONTROL'S OWN BORDER, on the controls that keep their native drawing
 
-`WS_BORDER` gives a control a border but not a colour or a width, which is why
-`text_field` wears one and `button` cannot be told to.
+comctl32 v6 draws a themed control through the theme engine, which owns every
+pixel of its frame and takes no colour message. `WS_BORDER` gives a control a
+border but not a colour or a width, which is why `text_field` wears one and a
+themed `button` cannot be told to.
+
+**That wall has a door, and this package now uses it: TAKE THE PIXELS.** A
+control given `BS_OWNERDRAW` keeps everything it is — focus, the tab order,
+space and enter, the accessibility role — and gives up only its drawing.
+
+It is CONDITIONAL, and the condition is the application's own words. A `button`,
+`radio` or `checkbox` that has been given a border, a corner radius, a letter
+spacing or an indicator colour has asked for an appearance the theme does not
+offer, and is drawn. One that has not stays exactly as native as it was — the
+hover fade, the focus ring and the accent are what make an application look
+like it belongs here, and a hand-drawn imitation is worse than the real thing
+in every case. Same rule as `paint::go_classic`: the cost is paid by the node
+that wanted the verb, never by the node that did not.
+
+`label` takes the same door for `character_spacing` alone, and the gate matters
+more there than anywhere — a label is the commonest node in any tree and the
+STATIC path has already produced two paint bugs.
+
+WHAT STAYS ABSENT is `popup`, and it is measured rather than assumed: a combo
+box records its owner inside `CreateWindowEx`, this renderer parks controls on
+`HWND_MESSAGE` until `insert`, and across a whole run there were zero
+`ODT_COMBOBOX` draws. The entry below has the numbers.
 
 ### `placeholder_color`
 
