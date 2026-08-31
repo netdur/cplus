@@ -133,8 +133,10 @@ The rules that shape every async signature you will write:
   `ref x: NonCopy` in an `async fn` signature. A coroutine frame outlives
   the call that created it, so a borrow in it has no owner to point at.
   Pass `Text` and `Vec[T]` — owned, moved in.
-- **A `Future` must be consumed.** `await`, `block_on`, `run`, or
-  `cancel` — a future that is merely dropped leaks its frame.
+- **A `Future` cleans up however it ends.** `await`, `block_on`, `run` and
+  `cancel` all consume one; a future that is merely dropped destroys its
+  frame through its destructor, running the cancel edges as `cancel` would.
+  There is nothing you have to remember to do.
 - **32-bit targets have no async: E0867.**
 - Each thread gets its own reactor, created on first use (kqueue on
   Darwin, epoll on Linux and Android).
@@ -174,12 +176,23 @@ let r = h.join();           // still waits, still returns the worker's value
 - `executor::run` destroys the suspended frame tree on a cancel request:
   every `await`'s destroy edge runs the drops of the locals live at that
   suspension point, transitively. Cancellation cannot skip a drop.
-- `Future::cancel(take this)` is the explicit drop-to-cancel for a future
-  you have decided not to drive.
-- The async↔thread bridge: `executor::join_worker[O](take h)` awaits a
-  spawned thread's result without blocking the executor, and
-  `executor::receive_or_cancel[T](take ch)` is an async channel receive
-  that surfaces `Cancelled`. Both poll on the reactor's timer.
+- **Dropping a future cancels it.** `Future` has a destructor: the frame is
+  destroyed and every suspend point's cancel edge runs, wherever the value
+  goes out of scope. `Future::cancel(take this)` is the same thing said as a
+  verb, for when "I am giving up on this" should read at the call site.
+- The async↔thread bridge: `executor::join_worker[O](take h, timeout: f64 = 0)`
+  awaits a spawned thread's result without blocking the executor, and
+  `executor::receive_or_cancel[T](take ch, timeout: f64 = 0)` is an async
+  channel receive that surfaces `Cancelled`. Both poll on the reactor's timer.
+  `timeout` is in seconds and anything `<= 0` means no deadline.
+
+  An expiry answers with the vocabulary each already has: `receive_or_cancel`
+  returns `Cancelled`, and `join_worker` **requests cancellation and still
+  joins** — a cancelled worker's `join` returns its value, so the deadline is
+  on the asking rather than a kill, and a worker that ignores the request is
+  still waited for. Buffered data beats an expiry the same way it beats a
+  cancellation. The clock is `time::now_millis`, so a system clock stepped
+  backwards defers an expiry rather than firing it early.
 - `thread::cancelled()` works inside `async fn` bodies — the token belongs
   to the thread, not to the coroutine.
 - **Cancellation does not cross a process boundary.** A PTY child or a
