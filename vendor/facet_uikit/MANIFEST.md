@@ -313,12 +313,24 @@ backend's half, armed from `backend::install` — which runs before
 | `E_TERMINATING` | `UIApplicationWillTerminateNotification` |
 | `E_LOW_MEMORY` | `UIApplicationDidReceiveMemoryWarningNotification`, `code` 0 (iOS has no level) |
 
+And one that is NOT a notification, because there is none to observe — a URL
+reaches an iOS app through the scene delegate and nowhere else. The class is
+built in `window.cplus`; the mapping to a facet kind stays in
+`app_events_uikit.cplus` with the rest:
+
+| kind | UIKit moment | when |
+|---|---|---|
+| `E_OPEN_URL` | `scene:openURLContexts:` | custom scheme, app running |
+| `E_OPEN_URL` | `connectionOptions.URLContexts` in `scene:willConnectToSession:options:` | custom scheme, cold start |
+| `E_OPEN_URL` | `scene:continueUserActivity:` | universal link, app running |
+| `E_OPEN_URL` | `connectionOptions.userActivities` in the same | universal link, cold start |
+
+The payload is the URL's `absoluteString` in all four. A universal link is
+recognised by carrying a `webpageURL`, not by its `activityType` — the property
+being read is the one that decides.
+
 Not fired here, and recorded rather than missing:
 
-- `E_OPEN_URL` — `scene:openURLContexts:` is scene-delegate-only, and a COLD
-  start delivers the URL in the scene's `connectionOptions` instead, before any
-  subscriber exists. It needs a latch on the portable side and arrives with
-  applinks.
 - `E_PUSH_TOKEN` / `E_PUSH_MESSAGE` — delegate-only; no notification exists.
   They arrive with notifications.
 - `E_NATIVE_RESULT` — Android's `onActivityResult`. Apple returns through

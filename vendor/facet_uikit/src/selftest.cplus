@@ -1224,6 +1224,160 @@ fn a_real_notification_reaches_an_app_events_subscriber() -> bool {
     return kind == ev::E_BACKGROUND && n == (1 as i32);
 }
 
+// ---- the URL road ------------------------------------------------------------
+//
+// WHAT THESE REACH AND WHAT THEY DO NOT. Every check below builds a REAL
+// Foundation object and drives `app_events_uikit`'s delivery verbs with it, on
+// the simulator, through real `objc_msgSend` — so the NSSet walking, the
+// `absoluteString` read and the `webpageURL` test are covered against the
+// actual runtime rather than a mock.
+//
+// What they cannot reach is UIKit deciding to CALL the scene delegate. That
+// needs a link arriving from outside the process, and `simctl openurl` puts a
+// SpringBoard confirmation in front of it that no scriptable interface here can
+// dismiss. It is one tap, and it is recorded in vendor/applinks/docs/guide.md
+// as the one step of this feature an agent cannot take.
+
+// EVERY CHECK BELOW STARTS WITH `ev::t_reset()`, and it is not hygiene — it is
+// the feature. `E_OPEN_URL` is a LATCHED kind, so `on_app_event` replays the
+// last URL to each new subscriber; without the reset, every check after the
+// first began with one delivery already counted and four of the five failed on
+// their first run. That the latch fires here is the cold-start contract
+// working on the real platform, and the check below asserts it deliberately
+// rather than tripping over it.
+static SEEN_URL: text::Text = #zero::[text::Text]();
+
+fn record_url(e: *ev::AppEvent, ctx: *u8) {
+    if { (*e).kind } != ev::E_OPEN_URL { return; }
+    SEEN_URL = text::from_str({ (*e).text });
+    SEEN_COUNT = SEEN_COUNT + (1 as i32);
+    return;
+}
+
+// An NSURL from a C+ string, the way the system would hand one over.
+fn ns_url(s: str) -> *u8 {
+    return rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                         rt::sel(#str_ptr("URLWithString:\0")), bridge::nsstring(s));
+}
+
+fn a_url_reaches_a_subscriber_as_its_absolute_string() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    SEEN_URL = text::new();
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    app_events_uikit::deliver_url(ns_url("myapp://record/42?x=1"));
+    let seen: bool = SEEN_URL.view() == "myapp://record/42?x=1";
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return seen && n == (1 as i32);
+}
+
+// THE COLD START, on the real platform. A URL delivered while nothing is
+// subscribed must still reach a subscriber that turns up afterwards — which is
+// what makes a link that launched the app reach a handler registered in
+// `on_attach`, and it is the single most load-bearing property of this road.
+fn a_link_delivered_before_anyone_subscribed_still_arrives() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    SEEN_URL = text::new();
+    app_events_uikit::deliver_url(ns_url("myapp://cold/7"));
+    if SEEN_COUNT != (0 as i32) { return false; }
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let seen: bool = SEEN_URL.view() == "myapp://cold/7";
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return seen && n == (1 as i32);
+}
+
+fn a_null_url_is_not_an_event() -> bool {
+    ev::t_reset();
+    // The delegate handing over a context with no URL must cost nothing, not
+    // crash and not fire an empty link that a subscriber would try to route.
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    app_events_uikit::deliver_url(0 as *u8);
+    app_events_uikit::deliver_url_contexts(0 as *u8);
+    app_events_uikit::deliver_user_activity(0 as *u8);
+    app_events_uikit::deliver_user_activities(0 as *u8);
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return n == (0 as i32);
+}
+
+// A universal link is an NSUserActivity carrying a webpageURL, and this one is
+// the real class — `initWithActivityType:` then `setWebpageURL:` is exactly
+// what iOS hands the scene delegate.
+fn a_user_activity_with_a_webpage_url_is_a_link() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    SEEN_URL = text::new();
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    let raw: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let ua: *u8 = rt::msg_id_id(raw, rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("NSUserActivityTypeBrowsingWeb"));
+    rt::msg_void_id(ua, rt::sel(#str_ptr("setWebpageURL:\0")),
+                    ns_url("https://example.com/record/42"));
+    app_events_uikit::deliver_user_activity(ua);
+    let seen: bool = SEEN_URL.view() == "https://example.com/record/42";
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return seen && n == (1 as i32);
+}
+
+// AN ACTIVITY THAT IS NOT A LINK. Handoff and Siri activities reach the same
+// delegate method and carry no webpageURL; firing an empty E_OPEN_URL for them
+// would hand every applinks subscriber a link that does not exist.
+fn a_user_activity_without_a_webpage_url_is_not_a_link() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    let raw: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let ua: *u8 = rt::msg_id_id(raw, rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("com.example.something"));
+    app_events_uikit::deliver_user_activity(ua);
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return n == (0 as i32);
+}
+
+// The SET walk, which is the shape both cold-start payloads arrive in. Two
+// activities in one set must produce two events — a delegate handing over
+// several is the case the loop exists for, and a loop that stopped at the
+// first would look correct in every single-link test.
+fn every_activity_in_a_set_is_delivered() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    let a1: *u8 = rt::msg_id_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                                rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("NSUserActivityTypeBrowsingWeb"));
+    rt::msg_void_id(a1, rt::sel(#str_ptr("setWebpageURL:\0")), ns_url("https://a.example/1"));
+    let a2: *u8 = rt::msg_id_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                                rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("NSUserActivityTypeBrowsingWeb"));
+    rt::msg_void_id(a2, rt::sel(#str_ptr("setWebpageURL:\0")), ns_url("https://b.example/2"));
+    // NSMutableSet, NOT `+setWithObjects:` — that one is nil-terminated
+    // variadic, and a two-argument `objc_msgSend` to it reads whatever happens
+    // to sit past the second register.
+    let set: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableSet\0")),
+                              rt::sel(#str_ptr("set\0")));
+    rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), a1);
+    rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), a2);
+    app_events_uikit::deliver_user_activities(set);
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return n == (2 as i32);
+}
+
 fn becoming_active_is_foreground_not_background() -> bool {
     app_events_uikit::arm();
     SEEN_KIND = 0 as u32;
@@ -1834,6 +1988,16 @@ fn run_all() -> i32 {
           a_real_notification_reaches_an_app_events_subscriber());
     check("becoming active is foreground, not background",
           becoming_active_is_foreground_not_background());
+    check("a url reaches a subscriber as its absolute string",
+          a_url_reaches_a_subscriber_as_its_absolute_string());
+    check("a link delivered before anyone subscribed still arrives",
+          a_link_delivered_before_anyone_subscribed_still_arrives());
+    check("a null url is not an event", a_null_url_is_not_an_event());
+    check("a user activity with a webpage url is a link",
+          a_user_activity_with_a_webpage_url_is_a_link());
+    check("a user activity without a webpage url is not a link",
+          a_user_activity_without_a_webpage_url_is_not_a_link());
+    check("every activity in a set is delivered", every_activity_in_a_set_is_delivered());
     check("an alert carries one button per named title",
           an_alert_carries_one_button_per_named_title());
     check("a prompt gets exactly one text field", a_prompt_gets_exactly_one_text_field());

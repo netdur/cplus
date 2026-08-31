@@ -41,6 +41,7 @@ public class FacetActivity extends android.app.Activity {
         // line executes a package has had its chance to subscribe. The latch in
         // facet's app_events makes it safe even if it has not.
         deliverPayload(getIntent());
+        deliverLink(getIntent());
         // A button pressed while this process was dead parked its payload; the
         // native exists now.
         drainPendingPayload();
@@ -53,6 +54,7 @@ public class FacetActivity extends android.app.Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         deliverPayload(intent);
+        deliverLink(intent);
     }
 
     // The payload a notification carried, if this intent is one. Opaque here:
@@ -72,6 +74,37 @@ public class FacetActivity extends android.app.Activity {
     public static final String PAYLOAD_EXTRA = "cplus.payload";
 
     static native void nativeNotificationTap(String payload);
+
+    // A DEEP LINK. The same two doors as the payload above and for the same
+    // reason — cold in onCreate, warm in onNewIntent — but a different field:
+    // a VIEW intent carries its URL as the intent's DATA, not as an extra.
+    //
+    // ONE INTENT-FILTER SERVES BOTH KINDS OF LINK. A custom scheme and a
+    // verified https App Link arrive here identically; what differs is the
+    // filter in the manifest and, for https, whether the system verified the
+    // domain before deciding to send it here at all.
+    //
+    // `onNewIntent` ONLY FIRES FOR A singleTop ACTIVITY. The default launch
+    // mode is `standard`, which builds a SECOND instance of this Activity for
+    // an incoming link — a second facet mount stacked on the first. Notifications
+    // never hit that because they build their own intent and set
+    // FLAG_ACTIVITY_SINGLE_TOP; a browser does not do that for us. So the
+    // manifest `cpc new` writes declares android:launchMode="singleTop", and an
+    // app that hand-writes its manifest must do the same.
+    private void deliverLink(android.content.Intent i) {
+        if (i == null) return;
+        android.net.Uri u = i.getData();
+        if (u == null) return;
+        String s = u.toString();
+        if (s == null || s.length() == 0) return;
+        // ONCE, the same discipline as the payload: a rotation re-runs onCreate
+        // against the same intent, and a link followed twice is a route
+        // followed twice.
+        i.setData(null);
+        nativeOpenUrl(s);
+    }
+
+    static native void nativeOpenUrl(String url);
 
     // A PAYLOAD THAT ARRIVED WITH NO NATIVE TO GIVE IT TO.
     //

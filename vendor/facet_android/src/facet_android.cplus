@@ -300,6 +300,30 @@ export extern fn facet_android_notification_tap(envp: *jni::JNIEnv, cls: jni::jo
     return;
 }
 
+// A DEEP LINK ARRIVED. `FacetActivity.deliverLink` calls this from `onCreate`
+// (cold) or `onNewIntent` (warm) — see the override for why it fires once per
+// intent, and why the Activity must be `singleTop` for the warm case to exist
+// at all.
+//
+// The same buffer-and-view shape as the notification tap above, and the same
+// reason: `AppEvent.text` is BORROWED for the dispatch, and the latch in
+// app_events interns a copy so a subscriber arriving later still gets it.
+//
+// 1024 bytes is the cap. A URL longer than that is truncated rather than
+// refused — a truncated link routes to the wrong place, which is visible,
+// where a silently dropped one looks like the feature not working.
+export extern fn facet_android_open_url(envp: *jni::JNIEnv, cls: jni::jobject,
+                                        url: jni::jobject) {
+    let env: rt::Env = rt::from_native(envp);
+    e::set_env(env);
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let ptr: *u8 = { #addr_of(buf) as *u8 };
+    if !env.string_utf_into(url, ptr, 1024 as usize) { return; }
+    ev::fire_text(ev::E_OPEN_URL,
+                  { #str_from_raw_parts(ptr, c_len(ptr, 1024 as usize)) });
+    return;
+}
+
 // A WIDGET ASKED FOR A LAYOUT. facet places views only when its own geometry
 // changes, so this is the door a widget's internal change comes through — see
 // FacetHost.requestLayout.

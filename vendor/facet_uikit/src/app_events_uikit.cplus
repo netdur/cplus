@@ -28,12 +28,6 @@
 //
 // WHAT IS NOT HERE, recorded rather than missing:
 //
-//   E_OPEN_URL         `scene:openURLContexts:` is scene-delegate-only, and a
-//                      COLD start delivers the URL in `connectionOptions`
-//                      instead — before any subscriber exists. That needs the
-//                      latch described in plans/permissions.md §3.4b, and it
-//                      arrives with applinks, which is the first thing that
-//                      needs it.
 //   E_PUSH_TOKEN       `application:didRegisterForRemoteNotifications…` is
 //                      delegate-only; no notification exists. Arrives with
 //                      notifications.
@@ -41,6 +35,18 @@
 //   E_NATIVE_RESULT    Android's `onActivityResult`. Apple returns through
 //                      E_OPEN_URL instead, so this is absent by design.
 
+// AND ONE EXCEPTION TO "NOTIFICATIONS, NOT THE DELEGATE", recorded because the
+// rule above is otherwise absolute: `E_OPEN_URL` has no notification to
+// observe on this platform either. A URL reaches an app through the SCENE
+// delegate and nowhere else, so the delivery lives in `window.cplus` where
+// that class is built, and the three `deliver_*` verbs below are the seam it
+// calls. They are here rather than there so that every mapping from a UIKit
+// moment to a facet kind stays in one file.
+
+import "stdlib/option" as option;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "stdlib/text" as text;
 import "facet/app_events" as ev;
 import "facet/services" as services;
 import "./notify" as notify;
@@ -107,4 +113,80 @@ fn armed() -> bool { return ARMED; }
 fn observe(name: str, handler: fn(*u8)) -> services::Cancellable {
     let id: u64 = notify::observe_named(name, 0 as *u8, handler, 0 as *u8);
     return services::Cancellable::of(id, notify::cancel_observe);
+}
+
+
+// ---- the URL road ------------------------------------------------------------
+//
+// TWO KINDS OF LINK, ONE EVENT. A custom scheme arrives as a
+// `UIOpenURLContext`; a universal link arrives as an `NSUserActivity` carrying
+// a `webpageURL`. They are different objects reaching different delegate
+// methods, and an app should not have to care — `E_OPEN_URL` carries both, as
+// the URL's `absoluteString`.
+//
+// EACH OF THESE HAS A COLD AND A WARM DOOR, which is the whole reason the
+// scene delegate needed work at all:
+//
+//   custom scheme   warm `scene:openURLContexts:`
+//                   cold `connectionOptions.URLContexts`
+//   universal link  warm `scene:continueUserActivity:`
+//                   cold `connectionOptions.userActivities`
+//
+// The cold pair arrive inside `scene:willConnectToSession:options:` — before
+// any subscriber can exist, which is what `app_events`' latch is for.
+
+// One NSURL, fired. Null-safe at every hop: a delegate handing over a context
+// with no URL is not worth a crash.
+fn deliver_url(nsurl: *u8) {
+    if nsurl == (0 as *u8) { return; }
+    let ns: *u8 = rt::msg_id(nsurl, rt::sel(#str_ptr("absoluteString\0")));
+    if ns == (0 as *u8) { return; }
+    let t: text::Text = bridge::to_text(ns);
+    if #str_len(t.view()) == (0 as usize) { return; }
+    ev::fire_text(ev::E_OPEN_URL, t.view());
+    return;
+}
+
+// An `NSSet<UIOpenURLContext *>`, from either door.
+fn deliver_url_contexts(set: *u8) {
+    if set == (0 as *u8) { return; }
+    let all: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+    if all == (0 as *u8) { return; }
+    let n: u64 = rt::msg_u64(all, rt::sel(#str_ptr("count\0")));
+    var i: u64 = 0 as u64;
+    while i < n {
+        let c: *u8 = rt::msg_id_u64(all, rt::sel(#str_ptr("objectAtIndex:\0")), i);
+        if c != (0 as *u8) {
+            deliver_url(rt::msg_id(c, rt::sel(#str_ptr("URL\0"))));
+        }
+        i = i +% (1 as u64);
+    }
+    return;
+}
+
+// One `NSUserActivity`.
+//
+// `webpageURL` IS THE TEST, rather than comparing `activityType` against
+// `NSUserActivityTypeBrowsingWeb`. An activity that carries a web page is the
+// universal link whatever it calls itself, and one that does not has no URL to
+// hand over — so the property that decides is the property being read. It also
+// avoids depending on the literal value of an Apple constant.
+fn deliver_user_activity(ua: *u8) {
+    if ua == (0 as *u8) { return; }
+    deliver_url(rt::msg_id(ua, rt::sel(#str_ptr("webpageURL\0"))));
+    return;
+}
+
+// An `NSSet<NSUserActivity *>`, which is the shape `connectionOptions` uses.
+fn deliver_user_activities(set: *u8) {
+    if set == (0 as *u8) { return; }
+    let all: *u8 = rt::msg_id(set, rt::sel(#str_ptr("allObjects\0")));
+    if all == (0 as *u8) { return; }
+    let n: u64 = rt::msg_u64(all, rt::sel(#str_ptr("count\0")));
+    var i: u64 = 0 as u64;
+    while i < n {
+        deliver_user_activity(rt::msg_id_u64(all, rt::sel(#str_ptr("objectAtIndex:\0")), i));
+        i = i +% (1 as u64);
+    }
+    return;
 }

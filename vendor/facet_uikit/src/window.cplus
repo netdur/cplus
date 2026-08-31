@@ -38,6 +38,9 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
 import "uikit/uikit" as ui;
+// The URL seam. No cycle: `app_events_uikit` imports facet and this file
+// imports it, never the other way round.
+import "./app_events_uikit" as appev;
 import "./geometry" as geometry;
 import "./scheduler" as scheduler;
 import "./device" as device;
@@ -1149,6 +1152,42 @@ fn imp_scene_will_connect(self_obj: *u8, cmd: *u8, scene: *u8, session: *u8, opt
     // in the pipeline knows that: flex caches a measurement whose inputs have
     // not changed, and from flex's side nothing has.
     relayout_all();
+        // THE COLD-START LINK, and this is its only door.
+    //
+    // A URL that LAUNCHED the app is not delivered to `scene:openURLContexts:`
+    // — it is already in `connectionOptions` by the time this scene connects,
+    // and an app that only implemented the warm method would work perfectly
+    // while running and never open a link from cold. Both kinds ride in here:
+    // `URLContexts` for a custom scheme, `userActivities` for a universal
+    // link.
+    //
+    // LAST in this function, after the window is adopted and the tree is
+    // measured, so a subscriber that navigates on the link is writing a tree
+    // that is already up. The latch in `app_events` covers the subscriber that
+    // has not registered yet, which at this point is most of them.
+    if options != (0 as *u8) {
+        appev::deliver_url_contexts(
+            rt::msg_id(options, rt::sel(#str_ptr("URLContexts\0"))));
+        appev::deliver_user_activities(
+            rt::msg_id(options, rt::sel(#str_ptr("userActivities\0"))));
+    }
+    return;
+}
+
+// THE WARM DOORS. Both are `UISceneDelegate` methods, and the class already
+// claims that protocol — so these are two more methods on a conformance that
+// exists rather than a new claim.
+
+// A custom scheme, delivered while the app is running. UIKit passes an NSSet
+// because several can arrive at once.
+fn imp_scene_open_url_contexts(self_obj: *u8, cmd: *u8, scene: *u8, contexts: *u8) {
+    appev::deliver_url_contexts(contexts);
+    return;
+}
+
+// A universal link, delivered while the app is running.
+fn imp_scene_continue_user_activity(self_obj: *u8, cmd: *u8, scene: *u8, activity: *u8) {
+    appev::deliver_user_activity(activity);
     return;
 }
 
@@ -1240,6 +1279,13 @@ fn scene_delegate_class() -> *u8 {
     let _g: i8 = synth::add_method_v_2id(cls,
         rt::sel(#str_ptr("windowScene:didUpdateEffectiveGeometry:\0")),
         imp_scene_geometry_changed, #str_ptr("v@:@@\0"));
+    // THE LINK DOORS, on the conformance the class already claims below.
+    let _u: i8 = synth::add_method_v_2id(cls,
+        rt::sel(#str_ptr("scene:openURLContexts:\0")),
+        imp_scene_open_url_contexts, #str_ptr("v@:@@\0"));
+    let _c: i8 = synth::add_method_v_2id(cls,
+        rt::sel(#str_ptr("scene:continueUserActivity:\0")),
+        imp_scene_continue_user_activity, #str_ptr("v@:@@\0"));
     // ONLY WHERE THE VOCABULARY EXISTS. `UISceneWindowingControlStyle` arrived
     // in iOS 26; on anything older there is no object to answer with, and the
     // header declares the method nonnull. UIKit's documented way to say nothing

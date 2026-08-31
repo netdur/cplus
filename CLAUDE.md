@@ -33,9 +33,15 @@ default.
 | `vendor/facet/src/*.cplus` (control modules, `props`, `elements`, `vocabulary`) | `tools/gen_contract.py` |
 | `vendor/appkit/src/appkit.cplus` | `cpc-bindgen` (hand additions go in `appkit_ext.cplus`) |
 | `docs/lang/errors.md` | `docs/lang/gen_errors.py` from `docs/lang/errors.toml` |
+| `vendor/facet_android/facet_android.dex` | `vendor/facet_android/tools/build_dex.sh` from `java/` |
 
 A fix written into a generated file survives exactly until the next regen. This
 has already cost this project real behaviour — see below.
+
+The `.dex` is the reverse trap and just as expensive: editing
+`java/cplus/facet/FacetActivity.java` changes NOTHING until `build_dex.sh` runs,
+because the dex is checked in and `#include_bytes`'d with a hard-coded length.
+The symptom is a Java override that is plainly there and never called.
 
 ## Before rebuilding any AppKit behaviour, check whether it already exists
 
