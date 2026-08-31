@@ -64,7 +64,6 @@ fn arm() {
     OBS_FOREGROUND = observe("NSApplicationDidBecomeActiveNotification", on_foreground);
     OBS_BACKGROUND = observe("NSApplicationDidResignActiveNotification", on_background);
     OBS_TERMINATING = observe("NSApplicationWillTerminateNotification", on_terminating);
-    return;
 }
 
 fn armed() -> bool { return ARMED; }

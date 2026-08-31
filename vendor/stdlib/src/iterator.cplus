@@ -68,7 +68,6 @@ impl Iterator[T] {
             }
             k = k +% (1 as usize);
         }
-        return;
     }
 }
 
@@ -92,7 +91,6 @@ gen fn _ints_below(n: i32) -> i32 {
         yield i;
         i = i +% (1 as i32);
     }
-    return;
 }
 
 fn _is_even(x: i32) -> bool {
@@ -118,7 +116,6 @@ fn iterator_next_yields_in_order() {
         option::Option[i32]::Some(x) => { assert false; }
         option::Option[i32]::None => { assert true; }
     }
-    return;
 }
 
 #[test]

@@ -186,24 +186,28 @@
 				PRODUCT_NAME = Gallery;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
+				CPLUS_TRIPLE = "arm64-apple-ios";
+				"CPLUS_TRIPLE[sdk=iphonesimulator*]" = "arm64-apple-ios-simulator";
+				CPLUS_TARGETDIR = "ios-arm64";
+				"CPLUS_TARGETDIR[sdk=iphonesimulator*]" = "ios-arm64-simulator";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../target/$(CPLUS_TARGETDIR)/debug";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../target/$(CPLUS_TARGETDIR)/debug";
 				OTHER_LDFLAGS = (
 					"-lfacet_gallery_ios",
-					"$(SRCROOT)/../../../vendor/agent_core/lib/arm64-apple-ios/libagent_core.a",
-					"$(SRCROOT)/../../../vendor/agent_inapp/lib/arm64-apple-ios/libagent_inapp.a",
-					"$(SRCROOT)/../../../vendor/agent_mcp/lib/arm64-apple-ios/libagent_mcp.a",
-					"$(SRCROOT)/../../../vendor/agent_uikit/lib/arm64-apple-ios/libagent_uikit.a",
-					"$(SRCROOT)/../../../vendor/events/lib/arm64-apple-ios/libevents.a",
-					"$(SRCROOT)/../../../vendor/facet_agent/lib/arm64-apple-ios/libfacet_agent.a",
-					"$(SRCROOT)/../../../vendor/facet_runtime/lib/arm64-apple-ios/libfacet_runtime.a",
-					"$(SRCROOT)/../../../vendor/flex_layout/lib/arm64-apple-ios/libflex_layout.a",
-					"$(SRCROOT)/../../../vendor/json/lib/arm64-apple-ios/libjson.a",
-					"$(SRCROOT)/../../../vendor/objc/lib/arm64-apple-ios/libobjc.a",
-					"$(SRCROOT)/../../../vendor/quartzcore/lib/arm64-apple-ios/libquartzcore.a",
-					"$(SRCROOT)/../../../vendor/stdlib/lib/arm64-apple-ios/libstdlib.a",
-					"$(SRCROOT)/../../../vendor/uikit/lib/arm64-apple-ios/libuikit.a",
-					"$(SRCROOT)/../../../vendor/webkit/lib/arm64-apple-ios/libwebkit.a",
+					"$(SRCROOT)/../../../vendor/agent_core/lib/$(CPLUS_TRIPLE)/libagent_core.a",
+					"$(SRCROOT)/../../../vendor/agent_inapp/lib/$(CPLUS_TRIPLE)/libagent_inapp.a",
+					"$(SRCROOT)/../../../vendor/agent_mcp/lib/$(CPLUS_TRIPLE)/libagent_mcp.a",
+					"$(SRCROOT)/../../../vendor/agent_uikit/lib/$(CPLUS_TRIPLE)/libagent_uikit.a",
+					"$(SRCROOT)/../../../vendor/events/lib/$(CPLUS_TRIPLE)/libevents.a",
+					"$(SRCROOT)/../../../vendor/facet_agent/lib/$(CPLUS_TRIPLE)/libfacet_agent.a",
+					"$(SRCROOT)/../../../vendor/facet_runtime/lib/$(CPLUS_TRIPLE)/libfacet_runtime.a",
+					"$(SRCROOT)/../../../vendor/flex_layout/lib/$(CPLUS_TRIPLE)/libflex_layout.a",
+					"$(SRCROOT)/../../../vendor/json/lib/$(CPLUS_TRIPLE)/libjson.a",
+					"$(SRCROOT)/../../../vendor/objc/lib/$(CPLUS_TRIPLE)/libobjc.a",
+					"$(SRCROOT)/../../../vendor/quartzcore/lib/$(CPLUS_TRIPLE)/libquartzcore.a",
+					"$(SRCROOT)/../../../vendor/stdlib/lib/$(CPLUS_TRIPLE)/libstdlib.a",
+					"$(SRCROOT)/../../../vendor/uikit/lib/$(CPLUS_TRIPLE)/libuikit.a",
+					"$(SRCROOT)/../../../vendor/webkit/lib/$(CPLUS_TRIPLE)/libwebkit.a",
 				);
 				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
 			};
@@ -225,24 +229,28 @@
 				PRODUCT_NAME = Gallery;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
+				CPLUS_TRIPLE = "arm64-apple-ios";
+				"CPLUS_TRIPLE[sdk=iphonesimulator*]" = "arm64-apple-ios-simulator";
+				CPLUS_TARGETDIR = "ios-arm64";
+				"CPLUS_TARGETDIR[sdk=iphonesimulator*]" = "ios-arm64-simulator";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../target/$(CPLUS_TARGETDIR)/debug";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../target/$(CPLUS_TARGETDIR)/debug";
 				OTHER_LDFLAGS = (
 					"-lfacet_gallery_ios",
-					"$(SRCROOT)/../../../vendor/agent_core/lib/arm64-apple-ios/libagent_core.a",
-					"$(SRCROOT)/../../../vendor/agent_inapp/lib/arm64-apple-ios/libagent_inapp.a",
-					"$(SRCROOT)/../../../vendor/agent_mcp/lib/arm64-apple-ios/libagent_mcp.a",
-					"$(SRCROOT)/../../../vendor/agent_uikit/lib/arm64-apple-ios/libagent_uikit.a",
-					"$(SRCROOT)/../../../vendor/events/lib/arm64-apple-ios/libevents.a",
-					"$(SRCROOT)/../../../vendor/facet_agent/lib/arm64-apple-ios/libfacet_agent.a",
-					"$(SRCROOT)/../../../vendor/facet_runtime/lib/arm64-apple-ios/libfacet_runtime.a",
-					"$(SRCROOT)/../../../vendor/flex_layout/lib/arm64-apple-ios/libflex_layout.a",
-					"$(SRCROOT)/../../../vendor/json/lib/arm64-apple-ios/libjson.a",
-					"$(SRCROOT)/../../../vendor/objc/lib/arm64-apple-ios/libobjc.a",
-					"$(SRCROOT)/../../../vendor/quartzcore/lib/arm64-apple-ios/libquartzcore.a",
-					"$(SRCROOT)/../../../vendor/stdlib/lib/arm64-apple-ios/libstdlib.a",
-					"$(SRCROOT)/../../../vendor/uikit/lib/arm64-apple-ios/libuikit.a",
-					"$(SRCROOT)/../../../vendor/webkit/lib/arm64-apple-ios/libwebkit.a",
+					"$(SRCROOT)/../../../vendor/agent_core/lib/$(CPLUS_TRIPLE)/libagent_core.a",
+					"$(SRCROOT)/../../../vendor/agent_inapp/lib/$(CPLUS_TRIPLE)/libagent_inapp.a",
+					"$(SRCROOT)/../../../vendor/agent_mcp/lib/$(CPLUS_TRIPLE)/libagent_mcp.a",
+					"$(SRCROOT)/../../../vendor/agent_uikit/lib/$(CPLUS_TRIPLE)/libagent_uikit.a",
+					"$(SRCROOT)/../../../vendor/events/lib/$(CPLUS_TRIPLE)/libevents.a",
+					"$(SRCROOT)/../../../vendor/facet_agent/lib/$(CPLUS_TRIPLE)/libfacet_agent.a",
+					"$(SRCROOT)/../../../vendor/facet_runtime/lib/$(CPLUS_TRIPLE)/libfacet_runtime.a",
+					"$(SRCROOT)/../../../vendor/flex_layout/lib/$(CPLUS_TRIPLE)/libflex_layout.a",
+					"$(SRCROOT)/../../../vendor/json/lib/$(CPLUS_TRIPLE)/libjson.a",
+					"$(SRCROOT)/../../../vendor/objc/lib/$(CPLUS_TRIPLE)/libobjc.a",
+					"$(SRCROOT)/../../../vendor/quartzcore/lib/$(CPLUS_TRIPLE)/libquartzcore.a",
+					"$(SRCROOT)/../../../vendor/stdlib/lib/$(CPLUS_TRIPLE)/libstdlib.a",
+					"$(SRCROOT)/../../../vendor/uikit/lib/$(CPLUS_TRIPLE)/libuikit.a",
+					"$(SRCROOT)/../../../vendor/webkit/lib/$(CPLUS_TRIPLE)/libwebkit.a",
 				);
 				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
 			};

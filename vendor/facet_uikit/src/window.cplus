@@ -424,6 +424,13 @@ fn push_screen(root: *core::Node, title: str, box_: *u8) -> bool {
     { msg_void_id_i8(NAV, rt::sel(#str_ptr("pushViewController:animated:\0")),
                      vc, 1 as i8) };
     let _s: status::Status = STACK.append(Pushed { vc: vc, root: root, box_: box_ });
+    // REGISTERED WITH THE APP, so a reader that only knows facet can find it. A
+    // pushed screen here lives inside the SAME UIWindow (macOS gives each its
+    // own window and gets this for free), so without this the tree is on screen
+    // and invisible to anything walking the application's windows — which is
+    // what the agent surface does now.
+    app::open_window(root);
+    app::set_window_native(root, WINDOW);
     { rt::release(vc) };
     scheduler::schedule(0 as *u8);
     // A pushed screen is what the user is now looking at, so it is what an agent
@@ -465,6 +472,9 @@ fn imp_did_show(self_obj: *u8, cmd: *u8, navc: *u8, shown: *u8, animated: i8) {
         if gone {
             match STACK.remove(at: i) {
                 option::Option[Pushed]::Some(e) => {
+                    // Off the application's window list too, or the agent keeps
+                    // describing a screen the user has navigated away from.
+                    app::close_window({ e.root });
                     let f: fn(*u8) = POPPED_FN;
                     if f != (0 as fn(*u8)) { f({ e.box_ }); }
                 }

@@ -326,6 +326,27 @@ Platform-specific constants and errno access for `net`. Import as
 Public surface is shared across overrides (numeric constants + errno
 helper — see the active `netsys*.cplus`).
 
+Two socket options are worth naming, because a caller wants them by intent
+rather than by number and each platform spells them differently:
+
+```cplus
+fn set_nosigpipe(fd: i32) -> i32
+fn set_timeout(fd: i32, seconds: i64) -> i32
+```
+
+`set_nosigpipe` makes a write to a departed peer **report** instead of killing
+the process (`SO_NOSIGPIPE` on Darwin, `MSG_NOSIGNAL` inside `send_fd` on
+Linux, nothing needed on Windows).
+
+`set_timeout` bounds how long a read or a write may **wait**, in both
+directions. Without it a peer that accepts a connection and then says nothing
+hangs the calling thread for good — which no probe can predict, since a
+successful `connect(2)` says a socket accepted, not that anything behind it
+will answer, and a port forward (`adb forward`, `iproxy`) accepts on behalf of
+a device that may never reply. After expiry the syscall returns -1 with
+`eagain()`, which is how a caller tells a deadline from a peer that closed
+(0 bytes). Whole seconds; Winsock takes milliseconds and the shim converts.
+
 ---
 
 ## env

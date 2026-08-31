@@ -33,7 +33,6 @@ impl Grids {
         this.dense = !this.dense;
         core::set_grid_dense(mount::node(GRID), this.dense);
         core::relayout(mount::node(GRID));
-        return;
     }
 
     // The wide cell is the one that leaves a hole — with dense off, the cells
@@ -42,7 +41,6 @@ impl Grids {
         this.wide = !this.wide;
         core::set_grid_column_span(mount::node("gr:c2"), if this.wide { 2 } else { 1 });
         core::relayout(mount::node(GRID));
-        return;
     }
 }
 
@@ -51,13 +49,13 @@ fn cell(key: str, text: str, c: vocab::Color) -> core::Node {
     b.add(ui::label(
         text,
         key: "",
-        font_size: 12.0f64,
+        font_size: 12.0,
         font_weight: vocab::FontWeight::Semibold,
-        text_color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
+        text_color: vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
     ));
-    var n: core::Node = core::column(b, key: key).padding(10.0f64).height(48.0f64);
+    var n: core::Node = core::column(b, key: key).padding(10.0).height(48.0);
     n.set_background_color(c);
-    n.set_corner_radius(vocab::Corners::all(8.0f64));
+    n.set_corner_radius(vocab::Corners::all(8.0));
     return n;
 }
 
@@ -68,39 +66,39 @@ impl Grids: component::Component {
         var ctl: core::Builder = core::Builder::new();
         ctl.add(ui::button("Span cell 2 across", key: "gr:wide", on_click: this.on_wide));
         ctl.add(ui::button("Toggle dense", key: "gr:dense", on_click: this.on_dense));
-        body.add(core::row(ctl).gap(8.0f64));
+        body.add(core::row(ctl).gap(8.0));
 
         body.add(shell::caption("3 columns: 80pt · 1fr · 1fr"));
 
         var cells: core::Builder = core::Builder::new();
         cells.add(cell("gr:c1", "1", vocab::Color::primary()));
-        cells.add(cell("gr:c2", "2", vocab::Color::rgba(0.75f64, 0.30f64, 0.85f64, 1.0f64)));
+        cells.add(cell("gr:c2", "2", vocab::Color::rgba(0.75, 0.30, 0.85, 1.0)));
         cells.add(cell("gr:c3", "3", vocab::Color::primary()));
         cells.add(cell("gr:c4", "4", vocab::Color::primary()));
-        cells.add(cell("gr:c5", "5", vocab::Color::rgba(0.20f64, 0.70f64, 0.55f64, 1.0f64)));
+        cells.add(cell("gr:c5", "5", vocab::Color::rgba(0.20, 0.70, 0.55, 1.0)));
         cells.add(cell("gr:c6", "6", vocab::Color::primary()));
 
-        var grid: core::Node = core::column(cells, key: GRID).gap(8.0f64);
+        var grid: core::Node = core::column(cells, key: GRID).gap(8.0);
         // The tracks are flex's, on the same node facet writes its band to.
         grid.set_display(flex::Display::Grid);
-        grid.add_grid_column(flex::GridTrack::points(80.0f64));
-        grid.add_grid_column(flex::GridTrack::fr(1.0f64));
-        grid.add_grid_column(flex::GridTrack::fr(1.0f64));
+        grid.add_grid_column(flex::GridTrack::points(80.0));
+        grid.add_grid_column(flex::GridTrack::fr(1.0));
+        grid.add_grid_column(flex::GridTrack::fr(1.0));
         body.add(grid);
 
         body.add(ui::label(
             "A fixed track is points, a share of what is left is fr, and auto is the content's own size. Children flow into the cells in order; give one a span and it takes two tracks, which can leave a hole. Dense backfills those holes with later children, sparse never looks back — that is the whole difference and it is visible above.",
             key: "gr:note",
-            font_size: 12.0f64,
-            text_color: vocab::Color::ink(0.6f64),
-            max_lines: 6 as i64,
+            font_size: 12.0,
+            text_color: vocab::Color::ink(0.6),
+            max_lines: 6,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
         return shell::panel(
             "Grid",
             "Track-based layout: fixed, fractional and auto columns, spans, and the dense packing rule.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "var g = core::column(cells, key: \"grid\");\ng.set_display(flex::Display::Grid);\ng.add_grid_column(flex::GridTrack::points(80.0));\ng.add_grid_column(flex::GridTrack::fr(1.0));\ncore::set_grid_column_span(child, 2);",
         );
     }

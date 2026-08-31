@@ -33,5 +33,4 @@ export extern fn http_transport_perform_v1(req: *http::Request, out: *http::Exch
     { (*out).error_code = ERROR_NOT_BUILT };
     { (*out).error_message = text::from_str(
         "http: no transport is built for Linux (see vendor/http/src/transport_linux.cplus - libcurl is the port)") };
-    return;
 }

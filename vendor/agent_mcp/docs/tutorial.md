@@ -57,11 +57,17 @@ let resp: text::Text = mcp::handle_request(
 
 | method | params (typical) | result |
 |---|---|---|
-| `describe_ui` | `{}` | array of nodes |
+| `describe_ui` | `{ "mode": "exposed" \| "full", "prefix": "…" }` | array of nodes |
 | `click` | `{ "id": "…" }` | `{ "outcome": "…" }` |
+| `hit_test` | `{ "id": "…" }` | what a pointer at its centre would reach |
+| `set_caret` | `{ "id", "start", "end" }` | outcome |
+| `read_text` | `{ "id": "…" }` | the node's text |
+| `read_runs` | `{ "id": "…" }` | the styled runs as drawn |
+| `invoke_menu` | `{ "id": "…" }` | outcome |
 | `scroll_to` | `{ "id": "…" }` | outcome |
 | `set_text` | `{ "id", "value", "base_version" }` | outcome |
 | `poll_event` | `{}` | event object or `null` |
+| `activity` | `{}` | what this surface has been asked to DO |
 
 ## Serve UDS (blocking)
 

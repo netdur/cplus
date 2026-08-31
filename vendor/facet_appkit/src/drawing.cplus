@@ -129,7 +129,7 @@ fn canvas_is_flipped_imp(self_obj: *u8, cmd: *u8) -> i8 { return 1 as i8; }
 
 fn canvas_draw_rect_imp(self_obj: *u8, cmd: *u8, dirty: rt::Rect) {
     let n: *core::Node = { synth::get_associated(self_obj, canvas_node_key()) as *core::Node };
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let d: vocab::Drawable = drawable_of(n);
     if d.is_none() { return; }
 
@@ -137,9 +137,9 @@ fn canvas_draw_rect_imp(self_obj: *u8, cmd: *u8, dirty: rt::Rect) {
     // the dirty rect, and current for NSString/NSImage drawing.
     let gc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSGraphicsContext\0")),
                                rt::sel(#str_ptr("currentContext\0"))) };
-    if gc == (0 as *u8) { return; }
+    if gc.is_null() { return; }
     let ctx: *u8 = { rt::msg_id(gc, rt::sel(#str_ptr("CGContext\0"))) };
-    if ctx == (0 as *u8) { return; }
+    if ctx.is_null() { return; }
 
     let bounds: rt::Rect = { rt::msg_rect(self_obj, rt::sel(#str_ptr("bounds\0"))) };
     var surface: vocab::Canvas = vocab::Canvas::of(
@@ -152,19 +152,18 @@ fn canvas_draw_rect_imp(self_obj: *u8, cmd: *u8, dirty: rt::Rect) {
       vocab::Rect::of(dirty.x, dirty.y, dirty.w, dirty.h), d.ctx);
 
     replay(ctx, #addr_of(surface));
-    return;
 }
 
 fn scale_of(view: *u8) -> f64 {
     let w: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("window\0"))) };
-    if w == (0 as *u8) { return 1.0f64; }
+    if w.is_null() { return 1.0f64; }
     return { rt::msg_f64(w, rt::sel(#str_ptr("backingScaleFactor\0"))) };
 }
 
 // Registered once; `get_class` answers null until the pair is registered.
 fn canvas_view_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("FacetCanvasView\0"));
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")),
                                               #str_ptr("FacetCanvasView\0"), 0 as usize);
     add_method_bool_0(cls, rt::sel(#str_ptr("isFlipped\0")),
@@ -186,22 +185,20 @@ fn new_canvas_view() -> ak::View {
 // because mount releases the view before the node goes.
 fn bind_node(v: *u8, n: *core::Node) {
     synth::set_associated(v, canvas_node_key(), n as *u8);
-    return;
 }
 
 // Ask for a redraw. AppKit coalesces these, so calling it on every dirty write
 // costs one draw per frame however many writes there were.
 fn invalidate(v: *u8) {
     { rt::msg_void_i8(v, rt::sel(#str_ptr("setNeedsDisplay:\0")), 1 as i8) };
-    return;
 }
 
 fn drawable_of(n: *core::Node) -> vocab::Drawable {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return vocab::Drawable::none(); }
+    if d.is_null() { return vocab::Drawable::none(); }
     if { (*d).kind } != props::K_CANVAS { return vocab::Drawable::none(); }
     let p: *props::CanvasProps = { (*d).props } as *props::CanvasProps;
-    if p == (0 as *props::CanvasProps) { return vocab::Drawable::none(); }
+    if p.is_null() { return vocab::Drawable::none(); }
     return { (*p).drawable };
 }
 
@@ -244,13 +241,11 @@ fn cg_rect(r: vocab::Rect) -> rt::Rect {
 fn set_stroke_color(ctx: *u8, col: vocab::Color) {
     let nc: ak::Color = paint::ns_color(col);
     CGContextSetStrokeColorWithColor(ctx, nc.c_g_color());
-    return;
 }
 
 fn set_fill_color(ctx: *u8, col: vocab::Color) {
     let nc: ak::Color = paint::ns_color(col);
     CGContextSetFillColorWithColor(ctx, nc.c_g_color());
-    return;
 }
 
 fn cg_line_cap(c: vocab::LineCap) -> i32 {
@@ -333,14 +328,13 @@ fn add_arc_path(p: *u8, box: rt::Rect, from: f64, to: f64, clockwise: bool) {
     if clockwise { cw = 0 as i8; }
     CGPathAddArc(p, #addr_of(m), 0.0f64, 0.0f64, 1.0f64,
                  0.0f64 - radians(from), 0.0f64 - radians(to), cw);
-    return;
 }
 
 // A recorded path, as a CGPath at +1. The caller releases it.
 fn build_path(src: *vocab::Path) -> *u8 {
     let p: *u8 = CGPathCreateMutable();
-    if p == (0 as *u8) { return 0 as *u8; }
-    if src == (0 as *vocab::Path) { return p; }
+    if p.is_null() { return 0 as *u8; }
+    if src.is_null() { return p; }
     var i: usize = 0 as usize;
     let n: usize = { (*src).count() };
     while i < n {
@@ -375,7 +369,7 @@ fn build_path(src: *vocab::Path) -> *u8 {
 // One rounded rect, as a CGPath at +1.
 fn rounded_rect_path(r: rt::Rect, radius: f64) -> *u8 {
     let p: *u8 = CGPathCreateMutable();
-    if p == (0 as *u8) { return 0 as *u8; }
+    if p.is_null() { return 0 as *u8; }
     CGPathAddRoundedRect(p, 0 as *Affine, r, radius, radius);
     return p;
 }
@@ -384,7 +378,7 @@ fn rounded_rect_path(r: rt::Rect, radius: f64) -> *u8 {
 // filled arc always wants and what DrawArc(closed:) asks for.
 fn arc_path(r: rt::Rect, from: f64, to: f64, clockwise: bool, closed: bool) -> *u8 {
     let p: *u8 = CGPathCreateMutable();
-    if p == (0 as *u8) { return 0 as *u8; }
+    if p.is_null() { return 0 as *u8; }
     add_arc_path(p, r, from, to, clockwise);
     if closed { CGPathCloseSubpath(p); }
     return p;
@@ -397,7 +391,7 @@ fn arc_path(r: rt::Rect, from: f64, to: f64, clockwise: bool, closed: bool) -> *
 
 fn gradient_of(b: vocab::Brush) -> *u8 {
     let space: *u8 = CGColorSpaceCreateDeviceRGB();
-    if space == (0 as *u8) { return 0 as *u8; }
+    if space.is_null() { return 0 as *u8; }
     let colors: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")),
                                    rt::sel(#str_ptr("array\0"))) };
     let c0: ak::Color = paint::ns_color(b.start);
@@ -439,17 +433,16 @@ fn abs_f64(x: f64) -> f64 {
 // leaving the corners unpainted.
 fn fill_clip_with_brush(ctx: *u8, st: DrawState) {
     let g: *u8 = gradient_of(st.brush);
-    if g == (0 as *u8) { return; }
+    if g.is_null() { return; }
     let axis: [rt::Point; 2] = gradient_axis(st.brush_rect, st.brush.angle);
     CGContextDrawLinearGradient(ctx, g, axis[0 as usize], axis[1 as usize], 3 as u32);
     CGGradientRelease(g);
-    return;
 }
 
 // Fill a path with the state's fill: a gradient through it when a brush is set,
 // the plain fill colour otherwise. `path` is consumed (released).
 fn fill_path_with(ctx: *u8, path: *u8, st: DrawState, even_odd: bool) {
-    if path == (0 as *u8) { return; }
+    if path.is_null() { return; }
     if st.has_brush && st.brush.is_gradient {
         CGContextSaveGState(ctx);
         CGContextBeginPath(ctx);
@@ -463,7 +456,6 @@ fn fill_path_with(ctx: *u8, path: *u8, st: DrawState, even_odd: bool) {
         if even_odd { CGContextEOFillPath(ctx); } else { CGContextFillPath(ctx); }
     }
     CGPathRelease(path);
-    return;
 }
 
 // The rect form, which does not need a path object at all.
@@ -476,7 +468,6 @@ fn fill_rect_with(ctx: *u8, r: rt::Rect, st: DrawState) {
         return;
     }
     CGContextFillRect(ctx, r);
-    return;
 }
 
 // ---- text --------------------------------------------------------------------
@@ -490,10 +481,10 @@ const USES_LINE_FRAGMENT_ORIGIN: u64 = 1u64;
 fn italicised(f: ak::Font) -> *u8 {
     let mgr: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSFontManager\0")),
                                 rt::sel(#str_ptr("sharedFontManager\0"))) };
-    if mgr == (0 as *u8) { return f.raw(); }
+    if mgr.is_null() { return f.raw(); }
     let out: *u8 = msg_id_id_u64(mgr, rt::sel(#str_ptr("convertFont:toHaveTrait:\0")),
                                  f.raw(), ITALIC_MASK);
-    if out == (0 as *u8) { return f.raw(); }
+    if out.is_null() { return f.raw(); }
     return out;
 }
 
@@ -502,7 +493,7 @@ fn italicised(f: ak::Font) -> *u8 {
 fn text_attributes(st: DrawState, c: *vocab::Canvas, align: vocab::TextAlign,
                    line_spacing: f64, wraps: bool) -> *u8 {
     let attrs: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
-    if attrs == (0 as *u8) { return 0 as *u8; }
+    if attrs.is_null() { return 0 as *u8; }
 
     var family: str = "";
     if st.font_family >= (0 as i64) { family = { (*c).text(st.font_family as usize) }; }
@@ -521,7 +512,7 @@ fn text_attributes(st: DrawState, c: *vocab::Canvas, align: vocab::TextAlign,
                          col.raw(), bridge::nsstring("NSColor")) };
 
     let ps: *u8 = { rt::alloc_init(#str_ptr("NSMutableParagraphStyle\0")) };
-    if ps != (0 as *u8) {
+    if ps.is_not_null() {
         { rt::msg_void_i64(ps, rt::sel(#str_ptr("setAlignment:\0")), ns_align_raw(align)) };
         { rt::msg_void_f64(ps, rt::sel(#str_ptr("setLineSpacing:\0")), line_spacing) };
         // 0 = word wrap, 2 = clip. A single line at a point never wraps.
@@ -551,7 +542,7 @@ fn draw_text_at(ctx: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: DrawSt
     if cmd.has_aux() == false { return; }
     let s: *u8 = bridge::nsstring({ (*c).text(cmd.aux as usize) });
     let attrs: *u8 = text_attributes(st, c, cmd.align, 0.0f64, false);
-    if attrs == (0 as *u8) { return; }
+    if attrs.is_null() { return; }
     // A point placement aligns the string ABOUT the point, so it needs the
     // string's own width — the one measurement a recording cannot carry.
     let size: rt::Size = msg_size_id(s, rt::sel(#str_ptr("sizeWithAttributes:\0")), attrs);
@@ -562,20 +553,19 @@ fn draw_text_at(ctx: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: DrawSt
     // Drawn LEFT-ALIGNED in its own box: the alignment has already been spent
     // on placing that box, and asking for it twice would centre it twice.
     let plain: *u8 = text_attributes(st, c, vocab::TextAlign::Start, 0.0f64, false);
-    if plain != (0 as *u8) {
+    if plain.is_not_null() {
         { rt::msg_void_rect_id(s, rt::sel(#str_ptr("drawInRect:withAttributes:\0")),
                                rt::Rect { x: x, y: at.y, w: size.w, h: size.h }, plain) };
         rt::release(plain);
     }
     rt::release(attrs);
-    return;
 }
 
 fn draw_text_block(ctx: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: DrawState) {
     if cmd.has_aux() == false { return; }
     let s: *u8 = bridge::nsstring({ (*c).text(cmd.aux as usize) });
     let attrs: *u8 = text_attributes(st, c, cmd.align, cmd.line_spacing(), true);
-    if attrs == (0 as *u8) { return; }
+    if attrs.is_null() { return; }
     let box: rt::Rect = cg_rect(cmd.bounds);
 
     var target: rt::Rect = box;
@@ -602,7 +592,6 @@ fn draw_text_block(ctx: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: Dra
                                target, attrs) };
     }
     rt::release(attrs);
-    return;
 }
 
 // The attribute values that are numbers rather than objects. Autoreleased.
@@ -615,9 +604,9 @@ fn ns_number(v: i64) -> *u8 {
 // label path builds the same thing from span NODES; this one reads the value
 // type, because a drawing has no children.
 fn append_recorded_run(ms: *u8, r: *vocab::TextSpan) {
-    if ms == (0 as *u8) || r == (0 as *vocab::TextSpan) { return; }
+    if ms.is_null() || r.is_null() { return; }
     let attrs: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
-    if attrs == (0 as *u8) { return; }
+    if attrs.is_null() { return; }
     match paint::ns_font({ (*r).font_size }, { (*r).font_weight },
                          { (*r).font_family.view() }) {
         option::Option[ak::Font]::Some(f) => {
@@ -655,20 +644,19 @@ fn append_recorded_run(ms: *u8, r: *vocab::TextSpan) {
                      rt::sel(#str_ptr("alloc\0"))) },
         rt::sel(#str_ptr("initWithString:attributes:\0")),
         bridge::nsstring({ (*r).view() }), attrs) };
-    if piece != (0 as *u8) {
+    if piece.is_not_null() {
         { rt::msg_void_id(ms, rt::sel(#str_ptr("appendAttributedString:\0")), piece) };
         rt::release(piece);
     }
     rt::release(attrs);
-    return;
 }
 
 fn draw_spans(ctx: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand) {
     if cmd.has_aux() == false { return; }
     let sp: *vocab::Spans = { (*c).spans(cmd.aux as usize) };
-    if sp == (0 as *vocab::Spans) { return; }
+    if sp.is_null() { return; }
     let ms: *u8 = { rt::alloc_init(#str_ptr("NSMutableAttributedString\0")) };
-    if ms == (0 as *u8) { return; }
+    if ms.is_null() { return; }
     var i: usize = 0 as usize;
     let n: usize = { (*sp).count() };
     while i < n {
@@ -677,7 +665,6 @@ fn draw_spans(ctx: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand) {
     }
     { rt::msg_void_rect(ms, rt::sel(#str_ptr("drawInRect:\0")), cg_rect(cmd.bounds)) };
     rt::release(ms);
-    return;
 }
 
 // ---- the loop ----------------------------------------------------------------
@@ -692,24 +679,21 @@ fn push_graphics_context(ctx: *u8) {
     { rt::msg_void(cls, rt::sel(#str_ptr("saveGraphicsState\0"))) };
     let gc: *u8 = msg_id_id_i8(cls, rt::sel(#str_ptr("graphicsContextWithCGContext:flipped:\0")),
                                ctx, 1 as i8);
-    if gc != (0 as *u8) {
+    if gc.is_not_null() {
         { rt::msg_void_id(cls, rt::sel(#str_ptr("setCurrentContext:\0")), gc) };
     }
-    return;
 }
 
 fn pop_graphics_context() {
     { rt::msg_void(rt::get_class(#str_ptr("NSGraphicsContext\0")),
                    rt::sel(#str_ptr("restoreGraphicsState\0"))) };
-    return;
 }
 
 fn replay(ctx: *u8, c: *vocab::Canvas) {
-    if ctx == (0 as *u8) || c == (0 as *vocab::Canvas) { return; }
+    if ctx.is_null() || c.is_null() { return; }
     push_graphics_context(ctx);
     replay_commands(ctx, c);
     pop_graphics_context();
-    return;
 }
 
 fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
@@ -816,7 +800,7 @@ fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
         } else if cmd.op == vocab::DrawOp::ClipPath {
             if cmd.has_aux() {
                 let path: *u8 = build_path({ (*c).path(cmd.aux as usize) });
-                if path != (0 as *u8) {
+                if path.is_not_null() {
                     CGContextBeginPath(ctx);
                     CGContextAddPath(ctx, path);
                     if cmd.winding == vocab::Winding::EvenOdd { CGContextEOClip(ctx); }
@@ -847,7 +831,7 @@ fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
             fill_rect_with(ctx, b, st);
         } else if cmd.op == vocab::DrawOp::DrawRoundedRect {
             let path: *u8 = rounded_rect_path(b, cmd.corner_radius());
-            if path != (0 as *u8) {
+            if path.is_not_null() {
                 CGContextBeginPath(ctx);
                 CGContextAddPath(ctx, path);
                 CGContextStrokePath(ctx);
@@ -860,7 +844,7 @@ fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
         } else if cmd.op == vocab::DrawOp::FillEllipse {
             if st.has_brush && st.brush.is_gradient {
                 let path: *u8 = CGPathCreateMutable();
-                if path != (0 as *u8) {
+                if path.is_not_null() {
                     CGPathAddEllipseInRect(path, 0 as *Affine, b);
                     fill_path_with(ctx, path, st, false);
                 }
@@ -870,7 +854,7 @@ fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
         } else if cmd.op == vocab::DrawOp::DrawArc {
             let path: *u8 = arc_path(b, cmd.start_angle(), cmd.end_angle(),
                                      cmd.is_clockwise, cmd.is_closed);
-            if path != (0 as *u8) {
+            if path.is_not_null() {
                 CGContextBeginPath(ctx);
                 CGContextAddPath(ctx, path);
                 CGContextStrokePath(ctx);
@@ -882,7 +866,7 @@ fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
         } else if cmd.op == vocab::DrawOp::DrawPath {
             if cmd.has_aux() {
                 let path: *u8 = build_path({ (*c).path(cmd.aux as usize) });
-                if path != (0 as *u8) {
+                if path.is_not_null() {
                     CGContextBeginPath(ctx);
                     CGContextAddPath(ctx, path);
                     CGContextStrokePath(ctx);
@@ -915,7 +899,6 @@ fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
 
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // The same resolution order a `image` node uses: a system symbol, then a named

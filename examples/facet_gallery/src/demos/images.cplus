@@ -27,9 +27,9 @@ impl Images: component::Component {
         body.add(ui::label(
             "Fit modes: AspectFit, AspectFill, Center, Fill. Size the host with layout verbs.",
             key: "img:note",
-            font_size: 13.0f64,
-            text_color: vocab::Color::ink(0.65f64),
-            max_lines: 3 as i64,
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.65),
+            max_lines: 3,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
@@ -46,33 +46,33 @@ impl Images: component::Component {
         var row: core::Builder = core::Builder::new();
         row.add(ui::image(hat(), key: "img:fit",
             fit: vocab::ImageFit::AspectFit)
-            .width(96.0f64).height(72.0f64));
+            .width(96.0).height(72.0));
         row.add(ui::image(hat(), key: "img:fill",
             fit: vocab::ImageFit::AspectFill)
-            .width(96.0f64).height(72.0f64));
+            .width(96.0).height(72.0));
         row.add(ui::image(hat(), key: "img:center",
             fit: vocab::ImageFit::Center)
-            .width(72.0f64).height(72.0f64));
+            .width(72.0).height(72.0));
         row.add(ui::image(hat(), key: "img:stretch",
             fit: vocab::ImageFit::Fill)
-            .width(72.0f64).height(72.0f64));
-        body.add(core::row(row).gap(12.0f64));
+            .width(72.0).height(72.0));
+        body.add(core::row(row).gap(12.0));
 
         var labels: core::Builder = core::Builder::new();
-        labels.add(ui::label("AspectFit", key: "", font_size: 11.0f64,
-            text_color: vocab::Color::ink(0.5f64)).width(96.0f64));
-        labels.add(ui::label("AspectFill", key: "", font_size: 11.0f64,
-            text_color: vocab::Color::ink(0.5f64)).width(96.0f64));
-        labels.add(ui::label("Center", key: "", font_size: 11.0f64,
-            text_color: vocab::Color::ink(0.5f64)).width(72.0f64));
-        labels.add(ui::label("Fill", key: "", font_size: 11.0f64,
-            text_color: vocab::Color::ink(0.5f64)).width(72.0f64));
-        body.add(core::row(labels).gap(12.0f64));
+        labels.add(ui::label("AspectFit", key: "", font_size: 11.0,
+            text_color: vocab::Color::ink(0.5)).width(96.0));
+        labels.add(ui::label("AspectFill", key: "", font_size: 11.0,
+            text_color: vocab::Color::ink(0.5)).width(96.0));
+        labels.add(ui::label("Center", key: "", font_size: 11.0,
+            text_color: vocab::Color::ink(0.5)).width(72.0));
+        labels.add(ui::label("Fill", key: "", font_size: 11.0,
+            text_color: vocab::Color::ink(0.5)).width(72.0));
+        body.add(core::row(labels).gap(12.0));
 
         return shell::panel(
             "Image",
             "Raster or symbol image host. Layout owns size; fit owns how the content maps into it.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "ui::image(\"assets/hat.png\", key: \"img\", fit: ImageFit::AspectFit)\n    .width(96.0).height(72.0)",
         );
     }

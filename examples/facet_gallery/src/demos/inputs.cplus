@@ -21,18 +21,17 @@ impl Inputs {
                 let t: str = f.text();
                 match label::find("in:name_echo") {
                     option::Option[label::Label]::Some(l) => {
-                        if t.count() == (0 as usize) {
+                        if t.count() == 0 {
                             let _l: label::Label = l.set_text("Hello, stranger");
                         } else {
                             let _l: label::Label = l.set_text("Hello, ${t}");
                         }
                     }
-                    option::Option[label::Label]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[text_field::TextField]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 
     fn on_search(ref this, sender: *u8) {
@@ -41,18 +40,17 @@ impl Inputs {
                 let t: str = f.text();
                 match label::find("in:search_echo") {
                     option::Option[label::Label]::Some(l) => {
-                        if t.count() == (0 as usize) {
+                        if t.count() == 0 {
                             let _l: label::Label = l.set_text("Query: (empty)");
                         } else {
                             let _l: label::Label = l.set_text("Query: ${t}");
                         }
                     }
-                    option::Option[label::Label]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[search_field::SearchField]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -64,7 +62,7 @@ impl Inputs: component::Component {
         body.add(ui::text_field("", key: "in:name", placeholder: "Your name",
             on_text_changed: this.on_name));
         body.add(ui::label("Hello, stranger", key: "in:name_echo",
-            font_size: 14.0f64, text_color: vocab::Color::ink(0.7f64)));
+            font_size: 14.0, text_color: vocab::Color::ink(0.7)));
 
         body.add(shell::caption("Secure field"));
         body.add(ui::text_field("", key: "in:secret", placeholder: "Password", secure: true));
@@ -73,16 +71,16 @@ impl Inputs: component::Component {
         body.add(ui::search_field("", key: "in:search", placeholder: "Search the catalog…",
             on_text_changed: this.on_search));
         body.add(ui::label("Query: (empty)", key: "in:search_echo",
-            font_size: 14.0f64, text_color: vocab::Color::ink(0.7f64)));
+            font_size: 14.0, text_color: vocab::Color::ink(0.7)));
 
         body.add(shell::caption("Text area"));
         body.add(ui::text_area("Write a few lines…\nSecond line.", key: "in:area")
-            .height(120.0f64));
+            .height(120.0));
 
         return shell::panel(
             "Inputs",
             "Single-line, secure, search, and multi-line text entry.",
-            core::column(body).gap(10.0f64),
+            core::column(body).gap(10.0),
             howto: "ui::text_field(\"\", key: \"n\", placeholder: \"Name\",\n    on_text_changed: this.on_name)\nui::search_field(\"\", placeholder: \"Search…\")\nui::text_area(\"…\", key: \"a\").height(120.0)",
         );
     }

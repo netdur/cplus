@@ -144,5 +144,4 @@ fn find_up_from_returns_none_when_absent() {
         option::Option[text::Text]::Some(found) => { assert false; }
         option::Option[text::Text]::None => { assert true; }
     }
-    return;
 }

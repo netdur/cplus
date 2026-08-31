@@ -12,15 +12,13 @@ static PRESSES: i32 = 0;
 fn note(s: str) {
     match label::find("buttons:echo") {
         option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_plain(sender: *u8, ctx: *u8) {
-    PRESSES = PRESSES +% (1 as i32);
+    PRESSES = PRESSES +% 1;
     note("button pressed ${PRESSES}x");
-    return;
 }
 
 fn on_text(sender: *u8, ctx: *u8) { note("text button"); return; }
@@ -42,7 +40,7 @@ fn build() -> core::Node {
     b.add(shell::body("An ImageButton. Its source is a filesystem path — an image inside the APK needs an AssetManager, which MANIFEST section 2 still owes."));
     b.add(ui::icon_button("", key: "buttons:icon", on_clicked: on_icon));
 
-    b.add(ui::label("(nothing pressed yet)", key: "buttons:echo", font_size: 15.0f64,
-                    text_color: vocab::Color::rgba(0.35f64, 0.35f64, 0.40f64)));
+    b.add(ui::label("(nothing pressed yet)", key: "buttons:echo", font_size: 15.0,
+                    text_color: vocab::Color::rgba(0.35, 0.35, 0.40)));
     return shell::page(b, "demo:buttons");
 }

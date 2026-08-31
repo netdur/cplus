@@ -77,7 +77,6 @@ fn unsupported(what: *u8) {
     let _y: i64 = { write(2 as i32, what, strlen(what)) };
     let b: *u8 = #str_ptr("\n  (see stdlib/src/process_linux.cplus; ask process::supported() first)\n\0");
     let _z: i64 = { write(2 as i32, b, strlen(b)) };
-    return;
 }
 
 // ---- the types, mirrored ------------------------------------------------------

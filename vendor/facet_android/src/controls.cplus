@@ -3738,7 +3738,8 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
         core::set_flow(n, flow);
     }
     let watched: u64 = split::P_POSITION | split::P_COLLAPSED | split::P_MIN_LEADING
-                       | split::P_MIN_TRAILING | split::P_DIVIDER | split::P_AXIS;
+                       | split::P_MIN_TRAILING | split::P_MAX_LEADING
+                       | split::P_MAX_TRAILING | split::P_DIVIDER | split::P_AXIS;
     if (dirty & watched) != (0 as u64) || dirty == paint::all_bits() {
         let _changed: bool = settle_split(n, p);
     }
@@ -3810,9 +3811,14 @@ fn settle_split(n: *core::Node, p: *split::SplitProps) -> bool {
         // asks for one — so clamp before it becomes a pane size.
         if want > extent { want = extent; }
         if !{ (*p).collapsed_leading } && !{ (*p).collapsed_trailing } {
-            let ceiling: f64 = extent - { (*p).min_trailing };
+            // Each bound narrowed by the OTHER pane's maximum — the shared rule
+            // in `split`, so the four backends cannot disagree about what a
+            // maximum means.
+            var ceiling: f64 = extent - { (*p).min_trailing };
+            ceiling = split::ceiling_with_max(ceiling, { (*p).max_leading });
             if ceiling > 0.0f64 && want > ceiling { want = ceiling; }
-            let floor: f64 = { (*p).min_leading };
+            let floor: f64 = split::floor_with_max({ (*p).min_leading },
+                                                   { (*p).max_trailing }, extent);
             if floor < extent && want < floor { want = floor; }
         }
     }
@@ -3998,8 +4004,10 @@ fn fire_touch_event(token: i64, action: i32, x: f32, y: f32) {
         var extent: f64 = { f.height };
         if vertical { extent = { f.width }; }
         var want: f64 = here - SPLIT_GRAB;
-        var floor: f64 = { (*p).min_leading };
-        var ceiling: f64 = extent - { (*p).min_trailing };
+        var floor: f64 = split::floor_with_max({ (*p).min_leading },
+                                               { (*p).max_trailing }, extent);
+        var ceiling: f64 = split::ceiling_with_max(extent - { (*p).min_trailing },
+                                                   { (*p).max_leading });
         if ceiling < floor { ceiling = floor; }
         if want < floor { want = floor; }
         if extent > 0.0f64 && want > ceiling { want = ceiling; }

@@ -24,12 +24,12 @@ impl Cannot: component::Component {
         var body: flex::Builder = flex::Builder::new();
 
         var font: flex::Builder = flex::Builder::new();
-        font.add(ui::date_picker(vocab::Date { year: 2026 as i64, month: 8 as i64,
-                                               day: 16 as i64 },
-                                 key: "g:date", font_size: 28.0f64,
+        font.add(ui::date_picker(vocab::Date { year: 2026, month: 8,
+                                               day: 16 },
+                                 key: "g:date", font_size: 28.0,
                                  font_family: "Georgia",
                                  font_weight: vocab::FontWeight::Bold)
-                 .height(44.0f64));
+                 .height(44.0));
         font.add(shell::caption("The picker above asks for a 28pt bold Georgia. It is drawn in the system font, because UIDatePicker has no font property of ANY kind — the class has twenty-odd methods and every one of them is about dates. Six verbs on `date_picker` and six on `time_picker`, with no public way to reach any of them."));
         body.add(shell::card("A PICKER'S FONT — 12 VERBS", font));
 

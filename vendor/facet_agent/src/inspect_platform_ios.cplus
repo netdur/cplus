@@ -13,10 +13,10 @@
 //     so the coordinate branch that file carries has nothing to decide here.
 //   * THE TARGET IS A PORT, not a socket path. A Unix socket lives inside the
 //     app sandbox where nothing on the development machine can reach it, and a
-//     real device shares no filesystem at all — so `serve_if_asked` hands the
-//     value straight to `agent_serve_once`, which on this backend binds TCP on
-//     loopback. It is the choice the agent surface already made, for the same
-//     reason, and it is why the value is not called `path` anywhere below.
+//     real device shares no filesystem at all — so this backend binds TCP on
+//     loopback, at `agent_mcp::loopback_port(pid)`. It is the choice the agent
+//     surface already made, for the same reason, and it is why nothing below
+//     is called `path`.
 
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
@@ -31,10 +31,9 @@ import "quartzcore/quartzcore" as qc;
 import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/application" as runtime;
-import "facet_agent/agent" as agent;
-import "./inspector" as insp;
-import "./tree" as tree;
-import "./mcp" as mcp;
+import "agent_core/inspect" as insp;
+import "./inspect_tree" as tree;
+import "agent_mcp/inspect" as mcp;
 
 // ---- the hop to the UI thread --------------------------------------------------
 // `mount::install` records the thread it ran on and `core::touch` asserts on
@@ -44,22 +43,21 @@ extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
 extern fn dispatch_sync_f(queue: *u8, ctx: *u8, work: fn(*u8));
 
 fn main_queue() -> *u8 {
-    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    let rtld_default: *u8 = { (0 -% 2) as *u8 };
     return { dlsym(rtld_default, #str_ptr("_dispatch_main_q\0")) };
 }
 
 fn on_main_thread() -> bool {
     let ns_thread: *u8 = rt::get_class(#str_ptr("NSThread\0"));
-    if ns_thread == (0 as *u8) { return true; }
-    return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != (0 as i8);
+    if ns_thread.is_null() { return true; }
+    return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != 0;
 }
 
 fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
     if on_main_thread() { work(ctx); return; }
     let q: *u8 = main_queue();
-    if q == (0 as *u8) { work(ctx); return; }
+    if q.is_null() { work(ctx); return; }
     { dispatch_sync_f(q, ctx, work) };
-    return;
 }
 
 #[link_name = "CGColorCreateGenericRGB"]
@@ -73,22 +71,21 @@ static FILL: *u8 = 0 as *u8;
 static STROKE: *u8 = 0 as *u8;
 
 fn ensure_colours() {
-    if FILL == (0 as *u8) {
-        FILL = cg_rgba(0.13f64, 0.47f64, 1.0f64, 0.22f64);
-        STROKE = cg_rgba(0.13f64, 0.47f64, 1.0f64, 0.95f64);
+    if FILL.is_null() {
+        FILL = cg_rgba(0.13, 0.47, 1.0, 0.22);
+        STROKE = cg_rgba(0.13, 0.47, 1.0, 0.95);
     }
-    return;
 }
 
 fn overlay_layer() -> qc::Layer {
     ensure_colours();
-    if OVERLAY == (0 as *u8) {
+    if OVERLAY.is_null() {
         let l: qc::Layer = qc::Layer::new();
         l.set_background_color(FILL);
         l.set_border_color(STROKE);
-        l.set_border_width(1.0f64);
-        l.set_corner_radius(2.0f64);
-        l.set_z_position(10000.0f64);
+        l.set_border_width(1.0);
+        l.set_corner_radius(2.0);
+        l.set_z_position(10000.0);
         OVERLAY = rt::retain(l.raw());
         return l;
     }
@@ -109,13 +106,13 @@ struct Placed {
 fn place(n: *core::Node) -> Placed {
     let none: Placed = Placed {
         view: 0 as *u8,
-        rect: rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        rect: rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
         found: false,
     };
-    if n == (0 as *core::Node) { return none; }
+    if n.is_null() { return none; }
 
     let own: *u8 = core::view_of(n);
-    if own != (0 as *u8) {
+    if own.is_not_null() {
         let b: rt::Rect = { uik::View::from_raw(own).bounds() };
         return Placed { view: own, rect: b, found: true };
     }
@@ -130,15 +127,15 @@ fn place(n: *core::Node) -> Placed {
     let h: f64 = f.height;
 
     var cur: *core::Node = n;
-    var steps: usize = 0 as usize;
-    while steps < (256 as usize) {
+    var steps: usize = 0;
+    while steps < 256 {
         let p: *core::Node = match mount::parent_of(cur) {
             option::Option[*core::Node]::Some(q) => q,
-            option::Option[*core::Node]::None => 0 as *core::Node,
+            option::Option::None => 0 as *core::Node,
         };
-        if p == (0 as *core::Node) { return none; }
+        if p.is_null() { return none; }
         let pv: *u8 = core::view_of(p);
-        if pv != (0 as *u8) {
+        if pv.is_not_null() {
             // No flip branch: every UIView's origin is its top-left, which is
             // flex's own, so the accumulated offset IS the view-space rect.
             return Placed {
@@ -151,7 +148,7 @@ fn place(n: *core::Node) -> Placed {
         x = x + pf.left;
         y = y + pf.top;
         cur = p;
-        steps = steps +% (1 as usize);
+        steps = steps +% 1;
     }
     return none;
 }
@@ -159,22 +156,21 @@ fn place(n: *core::Node) -> Placed {
 // ---- highlight ---------------------------------------------------------------
 
 fn clear_highlight(_s: *u8) {
-    if OVERLAY == (0 as *u8) { return; }
+    if OVERLAY.is_null() { return; }
     let l: qc::Layer = qc::Layer::from_raw(OVERLAY);
     l.remove_from_superlayer();
-    return;
 }
 
 fn highlight(s: *u8, h: insp::Handle) {
     clear_highlight(s);
     if !h.is_live() { return; }
-    let p: Placed = place(h.node);
+    let p: Placed = place(tree::node_of(h));
     if !p.found { return; }
 
     let target: uik::View = uik::View::from_raw(p.view);
     let win: uik::Window = match target.window() {
         option::Option[uik::Window]::Some(w) => w,
-        option::Option[uik::Window]::None => { return; }
+        option::Option::None => { return; }
     };
     // The WINDOW is the host here, where AppKit uses its content view: a
     // UIWindow is itself a UIView, so it is both the top of the hierarchy and
@@ -187,7 +183,6 @@ fn highlight(s: *u8, h: insp::Handle) {
     let l: qc::Layer = overlay_layer();
     l.set_frame(r);
     host.add_sublayer(l);
-    return;
 }
 
 // ---- native rows -------------------------------------------------------------
@@ -195,7 +190,7 @@ fn highlight(s: *u8, h: insp::Handle) {
 fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
     let v: *u8 = core::view_of(n);
-    if v == (0 as *u8) {
+    if v.is_null() {
         let _a: status::Status = out.append(insp::Prop::read_only(
             "native_class", insp::Value::Str(text::from_str("(drawn by an ancestor)"))));
         return out;
@@ -236,25 +231,4 @@ fn install() {
     tree::install_platform(highlight, clear_highlight);
     tree::set_native_fn(native_props);
     mcp::set_marshal(run_on_main_sync);
-    return;
-}
-
-// Serve the inspector IF the environment asks — the one line an iOS app adds to
-// be inspectable by the tool that launched it.
-//
-// `FACET_INSPECT` carries a PORT here, and `simctl launch` is how it arrives:
-// the launcher sets `SIMCTL_CHILD_FACET_INSPECT` and simctl passes the
-// unprefixed variable to the app. Launched any other way there is no variable
-// and this costs one getenv.
-fn serve_if_asked() {
-    let port: text::Text = match env::var("FACET_INSPECT") {
-        option::Option[text::Text]::Some(p) => p,
-        option::Option[text::Text]::None => { return; }
-    };
-    if port.is_empty() { return; }
-    install();
-    mcp::arm(tree::local_backend());
-    agent::enable();
-    runtime::agent_serve_once(port.view());
-    return;
 }

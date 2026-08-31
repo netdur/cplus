@@ -23,6 +23,7 @@ import "stdlib/executor" as executor;
 import "stdlib/net" as net;
 import "stdlib/atomic" as atomic;
 import "stdlib/io" as io;
+import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 
@@ -64,8 +65,7 @@ fn uninstall_scheduler() { SCHEDULER = scheduler_none(); return; }
 
 fn run_on_main(work: fn(*u8), ctx: *u8) {
     let f: fn(fn(*u8), *u8) = SCHEDULER.run_on_main;
-    if f != (0 as fn(fn(*u8), *u8)) { f(work, ctx); }
-    return;
+    if f.is_not_null() { f(work, ctx); }
 }
 
 // Is a main-thread hop installed? The resource tier gates its verbs on this
@@ -73,7 +73,7 @@ fn run_on_main(work: fn(*u8), ctx: *u8) {
 // nothing runs, nothing queues, nothing leaks — rather than a flight whose
 // apply can never land.
 fn has_main_hop() -> bool {
-    return SCHEDULER.run_on_main != (0 as fn(fn(*u8), *u8));
+    return SCHEDULER.run_on_main.is_not_null();
 }
 
 // ---- after: do something LATER, and be able to call it off --------------------
@@ -130,10 +130,9 @@ impl Cancellable {
     fn cancel(ref this) {
         if this._id == (0 as u64) { return; }
         var f: fn(u64) = this._cancel;
-        if f == (0 as fn(u64)) { f = SCHEDULER.cancel_after; }
-        if f != (0 as fn(u64)) { f(this._id); }
+        if f.is_null() { f = SCHEDULER.cancel_after; }
+        if f.is_not_null() { f(this._id); }
         this._id = 0 as u64;
-        return;
     }
 
     // Does this handle still hold a registration — i.e. is cancel() still
@@ -146,7 +145,6 @@ impl Cancellable {
 
     fn drop(ref this) {
         this.cancel();
-        return;
     }
 }
 
@@ -154,7 +152,7 @@ impl Cancellable {
 // handle — including by letting it drop.
 fn after(seconds: f64, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
     let f: fn(f64, fn(*u8), *u8) -> u64 = SCHEDULER.after;
-    if f == (0 as fn(f64, fn(*u8), *u8) -> u64) { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
+    if f.is_null() { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
     return Cancellable { _id: f(seconds, cb, ctx), _cancel: SCHEDULER.cancel_after };
 }
 // ---- element geometry -------------------------------------------------------
@@ -172,7 +170,7 @@ fn after(seconds: f64, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
 // the same posture as `after`.
 fn observe_size(n: *core::Node, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> Cancellable {
     let f: fn(*core::Node, fn(*u8), *u8) -> u64 = SCHEDULER.observe_size;
-    if f == (0 as fn(*core::Node, fn(*u8), *u8) -> u64) { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
+    if f.is_null() { return Cancellable { _id: 0 as u64, _cancel: #zero::[fn(u64)]() }; }
     return Cancellable { _id: f(n, cb, ctx), _cancel: SCHEDULER.cancel_observe_size };
 }
 
@@ -220,7 +218,6 @@ fn pump_async(ctx: *u8) {
             if fired == 0 { break; }
         }
     }
-    return;
 }
 
 // ---- awaitable worker (blocking work off the UI thread) ---------------------
@@ -375,13 +372,11 @@ fn job_table_lock() {
           != (0 as u64) {
         sched_yield_once();
     }
-    return;
 }
 
 fn job_table_unlock() {
     let p: *u64 = { #addr_of(JOB_TABLE_LOCK) };
     atomic::store_u64(p, 0 as u64, atomic::Ordering::Release);
-    return;
 }
 
 // Take a slot for `addr`, or answer false because it is already flying.
@@ -430,7 +425,6 @@ fn release_job(addr: u64) {
         i = i +% (1 as usize);
     }
     job_table_unlock();
-    return;
 }
 
 // Is a worker or a queued apply still inside this job? The question a caller
@@ -497,13 +491,11 @@ static JOBS_IN_FLIGHT: u64 = 0 as u64;
 fn jobs_inflight_add(d: u64) {
     let p: *u64 = { #addr_of(JOBS_IN_FLIGHT) };
     let _prev: u64 = atomic::fetch_add_u64(p, d, atomic::Ordering::AcqRel);
-    return;
 }
 
 fn jobs_inflight_sub(d: u64) {
     let p: *u64 = { #addr_of(JOBS_IN_FLIGHT) };
     let _prev: u64 = atomic::fetch_sub_u64(p, d, atomic::Ordering::AcqRel);
-    return;
 }
 
 // How many service workers may still be touching their service.
@@ -520,13 +512,11 @@ static APPLIES_PENDING: u64 = 0 as u64;
 fn applies_pending_add(d: u64) {
     let p: *u64 = { #addr_of(APPLIES_PENDING) };
     let _prev: u64 = atomic::fetch_add_u64(p, d, atomic::Ordering::AcqRel);
-    return;
 }
 
 fn applies_pending_sub(d: u64) {
     let p: *u64 = { #addr_of(APPLIES_PENDING) };
     let _prev: u64 = atomic::fetch_sub_u64(p, d, atomic::Ordering::AcqRel);
-    return;
 }
 
 fn applies_pending() -> u64 {
@@ -545,7 +535,182 @@ fn jobs_settled() -> bool {
 // service was given — the runtime does this for screens at teardown.
 fn wait_for_jobs() {
     while jobs_in_flight() != (0 as u64) { sched_yield_once(); }
-    return;
+}
+
+// ---- deferring a free until nothing can be pointing at it -------------------
+//
+// `wait_for_jobs` is the right answer in one place and the wrong one in
+// another, and the difference is which thread is asking.
+//
+// A screen that started a service and is then torn down must not be freed
+// while a worker is inside a job that points into it — the worker keeps
+// writing, the next screen is allocated into that memory, and something
+// unrelated crashes reading its own fields. Three separate iris crashes were
+// this: a `Text.clone` in one subsystem, a `Text.drop` in another, and a
+// malloc abort in a third, because the fault lands wherever the freed memory
+// was REUSED, never where it was freed.
+//
+// The runtime's own teardown (`settle_and_teardown`, after the run loop has
+// returned) can simply wait. A WINDOW-CLOSE CALLBACK CANNOT. It runs on the
+// main thread inside the toolkit's `windowWillClose:`, and the workers it
+// would be waiting for are trying to reach that same main thread to land their
+// applies. Waiting there froze the app for as long as a child process took,
+// and froze it for good when a worker needed the main thread — which is
+// exactly what happened, was reported by a person using it, and got the first
+// attempt at this reverted.
+//
+// So the free is DEFERRED rather than waited for. `free_when_settled` frees
+// immediately when nothing is in flight — the ordinary case, and the same
+// timing as before — and otherwise parks the pointer and retries on a timer,
+// off the close callback, until `jobs_settled()` says nothing can reach it.
+//
+// WHAT THIS TRADES. A worker that never finishes leaks one screen instead of
+// corrupting the next one. That is the right way round: a leak is visible to
+// `leaks` and costs a screen's memory, while the use-after-free is a crash in
+// a subsystem that has nothing to do with the screen that caused it. The loud
+// line below is what says a wait has gone on too long.
+//
+// THE COUNTERS ARE GLOBAL, so a deferred free waits for every job and not just
+// the ones its own screen started. Stronger than necessary and therefore safe;
+// `run_job` has no notion of an owning screen to make it narrower.
+
+// One parked pointer and the function that reclaims it — a fn-ptr rather than
+// a kind tag, because the two callers free different types (a `ScreenBox` and
+// a tree `Node`) and a third would otherwise have to touch this file.
+struct PendingFree {
+    free: fn(*u8),
+    // The subject. `opaque` because `free` is its owner: this struct carries
+    // the address, it does not own it.
+    opaque p: *u8,
+    // Retries so far, for the loud line only.
+    turns: i64,
+}
+
+static PENDING_FREES: vec::Vec[PendingFree] = #zero::[vec::Vec[PendingFree]]();
+static RECLAIM_ARMED: bool = false;
+
+// How often to re-ask. Short enough that a screen closed between two service
+// calls is reclaimed before the user notices, long enough that the run loop
+// still sleeps. A timer, not a `run_on_main` re-post: re-posting would spin
+// the main thread hot for as long as a service shells out, which is the
+// problem this exists to avoid.
+const RECLAIM_INTERVAL: f64 = 0.05f64;
+
+// ~10 seconds of retries. Not a bailout — nothing is freed early — just the
+// point at which a wait stops being ordinary and should be visible.
+const RECLAIM_LOUD_AFTER: i64 = 200 as i64;
+
+// Free `p` by calling `f(p)` as soon as no job can still be pointing at it.
+//
+// Frees SYNCHRONOUSLY when nothing is in flight, which is almost always, so
+// the common path keeps the timing it had. Otherwise it returns at once and
+// the free happens later, on the main thread, from a timer.
+fn free_when_settled(f: fn(*u8), p: *u8) {
+    if f.is_null() { return; }
+    if p.is_null() { return; }
+    if jobs_settled() { f(p); return; }
+    // No timer primitive — headless, or a backend that installed none. Nothing
+    // will ever turn a loop to retry on, and there is no main thread to freeze
+    // either, so the honest answer here is the old one: wait, then free.
+    // (Headless also means no apply is ever queued, so this terminates as soon
+    // as the worker leaves `run`.)
+    let arm: fn(f64, fn(*u8), *u8) -> u64 = SCHEDULER.after;
+    if arm.is_null() {
+        wait_for_jobs();
+        f(p);
+        return;
+    }
+    let list: *vec::Vec[PendingFree] = { #addr_of(PENDING_FREES) };
+    let _a: status::Status =
+        { (*list).append(PendingFree { free: f, p: p, turns: 0 as i64 }) };
+    arm_reclaim();
+}
+
+// Free everything parked, if and only if nothing is in flight. Answers how
+// many are still parked, so a caller can say whether it drained.
+//
+// Called from the retry timer, and by the runtime's own `settle_and_teardown`
+// once it has waited — so a quit reclaims whatever a close left behind.
+fn reclaim_settled() -> usize {
+    let list: *vec::Vec[PendingFree] = { #addr_of(PENDING_FREES) };
+    let n: usize = { (*list).count() };
+    if n == (0 as usize) { return 0 as usize; }
+    if !jobs_settled() { return n; }
+    // Take the entries out BEFORE running any of them: a `free` may drop a
+    // screen whose own teardown parks something new, and appending to a vector
+    // being iterated is how that becomes a missed entry or a moved buffer.
+    var taken: vec::Vec[PendingFree] = vec::new::[PendingFree]();
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*list).at(i) } {
+            option::Option[PendingFree]::Some(e) => { let _a: status::Status = taken.append(e); }
+            option::Option[PendingFree]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    { (*list).remove_all() };
+    // Nothing is waiting, so nothing is armed. A timer already scheduled will
+    // still fire once, find the list empty and return — but the FLAG must not
+    // outlive the list, or the next parked free sees `RECLAIM_ARMED` already
+    // true, arms nothing, and waits for a tick that is never coming.
+    //
+    // That is not hypothetical: `settle_and_teardown` calls this after its own
+    // wait, so any process that closes a screen, settles, and closes another
+    // would leak the second one silently. `a_drain_rearms_for_the_next_close`
+    // is the assertion; it found this.
+    RECLAIM_ARMED = false;
+    var k: usize = 0 as usize;
+    let c: usize = taken.count();
+    while k < c {
+        match taken.at(k) {
+            option::Option[PendingFree]::Some(e) => {
+                let f: fn(*u8) = e.free;
+                if f.is_not_null() { f(e.p); }
+            }
+            option::Option[PendingFree]::None => { }
+        }
+        k = k +% (1 as usize);
+    }
+    return { (*list).count() };
+}
+
+// How many frees are parked. For tests, and for anyone measuring whether a
+// close actually reclaimed.
+fn pending_frees() -> usize {
+    let list: *vec::Vec[PendingFree] = { #addr_of(PENDING_FREES) };
+    return { (*list).count() };
+}
+
+fn arm_reclaim() {
+    if RECLAIM_ARMED { return; }
+    let arm: fn(f64, fn(*u8), *u8) -> u64 = SCHEDULER.after;
+    if arm.is_null() { return; }
+    RECLAIM_ARMED = true;
+    let _id: u64 = arm(RECLAIM_INTERVAL, reclaim_tick, 0 as *u8);
+}
+
+fn reclaim_tick(ctx: *u8) {
+    RECLAIM_ARMED = false;
+    let left: usize = reclaim_settled();
+    if left == (0 as usize) { return; }
+    // Still held. Age each entry and say so once, at the point where a wait
+    // stops looking like a slow service and starts looking like a hung one.
+    let list: *vec::Vec[PendingFree] = { #addr_of(PENDING_FREES) };
+    var i: usize = 0 as usize;
+    while i < left {
+        match { (*list).at_ptr(i) } {
+            option::Option[*PendingFree]::Some(e) => {
+                let t: i64 = { (*e).turns } +% (1 as i64);
+                { (*e).turns = t };
+                if t == RECLAIM_LOUD_AFTER {
+                    io::eprintln("facet: a closed screen has been waiting 10s to be freed — a service worker is still inside it. Nothing is freed while it is; this is a leak, not a crash, and a worker that never returns is the thing to look at.");
+                }
+            }
+            option::Option[*PendingFree]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    arm_reclaim();
 }
 
 fn job_done_noop(ctx: *u8) { return; }
@@ -555,13 +720,11 @@ fn job_done_noop(ctx: *u8) { return; }
 fn job_run_tramp[J: Job](p: *u8) {
     let q: *J = p as *J;
     { (*q).run() };
-    return;
 }
 
 fn job_apply_tramp[J: Job](p: *u8) {
     let q: *J = p as *J;
     { (*q).apply() };
-    return;
 }
 
 // Raw pointers are !Send, so the job and ctx addresses ride as integers —
@@ -583,7 +746,7 @@ fn run_job_flight(take job: JobFlight) -> i32 {
     // counted BEFORE the worker count drops, so `jobs_settled()` can never
     // observe the gap between the two.
     let hop: fn(fn(*u8), *u8) = SCHEDULER.run_on_main;
-    if hop == (0 as fn(fn(*u8), *u8)) {
+    if hop.is_null() {
         // Headless: nothing will ever apply, so the flight ends HERE and the
         // slot goes back here too.
         //
@@ -624,7 +787,6 @@ fn finish_job_flight(raw: *u8) {
     // `jobs_settled()` never reports settled while a slot is still held.
     release_job(job.job_addr as u64);
     applies_pending_sub(1 as u64);
-    return;
 }
 
 
@@ -643,7 +805,6 @@ impl SlowJob: Job {
         let _s: i32 = job_spin(40000000 as i64);
         this.label = text::from_str("ran");
         this.done = this.done + 1;
-        return;
     }
     fn apply(ref this) { return; }
 }
@@ -691,7 +852,6 @@ impl HeldJob: Job {
             sched_yield_once();
         }
         this.runs = this.runs + 1;
-        return;
     }
     fn apply(ref this) { return; }
 }
@@ -724,7 +884,6 @@ fn a_second_flight_on_a_live_job_is_refused() {
     assert run_job::[HeldJob](j);
     wait_for_jobs();
     assert j.runs == 2;
-    return;
 }
 
 #[test]
@@ -741,7 +900,6 @@ fn two_different_jobs_do_not_block_each_other() {
     wait_for_jobs();
     assert a.runs == 1;
     assert b.runs == 1;
-    return;
 }
 
 #[test]
@@ -749,7 +907,6 @@ fn a_job_that_never_flew_is_not_in_flight() {
     var j: HeldJob = HeldJob { hold: 0 as u64, runs: 0 };
     assert job_in_flight({ #addr_of(j) as *u8 } as usize) == false;
     assert job_in_flight(0 as usize) == false;
-    return;
 }
 
 #[test]
@@ -771,6 +928,234 @@ fn wait_for_jobs_blocks_until_run_finishes() {
     assert jobs_in_flight() == (0 as u64);
     assert j.done == (1 as i32);
     assert j.label.view() == "ran";
+}
+
+// ---- deferring a free until nothing can be pointing at it -------------------
+
+// The subject of a deferred free: a heap thing a "screen" owns, standing in for
+// a ScreenBox. `FREED` records that its reclaim ran, so the tests can assert
+// WHEN rather than merely that.
+static FREED: i32 = 0;
+static FREED_MARK: i32 = 0;
+
+fn free_marker(p: *u8) {
+    if p.is_null() { return; }
+    let m: *i32 = p as *i32;
+    FREED_MARK = { (*m) };
+    FREED = FREED + 1;
+}
+
+// A timer fake that RECORDS instead of firing, so a test can decide when the
+// retry lands — the whole point being that the retry is off the caller's stack.
+static ARMED_CB: fn(*u8) = #zero::[fn(*u8)]();
+static ARMED_COUNT: i32 = 0;
+fn tmr_record(s: f64, cb: fn(*u8), ctx: *u8) -> u64 {
+    ARMED_CB = cb;
+    ARMED_COUNT = ARMED_COUNT + 1;
+    return 21 as u64;
+}
+fn fire_armed() {
+    let cb: fn(*u8) = ARMED_CB;
+    ARMED_CB = #zero::[fn(*u8)]();
+    if cb.is_not_null() { cb(0 as *u8); }
+}
+
+// The ordinary close: nothing in flight, so the free is SYNCHRONOUS and the
+// timing is what it was before deferral existed. Worth pinning on its own —
+// if this ever became "always deferred" every close would grow a 50ms tail and
+// a `leaks` run right after one would report a screen that is merely parked.
+#[test]
+fn a_free_with_nothing_in_flight_happens_immediately() {
+    uninstall_scheduler();
+    FREED = 0;
+    FREED_MARK = 0;
+    var subject: i32 = 77;
+    assert jobs_settled();
+    free_when_settled(free_marker, #addr_of(subject) as *u8);
+    assert FREED == 1;
+    assert FREED_MARK == 77;
+    assert pending_frees() == (0 as usize);
+}
+
+// THE ONE THAT MATTERS. A worker is genuinely inside `run()` — held there from
+// this thread, not merely likely to be — and the free must do two things that
+// pull in opposite directions: NOT happen, and NOT block.
+//
+// Not happening is the use-after-free (the screen's memory is what the worker
+// is writing into). Not blocking is the freeze: this call stands in for a
+// window-close callback on the main thread, and the worker is trying to reach
+// that same thread to land its apply. The first attempt at this bug waited
+// here and shipped an app that went unresponsive on Close Workspace.
+//
+// A blocking implementation cannot reach the line after the call at all: the
+// hold is only released further down, from this thread. So the reverted fix
+// shows up here as a HANG rather than a failure, and that hang is the bug
+// report — the app froze for the same reason, on the same thread.
+//
+// Freeing eagerly, which is what `pushed_closed` did before deferral, fails on
+// `FREED == 0` immediately. Both directions are covered; only one of them is
+// polite about it.
+#[test]
+fn a_free_with_a_worker_in_flight_neither_frees_nor_blocks() {
+    var sch: Scheduler = scheduler_none();
+    sch.after = tmr_record;
+    install_scheduler(sch);
+    FREED = 0;
+    ARMED_COUNT = 0;
+    ARMED_CB = #zero::[fn(*u8)]();
+
+    var j: HeldJob = HeldJob { hold: 1 as u64, runs: 0 };
+    assert run_job::[HeldJob](j);
+    while jobs_in_flight() == (0 as u64) { sched_yield_once(); }
+
+    var subject: i32 = 88;
+    free_when_settled(free_marker, #addr_of(subject) as *u8);
+    // Returned — with the worker still held. That is the freeze half.
+    assert jobs_in_flight() >= (1 as u64);
+    // And nothing was freed. That is the use-after-free half.
+    assert FREED == 0;
+    assert pending_frees() == (1 as usize);
+    // A retry is armed, once, off this stack.
+    assert ARMED_COUNT == 1;
+
+    // A retry while the worker is STILL inside must not free either, and must
+    // arm again rather than give up — a bailout here would be the crash by
+    // another route, which is what the `spins > 100000` line in
+    // `settle_and_teardown` is warned about for.
+    fire_armed();
+    assert FREED == 0;
+    assert pending_frees() == (1 as usize);
+    assert ARMED_COUNT == 2;
+
+    // Let the worker out. Headless (no `run_on_main`), so the flight ends on
+    // the worker and the counters reach zero with no apply queued.
+    atomic::store_u64({ #addr_of(j.hold) }, 0 as u64, atomic::Ordering::Release);
+    wait_for_jobs();
+    assert jobs_settled();
+
+    // NOW the retry reclaims it, and stops arming.
+    fire_armed();
+    assert FREED == 1;
+    assert FREED_MARK == 88;
+    assert pending_frees() == (0 as usize);
+    assert ARMED_COUNT == 2;
+
+    uninstall_scheduler();
+}
+
+// `settle_and_teardown` calls this on the way out, when the run loop has
+// stopped and the retry timer will never fire again. Without it a screen
+// closed moments before a quit would be leaked rather than deferred.
+#[test]
+fn reclaim_settled_drains_what_a_close_parked() {
+    var sch: Scheduler = scheduler_none();
+    sch.after = tmr_record;
+    install_scheduler(sch);
+    FREED = 0;
+    ARMED_CB = #zero::[fn(*u8)]();
+
+    var j: HeldJob = HeldJob { hold: 1 as u64, runs: 0 };
+    assert run_job::[HeldJob](j);
+    while jobs_in_flight() == (0 as u64) { sched_yield_once(); }
+    var subject: i32 = 99;
+    free_when_settled(free_marker, #addr_of(subject) as *u8);
+    // Held: a reclaim now answers "still one parked" and frees nothing.
+    assert reclaim_settled() == (1 as usize);
+    assert FREED == 0;
+
+    atomic::store_u64({ #addr_of(j.hold) }, 0 as u64, atomic::Ordering::Release);
+    wait_for_jobs();
+    assert reclaim_settled() == (0 as usize);
+    assert FREED == 1;
+    assert FREED_MARK == 99;
+
+    ARMED_CB = #zero::[fn(*u8)]();
+    uninstall_scheduler();
+}
+
+// A SECOND close after a drain must arm again. Found by a test that never
+// fired its fake timer: `reclaim_settled` emptied the list but left
+// `RECLAIM_ARMED` true, so the next parked free armed nothing and waited for a
+// tick that was never coming — a silent permanent leak, and only of the SECOND
+// screen, which is the kind of thing that survives a suite.
+//
+// `settle_and_teardown` calls `reclaim_settled` on every quit, so this is the
+// ordinary sequence in any process that closes a screen more than once.
+#[test]
+fn a_drain_rearms_for_the_next_close() {
+    var sch: Scheduler = scheduler_none();
+    sch.after = tmr_record;
+    install_scheduler(sch);
+    FREED = 0;
+    ARMED_COUNT = 0;
+    ARMED_CB = #zero::[fn(*u8)]();
+
+    // First close, parked and drained WITHOUT the timer ever firing — which is
+    // what `settle_and_teardown` does.
+    var j: HeldJob = HeldJob { hold: 1 as u64, runs: 0 };
+    assert run_job::[HeldJob](j);
+    while jobs_in_flight() == (0 as u64) { sched_yield_once(); }
+    var first: i32 = 1;
+    free_when_settled(free_marker, #addr_of(first) as *u8);
+    assert ARMED_COUNT == 1;
+    atomic::store_u64({ #addr_of(j.hold) }, 0 as u64, atomic::Ordering::Release);
+    wait_for_jobs();
+    assert reclaim_settled() == (0 as usize);
+    assert FREED == 1;
+
+    // Second close, same shape. It must arm its own retry.
+    var j2: HeldJob = HeldJob { hold: 1 as u64, runs: 0 };
+    assert run_job::[HeldJob](j2);
+    while jobs_in_flight() == (0 as u64) { sched_yield_once(); }
+    var second: i32 = 2;
+    free_when_settled(free_marker, #addr_of(second) as *u8);
+    assert pending_frees() == (1 as usize);
+    assert ARMED_COUNT == 2;
+
+    atomic::store_u64({ #addr_of(j2.hold) }, 0 as u64, atomic::Ordering::Release);
+    wait_for_jobs();
+    fire_armed();
+    assert FREED == 2;
+    assert FREED_MARK == 2;
+    assert pending_frees() == (0 as usize);
+
+    ARMED_CB = #zero::[fn(*u8)]();
+    uninstall_scheduler();
+}
+
+// No timer primitive at all — a headless build, or a backend that installed
+// none. There is no loop to retry on AND no main thread to freeze, so the
+// honest answer is the old one: wait, then free. Pinned because the reverted
+// fix's failure mode was exactly "waited on a thread that could not afford
+// it", and the rule is about WHICH thread, not about waiting being wrong.
+#[test]
+fn with_no_timer_the_free_waits_rather_than_leaking() {
+    uninstall_scheduler();
+    FREED = 0;
+    ARMED_CB = #zero::[fn(*u8)]();
+
+    var j: HeldJob = HeldJob { hold: 1 as u64, runs: 0 };
+    assert run_job::[HeldJob](j);
+    while jobs_in_flight() == (0 as u64) { sched_yield_once(); }
+    // Released from another thread, so the wait below is a real wait.
+    var rel: Releaser = Releaser { hold: { #addr_of(j.hold) } as usize };
+    let h: thread::JoinHandle[i32] = thread::spawn_with::[Releaser, i32](rel, release_after_a_moment);
+
+    var subject: i32 = 55;
+    free_when_settled(free_marker, #addr_of(subject) as *u8);
+    // It waited, and then freed — nothing parked, nothing leaked.
+    assert FREED == 1;
+    assert FREED_MARK == 55;
+    assert pending_frees() == (0 as usize);
+    let _r: i32 = h.join();
+}
+
+struct Releaser { hold: usize }
+
+fn release_after_a_moment(take r: Releaser) -> i32 {
+    let _s: i32 = job_spin(2000000 as i64);
+    atomic::store_u64(r.hold as *u64, 0 as u64, atomic::Ordering::Release);
+    return 0;
 }
 
 // ---- observe_size / after slot discipline -----------------------------------
@@ -857,14 +1242,12 @@ fn a_scheduler_callback_can_be_a_bound_method() {
     assert u.ticks == 1;
 
     uninstall_scheduler();
-    return;
 }
 
 fn tick_free(ctx: *u8) {
-    if ctx == (0 as *u8) { return; }
+    if ctx.is_null() { return; }
     let t: *Ticker = ctx as *Ticker;
     { (*t).tick() };
-    return;
 }
 
 // ---- the apply half of the flight -------------------------------------------
@@ -902,5 +1285,4 @@ fn queued_apply_is_counted_and_settles() {
     assert jobs_settled();
     assert j2.ran == 1;
     assert j2.applied == 0;
-    return;
 }

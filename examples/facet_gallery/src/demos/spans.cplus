@@ -26,26 +26,26 @@ impl SpansDemo: component::Component {
         var runs: vocab::Spans = vocab::Spans::new();
         let _a: status::Status = runs.add(vocab::TextSpan::of(
             "Bold ",
-            font_size: 16.0f64,
+            font_size: 16.0,
             font_weight: vocab::FontWeight::Bold,
             color: vocab::Color::ink(),
         ));
         let _b: status::Status = runs.add(vocab::TextSpan::of(
             "italic ",
-            font_size: 16.0f64,
+            font_size: 16.0,
             italic: true,
-            color: vocab::Color::ink(0.75f64),
+            color: vocab::Color::ink(0.75),
         ));
         let _c: status::Status = runs.add(vocab::TextSpan::of(
             "primary",
-            font_size: 16.0f64,
+            font_size: 16.0,
             font_weight: vocab::FontWeight::Semibold,
             color: vocab::Color::primary(),
         ));
         let _d: status::Status = runs.add(vocab::TextSpan::of(
             " and plain.",
-            font_size: 16.0f64,
-            color: vocab::Color::ink(0.7f64),
+            font_size: 16.0,
+            color: vocab::Color::ink(0.7),
         ));
         body.add(ui::label("", key: "sp:runs", formatted_text: runs));
 
@@ -53,14 +53,14 @@ impl SpansDemo: component::Component {
         body.add(ui::span(
             "A span is a leaf used inside richer compositions.",
             key: "sp:one",
-            font_size: 14.0f64,
-            text_color: vocab::Color::ink(0.8f64),
+            font_size: 14.0,
+            text_color: vocab::Color::ink(0.8),
         ));
 
         return shell::panel(
             "Spans",
             "Rich text without a second text system: Spans feed label.formatted_text; span is a single run.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "var runs = Spans::new();\nruns.add(TextSpan::of(\"Hi \", font_weight: Bold, color: ink()));\nui::label(\"\", formatted_text: runs)",
         );
     }

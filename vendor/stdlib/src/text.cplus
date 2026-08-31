@@ -316,14 +316,12 @@ impl Text {
 
     fn remove_all(ref this) {
         this._len = 0 as usize;
-        return;
     }
 
     fn truncate(ref this, to: usize) {
         if to < this._len {
             this._len = to;
         }
-        return;
     }
 
     // Insert `s` at byte offset `at`, shifting the bytes at/after `at` to the
@@ -590,7 +588,6 @@ impl Text {
         if this._ptr.is_not_null() {
             { free(this._ptr); }
         }
-        return;
     }
 }
 
@@ -656,7 +653,6 @@ impl CString {
         if this._ptr.is_not_null() {
             { free(this._ptr); }
         }
-        return;
     }
 }
 
@@ -866,7 +862,6 @@ fn text_find_first_offset() {
         option::Option[usize]::Some(i) => { assert false; }
         option::Option[usize]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -876,7 +871,6 @@ fn text_rfind_last_offset() {
         option::Option[usize]::Some(i) => { assert i == (4 as usize); }
         option::Option[usize]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -890,7 +884,6 @@ fn text_byte_at_in_and_out_of_bounds() {
         option::Option[u8]::Some(b) => { assert false; }
         option::Option[u8]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -902,7 +895,6 @@ fn text_slice_views_range() {
         option::Option[str]::Some(s) => { assert s == "ell"; }
         option::Option[str]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -912,7 +904,6 @@ fn text_slice_out_of_bounds_is_none() {
         option::Option[str]::Some(s) => { assert false; }
         option::Option[str]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -922,7 +913,6 @@ fn text_slice_inverted_is_none() {
         option::Option[str]::Some(s) => { assert false; }
         option::Option[str]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -1154,7 +1144,6 @@ fn text_split_on_sep() {
         option::Option[str]::Some(last) => { assert last == "ccc"; }
         option::Option[str]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1286,7 +1275,6 @@ fn text_c_str_counts_without_nul() {
         option::Option[CString]::Some(cs) => { assert cs.count() == (2 as usize); }
         option::Option[CString]::None => { assert false; }
     }
-    return;
 }
 
 // ── Eq / Hash (key role for stdlib/string_map) ──
@@ -1367,7 +1355,6 @@ fn from_utf8_valid_ascii_roundtrips() {
         option::Option[Text]::Some(t) => { assert t.equals("hi"); }
         option::Option[Text]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1380,7 +1367,6 @@ fn from_utf8_valid_multibyte_is_kept_verbatim() {
         option::Option[Text]::Some(t) => { assert t.count() == (2 as usize); }
         option::Option[Text]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1390,7 +1376,6 @@ fn from_utf8_empty_is_valid_and_empty() {
         option::Option[Text]::Some(t) => { assert t.is_empty(); }
         option::Option[Text]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1401,7 +1386,6 @@ fn from_utf8_rejects_lone_continuation_byte() {
         option::Option[Text]::Some(_t) => { assert false; }
         option::Option[Text]::None => { }
     }
-    return;
 }
 
 #[test]
@@ -1412,7 +1396,6 @@ fn from_utf8_rejects_truncated_multibyte() {
         option::Option[Text]::Some(_t) => { assert false; }
         option::Option[Text]::None => { }
     }
-    return;
 }
 
 #[test]
@@ -1426,7 +1409,6 @@ fn from_utf8_rejects_surrogate() {
         option::Option[Text]::Some(_t) => { assert false; }
         option::Option[Text]::None => { }
     }
-    return;
 }
 
 #[test]
@@ -1439,7 +1421,6 @@ fn from_utf8_rejects_overlong_encoding() {
         option::Option[Text]::Some(_t) => { assert false; }
         option::Option[Text]::None => { }
     }
-    return;
 }
 
 #[test]
@@ -1457,7 +1438,6 @@ fn from_utf8_accepts_max_scalar_and_rejects_above() {
         option::Option[Text]::Some(_t) => { assert false; }
         option::Option[Text]::None => { }
     }
-    return;
 }
 
 #[test]
@@ -1469,7 +1449,6 @@ fn intern_view_outlives_its_source_text() {
     }
     assert key.count() == (6 as usize);
     assert key.compare("row_42") == (0 as i32);
-    return;
 }
 
 #[test]
@@ -1479,7 +1458,6 @@ fn intern_dedups_equal_strings_to_one_pointer() {
     let b: str = intern(t);
     assert ({ #str_ptr(a) } as usize) == ({ #str_ptr(b) } as usize);
     assert a.compare(b) == (0 as i32);
-    return;
 }
 
 #[test]
@@ -1489,12 +1467,10 @@ fn intern_distinct_strings_get_distinct_bytes() {
     assert ({ #str_ptr(a) } as usize) != ({ #str_ptr(b) } as usize);
     assert a.compare("alpha_key") == (0 as i32);
     assert b.compare("beta_key") == (0 as i32);
-    return;
 }
 
 #[test]
 fn intern_empty_is_empty() {
     let e: str = intern("");
     assert e.is_empty();
-    return;
 }

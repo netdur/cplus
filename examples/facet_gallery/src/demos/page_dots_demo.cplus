@@ -16,35 +16,32 @@ struct PageDotsDemo {
 }
 
 impl PageDotsDemo {
-    fn new() -> PageDotsDemo { return PageDotsDemo { pos: 0 as i64 }; }
+    fn new() -> PageDotsDemo { return PageDotsDemo { pos: 0 }; }
 
     fn paint(ref this) {
         match page_dots::find("pd:dots") {
             option::Option[page_dots::PageDots]::Some(d) => {
                 let _d: page_dots::PageDots = d.set_position(this.pos);
             }
-            option::Option[page_dots::PageDots]::None => { }
+            option::Option::None => { }
         }
         match label::find("pd:status") {
             option::Option[label::Label]::Some(l) => {
                 let p: i32 = this.pos as i32;
                 let _l: label::Label = l.set_text("position: ${p} / 4");
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 
     fn go_prev(ref this, sender: *u8) {
-        if this.pos > (0 as i64) { this.pos = this.pos -% (1 as i64); }
+        if this.pos > 0 { this.pos = this.pos -% 1; }
         this.paint();
-        return;
     }
 
     fn go_next(ref this, sender: *u8) {
-        if this.pos < (4 as i64) { this.pos = this.pos +% (1 as i64); }
+        if this.pos < 4 { this.pos = this.pos +% 1; }
         this.paint();
-        return;
     }
 }
 
@@ -53,22 +50,22 @@ impl PageDotsDemo: component::Component {
         var body: core::Builder = core::Builder::new();
         body.add(shell::caption("page_dots  ·  page indicator"));
         body.add(ui::page_dots(
-            5 as i64,
+            5,
             key: "pd:dots",
-            position: 0 as i64,
+            position: 0,
             selected_dot_color: vocab::Color::primary(),
         ));
         var row: core::Builder = core::Builder::new();
         row.add(ui::button("Previous", key: "pd:prev", on_click: this.go_prev));
         row.add(ui::button("Next", key: "pd:next", on_click: this.go_next));
-        body.add(core::row(row).gap(8.0f64));
+        body.add(core::row(row).gap(8.0));
         body.add(ui::label("position: 0 / 4", key: "pd:status",
-            font_size: 13.0f64, text_color: vocab::Color::ink(0.7f64)));
+            font_size: 13.0, text_color: vocab::Color::ink(0.7)));
 
         return shell::panel(
             "Page dots",
             "Indicator for a paged surface (carousel, onboarding). Drive position from the host.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "ui::page_dots(5, key: \"d\", position: 0)\npage_dots::find(\"d\").set_position(2)",
         );
     }

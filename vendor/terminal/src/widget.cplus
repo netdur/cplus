@@ -56,7 +56,6 @@ impl Widget {
 
     fn send(this, bytes: str) {
         this._backend.send(bytes);
-        return;
     }
 
     // Give the terminal the keyboard, so the user can type into the shell the
@@ -82,7 +81,6 @@ impl Widget {
 
     fn stop(this) {
         this._backend.stop();
-        return;
     }
 
     // ---- driving commands ---------------------------------------------------
@@ -109,7 +107,6 @@ impl Widget {
     // Interrupt whatever is running, as ^C does.
     fn interrupt(this) {
         this._backend.interrupt();
-        return;
     }
 
     // Empty the pane: the screen and the scrollback both, without sending the
@@ -121,7 +118,6 @@ impl Widget {
     // under it. Ask `command_state` first if that matters.
     fn clear(this) {
         this._backend.clear();
-        return;
     }
 
     fn has_integration(this) -> bool { return this._backend.has_integration(); }
@@ -148,13 +144,11 @@ impl Widget {
     // Called on the main thread once per command that finishes.
     fn on_command_end(this, handler: fn(*u8), ctx: *u8 = 0 as *u8) {
         this._backend.on_command_end(handler, ctx);
-        return;
     }
 
     // Called once when the shell itself goes away.
     fn on_exit(this, handler: fn(*u8), ctx: *u8 = 0 as *u8) {
         this._backend.on_exit(handler, ctx);
-        return;
     }
 
     fn shell_exit_code(this) -> option::Option[i32] { return this._backend.shell_exit_code(); }

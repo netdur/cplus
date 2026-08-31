@@ -84,7 +84,6 @@ fn install() {
     // The delegate fan-out: the application-level moments an SDK package needs
     // a share of. Armed once per process and never disarmed — see arm().
     app_events_appkit::arm();
-    return;
 }
 
 fn installed() -> bool { return INSTALLED; }
@@ -100,7 +99,6 @@ fn uninstall() {
     theme::set_is_dark_fn(0 as fn() -> bool);
     theme::set_theme_changed_fn(0 as fn());
     INSTALLED = false;
-    return;
 }
 
 // ---- theme changed -----------------------------------------------------------
@@ -116,10 +114,9 @@ fn theme_changed() {
     let n: usize = app::window_count();
     while i < n {
         let r: *core::Node = app::window_root(i);
-        if r != (0 as *core::Node) { repaint_walk(r); }
+        if r.is_not_null() { repaint_walk(r); }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 fn repaint_walk(n: *core::Node) {
@@ -151,5 +148,4 @@ fn repaint_walk(n: *core::Node) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }

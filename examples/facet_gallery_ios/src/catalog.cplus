@@ -57,32 +57,32 @@ const SEC_NOTES: str = "sec:notes";
 
 // The demo a leaf id names. -1 for a branch or an id nobody claimed, which is
 // what `on_select` checks before it swaps anything in.
-const DEMO_NONE: i64 = 0 as i64 - (1 as i64);
-const DEMO_BUTTON: i64 = 0 as i64;
-const DEMO_VALUES: i64 = 1 as i64;
-const DEMO_SWITCHES: i64 = 2 as i64;
-const DEMO_INDICATORS: i64 = 3 as i64;
-const DEMO_TYPE: i64 = 4 as i64;
-const DEMO_FIELDS: i64 = 5 as i64;
-const DEMO_KEYBOARDS: i64 = 6 as i64;
-const DEMO_RADIUS: i64 = 7 as i64;
-const DEMO_BRUSH: i64 = 8 as i64;
-const DEMO_SHADOW: i64 = 9 as i64;
-const DEMO_CLIP: i64 = 10 as i64;
-const DEMO_TRANSFORM: i64 = 11 as i64;
-const DEMO_FADE: i64 = 12 as i64;
-const DEMO_SPIN: i64 = 13 as i64;
-const DEMO_POP: i64 = 14 as i64;
-const DEMO_ENTRANCE: i64 = 15 as i64;
-const DEMO_DEAD: i64 = 16 as i64;
-const DEMO_CANVAS: i64 = 17 as i64;
-const DEMO_SWIPE: i64 = 18 as i64;
-const DEMO_RADIO: i64 = 19 as i64;
-const DEMO_SPLIT: i64 = 20 as i64;
-const DEMO_LIST: i64 = 21 as i64;
-const DEMO_CANNOT: i64 = 22 as i64;
-const DEMO_REFRESH: i64 = 23 as i64;
-const DEMO_RESPONSIVE: i64 = 24 as i64;
+const DEMO_NONE: i64 = 0 - 1;
+const DEMO_BUTTON: i64 = 0;
+const DEMO_VALUES: i64 = 1;
+const DEMO_SWITCHES: i64 = 2;
+const DEMO_INDICATORS: i64 = 3;
+const DEMO_TYPE: i64 = 4;
+const DEMO_FIELDS: i64 = 5;
+const DEMO_KEYBOARDS: i64 = 6;
+const DEMO_RADIUS: i64 = 7;
+const DEMO_BRUSH: i64 = 8;
+const DEMO_SHADOW: i64 = 9;
+const DEMO_CLIP: i64 = 10;
+const DEMO_TRANSFORM: i64 = 11;
+const DEMO_FADE: i64 = 12;
+const DEMO_SPIN: i64 = 13;
+const DEMO_POP: i64 = 14;
+const DEMO_ENTRANCE: i64 = 15;
+const DEMO_DEAD: i64 = 16;
+const DEMO_CANVAS: i64 = 17;
+const DEMO_SWIPE: i64 = 18;
+const DEMO_RADIO: i64 = 19;
+const DEMO_SPLIT: i64 = 20;
+const DEMO_LIST: i64 = 21;
+const DEMO_CANNOT: i64 = 22;
+const DEMO_REFRESH: i64 = 23;
+const DEMO_RESPONSIVE: i64 = 24;
 
 fn demo_for(id: str) -> i64 {
     if id == NAV_BUTTON { return DEMO_BUTTON; }
@@ -125,7 +125,7 @@ fn demo_for(id: str) -> i64 {
 // Prefixed rather than bare, so a row id can never collide with a `key:`
 // somewhere else in the app — the two share one namespace on the surface.
 fn row_key(node: *tree::TreeNode, ctx: *u8) -> text::Text {
-    if node == (0 as *tree::TreeNode) { return text::new(); }
+    if node.is_null() { return text::new(); }
     let id: str = { (*node).id_of() };
     return "row:${id}";
 }
@@ -207,5 +207,4 @@ fn expand_all(t: tree::Tree) {
     let _l: tree::Tree = t.expand(SEC_LAYOUT);
     let _f: tree::Tree = t.expand(SEC_COLLECTIONS);
     let _g: tree::Tree = t.expand(SEC_NOTES);
-    return;
 }

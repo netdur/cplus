@@ -16,10 +16,10 @@ struct Tables {
 
 fn data_row(a: str, b: str, c: str) -> core::Node {
     var r: core::Builder = core::Builder::new();
-    r.add(ui::label(a, key: "", font_size: 13.0f64, text_color: vocab::Color::ink()).grow(1.0f64));
-    r.add(ui::label(b, key: "", font_size: 13.0f64, text_color: vocab::Color::ink(0.7f64)).grow(1.0f64));
-    r.add(ui::label(c, key: "", font_size: 13.0f64, text_color: vocab::Color::ink(0.7f64)).grow(1.0f64));
-    return core::row(r).padding(8.0f64).gap(8.0f64);
+    r.add(ui::label(a, key: "", font_size: 13.0, text_color: vocab::Color::ink()).grow(1.0));
+    r.add(ui::label(b, key: "", font_size: 13.0, text_color: vocab::Color::ink(0.7)).grow(1.0));
+    r.add(ui::label(c, key: "", font_size: 13.0, text_color: vocab::Color::ink(0.7)).grow(1.0));
+    return core::row(r).padding(8.0).gap(8.0);
 }
 
 impl Tables {
@@ -33,45 +33,45 @@ impl Tables: component::Component {
         body.add(ui::label(
             "TableView is a host: put a column of rows (or a custom grid) into @content. Style and row_height configure chrome.",
             key: "tb:note",
-            font_size: 13.0f64,
-            text_color: vocab::Color::ink(0.65f64),
-            max_lines: 4 as i64,
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.65),
+            max_lines: 4,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
         var header: core::Builder = core::Builder::new();
-        header.add(ui::label("Name", key: "", font_size: 12.0f64,
-            font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink(0.55f64)).grow(1.0f64));
-        header.add(ui::label("Role", key: "", font_size: 12.0f64,
-            font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink(0.55f64)).grow(1.0f64));
-        header.add(ui::label("Status", key: "", font_size: 12.0f64,
-            font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink(0.55f64)).grow(1.0f64));
+        header.add(ui::label("Name", key: "", font_size: 12.0,
+            font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink(0.55)).grow(1.0));
+        header.add(ui::label("Role", key: "", font_size: 12.0,
+            font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink(0.55)).grow(1.0));
+        header.add(ui::label("Status", key: "", font_size: 12.0,
+            font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink(0.55)).grow(1.0));
 
         var doc: core::Builder = core::Builder::new();
-        doc.add(core::row(header).padding(8.0f64).gap(8.0f64));
+        doc.add(core::row(header).padding(8.0).gap(8.0));
         doc.add(data_row("Ada", "Engineer", "Active"));
         doc.add(data_row("Grace", "Architect", "Active"));
         doc.add(data_row("Alan", "Research", "Away"));
         doc.add(data_row("Edsger", "Reviewer", "Active"));
-        var content: core::Node = core::column(doc).gap(0.0f64);
+        var content: core::Node = core::column(doc).gap(0.0);
 
         var host: core::Node = ui::table(
             key: "tb:host",
-            row_height: 36 as i64,
+            row_height: 36,
             style: vocab::TableStyle::Data,
-        ).height(220.0f64).grow(1.0f64);
+        ).height(220.0).grow(1.0);
         match table::find("tb:host", within: #addr_of(host)) {
             option::Option[table::Table]::Some(t) => {
                 let _c: table::Table = t.set_content(content);
             }
-            option::Option[table::Table]::None => { }
+            option::Option::None => { }
         }
         body.add(host);
 
         return shell::panel(
             "Table",
             "Host for tabular content. Fill via set_content; list/collection cover recycled data grids.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "var h = ui::table(key: \"t\", row_height: 36);\nmatch table::find(\"t\", within: #addr_of(h)) {\n  Some(t) => { t.set_content(rows); }\n  None => {}\n}",
         );
     }

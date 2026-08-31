@@ -52,7 +52,7 @@ fn os_version_raw() -> text::Text {
     if len == (0 as usize) { return empty; }
 
     let buf: *u8 = { malloc(len) };
-    if buf == (0 as *u8) { return empty; }
+    if buf.is_null() { return empty; }
     let rc: i32 = { sysctlbyname(#str_ptr(key), buf, #addr_of(len), 0 as *u8, 0 as usize) };
     if rc != (0 as i32) { free(buf); return empty; }
 

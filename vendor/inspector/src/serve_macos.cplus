@@ -1,7 +1,0 @@
-// The macOS half of `serve`. Everything it does is in `inspector/appkit`,
-// which predates this seam and is named in the package's docs — so this
-// forwards rather than moving 300 lines to a new filename.
-
-import "./appkit" as platform;
-
-fn serve_if_asked() { platform::serve_if_asked(); return; }

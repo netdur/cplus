@@ -133,8 +133,7 @@ fn set_agent_pin_fn(f: fn(*u8, vocab::Agent)) { AGENT_PIN_FN = f; return; }
 // serving, which is every app that never called `agent::enable()`.
 fn agent_pin(view: *u8, a: vocab::Agent) {
     let f: fn(*u8, vocab::Agent) = AGENT_PIN_FN;
-    if f != (0 as fn(*u8, vocab::Agent)) { f(view, a); }
-    return;
+    if f.is_not_null() { f(view, a); }
 }
 
 static ACTIVATE_FN: fn(*u8) = #zero::[fn(*u8)]();
@@ -144,8 +143,7 @@ fn set_activate_fn(f: fn(*u8)) { ACTIVATE_FN = f; return; }
 // every app that never called `agent::enable()`.
 fn agent_attach(win: *u8) {
     let f: fn(*u8) = AGENT_ATTACH_FN;
-    if f != (0 as fn(*u8)) { f(win); }
-    return;
+    if f.is_not_null() { f(win); }
 }
 
 // ---- the agent install seam ---------------------------------------------------
@@ -172,7 +170,6 @@ fn install_agent(take h: AgentHooks) {
     AGENT_ATTACH_FN = h.attach_window;
     AGENT_PIN_FN = h.pin_policy;
     AGENT_SERVE_FN = h.serve_once;
-    return;
 }
 
 // Serve one agent connection on `path`. The runtime facades call this when
@@ -181,12 +178,11 @@ fn install_agent(take h: AgentHooks) {
 // error, not a quiet no-op.
 fn agent_serve_once(path: str) {
     let f: fn(str) = AGENT_SERVE_FN;
-    if f == (0 as fn(str)) {
+    if f.is_null() {
         io::println("facet: agent_mcp path set but the agent module is not enabled — import \"facet/agent\" and call agent::enable() before app.run");
         return;
     }
     f(path);
-    return;
 }
 
 // ---- navigation state (owned by the app) -------------------------------------
@@ -265,20 +261,19 @@ static DEFAULT: Application = #zero::[Application]();
 // Application.Current, exactly: the running app, or the process default
 // (the app-less posture tests and bare mounts run in).
 fn current() -> *Application {
-    if RUNNING != (0 as *Application) { return RUNNING; }
+    if RUNNING.is_not_null() { return RUNNING; }
     return #addr_of(DEFAULT);
 }
 
 // `App::run` points the door here; quitting calls release. Not app-facing.
 fn make_current(s: *Application) { RUNNING = s; return; }
 fn release_current() { RUNNING = 0 as *Application; return; }
-fn has_current() -> bool { return RUNNING != (0 as *Application); }
+fn has_current() -> bool { return RUNNING.is_not_null(); }
 
 // Tests: a fresh default state, so one test's app state cannot leak into
 // the next. Only meaningful when nothing is running.
 fn reset_default_for_tests() {
     DEFAULT = Application::new();
-    return;
 }
 
 // ---- windows ----------------------------------------------------------------
@@ -287,7 +282,6 @@ fn reset_default_for_tests() {
 fn open_window(root: *flex::Node) {
     let s: *Application = current();
     { (*s).windows.append(Window { root: root, native: 0 as *u8 }) };
-    return;
 }
 
 // Application.CloseWindow.
@@ -306,7 +300,6 @@ fn close_window(root: *flex::Node) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // Bring a window to the front and give it the keyboard. Opening and closing
@@ -318,10 +311,9 @@ fn close_window(root: *flex::Node) {
 // half of facet is portable and knows no AppKit. The backend fills it in.
 fn activate_window(root: *flex::Node) {
     let f: fn(*u8) = ACTIVATE_FN;
-    if f == (0 as fn(*u8)) { return; }
+    if f.is_null() { return; }
     let w: *u8 = window_native(root);
-    if w != (0 as *u8) { f(w); }
-    return;
+    if w.is_not_null() { f(w); }
 }
 
 // The platform window behind `root`, and the backend's door to record it.
@@ -347,7 +339,6 @@ fn set_window_native(root: *flex::Node, p: *u8) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // 0 when the root is not an open window of the running app, or when no
@@ -372,7 +363,7 @@ fn window_native(root: *flex::Node) -> *u8 {
 // delegate needs: AppKit hands back an NSWindow, and the app must find which
 // of its trees that is. 0 for a handle no window carries.
 fn window_root_for_native(p: *u8) -> *flex::Node {
-    if p == (0 as *u8) { return 0 as *flex::Node; }
+    if p.is_null() { return 0 as *flex::Node; }
     let s: *Application = current();
     var i: usize = 0 as usize;
     let n: usize = { (*s).windows.count() };
@@ -386,6 +377,35 @@ fn window_root_for_native(p: *u8) -> *flex::Node {
         i = i +% (1 as usize);
     }
     return 0 as *flex::Node;
+}
+
+// EVERY root shown in one native window, oldest first.
+//
+// `window_root_for_native` answers the FIRST, which is right when a platform
+// gives each screen its own window — macOS does, so a pushed screen is a window
+// and has its own record. iOS does not: `nav::push` puts the pushed tree into a
+// view controller inside the SAME UIWindow, so one handle legitimately carries
+// several roots and a reader that stops at the first goes blind the moment a
+// screen is pushed or a sheet comes up.
+//
+// The agent surface is the caller that needs all of them: it describes what is
+// on screen, and a pushed screen is on screen.
+fn window_roots_for_native(p: *u8) -> vec::Vec[*flex::Node] {
+    var out: vec::Vec[*flex::Node] = vec::new::[*flex::Node]();
+    if p.is_null() { return out; }
+    let s: *Application = current();
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).windows.count() };
+    while i < n {
+        match { (*s).windows.at_ptr(i) } {
+            option::Option[*Window]::Some(w) => {
+                if { (*w).native } == p { out.append({ (*w).root }); }
+            }
+            option::Option[*Window]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
 }
 
 fn window_count() -> usize {
@@ -441,7 +461,6 @@ fn the_native_handle_is_per_window_not_per_process() {
     assert window_native(#addr_of(b)) == (22 as *u8);
     assert window_native(#addr_of(a)) == (0 as *u8);
     reset_default_for_tests();
-    return;
 }
 
 #[test]
@@ -460,5 +479,4 @@ fn native_window_readers_are_inert_off_the_window_list() {
     assert window_root_for_native(404 as *u8) == (0 as *flex::Node);
     close_window(#addr_of(lone));
     reset_default_for_tests();
-    return;
 }

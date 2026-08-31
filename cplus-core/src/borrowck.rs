@@ -3089,6 +3089,25 @@ struct Analyzer<'p> {
     /// cleanup — releasing the borrower decrements every source's
     /// `BorrowedShared(N)` count.
     binding_borrows_from: HashMap<String, Vec<Place>>,
+    /// NLL precision: borrowers whose last mention is the CONDITION of the
+    /// `if` that is a whole statement, and which are therefore dead before
+    /// either arm runs.
+    ///
+    /// The release schedule works in whole top-level statements, so an `if`
+    /// is one point and a name mentioned anywhere inside it — condition
+    /// included — stayed live until the statement finished. That made
+    /// `if !looks_at(p) { s.put(v) }` an E0372 while the straight-line
+    /// spelling of the same program was accepted: the only difference is
+    /// WHERE the last use sits, and a condition is evaluated to completion
+    /// before an arm is entered.
+    ///
+    /// Carried on the analyzer rather than threaded through `apply_expr`
+    /// because the two facts live at different levels: which names are due
+    /// is a property of the enclosing BLOCK's schedule, and the release
+    /// point is inside the expression walk. The span pins it to the exact
+    /// `if` the statement is, so an `if` nested inside the condition cannot
+    /// consume a release meant for the outer one.
+    nll_cond_release: Option<(Span, Vec<String>)>,
 }
 
 /// Diagnostic with a `Span` only; the caller converts to a full
@@ -3118,6 +3137,7 @@ impl<'p> Analyzer<'p> {
             diags: Vec::new(),
             live_borrows: BTreeMap::new(),
             binding_borrows_from: HashMap::new(),
+            nll_cond_release: None,
         }
     }
 
@@ -6360,7 +6380,9 @@ impl Analyzer<'_> {
 
         let nll = self.nll_release_schedule(body);
         for (i, stmt) in body.stmts.iter().enumerate() {
+            self.nll_cond_release = self.cond_only_releases(stmt, &nll[i]);
             self.apply_stmt(stmt, &mut state);
+            self.nll_cond_release = None;
             // NLL: end borrows whose last mention was this statement.
             for name in &nll[i] {
                 self.drop_borrower(name, &mut state);
@@ -6371,7 +6393,9 @@ impl Analyzer<'_> {
             });
         }
         if let Some(tail) = &body.tail {
+            self.nll_cond_release = self.tail_cond_releases(tail);
             self.apply_expr(tail, &mut state);
+            self.nll_cond_release = None;
         }
         points.push(PointSnapshot {
             label: "exit".into(),
@@ -6652,6 +6676,131 @@ impl Analyzer<'_> {
         schedule
     }
 
+    /// Which of the borrowers due for release at this statement are dead
+    /// before the statement's `if` enters an arm.
+    ///
+    /// `nll_release_schedule` works in whole top-level statements, so an `if`
+    /// is one release point and a name mentioned anywhere inside it stays
+    /// live to the end of it. For a name mentioned only in the CONDITION that
+    /// is too coarse: the condition is evaluated to completion before either
+    /// arm runs, so the borrow is already dead when the arm moves the owner.
+    /// That coarseness rejected
+    ///
+    /// ```text
+    /// if !looks_at(p) { let _r: i32 = s.put(v); }
+    /// ```
+    ///
+    /// while accepting the same program written straight-line, which is the
+    /// one shape a person reaches for when the question is "is it already
+    /// there? if not, move it in".
+    ///
+    /// ONLY WHEN THE `if` IS THE WHOLE STATEMENT — a bare `if`, or a
+    /// `let x = if …;`. An `if` buried in a larger expression does not
+    /// qualify: in `f(if p.ok() { s.put(v) } else { 0 }, g(p))` a sibling
+    /// still reads `p` after the arms, and releasing before them would admit
+    /// the arm's move and leave that read dangling. The mention must also be
+    /// IN the condition and in NEITHER arm; a name the schedule retires here
+    /// for some other reason keeps the release point it had.
+    fn cond_only_releases(&self, st: &Stmt, due: &[String]) -> Option<(Span, Vec<String>)> {
+        use std::collections::BTreeSet;
+        let e = match &st.kind {
+            StmtKind::Expr(e) => e,
+            StmtKind::Let { init: Some(e), .. } => e,
+            _ => return None,
+        };
+        let ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } = &e.kind
+        else {
+            return None;
+        };
+        let mut in_cond: BTreeSet<String> = BTreeSet::new();
+        crate::ast::visit_exprs(cond, &mut |x| {
+            if let ExprKind::Ident(n) = &x.kind {
+                in_cond.insert(n.clone());
+            }
+        });
+        let mut in_arms: BTreeSet<String> = BTreeSet::new();
+        crate::ast::visit_exprs_in_block(then, &mut |x| {
+            if let ExprKind::Ident(n) = &x.kind {
+                in_arms.insert(n.clone());
+            }
+        });
+        if let Some(eb) = else_branch {
+            crate::ast::visit_exprs(eb, &mut |x| {
+                if let ExprKind::Ident(n) = &x.kind {
+                    in_arms.insert(n.clone());
+                }
+            });
+        }
+        let names: Vec<String> = due
+            .iter()
+            .filter(|n| in_cond.contains(*n) && !in_arms.contains(*n))
+            .cloned()
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+        Some((e.span, names))
+    }
+
+    /// The same release, for a block whose TAIL is an `if`.
+    ///
+    /// A tail is pinned to scope exit by `nll_release_schedule`, and rightly:
+    /// the block's value may itself borrow, so a name mentioned in the tail
+    /// cannot be retired at some earlier statement. A name mentioned only in
+    /// the tail's CONDITION is the exception — the condition runs to
+    /// completion before either arm, and the block's value comes from an arm,
+    /// so that name cannot be in it.
+    ///
+    /// Unpinning it in the schedule would be wrong: the schedule can only
+    /// name a STATEMENT to release at, and every statement is before the tail
+    /// — which would release the borrow before code that still reads it. This
+    /// releases at the one point that is both after the last read and before
+    /// the arms, which is a point only the expression walk can see.
+    fn tail_cond_releases(&self, tail: &Expr) -> Option<(Span, Vec<String>)> {
+        use std::collections::BTreeSet;
+        let ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } = &tail.kind
+        else {
+            return None;
+        };
+        let mut in_cond: BTreeSet<String> = BTreeSet::new();
+        crate::ast::visit_exprs(cond, &mut |x| {
+            if let ExprKind::Ident(n) = &x.kind {
+                in_cond.insert(n.clone());
+            }
+        });
+        let mut in_arms: BTreeSet<String> = BTreeSet::new();
+        crate::ast::visit_exprs_in_block(then, &mut |x| {
+            if let ExprKind::Ident(n) = &x.kind {
+                in_arms.insert(n.clone());
+            }
+        });
+        if let Some(eb) = else_branch {
+            crate::ast::visit_exprs(eb, &mut |x| {
+                if let ExprKind::Ident(n) = &x.kind {
+                    in_arms.insert(n.clone());
+                }
+            });
+        }
+        // Only actual borrowers: this set is not filtered by a release
+        // schedule, so it is narrowed to the bindings that hold a loan at all.
+        let names: Vec<String> = in_cond
+            .into_iter()
+            .filter(|n| !in_arms.contains(n) && self.binding_borrows_from.contains_key(n))
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+        Some((tail.span, names))
+    }
+
     /// Walk a block whose state must be scope-restricted to bindings that
     /// existed at `outer`. Bindings introduced inside the block are
     /// discarded from `state` on exit so they don't leak to subsequent
@@ -6664,7 +6813,9 @@ impl Analyzer<'_> {
     ) {
         let nll = self.nll_release_schedule(b);
         for (i, s) in b.stmts.iter().enumerate() {
+            self.nll_cond_release = self.cond_only_releases(s, &nll[i]);
             self.apply_stmt(s, state);
+            self.nll_cond_release = None;
             // NLL: this statement was the last mention of these borrowers —
             // their borrows end here, not at scope exit.
             for name in &nll[i] {
@@ -6672,7 +6823,9 @@ impl Analyzer<'_> {
             }
         }
         if let Some(t) = &b.tail {
+            self.nll_cond_release = self.tail_cond_releases(t);
             self.apply_expr(t, state);
+            self.nll_cond_release = None;
         }
         // 5BC.3b: release any borrows held by bindings that are about to
         // be dropped (block-local bindings not present in `outer`).
@@ -6819,6 +6972,18 @@ impl Analyzer<'_> {
                 else_branch,
             } => {
                 self.apply_expr(cond, state);
+                // The condition has run to completion. Any borrower whose
+                // last mention was in it is dead before either arm is
+                // entered, so a move in an arm invalidates nothing.
+                if let Some((sp, names)) = &self.nll_cond_release {
+                    if *sp == e.span {
+                        let due = names.clone();
+                        self.nll_cond_release = None;
+                        for n in &due {
+                            self.drop_borrower(n, state);
+                        }
+                    }
+                }
                 let pre = state.clone();
                 let mut then_state = pre.clone();
                 self.walk_block_in_scope(then, &mut then_state, &pre);
@@ -7364,24 +7529,38 @@ impl Analyzer<'_> {
         } = &callee.kind
         {
             if let ExprKind::Ident(recv_name) = &receiver.kind {
-                // NOTE (2026-08-28): matching only `Path` here means a method
-                // call on a GENERIC-typed receiver (`Vec[T]`, `Box[T]`,
-                // `Option[T]`, `Mutex[T]`) carries no flags at all — no move
-                // flags, no `ref` flags, no receiver claim — so E0372 and the
-                // whole intra-call family (E0380/E0381/E0382/E0374) skip it
-                // while firing on the concrete-receiver spelling of the same
-                // call. Extending the match to `Generic` closes it in three
-                // lines and every suite stays green, but it then rejects real
-                // code through a SEPARATE precision bug: a view whose last use
-                // is an `if` condition is still treated as live inside the
-                // branch body, so `if !seen(p) { out.append(pg); }` reports
-                // E0372 against a borrow that NLL should already have ended.
-                // Fix that first. See
-                // bugs/generic-receiver-method-calls-carry-no-borrow-flags.md.
+                // A GENERIC-TYPED RECEIVER RESOLVES TOO.
+                //
+                // Matching only `Path` meant a call on `Vec[T]`, `Box[T]`,
+                // `Option[T]`, `Mutex[T]`, `Arc[T]` or `HashMap[K, V]` —
+                // `TypeKind::Generic`, not `Path` — found no `FnEntry` and
+                // carried NO flags at all: no move flags, no `ref` flags, no
+                // receiver claim. So `s.put(t)` was rejected under a live view
+                // and `vs.append(t)` was silent, same call, same rule. The
+                // whole intra-call family went with it — E0372, E0380, E0381,
+                // E0382, E0374 and the cross-statement `ref`-argument check,
+                // every one of which fires on the concrete spelling.
+                //
+                // The method table is keyed by the impl target's WRITTEN name,
+                // so `Vec[Text]` finds `Vec.append` exactly as `Sink` finds
+                // `Sink.put`. The `#[keeps(this)]` tie a few lines below
+                // already resolved through `keeps_flags_for_receiver_ty`,
+                // which handles both; this lookup was the odd one out.
+                //
+                // Held back until 2026-08-30 because it exposed a SEPARATE
+                // precision bug on real code — a view whose last use is an
+                // `if` condition stayed live inside the branch body, so
+                // `if !seen(p) { out.append(pg); }` reported E0372 against a
+                // borrow NLL had already ended. That is fixed
+                // (`cond_only_releases`), so this can land.
+                // bugs/generic-receiver-method-calls-carry-no-borrow-flags.md
                 let entry = self
                     .binding_type(recv_name)
                     .and_then(|bt| match &bt.kind {
-                        TypeKind::Path(type_name) => self
+                        TypeKind::Path(type_name)
+                        | TypeKind::Generic {
+                            name: type_name, ..
+                        } => self
                             .sigs
                             .methods
                             .get(&format!("{type_name}.{}", method.name)),
@@ -10804,6 +10983,247 @@ fn caller() {
         assert!(
             !codes.iter().any(|c| c == "E0381" || c == "E0383" || c == "E0372"),
             "a dead view borrower must release its owner; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_a_view_whose_last_use_is_a_branch_condition_is_dead_in_the_body() {
+        // TWO SPELLINGS OF ONE PROGRAM. Straight-line, the view is dead at the
+        // move and the move is admitted; with the same last use moved into an
+        // `if` CONDITION it was refused. A condition is evaluated to
+        // completion before an arm runs, so nothing about the borrow differs —
+        // only where the last use sits.
+        //
+        // The shape is "is it already there? if not, move it in", which is
+        // what a person writes; iris/src/services/settings.cplus:520 is
+        // exactly it.
+        // bugs/a-view-whose-last-use-is-a-branch-condition-stays-live-in-the-body.md
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if !looks(p) { let r: i32 = s.put(v); }
+  let done: i32 = 0;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "a view whose last use is the condition is dead in the body; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_the_same_relaxation_reaches_a_block_tail_if() {
+        // A tail is pinned to scope exit because the block's VALUE may borrow.
+        // A name in the tail's condition cannot be in that value, so it gets
+        // the same treatment — and it has to, because a unit function ending
+        // in an `if` is the shape the bug was reported in.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if !looks(p) { let r: i32 = s.put(v); }
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "a tail `if`'s condition is still the last use; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_a_view_read_inside_the_arm_still_pins_the_owner() {
+        // The first thing the relaxation must not break: the view IS used in
+        // the body, after the move. Releasing at the condition here would
+        // hand the arm a dangling view.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if true { let r: i32 = s.put(v); let b: bool = looks(p); }
+  let done: i32 = 0;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a view read in the arm after the move must be refused; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_a_view_read_after_the_if_still_pins_the_owner() {
+        // The condition is not the last use if anything below the `if` reads
+        // it — and the release schedule already knows that, which is why the
+        // relaxation is filtered by it rather than deciding on its own.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if !looks(p) { let r: i32 = s.put(v); }
+  let b: bool = looks(p);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a view read after the `if` must still pin the owner; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_an_if_buried_in_a_call_does_not_get_the_relaxation() {
+        // WHY THE RELAXATION IS RESTRICTED TO A WHOLE STATEMENT. Here a
+        // SIBLING argument still reads the view after the arms have run, so
+        // releasing at the condition would admit the arm's move and leave that
+        // read dangling. The `if` is not the statement, so it does not
+        // qualify.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn two(a: i32, b: bool) -> i32 { return a; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  let q: i32 = two(if looks(p) { s.put(v) } else { 0 }, looks(p));
+  let done: i32 = 0;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "an `if` inside a larger expression must not release early; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_a_move_before_the_tail_condition_is_still_refused() {
+        // The tail relaxation releases AFTER the condition, never before. A
+        // move in a statement above it happens while the view is still live,
+        // and unpinning the name in the schedule instead — the obvious
+        // shortcut — would have admitted exactly this.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  let r: i32 = s.put(v);
+  if looks(p) { let n: i32 = 1; }
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a move above the tail condition must still be refused; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn a_generic_receiver_carries_the_same_borrow_flags_as_a_concrete_one() {
+        // SAME CALL, TWO SPELLINGS, TWO ANSWERS. The receiver's type decided
+        // whether the call was checked at all: `Vec[T]`, `Box[T]`, `Option[T]`,
+        // `Mutex[T]` are `TypeKind::Generic`, the lookup matched only `Path`,
+        // and a generic receiver resolved to no `FnEntry` — so no move flags,
+        // no `ref` flags, no receiver claim. Moving into `vs.append(t)` under
+        // a live view was silent while `s.put(t)` was correctly refused.
+        // bugs/generic-receiver-method-calls-carry-no-borrow-flags.md
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Bag[T] { n: i32 }
+impl Bag[T] { fn add(ref this, take v: T) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref g: Bag[B]) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  let r: i32 = g.add(v);
+  let b: bool = looks(p);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a move into a generic receiver's `take` param under a live view \
+             must be refused, exactly as the concrete spelling is; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn the_generic_receiver_check_does_not_reject_the_shape_it_was_held_back_for() {
+        // The two fixes are one change. Checking generic receivers exposed the
+        // NLL condition imprecision on real code — iris's
+        // `if !has(out, p) { out.append(pg); }` — which is why the three-line
+        // lookup sat unapplied. With `cond_only_releases` in place the unsound
+        // call is caught AND this stays accepted; without it, this is the
+        // false positive that made the trade a bad one.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Bag[T] { n: i32 }
+impl Bag[T] { fn add(ref this, take v: T) -> i32 { return 0; } }
+fn seen(s: str) -> bool { return true; }
+fn caller(ref g: Bag[B]) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if !seen(p) { let r: i32 = g.add(v); }
+  let done: i32 = 0;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "the view is dead at the condition; the move in the arm is fine; got {codes:?}"
         );
     }
 

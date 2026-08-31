@@ -21,13 +21,12 @@ struct AnimRules {
     pending: services::Cancellable,
 }
 
-fn slow() -> vocab::Duration { return vocab::Duration::of_seconds(0.8f64); }
+fn slow() -> vocab::Duration { return vocab::Duration::of_seconds(0.8); }
 
 // The second half of the two-tick fade: by the time the timer calls this, the
 // zero written below has been through a sync and card B really is invisible.
 fn fade_b_in(ctx: *u8) {
-    core::animate_opacity(mount::node(B), 1.0f64, slow(), vocab::Easing::SinOut);
-    return;
+    core::animate_opacity(mount::node(B), 1.0, slow(), vocab::Easing::SinOut);
 }
 
 impl AnimRules {
@@ -41,9 +40,8 @@ impl AnimRules {
     // this pair rather than leaving it silent.
     fn on_same_tick(ref this, sender: *u8) {
         let n: *core::Node = mount::node(A);
-        core::set_opacity(n, 0.0f64);
-        core::animate_opacity(n, 1.0f64, slow(), vocab::Easing::SinOut);
-        return;
+        core::set_opacity(n, 0.0);
+        core::animate_opacity(n, 1.0, slow(), vocab::Easing::SinOut);
     }
 
     // RIGHT. The zero gets its own apply, then the animation starts from it.
@@ -53,9 +51,8 @@ impl AnimRules {
     // nodes, so the snap and the animate would still collapse into one apply.
     // "A later turn" is the requirement, and a timer is what states it.
     fn on_two_ticks(ref this, sender: *u8) {
-        core::set_opacity(mount::node(B), 0.0f64);
-        this.pending = services::after(0.05f64, fade_b_in, 0 as *u8);
-        return;
+        core::set_opacity(mount::node(B), 0.0);
+        this.pending = services::after(0.05, fade_b_in, 0 as *u8);
     }
 
     // The transform is ONE matrix, so two verbs in a tick are one animation
@@ -67,9 +64,8 @@ impl AnimRules {
     // not play at all.
     fn on_compose(ref this, sender: *u8) {
         let n: *core::Node = mount::node(C);
-        core::animate_scale(n, 1.4f64, slow(), vocab::Easing::CubicInOut);
-        core::animate_rotation(n, 180.0f64, slow(), vocab::Easing::CubicInOut);
-        return;
+        core::animate_scale(n, 1.4, slow(), vocab::Easing::CubicInOut);
+        core::animate_rotation(n, 180.0, slow(), vocab::Easing::CubicInOut);
     }
 
     // ...and because it is one matrix, a snap to ANY part of it cancels the
@@ -77,9 +73,8 @@ impl AnimRules {
     // The turn below never plays: the scale write lands on the same channel.
     fn on_snap_cancels(ref this, sender: *u8) {
         let n: *core::Node = mount::node(C);
-        core::animate_rotation(n, 180.0f64, slow(), vocab::Easing::CubicInOut);
-        core::set_scale(n, 1.4f64);
-        return;
+        core::animate_rotation(n, 180.0, slow(), vocab::Easing::CubicInOut);
+        core::set_scale(n, 1.4);
     }
 
     fn on_reset(ref this, sender: *u8) {
@@ -89,11 +84,10 @@ impl AnimRules {
         core::cancel_animations(a);
         core::cancel_animations(b);
         core::cancel_animations(c);
-        core::set_opacity(a, 1.0f64);
-        core::set_opacity(b, 1.0f64);
-        core::set_scale(c, 1.0f64);
-        core::set_rotation(c, 0.0f64);
-        return;
+        core::set_opacity(a, 1.0);
+        core::set_opacity(b, 1.0);
+        core::set_scale(c, 1.0);
+        core::set_rotation(c, 0.0);
     }
 }
 
@@ -102,25 +96,25 @@ fn tile(key: str, caption: str) -> core::Node {
     inner.add(ui::label(
         caption,
         key: "",
-        font_size: 13.0f64,
+        font_size: 13.0,
         font_weight: vocab::FontWeight::Semibold,
-        text_color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
+        text_color: vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
     ));
     var n: core::Node = core::column(inner, key: key)
-        .padding(16.0f64)
-        .width(150.0f64)
-        .height(64.0f64);
+        .padding(16.0)
+        .width(150.0)
+        .height(64.0);
     n.set_background_color(vocab::Color::primary());
-    n.set_corner_radius(vocab::Corners::all(10.0f64));
+    n.set_corner_radius(vocab::Corners::all(10.0));
     return n;
 }
 
 fn stage(take content: core::Node) -> core::Node {
     var b: core::Builder = core::Builder::new();
     b.add(content);
-    var s: core::Node = core::column(b).padding(20.0f64).height(120.0f64);
+    var s: core::Node = core::column(b).padding(20.0).height(120.0);
     s.set_background_color(vocab::Color::sunken());
-    s.set_corner_radius(vocab::Corners::all(10.0f64));
+    s.set_corner_radius(vocab::Corners::all(10.0));
     return s;
 }
 
@@ -132,19 +126,19 @@ impl AnimRules: component::Component {
         var r1: core::Builder = core::Builder::new();
         r1.add(ui::button("Same tick (nothing happens)", key: "ru:same", on_click: this.on_same_tick));
         r1.add(ui::button("Two ticks (real fade)", key: "ru:two", on_click: this.on_two_ticks));
-        body.add(core::row(r1).gap(8.0f64));
+        body.add(core::row(r1).gap(8.0));
 
         var pair: core::Builder = core::Builder::new();
         pair.add(tile(A, "same tick"));
         pair.add(tile(B, "two ticks"));
-        body.add(stage(core::row(pair).gap(16.0f64)));
+        body.add(stage(core::row(pair).gap(16.0)));
 
         body.add(ui::label(
             "One field per property, one apply per tick. set_opacity(0) then animate_opacity(1) in one handler leaves 1 in the field and never shows the 0 — so there is nothing to animate from. facet prints a line naming the pair, because otherwise the only symptom is a card that does not move.",
             key: "ru:n1",
-            font_size: 12.0f64,
-            text_color: vocab::Color::ink(0.6f64),
-            max_lines: 5 as i64,
+            font_size: 12.0,
+            text_color: vocab::Color::ink(0.6),
+            max_lines: 5,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
@@ -153,22 +147,22 @@ impl AnimRules: component::Component {
         r2.add(ui::button("Compose (scale + turn)", key: "ru:comp", on_click: this.on_compose));
         r2.add(ui::button("Snap cancels the turn", key: "ru:snap", on_click: this.on_snap_cancels));
         r2.add(ui::button("Reset", key: "ru:reset", on_click: this.on_reset));
-        body.add(core::row(r2).gap(8.0f64));
+        body.add(core::row(r2).gap(8.0));
         body.add(stage(tile(C, "transform")));
 
         body.add(ui::label(
             "Scale, rotation and translation are nine numbers in one matrix, and a backend rebuilds all of it at once — so it cannot interpolate the rotation while snapping the scale. Two animate_* verbs in a tick compose into one animation; a set_* on any of the nine cancels a pending one outright.",
             key: "ru:n2",
-            font_size: 12.0f64,
-            text_color: vocab::Color::ink(0.6f64),
-            max_lines: 5 as i64,
+            font_size: 12.0,
+            text_color: vocab::Color::ink(0.6),
+            max_lines: 5,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
         return shell::panel(
             "Rules",
             "The two things about animate_* that the signatures do not show — both failing silently, both shown next to the spelling that works.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "// wrong — one tick, one field\nn.set_opacity(0.0); n.animate_opacity(to: 1.0);\n\n// right — the zero gets its own apply\nn.set_opacity(0.0);\nservices::run_on_main(fade_in, 0 as *u8);",
         );
     }

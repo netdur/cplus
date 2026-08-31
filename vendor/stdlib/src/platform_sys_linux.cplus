@@ -54,7 +54,7 @@ fn cpu_count_raw() -> usize {
 fn os_version_raw() -> text::Text {
     let empty: text::Text = text::from_str("");
     let buf: *u8 = { malloc(utsname_size()) };
-    if buf == (0 as *u8) { return empty; }
+    if buf.is_null() { return empty; }
     let rc: i32 = { uname(buf) };
     if rc != (0 as i32) { free(buf); return empty; }
 

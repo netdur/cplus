@@ -193,7 +193,6 @@ impl AppMenu {
     // Add a dividing rule to `menu` at this point.
     fn add_separator(ref this, menu: str) {
         this.items.append(MenuItem::separator(menu));
-        return;
     }
 
     // Drop every item in `menu` holding the CHORD `k`+`shift`+`alt` (keyless
@@ -224,7 +223,6 @@ impl AppMenu {
                 i = i +% (1 as usize);
             }
         }
-        return;
     }
 
     // Merge a screen's own items into this menu.
@@ -251,7 +249,6 @@ impl AppMenu {
                 option::Option[MenuItem]::None => { break; }
             }
         }
-        return;
     }
 }
 
@@ -402,13 +399,11 @@ fn sb_build_tramp[S: component::Component](p: *u8) -> Node {
 fn sb_attach_tramp[S: component::Lifecycle](p: *u8) {
     let q: *S = p as *S;
     { (*q).on_attach() };
-    return;
 }
 
 fn sb_detach_tramp[S: component::Lifecycle](p: *u8) {
     let q: *S = p as *S;
     { (*q).on_detach() };
-    return;
 }
 
 fn sb_chrome_tramp[S: Screen](p: *u8) -> Chrome {
@@ -424,7 +419,6 @@ fn sb_menu_items_tramp[S: Screen](p: *u8) -> vec::Vec[MenuItem] {
 // Reclaim the heap slot: the box drops the screen (drop_in_place) and frees.
 fn sb_drop_tramp[S](p: *u8) {
     let _b: box::Box[S] = box::from_raw::[S](p);
-    return;
 }
 
 impl ScreenBox {
@@ -442,7 +436,7 @@ impl ScreenBox {
         };
     }
 
-    fn valid(this) -> bool { return this._p != (0 as *u8); }
+    fn valid(this) -> bool { return this._p.is_not_null(); }
 
     // The boxed instance's address — the mount slot key (cp) its handlers
     // self-locate against.
@@ -458,14 +452,12 @@ impl ScreenBox {
         if !this.valid() { return; }
         let f: fn(*u8) = this._attach;
         f(this._p);
-        return;
     }
 
     fn on_detach(this) {
         if !this.valid() { return; }
         let f: fn(*u8) = this._detach;
         f(this._p);
-        return;
     }
 
     fn chrome(this) -> Chrome {
@@ -479,16 +471,15 @@ impl ScreenBox {
     fn menu_items(this) -> vec::Vec[MenuItem] {
         if !this.valid() { return vec::new::[MenuItem](); }
         let f: fn(*u8) -> vec::Vec[MenuItem] = this._menu_items;
-        if f == (0 as fn(*u8) -> vec::Vec[MenuItem]) { return vec::new::[MenuItem](); }
+        if f.is_null() { return vec::new::[MenuItem](); }
         return f(this._p);
     }
 
     fn drop(ref this) {
-        if this._p == (0 as *u8) { return; }
+        if this._p.is_null() { return; }
         let f: fn(*u8) = this._drop;
         f(this._p);
         this._p = 0 as *u8;
-        return;
     }
 }
 
@@ -546,7 +537,6 @@ fn menu_extend_is_additive_and_screen_wins_on_key() {
     assert sep;                 // the rule came through
     assert close_tab;           // the screen's item is present
     assert !close_window;       // and it EVICTED the base item sharing ⌘W
-    return;
 }
 
 #[test]
@@ -604,7 +594,6 @@ fn menu_extend_evicts_by_chord_and_only_inside_one_menu() {
     assert forward;
     assert symbol;
     assert base.items.count() == (6 as usize);
-    return;
 }
 
 #[test]
@@ -648,7 +637,6 @@ fn menu_extend_still_evicts_the_same_chord_in_the_same_menu() {
     assert find_next;           // ⌘G survives ⇧⌘G
     assert previous;
     assert base.items.count() == (3 as usize);
-    return;
 }
 
 #[test]
@@ -662,7 +650,6 @@ fn screen_box_without_a_contribution_merges_nothing() {
     base.add_item("Edit", "Undo", "z", menu_action_undo());
     base.extend(sb.menu_items());
     assert base.items.count() == (1 as usize);
-    return;
 }
 
 // ---- screen tests ------------------------------------------------------------
@@ -680,7 +667,6 @@ fn sbt_reset() {
     SBT_ATTACHES = 0;
     SBT_DETACHES = 0;
     SBT_DROPS = 0;
-    return;
 }
 
 struct SbtScreen {
@@ -690,7 +676,6 @@ struct SbtScreen {
 impl SbtScreen {
     fn drop(ref this) {
         SBT_DROPS = SBT_DROPS + 1;
-        return;
     }
 }
 
@@ -704,11 +689,9 @@ impl SbtScreen: component::Component {
 impl SbtScreen: component::Lifecycle {
     fn on_attach(ref this) {
         SBT_ATTACHES = SBT_ATTACHES + 1;
-        return;
     }
     fn on_detach(ref this) {
         SBT_DETACHES = SBT_DETACHES + 1;
-        return;
     }
 }
 

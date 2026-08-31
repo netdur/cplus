@@ -31,23 +31,21 @@ impl Placement {
     fn on_corner(ref this, sender: *u8) {
         this.corner = (this.corner +% 1) % 4;
         let n: *core::Node = mount::node(BADGE);
-        if n == (0 as *core::Node) { return; }
+        if n.is_null() { return; }
         // Both edges of an axis are always named here, so the badge hangs from
         // a corner rather than stretching: an edge left unset is not the same
         // as an edge set to zero, and there is no "unset" to write.
-        core::set_left(n, if this.corner == 0 || this.corner == 3 { 8.0f64 } else { 236.0f64 });
-        core::set_top(n, if this.corner == 0 || this.corner == 1 { 8.0f64 } else { 68.0f64 });
+        core::set_left(n, if this.corner == 0 || this.corner == 3 { 8.0 } else { 236.0 });
+        core::set_top(n, if this.corner == 0 || this.corner == 1 { 8.0 } else { 68.0 });
         core::relayout(mount::node("pl:host"));
-        return;
     }
 
     // min/max clamp whatever the flow would otherwise hand out.
     fn on_bounds(ref this, sender: *u8) {
         this.wide = !this.wide;
         let n: *core::Node = mount::node(BOUNDED);
-        core::set_max_width(n, if this.wide { 420.0f64 } else { 160.0f64 });
+        core::set_max_width(n, if this.wide { 420.0 } else { 160.0 });
         core::relayout(n);
-        return;
     }
 }
 
@@ -62,37 +60,37 @@ impl Placement: component::Component {
         badge_b.add(ui::label(
             "badge",
             key: "",
-            font_size: 11.0f64,
+            font_size: 11.0,
             font_weight: vocab::FontWeight::Bold,
-            text_color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
+            text_color: vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
         ));
-        var badge: core::Node = core::column(badge_b, key: BADGE).padding(6.0f64);
-        badge.set_background_color(vocab::Color::rgba(0.90f64, 0.20f64, 0.35f64, 1.0f64));
-        badge.set_corner_radius(vocab::Corners::all(6.0f64));
+        var badge: core::Node = core::column(badge_b, key: BADGE).padding(6.0);
+        badge.set_background_color(vocab::Color::rgba(0.90, 0.20, 0.35, 1.0));
+        badge.set_corner_radius(vocab::Corners::all(6.0));
         core::set_absolute(#addr_of(badge), true);
-        core::set_left(#addr_of(badge), 8.0f64);
-        core::set_top(#addr_of(badge), 8.0f64);
+        core::set_left(#addr_of(badge), 8.0);
+        core::set_top(#addr_of(badge), 8.0);
 
         var host_b: core::Builder = core::Builder::new();
         host_b.add(ui::label(
             "in-flow content",
             key: "",
-            font_size: 12.0f64,
-            text_color: vocab::Color::ink(0.7f64),
+            font_size: 12.0,
+            text_color: vocab::Color::ink(0.7),
         ));
         host_b.add(badge);
         var host: core::Node = core::column(host_b, key: "pl:host")
-            .padding(16.0f64).width(300.0f64).height(110.0f64);
+            .padding(16.0).width(300.0).height(110.0);
         host.set_background_color(vocab::Color::sunken());
-        host.set_corner_radius(vocab::Corners::all(10.0f64));
+        host.set_corner_radius(vocab::Corners::all(10.0));
         body.add(host);
 
         body.add(shell::caption("aspect ratio  ·  height derived from width"));
         var ar_b: core::Builder = core::Builder::new();
-        var ar: core::Node = core::column(ar_b).width(240.0f64);
-        core::set_aspect_ratio(#addr_of(ar), 16.0f64 / 9.0f64);
+        var ar: core::Node = core::column(ar_b).width(240.0);
+        core::set_aspect_ratio(#addr_of(ar), 16.0 / 9.0);
         ar.set_background_color(vocab::Color::primary());
-        ar.set_corner_radius(vocab::Corners::all(8.0f64));
+        ar.set_corner_radius(vocab::Corners::all(8.0));
         body.add(ar);
 
         body.add(shell::caption("min / max  ·  clamping what the flow hands out"));
@@ -101,33 +99,33 @@ impl Placement: component::Component {
         bo_b.add(ui::label(
             "grow(1) with a max width — the clamp wins",
             key: "",
-            font_size: 12.0f64,
-            text_color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
-            max_lines: 2 as i64,
+            font_size: 12.0,
+            text_color: vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
+            max_lines: 2,
             line_break: vocab::LineBreak::WordWrap,
         ));
         var bounded: core::Node = core::column(bo_b, key: BOUNDED)
-            .padding(10.0f64).grow(1.0f64);
-        core::set_max_width(#addr_of(bounded), 160.0f64);
-        bounded.set_background_color(vocab::Color::rgba(0.20f64, 0.70f64, 0.55f64, 1.0f64));
-        bounded.set_corner_radius(vocab::Corners::all(8.0f64));
+            .padding(10.0).grow(1.0);
+        core::set_max_width(#addr_of(bounded), 160.0);
+        bounded.set_background_color(vocab::Color::rgba(0.20, 0.70, 0.55, 1.0));
+        bounded.set_corner_radius(vocab::Corners::all(8.0));
         var brow: core::Builder = core::Builder::new();
         brow.add(bounded);
-        body.add(core::row(brow).width(460.0f64));
+        body.add(core::row(brow).width(460.0));
 
         body.add(ui::label(
             "An absolute node leaves the flow: its siblings lay out as if it were not there, and it hangs off whichever edges it names. Name both edges of one axis and it stretches between them instead. aspect_ratio derives the other dimension; min/max clamp whatever grow or the content asked for.",
             key: "pl:note",
-            font_size: 12.0f64,
-            text_color: vocab::Color::ink(0.6f64),
-            max_lines: 6 as i64,
+            font_size: 12.0,
+            text_color: vocab::Color::ink(0.6),
+            max_lines: 6,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
         return shell::panel(
             "Placement",
             "Absolute positioning, aspect ratio and the min/max clamps.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "core::set_absolute(n, true);\ncore::set_left(n, 8.0); core::set_top(n, 8.0);\ncore::set_aspect_ratio(n, 16.0 / 9.0);\ncore::set_max_width(n, 160.0);",
         );
     }

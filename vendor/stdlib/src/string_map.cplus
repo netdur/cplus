@@ -322,7 +322,6 @@ impl StringMap[V] {
         { free(this._keys as *u8); }
         { free(this._vals as *u8); }
         { free(this._occupied); }
-        return;
     }
 }
 
@@ -361,7 +360,6 @@ fn string_map_insert_and_get_scalar() {
         option::Option[i32]::Some(v) => { assert v == 1; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -372,7 +370,6 @@ fn string_map_get_missing_is_none() {
         option::Option[i32]::Some(v) => { assert false; }
         option::Option[i32]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -382,7 +379,6 @@ fn string_map_get_on_empty_is_none() {
         option::Option[i32]::Some(v) => { assert false; }
         option::Option[i32]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -395,7 +391,6 @@ fn string_map_overwrite_updates_value() {
         option::Option[i32]::Some(v) => { assert v == 999; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -415,7 +410,6 @@ fn string_map_empty_string_key() {
         option::Option[i32]::Some(v) => { assert v == 7; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -441,7 +435,6 @@ fn string_map_grows_past_load_factor() {
         option::Option[i32]::Some(v) => { assert v == 50; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -459,7 +452,6 @@ fn string_map_text_values_via_get_ptr() {
         option::Option[*text::Text]::Some(p) => { assert false; }
         option::Option[*text::Text]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -474,7 +466,6 @@ fn string_map_text_value_overwrite_drops_old() {
         option::Option[*text::Text]::Some(p) => { assert { (*p).equals("second") }; }
         option::Option[*text::Text]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -507,5 +498,4 @@ fn string_map_slot_iteration_visits_every_entry() {
     }
     assert seen == (3 as usize);
     assert sum == (60 as i64);
-    return;
 }

@@ -34,9 +34,8 @@ impl Buttons {
             option::Option[label::Label]::Some(l) => {
                 let _l: label::Label = l.set_text("tapped ${this.taps}×");
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -55,22 +54,22 @@ impl Buttons: component::Component {
         var body: flex::Builder = flex::Builder::new();
         var taps: flex::Builder = flex::Builder::new();
         taps.add(ui::button("Tap me", key: "c:button", on_click: this.on_tap)
-                 .height(44.0f64));
-        taps.add(ui::label("tapped 0×", key: "c:taps", font_size: 15.0f64,
-                           text_color: vocab::Color::ink(0.6f64)));
+                 .height(44.0));
+        taps.add(ui::label("tapped 0×", key: "c:taps", font_size: 15.0,
+                           text_color: vocab::Color::ink(0.6)));
         body.add(shell::card("TAP TARGET", taps));
 
         var styles: flex::Builder = flex::Builder::new();
         styles.add(ui::button("Bordered", key: "c:b2", bordered: true,
-                              border_width: 1.0f64,
+                              border_width: 1.0,
                               border_color: vocab::Color::accent(),
-                              corner_radius: vocab::Corners::all(10.0f64))
-                   .height(44.0f64));
-        styles.add(ui::text_button("A text button", key: "c:b3").height(44.0f64));
+                              corner_radius: vocab::Corners::all(10.0))
+                   .height(44.0));
+        styles.add(ui::text_button("A text button", key: "c:b3").height(44.0));
         // SQUARE, because a glyph button is a glyph and its box is the tap
         // target around it — stretched across a card it stops reading as one.
         styles.add(ui::icon_button(share_glyph(), key: "c:b4")
-                   .width(44.0f64).height(44.0f64));
+                   .width(44.0).height(44.0));
         styles.add(shell::caption("Three postures of one idea: a filled button, the link posture (`text_button`, a decorated title), and a glyph-only `icon_button`."));
         body.add(shell::card("POSTURES", styles));
 
@@ -98,23 +97,22 @@ impl Values {
         match slider::find("c:slider") {
             option::Option[slider::Slider]::Some(s) => {
                 let v: f64 = s.value();
-                let pct: i32 = (v * 100.0f64) as i32;
+                let pct: i32 = (v * 100.0) as i32;
                 match label::find("c:slider:read") {
                     option::Option[label::Label]::Some(l) => {
                         let _l: label::Label = l.set_text("${pct}%");
                     }
-                    option::Option[label::Label]::None => { }
+                    option::Option::None => { }
                 }
                 match progress::find("c:progress") {
                     option::Option[progress::Progress]::Some(p) => {
                         let _p: progress::Progress = p.set_progress(v);
                     }
-                    option::Option[progress::Progress]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[slider::Slider]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 
     fn on_step(ref this, sender: *u8) {
@@ -125,12 +123,11 @@ impl Values {
                     option::Option[label::Label]::Some(l) => {
                         let _l: label::Label = l.set_text("${n}");
                     }
-                    option::Option[label::Label]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[stepper::Stepper]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -139,21 +136,21 @@ impl Values: component::Component {
         var body: flex::Builder = flex::Builder::new();
         var vals: flex::Builder = flex::Builder::new();
         vals.add(shell::field("Slider",
-            ui::slider(0.35f64, key: "c:slider", minimum: 0.0f64, maximum: 1.0f64,
-                       on_value_changed: this.on_slide).width(180.0f64)));
+            ui::slider(0.35, key: "c:slider", minimum: 0.0, maximum: 1.0,
+                       on_value_changed: this.on_slide).width(180.0)));
         vals.add(shell::field("Reads",
-            ui::label("35%", key: "c:slider:read", font_size: 16.0f64,
+            ui::label("35%", key: "c:slider:read", font_size: 16.0,
                       font_weight: vocab::FontWeight::Semibold)));
-        vals.add(ui::progress(0.35f64, key: "c:progress").height(4.0f64));
+        vals.add(ui::progress(0.35, key: "c:progress").height(4.0));
         vals.add(shell::caption("Drag the slider: the percentage and the bar under it are both written from the handler, which read the value back out of facet's props rather than off the control."));
         body.add(shell::card("SLIDER → PROGRESS", vals));
 
         var st: flex::Builder = flex::Builder::new();
         st.add(shell::field("Stepper",
-            ui::stepper(3.0f64, key: "c:stepper", minimum: 0.0f64, maximum: 10.0f64,
-                        increment: 1.0f64, on_value_changed: this.on_step)));
+            ui::stepper(3.0, key: "c:stepper", minimum: 0.0, maximum: 10.0,
+                        increment: 1.0, on_value_changed: this.on_step)));
         st.add(shell::field("Reads",
-            ui::label("3", key: "c:stepper:read", font_size: 16.0f64,
+            ui::label("3", key: "c:stepper:read", font_size: 16.0,
                       font_weight: vocab::FontWeight::Semibold)));
         body.add(shell::card("STEPPER", st));
 
@@ -187,12 +184,11 @@ impl Switches {
                             let _l: label::Label = l.set_text("off");
                         }
                     }
-                    option::Option[label::Label]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[toggle::Toggle]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -202,16 +198,15 @@ fn on_pick(v: *u8, ctx: *u8) {
             let i: i64 = p.selected_index();
             match label::find("c:pick:read") {
                 option::Option[label::Label]::Some(l) => {
-                    let _t: label::Label = l.set_text(if i == (0 as i64) { "Sencha" }
-                                                      else if i == (1 as i64) { "Gyokuro" }
+                    let _t: label::Label = l.set_text(if i == 0 { "Sencha" }
+                                                      else if i == 1 { "Gyokuro" }
                                                       else { "Hojicha" });
                 }
-                option::Option[label::Label]::None => { }
+                option::Option::None => { }
             }
         }
-        option::Option[popup::Popup]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 impl Switches: component::Component {
@@ -221,7 +216,7 @@ impl Switches: component::Component {
         sw.add(shell::field("Switch",
             ui::toggle(true, key: "c:toggle", on_toggled: this.on_switch)));
         sw.add(shell::field("Reads",
-            ui::label("on", key: "c:toggle:read", font_size: 16.0f64,
+            ui::label("on", key: "c:toggle:read", font_size: 16.0,
                       font_weight: vocab::FontWeight::Semibold)));
         sw.add(shell::field("Checkbox", ui::checkbox(false, key: "c:check")));
         sw.add(shell::caption("`checkbox` is a UISwitch here: iOS has no checkbox, and the platform's answer is a table row with a checkmark, which cannot stand in a row of its own. `radio` is NOT a switch — see Interaction → Radio."));
@@ -239,13 +234,13 @@ impl Switches: component::Component {
         let _t3: status::Status = teas.add("Hojicha");
         pick.add(shell::field("Picker",
             ui::popup("Choose one", key: "c:pick", items: teas,
-                      selected_index: 0 as i64,
-                      font_size: 17.0f64,
+                      selected_index: 0,
+                      font_size: 17.0,
                       font_weight: vocab::FontWeight::Semibold,
                       text_color: vocab::Color::system_teal(),
                       on_selected_index_changed: on_pick)));
         pick.add(shell::field("Reads",
-            ui::label("Sencha", key: "c:pick:read", font_size: 16.0f64)));
+            ui::label("Sencha", key: "c:pick:read", font_size: 16.0)));
         pick.add(shell::caption("The font verbs reach the ROW, not the control: a Spinner's field and its drop-down are both views an adapter inflates from a platform layout, so a size, a weight and a colour are applied as each row is handed back."));
         body.add(shell::card("ONE OF SEVERAL", pick));
 
@@ -275,7 +270,7 @@ impl Indicators: component::Component {
         busy.add(shell::field("Spinner",
             ui::spinner(vocab::Color::accent(), key: "c:spinner", running: true)));
         busy.add(shell::field("Page dots",
-            ui::page_dots(4 as i64, key: "c:dots", position: 1 as i64)));
+            ui::page_dots(4, key: "c:dots", position: 1)));
         busy.add(shell::caption("UIPageControl is a real control here. The AppKit backend draws the dots itself, because macOS has none."));
         body.add(shell::card("BUSY & POSITION", busy));
 

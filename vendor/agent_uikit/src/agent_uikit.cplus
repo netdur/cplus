@@ -37,6 +37,10 @@ import "stdlib/vec" as vec;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/tree" as ftree;
+import "facet/application" as app;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/auth" as auth;
@@ -473,6 +477,85 @@ fn append_ref(ref views: vec::Vec[ViewRef], view: *u8) -> status_of_append {
     return _s;
 }
 
+// ---- the walk over FACET'S tree ------------------------------------------------
+//
+// An app IS a facet tree; UIKit is one backend's realisation of it. Walking the
+// UIView hierarchy described the realisation — every wrapper view UIKit inserts
+// came back as a node the developer never wrote, with a path id naming a
+// position in a view hierarchy rather than anything in the source.
+//
+// ONLY A KEYED NODE IS REGISTERED, the rule `agent_android` has always used and
+// `agent_appkit` now does: an unkeyed node is transparent, its children attach
+// to the nearest keyed ancestor, and there is no id to synthesise.
+//
+// The per-node reads still come off the VIEW — they are live reads, and the
+// view is where "now" lives. `core::view_of` is the bridge, set at mount.
+fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
+              n: *core::Node, parent_reg: usize) {
+    var me: usize = parent_reg;
+    let key: str = { (*n).key() };
+    if key != "" {
+        let view: *u8 = core::view_of(n);
+        // A keyed node with no view is not on screen; registering it would
+        // advertise something no verb could act on.
+        if !is_null(view) {
+            let role: identity::Role = resolve_role(view);
+            me = reg.add_child(parent_reg, option::Option[str]::Some(key), role);
+            reg.set_enabled(me, live_enabled(view));
+            reg.set_policy(me, effective_policy(view));
+            let label: text::Text = view_a11y_string(view, "accessibilityLabel\0");
+            if { label.is_empty() } == false {
+                reg.set_name(me, { label.view() });
+            } else if !reg.is_sensitive(me) {
+                let own: text::Text = node_text(view, role);
+                if { own.is_empty() } == false { reg.set_content_name(me, { own.view() }); }
+            }
+            let ds: text::Text = view_a11y_string(view, "accessibilityHint\0");
+            if { ds.is_empty() } == false { reg.set_description(me, { ds.view() }); }
+            let _r: *u8 = rt::retain(view);
+            let _a: status_of_append = append_ref(views, view);
+
+            // A ROW IS NOT A FACET NODE — the same exception the AppKit walk
+            // makes, for the same reason. The row IS content and the backend
+            // mounts it in a cell it owns, so a `key:` on what the row builder
+            // returns lands on the label rather than on the thing a tap has to
+            // reach; `row_id` is the hook, and the cell builder stamps the
+            // answer on the cell. Facet's tree has no node for those cells, so
+            // this is a VIEW walk of one control's interior.
+            //
+            // Without it a list is something an agent can see and cannot
+            // enter — `describe_ui` answers `g:catalog` and nothing beneath.
+            // Guarded on having no facet children so a list whose rows ARE
+            // facet nodes is walked once, by the recursion below.
+            let kind: u32 = core::kind_of(n);
+            let hosts_cells: bool = (kind == props::K_LIST)
+                || (kind == props::K_TABLE)
+                || (kind == props::K_COLLECTION)
+                // `facet/tree` is a facet-origin control and numbers its own
+                // kind from 1000 up, so it is not in `props`.
+                || (kind == ftree::K_TREE);
+            if hosts_cells && (core::child_count_of(n) == (0 as usize)) {
+                let sub: usize = subview_count(view);
+                var si: usize = 0 as usize;
+                while si < sub {
+                    walk(reg, views, subview_at(view, si), me);
+                    si = si +% (1 as usize);
+                }
+            }
+        }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { walk_facet(reg, views, c, me); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
 // Walk a window into a Surface. The window is the root node (role Window); its
 // ROOT VIEW CONTROLLER's view is the subtree — a UIWindow has no `contentView`,
 // which is the one structural difference from the AppKit walk.
@@ -496,16 +579,22 @@ fn open(window: *u8) -> Surface {
     let _rw: *u8 = rt::retain(window);
     views.append(ViewRef { p: window });
 
-    // The window's own subviews rather than the controller's view alone: a
-    // presented sheet and a pushed screen are siblings under the window, and an
-    // agent that could only see the root controller would go blind the moment
-    // an alert came up. That is the case `nav::push` and `present_window`
-    // create, so it is not hypothetical.
-    let n: usize = subview_count(window);
-    var i: usize = 0 as usize;
-    while i < n {
-        walk(reg, views, subview_at(window, i), win_reg);
-        i = i +% (1 as usize);
+    // EVERY root in this window, not the view hierarchy. A presented sheet and
+    // a pushed screen are separate facet trees that share one UIWindow — macOS
+    // gives each its own window and gets this for free — so `push_screen`
+    // registers them and this walks all of them. An agent that saw only the
+    // primary root would go blind the moment an alert came up.
+    var roots: vec::Vec[*core::Node] = app::window_roots_for_native(window);
+    var ri: usize = 0 as usize;
+    while ri < { roots.count() } {
+        match { roots.at_ptr(ri) } {
+            option::Option[**core::Node]::Some(rp) => {
+                let r: *core::Node = { *rp };
+                if !is_null(r as *u8) { walk_facet(reg, views, r, win_reg); }
+            }
+            option::Option[**core::Node]::None => { }
+        }
+        ri = ri +% (1 as usize);
     }
 
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views };

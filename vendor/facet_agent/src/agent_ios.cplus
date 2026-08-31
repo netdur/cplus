@@ -28,41 +28,15 @@ import "stdlib/thread" as thread;
 import "agent_core/events" as events;
 import "agent_inapp/agent_inapp" as inapp;
 import "agent_mcp/agent_mcp" as mcp;
+import "agent_mcp/inspect" as mcp_inspect;
+import "./inspect_tree" as itree;
+import "./inspect_platform" as iplatform;
 import "agent_uikit/agent_uikit" as agent_uikit;
 
 static AGENT_SURFACE: agent_uikit::Surface = #zero::[agent_uikit::Surface]();
 static AGENT_SERVING: bool = false;
 
-// THE TRANSPORT IS A PORT, not a path, and that is the whole iOS story.
-//
-// A Unix socket lives in the app's sandbox, where nothing on the development
-// machine can reach it — and to a DEVICE there is no shared filesystem at all.
-// A port is reachable, forwarded over USB by usbmuxd, which is how Flutter's
-// Dart VM Service and Chrome's remote debugging are reached. So the path an
-// application passes is read as a PORT NUMBER, and a path that is not one gets
-// the default.
-//
-// Bound to loopback by `serve_tcp`, never to every interface: this surface can
-// read a UI and press its buttons.
-const DEFAULT_PORT: u16 = 8787u16;
 
-fn port_of(path: str) -> u16 {
-    var n: u32 = 0 as u32;
-    var any: bool = false;
-    let bytes: *u8 = #str_ptr(path);
-    let len: usize = #str_len(path);
-    var i: usize = 0 as usize;
-    while i < len {
-        let c: u8 = { *(bytes + i) };
-        if c < ('0' as u8) || c > ('9' as u8) { return DEFAULT_PORT; }
-        n = n * (10 as u32) + ((c -% ('0' as u8)) as u32);
-        if n > (65535 as u32) { return DEFAULT_PORT; }
-        any = true;
-        i = i +% (1 as usize);
-    }
-    if !any { return DEFAULT_PORT; }
-    return n as u16;
-}
 
 fn enable() {
     app::install_agent(app::AgentHooks {
@@ -70,7 +44,6 @@ fn enable() {
         serve_once: serve_once,
         pin_policy: pin_policy,
     });
-    return;
 }
 
 fn disable() {
@@ -79,7 +52,6 @@ fn disable() {
         serve_once: 0 as fn(str),
         pin_policy: 0 as fn(*u8, vocab::Agent),
     });
-    return;
 }
 
 // The in-process assistant, which needs no socket at all: it drives the same
@@ -123,40 +95,138 @@ fn policy_for(a: vocab::Agent) -> u32 {
 
 fn pin_policy(view: *u8, a: vocab::Agent) {
     agent_uikit::set_agent_policy(view, policy_for(a));
-    return;
 }
 
 // Walk `win`'s live view tree into the surface, replacing the previous
 // screen's — whose retained views are released by the drop.
 fn attach_window(win: *u8) {
     AGENT_SURFACE = agent_uikit::open(win);
-    return;
 }
 
 // The default channel policy: the developer opted in by asking for a port, so
 // the channel is admitted — as an ORDINARY OPERATOR. Read the app, drive the
 // app, and nothing from a node the application put behind a tier. Widening is
 // an app supplying its own policy, which is a place a reader can find it.
-fn admit(req: auth::Request) -> auth::Grant { return auth::operator(); }
-
-struct AgentServe { port: u16 }
-
-fn serve_main(take job: AgentServe) -> i32 {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
-    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
-    return mcp::serve_tcp(surf, agent_uikit::mcp_backend(), sub, admit, job.port);
+// AND `edit_tree`, because this is the line that publishes an editing surface.
+//
+// `serve_once` installs the inspector's walker and publishes its fourteen
+// verbs, eight of which rewrite the tree. `cap_edit_tree` gates those eight and
+// NOTHING GRANTED IT — it appeared at its definition and in agent_core's own
+// tests and nowhere else, so every write on every app was refused, always. The
+// inspector was reliably read-only and said so in a `-32002` a panel showed as
+// a field that reverted. A capability that only ever refuses is not a policy,
+// it is a defect with a error message.
+//
+// It does not widen what the paragraph above argues about. That argument is
+// about protected CONTENT — a card number behind a tier — and the tier caps
+// stay out of this grant exactly as before. `edit_tree` is the DEVELOPER
+// surface: structure and properties that are not user affordances, published
+// by the same call that installs the walker to read them. The thing that
+// publishes an editing surface is the thing that authorizes it.
+//
+// An app that wants a reader hands out `auth::operator()` from its own
+// `set_policy`, which is where narrowing has always belonged.
+fn admit(req: auth::Request) -> auth::Grant {
+    return auth::operator().with(auth::cap_edit_tree());
 }
 
-// Start the serve worker exactly once per process. The accept loop lives for
-// the app's life.
-fn serve_once(path: str) {
+// THE APP'S OWN POLICY, if it has one.
+//
+// THIS PLATFORM DID NOT HAVE ONE AT ALL until now, and the absence was silent
+// in the worst direction: `set_policy` existed only in the desktop facade, so
+// an app that installed a consent gate and then built for a phone either failed
+// to compile or — on the path that did compile — served `admit` to anything
+// that reached the loopback port, which on a device is every other app on it.
+// The grant model is not a desktop feature.
+//
+// A function pointer and not a closure, matching `auth::AuthGate`: C+ has no
+// closures, and per-caller behaviour comes from the `Request`.
+//
+// SET IT BEFORE `enable()`. The serve thread reads it once when it starts; a
+// policy installed afterwards would leave a window in which the default served.
+static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
+    #zero::[fn(auth::Request) -> auth::Grant]();
+
+fn set_policy(f: fn(auth::Request) -> auth::Grant) {
+    AGENT_POLICY = f;
+}
+
+fn effective_policy() -> fn(auth::Request) -> auth::Grant {
+    if AGENT_POLICY.is_null() { return admit; }
+    return AGENT_POLICY;
+}
+
+struct AgentServe { fd: i32 }
+
+fn serve_main(take job: AgentServe) -> i32 {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64);
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    // HTTP, NOT THE PRIVATE FRAMING. This platform has no Unix socket a client
+    // could reach, so the loopback port is the ONLY door — which makes it the
+    // one place the framing has to be something an MCP client already speaks.
+    // It served line-delimited JSON-RPC, so reaching a phone app meant writing
+    // a bridge for it; now `adb forward` or a simulator's shared loopback is
+    // enough and any client connects to `http://127.0.0.1:<port>/`.
+    return mcp::accept_loop(surf, agent_uikit::mcp_backend(), sub, effective_policy(),
+                            job.fd, false, http: true);
+}
+
+// Start the serve worker exactly once per process.
+//
+// `id` NAMES THE APP; the port is derived from the pid —
+// `agent_mcp::loopback_port`. BOUND ON THIS THREAD so a failure is something a
+// caller can hear: on this platform the documented one is Android refusing
+// `socket()` without `android.permission.INTERNET`, which used to end the
+// accept loop instantly and look exactly like an agent nobody connected to.
+fn serve_once(id: str) {
     if AGENT_SERVING { return; }
+    // Clear out what dead processes left behind. A path carries the pid, so a
+    // name is never reused and nothing else would ever remove these.
+    let _swept: usize = mcp::sweep_stale();
+    if !mcp::valid_id(id) {
+        let bad: text::Text = "facet: agent surface not served — \"${id}\" is not a valid id (a NAME, not a path)";
+        io::eprintln(bad.view());
+        return;
+    }
+    let port: u16 = mcp::loopback_port(mcp::current_pid());
+    let fd: i32 = mcp::bind_tcp(port);
+    if fd < 0 {
+        let why: text::Text = "facet: agent surface not served on port ${port} — ${mcp::bind_reason(fd)}";
+        io::eprintln(why.view());
+        return;
+    }
     AGENT_SERVING = true;
+    // THE INSPECTOR'S FOURTEEN VERBS, published with the other eleven and not
+    // by an application remembering to. Serving IS the opt-in — an app that
+    // does not want to be driven does not call this function — and there is no
+    // second flag beside it.
+    //
+    // They REFUSE until a toolkit installs a walker (`inspect::arm()`), and
+    // they refuse with a policy answer that names what is missing. That is the
+    // whole point of publishing them unconditionally: `-32601 method not
+    // found` was the wrong sentence, and three packages downstream had grown
+    // machinery to translate it.
+    // The platform half — overlay, native rows, and the synchronous
+    // main-thread hop `core::touch` requires. Was `inspect::arm()`'s other job.
+    iplatform::install();
+    mcp_inspect::publish();
+    // AND THE WALKER, here rather than in application code. The toolkit is what
+    // knows what a tree is; an application asking to be driven has already said
+    // everything it has to say by calling this function.
+    //
+    // This was `inspect::arm()` — a line every app had to remember, whose
+    // absence answered `-32601 method not found` three packages downstream.
+    // There is nothing left to forget.
+    mcp_inspect::set_backend(itree::local_backend());
+    mcp::set_server_name(id);
+    let addr: text::Text = "http://127.0.0.1:${port}/";
+    let _d: bool = mcp::write_descriptor(id, mcp::current_pid(), "http", addr.view());
     let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
-        AgentServe { port: port_of(path) },
+        AgentServe { fd: fd },
         serve_main,
     );
-    return;
+    let ok: text::Text = "facet: agent surface on http://127.0.0.1:${port}/ — ${mcp::verb_summary()}";
+    io::eprintln(ok.view());
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -171,5 +241,4 @@ fn every_facet_tier_maps_to_the_policy_the_core_reads() {
     assert policy_for(vocab::Agent::Protected) == identity::policy_protected();
     assert policy_for(vocab::Agent::Private) == identity::policy_private();
     assert policy_for(vocab::Agent::Hidden) == identity::policy_exclude();
-    return;
 }

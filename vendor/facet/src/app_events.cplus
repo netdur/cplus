@@ -136,7 +136,7 @@ fn no_handler(e: *AppEvent, ctx: *u8) { return; }
 // as many times as it was initialised, and the symptom — one push handled
 // four times — reads as a platform problem rather than a registration one.
 fn on_app_event(f: fn(*AppEvent, *u8), ctx: *u8 = 0 as *u8) -> status::Status {
-    if f == (0 as fn(*AppEvent, *u8)) { return status::Status::InvalidInput; }
+    if f.is_null() { return status::Status::InvalidInput; }
     var i: usize = 0 as usize;
     while i < MAX_SUBSCRIBERS {
         if HANDLERS[i] == f && CTXS[i] == ctx { return status::Status::Ok; }
@@ -191,7 +191,6 @@ fn clear_app_events() {
         CTXS[i] = 0 as *u8;
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // ---- the fan-out -------------------------------------------------------------
@@ -201,15 +200,14 @@ fn clear_app_events() {
 // only makes sense when one listener owns the callback, which is the situation
 // this module exists to end.
 fn fire(e: *AppEvent) {
-    if e == (0 as *AppEvent) { return; }
+    if e.is_null() { return; }
     assert core::on_ui_thread();
     var i: usize = 0 as usize;
     while i < MAX_SUBSCRIBERS {
         let f: fn(*AppEvent, *u8) = HANDLERS[i];
-        if f != (0 as fn(*AppEvent, *u8)) { f(e, CTXS[i]); }
+        if f.is_not_null() { f(e, CTXS[i]); }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // The three shapes a backend actually has, so a delegate method is one line
@@ -217,7 +215,6 @@ fn fire(e: *AppEvent) {
 fn fire_plain(kind: u32) {
     var e: AppEvent = AppEvent::new(kind);
     fire(#addr_of(e));
-    return;
 }
 
 fn fire_text(kind: u32, text: str, native: *u8 = 0 as *u8) {
@@ -225,7 +222,6 @@ fn fire_text(kind: u32, text: str, native: *u8 = 0 as *u8) {
     e.text = text;
     e.native = native;
     fire(#addr_of(e));
-    return;
 }
 
 fn fire_result(kind: u32, code: i64, result: i64, native: *u8 = 0 as *u8) {
@@ -234,7 +230,6 @@ fn fire_result(kind: u32, code: i64, result: i64, native: *u8 = 0 as *u8) {
     e.result = result;
     e.native = native;
     fire(#addr_of(e));
-    return;
 }
 
 // ---- tests -------------------------------------------------------------------
@@ -248,14 +243,12 @@ fn t_record(e: *AppEvent, ctx: *u8) {
     SEEN_KIND = { (*e).kind };
     SEEN_COUNT = SEEN_COUNT + 1;
     SEEN_CTX = ctx;
-    return;
 }
 
 fn t_count_only(e: *AppEvent, ctx: *u8) { SEEN_COUNT = SEEN_COUNT + 1; return; }
 
 fn t_read_text(e: *AppEvent, ctx: *u8) {
     SEEN_TEXT_OK = { (*e).text } == "myapp://auth?code=42";
-    return;
 }
 
 fn t_reset() {
@@ -264,7 +257,6 @@ fn t_reset() {
     SEEN_COUNT = 0;
     SEEN_TEXT_OK = false;
     SEEN_CTX = 0 as *u8;
-    return;
 }
 
 #[test]
@@ -276,7 +268,6 @@ fn a_subscriber_receives_the_event() {
     assert SEEN_COUNT == 1;
     assert SEEN_KIND == E_LAUNCHED;
     t_reset();
-    return;
 }
 
 // THE POINT OF THE MODULE: two SDKs want the same callback and both get it.
@@ -292,7 +283,6 @@ fn every_subscriber_sees_every_event() {
     assert SEEN_COUNT == 2;         // one from each
     assert SEEN_KIND == E_FOREGROUND;
     t_reset();
-    return;
 }
 
 #[test]
@@ -303,7 +293,6 @@ fn the_ctx_comes_back_to_its_own_handler() {
     fire_plain(E_BACKGROUND);
     assert SEEN_CTX == (#addr_of(marker) as *u8);
     t_reset();
-    return;
 }
 
 #[test]
@@ -313,7 +302,6 @@ fn text_rides_the_event() {
     fire_text(E_OPEN_URL, "myapp://auth?code=42");
     assert SEEN_TEXT_OK;
     t_reset();
-    return;
 }
 
 #[test]
@@ -325,9 +313,8 @@ fn a_result_carries_both_codes() {
     assert e.code == (9001 as i64);
     assert e.result == (-1 as i64);
     assert e.text == "";
-    assert e.native == (0 as *u8);
+    assert e.native.is_null();
     t_reset();
-    return;
 }
 
 // Registering the same pair twice fans out ONCE. An SDK `init` called per
@@ -341,7 +328,6 @@ fn a_duplicate_registration_is_a_no_op() {
     fire_plain(E_LAUNCHED);
     assert SEEN_COUNT == 1;
     t_reset();
-    return;
 }
 
 // Same fn, different ctx, is a DIFFERENT subscriber — two instances of one SDK
@@ -357,7 +343,6 @@ fn the_same_fn_with_two_contexts_is_two_subscribers() {
     fire_plain(E_LAUNCHED);
     assert SEEN_COUNT == 2;
     t_reset();
-    return;
 }
 
 #[test]
@@ -369,7 +354,6 @@ fn off_stops_delivery_and_frees_the_slot() {
     fire_plain(E_LAUNCHED);
     assert SEEN_COUNT == 0;
     t_reset();
-    return;
 }
 
 // ---- negative ----------------------------------------------------------------
@@ -380,7 +364,6 @@ fn a_null_handler_is_refused() {
     assert on_app_event(0 as fn(*AppEvent, *u8)) == status::Status::InvalidInput;
     assert subscriber_count() == (0 as usize);
     t_reset();
-    return;
 }
 
 // A ctx that does not match the registration is NOT the same subscriber, and
@@ -396,7 +379,6 @@ fn off_with_the_wrong_ctx_reports_rather_than_swallows() {
     assert off_app_event(t_count_only, #addr_of(a) as *u8).is_ok();
     assert subscriber_count() == (0 as usize);
     t_reset();
-    return;
 }
 
 #[test]
@@ -413,7 +395,6 @@ fn a_seventeenth_subscriber_is_refused_not_dropped_silently() {
         == status::Status::OutOfBounds;
     assert subscriber_count() == MAX_SUBSCRIBERS;
     t_reset();
-    return;
 }
 
 #[test]
@@ -423,7 +404,6 @@ fn firing_with_no_subscribers_is_silent() {
     fire_text(E_OPEN_URL, "x://y");
     fire_result(E_NATIVE_RESULT, 1 as i64, 0 as i64);
     assert SEEN_COUNT == 0;
-    return;
 }
 
 #[test]
@@ -433,7 +413,6 @@ fn firing_a_null_event_is_inert() {
     fire(0 as *AppEvent);
     assert SEEN_COUNT == 0;
     t_reset();
-    return;
 }
 
 // A handler that unsubscribes itself mid-dispatch — a one-shot sign-in
@@ -443,7 +422,6 @@ static ONESHOT_RAN: i32 = 0;
 fn t_oneshot(e: *AppEvent, ctx: *u8) {
     ONESHOT_RAN = ONESHOT_RAN + 1;
     let _s: status::Status = off_app_event(t_oneshot);
-    return;
 }
 
 #[test]
@@ -460,5 +438,4 @@ fn a_handler_that_unsubscribes_itself_does_not_skip_its_neighbour() {
     assert ONESHOT_RAN == 1;        // and stayed gone
     assert SEEN_COUNT == 2;
     t_reset();
-    return;
 }

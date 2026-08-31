@@ -22,7 +22,6 @@ fn reset() {
     HITS = 0;
     SEEN = 0;
     NEST_DEPTH = 0;
-    return;
 }
 
 // ---- Signal: order, ctx, payload ----------------------------------------------
@@ -30,7 +29,6 @@ fn reset() {
 fn log_digit(v: i64, ctx: *u8) {
     LOG = LOG * 10 + (ctx as i64);
     SEEN = v;
-    return;
 }
 
 #[test]
@@ -44,7 +42,6 @@ fn signal_emits_in_subscription_order_with_ctx() {
     assert LOG == 123;
     assert SEEN == 42;
     assert s.count() == 3usize;
-    return;
 }
 
 #[test]
@@ -54,12 +51,10 @@ fn signal_emit_with_no_listeners_is_noop() {
     s.emit(7);
     assert LOG == 0;
     assert s.is_empty();
-    return;
 }
 
 fn read_str(v: str, ctx: *u8) {
     HITS = HITS + (#str_len(v) as i64);
-    return;
 }
 
 #[test]
@@ -70,14 +65,12 @@ fn signal_str_payload_borrows() {
     s.emit("hello");
     s.emit("hi");
     assert HITS == 7;
-    return;
 }
 
 // ---- Signal: once ---------------------------------------------------------------
 
 fn bump(v: i64, ctx: *u8) {
     HITS = HITS + v;
-    return;
 }
 
 #[test]
@@ -91,7 +84,6 @@ fn signal_once_fires_exactly_once() {
     s.emit(1);
     assert HITS == 3;
     assert s.count() == 1usize;
-    return;
 }
 
 // A once handler that re-subscribes itself: the fresh registration must wait
@@ -106,7 +98,6 @@ fn resub(v: i64, ctx: *u8) {
     let s: *events::Signal[i64] = resub_sig();
     var sub: events::SignalSubscription[i64] = { (*s).once(resub) };
     sub.detach();
-    return;
 }
 
 #[test]
@@ -121,7 +112,6 @@ fn signal_once_resubscribing_defers_to_next_emit() {
     { (*s).emit(0); }
     assert HITS == 2;
     { (*s).remove_all(); }
-    return;
 }
 
 // ---- Signal: cancel / off ------------------------------------------------------
@@ -139,7 +129,6 @@ fn signal_cancel_removes_and_reports() {
     s.emit(5);
     assert HITS == 5;          // only b left
     assert b.cancel();
-    return;
 }
 
 #[test]
@@ -154,7 +143,6 @@ fn signal_remove_all_drops_everything() {
     assert !s.off(a_id);       // stale token after remove_all
     s.emit(3);
     assert HITS == 0;
-    return;
 }
 
 // ---- Signal: handle ownership --------------------------------------------------
@@ -172,7 +160,6 @@ fn signal_handle_drop_unsubscribes() {
     assert s.count() == 0usize;   // the handle's drop cancelled it
     s.emit(3);
     assert HITS == 2;
-    return;
 }
 
 #[test]
@@ -186,7 +173,6 @@ fn signal_detach_keeps_registration() {
     s.emit(4);
     assert HITS == 4;             // survived the handle's drop
     s.remove_all();
-    return;
 }
 
 #[test]
@@ -202,7 +188,6 @@ fn signal_pause_and_resume() {
     assert a.resume();
     s.emit(2);
     assert LOG == 212;            // a fires again, in its ORIGINAL place
-    return;
 }
 
 #[test]
@@ -218,7 +203,6 @@ fn signal_paused_once_waits_for_resume() {
     s.emit(7);
     assert HITS == 7;
     assert s.count() == 0usize;   // fired once, removed
-    return;
 }
 
 #[test]
@@ -233,7 +217,6 @@ fn inert_handles_are_safe() {
     assert !bn.cancel();
     assert !bn.pause();
     assert !bn.resume();
-    return;
 }
 
 // ---- Signal: mutation during dispatch ---------------------------------------------
@@ -248,7 +231,6 @@ fn killer(v: i64, ctx: *u8) {
     HITS = HITS + 1;
     let s: *events::Signal[i64] = kill_sig();
     let _r: bool = { (*s).off(KILL_TARGET) };
-    return;
 }
 
 #[test]
@@ -265,7 +247,6 @@ fn signal_off_during_emit_skips_removed_listener() {
     assert HITS == 1;          // killer ran, bump never did
     assert KILL_SIG.count() == 1usize;
     { (*s).remove_all(); }
-    return;
 }
 
 // A listener that adds a listener mid-emit: the addition waits for the next
@@ -279,7 +260,6 @@ fn grower(v: i64, ctx: *u8) {
     let s: *events::Signal[i64] = grow_sig();
     var sub: events::SignalSubscription[i64] = { (*s).on(bump) };
     sub.detach();
-    return;
 }
 
 #[test]
@@ -293,7 +273,6 @@ fn signal_on_during_emit_defers_to_next_emit() {
     assert HITS == 1;                      // grower only; the added bump deferred
     assert GROW_SIG.count() == 2usize;
     { (*s).remove_all(); }
-    return;
 }
 
 // A listener that re-emits the same signal (bounded): nested dispatch must
@@ -309,7 +288,6 @@ fn nester(v: i64, ctx: *u8) {
         let s: *events::Signal[i64] = nest_sig();
         { (*s).emit(10); }
     }
-    return;
 }
 
 #[test]
@@ -325,7 +303,6 @@ fn signal_nested_emit_completes() {
     // outer: nester(1) -> nested emit(10) fires nester(10)+bump(10) -> bump(1)
     assert HITS == 22;
     { (*s).remove_all(); }
-    return;
 }
 
 // ---- Signal: bound-method listeners ------------------------------------------------
@@ -337,7 +314,6 @@ struct Counter {
 impl Counter {
     fn add(ref this, v: i64) {
         this.total = this.total + v;
-        return;
     }
 }
 
@@ -350,19 +326,16 @@ fn signal_bound_method_listener() {
     s.emit(5);
     s.emit(2);
     assert c.total == 7;
-    return;
 }
 
 // ---- Bus ---------------------------------------------------------------------------
 
 fn on_open(payload: str, ctx: *u8) {
     HITS = HITS + (#str_len(payload) as i64);
-    return;
 }
 
 fn on_save(payload: str, ctx: *u8) {
     LOG = LOG + 1;
-    return;
 }
 
 #[test]
@@ -380,7 +353,6 @@ fn bus_routes_by_name() {
     b.emit("file:rename", payload: "x");   // no listeners: no-op
     assert HITS == 3;
     assert LOG == 1;
-    return;
 }
 
 #[test]
@@ -398,7 +370,6 @@ fn bus_once_cancel_and_count() {
     assert a.cancel();
     assert !a.cancel();
     assert b.count("tick") == 0usize;
-    return;
 }
 
 #[test]
@@ -417,7 +388,6 @@ fn bus_off_all_clears_one_name_only() {
     assert HITS == 2;
     b.remove_all();
     assert b.count("tock") == 0usize;
-    return;
 }
 
 #[test]
@@ -433,7 +403,6 @@ fn bus_handle_drop_unsubscribes() {
     assert b.count("tick") == 0usize;
     b.emit("tick");
     assert LOG == 1;
-    return;
 }
 
 #[test]
@@ -448,7 +417,6 @@ fn bus_pause_and_resume() {
     assert t.resume();
     b.emit("tick");
     assert LOG == 1;
-    return;
 }
 
 #[test]
@@ -461,7 +429,6 @@ fn bus_shared_is_one_instance() {
     { (*b).emit("ping"); }
     assert LOG == 1;
     assert sub.cancel();
-    return;
 }
 
 // ---- off_ctx: bulk receiver teardown ------------------------------------------
@@ -478,7 +445,6 @@ fn signal_off_ctx_removes_by_identity() {
     assert s.count() == 1usize;
     let none: usize = s.off_ctx(9 as *u8);   // unknown identity: no-op
     assert none == 0usize;
-    return;
 }
 
 #[test]
@@ -492,7 +458,6 @@ fn bus_off_ctx_removes_across_names() {
     assert removed == 2usize;
     assert b.count("tick") == 1usize;
     assert b.count("tock") == 0usize;
-    return;
 }
 
 // ---- module verbs: the pointer-free shared-bus surface --------------------------
@@ -511,7 +476,6 @@ fn module_verbs_route_through_shared_bus() {
     assert a.cancel();
     assert !a.cancel();
     assert events::count("mv:ping") == 0usize;
-    return;
 }
 
 #[test]
@@ -525,7 +489,6 @@ fn module_handle_drop_unsubscribes_shared() {
     assert events::count("mv:raii") == 0usize;   // dropped with the scope
     events::emit("mv:raii");
     assert LOG == 1;
-    return;
 }
 
 #[test]
@@ -540,7 +503,6 @@ fn module_off_all_and_off_ctx() {
     let removed: usize = events::off_ctx(3 as *u8);
     assert removed == 1usize;
     assert events::count("mv:b") == 0usize;
-    return;
 }
 
 #[test]
@@ -553,7 +515,6 @@ fn module_remove_all_clears_shared_bus() {
     assert events::count("mv:ra") == 0usize;
     assert events::count("mv:rb") == 0usize;
     assert !events::off(a_id);   // stale token after remove_all
-    return;
 }
 
 // A bound method registered through the module verb: `this` rides as ctx
@@ -565,7 +526,6 @@ struct Recorder {
 impl Recorder {
     fn on_note(ref this, payload: str) {
         this.total = this.total + (#str_len(payload) as i64);
-        return;
     }
 }
 
@@ -578,7 +538,6 @@ fn module_verb_bound_method_listener() {
     events::emit("mv:note", payload: "de");
     assert r.total == 5;
     assert sub.cancel();
-    return;
 }
 
 fn main() -> i32 {

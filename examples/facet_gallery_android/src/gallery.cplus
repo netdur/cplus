@@ -28,11 +28,11 @@ fn show(key: str, name: str) {
         option::Option[*core::Node]::Some(o) => {
             let _ok: bool = mount::switch_to(o, key);
         }
-        option::Option[*core::Node]::None => { }
+        option::Option::None => { }
     }
     match label::find("gallery:title") {
         option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(name); }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
     // The back button is only meaningful off the home screen. `Display::None`
     // rather than `set_visible(false)`: an invisible button still holds its
@@ -43,9 +43,8 @@ fn show(key: str, name: str) {
             if key == HOME { { (*bk).set_display(flex::Display::None) }; }
             else { { (*bk).set_display(flex::Display::Flex) }; }
         }
-        option::Option[*core::Node]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_back(sender: *u8, ctx: *u8) { show(HOME, "Facet Gallery"); return; }
@@ -73,9 +72,9 @@ fn home() -> core::Node {
 fn bar() -> core::Node {
     var b: core::Builder = core::Builder::new();
     b.add(ui::text_button("< Back", key: "gallery:back", on_click: on_back));
-    b.add(ui::label("Facet Gallery", key: "gallery:title", font_size: 20.0f64,
+    b.add(ui::label("Facet Gallery", key: "gallery:title", font_size: 20.0,
                     font_weight: vocab::FontWeight::Semibold));
-    return core::row(b, key: "gallery:bar").gap(12.0f64).padding(12.0f64);
+    return core::row(b, key: "gallery:bar").gap(12.0).padding(12.0);
 }
 
 fn build() -> core::Node {
@@ -90,7 +89,7 @@ fn build() -> core::Node {
 
     var b: core::Builder = core::Builder::new();
     b.add(bar());
-    b.add(core::column(demos, key: "gallery:outlet").grow(1.0f64));
+    b.add(core::column(demos, key: "gallery:outlet").grow(1.0));
     return core::column(b, key: "gallery:root");
 }
 

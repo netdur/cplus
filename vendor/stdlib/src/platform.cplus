@@ -498,7 +498,6 @@ fn os_version_is_present_and_sane_on_a_hosted_target() {
             assert !is_hosted() || os() == Os::Windows;
         }
     }
-    return;
 }
 
 #[test]
@@ -514,7 +513,6 @@ fn apple_reports_the_product_version_not_the_kernel() {
         assert !s.is_empty();
         assert parse_version(s.view()).major > 0;
     }
-    return;
 }
 
 #[test]
@@ -526,7 +524,6 @@ fn cpu_count_is_at_least_one_where_there_is_an_os() {
         }
         option::Option[usize]::None => { assert !is_hosted(); }
     }
-    return;
 }
 
 #[test]
@@ -538,5 +535,4 @@ fn separators_follow_the_target_not_the_host() {
         assert path_separator() == "/";
         assert line_terminator() == "\n";
     }
-    return;
 }

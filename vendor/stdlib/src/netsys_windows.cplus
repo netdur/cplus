@@ -46,6 +46,28 @@ fn eintr() -> i32 { return 10004 as i32; }
 fn sol_socket() -> i32 { return 0xffff as i32; }
 fn so_reuseaddr() -> i32 { return 0x4 as i32; }
 
+// setsockopt optname for SO_RCVTIMEO / SO_SNDTIMEO. Winsock: 0x1006 / 0x1005
+// (same values as BSD, a different argument).
+fn so_rcvtimeo() -> i32 { return 0x1006 as i32; }
+fn so_sndtimeo() -> i32 { return 0x1005 as i32; }
+
+extern fn setsockopt(s: i32, level: i32, optname: i32, optval: *u8, optlen: i32) -> i32;
+
+// Bound how long a read or a write on this socket may WAIT. See the Darwin
+// variant for why it exists.
+//
+// WINSOCK TAKES MILLISECONDS as a DWORD, not a `timeval` — the one place the
+// three platforms disagree about more than a constant, and the reason this is
+// a function on the surface rather than two optnames a caller passes itself.
+fn set_timeout(fd: i32, seconds: i64) -> i32 {
+    var ms: u32 = (seconds *% (1000 as i64)) as u32;
+    let p: *u8 = { #addr_of(ms) as *u8 };
+    let r: i32 = { setsockopt(fd, sol_socket(), so_rcvtimeo(), p, 4 as i32) };
+    let w: i32 = { setsockopt(fd, sol_socket(), so_sndtimeo(), p, 4 as i32) };
+    if r != (0 as i32) { return r; }
+    return w;
+}
+
 // First two bytes of `sockaddr_in`. Windows, like Linux, has no `sin_len`:
 // the struct starts with `ADDRESS_FAMILY sin_family` (a 2-byte field), so
 // for AF_INET=2 the little-endian bytes are [2, 0].

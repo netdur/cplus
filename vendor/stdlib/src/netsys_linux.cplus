@@ -25,6 +25,36 @@ fn eintr() -> i32 { return 4 as i32; }
 fn sol_socket() -> i32 { return 1 as i32; }
 fn so_reuseaddr() -> i32 { return 2 as i32; }
 
+// The only setsockopt this variant makes: Linux has no SO_NOSIGPIPE (see
+// `set_nosigpipe`), so the deadline below is what the call is here for.
+extern fn setsockopt(fd: i32, level: i32, optname: i32, optval: *u8, optlen: u32) -> i32;
+
+// setsockopt optname for SO_RCVTIMEO / SO_SNDTIMEO. Linux: 20 / 21.
+fn so_rcvtimeo() -> i32 { return 20 as i32; }
+fn so_sndtimeo() -> i32 { return 21 as i32; }
+
+// `struct timeval` as setsockopt wants it: `{ time_t tv_sec; suseconds_t
+// tv_usec; }`, both 8 bytes here. The Darwin variant's second field is 4 plus
+// 4 of padding, so the same 16 bytes serve both as long as a caller only sets
+// whole seconds — see the note there.
+struct Timeval {
+    sec: i64,
+    usec: i64,
+}
+
+// Bound how long a read or a write on this socket may WAIT. See the Darwin
+// variant for why this exists: a peer that accepts and then says nothing hangs
+// the calling thread for good, and a connect probe cannot see it coming.
+// Seconds, both directions, and expiry surfaces as -1 with `eagain()`.
+fn set_timeout(fd: i32, seconds: i64) -> i32 {
+    var tv: Timeval = Timeval { sec: seconds, usec: 0 as i64 };
+    let p: *u8 = { #addr_of(tv) as *u8 };
+    let r: i32 = { setsockopt(fd, sol_socket(), so_rcvtimeo(), p, 16 as u32) };
+    let w: i32 = { setsockopt(fd, sol_socket(), so_sndtimeo(), p, 16 as u32) };
+    if r != (0 as i32) { return r; }
+    return w;
+}
+
 // First two bytes of `sockaddr_in`. Linux has no `sin_len`: the struct
 // starts with `sa_family_t sin_family` (a 2-byte field), so for AF_INET=2
 // the little-endian bytes are [2, 0].

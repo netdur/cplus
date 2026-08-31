@@ -43,7 +43,7 @@ fn node_key() -> *u8 { return { 29060 as *u8 }; }
 fn observer_pin_key() -> *u8 { return { 29061 as *u8 }; }
 
 fn node_of(obj: *u8) -> *core::Node {
-    if obj == (0 as *u8) { return 0 as *core::Node; }
+    if obj.is_null() { return 0 as *core::Node; }
     return { synth::get_associated(obj, node_key()) as *core::Node };
 }
 
@@ -52,9 +52,9 @@ fn node_of(obj: *u8) -> *core::Node {
 // answered by the new one with nothing re-installed.
 fn scrolled_handler(n: *core::Node) -> fn(*u8, *u8) {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return props::no_handler; }
+    if d.is_null() { return props::no_handler; }
     let raw: *u8 = { (*d).props };
-    if raw == (0 as *u8) { return props::no_handler; }
+    if raw.is_null() { return props::no_handler; }
     let kind: u32 = { (*d).kind };
     if kind == props::K_SCROLL { return { (*(raw as *props::ScrollProps)).observe_scrolled }; }
     if kind == props::K_LIST { return { (*(raw as *props::ListProps)).observe_scrolled }; }
@@ -73,9 +73,9 @@ fn scrolled_handler(n: *core::Node) -> fn(*u8, *u8) {
 
 fn scrolled_ctx(n: *core::Node) -> *u8 {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return 0 as *u8; }
+    if d.is_null() { return 0 as *u8; }
     let raw: *u8 = { (*d).props };
-    if raw == (0 as *u8) { return 0 as *u8; }
+    if raw.is_null() { return 0 as *u8; }
     let kind: u32 = { (*d).kind };
     if kind == props::K_SCROLL { return { (*(raw as *props::ScrollProps)).observe_scrolled_ctx }; }
     if kind == props::K_LIST { return { (*(raw as *props::ListProps)).observe_scrolled_ctx }; }
@@ -97,7 +97,7 @@ fn scrolls(kind: u32) -> bool {
 
 fn bounds_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     let n: *core::Node = node_of(self_obj);
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let view: *u8 = core::view_of(n);
     // Everything below is DERIVED from a scroll rather than reported by
     // AppKit, and this is the only place that sees one — which is why they
@@ -111,7 +111,6 @@ fn bounds_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     // handler in this package hands back the thing the application named, and
     // `component::key_of` is written against that.
     h(view, scrolled_ctx(n));
-    return;
 }
 
 // Where the scroll IS, written back into the props.
@@ -125,27 +124,26 @@ fn bounds_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
 // The clip view's bounds origin IS the offset. The document view is flipped, so
 // y grows downward and matches what `set_scroll_y` means.
 fn record_offset(n: *core::Node, view: *u8) {
-    if view == (0 as *u8) { return; }
+    if view.is_null() { return; }
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return; }
+    if d.is_null() { return; }
     if { (*d).kind } != props::K_SCROLL { return; }
     let p: *props::ScrollProps = { (*d).props } as *props::ScrollProps;
-    if p == (0 as *props::ScrollProps) { return; }
+    if p.is_null() { return; }
     let clip: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("contentView\0"))) };
-    if clip == (0 as *u8) { return; }
+    if clip.is_null() { return; }
     let b: rt::Rect = ak::View::from_raw(clip).bounds();
     { (*p).scroll_x = { b.x } };
     { (*p).scroll_y = { b.y } };
-    return;
 }
 
 // ---- what a scroll implies ---------------------------------------------------
 
 fn items_view_of(n: *core::Node) -> *props::ItemsViewProps {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return 0 as *props::ItemsViewProps; }
+    if d.is_null() { return 0 as *props::ItemsViewProps; }
     let raw: *u8 = { (*d).props };
-    if raw == (0 as *u8) { return 0 as *props::ItemsViewProps; }
+    if raw.is_null() { return 0 as *props::ItemsViewProps; }
     let kind: u32 = { (*d).kind };
     if kind == props::K_COLLECTION {
         return { #addr_of((*(raw as *props::CollectionProps)).items_view) };
@@ -162,7 +160,7 @@ fn items_view_of(n: *core::Node) -> *props::ItemsViewProps {
 // this measures nothing of its own.
 fn index_at_offset(n: *core::Node, view: *u8) -> i64 {
     let clip: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("contentView\0"))) };
-    if clip == (0 as *u8) { return 0 as i64; }
+    if clip.is_null() { return 0 as i64; }
     let b: rt::Rect = ak::View::from_raw(clip).bounds();
     let x: f64 = { b.x };
     let y: f64 = { b.y };
@@ -194,9 +192,9 @@ fn index_at_offset(n: *core::Node, view: *u8) -> i64 {
 fn carousel_position(n: *core::Node, view: *u8) {
     if core::kind_of(n) != props::K_CAROUSEL { return; }
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return; }
+    if d.is_null() { return; }
     let p: *props::CarouselProps = { (*d).props } as *props::CarouselProps;
-    if p == (0 as *props::CarouselProps) { return; }
+    if p.is_null() { return; }
     // A scroll is in progress by definition: this fires FROM one. It is
     // cleared when the scroll settles, which is the `after` below.
     { (*p).is_scrolling = true };
@@ -210,13 +208,11 @@ fn carousel_position(n: *core::Node, view: *u8) {
         fire_h({ (*p).on_current_item_changed }, { (*p).on_current_item_changed_ctx }, view);
     }
     settle_scrolling(n, view);
-    return;
 }
 
 fn fire_h(h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
     if h == props::no_handler { return; }
     h(sender, ctx);
-    return;
 }
 
 // `is_scrolling` has no "stopped" event on AppKit — a scroll simply stops
@@ -227,14 +223,13 @@ fn settle_key() -> *u8 { return { 29062 as *u8 }; }
 
 fn scroll_settled(ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return; }
+    if d.is_null() { return; }
     if { (*d).kind } != props::K_CAROUSEL { return; }
     let p: *props::CarouselProps = { (*d).props } as *props::CarouselProps;
-    if p == (0 as *props::CarouselProps) { return; }
+    if p.is_null() { return; }
     { (*p).is_scrolling = false };
-    return;
 }
 
 fn settle_scrolling(n: *core::Node, view: *u8) {
@@ -243,7 +238,6 @@ fn settle_scrolling(n: *core::Node, view: *u8) {
     let f: fn(*u8) = scroll_settled;
     let id: u64 = akx::after(0.15f64, f, n as *u8);
     synth::set_associated(view, settle_key(), id as *u8);
-    return;
 }
 
 // `RemainingItemsThreshold`: fire once when the tail comes within N items of
@@ -253,7 +247,7 @@ fn threshold_key() -> *u8 { return { 29063 as *u8 }; }
 
 fn remaining_threshold(n: *core::Node, view: *u8) {
     let iv: *props::ItemsViewProps = items_view_of(n);
-    if iv == (0 as *props::ItemsViewProps) { return; }
+    if iv.is_null() { return; }
     let threshold: i64 = { (*iv).remaining_threshold };
     if threshold <= (0 as i64) { return; }
     let count: i64 = core::child_count_of(n) as i64;
@@ -269,12 +263,11 @@ fn remaining_threshold(n: *core::Node, view: *u8) {
     } else {
         synth::set_associated(view, threshold_key(), 0 as *u8);
     }
-    return;
 }
 
 fn observer_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("FacetScrollObserver\0"));
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
                                               #str_ptr("FacetScrollObserver\0"), 0 as usize);
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetBoundsChanged:\0")),
@@ -292,16 +285,16 @@ fn notification_center() -> *u8 {
 // the pin and leaves the first observer in place, so a re-apply cannot stack
 // two observers and fire twice.
 fn install(view: *u8, n: *core::Node) {
-    if view == (0 as *u8) || n == (0 as *core::Node) { return; }
+    if view.is_null() || n.is_null() { return; }
     if { synth::get_associated(view, observer_pin_key()) } != (0 as *u8) { return; }
     let sv: ak::ScrollView = ak::ScrollView::from_raw(view);
     let clip: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("contentView\0"))) };
-    if clip == (0 as *u8) { return; }
+    if clip.is_null() { return; }
     // Off by default, because it costs a notification per scrolled pixel.
     { rt::msg_void_i8(clip, rt::sel(#str_ptr("setPostsBoundsChangedNotifications:\0")),
                       true as i8) };
     let o: *u8 = synth::alloc_init_class(observer_class());
-    if o == (0 as *u8) { return; }
+    if o.is_null() { return; }
     synth::set_associated(o, node_key(), n as *u8);
     { msg_void_4id_decl(notification_center(),
                        rt::sel(#str_ptr("addObserver:selector:name:object:\0")),
@@ -309,19 +302,17 @@ fn install(view: *u8, n: *core::Node) {
                        bridge::nsstring("NSViewBoundsDidChangeNotification"), clip) };
     synth::retain_associated(view, observer_pin_key(), o);
     rt::release(o);
-    return;
 }
 
 // Called from the node's view release. A notification centre holds observers
 // UNRETAINED, so an observer that outlives its registration is a dangling
 // pointer the next scroll walks into — this is not optional cleanup.
 fn uninstall(view: *u8) {
-    if view == (0 as *u8) { return; }
+    if view.is_null() { return; }
     let o: *u8 = { synth::get_associated(view, observer_pin_key()) };
-    if o == (0 as *u8) { return; }
+    if o.is_null() { return; }
     { rt::msg_void_id(notification_center(), rt::sel(#str_ptr("removeObserver:\0")), o) };
     synth::set_associated(view, observer_pin_key(), 0 as *u8);
-    return;
 }
 
 #[link_name = "objc_msgSend"]

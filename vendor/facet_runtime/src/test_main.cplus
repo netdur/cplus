@@ -13,5 +13,4 @@ import "./runtime" as runtime;
 fn the_facade_and_its_backend_compile() {
     // The import above is the assertion: resolving `./runtime` on this
     // platform compiles the platform facade and the backend it installs.
-    return;
 }

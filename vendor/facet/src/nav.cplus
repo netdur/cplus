@@ -60,17 +60,14 @@ fn intent_quit() -> u32 { return 2 as u32; }
 fn set_close_fn(f: fn()) {
     let s: *app::Application = app::current();
     { (*s).nav.close_fn = f };
-    return;
 }
 fn set_push_fn(f: fn(str, str) -> bool) {
     let s: *app::Application = app::current();
     { (*s).nav.push_fn = f };
-    return;
 }
 fn set_pop_fn(f: fn() -> bool) {
     let s: *app::Application = app::current();
     { (*s).nav.pop_fn = f };
-    return;
 }
 
 fn clear_hooks() {
@@ -78,14 +75,12 @@ fn clear_hooks() {
     { (*s).nav.close_fn = 0 as fn() };
     { (*s).nav.push_fn = 0 as fn(str, str) -> bool };
     { (*s).nav.pop_fn = 0 as fn() -> bool };
-    return;
 }
 
 fn fire_close() {
     let s: *app::Application = app::current();
     let f: fn() = { (*s).nav.close_fn };
-    if f != (0 as fn()) { f(); }
-    return;
+    if f.is_not_null() { f(); }
 }
 
 // ---- verbs ------------------------------------------------------------------
@@ -115,7 +110,6 @@ fn go(route: str, arg: str = "", take params: Params = params_new()) {
     { (*s).nav.target = text::from_str(route) };
     { (*s).nav.params = p };
     fire_close();
-    return;
 }
 
 // End the app: close the current window with nothing pending after it.
@@ -123,7 +117,6 @@ fn quit() {
     let s: *app::Application = app::current();
     { (*s).nav.intent = intent_quit() };
     fire_close();
-    return;
 }
 
 // Show a screen ALONGSIDE the current one (secondary window on desktop, a
@@ -132,7 +125,7 @@ fn quit() {
 fn push(route: str, arg: str = "") -> bool {
     let s: *app::Application = app::current();
     let f: fn(str, str) -> bool = { (*s).nav.push_fn };
-    if f == (0 as fn(str, str) -> bool) { return false; }
+    if f.is_null() { return false; }
     return f(route, arg);
 }
 
@@ -141,7 +134,7 @@ fn push(route: str, arg: str = "") -> bool {
 fn pop() -> bool {
     let s: *app::Application = app::current();
     let f: fn() -> bool = { (*s).nav.pop_fn };
-    if f == (0 as fn() -> bool) { return false; }
+    if f.is_null() { return false; }
     return f();
 }
 
@@ -175,7 +168,6 @@ fn set_arg(arg: str) {
     let s: *app::Application = app::current();
     let _s: status::Status = { (*s).nav.params.insert(text::from_str(arg_key()),
                                                       text::from_str(arg)) };
-    return;
 }
 
 // The pending intent code, without consuming it.
@@ -213,7 +205,6 @@ fn reset(arg: str = "") {
     var p: Params = params_new();
     if arg != "" { let _s: status::Status = p.insert(text::from_str(arg_key()), text::from_str(arg)); }
     { (*s).nav.params = p };
-    return;
 }
 
 // ---- tests -------------------------------------------------------------------

@@ -149,32 +149,26 @@ fn ensure() -> *u8 {
 
 export extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
     register_read(fd, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
     register_write(fd, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
     register_timer(ms, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
     register_awaiter(awaitee, awaiter);
-    return;
 }
 
 export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
     notify_completed(awaitee);
-    return;
 }
 
 export extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
     enqueue_pending(hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
@@ -195,13 +189,11 @@ export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
 // Register fd for read-readiness; record the coroutine handle to wake.
 fn register_read(fd: i32, hdl: *u8) {
     register_fd(fd, hdl, pollrdnorm());
-    return;
 }
 
 // Register fd for write-readiness.
 fn register_write(fd: i32, hdl: *u8) {
     register_fd(fd, hdl, pollwrnorm());
-    return;
 }
 
 // Append a (fd, hdl, events) triple to the waiter arrays. `poll_one_event`
@@ -232,7 +224,6 @@ fn register_fd(fd: i32, hdl: *u8, evmask: i16) {
     { *(hdls + (n as usize)) = hdl; }
     { *(masks + (n as usize)) = evmask; }
     { *nw_slot = n +% (1 as i32); }
-    return;
 }
 
 // Register a one-shot timer that fires `ms` milliseconds from now and
@@ -261,7 +252,6 @@ fn register_timer(ms: u64, hdl: *u8) {
     { *(deadlines + (n as usize)) = deadline; }
     { *(hdls + (n as usize)) = hdl; }
     { *nt_slot = n +% (1 as i32); }
-    return;
 }
 
 // Index of the timer with the earliest deadline (caller guarantees n>0).
@@ -439,7 +429,6 @@ fn enqueue_pending(hdl: *u8) {
     let hdls: **u8 = { *ph_slot as **u8 };
     { *(hdls + (n as usize)) = hdl; }
     { *np_slot = n +% (1 as i32); }
-    return;
 }
 
 // Snapshot of pending event-side work — fd waiters plus active timers.
@@ -513,7 +502,6 @@ fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     { *(aes + (n as usize)) = awaitee; }
     { *(ars + (n as usize)) = awaiter; }
     { *na_slot = n +% (1 as i32); }
-    return;
 }
 
 // Linear scan for an awaiter registered on `awaitee`; if found, swap-remove
@@ -545,7 +533,6 @@ fn notify_completed(awaitee: *u8) {
         }
         i = i +% (1 as i32);
     }
-    return;
 }
 
 // This thread's reactor descriptor. See the note on `reactor_fd` in

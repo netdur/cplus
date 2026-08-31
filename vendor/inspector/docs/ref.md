@@ -5,12 +5,18 @@ Manual for the `inspector` package. Signatures and behavior only. Recipes are in
 namespace in [wire.md](wire.md).
 
 ```cplus
-import "inspector/inspector" as insp;
-import "inspector/tree" as itree;
-import "inspector/widget" as panel;
-import "inspector/appkit" as iplatform;
-import "inspector/mcp" as imcp;
+import "inspector/widget" as panel;          // the panel, and the host API
+import "inspector/remote" as remote;         // the vtable over a wire
+
+import "agent_core/inspect" as insp;         // the neutral surface
+import "facet_agent/inspect_tree" as itree;  // the facet walker
+import "agent_mcp/inspect" as imcp;          // the verbs
 ```
+
+WHERE EACH LIVES IS THE ARGUMENT. `agent_mcp` serves the fourteen verbs and must
+not depend on a toolkit, so the types those verbs carry cannot either — which is
+why the neutral surface is in `agent_core` and the facet walker that fills it is
+in `facet_agent`. What is left in this package is the panel.
 
 ## Cross-cutting contracts
 
@@ -18,17 +24,20 @@ import "inspector/mcp" as imcp;
   any removal, anywhere, answers `Outcome::Stale`.
 - Every write goes through facet's own setters: prop, dirty bit, scheduled sync,
   backend apply. Nothing writes a platform view directly.
-- Reads and writes must happen on the UI thread. `iplatform::install()`
-  installs the hop that lets a socket consumer satisfy that.
+- Reads and writes must happen on the UI thread. The serving facade installs
+  the hop that lets a socket consumer satisfy that; nothing an application
+  writes has to.
 - Property names handed to `set` / `reset` / `is_overridden` must be literals
   from `declared_names` or `computed_names`; exchange a caller's name through
   `canonical_prop` first.
 
 ---
 
-# `inspector/inspector`
+# `agent_core/inspect`
+<!-- was `inspector/inspector` (retired) -->
 
-The neutral surface. Names no backend, touches no platform.
+The neutral surface. Names no backend, no toolkit and no platform — which is
+what lets `agent_mcp` serve the verbs that carry these types.
 
 ## `Handle`
 
@@ -278,7 +287,8 @@ did not generate. Hand-written; the test suite pins every constant against it.
 
 ---
 
-# `inspector/tree`
+# `facet_agent/inspect_tree`
+<!-- was `inspector/tree` (retired) -->
 
 The walker, the typed dispatch, and the structural verbs. Portable.
 
@@ -596,16 +606,159 @@ fn embedded() -> Inspector
 
 `new(tree::local_backend())` — drives the tree in this very process.
 
-### `selection` / `row_count` / `shown_count`
+### `selection` / `selected_handle` / `node_count` / `row_count` / `shown_count`
 
 ```cplus
-fn selection(this) -> insp::Handle
+fn selection(this) -> text::Text          // the node id, or empty
+fn selected_handle(this) -> insp::Handle
+fn node_count(this) -> usize
 fn row_count(this) -> usize
 fn shown_count(this) -> usize
 ```
 
-`row_count` is the last snapshot's size; `shown_count` is how many rows reached
-the tree model, which is smaller when the panel filters its own subtree.
+`selection` answers the ID (below); `selected_handle` is the opaque, for the
+panel's own machinery. `node_count` and `shown_count` are the same number — how
+many rows reached the tree model — and `row_count` is the last snapshot's size,
+which is larger when the panel filters its own subtree out.
+
+## The host API
+
+What an application EMBEDDING the panel drives it with. It exists because the
+alternative is what a host writes instead: a probe before a connect, a
+`Backend::none()` swapped in by hand to disconnect, a bool tracking whether the
+panel is remote, and a timer polling `Remote::fault()` to find out something
+went wrong. All four are the panel's own state, read from outside because it
+had no way to say them.
+
+### A node's ID
+
+`kind#key` — `button#tap`. Not a new spelling: it is what the change ledger
+labels a row with, what the journal prints, and what a tree row shows. So an id
+from `on_select` matches the `node` on a `Change` from `on_change`, and both
+match a key written in the source. That correlation is why a host wants an id.
+
+**An unkeyed node has none** and answers empty. It is not addressable in the
+ledger or the journal either, and a positional id would name a different node
+after the next insert.
+
+### Transport
+
+```cplus
+async fn connect(st: *Inspector, take target: text::Text) -> status::Status
+fn disconnect(st: *Inspector)
+fn is_connected(st: *Inspector) -> bool
+fn target(st: *Inspector) -> text::Text
+fn refresh(st: *Inspector)
+fn discover(app_id: str) -> vec::Vec[text::Text]
+```
+
+`connect` takes four forms and the **scheme picks the transport**:
+
+| `target` | |
+|---|---|
+| `inapp` | this process. No transport, and `is_connected` stays false — there is nothing to disconnect |
+| `/tmp/mcp-app-123.socket` | a Unix socket |
+| `9123` | a loopback port. What a phone reports |
+| `http://127.0.0.1:9123/` | the same JSON-RPC, POSTed |
+
+| Status | |
+|---|---|
+| `Ok` | attached, and the tree is read |
+| `InvalidInput` | not an address this panel can read |
+| `OutOfBounds` | nothing is listening there, **or** something is and it never answered |
+
+`fault()` carries the sentence either way, so a host shows one string whichever
+answer it got — and the two `OutOfBounds` cases say which, because they send a
+developer to different places. "Nothing is listening there" means the app is not
+running or the address is stale; "something accepted the connection there and
+never answered" means the door belongs to someone else, which on a device is
+the port forward standing up for an app that is not serving.
+
+**Async**, and for two cases: a target that is not there, and a target that
+answers the door and then says nothing. `connect(2)` waits for the network stack
+to give up; a peer that accepts and stays quiet waits **for good**. Either on
+the UI thread is a frozen window, so both are spent on a worker — which is why
+`connect` asks the target a question (`initialize`) rather than merely opening a
+socket. Everything else answers on the first poll.
+
+**Every call has a deadline**, `remote::CALL_TIMEOUT_SECS` — five seconds,
+per `Remote` via `timeout_secs`. Seconds rather than milliseconds because a
+device at the end of a cable is legitimately slow, and a deadline that fires on
+a slow answer turns a working target into an intermittent one. An expiry takes
+the path every other transport failure takes: a fault, and `Stale`.
+
+What `connect` does **not** make async is the rest of the session: every verb
+after it is a synchronous connect-write-read on the calling thread. That is fine
+for a socket on the same machine, and it is now bounded rather than open-ended
+for one that is not — a target that goes quiet mid-session costs five seconds
+and then reports a fault, instead of taking the window with it. Making the
+session itself async is the thing to look at if a panel is ever pointed across a
+network.
+
+**An owned target, not a `str`**, because an `async fn` cannot take a borrow: a
+coroutine frame outlives the call that made it (E0900).
+
+`discover` answers where a named app is listening, newest first, and every entry
+is something `connect` takes — a live socket's path, and the address a
+descriptor states, which is how a phone's loopback port gets here. It is
+re-exported from `agent_mcp`, whose convention it is; a host writing its own
+`/tmp` globber gets `mcp-<id>-<pid>` wrong for an id containing a dash and
+attaches to a dead socket.
+
+`disconnect` drops the selection, empties the panes and clears the target.
+
+### Being told
+
+```cplus
+fn on_fault(st: *Inspector, f: fn(str, *u8), ctx: *u8 = 0 as *u8)
+fn on_change(st: *Inspector, f: fn(insp::Change, *u8), ctx: *u8 = 0 as *u8)
+fn on_select(st: *Inspector, f: fn(str, *u8), ctx: *u8 = 0 as *u8)
+```
+
+The context is LAST, which is the shape a bound method binds to: a host writes
+`panel::on_select(st, this.jump_to_key)` and the compiler pairs the method with
+its receiver. Zero means nobody is listening.
+
+- **`on_fault`** — a transport failure or a refusal, with the sentence. This is
+  the one that matters most: a refused write shows up as a field that snaps back
+  to its old value, and the sentence saying why reaches nobody.
+- **`on_change`** — an edit LANDED, with the value the tree actually holds, not
+  the one asked for. `Change` is `{node, prop, now}`, so a host can write it
+  back into source.
+- **`on_select`** — the selection changed, by id. Announced only when it
+  actually changed, so `connect` (which disconnects first) does not report a
+  selection clearing that never happened.
+
+### Reads
+
+```cplus
+fn fault(st: *Inspector) -> text::Text
+impl Inspector { fn changes(this) -> vec::Vec[insp::Change] }
+```
+
+For a host that would rather pull than subscribe. `changes` is read through the
+vtable, so it is the ledger of whatever the panel is ATTACHED to rather than of
+the process the panel is drawn in — which is what the Copy button got wrong.
+
+### Actions
+
+```cplus
+fn select(st: *Inspector, id: str) -> bool
+fn highlight(st: *Inspector, id: str) -> bool
+fn clear_highlight(st: *Inspector)
+fn reset_all(st: *Inspector)
+```
+
+`select` is the other half of `on_select`, so host and panel stay in step both
+ways. An id nothing answers to is `false` **and a fault with a sentence**, not a
+silent no-op; the selection it had is kept.
+
+`highlight` draws the box on the running app WITHOUT moving the selection — for
+showing a person which node is under discussion.
+
+`reset_all` puts every property on the selected node back to what the
+application built it with. It has been a button since the panel had one; this is
+the same thing with a name.
 
 ### `build`
 
@@ -630,18 +783,16 @@ directly.
 
 ---
 
-# `inspector/appkit`
+# `facet_agent/inspect_platform`
+<!-- was `inspector/appkit` (retired) -->
 
-THE PLATFORM HALF, and it is not macOS only despite the name. The module
-resolves per platform — `appkit.cplus` on macOS, `serve_ios.cplus` on iOS,
-`serve_android.cplus` on Android — and all three answer the same six entry
-points: the two things facet's tree cannot answer, plus the thread hop. The
-name predates the second and third backends and is kept because it is what the
-docs and the probe already say.
+THE PLATFORM HALF: the two things facet's tree cannot answer, plus the thread
+hop. Resolved per platform — `inspect_platform.cplus` on macOS,
+`inspect_platform_ios.cplus`, `inspect_platform_android.cplus`.
 
-`inspector/serve` is the door an application should use: one `serve_if_asked()`
-that resolves to the same three files, so a shared entry does not name a
-toolkit.
+**An application does not call this.** `facet_agent`'s serving facade installs
+it beside the walker, so `runtime::agent_mcp(id)` is the whole opt-in. It is
+documented here because a reader tracing an overlay ends up in it.
 
 ### `install`
 
@@ -649,8 +800,8 @@ toolkit.
 fn install()
 ```
 
-Installs the highlight overlay, the native property rows, and the synchronous
-UI-thread hop used by `inspector/mcp`. Call it before serving over a socket.
+Installs the highlight overlay, the native property rows, the clipboard, and the
+synchronous UI-thread hop the verbs need.
 
 ### `run_on_main_sync`
 
@@ -663,9 +814,16 @@ already there, otherwise through `dispatch_sync_f` on the main queue.
 
 ---
 
-# `inspector/mcp`
+# `agent_mcp/inspect`
+<!-- was `inspector/mcp` (retired) -->
 
-The `inspector.` JSON-RPC namespace. Protocol in [wire.md](wire.md).
+The fourteen verbs. Protocol in [wire.md](wire.md).
+
+**Published unconditionally** by `agent_mcp` when it starts serving, so an app
+that calls `runtime::agent_mcp(id)` is inspectable with no second call. What
+`set_backend` supplies is the WALKER the verbs read through — the serving facade
+does that too. A surface with no walker answers a policy refusal naming what is
+missing, never `-32601`.
 
 ### `arm`
 
@@ -697,7 +855,7 @@ fn armed() -> bool
 fn snapshot_count() -> usize
 ```
 
-How many rows the last `inspector.describe` issued addresses for.
+How many rows the last `describe_tree` issued addresses for.
 
 ### `set_marshal`
 
@@ -725,7 +883,7 @@ the prefix.
 | | |
 |---|---|
 | Name | `inspector` |
-| Modules | `inspector/inspector`, `inspector/tree`, `inspector/widget`, `inspector/appkit`, `inspector/serve`, `inspector/mcp` |
+| Modules | `inspector/widget`, `inspector/remote`. The surface, verbs, walker and platform halves live in `agent_core`, `agent_mcp` and `facet_agent` — see the header |
 | Dependencies | `stdlib`, `flex_layout`, `facet`, `objc`, `appkit`, `quartzcore`, `json`, `agent_mcp`, `agent_core` |
-| Platform notes | `inspector/tree` is portable. `inspector/appkit` is the platform half and resolves three ways — macOS, iOS, Android. On iOS and Android `serve_if_asked` takes a PORT rather than a socket path (a Unix socket inside the sandbox is unreachable from the development machine), and on Android the port arrives as the system property `debug.facet.inspect` because an Activity has no environment for a launcher to set; the app also needs `android.permission.INTERNET`, without which the bind fails and nothing listens |
+| Platform notes | The walker is portable; `facet_agent/inspect_platform` is the platform half and resolves three ways — macOS, iOS, Android. Where the process LISTENS is `agent_mcp`'s business and differs — a Unix socket at `/tmp/mcp-<id>-<pid>.socket` on a desktop, a loopback port `9000 + pid % 1000` on iOS and Android, because a socket inside the sandbox is unreachable from the development machine. Both are derived from the pid, so a launcher can compute the address from the process it spawned. On Android the app also needs `android.permission.INTERNET`, without which the bind fails and nothing listens |
 | Tests | `src/test_main.cplus` — `cd vendor/inspector && cpc test` |

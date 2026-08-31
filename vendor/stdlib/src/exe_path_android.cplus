@@ -12,9 +12,9 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
 fn executable_path() -> text::Text {
-    let cap: usize = 4096 as usize;
+    let cap: usize = 4096;
     let buf: *u8 = { malloc(cap +% (1 as usize)) };
-    if buf == (0 as *u8) { return text::from_str(""); }
+    if buf.is_null() { return text::from_str(""); }
     // readlink does NOT NUL-terminate, and returns the byte count.
     let n: i64 = { readlink(#str_ptr("/proc/self/exe\0"), buf, cap) };
     if n <= (0 as i64) { free(buf); return text::from_str(""); }

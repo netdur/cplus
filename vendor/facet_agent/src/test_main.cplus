@@ -5,11 +5,264 @@
 // connects. The module's own #[test]s ride along with the import; anything
 // that needs a window or a live socket belongs to an app under playground/.
 
-import "./agent" as _;
+import "./agent" as agent;
+import "stdlib/vec" as vec;
+import "stdlib/io" as io;
+import "./inspect_tree" as itree;
+import "./inspect_platform" as iplatform;
+import "quartzcore/quartzcore" as qc;
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
+import "agent_core/inspect" as ainsp;
+import "facet/facet" as fcore;
+import "facet/elements" as fui;
+import "facet/application" as fapp;
+
+import "agent_core/auth" as aauth;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/str" as _str;
+// The consent policy is portable — it names no platform and no window — so it
+// is imported here rather than from `agent.cplus`, which would put it in every
+// build whether the app installs it or not.
+import "./consent" as _consent;
 
 #[test]
 fn the_agent_surface_compiles() {
     // The import above is the assertion: on macOS it compiles agent.cplus
     // and the agent_appkit overlay it drives; on iOS, agent_ios.cplus.
-    return;
+}
+
+
+// ---- the platform halves must not teach a call that is gone --------------------
+//
+// These files WERE `inspector/serve_ios.cplus`, `serve_android.cplus` and
+// `appkit.cplus`, and their `arm()` doc comments told a reader to call
+// `runtime::agent_mcp("/tmp/myapp.sock")` — an id `valid_id` refuses, so an app
+// following the package's own instructions served nothing. `arm()` itself is
+// gone now (`serve_once` installs the walker), which removes the comment along
+// with the call; this keeps the strings from coming back with it.
+//
+// LINE-AWARE: a line carrying `(retired)` is prose ABOUT a dead name, which is
+// how a file explains what moved without teaching it.
+// Does `needle` appear on any line that is NOT marked as history?
+//
+// LINE-AWARE, and that is the whole design of this guard. A file that must not
+// TEACH a dead name still has to be able to SAY it — `wire.md` explains what
+// the prefix was and why it went, and the three `arm()` comments say what the
+// stale example used to be so the next reader knows the shape to distrust. A
+// guard that forbade the explanation along with the mistake would delete the
+// only account of why any of this moved.
+//
+// So the marker is `(retired)`: put it on the line and the line is prose about
+// a dead name rather than an instruction to use one. It has to be earned per
+// line — a file-wide exemption would let a real regression in beside it.
+fn doc_has(hay: str, needle: str) -> bool {
+    return text::from_str(hay).contains(needle);
+}
+
+fn teaches(hay: str, needle: str) -> bool {
+    let lines: vec::Vec[str] = hay.split("\n");
+    var i: usize = 0 as usize;
+    while i < lines.count() {
+        match lines.at(i) {
+            option::Option[str]::Some(l) => {
+                if l.contains(needle) && !l.contains("(retired)") { return true; }
+            }
+            option::Option[str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+
+#[test]
+fn no_doc_teaches_an_id_the_runtime_refuses() {
+    // `agent_mcp` takes a NAME. Every path-shaped example is a scaffolded app
+    // that does not serve.
+    assert teaches(#include_str("./inspect_platform_ios.cplus"), "/tmp/myapp.sock") == false;
+    assert teaches(#include_str("./inspect_platform_android.cplus"), "/tmp/myapp.sock") == false;
+    assert teaches(#include_str("./inspect_platform.cplus"), "/tmp/myapp.sock") == false;
+    assert teaches(#include_str("./inspect_platform.cplus"), "/tmp/myapp.sock") == false;
+    assert teaches(#include_str("./agent.cplus"), "/tmp/myapp.sock") == false;
+    // ...and the shape that IS right appears where a reader will meet it.
+    
+}
+
+#[test]
+fn no_source_names_the_dead_android_channel() {
+    // The port is derived from the pid. `debug.facet.inspect` was the channel
+    // until 2026-08-30 and `asked_port` was what read it; both are gone, and
+    // the twenty-line paragraph describing the property sat directly above
+    // `arm()`, where it read as documentation OF arm.
+    let android: str = #include_str("./inspect_platform_android.cplus");
+    assert teaches(android, "fn asked_port") == false;
+    assert teaches(android, "system_property_get") == false;
+    assert teaches(android, "FACET_INSPECT") == false;
+    assert teaches(#include_str("./inspect_platform_ios.cplus"), "FACET_INSPECT") == false;
+    assert teaches(#include_str("./inspect_platform.cplus"), "FACET_INSPECT") == false;
+    // The one surviving mention is prose saying it is GONE, which is the point
+    // of keeping it.
+    
+    
+}
+
+// ---- the surface this facade publishes, it also authorizes ---------------------
+//
+// `serve_once` publishes the inspector's fourteen verbs and installs the walker
+// they read through. EIGHT OF THEM REWRITE THE TREE, and `cap_edit_tree` gates
+// those eight — and for a while nothing granted it. It appeared at its
+// definition in `agent_core/auth` and in that package's own unit tests, and
+// nowhere else in the tree. So every write on every app was refused, always.
+//
+// It was invisible in exactly the way the `-32601` before it was invisible:
+// the refusal is a `-32002` with a sentence, a panel showed a field that
+// reverted, and the sentence never reached a person. Publishing an editing
+// surface without authorizing it swapped one silent failure for another.
+#[test]
+fn the_default_grant_can_use_every_verb_this_facade_publishes() {
+    let g: aauth::Grant = agent::admit(aauth::request(aauth::Channel::External));
+
+    // The eleven core verbs.
+    assert g.has(aauth::cap_read());
+    assert g.has(aauth::cap_act());
+    // ...and the eight that rewrite the tree, which is what `serve_once`
+    // publishes alongside them.
+    assert g.has(aauth::cap_edit_tree());
+
+    // NOT the tier caps. The default's argument has always been about
+    // protected CONTENT — a card number behind a tier — and that is untouched:
+    // `agent_mcp(id)` must not become the line that hands one out.
+    assert !g.has(aauth::cap_read_protected());
+    assert !g.has(aauth::cap_act_protected());
+    assert !g.has(aauth::cap_read_private());
+    assert !g.has(aauth::cap_act_private());
+}
+
+// An app that wants a READER says so, and narrowing still works — which is the
+// answer to "then why is the capability there at all".
+fn reader_only(req: aauth::Request) -> aauth::Grant { return aauth::operator(); }
+
+#[test]
+fn an_app_can_still_narrow_the_grant_to_a_reader() {
+    let g: aauth::Grant = reader_only(aauth::request(aauth::Channel::External));
+    assert g.has(aauth::cap_read());
+    assert !g.has(aauth::cap_edit_tree());
+}
+
+// ---- the outline follows what it is on ----------------------------------------
+//
+// The overlay is PLACED, not attached, so a write that moves or resizes the
+// selected node leaves it behind. The panel re-places after its own writes and
+// that is enough in-process — but not over a socket: the panel schedules on ITS
+// main loop, the RPC returns, and the TARGET lays out afterwards, so the
+// re-place reads the frame from before the change and the outline trails by one
+// edit. Reported as a highlight that lagged a `scale` write.
+//
+// The target asks for its own re-place now, from the walker's write path, and
+// the platform coalesces it onto this process's next turn. What is asserted
+// here is that every write ASKS — where the outline lands is pixels, and pixels
+// need eyes.
+
+fn approx(a: f64, b: f64) -> bool {
+    let d: f64 = if a > b { a - b } else { b - a };
+    return d < 0.001f64;
+}
+
+// THE OUTLINE FOLLOWS ITS NODE ON THE TICK, and this pins the wiring.
+//
+// What was here before asserted that every geometry write ASKED for a re-place
+// — `set` calling `rehighlight()`, coalesced onto the next turn. That whole
+// mechanism is gone (2026-08-31), and it was gone for a reason worth keeping:
+// it was a list of causes, and a `top` edit arriving over a socket fell through
+// it. A turn on the panel's run loop is not a layout tick in this process, so
+// the re-place read the frame from before the change.
+//
+// The replacement asks nothing and lists nothing: `install` puts
+// `replace_highlight_now` on `core::frames_settled`, which the backend calls
+// after its layout pass, and the answer is right whatever moved the node.
+//
+// WHAT CAN BE PINNED HERE is the wiring and the harmless cases; the follow
+// itself needs a mounted view inside a window, which this package cannot build.
+#[test]
+fn the_settled_hook_is_installed_and_safe_when_nothing_is_highlighted() {
+    iplatform::install();
+    // Nothing highlighted: the tick must reach this and do nothing at all. It
+    // runs on EVERY tick of every app that links the agent, so "cheap and inert
+    // by default" is the property that makes the design affordable.
+    iplatform::clear_highlight(0 as *u8);
+    fcore::frames_settled();
+    fcore::frames_settled();
+    assert true;
+}
+
+#[test]
+fn a_settled_call_with_no_hook_installed_is_a_no_op() {
+    // The portable posture: a headless build, or one that never enabled the
+    // agent, has no hook — and the backend calls this unconditionally.
+    fcore::set_frames_settled_fn(#zero::[fn()]());
+    fcore::frames_settled();
+    assert true;
+}
+
+// The outline of a SCALED node is scaled with it.
+//
+// `scale` / `rotation` / `translation` are a CATransform3D on the node's LAYER,
+// not a layout change: the flex frame and the view's bounds stay the unscaled
+// ones, and `convertRect:toView:` is view geometry and does not see a layer
+// matrix either. So the outline of a node at `scale: 2` was the correct
+// rectangle for a node drawing at twice the size, and re-placing it computed
+// the same rectangle again. Reported as a highlight that trailed a scale write.
+//
+// A full check needs a mounted view inside a window, which this package cannot
+// build (it does not depend on a facet backend). What IS pinned is the
+// decision, on bare layers: mirror the node's matrix when the node is what was
+// placed, and leave identity when it was not.
+#[test]
+fn the_outline_mirrors_the_placed_nodes_own_matrix() {
+    let overlay: qc::Layer = qc::Layer::new();
+    let v: ak::View = ak::View::new(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 40.0f64, h: 20.0f64 });
+    v.set_wants_layer(true);
+    let nl: qc::Layer = v.layer();
+    var m: qc::Transform3D = iplatform::identity_transform();
+    m.m11 = 2.0f64;
+    m.m22 = 2.0f64;
+    nl.set_transform(m);
+
+    // The node IS what was placed: its matrix reaches the outline.
+    iplatform::mirror_transform(overlay, v.raw(), v.raw());
+    assert approx({ overlay.transform().m11 }, 2.0f64);
+
+    // A VIEWLESS node was placed against an ANCESTOR's view. That ancestor's
+    // matrix is not this node's, and a span inside a scaled label is already
+    // drawn scaled by the label — mirroring here would scale it twice.
+    let overlay2: qc::Layer = qc::Layer::new();
+    iplatform::mirror_transform(overlay2, 0 as *u8, v.raw());
+    assert approx({ overlay2.transform().m11 }, 1.0f64);
+
+    let overlay3: qc::Layer = qc::Layer::new();
+    let other: ak::View = ak::View::new(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+    iplatform::mirror_transform(overlay3, v.raw(), other.raw());
+    assert approx({ overlay3.transform().m11 }, 1.0f64);
+}
+
+// This package's own docs, held to the same rule as the platform files above.
+//
+// `serve_once` publishes the verbs and installs the walker, so the second call
+// an application used to make is gone — and a tutorial that still teaches it
+// hands a reader a name the compiler refuses.
+#[test]
+fn no_doc_here_teaches_the_retired_second_call() {
+    let tut: str = #include_str("../docs/tutorial.md");
+    let ref_md: str = #include_str("../docs/ref.md");
+    assert teaches(tut, "inspect::arm") == false;
+    assert teaches(tut, "inspector/serve") == false;
+    assert teaches(ref_md, "inspector/serve") == false;
+    // ...and what replaced it is named, so the page is usable rather than
+    // merely silent.
+    assert doc_has(ref_md, "agent_mcp/inspect");
+    assert doc_has(tut, "25 verbs");
 }
