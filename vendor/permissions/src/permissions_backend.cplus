@@ -442,7 +442,21 @@ fn _notify_refresh(d: *_Domain) {
 fn _instance_of(d: *_Domain) -> *u8 {
     let cls: *u8 = _class_of(d);
     if cls == (0 as *u8) { return 0 as *u8; }
+    // NO BUNDLE IDENTIFIER, NO SHARED INSTANCE — and `_responds` does not save
+    // you, which is the trap.
+    //
+    // `+currentNotificationCenter` is present on the class and RAISES when the
+    // process has no bundle: "bundleProxyForCurrentProcess is nil". An
+    // unhandled ObjC exception aborts, so a bare `cpc build` binary asking for
+    // the notification state does not get `Unsupported` — it gets SIGABRT.
+    //
+    // MEASURED: `vendor/notifications` grew this guard first, for its own
+    // centre, and this file did not. The abort surfaced the moment a
+    // notifications test called `schedule` with a valid id and title, which is
+    // the first call anywhere that reaches `state(of: NOTIFICATIONS)` from a
+    // bundle-less process. Every earlier test stopped at a guard before it.
     if { (*d).instance_sel_c } != "" {
+        if !_has_bundle_id() { return 0 as *u8; }
         let sel: *u8 = { rt::sel(#str_ptr({ (*d).instance_sel_c })) };
         if !_responds(cls, sel) { return 0 as *u8; }
         return { rt::msg_id(cls, sel) };
@@ -1074,6 +1088,17 @@ fn _fire(d: *_Domain, cls: *u8, token: u64) -> bool {
     return true;
 }
 
+// Does this process have a bundle identifier? False for a bare binary, which
+// is every `cpc build` output not wrapped in a .app.
+fn _has_bundle_id() -> bool {
+    let cls: *u8 = { rt::get_class(#str_ptr("NSBundle\0")) };
+    if cls == (0 as *u8) { return false; }
+    let main: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("mainBundle\0"))) };
+    if main == (0 as *u8) { return false; }
+    let bid: *u8 = { rt::msg_id(main, rt::sel(#str_ptr("bundleIdentifier\0"))) };
+    return bid.is_not_null();
+}
+
 fn _responds(obj: *u8, sel: *u8) -> bool {
     return { rt::msg_i8_id(obj, rt::sel(#str_ptr("respondsToSelector:\0")), sel) } != (0 as i8);
 }
@@ -1335,4 +1360,19 @@ fn the_notification_cache_starts_unknown_so_the_first_move_is_to_ask() {
     // seeded with, which is what makes `can_prompt` true on first run.
     assert NOTIFY_CODE <= perm::State::Unsupported.to_code();
     assert perm::State::from_code(0 as u32).to_code() == perm::State::Unknown.to_code();
+}
+
+#[test]
+fn reading_the_notification_state_from_a_bare_binary_does_not_abort() {
+    // `+currentNotificationCenter` RAISES without a bundle identifier, and an
+    // unhandled ObjC exception aborts the process — `respondsToSelector:` does
+    // not help, because the class does respond. This test exists because the
+    // abort was found from OUTSIDE: a `vendor/notifications` test called
+    // `schedule` with a valid id and title, which was the first call anywhere
+    // to reach this path from a bundle-less process.
+    //
+    // Reaching this assertion at all is the assertion.
+    let c: u32 = { cplus_permissions_state_v1(#str_ptr(perm::NOTIFICATIONS),
+                                              #str_len(perm::NOTIFICATIONS)) };
+    assert c <= perm::State::Unsupported.to_code();
 }
