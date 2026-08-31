@@ -78,11 +78,23 @@ const E_PUSH_MESSAGE: u32 = 8u32;
 // Android has no other door, and a kind that exists on one platform is honest
 // in a way an invented portable name would not be.
 const E_NATIVE_RESULT: u32 = 9u32;
+// A permission request was answered. `code` is the request code the batch was
+// sent with, `text` the platform's permission string, `result` 0 granted /
+// -1 denied. Fired ONCE PER PERMISSION, so a batch of three arrives as three
+// events — which is what fits `AppEvent`'s four payload fields without an
+// array, and what lets a subscriber count its own batch home.
+//
+// ANDROID'S, and said so rather than dressed up as portable, the same way
+// `E_NATIVE_RESULT` is. `onRequestPermissionsResult` has no Apple equivalent:
+// there, the request carries its own completion block and the answer comes back
+// through that. A kind that exists on one platform is honest in a way an
+// invented portable name would not be.
+const E_PERMISSION_RESULT: u32 = 10u32;
 
 // The highest kind this build knows. A subscriber that switches on `kind`
 // should ignore what it does not recognise rather than assert — a newer facet
 // firing a newer kind must not break an older SDK package.
-const E_MAX: u32 = 9u32;
+const E_MAX: u32 = 10u32;
 
 // ---- the payload -------------------------------------------------------------
 
@@ -192,6 +204,57 @@ fn clear_app_events() {
         i = i +% (1 as usize);
     }
 }
+
+// ---- the host object ---------------------------------------------------------
+//
+// THE ONE PLATFORM OBJECT THE PROCESS HAS: the Activity on Android, the
+// UIApplication on iOS, the NSApplication on macOS. Set by the backend at
+// install; read by any package that needs to talk to it.
+//
+// SINGLE-SLOT, not a list, and that is the difference from the handlers above.
+// There are many SDKs wanting a callback and there is exactly one Activity, so
+// this is `mount::install`'s shape rather than `on_app_event`'s.
+//
+// WHY IT IS HERE AND NOT IN THE BACKEND that owns it: a services package must
+// not depend on a UI backend to reach it. `vendor/permissions` needs the
+// Activity for `requestPermissions`, which is an Activity method, and taking a
+// dependency on `facet_android` to get it would invert the layering the moment
+// a backend wanted a permission. This module is the one both halves may depend
+// on, and handing over the host is the same job as handing over the callbacks.
+//
+// NEVER CACHE WHAT `host()` RETURNS. On Android the Activity is destroyed and
+// recreated under a live tree — facet_android's manifest lists that as its
+// third structural consequence — and the backend replaces this slot each time.
+// A jobject held across a rotation is a dead one, and it does not fail loudly.
+static HOST: *u8 = 0 as *u8;
+
+fn set_host(native: *u8) { HOST = native; return; }
+fn host() -> *u8 { return HOST; }
+fn has_host() -> bool { return HOST.is_not_null(); }
+
+// THE PROCESS'S MANAGED-RUNTIME HANDLE, where the platform has one: Android's
+// `JavaVM`. Zero on the Apple platforms and on GTK, which have no such thing.
+//
+// SEPARATE FROM `host()` because they have different lifetimes and different
+// thread rules. The Activity is replaced on every recreation and belongs to the
+// UI thread; the VM is process-wide, outlives every thread, and is the ONLY
+// handle from which a thread the JVM never called into can get an env of its
+// own. A package that cached the Activity would hold a dead jobject after a
+// rotation; a package that cached a JNIEnv would hold one belonging to another
+// thread. The VM is the one of the three that is safe to keep.
+//
+// WHY IT IS IN PORTABLE CORE. Same reason as `host()`, and it is the second
+// half of the same problem: `vendor/permissions` needs an env to call
+// `checkSelfPermission` and cannot depend on `facet_android` to get one.
+// `vendor/http` solved it by defining `JNI_OnLoad`, which works and which a
+// shared library gets exactly ONE of — so the second package to try it is a
+// duplicate-symbol error at link. This slot is how the backend that already
+// has the VM hands it over instead, and it costs a package nothing to ignore.
+static HOST_RUNTIME: *u8 = 0 as *u8;
+
+fn set_host_runtime(vm: *u8) { HOST_RUNTIME = vm; return; }
+fn host_runtime() -> *u8 { return HOST_RUNTIME; }
+fn has_host_runtime() -> bool { return HOST_RUNTIME.is_not_null(); }
 
 // ---- the fan-out -------------------------------------------------------------
 
@@ -438,4 +501,58 @@ fn a_handler_that_unsubscribes_itself_does_not_skip_its_neighbour() {
     assert ONESHOT_RAN == 1;        // and stayed gone
     assert SEEN_COUNT == 2;
     t_reset();
+}
+
+#[test]
+fn the_permission_result_kind_is_inside_the_known_range() {
+    // A subscriber switching on `kind` ignores what it does not recognise, so a
+    // kind above E_MAX would be silently dropped by every well-written handler
+    // — which is the failure mode furthest from its cause.
+    assert E_PERMISSION_RESULT <= E_MAX;
+    assert E_PERMISSION_RESULT != E_NATIVE_RESULT;
+}
+
+#[test]
+fn a_permission_result_carries_the_name_and_both_codes() {
+    t_reset();
+    let _s: status::Status = on_app_event(t_record, 0 as *u8);
+    // One event per permission in the batch: request code 7, granted.
+    var e: AppEvent = AppEvent::new(E_PERMISSION_RESULT);
+    e.text = "android.permission.CAMERA";
+    e.code = 7 as i64;
+    e.result = 0 as i64;
+    fire(#addr_of(e));
+    assert SEEN_KIND == E_PERMISSION_RESULT;
+    assert SEEN_COUNT == 1;
+    let _o: status::Status = off_app_event(t_record, 0 as *u8);
+}
+
+#[test]
+fn the_host_slot_starts_empty_and_round_trips() {
+    let before: *u8 = host();
+    set_host(0 as *u8);
+    assert has_host() == false;
+    assert host().is_null();
+    // A stand-in pointer: the slot is opaque to this module and only the
+    // backend knows what it means.
+    let sentinel: *u8 = { #addr_of(HOST) as *u8 };
+    set_host(sentinel);
+    assert has_host();
+    assert host() == sentinel;
+    set_host(before);
+}
+
+#[test]
+fn the_host_slot_is_replaced_not_appended() {
+    // An Activity recreated under a live tree sets this again, and the OLD
+    // jobject must not survive anywhere — which is why this is a slot and not
+    // a list, and why nothing here retains.
+    let before: *u8 = host();
+    let a: *u8 = { #addr_of(HOST) as *u8 };
+    let b: *u8 = { #addr_of(HANDLERS) as *u8 };
+    set_host(a);
+    set_host(b);
+    assert host() == b;
+    assert host() != a;
+    set_host(before);
 }

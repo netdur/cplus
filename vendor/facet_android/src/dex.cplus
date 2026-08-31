@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 37684;
+const DEX_LEN: usize = 37960;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -54,6 +54,13 @@ static C_INSETS: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
+// (int, String, int) -> void, for the Activity's permission result.
+struct Native3ILI {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32, jni::jobject, i32),
+}
+
 struct Native0Z {
     opaque name: *u8,
     opaque signature: *u8,
@@ -176,6 +183,9 @@ extern fn facet_android_tab(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, i
 extern fn facet_android_menu_item(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                   index: i32);
 extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8;
+extern fn facet_android_permission_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                          request_code: i32, permission: jni::jobject,
+                                          result: i32);
 extern fn facet_android_layout_requested(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_insets(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_carousel_page(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
@@ -260,7 +270,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 37684] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 37960] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -663,6 +673,20 @@ fn bind_natives(env: rt::Env) {
         };
         let _r17: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
                                                           #addr_of(back_rec) as *u8, 1) };
+
+        // The permission answer's door. Registered on the SAME class and in the
+        // same guarded block: an app whose APK predates this override has a
+        // FacetActivity without the method, and RegisterNatives on a missing
+        // one throws — so a stale APK must not take the back button down with
+        // it. Separate call, separate result.
+        var perm_rec: Native3ILI = Native3ILI {
+            name: #str_ptr("nativePermissionResult\0"),
+            signature: #str_ptr("(ILjava/lang/String;I)V\0"),
+            fn_ptr: facet_android_permission_result,
+        };
+        let _r18: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(perm_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
     }
 
     var insets_rec: Native0 = Native0 {

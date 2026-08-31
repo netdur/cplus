@@ -328,6 +328,77 @@ impl Env {
         };
     }
 
+    // ---- int and boolean returns --------------------------------------------
+    //
+    // ADDED FOR `vendor/permissions`, and the gap is worth recording because it
+    // is the shape of gap this wrapper will have again: the raw `jni` table has
+    // bound `CallIntMethodA` and `CallBooleanMethodA` since the beginning, and
+    // this CACHING wrapper — the one every caller actually uses — only ever
+    // grew the arities its callers needed. Everything before permissions
+    // returned void or an object.
+    //
+    //     Context.checkSelfPermission(String) -> int
+    //     Activity.shouldShowRequestPermissionRationale(String) -> boolean
+
+    fn call_int_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8,
+                  arg0: jni::JValue) -> i32 {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 1] = [arg0];
+        return { (*(*this._env)).CallIntMethodA(this._env, obj, mid, #addr_of(args[0])) };
+    }
+
+    fn call_bool_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8,
+                   arg0: jni::JValue) -> bool {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 1] = [arg0];
+        return { (*(*this._env)).CallBooleanMethodA(this._env, obj, mid,
+                                                    #addr_of(args[0])) } as i8 != 0;
+    }
+
+    // ---- two more arities, added for `vendor/notifications` -------------------
+    //
+    // The same gap `permissions` found and for the same reason: this caching
+    // wrapper only ever grew the arities its callers needed. A
+    // `Notification.Builder` is constructed from (Context, String) and posted
+    // with `notify(String, int, Notification)`.
+
+    fn new_object_2(this, class_name: *u8, ctor_sig: *u8,
+                    arg0: jni::JValue, arg1: jni::JValue) -> jni::jobject {
+        let cls: jni::jclass = this.class_cached(class_name);
+        if cls == (0 as jni::jclass) { return 0 as jni::jobject; }
+        let ctor: jni::jmethodID = this.method(class_name, #str_ptr("<init>\0"), ctor_sig);
+        var args: [jni::JValue; 2] = [arg0, arg1];
+        return { (*(*this._env)).NewObjectA(this._env, cls, ctor, #addr_of(args[0])) };
+    }
+
+    fn call_void_3(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8,
+                   arg0: jni::JValue, arg1: jni::JValue, arg2: jni::JValue) {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 3] = [arg0, arg1, arg2];
+        { (*(*this._env)).CallVoidMethodA(this._env, obj, mid, #addr_of(args[0])); };
+    }
+
+    // ---- object arrays --------------------------------------------------------
+    //
+    // `Activity.requestPermissions(String[], int)` is the only caller so far,
+    // and a String[] cannot be built from anything already here.
+    //
+    // `initial` fills every slot; pass null and set the elements. The class is
+    // named rather than passed so the CLASS CACHE serves it, which is the whole
+    // reason these live on `Env` rather than being written out at each call
+    // site — resolving per call measured 2x slower on a 400-node mount.
+    fn new_object_array(this, len: i32, class_name: *u8,
+                        initial: jni::jobject) -> jni::jobjectArray {
+        let cls: jni::jclass = this.class_cached(class_name);
+        if cls == (0 as jni::jclass) { return 0 as jni::jobjectArray; }
+        return { (*(*this._env)).NewObjectArray(this._env, len as jni::jsize, cls, initial) };
+    }
+
+    fn set_object_array_element(this, arr: jni::jobjectArray, index: i32,
+                                value: jni::jobject) {
+        { (*(*this._env)).SetObjectArrayElement(this._env, arr, index as jni::jsize, value); };
+    }
+
     // A pending JVM exception reads as an assertion, not a raw 0/1 sentinel.
     fn has_pending_exception(this) -> bool {
         return { (*(*this._env)).ExceptionCheck(this._env) } as i8 != 0;

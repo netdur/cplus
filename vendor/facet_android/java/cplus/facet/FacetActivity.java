@@ -88,6 +88,37 @@ public class FacetActivity extends android.app.Activity {
 
     private static native boolean nativeBack();
 
+    // THE PERMISSION ANSWER HAS NO OTHER DOOR.
+    //
+    // `requestPermissions` is an Activity method and so is its result, so a
+    // services package that wants to ask for the camera has nowhere to receive
+    // the answer unless this class forwards it. facet's `app_events` is the
+    // fan-out that forwards it — see E_PERMISSION_RESULT.
+    //
+    // ONE NATIVE CALL PER PERMISSION, rather than passing the two arrays down.
+    // The loop is three lines here and the alternative is jobjectArray and
+    // jintArray handling on the C+ side for a batch that is almost always one
+    // or two entries. It also matches the payload `AppEvent` already has —
+    // `text` for the permission, `result` for the answer — with no new struct.
+    //
+    // `onRequestPermissionsResult` is deprecated in favour of the Activity
+    // Result API, and the deprecated override is still right here for the same
+    // reason `onBackPressed` above is: the replacement is AndroidX and opt-in
+    // per manifest, this one runs on every level this backend targets, and one
+    // path beats a version fork.
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                                     int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (permissions == null || grantResults == null) return;
+        int n = Math.min(permissions.length, grantResults.length);
+        for (int i = 0; i < n; i++) {
+            nativePermissionResult(requestCode, permissions[i], grantResults[i]);
+        }
+    }
+
+    private static native void nativePermissionResult(int requestCode, String permission,
+                                                      int result);
+
     private String libraryName() {
         try {
             android.content.pm.ActivityInfo info = getPackageManager().getActivityInfo(

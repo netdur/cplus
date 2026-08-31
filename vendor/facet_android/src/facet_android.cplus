@@ -14,6 +14,8 @@ import "android_view/runtime" as rt;
 import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/nav" as nav;
+import "facet/app_events" as ev;
+import "stdlib/text" as text;
 import "facet/services" as services;
 import "facet/theme" as theme;
 import "./views" as views;
@@ -238,6 +240,45 @@ export extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8
     e::set_env(rt::from_native(envp));
     if nav::pop() { return 1 as u8; }
     return 0 as u8;
+}
+
+// A PERMISSION WAS ANSWERED. `FacetActivity.onRequestPermissionsResult` calls
+// this once per permission in the batch — see the comment on the override for
+// why the loop is on the Java side.
+//
+// The Java String is read into a stack buffer and the `str` handed to the
+// fan-out VIEWS that buffer, which is exactly the borrow `AppEvent.text`
+// documents: valid for the dispatch and not one instant longer. A subscriber
+// that keeps it copies it.
+//
+// 256 bytes because the longest permission string Android ships is under 60 and
+// an OEM one that overflowed would be truncated rather than corrupt — the read
+// below NUL-terminates within the buffer either way.
+export extern fn facet_android_permission_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                                 request_code: i32, permission: jni::jobject,
+                                                 result: i32) {
+    let env: rt::Env = rt::from_native(envp);
+    e::set_env(env);
+    var buf: [u8; 256] = #zero::[[u8; 256]]();
+    let ptr: *u8 = { #addr_of(buf) as *u8 };
+    if !env.string_utf_into(permission, ptr, 256 as usize) { return; }
+    var ae: ev::AppEvent = ev::AppEvent::new(ev::E_PERMISSION_RESULT);
+    ae.text = { #str_from_raw_parts(ptr, c_len(ptr, 256 as usize)) };
+    ae.code = request_code as i64;
+    ae.result = result as i64;
+    ev::fire(#addr_of(ae));
+    return;
+}
+
+// The length of a NUL-terminated buffer, capped. `string_utf_into` writes a C
+// string and a `str` needs the length, and there is no strlen in this closure.
+fn c_len(p: *u8, cap: usize) -> usize {
+    var i: usize = 0 as usize;
+    while i < cap {
+        if { *(p + i) } == (0 as u8) { return i; }
+        i = i +% (1 as usize);
+    }
+    return cap;
 }
 
 // A WIDGET ASKED FOR A LAYOUT. facet places views only when its own geometry
