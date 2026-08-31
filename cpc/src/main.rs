@@ -7181,6 +7181,27 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20        No UISceneStoryboardFile: a storyboard makes UIKit wait for a\n\
          \x20        nib facet does not have, and the screen stays black. That is\n\
          \x20        the key that was correctly avoided; this one is not it. -->\n\
+         \x20   <!-- A DEEP LINK'S REGISTRATION, commented out because a scheme is\n\
+         \x20        the app's to choose. Uncomment, put your own scheme in, and\n\
+         \x20        `applinks::on_link(handler, scheme: \"myapp\")` receives it —\n\
+         \x20        cold start included. WITHOUT THIS KEY the scheme belongs to\n\
+         \x20        nobody, the app is never launched for it, and the handler is\n\
+         \x20        perfectly correct and perfectly silent.\n\
+         \x20\n\
+         \x20        A UNIVERSAL LINK (https://) IS NOT THIS KEY. It needs the\n\
+         \x20        com.apple.developer.associated-domains entitlement, a paid\n\
+         \x20        team, and an apple-app-site-association file served from your\n\
+         \x20        domain. See vendor/applinks/docs/guide.md.\n\
+         \x20   <key>CFBundleURLTypes</key>\n\
+         \x20   <array>\n\
+         \x20       <dict>\n\
+         \x20           <key>CFBundleURLName</key>\n\
+         \x20           <string>dev.cplus.{app_id}.link</string>\n\
+         \x20           <key>CFBundleURLSchemes</key>\n\
+         \x20           <array><string>myapp</string></array>\n\
+         \x20       </dict>\n\
+         \x20   </array>\n\
+         \x20   -->\n\
          \x20   <key>UIApplicationSceneManifest</key>\n\
          \x20   <dict>\n\
          \x20       <key>UIApplicationSupportsMultipleScenes</key>\n\
@@ -7293,8 +7314,16 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20            configChanges is not a preference: without it the system\n\
          \x20            destroys and recreates the Activity on rotation, and the\n\
          \x20            mounted facet tree goes with it. -->\n\
+         \x20       <!-- singleTop, and it is a correctness fix rather than a\n\
+         \x20            preference. The default `standard` mode builds a SECOND\n\
+         \x20            instance of this Activity for an incoming intent — a\n\
+         \x20            second facet mount stacked on the first — instead of\n\
+         \x20            calling onNewIntent on the one already up. Notifications\n\
+         \x20            escape it by setting FLAG_ACTIVITY_SINGLE_TOP on their own\n\
+         \x20            intent; a browser opening a deep link does not. -->\n\
          \x20       <activity android:name=\"cplus.facet.FacetActivity\"\n\
          \x20                 android:exported=\"true\"\n\
+         \x20                 android:launchMode=\"singleTop\"\n\
          \x20                 android:configChanges=\"orientation|screenSize|keyboardHidden\">\n\
          \x20           <!-- Which .so to load, the way NativeActivity takes\n\
          \x20                android.app.lib_name — the Activity is generic across\n\
@@ -7310,6 +7339,34 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20               <action android:name=\"android.intent.action.MAIN\" />\n\
          \x20               <category android:name=\"android.intent.category.LAUNCHER\" />\n\
          \x20           </intent-filter>\n\
+         \x20           <!-- A DEEP LINK, commented out because the scheme is the\n\
+         \x20                app's to choose. BROWSABLE is what lets a link in a\n\
+         \x20                browser or a message reach the app; DEFAULT is what\n\
+         \x20                lets an implicit intent match at all. Without both,\n\
+         \x20                the filter is there and nothing is ever delivered.\n\
+         \x20           <intent-filter>\n\
+         \x20               <action android:name=\"android.intent.action.VIEW\" />\n\
+         \x20               <category android:name=\"android.intent.category.DEFAULT\" />\n\
+         \x20               <category android:name=\"android.intent.category.BROWSABLE\" />\n\
+         \x20               <data android:scheme=\"myapp\" />\n\
+         \x20           </intent-filter>\n\
+         \x20           -->\n\
+         \x20           <!-- A VERIFIED APP LINK (https), which is a different\n\
+         \x20                feature and needs a file on your web server:\n\
+         \x20                https://example.com/.well-known/assetlinks.json,\n\
+         \x20                naming this package and its signing certificate\n\
+         \x20                SHA-256. autoVerify is what makes Android check it.\n\
+         \x20                Unverified, the link opens the BROWSER instead and\n\
+         \x20                nothing reports an error — check with\n\
+         \x20                `adb shell pm get-app-links <package>`.\n\
+         \x20                See vendor/applinks/docs/guide.md.\n\
+         \x20           <intent-filter android:autoVerify=\"true\">\n\
+         \x20               <action android:name=\"android.intent.action.VIEW\" />\n\
+         \x20               <category android:name=\"android.intent.category.DEFAULT\" />\n\
+         \x20               <category android:name=\"android.intent.category.BROWSABLE\" />\n\
+         \x20               <data android:scheme=\"https\" android:host=\"example.com\" />\n\
+         \x20           </intent-filter>\n\
+         \x20           -->\n\
          \x20       </activity>\n\
          \x20   </application>\n\
          </manifest>\n"
