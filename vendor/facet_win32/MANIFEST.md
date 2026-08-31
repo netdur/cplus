@@ -502,6 +502,35 @@ A real touch pinch comes through `WM_GESTURE`, or `WM_POINTER` on the newer
 input stack. Both are a different door and neither is bound; §2 carries the row.
 Same for `touch_points`, which has no meaning while the only pointer is a mouse.
 
+### WHAT THE AGENT CAN SEE, and the one thing it cannot
+
+Measured against `playground/win32_probe` over the live socket, not reasoned
+about. `describe_tree` walks facet's own node tree and returns every kind this
+package builds — button, carousel, checkbox, collection, date_picker,
+icon_button, image, label, list, popup, progress, radio, slider, tabs,
+text_field, toggle — with real keys, kinds and frames.
+
+**IT RETURNS NO ROWS.** Not the collection's, not a twenty-thousand-row list's,
+not a tree's. A virtualised row is built by `recycler.cplus` and put on screen
+with `mount::realise`, which is the SECOND mount path: it creates the row's
+views without making the row a CHILD of the list node. `inspect_tree` walks
+`core::child_of`, so a row is not on the walk.
+
+**This is facet's shape and not this backend's.** facet_gtk's recycler says the
+same thing in its own words — "a realised row is not in a window and `sync`
+will never reach it" — and reaches rows through `sync_from` for exactly that
+reason. Every backend's agent sees a list and not its contents.
+
+What it means in practice: an agent can find a `list`, read its props and
+scroll it, and cannot name or click a row through `describe_tree`. The
+platform reader (`describe_ui`, `agent_win32`) walks HWNDs instead and a row IS
+a real window there — so the two doors see different things, which is worth
+knowing before trusting either alone.
+
+Not recorded as a gap in this package because no verb here is unanswered by it;
+recorded because "the inspector works on Windows" is true and would be
+misleading without it.
+
 ### THE GESTURE BAND IS NOT IN THE PARITY NUMBERS AT ALL
 
 Worth stating plainly, because the handler percentage looks like it covers this
