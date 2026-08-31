@@ -2826,7 +2826,14 @@ fn build_project(
             BuildMode::Debug => "debug",
             BuildMode::Release => "release",
         };
-        m.root.join("target").join(sub).join(&m.package.name)
+        // `.exe` ON WINDOWS, from the TARGET rather than the host — see
+        // `TargetSpec::exe_suffix`. An extensionless PE is a working binary the
+        // operating system refuses to launch, which looks like a build failure.
+        let suffix = target::active_target().exe_suffix();
+        m.root
+            .join("target")
+            .join(sub)
+            .join(format!("{}{suffix}", m.package.name))
     });
     if let Some(parent) = out_path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
@@ -5489,6 +5496,72 @@ fn prune_ir(ir: String) -> String {
     pruned
 }
 
+
+/// Compile the default Windows application manifest into a `.res` and add it to
+/// the link line. See the call site in `run_clang` for why this is a resource
+/// rather than `/manifest:embed`.
+///
+/// Every failure path is silent and leaves the link untouched: the program still
+/// builds and runs, it just draws with Common Controls 5.82.
+#[cfg(windows)]
+fn embed_windows_manifest(cmd: &mut Command, out: &Path) {
+    const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls"
+                        version="6.0.0.0" processorArchitecture="*"
+                        publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
+    </application>
+  </compatibility>
+</assembly>
+"#;
+    // Named after the OUTPUT rather than put in a shared temp file: two
+    // `cpc build`s running at once would otherwise race for one path, and the
+    // loser links a half-written resource.
+    let xml = out.with_extension("cpc-manifest.xml");
+    let rc = out.with_extension("cpc-manifest.rc");
+    let res = out.with_extension("cpc-manifest.res");
+    if std::fs::write(&xml, MANIFEST).is_err() {
+        return;
+    }
+    // `1 24 "path"` — resource id 1 is CREATEPROCESS_MANIFEST_RESOURCE_ID, the
+    // one the loader reads for an executable, and 24 is RT_MANIFEST. The path
+    // is a C string to the resource compiler, so its backslashes have to be
+    // escaped or a Windows path silently becomes an escape sequence.
+    let script = format!("1 24 \"{}\"\n", xml.display().to_string().replace('\\', "\\\\"));
+    if std::fs::write(&rc, script).is_err() {
+        return;
+    }
+    let compiled = Command::new("llvm-rc")
+        .arg("-fo")
+        .arg(&res)
+        .arg(&rc)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if compiled {
+        cmd.arg(&res);
+    }
+}
+
+#[cfg(not(windows))]
+fn embed_windows_manifest(_cmd: &mut Command, _out: &Path) {}
 fn run_clang(
     input_ll: &Path,
     out: &Path,
@@ -5599,6 +5672,73 @@ fn run_clang(
         cmd.arg("-lbcrypt");
         cmd.arg("-lntdll");
         cmd.arg("-lwinhttp");
+        // THE APPLICATION MANIFEST, embedded as an RT_MANIFEST resource.
+        //
+        // A Windows process gets Common Controls **5.82** by default — the 1995
+        // renderer, with bevelled buttons and 3D check boxes. The themed 6.0
+        // that every modern Windows application uses is side-by-side, and the
+        // loader binds it only when the executable DECLARES a dependency on it
+        // in an application manifest. There is no runtime call that asks.
+        //
+        // MEASURED, by printing which comctl32 the process actually loaded:
+        //
+        //   no manifest    ...common-controls_..._5.82.26100...   classic
+        //   this manifest  ...common-controls_..._6.0.26100...    themed
+        //
+        // ---- why `llvm-rc` and not `/manifest:embed` --------------------------
+        //
+        // lld-link HAS `/manifest:embed` with `/manifestinput:`, it accepts both
+        // without complaint, and on this toolchain it produces a STUB — an
+        // `<assembly>` element with the dependency stripped out. Manifest
+        // merging needs libxml2 and the LLVM Windows releases are built without
+        // it, so the merge silently degrades to LLD's own empty default.
+        //
+        // That is worse than doing nothing: an empty manifest still marks the
+        // process as manifested. The failure looks exactly like success — the
+        // link is clean and both flags are accepted.
+        //
+        // Compiling the manifest into a `.res` and handing that to the linker as
+        // an ordinary input has no such dependency: `llvm-rc` writes the
+        // resource directory itself and lld-link merges `.res` inputs natively.
+        //
+        // ---- what the default says -------------------------------------------
+        //
+        //   Common-Controls 6.0  Without it every C+ program that opens a window
+        //                        looks two decades old. A console program is
+        //                        unaffected — it creates no controls to theme.
+        //   PerMonitorV2 DPI     Without a declaration the process is
+        //                        DPI-UNAWARE and Windows scales its windows as a
+        //                        BITMAP on a high-DPI display: blurry text, and
+        //                        `GetDpiForWindow` answering 96 everywhere so a
+        //                        UI backend computes the wrong pixel sizes.
+        //   supportedOS          Some shell behaviours are gated on it; a binary
+        //                        naming no OS is treated as pre-Vista for those.
+        //   activeCodePage       UTF-8. THE ONE THAT MAKES C+ STRINGS WORK.
+        //
+        //                        Win32 ships two parallel APIs: `*A` takes the
+        //                        process ANSI codepage (CP1252 on a Western
+        //                        install) and `*W` takes UTF-16. A C+ `str` is
+        //                        UTF-8, which historically matched NEITHER — so
+        //                        every byte above 0x7F handed to an `*A` call
+        //                        was decoded as the wrong character. An em-dash
+        //                        in a window title came out as `â€"`.
+        //
+        //                        Since Windows 10 1903 a process can DECLARE
+        //                        its ANSI codepage to be UTF-8, and then the
+        //                        `*A` family takes UTF-8 directly — which is
+        //                        what `vendor/win32` assumed all along when it
+        //                        chose the ANSI entry points. This line is what
+        //                        makes that assumption true.
+        //
+        //                        Older Windows ignores the element and keeps
+        //                        CP1252, so a backend still has to convert for
+        //                        anything it cannot afford to get wrong.
+        //
+        // Skipped in silence when `llvm-rc` is not on PATH. A missing resource
+        // compiler is not a reason to fail a build that would otherwise link —
+        // the program runs, it just looks old, and that is recoverable where a
+        // failed build is not.
+        embed_windows_manifest(&mut cmd, out);
     }
     cmd.arg("-o").arg(out);
     // Under `-g`, clang DISCARDS the whole module's debug info — with only a

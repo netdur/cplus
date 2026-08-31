@@ -359,6 +359,25 @@ impl TargetSpec {
         SUPPORTED.iter().copied().find(|t| t.name == name)
     }
 
+    /// The file extension an EXECUTABLE wants on this target, `""` for
+    /// everything but Windows.
+    ///
+    /// Windows resolves and launches programs by extension: Explorer will not
+    /// double-click an extensionless PE, `CreateProcess` with a bare name will
+    /// not find it on PATH, and a shell reports "no such file". The file cpc
+    /// emitted was a perfectly good binary that the operating system would not
+    /// start — which reads as a build failure rather than a naming one.
+    ///
+    /// This follows the TARGET, not the host: cross-compiling to Windows from
+    /// a Mac has to produce `.exe` too, and a Windows host building for Linux
+    /// must not.
+    pub fn exe_suffix(&self) -> &'static str {
+        match self.os {
+            TargetOs::Windows => ".exe",
+            _ => "",
+        }
+    }
+
     /// Whether this spec is the host (no `-target` flag, no IR triple line,
     /// artifact lookup by `clang -print-target-triple`).
     pub fn is_host(&self) -> bool {
