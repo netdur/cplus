@@ -25,6 +25,7 @@ import "stdlib/atomic" as atomic;
 import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
+import "./platform_sys" as platform_sys;
 
 // Main-thread dispatcher: run `work(ctx)` on the UI thread, where touching
 // views (or state the UI reads) is safe. Non-blocking — the caller returns
@@ -485,12 +486,9 @@ fn job_in_flight(addr: usize) -> bool {
 // facade's teardown drains its loop to get there. Headless (no scheduler),
 // nothing is ever queued: the flight is dropped instead of leaked, and
 // `apply` simply never runs — the portable posture.
-#[link_name = "sched_yield"]
-extern fn sched_yield_raw() -> i32;
-
 // Give a worker its turn rather than burning the core. The wait is a teardown
 // step, not a poll loop.
-fn sched_yield_once() { let _r: i32 = { sched_yield_raw() }; return; }
+fn sched_yield_once() { platform_sys::yield_once(); return; }
 
 static JOBS_IN_FLIGHT: u64 = 0 as u64;
 

@@ -13,6 +13,7 @@ import "stdlib/box" as box;
 import "stdlib/vec" as vec;
 import "stdlib/io" as io;
 import "./props" as props;
+import "./platform_sys" as platform_sys;
 import "./vocabulary" as vocab;
 
 type Node = flex::Node;
@@ -254,12 +255,9 @@ fn set_sync_request_fn(f: fn()) { SYNC_REQUEST_FN = f; return; }
 static MAIN_THREAD_ID: u64 = 0 as u64;
 fn set_main_thread_id(id: u64) { MAIN_THREAD_ID = id; return; }
 
-#[link_name = "pthread_self"]
-extern fn pthread_self_raw() -> u64;
-
 fn on_ui_thread() -> bool {
     if MAIN_THREAD_ID == (0 as u64) { return true; }
-    return { pthread_self_raw() } == MAIN_THREAD_ID;
+    return { platform_sys::ui_thread_id() } == MAIN_THREAD_ID;
 }
 
 fn touch(n: *Node, bit: u64) {

@@ -45,6 +45,7 @@ import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 import "./props" as props;
+import "./platform_sys" as platform_sys;
 import "./component" as component;
 import "./application" as app;
 
@@ -92,7 +93,7 @@ fn installed() -> bool { return RENDERER.create != (0 as fn(*u8, *core::Node) ->
 // to the renderer's scheduler) and M6 (this thread becomes THE UI thread).
 fn install(take r: Renderer) {
     RENDERER = r;
-    core::set_main_thread_id(ui_thread_id());
+    core::set_main_thread_id(platform_sys::ui_thread_id());
     core::set_sync_request_fn(request_sync);
     return;
 }
@@ -104,9 +105,6 @@ fn uninstall() {
     core::set_sync_request_fn(0 as fn());
     return;
 }
-
-#[link_name = "pthread_self"]
-extern fn ui_thread_id() -> u64;
 
 fn request_sync() {
     if !installed() { return; }
