@@ -73,4 +73,6 @@ win32       = "*"
 # nothing installed. Named anyway: `win32`'s own manifest names them for its
 # modules, and a direct reference from THIS package is resolved from this
 # package's link line.
-libs = ["user32", "gdi32", "comctl32", "uxtheme", "dwmapi", "advapi32"]
+# `gdiplus` is the bitmap decoder — see `imaging.cplus` for why it is GDI+ and
+# not WIC. It ships with every Windows since XP and needs no registration.
+libs = ["user32", "gdi32", "comctl32", "uxtheme", "dwmapi", "advapi32", "gdiplus"]

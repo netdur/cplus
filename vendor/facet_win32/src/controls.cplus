@@ -42,6 +42,9 @@ import "facet/tabs" as tabs;
 import "facet/refreshable" as refreshable;
 import "facet/split" as split;
 import "facet/carousel" as carousel;
+import "facet/image" as image;
+import "win32/commctrl" as cc;
+import "./imaging" as imaging;
 import "facet/page_dots" as page_dots;
 import "facet/bordered" as bordered;
 import "facet/scroll" as scroll;
@@ -109,75 +112,13 @@ fn message_only_parent() -> *u8 { return ((0 as i64) -% (3 as i64)) as *u8; }
 // The empty C string, for a window created with no title.
 fn empty_title() -> *u8 { return { #str_ptr("\0") }; }
 
-// ---- text goes out WIDE ------------------------------------------------------------
-//
-// THE ANSI ENTRY POINTS CANNOT CARRY A C+ STRING, and this was wrong from the
-// first commit.
-//
-// `vendor/win32`'s manifest chose the `*A` calls so that "plain NUL-terminated
-// C+ strings pass straight through (no UTF-16)". That is true for ASCII and
-// false for everything else: an `*A` call decodes its bytes as the system
-// ANSI codepage — CP1252 on a Western install — while a C+ `str` is UTF-8. So
-// every byte above 0x7F is decoded as the wrong character, one per byte.
-//
-// Seen in a screenshot as a window titled `facet_win32 â€" first light`. The
-// em-dash is UTF-8 `E2 80 94`; CP1252 reads those three bytes as `â`, `€` and
-// `"`. Not a font problem and not a rendering problem — the string was already
-// wrong before it reached the control.
-//
-// So text goes out through the `*W` calls, converted with
-// `MultiByteToWideChar(CP_UTF8)`. That is the same conversion
-// `stdlib/fs_sys_windows` does for every path it opens, and for the same
-// reason.
-//
-// WHAT STAYS ANSI: class names and property keys. Those are ASCII literals this
-// package writes itself, they are compared as bytes rather than displayed, and
-// converting them would buy nothing.
-
-fn cp_utf8() -> u32 { return 65001 as u32; }
-
-extern fn malloc(n: usize) -> *u8;
-extern fn free(p: *u8);
-
-extern fn MultiByteToWideChar(codepage: u32, flags: u32, mb: *u8, mb_len: i32,
-                              wc: *u16, wc_len: i32) -> i32;
-
-// UTF-8 -> a NUL-terminated UTF-16 buffer the caller must free.
-//
-// `-1` for the input length means "the source is NUL-terminated, and count the
-// terminator too" — which is what makes the result NUL-terminated without
-// writing one by hand.
-fn to_wide(s: str) -> *u16 {
-    match text::from_str(s).c_str() {
-        option::Option[text::CString]::Some(cs) => {
-            let need: i32 = { MultiByteToWideChar(cp_utf8(), 0 as u32, cs.as_ptr(),
-                                                  0 -% (1 as i32),
-                                                  0 as *u16, 0 as i32) };
-            if need <= (0 as i32) { return 0 as *u16; }
-            let buf: *u8 = { malloc((need as usize) *% (2 as usize)) };
-            if buf.is_null() { return 0 as *u16; }
-            let w: *u16 = buf as *u16;
-            let got: i32 = { MultiByteToWideChar(cp_utf8(), 0 as u32, cs.as_ptr(),
-                                                 0 -% (1 as i32), w, need) };
-            if got <= (0 as i32) { { free(buf) }; return 0 as *u16; }
-            return w;
-        }
-        option::Option[text::CString]::None => { return 0 as *u16; }
-    }
-}
-
-fn free_wide(w: *u16) {
-    if w == (0 as *u16) { return; }
-    { free(w as *u8) };
-    return;
-}
 // A node's text, converted and handed to the WIDE entry point — see above for
 // why it cannot go out as bytes.
 fn set_window_text(v: *u8, t: text::Text) {
-    let w: *u16 = to_wide(t.view());
+    let w: *u16 = sys::to_wide(t.view());
     if w == (0 as *u16) { return; }
     let _r: i32 = { u::SetWindowTextW(v, w) };
-    free_wide(w);
+    sys::free_wide(w);
     return;
 }
 
@@ -375,6 +316,9 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
         let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
     return;
+    if (dirty & (button::P_IMAGE | button::P_CONTENT_LAYOUT)) != (0 as u64) {
+        apply_button_image(v, { (*p).image }.view(), { (*p).content_layout });
+    }
 }
 
 // ---- checkbox / toggle -------------------------------------------------------
@@ -444,11 +388,11 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
         // bytes as wide characters, so two ASCII bytes become one CJK glyph and
         // `type here` renders as 裁数集牭eN. Visible in a screenshot the moment
         // anyone looked at it.
-        let w: *u16 = to_wide({ (*p).input_view.placeholder }.view());
+        let w: *u16 = sys::to_wide({ (*p).input_view.placeholder }.view());
         if w != (0 as *u16) {
             let _r: i64 = { u::SendMessageW(v, sys::em_setcuebanner(),
                                             1 as u64, { #addr(w as *u8) } as i64) };
-            free_wide(w);
+            sys::free_wide(w);
         }
     }
     return;
@@ -1432,14 +1376,14 @@ fn draw_tab_strip(v: *u8, n: *core::Node, hdc: *u8) {
         // of its own, and a key is the one name every node has.
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(pane) => {
-                let w16: *u16 = to_wide({ (*pane).key() });
+                let w16: *u16 = sys::to_wide({ (*pane).key() });
                 if w16 != (0 as *u16) {
                     let flags: u32 = sys::dt_center() | sys::dt_vcenter()
                                    | sys::dt_singleline() | sys::dt_noprefix()
                                    | sys::dt_end_ellipsis();
                     let _dd: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
                                                   #addr_of(tab), flags) };
-                    free_wide(w16);
+                    sys::free_wide(w16);
                 }
             }
             option::Option[*core::Node]::None => { }
@@ -1984,13 +1928,23 @@ fn draw_icon_button(di: *u8) -> bool {
         r.left = r.left +% (1 as i32);
         r.top = r.top +% (1 as i32);
     }
-    let w16: *u16 = to_wide({ (*p).source }.view());
-    if w16 != (0 as *u16) {
-        let flags: u32 = sys::dt_center() | sys::dt_vcenter()
-                       | sys::dt_singleline() | sys::dt_noprefix();
-        let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
-                                     #addr_of(r), flags) };
-        free_wide(w16);
+    // A SOURCE IS EITHER A GLYPH OR A FILE. `fonts::spec_of` decides the same
+    // question for the FACE — a lone private-use codepoint takes the icon font
+    // — and this is its other half: anything that decodes as a picture is
+    // drawn as one, and everything else is drawn as text.
+    //
+    // The picture is tried FIRST because the test is exact: `imaging::draw`
+    // answers false for a string that is not a path to something it can read,
+    // which is every glyph and every word.
+    if !imaging::draw(hdc, r, { (*p).source }.view(), { (*p).fit }) {
+        let w16: *u16 = sys::to_wide({ (*p).source }.view());
+        if w16 != (0 as *u16) {
+            let flags: u32 = sys::dt_center() | sys::dt_vcenter()
+                           | sys::dt_singleline() | sys::dt_noprefix();
+            let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                         #addr_of(r), flags) };
+            sys::free_wide(w16);
+        }
     }
     if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
     if (state & ods_focus()) != (0 as u32) {
@@ -2208,11 +2162,11 @@ fn draw_text_button(di: *u8) -> bool {
         r.left = r.left +% (1 as i32);
         r.top = r.top +% (1 as i32);
     }
-    let w16: *u16 = to_wide({ (*p).title }.view());
+    let w16: *u16 = sys::to_wide({ (*p).title }.view());
     if w16 != (0 as *u16) {
         let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
                                      #addr_of(r), flags) };
-        free_wide(w16);
+        sys::free_wide(w16);
     }
     if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
 
@@ -2775,6 +2729,134 @@ fn carousel_step(v: *u8, n: *core::Node, delta: i64) -> bool {
     return true;
 }
 
+// ---- a button's picture, and where it sits relative to the text --------------------
+//
+// `BM_SETIMAGE` with `BS_BITMAP` is the obvious call and the wrong one: that
+// style makes the bitmap REPLACE the title, so a button with both shows only
+// the picture. `BUTTON_IMAGELIST` is the one that places an image BESIDE the
+// text, which is what `content_layout` describes.
+//
+// THE ALIGNMENT MAPS ONE TO ONE. `ContentLayout` is ImageLeft/Top/Right/Bottom
+// and `BUTTON_IMAGELIST_ALIGN_*` is 0/1/2/3 in that order. This file recorded
+// the opposite in MANIFEST §2 before the two were put side by side — the entry
+// is gone, and the lesson is the one this package keeps relearning: a claim
+// about what a platform cannot do is worth checking before it is written down.
+//
+// BUTTON_IMAGELIST on x64:
+//   0   HIMAGELIST himl
+//   8   RECT       margin   (16 bytes)
+//   24  UINT       uAlign
+// 32 with the tail padding.
+fn bcm_setimagelist() -> u32 { return 0x1602 as u32; }
+fn ilc_color32() -> u32 { return 0x0020 as u32; }
+fn bil_bytes() -> usize { return 32 as usize; }
+fn bil_off_align() -> usize { return 24 as usize; }
+
+fn align_of_layout(l: vocab::ContentLayout) -> u32 {
+    return match l {
+        vocab::ContentLayout::ImageLeft => 0 as u32,
+        vocab::ContentLayout::ImageTop => 1 as u32,
+        vocab::ContentLayout::ImageRight => 2 as u32,
+        vocab::ContentLayout::ImageBottom => 3 as u32,
+    };
+}
+
+// The list is kept ON THE BUTTON, because `BCM_SETIMAGELIST` does not copy it —
+// the control holds the handle and reads it on every paint. Destroying it after
+// the call, or letting a second apply overwrite the field without destroying
+// the first, is a leak of a GDI object per apply.
+fn apply_button_image(v: *u8, source: str, layout: vocab::ContentLayout) {
+    var w: i32 = 0 as i32;
+    var h: i32 = 0 as i32;
+    let hbm: *u8 = imaging::bitmap_for(source, #addr_of(w), #addr_of(h));
+    let old: *u8 = { u::GetPropA(v, sys::prop_imagelist() as *i8) };
+    if hbm == (0 as *u8) || w <= (0 as i32) || h <= (0 as i32) {
+        // NO PICTURE IS A STATE, not a failure: an application clearing
+        // `image` means the button goes back to text, so the list is taken off
+        // the control before it is destroyed.
+        if old != (0 as *u8) {
+            let _c: i64 = { u::SendMessageA(v, bcm_setimagelist(), 0 as u64, 0 as i64) };
+            let _d: i32 = { cc::ImageList_Destroy(old) };
+            let _r: *u8 = { u::RemovePropA(v, sys::prop_imagelist() as *i8) };
+        }
+        return;
+    }
+    // ILC_COLOR32 keeps the alpha a PNG arrived with. A 24-bit list would
+    // composite every rounded icon against black.
+    let list: *u8 = { cc::ImageList_Create(w, h, ilc_color32(), 1 as i32, 0 as i32) };
+    if list == (0 as *u8) { return; }
+    let _a: i32 = { cc::ImageList_Add(list, hbm, 0 as *u8) };
+    let bil: *u8 = { bi_malloc(bil_bytes()) };
+    if bil.is_null() { let _d: i32 = { cc::ImageList_Destroy(list) }; return; }
+    let _z: *u8 = { bi_memset(bil, 0 as i32, bil_bytes()) };
+    let slot: *usize = bil as *usize;
+    { *slot = { #addr(list) } };
+    let al: *u32 = { (bil + bil_off_align()) } as *u32;
+    { *al = align_of_layout(layout) };
+    let _s: i64 = { u::SendMessageA(v, bcm_setimagelist(), 0 as u64,
+                                    { #addr(bil) } as i64) };
+    { bi_free(bil) };
+    // ONLY AFTER the control has taken the new one — destroying the old list
+    // first would leave the button reading a freed handle for the instant
+    // between.
+    if old != (0 as *u8) { let _d: i32 = { cc::ImageList_Destroy(old) }; }
+    let _p: i32 = { u::SetPropA(v, sys::prop_imagelist() as *i8, list) };
+    return;
+}
+
+#[link_name = "malloc"]
+extern fn bi_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn bi_free(p: *u8);
+#[link_name = "memset"]
+extern fn bi_memset(p: *u8, v: i32, n: usize) -> *u8;
+
+// ---- image -----------------------------------------------------------------------
+//
+// A PANEL that draws its picture — there is no Win32 image control worth the
+// name. `STATIC` with `SS_BITMAP` exists and takes an HBITMAP, but it ignores
+// every fit but one (it draws at the bitmap's own size, top-left), has no
+// scaling mode, and cannot composite alpha. `fit` is four of this kind's four
+// props; a control that answers none of them is not the control.
+//
+// The decode is `imaging`'s. This file only says WHERE the picture goes.
+fn create_image(n: *core::Node) -> *u8 { return create_panel(n); }
+
+fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ImageProps = props_of(n, props::K_IMAGE) as *props::ImageProps;
+    if p == (0 as *props::ImageProps) { return; }
+    let touched: u64 = image::P_SOURCE | image::P_FIT | image::P_IS_OPAQUE;
+    if (dirty & touched) != (0 as u64) {
+        // A new source is a new size, and the layout is asked again by
+        // `views::apply` — which calls `measure::remeasure` after every
+        // configure, for exactly this reason. Calling it here too would be a
+        // second ask and an import cycle.
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+fn draw_image(v: *u8, n: *core::Node, hdc: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *props::ImageProps = { (*d).props } as *props::ImageProps;
+    if p == (0 as *props::ImageProps) { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    // `is_opaque` HERE MEANS SOMETHING, unlike on `icon_button` where §1
+    // records it absent. An image with alpha needs whatever is behind it, and
+    // this node OWNS its pixels — so an opaque image fills first and a
+    // transparent one composites over the inherited background the band has
+    // already painted.
+    if { (*p).is_opaque } {
+        let b: *u8 = paint::brush_for(paint::effective_bg(v));
+        if b != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), b) }; }
+    }
+    let _drew: bool = imaging::draw(hdc, r, { (*p).source }.view(), { (*p).fit });
+    return;
+}
+
 // ---- what a panel paints -------------------------------------------------------------
 //
 // THE BAND FIRST, THEN THE KIND. A `bordered` strokes over the background it was
@@ -2793,6 +2875,7 @@ fn paint_node(v: *u8, n: *core::Node, hdc: *u8) {
     if kind == props::K_TABS { draw_tab_strip(v, n, hdc); return; }
     if kind == props::K_REFRESHABLE { draw_refreshable(v, n, hdc); return; }
     if kind == split::K_SPLIT { draw_split(v, n, hdc); return; }
+    if kind == props::K_IMAGE { draw_image(v, n, hdc); return; }
     return;
 }
 
@@ -2879,6 +2962,13 @@ fn slider_customdraw(v: *u8, nm: *u8) -> i64 {
     };
 
     if spec == tbcd_thumb() {
+        // A PICTURE WINS OVER A COLOUR. `thumb_image` is the more specific
+        // verb — an application that stated both meant the picture, and
+        // filling the colour underneath would show at its edges.
+        if imaging::draw(hdc, r, { (*p).thumb_image }.view(),
+                         vocab::ImageFit::AspectFit) {
+            return cdrf_skipdefault();
+        }
         var has: bool = false;
         let c: u32 = paint::resolve({ (*p).thumb_color }, #addr_of(has));
         if !has { return cdrf_dodefault(); }

@@ -18,6 +18,10 @@
 
 // ---- messages ----------------------------------------------------------------
 
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "win32/winuser" as u;
+
 fn wm_create() -> u32 { return 0x0001 as u32; }
 fn wm_destroy() -> u32 { return 0x0002 as u32; }
 fn wm_size() -> u32 { return 0x0005 as u32; }
@@ -264,6 +268,7 @@ fn prop_font() -> *u8 { return { #str_ptr("facet-win32-font\0") }; }
 fn prop_brush() -> *u8 { return { #str_ptr("facet-win32-brush\0") }; }
 // Set on a control that has been dropped out of visual styles — see
 // `paint::go_classic`.
+fn prop_imagelist() -> *u8 { return { #str_ptr("facet-win32-imagelist ") }; }
 fn prop_classic() -> *u8 { return { #str_ptr("facet-win32-classic\0") }; }
 
 // ---- this package's own window class -----------------------------------------
@@ -326,3 +331,66 @@ fn bs_ownerdraw_style() -> u32 { return 0x000B as u32; }
 
 // WM_DRAWITEM, sent to the OWNER of an owner-drawn control.
 fn wm_drawitem() -> u32 { return 0x002B as u32; }
+
+// ---- text goes out WIDE ------------------------------------------------------------
+//
+// THE ANSI ENTRY POINTS CANNOT CARRY A C+ STRING, and this was wrong from the
+// first commit.
+//
+// `vendor/win32`'s manifest chose the `*A` calls so that "plain NUL-terminated
+// C+ strings pass straight through (no UTF-16)". That is true for ASCII and
+// false for everything else: an `*A` call decodes its bytes as the system
+// ANSI codepage — CP1252 on a Western install — while a C+ `str` is UTF-8. So
+// every byte above 0x7F is decoded as the wrong character, one per byte.
+//
+// Seen in a screenshot as a window titled `facet_win32 â€" first light`. The
+// em-dash is UTF-8 `E2 80 94`; CP1252 reads those three bytes as `â`, `€` and
+// `"`. Not a font problem and not a rendering problem — the string was already
+// wrong before it reached the control.
+//
+// So text goes out through the `*W` calls, converted with
+// `MultiByteToWideChar(CP_UTF8)`. That is the same conversion
+// `stdlib/fs_sys_windows` does for every path it opens, and for the same
+// reason.
+//
+// WHAT STAYS ANSI: class names and property keys. Those are ASCII literals this
+// package writes itself, they are compared as bytes rather than displayed, and
+// converting them would buy nothing.
+
+fn cp_utf8() -> u32 { return 65001 as u32; }
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+extern fn MultiByteToWideChar(codepage: u32, flags: u32, mb: *u8, mb_len: i32,
+                              wc: *u16, wc_len: i32) -> i32;
+
+// UTF-8 -> a NUL-terminated UTF-16 buffer the caller must free.
+//
+// `-1` for the input length means "the source is NUL-terminated, and count the
+// terminator too" — which is what makes the result NUL-terminated without
+// writing one by hand.
+fn to_wide(s: str) -> *u16 {
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let need: i32 = { MultiByteToWideChar(cp_utf8(), 0 as u32, cs.as_ptr(),
+                                                  0 -% (1 as i32),
+                                                  0 as *u16, 0 as i32) };
+            if need <= (0 as i32) { return 0 as *u16; }
+            let buf: *u8 = { malloc((need as usize) *% (2 as usize)) };
+            if buf.is_null() { return 0 as *u16; }
+            let w: *u16 = buf as *u16;
+            let got: i32 = { MultiByteToWideChar(cp_utf8(), 0 as u32, cs.as_ptr(),
+                                                 0 -% (1 as i32), w, need) };
+            if got <= (0 as i32) { { free(buf) }; return 0 as *u16; }
+            return w;
+        }
+        option::Option[text::CString]::None => { return 0 as *u16; }
+    }
+}
+
+fn free_wide(w: *u16) {
+    if w == (0 as *u16) { return; }
+    { free(w as *u8) };
+    return;
+}

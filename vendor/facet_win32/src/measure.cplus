@@ -35,6 +35,7 @@ import "facet/props" as props;
 import "facet/label" as label;
 import "facet/text_button" as text_button;
 import "facet/symbol" as symbol;
+import "./imaging" as imaging;
 import "facet/vocabulary" as vocab;
 import "win32/winuser" as u;
 import "win32/wingdi" as gdi;
@@ -127,12 +128,12 @@ fn text_extent(v: *u8, s: str, wrap_at: i32, out_w: *i32, out_h: *i32) {
     // character above 0x7F measures as MORE characters than it draws — and the
     // control is then given a box too wide for its text, or the label is
     // ellipsised for a width it does not need. The two halves have to agree.
-    let w16: *u16 = controls::to_wide(s);
+    let w16: *u16 = sys::to_wide(s);
     if w16 != (0 as *u16) {
         let _d: i32 = { u::DrawTextW(hdc, w16, 0 -% (1 as i32), #addr_of(r), flags) };
         { *out_w = r.right -% r.left };
         { *out_h = r.bottom -% r.top };
-        controls::free_wide(w16);
+        sys::free_wide(w16);
     }
     if old != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, old) }; }
     let _r: i32 = { u::ReleaseDC(v, hdc) };
@@ -252,6 +253,11 @@ fn has_intrinsic_size(kind: u32) -> bool {
     // never installed, and `fixed_height` is never consulted.
     if kind == symbol::K_SYMBOL { return true; }
     if kind == props::K_ICON_BUTTON { return true; }
+    // AN IMAGE'S NATURAL SIZE IS THE PICTURE'S. Without this it lays out at
+    // 0x0 — the failure the slider, the progress bar and both pickers each had
+    // in turn, and the reason this list is the first place to look when a
+    // control is created, placed and invisible.
+    if kind == props::K_IMAGE { return true; }
     return false;
 }
 
@@ -333,6 +339,28 @@ fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
         let side: f64 = controls::toggle_height() as f64;
         return flex::Size { width: side * (2.0 as f64), height: side };
     }
+    // THE PICTURE'S OWN SIZE, decoded. An image with a stated width or height
+    // still measures — flex takes the stated one and uses this for the other,
+    // which is how an image scales by its aspect when only one side is given.
+    if kind == props::K_IMAGE {
+        let d: *core::Data = core::node_data(n);
+        if d != (0 as *core::Data) {
+            let ip: *props::ImageProps = { (*d).props } as *props::ImageProps;
+            if ip != (0 as *props::ImageProps) {
+                var iw: i32 = 0 as i32;
+                var ih: i32 = 0 as i32;
+                imaging::natural_size({ (*ip).source }.view(), #addr_of(iw), #addr_of(ih));
+                if iw > (0 as i32) && ih > (0 as i32) {
+                    return flex::Size { width: iw as f64, height: ih as f64 };
+                }
+            }
+        }
+        // A SOURCE THAT DOES NOT DECODE HAS NO SIZE TO REPORT — not zero,
+        // which would collapse the box and take any stated dimension with it.
+        // Whatever the node was given stands.
+        return flex::Size { width: 0.0f64, height: 0.0f64 };
+    }
+
     // A GLYPH IS SQUARE, at the size its font was made at — the codepoint is
     // drawn by the text stack, so the font's own line height IS the icon's
     // side and nothing else has to be stated.
