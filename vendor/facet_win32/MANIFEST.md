@@ -44,7 +44,7 @@ Two probes under `playground/`, and the division is deliberate:
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
 
 ```
-362 declared prop bits     273 answered    75%   (gtk 358, appkit 336, uikit 323, android 321)
+362 declared prop bits     276 answered    76%   (gtk 358, appkit 336, uikit 323, android 321)
  68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
@@ -644,21 +644,30 @@ caret or an accessibility role to reproduce.
 `PS_INSIDEFRAME` is the detail worth keeping. A pen is centred on its path by
 default, so half of a wide stroke falls outside the node's own box and is
 clipped — a 6-point border drawing as 3, with nothing to explain it.
-### The MOBILE INPUT verbs — `keyboard`, `return_key`, `predicts_text`, `checks_spelling`
+### The MOBILE INPUT verbs that remain — `return_key`, `predicts_text`, `checks_spelling`
 
-Four `InputView` rows that describe a SOFT keyboard, and a desktop has none.
+Three `InputView` rows that describe a SOFT keyboard, and a desktop has none.
+`return_key` labels its action key (Go, Search, Done); the other two are the
+suggestion strip above it. A Win32 `EDIT` receives from a hardware keyboard
+that has one Enter key with no label to set, and shows no strip.
 
-`keyboard` picks which on-screen layout appears (numeric, email, URL);
-`return_key` labels its action key (Go, Search, Done); `predicts_text` and
-`checks_spelling` are the suggestion strip above it. A Win32 `EDIT` receives
-from a hardware keyboard that is always the same one, shows no strip, and has no
-action key to label.
+The near neighbours are worse than nothing: `EM_SETCUEBANNER` is a prompt
+rather than a key label, and spell-checking on an `EDIT` is the application's,
+not the control's.
 
-The near neighbours are all worse than nothing. Windows has a touch keyboard,
-but a desktop app cannot choose its layout; `EM_SETCUEBANNER` is a prompt rather
-than a key label; and spell-checking on an `EDIT` is the application's, not the
-control's. Answering any of them would be inventing a behaviour the platform
-does not have.
+**The fourth used to be here and was wrong.** This entry claimed all four
+together on the argument that "a desktop app cannot choose its layout".
+`SetInputScope` is exactly that API — it takes an HWND and a scope and tells
+the Windows touch keyboard which layout to show. It is answered now
+(`controls::apply_keyboard`), and it matters on two surfaces that are ordinary
+Windows rather than exceptions: a tablet or 2-in-1 shows the touch keyboard and
+honours the scope, and the IME reads it even with a hardware keyboard, so a
+field scoped to a number does not open a composition window over itself.
+
+It is resolved from msctf.dll at RUNTIME rather than linked. The import library
+is not in every SDK layout — it is not in this one — and linking it would turn
+"this hint is unavailable" into "the package does not build". A scope is a hint
+to a keyboard that may not exist, so losing it should cost a hint.
 
 ### PER-CONTROL TYPOGRAPHY — `character_spacing` and `line_height`
 
@@ -667,9 +676,12 @@ DEVICE CONTEXT call, so it applies to whatever is drawn next rather than to a
 control, and a system control acquires its own DC when it paints — there is
 nowhere to put the value that the control would read.
 
-Both are answerable by owner-drawing (§2's ceiling) or by DirectWrite, which is
-a different text stack. `line_height` on a wrapping label is the one that would
-be missed most.
+Both are answerable by owner-drawing, and `character_spacing` IS answered on
+the kinds this package already owner-draws — see `text_button`, where the DC is
+ours and `SetTextCharacterExtra` applies to exactly the text about to be drawn.
+What stays absent is the SYSTEM controls, which is what the paragraph above is
+about. `line_height` needs DirectWrite on any kind, and on a wrapping label it
+is the one that would be missed most.
 
 ### A CONTROL'S OWN BORDER — `border_color`, `border_width`, `corner_radius`
 

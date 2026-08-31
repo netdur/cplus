@@ -564,9 +564,16 @@ struct InputBits {
     transform: u64,
     align: u64,
     secure: u64,
+    keyboard: u64,
 }
 
 fn apply_input_view(v: *u8, iv: *props::InputViewProps, dirty: u64, b: InputBits) {
+    // THE SCOPE IS SET ON THE CONTROL and stays until it is set again, so this
+    // runs on the create sweep too — every bit is raised then, which is what
+    // gives a field its scope before a user ever reaches it.
+    if b.keyboard != (0 as u64) && (dirty & b.keyboard) != (0 as u64) {
+        apply_keyboard(v, { (*iv).keyboard });
+    }
     if (dirty & b.read_only) != (0 as u64) {
         let ro: u64 = if { (*iv).is_read_only } { 1 as u64 } else { 0 as u64 };
         let _r: i64 = { u::SendMessageA(v, sys::em_setreadonly(), ro, 0 as i64) };
@@ -641,6 +648,7 @@ fn text_field_bits() -> InputBits {
         text_color: text_field::P_TEXT_COLOR,
         transform: text_field::P_TEXT_TRANSFORM,
         align: text_field::P_TEXT_ALIGN, secure: text_field::P_IS_SECURE,
+        keyboard: text_field::P_KEYBOARD,
     };
 }
 
@@ -656,6 +664,7 @@ fn text_area_bits() -> InputBits {
         // An editor is never a password box; there is no `is_secure` on it and
         // zero is a mask no bit can match.
         secure: 0 as u64,
+        keyboard: text_area::P_KEYBOARD,
     };
 }
 
@@ -669,6 +678,7 @@ fn search_field_bits() -> InputBits {
         text_color: search_field::P_TEXT_COLOR,
         transform: search_field::P_TEXT_TRANSFORM,
         align: search_field::P_TEXT_ALIGN, secure: 0 as u64,
+        keyboard: search_field::P_KEYBOARD,
     };
 }
 // ---- slider ------------------------------------------------------------------------
@@ -2855,6 +2865,78 @@ extern fn bi_malloc(n: usize) -> *u8;
 extern fn bi_free(p: *u8);
 #[link_name = "memset"]
 extern fn bi_memset(p: *u8, v: i32, n: usize) -> *u8;
+
+// ---- the touch keyboard's layout, and the IME's expectation -----------------------
+//
+// `keyboard` picks which on-screen layout appears. MANIFEST §1 recorded all
+// four "mobile input" verbs absent together, on the argument that "a desktop
+// app cannot choose its layout". THAT PART WAS WRONG: `SetInputScope` is
+// exactly that API. It ships in msctf, takes an HWND and a scope, and is what
+// tells the Windows touch keyboard which layout to show and the IME what kind
+// of text to expect.
+//
+// It matters on two real surfaces. A Windows tablet or 2-in-1 shows the touch
+// keyboard and honours the scope — that form factor is ordinary Windows, not an
+// exception. And the IME reads it even with a hardware keyboard, so a field
+// scoped to a number stops a CJK composition window opening over it.
+//
+// The other three of that group stand: `return_key` labels an action key a
+// hardware keyboard does not have, and `predicts_text` / `checks_spelling` are
+// the suggestion strip above a keyboard that is not there.
+//
+// A SCOPE IS A HINT AND NOT A RESTRICTION. `ES_NUMBER` would refuse non-digits
+// outright, and that is a different verb — facet says which keyboard to offer,
+// not which characters to accept, and silently dropping a keystroke the
+// application never asked to forbid is the worse failure.
+// RESOLVED AT RUNTIME, not linked. `SetInputScope` lives in msctf.dll and its
+// import library is not in every SDK layout — this one does not have
+// `msctf.lib` — so linking against it would make the whole package fail to
+// build on a machine where the feature is merely unavailable.
+//
+// That is the right shape for it anyway: a scope is a HINT to a keyboard that
+// may not exist, so a system without the export loses a hint rather than a
+// build. Looked up once and cached, including the failure.
+extern fn LoadLibraryA(name: *i8) -> *u8;
+extern fn GetProcAddress(module: *u8, name: *i8) -> *u8;
+
+static INPUT_SCOPE_FN: usize = 0;
+static INPUT_SCOPE_TRIED: bool = false;
+
+fn input_scope_fn() -> fn(*u8, i32) -> i32 {
+    if !INPUT_SCOPE_TRIED {
+        INPUT_SCOPE_TRIED = true;
+        let m: *u8 = { LoadLibraryA({ #str_ptr("msctf.dll ") } as *i8) };
+        if m != (0 as *u8) {
+            let p: *u8 = { GetProcAddress(m, { #str_ptr("SetInputScope ") } as *i8) };
+            INPUT_SCOPE_FN = { #addr(p) };
+        }
+    }
+    return INPUT_SCOPE_FN as fn(*u8, i32) -> i32;
+}
+
+fn scope_of(k: vocab::Keyboard) -> i32 {
+    return match k {
+        vocab::Keyboard::Default => 0 as i32,      // IS_DEFAULT
+        vocab::Keyboard::Plain => 0 as i32,
+        // NO SCOPE FOR CHAT OR TEXT. Both mean "ordinary prose", which is what
+        // the default layout already is — and every other scope would narrow
+        // it. Mapping them onto something merely because a constant exists is
+        // how a chat field ends up offering a number pad.
+        vocab::Keyboard::Chat => 0 as i32,
+        vocab::Keyboard::Text => 0 as i32,
+        vocab::Keyboard::Url => 1 as i32,          // IS_URL
+        vocab::Keyboard::Email => 5 as i32,        // IS_EMAIL_SMTPEMAILADDRESS
+        vocab::Keyboard::Numeric => 29 as i32,     // IS_NUMBER
+        vocab::Keyboard::Telephone => 32 as i32,   // IS_TELEPHONE_FULLTELEPHONENUMBER
+    };
+}
+
+fn apply_keyboard(v: *u8, k: vocab::Keyboard) {
+    let f: fn(*u8, i32) -> i32 = input_scope_fn();
+    if f.is_null() { return; }
+    let _r: i32 = f(v, scope_of(k));
+    return;
+}
 
 // ---- image -----------------------------------------------------------------------
 //
