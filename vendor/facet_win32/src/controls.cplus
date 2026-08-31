@@ -40,6 +40,7 @@ import "facet/time_picker" as time_picker;
 import "facet/stepper" as stepper;
 import "facet/tabs" as tabs;
 import "facet/refreshable" as refreshable;
+import "facet/split" as split;
 import "facet/page_dots" as page_dots;
 import "facet/bordered" as bordered;
 import "facet/scroll" as scroll;
@@ -2332,6 +2333,196 @@ fn draw_refreshable(v: *u8, n: *core::Node, hdc: *u8) {
     return;
 }
 
+// ---- split: two panes and a divider you can drag ------------------------------------
+//
+// A PANEL, with the divider DRAWN into it — the same shape `tabs` takes, and
+// for the same reason: there is no Win32 splitter control. `SysLink`, the
+// rebar, the header control — none of them is this. Every toolkit that has a
+// splitter drew it.
+//
+// THE PANES ARE FLEX'S, NOT OURS. facet's `split` says the leading pane is
+// `position` points and the trailing one takes the rest, and that is a
+// STATEMENT ABOUT LAYOUT — so it is written into the nodes' flex style and the
+// existing layout walk places the two child windows. This file never calls
+// SetWindowPos.
+//
+// THE CLAMPING IS FACET'S. `split::floor_with_max` and
+// `split::ceiling_with_max` hold the interaction between a minimum on one pane
+// and a maximum on the other, which is fiddly and identical on every platform.
+// facet_gtk calls the same two functions from the same place; a second copy
+// here is the copy that would drift.
+
+fn create_split(n: *core::Node) -> *u8 { return create_panel(n); }
+
+fn split_props(n: *core::Node) -> *split::SplitProps {
+    return props_of(n, split::K_SPLIT) as *split::SplitProps;
+}
+
+fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *split::SplitProps = split_props(n);
+    if p == (0 as *split::SplitProps) { return; }
+    if (dirty & (split::P_POSITION | split::P_AXIS | split::P_MIN_LEADING
+                 | split::P_MIN_TRAILING | split::P_MAX_LEADING
+                 | split::P_MAX_TRAILING | split::P_COLLAPSED)) != (0 as u64) {
+        size_panes(n, p);
+    }
+    if (dirty & (split::P_DIVIDER | split::P_POSITION | split::P_COLLAPSED))
+       != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+fn split_is_columns(p: *split::SplitProps) -> bool {
+    return match { (*p).axis } {
+        split::SplitAxis::Columns => true,
+        split::SplitAxis::Rows => false,
+    };
+}
+
+// The leading pane's extent, clamped. Pulled out of `size_panes` because the
+// DRAG needs the same answer — a divider that could be dragged past a minimum
+// the layout then refuses would jump back under the pointer.
+fn split_extent(n: *core::Node, p: *split::SplitProps) -> f64 {
+    let columns: bool = split_is_columns(p);
+    var extent: f64 = { (*p).position };
+    if { (*p).collapsed_leading } { extent = 0.0f64; }
+    let lead_min: f64 = if { (*p).collapsed_leading } { 0.0f64 }
+                        else { { (*p).min_leading } };
+    let trail_min: f64 = if { (*p).collapsed_trailing } { 0.0f64 }
+                         else { { (*p).min_trailing } };
+    let avail: f64 = if columns { { (*n).frame().width } } else { { (*n).frame().height } };
+    let floor: f64 = split::floor_with_max(lead_min, { (*p).max_trailing }, avail);
+    if extent < floor { extent = floor; }
+    if avail > (0.0 as f64) {
+        var cap: f64 = avail - trail_min;
+        cap = split::ceiling_with_max(cap, { (*p).max_leading });
+        if cap > lead_min && extent > cap { extent = cap; }
+    } else {
+        let hi: f64 = { (*p).max_leading };
+        if hi > (0.0 as f64) && extent > hi { extent = hi; }
+    }
+    return extent;
+}
+
+fn split_pane(n: *core::Node, i: usize) -> *core::Node {
+    if i >= core::child_count_of(n) { return 0 as *core::Node; }
+    return match core::child_of(n, i) {
+        option::Option[*core::Node]::Some(c) => c,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+}
+
+fn size_panes(n: *core::Node, p: *split::SplitProps) {
+    let columns: bool = split_is_columns(p);
+    let lead: *core::Node = split_pane(n, 0 as usize);
+    let trail: *core::Node = split_pane(n, 1 as usize);
+    if lead == (0 as *core::Node) { return; }
+    let extent: f64 = split_extent(n, p);
+    let lead_min: f64 = if { (*p).collapsed_leading } { 0.0f64 }
+                        else { { (*p).min_leading } };
+    let trail_min: f64 = if { (*p).collapsed_trailing } { 0.0f64 }
+                         else { { (*p).min_trailing } };
+    // THE LEADING PANE IS STATED AND DOES NOT FLEX. Growing it would let free
+    // space move the divider, which is the one thing `position` exists to
+    // decide.
+    if columns {
+        { (*lead).set_width(flex::StyleLength::points(extent)) };
+        { (*lead).set_min_width(flex::StyleLength::points(lead_min)) };
+    } else {
+        { (*lead).set_height(flex::StyleLength::points(extent)) };
+        { (*lead).set_min_height(flex::StyleLength::points(lead_min)) };
+    }
+    { (*lead).set_flex_grow(0.0f64) };
+    { (*lead).set_flex_shrink(0.0f64) };
+    if trail == (0 as *core::Node) { return; }
+    { (*trail).set_flex_grow(1.0f64) };
+    { (*trail).set_flex_shrink(1.0f64) };
+    if columns { { (*trail).set_min_width(flex::StyleLength::points(trail_min)) }; }
+    else { { (*trail).set_min_height(flex::StyleLength::points(trail_min)) }; }
+    // A COLLAPSED TRAILING PANE gives its space to the leading one, which then
+    // has to be the pane that grows — otherwise the split leaves a hole where
+    // the trailing pane was.
+    if { (*p).collapsed_trailing } {
+        if columns { { (*trail).set_width(flex::StyleLength::points(0.0f64)) }; }
+        else { { (*trail).set_height(flex::StyleLength::points(0.0f64)) }; }
+        { (*trail).set_flex_grow(0.0f64) };
+        { (*lead).set_flex_grow(1.0f64) };
+    }
+    return;
+}
+
+// The divider's band, in the panel's own coordinates. It straddles the boundary
+// rather than sitting after it: a divider drawn entirely inside the trailing
+// pane would be covered the moment that pane has a background, because a child
+// window paints over its parent.
+fn split_thickness(p: *split::SplitProps) -> f64 {
+    let t: f64 = { (*p).divider_thickness };
+    if t > (0.0 as f64) { return t; }
+    return 4.0f64;
+}
+
+fn draw_split(v: *u8, n: *core::Node, hdc: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *split::SplitProps = { (*d).props } as *split::SplitProps;
+    if p == (0 as *split::SplitProps) { return; }
+    var has: bool = false;
+    var c: u32 = paint::resolve({ (*p).divider_color }, #addr_of(has));
+    // COLOR_3DFACE — the shell's own divider colour, and the one a splitter
+    // wears in every Windows application that has one.
+    if !has { c = { u::GetSysColor(15 as i32) }; }
+    let brush: *u8 = paint::brush_for(c);
+    if brush == (0 as *u8) { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    let at: i32 = split_extent(n, p) as i32;
+    let t: i32 = split_thickness(p) as i32;
+    var bar: u::tagRECT = if split_is_columns(p) {
+        u::tagRECT { left: at, top: r.top, right: at +% t, bottom: r.bottom }
+    } else {
+        u::tagRECT { left: r.left, top: at, right: r.right, bottom: at +% t }
+    };
+    let _f: i32 = { u::FillRect(hdc, #addr_of(bar), brush) };
+    return;
+}
+
+// Is this point ON the divider? The band is widened by a couple of points on
+// each side for the HIT TEST only — a four-point divider is a four-point target
+// and every splitter in the shell is more forgiving than it looks.
+fn split_grab_slack() -> i32 { return 3 as i32; }
+
+fn on_divider(n: *core::Node, x: i32, y: i32) -> bool {
+    let p: *split::SplitProps = split_props(n);
+    if p == (0 as *split::SplitProps) { return false; }
+    let at: i32 = split_extent(n, p) as i32;
+    let t: i32 = split_thickness(p) as i32;
+    let along: i32 = if split_is_columns(p) { x } else { y };
+    return along >= (at -% split_grab_slack())
+        && along <= (at +% t +% split_grab_slack());
+}
+
+// Where a drag to `x,y` puts the divider. The clamp is NOT applied here: the
+// position is written to the node and `split_extent` clamps on the way out, so
+// there is exactly one place that decides and the drag cannot disagree with the
+// layout.
+fn split_drag_to(v: *u8, n: *core::Node, x: i32, y: i32) -> bool {
+    let p: *split::SplitProps = split_props(n);
+    if p == (0 as *split::SplitProps) { return false; }
+    let along: f64 = if split_is_columns(p) { x as f64 } else { y as f64 };
+    if { (*p).position } == along { return true; }
+    { (*p).position = along };
+    // A DRAG UNCOLLAPSES. Dragging a collapsed pane open and having it snap
+    // shut is the interaction failing in the most confusing way available.
+    if { (*p).collapsed_leading } { { (*p).collapsed_leading = false }; }
+    core::touch(n, split::P_POSITION);
+    let h: fn(*u8, *u8) = { (*p).on_move };
+    if h == split::no_move { return true; }
+    h(v, { (*p).ctx });
+    return true;
+}
+
 // ---- what a panel paints -------------------------------------------------------------
 //
 // THE BAND FIRST, THEN THE KIND. A `bordered` strokes over the background it was
@@ -2349,6 +2540,7 @@ fn paint_node(v: *u8, n: *core::Node, hdc: *u8) {
     if kind == props::K_BORDERED { draw_bordered(v, n, hdc); return; }
     if kind == props::K_TABS { draw_tab_strip(v, n, hdc); return; }
     if kind == props::K_REFRESHABLE { draw_refreshable(v, n, hdc); return; }
+    if kind == split::K_SPLIT { draw_split(v, n, hdc); return; }
     return;
 }
 

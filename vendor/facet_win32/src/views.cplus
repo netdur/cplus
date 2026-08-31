@@ -32,6 +32,7 @@ import "facet/window_chrome" as window_chrome;
 import "win32/winuser" as u;
 import "./sys" as sys;
 import "./controls" as controls;
+import "./subclass" as subclass;
 import "./paint" as paint;
 import "./input" as input;
 import "./measure" as measure;
@@ -121,6 +122,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_BORDERED { return controls::create_bordered(n); }
     if kind == symbol::K_SYMBOL { return controls::create_symbol(n); }
     if kind == props::K_REFRESHABLE { return controls::create_refreshable(n); }
+    if kind == split::K_SPLIT { return controls::create_split(n); }
     if kind == props::K_ICON_BUTTON { return controls::create_icon_button(n); }
     if kind == props::K_LIST { return recycler::create_sequence(n); }
     if kind == props::K_TABLE { return controls::create_table(n); }
@@ -157,6 +159,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_BORDERED { controls::apply_bordered(v, n, dirty); return; }
     if kind == symbol::K_SYMBOL { controls::apply_symbol(v, n, dirty); return; }
     if kind == props::K_REFRESHABLE { controls::apply_refreshable(v, n, dirty); return; }
+    if kind == split::K_SPLIT { controls::apply_split(v, n, dirty); return; }
     if kind == props::K_ICON_BUTTON { controls::apply_icon_button(v, n, dirty); return; }
     if kind == props::K_LIST { recycler::apply_sequence(v, n, dirty); return; }
     if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }
@@ -194,6 +197,11 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     }
     let v: *u8 = create_for_kind(core::kind_of(n), n);
     if v == (0 as *u8) { return 0 as *u8; }
+    // THE MESSAGES A SYSTEM CONTROL KEEPS TO ITSELF. Enter and the caret never
+    // reach the parent, so the three input kinds have their window procedure
+    // hooked — see `subclass`. Installed here rather than in `configure`
+    // because it is a once-per-window act and `configure` runs on every apply.
+    if wants_subclass(core::kind_of(n)) { subclass::install(v); }
     // Configure it WHOLE — the same call apply makes, with every bit set.
     configure(v, n, paint::all_bits());
     // The READ half. `arm` binds the node onto the window, which every backed
@@ -210,6 +218,17 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
 // The bits that mean "ask `input::arm` again". Named so the suite can pin it:
 // a missing bit here is a handler that never fires, which is silent at runtime
 // and looks like an application bug.
+// WHICH KINDS NEED THEIR PROCEDURE HOOKED. Only the three that carry
+// `on_submit`, plus `text_area` for `on_selection_changed`. Subclassing a
+// control that needs neither buys nothing and puts this package's code on the
+// hot path of every message that control receives.
+fn wants_subclass(kind: u32) -> bool {
+    if kind == props::K_TEXT_FIELD { return true; }
+    if kind == props::K_SEARCH_FIELD { return true; }
+    if kind == props::K_TEXT_AREA { return true; }
+    return false;
+}
+
 fn rearm_bits() -> u64 {
     return core::C_GESTURES | props::C_INPUT_TRANSPARENT | props::C_HANDLERS;
 }
@@ -316,6 +335,11 @@ fn remove(ctx: *u8, host: *u8, child: *u8) {
 // parent has already gone would otherwise be destroyed twice.
 fn view_release(v: *u8) {
     if v == (0 as *u8) { return; }
+    // BEFORE the window goes. Putting the original procedure back on a
+    // destroyed window is not merely useless — `RemovePropA` on it would
+    // answer null and leave this package's procedure installed on a handle
+    // that is about to be reused.
+    subclass::remove(v);
     input::unbind_node(v);
     let _d: i32 = { u::DestroyWindow(v) };
     return;

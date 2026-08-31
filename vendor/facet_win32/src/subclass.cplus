@@ -1,0 +1,265 @@
+// facet_win32/subclass — reading the messages a SYSTEM CONTROL keeps to itself.
+//
+// Every other reader in this package works because the window is OURS: a panel
+// is this package's own class, so `window::wnd_proc` sees its messages and
+// `input` dispatches them. A system control is not ours. `EDIT`, `BUTTON`,
+// `COMBOBOX` each have their own window procedure inside comctl32, and the only
+// things that reach us are the NOTIFICATIONS they choose to send the parent —
+// `EN_CHANGE`, `BN_CLICKED`, `CBN_SELCHANGE`.
+//
+// That is enough for most verbs and not enough for three:
+//
+//   `on_submit`             an `EDIT` does not tell its parent about Enter. The
+//                           dialog manager turns Enter into `IDOK` for a DEFAULT
+//                           BUTTON, and a facet tree has no such thing — so the
+//                           key is simply consumed and nothing hears it.
+//   `on_selection_changed`  `EN_SELCHANGE` is a RICHEDIT notification. A plain
+//                           `EDIT` never sends it, at any style.
+//
+// MANIFEST §2 recorded both as "needs the control SUBCLASSED, which this
+// package does not do anywhere yet". This is that machinery.
+//
+// ---- how it works, and the two ways it goes wrong -----------------------------
+//
+// `SetWindowLongPtr(h, GWLP_WNDPROC, ours)` replaces a window's procedure and
+// answers the one it replaced. Ours runs first, decides, and then calls the
+// original through `CallWindowProc` — NOT `DefWindowProc`, which would skip
+// the control's own implementation entirely and leave an EDIT that does not
+// edit.
+//
+// THE ORIGINAL PROCEDURE IS PER-WINDOW and has to be stored per-window. A
+// static would hold whichever control was subclassed last, and every other one
+// would then be routed into that control's procedure — an EDIT running a
+// BUTTON's proc, which is not a crash and not a control either. It rides a
+// window property, the same door `sys::prop_node` uses.
+//
+// AND IT IS INSTALLED ONCE. `views::configure` runs on every apply; subclassing
+// a second time would store OUR procedure as the "original" and the second call
+// into it would recurse until the stack ran out.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/text_field" as text_field;
+import "facet/search_field" as search_field;
+import "facet/text_area" as text_area;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./input" as input;
+
+fn vk_return() -> u64 { return 0x0D as u64; }
+
+// EM_GETSEL packs the selection into the two halves of the return value, so one
+// message answers both ends and there is nothing to allocate.
+fn em_getsel() -> u32 { return 0x00B0 as u32; }
+
+fn prop_oldproc() -> *u8 { return { #str_ptr("facet-win32-oldproc\0") }; }
+fn prop_sel() -> *u8 { return { #str_ptr("facet-win32-sel\0") }; }
+
+fn proc_addr() -> *u8 {
+    let p: fn(*u8, u32, u64, i64) -> i64 = sub_proc;
+    return p as *u8;
+}
+
+// Install on `v`, once. Safe to call again — the second call sees the property
+// and returns, which is what makes it safe to put in `configure`.
+fn install(v: *u8) {
+    if v == (0 as *u8) { return; }
+    if { u::GetPropA(v, prop_oldproc() as *i8) } != (0 as *u8) { return; }
+    let old: i64 = { u::SetWindowLongPtrA(v, sys::gwlp_wndproc(), proc_addr() as i64) };
+    if old == (0 as i64) { return; }
+    let _p: i32 = { u::SetPropA(v, prop_oldproc() as *i8, old as *u8) };
+    return;
+}
+
+// A control that is going away has to be UNSUBCLASSED, and in the right order:
+// the original procedure goes back before the property is removed, or a message
+// arriving in between would find our procedure with nothing to forward to.
+fn remove(v: *u8) {
+    if v == (0 as *u8) { return; }
+    let old: *u8 = { u::GetPropA(v, prop_oldproc() as *i8) };
+    if old == (0 as *u8) { return; }
+    let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwlp_wndproc(), old as i64) };
+    let _r: *u8 = { u::RemovePropA(v, prop_oldproc() as *i8) };
+    let _s: *u8 = { u::RemovePropA(v, prop_sel() as *i8) };
+    return;
+}
+
+fn sub_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    let old: *u8 = { u::GetPropA(hwnd, prop_oldproc() as *i8) };
+    if old == (0 as *u8) { return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+
+    // ENTER IS A SUBMIT, and it is answered BEFORE the control sees it.
+    //
+    // A single-line EDIT would otherwise beep: with no default button to hand
+    // the key to, the dialog manager's fallback is `MessageBeep`. A multi-line
+    // one carries `ES_WANTRETURN` and would insert a newline — which is what
+    // Enter MEANS in a text area, so there the submit is Ctrl-Enter and a plain
+    // Enter is passed through untouched.
+    if msg == sys::wm_keydown() && w == vk_return() {
+        let n: *core::Node = input::node_of_window(hwnd);
+        if n != (0 as *core::Node) {
+            let kind: u32 = core::kind_of(n);
+            let multiline: bool = kind == props::K_TEXT_AREA;
+            let want: bool = if multiline { ctrl_down() } else { true };
+            if want {
+                if fire_submit(hwnd, n, kind) { return 0 as i64; }
+                // NOTHING WAS LISTENING. A single-line field still swallows the
+                // key rather than letting the beep through — the beep is the
+                // dialog manager reporting that nothing handled it, and a facet
+                // tree has no default button by construction, so it is never
+                // information.
+                if !multiline { return 0 as i64; }
+            }
+        }
+    }
+
+    let r: i64 = { u::CallWindowProcA(old, hwnd, msg, w, l) };
+
+    // AFTER the control has run, because the selection is only what it is once
+    // the control has moved the caret. Reading it first would report the
+    // previous selection on every keystroke — one event behind, forever.
+    if selection_may_have_moved(msg) { note_selection(hwnd); }
+    return r;
+}
+
+// The messages that can move a caret or a selection. Checked rather than
+// polling on every message: a control receives paint and timer traffic it has
+// no business making this package re-read a selection for.
+fn selection_may_have_moved(msg: u32) -> bool {
+    if msg == sys::wm_keydown() { return true; }
+    if msg == sys::wm_keyup() { return true; }
+    if msg == sys::wm_char() { return true; }
+    if msg == sys::wm_lbuttondown() { return true; }
+    if msg == sys::wm_lbuttonup() { return true; }
+    if msg == sys::wm_mousemove() { return true; }
+    if msg == em_setsel() { return true; }
+    if msg == wm_cut() { return true; }
+    if msg == wm_paste() { return true; }
+    if msg == wm_clear() { return true; }
+    if msg == wm_undo() { return true; }
+    return false;
+}
+
+fn em_setsel() -> u32 { return 0x00B1 as u32; }
+fn wm_cut() -> u32 { return 0x0300 as u32; }
+fn wm_paste() -> u32 { return 0x0302 as u32; }
+fn wm_clear() -> u32 { return 0x0303 as u32; }
+fn wm_undo() -> u32 { return 0x0304 as u32; }
+
+// VK_CONTROL is 0x11; `GetKeyState`'s high bit is "down now".
+fn ctrl_down() -> bool {
+    // The high bit of a SHORT, so the mask is a short too — a negative i16 is
+    // what "down now" actually looks like coming back from GetKeyState.
+    let st: i16 = { u::GetKeyState(0x11 as i32) };
+    return (st & (0x8000 as u16 as i16)) != (0 as i16);
+}
+
+// ONLY ON A CHANGE. The selection is compared against what was last seen, so a
+// keystroke that moves nothing — a modifier, a key the control ignored — is not
+// an event. The previous value rides a window property, which holds a pointer
+// and so holds the packed pair with a bit to spare.
+//
+// +1 SO THAT "NEVER READ" IS DISTINGUISHABLE FROM "ZERO". A property that was
+// never set answers null, and a selection at 0,0 — which is where an empty
+// field starts — packs to zero. Without the offset the first click into an
+// empty field would look like no change at all.
+fn note_selection(v: *u8) {
+    let n: *core::Node = input::node_of_window(v);
+    if n == (0 as *core::Node) { return; }
+    let packed: u64 = { u::SendMessageA(v, em_getsel(), 0 as u64, 0 as i64) } as u64;
+    let stamped: usize = (packed +% (1 as u64)) as usize;
+    let seen: *u8 = { u::GetPropA(v, prop_sel() as *i8) };
+    if { #addr(seen) } == stamped { return; }
+    let _p: i32 = { u::SetPropA(v, prop_sel() as *i8, stamped as *u8) };
+    // The FIRST reading is not a change — it is this package finding out where
+    // the caret already was. Reporting it would fire the handler once for every
+    // field the moment it is touched.
+    if seen == (0 as *u8) { return; }
+    fire_selection_changed(v, n);
+}
+
+fn fire_submit(v: *u8, n: *core::Node, kind: u32) -> bool {
+    if kind == props::K_TEXT_FIELD {
+        let p: *props::TextFieldProps =
+            controls_props(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+        if p == (0 as *props::TextFieldProps) { return false; }
+        return call(v, { (*p).on_submit }, { (*p).on_submit_ctx });
+    }
+    if kind == props::K_SEARCH_FIELD {
+        let p: *props::SearchFieldProps =
+            controls_props(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
+        if p == (0 as *props::SearchFieldProps) { return false; }
+        return call(v, { (*p).on_submit }, { (*p).on_submit_ctx });
+    }
+    if kind == props::K_TEXT_AREA {
+        let p: *props::TextAreaProps =
+            controls_props(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+        if p == (0 as *props::TextAreaProps) { return false; }
+        return call(v, { (*p).on_submit }, { (*p).on_submit_ctx });
+    }
+    return false;
+}
+
+fn fire_selection_changed(v: *u8, n: *core::Node) {
+    // Only `text_area` declares it. `props_of` answers null for anything else,
+    // so a field falls out here rather than reading another kind's block.
+    let p: *props::TextAreaProps =
+        controls_props(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    let _f: bool = call(v, { (*p).on_selection_changed },
+                        { (*p).on_selection_changed_ctx });
+    return;
+}
+
+// `controls::props_of` under another name: importing `controls` here would
+// close a cycle (`controls` imports `input`, `input` would import this).
+fn controls_props(n: *core::Node, kind: u32) -> *u8 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    if { (*d).kind } != kind { return 0 as *u8; }
+    return { (*d).props };
+}
+
+fn call(v: *u8, h: fn(*u8, *u8), ctx: *u8) -> bool {
+    if h == props::no_handler { return false; }
+    h(v, ctx);
+    return true;
+}
+
+#[test]
+fn installing_twice_keeps_the_first_original() {
+    // The recursion this guards against is not subtle: a second install would
+    // store OUR procedure as the original, and the first message to arrive
+    // would call into it forever. `configure` runs on every apply, so this is
+    // reached constantly.
+    install(0 as *u8);      // a null window is quiet
+    remove(0 as *u8);
+    return;
+}
+
+#[test]
+fn a_selection_of_zero_is_still_a_reading() {
+    // The +1 stamp. An empty field's selection packs to zero, and a window
+    // property that was never set also answers zero — so without the offset
+    // the first click into an empty field is indistinguishable from no click.
+    let empty: u64 = 0 as u64;
+    let stamped: usize = (empty +% (1 as u64)) as usize;
+    assert stamped != (0 as usize);
+    return;
+}
+
+#[test]
+fn enter_submits_a_field_and_ctrl_enter_submits_an_area() {
+    // The asymmetry is the whole design: Enter MEANS a newline in a text area,
+    // so taking it for submit there would break the control. A single-line
+    // field has no such meaning for it.
+    assert vk_return() == (0x0D as u64);
+    assert selection_may_have_moved(sys::wm_keydown());
+    assert selection_may_have_moved(em_setsel());
+    assert selection_may_have_moved(wm_paste());
+    // Paint and timer traffic must not make this package re-read a selection.
+    assert !selection_may_have_moved(sys::wm_paint());
+    assert !selection_may_have_moved(sys::wm_timer());
+    return;
+}

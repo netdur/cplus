@@ -29,6 +29,7 @@ import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/tabs" as tabs;
+import "facet/split" as split;
 import "facet/refreshable" as refreshable;
 import "facet/text_button" as text_button;
 import "facet/component" as component;
@@ -681,6 +682,16 @@ fn on_mouse(v: *u8, msg: u32, w: u64, l: i64) -> bool {
     // would make its tabs unclickable.
     if msg == sys::wm_lbuttondown() {
         if fire_tab_click(v, lo_word(l), hi_word(l)) { return true; }
+        // A DIVIDER GRAB CAPTURES THE MOUSE. Without it a drag that leaves the
+        // panel — which is most of them, since the pointer is heading for the
+        // edge — stops reporting, and the divider sticks halfway.
+        if begin_divider_drag(v, lo_word(l), hi_word(l)) { return true; }
+    }
+    if DRAG_SPLIT != (0 as usize) {
+        if msg == sys::wm_mousemove() {
+            if drag_divider(v, lo_word(l), hi_word(l)) { return true; }
+        }
+        if msg == sys::wm_lbuttonup() { end_divider_drag(); return true; }
     }
     // A CANVAS DECLARES ITS OWN POINTER BAND rather than using the shared
     // gesture one — `GraphicsView`'s seven interaction verbs are the kind's,
@@ -1355,6 +1366,34 @@ fn call(v: *u8, h: fn(*u8, *u8), ctx: *u8) -> bool {
     if h == props::no_handler { return false; }
     h(v, ctx);
     return true;
+}
+
+// Which split is being dragged. One at a time is the whole of what a pointer
+// can do, so a single slot rather than a per-window flag.
+static DRAG_SPLIT: usize = 0;
+
+fn begin_divider_drag(v: *u8, x: i32, y: i32) -> bool {
+    let n: *core::Node = node_of_window(v);
+    if n == (0 as *core::Node) { return false; }
+    if core::kind_of(n) != split::K_SPLIT { return false; }
+    if !controls::on_divider(n, x, y) { return false; }
+    DRAG_SPLIT = { #addr(v) };
+    let _c: *u8 = { u::SetCapture(v) };
+    return true;
+}
+
+fn drag_divider(v: *u8, x: i32, y: i32) -> bool {
+    if DRAG_SPLIT != { #addr(v) } { return false; }
+    let n: *core::Node = node_of_window(v);
+    if n == (0 as *core::Node) { return false; }
+    return controls::split_drag_to(v, n, x, y);
+}
+
+fn end_divider_drag() {
+    if DRAG_SPLIT == (0 as usize) { return; }
+    DRAG_SPLIT = 0 as usize;
+    if { u::GetCapture() } != (0 as *u8) { let _r: i32 = { u::ReleaseCapture() }; }
+    return;
 }
 
 fn fire_tab_click(v: *u8, x: i32, y: i32) -> bool {
