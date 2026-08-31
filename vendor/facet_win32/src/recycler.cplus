@@ -204,6 +204,15 @@ struct SeqSource {
     on_refreshing: fn(*u8, *u8),
     on_refreshing_ctx: usize,
     scroll_to_index: i64,
+    // Grouping. `group_size` and `group_header` are the application's, exactly
+    // as `row` is — this file never invents a section.
+    is_grouped: bool,
+    can_mix_groups: bool,
+    group_count: i64,
+    group_size: fn(usize, *u8) -> usize,
+    group_size_ctx: usize,
+    group_header: fn(usize, *u8) -> flex::Node,
+    group_header_ctx: usize,
 }
 
 fn no_source() -> SeqSource {
@@ -222,6 +231,9 @@ fn no_source() -> SeqSource {
         refresh_color: vocab::Color::clear(),
         on_refreshing: props::no_handler, on_refreshing_ctx: 0 as usize,
         scroll_to_index: (0 as i64) -% (1 as i64),
+        is_grouped: false, can_mix_groups: false, group_count: 0 as i64,
+        group_size: props::no_group_size, group_size_ctx: 0 as usize,
+        group_header: props::no_group_header, group_header_ctx: 0 as usize,
     };
 }
 
@@ -262,6 +274,15 @@ fn source_of(n: *core::Node) -> SeqSource {
             on_refreshing: { (*p).on_refreshing },
             on_refreshing_ctx: { #addr((*p).on_refreshing_ctx) },
             scroll_to_index: { (*p).scroll_to_index },
+            is_grouped: { (*p).is_grouped },
+            // A `list` has no `ReorderableItemsViewProps` — see §1 — so it
+            // never reorders and the answer here cannot matter.
+            can_mix_groups: false,
+            group_count: { (*p).group_count },
+            group_size: { (*p).group_size },
+            group_size_ctx: { #addr((*p).group_size_ctx) },
+            group_header: { (*p).group_header },
+            group_header_ctx: { #addr((*p).group_header_ctx) },
         };
     }
     if k == props::K_COLLECTION {
@@ -293,6 +314,13 @@ fn source_of(n: *core::Node) -> SeqSource {
             refresh_color: vocab::Color::clear(),
             on_refreshing: props::no_handler, on_refreshing_ctx: 0 as usize,
             scroll_to_index: { (*p).items_view.scroll_to_index },
+            is_grouped: { (*p).groupable_items_view.is_grouped },
+            can_mix_groups: { (*p).reorderable_items_view.can_mix_groups },
+            group_count: { (*p).group_count },
+            group_size: { (*p).group_size },
+            group_size_ctx: { #addr((*p).group_size_ctx) },
+            group_header: { (*p).group_header },
+            group_header_ctx: { #addr((*p).group_header_ctx) },
         };
     }
     // `table` deliberately falls through: it is not a row source. See the
@@ -300,7 +328,20 @@ fn source_of(n: *core::Node) -> SeqSource {
     return no_source();
 }
 
+// `i` is a DISPLAY index; the application's `row_height_of` takes a data one.
+// A header takes the uniform height — facet declares no `group_header_height`,
+// and asking `row_height_of` about a row that is not a row would hand it an
+// index into somebody else's data.
 fn height_of_row(p: *SeqSource, i: usize) -> f64 {
+    if grouped(p) {
+        let d: i64 = data_index(p, i);
+        if d < (0 as i64) { return default_row_height(); }
+        return height_of_data_row(p, d as usize);
+    }
+    return height_of_data_row(p, i);
+}
+
+fn height_of_data_row(p: *SeqSource, i: usize) -> f64 {
     let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
     if f != props::no_row_height_of {
         let h: f64 = f(i, { (*p).row_height_of_ctx } as *u8);
@@ -316,8 +357,109 @@ fn height_of_row(p: *SeqSource, i: usize) -> f64 {
 
 // Rebuild the map from the props. Called when the count, the heights or the
 // stated row height change — never per scroll.
+// ---- grouping: sections, resolved by ARITHMETIC ---------------------------------
+//
+// A grouped sequence shows a HEADER row before each group's rows. So the
+// DISPLAY index and the DATA index stop being the same number, and everything
+// that takes a row index has to say which it means.
+//
+// THE MAP IS NOT STORED, and that is the whole design constraint. `tree_rows`
+// exists because a tree's shape cannot be computed — it depends on which
+// branches are open — but a grouped sequence's can: group `g` starts at a
+// position that is the sum of the groups before it, plus one header each. A
+// stored map would be one entry per display row, which makes memory
+// proportional to the MODEL and destroys the property this whole file exists
+// to have. `FACET_WIN32_ROWS=1` on a grouped twenty-thousand-row list must
+// still print twelve cells.
+//
+// The cost is that resolving one display index walks the groups — O(groups),
+// not O(rows) — and it is asked only for the visible window. facet_gtk's
+// `slot_at` is the same arithmetic from the same reasoning.
+
+struct Slot {
+    // A header has no data row behind it: `data` is where its group STARTS,
+    // which is what a reorder needs, and `is_header` is what everything else
+    // branches on.
+    is_header: bool,
+    group: usize,
+    data: usize,
+}
+
+fn no_group_slot() -> Slot {
+    return Slot { is_header: false, group: 0 as usize, data: 0 as usize };
+}
+
+fn group_size_at(p: *SeqSource, g: usize) -> usize {
+    let f: fn(usize, *u8) -> usize = { (*p).group_size };
+    if f == props::no_group_size { return 0 as usize; }
+    return f(g, { (*p).group_size_ctx } as *u8);
+}
+
+// Headers only exist when the application supplies a builder for them. A
+// grouped list that named no `group_header` is grouped in its ARITHMETIC — the
+// rows are still in sections for a reorder's purposes — and shows no header
+// rows, which is a real configuration rather than a mistake.
+fn has_headers(p: *SeqSource) -> bool {
+    return { (*p).group_header } != props::no_group_header;
+}
+
+fn grouped(p: *SeqSource) -> bool {
+    return { (*p).is_grouped } && { (*p).group_count } > (0 as i64);
+}
+
+// How many DISPLAY rows the whole sequence has.
+fn display_count(p: *SeqSource) -> i64 {
+    if !grouped(p) { return { (*p).count }; }
+    var total: i64 = 0 as i64;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) { total = total + (1 as i64); }
+        total = total + (group_size_at(p, g) as i64);
+        g = g +% (1 as usize);
+    }
+    return total;
+}
+
+// What display row `at` IS.
+fn slot_at(p: *SeqSource, at: usize) -> Slot {
+    if !grouped(p) {
+        return Slot { is_header: false, group: 0 as usize, data: at };
+    }
+    var seen: usize = 0 as usize;
+    var data: usize = 0 as usize;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) {
+            if seen == at {
+                return Slot { is_header: true, group: g, data: data };
+            }
+            seen = seen +% (1 as usize);
+        }
+        let size: usize = group_size_at(p, g);
+        if at < seen +% size {
+            return Slot { is_header: false, group: g, data: data +% (at -% seen) };
+        }
+        seen = seen +% size;
+        data = data +% size;
+        g = g +% (1 as usize);
+    }
+    return no_group_slot();
+}
+
+// The DATA index behind a display row, or -1 for a header. What a selection and
+// a reorder report, because those are about the application's rows and not
+// about the furniture between them.
+fn data_index(p: *SeqSource, at: usize) -> i64 {
+    if !grouped(p) { return at as i64; }
+    let slot: Slot = slot_at(p, at);
+    if slot.is_header { return (0 as i64) -% (1 as i64); }
+    return slot.data as i64;
+}
+
 fn rebuild_map(s: *ListState, p: *SeqSource) {
-    let count: i64 = { (*p).count };
+    // DISPLAY rows, not data rows — a grouped sequence has a header between
+    // sections and every offset below is measured in what is shown.
+    let count: i64 = display_count(p);
     { (*s).count = count };
     { (*s).offsets = vec::new::[f64]() };
     { (*s).content = 0.0f64 };
@@ -441,7 +583,21 @@ fn cell_showing(s: *ListState, row: i64) -> i64 {
     return (0 as i64) -% (1 as i64);
 }
 
+// The POOL a cell comes from. A header is its own shape — pooling it with data
+// rows would rebind a header's subtree as a row and vice versa, which is the
+// type confusion `SeqSource` exists to prevent, arriving by another door.
+fn header_shape() -> usize { return 0xFFFFFFFF as usize; }
+
 fn kind_of_row(p: *SeqSource, i: usize) -> usize {
+    if grouped(p) {
+        let slot: Slot = slot_at(p, i);
+        if slot.is_header { return header_shape(); }
+        return kind_of_data_row(p, slot.data);
+    }
+    return kind_of_data_row(p, i);
+}
+
+fn kind_of_data_row(p: *SeqSource, i: usize) -> usize {
     let f: fn(usize, *u8) -> usize = { (*p).row_kind };
     if f == props::no_row_kind { return 0 as usize; }
     return f(i, { (*p).row_kind_ctx } as *u8);
@@ -454,16 +610,47 @@ fn kind_of_row(p: *SeqSource, i: usize) -> usize {
 // item_index_of(sender)` walks up from whatever was clicked looking for a node
 // carrying one, so a row that never got an index reports None and the
 // application's handler cannot tell which row fired.
+// `i` is a DISPLAY index. A header comes from `group_header` and a data row
+// from `row`, and which one this is comes from the arithmetic rather than from
+// a flag the caller passed — so no caller can get it wrong.
 fn build_row(v: *u8, p: *SeqSource, i: usize) -> *core::Node {
-    let f: fn(usize, *u8) -> flex::Node = { (*p).row };
-    if f == props::no_row { return 0 as *core::Node; }
-    var n: core::Node = f(i, { (*p).row_ctx } as *u8);
+    if grouped(p) {
+        let slot: Slot = slot_at(p, i);
+        if slot.is_header { return build_header(v, p, i, slot.group); }
+        return build_data_row(v, p, i, slot.data);
+    }
+    return build_data_row(v, p, i, i);
+}
+
+fn build_header(v: *u8, p: *SeqSource, display: usize, group: usize) -> *core::Node {
+    let f: fn(usize, *u8) -> flex::Node = { (*p).group_header };
+    if f == props::no_group_header { return 0 as *core::Node; }
+    var n: core::Node = f(group, { (*p).group_header_ctx } as *u8);
     let rp: *core::Node = match box::new::[core::Node](n) {
         option::Option[box::Box[core::Node]]::Some(b) => { b.into_raw() } as *core::Node,
         option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
     };
     if rp == (0 as *core::Node) { return 0 as *core::Node; }
-    core::set_item_index(rp, i);
+    // THE ITEM SLOT IS THE DISPLAY INDEX, as it is for a data row — it is what
+    // the cell is keyed by, and `on_row_click` turns it back into a data index
+    // (or refuses, for a header) through the same arithmetic.
+    core::set_item_index(rp, display);
+    let _view: *u8 = mount::realise(rp, controls::document_host(v));
+    return rp;
+}
+
+fn build_data_row(v: *u8, p: *SeqSource, display: usize, data: usize) -> *core::Node {
+    let f: fn(usize, *u8) -> flex::Node = { (*p).row };
+    if f == props::no_row { return 0 as *core::Node; }
+    // THE APPLICATION'S BUILDER TAKES A DATA INDEX. Handing it the display one
+    // would build row 4 where row 3 belongs the moment a header appears above.
+    var n: core::Node = f(data, { (*p).row_ctx } as *u8);
+    let rp: *core::Node = match box::new::[core::Node](n) {
+        option::Option[box::Box[core::Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp == (0 as *core::Node) { return 0 as *core::Node; }
+    core::set_item_index(rp, display);
     let _view: *u8 = mount::realise(rp, controls::document_host(v));
     return rp;
 }
@@ -508,13 +695,20 @@ fn fill_cell(v: *u8, s: *ListState, p: *SeqSource, slot: usize, i: usize) {
         option::Option[*Cell]::Some(c) => {
             let bind: fn(usize, *flex::Node, *u8) = { (*p).bind };
             let same: bool = { (*c).kind } == kind && { (*c).node } != (0 as usize);
-            if bind != props::no_bind && same {
+            // A HEADER IS NEVER REBOUND. `bind` writes row `i` into an existing
+            // subtree and the application's binder knows nothing about section
+            // headers — it would write a data row's content into the header's
+            // shape. A header cell is rebuilt, which is what the shape mismatch
+            // below already does for any cell whose kind changed.
+            let is_header: bool = kind == header_shape();
+            if bind != props::no_bind && same && !is_header {
                 let rp: *core::Node = { (*c).node } as *core::Node;
                 // `bind` SHARES `row_ctx` — `set_row_bind` writes the ctx it was
                 // given into that same slot, because a row builder and a row
                 // binder are two verbs of one object and facet gave them one
                 // context rather than two that could disagree.
-                bind(i, rp, { (*p).row_ctx } as *u8);
+                // THE BINDER TAKES A DATA INDEX, as the builder does.
+                bind(data_index(p, i) as usize, rp, { (*p).row_ctx } as *u8);
                 core::set_item_index(rp, i);
                 // THE ROW IS NOT IN A WINDOW, so the ordinary sync will never
                 // reach it — `sync_from` is the door facet opened for exactly
@@ -911,7 +1105,11 @@ fn model_bits() -> u64 {
     // change to any of them invalidates the same thing.
     return flist::P_COUNT | flist::P_ROW | flist::P_ROW_HEIGHT
          | flist::P_HAS_UNEVEN_ROWS | flist::P_INVALIDATE_ROW
-         | flist::P_SPLICE_ROWS;
+         | flist::P_SPLICE_ROWS
+         // GROUPING CHANGES WHICH ROWS EXIST, not merely how they look: a
+         // section appearing inserts a header above every row after it, so
+         // every display index shifts and the whole map is stale.
+         | flist::P_IS_GROUPED | flist::P_GROUP_COUNT | flist::P_GROUP;
 }
 
 fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
@@ -1019,6 +1217,10 @@ fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
         vocab::SelectionMode::Single => true,
         vocab::SelectionMode::Multiple => true,
     };
+    // A HEADER IS NOT A ROW. Clicking a section title must not select, tap, or
+    // report anything — it is furniture, and `data_index` answers -1 for it.
+    let data: i64 = data_index(#addr_of(src), index);
+    if data < (0 as i64) { return false; }
     // A TAP IS NOT A SELECTION. `on_item_tapped` fires for every click on a
     // row — including one in a list whose `selection_mode` is None, which is
     // the case that makes the two verbs different rather than redundant. So it
@@ -1029,7 +1231,10 @@ fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
     // THE SELECTION IS WRITTEN BACK THROUGH THE REAL PROPS, not through the
     // resolved copy — `SeqSource` is a snapshot for reading and writing to it
     // would update nothing the application can see.
-    write_selected(n, index as i64);
+    // THE APPLICATION IS TOLD THE DATA INDEX. `selected_index` is a position in
+    // its own sequence; handing it a display index would name a different row
+    // in any grouped list, and the wrong one by a growing margin.
+    write_selected(n, data);
     let h: fn(*u8, *u8) = src.on_item_selected;
     if h == props::no_handler { return false; }
     h(v, src.on_item_selected_ctx as *u8);
@@ -1808,8 +2013,23 @@ fn end_reorder(n: *core::Node, y: i32) -> bool {
     if to < (0 as i64) { to = 0 as i64; }
     if to >= count { to = count -% (1 as i64); }
     if to == from { return false; }
-    REORDER_TO = to;
-    return report_reorder(v, n, from, to);
+    // BOTH ENDS ARE DISPLAY INDICES and the application's are DATA ones. A
+    // header is not a destination — dropping on a section title reports
+    // nothing rather than the row that happens to follow it.
+    let from_data: i64 = data_index(p, from as usize);
+    let to_data: i64 = data_index(p, to as usize);
+    if from_data < (0 as i64) || to_data < (0 as i64) { return false; }
+    // `can_mix_groups` — whether a reorder may CROSS a section boundary. False
+    // is the default and the stricter answer, so a grouped collection that
+    // never mentioned it cannot have a row dragged out of its section.
+    if grouped(p) && !{ (*p).can_mix_groups } {
+        if slot_at(p, from as usize).group != slot_at(p, to as usize).group {
+            return false;
+        }
+    }
+    if to_data == from_data { return false; }
+    REORDER_TO = to_data;
+    return report_reorder(v, n, from_data, to_data);
 }
 
 fn report_reorder(v: *u8, n: *core::Node, from: i64, to: i64) -> bool {
@@ -1862,4 +2082,130 @@ fn a_press_that_never_moved_is_a_click_and_not_a_reorder() {
     assert !end_reorder(#addr_of(l), 102 as i32);
     assert !reorder_active();
     return;
+}
+
+// ---- grouping arithmetic ---------------------------------------------------------
+
+#[test]
+fn an_ungrouped_sequence_is_its_own_display() {
+    // The fast path, and the one every existing list takes: display index IS
+    // data index, and nothing walks anything.
+    var src: SeqSource = no_source();
+    src.count = 50 as i64;
+    let p: *SeqSource = #addr_of(src);
+    assert display_count(p) == (50 as i64);
+    assert data_index(p, 7 as usize) == (7 as i64);
+    assert !slot_at(p, 7 as usize).is_header;
+    return;
+}
+
+#[test]
+fn a_header_sits_above_each_group_and_is_not_a_row() {
+    // Two groups of two, with headers: H a b H c d — six display rows over
+    // four data rows. Getting this off by one puts every row under the wrong
+    // heading.
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 2 as i64, true);
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert grouped(p);
+    assert has_headers(p);
+    assert display_count(p) == (6 as i64);
+
+    assert slot_at(p, 0 as usize).is_header;
+    assert data_index(p, 0 as usize) == ((0 as i64) -% (1 as i64));
+    assert data_index(p, 1 as usize) == (0 as i64);
+    assert data_index(p, 2 as usize) == (1 as i64);
+    // ...the second group's header, then its rows continue the DATA numbering.
+    assert slot_at(p, 3 as usize).is_header;
+    assert slot_at(p, 3 as usize).group == (1 as usize);
+    assert data_index(p, 4 as usize) == (2 as i64);
+    assert data_index(p, 5 as usize) == (3 as i64);
+    return;
+}
+
+#[test]
+fn grouping_without_a_header_builder_shows_no_headers() {
+    // A real configuration rather than a mistake: the rows are still in
+    // sections for a reorder's purposes, and nothing is drawn between them.
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 2 as i64, false);
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert grouped(p);
+    assert !has_headers(p);
+    assert display_count(p) == (4 as i64);
+    assert data_index(p, 0 as usize) == (0 as i64);
+    assert data_index(p, 3 as usize) == (3 as i64);
+    // The groups are still there, which is what `can_mix_groups` reads.
+    assert slot_at(p, 1 as usize).group == (0 as usize);
+    assert slot_at(p, 2 as usize).group == (1 as usize);
+    return;
+}
+
+#[test]
+fn a_header_gets_its_own_cell_pool() {
+    // Pooling a header with data rows would rebind a header's subtree as a row
+    // — the same type confusion `SeqSource` exists to prevent, arriving by
+    // another door.
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 1 as i64, true);
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert kind_of_row(p, 0 as usize) == header_shape();
+    assert kind_of_row(p, 1 as usize) != header_shape();
+    return;
+}
+
+#[test]
+fn an_index_past_the_end_answers_nothing_rather_than_walking_off() {
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 1 as i64, true);
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert display_count(p) == (3 as i64);
+    let past: Slot = slot_at(p, 99 as usize);
+    assert !past.is_header;
+    assert past.data == (0 as usize);
+    return;
+}
+
+// The grouping verbs are cursor SETTERS on `collection`, not constructor
+// arguments, and a cursor needs a mounted tree. The props are written directly
+// here because what is under test is this file's arithmetic, not facet's
+// argument list.
+fn grouped_props(n: *core::Node, groups: i64, headers: bool) {
+    let p: *props::CollectionProps =
+        controls::props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return; }
+    { (*p).groupable_items_view.is_grouped = true };
+    { (*p).group_count = groups };
+    { (*p).group_size = two_per_group };
+    { (*p).count = groups *% (2 as i64) };
+    { (*p).row = a_data_row };
+    if headers { { (*p).group_header = a_header }; }
+    return;
+}
+
+fn two_per_group(g: usize, ctx: *u8) -> usize { return 2 as usize; }
+fn a_data_row(i: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); }
+// NOT byte-identical to `props::no_group_header`, and that is load-bearing
+// rather than incidental. That sentinel is
+//
+//     fn no_group_header(group: usize, ctx: *u8) -> flex::Node {
+//         return flex::Node::new();
+//     }
+//
+// and a test double with the same body gets FOLDED ONTO IT by the linker —
+// lld does identical-code folding on COMDAT sections — so `has_headers`, which
+// compares against the sentinel, answered false for a header builder that was
+// plainly set. Three tests failed and the implementation was right.
+//
+// A real backend never hits this: an application's `group_header` builds
+// something. A test double has to be made distinguishable on purpose.
+static HEADERS_BUILT: i64 = 0;
+
+fn a_header(g: usize, ctx: *u8) -> flex::Node {
+    HEADERS_BUILT = HEADERS_BUILT + (1 as i64);
+    return flex::Node::new();
 }

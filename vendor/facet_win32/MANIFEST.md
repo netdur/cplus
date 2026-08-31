@@ -27,7 +27,8 @@ positions. Owner-draw where a themed control refuses a verb (`text_button`,
 different pixels (`slider`), and this package's own painting where there is no
 control at all (`tabs`, `page_dots`, `bordered`, and the list's separators).
 `recycler.cplus` virtualises lists, collections and trees over an ordinary
-scrolling panel — measured at twelve cells for a twenty-thousand-row model.
+scrolling panel — measured at ten cells for a twenty-thousand-row model, and
+still ten with grouping built.
 `subclass.cplus` reads the messages a system control keeps to itself, which is
 what `on_submit` and `on_selection_changed` needed. `split` and `carousel` are
 drawn and paged here, both for the reason `tabs` is: Win32 has no such control
@@ -42,7 +43,7 @@ Two probes under `playground/`, and the division is deliberate:
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
 
 ```
-362 declared prop bits     245 answered    67%   (gtk 358, appkit 336, uikit 323, android 321)
+362 declared prop bits     248 answered    68%   (gtk 358, appkit 336, uikit 323, android 321)
  68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
@@ -276,16 +277,6 @@ properly. What is absent is more than one of them.
 
 (`text_area.on_selection_changed` is the same wall from the other side:
 `EN_SELCHANGE` is a RichEdit notification and a plain `EDIT` never sends it.)
-
-### Grouped lists: `list.is_grouped` and `list.group_count`
-
-§2 rather than §1 — Win32 puts nothing in the way, this package has not built
-it. The recycler's map is a flat run of rows; grouping makes it a run of
-SECTIONS, each with a header row that is not a data row, which changes
-`offset_of`, `row_at`, the selection index and the splice arithmetic together.
-That is a change to the file's core invariants rather than an addition beside
-them, and doing it badly would put the virtualisation measurement at risk —
-which is the one property this file exists to have.
 
 ### `popup.text_color`, `popup.text_align`, `popup.title` — owner-draw is not available to a combo box here
 
