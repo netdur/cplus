@@ -338,7 +338,12 @@ fn open(window: *u8) -> Surface {
 // Convenience: the read-only snapshot of a window in one call.
 fn describe(window: *u8, grant: auth::Grant) -> vec::Vec[Win32Node] {
     let s: Surface = open(window);
-    return s.describe();
+    // THE GRANT IS FORWARDED, not dropped. `Surface::describe` gates every node
+    // on `grant.has(cap_read())`, so a call that did not pass it through would
+    // not compile — which is what caught this — and one that defaulted to a
+    // full grant would have quietly bypassed the authorization brain this
+    // package exists to sit behind.
+    return s.describe(grant);
 }
 
 impl Surface {
@@ -629,4 +634,51 @@ fn mcp_backend() -> mcpb::Backend {
         read_runs: mcp_read_runs,
         invoke_menu: mcp_invoke_menu,
     };
+}
+
+// ---- the declared agent tier, pinned onto a window ------------------------------
+//
+// `facet_agent` calls `set_agent_policy` for every node whose `C_AGENT` bit is
+// up, so a developer's `agent: Private` on a card-number field becomes a fact
+// the surface can read back when it walks the tree.
+//
+// `SetPropA` is the Win32 analogue of `g_object_set_data`, which is what
+// agent_gtk uses, and it is the same slot `facet_win32/input` binds a node
+// through — a named property on any HWND, including a system control's, which
+// is what makes it the right door. Different key, same window, no collision.
+
+fn policy_key() -> *u8 { return { #str_ptr("facet-agent-policy\0") }; }
+
+fn set_agent_policy(window: *u8, policy: u32) {
+    if is_null(window) { return; }
+    // Packed as a pointer-sized integer, which is what `SetPropA` stores; +1 so
+    // `policy_none` (0) is distinguishable from "never pinned". The same
+    // encoding agent_gtk uses, and for the same reason — without the offset a
+    // node explicitly marked Open would read as one nobody ever marked.
+    let _r: i32 = { SetPropA(window, policy_key(),
+                             ((policy +% (1 as u32)) as usize) as *u8) };
+    return;
+}
+
+fn get_agent_policy(window: *u8) -> u32 {
+    if is_null(window) { return identity::policy_none(); }
+    let raw: usize = { #addr(GetPropA(window, policy_key())) };
+    if raw == (0 as usize) { return identity::policy_none(); }
+    return (raw -% (1 as usize)) as u32;
+}
+
+#[test]
+fn a_pinned_policy_reads_back_and_open_is_not_unpinned() {
+    // The +1 offset, pinned. Without it an explicit `Open` and a node nobody
+    // ever marked are the same stored value — which is fine until something
+    // wants to know whether a decision was MADE, and then it silently is not.
+    // The window is null here, so both calls take their guard path; what is
+    // asserted is the encoding either side of it.
+    let encoded: usize = ((identity::policy_none() +% (1 as u32)) as usize);
+    assert encoded != (0 as usize);
+    let round: u32 = (encoded -% (1 as usize)) as u32;
+    assert round == identity::policy_none();
+    let p: usize = ((identity::policy_private() +% (1 as u32)) as usize);
+    assert ((p -% (1 as usize)) as u32) == identity::policy_private();
+    return;
 }
