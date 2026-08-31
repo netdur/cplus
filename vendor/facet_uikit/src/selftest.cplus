@@ -884,35 +884,140 @@ fn a_collections_scroll_reaches_the_app() -> bool {
 }
 
 // ---- the agent surface -----------------------------------------------------------
-// The reader walks a live UIView tree into agent_core's identity registry. It
-// runs here rather than in agent_uikit's own suite for the reason everything
-// else does: the walk needs UIKit, and only an iOS binary has it.
+//
+// WHY HERE AND NOT IN `agent_uikit`. The walk needs UIKit, and `agent_uikit`
+// cannot link `facet_uikit` on a macOS host — so its own suite could not build
+// a facet tree with views in it. The AppKit sibling lives in
+// `agent_appkit/src/test_main.cplus` because that one CAN run on the host. The
+// asymmetry is the platform's, not a preference.
+//
+// `open` WALKS FACET'S TREE, not the view hierarchy — `window_roots_for_native`
+// looks the window's registered roots up and `walk_facet` reads each node's
+// `key()`. It walked subviews once, and the check below was written against
+// that; `b4b63eaf` moved the walk and did not touch this file, which left the
+// iOS suite red for a day and made red its normal state. See
+// `bugs/closed/ios-agent-walk-test-not-updated-for-the-facet-tree-walk.md`.
+//
+// The fixture is `agent_appkit`'s `mirror` ported: build the views, mirror them
+// into the facet tree those views would have belonged to, and register it as a
+// window so the walk can find it.
+
+// The tests own their views; facet must not free them.
+fn noop_release(v: *u8) { }
+
+// Mirror a view subtree into a facet tree, keyed wherever the view is tagged.
+//
+// A FIXTURE, not a shortcut. The real path builds facet first and mounts views
+// from it; this constructs the tree those views would have belonged to, and the
+// shape that comes out is the same.
+//
+// `get_agent_id` supplies the key, which is also how `accessibilityIdentifier`
+// stays covered on this platform. facet writes a node's key into it — "one
+// token doing three jobs", as that function's own comment puts it — and this
+// reads the same token back out, so a change to either end fails here.
+fn mirror(view: *u8) -> core::Node {
+    let k: text::Text = match agent::get_agent_id(view) {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::new(),
+    };
+    var n: core::Node = core::column(core::Builder::new(), key: k.view());
+    core::set_view(#addr_of(n), view, noop_release);
+    var i: usize = 0 as usize;
+    let c: usize = agent::subview_count(view);
+    while i < c {
+        let _s: status::Status = n.add_child(mirror(agent::subview_at(view, i)));
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+// Register `root` as the window's tree, the way `mount` does.
+//
+// Resets first: `set_window_native` only fills in an EXISTING record, so a
+// second mount against the same native handle would add a second one and
+// `window_roots_for_native` returns the FIRST match — a re-mounting test would
+// go on walking its first tree.
+//
+// THE CALLER HOLDS THE ROOT, in two lines, and the reason is the move: a helper
+// that returned it would register the address of its own local and then move it
+// out, leaving the registration pointing at a dead frame.
+fn mount_tree(root: *core::Node, win: *u8) {
+    app::reset_default_for_tests();
+    app::open_window(root);
+    app::set_window_native(root, win);
+}
+
+fn tag_view(view: *u8, id: str) {
+    { rt::msg_void_id(view, rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
+                      bridge::nsstring(id)) };
+    return;
+}
+
+fn surface_has_id(nodes: *vec::Vec[mcpb::UiNode], id: str) -> bool {
+    var i: usize = 0 as usize;
+    while i < { (*nodes).count() } {
+        match { (*nodes).at_ptr(i) } {
+            option::Option[*mcpb::UiNode]::Some(n) => {
+                if { (*n).id.view() } == id { return true; }
+            }
+            option::Option[*mcpb::UiNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
 
 fn the_agent_walk_finds_a_tagged_view() -> bool {
     let root: uik::View = uik::View::new_with_frame(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
     let btn: uik::Button = uik::Button::button_with_type(uik::ButtonType::System);
     btn.set_title("Save", 0 as u64);
-    { rt::msg_void_id(btn.as_view().raw(),
-                      rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
-                      bridge::nsstring("save")) };
+    tag_view(btn.as_view().raw(), "save");
     root.add_subview(btn.as_view());
-    // `open` takes a WINDOW and walks its subviews, so the root stands in for
-    // one: the walk is the same either way.
+
+    var tree: core::Node = mirror(root.raw());
+    mount_tree(#addr_of(tree), root.raw());
+
     let s: agent::Surface = agent::open(root.raw());
     let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
-    var found: bool = false;
-    var i: usize = 0 as usize;
-    while i < nodes.count() {
-        match nodes.at_ptr(i) {
-            option::Option[*mcpb::UiNode]::Some(n) => {
-                if { (*n).id.view() } == "save" { found = true; }
-            }
-            option::Option[*mcpb::UiNode]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return found;
+    return surface_has_id(#addr_of(nodes), "save");
+}
+
+// AN UNREGISTERED WINDOW ANSWERS NOTHING BENEATH IT, and this is the check the
+// old one had accidentally become. `open` resolves roots by native handle, so a
+// view that never went through `open_window` has no tree — the surface is the
+// app root and a window node and nothing else.
+//
+// Worth asserting rather than leaving implicit: it is the exact state the stale
+// test was in for a day while reading as an ordinary failure, and it is what an
+// app looks like if a backend ever stops registering its roots.
+fn an_unregistered_window_exposes_no_children() -> bool {
+    let root: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    let btn: uik::Button = uik::Button::button_with_type(uik::ButtonType::System);
+    tag_view(btn.as_view().raw(), "orphan");
+    root.add_subview(btn.as_view());
+    app::reset_default_for_tests();
+
+    let s: agent::Surface = agent::open(root.raw());
+    let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
+    return !surface_has_id(#addr_of(nodes), "orphan");
+}
+
+// THE WINDOW NODE'S OWN ID, which is the second surviving reader of
+// `accessibilityIdentifier` and the one `open` uses directly. A tagged window
+// carries its tag into the surface.
+fn a_tagged_window_carries_its_own_id() -> bool {
+    let root: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    tag_view(root.raw(), "main-window");
+
+    var tree: core::Node = mirror(root.raw());
+    mount_tree(#addr_of(tree), root.raw());
+
+    let s: agent::Surface = agent::open(root.raw());
+    let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
+    return surface_has_id(#addr_of(nodes), "main-window");
 }
 
 fn a_button_classifies_as_a_button() -> bool {
@@ -1973,6 +2078,9 @@ fn run_all() -> i32 {
     check("named keys map from HID codes", named_keys_map_from_hid_codes());
     check("modifier flags map onto facet's bits", modifier_flags_map_onto_facets_bits());
     check("the agent walk finds a tagged view", the_agent_walk_finds_a_tagged_view());
+    check("an unregistered window exposes no children",
+          an_unregistered_window_exposes_no_children());
+    check("a tagged window carries its own id", a_tagged_window_carries_its_own_id());
     check("a button classifies as a button", a_button_classifies_as_a_button());
     check("a label is Text and a field is Input", a_label_classifies_as_text_and_a_field_as_input());
     check("a secure field is sensitive by class", a_secure_field_is_sensitive_by_class());
