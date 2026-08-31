@@ -44,7 +44,7 @@ Two probes under `playground/`, and the division is deliberate:
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
 
 ```
-362 declared prop bits     268 answered    74%   (gtk 358, appkit 336, uikit 323, android 321)
+362 declared prop bits     273 answered    75%   (gtk 358, appkit 336, uikit 323, android 321)
  68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
@@ -800,16 +800,37 @@ compositor has no such inset").
 closes a batch, and this package's `touch` already coalesces through the
 scheduler's pending flag, so the batch ends when the queue drains.
 
-### The parity tool measures ONE backend's ledger, and it is not this one
+### The parity tool is held to THIS ledger now, and what that changed
 
-`parity.py`'s `--check` reads `MANIFEST` from its own directory —
-`facet_gtk/MANIFEST.md` — so its "nothing unanswered is unrecorded" line is a
-statement about GTK, whatever backend column it is printing beside it.
+This entry used to say the cross-check was not portable — that `parity.py`
+read `facet_gtk/MANIFEST.md` whatever column it printed, so its "nothing
+unanswered is unrecorded" line was a statement about GTK, and the rows here
+were held to the doctrine by hand. It called making the check per-backend "a
+small change to a shared tool and the honest fix".
 
-The numbers for every backend are real; the LEDGER CROSS-CHECK is not portable.
-So the rows above are held to the doctrine by hand, and a reader should not read
-that closing line as covering this file. Making the check per-backend is a small
-change to a shared tool and is the honest fix.
+It was made. `parity.py <backend>` now reads each package's own §1, prints that
+package's per-kind table, and grades its band against its own ledger. The
+closing line covers this file.
+
+Two things surfaced the moment it did, and both are worth keeping in view:
+
+**Other backends have unrecorded gaps** that nothing had been measuring —
+appkit does not name or argue `C_FLUSH`, and uikit does not name or argue three
+band bits. Not this package's to fix; recorded because a tool that only graded
+one backend is why they went unseen.
+
+**A NAME IN §1 IS A CLAIM, and the tool cannot tell it from a mention.** It
+takes every backticked identifier here as "decided absent", and it has no
+notion of WHICH KIND a sentence was about — the leaf is all it keeps. So an
+entry explaining that a themed control cannot have a border marked the border
+verbs absent on `text_button` too, which is owner-drawn and can simply be given
+one; and an entry saying a verb WAS answered claimed the opposite by naming it.
+Four verbs read as gaps for no reason but this file's prose.
+
+The rule that follows: name a verb in §1 only where the sentence is a decision
+ABOUT THAT VERB across this backend. When a kind is the exception, describe it
+without backticks.
+
 ## 2. Not built yet — Win32 has it, this package has not reached it
 
 This is DEBT, not decision. Every row here is reachable with what user32,

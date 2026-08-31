@@ -2064,7 +2064,10 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
                                        { (*p).text_transform }));
     }
     if (dirty & (text_button::P_TEXT_COLOR | text_button::P_TEXT_ALIGN
-                 | text_button::P_LINE_BREAK | text_button::P_ON)) != (0 as u64) {
+                 | text_button::P_LINE_BREAK | text_button::P_ON
+                 | text_button::P_BORDERED | text_button::P_BORDER_COLOR
+                 | text_button::P_BORDER_WIDTH | text_button::P_CORNER_RADIUS
+                 | text_button::P_CHARACTER_SPACING)) != (0 as u64) {
         let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
     return;
@@ -2130,6 +2133,23 @@ fn draw_text_button(di: *u8) -> bool {
     let brush: *u8 = paint::brush_for(bg);
     if brush != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), brush) }; }
 
+    // A TEXT BUTTON HAS NO BORDER AND CAN BE GIVEN ONE, which is what the
+    // `bordered` / `border_color` / `border_width` / `corner_radius` group
+    // says — `text_button.cplus` states it in those words. §1's border entry is
+    // about SYSTEM controls, where the theme owns the frame; this kind is
+    // owner-drawn, so its border is simply ours to paint, exactly as
+    // `draw_icon_button`'s is.
+    if { (*p).bordered } {
+        var bhas: bool = false;
+        let bc: u32 = paint::resolve({ (*p).border_color }, #addr_of(bhas));
+        var bw: f64 = { (*p).border_width };
+        if bw <= (0.0 as f64) { bw = 1.0f64; }
+        if bhas {
+            paint::stroke_rect(hdc, r, bc, bw as i32,
+                               paint::uniform_radius({ (*p).corner_radius }));
+        }
+    }
+
     // The font this control was given. `WM_GETFONT` answers what `fonts::apply`
     // set, so an owner-drawn button wears the same typeface every other control
     // does without asking for it again.
@@ -2162,12 +2182,21 @@ fn draw_text_button(di: *u8) -> bool {
         r.left = r.left +% (1 as i32);
         r.top = r.top +% (1 as i32);
     }
+    // `character_spacing` IS A DC SETTING, not a control style — which is why a
+    // STATIC cannot wear it (§1) and an owner-drawn button can. It is extra
+    // space added AFTER each glyph, in logical units, and it has to be put back
+    // afterwards: the DC belongs to the control and the next thing drawn into
+    // it would inherit the spacing.
+    let extra: i32 = { (*p).character_spacing } as i32;
+    var prev_extra: i32 = 0 as i32;
+    if extra != (0 as i32) { prev_extra = { gdi::SetTextCharacterExtra(hdc, extra) }; }
     let w16: *u16 = sys::to_wide({ (*p).title }.view());
     if w16 != (0 as *u16) {
         let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
                                      #addr_of(r), flags) };
         sys::free_wide(w16);
     }
+    if extra != (0 as i32) { let _e: i32 = { gdi::SetTextCharacterExtra(hdc, prev_extra) }; }
     if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
 
     // THE FOCUS RING IS OURS TOO. An owner-drawn button gets no focus
