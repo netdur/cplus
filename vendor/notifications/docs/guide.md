@@ -1,0 +1,159 @@
+# Guide
+
+How the package is meant to be used, why the pieces exist, and the gotchas that
+bite. For a fast start see [tutorial.md](tutorial.md); for signatures see
+[ref.md](ref.md).
+
+## What this package is, and what it is not
+
+It owns everything from *"a notification exists"* onward: building one,
+scheduling it, cancelling it, and — when that tier lands — routing its tap.
+
+It does **not** own how a remote one got there. A push token is a device
+credential and a round trip to a server you own: an `aps-environment`
+entitlement and a provisioning profile on Apple, the whole Firebase AAR pipeline
+on Android. None of that is needed to build, show or handle a notification, and
+a remote one that arrives travels this package's code path exactly. That is the
+promise; `plans/notifications.md` §6 has the reasoning.
+
+It also does not own **media/transport-control** notifications. Stripped of the
+`MediaSession`, one of those is a sticky notification with actions — both of
+which are features this package is adding. What it cannot give you is the media
+area of the shade, the seek bar, album-art colouring or hardware media keys, and
+none of those come from the notification. Apple has no media notification at
+all; its equivalent is `MPNowPlayingInfoCenter`, a different framework.
+
+## The permission is a hard prerequisite
+
+Neither platform reports an error for a notification posted without permission.
+It is accepted and never shown. So `schedule` reads the gate first and answers
+`NotPermitted`, and this package depends on `permissions` to have somewhere to
+read it from.
+
+`Limited` counts as allowed. A provisional authorisation on iOS delivers quietly
+to the notification centre — that is showing, just not loudly — and refusing to
+schedule there would be this package overruling a choice the person made.
+
+**`Unknown` does not count**, and that is deliberate: scheduling is not the
+place to prompt. A permission dialog that appears because a background job set a
+reminder is a dialog with no context. The application asks; this reports.
+
+## When the callback… there isn't one
+
+`schedule` is synchronous and returns an `Outcome`. There is no completion
+handler, because there is nothing to wait for: the platform either accepted the
+request or did not. Delivery happens later and is the operating system's
+business.
+
+## Ids, and why they are yours
+
+The id is caller-chosen rather than returned, because both platforms key
+**replacement** on it. Scheduling twice with one id updates in place instead of
+stacking a duplicate — which is what a "3 unread messages" notification wants,
+and what makes `cancel(id)` possible without this package handing out tokens.
+
+An empty id is refused: a notification nothing can cancel is a leak.
+
+## Gotcha: nothing appears while your app is in front (Apple)
+
+A notification scheduled five seconds out, with the app foregrounded, delivers
+to nothing visible — unless `userNotificationCenter:willPresentNotification:`
+returns a presentation option. With no delegate the answer is "do not present".
+
+This package installs a `UNUserNotificationCenterDelegate` and answers banner +
+sound + list, so you never meet it. It is documented here because it is the
+single most common "notifications don't work" report on the platform, and
+because if you ever see that symptom in your own code, this is why.
+
+**Badge is deliberately not among the options.** A package that bumped the badge
+on every notification would be making your counting decision.
+
+## Gotcha: a missing channel drops the notification silently (Android)
+
+From API 26 every notification names a channel, and posting to one that was
+never created does not throw and does not log — it is simply dropped.
+
+This package creates the channel before every post rather than once at init,
+because a caller can invent a channel id at any time and the only safe moment to
+create it is just before use. `createNotificationChannel` on an existing id is a
+no-op that does not reset the person's own settings, so doing it every time is
+safe as well as convenient.
+
+`channel` is **Android-only**. An earlier version of this file called it
+"Android channel id / Apple category id", which was wrong and would have shaped
+the actions tier badly: an Android channel is importance, sound and vibration —
+the per-app list a person toggles in Settings — while an Apple *category* is the
+**action set**, registered up front. They are orthogonal, and `category` becomes
+its own field when actions land.
+
+## Gotcha: you need a bundle on Apple
+
+`UNUserNotificationCenter` refuses a process with no bundle identifier, and it
+refuses by **raising** — `+currentNotificationCenter` throws rather than
+returning nil, and an unhandled ObjC exception aborts. That killed this
+package's own test runner with SIGABRT until the backend grew a guard.
+
+A bare `cpc build` binary now answers `Unsupported` honestly. To actually post
+one you need a `.app`: `examples/notifications_demo/bundle.sh` is the smallest
+version, about twenty lines.
+
+Notifications is the one Apple domain gated on the prompt alone — there is no
+`NSNotificationsUsageDescription` to forget, unlike camera or contacts.
+
+## Deferred delivery on Android
+
+**A scheduled notification does not survive the process being killed.** This is
+the one place the platforms genuinely differ in what they promise.
+
+Apple hands the trigger to the OS: the notification fires whether or not your
+app is alive. Android's equivalent is `AlarmManager` with a `PendingIntent`
+aimed at a `BroadcastReceiver`, and a receiver has to be declared in the *app's*
+`AndroidManifest.xml` and merged into its `classes.dex` — the same arrangement
+`FacetActivity` has, one package further out.
+
+That is not built. A deferred notification here rides facet's own scheduler, so
+it fires while the app is running and is lost if the process dies first.
+`schedule` reports `Ok` either way, because the schedule *was* accepted.
+
+If your app needs a reminder that survives a swipe-away, this package does not
+give you one yet.
+
+## What `pending` actually answers
+
+Its own record, not the platform's. Apple can be asked —
+`getPendingNotificationRequestsWithCompletionHandler:` — and Android has no
+listing API at all, so an answer that exists on both platforms has to be the one
+kept here.
+
+It goes stale in one direction only: an entry may outlive a notification the
+system already delivered. It will not claim nothing is pending while something
+is, which is the direction that would hide work.
+
+## `cancel_all` versus `clear_shown`
+
+Different questions. `cancel_all` is about the future — notifications scheduled
+and not yet delivered. `clear_shown` is about the past — what is sitting in the
+shade right now. An app clearing a badge on launch wants the second.
+
+On Android they happen to be the same call (`NotificationManager.cancelAll`,
+plus this package's own timer list for the first). The facade keeps them apart
+because Apple's centre distinguishes pending from delivered, and collapsing them
+would lose that.
+
+## Testing your integration
+
+```sh
+cd vendor/notifications && cpc test           # arithmetic, guards, the record
+vendor/notifications/tools/run_ios_tests.sh   # framework, centre, gate
+```
+
+Two things no harness reaches:
+
+- **A notification actually appearing.** On Android
+  `adb shell dumpsys notification --noredact` will tell you what posted, with
+  what title, on what channel — which is most of the way there. Apple has no
+  equivalent; `simctl` can inject a remote notification but cannot enumerate.
+- **The granted path on iOS.** `xcrun simctl privacy` has no notifications
+  service — authorisation is not TCC and cannot be written from outside — so
+  granting needs a person. `examples/notifications_demo` on a Mac is where that
+  happens.

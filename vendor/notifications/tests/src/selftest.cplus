@@ -1,0 +1,150 @@
+// The iOS checks — what this package cannot answer on a macOS host.
+//
+// The host suite covers the `When` arithmetic, the guards, the `Outcome` map
+// and the pending record. What it CANNOT cover is the framework: `cpc test`
+// builds a bare binary, `UNUserNotificationCenter` refuses a process with no
+// bundle identifier, and every seam verb correctly answers `Unsupported`
+// there. This runner is a bundled app, which is the only configuration where
+// the centre exists — so these are the checks that only mean something here.
+//
+// WHAT THEY STILL CANNOT DO: see a notification. A fresh install has the
+// notification permission NotDetermined, granting it needs a person to tap a
+// system prompt, and `simctl` has no notifications entry in its privacy list —
+// unlike contacts or photos, which is how the permissions runner drove TCC from
+// outside. So the granted path is `examples/notifications_demo`'s job, on a Mac
+// with a person. What is asserted here is everything up to it: the centre
+// exists, the delegate installs, the record behaves, and the gate reports
+// honestly rather than pretending.
+
+import "stdlib/io" as io;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "objc/runtime" as rt;
+import "permissions/permissions" as permissions;
+import "notifications/notifications" as notify;
+
+static RAN: i32 = 0 as i32;
+static FAILED: i32 = 0 as i32;
+
+fn check(name: str, ok: bool) {
+    RAN = RAN + (1 as i32);
+    if ok {
+        io::eprintln(text::from_str("  ok   ${name}"));
+        return;
+    }
+    FAILED = FAILED + (1 as i32);
+    io::eprintln(text::from_str("  FAIL ${name}"));
+    return;
+}
+
+// ---- the thing a bare binary cannot do --------------------------------------
+
+fn the_framework_is_reachable_by_dlopen() -> bool {
+    // Nothing in this package's `[link]` names UserNotifications. The class
+    // must still resolve, because the backend loads the framework on first use.
+    // On the host this also passes; here it passes against the iOS dyld shared
+    // cache, where the path is not a file.
+    let _s: notify::Outcome = notify::cancel_all();
+    return { rt::get_class(#str_ptr("UNUserNotificationCenter\0")) }.is_not_null();
+}
+
+fn a_bundled_app_gets_a_centre_where_a_bare_binary_does_not() -> bool {
+    // THE CHECK THIS RUNNER EXISTS FOR. `cancel_all` answers `Unsupported`
+    // exactly when there is no centre, so a non-`Unsupported` answer here IS
+    // the proof that the bundle made the difference — the same call answers
+    // `Unsupported` in `cpc test` on the host.
+    return notify::cancel_all() != notify::Outcome::Unsupported;
+}
+
+fn clearing_what_is_shown_also_reaches_the_centre() -> bool {
+    return notify::clear_shown() != notify::Outcome::Unsupported;
+}
+
+// ---- the gate ----------------------------------------------------------------
+
+fn scheduling_without_the_permission_reports_rather_than_pretending() -> bool {
+    // A fresh install is NotDetermined, and this package refuses rather than
+    // handing UNUserNotificationCenter a request it will accept and never show.
+    // If the permission HAS been granted on this simulator, the same call must
+    // succeed instead — written as a fork so the check says something true in
+    // both worlds rather than only in a fresh one.
+    let o: notify::Outcome = notify::schedule(
+        notify::Notification::new("ios:probe", "Probe", body: "from the runner",
+                                  when: notify::When::After(3600.0f64)));
+    let allowed: bool = match permissions::state(of: permissions::NOTIFICATIONS) {
+        permissions::State::Granted => true,
+        permissions::State::Limited => true,
+        _ => false,
+    };
+    if allowed { return o == notify::Outcome::Ok; }
+    return o == notify::Outcome::NotPermitted;
+}
+
+fn a_malformed_notification_is_refused_before_the_permission_is_read() -> bool {
+    // Ordering matters: a caller with an empty title should be told that, not
+    // told the permission is missing.
+    return notify::schedule(notify::Notification::new("id", ""))
+        == notify::Outcome::InvalidInput;
+}
+
+// ---- the record --------------------------------------------------------------
+
+fn pending_answers_and_appends() -> bool {
+    var out: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = out.append("sentinel");
+    if notify::pending({ #addr_of(out) as *vec::Vec[str] }) != notify::Outcome::Ok {
+        return false;
+    }
+    // The caller's own entry survives: this package appends to a Vec it does
+    // not own.
+    return out.count() >= (1 as usize);
+}
+
+fn cancelling_something_that_was_never_scheduled_is_not_an_error() -> bool {
+    // Making it an error would force every caller to track state this package
+    // already tracks.
+    return notify::cancel("nothing:here") != notify::Outcome::InvalidInput;
+}
+
+fn an_empty_id_is_refused() -> bool {
+    return notify::cancel("") == notify::Outcome::InvalidInput;
+}
+
+// ---- the permission read, on the platform that caches it ---------------------
+
+fn the_notification_permission_answers_a_known_state() -> bool {
+    // Apple has no synchronous read, so `permissions` caches it: the first call
+    // of a process answers Unknown and starts a refresh. Any nameable state is
+    // a pass — asserting a particular one would make this a statement about the
+    // simulator rather than about the code.
+    let c: u32 = permissions::state(of: permissions::NOTIFICATIONS).to_code();
+    return c <= permissions::State::Unsupported.to_code();
+}
+
+fn run_all() -> i32 {
+    FAILED = 0 as i32;
+    RAN = 0 as i32;
+    io::eprintln(text::from_str("notifications selftest (ios)"));
+
+    check("the framework is reachable by dlopen",
+          the_framework_is_reachable_by_dlopen());
+    check("a bundled app gets a centre where a bare binary does not",
+          a_bundled_app_gets_a_centre_where_a_bare_binary_does_not());
+    check("clearing what is shown also reaches the centre",
+          clearing_what_is_shown_also_reaches_the_centre());
+    check("scheduling without the permission reports rather than pretending",
+          scheduling_without_the_permission_reports_rather_than_pretending());
+    check("a malformed notification is refused before the permission is read",
+          a_malformed_notification_is_refused_before_the_permission_is_read());
+    check("pending answers and appends",
+          pending_answers_and_appends());
+    check("cancelling something never scheduled is not an error",
+          cancelling_something_that_was_never_scheduled_is_not_an_error());
+    check("an empty id is refused", an_empty_id_is_refused());
+    check("the notification permission answers a known state",
+          the_notification_permission_answers_a_known_state());
+
+    io::eprintln(text::from_str("selftest result: ${RAN} ran; ${FAILED} failed"));
+    return FAILED;
+}

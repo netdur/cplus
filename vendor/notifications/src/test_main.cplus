@@ -1,0 +1,11 @@
+// notifications test root — `cpc test` discovers the `#[test]` fns in the
+// modules this imports, and the imports are the point of the file.
+//
+// Same reason `vendor/http` and `vendor/permissions` have one: the facade
+// deliberately does not import the backend — the two meet at stable symbols
+// because the backend imports the facade for its types and a cycle back is
+// rejected (E0404) — so a test driver built from the facade's own import graph
+// would link against symbols nothing defined.
+
+import "./notifications" as notifications;
+import "./notifications_backend" as backend;

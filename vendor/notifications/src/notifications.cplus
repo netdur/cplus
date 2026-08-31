@@ -1,0 +1,333 @@
+// notifications — the portable facade.
+//
+// Build a notification, schedule it, cancel it, list what is pending. Taps
+// arrive through `on_tap` once that tier lands; everything platform-shaped is
+// behind the seam at the bottom of this file.
+//
+// WHAT THIS PACKAGE IS NOT: a push-token package. A token is a device
+// credential and a round trip to a server you own — an `aps-environment`
+// entitlement and a provisioning profile on Apple, the Firebase AAR pipeline on
+// Android — and none of it is needed to build, show or handle a notification. A
+// remote one that arrives is presented and routed exactly like a local one,
+// which is the whole promise here. See plans/notifications.md §6.
+//
+// THE PERMISSION IS A HARD PREREQUISITE, and this package checks it rather than
+// letting the platform swallow the request. Neither Apple nor Android reports an
+// error for a notification posted without permission — it is accepted and never
+// shown — so `schedule` reads the gate first and answers `Denied` instead.
+
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "permissions/permissions" as permissions;
+
+// ---- what happened ------------------------------------------------------------
+//
+// THIS PACKAGE'S OWN VOCABULARY, and not `stdlib::Status`, for the reason
+// `permissions::open_settings` records: `Status` has no arm meaning "the person
+// has not allowed this" and none meaning "this platform cannot". Mapping either
+// onto `InvalidInput` would blame the caller for a fact about the device, and
+// the two are exactly what a caller needs to tell apart — one is answered by
+// asking for the permission, the other by hiding the feature.
+enum Outcome {
+    Ok,
+    // An empty id or an empty title. The caller's bug.
+    InvalidInput,
+    // The notification permission is not held. Ask for it — `permissions` is
+    // this package's dependency precisely so the caller has somewhere to go.
+    NotPermitted,
+    // No notification backend on this platform.
+    Unsupported,
+    // The platform accepted the call and refused the notification. Rare, and
+    // kept distinct from the three above because there is nothing to do about
+    // it but report.
+    Failed,
+}
+
+impl Outcome {
+    // The wire form the seam speaks, and its inverse — one round trip, one pair.
+    fn to_code(this) -> i32 {
+        return match this {
+            Outcome::Ok => 0 as i32,
+            Outcome::InvalidInput => 1 as i32,
+            Outcome::NotPermitted => 2 as i32,
+            Outcome::Unsupported => 3 as i32,
+            Outcome::Failed => 4 as i32,
+        };
+    }
+
+    // An unrecognised code is `Failed`: the seam is a version boundary, and a
+    // newer backend answering something this build has never heard of has
+    // plainly not succeeded.
+    fn from_code(c: i32) -> Outcome {
+        if c == (0 as i32) { return Outcome::Ok; }
+        if c == (1 as i32) { return Outcome::InvalidInput; }
+        if c == (2 as i32) { return Outcome::NotPermitted; }
+        if c == (3 as i32) { return Outcome::Unsupported; }
+        return Outcome::Failed;
+    }
+}
+
+// ---- when ---------------------------------------------------------------------
+//
+// Three shapes, and no more: an application that wants a calendar rule can
+// compute the instant itself and use `At`. Repeating triggers are deliberately
+// absent from this pass — they are a different lifetime problem (a repeat
+// survives reinstalls on one platform and not the other) and belong with the
+// tier that also handles actions and grouping.
+enum When {
+    // As soon as the platform will take it. NOT a promise of instantaneous:
+    // both platforms may coalesce.
+    Now,
+    // Seconds from now. Apple's minimum interval is 60 for a repeating trigger
+    // and 1 for a one-shot; below 1 this degrades to `Now` rather than being
+    // refused, because a caller asking for "half a second" means "now".
+    After(f64),
+    // An absolute Unix timestamp in seconds. Past instants degrade to `Now` for
+    // the same reason: a reminder whose moment has gone is still worth showing.
+    At(f64),
+}
+
+// ---- what to show -------------------------------------------------------------
+
+struct Notification {
+    // THE HANDLE, caller-chosen rather than returned, because both platforms key
+    // REPLACEMENT on it: scheduling twice with one id updates in place instead
+    // of stacking a duplicate, which is what an "N unread" notification wants.
+    // An empty id is refused — a notification nothing can cancel is a leak.
+    id: str,
+    title: str,
+    body: str,
+    when: When,
+    // Opaque to this package and handed back verbatim on tap. THE DEEP LINK,
+    // and a `str` rather than a URL on purpose: an application that wants a URL
+    // puts one in, and one that wants "order:1234" is not made to invent a
+    // scheme.
+    payload: str,
+    // ANDROID ONLY, and the earlier comment here claimed otherwise — it said
+    // "Android channel id / Apple category id", which conflates two unrelated
+    // things and would have shaped the actions tier wrongly.
+    //
+    // An Android CHANNEL is importance, sound and vibration: the per-app list a
+    // person toggles in Settings. It is created once and says nothing about
+    // content. An Apple CATEGORY is the ACTION SET — registered up front with
+    // `setNotificationCategories:` and named by a notification that wants
+    // buttons. They are orthogonal, and an application will eventually want to
+    // set both, so `category` becomes its own field when actions land rather
+    // than being squeezed in here. plans/notifications.md §10.
+    //
+    // `""` takes the package default, created lazily on first use. A channel
+    // that does not exist makes Android drop the notification SILENTLY, which
+    // is why it is never passed through unchecked.
+    //
+    // Ignored on Apple today.
+    channel: str,
+}
+
+impl Notification {
+    // Content-taking constructor with the rest defaulted, per
+    // `naming_guideline.md`: one signature instead of a family of overloads.
+    fn new(id: str, title: str, body: str = "", when: When = When::Now,
+           payload: str = "", channel: str = "") -> Notification {
+        return Notification { id: id, title: title, body: body, when: when,
+                              payload: payload, channel: channel };
+    }
+}
+
+// ---- the verbs ----------------------------------------------------------------
+
+// Post or schedule. Scheduling an id that is already pending REPLACES it.
+//
+// `NotPermitted` is checked HERE rather than left to the platform, which accepts
+// a notification it will never show and reports nothing — the silent failure
+// this package exists to prevent.
+fn schedule(n: Notification) -> Outcome {
+    if n.id == "" { return Outcome::InvalidInput; }
+    if n.title == "" { return Outcome::InvalidInput; }
+    if !allowed() { return Outcome::NotPermitted; }
+    let secs: f64 = delay_of(n.when);
+    let rc: i32 = { cplus_notifications_schedule_v1(
+        #str_ptr(n.id), #str_len(n.id),
+        #str_ptr(n.title), #str_len(n.title),
+        #str_ptr(n.body), #str_len(n.body),
+        #str_ptr(n.payload), #str_len(n.payload),
+        #str_ptr(n.channel), #str_len(n.channel),
+        secs) };
+    return Outcome::from_code(rc);
+}
+
+// True when the platform will actually show what this package posts. The
+// permission package owns the question; this is the one place its answer is
+// turned into a decision.
+//
+// `Limited` COUNTS AS ALLOWED: a provisional notification authorisation on iOS
+// delivers quietly to the notification centre, which is showing, just not
+// loudly. Refusing to schedule there would be this package overruling a choice
+// the person made.
+fn allowed() -> bool {
+    return match permissions::state(of: permissions::NOTIFICATIONS) {
+        permissions::State::Granted => true,
+        permissions::State::Limited => true,
+        // `Unknown` is "never asked", and scheduling is not the place to ask —
+        // a prompt that appears because a background job scheduled a reminder
+        // is a prompt with no context. The application asks; this reports.
+        permissions::State::Unknown => false,
+        permissions::State::Denied => false,
+        permissions::State::Blocked => false,
+        permissions::State::Unsupported => false,
+    };
+}
+
+// Seconds from now, whatever shape the caller used. Negative and sub-second
+// delays collapse to 0, which every backend reads as "post immediately".
+fn delay_of(w: When) -> f64 {
+    return match w {
+        When::Now => 0.0f64,
+        When::After(s) => { if s < 1.0f64 { 0.0f64 } else { s } }
+        When::At(t) => {
+            let d: f64 = t - now_seconds();
+            if d < 1.0f64 { 0.0f64 } else { d }
+        }
+    };
+}
+
+// Cancel a pending notification by id. `Ok` whether or not one was pending —
+// cancelling something already delivered or never scheduled is not an error,
+// and making it one would force every caller to track state this package
+// already tracks.
+fn cancel(id: str) -> Outcome {
+    if id == "" { return Outcome::InvalidInput; }
+    return Outcome::from_code({ cplus_notifications_cancel_v1(#str_ptr(id), #str_len(id)) });
+}
+
+// Cancel everything this application scheduled. Does not touch notifications
+// already shown and sitting in the shade — see `clear_shown`.
+fn cancel_all() -> Outcome {
+    return Outcome::from_code({ cplus_notifications_cancel_all_v1() });
+}
+
+// Remove this application's already-delivered notifications from the shade.
+// Separate from `cancel_all` because they are different questions: one is about
+// the future, one about the past, and an app that clears a badge on launch
+// wants exactly this one.
+fn clear_shown() -> Outcome {
+    return Outcome::from_code({ cplus_notifications_clear_shown_v1() });
+}
+
+// Append the ids this package believes are still pending.
+//
+// APPENDS to a Vec the caller owns, so this package never hands back a
+// collection whose lifetime it would then have to explain. The pointer form is
+// the tree's idiom for an out-collection (`facet_gtk/chrome.cplus`,
+// `facet_android/recycler.cplus`) and it is what crosses the seam unchanged.
+//
+// THE ANSWER IS THIS PACKAGE'S RECORD, not the platform's, and the two can
+// disagree. Apple can be asked and Android cannot — `NotificationManager` has
+// no listing API at all — so the record is kept here and persisted, and it is
+// the only answer that can be given on both. It goes stale in one direction
+// only: an entry may survive a notification the system already delivered.
+fn pending(out: *vec::Vec[str]) -> Outcome {
+    if out.is_null() { return Outcome::InvalidInput; }
+    return Outcome::from_code({ cplus_notifications_pending_v1({ out as *u8 }) });
+}
+
+// ---- the seam -----------------------------------------------------------------
+//
+// Implemented by whichever `notifications_backend*.cplus` this platform
+// compiled. Stable symbols rather than an import, because the backend imports
+// this module for `Notification` and a cycle back is rejected (E0404) — the same
+// one-way arrangement `http.cplus` and `permissions.cplus` document.
+//
+// Every string crosses as `(*u8, usize)`: a `str` is a fat pointer with no
+// C-ABI counterpart and cannot be an `export extern fn` parameter (E0410). The
+// backend rebuilds each view with `#str_from_raw_parts`.
+
+extern fn cplus_notifications_schedule_v1(
+    id_ptr: *u8, id_len: usize,
+    title_ptr: *u8, title_len: usize,
+    body_ptr: *u8, body_len: usize,
+    payload_ptr: *u8, payload_len: usize,
+    channel_ptr: *u8, channel_len: usize,
+    delay_seconds: f64) -> i32;
+
+extern fn cplus_notifications_cancel_v1(id_ptr: *u8, id_len: usize) -> i32;
+extern fn cplus_notifications_cancel_all_v1() -> i32;
+extern fn cplus_notifications_clear_shown_v1() -> i32;
+
+// `out` is a `*vec::Vec[str]` the backend appends interned ids to. Opaque
+// across the seam for the same fat-pointer reason as everything else.
+extern fn cplus_notifications_pending_v1(out: *u8) -> i32;
+
+#[link_name = "time"]
+extern fn c_time(t: *u8) -> i64;
+
+fn now_seconds() -> f64 {
+    return { c_time(0 as *u8) } as f64;
+}
+
+// ---- tests --------------------------------------------------------------------
+// The portable half only: the `When` arithmetic, the guards, and the code map.
+// Anything that reaches a platform lives next to the backend that reaches it.
+
+#[test]
+fn now_and_sub_second_delays_collapse_to_zero() {
+    assert delay_of(When::Now) == 0.0f64;
+    // "Half a second" means now; refusing it would make a caller round.
+    assert delay_of(When::After(0.5f64)) == 0.0f64;
+    assert delay_of(When::After(0.0f64)) == 0.0f64;
+}
+
+#[test]
+fn an_interval_survives_intact() {
+    assert delay_of(When::After(60.0f64)) == 60.0f64;
+    assert delay_of(When::After(3600.0f64)) == 3600.0f64;
+}
+
+#[test]
+fn a_past_instant_degrades_to_now_rather_than_being_refused() {
+    // A reminder whose moment has gone is still worth showing.
+    assert delay_of(When::At(1.0f64)) == 0.0f64;
+    assert delay_of(When::At(now_seconds() - 500.0f64)) == 0.0f64;
+}
+
+#[test]
+fn a_future_instant_becomes_a_delay() {
+    let d: f64 = delay_of(When::At(now_seconds() + 120.0f64));
+    // Within a second of 120: `now_seconds` is read twice and the clock moves.
+    assert d > 118.0f64 && d <= 120.0f64;
+}
+
+#[test]
+fn an_empty_id_or_title_is_refused_before_the_permission_is_read() {
+    // Ordered deliberately: a caller with a malformed notification should be
+    // told that, not told the permission is missing.
+    assert schedule(Notification::new("", "Title")) == Outcome::InvalidInput;
+    assert schedule(Notification::new("id", "")) == Outcome::InvalidInput;
+    assert cancel("") == Outcome::InvalidInput;
+}
+
+#[test]
+fn the_constructor_defaults_everything_but_id_and_title() {
+    let n: Notification = Notification::new("a", "Hello");
+    assert n.id == "a";
+    assert n.title == "Hello";
+    assert n.body == "";
+    assert n.payload == "";
+    assert n.channel == "";
+    assert delay_of(n.when) == 0.0f64;
+}
+
+#[test]
+fn every_outcome_round_trips_and_an_unknown_code_is_failed() {
+    assert Outcome::from_code(Outcome::Ok.to_code()) == Outcome::Ok;
+    assert Outcome::from_code(Outcome::InvalidInput.to_code()) == Outcome::InvalidInput;
+    assert Outcome::from_code(Outcome::NotPermitted.to_code()) == Outcome::NotPermitted;
+    assert Outcome::from_code(Outcome::Unsupported.to_code()) == Outcome::Unsupported;
+    assert Outcome::from_code(Outcome::Failed.to_code()) == Outcome::Failed;
+    // A newer backend answering a code this build does not know has plainly
+    // not succeeded.
+    assert Outcome::from_code(99 as i32) == Outcome::Failed;
+    // NotPermitted and InvalidInput must never collapse: one is answered by
+    // asking for the permission, the other by fixing the call.
+    assert Outcome::NotPermitted.to_code() != Outcome::InvalidInput.to_code();
+}

@@ -1,0 +1,423 @@
+// notifications_backend_android — the Android half.
+//
+// ---------------------------------------------------------------------------
+// A CHANNEL IS MANDATORY, AND A MISSING ONE FAILS SILENTLY
+// ---------------------------------------------------------------------------
+//
+// From API 26 every notification names a channel, and posting to one that was
+// never created does NOT throw and does NOT log — the notification is simply
+// dropped. It is the single most common "my notification does not appear" on
+// this platform, and it is why `_ensure_channel` runs before every post rather
+// than once at init: a caller can invent a channel id at any time, and the only
+// safe moment to create it is just before it is used.
+//
+// This backend targets API 26+ (every app in this tree builds
+// `--min-sdk-version 26`), so there is no pre-channel path to write.
+//
+// ---------------------------------------------------------------------------
+// A SMALL ICON IS ALSO MANDATORY
+// ---------------------------------------------------------------------------
+//
+// `Notification.Builder.build()` THROWS without one — "Invalid notification (no
+// valid small icon)" — which aborts the process through JNI. A package cannot
+// ship a drawable (it has no resources of its own and an app's R class is not
+// ours to read), so this uses a platform drawable looked up reflectively out of
+// `android.R$drawable`. An application that wants its own icon gets that with
+// the actions tier, where a `Notification` grows the field.
+//
+// ---------------------------------------------------------------------------
+// DEFERRED DELIVERY DOES NOT SURVIVE THE PROCESS, and that is a real gap
+// ---------------------------------------------------------------------------
+//
+// Apple hands a trigger to the OS and the notification fires whether or not the
+// app is alive. Android's equivalent is `AlarmManager` with a `PendingIntent`
+// aimed at a `BroadcastReceiver`, and a receiver has to be declared in the
+// APP's `AndroidManifest.xml` and merged into its `classes.dex` — the same
+// arrangement `FacetActivity` has, one package further out.
+//
+// That is not built. A deferred notification here rides facet's own scheduler,
+// so it fires while the app is running and is lost if the process dies first.
+// `schedule` reports `Ok` either way, because the schedule WAS accepted; the
+// limitation is documented rather than encoded, and the fix is a receiver class
+// plus one manifest line per app. See plans/notifications.md.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "facet/app_events" as ev;
+import "facet/services" as services;
+import "./notifications" as notify;
+
+// IMPORTANCE_DEFAULT. Makes a sound and appears in the shade; anything quieter
+// would make a package decide something an application should.
+const IMPORTANCE_DEFAULT: i32 = 3 as i32;
+
+// The channel used when a caller names none. Created on first use like any
+// other, so there is no init order to get wrong.
+const DEFAULT_CHANNEL: str = "cplus.default";
+
+// ---- the environment ----------------------------------------------------------
+
+fn _ready() -> bool {
+    if !ev::has_host() { return false; }
+    if !ev::has_host_runtime() { return false; }
+    return true;
+}
+
+// This thread's env, from the process-wide JavaVM that `facet_android`
+// publishes. Never a cached env: a JNIEnv belongs to one thread. Same reasoning
+// as `permissions`, and the same reason it is not `JNI_OnLoad` — a shared
+// library has one and `vendor/http` already took it.
+fn _env() -> rt::Env {
+    let raw: *u8 = ev::host_runtime();
+    if raw.is_null() { return rt::from_native(0 as *jni::JNIEnv); }
+    let vm: *jni::JavaVM = { raw as *jni::JavaVM };
+    var envp: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    let got: i32 = { (*(*vm)).GetEnv(vm, { #addr_of(envp) as *u8 }, 65542 as i32) };
+    if got == (0 as i32) { return rt::from_native(envp); }
+    let rc: i32 = { (*(*vm)).AttachCurrentThreadAsDaemon(vm, { #addr_of(envp) as *u8 },
+                                                         0 as *u8) };
+    if rc != (0 as i32) { return rt::from_native(0 as *jni::JNIEnv); }
+    return rt::from_native(envp);
+}
+
+// The Activity, read per call. NEVER cached — Android recreates it under a live
+// tree and the backend republishes; a held jobject is a dead one after the
+// first rotation.
+fn _context() -> jni::jobject { return ev::host(); }
+
+// A NUL-terminated interned view, so JNI gets a C string and nothing is built
+// per call. Same helper `permissions` uses, same reason.
+fn _nul(s: str) -> str {
+    if s == "" { return ""; }
+    let t: text::Text = text::from_str(s).appending("\0");
+    return text::intern({ t.view() });
+}
+
+fn _manager(env: rt::Env, ctx: jni::jobject) -> jni::jobject {
+    let name: jni::jstring = env.new_string_utf(#str_ptr("notification\0"));
+    if name == (0 as jni::jstring) { return 0 as jni::jobject; }
+    let m: jni::jobject = env.call_object_1(ctx, #str_ptr("android/content/Context\0"),
+        #str_ptr("getSystemService\0"),
+        #str_ptr("(Ljava/lang/String;)Ljava/lang/Object;\0"),
+        rt::arg_object(name));
+    env.delete_local_ref(name);
+    return m;
+}
+
+// ---- the channel --------------------------------------------------------------
+
+// Create the channel if it is not there. Idempotent by contract:
+// `createNotificationChannel` on an existing id is a no-op that does not reset
+// the person's own settings for it, which is why calling this before every post
+// is safe rather than merely convenient.
+fn _ensure_channel(env: rt::Env, mgr: jni::jobject, id: str) {
+    let cid: jni::jstring = env.new_string_utf(#str_ptr(_nul(id)));
+    if cid == (0 as jni::jstring) { return; }
+    // The channel's user-visible name. The id doubles as the label: a package
+    // cannot invent copy for a channel an application named, and a blank label
+    // is worse than a technical one in the Settings list.
+    let label: jni::jstring = env.new_string_utf(#str_ptr(_nul(id)));
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/app/NotificationChannel\0"));
+    if cls == (0 as jni::jclass) { env.delete_local_ref(cid); return; }
+    let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"),
+        #str_ptr("(Ljava/lang/String;Ljava/lang/CharSequence;I)V\0"));
+    if ctor == (0 as jni::jmethodID) { env.delete_local_ref(cid); return; }
+    var args: [jni::JValue; 3] = [rt::arg_object(cid), rt::arg_object(label),
+                                  rt::arg_int(IMPORTANCE_DEFAULT)];
+    let ch: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor,
+                                                        #addr_of(args[0])) };
+    if ch != (0 as jni::jobject) {
+        env.call_void_1(mgr, #str_ptr("android/app/NotificationManager\0"),
+            #str_ptr("createNotificationChannel\0"),
+            #str_ptr("(Landroid/app/NotificationChannel;)V\0"),
+            rt::arg_object(ch));
+        env.delete_local_ref(ch);
+    }
+    env.delete_local_ref(cid);
+    env.delete_local_ref(label);
+    return;
+}
+
+// A platform drawable id, read out of `android.R$drawable` rather than
+// hardcoded: the numeric value is not contractual and a wrong one throws at
+// `build()`. `ic_dialog_info` exists on every level this backend targets.
+static _ICON: i32 = 0 as i32;
+
+fn _small_icon(env: rt::Env) -> i32 {
+    if _ICON != (0 as i32) { return _ICON; }
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/R$drawable\0"));
+    if cls == (0 as jni::jclass) { return 0 as i32; }
+    let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("ic_dialog_info\0"),
+                                                 #str_ptr("I\0"));
+    if fid == (0 as jni::jfieldID) { return 0 as i32; }
+    _ICON = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+    return _ICON;
+}
+
+// ---- posting ------------------------------------------------------------------
+
+// Build and post. `notify(String tag, int id, Notification)` rather than the
+// int-only overload, because this package's ids are strings and hashing them to
+// an int would make two notifications collide silently.
+fn _post(id: str, title: str, body: str, channel: str) -> i32 {
+    if !_ready() { return notify::Outcome::Unsupported.to_code(); }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return notify::Outcome::Unsupported.to_code(); }
+    let ctx: jni::jobject = _context();
+    if ctx == (0 as jni::jobject) { return notify::Outcome::Unsupported.to_code(); }
+    let mgr: jni::jobject = _manager(env, ctx);
+    if mgr == (0 as jni::jobject) { return notify::Outcome::Unsupported.to_code(); }
+
+    var ch: str = channel;
+    if ch == "" { ch = DEFAULT_CHANNEL; }
+    _ensure_channel(env, mgr, ch);
+
+    let icon: i32 = _small_icon(env);
+    if icon == (0 as i32) { return notify::Outcome::Failed.to_code(); }
+
+    let cid: jni::jstring = env.new_string_utf(#str_ptr(_nul(ch)));
+    let b: jni::jobject = env.new_object_2(#str_ptr("android/app/Notification$Builder\0"),
+        #str_ptr("(Landroid/content/Context;Ljava/lang/String;)V\0"),
+        rt::arg_object(ctx), rt::arg_object(cid));
+    env.delete_local_ref(cid);
+    if b == (0 as jni::jobject) { return notify::Outcome::Failed.to_code(); }
+
+    let t: jni::jstring = env.new_string_utf(#str_ptr(_nul(title)));
+    let _b1: jni::jobject = env.call_object_1(b,
+        #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setContentTitle\0"),
+        #str_ptr("(Ljava/lang/CharSequence;)Landroid/app/Notification$Builder;\0"),
+        rt::arg_object(t));
+    env.delete_local_ref(t);
+
+    if body != "" {
+        let bo: jni::jstring = env.new_string_utf(#str_ptr(_nul(body)));
+        let _b2: jni::jobject = env.call_object_1(b,
+            #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setContentText\0"),
+            #str_ptr("(Ljava/lang/CharSequence;)Landroid/app/Notification$Builder;\0"),
+            rt::arg_object(bo));
+        env.delete_local_ref(bo);
+    }
+
+    let _b3: jni::jobject = env.call_object_1(b,
+        #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setSmallIcon\0"),
+        #str_ptr("(I)Landroid/app/Notification$Builder;\0"), rt::arg_int(icon));
+    // AUTO-CANCEL: tapping removes it from the shade. The tap tier will want
+    // the notification gone once its payload has been routed, and an app that
+    // wants it to persist gets `sticky` when that lands.
+    let _b4: jni::jobject = env.call_object_1(b,
+        #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setAutoCancel\0"),
+        #str_ptr("(Z)Landroid/app/Notification$Builder;\0"), rt::arg_bool(true));
+
+    let n: jni::jobject = env.call_object_0(b,
+        #str_ptr("android/app/Notification$Builder\0"), #str_ptr("build\0"),
+        #str_ptr("()Landroid/app/Notification;\0"));
+    env.delete_local_ref(b);
+    if n == (0 as jni::jobject) { return notify::Outcome::Failed.to_code(); }
+
+    let tag: jni::jstring = env.new_string_utf(#str_ptr(_nul(id)));
+    env.call_void_3(mgr, #str_ptr("android/app/NotificationManager\0"),
+        #str_ptr("notify\0"),
+        #str_ptr("(Ljava/lang/String;ILandroid/app/Notification;)V\0"),
+        rt::arg_object(tag), rt::arg_int(0 as i32), rt::arg_object(n));
+    env.delete_local_ref(tag);
+    env.delete_local_ref(n);
+    return notify::Outcome::Ok.to_code();
+}
+
+// ---- the deferred queue -------------------------------------------------------
+//
+// One entry per scheduled notification, held so a `cancel` before the timer
+// fires can find it. The `Cancellable` is what actually stops the timer — a
+// dropped one cancels, which is why these live in a static rather than a local.
+
+struct _Timer {
+    // The timer's own identity, handed to `services::after` as its ctx and
+    // matched on the way back. A `Cancellable` carries no readable id, and an
+    // index into the vector would break the moment anything compacted it.
+    token: u64,
+    id: str,
+    title: str,
+    body: str,
+    channel: str,
+    handle: services::Cancellable,
+    live: bool,
+}
+
+static _TIMERS: vec::Vec[_Timer] = #zero::[vec::Vec[_Timer]]();
+static _NEXT_TOKEN: u64 = 1 as u64;
+
+fn _timer_index(id: str) -> i64 {
+    let reg: *vec::Vec[_Timer] = { #addr_of(_TIMERS) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_Timer]::Some(t) => {
+                if { (*t).live } && { (*t).id } == id { return i as i64; }
+            }
+            option::Option[*_Timer]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as i64 -% (1 as i64);
+}
+
+// The token comes back as the callback's ctx; the entry is found by matching
+// it. An index would have been smaller and wrong — the vector is appended to
+// while timers are live.
+fn _fire(ctx: *u8) {
+    let reg: *vec::Vec[_Timer] = { #addr_of(_TIMERS) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_Timer]::Some(t) => {
+                if { (*t).live } && { (*t).token } == { ctx as u64 } {
+                    { (*t).live = false };
+                    let _rc: i32 = _post({ (*t).id }, { (*t).title }, { (*t).body },
+                                         { (*t).channel });
+                    return;
+                }
+            }
+            option::Option[*_Timer]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- the seam -----------------------------------------------------------------
+
+export extern fn cplus_notifications_schedule_v1(
+    id_ptr: *u8, id_len: usize,
+    title_ptr: *u8, title_len: usize,
+    body_ptr: *u8, body_len: usize,
+    payload_ptr: *u8, payload_len: usize,
+    channel_ptr: *u8, channel_len: usize,
+    delay_seconds: f64) -> i32 {
+
+    let id: str = { #str_from_raw_parts(id_ptr, id_len) };
+    let title: str = { #str_from_raw_parts(title_ptr, title_len) };
+    let body: str = { #str_from_raw_parts(body_ptr, body_len) };
+    let channel: str = { #str_from_raw_parts(channel_ptr, channel_len) };
+
+    if !_ready() { return notify::Outcome::Unsupported.to_code(); }
+
+    // REPLACEMENT: an id scheduled twice replaces rather than stacking, so a
+    // pending timer for the same id is cancelled first. `notify` with the same
+    // tag already replaces a POSTED one; this is the other half.
+    let existing: i64 = _timer_index(id);
+    if existing >= (0 as i64) { _cancel_timer(existing); }
+
+    if delay_seconds <= 0.0f64 {
+        return _post(id, title, body, channel);
+    }
+
+    // DEFERRED, and it does not survive the process — see the file header. The
+    // schedule is real and the notification will fire while the app runs; an
+    // AlarmManager receiver is what would make it survive a kill.
+    let token: u64 = _NEXT_TOKEN;
+    _NEXT_TOKEN = _NEXT_TOKEN +% (1 as u64);
+    let h: services::Cancellable = services::after(delay_seconds, _fire, { token as *u8 });
+    let reg: *vec::Vec[_Timer] = { #addr_of(_TIMERS) };
+    let _a: status::Status = (*reg).append(_Timer {
+        token: token,
+        id: text::intern(id), title: text::intern(title), body: text::intern(body),
+        channel: text::intern(channel), handle: h, live: true,
+    });
+    return notify::Outcome::Ok.to_code();
+}
+
+fn _cancel_timer(i: i64) {
+    let reg: *vec::Vec[_Timer] = { #addr_of(_TIMERS) };
+    match (*reg).at_ptr(i as usize) {
+        option::Option[*_Timer]::Some(t) => {
+            { (*t).live = false };
+            { (*t).handle.cancel() };
+        }
+        option::Option[*_Timer]::None => { }
+    }
+    return;
+}
+
+export extern fn cplus_notifications_cancel_v1(id_ptr: *u8, id_len: usize) -> i32 {
+    let id: str = { #str_from_raw_parts(id_ptr, id_len) };
+    let i: i64 = _timer_index(id);
+    if i >= (0 as i64) { _cancel_timer(i); }
+    if !_ready() { return notify::Outcome::Unsupported.to_code(); }
+    let env: rt::Env = _env();
+    let ctx: jni::jobject = _context();
+    if env.raw().is_null() || ctx == (0 as jni::jobject) {
+        return notify::Outcome::Unsupported.to_code();
+    }
+    let mgr: jni::jobject = _manager(env, ctx);
+    if mgr == (0 as jni::jobject) { return notify::Outcome::Unsupported.to_code(); }
+    let tag: jni::jstring = env.new_string_utf(#str_ptr(_nul(id)));
+    env.call_void_2(mgr, #str_ptr("android/app/NotificationManager\0"),
+        #str_ptr("cancel\0"), #str_ptr("(Ljava/lang/String;I)V\0"),
+        rt::arg_object(tag), rt::arg_int(0 as i32));
+    env.delete_local_ref(tag);
+    return notify::Outcome::Ok.to_code();
+}
+
+export extern fn cplus_notifications_cancel_all_v1() -> i32 {
+    let reg: *vec::Vec[_Timer] = { #addr_of(_TIMERS) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n { _cancel_timer(i as i64); i = i +% (1 as usize); }
+    (*reg).remove_all();
+    if !_ready() { return notify::Outcome::Unsupported.to_code(); }
+    let env: rt::Env = _env();
+    let ctx: jni::jobject = _context();
+    if env.raw().is_null() || ctx == (0 as jni::jobject) {
+        return notify::Outcome::Unsupported.to_code();
+    }
+    let mgr: jni::jobject = _manager(env, ctx);
+    if mgr == (0 as jni::jobject) { return notify::Outcome::Unsupported.to_code(); }
+    // `cancelAll` removes this app's POSTED notifications. The pending timers
+    // above are the other half, and both are needed for "cancel everything".
+    env.call_void_0(mgr, #str_ptr("android/app/NotificationManager\0"),
+                    #str_ptr("cancelAll\0"), #str_ptr("()V\0"));
+    return notify::Outcome::Ok.to_code();
+}
+
+// SAME CALL AS `cancel_all` ON THIS PLATFORM, and said rather than hidden:
+// `NotificationManager.cancelAll` clears what is showing, and Android has no
+// separate "forget what is scheduled" — the schedule lives in this package.
+// The two verbs differ on Apple, where the centre distinguishes pending from
+// delivered, so the facade keeps them apart and this half answers both.
+export extern fn cplus_notifications_clear_shown_v1() -> i32 {
+    if !_ready() { return notify::Outcome::Unsupported.to_code(); }
+    let env: rt::Env = _env();
+    let ctx: jni::jobject = _context();
+    if env.raw().is_null() || ctx == (0 as jni::jobject) {
+        return notify::Outcome::Unsupported.to_code();
+    }
+    let mgr: jni::jobject = _manager(env, ctx);
+    if mgr == (0 as jni::jobject) { return notify::Outcome::Unsupported.to_code(); }
+    env.call_void_0(mgr, #str_ptr("android/app/NotificationManager\0"),
+                    #str_ptr("cancelAll\0"), #str_ptr("()V\0"));
+    return notify::Outcome::Ok.to_code();
+}
+
+export extern fn cplus_notifications_pending_v1(out: *u8) -> i32 {
+    if out.is_null() { return notify::Outcome::InvalidInput.to_code(); }
+    let dst: *vec::Vec[str] = { out as *vec::Vec[str] };
+    let reg: *vec::Vec[_Timer] = { #addr_of(_TIMERS) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_Timer]::Some(t) => {
+                if { (*t).live } { let _s: status::Status = (*dst).append({ (*t).id }); }
+            }
+            option::Option[*_Timer]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return notify::Outcome::Ok.to_code();
+}
