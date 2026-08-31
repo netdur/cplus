@@ -54,6 +54,7 @@ import "facet/mount" as mount;
 import "facet/nav" as nav;
 import "facet_uikit/facet_uikit" as backend;
 import "facet_uikit/window" as host;
+import "facet_uikit/notify" as notify;
 import "facet_uikit/dialogs" as dialogs;
 
 type Node = flex::Node;
@@ -434,14 +435,29 @@ fn observe_window_size(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellabl
 
 // Backgrounding / resumed / stopped. THE ONE PLACE THIS PLATFORM IS RICHER:
 // these three are real, frequent, user-visible moments on a phone, where on a
-// desktop they are hide, unhide and terminate. They are the app delegate's
-// notifications and are not wired yet.
+// desktop they are hide, unhide and terminate.
+//
+// NOTIFICATIONS, NOT THE APP DELEGATE, and that is a correction rather than a
+// preference. These five verbs used to ride `applicationDidEnterBackground:`
+// and its three siblings through a backend-local `observe_lifecycle`, and UIKit
+// does not send any of those four to an app that has adopted UIScene — which
+// every app scaffolded by `cpc new` has. They fired for nobody. The
+// `UIApplication*Notification` names carry neither the "not called" note nor
+// the iOS 26 deprecation the delegate methods do, and they post regardless of
+// scene adoption. See `bugs/closed/ios-lifecycle-verbs-never-fire-under-scenes.md`.
+//
+// This is now structurally the same file as `runtime_macos.cplus`, which
+// answers the same five verbs through `akx::observe_named`.
 fn observe_backgrounding(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_BACKGROUND, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationDidEnterBackgroundNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 fn observe_resumed(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_FOREGROUND, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationWillEnterForegroundNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 // `stopped` is TERMINATION, and on iOS it is the one lifecycle edge that is not
@@ -450,8 +466,17 @@ fn observe_resumed(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
 // because it does arrive when the app is quit while foregrounded, and
 // MANIFEST.md records that an app which needs to save state should save it on
 // BACKGROUNDING instead.
+//
+// Worth knowing while reading the report above: `applicationWillTerminate:` is
+// the ONE of the delegate's lifecycle methods that carries neither the
+// "not called under scenes" note nor a deprecation, so this verb was probably
+// the only one of the five that ever worked. It moves to the notification
+// anyway — five verbs on one mechanism beats four on one and a survivor on
+// another.
 fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_TERMINATE, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationWillTerminateNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 // "Window active" on iOS is the APPLICATION being frontmost and interactive,
@@ -459,11 +484,15 @@ fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
 // a desktop asks of a window, asked of the app, exactly as `is_window_active`
 // already answers it.
 fn observe_window_active(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_ACTIVE, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationDidBecomeActiveNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_INACTIVE, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationWillResignActiveNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 // An explicit light/dark choice overriding the system's:

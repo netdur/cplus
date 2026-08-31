@@ -68,6 +68,7 @@ import "./dialogs" as dialogs;
 //     vendor/facet_uikit/tools/run_ios_tests.sh
 import "./drawing" as drawing;
 import "./swipe" as swipe;
+import "./app_events_uikit" as app_events_uikit;
 
 fn renderer() -> mount::Renderer {
     return mount::Renderer {
@@ -97,6 +98,12 @@ fn install() {
     component::install_sender_readers(input::sender_readers());
     gestures::install_key_reader(keys::reader());
     scheduler::install_sync_tick();
+    // The delegate fan-out: the application-level moments an SDK package needs
+    // a share of. Armed once per process and never disarmed — see arm(). It
+    // must be armed HERE rather than from `run_loop`, because `install` is what
+    // a headless test calls, and because arming before `UIApplicationMain` is
+    // what makes E_LAUNCHED reachable at all.
+    app_events_uikit::arm();
     return;
 }
 

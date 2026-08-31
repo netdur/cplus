@@ -1,0 +1,110 @@
+// app_events_uikit — the iOS half of facet's delegate fan-out.
+//
+// `facet/app_events` declares WHAT an application-level event is; this says
+// which UIKit moment each one is, and fires it. One file, because that is the
+// whole of the backend's share: the fan-out itself, the subscriber list and the
+// UI-thread rule all live in the portable module. The macOS sibling is
+// `facet_appkit/app_events_appkit.cplus` and this is deliberately its twin.
+//
+// NOTIFICATIONS, NOT THE DELEGATE — and on this platform that is not a
+// preference, it is the only thing that works.
+//
+// UIKit does not send `applicationDidBecomeActive:`,
+// `applicationWillResignActive:`, `applicationDidEnterBackground:` or
+// `applicationWillEnterForeground:` to an app that has adopted UIScene, and
+// every app this repo builds has: `cpc new` scaffolds `UIApplicationSceneManifest`
+// into `ios/Info.plist`. The SDK header says so on each of the four —
+//
+//     /// - Note: This method is not called if `UIScene` lifecycle has been adopted.
+//
+// — and the four are deprecated as of iOS 26 on top of it. The corresponding
+// `UIApplication*Notification` names carry no such note and no deprecation:
+// they post at the application level and do not care whether scenes are
+// adopted. That is the property this file is built on.
+//
+// This replaces `window.cplus`'s `PHASE_*` / `observe_lifecycle` / `fire_phase`,
+// which was a second lifecycle vocabulary living in a backend, wired to those
+// four dead methods. See `bugs/closed/ios-lifecycle-verbs-never-fire-under-scenes.md`.
+//
+// WHAT IS NOT HERE, recorded rather than missing:
+//
+//   E_OPEN_URL         `scene:openURLContexts:` is scene-delegate-only, and a
+//                      COLD start delivers the URL in `connectionOptions`
+//                      instead — before any subscriber exists. That needs the
+//                      latch described in plans/permissions.md §3.4b, and it
+//                      arrives with applinks, which is the first thing that
+//                      needs it.
+//   E_PUSH_TOKEN       `application:didRegisterForRemoteNotifications…` is
+//                      delegate-only; no notification exists. Arrives with
+//                      notifications.
+//   E_PUSH_MESSAGE     ditto.
+//   E_NATIVE_RESULT    Android's `onActivityResult`. Apple returns through
+//                      E_OPEN_URL instead, so this is absent by design.
+
+import "facet/app_events" as ev;
+import "facet/services" as services;
+import "./notify" as notify;
+
+// The five live observations, held for the process. `Cancellable` cancels on
+// DROP, so these must be statics and not locals — a local would unregister the
+// observer at the end of `arm`, which is the trap the window tier's own comment
+// warns about.
+static OBS_LAUNCHED: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_FOREGROUND: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_BACKGROUND: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_TERMINATING: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_LOW_MEMORY: services::Cancellable = #zero::[services::Cancellable]();
+static ARMED: bool = false;
+
+fn on_launched(ctx: *u8) { ev::fire_plain(ev::E_LAUNCHED); return; }
+fn on_foreground(ctx: *u8) { ev::fire_plain(ev::E_FOREGROUND); return; }
+fn on_background(ctx: *u8) { ev::fire_plain(ev::E_BACKGROUND); return; }
+fn on_terminating(ctx: *u8) { ev::fire_plain(ev::E_TERMINATING); return; }
+
+// `code` is the platform's level where it has one, and iOS has none — the
+// portable contract says 0 there, so this is `fire_result` with both zeroes
+// rather than `fire_plain`, to keep the payload explicit at the fire site.
+fn on_low_memory(ctx: *u8) {
+    ev::fire_result(ev::E_LOW_MEMORY, 0 as i64, 0 as i64);
+    return;
+}
+
+// Armed once per process, from `backend::install`. Idempotent for the same
+// reason `install` is: a second arming would double every event, and "the push
+// was handled twice" is the symptom furthest from its cause.
+//
+// NOT paired with an uninstall, matching the macOS half: these fire on the UI
+// thread from the notification centre, cost nothing with no subscribers, and
+// taking them back out mid-process would leave a re-installed backend silent.
+//
+// ARMED BEFORE `UIApplicationMain`, which is what makes E_LAUNCHED reachable:
+// `window::run_loop` calls `install()` and only then hands the process to
+// UIKit, so the observer is registered before `didFinishLaunching` is posted.
+fn arm() {
+    if ARMED { return; }
+    ARMED = true;
+    OBS_LAUNCHED = observe("UIApplicationDidFinishLaunchingNotification", on_launched);
+    // E_FOREGROUND is `didBecomeActive`, not `willEnterForeground` — the
+    // portable kind's own comment fixes that mapping ("macOS: didBecomeActive;
+    // iOS: didBecomeActive; Android: onResume"), and it is the more useful of
+    // the two: an app returning from the app switcher preview gets it, and a
+    // cold launch gets it as well.
+    OBS_FOREGROUND = observe("UIApplicationDidBecomeActiveNotification", on_foreground);
+    // `didEnterBackground`, not `willResignActive`: E_BACKGROUND means "the
+    // last safe moment to persist", and resigning active is a control-centre
+    // swipe, not a moment the process can be killed after.
+    OBS_BACKGROUND = observe("UIApplicationDidEnterBackgroundNotification", on_background);
+    OBS_TERMINATING = observe("UIApplicationWillTerminateNotification", on_terminating);
+    OBS_LOW_MEMORY = observe("UIApplicationDidReceiveMemoryWarningNotification", on_low_memory);
+}
+
+fn armed() -> bool { return ARMED; }
+
+// One notification, paired with the canceller that matches it. A named step
+// rather than five inline expressions: `observe_named` answers a bare id, and
+// pairing it with the wrong canceller is exactly the kind of mistake that five
+// near-identical inline lines hide.
+fn observe(name: str, handler: fn(*u8)) -> services::Cancellable {
+    let id: u64 = notify::observe_named(name, 0 as *u8, handler, 0 as *u8);
+    return services::Cancellable::of(id, notify::cancel_observe);
+}

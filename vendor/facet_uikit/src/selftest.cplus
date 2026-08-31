@@ -28,6 +28,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/application" as app;
+import "facet/app_events" as ev;
 import "facet/tree" as tree;
 import "facet/vocabulary" as vocab;
 import "facet/elements" as ui;
@@ -39,6 +40,8 @@ import "./views" as views;
 import "./recycler" as recycler;
 import "./input" as input;
 import "./keys" as keys;
+import "./notify" as notify;
+import "./app_events_uikit" as app_events_uikit;
 import "./window" as window;
 import "./device" as device;
 import "./keyboard" as keyboard;
@@ -1117,36 +1120,120 @@ fn runs_are_read_from_a_labels_attributed_text() -> bool {
 }
 
 // ---- the lifecycle band -----------------------------------------------------------
-// Pure registry logic, so it runs with no app: register, fire, check it ran;
-// cancel, fire again, check it did not. The five phases are separate lists in
-// one vector and a fire must not cross them.
+// THROUGH THE REAL NOTIFICATION CENTRE, and that is the whole point of these.
+//
+// What was here before were two REGISTRY tests: they called `window::fire_phase`
+// themselves, asserted the fan-out, and never touched delivery. They were
+// correct about the registry and they stayed green for years while the four
+// app-delegate methods underneath fired for nobody — UIKit does not send them
+// to a scene-based app. See
+// `bugs/closed/ios-lifecycle-verbs-never-fire-under-scenes.md`.
+//
+// So these post an ACTUAL `UIApplication*Notification` and check that a
+// subscriber sees it. `NSNotificationCenter` delivers synchronously on the
+// posting thread, so there is no waiting and no run loop needed — which is
+// what makes a delivery test possible with no app at all.
+//
+// Each is checked AGAINST ITS OWN NAME: two observers pointed at one
+// notification would pass a single-event test.
 
 static FIRED: i32 = 0 as i32;
+static OTHER_FIRED: i32 = 0 as i32;
 fn count_fire(ctx: *u8) { FIRED = FIRED + (1 as i32); return; }
+fn count_other(ctx: *u8) { OTHER_FIRED = OTHER_FIRED + (1 as i32); return; }
 
-fn a_lifecycle_observer_fires_for_its_own_phase() -> bool {
-    FIRED = 0 as i32;
-    var h: services::Cancellable = window::observe_lifecycle(
-        window::PHASE_BACKGROUND, count_fire, 0 as *u8);
-    window::fire_phase(window::PHASE_BACKGROUND);
-    let after_own: i32 = FIRED;
-    // A DIFFERENT phase must not reach it: five edges in one vector, and a
-    // fire that crossed them would tell an app it was backgrounded when it
-    // was merely resigning active.
-    window::fire_phase(window::PHASE_ACTIVE);
-    let after_other: i32 = FIRED;
-    h.cancel();
-    return after_own == (1 as i32) && after_other == (1 as i32);
+// Post `name` with no object and no userInfo.
+fn post(name: str) {
+    let c: *u8 = notify::notification_center();
+    if c == (0 as *u8) { return; }
+    { rt::msg_void_id_id(c, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                         bridge::nsstring(name), 0 as *u8) };
+    return;
 }
 
-fn a_cancelled_lifecycle_observer_stops_firing() -> bool {
+fn a_real_notification_reaches_its_observer() -> bool {
     FIRED = 0 as i32;
-    var h: services::Cancellable = window::observe_lifecycle(
-        window::PHASE_TERMINATE, count_fire, 0 as *u8);
-    window::fire_phase(window::PHASE_TERMINATE);
+    OTHER_FIRED = 0 as i32;
+    var h: services::Cancellable = runtime_observe_background();
+    // A DIFFERENT notification must not reach it. Backgrounding and resigning
+    // active are the two an app confuses at its peril: one means "you may be
+    // killed after this", the other means "a control centre swipe".
+    var g: services::Cancellable = services::Cancellable::of(
+        notify::observe_named("UIApplicationWillResignActiveNotification",
+                              0 as *u8, count_other, 0 as *u8),
+        notify::cancel_observe);
+    post("UIApplicationDidEnterBackgroundNotification");
+    let mine: i32 = FIRED;
+    let theirs: i32 = OTHER_FIRED;
     h.cancel();
-    window::fire_phase(window::PHASE_TERMINATE);
+    g.cancel();
+    return mine == (1 as i32) && theirs == (0 as i32);
+}
+
+fn a_cancelled_observation_stops_being_delivered() -> bool {
+    FIRED = 0 as i32;
+    var h: services::Cancellable = runtime_observe_background();
+    post("UIApplicationDidEnterBackgroundNotification");
+    h.cancel();
+    post("UIApplicationDidEnterBackgroundNotification");
     return FIRED == (1 as i32);
+}
+
+// The observation the five public verbs are built from, made the same way
+// `runtime_ios::observe_backgrounding` makes it. Named rather than inlined so
+// the test exercises the pairing of id and canceller, which is the half a
+// wrong `Cancellable::of` would break silently.
+fn runtime_observe_background() -> services::Cancellable {
+    let id: u64 = notify::observe_named("UIApplicationDidEnterBackgroundNotification",
+                                        0 as *u8, count_fire, 0 as *u8);
+    return services::Cancellable::of(id, notify::cancel_observe);
+}
+
+fn a_cancelled_observation_frees_its_registry_slot() -> bool {
+    let before: usize = notify::pending_count();
+    var h: services::Cancellable = runtime_observe_background();
+    let during: usize = notify::pending_count();
+    h.cancel();
+    let after: usize = notify::pending_count();
+    return during == before +% (1 as usize) && after == before;
+}
+
+// ---- the app-events fan-out ---------------------------------------------------
+// Same discipline one level up: post the real notification, and check the
+// PORTABLE kind a subscriber sees. This is the seam an SDK package subscribes
+// to, so a wrong kind here is a push handled as a backgrounding.
+
+static SEEN_KIND: u32 = 0 as u32;
+static SEEN_COUNT: i32 = 0 as i32;
+fn record_kind(e: *ev::AppEvent, ctx: *u8) {
+    SEEN_KIND = { (*e).kind };
+    SEEN_COUNT = SEEN_COUNT + (1 as i32);
+    return;
+}
+
+fn a_real_notification_reaches_an_app_events_subscriber() -> bool {
+    app_events_uikit::arm();
+    SEEN_KIND = 0 as u32;
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_kind, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    post("UIApplicationDidEnterBackgroundNotification");
+    let kind: u32 = SEEN_KIND;
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_kind, 0 as *u8);
+    return kind == ev::E_BACKGROUND && n == (1 as i32);
+}
+
+fn becoming_active_is_foreground_not_background() -> bool {
+    app_events_uikit::arm();
+    SEEN_KIND = 0 as u32;
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_kind, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    post("UIApplicationDidBecomeActiveNotification");
+    let kind: u32 = SEEN_KIND;
+    let _o: status::Status = ev::off_app_event(record_kind, 0 as *u8);
+    return kind == ev::E_FOREGROUND;
 }
 
 // ---- the dialog tier ---------------------------------------------------------------
@@ -1737,10 +1824,16 @@ fn run_all() -> i32 {
     check("a secure field is sensitive by class", a_secure_field_is_sensitive_by_class());
     check("a control is clickable, a bare view is not",
           a_control_is_clickable_and_a_bare_view_is_not());
-    check("a lifecycle observer fires for its own phase",
-          a_lifecycle_observer_fires_for_its_own_phase());
-    check("a cancelled lifecycle observer stops firing",
-          a_cancelled_lifecycle_observer_stops_firing());
+    check("a real notification reaches its observer",
+          a_real_notification_reaches_its_observer());
+    check("a cancelled observation stops being delivered",
+          a_cancelled_observation_stops_being_delivered());
+    check("a cancelled observation frees its registry slot",
+          a_cancelled_observation_frees_its_registry_slot());
+    check("a real notification reaches an app_events subscriber",
+          a_real_notification_reaches_an_app_events_subscriber());
+    check("becoming active is foreground, not background",
+          becoming_active_is_foreground_not_background());
     check("an alert carries one button per named title",
           an_alert_carries_one_button_per_named_title());
     check("a prompt gets exactly one text field", a_prompt_gets_exactly_one_text_field());
