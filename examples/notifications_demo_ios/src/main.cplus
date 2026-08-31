@@ -1,5 +1,10 @@
-// notifications_demo — one permission, and a button per kind of notification
-// this package can post.
+// notifications_demo_ios — one permission, and a button per kind of
+// notification this package can post, on a phone.
+//
+// The same demo as examples/notifications_demo. Two differences, both of them
+// the platform's rather than the demo's: the entry is an `export extern fn`
+// because an iOS binary's `main` is ObjC and calls in, and the window is sized
+// by the device rather than by `run_component`.
 //
 // The permission row is first because nothing below it works until it says
 // Granted: both platforms accept a notification from an unauthorised app and
@@ -260,7 +265,9 @@ extern fn c_write(fd: i32, buf: *u8, n: usize) -> i64;
 #[link_name = "close"]
 extern fn c_close(fd: i32) -> i32;
 
-const ANDROID_PHOTO: str = "";
+// The app's own files directory. Hardcoded because this is a demo; a real
+// application asks the platform for it.
+const ANDROID_PHOTO: str = "/data/data/cplus.notificationsdemo/files/photo.png";
 
 const PHOTO_LEN: usize = 24706;
 
@@ -469,11 +476,13 @@ impl Demo: component::Lifecycle {
     fn on_detach(ref this) { return; }
 }
 
-fn main() -> i32 {
+export extern fn notifications_demo_ios_main() -> i32 {
     theme::set_theme(theme::Theme::new(
         primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
     ));
+    // The size arguments are ignored on a phone — the window is the screen —
+    // and passed anyway so this file stays readable next to its macOS twin.
     runtime::run_component(Demo::new(), title: "Notifications",
-                           width: 560.0, height: 560.0);
+                           width: 390.0, height: 844.0);
     return 0;
 }

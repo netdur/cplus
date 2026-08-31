@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key><string>NotificationsDemo</string>
+	<key>CFBundleIdentifier</key><string>dev.cplus.notificationsdemo.ios</string>
+	<key>CFBundleName</key><string>Notifications</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>1.0</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>LSRequiresIPhoneOS</key><true/>
+	<key>MinimumOSVersion</key><string>15.0</string>
+	<key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+	<key>UILaunchScreen</key><dict/>
+	<!-- NO PRIVACY KEY. Notifications is the one Apple domain gated on the
+	     prompt alone — there is no NSNotificationsUsageDescription to forget,
+	     unlike camera or contacts. What IS load-bearing is CFBundleIdentifier:
+	     UNUserNotificationCenter refuses a process without one, and it refuses
+	     by RAISING rather than returning nil.
+
+	     The SCENE MANIFEST is deliberate and not boilerplate: facet_uikit
+	     synthesises both its app delegate and its scene delegate at runtime,
+	     and every windowing API on iPadOS hangs off a scene. It must not name a
+	     storyboard — UIKit would wait for a nib facet has not got and the
+	     screen stays black. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key><false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key><string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key><string>FacetUIKitSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+</dict>
+</plist>

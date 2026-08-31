@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="cplus.notificationsdemo">
+
+    <!-- API 33+. Below it the permission does not exist and notifications are
+         on unless a person turned them off in Settings — a different question
+         with a different call, which `permissions` answers with a version
+         fork. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application android:label="Notifications"
+                 android:theme="@android:style/Theme.DeviceDefault.DayNight">
+        <!-- THE ACTIVITY IS FACET'S. It ships inside facet_android as a
+             precompiled dex merged into classes.dex by build_android.sh, so
+             this app contains no Java of its own. It is also what receives a
+             notification tap — onNewIntent when running, the launch intent when
+             the process was dead. -->
+        <activity android:name="cplus.facet.FacetActivity" android:exported="true"
+                  android:configChanges="orientation|screenSize|keyboardHidden">
+            <meta-data android:name="cplus.facet.lib"  android:value="notificationsdemo" />
+            <meta-data android:name="cplus.facet.main" android:value="notifications_demo_ios_main" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ACTION BUTTONS ROUTE THROUGH HERE. A button must do its thing and
+             leave the shade open, and only a broadcast can do that — an
+             Activity PendingIntent always brings the app forward. The class
+             ships inside facet_android's dex, merged into classes.dex by
+             build_android.sh, so this line is all an app adds. Omit it and the
+             buttons quietly do nothing; everything else still works. -->
+        <receiver android:name="cplus.facet.FacetNotificationReceiver"
+                  android:exported="false" />
+    </application>
+</manifest>
