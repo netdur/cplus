@@ -43,7 +43,7 @@ Two probes under `playground/`, and the division is deliberate:
 
 ```
 362 declared prop bits     245 answered    67%   (gtk 358, appkit 336, uikit 323, android 321)
- 68 declared handlers       52 fired       76%   (gtk  68, appkit  68, uikit  65, android  67)
+ 68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
 `python3 vendor/facet_gtk/tools/parity.py win32` prints it. Without the
@@ -671,6 +671,26 @@ theme's grey; there is no message for it.
 A single-line `EDIT` centres its text vertically and a multiline one starts at
 the top, and neither is adjustable. The verb is answered for a `label`, where
 `SS_CENTERIMAGE` genuinely does it.
+
+### A `list` cannot be reordered, and that is facet's shape rather than this package's
+
+Worth recording because the verb LOOKS present on both kinds and is not.
+
+`ReorderableItemsViewProps` — which carries `can_reorder_items` and
+`on_reorder_completed` — is embedded in `CollectionProps` and in nothing else.
+A `list` has `reorder_from` and `reorder_to` to READ, and `P_REORDER` is
+declared, but there is no way to ask a list to be reorderable and no handler to
+hear that it was. A drag there would be a gesture with no contract behind it,
+so `collection` reorders and `list` does not. facet_gtk reads
+`CollectionProps` and only that, for the same reason.
+
+Reordering here is mouse capture rather than OLE drag-and-drop, and the COM
+note in the entry below does not apply to it: a reorder never leaves the
+window, so there is no data object and no cross-application format to
+negotiate. The move is REPORTED and the data is not touched — facet's sequence
+is a count plus a builder, so the order belongs to the application; a backend
+that shuffled rows itself would be shuffling a view of data it does not own,
+and the next rebuild would put them back.
 
 ### The drag half of drag-and-drop, and the two travelling edges
 

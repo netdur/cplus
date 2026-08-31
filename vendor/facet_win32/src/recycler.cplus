@@ -1710,3 +1710,156 @@ fn fire_threshold(v: *u8, n: *core::Node, last: i64, count: i64) {
     }
     return;
 }
+
+// ---- reordering, by dragging a row -----------------------------------------------
+//
+// `can_reorder_items` is the ledger's `ReorderableItemsView`, and this is the
+// ONE place in this file where the backend writes into the props:
+// `reorder_from` and `reorder_to` are read-only to the application — writing
+// them would be describing a move that did not happen — and
+// `on_reorder_completed` is how it learns a move happened at all.
+//
+// THE DATA IS NOT TOUCHED, and that is the contract rather than a shortcut.
+// facet's sequence is a count plus a builder, so the ORDER belongs to the
+// application: this reports the move, the application reorders its own data and
+// writes `count` or `row` back. A backend that shuffled rows itself would be
+// shuffling a view of data it does not own, and the next rebuild would put them
+// back. facet_gtk states the same rule in the same words.
+//
+// NO OLE DRAG-DROP HERE. facet_gtk uses GTK's own drag machinery because a row
+// is both a source and a target there; on Win32 the equivalent is COM, and this
+// is an INTRA-APPLICATION move that never leaves the window — mouse capture
+// answers it exactly, and `dnd.cplus`'s note about the COM price does not
+// apply.
+
+static REORDER_LIST: usize = 0;
+static REORDER_FROM: i64 = (0 as i64) -% (1 as i64);
+static REORDER_TO: i64 = (0 as i64) -% (1 as i64);
+static REORDER_MOVED: bool = false;
+static REORDER_Y: i32 = 0;
+
+fn reorders(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    // ONLY A COLLECTION REORDERS, and that is facet's shape rather than this
+    // package's choice. `ReorderableItemsViewProps` — which carries
+    // `can_reorder_items` and `on_reorder_completed` — is embedded in
+    // `CollectionProps` and in nothing else. A `list` has `reorder_from` and
+    // `reorder_to` to read, but no way to ASK for reordering and no handler to
+    // hear it, so a drag there would be a gesture with no contract behind it.
+    // facet_gtk reorders `CollectionProps` and only that, for the same reason.
+    if { (*d).kind } != props::K_COLLECTION { return false; }
+    return { (*(raw as *props::CollectionProps)).reorderable_items_view.can_reorder_items };
+}
+
+// A press on row `index` of the list at `v`. Answers false when this list does
+// not reorder, so the press falls through to selection as before.
+fn begin_reorder(v: *u8, n: *core::Node, index: usize, y: i32) -> bool {
+    if !reorders(n) { return false; }
+    REORDER_LIST = { #addr(v) };
+    REORDER_FROM = index as i64;
+    REORDER_TO = (0 as i64) -% (1 as i64);
+    REORDER_MOVED = false;
+    REORDER_Y = y;
+    return true;
+}
+
+// PAST THE SLOP, or it is not a drag. Every click jitters a pixel between down
+// and up; without this every click on a reorderable row is also a reorder onto
+// itself.
+fn reorder_slop() -> i32 { return 4 as i32; }
+
+fn drag_reorder(v: *u8, y: i32) -> bool {
+    if REORDER_LIST == (0 as usize) { return false; }
+    var dy: i32 = y -% REORDER_Y;
+    if dy < (0 as i32) { dy = (0 as i32) -% dy; }
+    if !REORDER_MOVED && dy < reorder_slop() { return false; }
+    REORDER_MOVED = true;
+    return true;
+}
+
+// The release. `y` is in the VIEWPORT's coordinates — the caller converts,
+// because the release may land on a different row's window than the press did
+// and each has its own origin.
+fn end_reorder(n: *core::Node, y: i32) -> bool {
+    let v: *u8 = REORDER_LIST as *u8;
+    let from: i64 = REORDER_FROM;
+    let moved: bool = REORDER_MOVED;
+    REORDER_LIST = 0 as usize;
+    REORDER_FROM = (0 as i64) -% (1 as i64);
+    REORDER_MOVED = false;
+    if v == (0 as *u8) { return false; }
+    // A PRESS THAT NEVER MOVED IS A CLICK, not a reorder onto the same row.
+    if !moved { return false; }
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    var src: SeqSource = source_of(n);
+    if !src.live { return false; }
+    let p: *SeqSource = #addr_of(src);
+    // Where the pointer let go, in CONTENT coordinates — the scroll offset has
+    // to come back on, or dropping onto a scrolled list reports the row that
+    // happens to be at that screen position in an unscrolled one.
+    let at: f64 = (y as f64) + { (*s).scroll } - strip_height(s);
+    var to: i64 = row_at(s, at, p);
+    let count: i64 = row_count(s);
+    if count <= (0 as i64) { return false; }
+    if to < (0 as i64) { to = 0 as i64; }
+    if to >= count { to = count -% (1 as i64); }
+    if to == from { return false; }
+    REORDER_TO = to;
+    return report_reorder(v, n, from, to);
+}
+
+fn report_reorder(v: *u8, n: *core::Node, from: i64, to: i64) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    if { (*d).kind } != props::K_COLLECTION { return false; }
+    let p: *props::CollectionProps = raw as *props::CollectionProps;
+    // THE BACKEND WRITES THESE TWO and nothing else does — they are read-only
+    // to the application, because writing them would describe a move that did
+    // not happen.
+    { (*p).reorder_from = from };
+    { (*p).reorder_to = to };
+    let h: fn(*u8, *u8) = { (*p).reorderable_items_view.on_reorder_completed };
+    if h == props::no_handler { return true; }
+    h(v, { (*p).reorderable_items_view.on_reorder_completed_ctx });
+    return true;
+}
+
+fn reorder_active() -> bool { return REORDER_LIST != (0 as usize); }
+fn reorder_host() -> *u8 { return REORDER_LIST as *u8; }
+
+#[test]
+fn a_list_that_did_not_ask_to_reorder_does_not() {
+    // The gate. Without it every press on every row would begin a drag and the
+    // release would report a move the application never allowed.
+    // A LIST NEVER REORDERS — it has no way to ask. See `reorders`.
+    var l: core::Node = flist::list(key: "l");
+    assert !reorders(#addr_of(l));
+    var c: core::Node = fcollection::collection(key: "c");
+    assert !reorders(#addr_of(c));
+    assert !begin_reorder(0 as *u8, #addr_of(l), 0 as usize, 0 as i32);
+    assert !reorder_active();
+    return;
+}
+
+#[test]
+fn a_press_that_never_moved_is_a_click_and_not_a_reorder() {
+    // Every click jitters a pixel between down and up. Reporting a reorder for
+    // one would fire `on_reorder_completed` for a move the user did not make —
+    // and the application would then rewrite its data.
+    var l: core::Node = fcollection::collection(key: "c", reorder_items: true);
+    assert reorders(#addr_of(l));
+    assert begin_reorder(4321 as *u8, #addr_of(l), 2 as usize, 100 as i32);
+    assert reorder_active();
+    // Two pixels is jitter, not a drag.
+    assert !drag_reorder(4321 as *u8, 102 as i32);
+    // And the release then reports nothing.
+    assert !end_reorder(#addr_of(l), 102 as i32);
+    assert !reorder_active();
+    return;
+}

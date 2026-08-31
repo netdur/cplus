@@ -691,6 +691,18 @@ fn on_mouse(v: *u8, msg: u32, w: u64, l: i64) -> bool {
         // panel — which is most of them, since the pointer is heading for the
         // edge — stops reporting, and the divider sticks halfway.
         if begin_divider_drag(v, lo_word(l), hi_word(l)) { return true; }
+        // A PRESS ON A ROW may be the start of a reorder. It does not consume
+        // the press — a drag that never moves is still a click, and the
+        // selection has to happen on release exactly as it did before.
+        let _r: bool = begin_row_reorder(v, hi_word(l));
+    }
+    if recycler::reorder_active() {
+        if msg == sys::wm_mousemove() {
+            let _d: bool = recycler::drag_reorder(v, screen_y(v, hi_word(l)));
+        }
+        if msg == sys::wm_lbuttonup() {
+            if end_row_reorder(v, hi_word(l)) { return true; }
+        }
     }
     if DRAG_SPLIT != (0 as usize) {
         if msg == sys::wm_mousemove() {
@@ -1390,6 +1402,47 @@ fn call(v: *u8, h: fn(*u8, *u8), ctx: *u8) -> bool {
 // Which split is being dragged. One at a time is the whole of what a pointer
 // can do, so a single slot rather than a per-window flag.
 static DRAG_SPLIT: usize = 0;
+
+// A press inside a reorderable collection. The ROW is resolved the same way a
+// click is — `list_above` then the item slot — so a press on something nested
+// inside a row still names the row.
+fn begin_row_reorder(v: *u8, y: i32) -> bool {
+    let host: *u8 = list_above(v);
+    if host == (0 as *u8) || host == v { return false; }
+    let n: *core::Node = node_of_window(host);
+    if n == (0 as *core::Node) { return false; }
+    return match component::item_index_of(v) {
+        option::Option[usize]::Some(i) =>
+            recycler::begin_reorder(host, n, i, screen_y(v, y)),
+        option::Option[usize]::None => false,
+    };
+}
+
+fn end_row_reorder(v: *u8, y: i32) -> bool {
+    let host: *u8 = recycler::reorder_host();
+    if host == (0 as *u8) { return false; }
+    let n: *core::Node = node_of_window(host);
+    if n == (0 as *core::Node) { return false; }
+    // IN THE VIEWPORT'S COORDINATES. The press and the release land on
+    // different row windows, each with its own origin, so both are converted
+    // through the screen — comparing two client-relative values from different
+    // windows is how a drag reports the row it started on.
+    return recycler::end_reorder(n, viewport_y(host, screen_y(v, y)));
+}
+
+// A window-relative y in SCREEN coordinates.
+fn screen_y(v: *u8, y: i32) -> i32 {
+    var r: u::tagRECT = #zero::[u::tagRECT]();
+    if { u::GetWindowRect(v, #addr_of(r)) } == (0 as i32) { return y; }
+    return r.top +% y;
+}
+
+// ...and back down into `host`'s client space.
+fn viewport_y(host: *u8, sy: i32) -> i32 {
+    var r: u::tagRECT = #zero::[u::tagRECT]();
+    if { u::GetWindowRect(host, #addr_of(r)) } == (0 as i32) { return sy; }
+    return sy -% r.top;
+}
 
 fn begin_divider_drag(v: *u8, x: i32, y: i32) -> bool {
     let n: *core::Node = node_of_window(v);
