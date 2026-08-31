@@ -41,23 +41,36 @@ impl Future[T] {
         return this._handle;
     }
 
-    // v0.0.29 phase 2: EXPLICIT drop-to-cancel. Destroys the suspended
-    // frame; each suspend point's cancel edge runs the drops of the locals
-    // live there, transitively through whatever this future was awaiting —
-    // so cancelling a future cannot skip a drop. Consumes the future; safe
-    // on an already-completed frame (destroy at final suspend just frees).
+    // DROP IS CANCEL, and that is the whole of it since v0.0.30.
     //
-    // A future that is merely DROPPED — never awaited, driven, or
-    // cancelled — still leaks its frame: wiring this into implicit drop
-    // glue is the recorded follow-up in the cancellation report.
-    fn cancel(take this) {
+    // Destroying the suspended frame runs each suspend point's cancel edge,
+    // which drops the locals live there and cascades through whatever this
+    // future was awaiting — so dropping a future cannot skip a drop either.
+    // Safe on an already-completed frame: destroy at final suspend just frees.
+    //
+    // THE HANDLE IS NULLED, and it is not belt-and-braces. `await` destroys
+    // the inner frame itself when it extracts the value, so the future value
+    // it consumed is left holding a dangling pointer; codegen writes 0 back
+    // into the place at that moment, and this reads it. Any future that has
+    // been through an await therefore drops to nothing, and one that has not
+    // is the only kind that still owns a frame here.
+    fn drop(ref this) {
         if this._handle.is_not_null() {
             // If another drive on this thread pumped the reactor, this frame
-            // may have been notified into the pending queue — purge first.
+            // may have been notified into the pending queue — purge first: a
+            // frame address is reused by malloc, so a stale entry is a
+            // use-after-free rather than a leak.
             reactor::unregister_pending(this._handle);
             __cplus_coro_destroy(this._handle);
+            this._handle = 0 as *u8;
         }
     }
+
+    // EXPLICIT drop-to-cancel, kept for the intent it states. Consuming the
+    // future runs the drop above, which is where the work is — this exists so
+    // that "I am giving up on this" reads as a verb at the call site rather
+    // than as a binding nobody uses.
+    fn cancel(take this) { }
 }
 
 // The result of polling a `Future[T]`. The executor's poll loop

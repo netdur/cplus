@@ -79,14 +79,20 @@ fn run[T: Send](take f: future::Future[T]) -> RunResult[T] {
         if { #coro_done(hdl) } != (0 as i32) {
             let prom: *T = { #coro_promise::[T](hdl) };
             let v: T = { #take::[T](prom) };
-            // A notified awaiter this loop resumed directly may still sit in
-            // the pending queue — purge before the frame is freed.
-            reactor::unregister_pending(hdl);
-            { #coro_destroy(hdl); }
+            // `cancel` CONSUMES the future, and consuming it is what frees the
+            // frame — `Future::drop` purges the pending queue and destroys.
+            // Explicit rather than left to scope exit so the order is on the
+            // page: the value is out of the promise before the frame goes.
+            f.cancel();
             return RunResult[T]::Done(v);
         }
         if thread::cancelled() {
-            { #coro_destroy(hdl); }
+            // DESTROY BEFORE TEARDOWN, and the order is load-bearing: the
+            // frame's cancel edges unregister awaiters and pending entries,
+            // and `teardown` has already freed those arrays and closed the
+            // kqueue. Consuming `f` here is what keeps the two in this order —
+            // leaving it to scope exit would run them the other way round.
+            f.cancel();
             reactor::teardown();
             return RunResult[T]::Cancelled;
         }
@@ -266,6 +272,47 @@ fn run_reports_cancellation_and_runs_the_frames_drops() {
     usleep(20000 as u32);
     h.cancel();
     assert h.join() == (77 as i64);
+    let after: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    assert after == before +% (1 as u64);
+}
+
+// THE SAME SHAPE THROUGH A NAMED LOCAL, and the reason it is a separate
+// fixture: `_sleepy_with_probe` above awaits a TEMPORARY, and a temporary and a
+// named binding reach the drop machinery by different routes. At an await's
+// cancel edge the lowering destroys the awaited frame and then runs the drops
+// of the locals live at that suspend point — so a future held in a local is the
+// shape where those two could collide into a double destroy.
+//
+// Uncovered until v0.0.30 gave `Future` a destructor, which is when the
+// question started having a wrong answer.
+async fn _sleepy_via_a_named_local() -> i32 {
+    let p: _AsyncProbe = _AsyncProbe { _v: 5 as i64 };
+    let f: future::Future[i32] = _long_nap_value();
+    let _v: i32 = await f;
+    return p._v as i32;
+}
+
+async fn _long_nap_value() -> i32 {
+    await _long_nap();
+    return 3;
+}
+
+fn _run_sleepy_local(take x: i64) -> i64 {
+    return match run::[i32](_sleepy_via_a_named_local()) {
+        RunResult::Done(v) => { (v as i64) }
+        RunResult::Cancelled => { 78 as i64 }
+    };
+}
+
+#[test]
+fn cancelling_through_an_awaited_LOCAL_destroys_once_and_runs_its_drops() {
+    let before: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    let h: thread::JoinHandle[i64] = thread::spawn_with::[i64, i64](0 as i64, _run_sleepy_local);
+    usleep(20000 as u32);
+    h.cancel();
+    assert h.join() == (78 as i64);
+    // The probe live at the suspend point still dropped exactly once — a
+    // double destroy of the inner frame would abort long before this reads.
     let after: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
     assert after == before +% (1 as u64);
 }

@@ -3716,7 +3716,26 @@ fn return_passes_by_sret_widened(ty: &Ty, types: &TypeTable) -> bool {
     }
     if let Ty::Struct(id) = ty {
         let def = &types.struct_defs[id.0 as usize];
-        if !def.is_copy {
+        // A COROUTINE FUTURE KEEPS ITS REGISTER RETURN, whatever its Copy flag
+        // says. `Future[T]` is `{ ptr }` and the five `async`/generator ramp
+        // emitters return it by value — their signatures are hand-written and
+        // consult nothing, so widening here would make every call site pass an
+        // `sret` slot to a definition that returns a struct. That is an ABI
+        // mismatch with no diagnostic: the caller reads its uninitialised slot
+        // and jumps through whatever was in it.
+        //
+        // It went unnoticed while `Future` had no destructor and was therefore
+        // Copy. Giving it one (v0.0.30, so a future that is merely dropped
+        // stops leaking its frame) cleared `is_copy` and tripped this — the
+        // minimal repro is `let _f = an_async_fn();` and it segfaults before
+        // main's first line.
+        //
+        // The widening exists to stop a drop-after-move on a COPIED aggregate:
+        // the by-value return duplicates the struct, and both copies then drop
+        // the same heap. A future is never in that position — a ramp
+        // constructs the only value there is and hands it over, and a `return
+        // f;` moves out of a local whose drop is already suppressed.
+        if !def.is_copy && !def.is_lang_future {
             return true;
         }
     }
@@ -16438,9 +16457,24 @@ impl<'a> FnState<'a> {
         self.body.push_str(&format!(
             "  call void @stdlib_reactor_unregister_pending_v1(ptr {inner_hdl})\n"
         ));
-        self.body.push_str(&format!(
-            "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
-        ));
+        // THE AWAITED FRAME GOES THROUGH ITS OWNER'S DROP, not a destroy here,
+        // and the two drop calls below are what make that cover both shapes.
+        //
+        // The awaited future is either a NAMED LOCAL or a TEMPORARY, and those
+        // reach the drop machinery by different routes: locals through
+        // `scope_exits`, temporaries through `temp_scopes`. This edge used to
+        // `coro.destroy` the inner frame itself and then run only the local
+        // drops — correct while `Future` had no destructor, and a double
+        // destroy the moment it got one, because a future held in a local was
+        // then freed twice. `cancelling_through_an_awaited_LOCAL_destroys_once`
+        // is that case, and it SIGBUSes without this.
+        //
+        // Dropping the temporaries too is not merely symmetry: with the
+        // explicit destroy gone, they are the only thing that frees an
+        // `await mk()` frame on a cancel. Both are safe to run here because
+        // this edge terminates into `.coro.cleanup` — nothing downstream will
+        // drop them again.
+        self.emit_all_temp_scope_exits();
         self.emit_coro_cancel_drops();
         self.emit_terminator("br label %.coro.cleanup");
 
@@ -16466,11 +16500,24 @@ impl<'a> FnState<'a> {
         // v0.0.5 Slice 4A fix: when U is Unit, the promise has no
         // payload to load — emitting `load void, ...` is illegal LLVM.
         // Skip the load and produce the canonical unit value instead.
+        // THE FRAME IS NOT DESTROYED HERE, and that changed in v0.0.30.
+        //
+        // This used to `coro.destroy` the inner frame the moment it extracted
+        // the value, which was correct while `Future` had no destructor and
+        // wrong the instant it got one: the future VALUE this await consumed —
+        // a named local or the temporary of `await mk()`, both of which the
+        // drop machinery tracks — would then destroy the same frame a second
+        // time at scope exit. It segfaults on the first test that awaits
+        // anything.
+        //
+        // So destruction belongs to `Future::drop` alone, which is also what
+        // makes the leak this fixes go away: one owner, one destroy, whether
+        // the future was awaited, cancelled, or merely dropped. The frame
+        // sitting at its final suspend after the value is out is exactly what
+        // `drop` is documented to handle ("destroy at final suspend just
+        // frees").
         self.body.push_str(&format!("{extract_bb}:\n"));
         let result = if matches!(u_ty, Ty::Unit) {
-            self.body.push_str(&format!(
-                "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
-            ));
             self.body.push_str(&format!("  br label %{done_bb}\n"));
             self.body.push_str(&format!("{done_bb}:\n"));
             self.terminated = false;
@@ -16486,9 +16533,7 @@ impl<'a> FnState<'a> {
             ));
             r
         };
-        self.body.push_str(&format!(
-            "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
-        ));
+        // No destroy — see the note on `extract_bb` above.
         self.body.push_str(&format!("  br label %{done_bb}\n"));
 
         self.body.push_str(&format!("{done_bb}:\n"));
@@ -16584,7 +16629,10 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "call void @stdlib_reactor_unregister_pending_v1(ptr {hdl})"
         ));
-        self.emit(&format!("call void @llvm.coro.destroy(ptr {hdl})"));
+        // NO DESTROY HERE — `Future::drop` owns the frame, the same rule the
+        // await lowering follows. `block_on(mk())` binds its operand to a
+        // temporary the drop machinery tracks, so destroying it here would be
+        // the first of two.
         Some((result, t_ty))
     }
 
