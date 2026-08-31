@@ -69,6 +69,8 @@ import "stdlib/result" as result;
 import "stdlib/status" as status;
 import "stdlib/thread" as thread;
 import "stdlib/netsys" as netsys;
+import "stdlib/sync_sys" as sync_sys;
+import "stdlib/thread_sys" as thread_sys;
 // The `struct stat` reader, for the socket-mode test alone: its buffer size and
 // every field offset differ per platform, and this is the module that already
 // knows them.
@@ -1549,8 +1551,17 @@ extern fn bind(fd: i32, addr: *u8, addrlen: u32) -> i32;
 extern fn connect(fd: i32, addr: *u8, addrlen: u32) -> i32;
 extern fn listen(fd: i32, backlog: i32) -> i32;
 extern fn accept(fd: i32, addr: *u8, addrlen: *u32) -> i32;
-extern fn read(fd: i32, buf: *u8, count: usize) -> i64;
-extern fn write(fd: i32, buf: *u8, count: usize) -> i64;
+// NO RAW `read`/`write` ON A SOCKET. They are POSIX FILE calls, and on Windows
+// a Winsock SOCKET is not a CRT file descriptor — `_read` on one fails, which
+// is why the agent surface accepted a connection and then reset it: `accept`
+// worked, the first read did not, and the loop closed the socket. Every socket
+// read goes through `netsys::recv_fd` and every write through
+// `netsys::send_fd`, which are `recv`/`send` on Windows and the POSIX calls
+// elsewhere. `write_all` already did; the three reads did not.
+//  is the CRT one and is used ONLY on pipe descriptors now. A SOCKET
+// goes through `netsys::close_fd`, which is `closesocket` on Windows — passing
+// a Winsock SOCKET to `_close` does not release it, and the listener then
+// answered exactly one connection and reset every one after it.
 extern fn close(fd: i32) -> i32;
 extern fn unlink(path: *u8) -> i32;
 extern fn getpid() -> i32;
@@ -1663,9 +1674,9 @@ fn bind_uds(path: str) -> i32 {
     let probe: i32 = { socket(1, 1, 0) };
     if probe >= 0 {
         let live: i32 = { connect(probe, #addr_of(addr[0]), addrlen) };
-        { close(probe); }
+        let _c: i32 = netsys::close_fd(probe);
         if live == 0 {
-            { close(fd); }
+            let _c2: i32 = netsys::close_fd(fd);
             return - 5;   // someone is serving here; do not steal it
         }
     }
@@ -1689,7 +1700,7 @@ fn bind_uds(path: str) -> i32 {
     let rc: i32 = { bind(fd, #addr_of(addr[0]), addrlen) };
     let _restored: u32 = { umask(prev_mask & MODE_BITS) };
     if rc != 0 {
-        { close(fd); }
+        let _c3: i32 = netsys::close_fd(fd);
         return - 2;      // bind is what creates the file; none exists yet
     }
     let _chmod: i32 = { chmod(path_c, SOCK_MODE) };
@@ -1799,7 +1810,6 @@ fn loopback_port(pid: i32) -> u16 {
 // either. So it is deferred to the transport that needs it, with a way to carry
 // it, rather than added here where it would look like protection and be none.
 
-extern fn kill(pid: i32, sig: i32) -> i32;
 
 fn descriptor_path(id: str, pid: i32) -> text::Text {
     return "/tmp/mcp-${id}-${pid}.json";
@@ -1810,9 +1820,12 @@ fn descriptor_path(id: str, pid: i32) -> text::Text {
 // separates a live endpoint from a leftover. It is the reason the address
 // carries a PID rather than a random id: liveness is one syscall, with no
 // registry and no handshake.
+// THROUGH THE SHIM. `kill(pid, 0)` is the POSIX idiom and Windows has no
+// `kill` at any spelling — an undefined symbol here took every consumer of
+// this package down at link time, because `sweep_stale` is ordinary code
+// rather than a test. `platform_sys` answers it on all three.
 fn pid_is_live(pid: i32) -> bool {
-    if pid <= 0 { return false; }
-    return { kill(pid, 0) } == 0;
+    return platform_sys::pid_is_live(pid);
 }
 
 // The descriptor this process wrote, kept so the exit hook can remove it.
@@ -2081,7 +2094,7 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
             thread::park_end();
             return - 2;
         }
-        let r: i64 = { read(fd, #addr_of(byte), 1) };
+        let r: i64 = netsys::recv_fd(fd, #addr_of(byte), 1 as usize) as i64;
         thread::park_end();
         if r <= 0 {
             if r < 0 {
@@ -2191,7 +2204,7 @@ fn serve_uds(
     }
     let l: i32 = listen_on(fd);
     if l < 0 {
-        { close(fd); }
+        let _c: i32 = netsys::close_fd(fd);
         unlink_bound_socket();  // the bound file would otherwise be orphaned here
         return l;
     }
@@ -2264,12 +2277,12 @@ fn accept_loop(
         var served: i32 = 0;
         if http { served = serve_http_fd(surf, vt, sub, policy, conn); }
         else { served = serve_fd(surf, vt, sub, policy, conn); }
-        { close(conn); }
+        let _c: i32 = netsys::close_fd(conn);
         if served == 1 {
             break;                          // cancelled mid-connection
         }
     }
-    { close(fd); }
+    let _c2: i32 = netsys::close_fd(fd);
     if unlink_on_exit { unlink_bound_socket(); }
     return 0;
 }
@@ -2425,7 +2438,7 @@ fn read_exact(fd: i32, buf: *u8, len: usize) -> bool {
             thread::park_end();
             return false;
         }
-        let r: i64 = { read(fd, buf + got, len -% got) };
+        let r: i64 = netsys::recv_fd(fd, buf + got, len -% got) as i64;
         thread::park_end();
         if r <= 0 {
             if r < 0 {
@@ -2547,42 +2560,37 @@ fn put_be16(ref buf: [u8; 16], at: usize, v: u16) {
 // Bind a loopback listener on `port`. Returns the fd, or a negative setup code
 // matching `bind_uds`: -1 socket, -2 bind, -3 listen.
 fn bind_tcp(port: u16) -> i32 {
+    // WINSOCK IS NOT READY UNTIL IT IS STARTED. `startup` is a no-op on POSIX
+    // and `WSAStartup` on Windows, where every socket call before it fails with
+    // WSANOTINITIALISED — which reads as "the agent surface simply is not
+    // there", the same silent shape the two bugs below had.
+    let _s: i32 = netsys::startup();
     let fd: i32 = { socket(2, 1, 0) };
     if fd < 0 { return - 1; }
     // SO_REUSEADDR, so a restart does not wait out TIME_WAIT on the same port.
     //
-    // NOT `#platform() == "linux"`, which answers FALSE ON ANDROID — whose
-    // kernel is Linux. Every branch here took the Darwin side there, so `bind`
-    // was handed a BSD sockaddr_in whose first two bytes read as family 528 and
-    // refused it. The accept loop returned instantly and nothing listened; the
-    // agent surface simply was not there, with no error anywhere. See
-    // `platform_sys::is_linux_abi`.
-    //
-    // THE CONSTANTS ARE DARWIN'S AND LINUX DISAGREES: SOL_SOCKET is 0xffff on
-    // Darwin and 1 on Linux; SO_REUSEADDR is 4 there and 2 here. Passing the
-    // Darwin pair on Linux sets nothing — `setsockopt` fails and the option
-    // simply never applied.
+    // THE CONSTANTS ARE THE PLATFORM'S and three platforms disagree, so they
+    // come from `netsys` rather than from a branch here. This used to test
+    // `platform_sys::is_linux_abi()`, which is a question with two answers and
+    // there are three: SOL_SOCKET is 0xffff on Darwin and Winsock and 1 on
+    // Linux; SO_REUSEADDR is 4 on Darwin and Winsock and 2 on Linux. Every
+    // branch took the Darwin side on Windows, so the option never applied.
     var one: i32 = 1;
-    let sol: i32 = if platform_sys::is_linux_abi() { 1 } else { 65535 };
-    let reuse: i32 = if platform_sys::is_linux_abi() { 2 } else { 4 };
-    let _o: i32 = { setsockopt(fd, sol, reuse,
+    let _o: i32 = { setsockopt(fd, netsys::sol_socket(), netsys::so_reuseaddr(),
                                { #addr_of(one) as *u8 }, 4) };
     var addr: [u8; 16] = [0; 16];
     // `sockaddr_in` SPLITS THE SAME WAY `sockaddr_un` DOES, and for the same
     // reason — see `bind_uds`:
     //
     //   BSD / macOS:  u_char sin_len;  u_char sin_family;  u_short sin_port;
-    //   Linux:        sa_family_t sin_family;              u_short sin_port;
+    //   Linux / Win:  sa_family_t sin_family;              u_short sin_port;
     //
-    // So the BSD spelling gives Linux a family of 0x0210 = 528 and `bind`
-    // refuses it. The PORT is at offset 2 either way, which is why only these
-    // two bytes move.
-    if platform_sys::is_linux_abi() {
-        addr[0] = 2;       // sin_family = AF_INET, low byte
-    } else {
-        addr[0] = 16;      // sin_len
-        addr[1] = 2;       // sin_family = AF_INET
-    }
+    // So the BSD spelling gives the other two a family of 0x0210 = 528 and
+    // `bind` refuses it. The PORT is at offset 2 either way, which is why only
+    // these two bytes move — and which two they are is `netsys`'s to say, for
+    // the same reason the option constants are.
+    addr[0] = netsys::sa_family_byte0();
+    addr[1] = netsys::sa_family_byte1();
     put_be16(addr, 2, port);
     // 127.0.0.1, in network order — which is the same byte order written out.
     addr[4] = 127;
@@ -2590,11 +2598,11 @@ fn bind_tcp(port: u16) -> i32 {
     addr[6] = 0;
     addr[7] = 1;
     if { bind(fd, { #addr_of(addr[0]) }, 16) } != 0 {
-        { close(fd); }
+        let _c: i32 = netsys::close_fd(fd);
         return - 2;
     }
     if { listen(fd, 4) } != 0 {
-        { close(fd); }
+        let _c2: i32 = netsys::close_fd(fd);
         return - 3;
     }
     return fd;
@@ -2687,7 +2695,7 @@ fn a_derived_path_binds() {
     let fd: i32 = bind_uds(path.view());
     assert fd >= 0;
     unlink_bound_socket();
-    { close(fd); }
+    let _c: i32 = netsys::close_fd(fd);
 }
 
 // Every setup code says something a developer can act on. Two of these are
@@ -2724,7 +2732,7 @@ fn bind_and_listen_are_separable_and_report() {
     assert bind_reason(second) == "another process is already serving on that path";
 
     unlink_bound_socket();
-    { close(fd); }
+    let _c: i32 = netsys::close_fd(fd);
 }
 
 // ---- the descriptor and the sweep ------------------------------------------------
@@ -2872,7 +2880,10 @@ fn a_listing_marks_what_it_clipped_and_leaves_short_text_alone() {
 
 // ---- the HTTP door ---------------------------------------------------------------
 
-extern fn socketpair(domain: i32, ty: i32, protocol: i32, sv: *i32) -> i32;
+// `netsys::socket_pair` and not `socketpair`: Windows has the BSD call at no
+// spelling, and `netsys_windows` builds an equivalent pair over loopback TCP.
+// The same reason as the test helpers above — this is a test scaffold, and a
+// test scaffold's undefined symbol breaks every consumer's link.
 extern fn shutdown(fd: i32, how: i32) -> i32;
 
 // Field names are case-insensitive in HTTP, and a client is entitled to any
@@ -2905,7 +2916,7 @@ fn a_header_number_reads_its_value() {
 // read hit EOF after the request, so its keep-alive loop ends and it returns.
 fn http_round_trip(request: str, out: *u8, cap: usize) -> usize {
     var sv: [i32; 2] = [0; 2];
-    if { socketpair(1, 1, 0, #addr_of(sv[0])) } != 0 {
+    if netsys::socket_pair(#addr_of(sv[0])) != 0 {
         return 0;
     }
     write_all(sv[1], #str_ptr(request), #str_len(request));
@@ -2913,16 +2924,16 @@ fn http_round_trip(request: str, out: *u8, cap: usize) -> usize {
 
     var sub: events::Subscriber = events::subscriber(events::everything(), 8);
     let _r: i32 = serve_http_fd(#addr_of(FAKE_SURF) as *u8, fake_backend(), sub, allow_all, sv[0]);
-    { close(sv[0]); }
+    let _c: i32 = netsys::close_fd(sv[0]);
 
     var got: usize = 0;
     loop {
         if got >= cap { break; }
-        let n: i64 = { read(sv[1], out + got, cap -% got) };
+        let n: i64 = netsys::recv_fd(sv[1], out + got, cap -% got) as i64;
         if n <= 0 { break; }
         got = got +% (n as usize);
     }
-    { close(sv[1]); }
+    let _c2: i32 = netsys::close_fd(sv[1]);
     return got;
 }
 
@@ -3047,7 +3058,7 @@ fn a_loopback_listener_binds_and_closes() {
     // take: a fixed number is a test that fails when something else is running.
     let fd: i32 = bind_tcp(0);
     assert fd >= 0;
-    { close(fd); }
+    let _c: i32 = netsys::close_fd(fd);
 }
 
 #[test]
@@ -3068,7 +3079,7 @@ fn two_listeners_on_one_port_is_a_bind_error() {
     // privileged port refuses, and the code says which step failed.
     let b: i32 = bind_tcp(1);
     assert b == (0 - 2);
-    { close(a); }
+    let _c: i32 = netsys::close_fd(a);
 }
 
 // ---- tests -------------------------------------------------------------------
@@ -3976,7 +3987,7 @@ fn binding_arms_the_socket_cleanup() {
     unlink_bound_socket();
     assert path_exists(path) == false;
 
-    { close(fd); }
+    let _c: i32 = netsys::close_fd(fd);
 }
 
 // The bound socket is 0600, so a path anyone can guess is still a door only its
@@ -4013,7 +4024,7 @@ fn a_bound_socket_is_not_world_connectable() {
     assert (mode & MODE_BITS) == SOCK_MODE;
 
     unlink_bound_socket();
-    { close(fd); }
+    let _c: i32 = netsys::close_fd(fd);
 }
 
 // A path longer than `sun_path` is rejected before any syscall, and rejecting
@@ -4036,7 +4047,7 @@ fn an_over_long_path_is_rejected_without_disarming() {
     // Still armed for `good`, and teardown still removes it.
     unlink_bound_socket();
     assert path_exists(good) == false;
-    { close(fd); }
+    let _c: i32 = netsys::close_fd(fd);
 }
 
 // A socket file left by a process that died without running its exit hook —
@@ -4053,7 +4064,7 @@ fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
     // Drop the fd WITHOUT unlinking: exactly the state a killed process leaves,
     // a file on disk with no listener behind it. (No `listen` was called
     // either, so the path was never answering.)
-    { close(dead); }
+    let _c: i32 = netsys::close_fd(dead);
     assert path_exists(path);
 
     let fresh: i32 = bind_uds(path);
@@ -4062,7 +4073,7 @@ fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
 
     unlink_bound_socket();
     assert path_exists(path) == false;
-    { close(fresh); }
+    let _c2: i32 = netsys::close_fd(fresh);
 }
 
 // The other half: a path a LIVE server is answering on must be refused, not
@@ -4089,7 +4100,7 @@ fn a_live_server_keeps_its_socket_against_a_second_bind() {
     // still targets the live socket, which is what this process actually owns.
     unlink_bound_socket();
     assert path_exists(path) == false;
-    { close(live); }
+    let _c: i32 = netsys::close_fd(live);
 }
 
 #[test]
@@ -4275,8 +4286,17 @@ fn an_extension_namespace_is_told_which_capabilities_the_caller_has() {
 
 // ---- cancellation of the transport parks -------------------------------------
 
-extern fn pipe(fds: *i32) -> i32;
-extern fn usleep(us: u32) -> i32;
+// THROUGH THE PORTABLE SHIMS, not the BSD names. These are test helpers, and a
+// test's body is compiled into the package's PREBUILT ARCHIVE like any other
+// function — so an undefined `usleep` is not a test that fails on Windows, it
+// is every CONSUMER of this package failing to link:
+//
+//   lld-link: error: undefined symbol: usleep
+//   >>> referenced by libagent_mcp.a(agent_mcp.o):(...read_line_reports_cancellation...)
+//
+// which is what kept `facet_agent` — and therefore the inspector — out of every
+// Windows build. `stdlib` already carries all three behind shims with Windows
+// implementations; the only thing missing was using them.
 
 // Parks in read_line on a pipe nobody writes — the exact shape the
 // cancellation report filed against this package ("a worker parked in
@@ -4292,17 +4312,17 @@ fn _read_line_until_cancelled(take rfd: i64) -> i64 {
 #[test]
 fn read_line_reports_cancellation_instead_of_parking_forever() {
     var fds: [i32; 2] = [0, 0];
-    assert { pipe(#addr_of(fds[0])) } == 0;
+    assert thread_sys::make_pipe(#addr_of(fds[0])) == 0;
     let h: thread::JoinHandle[i64] =
         thread::spawn_with::[i64, i64](fds[0] as i64, _read_line_until_cancelled);
-    usleep(3000);
+    let _w: i32 = sync_sys::sleep_us(3000 as u32);
     h.cancel();
     assert h.join() == 11;
     { close(fds[0]); }
     { close(fds[1]); }
 }
 
-extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
+
 
 // A client that goes away mid-response must not take the SERVER with it.
 // `write_all` is the response path; with the peer closed it has to return
@@ -4317,7 +4337,7 @@ extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
 #[test]
 fn write_all_to_a_departed_client_does_not_kill_the_server() {
     var fds: [i32; 2] = [0, 0];
-    assert { socketpair(1, 1, 0, #addr_of(fds[0])) } == 0;
+    assert netsys::socket_pair(#addr_of(fds[0])) == 0;
     let _np: i32 = netsys::set_nosigpipe(fds[0]);
     { close(fds[1]); }                          // the client disconnects
     var buf: [u8; 16] = [65; 16];
@@ -4326,7 +4346,7 @@ fn write_all_to_a_departed_client_does_not_kill_the_server() {
         write_all(fds[0], { #addr_of(buf[0]) }, 16);
         i = i +% 1;
     }
-    { close(fds[0]); }
+    let _c: i32 = netsys::close_fd(fds[0]);
     assert true;                                // reached = we survived
 }
 
