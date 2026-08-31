@@ -99,7 +99,7 @@ caller that opens a socket, acts once and hangs up is recorded as
 `unidentified`, which is a fact about it rather than a gap. Content is never
 recorded: `detail` on a `set_text` is `wrote N characters`.
 
-An extension namespace keeps its own record; `inspector.journal` is that, and it
+An extension namespace keeps its own record; the inspector's `journal` is that, and it
 answers a different question — the C+ source that would make the change.
 
 ## Transport (UDS)

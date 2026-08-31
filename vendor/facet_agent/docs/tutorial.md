@@ -56,17 +56,25 @@ $ curl -s -X POST http://127.0.0.1:9161/ \
     -d '{"jsonrpc":"2.0","id":1,"method":"describe_ui"}'
 ```
 
-## Add the inspector's verbs
+## The inspector's verbs
+
+You already have them. `agent_mcp(id)` serves twenty-five: the eleven that drive
+the app as a person would, and fourteen that inspect it as a developer would —
+seeing unexposed nodes and writing properties that are not user affordances.
 
 ```cplus
-import "inspector/serve" as inspect;
-
     agent::enable();
-    inspect::arm();                     // + the twelve inspector.* verbs
-    runtime::agent_mcp("myapp");
+    runtime::agent_mcp("myapp");        // 25 verbs, one call
 ```
 
-Nine verbs without it, twenty-one with. Same socket, same gate.
+Serving IS the opt-in. `inspect::arm()` (retired) was a second call an app had
+to make, and forgetting it answered `-32601 method not found` from three
+packages away.
+`serve_once` installs the walker and the platform half now.
+
+What separates the two halves is the GRANT, not a flag: the eight verbs that
+rewrite the tree cost `cap_edit_tree`, which the default carries and a narrower
+policy does not.
 
 ## Decide who may drive
 

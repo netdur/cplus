@@ -59,7 +59,7 @@ where the panel runs is a binding at the call site rather than an architecture.
 | a panel in the app under test | `panel::embedded()` |
 | a panel over some other backend | `panel::new(backend)` |
 | drive the tree from code | `tree::describe` / `set` / `insert` directly |
-| drive it from another process | `mcp::arm(tree::local_backend())` — see [wire.md](wire.md) |
+| drive it from another process | nothing — `runtime::agent_mcp(id)` serves the verbs. See [wire.md](wire.md) |
 | a build with no walker at all | `insp::Backend::none()` — refuses everything, crashes nothing |
 
 ## Reading: three categories, never flattened
@@ -249,7 +249,7 @@ could write over any other value.
 - **No source navigation.** facet's runtime `Data` carries no source origin;
   that needs a debug-only origin ID injected during `@ui` lowering. Until then
   the key is the handle and an editor can search for it.
-- **macOS only for the overlay and the thread hop.** `inspector/tree` is
+- **macOS only for the overlay and the thread hop.** The walker is
   portable and needs no platform at all.
 - **Handles are process-local pointers.** A transport sends indices into the
   flat `describe` listing instead — which is why that listing is flat and

@@ -784,10 +784,15 @@ Loopback is not an exception. There is no permission below INTERNET that grants
 it into the scaffolded AndroidManifest.xml beside the agent-surface lines
 that needs it; an app writing its own manifest has to.
 
-    adb shell setprop debug.facet.inspect 8787   # the port, since an Activity
-    adb shell am start -n <pkg>/cplus.facet.FacetActivity   # has no environment
-    adb forward tcp:8787 tcp:8787               # the counterpart of usbmuxd
+    adb shell am start -n <pkg>/cplus.facet.FacetActivity
+    adb forward tcp:<port> tcp:<port>           # the counterpart of usbmuxd
+
+The port is DERIVED FROM THE PID, so nothing has to be set on the device — an
+Activity has no environment a launcher could write into, and a launcher knows
+the pid it started. `adb shell setprop debug.facet.inspect <port>` was the
+channel until 2026-08-30 and reaches nothing now; `facet_agent`'s Android
+facade computes the port and writes the descriptor.
 
 Measured on an emulator, 2026-08-27, in both directions: without the permission
-`/proc/net/tcp` has no listener and `inspector.describe` never connects; with
+`/proc/net/tcp` has no listener and `describe_tree` never connects; with
 it, `0100007F:2253` is there and the tree comes back.

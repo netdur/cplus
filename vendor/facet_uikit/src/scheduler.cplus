@@ -125,6 +125,10 @@ fn tick() {
     TICKS = TICKS +% (1 as u64);
     mount::sync();
     layout_all_windows();
+    // ...and LAST, work that only wants to read a frame that is now true —
+    // the inspector's outline follows its node from here. See
+    // `core::set_frames_settled_fn`.
+    core::frames_settled();
     return;
 }
 

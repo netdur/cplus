@@ -49,7 +49,6 @@ import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
-import "stdlib/env" as env;
 import "flex_layout/flex_layout" as flex;
 import "jni/jni" as jni;
 import "android_view/runtime" as rt;
@@ -57,16 +56,15 @@ import "android_view/widgets" as w;
 import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/application" as runtime;
-import "facet_agent/agent" as agent;
 import "facet_android/env" as aenv;
 import "facet_android/paint" as paint;
 import "facet_android/geometry" as geometry;
 import "facet_android/mainthread" as mainthread;
 import "facet_android/scheduler" as sched;
 import "facet_android/log" as alog;
-import "./inspector" as insp;
-import "./tree" as tree;
-import "./mcp" as mcp;
+import "agent_core/inspect" as insp;
+import "./inspect_tree" as tree;
+import "agent_mcp/inspect" as mcp;
 
 // ---- the hop to the UI thread --------------------------------------------------
 //
@@ -200,7 +198,7 @@ fn highlight(s: *u8, h: insp::Handle) {
     if !h.is_live() { clear_highlight(s); return; }
     if !aenv::have_env() { clear_highlight(s); return; }
     if !aenv::have_host() { clear_highlight(s); return; }
-    let p: Placed = place(h.node);
+    let p: Placed = place(tree::node_of(h));
     if !p.found { clear_highlight(s); return; }
 
     // BACK THROUGH FACET'S UNITS on purpose. `geometry::place` is the one place
@@ -595,79 +593,3 @@ fn install() {
     tree::set_native_fn(native_props);
     mcp::set_marshal(run_on_main_sync);
 }
-
-// The launcher's channel, and it is the one part of this file with no analogue
-// on either Apple platform.
-//
-// AN ANDROID APP HAS NO ENVIRONMENT TO SET. `simctl launch` passes
-// `SIMCTL_CHILD_FACET_INSPECT` through to the process it starts, and a desktop
-// binary is spawned by the IDE with a whole environment; `am start` takes an
-// Intent, and the environment an Activity inherits belongs to zygote. So the
-// port arrives as a SYSTEM PROPERTY, which is Android's own configuration
-// channel and the one every debug switch on the platform already uses:
-//
-//     adb shell setprop debug.facet.inspect 8787
-//     adb shell am start -n <pkg>/cplus.facet.FacetActivity
-//     adb forward tcp:8787 tcp:8787
-//
-// `debug.` is the prefix adb shell may write without root, on a stock emulator
-// and on a stock device — which is what makes this a channel a launcher can
-// actually use rather than one that needs a rooted build.
-//
-// A PORT AND NOT A PATH, for the reason facet_agent's Android facade already
-// records: an app's files live under /data/data/<pkg>, which the development
-// machine cannot reach, so a Unix socket is as unreachable here as it is inside
-// an iOS sandbox. `adb forward` is the counterpart of usbmuxd and the same MCP
-// client talks to both without knowing which it reached.
-//
-// `FACET_INSPECT` is read too, and second. Nothing on a device sets it; a
-// host-side harness that dlopen's the .so and calls the entry directly can, and
-// then the variable means what it means everywhere else.
-// PROP_VALUE_MAX is 92 and the buffer must be at least that: the platform
-// writes up to it and does not take a capacity.
-#[link_name = "__system_property_get"]
-extern fn system_property_get(name: *u8, value: *u8) -> i32;
-
-fn asked_port() -> text::Text {
-    var buf: [u8; 96] = #zero::[[u8; 96]]();
-    let base: *u8 = { #addr_of(buf[0]) };
-    let n: i32 = { system_property_get(#str_ptr("debug.facet.inspect\0"), base) };
-    if n > 0 {
-        return text::from_str({ #str_from_raw_parts(base, { n as usize }) });
-    }
-    return match env::var("FACET_INSPECT") {
-        option::Option[text::Text]::Some(p) => p,
-        option::Option::None => text::new(),
-    };
-}
-
-// Serve the inspector IF the launcher asked. Everything it does is the explicit
-// wiring the other two entries spell out: the platform half, the armed
-// namespace, and the serving thread. Arming stays a deliberate act — linking
-// this package in still exposes nothing; only the launcher that set the
-// property gets a listener.
-// Arm the inspector namespace on the agent's socket, WITHOUT binding anything.
-//
-// This is the half an application actually chooses. `agent_mcp` decides whether
-// this process serves at all and at what address; this decides whether the
-// twelve `inspector.*` verbs are among what it serves. Separating them is the
-// point: there is one server and one consent gate, and the inspector is a
-// namespace inside it rather than a second door with its own socket.
-//
-// STILL EXPLICIT. Linking this package in exposes nothing — a process that
-// never calls `arm` answers "method not found" to every `inspector.*` method,
-// and the agent's policy still runs first and covers this namespace too.
-// Arming opens a door; it is not a way around the gate.
-//
-// Call it before the host, beside `agent_mcp`:
-//
-//     agent::enable();
-//     inspect::arm();
-//     runtime::agent_mcp("/tmp/myapp.sock");
-//     runtime::run_screen(Home::new());
-//
-fn arm() {
-    install();
-    mcp::arm(tree::local_backend());
-}
-

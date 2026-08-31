@@ -3825,6 +3825,8 @@ fn split(
     position: f64 = 220.0f64,
     min_leading: f64 = 150.0f64,
     min_trailing: f64 = 240.0f64,
+    max_leading: f64 = 0.0f64,
+    max_trailing: f64 = 0.0f64,
     divider_color: vocab::Color = vocab::Color::separator(),
     divider_thickness: f64 = 1.0f64,
     on_move: fn(*u8, *u8) = m_split::no_move,
@@ -3832,6 +3834,7 @@ fn split(
 ) -> core::Node {
     return m_split::split(b, key: key, axis: axis, position: position,
                           min_leading: min_leading, min_trailing: min_trailing,
+                          max_leading: max_leading, max_trailing: max_trailing,
                           divider_color: divider_color,
                           divider_thickness: divider_thickness,
                           on_move: on_move, ctx: ctx);

@@ -134,6 +134,43 @@ thing: a text_button is a real button, so it activates from the keyboard when
 focused and from VoiceOver, and it reports `role=button` to an agent. The label
 is reachable by a pointer and nothing else.
 
+### A split's bounds
+
+`split` holds two panes and a divider. Each pane takes a minimum and a maximum,
+in points, and `0.0` means no maximum:
+
+```cplus
+split(panes, key: "main",
+      position: 300.0f64,
+      min_leading: 220.0f64,       // the editor never narrower than this
+      max_trailing: 640.0f64)      // the panel never wider than this
+```
+
+Both ends are also writable on the cursor:
+
+```cplus
+match split::find("main") {
+    option::Option[split::Split]::Some(s) => {
+        let _a: split::Split = s.set_max(split::Pane::Trailing, 640.0f64);
+        let _b: split::Split = s.set_max(split::Pane::Trailing, 0.0f64);  // no cap
+    }
+    _ => { }
+}
+```
+
+A maximum on one pane is arithmetically a minimum on the other — `leading +
+divider + trailing == extent` — but only the framework can write it that way,
+because `extent` is the split's live size and changes with the window. Say the
+bound you mean and let the divider's delegate do the subtraction.
+
+**Do not enforce a bound from `on_move`.** That handler fires on every tick of a
+live drag, so writing `set_position` back from it puts two writers on one
+number: the panes stop at your bound while the divider keeps following the
+cursor, and the drag ends wherever the last write landed.
+
+When a minimum and a maximum contradict each other, the minimum wins. A divider
+pushed past a far bound can be dragged back; one pinned at zero width cannot.
+
 ## Cursors — reaching a built control
 
 Each control module offers the same two entry points:

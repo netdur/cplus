@@ -26,6 +26,8 @@ const P_MIN_LEADING: u64 = 4u64;
 const P_MIN_TRAILING: u64 = 8u64;
 const P_COLLAPSED: u64 = 16u64;
 const P_DIVIDER: u64 = 32u64;
+const P_MAX_LEADING: u64 = 64u64;
+const P_MAX_TRAILING: u64 = 128u64;
 
 // Which way the panes sit. Named for the RESULT, not for the divider: a
 // boolean `vertical` reads as a question about the wrong object every time.
@@ -49,6 +51,28 @@ struct SplitProps {
     position: f64,
     min_leading: f64,
     min_trailing: f64,
+    // The other end of each pane's travel, and ZERO MEANS NO MAXIMUM.
+    //
+    // Zero rather than an Option or a sentinel because it is the same idiom
+    // the minimums already use on the enforcing side ("a minimum of zero is
+    // no minimum"), and because the one value it costs — a pane capped at
+    // exactly zero points — is `collapse(pane)`, which says it better.
+    //
+    // WHY BOTH, when either one implies the other. `leading + divider +
+    // trailing == extent`, so a maximum on the trailing pane IS a minimum on
+    // the leading one — and an application can write that itself, which is
+    // what iris did. What it cannot do is write it WITHOUT the extent: the
+    // divider is handed its split's live extent on every drag tick, and an
+    // application has to mirror that by observing window resizes. A mirror of
+    // a live value is derived state that goes stale, and correcting it from
+    // the divider's own notification puts two writers on one number — the
+    // panes freeze while the divider keeps following the cursor. Measured,
+    // from a user: "as I am resizing, the panel stopped getting wide but
+    // splitter continued ... then at some point it snap to much wider width".
+    //
+    // So the maximum lives here, where the extent already is.
+    max_leading: f64,
+    max_trailing: f64,
     // A pane collapsed to nothing. The position is remembered, so restoring
     // puts the divider back where the user left it.
     //
@@ -73,6 +97,49 @@ struct SplitProps {
 
 fn no_move(sender: *u8, ctx: *u8) { return; }
 
+// ---- the maximum, as the two clamps the minimums already use ------------------
+//
+// PURE, and here rather than in each backend, because the four of them spell
+// the minimums six different ways — each with its own hard-won guard about an
+// extent that is a layout behind, or a host too small to honour both ends — and
+// a seventh copy of the maximum in each would be six chances to disagree.
+//
+// Each takes a bound a backend has ALREADY computed its own way and returns it
+// narrowed. So a backend's existing clamp keeps its shape and its guards, and
+// gains one line.
+
+// A maximum on the TRAILING pane raises the divider's FLOOR: `leading +
+// divider + trailing == extent`, so "trailing at most M" is "position at least
+// extent - M".
+//
+// It needs the extent, and returns `lo` untouched without one. A split that has
+// not been laid out reports zero, and subtracting from zero would pin the
+// divider to a negative floor on the first pass — which is the same reason
+// every backend's trailing MINIMUM is guarded on the extent too.
+fn floor_with_max(lo: f64, max_trailing: f64, extent: f64) -> f64 {
+    if max_trailing <= 0.0f64 { return lo; }
+    if extent <= 0.0f64 { return lo; }
+    let from_max: f64 = extent - max_trailing;
+    if from_max > lo { return from_max; }
+    return lo;
+}
+
+// A maximum on the LEADING pane lowers the divider's CEILING, and needs NO
+// extent — the divider's position IS the leading pane's size. That asymmetry is
+// the whole reason this pair exists in the framework: the leading half is the
+// one an application could already enforce, and the trailing half is the one it
+// could not.
+//
+// `hi` is the caller's own ceiling and a non-positive one means "none" — the
+// convention every backend already uses for `extent - min_trailing` when there
+// is nothing to measure against.
+fn ceiling_with_max(hi: f64, max_leading: f64) -> f64 {
+    if max_leading <= 0.0f64 { return hi; }
+    if hi <= 0.0f64 { return max_leading; }
+    if max_leading < hi { return max_leading; }
+    return hi;
+}
+
 impl SplitProps {
     fn new() -> SplitProps {
         return SplitProps {
@@ -80,6 +147,8 @@ impl SplitProps {
             position: 220.0f64,
             min_leading: 150.0f64,
             min_trailing: 240.0f64,
+            max_leading: 0.0f64,
+            max_trailing: 0.0f64,
             divider_color: vocab::Color::separator(),
             divider_thickness: 1.0f64,
             collapsed_leading: false,
@@ -103,6 +172,8 @@ fn split(
     position: f64 = 220.0f64,
     min_leading: f64 = 150.0f64,
     min_trailing: f64 = 240.0f64,
+    max_leading: f64 = 0.0f64,
+    max_trailing: f64 = 0.0f64,
     divider_color: vocab::Color = vocab::Color::separator(),
     divider_thickness: f64 = 1.0f64,
     on_move: fn(*u8, *u8) = no_move,
@@ -110,9 +181,22 @@ fn split(
 ) -> core::Node {
     var p: SplitProps = SplitProps::new();
     p.axis = axis;
-    p.position = position;
+    // CLAMPED HERE TOO, by the same rule `set_position` applies, so the two
+    // doors into a position agree. `split(position: 900, max_leading: 400)`
+    // storing 900 would make `position()` answer a number the very next layout
+    // pass overwrites — a control that disagrees with itself between being
+    // built and being shown.
+    //
+    // Both bounds, not just the new one: `min_leading` had the same hole and
+    // the asymmetry would be worse than the gap.
+    var want: f64 = position;
+    if max_leading > 0.0f64 && want > max_leading { want = max_leading; }
+    if want < min_leading { want = min_leading; }
+    p.position = want;
     p.min_leading = min_leading;
     p.min_trailing = min_trailing;
+    p.max_leading = max_leading;
+    p.max_trailing = max_trailing;
     p.divider_color = divider_color;
     p.divider_thickness = divider_thickness;
     p.on_move = on_move;
@@ -158,13 +242,25 @@ impl Split {
         return { (*d).props } as *SplitProps;
     }
 
-    // Where the divider sits, clamped to the minimums. Clamping HERE and not
-    // in the backend is deliberate: an application that saves and restores a
-    // position must read back what was actually applied, not what it asked for.
+    // Where the divider sits, clamped to the bounds that need no extent to
+    // apply. Clamping HERE and not in the backend is deliberate: an application
+    // that saves and restores a position must read back what was actually
+    // applied, not what it asked for.
+    //
+    // `min_leading` and `max_leading` are both in the divider's own coordinate,
+    // so both land here. The TRAILING pair is not — it is measured from the far
+    // edge — so it stays with the backend that knows the extent, exactly as
+    // `min_trailing` always has.
     fn set_position(this, v: f64) -> Split {
         let p: *SplitProps = this._props();
         if p.is_null() { return this; }
         var want: f64 = v;
+        let hi: f64 = { (*p).max_leading };
+        if hi > 0.0f64 && want > hi { want = hi; }
+        // The floor LAST, so it wins a contradictory pair. Same precedence the
+        // backends give it, and for the reason gtk's clamp writes down: a
+        // divider shoved past the far bound is recoverable by dragging back,
+        // one pinned at zero width is not.
         let lo: f64 = { (*p).min_leading };
         if want < lo { want = lo; }
         { (*p).position = want };
@@ -243,6 +339,39 @@ impl Split {
         return match pane {
             Pane::Leading => { (*p).min_leading },
             Pane::Trailing => { (*p).min_trailing },
+        };
+    }
+
+    // The other end. `0.0` (the default) is NO MAXIMUM, so a pane is unbounded
+    // until an application says otherwise and `set_max(pane, 0.0)` takes a
+    // maximum away again.
+    //
+    // This is the whole of what an application needed and did not have. Capping
+    // a TRAILING pane used to mean deriving `min_leading = total - cap` and
+    // recomputing it on every window resize, because `total` is not visible
+    // from where the application stands — and the obvious alternative, writing
+    // `set_position` back from `on_divider_moved`, puts a second writer on the
+    // number the drag is already moving and breaks the drag.
+    fn set_max(this, pane: Pane, v: f64) -> Split {
+        let p: *SplitProps = this._props();
+        if p.is_null() { return this; }
+        match pane {
+            Pane::Leading => { { (*p).max_leading = v }; core::touch(this._p, P_MAX_LEADING); }
+            Pane::Trailing => { { (*p).max_trailing = v }; core::touch(this._p, P_MAX_TRAILING); }
+        }
+        // A leading maximum can invalidate the position that is already set,
+        // and nothing else would notice until the next drag. Re-running the
+        // write applies it and raises P_POSITION, so the backend re-settles.
+        let _r: Split = this.set_position(this.position());
+        return this;
+    }
+
+    fn max(this, pane: Pane) -> f64 {
+        let p: *SplitProps = this._props();
+        if p.is_null() { return 0.0f64; }
+        return match pane {
+            Pane::Leading => { (*p).max_leading },
+            Pane::Trailing => { (*p).max_trailing },
         };
     }
 

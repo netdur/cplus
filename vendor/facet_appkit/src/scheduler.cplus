@@ -69,6 +69,7 @@ extern fn CFRunLoopObserverCreate(
     context: *u8,
 ) -> *u8;
 extern fn CFStringCreateWithCString(alloc: *u8, cstr: *u8, encoding: u32) -> *u8;
+extern fn CFRunLoopRunInMode(mode: *u8, seconds: f64, return_after_source: i8) -> i32;
 
 // The loop is about to sleep: everything queued has been handled.
 fn cf_before_waiting() -> u64 { return 32 as u64; }
@@ -158,6 +159,9 @@ fn tick() {
     // A reload lays its own rows out (`place_row` measures and positions the
     // subtree it fills), so nothing needs a second window pass behind it.
     drain_reload_jobs();
+    // ...and LAST, work that only wants to read a frame that is now true. A
+    // reload lays its own rows out, so a consumer reading here sees those too.
+    core::frames_settled();
     if dbg { debug_dump("tick.drain"); { printf(#str_ptr("[dragdbg c%llu] tick end\n\0"), DBG_CYCLE) }; }
 }
 
@@ -582,6 +586,37 @@ fn main_dispatch_queue() -> *u8 {
 
 fn run_on_main(work: fn(*u8), ctx: *u8) {
     { dispatch_async_f(main_dispatch_queue(), ctx, work) };
+}
+
+// Turn the main run loop once, for a caller that is NOT inside it.
+//
+// `run_on_main` is `dispatch_async_f` onto the main dispatch queue, and that
+// queue is drained by the MAIN RUN LOOP — libdispatch installs its drain source
+// there. Nothing else moves it. So a teardown that has already left
+// `host::run_loop()` and is waiting for a queued apply to land has to turn the
+// loop itself, or the apply is never delivered and the wait is a spin against
+// a queue nobody is reading.
+//
+// That is not a hypothesis. `facet_runtime`'s `settle_and_teardown` drained
+// with `services::pump_async` alone, which drives the stdlib REACTOR and not
+// this queue, so every teardown with an apply outstanding spun its 100,000
+// turns and took the "freeing anyway" bailout — the one its own comment said
+// had never been observed to fire. It fires on the first screen change with a
+// service still in flight. See
+// `a_teardown_with_a_queued_apply_lands_it_rather_than_bailing`.
+//
+// Zero seconds and `return_after_source = true`: one pass, no sleeping. Safe
+// only because the caller has left the loop — re-entering it from inside an
+// event callback is a different thing entirely and is why the close paths
+// defer their free instead of draining here.
+fn drain_main_once() {
+    let rl: *u8 = { CFRunLoopGetMain() };
+    if rl.is_null() { return; }
+    let mode: *u8 = { CFStringCreateWithCString(0 as *u8,
+                                                #str_ptr("kCFRunLoopDefaultMode\0"),
+                                                cf_utf8()) };
+    if mode.is_null() { return; }
+    let _r: i32 = { CFRunLoopRunInMode(mode, 0.0f64, 1 as i8) };
 }
 
 // ---- the async pump — `spawn_ui`'s wake source -------------------------------

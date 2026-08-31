@@ -2457,7 +2457,9 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     // delegate where a divider may go, and tells it after one moved. Installed
     // on the first apply rather than at create, because a split with neither a
     // minimum nor a handler should not pay for a delegate at all.
-    if (dirty & (split::P_MIN_LEADING | split::P_MIN_TRAILING | props::C_HANDLERS)) != (0 as u64)
+    if (dirty & (split::P_MIN_LEADING | split::P_MIN_TRAILING
+                 | split::P_MAX_LEADING | split::P_MAX_TRAILING
+                 | props::C_HANDLERS)) != (0 as u64)
         || dirty == paint::all_bits() {
         text_input::install_split(v, n);
     }
@@ -2475,7 +2477,12 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     // FIRST — the panes are ordinary facet children, so the frame walk sizes
     // them from flex, and a divider flex knew nothing about was erased on
     // every pass.
-    if (dirty & (split::P_POSITION | split::P_COLLAPSED)) != (0 as u64)
+    // The MAXIMUMS are in this arm and not only the one above, because unlike a
+    // minimum they can invalidate a position that is already applied: capping
+    // the trailing pane at 640 in a 1200-point split must move a divider
+    // sitting at 300, and the delegate is only consulted on a drag.
+    if (dirty & (split::P_POSITION | split::P_COLLAPSED
+                 | split::P_MAX_LEADING | split::P_MAX_TRAILING)) != (0 as u64)
        || dirty == paint::all_bits() {
         scheduler::register_split(n);
         settle_split(n);
@@ -2569,9 +2576,14 @@ fn settle_split_inner(n: *core::Node) {
     // was not final yet". Clamping first makes any remaining disagreement mean
     // exactly one thing.
     if !{ (*p).collapsed_leading } && !{ (*p).collapsed_trailing } {
-        let ceiling: f64 = extent - { (*p).min_trailing };
+        // Each bound narrowed by the OTHER pane's maximum before it is applied
+        // — the shared rule in `split`, so the four backends and the delegate
+        // cannot disagree about what a maximum means.
+        var ceiling: f64 = extent - { (*p).min_trailing };
+        ceiling = split::ceiling_with_max(ceiling, { (*p).max_leading });
         if ceiling > 0.0f64 && want > ceiling { want = ceiling; }
-        let floor: f64 = { (*p).min_leading };
+        let floor: f64 = split::floor_with_max({ (*p).min_leading },
+                                               { (*p).max_trailing }, extent);
         if floor < extent && want < floor { want = floor; }
     }
 

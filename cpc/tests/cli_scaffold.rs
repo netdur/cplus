@@ -652,7 +652,7 @@ fn init_rejects_an_unknown_platform() {
 // Android gates a listening socket on. See
 // iris/gaps/done/the-inspector-has-no-android-half.txt.
 #[test]
-fn init_android_arms_the_inspector() {
+fn init_android_serves_the_inspector_without_a_second_call() {
     let dir = tempfile::tempdir().unwrap();
     let out = Command::new(cpc())
         .current_dir(dir.path())
@@ -666,15 +666,19 @@ fn init_android_arms_the_inspector() {
     assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
     let proj = dir.path().join("droid");
 
-    // 1. The APP arms it — one file, every platform, not three per-platform
+    // 1. The APP asks to be served — one file, every platform, not three
     //    entries reading three differently-spelled channels. The entry itself
     //    is now agent-free, which is the point: nothing about arming a surface
     //    is Android-shaped.
     let app = read(&proj.join("src/app.cplus"));
-    assert!(app.contains("import \"inspector/serve\" as inspect;"), "{app}");
     assert!(app.contains("agent::enable();"), "{app}");
-    assert!(app.contains("inspect::arm();"), "{app}");
     assert!(app.contains("runtime::agent_mcp(\"droid\");"), "{app}");
+    // AND NOTHING ELSE. `inspect::arm()` was a third line an app had to
+    // remember, and forgetting it answered `-32601 method not found` from
+    // three packages away. The serving facade installs the walker now, so
+    // serving is the whole opt-in and there is nothing left to forget.
+    assert!(!app.contains("inspect::arm()"), "the scaffold still arms: {app}");
+    assert!(!app.contains("inspector/serve"), "the scaffold still imports it: {app}");
     let main = read(&proj.join("src/main.cplus"));
     assert!(!main.contains("serve_if_asked"), "the entry should not arm anything: {main}");
 
@@ -710,7 +714,7 @@ fn init_android_arms_the_inspector() {
 // The reported case: one project, all three platforms, and the Inspect tab
 // blank on exactly one of them. Every entry arms the inspector now.
 #[test]
-fn init_three_platforms_all_arm_the_inspector() {
+fn init_three_platforms_serve_the_inspector_from_one_line() {
     let dir = tempfile::tempdir().unwrap();
     let out = Command::new(cpc())
         .current_dir(dir.path())
@@ -721,10 +725,11 @@ fn init_three_platforms_all_arm_the_inspector() {
     assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
     let proj = dir.path().join("all3");
 
-    // ONE file arms the surface, and it is the one every platform builds.
+    // ONE file asks to be served, and it is the one every platform builds.
+    // Being served IS being inspectable — all 25 verbs, no second call.
     let app = read(&proj.join("src/app.cplus"));
-    assert!(app.contains("inspect::arm();"), "src/app.cplus does not arm the inspector: {app}");
     assert!(app.contains("runtime::agent_mcp(\"all3\");"), "{app}");
+    assert!(!app.contains("inspect::arm()"), "the scaffold still arms: {app}");
 
     // ...and no entry does. Three copies of it, reading three channels, is what
     // this replaced — see plan.md.

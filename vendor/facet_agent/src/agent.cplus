@@ -46,6 +46,9 @@ import "agent_core/identity" as identity;
 import "facet/vocabulary" as vocab;
 import "agent_inapp/agent_inapp" as inapp;
 import "agent_mcp/agent_mcp" as mcp;
+import "agent_mcp/inspect" as mcp_inspect;
+import "./inspect_tree" as itree;
+import "./inspect_platform" as iplatform;
 import "objc/runtime" as rt;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
@@ -146,8 +149,27 @@ fn attach_window(win: *u8) {
 // line, written to get an agent talking at all — silently the line that hands
 // a card number to whatever connects. Widening is an app supplying its own
 // policy, which is a place a reader can find it.
+// AND `edit_tree`, because this is the line that publishes an editing surface.
+//
+// `serve_once` installs the inspector's walker and publishes its fourteen
+// verbs, eight of which rewrite the tree. `cap_edit_tree` gates those eight and
+// NOTHING GRANTED IT — it appeared at its definition and in agent_core's own
+// tests and nowhere else, so every write on every app was refused, always. The
+// inspector was reliably read-only and said so in a `-32002` a panel showed as
+// a field that reverted. A capability that only ever refuses is not a policy,
+// it is a defect with a error message.
+//
+// It does not widen what the paragraph above argues about. That argument is
+// about protected CONTENT — a card number behind a tier — and the tier caps
+// stay out of this grant exactly as before. `edit_tree` is the DEVELOPER
+// surface: structure and properties that are not user affordances, published
+// by the same call that installs the walker to read them. The thing that
+// publishes an editing surface is the thing that authorizes it.
+//
+// An app that wants a reader hands out `auth::operator()` from its own
+// `set_policy`, which is where narrowing has always belonged.
 fn admit(req: auth::Request) -> auth::Grant {
-    return auth::operator();
+    return auth::operator().with(auth::cap_edit_tree());
 }
 
 // THE APP'S OWN POLICY, if it has one.
@@ -234,6 +256,31 @@ fn serve_once(id: str) {
     AGENT_SERVING = true;
     // WHO THIS IS, on the wire. A client that reached a stale address finds out
     // during the handshake instead of driving the wrong process.
+    // THE INSPECTOR'S FOURTEEN VERBS, published with the other eleven and not
+    // by an application remembering to. Serving IS the opt-in — an app that
+    // does not want to be driven does not call this function — and there is no
+    // second flag beside it.
+    //
+    // They REFUSE until a toolkit installs a walker (`inspect::arm()`), and
+    // they refuse with a policy answer that names what is missing. That is the
+    // whole point of publishing them unconditionally: `-32601 method not
+    // found` was the wrong sentence, and three packages downstream had grown
+    // machinery to translate it.
+    // The overlay, the native-property reader, and the SYNCHRONOUS main-thread
+    // hop a socket request needs — `core::touch` asserts the UI thread, so a
+    // write arriving on the server's thread aborts the process without it.
+    // This was the other half of `inspect::arm()`, and it is platform wiring:
+    // it belongs where the platform is known, which is here.
+    iplatform::install();
+    mcp_inspect::publish();
+    // AND THE WALKER, here rather than in application code. The toolkit is what
+    // knows what a tree is; an application asking to be driven has already said
+    // everything it has to say by calling this function.
+    //
+    // This was `inspect::arm()` — a line every app had to remember, whose
+    // absence answered `-32601 method not found` three packages downstream.
+    // There is nothing left to forget.
+    mcp_inspect::set_backend(itree::local_backend());
     mcp::set_server_name(id);
     // ...and what was actually bound, beside the socket. The address is
     // derivable, so this is confirmation rather than discovery — see

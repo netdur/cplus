@@ -32,9 +32,11 @@ import "facet/label" as label;
 import "facet/text_field" as tfield;
 import "facet/text_button" as tbutton;
 import "facet/tree" as ftree;
-import "./inspector" as insp;
-import "./tree" as tree;
-import "./vocabulary" as voc;
+import "agent_core/inspect" as insp;
+import "facet_agent/inspect_tree" as tree;
+import "./remote" as remote;
+import "agent_mcp/agent_mcp" as bridge;
+import "facet_agent/inspect_vocabulary" as voc;
 import "facet/checkbox" as cbox;
 import "facet/popup" as popup;
 import "facet/slider" as slider;
@@ -153,7 +155,7 @@ fn value_text(v: insp::Value) -> text::Text {
         insp::Value::Num(x) => f64_text(x),
         insp::Value::Str(s) => s.clone(),
         insp::Value::Enum(e) => e.clone(),
-        insp::Value::Color(c) => colour_text(c),
+        insp::Value::Color(c) => colour_text(tree::from_color(c)),
     };
 }
 
@@ -179,7 +181,42 @@ struct Inspector {
     // relayout, a divider drag, a window resize. Cancelled and replaced when
     // the selection moves, and BEFORE the observed element can leave the tree,
     // which is the contract `services::observe_size` states.
-    size_watch: services::Cancellable,
+
+    // ---- what this panel is attached to ----------------------------------------
+    //
+    // The panel OWNS its transport. `backend_of` takes the Remote's ADDRESS, so
+    // the Remote has to outlive the Backend built over it — holding it here is
+    // what makes that true, and it is what lets a host say `connect(target)`
+    // instead of building a Remote, probing it, building a Backend over it and
+    // keeping both alive itself.
+    remote: remote::Remote,
+    // What `connect` was given, verbatim, for a host to show.
+    attached_to: text::Text,
+    // Is a REMOTE attached? False for the embedded backend, which is not a
+    // connection and has nothing to disconnect.
+    connected: bool,
+    // The last transport failure or refusal, in words. A host may subscribe
+    // (`on_fault`) or read it (`fault()`); both beat polling `Remote::fault()`
+    // on a timer, which is what a host does when the panel offers neither.
+    last_fault: text::Text,
+
+    // ---- what a host is told ---------------------------------------------------
+    //
+    // `fn(..., *u8)` with a trailing context, which is the shape a bound method
+    // binds to (E0824): a host writes `on_select: this.jump_to_key` and the
+    // compiler fills the receiver in. Zero means nobody is listening.
+    fault_fn: fn(str, *u8),
+    // The listener's own receiver. BORROWED — the host owns it, and it is
+    // typically the address of the component holding this panel.
+    opaque fault_ctx: *u8,
+    change_fn: fn(insp::Change, *u8),
+    // The listener's own receiver. BORROWED — the host owns it, and it is
+    // typically the address of the component holding this panel.
+    opaque change_ctx: *u8,
+    select_fn: fn(str, *u8),
+    // The listener's own receiver. BORROWED — the host owns it, and it is
+    // typically the address of the component holding this panel.
+    opaque select_ctx: *u8,
 }
 
 fn new(take backend: insp::Backend, hide_self: bool = true) -> Inspector {
@@ -189,17 +226,379 @@ fn new(take backend: insp::Backend, hide_self: bool = true) -> Inspector {
         selected: insp::Handle::none(),
         shown: 0,
         hide_self: hide_self,
-        size_watch: services::Cancellable::none(),
+        remote: remote::Remote::new(""),
+        attached_to: text::new(),
+        connected: false,
+        last_fault: text::new(),
+        fault_fn: #zero::[fn(str, *u8)](),
+        fault_ctx: 0 as *u8,
+        change_fn: #zero::[fn(insp::Change, *u8)](),
+        change_ctx: 0 as *u8,
+        select_fn: #zero::[fn(str, *u8)](),
+        select_ctx: 0 as *u8,
     };
+}
+
+// ---- the host API ---------------------------------------------------------------
+//
+// Everything below is what an APPLICATION EMBEDDING THIS PANEL needs, named.
+// It exists because the alternative is what every host writes instead: a probe
+// before a connect, a `Backend::none()` swapped in by hand to disconnect, a
+// bool tracking whether the panel is remote, and a one-second timer polling
+// `Remote::fault()` to find out something went wrong. All four are the panel's
+// own state, read from outside because it had no way to say them.
+
+// ---- being told ------------------------------------------------------------
+//
+// `fn(..., *u8)` with the context LAST, which is the shape a bound method binds
+// to: a host writes `p.on_select(this.jump_to_key)` and the compiler pairs the
+// method with its receiver. A free function with an explicit `ctx` works the
+// same way.
+
+fn on_fault(st: *Inspector, f: fn(str, *u8), ctx: *u8 = 0 as *u8) {
+    if st.is_null() { return; }
+    { (*st).fault_fn = f };
+    { (*st).fault_ctx = ctx };
+}
+
+fn on_change(st: *Inspector, f: fn(insp::Change, *u8), ctx: *u8 = 0 as *u8) {
+    if st.is_null() { return; }
+    { (*st).change_fn = f };
+    { (*st).change_ctx = ctx };
+}
+
+fn on_select(st: *Inspector, f: fn(str, *u8), ctx: *u8 = 0 as *u8) {
+    if st.is_null() { return; }
+    { (*st).select_fn = f };
+    { (*st).select_ctx = ctx };
+}
+
+// ---- saying it -------------------------------------------------------------
+
+// A fault is REMEMBERED as well as announced, so a host may subscribe or read.
+// Both beat a timer: the panel knows the moment it happens.
+fn note_fault(st: *Inspector, why: str) {
+    if st.is_null() { return; }
+    { (*st).last_fault = text::from_str(why) };
+    say(why);
+    let f: fn(str, *u8) = { (*st).fault_fn };
+    if f.is_not_null() { f(why, { (*st).fault_ctx }); }
+}
+
+fn clear_fault(st: *Inspector) {
+    if st.is_null() { return; }
+    { (*st).last_fault = text::new() };
+}
+
+// ANNOUNCED ONLY WHEN IT CHANGED. `connect` disconnects first, and a host that
+// heard "selection cleared" on the way into a successful attach would flicker
+// its own chrome for a selection that was never there.
+static LAST_ANNOUNCED: text::Text = #zero::[text::Text]();
+
+fn announce_selection(st: *Inspector) {
+    if st.is_null() { return; }
+    let id: text::Text = { (*st).selection() };
+    if id.view() == LAST_ANNOUNCED.view() { return; }
+    LAST_ANNOUNCED = id.clone();
+    let f: fn(str, *u8) = { (*st).select_fn };
+    if f.is_null() { return; }
+    f(id.view(), { (*st).select_ctx });
+}
+
+// An edit LANDED. Announced after the write, with the value the tree actually
+// holds — not the one that was asked for, which a clamp or a refusal may have
+// changed.
+fn announce_change(st: *Inspector, prop: str) {
+    if st.is_null() { return; }
+    let f: fn(insp::Change, *u8) = { (*st).change_fn };
+    if f.is_null() { return; }
+    let id: text::Text = { (*st).selection() };
+    if id.is_empty() { return; }
+    let b: insp::Backend = { (*st).backend };
+    let now: insp::Value = current_declared(b, { (*st).selected }, prop);
+    f(insp::Change { node: id, prop: prop, now: now }, { (*st).change_ctx });
+}
+
+// ---- reads -----------------------------------------------------------------
+
+fn fault(st: *Inspector) -> text::Text {
+    if st.is_null() { return text::new(); }
+    return { (*st).last_fault }.clone();
+}
+
+fn is_connected(st: *Inspector) -> bool {
+    if st.is_null() { return false; }
+    return { (*st).connected };
+}
+
+fn target(st: *Inspector) -> text::Text {
+    if st.is_null() { return text::new(); }
+    return { (*st).attached_to }.clone();
+}
+
+// ---- transport -------------------------------------------------------------
+//
+// ONE CALL ATTACHES, and it says why when it cannot. What a host wrote instead:
+// probe the address, and if that answered, build a Remote, build a Backend over
+// it, hold both alive, and set a flag saying the panel is remote now. Four
+// pieces of the panel's own state, kept outside it because it had no way to
+// hold them.
+//
+// The probe is not a separate pre-flight any more either. It was one because a
+// failed attach left the panel showing an empty tree with no explanation, so a
+// host checked first — and a check that is separate from the thing it guards is
+// a race with it.
+
+// The blocking half, run on a worker.
+//
+// TWO WAITS LIVE HERE, and the second is the one that cost a frozen IDE.
+// `connect(2)` to a host that is not there waits for the network stack to give
+// up — the reason this was always on a worker. But a socket that ACCEPTS and
+// then says nothing waits forever, and no probe can see that coming: a
+// forwarded port (`adb forward`, `iproxy`) accepts on behalf of a device whose
+// app may never answer. So `reachable` asks a question rather than opening a
+// door, and both waits are spent here instead of on the thread drawing the
+// window. Bounded either way — see `remote::CALL_TIMEOUT_SECS`.
+fn reach(take target: text::Text) -> bool {
+    return remote::reachable(target.view());
+}
+
+// ATTACH. `inapp`, a socket path, a loopback port, or `http://host:port/` —
+// the scheme picks the transport.
+//
+// ASYNC because of the two cases that matter: a target that is not there, and
+// a target that answers the door and then says nothing. Everything else
+// answers on the first poll. Both waits are spent on the worker `reach` runs
+// on, which is why the `refresh` below is safe to make on the caller's thread:
+// by the time it runs, this target has demonstrably answered a question.
+//
+// What it does NOT make async is the rest of the session — every verb after
+// this is still a synchronous connect-write-read on the calling thread. That
+// is fine for a socket on the same machine, and it is now BOUNDED rather than
+// open-ended for one that is not: a target that goes quiet mid-session costs
+// `remote::CALL_TIMEOUT_SECS` and then reports a fault, instead of taking the
+// window with it. Making the session itself async is the next thing to look at
+// if a panel is ever pointed across a network.
+//
+// AN OWNED TARGET, not a `str`, and the compiler is right to insist: a
+// coroutine frame outlives the call that made it, so a borrow in one has no
+// owner left to point at (E0900). `text::from_str("inapp")` at a call site is
+// the cost.
+//
+// The Status is the outcome a host acts on. `InvalidInput` is an address this
+// panel cannot read; `OutOfBounds` is one nothing is listening at — reusing
+// stdlib's set rather than inventing a second vocabulary for two cases, and
+// `fault()` carries the sentence either way.
+async fn connect(st: *Inspector, take target: text::Text) -> status::Status {
+    if st.is_null() { return status::Status::InvalidInput; }
+    disconnect(st);
+    let t: str = target;
+    { (*st).attached_to = text::from_str(t) };
+
+    match remote::classify(t) {
+        remote::Target::Unknown => {
+            note_fault(st, "not an address this panel understands - expected `inapp`, a socket path, a port, or http://host:port/");
+            return status::Status::InvalidInput;
+        }
+        remote::Target::InApp => {
+            { (*st).backend = tree::local_backend() };
+            { (*st).connected = false };
+            clear_fault(st);
+            refresh(st);
+            return status::Status::Ok;
+        }
+        _ => { }
+    }
+
+    let ok: bool = await services::run_on_worker::[text::Text, bool](
+        text::from_str(t), reach);
+    if !ok {
+        // WHICH KIND OF NO, because the two send a developer to different
+        // places. Nothing listening means the app is not running or the
+        // address is stale; something that accepted and then went quiet means
+        // the door is someone else's — a port forward standing in for a device
+        // whose app is not serving is the case this was found on.
+        if remote::accepts(t) {
+            note_fault(st, "something accepted the connection there and never answered - on a device that is usually the port forward standing up for an app that is not serving");
+        } else {
+            note_fault(st, "nothing is listening there");
+        }
+        return status::Status::OutOfBounds;
+    }
+
+    // The Remote lives in the panel, because `backend_of` borrows its address
+    // and the Backend must not outlive it. That ownership is the whole reason
+    // a host used to have to hold one.
+    { (*st).remote = remote::of_target(t) };
+    { (*st).backend = remote::backend_of({ #addr_of((*st).remote) }) };
+    { (*st).connected = true };
+    clear_fault(st);
+    refresh(st);
+
+    // A tree that came back empty from a live endpoint is the case that reads
+    // as success and is not: the socket answered, so `probe` was happy, and
+    // the verb was refused. The panel says so rather than showing nothing.
+    if { (*st).rows.count() } == (0 as usize) {
+        let why: text::Text = { (*st).remote.fault() };
+        if !why.is_empty() { note_fault(st, why.view()); return status::Status::OutOfBounds; }
+    }
+    return status::Status::Ok;
+}
+
+// DETACH: drop the selection, empty the panes, and stop being remote. A host
+// swapping `Backend::none()` in by hand got the first two wrong often enough
+// that this is the whole reason it is named.
+fn disconnect(st: *Inspector) {
+    if st.is_null() { return; }
+    let b: insp::Backend = { (*st).backend };
+    b.clear_highlight_now();
+    { (*st).backend = insp::Backend::none() };
+    { (*st).rows = vec::new::[insp::Node]() };
+    { (*st).selected = insp::Handle::none() };
+    { (*st).shown = 0 as usize };
+    { (*st).connected = false };
+    { (*st).attached_to = text::new() };
+    { (*st).remote = remote::Remote::new("") };
+    rebuild_tree(st);
+    paint_props(st);
+    say_counts(st);
+    announce_selection(st);
+}
+
+// WHERE IS APP X LISTENING? Re-exported rather than reimplemented: the address
+// convention is `agent_mcp`'s, so answering this is too — and a host that
+// writes its own globber gets `mcp-<id>-<pid>` wrong for an id containing a
+// dash, attaches to a dead socket, and shows an empty tree.
+//
+// Newest first, and every entry is something `connect` takes.
+fn discover(app_id: str) -> vec::Vec[text::Text] {
+    return bridge::discover(app_id);
+}
+
+// ---- actions ---------------------------------------------------------------
+
+// The snapshot row carrying `id`, or None. Linear over the listing, which is
+// the same walk the tree rebuild makes and is bounded by what is on screen.
+fn row_with_id(st: *Inspector, id: str) -> option::Option[usize] {
+    if st.is_null() { return option::Option[usize]::None; }
+    var i: usize = 0 as usize;
+    let c: usize = { (*st).rows.count() };
+    while i < c {
+        match { (*st).rows.at_ptr(i) } {
+            option::Option[*insp::Node]::Some(r) => {
+                let rid: text::Text = id_of_row(r);
+                if !rid.is_empty() && rid.view() == id {
+                    return option::Option[usize]::Some(i);
+                }
+            }
+            option::Option[*insp::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[usize]::None;
+}
+
+// SELECT BY ID, so host and panel stay in step both ways: a host that jumped
+// its editor from `on_select` can jump the panel back from a click in the
+// editor.
+fn select(st: *Inspector, id: str) -> bool {
+    match row_with_id(st, id) {
+        option::Option[usize]::Some(i) => {
+            match { (*st).rows.at_ptr(i) } {
+                option::Option[*insp::Node]::Some(r) => {
+                    { (*st).selected = { (*r).handle } };
+                    let b: insp::Backend = { (*st).backend };
+                    b.highlight_now({ (*st).selected });
+                                    paint_props(st);
+                    announce_selection(st);
+                    return true;
+                }
+                option::Option[*insp::Node]::None => { return false; }
+            }
+        }
+        option::Option[usize]::None => {
+            note_fault(st, "no node with that id in the current tree");
+            return false;
+        }
+    }
+}
+
+// DRAW THE BOX on the running app, for a host that wants to show a person
+// which node is under discussion without moving the selection.
+fn highlight(st: *Inspector, id: str) -> bool {
+    match row_with_id(st, id) {
+        option::Option[usize]::Some(i) => {
+            match { (*st).rows.at_ptr(i) } {
+                option::Option[*insp::Node]::Some(r) => {
+                    let b: insp::Backend = { (*st).backend };
+                    b.highlight_now({ (*r).handle });
+                    return true;
+                }
+                option::Option[*insp::Node]::None => { return false; }
+            }
+        }
+        option::Option[usize]::None => { return false; }
+    }
+}
+
+fn clear_highlight(st: *Inspector) {
+    if st.is_null() { return; }
+    let b: insp::Backend = { (*st).backend };
+    b.clear_highlight_now();
+}
+
+// Put every property on the selected node back to what the application built
+// it with. The panel has had this as a BUTTON since it had a panel; this is the
+// same thing with a name, so a host can offer it its own way.
+fn reset_all(st: *Inspector) {
+    if st.is_null() { return; }
+    on_reset_all(0 as *u8, st as *u8);
 }
 
 // The default: drives the tree in this very process, with no transport.
 fn embedded() -> Inspector { return new(tree::local_backend()); }
 
 impl Inspector {
-    fn selection(this) -> insp::Handle { return this.selected; }
+    // ---- what a HOST reads -----------------------------------------------------
+    //
+    // The panel is a control an application embeds, so everything a host needs
+    // to keep its own chrome in step is a named read rather than a field it
+    // reaches into or a poll it invents.
+
+    // The selected node's id, or empty for nothing selected — and for a node
+    // that has no key, which is the same answer for the same reason.
+    fn selection(this) -> text::Text {
+        let h: insp::Handle = this.selected;
+        if h.is_none() { return text::new(); }
+        return match this.index_of_handle(h) {
+            option::Option[usize]::Some(i) => match this.rows.at_ptr(i) {
+                option::Option[*insp::Node]::Some(r) => id_of_row(r),
+                option::Option[*insp::Node]::None => text::new(),
+            },
+            option::Option[usize]::None => text::new(),
+        };
+    }
+
+    // The HANDLE, for the panel's own machinery and for a host that has one of
+    // this package's other entry points in hand. Separate from `selection`
+    // because a handle is an opaque a host can do nothing with — which is why
+    // `selection` stopped being one.
+    fn selected_handle(this) -> insp::Handle { return this.selected; }
+
+    // How many rows the tree is SHOWING. `row_count` is the snapshot's own
+    // size, which differs by the panel's own subtree when it is embedded.
+    fn node_count(this) -> usize { return this.shown; }
+
     fn row_count(this) -> usize { return this.rows.count(); }
     fn shown_count(this) -> usize { return this.shown; }
+
+    // THE DIFF, for a host that wants to write the edits back into source.
+    // Read through the vtable, so it is the ledger of whatever this panel is
+    // attached to rather than of the process the panel is drawn in.
+    fn changes(this) -> vec::Vec[insp::Change] {
+        let b: insp::Backend = this.backend;
+        return (b.changes)(b.surface);
+    }
 
     // Is row `i` of the snapshot eligible at all — i.e. not part of the
     // panel's own subtree? Collapse is a separate question, answered by
@@ -229,7 +628,7 @@ impl Inspector {
 
     fn node_at(this, i: usize) -> *core::Node {
         return match this.rows.at_ptr(i) {
-            option::Option[*insp::Node]::Some(p) => { (*p).handle.node }
+            option::Option[*insp::Node]::Some(p) => { tree::node_of({ (*p).handle }) }
             option::Option::None => 0 as *core::Node,
         };
     }
@@ -268,7 +667,7 @@ impl Inspector {
                         option::Option[*insp::Node]::Some(p) => {
                             if !out.is_empty() { let _a: status::Status = out.append(" > "); }
                             let _b: status::Status =
-                                out.append(insp::kind_name({ (*p).kind }));
+                                out.append(tree::kind_name({ (*p).kind }));
                             if !{ (*p).key.is_empty() } {
                                 let _c: status::Status = out.append(" #");
                                 let _d: status::Status = out.append({ (*p).key.view() });
@@ -294,7 +693,7 @@ impl Inspector {
         var out: text::Text = text::new();
         match this.rows.at_ptr(i) {
             option::Option[*insp::Node]::Some(p) => {
-                let _a: status::Status = out.append(insp::kind_name({ (*p).kind }));
+                let _a: status::Status = out.append(tree::kind_name({ (*p).kind }));
                 if !{ (*p).key.is_empty() } {
                     let _b: status::Status = out.append("#");
                     let _c: status::Status = out.append({ (*p).key.view() });
@@ -329,7 +728,7 @@ impl Inspector {
         while i < c {
             match this.rows.at_ptr(i) {
                 option::Option[*insp::Node]::Some(p) => {
-                    if { (*p).handle.node } == n { return option::Option[usize]::Some(i); }
+                    if tree::node_of({ (*p).handle }) == n { return option::Option[usize]::Some(i); }
                 }
                 option::Option::None => { }
             }
@@ -339,7 +738,7 @@ impl Inspector {
     }
 
     fn index_of_handle(this, h: insp::Handle) -> option::Option[usize] {
-        return this.index_of_node(h.node);
+        return this.index_of_node(tree::node_of(h));
     }
 }
 
@@ -454,6 +853,28 @@ fn tree_row_bind(n: *ftree::TreeNode, _ctx: *u8, row: *core::Node) {
 // the item rather than from where it sits. A positional id ("row_7") renames
 // every row after any insert, so expansion and selection would follow the slot
 // instead of the node — the bug that reads as "the selection jumped".
+// A NODE'S ID, and it is the package's existing one rather than a new spelling.
+//
+// `kind#key` — `button#tap` — is what the change ledger already labels a row
+// with, what the journal prints, and what a tree row shows. So an id a host
+// gets from `on_select` matches the `node` on the `Change` it gets from
+// `on_change`, and both match a key written in the source. That correlation is
+// the whole reason a host wants an id at all.
+//
+// AN UNKEYED NODE HAS NONE, and answers empty. It is not addressable in any of
+// the three places above either — the journal says so in as many words when an
+// edit lands under one — and inventing a positional id here would hand a host
+// something that means a different node after the next insert.
+fn id_of_row(r: *insp::Node) -> text::Text {
+    if r.is_null() { return text::new(); }
+    let k: text::Text = { (*r).key }.clone();
+    if k.is_empty() { return text::new(); }
+    var out: text::Text = text::from_str(tree::kind_name({ (*r).kind }));
+    let _a: status::Status = out.append("#");
+    let _b: status::Status = out.append(k.view());
+    return out;
+}
+
 fn node_id(n: *core::Node) -> text::Text {
     var t: text::Text = text::from_str("n");
     let _s: status::Status = t.append({ ((n as usize) as i64) }.to_text().view());
@@ -616,10 +1037,10 @@ fn paint_props(st: *Inspector) {
     let b: insp::Backend = { (*st).backend };
     match b.inspect_now(h) {
         option::Option[insp::Detail]::Some(d) => {
-            var head: text::Text = text::from_str(insp::kind_name(d.node.kind));
-            if !d.node.key.is_empty() {
+            var head: text::Text = text::from_str(tree::kind_name({ d.node }.kind));
+            if !{ d.node }.key.is_empty() {
                 let _a: status::Status = head.append("  #");
-                let _b2: status::Status = head.append(d.node.key.view());
+                let _b2: status::Status = head.append({ d.node }.key.view());
             }
             set_label(text::from_str("insp:headline"), head.view());
 
@@ -787,7 +1208,7 @@ fn on_tree_select(n: *ftree::TreeNode, ctx: *u8) {
     while i < c {
         match { (*st).rows.at_ptr(i) } {
             option::Option[*insp::Node]::Some(p) => {
-                if { (*p).handle.node } == target { found = { (*p).handle }; i = c; }
+                if tree::node_of({ (*p).handle }) == target { found = { (*p).handle }; i = c; }
             }
             option::Option::None => { }
         }
@@ -798,8 +1219,8 @@ fn on_tree_select(n: *ftree::TreeNode, ctx: *u8) {
     { (*st).selected = found };
     let b: insp::Backend = { (*st).backend };
     b.highlight_now(found);
-    watch_selection_size(st);
     paint_props(st);
+    announce_selection(st);
 }
 
 // The property's current value, read through the VTABLE. This was `tree::get`,
@@ -843,7 +1264,6 @@ fn on_commit(sender: *u8, ctx: *u8) {
             let r: insp::Outcome = b.set_now(h, prop.view(), v);
             say(r.describe());
             paint_props(st);
-            rehighlight_after_layout(st);
         }
         option::Option::None => {
             // The refusal is visible and the field goes back to the truth,
@@ -896,8 +1316,7 @@ fn on_typed(sender: *u8, ctx: *u8) {
                 EDITING = prop.clone();
                 paint_props(st);
                 EDITING = text::new();
-                rehighlight_after_layout(st);
-            } else {
+                } else {
                 say(r.describe());
             }
         }
@@ -931,21 +1350,29 @@ fn on_reset_one(sender: *u8, ctx: *u8) {
 //
 // The button is a no-op with an honest status line on a build with no
 // clipboard (`tree::can_copy`), rather than one that always says "copied".
-fn on_copy_changes(_sender: *u8, _ctx: *u8) {
+fn on_copy_changes(_sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
     if !tree::can_copy() {
         say("no clipboard on this platform");
         return;
     }
+    // THROUGH THE VTABLE, like every other read this panel makes. It used to
+    // call the walker directly, which is the LOCAL tree — so a panel pointed at
+    // another process over a socket copied its own empty ledger and said
+    // "nothing changed yet" over a screen full of edits it had just made.
+    //
     // The DIFF's own count, not the ledger's: the ledger keeps a row for a node
     // that has since died or lost its key, and the diff drops those. Saying
     // "copied 7 changes" over six lines is a small lie that costs trust in the
     // one number the button reports.
-    let n: usize = tree::changes().count();
+    let b: insp::Backend = { (*st).backend };
+    let cs: vec::Vec[insp::Change] = (b.changes)(b.surface);
+    let n: usize = cs.count();
     if n == 0 {
         say("nothing changed yet");
         return;
     }
-    let body: text::Text = tree::changes_text();
+    let body: text::Text = insp::changes_text(cs);
     if !tree::copy_text(body.view()) {
         say("copy failed");
         return;
@@ -994,8 +1421,8 @@ const ED_ENUM: u32 = 2u32;
 const ED_RANGE: u32 = 3u32;
 
 fn editor_for(prop: str) -> u32 {
-    return match voc::describe(prop) {
-        option::Option[voc::Descriptor]::Some(d) => {
+    return match insp::describe_prop(prop) {
+        option::Option[insp::Descriptor]::Some(d) => {
             if d.ty == "bool" { ED_BOOL }
             else if d.ty == "enum" { ED_ENUM }
             // A RANGE is a number with both ends known. `opacity` and
@@ -1012,8 +1439,8 @@ fn editor_for(prop: str) -> u32 {
 
 fn enum_items(prop: str) -> vocab::TextList {
     var out: vocab::TextList = vocab::TextList::new();
-    match voc::describe(prop) {
-        option::Option[voc::Descriptor]::Some(d) => {
+    match insp::describe_prop(prop) {
+        option::Option[insp::Descriptor]::Some(d) => {
             let parts: vec::Vec[str] = d.values.split(" ");
             var i: usize = 0;
             while i < parts.count() {
@@ -1032,8 +1459,8 @@ fn enum_items(prop: str) -> vocab::TextList {
 }
 
 fn enum_index_of(prop: str, spelling: str) -> i64 {
-    match voc::describe(prop) {
-        option::Option[voc::Descriptor]::Some(d) => {
+    match insp::describe_prop(prop) {
+        option::Option[insp::Descriptor]::Some(d) => {
             let parts: vec::Vec[str] = d.values.split(" ");
             var i: usize = 0;
             var seen: i64 = 0 as i64;
@@ -1056,8 +1483,8 @@ fn enum_index_of(prop: str, spelling: str) -> i64 {
 }
 
 fn enum_spelling_at(prop: str, index: i64) -> text::Text {
-    match voc::describe(prop) {
-        option::Option[voc::Descriptor]::Some(d) => {
+    match insp::describe_prop(prop) {
+        option::Option[insp::Descriptor]::Some(d) => {
             let parts: vec::Vec[str] = d.values.split(" ");
             var i: usize = 0;
             var seen: i64 = 0 as i64;
@@ -1084,63 +1511,38 @@ fn enum_spelling_at(prop: str, index: i64) -> text::Text {
 // Each finds its property the same way `on_commit` does — the sender's key is
 // `insp:f:<prop>` and the tail is the name — so a row's editor can be any kind
 // without the row knowing which.
-
-// THE OVERLAY IS PLACED, NOT ATTACHED, so it does not follow.
+// THE OUTLINE FOLLOWS ITS NODE IN THE APP, not from here (2026-08-31).
 //
-// `highlight` computes the node's frame and puts the layer there. Move the node
-// or resize it and the layer stays where it was — which is fine until the
-// inspector is used for the thing it is for, since every edit that matters
-// changes a frame. Reported as "works well till I change the button place or
-// size", which is exactly the set of edits worth making.
+// Three mechanisms used to live at this spot, and all three were the same
+// mistake in different clothes: a list of reasons a node might have moved.
+// `rehighlight_after_layout` deferred one turn after a write.
+// `watch_selection_size` hung an `observe_size` on the selected node. The
+// backend armed a third after any write that could move a frame.
 //
-// Re-placed on the NEXT main-loop turn rather than immediately: a property
-// write marks the node dirty and the backend lays out on its own tick, so
-// reading the frame now would read the one before the change. `after(0)` is the
-// smallest wait that is still after it.
+// Every list was incomplete, and the one that broke in front of a user was a
+// `top` edit sent over a socket: a turn on THIS run loop has no relationship to
+// a layout tick in the app's, so the re-place read the frame from before the
+// change and the box sat where the label used to be.
 //
-// Not attached as a sublayer of the target instead — which would track the
-// frame for free — because that needs the target layer-backed, and an
-// inspector that changes how the app it is inspecting draws is not an
-// inspector.
-fn replace_highlight(ctx: *u8) {
-    let st: *Inspector = ctx as *Inspector;
-    let h: insp::Handle = { (*st).selected };
-    if h.is_none() { return; }
-    if !h.is_live() { return; }
-    let b: insp::Backend = { (*st).backend };
-    b.highlight_now(h);
-}
-
-fn rehighlight_after_layout(st: *Inspector) {
-    // A MOVE, which `observe_size` cannot see: the element is the same size at
-    // a different place — `top` on an absolute node, or a sibling's padding
-    // pushing it along. Deferred by one turn because the write only marks the
-    // node dirty; the backend lays out on its own tick, and reading the frame
-    // now would read the one before the change.
-    let _c: services::Cancellable = services::after(0.0, replace_highlight, st as *u8);
-}
-
-// ...and a RESIZE, from wherever it came. `observe_size` fires after the
-// element actually changed size, so this needs no guess about when layout ran
-// and covers the causes a panel write knows nothing about: the window resizing,
-// a splitter dragging, the app relaying itself out.
-fn watch_selection_size(st: *Inspector) {
-    let w: *services::Cancellable = { #addr_of((*st).size_watch) };
-    { (*w).cancel() };
-    let h: insp::Handle = { (*st).selected };
-    if h.is_none() { return; }
-    if !h.is_live() { return; }
-    { (*st).size_watch = services::observe_size(h.node, replace_highlight, st as *u8) };
-}
+// It is the target's now — `facet_agent/inspect_platform` re-places on
+// `core::frames_settled`, after its own layout pass, which is right whatever
+// moved the node and needs no list. `observe_size` could never have served the
+// remote case anyway: it takes a `*core::Node`, and a remote handle is a wire
+// index that must not be dereferenced.
 
 fn write_prop(st: *Inspector, prop: str, take v: insp::Value) {
     let h: insp::Handle = { (*st).selected };
     if h.is_none() { say("nothing selected"); return; }
     let b: insp::Backend = { (*st).backend };
     let r: insp::Outcome = b.set_now(h, prop, v);
+    // A REFUSAL IS A FAULT, and it is the one a host most needs: a rejected
+    // write shows up as a field that snaps back to its old value, and the
+    // sentence saying why never reaches anyone. `Ok` clears whatever the last
+    // one was, so a host's notice does not outlive its cause.
+    if r == insp::Outcome::Ok { clear_fault(st); } else { note_fault(st, r.describe()); }
     say(r.describe());
     paint_props(st);
-    rehighlight_after_layout(st);
+    if r == insp::Outcome::Ok { announce_change(st, prop); }
 }
 
 fn on_toggle(sender: *u8, ctx: *u8) {
@@ -1237,8 +1639,8 @@ fn paint_editor(prop: str, shown: str) {
 // a colour and an enum have nothing to step — an enum has a dropdown, which is
 // the right control for walking a closed set.
 fn steps_by_arrow(prop: str) -> bool {
-    return match voc::describe(prop) {
-        option::Option[voc::Descriptor]::Some(d) => (d.ty == "number") || (d.ty == "length"),
+    return match insp::describe_prop(prop) {
+        option::Option[insp::Descriptor]::Some(d) => (d.ty == "number") || (d.ty == "length"),
         option::Option::None => false,
     };
 }
@@ -1313,7 +1715,6 @@ fn on_arrow(event: *u8, ctx: *u8) -> bool {
             let _t: status::Status = m.append(value_text(current_declared(b, h, prop.view())).view());
             say(m.view());
             paint_props(st);
-            rehighlight_after_layout(st);
             return true;
         }
         // A property with no number to move — a colour, a word, `auto`. The
@@ -1341,7 +1742,7 @@ fn percent_moved(spelled: str, by: f64) -> option::Option[insp::Value] {
     if !spelled.has_suffix("%") { return option::Option[insp::Value]::None; }
     return match spelled.drop_last(1).trim().to_f64() {
         option::Option[f64]::Some(x) => {
-            var t: text::Text = tree::plain_num(x + by);
+            var t: text::Text = insp::plain_num(x + by);
             let _a: status::Status = t.append("%");
             option::Option[insp::Value]::Some(insp::Value::Str(t))
         }

@@ -31,10 +31,9 @@ import "quartzcore/quartzcore" as qc;
 import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/application" as runtime;
-import "facet_agent/agent" as agent;
-import "./inspector" as insp;
-import "./tree" as tree;
-import "./mcp" as mcp;
+import "agent_core/inspect" as insp;
+import "./inspect_tree" as tree;
+import "agent_mcp/inspect" as mcp;
 
 // ---- the hop to the UI thread --------------------------------------------------
 // `mount::install` records the thread it ran on and `core::touch` asserts on
@@ -165,7 +164,7 @@ fn clear_highlight(_s: *u8) {
 fn highlight(s: *u8, h: insp::Handle) {
     clear_highlight(s);
     if !h.is_live() { return; }
-    let p: Placed = place(h.node);
+    let p: Placed = place(tree::node_of(h));
     if !p.found { return; }
 
     let target: uik::View = uik::View::from_raw(p.view);
@@ -233,36 +232,3 @@ fn install() {
     tree::set_native_fn(native_props);
     mcp::set_marshal(run_on_main_sync);
 }
-
-// Serve the inspector IF the environment asks — the one line an iOS app adds to
-// be inspectable by the tool that launched it.
-//
-// `FACET_INSPECT` carries a PORT here, and `simctl launch` is how it arrives:
-// the launcher sets `SIMCTL_CHILD_FACET_INSPECT` and simctl passes the
-// unprefixed variable to the app. Launched any other way there is no variable
-// and this costs one getenv.
-// Arm the inspector namespace on the agent's socket, WITHOUT binding anything.
-//
-// This is the half an application actually chooses. `agent_mcp` decides whether
-// this process serves at all and at what address; this decides whether the
-// twelve `inspector.*` verbs are among what it serves. Separating them is the
-// point: there is one server and one consent gate, and the inspector is a
-// namespace inside it rather than a second door with its own socket.
-//
-// STILL EXPLICIT. Linking this package in exposes nothing — a process that
-// never calls `arm` answers "method not found" to every `inspector.*` method,
-// and the agent's policy still runs first and covers this namespace too.
-// Arming opens a door; it is not a way around the gate.
-//
-// Call it before the host, beside `agent_mcp`:
-//
-//     agent::enable();
-//     inspect::arm();
-//     runtime::agent_mcp("/tmp/myapp.sock");
-//     runtime::run_screen(Home::new());
-//
-fn arm() {
-    install();
-    mcp::arm(tree::local_backend());
-}
-

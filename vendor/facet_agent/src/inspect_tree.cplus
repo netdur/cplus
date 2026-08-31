@@ -63,8 +63,8 @@ import "facet/text_field" as text_field;
 import "facet/text_area" as text_area;
 import "facet/checkbox" as checkbox;
 import "facet/toggle" as toggle;
-import "./inspector" as insp;
-import "./vocabulary" as voc;
+import "agent_core/inspect" as insp;
+import "./inspect_vocabulary" as voc;
 
 // ---- the override ledger -----------------------------------------------------
 
@@ -183,13 +183,13 @@ fn row_of(
     mine: bool,
 ) -> insp::Node {
     return insp::Node {
-        handle: insp::Handle::of(n, window),
+        handle: handle_of(n, window),
         parent: parent,
         depth: depth,
         key: text::from_str({ (*n).key() }),
         slot: text::from_str(core::slot_of(n)),
         kind: core::kind_of(n),
-        frame: core::frame_of(n),
+        frame: to_frame(core::frame_of(n)),
         has_view: core::view_of(n) != (0 as *u8),
         is_attached: core::is_attached(n),
         is_focused: core::is_focused(n),
@@ -265,7 +265,7 @@ fn owned(v: str) -> option::Option[insp::Value] {
     return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(v)));
 }
 fn colour(v: vocab::Color) -> option::Option[insp::Value] {
-    return option::Option[insp::Value]::Some(insp::Value::Color(v));
+    return option::Option[insp::Value]::Some(insp::Value::Color(to_color(v)));
 }
 
 // A style length as a value. Only points survive the round trip: an `auto` or
@@ -286,14 +286,6 @@ fn same_points(l: flex::StyleLength, x: f64) -> bool {
     };
 }
 
-fn plain_num(x: f64) -> text::Text {
-    // Whole numbers read as whole numbers. This is the value a person copies
-    // back into source, so `50%` beats `50.000000%`.
-    let r: f64 = x - (((x as i64) as f64));
-    if r == 0.0 { return { (x as i64) }.to_text(); }
-    return x.to_text();
-}
-
 // A length answers as the thing a developer would write.
 //
 // Points are a number. A percent and `auto` are STRINGS, because they are not
@@ -305,7 +297,7 @@ fn len_value(l: flex::StyleLength) -> insp::Value {
     return match l.unit {
         flex::Unit::Point => insp::Value::Num(l.value),
         flex::Unit::Percent => {
-            var t: text::Text = plain_num(l.value);
+            var t: text::Text = insp::plain_num(l.value);
             let _a: status::Status = t.append("%");
             insp::Value::Str(t)
         }
@@ -653,7 +645,7 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
 
 fn get(h: insp::Handle, prop: str) -> option::Option[insp::Value] {
     if !h.is_live() { return option::Option[insp::Value]::None; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
     match get_uniform(n, prop) {
         option::Option[insp::Value]::Some(v) => { return option::Option[insp::Value]::Some(v); }
         option::Option::None => { }
@@ -729,7 +721,7 @@ fn parse_as(current: insp::Value, typed: str) -> option::Option[insp::Value] {
             option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(typed))),
         insp::Value::Color(_c) => match parse_hex_color(typed) {
             option::Option[vocab::Color]::Some(c) =>
-                option::Option[insp::Value]::Some(insp::Value::Color(c)),
+                option::Option[insp::Value]::Some(insp::Value::Color(to_color(c))),
             option::Option::None => option::Option[insp::Value]::None,
         },
         // An unset length. Empty clears nothing (there is no "unset" write in
@@ -1289,7 +1281,7 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
     }
     if prop == "background_color" {
         return match v {
-            insp::Value::Color(c) => { core::set_background_color(n, c); insp::Outcome::Ok }
+            insp::Value::Color(c) => { core::set_background_color(n, from_color(c)); insp::Outcome::Ok }
             _ => insp::Outcome::TypeMismatch,
         };
     }
@@ -1398,7 +1390,7 @@ fn weight_of(v: insp::Value) -> option::Option[vocab::FontWeight] {
 // out of a `Value` and returned.
 fn color_of(v: insp::Value) -> option::Option[vocab::Color] {
     return match v {
-        insp::Value::Color(c) => option::Option[vocab::Color]::Some(c),
+        insp::Value::Color(c) => option::Option[vocab::Color]::Some(from_color(c)),
         _ => option::Option[vocab::Color]::None,
     };
 }
@@ -1632,15 +1624,26 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
         option::Option::None => insp::Outcome::TypeMismatch,
     };
 }
+// Set, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn set(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
+    let r: insp::Outcome = set_inner(h, prop, v);
+    return r;
+}
+
 
 // The one write door. Order matters: liveness before existence before
 // writability before type, so the answer names the FIRST thing that was wrong
 // rather than the last thing checked.
-fn set(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
+fn set_inner(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
     if h.is_none() { return insp::Outcome::NotFound; }
     if !h.is_live() { return insp::Outcome::Stale; }
     if is_computed_prop(prop) { return insp::Outcome::ReadOnly; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
 
     // THE NAME IS EXCHANGED FOR OURS HERE, not in the caller.
     //
@@ -1675,15 +1678,26 @@ fn set(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
         _ => r,
     };
 }
+// Reset, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn reset(h: insp::Handle, prop: str) -> insp::Outcome {
+    let r: insp::Outcome = reset_inner(h, prop);
+    return r;
+}
+
 
 // Put back what the application declared and forget the record. Resetting a
 // property that was never overridden is `Ok` and changes nothing: it is
 // already at the declared value, which is what was asked for.
-fn reset(h: insp::Handle, prop: str) -> insp::Outcome {
+fn reset_inner(h: insp::Handle, prop: str) -> insp::Outcome {
     if h.is_none() { return insp::Outcome::NotFound; }
     if !h.is_live() { return insp::Outcome::Stale; }
     if is_computed_prop(prop) { return insp::Outcome::ReadOnly; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
     // Ours, for the same reason `set` takes ours: the ledger is keyed by the
     // name and a comparison against a caller's temporary matches nothing.
     let prop: str = match canonical_prop(prop) {
@@ -1730,11 +1744,11 @@ fn set_native_fn(f: fn(*core::Node) -> vec::Vec[insp::Prop]) { NATIVE_FN = f; re
 // then how big, then how it looks.
 fn declared_names() -> vec::Vec[str] {
     var v: vec::Vec[str] = vec::new::[str]();
-    let t: vec::Vec[voc::Descriptor] = voc::table();
+    let t: vec::Vec[insp::Descriptor] = insp::table();
     var i: usize = 0;
     while i < t.count() {
         match t.at_ptr(i) {
-            option::Option[*voc::Descriptor]::Some(p) => {
+            option::Option[*insp::Descriptor]::Some(p) => {
                 let _s: status::Status = v.append({ (*p).name });
             }
             option::Option::None => { }
@@ -1777,7 +1791,7 @@ fn declared_props(h: insp::Handle, n: *core::Node) -> vec::Vec[insp::Prop] {
 // panels and not one list.
 fn computed_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
-    let f: insp::Frame = core::frame_of(n);
+    let f: insp::Frame = to_frame(core::frame_of(n));
     let _a: status::Status = out.append(insp::Prop::read_only("frame_x", insp::Value::Num(f.left)));
     let _b: status::Status = out.append(insp::Prop::read_only("frame_y", insp::Value::Num(f.top)));
     let _c: status::Status = out.append(insp::Prop::read_only("frame_width", insp::Value::Num(f.width)));
@@ -1785,7 +1799,7 @@ fn computed_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     let _e: status::Status = out.append(insp::Prop::read_only("attached", insp::Value::Bool(core::is_attached(n))));
     let _f: status::Status = out.append(insp::Prop::read_only("focused", insp::Value::Bool(core::is_focused(n))));
     let _g: status::Status = out.append(insp::Prop::read_only("kind",
-        insp::Value::Str(text::from_str(insp::kind_name(core::kind_of(n))))));
+        insp::Value::Str(text::from_str(kind_name(core::kind_of(n))))));
     let _h: status::Status = out.append(insp::Prop::read_only("has_view",
         insp::Value::Bool(core::view_of(n) != (0 as *u8))));
     return out;
@@ -1801,7 +1815,7 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
 
 fn inspect(h: insp::Handle) -> option::Option[insp::Detail] {
     if !h.is_live() { return option::Option[insp::Detail]::None; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
     return option::Option[insp::Detail]::Some(insp::Detail {
         node: row_of(n, option::Option[usize]::None, 0, h.window, false),
         declared: declared_props(h, n),
@@ -1835,7 +1849,7 @@ fn append_num(t: *text::Text, x: f64) {
 fn snippet_for(h: insp::Handle, prop: str) -> text::Text {
     var out: text::Text = text::new();
     if !h.is_live() { return out; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
     let k: str = { (*n).key() };
     if k == "" { return out; }
 
@@ -1871,75 +1885,6 @@ fn snippet_for(h: insp::Handle, prop: str) -> text::Text {
     return out;
 }
 
-// ---- the diff ------------------------------------------------------------------
-//
-// THE JOURNAL IS THE DIFF between the tree the application built and the tree
-// as it stands. Not a log of calls: nobody transcribing an editing session
-// wants the nineteen intermediate values a nudge passed through, they want the
-// one it landed on and the one it started from.
-//
-// The override ledger already IS that diff for properties — it records the
-// first write to each (node, property) pair and nothing after it — so this
-// reads it out rather than keeping a second record that could disagree. A
-// `reset` removes the row, which is exactly right: the difference is gone.
-//
-// Structural edits keep their append-only lines. An insert is not a value that
-// changed, it is a node that was not there, and the only honest way to state
-// that difference is the operation that made it.
-
-fn hex_digit_str(v: usize) -> str {
-    if v == 0 { return "0"; }   if v == 1 { return "1"; }
-    if v == 2 { return "2"; }   if v == 3 { return "3"; }
-    if v == 4 { return "4"; }   if v == 5 { return "5"; }
-    if v == 6 { return "6"; }   if v == 7 { return "7"; }
-    if v == 8 { return "8"; }   if v == 9 { return "9"; }
-    if v == 10 { return "a"; }  if v == 11 { return "b"; }
-    if v == 12 { return "c"; }  if v == 13 { return "d"; }
-    if v == 14 { return "e"; }
-    return "f";
-}
-
-fn hex2(out: *text::Text, v: f64) {
-    var x: f64 = v;
-    if x < 0.0 { x = 0.0; }
-    if x > 1.0 { x = 1.0; }
-    let n: i64 = ((x * 255.0) + 0.5) as i64;
-    let _a: status::Status = { (*out).append(hex_digit_str(((n / 16) as usize))) };
-    let _b: status::Status = { (*out).append(hex_digit_str(((n % 16) as usize))) };
-}
-
-// A colour as the thing a person types back: `#rrggbb`, or `#rrggbbaa` when it
-// is not fully opaque. A token-only colour (a theme role, no channels) says so
-// by name — writing `#000000` for it would be a lie the developer then pastes.
-fn color_text(c: vocab::Color) -> text::Text {
-    if c.token != 255u32 {
-        var t: text::Text = text::from_str("token ");
-        let _a: status::Status = t.append((c.token as i64).to_text().view());
-        return t;
-    }
-    var out: text::Text = text::from_str("#");
-    hex2(#addr_of(out), c.r);
-    hex2(#addr_of(out), c.g);
-    hex2(#addr_of(out), c.b);
-    if c.a < 1.0 { hex2(#addr_of(out), c.a); }
-    return out;
-}
-
-// One value, as it would be written. Every shape the surface can hold — which
-// is the part `snippet_for` never grew: a colour came out `/* colour */` and
-// every enum fell through to `/* unset */`.
-fn value_text(v: insp::Value) -> text::Text {
-    return match v {
-        insp::Value::Nothing => text::from_str("unset"),
-        insp::Value::Bool(b) => text::from_str(if b { "true" } else { "false" }),
-        insp::Value::Int(i) => i.to_text(),
-        insp::Value::Num(x) => plain_num(x),
-        insp::Value::Str(t) => t.clone(),
-        insp::Value::Enum(e) => e.clone(),
-        insp::Value::Color(c) => color_text(c),
-    };
-}
-
 // Every property that differs from what the application declared.
 fn changes() -> vec::Vec[insp::Change] {
     var out: vec::Vec[insp::Change] = vec::new::[insp::Change]();
@@ -1948,7 +1893,7 @@ fn changes() -> vec::Vec[insp::Change] {
         match OVERRIDES.at_ptr(i) {
             option::Option[*Override]::Some(p) => {
                 let n: *core::Node = { (*p).node };
-                let h: insp::Handle = insp::Handle::of(n, { (*p).window });
+                let h: insp::Handle = handle_of(n, { (*p).window });
                 // A node the tree no longer holds is not a difference anyone
                 // can act on — the row would name a key that is gone.
                 if h.is_live() {
@@ -1959,7 +1904,7 @@ fn changes() -> vec::Vec[insp::Change] {
                             option::Option::None => insp::Value::Nothing,
                         };
                         var label: text::Text =
-                            text::from_str(insp::kind_name(core::kind_of(n)));
+                            text::from_str(kind_name(core::kind_of(n)));
                         let _h2: status::Status = label.append("#");
                         let _h3: status::Status = label.append(k);
                         let _s: status::Status = out.append(insp::Change {
@@ -1973,95 +1918,6 @@ fn changes() -> vec::Vec[insp::Change] {
         i = i +% 1;
     }
     return out;
-}
-
-// The diff as the text a person pastes. The same two levels the `journal` verb
-// answers, laid out to be read:
-//
-//     {
-//       "label#title": { "font_size": 30, "text_color": "#cc2200" },
-//       "node#card":   { "padding": 24 }
-//     }
-//
-// Written here rather than in the widget so both consumers — the panel's Copy
-// button and anything that wants the text form over the wire — say the same
-// thing, and so the widget stays free of a JSON dependency it has no other use
-// for.
-fn quoted_value(v: insp::Value) -> text::Text {
-    // Numbers and booleans are bare; everything else is a string, which is what
-    // the wire form does too — a colour is `"#cc2200"`, an enum is its
-    // spelling, a percent length is `"50%"`.
-    let bare: bool = match v {
-        insp::Value::Num(_x) => true,
-        insp::Value::Int(_i) => true,
-        insp::Value::Bool(_b) => true,
-        _ => false,
-    };
-    let body: text::Text = value_text(v);
-    if bare { return body; }
-    var out: text::Text = text::from_str("\"");
-    let _a: status::Status = out.append(body.view());
-    let _b: status::Status = out.append("\"");
-    return out;
-}
-
-fn changes_text() -> text::Text {
-    let cs: vec::Vec[insp::Change] = changes();
-    if cs.count() == 0 { return text::from_str("{}\n"); }
-    var out: text::Text = text::from_str("{\n");
-    var i: usize = 0;
-    while i < cs.count() {
-        var label: text::Text = text::new();
-        match cs.at_ptr(i) {
-            option::Option[*insp::Change]::Some(c) => { label = { (*c).node }.clone(); }
-            option::Option::None => { }
-        }
-        // One entry per node, gathering its rows: the ledger is in write order,
-        // so a node's properties are not necessarily adjacent.
-        if !node_written_before(cs, i, { label.view() }) {
-            if out.count() > (2 as usize) { let _s: status::Status = out.append(",\n"); }
-            let _a: status::Status = out.append("  \"");
-            let _b: status::Status = out.append(label.view());
-            let _c2: status::Status = out.append("\": { ");
-            var first: bool = true;
-            var j: usize = i;
-            while j < cs.count() {
-                match cs.at_ptr(j) {
-                    option::Option[*insp::Change]::Some(c) => {
-                        if { (*c).node.view() } == { label.view() } {
-                            if !first { let _d: status::Status = out.append(", "); }
-                            first = false;
-                            let _e: status::Status = out.append("\"");
-                            let _f: status::Status = out.append({ (*c).prop });
-                            let _g: status::Status = out.append("\": ");
-                            let _h2: status::Status =
-                                out.append(quoted_value({ (*c).now }.clone()).view());
-                        }
-                    }
-                    option::Option::None => { }
-                }
-                j = j +% 1;
-            }
-            let _i2: status::Status = out.append(" }");
-        }
-        i = i +% 1;
-    }
-    let _z: status::Status = out.append("\n}\n");
-    return out;
-}
-
-fn node_written_before(cs: vec::Vec[insp::Change], i: usize, label: str) -> bool {
-    var k: usize = 0;
-    while k < i {
-        match cs.at_ptr(k) {
-            option::Option[*insp::Change]::Some(c) => {
-                if { (*c).node.view() } == label { return true; }
-            }
-            option::Option::None => { }
-        }
-        k = k +% 1;
-    }
-    return false;
 }
 
 // ---- the clipboard -------------------------------------------------------------
@@ -2473,7 +2329,7 @@ fn journal_remove(n: *core::Node) {
     var line: text::Text = text::new();
     if !addressable(n) {
         let _a: status::Status = line.append("// removed an unkeyed ");
-        let _b: status::Status = line.append(insp::kind_name(core::kind_of(n)));
+        let _b: status::Status = line.append(kind_name(core::kind_of(n)));
         let _c: status::Status = line.append(" - no key, so no line that addresses it");
         journal(line);
         return;
@@ -2491,15 +2347,26 @@ fn journal_remove(n: *core::Node) {
 fn structural_guard(h: insp::Handle) -> insp::Outcome {
     if h.is_none() { return insp::Outcome::NotFound; }
     if !h.is_live() { return insp::Outcome::Stale; }
-    if is_panels_own(h.node) { return insp::Outcome::Protected; }
+    if is_panels_own(node_of(h)) { return insp::Outcome::Protected; }
     return insp::Outcome::Ok;
 }
+// Insert, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn insert(parent: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome {
+    let r: insp::Outcome = insert_inner(parent, at, sp);
+    return r;
+}
+
 
 // Build `sp` and put it in `parent` at `at`, clamped to the end.
-fn insert(parent: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome {
+fn insert_inner(parent: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome {
     let g: insp::Outcome = structural_guard(parent);
     if !g.is_ok() { return g; }
-    let p: *core::Node = parent.node;
+    let p: *core::Node = node_of(parent);
     if !can_host_children(p) { return insp::Outcome::NotAContainer; }
 
     // Made BEFORE the journal line, so a maker name nobody implements is
@@ -2518,15 +2385,26 @@ fn insert(parent: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome
         option::Option::None => insp::Outcome::UnknownKind,
     };
 }
+// Remove, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn remove(h: insp::Handle) -> insp::Outcome {
+    let r: insp::Outcome = remove_inner(h);
+    return r;
+}
+
 
 // Take the node out and KEEP it, so `undo` can put it back.
 //
 // `mount::remove_node` is the other spelling and it drops the subtree; this one
 // wants the subtree, which is what `remove_child` hands back.
-fn remove(h: insp::Handle) -> insp::Outcome {
+fn remove_inner(h: insp::Handle) -> insp::Outcome {
     let g: insp::Outcome = structural_guard(h);
     if !g.is_ok() { return g; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
     return match mount::parent_of(n) {
         // No parent means a window root — closed with `app::close_window`, not
         // deleted out from under itself.
@@ -2560,6 +2438,17 @@ fn remove(h: insp::Handle) -> insp::Outcome {
         },
     };
 }
+// Reparent, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
+    let r: insp::Outcome = reparent_inner(h, parent, at);
+    return r;
+}
+
 
 // Move a live node under a new parent.
 //
@@ -2567,13 +2456,13 @@ fn remove(h: insp::Handle) -> insp::Outcome {
 // subtree is owned by nobody a caller could name — `remove_child` hands back a
 // value, and a value that is not immediately moved somewhere is a value that is
 // dropped.
-fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
+fn reparent_inner(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
     let g: insp::Outcome = structural_guard(h);
     if !g.is_ok() { return g; }
     let g2: insp::Outcome = structural_guard(parent);
     if !g2.is_ok() { return g2; }
-    let n: *core::Node = h.node;
-    let p: *core::Node = parent.node;
+    let n: *core::Node = node_of(h);
+    let p: *core::Node = node_of(parent);
     if !can_host_children(p) { return insp::Outcome::NotAContainer; }
     // Into itself, or into anything under itself. Checked before the removal:
     // afterwards the answer would be no and the tree would already be cut.
@@ -2610,9 +2499,20 @@ fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
         },
     };
 }
+// Undo remove, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn undo_remove() -> insp::Outcome {
+    let r: insp::Outcome = undo_remove_inner();
+    return r;
+}
+
 
 // Put the most recent removal back where it came from.
-fn undo_remove() -> insp::Outcome {
+fn undo_remove_inner() -> insp::Outcome {
     let c: usize = TRASH.count();
     if c == 0 { return insp::Outcome::NothingToUndo; }
     let at: usize = match TRASH_AT.at(c -% 1) {
@@ -2670,6 +2570,21 @@ fn install_platform(highlight: fn(*u8, insp::Handle), clear_highlight: fn(*u8)) 
     CLEAR_FN = clear_highlight;
 }
 
+// ---- putting the outline back --------------------------------------------------
+//
+// The overlay is PLACED, not attached, so a write that moves or resizes the
+// selected node leaves it behind. The panel re-places after its own writes and
+// that is enough in-process — but not over a socket, where the panel schedules
+// on ITS loop, the RPC returns, and THIS process lays out afterwards. The
+// re-place then reads the frame from before the change and the outline trails
+// by one edit.
+//
+// So every write that can move a frame asks here, and the platform half
+// coalesces it onto this process's own next turn. Zero is the headless answer:
+// no overlay to move.
+
+
+
 fn bk_highlight(s: *u8, h: insp::Handle) {
     let f: fn(*u8, insp::Handle) = HIGHLIGHT_FN;
     if f.is_not_null() { f(s, h); }
@@ -2684,7 +2599,25 @@ fn bk_clear_highlight(s: *u8) {
 // already there. A socket adapter is the thing that will have to marshal, and
 // that is exactly where the cost belongs — not on the local case that does not
 // need it.
+// The eight slots the VERBS need, adapted to the vtable's surface-first shape.
+// Each is a one-line forward: the walker's own signatures were already in
+// neutral types, which is why the verbs could move without changing them.
+fn bk_get(_s: *u8, h: insp::Handle, p: str) -> option::Option[insp::Value] { return get(h, p); }
+fn bk_parse_for(_s: *u8, h: insp::Handle, p: str, raw: str) -> option::Option[insp::Value] {
+    return parse_for(h, p, raw);
+}
+fn bk_canonical_prop(_s: *u8, n: str) -> option::Option[str] { return canonical_prop(n); }
+fn bk_changes(_s: *u8) -> vec::Vec[insp::Change] { return changes(); }
+fn bk_journal_count(_s: *u8) -> usize { return journal_count(); }
+fn bk_journal_at(_s: *u8, i: usize) -> option::Option[text::Text] { return journal_at(i); }
+fn bk_maker_names(_s: *u8) -> vec::Vec[str] { return maker_names(); }
+fn bk_kind_name(_s: *u8, k: u32) -> str { return kind_name(k); }
+
 fn local_backend() -> insp::Backend {
+    // The one place every handle-issuing path passes through, so it is where
+    // the neutral surface learns how to ask flex whether a handle is still
+    // live. Idempotent — it writes one fn-pointer.
+    install_revision();
     return insp::Backend {
         surface: 0 as *u8,
         describe: bk_describe,
@@ -2697,5 +2630,115 @@ fn local_backend() -> insp::Backend {
         remove: bk_remove,
         reparent: bk_reparent,
         undo: bk_undo,
+        get: bk_get,
+        parse_for: bk_parse_for,
+        canonical_prop: bk_canonical_prop,
+        changes: bk_changes,
+        journal_count: bk_journal_count,
+        journal_at: bk_journal_at,
+        maker_names: bk_maker_names,
+        kind_name: bk_kind_name,
     };
+}
+
+// ---- the toolkit boundary ------------------------------------------------------
+//
+// `agent_core::inspect` names no toolkit, so the four types that used to BE
+// facet's — a node address, a colour, a frame — cross here and nowhere else.
+// Each is a field-for-field copy, so these are renames rather than conversions;
+// they exist so that exactly one file knows both spellings.
+
+// flex's global removal counter, handed to the neutral surface so a `Handle`
+// can answer `is_live` without `agent_core` naming a layout engine. Installed
+// from `local_backend` — every path that produces a handle goes through it.
+fn install_revision() {
+    insp::set_revision_fn(flex::removal_count);
+}
+
+fn handle_of(n: *core::Node, window: usize) -> insp::Handle {
+    return insp::Handle::of(n as *u8, window);
+}
+
+// The address back. Only this package may do it — the pointer is `opaque` on
+// the other side precisely so that nothing else tries.
+fn node_of(h: insp::Handle) -> *core::Node {
+    return { h.node } as *core::Node;
+}
+
+fn to_color(c: vocab::Color) -> insp::Color {
+    return insp::Color {
+        token: { c.token },
+        r: { c.r }, g: { c.g }, b: { c.b }, a: { c.a },
+        r2: { c.r2 }, g2: { c.g2 }, b2: { c.b2 }, a2: { c.a2 },
+    };
+}
+
+fn from_color(c: insp::Color) -> vocab::Color {
+    return vocab::Color {
+        token: { c.token },
+        r: { c.r }, g: { c.g }, b: { c.b }, a: { c.a },
+        r2: { c.r2 }, g2: { c.g2 }, b2: { c.b2 }, a2: { c.a2 },
+    };
+}
+
+fn to_frame(f: flex::Frame) -> insp::Frame {
+    return insp::Frame {
+        left: { f.left }, top: { f.top },
+        width: { f.width }, height: { f.height },
+    };
+}
+
+// ---- kind names --------------------------------------------------------------
+
+// What a control kind is called, for a tree row that has no key to show.
+//
+// Hand-written and therefore capable of drifting from `props.cplus`, which the
+// generator owns. The test suite pins every constant against this table, so
+// drift fails the build rather than showing "node" where a date picker is.
+// When `gen_contract.py` grows an inspector dispatch layer this table is the
+// first thing it should emit.
+fn kind_name(kind: u32) -> str {
+    if kind == props::K_SPINNER { return "spinner"; }
+    if kind == props::K_BORDERED { return "bordered"; }
+    if kind == props::K_BOX { return "box"; }
+    if kind == props::K_BUTTON { return "button"; }
+    if kind == props::K_CAROUSEL { return "carousel"; }
+    if kind == props::K_CHECKBOX { return "checkbox"; }
+    if kind == props::K_COLLECTION { return "collection"; }
+    if kind == props::K_DATE_PICKER { return "date_picker"; }
+    if kind == props::K_TEXT_AREA { return "text_area"; }
+    if kind == props::K_TEXT_FIELD { return "text_field"; }
+    if kind == props::K_CANVAS { return "canvas"; }
+    if kind == props::K_HYBRID_WEB { return "hybrid_web"; }
+    if kind == props::K_IMAGE { return "image"; }
+    if kind == props::K_ICON_BUTTON { return "icon_button"; }
+    if kind == props::K_PAGE_DOTS { return "page_dots"; }
+    if kind == props::K_LABEL { return "label"; }
+    if kind == props::K_LIST { return "list"; }
+    if kind == props::K_MENU { return "menu"; }
+    if kind == props::K_CONTEXT_MENU { return "context_menu"; }
+    if kind == props::K_CONTEXT_MENU_ITEM { return "context_menu_item"; }
+    if kind == props::K_MENU_ITEM { return "menu_item"; }
+    if kind == props::K_POPUP { return "popup"; }
+    if kind == props::K_PROGRESS { return "progress"; }
+    if kind == props::K_RADIO { return "radio"; }
+    if kind == props::K_REFRESHABLE { return "refreshable"; }
+    if kind == props::K_SCROLL { return "scroll"; }
+    if kind == props::K_SEARCH_FIELD { return "search_field"; }
+    if kind == props::K_SLIDER { return "slider"; }
+    if kind == props::K_SPAN { return "span"; }
+    if kind == props::K_STEPPER { return "stepper"; }
+    if kind == props::K_SWIPE_ITEM { return "swipe_item"; }
+    if kind == props::K_SWIPEABLE { return "swipeable"; }
+    if kind == props::K_TOGGLE { return "toggle"; }
+    if kind == props::K_TABS { return "tabs"; }
+    if kind == props::K_TABLE { return "table"; }
+    if kind == props::K_TIME_PICKER { return "time_picker"; }
+    if kind == props::K_TOOLBAR_ITEM { return "toolbar_item"; }
+    if kind == props::K_WEB { return "web"; }
+    // Kind 0 is every container facet did not generate — column, row, stack,
+    // card, spacer, and the hand-written words built on them. They carry no
+    // control props, only the common band and flex style, which is exactly
+    // what tiers 1 and 2 edit.
+    return "node";
 }

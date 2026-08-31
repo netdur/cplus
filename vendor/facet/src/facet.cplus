@@ -283,6 +283,44 @@ impl flex::Node {
 static SYNC_REQUEST_FN: fn() = #zero::[fn()]();
 fn set_sync_request_fn(f: fn()) { SYNC_REQUEST_FN = f; return; }
 
+// ---- after the frames are true ------------------------------------------------
+//
+// A seam for work that must read a LAID-OUT frame, filled by whatever wants one
+// and called by the backend at the one moment frames are correct: after the
+// layout pass, before the frame is committed.
+//
+// THE INSPECTOR'S OVERLAY IS WHY IT EXISTS. It draws a box at a node's window
+// frame and is not attached to that node — attaching would need the target
+// layer-backed, and an inspector that changes how the app it inspects draws is
+// not an inspector. So the box has to be put back whenever the node moves, and
+// every attempt to work out WHEN that is has been a list of causes: after a
+// write, on a size observation, one turn later on a timer. Each list was
+// incomplete, and the one that mattered — a `top` edit arriving over a socket —
+// fell through all of them, because a turn on the PANEL's run loop has no
+// relationship to a layout tick in the app's.
+//
+// Asking every tick has no list. It answers one question, "where is the node
+// now", and is right whatever moved it: a local write, a remote one, the window
+// resizing, a splitter, the app relaying itself out. What it deliberately does
+// NOT catch is a layer moved without a layout — an animation — and that is the
+// accepted edge: a per-frame hook for a debugging outline is not a trade worth
+// making in every app that links this.
+//
+// ONE SLOT, not a list, because there is one consumer and a list would need
+// removal semantics nobody has asked for.
+static FRAMES_SETTLED_FN: fn() = #zero::[fn()]();
+fn set_frames_settled_fn(f: fn()) { FRAMES_SETTLED_FN = f; return; }
+
+// Called by the backend's tick. Cheap enough to sit in one: a null check, and
+// then whatever the one consumer does — which for the inspector is nothing at
+// all unless something is highlighted.
+fn frames_settled() {
+    let f: fn() = FRAMES_SETTLED_FN;
+    if f == (0 as fn()) { return; }
+    f();
+    return;
+}
+
 static MAIN_THREAD_ID: u64 = 0 as u64;
 fn set_main_thread_id(id: u64) { MAIN_THREAD_ID = id; return; }
 

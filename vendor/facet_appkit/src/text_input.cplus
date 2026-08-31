@@ -986,31 +986,55 @@ fn split_node_of(obj: *u8) -> *core::Node {
     return { synth::get_associated(obj, split_node_key()) as *core::Node };
 }
 
-// `splitView:constrainMinCoordinate:ofSubviewAt:` — the LEADING pane's floor.
+// The split's own extent along the divided axis. Read off the LIVE view, which
+// is the reason both bounds can be enforced here and only one of them can be
+// enforced by an application: this number is not visible from where an
+// application stands, and mirroring it through resize notifications is derived
+// state that goes stale.
+fn split_extent_of(sv: *u8) -> f64 {
+    let s: ak::SplitView = ak::SplitView::from_raw(sv);
+    if s.is_vertical() { return { s.as_view().frame().w }; }
+    return { s.as_view().frame().h };
+}
+
+// `splitView:constrainMinCoordinate:ofSubviewAt:` — the divider's FLOOR.
+//
+// Two bounds meet here: the leading pane's own minimum, and the trailing pane's
+// MAXIMUM, which is the same thing measured from the other edge (`leading +
+// divider + trailing == extent`, so "trailing at most M" is "position at least
+// extent - M"). `split::floor_with_max` is the rule, shared with the other
+// three backends so the four cannot drift.
 fn min_coord_imp(self_obj: *u8, cmd: *u8, sv: *u8, proposed: f64, idx: i64) -> f64 {
     let n: *core::Node = split_node_of(self_obj);
     if n.is_null() { return proposed; }
     let p: *split::SplitProps = split_props_of(n);
     if p.is_null() { return proposed; }
-    let lo: f64 = { (*p).min_leading };
+    let lo: f64 = split::floor_with_max({ (*p).min_leading }, { (*p).max_trailing },
+                                        split_extent_of(sv));
     if lo > proposed { return lo; }
     return proposed;
 }
 
-// `splitView:constrainMaxCoordinate:ofSubviewAt:` — the TRAILING pane's floor,
-// expressed as a ceiling on the divider: the trailing pane is what is left.
+// `splitView:constrainMaxCoordinate:ofSubviewAt:` — the divider's CEILING.
+//
+// The mirror of the above: the trailing pane's minimum expressed as a ceiling
+// (the trailing pane is what is left), narrowed by the leading pane's own
+// MAXIMUM — which needs no extent at all, because the divider's position IS the
+// leading pane's size.
+//
+// It no longer early-returns on `min_trailing <= 0`. A split with no trailing
+// minimum and a leading maximum has a ceiling, and returning `proposed` there
+// was the one arrangement that let a capped pane be dragged past its cap.
 fn max_coord_imp(self_obj: *u8, cmd: *u8, sv: *u8, proposed: f64, idx: i64) -> f64 {
     let n: *core::Node = split_node_of(self_obj);
     if n.is_null() { return proposed; }
     let p: *split::SplitProps = split_props_of(n);
     if p.is_null() { return proposed; }
     let keep: f64 = { (*p).min_trailing };
-    if keep <= 0.0f64 { return proposed; }
-    let s: ak::SplitView = ak::SplitView::from_raw(sv);
-    var extent: f64 = { s.as_view().frame().h };
-    if s.is_vertical() { extent = { s.as_view().frame().w }; }
-    let ceiling: f64 = extent - keep;
-    if ceiling < proposed { return ceiling; }
+    var ceiling: f64 = 0.0f64;      // 0 = none, the shared convention
+    if keep > 0.0f64 { ceiling = split_extent_of(sv) - keep; }
+    ceiling = split::ceiling_with_max(ceiling, { (*p).max_leading });
+    if ceiling > 0.0f64 && ceiling < proposed { return ceiling; }
     return proposed;
 }
 

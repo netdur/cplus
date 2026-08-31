@@ -13,8 +13,7 @@ inspector = "*"
 
 ```cplus
 import "inspector/widget" as panel;
-import "inspector/tree" as itree;
-import "inspector/appkit" as iplatform;
+import "facet_agent/inspect_tree" as itree;
 ```
 
 ## A panel beside your app
@@ -99,17 +98,15 @@ let _u: insp::Outcome = itree::undo_remove();   // back in the same slot
 
 ## Over the socket
 
-If your app already serves an agent, one call publishes an `inspector.`
-namespace inside the same server — `import "inspector/serve" as inspect;`,
-which resolves per platform and is a no-op where there is no backend:
+If your app serves an agent, it is already inspectable — the fourteen verbs
+come with the surface, and there is no second call:
 
 ```cplus
-inspect::arm();                   // install + publish `inspector.`, portably
 agent::enable();
 runtime::agent_mcp("app");        // an ID; the platform derives the address
 ```
 
-Then `inspector.describe`, `inspector.set`, `inspector.insert`, … See
+Then `describe_tree`, `set`, `insert`, … See
 [wire.md](wire.md).
 
 ## Day-one rules

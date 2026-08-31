@@ -1293,7 +1293,7 @@ fn generate_inner(
     // on `preserve_nonecc` — fastcc can't compose with it. `main` keeps
     // C cc so the OS runtime can invoke it.
     {
-        let address_taken = collect_address_taken_fns(program, &sigs);
+        let address_taken = collect_address_taken_fns(program, &sigs, &types);
         *md.address_taken_funcs.borrow_mut() = address_taken.clone();
         let mut fastcc = md.fastcc_funcs.borrow_mut();
         for item in &program.items {
@@ -1332,16 +1332,24 @@ fn generate_inner(
                             // issue-03 step 7: the free-fn arm above excludes
                             // address-taken names, because a `fastcc` function
                             // cannot be called through a C-cc fn pointer. This
-                            // arm skips that check on the grounds that a method
-                            // has no address-taking syntax — a bound method
-                            // reference goes through a synthesized free-fn
-                            // BRIDGE, which the free-fn arm covers. Asserted
-                            // rather than asserted-in-a-comment.
-                            debug_assert!(
-                                !address_taken.contains(&mangle(target_name, &m.name.name)),
-                                "method `{}` is address-taken but the fastcc gate assumed methods never are",
-                                mangle(target_name, &m.name.name)
-                            );
+                            // arm does NOT, and that is deliberate: a method
+                            // whose address is taken keeps `fastcc` because
+                            // nothing ever points at the method itself. Both
+                            // address-taking syntaxes go through a synthesized
+                            // C-ABI free-fn BRIDGE — `recv.method` through
+                            // sema's bound-method bridge, `Type::f` through
+                            // `emit_fnptr_bridge` — and the bridge is what the
+                            // fn-pointer holds.
+                            //
+                            // This arm used to carry a `debug_assert!` claiming
+                            // a method is never address-taken. It was compiled
+                            // out of the release compiler, and `Type::f` in
+                            // value position had been violating it silently:
+                            // the method kept `fastcc` AND the raw-aggregate
+                            // METHOD_ABI while the indirect call site used the
+                            // C ABI, so any argument over 16 bytes was read
+                            // from the wrong place. See
+                            // `emit_fnptr_bridge`.
                             fastcc.insert(mangle(target_name, &m.name.name));
                         }
                     }
@@ -1554,6 +1562,15 @@ fn generate_inner(
                             &mut out, id, m, &sigs, &types, &str_lits, mode, test_mode, &md,
                             &tramps, is_lib,
                         );
+                        // `Type::f` in value position points at a C-ABI thunk,
+                        // not at the method. See `emit_fnptr_bridge`.
+                        if md
+                            .address_taken_funcs
+                            .borrow()
+                            .contains(&mangle(&b.target.name, &m.name.name))
+                        {
+                            emit_fnptr_bridge(&mut out, id, m, &types, &md, is_lib);
+                        }
                     }
                 } else if let Some(&enum_id) = types.enum_by_name.get(&b.target.name) {
                     // v0.0.5 Phase 2C: enum impl-method emission.
@@ -2307,6 +2324,12 @@ struct MethodInfo {
     /// cpc-emission time shrinks the IR clang has to optimize and lets
     /// the optimizer converge faster on the remaining work.
     trivial_inline: Option<TrivialInline>,
+    /// `async fn` / `gen fn`. A coroutine method is emitted by
+    /// `gen_async_method` / `gen_gen_method`, whose signatures this file's
+    /// fn-pointer BRIDGE does not mirror, so `Type::f` on one keeps handing out
+    /// the method's own symbol — the behaviour it had before the bridge
+    /// existed. See [`emit_fnptr_bridge`].
+    is_coroutine: bool,
 }
 
 /// v0.0.8 bench-gap fix D: classify a method's body for cpc-side
@@ -2644,6 +2667,7 @@ fn collect_types(
                         params,
                         return_type,
                         trivial_inline,
+                        is_coroutine: m.is_gen || m.is_async,
                     },
                 );
             }
@@ -2675,6 +2699,7 @@ fn collect_types(
                         params,
                         return_type,
                         trivial_inline: None,
+                        is_coroutine: false,
                     },
                 );
             }
@@ -2726,6 +2751,7 @@ fn collect_types(
                     params,
                     return_type,
                     trivial_inline,
+                    is_coroutine: m.is_gen || m.is_async,
                 },
             );
             // Mirror sema's Drop detection so codegen knows which bindings
@@ -5628,8 +5654,33 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
 /// "Free fn" here means a `sigs`-registered top-level function. Methods
 /// (looked up via type + name) aren't take-the-address-able in C+ —
 /// there's no `&T::method` syntax — so they're never added to the set.
-fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -> HashSet<String> {
-    fn visit_expr(e: &Expr, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
+fn collect_address_taken_fns(
+    program: &Program,
+    sigs: &HashMap<String, FnSig>,
+    types: &TypeTable,
+) -> HashSet<String> {
+    /// `Type::f` in value position: the mangled symbol whose address is taken,
+    /// or `None` when the path is an enum variant / an unknown name. MIRRORS
+    /// `gen_path`'s value-position arm — the two must agree on exactly which
+    /// paths hand out a function address, or the bridge emitted here and the
+    /// symbol referenced there drift apart (a link error, not a miscompile).
+    fn assoc_fn_path(segments: &[Ident], types: &TypeTable) -> Option<String> {
+        if segments.len() != 2 || types.enum_by_name.contains_key(&segments[0].name) {
+            return None;
+        }
+        let sid = *types.struct_by_name.get(&segments[0].name)?;
+        let m = types.struct_defs[sid.0 as usize]
+            .methods
+            .get(&segments[1].name)?;
+        (m.receiver.is_none() && !m.is_coroutine)
+            .then(|| mangle(&segments[0].name, &segments[1].name))
+    }
+    fn visit_expr(
+        e: &Expr,
+        sigs: &HashMap<String, FnSig>,
+        types: &TypeTable,
+        taken: &mut HashSet<String>,
+    ) {
         match &e.kind {
             // v0.0.22 DSL.2: never reached — builder blocks desugar to
             // ordinary AST long before codegen.
@@ -5648,125 +5699,150 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
                 // Ident referring to a fn name is safe to skip. Any
                 // other callee shape (parenthesized, indirect via a
                 // local fn-ptr, etc.) gets recursed normally.
-                if !matches!(callee.kind, ExprKind::Ident(_)) {
-                    visit_expr(callee, sigs, taken);
+                //
+                // A `Path` callee — `Type::f(...)` or `Enum::Variant(x)` — is
+                // direct too (`gen_assoc_call`), and must be skipped for the
+                // same reason: the Path arm below now treats a path in VALUE
+                // position as an address-take, and without this every
+                // directly-called associated fn would lose `fastcc`.
+                if !matches!(callee.kind, ExprKind::Ident(_) | ExprKind::Path { .. }) {
+                    visit_expr(callee, sigs, types, taken);
                 }
                 for a in args {
-                    visit_expr(a, sigs, taken);
+                    visit_expr(a, sigs, types, taken);
                 }
             }
-            ExprKind::Block(b) => visit_block(b, sigs, taken),
-            ExprKind::Await(inner) | ExprKind::Yield(inner) => visit_expr(inner, sigs, taken),
+            ExprKind::Block(b) => visit_block(b, sigs, types, taken),
+            ExprKind::Await(inner) | ExprKind::Yield(inner) => visit_expr(inner, sigs, types, taken),
             ExprKind::If {
                 cond,
                 then,
                 else_branch,
             } => {
-                visit_expr(cond, sigs, taken);
-                visit_block(then, sigs, taken);
+                visit_expr(cond, sigs, types, taken);
+                visit_block(then, sigs, types, taken);
                 if let Some(eb) = else_branch {
-                    visit_expr(eb, sigs, taken);
+                    visit_expr(eb, sigs, types, taken);
                 }
             }
             ExprKind::Binary { lhs, rhs, .. } => {
-                visit_expr(lhs, sigs, taken);
-                visit_expr(rhs, sigs, taken);
+                visit_expr(lhs, sigs, types, taken);
+                visit_expr(rhs, sigs, types, taken);
             }
-            ExprKind::Unary { operand, .. } => visit_expr(operand, sigs, taken),
-            ExprKind::Field { receiver, .. } => visit_expr(receiver, sigs, taken),
+            ExprKind::Unary { operand, .. } => visit_expr(operand, sigs, types, taken),
+            ExprKind::Field { receiver, .. } => visit_expr(receiver, sigs, types, taken),
             ExprKind::Index { receiver, index } => {
-                visit_expr(receiver, sigs, taken);
-                visit_expr(index, sigs, taken);
+                visit_expr(receiver, sigs, types, taken);
+                visit_expr(index, sigs, types, taken);
             }
             ExprKind::Assign { target, value, .. } => {
-                visit_expr(target, sigs, taken);
-                visit_expr(value, sigs, taken);
+                visit_expr(target, sigs, types, taken);
+                visit_expr(value, sigs, types, taken);
             }
             ExprKind::Cast { expr: inner, .. } | ExprKind::CastChecked { expr: inner, .. } => {
-                visit_expr(inner, sigs, taken)
+                visit_expr(inner, sigs, types, taken)
             }
             ExprKind::Range { start, end, .. } => {
                 if let Some(s) = start {
-                    visit_expr(s, sigs, taken);
+                    visit_expr(s, sigs, types, taken);
                 }
                 if let Some(e) = end {
-                    visit_expr(e, sigs, taken);
+                    visit_expr(e, sigs, types, taken);
                 }
             }
             ExprKind::Match { scrutinee, arms } => {
-                visit_expr(scrutinee, sigs, taken);
+                visit_expr(scrutinee, sigs, types, taken);
                 for a in arms {
-                    visit_expr(&a.body, sigs, taken);
+                    visit_expr(&a.body, sigs, types, taken);
                 }
             }
             ExprKind::StructLit { fields, .. }
             | ExprKind::InferredStructLit { fields }
             | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
-                    visit_expr(&f.value, sigs, taken);
+                    visit_expr(&f.value, sigs, types, taken);
                 }
             }
             ExprKind::ArrayLit { elements }
             | ExprKind::TupleLit { elements }
             | ExprKind::GenericEnumCall { args: elements, .. } => {
                 for e in elements {
-                    visit_expr(e, sigs, taken);
+                    visit_expr(e, sigs, types, taken);
                 }
             }
-            ExprKind::ArrayFill { fill, .. } => visit_expr(fill, sigs, taken),
+            ExprKind::ArrayFill { fill, .. } => visit_expr(fill, sigs, types, taken),
             ExprKind::InterpStr { parts } => {
                 for p in parts {
                     if let crate::ast::InterpStrPart::Expr(e) = p {
-                        visit_expr(e, sigs, taken);
+                        visit_expr(e, sigs, types, taken);
                     }
                 }
             }
-            // Leaves: literals, paths (Type::variant — not a free-fn
-            // address), include_bytes/str compiler builtins.
+            // `Type::f` in VALUE position takes the address of an associated
+            // fn (`gen_path` emits its symbol). Recorded under the method's
+            // mangled name — the same key the `fastcc` gate and the fn-pointer
+            // BRIDGE emitter use. An enum variant path (`Maybe::None`) lands
+            // here too and is a leaf: `mangle(enum, variant)` is not a fn sig
+            // key, and a name is either a struct or an enum, never both.
+            ExprKind::Path { segments } => {
+                if let Some(m) = assoc_fn_path(segments, types) {
+                    taken.insert(m);
+                }
+            }
+            // Leaves: literals, include_bytes/str compiler builtins.
             ExprKind::IntLit(_, _)
             | ExprKind::FloatLit(_, _)
             | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
             | ExprKind::CStrLit(_)
-            | ExprKind::Path { .. }
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }
             | ExprKind::EnvVar { .. } => {}
             ExprKind::Intrinsic { args, .. } => {
                 for a in args {
-                    visit_expr(a, sigs, taken);
+                    visit_expr(a, sigs, types, taken);
                 }
             }
             ExprKind::Asm { operands, .. } => {
                 for op in operands {
-                    visit_expr(&op.value, sigs, taken);
+                    visit_expr(&op.value, sigs, types, taken);
                 }
             }
         }
     }
-    fn visit_block(b: &Block, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
+    fn visit_block(
+        b: &Block,
+        sigs: &HashMap<String, FnSig>,
+        types: &TypeTable,
+        taken: &mut HashSet<String>,
+    ) {
         for s in &b.stmts {
-            visit_stmt(s, sigs, taken);
+            visit_stmt(s, sigs, types, taken);
         }
         if let Some(t) = &b.tail {
-            visit_expr(t, sigs, taken);
+            visit_expr(t, sigs, types, taken);
         }
     }
-    fn visit_stmt(s: &Stmt, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
+    fn visit_stmt(
+        s: &Stmt,
+        sigs: &HashMap<String, FnSig>,
+        types: &TypeTable,
+        taken: &mut HashSet<String>,
+    ) {
         match &s.kind {
-            StmtKind::Let { init: Some(e), .. } => visit_expr(e, sigs, taken),
+            StmtKind::Let { init: Some(e), .. } => visit_expr(e, sigs, types, taken),
             StmtKind::Expr(e) | StmtKind::Assert(e) | StmtKind::Defer(e) => {
-                visit_expr(e, sigs, taken);
+                visit_expr(e, sigs, types, taken);
             }
-            StmtKind::Return(Some(e)) => visit_expr(e, sigs, taken),
+            StmtKind::Return(Some(e)) => visit_expr(e, sigs, types, taken),
             StmtKind::While { cond, body, .. } => {
-                visit_expr(cond, sigs, taken);
-                visit_block(body, sigs, taken);
+                visit_expr(cond, sigs, types, taken);
+                visit_block(body, sigs, types, taken);
             }
             StmtKind::For(forloop, _) => match forloop {
                 crate::ast::ForLoop::Range { iter, body, .. } => {
-                    visit_expr(iter, sigs, taken);
-                    visit_block(body, sigs, taken);
+                    visit_expr(iter, sigs, types, taken);
+                    visit_block(body, sigs, types, taken);
                 }
                 crate::ast::ForLoop::CStyle {
                     init,
@@ -5775,18 +5851,18 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
                     body,
                 } => {
                     if let Some(s) = init {
-                        visit_stmt(s, sigs, taken);
+                        visit_stmt(s, sigs, types, taken);
                     }
                     if let Some(c) = cond {
-                        visit_expr(c, sigs, taken);
+                        visit_expr(c, sigs, types, taken);
                     }
                     for u in update {
-                        visit_expr(u, sigs, taken);
+                        visit_expr(u, sigs, types, taken);
                     }
-                    visit_block(body, sigs, taken);
+                    visit_block(body, sigs, types, taken);
                 }
             },
-            StmtKind::Loop(body, _) => visit_block(body, sigs, taken),
+            StmtKind::Loop(body, _) => visit_block(body, sigs, types, taken),
             _ => {}
         }
     }
@@ -5794,12 +5870,12 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
     for item in &program.items {
         match &item.kind {
             ItemKind::Function(f) if f.generic_params.is_empty() => {
-                visit_block(&f.body, sigs, &mut taken);
+                visit_block(&f.body, sigs, types, &mut taken);
             }
             ItemKind::Impl(b) => {
                 for m in &b.methods {
                     if m.generic_params.is_empty() {
-                        visit_block(&m.body, sigs, &mut taken);
+                        visit_block(&m.body, sigs, types, &mut taken);
                     }
                 }
             }
@@ -5810,8 +5886,8 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
             // call through that slot would then use the C convention against
             // a fastcc definition. That is a miscompile, not a link error,
             // which is why this arm exists before the feature it serves.
-            ItemKind::Static(st) => visit_expr(&st.value, sigs, &mut taken),
-            ItemKind::Const(c) => visit_expr(&c.value, sigs, &mut taken),
+            ItemKind::Static(st) => visit_expr(&st.value, sigs, types, &mut taken),
+            ItemKind::Const(c) => visit_expr(&c.value, sigs, types, &mut taken),
             _ => {}
         }
     }
@@ -8513,6 +8589,246 @@ fn gen_gen_enum_method(
         out.push('\n');
     }
     out.push_str(&state.body);
+    out.push_str("}\n\n");
+}
+
+/// The symbol a `Type::f` fn-pointer actually points at. See
+/// [`emit_fnptr_bridge`].
+fn fnptr_bridge_symbol(struct_name: &str, method_name: &str) -> String {
+    format!("{}.fnptr", mangle(struct_name, method_name))
+}
+
+/// Emit the C-ABI thunk that stands in for a receiverless associated fn
+/// whose ADDRESS IS TAKEN (`Type::f` in value position).
+///
+/// WHY A THUNK AND NOT THE METHOD ITSELF. Two conventions meet here and they
+/// are not the same one:
+///
+///   - A method is emitted with [`METHOD_ABI`] — Copy aggregates pass as raw
+///     LLVM aggregates — and, when it qualifies, `fastcc`.
+///   - Every call through a `fn(T)` pointer uses the platform C ABI:
+///     `gen_indirect_call` says so in as many words ("All callable signatures
+///     here are C-ABI"), because a fn-pointer may just as well hold a C
+///     function or an `export`ed one.
+///
+/// The two agree for aggregates of 16 bytes or less — AAPCS64 passes those in
+/// registers and `fastcc` happens to pick the same registers — and disagree
+/// above it, where the C ABI passes a POINTER to a copy and the raw-aggregate
+/// form does not. Handing the method's own symbol to a `fn(T)` slot therefore
+/// compiled, linked, called, and read every argument over 16 bytes from the
+/// wrong address, with no diagnostic. The same split exists on the return
+/// side: a Copy struct return coerces (≤16B) or goes through `sret` (>16B)
+/// for the C ABI, while a method returns the raw aggregate.
+///
+/// So the fn-pointer gets a thunk with the free-function ABI, and the method
+/// keeps its own. Nothing about the method or its direct call sites changes —
+/// which is why it stays `fastcc`-eligible: nothing points at IT.
+///
+/// This is the same shape sema already uses for the other address-taking
+/// syntax: `recv.method` becomes a synthesized bridge plus a context pointer
+/// (`BoundMethodRefInfo`).
+#[allow(clippy::too_many_arguments)]
+fn emit_fnptr_bridge(
+    out: &mut String,
+    struct_id: StructId,
+    m: &Method,
+    types: &TypeTable,
+    md: &ModuleMetadata,
+    is_lib: bool,
+) {
+    let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
+    let mangled = mangle(&struct_name, &m.name.name);
+    let Some(sig) = types.struct_defs[struct_id.0 as usize]
+        .methods
+        .get(&m.name.name)
+        .cloned()
+    else {
+        return;
+    };
+    // Only the shape `gen_path` routes through a bridge — kept in step with
+    // `assoc_fn_path` in `collect_address_taken_fns`, which is what decided to
+    // call this.
+    if sig.receiver.is_some() || sig.is_coroutine {
+        return;
+    }
+    let bridge = fnptr_bridge_symbol(&struct_name, &m.name.name);
+    let return_ty = sig.return_type.clone();
+
+    // The bridge's own ABI is a free function's: never `fastcc`, never a
+    // C export, Copy aggregates coerced. `AbiCtx { coerce_copy_aggregates:
+    // true }` is exactly what `gen_fn` builds for a non-fastcc fn, and what
+    // `gen_indirect_call` assumes on the other side of the pointer.
+    let c_cx = AbiCtx {
+        c_export: false,
+        coerce_copy_aggregates: true,
+    };
+    let bridge_abis: Vec<PassBy> = sig
+        .params
+        .iter()
+        .map(|ps| classify_param(ps, c_cx, types))
+        .collect();
+
+    // Return classification, mirroring `gen_fn`'s `want_c_abi_ret` for a
+    // non-export non-fastcc fn and `gen_indirect_call`'s call side.
+    let ret_is_copy_struct = matches!(return_ty, Ty::Struct(_)) && is_copy_ty(&return_ty, types);
+    let ret_abi = if ret_is_copy_struct {
+        classify_c_abi_return(&return_ty, types)
+    } else {
+        CAbiClass::Direct
+    };
+    let bridge_sret = if ret_is_copy_struct {
+        return_passes_by_sret(&return_ty) || matches!(ret_abi, CAbiClass::Indirect)
+    } else {
+        return_passes_by_sret_widened(&return_ty, types)
+    };
+    // What the METHOD itself does with its return (`gen_method`).
+    let method_sret = return_passes_by_sret_widened(&return_ty, types);
+    let coerce_ret: Option<(String, u64)> = match &ret_abi {
+        CAbiClass::Coerce {
+            llvm_ty, align, ..
+        } => Some((llvm_ty.clone(), *align)),
+        _ => None,
+    };
+    let ret_ty_str = if bridge_sret {
+        "void".to_string()
+    } else if let Some((t, _)) = &coerce_ret {
+        t.clone()
+    } else {
+        llvm_ty(&return_ty, types)
+    };
+
+    // Linkage: `linkonce_odr`, so a library and a consumer that recompiles the
+    // same verbatim generic module each emit one and the linker keeps one copy.
+    // Nothing declares this symbol in a generated header, so unlike a
+    // name-public method there is no archive copy that must be retained.
+    let _ = is_lib;
+    write!(
+        out,
+        "define linkonce_odr {} @{}(",
+        ret_ty_str, bridge
+    )
+    .unwrap();
+    let mut idx: u32 = 0;
+    let mut first = true;
+    if bridge_sret {
+        let (sz, al) = static_layout(&return_ty, types).expect("sret return type has layout");
+        let inner = llvm_ty(&return_ty, types);
+        out.push_str(&sret_fragment_for(&inner, sz, al, &format!("%{idx}")));
+        idx += 1;
+        first = false;
+    }
+    let first_param_idx = idx;
+    for abi in &bridge_abis {
+        if !first {
+            out.push_str(", ");
+        }
+        out.push_str(&abi.sig_fragment(idx));
+        idx += 1;
+        first = false;
+    }
+    out.push(')');
+    out.push_str(&md.fn_attrs.borrow());
+    out.push_str(" {\nentry:\n");
+
+    // Reconstitute each argument in the form the METHOD expects. The method's
+    // classification is `METHOD_ABI`, which only ever yields `Ptr` or `Value` —
+    // `param_passes_by_ptr` is consulted before the C-ABI arm in
+    // `classify_param` and does not depend on the context, so `Ptr` on one side
+    // is `Ptr` on the other. The work is entirely in the two C-ABI classes.
+    let mut tmp: u32 = 0;
+    let mut next_tmp = |out: &mut String| {
+        let _ = out;
+        tmp += 1;
+        format!("%b{}", tmp)
+    };
+    let mut call_args: Vec<String> = Vec::with_capacity(sig.params.len());
+    for (i, ps) in sig.params.iter().enumerate() {
+        let arg = format!("%{}", first_param_idx + i as u32);
+        let method_abi = classify_param(ps, METHOD_ABI, types);
+        match (&bridge_abis[i], &method_abi) {
+            (PassBy::Coerced { llvm_ty: clty, align }, PassBy::Value { llvm_ty: vty, .. }) => {
+                // The coerced class is at least as large as the struct; the
+                // alloca must satisfy both (`PassBy::Coerced`'s doc).
+                let (_, struct_al) = static_layout(&ps.ty, types).unwrap_or((0, *align));
+                let slot_al = (*align).max(struct_al);
+                let slot = next_tmp(out);
+                writeln!(out, "  {slot} = alloca {clty}, align {slot_al}").unwrap();
+                writeln!(out, "  store {clty} {arg}, ptr {slot}, align {slot_al}").unwrap();
+                let v = next_tmp(out);
+                writeln!(out, "  {v} = load {vty}, ptr {slot}, align {struct_al}").unwrap();
+                call_args.push(format!("{vty} {v}"));
+            }
+            (PassBy::Indirect { .. }, PassBy::Value { llvm_ty: vty, .. }) => {
+                // The C caller passed a pointer to its own copy; the method
+                // wants the aggregate.
+                let (_, al) = static_layout(&ps.ty, types).unwrap_or((0, 8));
+                let v = next_tmp(out);
+                writeln!(out, "  {v} = load {vty}, ptr {arg}, align {al}").unwrap();
+                call_args.push(format!("{vty} {v}"));
+            }
+            (_, method_abi) => {
+                // Identical on both sides: forward verbatim, using the
+                // METHOD's spelling of the type.
+                let ty = match method_abi {
+                    PassBy::Ptr { .. } => "ptr".to_string(),
+                    PassBy::Value { llvm_ty, .. } => llvm_ty.clone(),
+                    PassBy::Indirect { ty } => ty.clone(),
+                    PassBy::Coerced { llvm_ty, .. } => llvm_ty.clone(),
+                };
+                call_args.push(format!("{ty} {arg}"));
+            }
+        }
+    }
+
+    let cc = md.fastcc_prefix(&mangled);
+    let call_ret_ty = if method_sret {
+        "void".to_string()
+    } else {
+        llvm_ty(&return_ty, types)
+    };
+    // `sret` on both sides: hand the caller's slot straight through.
+    if method_sret {
+        debug_assert!(bridge_sret, "a method with sret cannot have a by-value bridge");
+        let (sz, al) = static_layout(&return_ty, types).expect("sret return type has layout");
+        let inner = llvm_ty(&return_ty, types);
+        let mut head = sret_fragment_for(&inner, sz, al, "%0");
+        for a in &call_args {
+            head.push_str(", ");
+            head.push_str(a);
+        }
+        writeln!(out, "  call {cc}void @{mangled}({head})").unwrap();
+        out.push_str("  ret void\n}\n\n");
+        return;
+    }
+    let arg_str = call_args.join(", ");
+    if matches!(return_ty, Ty::Unit) {
+        writeln!(out, "  call {cc}void @{mangled}({arg_str})").unwrap();
+        out.push_str("  ret void\n}\n\n");
+        return;
+    }
+    let r = next_tmp(out);
+    writeln!(out, "  {r} = call {cc}{call_ret_ty} @{mangled}({arg_str})").unwrap();
+    if bridge_sret {
+        // The method returns the aggregate by value; the C ABI wants it
+        // written into the caller's hidden slot.
+        let (_, al) = static_layout(&return_ty, types).expect("sret return type has layout");
+        writeln!(out, "  store {call_ret_ty} {r}, ptr %0, align {al}").unwrap();
+        out.push_str("  ret void\n}\n\n");
+        return;
+    }
+    if let Some((clty, align)) = &coerce_ret {
+        let (_, struct_al) = static_layout(&return_ty, types).unwrap_or((0, *align));
+        let slot_al = (*align).max(struct_al);
+        let slot = next_tmp(out);
+        writeln!(out, "  {slot} = alloca {clty}, align {slot_al}").unwrap();
+        writeln!(out, "  store {call_ret_ty} {r}, ptr {slot}, align {struct_al}").unwrap();
+        let c = next_tmp(out);
+        writeln!(out, "  {c} = load {clty}, ptr {slot}, align {slot_al}").unwrap();
+        writeln!(out, "  ret {clty} {c}").unwrap();
+        out.push_str("}\n\n");
+        return;
+    }
+    writeln!(out, "  ret {call_ret_ty} {r}").unwrap();
     out.push_str("}\n\n");
 }
 
@@ -14071,9 +14387,16 @@ impl<'a> FnState<'a> {
         let enum_name = &segments[0].name;
         let variant_name = &segments[1].name;
         // `Type::f` in value position: a receiverless associated fn is a
-        // namespaced fn, and its address is the symbol its own definition
-        // emitted. Methods are mangled `Struct.method`, which is what a
-        // direct call at any other site resolves to.
+        // namespaced fn, and its address is the C-ABI BRIDGE emitted beside
+        // it (`emit_fnptr_bridge`) — NOT the method symbol itself.
+        //
+        // The method symbol cannot be handed out: a method is emitted with
+        // `METHOD_ABI` (Copy aggregates raw) and usually `fastcc`, while every
+        // call through a `fn(T)` pointer uses the C ABI (`gen_indirect_call`:
+        // "All callable signatures here are C-ABI"). The two agree for
+        // aggregates of 16 bytes or less and disagree above it, which is
+        // exactly where a >16-byte struct argument used to be read from the
+        // wrong address, silently.
         if !self.types.enum_by_name.contains_key(enum_name) {
             if let Some(sid) = self.types.struct_by_name.get(enum_name).copied() {
                 if let Some(m) = self.types.struct_defs[sid.0 as usize]
@@ -14081,6 +14404,29 @@ impl<'a> FnState<'a> {
                     .get(variant_name)
                     .cloned()
                 {
+                    // A COROUTINE keeps the method symbol: `emit_fnptr_bridge`
+                    // does not mirror `gen_async_method` / `gen_gen_method`, so
+                    // `Type::f` on one behaves exactly as it did before the
+                    // bridge existed. `assoc_fn_path` in
+                    // `collect_address_taken_fns` makes the same exclusion —
+                    // the two must agree or the symbol referenced here has no
+                    // definition.
+                    if m.receiver.is_none() && m.is_coroutine {
+                        let params: Vec<Ty> = m.params.iter().map(|p| p.ty.clone()).collect();
+                        let param_takes: Vec<bool> =
+                            m.params.iter().map(|p| p.mode.is_take()).collect();
+                        let param_refs: Vec<bool> =
+                            m.params.iter().map(|p| p.mode.is_ref()).collect();
+                        return (
+                            format!("@{}", mangle(enum_name, variant_name)),
+                            Ty::FnPtr {
+                                params,
+                                param_takes,
+                                param_refs,
+                                return_type: Box::new(m.return_type.clone()),
+                            },
+                        );
+                    }
                     if m.receiver.is_none() {
                         let params: Vec<Ty> = m.params.iter().map(|p| p.ty.clone()).collect();
                         let param_takes: Vec<bool> =
@@ -14093,7 +14439,10 @@ impl<'a> FnState<'a> {
                             param_refs,
                             return_type: Box::new(m.return_type.clone()),
                         };
-                        return (format!("@{}", mangle(enum_name, variant_name)), ty);
+                        return (
+                            format!("@{}", fnptr_bridge_symbol(enum_name, variant_name)),
+                            ty,
+                        );
                     }
                 }
             }

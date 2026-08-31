@@ -8,6 +8,7 @@
 // which is worse than teaching them nothing at all.
 
 import "stdlib/vec" as vec;
+import "stdlib/executor" as executor;
 import "stdlib/io" as io;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
@@ -22,16 +23,17 @@ import "facet/label" as label;
 import "facet/button" as button;
 import "facet/mount" as mount;
 import "facet/tree" as ftree;
-import "./inspector" as insp;
+import "agent_core/inspect" as insp;
 import "json/json" as json;
-import "./tree" as tree;
-import "./vocabulary" as voc;
+import "facet_agent/inspect_tree" as tree;
+import "facet_agent/inspect_vocabulary" as voc;
 import "./widget" as widget;
-import "./appkit" as platform;
+import "facet_agent/inspect_platform" as platform;
 // Pulled in for its own `#[test]`s: without an import the module is not in the
 // test binary at all, and its checks silently do not run.
 import "./remote" as remote;
-import "./mcp" as mcp;
+import "agent_mcp/inspect" as mcp;
+import "agent_mcp/inspect_verbs" as verbs;
 import "agent_mcp/agent_mcp" as bridge;
 import "agent_core/events" as aevents;
 import "agent_core/auth" as aauth;
@@ -221,7 +223,7 @@ fn journal_line_is(i: usize, want: str) -> bool {
 #[test]
 fn a_fresh_handle_is_live_and_a_null_one_is_not() {
     var n: core::Node = core::node_with("probe", 0u32, 0 as *u8, core::no_release);
-    let h: insp::Handle = insp::Handle::of(#addr_of(n), 0);
+    let h: insp::Handle = tree::handle_of(#addr_of(n), 0);
     assert h.is_live();
     assert !h.is_none();
     let z: insp::Handle = insp::Handle::none();
@@ -235,7 +237,7 @@ fn value_tags_name_themselves() {
     assert insp::Value::Int(1 as i64).type_name() == "int";
     assert insp::Value::Num(1.0f64).type_name() == "number";
     assert insp::Value::Str(text::from_str("x")).type_name() == "text";
-    assert insp::Value::Color(vocab::Color::none()).type_name() == "color";
+    assert insp::Value::Color(tree::to_color(vocab::Color::none())).type_name() == "color";
     assert insp::Value::Enum(text::from_str("auto")).type_name() == "enum";
     assert insp::Value::Nothing.type_name() == "nothing";
     assert insp::Value::Nothing.is_nothing();
@@ -262,45 +264,45 @@ fn cloning_a_text_value_survives_the_original() {
 // where a date picker is would otherwise pass in silence.
 #[test]
 fn kind_names_cover_every_generated_control() {
-    assert insp::kind_name(props::K_SPINNER) == "spinner";
-    assert insp::kind_name(props::K_BORDERED) == "bordered";
-    assert insp::kind_name(props::K_BOX) == "box";
-    assert insp::kind_name(props::K_BUTTON) == "button";
-    assert insp::kind_name(props::K_CAROUSEL) == "carousel";
-    assert insp::kind_name(props::K_CHECKBOX) == "checkbox";
-    assert insp::kind_name(props::K_COLLECTION) == "collection";
-    assert insp::kind_name(props::K_DATE_PICKER) == "date_picker";
-    assert insp::kind_name(props::K_TEXT_AREA) == "text_area";
-    assert insp::kind_name(props::K_TEXT_FIELD) == "text_field";
-    assert insp::kind_name(props::K_CANVAS) == "canvas";
-    assert insp::kind_name(props::K_HYBRID_WEB) == "hybrid_web";
-    assert insp::kind_name(props::K_IMAGE) == "image";
-    assert insp::kind_name(props::K_ICON_BUTTON) == "icon_button";
-    assert insp::kind_name(props::K_PAGE_DOTS) == "page_dots";
-    assert insp::kind_name(props::K_LABEL) == "label";
-    assert insp::kind_name(props::K_LIST) == "list";
-    assert insp::kind_name(props::K_MENU) == "menu";
-    assert insp::kind_name(props::K_CONTEXT_MENU) == "context_menu";
-    assert insp::kind_name(props::K_CONTEXT_MENU_ITEM) == "context_menu_item";
-    assert insp::kind_name(props::K_MENU_ITEM) == "menu_item";
-    assert insp::kind_name(props::K_POPUP) == "popup";
-    assert insp::kind_name(props::K_PROGRESS) == "progress";
-    assert insp::kind_name(props::K_RADIO) == "radio";
-    assert insp::kind_name(props::K_REFRESHABLE) == "refreshable";
-    assert insp::kind_name(props::K_SCROLL) == "scroll";
-    assert insp::kind_name(props::K_SEARCH_FIELD) == "search_field";
-    assert insp::kind_name(props::K_SLIDER) == "slider";
-    assert insp::kind_name(props::K_SPAN) == "span";
-    assert insp::kind_name(props::K_STEPPER) == "stepper";
-    assert insp::kind_name(props::K_SWIPE_ITEM) == "swipe_item";
-    assert insp::kind_name(props::K_SWIPEABLE) == "swipeable";
-    assert insp::kind_name(props::K_TOGGLE) == "toggle";
-    assert insp::kind_name(props::K_TABS) == "tabs";
-    assert insp::kind_name(props::K_TABLE) == "table";
-    assert insp::kind_name(props::K_TIME_PICKER) == "time_picker";
-    assert insp::kind_name(props::K_TOOLBAR_ITEM) == "toolbar_item";
-    assert insp::kind_name(props::K_WEB) == "web";
-    assert insp::kind_name(0u32) == "node";
+    assert tree::kind_name(props::K_SPINNER) == "spinner";
+    assert tree::kind_name(props::K_BORDERED) == "bordered";
+    assert tree::kind_name(props::K_BOX) == "box";
+    assert tree::kind_name(props::K_BUTTON) == "button";
+    assert tree::kind_name(props::K_CAROUSEL) == "carousel";
+    assert tree::kind_name(props::K_CHECKBOX) == "checkbox";
+    assert tree::kind_name(props::K_COLLECTION) == "collection";
+    assert tree::kind_name(props::K_DATE_PICKER) == "date_picker";
+    assert tree::kind_name(props::K_TEXT_AREA) == "text_area";
+    assert tree::kind_name(props::K_TEXT_FIELD) == "text_field";
+    assert tree::kind_name(props::K_CANVAS) == "canvas";
+    assert tree::kind_name(props::K_HYBRID_WEB) == "hybrid_web";
+    assert tree::kind_name(props::K_IMAGE) == "image";
+    assert tree::kind_name(props::K_ICON_BUTTON) == "icon_button";
+    assert tree::kind_name(props::K_PAGE_DOTS) == "page_dots";
+    assert tree::kind_name(props::K_LABEL) == "label";
+    assert tree::kind_name(props::K_LIST) == "list";
+    assert tree::kind_name(props::K_MENU) == "menu";
+    assert tree::kind_name(props::K_CONTEXT_MENU) == "context_menu";
+    assert tree::kind_name(props::K_CONTEXT_MENU_ITEM) == "context_menu_item";
+    assert tree::kind_name(props::K_MENU_ITEM) == "menu_item";
+    assert tree::kind_name(props::K_POPUP) == "popup";
+    assert tree::kind_name(props::K_PROGRESS) == "progress";
+    assert tree::kind_name(props::K_RADIO) == "radio";
+    assert tree::kind_name(props::K_REFRESHABLE) == "refreshable";
+    assert tree::kind_name(props::K_SCROLL) == "scroll";
+    assert tree::kind_name(props::K_SEARCH_FIELD) == "search_field";
+    assert tree::kind_name(props::K_SLIDER) == "slider";
+    assert tree::kind_name(props::K_SPAN) == "span";
+    assert tree::kind_name(props::K_STEPPER) == "stepper";
+    assert tree::kind_name(props::K_SWIPE_ITEM) == "swipe_item";
+    assert tree::kind_name(props::K_SWIPEABLE) == "swipeable";
+    assert tree::kind_name(props::K_TOGGLE) == "toggle";
+    assert tree::kind_name(props::K_TABS) == "tabs";
+    assert tree::kind_name(props::K_TABLE) == "table";
+    assert tree::kind_name(props::K_TIME_PICKER) == "time_picker";
+    assert tree::kind_name(props::K_TOOLBAR_ITEM) == "toolbar_item";
+    assert tree::kind_name(props::K_WEB) == "web";
+    assert tree::kind_name(0u32) == "node";
 }
 
 #[test]
@@ -554,7 +556,7 @@ fn common_band_properties_round_trip_on_a_bare_container() {
     assert text_eq(h, "tooltip", "hi");
 
     assert tree::set(h, "background_color",
-                     insp::Value::Color(vocab::Color::system_blue())) == insp::Outcome::Ok;
+                     insp::Value::Color(tree::to_color(vocab::Color::system_blue()))) == insp::Outcome::Ok;
 }
 
 // Tier 2: flex style, also with no kind dispatch.
@@ -564,7 +566,7 @@ fn layout_properties_round_trip_and_raise_only_the_layout_bit() {
     var root: core::Node = @ui { column(key: "root") { label("x", key: "x") } };
     app::open_window(#addr_of(root));
     let h: insp::Handle = row_for(tree::describe(), "root");
-    let n: *core::Node = h.node;
+    let n: *core::Node = tree::node_of(h);
 
     core::clear_dirty(n);
     assert tree::set(h, "width", insp::Value::Num(320.0f64)) == insp::Outcome::Ok;
@@ -684,7 +686,7 @@ fn reset_restores_the_declared_value_and_not_the_type_default() {
     let h: insp::Handle = row_for(tree::describe(), "root");
 
     // What the application declared.
-    core::set_opacity(h.node, 0.8);
+    core::set_opacity(tree::node_of(h), 0.8);
     assert get_num(h, "opacity") == 0.8;
 
     assert tree::set(h, "opacity", insp::Value::Num(0.2f64)) == insp::Outcome::Ok;
@@ -705,7 +707,7 @@ fn a_second_write_does_not_overwrite_the_recorded_original() {
     app::open_window(#addr_of(root));
     let h: insp::Handle = row_for(tree::describe(), "root");
 
-    core::set_opacity(h.node, 0.9);
+    core::set_opacity(tree::node_of(h), 0.9);
     let _a: insp::Outcome = tree::set(h, "opacity", insp::Value::Num(0.5f64));
     let _b: insp::Outcome = tree::set(h, "opacity", insp::Value::Num(0.1f64));
     assert tree::override_count() == 1;
@@ -732,7 +734,7 @@ fn resetting_a_property_that_was_never_overridden_changes_nothing() {
     var root: core::Node = @ui { column(key: "root") { label("x", key: "x") } };
     app::open_window(#addr_of(root));
     let h: insp::Handle = row_for(tree::describe(), "root");
-    core::set_opacity(h.node, 0.7);
+    core::set_opacity(tree::node_of(h), 0.7);
     assert tree::reset(h, "opacity") == insp::Outcome::Ok;
     assert get_num(h, "opacity") == 0.7;
 }
@@ -830,7 +832,7 @@ fn no_inspector_write_ever_issues_a_focus_blur_or_flush_command() {
     app::open_window(#addr_of(root));
     let rows: vec::Vec[insp::Node] = tree::describe();
     let h: insp::Handle = row_for(rows, "status");
-    let n: *core::Node = h.node;
+    let n: *core::Node = tree::node_of(h);
 
     core::clear_dirty(n);
     let _a: insp::Outcome = tree::set(h, "opacity", insp::Value::Num(0.5f64));
@@ -838,7 +840,7 @@ fn no_inspector_write_ever_issues_a_focus_blur_or_flush_command() {
     let _c: insp::Outcome = tree::set(h, "padding", insp::Value::Num(4.0f64));
     let _d: insp::Outcome = tree::set(h, "text", insp::Value::Str(text::from_str("Busy")));
     let _e: insp::Outcome = tree::set(h, "background_color",
-                                      insp::Value::Color(vocab::Color::system_red()));
+                                      insp::Value::Color(tree::to_color(vocab::Color::system_red())));
     let after: u64 = core::dirty_of(n);
 
     // Real state bits were raised...
@@ -893,7 +895,7 @@ fn a_refused_write_changes_nothing_and_records_nothing() {
     var root: core::Node = @ui { column(key: "root") { label("x", key: "x") } };
     app::open_window(#addr_of(root));
     let h: insp::Handle = row_for(tree::describe(), "root");
-    core::set_opacity(h.node, 0.75);
+    core::set_opacity(tree::node_of(h), 0.75);
 
     assert tree::set(h, "opacity", insp::Value::Bool(true)) == insp::Outcome::TypeMismatch;
     assert get_num(h, "opacity") == 0.75;
@@ -953,7 +955,7 @@ fn a_duplicate_key_refuses_the_write_it_cannot_aim() {
     let second: insp::Handle = nth_for(rows, "dup", 1);
     assert !first.is_none();
     assert !second.is_none();
-    assert first.node != second.node;
+    assert tree::node_of(first) != tree::node_of(second);
 
     // The first match is what `find` resolves, so it is writable.
     assert tree::set(first, "text", insp::Value::Str(text::from_str("ok")))
@@ -1096,22 +1098,22 @@ fn values_render_by_tag() {
 // would report every themed colour as transparent black.
 #[test]
 fn a_theme_token_renders_as_a_token_and_a_literal_renders_as_channels() {
-    let named: text::Text = vt(insp::Value::Color(vocab::Color::system_blue()));
+    let named: text::Text = vt(insp::Value::Color(tree::to_color(vocab::Color::system_blue())));
     assert named.has_prefix("token:");
 
     let literal: text::Text =
-        vt(insp::Value::Color(vocab::Color::rgba(1.0, 0.0, 0.0, 1.0)));
+        vt(insp::Value::Color(tree::to_color(vocab::Color::rgba(1.0, 0.0, 0.0, 1.0))));
     assert literal.has_prefix("rgba(");
     assert !literal.contains("token");
 
     // Unset is a word, not four zeroes that read as a colour someone chose.
-    assert vt(insp::Value::Color(vocab::Color::clear())).view() == "clear";
+    assert vt(insp::Value::Color(tree::to_color(vocab::Color::clear()))).view() == "clear";
 
     // A light/dark pair shows both sides, because either one alone is half an
     // answer about what will actually be drawn.
-    let pair: text::Text = vt(insp::Value::Color(vocab::Color::adaptive(
+    let pair: text::Text = vt(insp::Value::Color(tree::to_color(vocab::Color::adaptive(
         vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
-        vocab::Color::rgba(0.0, 0.0, 0.0, 1.0))));
+        vocab::Color::rgba(0.0, 0.0, 0.0, 1.0)))));
     assert pair.contains("light");
     assert pair.contains("dark");
 }
@@ -1197,7 +1199,7 @@ fn unreadable_input_is_refused_rather_than_written_as_zero() {
         option::Option[insp::Value]::Some(_v) => false,
         option::Option::None => true,
     };
-    assert match tree::parse_as(insp::Value::Color(vocab::Color::none()), "blue") {
+    assert match tree::parse_as(insp::Value::Color(tree::to_color(vocab::Color::none())), "blue") {
         option::Option[insp::Value]::Some(_v) => false,
         option::Option::None => true,
     };
@@ -1234,8 +1236,8 @@ fn the_panel_refreshes_and_keeps_its_selection_across_a_new_snapshot() {
     { panel.selected = h };
     widget::refresh(#addr_of(panel));
     // Same node, re-issued handle, still live.
-    assert panel.selection().node == h.node;
-    assert panel.selection().is_live();
+    assert tree::node_of(panel.selected_handle()) == tree::node_of(h);
+    assert panel.selected_handle().is_live();
 }
 
 // The model the outline view is given excludes the panel's own subtree, so
@@ -1434,8 +1436,8 @@ fn the_model_carries_the_facet_node_so_selection_needs_no_lookup() {
 
     // And selecting through it lands on that node.
     widget::on_tree_select(a, #addr_of(panel) as *u8);
-    assert panel.selection().node == mount::node("a");
-    assert tree::set(panel.selection(), "opacity", insp::Value::Num(0.5f64))
+    assert tree::node_of(panel.selected_handle()) == mount::node("a");
+    assert tree::set(panel.selected_handle(), "opacity", insp::Value::Num(0.5f64))
         == insp::Outcome::Ok;
 }
 
@@ -1468,7 +1470,7 @@ fn selecting_a_departed_node_is_refused() {
 
     var orphan: ftree::TreeNode = ftree::TreeNode::new("gone", "n999", data: 0 as *u8);
     widget::on_tree_select(#addr_of(orphan), #addr_of(panel) as *u8);
-    assert panel.selection().is_none();
+    assert panel.selected_handle().is_none();
 }
 
 // ==============================================================================
@@ -1487,7 +1489,7 @@ fn placing_a_node_with_no_backed_ancestor_finds_nothing() {
     app::open_window(#addr_of(root));
 
     let h: insp::Handle = row_for(tree::describe(), "x");
-    let p: platform::Placed = platform::place(h.node);
+    let p: platform::Placed = platform::place(tree::node_of(h));
     assert !p.found;
     assert platform::place(0 as *core::Node).found == false;
 }
@@ -1828,9 +1830,9 @@ fn reparent_moves_a_node_between_containers() {
     let after: vec::Vec[insp::Node] = tree::describe();
     let lh: insp::Handle = row_for(after, "left");
     let rh: insp::Handle = row_for(after, "right");
-    assert core::child_count_of(lh.node) == 0;
-    assert core::child_count_of(rh.node) == 1;
-    assert child_key_is(rh.node, 0, "x");
+    assert core::child_count_of(tree::node_of(lh)) == 0;
+    assert core::child_count_of(tree::node_of(rh)) == 1;
+    assert child_key_is(tree::node_of(rh), 0, "x");
     // Moved, not copied and not dropped — the walk still finds exactly one.
     assert !row_for(after, "x").is_none();
 }
@@ -1932,7 +1934,7 @@ fn a_leaf_control_refuses_an_inserted_child() {
     assert tree::insert(row_for(rows, "go"), 0, insp::Spec::of("label"))
         == insp::Outcome::NotAContainer;
     // Refused all the way down: nothing was made and nothing was journalled.
-    assert core::child_count_of(row_for(rows, "a").node) == 0;
+    assert core::child_count_of(tree::node_of(row_for(rows, "a"))) == 0;
     assert tree::journal_count() == 0;
 }
 
@@ -1991,7 +1993,7 @@ fn the_panels_own_subtree_is_protected_from_every_structural_verb() {
     app::open_window(#addr_of(root));
 
     let rows: vec::Vec[insp::Node] = tree::describe();
-    tree::mark_self(row_for(rows, "insp:root").node);
+    tree::mark_self(tree::node_of(row_for(rows, "insp:root")));
 
     // The panel is the thing the developer is READING. A tool that can delete
     // its own controls can end a debugging session by accident — and unlike a
@@ -2029,7 +2031,7 @@ fn a_move_into_a_nodes_own_subtree_is_refused_as_a_cycle() {
     // the tree would already be cut.
     assert tree::reparent(outer, inner_h, 0) == insp::Outcome::Cycle;
     assert tree::reparent(outer, outer, 0) == insp::Outcome::Cycle;
-    assert core::child_count_of(outer.node) == 1;
+    assert core::child_count_of(tree::node_of(outer)) == 1;
     assert tree::trash_count() == 0;
 }
 
@@ -2135,7 +2137,7 @@ fn the_local_backend_routes_every_structural_verb_to_the_tree() {
 
     let rows: vec::Vec[insp::Node] = b.describe_now();
     assert b.reparent_now(row_for(rows, "made"), row_for(rows, "root"), 0).is_ok();
-    assert child_key_is(row_for(rows, "root").node, 0, "made");
+    assert child_key_is(tree::node_of(row_for(rows, "root")), 0, "made");
 }
 
 // ==============================================================================
@@ -2174,8 +2176,13 @@ fn wire_ready() {
     fresh();
     tree::empty_trash();
     tree::forget_journal();
-    mcp::disarm();
-    mcp::arm(tree::local_backend());
+    mcp::clear_backend();
+    // BOTH HALVES, because they are two things now. `publish` puts the verbs
+    // on the server — `agent_mcp` does this itself when it starts serving, and
+    // there is no server here — and `set_backend` installs the walker they
+    // read through, which is what the serving facade does.
+    mcp::publish();
+    mcp::set_backend(tree::local_backend());
 }
 
 #[test]
@@ -2368,27 +2375,55 @@ fn a_missing_parameter_is_refused_rather_than_defaulted_to_node_zero() {
     assert obj.contains("-32602");
 }
 
+// THE VERB EXISTS AND SAYS WHY, which is the whole of what moved.
+//
+// This test used to assert the opposite — that an unarmed process answers
+// `-32601 method not found` — and that was the defect, not the design.
+// `-32601` means THE VERB DOES NOT EXIST; not armed means THIS ENDPOINT HAS NO
+// TREE INSTALLED. A client cannot tell those apart, and three packages had
+// grown machinery to cope: `remote` turned it into an empty vector, so an IDE
+// panel rendered a broken endpoint as a calm "0 nodes"; `agent_mcp` grew a
+// startup canary; iris grew a special-cased empty state, wrote it, measured
+// it, and removed it again.
+//
+// The fourteen verbs are published by `agent_mcp` when it starts serving, so
+// serving IS the opt-in and there is no second flag to forget. What a walker
+// gates is whether they can ANSWER, and the refusal names the missing call.
 #[test]
-fn the_namespace_is_absent_until_it_is_armed_and_absent_again_after() {
+fn a_verb_with_no_tree_installed_refuses_by_policy_not_by_absence() {
     fresh();
-    mcp::disarm();
+    mcp::publish();
+    mcp::clear_backend();
     assert mcp::armed() == false;
 
-    // Linking the module in is not exposure. A process that never armed the
-    // namespace does not serve it — which is the whole gate, because this
-    // namespace is strictly more powerful than the agent surface beside it.
     let off: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
-    assert off.contains("-32601");
+    // The verb is THERE. `-32601` would be the old lie.
+    assert off.contains("-32601") == false;
     assert off.contains("\"nodes\"") == false;
+    // ...and the sentence names what is missing and where to put it, at the
+    // one place that knows — rather than three packages downstream.
+    assert off.contains("no tree is installed");
+    assert off.contains("no inspector backend for its platform");
 
-    mcp::arm(tree::local_backend());
+    mcp::set_backend(tree::local_backend());
     assert mcp::armed();
     let on: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":2}");
     assert on.contains("\"nodes\"");
 
-    mcp::disarm();
+    // Taking the tree away refuses the same way — a target that went, not a
+    // verb that never was.
+    mcp::clear_backend();
     let after: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":3}");
-    assert after.contains("-32601");
+    assert after.contains("-32601") == false;
+    assert after.contains("no tree is installed");
+}
+
+// A verb nobody serves is still `-32601`, which is what that code is FOR.
+#[test]
+fn an_unknown_verb_is_still_method_not_found() {
+    wire_ready();
+    let r: text::Text = rpc("{\"method\":\"inspector.teleport\",\"id\":1}");
+    assert r.contains("-32601");
 }
 
 #[test]
@@ -2411,11 +2446,11 @@ fn arming_the_inspector_is_not_a_way_around_the_agents_consent_gate() {
 #[test]
 fn a_degraded_backend_refuses_on_the_wire_without_crashing() {
     fresh();
-    mcp::disarm();
+    mcp::clear_backend();
     // Armed, but with the vtable that answers nothing. The namespace is open
     // and every verb declines — which is what a build with no walker installed
     // should look like from outside, rather than a null call.
-    mcp::arm(insp::Backend::none());
+    mcp::set_backend(insp::Backend::none());
 
     let d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
     assert d.contains("\"nodes\"");
@@ -2427,7 +2462,7 @@ fn a_degraded_backend_refuses_on_the_wire_without_crashing() {
     let u: text::Text = rpc("{\"method\":\"undo\",\"id\":3}");
     assert u.contains("\"outcome\":\"nothing_to_undo\"");
 
-    mcp::disarm();
+    mcp::clear_backend();
 }
 
 // THE TRAP THIS NAMESPACE EXISTS TO WALK INTO, and it cost a debugging session.
@@ -2455,7 +2490,7 @@ fn a_property_named_over_the_wire_is_still_addressable_by_a_later_reset() {
 
     // The ledger entry is findable — by the panel, which uses the literal, and
     // by a second request, which does not.
-    assert tree::is_overridden(row_for(tree::describe(), "root").node, "opacity");
+    assert tree::is_overridden(tree::node_of(row_for(tree::describe(), "root")), "opacity");
 
     let r: text::Text = rpc("{\"method\":\"reset\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":3}");
     assert r.contains("\"outcome\":\"ok\"");
@@ -2762,12 +2797,12 @@ fn enum_is(h: insp::Handle, prop: str, want: str) -> bool {
 }
 
 fn overridden(h: insp::Handle, prop: str) -> bool {
-    return tree::is_overridden(h.node, prop);
+    return tree::is_overridden(tree::node_of(h), prop);
 }
 
 // Does this node's editor list that property at all?
 fn lists(h: insp::Handle, prop: str) -> bool {
-    let ps: vec::Vec[insp::Prop] = tree::declared_props(h, h.node);
+    let ps: vec::Vec[insp::Prop] = tree::declared_props(h, tree::node_of(h));
     var i: usize = 0;
     while i < ps.count() {
         match ps.at_ptr(i) {
@@ -2783,7 +2818,7 @@ fn lists(h: insp::Handle, prop: str) -> bool {
 
 fn handle_for(root: *core::Node, key: str) -> insp::Handle {
     return match core::find_in(root, key) {
-        option::Option[*core::Node]::Some(p) => insp::Handle::of(p, 0),
+        option::Option[*core::Node]::Some(p) => tree::handle_of(p, 0),
         option::Option::None => insp::Handle::none(),
     };
 }
@@ -2825,7 +2860,7 @@ fn the_type_face_is_settable_and_reads_back() {
     assert enum_is(lbl, "font_weight", "bold");
 
     let red: vocab::Color = vocab::Color::rgba(1.0, 0.0, 0.0, 1.0);
-    assert tree::set(lbl, "text_color", insp::Value::Color(red)) == insp::Outcome::Ok;
+    assert tree::set(lbl, "text_color", insp::Value::Color(tree::to_color(red))) == insp::Outcome::Ok;
     assert match tree::get(lbl, "text_color") {
         option::Option[insp::Value]::Some(insp::Value::Color(c)) => c.r == 1.0,
         _ => false,
@@ -2836,7 +2871,7 @@ fn the_type_face_is_settable_and_reads_back() {
     // A border is a button's, and only a button's.
     assert tree::set(btn, "border_width", insp::Value::Num(2.0)) == insp::Outcome::Ok;
     assert num_prop(btn, "border_width") == 2.0;
-    assert tree::set(btn, "border_color", insp::Value::Color(red)) == insp::Outcome::Ok;
+    assert tree::set(btn, "border_color", insp::Value::Color(tree::to_color(red))) == insp::Outcome::Ok;
     assert tree::set(lbl, "border_width", insp::Value::Num(2.0))
         == insp::Outcome::UnknownProperty;
     assert match tree::get(lbl, "border_width") {
@@ -2932,16 +2967,16 @@ fn every_spelling_the_vocabulary_advertises_round_trips() {
     let box: insp::Handle = handle_for(#addr_of(root), "sp:root");
     let lbl: insp::Handle = handle_for(#addr_of(root), "sp:lbl");
 
-    let t: vec::Vec[voc::Descriptor] = voc::table();
+    let t: vec::Vec[insp::Descriptor] = insp::table();
     var checked: usize = 0;
     var i: usize = 0;
     while i < t.count() {
         match t.at_ptr(i) {
-            option::Option[*voc::Descriptor]::Some(dp) => {
+            option::Option[*insp::Descriptor]::Some(dp) => {
                 if { (*dp).ty } == "enum" {
                     // font_weight is a control property; everything else in the
                     // set is on the shared band.
-                    let h: insp::Handle = if voc::covers({ (*dp).applies }, "label") && ({ (*dp).applies } != "*") { lbl } else { box };
+                    let h: insp::Handle = if insp::covers({ (*dp).applies }, "label") && ({ (*dp).applies } != "*") { lbl } else { box };
                     let words: vec::Vec[str] = { (*dp).values }.split(" ");
                     assert words.count() > 1;
                     var w: usize = 0;
@@ -2970,7 +3005,7 @@ fn every_spelling_the_vocabulary_advertises_round_trips() {
                     }
                 }
             }
-            option::Option[*voc::Descriptor]::None => { }
+            option::Option[*insp::Descriptor]::None => { }
         }
         i = i +% 1;
     }
@@ -3027,7 +3062,7 @@ fn the_drop_shadow_is_five_scalars() {
     let h: insp::Handle = handle_for(#addr_of(root), "sh:root");
 
     let grey: vocab::Color = vocab::Color::rgba(0.2, 0.2, 0.2, 1.0);
-    assert tree::set(h, "shadow_color", insp::Value::Color(grey)) == insp::Outcome::Ok;
+    assert tree::set(h, "shadow_color", insp::Value::Color(tree::to_color(grey))) == insp::Outcome::Ok;
     assert tree::set(h, "shadow_opacity", insp::Value::Num(0.35)) == insp::Outcome::Ok;
     assert tree::set(h, "shadow_radius", insp::Value::Num(8.0)) == insp::Outcome::Ok;
     assert tree::set(h, "shadow_offset_x", insp::Value::Num(0.0)) == insp::Outcome::Ok;
@@ -3064,7 +3099,7 @@ fn every_advertised_property_is_settable_and_readable() {
     app::open_window(#addr_of(col));
 
     var hs: vec::Vec[insp::Handle] = vec::new::[insp::Handle]();
-    let _h1: status::Status = hs.append(insp::Handle::of(#addr_of(col), 0));
+    let _h1: status::Status = hs.append(tree::handle_of(#addr_of(col), 0));
     let _h2: status::Status = hs.append(handle_for(#addr_of(col), "p:lbl"));
     let _h3: status::Status = hs.append(handle_for(#addr_of(col), "p:btn"));
     let _h4: status::Status = hs.append(handle_for(#addr_of(col), "p:fld"));
@@ -3116,7 +3151,7 @@ fn every_advertised_property_is_settable_and_readable() {
 #[test]
 fn a_node_can_be_taken_out_of_flow_and_placed() {
     var n: core::Node = ui::column(core::Builder::new(), key: "probe:box");
-    let h: insp::Handle = insp::Handle::of(#addr_of(n), 0);
+    let h: insp::Handle = tree::handle_of(#addr_of(n), 0);
     assert h.is_live();
 
     assert tree::set(h, "position", insp::Value::Enum(text::from_str("absolute")))
@@ -3321,6 +3356,83 @@ fn every_verb_is_listed_declared_and_dispatched() {
         }
         i = i +% 1;
     }
+}
+
+// THE FOURTH LIST — the one that was missing, and the one that cost a working
+// Inspect tab. `remote` is this package's own JSON-RPC CLIENT for these verbs,
+// and until now nothing asserted that the names it SENDS are names `handle`
+// ANSWERS. So `f4a5a159` could drop the `inspector.` prefix from the server,
+// the bridge and this suite, leave `remote` spelling `inspector.describe`, and
+// ship green: the server half is tested through `handle_request`, the client
+// half against its own decoding, and the verb NAME is the one thing that only
+// matters where the two meet.
+//
+// What it looked like from a consumer is why this is a test and not a comment.
+// `rpc` maps a JSON-RPC error to a fault on the Remote and the verb returns an
+// empty vector — indistinguishable from an app whose tree really is empty — so
+// iris's Inspect tab attached, switched out of its empty state, and read
+// "0 nodes" from an app answering `describe_tree` with 5. Every signal said
+// success.
+//
+// No socket needed: `rpc` here builds the body the client's `rpc` builds and
+// hands it to the same dispatch a connection would.
+#[test]
+fn every_verb_the_client_sends_is_one_the_server_answers() {
+    wire_ready();
+    let sends: vec::Vec[str] = verbs::client_sends();
+    let routed: vec::Vec[str] = mcp::verb_names();
+    assert sends.count() == (10 as usize);
+
+    var i: usize = 0;
+    while i < sends.count() {
+        match sends.at(i) {
+            option::Option[str]::Some(nm) => {
+                // Routed to this namespace at all.
+                var known: bool = false;
+                var j: usize = 0;
+                while j < routed.count() {
+                    match routed.at(j) {
+                        option::Option[str]::Some(r) => { if r == nm { known = true; } }
+                        option::Option[str]::None => { }
+                    }
+                    j = j +% 1;
+                }
+                if !known {
+                    io::println(nm);
+                    io::println("  ^ remote.cplus sends this; the server does not route it");
+                }
+                assert known;
+
+                // And answered. Params are deliberately absent, so a verb that
+                // IS answered says "missing parameter" and only one that is not
+                // says "method not found" — the same discrimination
+                // `every_verb_is_listed_declared_and_dispatched` relies on.
+                var line: text::Text = text::from_str("{\"method\":\"");
+                let _a: status::Status = line.append(nm);
+                let _b: status::Status = line.append("\",\"id\":1}");
+                let r: text::Text = rpc(line.view());
+                if r.contains("method not found") {
+                    io::println(nm);
+                    io::println("  ^ remote.cplus sends this and gets -32601");
+                }
+                assert !r.contains("method not found");
+            }
+            option::Option[str]::None => { }
+        }
+        i = i +% 1;
+    }
+}
+
+// The client's own table is a SUBSET of the server's, not a second copy of it.
+// A verb in `client_sends` that is not in `all` is the failure above; a verb in
+// `all` that no client sends is fine and expected — `vocabulary`, `journal`,
+// `nudge` and `set_many` have no Backend vtable slot.
+#[test]
+fn the_clients_verbs_are_a_subset_of_the_servers() {
+    let sends: vec::Vec[str] = verbs::client_sends();
+    let all: vec::Vec[str] = verbs::all();
+    assert all.count() == (14 as usize);
+    assert sends.count() < all.count();
 }
 
 // The arrow-key drag: move it by two and see where it landed.
@@ -3554,7 +3666,7 @@ fn the_diff_text_is_the_two_levels_a_person_pastes() {
     assert tree::set(bh, "font_weight", insp::Value::Enum(text::from_str("bold")))
         == insp::Outcome::Ok;
 
-    let t: text::Text = tree::changes_text();
+    let t: text::Text = insp::changes_text(tree::changes());
     // Grouped by `kind#key`, one entry per node however the writes interleaved.
     assert t.contains("\"node#root\": {");
     assert t.contains("\"button#save\": {");
@@ -3570,7 +3682,7 @@ fn an_untouched_tree_copies_an_empty_object() {
     fresh();
     var root: core::Node = ui::column(core::Builder::new(), key: "root");
     app::open_window(#addr_of(root));
-    assert tree::changes_text().view() == "{}\n";
+    assert insp::changes_text(tree::changes()).view() == "{}\n";
 }
 
 #[test]
@@ -3644,12 +3756,12 @@ fn a_dropdown_offers_exactly_the_spellings_the_vocabulary_lists() {
     assert widget::enum_index_of("font_weight", "bold") == (7 as i64);
 
     // Round-trip every spelling of every enum: index → word → index.
-    let t: vec::Vec[voc::Descriptor] = voc::table();
+    let t: vec::Vec[insp::Descriptor] = insp::table();
     var i: usize = 0;
     var checked: usize = 0;
     while i < t.count() {
         match t.at_ptr(i) {
-            option::Option[*voc::Descriptor]::Some(d) => {
+            option::Option[*insp::Descriptor]::Some(d) => {
                 if { (*d).ty } == "enum" {
                     let words: vec::Vec[str] = { (*d).values }.split(" ");
                     var w: usize = 0;
@@ -3667,7 +3779,7 @@ fn a_dropdown_offers_exactly_the_spellings_the_vocabulary_lists() {
                     }
                 }
             }
-            option::Option[*voc::Descriptor]::None => { }
+            option::Option[*insp::Descriptor]::None => { }
         }
         i = i +% 1;
     }
@@ -3707,7 +3819,7 @@ fn a_caller_supplied_property_name_is_exchanged_for_ours() {
     }
 
     // The diff names the property, not the bytes that were there.
-    let t: text::Text = tree::changes_text();
+    let t: text::Text = insp::changes_text(tree::changes());
     assert t.contains("\"padding\": 24");
 
     // ...and a reset through another temporary still finds the row.
@@ -3716,7 +3828,7 @@ fn a_caller_supplied_property_name_is_exchanged_for_ours() {
         let _b: status::Status = again.append("ing");
         assert tree::reset(h, again.view()) == insp::Outcome::Ok;
     }
-    assert tree::changes_text().view() == "{}\n";
+    assert insp::changes_text(tree::changes()).view() == "{}\n";
 
     // A name in no table is refused rather than stored.
     assert tree::set(h, "not_a_property", insp::Value::Num(1.0))
@@ -3745,7 +3857,7 @@ fn a_value_that_does_not_parse_is_refused_and_changes_nothing() {
         option::Option[insp::Value]::Some(_v) => false,
         option::Option::None => true,
     };
-    assert tree::changes_text().view() == "{}\n";
+    assert insp::changes_text(tree::changes()).view() == "{}\n";
 
     // ...and a value that DOES parse writes.
     let cur2: insp::Value = match tree::get(h, "corner_radius") {
@@ -3758,7 +3870,7 @@ fn a_value_that_does_not_parse_is_refused_and_changes_nothing() {
         }
         option::Option::None => { assert false; }
     }
-    assert tree::changes_text().contains("\"corner_radius\": 12");
+    assert insp::changes_text(tree::changes()).contains("\"corner_radius\": 12");
 }
 
 #[test]
@@ -3778,7 +3890,7 @@ fn a_half_written_number_is_refused_without_touching_the_text() {
         option::Option::None => true,
     };
     // Nothing was written, so nothing has to be undone.
-    assert tree::changes_text().view() == "{}\n";
+    assert insp::changes_text(tree::changes()).view() == "{}\n";
 }
 
 // ---- the rest of the layout ---------------------------------------------------
@@ -3924,12 +4036,370 @@ fn reset_puts_a_refused_value_back() {
     let h: insp::Handle = handle_for(#addr_of(root), "root");
 
     assert tree::reset(h, "corner_radius") == insp::Outcome::Ok;
-    assert tree::changes_text().view() == "{}\n";
+    assert insp::changes_text(tree::changes()).view() == "{}\n";
 
     // ...and it still restores a real override.
     assert tree::set(h, "corner_radius", insp::Value::Num(9.0)) == insp::Outcome::Ok;
     assert num_prop(h, "corner_radius") == 9.0;
     assert tree::reset(h, "corner_radius") == insp::Outcome::Ok;
     assert num_prop(h, "corner_radius") == 0.0;
-    assert tree::changes_text().view() == "{}\n";
+    assert insp::changes_text(tree::changes()).view() == "{}\n";
 }
+
+// ---- the docs must not teach what the runtime refuses -------------------------
+//
+// gaps/the-inspectors-own-docs-teach-an-id-the-runtime-refuses. Two `arm()` doc
+// comments told the reader to call `runtime::agent_mcp("/tmp/myapp.sock")`, an
+// argument `valid_id` rejects outright — so an app following the package's own
+// instructions served no agent surface at all, and learned why on stderr, which
+// is the last place a reader looks.
+//
+// The sweep found more than the report named: a third copy of the same example
+// in `appkit.cplus`, and `docs/wire.md` — the PROTOCOL document — still naming
+// every verb with the `inspector.` prefix that f4a5a159 removed. A stranger
+// writing a client from it got `-32601` on all twelve, and there are fourteen.
+//
+// SO THE GUARD IS A TEST, not another proofread. `#include_str` compiles the
+// files into the binary, so a dead name coming back is a red suite rather than
+// an hour of somebody else's afternoon. It is the same trick iris used on its
+// generated AGENTS.md after the same defect, one layer out.
+//
+// WHAT GOES IN THE LIST: a spelling the runtime REFUSES, or one it no longer
+// answers. Not every historical name — `verbs.cplus` and `wire.md` both
+// explain what the prefix was and why it went, and a guard that forbade saying
+// so would forbid the explanation along with the mistake. Hence the marker:
+// prose ABOUT a dead name says `(retired)` beside it.
+
+// Does `needle` appear on any line that is NOT marked as history?
+//
+// LINE-AWARE, and that is the whole design of this guard. A file that must not
+// TEACH a dead name still has to be able to SAY it — `wire.md` explains what
+// the prefix was and why it went, and the three `arm()` comments say what the
+// stale example used to be so the next reader knows the shape to distrust. A
+// guard that forbade the explanation along with the mistake would delete the
+// only account of why any of this moved.
+//
+// So the marker is `(retired)`: put it on the line and the line is prose about
+// a dead name rather than an instruction to use one. It has to be earned per
+// line — a file-wide exemption would let a real regression in beside it.
+fn doc_has(hay: str, needle: str) -> bool {
+    return text::from_str(hay).contains(needle);
+}
+
+fn teaches(hay: str, needle: str) -> bool {
+    let lines: vec::Vec[str] = hay.split("\n");
+    var i: usize = 0 as usize;
+    while i < lines.count() {
+        match lines.at(i) {
+            option::Option[str]::Some(l) => {
+                if l.contains(needle) && !l.contains("(retired)") { return true; }
+            }
+            option::Option[str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// A MODULE PATH IS A DEAD NAME TOO, and this is the half the first version of
+// this guard missed. It watched verb names only — so when the surface, the
+// verbs, the walker and the platform halves moved out of this package, five doc
+// files went on naming `inspector/inspector`, `inspector/tree`, `inspector/mcp`,
+// `inspector/serve` and `inspector/appkit`, and a reader following any of them
+// got `imported file not found`. Thirty references across five files.
+//
+// The retirement marker earns each mention: `ref.md` says where a module WAS,
+// beside where it is, which is the sentence a reader arriving from an old link
+// needs.
+#[test]
+fn no_doc_teaches_a_module_path_that_moved() {
+    let readme: str = #include_str("../README.md");
+    let ref_md: str = #include_str("../docs/ref.md");
+    let guide: str = #include_str("../docs/guide.md");
+    let tut: str = #include_str("../docs/tutorial.md");
+    let wire: str = #include_str("../docs/wire.md");
+
+    // The surface, the verbs, the walker and the two platform doors.
+    assert teaches(readme, "inspector/inspector") == false;
+    assert teaches(readme, "inspector/tree") == false;
+    assert teaches(readme, "inspector/mcp") == false;
+    assert teaches(readme, "inspector/serve") == false;
+    assert teaches(readme, "inspector/appkit") == false;
+    assert teaches(ref_md, "inspector/inspector") == false;
+    assert teaches(ref_md, "inspector/tree") == false;
+    assert teaches(ref_md, "inspector/mcp") == false;
+    assert teaches(ref_md, "inspector/appkit") == false;
+    assert teaches(guide, "inspector/tree") == false;
+    assert teaches(tut, "inspector/tree") == false;
+    assert teaches(tut, "inspector/appkit") == false;
+    assert teaches(wire, "inspector/mcp") == false;
+    assert teaches(wire, "inspector/serve") == false;
+
+    // ...and the call that went with them.
+    assert teaches(readme, "inspect::arm") == false;
+    assert teaches(ref_md, "inspect::arm") == false;
+    assert teaches(guide, "mcp::arm") == false;
+    assert teaches(tut, "inspect::arm") == false;
+    assert teaches(wire, "inspect::arm") == false;
+
+    // WHERE THEY WENT is named, so the docs are usable and not merely silent.
+    assert doc_has(readme, "agent_core/inspect");
+    assert doc_has(readme, "agent_mcp/inspect");
+    assert doc_has(readme, "facet_agent/inspect_tree");
+    assert doc_has(ref_md, "facet_agent/inspect_platform");
+}
+
+// THE HOST API IS DOCUMENTED. Every name a containing application calls appears
+// in the reference — a surface a host cannot find is one it writes around,
+// which is what every one of these replaced.
+#[test]
+fn every_host_api_name_is_in_the_reference() {
+    let ref_md: str = #include_str("../docs/ref.md");
+    assert doc_has(ref_md, "fn connect(");
+    assert doc_has(ref_md, "fn disconnect(");
+    assert doc_has(ref_md, "fn is_connected(");
+    assert doc_has(ref_md, "fn target(");
+    assert doc_has(ref_md, "fn discover(");
+    assert doc_has(ref_md, "fn on_fault(");
+    assert doc_has(ref_md, "fn on_change(");
+    assert doc_has(ref_md, "fn on_select(");
+    assert doc_has(ref_md, "fn fault(");
+    assert doc_has(ref_md, "fn changes(");
+    assert doc_has(ref_md, "fn selection(");
+    assert doc_has(ref_md, "fn node_count(");
+    assert doc_has(ref_md, "fn select(");
+    assert doc_has(ref_md, "fn highlight(");
+    assert doc_has(ref_md, "fn clear_highlight(");
+    assert doc_has(ref_md, "fn reset_all(");
+    // ...and the two things a reader gets wrong without being told.
+    assert doc_has(ref_md, "kind#key");
+    assert doc_has(ref_md, "E0900");
+}
+
+#[test]
+fn no_doc_teaches_a_verb_name_the_server_dropped() {
+    // The prefix went with f4a5a159. `wire.md` is the document a stranger
+    // writes a client from, so it is the one that must be right.
+    let wire: str = #include_str("../docs/wire.md");
+    assert teaches(wire, "`inspector.describe`") == false;
+    assert teaches(wire, "`inspector.set`") == false;
+    assert teaches(wire, "`inspector.inspect`") == false;
+    assert teaches(wire, "`inspector.highlight`") == false;
+    assert teaches(wire, "`inspector.vocabulary`") == false;
+    // It names what the server actually answers, including the two it never
+    // listed at all.
+    assert doc_has(wire, "`describe_tree`");
+    assert doc_has(wire, "`set_many`");
+    assert doc_has(wire, "`nudge`");
+    // And the count it states is the count `verb_names` returns.
+    assert doc_has(wire, "Fourteen");
+    assert mcp::verb_names().count() == (14 as usize);
+}
+
+
+// ==============================================================================
+// the host API
+// ==============================================================================
+//
+// What an application EMBEDDING this panel needs, named — so a host stops
+// reading the panel's state from outside it. Each of these replaced something
+// a host wrote instead, and the comment on each says which.
+
+// ==============================================================================
+// the host API
+// ==============================================================================
+//
+// What an application EMBEDDING this panel needs, named — so a host stops
+// reading the panel's state from outside it. Each of these replaced something
+// a host wrote instead, and the comment on each says which.
+
+static SEEN_FAULT: text::Text = #zero::[text::Text]();
+static SEEN_SELECT: text::Text = #zero::[text::Text]();
+static SEEN_CHANGE: text::Text = #zero::[text::Text]();
+static CHANGE_CALLS: i32 = 0;
+
+fn note_fault_cb(why: str, _ctx: *u8) { SEEN_FAULT = text::from_str(why); return; }
+fn note_select_cb(id: str, _ctx: *u8) { SEEN_SELECT = text::from_str(id); return; }
+fn note_change_cb(c: insp::Change, _ctx: *u8) {
+    SEEN_CHANGE = c.node.clone();
+    CHANGE_CALLS = CHANGE_CALLS + 1;
+    return;
+}
+
+// THE TREE IS THE TEST'S, not a helper's. `open_window` registers it by
+// ADDRESS, so a helper that builds it and returns frees it out from under
+// every walk that follows — which is a segfault in whatever runs next, not a
+// failure here.
+fn api_tree() -> core::Node {
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("hello", key: "greeting"));
+    body.add(ui::button("go", key: "tap"));
+    return ui::column(body, key: "root");
+}
+
+fn api_panel() -> widget::Inspector {
+    return widget::new(tree::local_backend(), hide_self: false);
+}
+
+// A NODE'S ID is the package's existing one — `kind#key`, what the ledger
+// labels a change with and what the journal prints. That correlation is the
+// point: an id from `on_select` matches the `node` on a `Change`.
+#[test]
+fn the_api_addresses_nodes_by_the_id_the_ledger_uses() {
+    fresh();
+    var root: core::Node = api_tree();
+    app::open_window(#addr_of(root));
+    var p: widget::Inspector = api_panel();
+    let st: *widget::Inspector = #addr_of(p);
+    widget::refresh(st);
+
+    assert widget::select(st, "button#tap");
+    assert p.selection().view() == "button#tap";
+    assert p.node_count() > (0 as usize);
+
+    // An id nothing answers to is a refusal with a sentence, not a silent
+    // no-op — the panel keeps the selection it had.
+    assert widget::select(st, "button#nosuch") == false;
+    assert p.selection().view() == "button#tap";
+    assert widget::fault(st).contains("no node with that id");
+
+    // An UNKEYED node has no id, for the same reason the ledger drops one: it
+    // is not addressable, and a positional id would name a different node
+    // after the next insert.
+    assert widget::select(st, "column#") == false;
+}
+
+// The host is TOLD, rather than polling. `on_fault` is the one that caused
+// this: a host without it ran a one-second timer over `Remote::fault()`.
+#[test]
+fn a_host_is_told_about_selection_faults_and_edits() {
+    fresh();
+    var root: core::Node = api_tree();
+    app::open_window(#addr_of(root));
+    var p: widget::Inspector = api_panel();
+    let st: *widget::Inspector = #addr_of(p);
+    widget::on_fault(st, note_fault_cb);
+    widget::on_select(st, note_select_cb);
+    widget::on_change(st, note_change_cb);
+    widget::refresh(st);
+
+    SEEN_SELECT = text::new();
+    assert widget::select(st, "label#greeting");
+    assert SEEN_SELECT.view() == "label#greeting";
+
+    SEEN_FAULT = text::new();
+    let _miss: bool = widget::select(st, "label#gone");
+    assert SEEN_FAULT.contains("no node with that id");
+
+    // AN EDIT THAT LANDED, with the value the tree actually holds — which is
+    // what a host writes back into source.
+    CHANGE_CALLS = 0;
+    assert widget::select(st, "label#greeting");
+    widget::write_prop(st, "opacity", insp::Value::Num(0.5f64));
+    assert CHANGE_CALLS == 1;
+    assert SEEN_CHANGE.view() == "label#greeting";
+
+    // ...and a REFUSED one is a fault, not a change. This is the "field snaps
+    // back with no explanation" case.
+    SEEN_FAULT = text::new();
+    CHANGE_CALLS = 0;
+    widget::write_prop(st, "no_such_property", insp::Value::Num(1.0f64));
+    assert CHANGE_CALLS == 0;
+    assert !SEEN_FAULT.is_empty();
+}
+
+// The diff, read rather than copied — the same rows the Copy button pastes.
+#[test]
+fn the_api_answers_the_diff_and_resets_it() {
+    fresh();
+    var root: core::Node = api_tree();
+    app::open_window(#addr_of(root));
+    var p: widget::Inspector = api_panel();
+    let st: *widget::Inspector = #addr_of(p);
+    widget::refresh(st);
+    assert widget::select(st, "label#greeting");
+
+    assert p.changes().count() == (0 as usize);
+    widget::write_prop(st, "opacity", insp::Value::Num(0.5f64));
+    assert p.changes().count() == (1 as usize);
+    match p.changes().at_ptr(0 as usize) {
+        option::Option[*insp::Change]::Some(c) => {
+            assert { (*c).node.view() } == "label#greeting";
+            assert { (*c).prop } == "opacity";
+        }
+        option::Option[*insp::Change]::None => { assert false; }
+    }
+
+    // `reset_all` was a BUTTON and not an API, so a host could not offer it
+    // its own way.
+    widget::reset_all(st);
+    assert p.changes().count() == (0 as usize);
+}
+
+// DETACHING empties the panes and drops the selection. A host doing it by hand
+// swapped in `Backend::none()` and forgot the rest.
+#[test]
+fn disconnecting_empties_the_panel_and_drops_the_selection() {
+    fresh();
+    var root: core::Node = api_tree();
+    app::open_window(#addr_of(root));
+    var p: widget::Inspector = api_panel();
+    let st: *widget::Inspector = #addr_of(p);
+    widget::refresh(st);
+    assert widget::select(st, "label#greeting");
+    assert p.node_count() > (0 as usize);
+
+    widget::disconnect(st);
+    assert p.node_count() == (0 as usize);
+    assert p.selection().view() == "";
+    assert widget::is_connected(st) == false;
+    assert widget::target(st).view() == "";
+}
+// ATTACHING. `inapp` is the one target that needs no transport, so it is the
+// one this suite can drive end to end.
+#[test]
+fn connecting_in_app_attaches_without_a_transport() {
+    fresh();
+    var root: core::Node = api_tree();
+    app::open_window(#addr_of(root));
+    var p: widget::Inspector = api_panel();
+    let st: *widget::Inspector = #addr_of(p);
+
+    assert widget::is_connected(st) == false;
+    let r: status::Status = executor::block_on::[status::Status](
+        widget::connect(st, text::from_str("inapp")));
+    assert r == status::Status::Ok;
+    // `inapp` is not a CONNECTION — there is nothing to disconnect, and a host
+    // asking "am I attached to another process" must not be told yes.
+    assert widget::is_connected(st) == false;
+    assert widget::target(st).view() == "inapp";
+    assert p.node_count() > (0 as usize);
+}
+
+// An address this panel cannot read is refused with a sentence, before any
+// syscall. That is what makes `probe` stop being a separate pre-flight.
+#[test]
+fn an_unreadable_target_is_refused_with_a_reason() {
+    fresh();
+    var root: core::Node = api_tree();
+    app::open_window(#addr_of(root));
+    var p: widget::Inspector = api_panel();
+    let st: *widget::Inspector = #addr_of(p);
+    widget::on_fault(st, note_fault_cb);
+    SEEN_FAULT = text::new();
+
+    let r: status::Status = executor::block_on::[status::Status](
+        widget::connect(st, text::from_str("wat")));
+    assert r == status::Status::InvalidInput;
+    assert SEEN_FAULT.contains("not an address");
+    assert widget::is_connected(st) == false;
+
+    // ...and one nothing is listening at is a different answer, with its own
+    // sentence. Both used to be "the tree is empty".
+    SEEN_FAULT = text::new();
+    let r2: status::Status = executor::block_on::[status::Status](
+        widget::connect(st, text::from_str("/tmp/nothing-listens-here-at-all.socket")));
+    assert r2 == status::Status::OutOfBounds;
+    assert SEEN_FAULT.contains("nothing is listening");
+}
+

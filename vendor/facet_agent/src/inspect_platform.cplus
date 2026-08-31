@@ -25,6 +25,7 @@
 
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
+import "stdlib/io" as io;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
@@ -36,11 +37,11 @@ import "stdlib/env" as env;
 import "facet/facet" as core;
 import "facet/application" as app;
 import "facet/mount" as mount;
+import "facet/services" as services;
 import "facet/application" as runtime;
-import "facet_agent/agent" as agent;
-import "./inspector" as insp;
-import "./tree" as tree;
-import "./mcp" as mcp;
+import "agent_core/inspect" as insp;
+import "./inspect_tree" as tree;
+import "agent_mcp/inspect" as mcp;
 
 // ---- the hop to the UI thread --------------------------------------------------
 //
@@ -94,9 +95,82 @@ extern fn ns_string_from_class(c: *u8) -> *u8;
 // The overlay layer and its two colours, made once. A CGColor from
 // `CGColorCreate*` arrives at +1; holding both for the life of the process is
 // two allocations, against one per highlight if they were made per call.
+// WHAT THE OVERLAY IS ON, so it can be put back after the tree moves under it.
+//
+// `highlight` PLACES the layer; it does not attach it (attaching would need the
+// target layer-backed, and an inspector that changes how the app it inspects
+// draws is not an inspector). So every edit that changes a frame leaves the
+// outline behind — which is every edit worth making.
+//
+// SO IT IS PUT BACK EVERY TICK, and that is the whole mechanism.
+//
+// What came before was a list of causes — the panel re-placing after its own
+// writes, an `observe_size` for resizes, `rehighlight_soon` armed by the walker
+// after any write that can move a frame. Each list was incomplete. The one that
+// broke in the field was a `top` edit arriving over a socket: the walker armed
+// a re-place for one turn later on THIS process's loop, the layout had not run
+// by then, and the outline sat at the old frame while the label moved. Reported
+// from a screenshot, with the box left behind under the text.
+//
+// Asking on every tick has no list to be incomplete. `frames_settled` fires
+// after the layout pass, so the answer to "where is the node now" is true
+// whatever moved it — a local write, a remote one, the window resizing, a
+// splitter drag, the app relaying itself out.
+//
+// THE COST IS A NULL CHECK when nothing is highlighted, which is every tick of
+// every app that is not being inspected at that instant. Highlighting is a
+// deliberate, transient act on ONE node, so the loaded cost is one `place` walk
+// per tick for as long as a developer is looking at an outline.
+//
+// WHAT IT DOES NOT CATCH, deliberately: a layer moved without a layout — an
+// animation, or Core Animation driving a transform. Catching that needs a
+// per-frame hook in every app that links this, which is not a trade worth
+// making for a debugging outline.
+static HIGHLIGHTED: insp::Handle = #zero::[insp::Handle]();
+// The frame the outline is currently drawn at, so a tick that finds it
+// unchanged does nothing. A `place` walk is cheap; moving a layer is not, and
+// most ticks do not move the highlighted node.
+static AT_X: f64 = 0.0f64;
+static AT_Y: f64 = 0.0f64;
+static AT_W: f64 = 0.0f64;
+static AT_H: f64 = 0.0f64;
+
 static OVERLAY: *u8 = 0 as *u8;
 static FILL: *u8 = 0 as *u8;
 static STROKE: *u8 = 0 as *u8;
+
+// CATransform3DIdentity is a C global, not a call, so it is spelled out.
+fn identity_transform() -> qc::Transform3D {
+    return qc::Transform3D {
+        m11: 1.0f64, m12: 0.0f64, m13: 0.0f64, m14: 0.0f64,
+        m21: 0.0f64, m22: 1.0f64, m23: 0.0f64, m24: 0.0f64,
+        m31: 0.0f64, m32: 0.0f64, m33: 1.0f64, m34: 0.0f64,
+        m41: 0.0f64, m42: 0.0f64, m43: 0.0f64, m44: 1.0f64,
+    };
+}
+
+// The overlay's own m11, for the suite: the outline of a scaled node has to be
+// scaled with it, and that is a number rather than a screenshot.
+// Give `overlay` the node's own matrix, when the node is the thing that was
+// placed. Split out so the suite can drive it on bare layers: a full check
+// needs a mounted view in a window, and what is worth pinning is the DECISION
+// — mirror when the placed view is the node's own, identity otherwise.
+fn mirror_transform(overlay: qc::Layer, own: *u8, placed: *u8) {
+    if own.is_null() { return; }
+    // A VIEWLESS node was placed against an ANCESTOR's view, and that
+    // ancestor's matrix is not this node's. A span inside a scaled label is
+    // already drawn scaled by the label's own layer; mirroring it here would
+    // apply the scale twice.
+    if own != placed { return; }
+    let nl: qc::Layer = ak::View::from_raw(own).layer();
+    if nl.raw() == (0 as *u8) { return; }
+    overlay.set_transform(nl.transform());
+}
+
+fn overlay_m11() -> f64 {
+    if OVERLAY.is_null() { return 1.0f64; }
+    return { qc::Layer::from_raw(OVERLAY).transform().m11 };
+}
 
 fn ensure_colours() {
     if FILL.is_null() {
@@ -202,6 +276,11 @@ fn place(n: *core::Node) -> Placed {
 // ---- highlight ---------------------------------------------------------------
 
 fn clear_highlight(_s: *u8) {
+    HIGHLIGHTED = insp::Handle::none();
+    // FORGOTTEN TOO. Without this, selecting a node, clearing, and selecting
+    // the same node again would find the remembered rect unchanged and skip
+    // the re-place — an outline that never came back.
+    AT_X = 0.0f64; AT_Y = 0.0f64; AT_W = 0.0f64; AT_H = 0.0f64;
     if OVERLAY.is_null() { return; }
     let l: qc::Layer = qc::Layer::from_raw(OVERLAY);
     l.remove_from_superlayer();
@@ -210,7 +289,8 @@ fn clear_highlight(_s: *u8) {
 fn highlight(s: *u8, h: insp::Handle) {
     clear_highlight(s);
     if !h.is_live() { return; }
-    let p: Placed = place(h.node);
+    HIGHLIGHTED = h;
+    let p: Placed = place(tree::node_of(h));
     if !p.found { return; }
 
     let target: ak::View = ak::View::from_raw(p.view);
@@ -233,8 +313,35 @@ fn highlight(s: *u8, h: insp::Handle) {
     if host.raw() == (0 as *u8) { return; }
 
     let l: qc::Layer = overlay_layer();
+    // IDENTITY FIRST. The layer is reused across highlights, so a transform
+    // left from the last one would ride the next node.
+    l.set_transform(identity_transform());
     l.set_frame(r);
+
+    // THE NODE'S OWN TRANSFORM, MIRRORED — `scale`, `rotation` and
+    // `translation` are a CATransform3D on the node's LAYER, not a layout
+    // change, so its flex frame and its view's bounds are the UNSCALED ones.
+    // `convertRect:toView:` is view geometry and does not see a layer matrix
+    // either. So the outline of a node at `scale: 2` was the right rectangle
+    // for a node drawing at twice the size — reported as a highlight that
+    // trailed a scale write, and no amount of re-placing fixes it, because
+    // re-placing computes the same rect.
+    //
+    // Read from the layer rather than recomputed from the props: whatever the
+    // backend composed is what is on screen, and this cannot drift from it.
+    // Both layers anchor at their own centre and the overlay's frame IS the
+    // node's rect, so the same matrix about the same centre lands in the same
+    // place.
+    //
+    // A VIEWLESS node has no layer and no transform — a span is a run inside
+    // its label's string — so `p.view` being the parent's is the right answer
+    // and there is nothing to mirror.
+    mirror_transform(l, core::view_of(tree::node_of(h)), p.view);
+
     host.add_sublayer(l);
+    // REMEMBER WHERE IT LANDED, so the tick can tell "still there" from "moved"
+    // without doing this again.
+    AT_X = p.rect.x; AT_Y = p.rect.y; AT_W = p.rect.w; AT_H = p.rect.h;
 }
 
 // ---- native rows -------------------------------------------------------------
@@ -308,8 +415,33 @@ fn pasteboard_write(s: str) -> bool {
     return ok != (0 as i8);
 }
 
+// Put the outline back where the node now is. Called from the backend's tick,
+// after layout — see `core::set_frames_settled_fn`.
+//
+// A NO-OP UNLESS THE FRAME MOVED. The outline is a layer, and setting its
+// position every tick would be a commit every tick for a box that has not
+// moved. So the last placement is remembered and compared; only a change
+// reaches `highlight`.
+fn replace_highlight_now() {
+    let h: insp::Handle = HIGHLIGHTED;
+    if h.is_none() { return; }
+    if !h.is_live() {
+        // The node went away under us — a remove, or a screen swapped out.
+        // Leaving the outline over whatever took its place is the worst of the
+        // three options.
+        clear_highlight(0 as *u8);
+        return;
+    }
+    let p: Placed = place(tree::node_of(h));
+    if !p.found { return; }
+    if p.rect.x == AT_X && p.rect.y == AT_Y && p.rect.w == AT_W && p.rect.h == AT_H { return; }
+    highlight(0 as *u8, h);
+}
+
 fn install() {
     tree::install_platform(highlight, clear_highlight);
+    // The outline follows its node from here on — see `replace_highlight_now`.
+    core::set_frames_settled_fn(replace_highlight_now);
     tree::set_native_fn(native_props);
     tree::set_clipboard_fn(pasteboard_write);
     // Installed here and not in `mcp` so that module stays portable: the hop is
@@ -317,40 +449,3 @@ fn install() {
     // which is right for headless and for an in-process caller.
     mcp::set_marshal(run_on_main_sync);
 }
-
-// Serve the inspector IF the environment asks — the one line an application
-// adds to be inspectable by the tool that launched it. `FACET_INSPECT` names a
-// socket path; an IDE (iris's Run does this) sets it on the child it spawns
-// and connects a remote Backend to the same path. A process launched any other
-// way has no variable, and this is a no-op costing one getenv.
-//
-// Everything it does is the explicit wiring the probe app spells out by hand:
-// the platform half (overlay + the synchronous main-thread hop a socket
-// request needs), the armed namespace, and the serving thread. Arming stays a
-// deliberate act — linking this package in still exposes nothing; only the
-// launcher that set the variable gets a listener.
-// Arm the inspector namespace on the agent's socket, WITHOUT binding anything.
-//
-// This is the half an application actually chooses. `agent_mcp` decides whether
-// this process serves at all and at what address; this decides whether the
-// twelve `inspector.*` verbs are among what it serves. Separating them is the
-// point: there is one server and one consent gate, and the inspector is a
-// namespace inside it rather than a second door with its own socket.
-//
-// STILL EXPLICIT. Linking this package in exposes nothing — a process that
-// never calls `arm` answers "method not found" to every `inspector.*` method,
-// and the agent's policy still runs first and covers this namespace too.
-// Arming opens a door; it is not a way around the gate.
-//
-// Call it before the host, beside `agent_mcp`:
-//
-//     agent::enable();
-//     inspect::arm();
-//     runtime::agent_mcp("/tmp/myapp.sock");
-//     runtime::run_screen(Home::new());
-//
-fn arm() {
-    install();
-    mcp::arm(tree::local_backend());
-}
-

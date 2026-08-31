@@ -20,7 +20,6 @@ inspector = "*"
 
 ```cplus
 import "inspector/widget" as panel;
-import "inspector/appkit" as iplatform;
 
 struct App { panel: panel::Inspector, }
 
@@ -40,40 +39,56 @@ impl App: component::Lifecycle {
 }
 
 fn main() -> i32 {
-    iplatform::install();                       // highlight overlay + native rows
     let app: App = App { panel: panel::embedded() };
     ...
 }
 ```
 
-## Or over the agent's MCP socket
+The platform half — the highlight overlay, the native rows, the UI-thread hop —
+is installed by whoever serves the agent surface (`facet_agent`), so an embedded
+panel has nothing to install.
 
-One `arm` call publishes an `inspector.` namespace inside the server an app is
-already running. Arming is explicit and is the gate — see
-[docs/wire.md](docs/wire.md).
+## Or attached to another process
+
+`connect` takes `inapp`, a socket path, a loopback port, or `http://host:port/`
+— the scheme picks the transport — and `discover` answers where a named app is
+listening.
 
 ```cplus
-imcp::arm(itree::local_backend());
+let live: vec::Vec[text::Text] = panel::discover("myapp");
+let r: status::Status = await panel::connect(st, live.at_ptr(0)... );
 ```
+
+The fourteen verbs are on every agent surface: an app that calls
+`runtime::agent_mcp(id)` is inspectable, with no second call. See
+[docs/wire.md](docs/wire.md).
 
 ## Modules
 
+**This package is the panel.** The verbs, the walker and the platform halves
+live where their layer does, which is what lets `agent_mcp` serve the verbs
+without depending on a toolkit:
+
 | Module | |
 |---|---|
-| `inspector/inspector` | the neutral surface — `Handle`, `Value`, `Spec`, `Prop`, `Outcome`, `Backend` |
-| `inspector/tree` | the facet-tree walker, the typed dispatch, the structural verbs |
-| `inspector/widget` | the embeddable panel, written against the vtable |
-| `inspector/appkit` | highlight overlay, native rows, the UI-thread hop — the PLATFORM half, and it resolves per platform: `appkit.cplus` on macOS, `serve_ios.cplus` on iOS, `serve_android.cplus` on Android |
-| `inspector/serve` | `arm()` — one name an app calls on any platform to add the `inspector.*` verbs to the agent socket it already serves. Binds nothing: `runtime::agent_mcp(id)` decides whether this process serves at all |
-| `inspector/mcp` | the `inspector.` namespace for `agent_mcp`'s server |
+| `inspector/widget` | the embeddable panel, and the host API — written against the vtable |
+| `inspector/remote` | the same vtable over a socket, a port, or HTTP |
+
+| Elsewhere | |
+|---|---|
+| `agent_core/inspect` | the neutral surface — `Handle`, `Value`, `Spec`, `Prop`, `Outcome`, `Backend`, the property vocabulary. Names no toolkit, which is why the verbs could move |
+| `agent_mcp/inspect` | the fourteen verbs, published by `agent_mcp` itself when it starts serving |
+| `facet_agent/inspect_tree` | the facet-tree walker, the typed dispatch, the structural verbs |
+| `facet_agent/inspect_platform` | highlight overlay, native rows, the UI-thread hop — the PLATFORM half, resolved per platform (`_ios`, `_android`) |
 
 ## Docs
 
 - [docs/tutorial.md](docs/tutorial.md) — get a panel on screen, edit a property.
 - [docs/guide.md](docs/guide.md) — the three tiers, handles and staleness, the
   refusals, and the gotchas.
-- [docs/ref.md](docs/ref.md) — signatures.
-- [docs/wire.md](docs/wire.md) — the `inspector.` JSON-RPC namespace.
+- [docs/ref.md](docs/ref.md) — signatures, including the host API a
+  containing application drives the panel with.
+- [docs/wire.md](docs/wire.md) — the JSON-RPC verbs on the wire.
 - [docs/design.md](docs/design.md) — why it is shaped this way.
 
 ## Tests

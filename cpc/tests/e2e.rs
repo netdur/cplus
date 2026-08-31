@@ -26927,3 +26927,148 @@ fn a_prebuilt_packages_async_fn_runs_the_archives_body() {
          the promise unwritten: {stdout}"
     );
 }
+
+/// gaps/an-associated-fn-as-a-callback-mangles-a-large-struct-argument:
+/// `Type::f` passed where a `fn(T)` is expected used to hand out the METHOD's
+/// own symbol. A method is emitted with `METHOD_ABI` (Copy aggregates raw) and
+/// usually `fastcc`, while a call through a fn-pointer uses the platform C ABI
+/// — the two agree at or under 16 bytes and disagree above it, so every
+/// argument larger than that was read from the wrong address, silently. The
+/// return side split the same way. `Type::f` now points at a C-ABI bridge.
+///
+/// Every row here FAILED before the fix except the two 16-byte ones (which go
+/// in registers either way) and the 4xf64 one (an AAPCS64 HFA, four FP
+/// registers on both conventions). The 24-byte RETURN row is a case the
+/// original report did not name.
+#[test]
+fn assoc_fn_as_fn_pointer_matches_the_c_abi() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"afp\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "struct S16 { a: i64, b: i64 }\n\
+         struct S24 { a: i64, b: i64, c: i64 }\n\
+         struct S32 { a: i64, b: i64, c: i64, d: i64 }\n\
+         struct F4 { a: f64, b: f64, c: f64, d: f64 }\n\
+         static OUT: i64 = 0;\n\
+         struct H {}\n\
+         impl H {\n\
+           fn p16(k: S16) { OUT = k.a +% k.b; return; }\n\
+           fn p24(k: S24) { OUT = k.a +% k.b +% k.c; return; }\n\
+           fn p32(k: S32) { OUT = k.a +% k.b +% k.c +% k.d; return; }\n\
+           fn pfp(k: F4) { OUT = (k.a + k.b + k.c + k.d) as i64; return; }\n\
+           fn pmix(x: i64, k: S24, y: i64) { OUT = x +% k.a +% k.b +% k.c +% y; return; }\n\
+           fn r16(n: i64) -> S16 { return S16 { a: n, b: n +% (1 as i64) }; }\n\
+           fn r24(n: i64) -> S24 { return S24 { a: n, b: n +% (1 as i64), c: n +% (2 as i64) }; }\n\
+           fn wr(ref o: S24) { o.a = 7 as i64; return; }\n\
+         }\n\
+         fn v16(f: fn(S16)) -> i64 { f(S16 { a: 1 as i64, b: 2 as i64 }); return OUT; }\n\
+         fn v24(f: fn(S24)) -> i64 { f(S24 { a: 1 as i64, b: 2 as i64, c: 3 as i64 }); return OUT; }\n\
+         fn v32(f: fn(S32)) -> i64 { f(S32 { a: 1 as i64, b: 2 as i64, c: 3 as i64, d: 4 as i64 }); return OUT; }\n\
+         fn vfp(f: fn(F4)) -> i64 { f(F4 { a: 1.5f64, b: 2.5f64, c: 3.0f64, d: 4.0f64 }); return OUT; }\n\
+         fn vmix(f: fn(i64, S24, i64)) -> i64 { f(10 as i64, S24 { a: 1 as i64, b: 2 as i64, c: 3 as i64 }, 20 as i64); return OUT; }\n\
+         fn vr16(f: fn(i64) -> S16) -> i64 { let v: S16 = f(5 as i64); return v.a +% v.b; }\n\
+         fn vr24(f: fn(i64) -> S24) -> i64 { let v: S24 = f(5 as i64); return v.a +% v.b +% v.c; }\n\
+         fn vwr(f: fn(ref S24)) -> i64 { var s: S24 = S24 { a: 0 as i64, b: 0 as i64, c: 0 as i64 }; f(s); return s.a; }\n\
+         fn main() -> i32 {\n\
+           var bad: i32 = 0;\n\
+           if v16(H::p16) != (3 as i64) { bad = bad +% 1; }\n\
+           if v24(H::p24) != (6 as i64) { bad = bad +% 2; }\n\
+           if v32(H::p32) != (10 as i64) { bad = bad +% 4; }\n\
+           if vfp(H::pfp) != (11 as i64) { bad = bad +% 8; }\n\
+           if vmix(H::pmix) != (36 as i64) { bad = bad +% 16; }\n\
+           if vr16(H::r16) != (11 as i64) { bad = bad +% 32; }\n\
+           if vr24(H::r24) != (18 as i64) { bad = bad +% 64; }\n\
+           if vwr(H::wr) != (7 as i64) { bad = bad +% 128; }\n\
+           return bad;\n\
+         }\n",
+    )
+    .unwrap();
+
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(st.success(), "assoc-fn fn-pointer build failed");
+    let run = Command::new(dir.join("target/debug/afp"))
+        .status()
+        .expect("run afp");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "every `Type::f` fn-pointer call must read its argument and return \
+         its value through the C ABI (nonzero = the bitmask of failing rows)"
+    );
+
+    // --release: the same ABI decision at -O3, where the wrong one used to
+    // survive as a plausible-looking value rather than a crash.
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build --release");
+    assert!(st.success(), "assoc-fn fn-pointer --release build failed");
+    let run = Command::new(dir.join("target/release/afp"))
+        .status()
+        .expect("run afp release");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "the `Type::f` fn-pointer ABI must hold at -O3 too"
+    );
+}
+
+/// The bridge in `assoc_fn_as_fn_pointer_matches_the_c_abi` is emitted only for
+/// PLAIN associated fns. An `async fn` / `gen fn` is emitted by a different
+/// pair of coroutine emitters whose signatures the bridge does not mirror, so
+/// `Type::f` on one keeps handing out the method's own symbol. Pinned here
+/// because the two sides that decide this — `gen_path` and `assoc_fn_path` in
+/// `collect_address_taken_fns` — live in different functions, and a
+/// disagreement is `use of undefined value @S.m.fnptr` at clang, in whatever
+/// program happens to hold an async method's address.
+#[test]
+fn an_async_assoc_fn_is_still_addressable() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"aaf\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/future\" as future;\n\
+         struct S8 { a: i64 }\n\
+         struct H {}\n\
+         impl H { async fn go(k: S8) -> i64 { return k.a +% (1 as i64); } }\n\
+         fn via(f: fn(S8) -> future::Future[i64]) -> i64 {\n\
+             let fut: future::Future[i64] = f(S8 { a: 41 as i64 });\n\
+             return #block_on::[i64](fut);\n\
+         }\n\
+         fn main() -> i32 { return via(H::go) as i32; }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(
+        st.success(),
+        "an async associated fn taken as a fn-pointer must still link"
+    );
+    let run = Command::new(dir.join("target/debug/aaf"))
+        .status()
+        .expect("run aaf");
+    assert_eq!(run.code(), Some(42), "the coroutine must run through the pointer");
+}

@@ -50,14 +50,11 @@ import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
-import "flex_layout/flex_layout" as flex;
 import "json/json" as json;
-import "agent_mcp/agent_mcp" as bridge;
+import "./agent_mcp" as bridge;
 import "agent_core/auth" as auth;
-import "facet/vocabulary" as vocab;
-import "./inspector" as insp;
-import "./tree" as tree;
-import "./vocabulary" as voc;
+import "agent_core/inspect" as insp;
+import "./inspect_verbs" as verbs;
 
 // ---- JSON helpers --------------------------------------------------------------
 //
@@ -141,7 +138,7 @@ fn rgba_array(r: f64, g: f64, b: f64, a: f64) -> json::Value {
     return json::Value::Array(arr);
 }
 
-fn color_json(c: vocab::Color) -> json::Value {
+fn color_json(c: insp::Color) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member("token", jnum(c.token as f64)));
     if c.token == TOK_LITERAL {
@@ -182,7 +179,7 @@ fn nudged_spelling(spelled: str, by: f64) -> option::Option[insp::Value] {
     if !spelled.has_suffix("%") { return option::Option[insp::Value]::None; }
     return match spelled.drop_last(1).trim().to_f64() {
         option::Option[f64]::Some(x) => {
-            var t: text::Text = tree::plain_num(x + by);
+            var t: text::Text = insp::plain_num(x + by);
             let _a: status::Status = t.append("%");
             option::Option[insp::Value]::Some(insp::Value::Str(t))
         }
@@ -196,7 +193,7 @@ fn nudged_spelling(spelled: str, by: f64) -> option::Option[insp::Value] {
 // `{"token":255,"rgba":[0.8,0.133,0,1]}` into source.
 fn change_value_json(v: insp::Value) -> json::Value {
     return match v {
-        insp::Value::Color(c) => json::Value::Text(tree::color_text(c)),
+        insp::Value::Color(c) => json::Value::Text(insp::color_text(c)),
         other => value_json(other),
     };
 }
@@ -274,7 +271,7 @@ fn node_json(p: *insp::Node, index: usize) -> json::Value {
         option::Option::None => json::Value::Null,
     }));
     m.append(member("depth", jnum({ (*p).depth } as f64)));
-    m.append(member("kind", jstr(insp::kind_name({ (*p).kind }))));
+    m.append(member("kind", jstr((BACKEND.kind_name)(BACKEND.surface, { (*p).kind }))));
     m.append(member("key", jstr({ (*p).key })));
     m.append(member("children", jnum({ (*p).child_count } as f64)));
     // What a walk of the platform's view hierarchy could never tell you, and
@@ -328,24 +325,59 @@ fn run_ui(work: fn(*u8), ctx: *u8) {
 
 static BACKEND: insp::Backend = #zero::[insp::Backend]();
 static SNAPSHOT: vec::Vec[insp::Node] = #zero::[vec::Vec[insp::Node]]();
-static ARMED: bool = false;
+// Has a toolkit filled `BACKEND`? Set by `set_backend`, which the serving
+// facade calls — see `facet_agent::serve_once`. There is no application-facing
+// flag any more: `inspect::arm()` is gone and this is not its replacement.
+static HAS_BACKEND: bool = false;
 
-fn armed() -> bool { return ARMED; }
+// Is a walker installed?
+//
+// NOT A GATE, and it never was one — it answers whether `BACKEND` has been
+// filled, because running the verbs against a zeroed vtable is a null call.
+// It used to be spelled `ARMED` and read like a permission; whoever serves
+// installs the walker now, so on a served surface this is true by
+// construction and false only in a headless test that cleared it.
+fn armed() -> bool { return HAS_BACKEND; }
 
 fn snapshot_count() -> usize { return SNAPSHOT.count(); }
 
 // Publish `inspector.*` into the agent's server.
 //
-// The backend is a parameter and not `tree::local_backend()` by construction:
+// The backend is a parameter and not the toolkit's own by construction:
 // `widget` is written against the vtable for the same reason, and a test wants
 // to arm a degraded one and prove every verb refuses.
-fn arm(take b: insp::Backend) {
-    BACKEND = b;
-    ARMED = true;
-    // NO PREFIX. The prefix existed because this namespace described a
-    // DIFFERENT TREE from the agent surface and its verbs had to be told apart.
-    // Both walk facet's tree now, so there is one surface and these sit in it.
+// PUBLISH THE VERBS. Called by the SERVING FACADE — `facet_agent::serve_once`
+// and its three platform siblings — not by an application and not by
+// `agent_mcp`, which cannot call it: the import runs inspect -> agent_mcp and
+// a cycle is an E0404. The facade is the one place that knows both that a
+// server is starting and that this build has a tree, so the fourteen exist on
+// every surface a toolkit offers. There is no flag for an application to
+// forget, and no arrangement in which a client is told a verb does not exist
+// when what is meant is that it may not use it.
+//
+// This used to be `arm(backend)` in the inspector package, and it was both
+// halves at once: it published the verbs AND supplied the walker. That is what
+// made a missing call answer `-32601 method not found`, three packages from
+// the line that caused it. The two halves are separate now — this one is not
+// optional, and `set_backend` below is the one an application makes.
+fn publish() {
     bridge::arm_extension(verb_names(), handle, describe_tools);
+}
+
+// Install the walker these verbs read the tree through. A toolkit calls this;
+// `agent_mcp` cannot, because it does not know what a tree is.
+//
+// WITHOUT ONE the verbs still exist and still refuse — with a POLICY answer
+// naming what is missing, which is the difference this whole move is for.
+fn set_backend(take b: insp::Backend) {
+    BACKEND = b;
+    HAS_BACKEND = true;
+}
+
+// Take it away again — a screen tearing down a target, and the suite.
+fn clear_backend() {
+    HAS_BACKEND = false;
+    BACKEND = insp::Backend::none();
 }
 
 // ---- what this namespace tells `tools/list` ---------------------------------
@@ -373,13 +405,13 @@ fn describe_tools() -> vec::Vec[json::Value] {
     var p_desc: vec::Vec[json::Member] = bridge::no_props();
     p_desc.append(tools_prop("prefix", "string",
         "Answer only with nodes whose key starts with this, e.g. \"board:detail:\". Absent means the whole tree — which against a real application runs to tens of thousands of characters, large enough that a client may refuse it. Indices are unaffected by filtering: they stay addressable by the other verbs."));
-    out.append(bridge::tool("describe_tree",
+    out.append(bridge::tool(verbs::V_DESCRIBE_TREE,
         "The live view tree of THE APPLICATION SERVING THIS ENDPOINT, as the DEVELOPER sees it: every node, keyed or not, with its index. An app launched by this one has its own endpoint and does not appear here. Unlike describe_ui this is not curated — it is the whole tree — so pass \"prefix\" unless you really want all of it. Node indices from here are what every other inspector verb addresses.",
         p_desc, bridge::no_required()));
 
     var p_node: vec::Vec[json::Member] = bridge::no_props();
     p_node.append(tools_prop("node", "number", "Node index, from describe_tree."));
-    out.append(bridge::tool("inspect",
+    out.append(bridge::tool(verbs::V_INSPECT,
         "One node WHOLE — every property, control properties included. This is a content read, so a node behind a privacy tier is refused unless the grant carries it.",
         p_node, bridge::required1("node")));
 
@@ -387,7 +419,7 @@ fn describe_tools() -> vec::Vec[json::Value] {
     p_set.append(tools_prop("node", "number", "Node index."));
     p_set.append(tools_prop("property", "string", "Property name, exactly as vocabulary lists it."));
     p_set.append(tools_prop("value", "string", "New value: a number, a boolean, a string, or null to unset. A length takes a number of points, \"50%\", or \"auto\"; a colour takes \"#rrggbb\" or \"#rrggbbaa\"; an enum takes one of the spellings vocabulary lists for it."));
-    out.append(bridge::tool("set",
+    out.append(bridge::tool(verbs::V_SET,
         "Write one property on one node, live. Send null to unset a length — that is how a width goes back to sizing itself. Undoable with undo.",
         p_set, bridge::required2("node", "property")));
 
@@ -395,66 +427,66 @@ fn describe_tools() -> vec::Vec[json::Value] {
     p_nudge.append(tools_prop("node", "number", "Node index."));
     p_nudge.append(tools_prop("property", "string", "A numeric property — a position, a size, a spacing, an opacity."));
     p_nudge.append(tools_prop("by", "number", "How far to move it, in the unit the property already holds. Negative moves the other way."));
-    out.append(bridge::tool("nudge",
+    out.append(bridge::tool(verbs::V_NUDGE,
         "Move one numeric property BY an amount instead of TO a value — the arrow-key nudge you would use to slide an element into place. Answers the value it landed on. A percent nudges in percent; an unset length starts from zero.",
         p_nudge, bridge::required2("node", "property")));
 
     var p_many: vec::Vec[json::Member] = bridge::no_props();
     p_many.append(tools_prop("node", "number", "Node index."));
     p_many.append(tools_prop("properties", "object", "An object of property name to value, e.g. {\"absolute\": true, \"top\": 34, \"left\": 12.5}. Same values set takes."));
-    out.append(bridge::tool("set_many",
+    out.append(bridge::tool(verbs::V_SET_MANY,
         "Write several properties on one node in one call. Placing an element usually takes three of them, and each one on its own is a round trip. Applies every property it can and names the outcome of each; it does not stop at the first failure.",
         p_many, bridge::required2("node", "properties")));
 
     var p_reset: vec::Vec[json::Member] = bridge::no_props();
     p_reset.append(tools_prop("node", "number", "Node index."));
     p_reset.append(tools_prop("property", "string", "Property to return to its built value."));
-    out.append(bridge::tool("reset",
+    out.append(bridge::tool(verbs::V_RESET,
         "Undo one property back to what the app built it with.",
         p_reset, bridge::required2("node", "property")));
 
     var p_insert: vec::Vec[json::Member] = bridge::no_props();
     p_insert.append(tools_prop("node", "number", "Node index to insert relative to."));
     p_insert.append(tools_prop("element", "string", "Element kind to create."));
-    out.append(bridge::tool("insert",
+    out.append(bridge::tool(verbs::V_INSERT,
         "Add a new element to the live tree. A developer edit, not something a user could do.",
         p_insert, bridge::required2("node", "element")));
 
     var p_remove: vec::Vec[json::Member] = bridge::no_props();
     p_remove.append(tools_prop("node", "number", "Node index to remove."));
-    out.append(bridge::tool("remove",
+    out.append(bridge::tool(verbs::V_REMOVE,
         "Remove a node from the live tree.",
         p_remove, bridge::required1("node")));
 
     var p_rep: vec::Vec[json::Member] = bridge::no_props();
     p_rep.append(tools_prop("node", "number", "Node index to move."));
     p_rep.append(tools_prop("parent", "number", "Node index of its new parent."));
-    out.append(bridge::tool("reparent",
+    out.append(bridge::tool(verbs::V_REPARENT,
         "Move a node under a different parent.",
         p_rep, bridge::required2("node", "parent")));
 
-    out.append(bridge::tool("undo",
+    out.append(bridge::tool(verbs::V_UNDO,
         "Undo the last inspector mutation.",
         bridge::no_props(), bridge::no_required()));
 
     var p_hi: vec::Vec[json::Member] = bridge::no_props();
     p_hi.append(tools_prop("node", "number", "Node index to outline on screen."));
-    out.append(bridge::tool("highlight",
+    out.append(bridge::tool(verbs::V_HIGHLIGHT,
         "Draw an overlay around a node on the screen of the application serving this endpoint — how you show a person which node you mean.",
         p_hi, bridge::required1("node")));
 
-    out.append(bridge::tool("clear_highlight",
+    out.append(bridge::tool(verbs::V_CLEAR_HIGHLIGHT,
         "Remove the highlight overlay.",
         bridge::no_props(), bridge::no_required()));
 
     var p_vocab: vec::Vec[json::Member] = bridge::no_props();
     p_vocab.append(tools_prop("element", "string",
         "Answer only with the properties this kind of element carries — \"button\", \"label\", \"text_field\", or any kind describe_tree reports. Absent means every property."));
-    out.append(bridge::tool("vocabulary",
+    out.append(bridge::tool(verbs::V_VOCABULARY,
         "Every writable property: its name, its type, its unit, the element kinds that carry it, the closed set of spellings it accepts if it has one, and a line saying what it does. Read this before set rather than guessing a name or a value.",
         p_vocab, bridge::no_required()));
 
-    out.append(bridge::tool("journal",
+    out.append(bridge::tool(verbs::V_JOURNAL,
         "THE DIFF between the tree the application built and the tree as it stands: every property that differs, with what it was and what it is now, plus a line per structural edit. This is what you read off at the end of a session to put back in the source. A property that has been nudged twenty times appears ONCE, with the value it landed on. Resetting a property removes it from the diff.",
         bridge::no_props(), bridge::no_required()));
 
@@ -462,10 +494,10 @@ fn describe_tools() -> vec::Vec[json::Value] {
 }
 
 fn disarm() {
-    ARMED = false;
+    HAS_BACKEND = false;
     BACKEND = insp::Backend::none();
     SNAPSHOT.remove_all();
-    bridge::disarm_extension("describe_tree");
+    bridge::disarm_extension(verbs::V_DESCRIBE_TREE);
 }
 
 // ---- the marshalled call -------------------------------------------------------
@@ -638,7 +670,7 @@ fn value_for(h: insp::Handle, prop: str, tag: u32, num: f64, flag: bool, raw: st
         // Against the current tag, so a client sending `12` for an integer
         // property gets an integer rather than a number that reads back
         // differently from what it wrote.
-        return match tree::get(h, prop) {
+        return match (BACKEND.get)(BACKEND.surface, h, prop) {
             option::Option[insp::Value]::Some(cur) => match cur {
                 insp::Value::Int(_i) =>
                     option::Option[insp::Value]::Some(insp::Value::Int(num as i64)),
@@ -651,7 +683,7 @@ fn value_for(h: insp::Handle, prop: str, tag: u32, num: f64, flag: bool, raw: st
         // The panel's rule, unchanged: a string is read as the tag the property
         // already holds, which is what makes `"#2277ff"` a colour on a colour
         // property and a literal seven characters on a text one.
-        return tree::parse_for(h, prop, raw);
+        return (BACKEND.parse_for)(BACKEND.surface, h, prop, raw);
     }
     return option::Option[insp::Value]::None;
 }
@@ -687,7 +719,7 @@ fn run_call(ctx: *u8) {
             i = i +% 1;
         }
         var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-        m.append(member("revision", jnum(flex::removal_count() as f64)));
+        m.append(member("revision", jnum(insp::revision() as f64)));
         m.append(member("nodes", json::Value::Array(arr)));
         put_out(json::Value::Object(m));
         { (*c).outcome = insp::Outcome::Ok };
@@ -701,9 +733,9 @@ fn run_call(ctx: *u8) {
         // nothing at all, which is the one question the loop exists to answer.
         var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
         var i: usize = 0;
-        let n: usize = tree::journal_count();
+        let n: usize = (BACKEND.journal_count)(BACKEND.surface);
         while i < n {
-            match tree::journal_at(i) {
+            match (BACKEND.journal_at)(BACKEND.surface, i) {
                 option::Option[text::Text]::Some(line) => {
                     arr.append(json::Value::Text(line.clone()));
                 }
@@ -718,7 +750,7 @@ fn run_call(ctx: *u8) {
         // which is the shape you transcribe from. Not a list of operations and
         // not a was/now pair — the question at the end of a session is "what
         // are the numbers", and everything else is noise around them.
-        let cs: vec::Vec[insp::Change] = tree::changes();
+        let cs: vec::Vec[insp::Change] = (BACKEND.changes)(BACKEND.surface);
         var groups: vec::Vec[json::Member] = vec::new::[json::Member]();
         var ci: usize = 0;
         while ci < cs.count() {
@@ -773,7 +805,7 @@ fn run_call(ctx: *u8) {
         match b.inspect_now(h) {
             option::Option[insp::Detail]::Some(d) => {
                 var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-                m.append(member("revision", jnum(flex::removal_count() as f64)));
+                m.append(member("revision", jnum(insp::revision() as f64)));
                 m.append(member("node", node_json(#addr_of(d.node), { (*c).node })));
                 // Three lists, never one. Setting `width` writes a style and
                 // reading the frame reads what layout decided; a single `width`
@@ -813,7 +845,7 @@ fn run_call(ctx: *u8) {
     // property cannot each add to a value they read before the other wrote.
     if op == OP_NUDGE {
         let pp: *text::Text = { #addr_of((*c).prop) };
-        let prop: str = match tree::canonical_prop({ (*pp).view() }) {
+        let prop: str = match (BACKEND.canonical_prop)(BACKEND.surface, { (*pp).view() }) {
             option::Option[str]::Some(name) => name,
             option::Option::None => {
                 { (*c).outcome = insp::Outcome::UnknownProperty };
@@ -821,7 +853,7 @@ fn run_call(ctx: *u8) {
             }
         };
         let by: f64 = { (*c).num };
-        let moved: option::Option[insp::Value] = match tree::get(h, prop) {
+        let moved: option::Option[insp::Value] = match (BACKEND.get)(BACKEND.surface, h, prop) {
             option::Option[insp::Value]::Some(cur) => nudged(cur, by),
             option::Option::None => option::Option[insp::Value]::None,
         };
@@ -835,7 +867,7 @@ fn run_call(ctx: *u8) {
                     // The number it landed on, so the client does not have to
                     // read it back to know where it is.
                     m.append(member("value", value_json(after)));
-                    m.append(member("revision", jnum(flex::removal_count() as f64)));
+                    m.append(member("revision", jnum(insp::revision() as f64)));
                     put_out(json::Value::Object(m));
                 }
             }
@@ -848,7 +880,7 @@ fn run_call(ctx: *u8) {
 
     if op == OP_RESET {
         let pp: *text::Text = { #addr_of((*c).prop) };
-        match tree::canonical_prop({ (*pp).view() }) {
+        match (BACKEND.canonical_prop)(BACKEND.surface, { (*pp).view() }) {
             option::Option[str]::Some(name) => {
                 { (*c).outcome = b.reset_now(h, name) };
             }
@@ -861,7 +893,7 @@ fn run_call(ctx: *u8) {
     if op == OP_SET {
         let pp: *text::Text = { #addr_of((*c).prop) };
         let rp: *text::Text = { #addr_of((*c).raw) };
-        let prop: str = match tree::canonical_prop({ (*pp).view() }) {
+        let prop: str = match (BACKEND.canonical_prop)(BACKEND.surface, { (*pp).view() }) {
             option::Option[str]::Some(name) => name,
             option::Option::None => {
                 { (*c).outcome = insp::Outcome::UnknownProperty };
@@ -886,7 +918,7 @@ fn run_call(ctx: *u8) {
             // into a silent clear and answer `ok` — a width the client asked to
             // be "soonish" would come back sizing itself, reported as success.
             option::Option::None => {
-                let reads: bool = match tree::get(h, prop) {
+                let reads: bool = match (BACKEND.get)(BACKEND.surface, h, prop) {
                     option::Option[insp::Value]::Some(_v) => true,
                     option::Option::None => false,
                 };
@@ -943,7 +975,7 @@ fn outcome_members(o: insp::Outcome) -> vec::Vec[json::Member] {
     // The client's staleness token, on every answer. It is flex's removal
     // counter — the number `Handle` liveness is one comparison against — so a
     // client that sees it move knows its indices may have moved with it.
-    m.append(member("revision", jnum(flex::removal_count() as f64)));
+    m.append(member("revision", jnum(insp::revision() as f64)));
     return m;
 }
 
@@ -1095,7 +1127,7 @@ fn do_set_many(id: f64, params: json::Value) -> json::Value {
     m.append(member("outcome", jstr(outcome_name(first_bad))));
     m.append(member("applied", jnum(applied as f64)));
     m.append(member("results", json::Value::Object(results)));
-    m.append(member("revision", jnum(flex::removal_count() as f64)));
+    m.append(member("revision", jnum(insp::revision() as f64)));
     return ok_response(id, json::Value::Object(m));
 }
 
@@ -1185,7 +1217,7 @@ fn spellings_of(values: str) -> json::Value {
     return json::Value::Array(out);
 }
 
-fn descriptor_json(d: *voc::Descriptor) -> json::Value {
+fn descriptor_json(d: *insp::Descriptor) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member("name", jstr({ (*d).name })));
     m.append(member("type", jstr({ (*d).ty })));
@@ -1202,7 +1234,7 @@ fn do_vocabulary(id: f64, params: json::Value) -> json::Value {
     if params.has("element") { kind = as_text(obj_get(params, "element")); }
 
     var elements: vec::Vec[json::Value] = vec::new::[json::Value]();
-    let mk: vec::Vec[str] = tree::maker_names();
+    let mk: vec::Vec[str] = (BACKEND.maker_names)(BACKEND.surface);
     var i: usize = 0;
     while i < mk.count() {
         match mk.at(i) {
@@ -1213,12 +1245,12 @@ fn do_vocabulary(id: f64, params: json::Value) -> json::Value {
     }
 
     var props: vec::Vec[json::Value] = vec::new::[json::Value]();
-    let t: vec::Vec[voc::Descriptor] = voc::table();
+    let t: vec::Vec[insp::Descriptor] = insp::table();
     var j: usize = 0;
     while j < t.count() {
         match t.at_ptr(j) {
-            option::Option[*voc::Descriptor]::Some(d) => {
-                if voc::covers({ (*d).applies }, kind.view()) {
+            option::Option[*insp::Descriptor]::Some(d) => {
+                if insp::covers({ (*d).applies }, kind.view()) {
                     props.append(descriptor_json(d));
                 }
             }
@@ -1322,34 +1354,29 @@ fn refused(id: f64, what: str) -> json::Value {
 
 // Registered into `agent_mcp` by `arm`. The bridge has already run the consent
 // gate and matched the prefix; this only has to say which verb.
-// THE VERBS THIS PROVIDER ANSWERS. It must agree with `handle` below and with
-// `describe_tools` above — three lists that have to match, which is one more
-// than is comfortable; a generated table would collapse all three.
+// THE VERBS THIS PROVIDER ANSWERS — `verbs::all`, which is also what the
+// client half spells its requests with. It must still agree with `handle`
+// below and with `describe_tools` above; the three lists are two now, and
+// `every_verb_is_listed_declared_and_dispatched` checks what is left.
 fn verb_names() -> vec::Vec[str] {
-    var v: vec::Vec[str] = vec::new::[str]();
-    let _1: status::Status = v.append("describe_tree");
-    let _2: status::Status = v.append("inspect");
-    let _3: status::Status = v.append("set");
-    let _4: status::Status = v.append("reset");
-    let _5: status::Status = v.append("insert");
-    let _6: status::Status = v.append("remove");
-    let _7: status::Status = v.append("reparent");
-    let _8: status::Status = v.append("undo");
-    let _9: status::Status = v.append("highlight");
-    let _10: status::Status = v.append("clear_highlight");
-    let _11: status::Status = v.append("vocabulary");
-    let _12: status::Status = v.append("journal");
-    let _13: status::Status = v.append("nudge");
-    let _14: status::Status = v.append("set_many");
-    return v;
+    return verbs::all();
 }
 
 fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json::Value {
     // Disarmed mid-session, or armed by something that then dropped its
     // backend. Refused rather than run against a zeroed vtable, whose fn
     // pointers are null.
-    if !ARMED {
-        return err_response(id, - 32601 as f64, "inspector namespace is not armed");
+    // NO WALKER INSTALLED. A POLICY answer, not `-32601`: the verb exists, the
+    // caller asked for something real, and what is missing is on this side.
+    // `-32601` here meant "no such method", which is a different sentence and
+    // sent three packages downstream inventing ways to cope with it.
+    //
+    // Refused rather than run against a zeroed vtable, whose fn pointers are
+    // null — which is what this check was always for, and why it is a
+    // readiness question rather than a permission one.
+    if !HAS_BACKEND {
+        return refused(id,
+            "inspector: no tree is installed on this endpoint — the serving facade did not supply one, which on a facet app means this build has no inspector backend for its platform");
     }
     // Reading the tree at all.
     if !grant.has(auth::cap_read()) {
@@ -1358,30 +1385,30 @@ fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json
     // Rewriting it. Checked once, here, rather than in each `do_` body: a verb
     // added later gets the rule by being in this list, and a verb that forgot
     // to ask would be a hole with no symptom.
-    let mutates: bool = method == "set" || method == "reset"
-        || method == "set_many" || method == "nudge"
-        || method == "insert" || method == "remove"
-        || method == "reparent" || method == "undo";
+    let mutates: bool = method == verbs::V_SET || method == verbs::V_RESET
+        || method == verbs::V_SET_MANY || method == verbs::V_NUDGE
+        || method == verbs::V_INSERT || method == verbs::V_REMOVE
+        || method == verbs::V_REPARENT || method == verbs::V_UNDO;
     if mutates {
         if !grant.has(auth::cap_edit_tree()) {
             return refused(id, "inspector: rewriting the tree needs the edit_tree capability");
         }
     }
 
-    if method == "describe_tree" { return do_describe(id, params); }
-    if method == "inspect" { return do_inspect(id, params, grant); }
-    if method == "set" { return do_set(id, params); }
-    if method == "reset" { return do_reset(id, params); }
-    if method == "insert" { return do_insert(id, params); }
-    if method == "remove" { return do_remove(id, params); }
-    if method == "reparent" { return do_reparent(id, params); }
-    if method == "undo" { return do_simple(id, OP_UNDO); }
-    if method == "highlight" { return do_highlight(id, params); }
-    if method == "clear_highlight" { return do_simple(id, OP_CLEAR); }
-    if method == "nudge" { return do_nudge(id, params); }
-    if method == "set_many" { return do_set_many(id, params); }
-    if method == "vocabulary" { return do_vocabulary(id, params); }
-    if method == "journal" { return do_journal(id); }
+    if method == verbs::V_DESCRIBE_TREE { return do_describe(id, params); }
+    if method == verbs::V_INSPECT { return do_inspect(id, params, grant); }
+    if method == verbs::V_SET { return do_set(id, params); }
+    if method == verbs::V_RESET { return do_reset(id, params); }
+    if method == verbs::V_INSERT { return do_insert(id, params); }
+    if method == verbs::V_REMOVE { return do_remove(id, params); }
+    if method == verbs::V_REPARENT { return do_reparent(id, params); }
+    if method == verbs::V_UNDO { return do_simple(id, OP_UNDO); }
+    if method == verbs::V_HIGHLIGHT { return do_highlight(id, params); }
+    if method == verbs::V_CLEAR_HIGHLIGHT { return do_simple(id, OP_CLEAR); }
+    if method == verbs::V_NUDGE { return do_nudge(id, params); }
+    if method == verbs::V_SET_MANY { return do_set_many(id, params); }
+    if method == verbs::V_VOCABULARY { return do_vocabulary(id, params); }
+    if method == verbs::V_JOURNAL { return do_journal(id); }
     let unknown: text::Text = "method not found: ${method}";
     return err_response(id, - 32601 as f64, unknown.view());
 }

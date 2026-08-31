@@ -6817,11 +6817,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                         agent_mcp    = \"*\"\n\
                         json         = \"*\"\n"
                 .to_string(),
-            // The third full closure. It used to be three lines, and the note
-            // here said why: `inspector` had no Android half, so nothing armed
-            // the surface and none of the agent packages were named. It has one
-            // now (`inspector/serve_android`), so this is the same shape as its
-            // two neighbours.
+            // The third full closure, the same shape as its two neighbours.
             //
             // `agent_android` is the Android sibling of agent_appkit and
             // agent_uikit and walks facet's OWN node tree rather than a native
@@ -6836,9 +6832,12 @@ fn run_init(args: &[OsString]) -> ExitCode {
                           android_view  = \"*\"\n\
                           jni           = \"*\"\n\n\
                           # What the agent surface in src/app.cplus links, named here\n\
-                          # for the same flat-set reason as the backend's own closure. The\n\
-                          # port arrives as the system property `debug.facet.inspect`, since\n\
-                          # an Activity has no environment for the launcher to set.\n\
+                          # for the same flat-set reason as the backend's own closure. It\n\
+                          # listens on a loopback PORT here rather than a socket: an app's\n\
+                          # files live under /data/data/<pkg>, which your machine cannot\n\
+                          # reach. The port is derived from the pid, so a launcher that\n\
+                          # spawned the app can work it out; `adb forward tcp:P tcp:P` is\n\
+                          # the hop.\n\
                           inspector     = \"*\"\n\
                           facet_agent   = \"*\"\n\
                           agent_android = \"*\"\n\
@@ -6910,7 +6909,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"facet/vocabulary\" as vocab;\n\
          import \"facet_runtime/runtime\" as runtime;\n\
          import \"facet_agent/agent\" as agent;\n\
-         import \"inspector/serve\" as inspect;\n\
+
          import \"./agent_consent\" as agent_consent;\n\
          import \"stdlib/option\" as option;\n\
          import \"stdlib/vec\" as vec;\n\n\
@@ -6977,26 +6976,29 @@ fn run_init(args: &[OsString]) -> ExitCode {
          // warns on `adb logcat -s facet` and returns InvalidInput, so an app\n\
          // built on it launches to a blank Activity.\n\
          fn run() -> i32 {{\n\
-         \x20   // DRIVEABLE BY AN AGENT, and by the IDE that launched it. Three\n\
+         \x20   // DRIVEABLE BY AN AGENT, and by the IDE that launched it. Two\n\
          \x20   // lines, each saying what it does:\n\
          \x20   //\n\
          \x20   //   enable()      fills the serving seam (without it, nothing serves)\n\
-         \x20   //   arm()         adds the `inspector.*` verbs — the developer half,\n\
-         \x20   //                 which sees unexposed nodes and writes properties\n\
-         \x20   //                 that are not user affordances\n\
          \x20   //   agent_mcp(id) names THIS APP; the platform derives where it\n\
          \x20   //                 listens — `/tmp/mcp-{proj_name}-<pid>.socket` on a\n\
          \x20   //                 desktop, a loopback port on a phone. A launcher\n\
          \x20   //                 knows the pid it spawned, so it can work the\n\
          \x20   //                 address out without being told.\n\
          \x20   //\n\
-         \x20   // Delete all three (and the agent packages from Cplus.toml) if you\n\
+         \x20   // That is the whole opt-in. All 25 verbs come with it — the eleven\n\
+         \x20   // that drive the app as a person would, and the fourteen that\n\
+         \x20   // inspect it as a developer would, seeing unexposed nodes and\n\
+         \x20   // writing properties that are not user affordances. There is no\n\
+         \x20   // third line: the serving facade installs the tree walker, so\n\
+         \x20   // being served and being inspectable are one decision.\n\
+         \x20   //\n\
+         \x20   // Delete both (and the agent packages from Cplus.toml) if you\n\
          \x20   // would rather this binary could not be driven.\n\
          \x20   //\n\
          \x20   // ANYTHING THAT CONNECTS IS ADMITTED. To ask the user first, add\n\
          \x20   // `agent_consent::install();` above — see src/agent_consent.cplus.\n\
          \x20   agent::enable();\n\
-         \x20   inspect::arm();\n\
          \x20   runtime::agent_mcp(\"{proj_name}\");\n\
          \x20   runtime::run_screen(Home::new());\n\
          \x20   return 0;\n\
@@ -7276,9 +7278,9 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20        socket on LOOPBACK, and Android gates socket() on the app's\n\
          \x20        membership of the inet group — which this permission is what\n\
          \x20        grants. Without it the bind fails with EACCES, the accept loop\n\
-         \x20        ends the instant it starts, and an IDE that set\n\
-         \x20        debug.facet.inspect connects to nothing while the app runs\n\
-         \x20        perfectly. Measured, on an emulator, before this line existed.\n\n\
+         \x20        ends the instant it starts, and an IDE that forwarded the\n\
+         \x20        port connects to nothing while the app runs perfectly.\n\
+         \x20        Measured, on an emulator, before this line existed.\n\n\
          \x20        Delete it with the three lines in src/app.cplus if you would\n\
          \x20        rather the app could not be inspected: they belong together. -->\n\
          \x20   <uses-permission android:name=\"android.permission.INTERNET\" />\n\
@@ -7409,13 +7411,16 @@ fn run_init(args: &[OsString]) -> ExitCode {
          curl -s -X POST http://127.0.0.1:<port>/ \\\n\
          \x20    -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}}'\n\
          ```\n\n\
-         `tools/list` names every verb, and the startup line says how many are\n\
-         armed. The core ones are `describe_ui`, `click`, `set_text`,\n\
+         `tools/list` names every verb, and the startup line says how many\n\
+         there are. The core eleven are `describe_ui`, `click`, `set_text`,\n\
          `hit_test`, `set_caret`, `read_text`, `read_runs`, `invoke_menu`,\n\
-         `scroll_to`, `poll_event` and `activity`; if the app called\n\
-         `inspect::arm()` there are fourteen more in the same namespace that see\n\
-         the whole tree, not just what is exposed, and can write any property on\n\
-         it. Ask `vocabulary` what a property takes before you `set` one.\n\n\
+         `scroll_to`, `poll_event` and `activity`. Fourteen more see the whole\n\
+         tree rather than just what is exposed, and can write any property on\n\
+         it: `describe_tree`, `inspect`, `set`, `set_many`, `reset`, `nudge`,\n\
+         `insert`, `remove`, `reparent`, `undo`, `highlight`,\n\
+         `clear_highlight`, `vocabulary` and `journal`. They come with the\n\
+         surface — there is nothing extra for the app to call. Ask\n\
+         `vocabulary` what a property takes before you `set` one.\n\n\
          `activity` is the record of what has been DONE through the surface —\n\
          useful when a person is supervising you, and when you want to check\n\
          what you already tried.\n\n\

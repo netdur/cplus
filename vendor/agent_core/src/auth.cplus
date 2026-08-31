@@ -271,6 +271,50 @@ fn representative_policy(req: Request) -> Grant {
     };
 }
 
+// The same policy on a struct, because that is how a lot of applications write
+// one — iris's `Consent::admit` is exactly this shape. A `Type::fn` handed to
+// `serve` is a plain `fn(Request) -> Grant`, and it must read the SAME
+// `Request` a free function does.
+//
+// It did not. `Request` is 56 bytes (a channel plus three `str`s), and an
+// aggregate over 16 bytes is passed by pointer on AArch64 — but an associated
+// fn used to be emitted with the internal method convention, which passes it
+// raw. Every field came back shifted: `req.token` read a pointer where its
+// length belonged, so the first real HTTP request iris ever served died in
+// `memmove` at address 0. Nothing here had ever pointed a policy at a method.
+// See gaps/an-associated-fn-as-a-callback-mangles-a-large-struct-argument.
+struct PolicyOnAStruct {}
+impl PolicyOnAStruct {
+    fn admit(req: Request) -> Grant {
+        return representative_policy(req);
+    }
+}
+
+#[test]
+fn a_policy_may_live_on_a_struct_and_reads_the_same_request() {
+    let free_gate: AuthGate = serve(representative_policy);
+    let assoc_gate: AuthGate = serve(PolicyOnAStruct::admit);
+    // Every row of `a_policy_reads_the_token_the_transport_carried`, asserted
+    // through an associated fn and against the free function's own answer.
+    assert grant_eq(
+        assoc_gate.check(request(Channel::InApp)),
+        free_gate.check(request(Channel::InApp)),
+    );
+    assert assoc_gate.check(request(Channel::External)).is_empty();
+    let looker: Grant = assoc_gate.check(request_with_token(Channel::External, "whoever"));
+    assert looker.has(cap_read());
+    assert !looker.has(cap_act());
+    let filler: Grant =
+        assoc_gate.check(request_with_token(Channel::External, "autofill-approved"));
+    assert filler.has(cap_read() | cap_act() | cap_read_protected() | cap_act_protected());
+    // The fields BEHIND the one the policy branches on: a shifted aggregate
+    // reads a plausible answer out of the wrong slot, so the last field is
+    // what pins the offsets.
+    let named: Request =
+        request_with_token(Channel::External, "autofill-approved", "claude-code", "click");
+    assert assoc_gate.check(named).has(cap_act_protected());
+}
+
 #[test]
 fn test_default_deny_grants_nothing_on_every_channel() {
     let gate: AuthGate = deny_all();

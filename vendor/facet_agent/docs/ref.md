@@ -125,5 +125,6 @@ prompt is up, `"consent denied: …"` once refused. Installed into `agent_mcp` b
 | `agent_core/auth` | `Request { channel, token, client, method }`, `Grant`, the capability table |
 | `agent_mcp` | the JSON-RPC core, both transports, the address convention |
 | `agent_inapp` | the in-process session `in_app()` returns |
-| `inspector/serve` | `arm()` — the twelve `inspector.*` verbs on the same socket |
+| `agent_mcp/inspect` | the fourteen inspector verbs, served with the other eleven |
+| `inspector/widget` | the panel a host embeds, and the API it drives it with |
 | `facet_runtime/runtime` | `agent_mcp(id)`, `agent_id()` |

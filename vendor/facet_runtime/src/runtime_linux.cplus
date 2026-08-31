@@ -294,7 +294,18 @@ fn settle_and_teardown(root: *core::Node) {
     while !services::jobs_settled() {
         drain_once();
         spins = spins +% (1 as i64);
-        if spins > (100000 as i64) { break; }   // never wedge a teardown
+        if spins > (100000 as i64) {
+            io::eprintln("facet_runtime: teardown gave up waiting for a queued apply after 100000 turns — freeing anyway. A job's owner is about to be freed with an apply still pointing at it.");
+            break;
+        }
+    }
+    // Anything a window-close callback parked (`free_when_settled`) is
+    // reclaimed HERE, on the way out. Its retry timer needs a turning run loop
+    // and there is none left by now, so without this a screen closed moments
+    // before the quit would be leaked rather than merely deferred.
+    let left: usize = services::reclaim_settled();
+    if left != (0 as usize) {
+        io::eprintln("facet_runtime: teardown left a closed screen unfreed — a worker is still inside it. Leaked deliberately: freeing it now is the use-after-free this defers.");
     }
 }
 
@@ -796,7 +807,15 @@ static PUSHED: vec::Vec[PushedScreen] = #zero::[vec::Vec[PushedScreen]]();
 // `present_window` was never reclaimed.
 fn presented_closed(ctx: *u8) {
     if ctx.is_null() { return; }
-    let _b: box::Box[Node] = box::from_raw::[Node](ctx);
+    // DEFERRED, not waited for — see `pushed_closed` for the whole reason.
+    services::free_when_settled(free_presented_tree, ctx);
+}
+
+// The reclaim `presented_closed` parks. Runs on the main thread, either
+// synchronously from the close (the ordinary case, nothing in flight) or from
+// the retry timer once the last worker is out.
+fn free_presented_tree(p: *u8) {
+    let _b: box::Box[Node] = box::from_raw::[Node](p);
 }
 
 // nav::push: show `route` in a window alongside the primary.
@@ -845,7 +864,31 @@ fn pushed_closed(ctx: *u8) {
     if ctx.is_null() { return; }
     { (*(ctx as *screen::ScreenBox)).on_detach() };
     pushed_remove(ctx);
-    let _b: box::Box[screen::ScreenBox] = box::from_raw::[screen::ScreenBox](ctx);
+    // THE FREE IS DEFERRED, and the two things it is not are both mistakes
+    // that were made here.
+    //
+    // Freeing NOW is a use-after-free: a service worker may still be inside
+    // this screen's memory, and the next screen is allocated into it. Three
+    // iris crashes were that, each in a different subsystem, because the fault
+    // lands wherever the memory was reused.
+    //
+    // WAITING now is a freeze. `settle_and_teardown` spins the main thread in
+    // `wait_for_jobs`, and this runs inside the toolkit's window-close
+    // callback — on the main thread. A service that shells out froze the app
+    // for as long as the child took, and a worker that needs the main thread
+    // froze it for good. That was shipped, reported by a person using it, and
+    // reverted.
+    //
+    // So: park the pointer and return. `free_when_settled` frees synchronously
+    // when nothing is in flight (the ordinary case — same timing as before)
+    // and otherwise reclaims from a timer, off this callback, once the
+    // counters say nothing can reach it.
+    services::free_when_settled(free_pushed_box, ctx);
+}
+
+// The reclaim `pushed_closed` parks. On the main thread either way.
+fn free_pushed_box(p: *u8) {
+    let _b: box::Box[screen::ScreenBox] = box::from_raw::[screen::ScreenBox](p);
 }
 
 fn pushed_remove(sbp: *u8) {
@@ -937,6 +980,91 @@ fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
 // run loop; these stay headless.
 
 fn rt_screen_factory() -> screen::ScreenBox { return screen::ScreenBox::invalid(); }
+
+// ---- a close does not free a screen a worker is inside ----------------------
+
+// The two window-close callbacks free their screen on the main thread inside
+// the toolkit's `windowWillClose:`, where neither of the obvious answers works:
+// freeing is a use-after-free while a worker is inside the screen, and waiting
+// is a freeze, because the worker is trying to reach that same main thread.
+//
+// These drive the callbacks directly — no window, so the assertion is about
+// the free and nothing else — and check the property in both directions.
+
+static CLOSE_PROBE_FREED: i32 = 0;
+
+fn close_probe_free(p: *u8) { CLOSE_PROBE_FREED = CLOSE_PROBE_FREED + 1; }
+
+// A timer fake that records instead of firing, so the retry is observable
+// without a run loop.
+static CLOSE_PROBE_CB: fn(*u8) = #zero::[fn(*u8)]();
+fn close_probe_timer(s: f64, cb: fn(*u8), ctx: *u8) -> u64 {
+    CLOSE_PROBE_CB = cb;
+    return 31 as u64;
+}
+
+#[test]
+fn a_close_defers_the_free_while_a_worker_is_in_the_screen() {
+    var sch: services::Scheduler = services::scheduler_none();
+    sch.after = close_probe_timer;
+    services::install_scheduler(sch);
+    CLOSE_PROBE_FREED = 0;
+    CLOSE_PROBE_CB = #zero::[fn(*u8)]();
+
+    var j: HeldService = HeldService { hold: 1 as u64, ran: 0 };
+    assert services::run_job::[HeldService](j);
+    while services::jobs_in_flight() == (0 as u64) { services::sched_yield_once(); }
+
+    // The close path's own free, with a worker genuinely inside a job. It must
+    // return — a wait here is the freeze that got the first fix reverted — and
+    // it must not free.
+    var subject: i32 = 0;
+    services::free_when_settled(close_probe_free, #addr_of(subject) as *u8);
+    assert CLOSE_PROBE_FREED == 0;
+    assert services::pending_frees() == (1 as usize);
+
+    // And it lands once the worker is out.
+    atomic::store_u64({ #addr_of(j.hold) }, 0 as u64, atomic::Ordering::Release);
+    services::wait_for_jobs();
+    let cb: fn(*u8) = CLOSE_PROBE_CB;
+    CLOSE_PROBE_CB = #zero::[fn(*u8)]();
+    assert cb.is_not_null();
+    cb(0 as *u8);
+    assert CLOSE_PROBE_FREED == 1;
+    assert services::pending_frees() == (0 as usize);
+
+    CLOSE_PROBE_CB = #zero::[fn(*u8)]();
+    services::uninstall_scheduler();
+}
+
+// `settle_and_teardown` runs after the loop has stopped, so the retry timer
+// will never fire again — it drains what a close parked, or says so.
+#[test]
+fn teardown_reclaims_what_a_close_left_parked() {
+    var sch: services::Scheduler = services::scheduler_none();
+    sch.after = close_probe_timer;
+    services::install_scheduler(sch);
+    CLOSE_PROBE_FREED = 0;
+    CLOSE_PROBE_CB = #zero::[fn(*u8)]();
+
+    var j: HeldService = HeldService { hold: 1 as u64, ran: 0 };
+    assert services::run_job::[HeldService](j);
+    while services::jobs_in_flight() == (0 as u64) { services::sched_yield_once(); }
+    var subject: i32 = 0;
+    services::free_when_settled(close_probe_free, #addr_of(subject) as *u8);
+    assert services::pending_frees() == (1 as usize);
+
+    // Released from another thread, so the teardown's own wait is a real one.
+    let h: thread::JoinHandle[i32] = thread::spawn_with::[*u64, i32](
+        { #addr_of(j.hold) }, release_after_a_moment);
+    settle_and_teardown(0 as *core::Node);
+    assert CLOSE_PROBE_FREED == 1;
+    assert services::pending_frees() == (0 as usize);
+    let _r: i32 = h.join();
+
+    CLOSE_PROBE_CB = #zero::[fn(*u8)]();
+    services::uninstall_scheduler();
+}
 
 #[test]
 fn app_routes_register_and_resolve() {

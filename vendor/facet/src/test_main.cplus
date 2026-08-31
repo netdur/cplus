@@ -2574,6 +2574,178 @@ fn a_split_clamps_the_position_it_stores() {
     }
 }
 
+// ---- the maximum ---------------------------------------------------------------
+//
+// `SplitProps` carried `min_leading`/`min_trailing` and no maximum, so "this
+// pane may not exceed 640 points" could not be said. It was EXPRESSIBLE — a
+// maximum on the trailing pane is a minimum on the leading one — but only by
+// an application that mirrors the split's live extent through window-resize
+// observers, and a mirror of a live value is derived state that goes stale.
+// gaps/a-split-pane-has-a-minimum-and-no-maximum.
+
+// The RULE, on its own, because six clamp sites across four backends ask it and
+// none of them needs a window to be wrong.
+#[test]
+fn a_trailing_maximum_is_a_floor_under_the_divider() {
+    // 1000-wide split, trailing pane capped at 640 -> the divider may not go
+    // left of 360. This is the arithmetic iris was doing by hand, and the
+    // reason it had to: `1000` is not visible from where an application stands.
+    assert approx(split::floor_with_max(150.0f64, 640.0f64, 1000.0f64), 360.0f64);
+    // Inert when the leading minimum already demands more.
+    assert approx(split::floor_with_max(400.0f64, 640.0f64, 1000.0f64), 400.0f64);
+    // NO MAXIMUM is zero, and changes nothing.
+    assert approx(split::floor_with_max(150.0f64, 0.0f64, 1000.0f64), 150.0f64);
+    // NO EXTENT YET. Before the first layout a split reports zero, and
+    // subtracting from it would pin the divider to a negative floor — the same
+    // guard every backend's trailing MINIMUM already carries.
+    assert approx(split::floor_with_max(150.0f64, 640.0f64, 0.0f64), 150.0f64);
+}
+
+#[test]
+fn a_leading_maximum_is_a_ceiling_and_needs_no_extent() {
+    // The asymmetry that makes this framework's business: the divider's
+    // position IS the leading pane's size, so this half needs nothing measured.
+    assert approx(split::ceiling_with_max(760.0f64, 400.0f64), 400.0f64);
+    // Inert when the trailing minimum already binds tighter.
+    assert approx(split::ceiling_with_max(300.0f64, 400.0f64), 300.0f64);
+    // NO MAXIMUM leaves the caller's own ceiling alone, including the
+    // "none" one.
+    assert approx(split::ceiling_with_max(760.0f64, 0.0f64), 760.0f64);
+    assert approx(split::ceiling_with_max(0.0f64, 0.0f64), 0.0f64);
+    // A caller with NO ceiling of its own takes the maximum as the ceiling —
+    // the case a split with no trailing minimum and a capped leading pane is
+    // in, and the one that used to have no bound at all.
+    assert approx(split::ceiling_with_max(0.0f64, 400.0f64), 400.0f64);
+}
+
+// The verb, and the round trip. `0.0` is the default and means unbounded.
+#[test]
+fn a_split_carries_a_maximum_per_pane() {
+    var root: facet::Node = split::split(two_panes(), key: "s");
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert approx(x.max(split::Pane::Leading), 0.0f64);
+            assert approx(x.max(split::Pane::Trailing), 0.0f64);
+            let _a: split::Split = x.set_max(split::Pane::Trailing, 640.0f64);
+            assert approx(x.max(split::Pane::Trailing), 640.0f64);
+            assert approx(x.max(split::Pane::Leading), 0.0f64);   // untouched
+            // ...and taking it away again.
+            let _b: split::Split = x.set_max(split::Pane::Trailing, 0.0f64);
+            assert approx(x.max(split::Pane::Trailing), 0.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// The CONSTRUCTOR clamps too, by the same rule `set_position` does. Two doors
+// into one number that disagreed would mean `position()` answering something
+// the first layout pass overwrites — a control that contradicts itself between
+// being built and being shown. `min_leading` had the same hole; both are shut.
+#[test]
+fn a_split_clamps_the_position_it_is_built_with() {
+    var a: facet::Node = split::split(two_panes(), key: "a",
+                                      position: 900.0f64, max_leading: 400.0f64);
+    match split::find("a", within: #addr_of(a)) {
+        option::Option[split::Split]::Some(x) => { assert approx(x.position(), 400.0f64); }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    var b: facet::Node = split::split(two_panes(), key: "b",
+                                      position: 20.0f64, min_leading: 180.0f64);
+    match split::find("b", within: #addr_of(b)) {
+        option::Option[split::Split]::Some(x) => { assert approx(x.position(), 180.0f64); }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    // A contradictory pair at build time resolves the same way it does at
+    // write time: the minimum wins.
+    var c: facet::Node = split::split(two_panes(), key: "c", position: 500.0f64,
+                                      min_leading: 300.0f64, max_leading: 100.0f64);
+    match split::find("c", within: #addr_of(c)) {
+        option::Option[split::Split]::Some(x) => { assert approx(x.position(), 300.0f64); }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// The builder argument, so a cap can be stated where the split is built rather
+// than found and written afterwards — which is the whole of what replaces
+// iris's resize observer.
+#[test]
+fn a_split_takes_its_maximums_at_build_time() {
+    var root: facet::Node = split::split(two_panes(), key: "s",
+                                         max_leading: 400.0f64, max_trailing: 640.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert approx(x.max(split::Pane::Leading), 400.0f64);
+            assert approx(x.max(split::Pane::Trailing), 640.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// A LEADING maximum is in the divider's own coordinate, so `set_position`
+// enforces it where the position is stored — the same place `min_leading` is
+// enforced, and for the same reason: an application that saves and restores
+// must read back what was applied.
+#[test]
+fn set_position_honours_a_leading_maximum() {
+    var root: facet::Node = split::split(two_panes(), key: "s", max_leading: 400.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            let _a: split::Split = x.set_position(900.0f64);
+            assert approx(x.position(), 400.0f64);
+            let _b: split::Split = x.set_position(250.0f64);
+            assert approx(x.position(), 250.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// Setting a maximum re-applies the position, so a cap arriving AFTER the
+// divider is placed moves it. Without this the number and the pane would
+// disagree until the next drag, which is the shape of the bug that made the
+// application-side workaround break a drag in the first place.
+#[test]
+fn a_leading_maximum_moves_a_divider_that_is_already_past_it() {
+    var root: facet::Node = split::split(two_panes(), key: "s", position: 900.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert approx(x.position(), 900.0f64);
+            let _a: split::Split = x.set_max(split::Pane::Leading, 400.0f64);
+            assert approx(x.position(), 400.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// NEGATIVE: a maximum that contradicts a minimum. The MINIMUM wins, the same
+// precedence the backends give the floor and for the reason gtk's clamp writes
+// down — a divider past the far bound drags back, one pinned at zero does not.
+#[test]
+fn a_maximum_below_the_minimum_leaves_the_minimum_standing() {
+    var root: facet::Node = split::split(two_panes(), key: "s",
+                                         min_leading: 300.0f64, max_leading: 100.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            let _a: split::Split = x.set_position(500.0f64);
+            assert approx(x.position(), 300.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    // And in the shared rule, where the backends meet it.
+    assert approx(split::floor_with_max(300.0f64, 900.0f64, 1000.0f64), 300.0f64);
+}
+
+// NEGATIVE: a maximum on a node that is not a split answers the neutral value
+// rather than reading whatever the props happen to be — the same posture every
+// other cursor read has.
+#[test]
+fn a_maximum_read_through_a_dead_cursor_is_zero() {
+    var root: facet::Node = split::split(two_panes(), key: "s", max_leading: 400.0f64);
+    match split::find("nosuch", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(_x) => { assert false; }
+        option::Option[split::Split]::None => { assert true; }
+    }
+}
+
 // Collapsing remembers where the divider was, so restoring is not a default.
 #[test]
 fn collapsing_a_pane_keeps_the_position() {
@@ -4022,4 +4194,29 @@ fn replace_child_swaps_in_place_rather_than_appending() {
         option::Option[*facet::Node]::None => { assert false; }
     }
     mount::unmount(#addr_of(root));
+}
+
+static SETTLED_HITS: i32 = 0;
+fn count_settled() { SETTLED_HITS = SETTLED_HITS + 1; return; }
+
+#[test]
+fn the_frames_settled_seam_calls_its_one_consumer() {
+    // The seam the inspector's outline rides: filled by whoever needs a frame
+    // that is TRUE, called by the backend after its layout pass. One slot, so
+    // a second install replaces rather than appends — which is the whole
+    // contract, and the reason it is worth a test rather than a comment.
+    SETTLED_HITS = 0;
+    // Bound first: a bare name is a call, not an address.
+    let f: fn() = count_settled;
+    facet::set_frames_settled_fn(f);
+    facet::frames_settled();
+    facet::frames_settled();
+    assert SETTLED_HITS == (2 as i32);
+
+    // Unset is inert, because the backend calls this on every tick whether or
+    // not anything wanted it.
+    facet::set_frames_settled_fn(#zero::[fn()]());
+    facet::frames_settled();
+    assert SETTLED_HITS == (2 as i32);
+    return;
 }

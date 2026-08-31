@@ -12361,6 +12361,146 @@ fn a_collapsed_split_pane_comes_back_where_it_was() {
     }
 }
 
+// ---- a pane's MAXIMUM, at the delegate that enforces it ------------------------
+//
+// `SplitProps` carried two minimums and no maximum, so "this pane may not
+// exceed 640 points" could not be said. An application could only get it by
+// deriving `min_leading = total - cap` and re-running that on every window
+// resize — because `total` is not visible from where an application stands —
+// and the obvious alternative, writing `set_position` back from the divider's
+// own notification, puts a second writer on the number the drag is moving and
+// breaks the drag. gaps/a-split-pane-has-a-minimum-and-no-maximum.
+//
+// NSSplitView asks its delegate for BOTH ends of the divider's travel on every
+// drag tick, and it is handed the split's live extent when it does. So the
+// maximum belongs where the extent already is, and these two assert it there.
+
+fn split_delegate_of(v: *u8) -> *u8 {
+    return { rt::msg_id(v, rt::sel(#str_ptr("delegate\0"))) };
+}
+
+// A split view with a real frame, its delegate installed — the arrangement
+// AppKit is in when it asks where a divider may go.
+fn armed_split(n: *core::Node, extent: f64) -> *u8 {
+    let v: *u8 = views::create(0 as *u8, n);
+    ak::View::from_raw(v).set_frame(rt::Rect { x: 0.0f64, y: 0.0f64,
+                                               w: extent, h: 400.0f64 });
+    text_input::install_split(v, n);
+    return v;
+}
+
+#[test]
+fn the_divider_delegate_answers_a_trailing_maximum_as_its_floor() {
+    backend::install();
+    // 1000 wide, trailing pane capped at 640 -> the divider may not go left of
+    // 360. That number is the split's own extent minus the cap, and reading it
+    // off the live view is the whole reason this belongs to the framework.
+    var n: core::Node = split::split(core::Builder::new(), key: "sp",
+                                     min_leading: 150.0f64, max_trailing: 640.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = armed_split(p, 1000.0f64);
+    let d: *u8 = split_delegate_of(v);
+    assert d.is_not_null();
+    // REGISTERED, not just written: a delegate method AppKit does not see is a
+    // constraint nothing asks for.
+    let cls: *u8 = synth::object_class(d);
+    assert synth::class_responds(cls,
+        rt::sel(#str_ptr("splitView:constrainMinCoordinate:ofSubviewAt:\0"))) != (0 as i8);
+
+    // A drag toward the left edge is stopped at 360, not at min_leading's 150.
+    let floor: f64 = text_input::min_coord_imp(d, 0 as *u8, v, 40.0f64, 0 as i64);
+    assert floor > 359.0f64;
+    assert floor < 361.0f64;
+    // A proposal already right of the floor passes through untouched.
+    assert text_input::min_coord_imp(d, 0 as *u8, v, 700.0f64, 0 as i64) > 699.0f64;
+    views::view_release(v);
+}
+
+#[test]
+fn the_divider_delegate_answers_a_leading_maximum_as_its_ceiling() {
+    backend::install();
+    // A leading maximum needs NO extent — the divider's position IS the
+    // leading pane's size — which is the half an application could already
+    // enforce. It is here so both ends read the same way.
+    //
+    // `min_trailing` is 0 on purpose: that is the arrangement where
+    // `max_coord_imp` used to return the proposal untouched, so a capped pane
+    // could be dragged past its cap.
+    var n: core::Node = split::split(core::Builder::new(), key: "sp",
+                                     min_trailing: 0.0f64, max_leading: 400.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = armed_split(p, 1000.0f64);
+    let d: *u8 = split_delegate_of(v);
+    assert d.is_not_null();
+    let cls: *u8 = synth::object_class(d);
+    assert synth::class_responds(cls,
+        rt::sel(#str_ptr("splitView:constrainMaxCoordinate:ofSubviewAt:\0"))) != (0 as i8);
+
+    let ceiling: f64 = text_input::max_coord_imp(d, 0 as *u8, v, 900.0f64, 0 as i64);
+    assert ceiling > 399.0f64;
+    assert ceiling < 401.0f64;
+    assert text_input::max_coord_imp(d, 0 as *u8, v, 200.0f64, 0 as i64) < 201.0f64;
+    views::view_release(v);
+}
+
+// NEGATIVE: no maximum is the default, and the delegate must answer exactly
+// what it answered before this existed — the minimums and nothing else.
+#[test]
+fn a_split_with_no_maximum_answers_only_its_minimums() {
+    backend::install();
+    var n: core::Node = split::split(core::Builder::new(), key: "sp",
+                                     min_leading: 150.0f64, min_trailing: 240.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = armed_split(p, 1000.0f64);
+    let d: *u8 = split_delegate_of(v);
+    assert text_input::min_coord_imp(d, 0 as *u8, v, 40.0f64, 0 as i64) > 149.0f64;
+    assert text_input::min_coord_imp(d, 0 as *u8, v, 40.0f64, 0 as i64) < 151.0f64;
+    // 1000 - 240 = 760.
+    assert text_input::max_coord_imp(d, 0 as *u8, v, 900.0f64, 0 as i64) > 759.0f64;
+    assert text_input::max_coord_imp(d, 0 as *u8, v, 900.0f64, 0 as i64) < 761.0f64;
+    // A split with NEITHER bound leaves the proposal alone in both directions.
+    var m: core::Node = split::split(core::Builder::new(), key: "sp2",
+                                     min_leading: 0.0f64, min_trailing: 0.0f64);
+    let q: *core::Node = #addr_of(m);
+    let w: *u8 = armed_split(q, 1000.0f64);
+    let e: *u8 = split_delegate_of(w);
+    assert text_input::min_coord_imp(e, 0 as *u8, w, 40.0f64, 0 as i64) < 41.0f64;
+    assert text_input::max_coord_imp(e, 0 as *u8, w, 900.0f64, 0 as i64) > 899.0f64;
+    views::view_release(w);
+    views::view_release(v);
+}
+
+// The WRITE path, not the drag path. `settle_split` places the panes from the
+// props on every layout walk, so a cap has to bind there too — otherwise a
+// divider is only capped while a person is holding it.
+#[test]
+fn a_settled_split_places_its_panes_inside_the_maximum() {
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("left", key: "L"));
+    b.add(label::label("right", key: "R"));
+    var n: core::Node = split::split(b, key: "sp", position: 900.0f64,
+                                     min_trailing: 0.0f64, max_leading: 400.0f64);
+    let p: *core::Node = #addr_of(n);
+    // The position is capped where it is STORED, so an application reads back
+    // what was applied.
+    match split::from(p) {
+        option::Option[split::Split]::Some(s) => { assert s.position() < 401.0f64; }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    let v: *u8 = armed_split(p, 1000.0f64);
+    // `settle_split` reads the node's view, so the node has to own it.
+    core::set_view(p, v, views::view_release);
+    controls::settle_split(p);
+    // ...and the leading pane is laid out at the cap, not at 900.
+    match core::child_of(p, 0 as usize) {
+        option::Option[*core::Node]::Some(lead) => {
+            assert controls::is_points({ (*lead).style.width }, 400.0f64);
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
 #[test]
 fn the_drag_source_reports_both_ends_of_a_drag() {
     // `can_drag` armed the source and `on_drop` fired at the destination, but

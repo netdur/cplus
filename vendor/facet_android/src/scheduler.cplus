@@ -69,6 +69,10 @@ fn tick() {
     mount::sync();
     relayout_current();
     IN_PASS = false;
+    // ...and LAST, work that only wants to read a frame that is now true —
+    // the inspector's outline follows its node from here. See
+    // `core::set_frames_settled_fn`.
+    core::frames_settled();
     return;
 }
 

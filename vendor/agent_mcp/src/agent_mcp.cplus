@@ -1856,6 +1856,131 @@ fn write_descriptor(id: str, pid: i32, transport: str, address: str) -> bool {
 // to take. Everything else accumulates: four dead sockets from one afternoon's
 // runs were sitting in /tmp when this was written, and macOS does not sweep for
 // days. Returns how many it removed.
+// ---- finding a live endpoint ---------------------------------------------------
+//
+// THE ADDRESS CONVENTION IS THIS PACKAGE'S, so answering "where is app X
+// listening" is too. Every consumer that wanted to attach to a running app
+// wrote the same thing instead: glob `/tmp`, match `mcp-<id>-<pid>`, parse the
+// pid out of a name whose id may itself contain dashes and digits, ask whether
+// that pid is alive, and pick the newest when several answered. Four rules,
+// none of them the consumer's, all of them re-derived — and a consumer that
+// gets `pid_in_name` wrong attaches to a dead socket and shows an empty tree.
+//
+// NEWEST FIRST, by the address's own mtime. Several live processes of one app
+// is ordinary — a developer with two builds open — and the most recently
+// started is the one they just launched.
+
+// The id out of `mcp-<id>-<pid>.socket`. `pid_in_name` reads the tail; this
+// reads the middle, by the same rule and for the same reason: the id may
+// contain dashes, so the boundary is the LAST one before the extension.
+fn id_in_name(name: str) -> text::Text {
+    if !text::from_str(name).has_prefix("mcp-") { return text::new(); }
+    let n: usize = #str_len(name);
+    let b: *u8 = #str_ptr(name);
+    var dot: i64 = - 1;
+    var i: usize = 0;
+    while i < n {
+        if { *(b + i) } == ('.' as u8) { dot = i as i64; }
+        i = i +% 1;
+    }
+    if dot < 0 { return text::new(); }
+    var dash: i64 = - 1;
+    var j: usize = 0;
+    while j < (dot as usize) {
+        if { *(b + j) } == ('-' as u8) { dash = j as i64; }
+        j = j +% 1;
+    }
+    if dash < (4 as i64) { return text::new(); }
+    return text::from_str({ #str_from_raw_parts(b + (4 as usize), (dash as usize) -% (4 as usize)) });
+}
+
+// A descriptor's `address`, for a target whose address is not its path — a
+// phone, where the app listens on a loopback port because a socket inside the
+// sandbox is unreachable from here.
+fn address_in_descriptor(path: str) -> text::Text {
+    let body: text::Text = match fs::read_to_string(path) {
+        result::Result[text::Text, result::IoError]::Ok(t) => t,
+        result::Result[text::Text, result::IoError]::Err(_e) => { return text::new(); }
+    };
+    let v: str = body;
+    let at: usize = match v.find("\"address\":\"") {
+        option::Option[usize]::Some(i) => i +% (11 as usize),
+        option::Option[usize]::None => { return text::new(); }
+    };
+    let rest: str = match v.slice(at, #str_len(v)) {
+        option::Option[str]::Some(r) => r,
+        option::Option[str]::None => { return text::new(); }
+    };
+    let end: usize = match rest.find("\"") {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return text::new(); }
+    };
+    return match rest.slice(0 as usize, end) {
+        option::Option[str]::Some(a) => text::from_str(a),
+        option::Option[str]::None => text::new(),
+    };
+}
+
+// Every address `app_id` is currently listening on, newest first.
+//
+// A live `.socket` answers with its own path. A live `.json` descriptor
+// answers with the address it states, which is how a phone's loopback port
+// gets here — the socket path a desktop reports IS its address, and a
+// descriptor exists for the case where it is not.
+fn discover(app_id: str) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    var stamps: vec::Vec[i64] = vec::new::[i64]();
+    let names: vec::Vec[text::Text] = match fs::read_dir("/tmp") {
+        option::Option[vec::Vec[text::Text]]::Some(v) => v,
+        option::Option[vec::Vec[text::Text]]::None => { return out; }
+    };
+    var i: usize = 0;
+    while i < names.count() {
+        match names.at_ptr(i) {
+            option::Option[*text::Text]::Some(n) => {
+                let name: str = { (*n).view() };
+                let pid: i32 = pid_in_name(name);
+                // A DEAD pid is a leftover, not a target. `sweep_stale` removes
+                // these on the way up; nothing guarantees it has run here.
+                if pid > 0 && pid_is_live(pid) {
+                    let who: text::Text = id_in_name(name);
+                    if who.view() == app_id {
+                        let full: text::Text = "/tmp/${name}";
+                        var addr: text::Text = full.clone();
+                        if text::from_str(name).has_suffix(".json") {
+                            addr = address_in_descriptor(full.view());
+                        }
+                        if !addr.is_empty() {
+                            let when: i64 = match fs::mtime(full.view()) {
+                                result::Result[i64, result::IoError]::Ok(t) => t,
+                                result::Result[i64, result::IoError]::Err(_e) => 0 as i64,
+                            };
+                            // Insertion sort, newest first. The list is one
+                            // app's live endpoints — a handful at most.
+                            var at: usize = 0 as usize;
+                            var placing: bool = true;
+                            while placing && at < stamps.count() {
+                                match stamps.at(at) {
+                                    option::Option[i64]::Some(s) => {
+                                        if when > s { placing = false; }
+                                        else { at = at +% (1 as usize); }
+                                    }
+                                    option::Option[i64]::None => { at = at +% (1 as usize); }
+                                }
+                            }
+                            let _a: status::Status = out.insert(addr, at);
+                            let _b: status::Status = stamps.insert(when, at);
+                        }
+                    }
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return out;
+}
+
 fn sweep_stale() -> usize {
     var removed: usize = 0;
     let names: vec::Vec[text::Text] = match fs::read_dir("/tmp") {
@@ -4545,4 +4670,65 @@ fn every_core_tool_is_dispatched() {
         }
         i = i +% 1;
     }
+}
+
+// ---- discover ------------------------------------------------------------------
+
+// A name whose id contains dashes and digits, which is the case `pid_in_name`
+// exists for and the one a consumer's own parser gets wrong.
+#[test]
+fn an_id_with_dashes_is_read_back_whole() {
+    assert id_in_name("mcp-iris-4321.socket").view() == "iris";
+    assert id_in_name("mcp-my-app-2-4321.socket").view() == "my-app-2";
+    assert pid_in_name("mcp-my-app-2-4321.socket") == 4321;
+    // ...and the descriptor beside it reads the same way.
+    assert id_in_name("mcp-my-app-2-4321.json").view() == "my-app-2";
+    assert pid_in_name("mcp-my-app-2-4321.json") == 4321;
+    // Not ours.
+    assert id_in_name("something-else.socket").view() == "";
+    assert id_in_name("mcp-nodash.socket").view() == "";
+}
+
+// The address a descriptor states, which is how a target whose address is not
+// its path — a phone's loopback port — is reachable at all.
+#[test]
+fn a_descriptors_address_is_read_out_of_it() {
+    let dir: text::Text = "/tmp/mcp-desc-probe-${current_pid()}.json";
+    let body: str =
+        "{\"id\":\"probe\",\"pid\":7,\"transport\":\"http\",\"address\":\"http://127.0.0.1:9123/\",\"protocol\":\"2024-11-05\"}\n";
+    let _w: result::Result[usize, result::IoError] = fs::write_string(dir.view(), body);
+    assert address_in_descriptor(dir.view()).view() == "http://127.0.0.1:9123/";
+    let _r: result::Result[bool, result::IoError] = fs::remove_file(dir.view());
+
+    // A file that is not one, and a missing one, answer empty rather than
+    // half a string.
+    assert address_in_descriptor("/tmp/does-not-exist-at-all.json").view() == "";
+}
+
+// THIS PROCESS is a live endpoint while it is serving, so `discover` finding it
+// is the round trip: the name this package writes is the name it reads back.
+#[test]
+fn discover_finds_this_processes_own_socket_and_not_a_dead_one() {
+    let pid: i32 = current_pid();
+    let id: text::Text = "discoprobe-${pid}";
+    let live: text::Text = uds_path(id.view(), pid);
+    let _w: result::Result[usize, result::IoError] = fs::write_string(live.view(), "x");
+
+    // ...and a name with a pid nothing is running under. 999999 is above the
+    // default pid_max on macOS and Linux both.
+    let dead: text::Text = uds_path(id.view(), 999999);
+    let _w2: result::Result[usize, result::IoError] = fs::write_string(dead.view(), "x");
+
+    let found: vec::Vec[text::Text] = discover(id.view());
+    assert found.count() == (1 as usize);
+    match found.at_ptr(0 as usize) {
+        option::Option[*text::Text]::Some(a) => { assert { (*a).view() } == live.view(); }
+        option::Option[*text::Text]::None => { assert false; }
+    }
+
+    // An id nobody is serving is an empty list, not a fault.
+    assert discover("no-such-app-anywhere").count() == (0 as usize);
+
+    let _r1: result::Result[bool, result::IoError] = fs::remove_file(live.view());
+    let _r2: result::Result[bool, result::IoError] = fs::remove_file(dead.view());
 }

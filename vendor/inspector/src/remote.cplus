@@ -35,9 +35,21 @@
 // panel: every verb degrades to a refusal the widget already knows how to
 // say. Transport failure reads as `Stale` — "re-describe" is exactly the
 // remedy — and the fault line carries the sentence.
+//
+// AND EVERY CALL HAS A DEADLINE, because the failure that is not a refusal is
+// a peer that ACCEPTS and then says nothing. That hangs the calling thread for
+// good, and the calling thread here is usually the one drawing the window: no
+// paint, no input, no way back short of killing the IDE. It is invisible in
+// advance — a `connect(2)` that succeeds says a socket accepted, not that
+// anything behind it will reply, and `adb forward` accepts on behalf of a
+// phone that may never answer — so a probe cannot see it coming and only a
+// clock can. An expiry takes the same path everything else does: a fault, a
+// `Stale`, and a sentence saying which.
 
 import "stdlib/text" as text;
 import "stdlib/netsys" as netsys;
+import "stdlib/fs" as fs;
+import "stdlib/time" as time;
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
@@ -46,8 +58,9 @@ import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/vocabulary" as vocab;
 import "json/json" as json;
-import "./inspector" as insp;
-import "./tree" as tree;
+import "agent_core/inspect" as insp;
+import "facet_agent/inspect_tree" as tree;
+import "agent_mcp/inspect_verbs" as verbs;
 
 // AF_UNIX = 1, SOCK_STREAM = 1 on Darwin; `sockaddr_un` is
 // { uint8 sun_len; uint8 sun_family; char sun_path[104] } — built in a byte
@@ -63,27 +76,79 @@ extern fn close(fd: i32) -> i32;
 // One remote target. The CALLER owns it — the vtable's `surface` is a borrowed
 // pointer, so the struct must outlive the Backend built over it; a component
 // holds it as a field for exactly that reason.
+// WHICH WIRE. The address decides it, at `connect`, so nothing downstream has
+// to re-derive it per call.
+//
+//   Line   one JSON object per line, one connection per call. What the agent
+//          surface speaks over a Unix socket, and over a loopback port on a
+//          phone (where a socket inside the sandbox is unreachable).
+//   Http   the same JSON-RPC, POSTed. What `http://host:port/` means, and the
+//          only form that reaches a target through anything that speaks HTTP.
+enum Wire {
+    Line,
+    Http,
+}
+
 struct Remote {
     path: text::Text,
+    // The wire, and — for Http — the Host header's value, which a server may
+    // reasonably check and which is not derivable from a port alone.
+    wire: Wire,
+    host: text::Text,
     // The remote revision the last listing arrived with. Diagnostic — liveness
     // is the target's own check, made against its own counter.
     revision: u64,
+    // How long one call may wait, in seconds. `CALL_TIMEOUT_SECS` unless a
+    // caller says otherwise — a link slower than a USB cable is the case for
+    // saying otherwise, and the suite lowers it so that pinning the deadline
+    // costs a second rather than five.
+    timeout_secs: i64,
     // The last transport failure, empty while the wire answers. `fault()` is
     // the read; a UI shows it INSTEAD of a tree that silently stopped moving.
     _fault: text::Text,
+    // Did the last call get a WELL-FORMED ANSWER, refusal included?
+    //
+    // A JSON-RPC error is an answer — a server that refuses a verb is still a
+    // server, and its sentence is the one worth showing. A timeout is not an
+    // answer at all. `_fault` is set in both cases and cannot tell them apart,
+    // which matters at exactly one place: deciding whether a target is worth
+    // attaching to. See `answers`.
+    _answered: bool,
 }
 
 impl Remote {
+    // The LINE wire, from a socket path or a bare port. `connect` is the door
+    // that reads a scheme; this stays for a caller that already knows.
     fn new(path: str) -> Remote {
         return Remote {
             path: text::from_str(path),
+            wire: Wire::Line,
+            host: text::new(),
             revision: 0,
+            timeout_secs: CALL_TIMEOUT_SECS,
             _fault: text::new(),
+            _answered: false,
+        };
+    }
+
+    // An `http://host:port/` target. The path is the ADDRESS to connect to
+    // (the port, as `connect_to` reads one) and `host` is what goes in the
+    // header.
+    fn http(host: str, port: i32) -> Remote {
+        return Remote {
+            path: (port as i64).to_text(),
+            wire: Wire::Http,
+            host: text::from_str(host),
+            revision: 0,
+            timeout_secs: CALL_TIMEOUT_SECS,
+            _fault: text::new(),
+            _answered: false,
         };
     }
 
     fn fault(this) -> text::Text { return this._fault.clone(); }
     fn faulted(this) -> bool { return !this._fault.is_empty(); }
+    fn answered(this) -> bool { return this._answered; }
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -107,6 +172,170 @@ fn a_port_target_is_told_from_a_path() {
 // question a host asks BEFORE switching a panel to a target, so the switch
 // happens on evidence rather than on a socket file somebody forgot to unlink
 // (a refused connect on a leftover file answers no, which is the truth).
+// HOW LONG A CALL MAY WAIT before the target is treated as silent.
+//
+// SECONDS, and generously: a device at the end of a USB cable answering through
+// a forwarded port is legitimately slow, and a deadline that fires on a slow
+// answer is worse than no deadline at all — it turns a working target into an
+// intermittent one. This is a liveness bound, not a latency budget. What it
+// buys is that the worst case is five seconds of a busy panel rather than a
+// window that never comes back.
+const CALL_TIMEOUT_SECS: i64 = 5;
+
+// What a read came back with, and WHY it stopped.
+//
+// The body alone cannot say: an empty one means the peer closed without
+// answering, or the deadline expired, and those are different sentences to a
+// developer — one is "the app is gone", the other is "the app is there and not
+// talking to us", which on a phone usually means the forward is up and the app
+// behind it is not.
+struct Reply {
+    body: text::Text,
+    expired: bool,
+}
+
+// ---- reading a target ----------------------------------------------------------
+
+// What `connect` was handed, classified. The SCHEME picks the transport, so a
+// host passes through whatever it was told — a descriptor's address, a socket
+// path a user typed — without parsing it itself.
+enum Target {
+    // This process. No transport, no connection to fail.
+    InApp,
+    // A Unix socket path.
+    Socket,
+    // A loopback port, spelled as digits. What a phone reports.
+    Port,
+    // `http://host:port/`.
+    Http,
+    // None of the above, and saying so beats guessing.
+    Unknown,
+}
+
+fn classify(target: str) -> Target {
+    if target == "inapp" { return Target::InApp; }
+    if target.has_prefix("http://") { return Target::Http; }
+    if port_of(target) > 0 { return Target::Port; }
+    if target.has_prefix("/") { return Target::Socket; }
+    return Target::Unknown;
+}
+
+// `http://host:port/` -> the host. Empty when the shape is wrong, which the
+// port read below reports as the failure.
+fn http_host_of(target: str) -> text::Text {
+    let rest: str = match target.slice(7 as usize, #str_len(target)) {
+        option::Option[str]::Some(r) => r,
+        option::Option[str]::None => { return text::new(); }
+    };
+    let end: usize = match rest.find(":") {
+        option::Option[usize]::Some(at) => at,
+        option::Option[usize]::None => match rest.find("/") {
+            option::Option[usize]::Some(at) => at,
+            option::Option[usize]::None => #str_len(rest),
+        },
+    };
+    return match rest.slice(0 as usize, end) {
+        option::Option[str]::Some(h) => text::from_str(h),
+        option::Option[str]::None => text::new(),
+    };
+}
+
+// ...and the port. -1 when there is none, which is a real failure rather than
+// a default: 80 would connect this client to whatever is on port 80.
+fn http_port_of(target: str) -> i32 {
+    let rest: str = match target.slice(7 as usize, #str_len(target)) {
+        option::Option[str]::Some(r) => r,
+        option::Option[str]::None => { return - 1; }
+    };
+    let at: usize = match rest.find(":") {
+        option::Option[usize]::Some(i) => i +% (1 as usize),
+        option::Option[usize]::None => { return - 1; }
+    };
+    var digits: text::Text = text::new();
+    let n: usize = #str_len(rest);
+    let bytes: *u8 = #str_ptr(rest);
+    var i: usize = at;
+    var scanning: bool = true;
+    while scanning && i < n {
+        let c: u8 = { *(bytes + i) };
+        if c >= (48 as u8) && c <= (57 as u8) {
+            let _a: status::Status = digits.append(#str_from_raw_parts(bytes + i, 1 as usize));
+            i = i +% (1 as usize);
+        } else { scanning = false; }
+    }
+    if digits.is_empty() { return - 1; }
+    return port_of(digits.view());
+}
+
+// Does anything at `target` ANSWER? The transport half of `connect`, and the
+// half that BLOCKS — which is why `connect` runs it on a worker.
+//
+// A ROUND TRIP, not a `connect(2)`. Reaching the socket is the cheaper check
+// and it is the wrong one: a forwarded port (`adb forward`, `iproxy`) accepts
+// on behalf of a device that may never reply, so `probe` says yes and the
+// first real verb then waits — on the caller's thread, which for the panel is
+// the one drawing the window. Asking a question here moves that wait onto the
+// worker where the blocking was already expected, and it is bounded by
+// `CALL_TIMEOUT_SECS` either way.
+//
+// `initialize` is the question because every agent surface answers it, it
+// costs the server nothing, and it needs no capability.
+fn reachable(target: str, secs: i64 = CALL_TIMEOUT_SECS) -> bool {
+    return match classify(target) {
+        Target::InApp => true,
+        Target::Unknown => false,
+        Target::Http => {
+            if http_port_of(target) <= 0 { false } else { answers(target, secs) }
+        }
+        _ => answers(target, secs),
+    };
+}
+
+// Did anything ACCEPT, whether or not it went on to answer?
+//
+// This is what `reachable` used to be, and it is kept because the difference is
+// what a developer is told. "Nothing is listening there" sends them to check
+// whether the app is running; "something accepted and then said nothing" sends
+// them to check what is behind the forward. Answering both with the same
+// sentence sends half of them to the wrong place.
+//
+// Cheap enough to ask on the UI thread — a refused `connect(2)` to loopback or
+// to a socket path comes back at once — which is where the sentence is needed.
+fn accepts(target: str) -> bool {
+    return match classify(target) {
+        Target::InApp => true,
+        Target::Unknown => false,
+        Target::Http => {
+            let port: i32 = http_port_of(target);
+            if port <= 0 { false } else { probe((port as i64).to_text().view()) }
+        }
+        _ => probe(target),
+    };
+}
+
+// One handshake against `target`, on whatever wire its scheme picks.
+//
+// A REFUSAL COUNTS AS AN ANSWER. A server that will not hand out its verb list
+// is still a server, and its sentence — "consent denied", say — is what the
+// panel should end up showing; treating it as unreachable would replace a
+// diagnosable refusal with "nothing is listening there", which is false. Only
+// silence and a broken transport answer no.
+fn answers(target: str, secs: i64 = CALL_TIMEOUT_SECS) -> bool {
+    var r: Remote = of_target(target);
+    r.timeout_secs = secs;
+    let _reply: option::Option[json::Value] =
+        rpc({ #addr_of(r) }, "initialize", no_params());
+    return r.answered();
+}
+
+// A Remote for whatever `target` names, with the wire already decided.
+fn of_target(target: str) -> Remote {
+    return match classify(target) {
+        Target::Http => Remote::http(http_host_of(target).view(), http_port_of(target)),
+        _ => Remote::new(target),
+    };
+}
+
 fn probe(path: str) -> bool {
     let fd: i32 = connect_to(path);
     if fd < 0 { return false; }
@@ -114,9 +343,16 @@ fn probe(path: str) -> bool {
     return true;
 }
 
-// The Backend, over the caller's Remote. All ten verbs cross the wire; the
+// The Backend, over the caller's Remote. All ten operations cross the wire; the
 // two the platform normally owns — highlight and its clearing — draw in the
 // TARGET's window, which is where the inspected node is.
+//
+// THE EIGHT QUERY SLOTS ARE THE CLOSED DEFAULTS, and that is the honest answer
+// rather than a gap. They exist for the VERBS, which run in the inspected
+// process next to its walker; a remote panel reaches the same information the
+// other way — `kind` arrives on every describe row, and the ledger and journal
+// have their own wire verbs. Wiring them here would be a second path to the
+// same answers, over a transport that already carries them.
 fn backend_of(r: *Remote) -> insp::Backend {
     return insp::Backend {
         surface: r as *u8,
@@ -130,6 +366,14 @@ fn backend_of(r: *Remote) -> insp::Backend {
         remove: r_remove,
         reparent: r_reparent,
         undo: r_undo,
+        get: insp::no_get,
+        parse_for: insp::no_parse_for,
+        canonical_prop: insp::no_canonical_prop,
+        changes: r_changes,
+        journal_count: insp::no_journal_count,
+        journal_at: insp::no_journal_at,
+        maker_names: insp::no_maker_names,
+        kind_name: insp::no_kind_name,
     };
 }
 
@@ -182,9 +426,9 @@ fn connect_tcp(port: i32) -> i32 {
     return fd;
 }
 
-fn connect_to(path: str) -> i32 {
+fn connect_to(path: str, secs: i64 = CALL_TIMEOUT_SECS) -> i32 {
     let port: i32 = port_of(path);
-    if port > 0 { return connect_tcp(port); }
+    if port > 0 { return armed_fd(connect_tcp(port), secs); }
     let plen: usize = #str_len(path);
     if plen > 100 { return - 4; }
     var addr: [u8; 110] = [0; 110];
@@ -203,11 +447,26 @@ fn connect_to(path: str) -> i32 {
         { close(fd) };
         return - 2;
     }
-    // The app under test dying must make OUR next write fail, not kill the
-    // IDE holding this connection (netsys::set_nosigpipe). Without it the
-    // failure cascades the wrong way: the inspected app goes away, and the
-    // inspector process is terminated by SIGPIPE with no crash report.
+    return armed_fd(fd, secs);
+}
+
+// The two things every connection here needs, applied in ONE place because the
+// TCP family used to miss both — `connect_to` returned the port path's fd
+// before reaching them, so a phone got neither.
+//
+//   set_nosigpipe  The app under test dying must make OUR next write fail, not
+//                  kill the IDE holding this connection. Without it the failure
+//                  cascades the wrong way: the inspected app goes away, and the
+//                  inspector process is terminated by SIGPIPE with no crash
+//                  report.
+//   set_timeout    A peer that accepts and never answers must cost seconds,
+//                  not the process. See CALL_TIMEOUT_SECS.
+//
+// A failed connect passes straight through: there is no fd to arm.
+fn armed_fd(fd: i32, secs: i64) -> i32 {
+    if fd < 0 { return fd; }
     let _np: i32 = netsys::set_nosigpipe(fd);
+    let _to: i32 = netsys::set_timeout(fd, secs);
     return fd;
 }
 
@@ -227,16 +486,27 @@ fn send_all(fd: i32, line: str) -> bool {
     return true;
 }
 
+// Did that read stop because the DEADLINE fired, rather than because the peer
+// closed? -1 with EAGAIN is the socket saying "nobody spoke in time"; 0 is the
+// peer closing, and any other -1 is a broken connection. Only the first is a
+// silent target, and it is the one worth its own sentence.
+fn expired_read(n: i64) -> bool {
+    return n < 0 && netsys::errno() == netsys::eagain();
+}
+
 // Read until the response's newline (or the peer closes). One response per
 // request is the server's own framing; anything after the first newline
 // belongs to no question this client asked.
-fn read_reply(fd: i32) -> text::Text {
+fn read_reply(fd: i32) -> Reply {
     var out: text::Text = text::new();
     var tmp: [u8; 8192] = [0; 8192];
     let p: *u8 = #addr_of(tmp) as *u8;
     loop {
         let n: i64 = { read(fd, p, 8192) };
-        if n <= 0 { break; }
+        if n <= 0 {
+            if expired_read(n) { return Reply { body: out, expired: true }; }
+            break;
+        }
         let _s: status::Status = out.append(#str_from_raw_parts(p, n as usize));
         var i: usize = 0;
         var done: bool = false;
@@ -247,7 +517,91 @@ fn read_reply(fd: i32) -> text::Text {
         }
         if done { break; }
     }
-    return out;
+    return Reply { body: out, expired: false };
+}
+
+// An HTTP reply, read to the end of its body.
+//
+// Two phases, and the second is why the line reader will not do: headers end
+// at a blank line, and the BODY's length is stated rather than delimited. A
+// reader that stopped at the first newline would stop inside the status line.
+fn read_http_reply(fd: i32) -> Reply {
+    var raw: text::Text = text::new();
+    var tmp: [u8; 8192] = [0; 8192];
+    let p: *u8 = #addr_of(tmp) as *u8;
+    var want: i64 = - 1;
+    var expired: bool = false;
+    loop {
+        let n: i64 = { read(fd, p, 8192) };
+        if n <= 0 {
+            // A body that stopped MID-STREAM is not a body. Saying so beats
+            // handing the decoder half an object to fail on, because the
+            // parse error it would raise names JSON and the cause is the wire.
+            if expired_read(n) { expired = true; }
+            break;
+        }
+        let _s: status::Status = raw.append(#str_from_raw_parts(p, n as usize));
+        let v: str = raw;
+        match v.find("\r\n\r\n") {
+            option::Option[usize]::Some(at) => {
+                if want < 0 { want = content_length_of(v, at); }
+                let body_from: usize = at +% (4 as usize);
+                let have: usize = #str_len(v) -% body_from;
+                // A server that states no length has said everything it is
+                // going to say when it closes, which the `n <= 0` above sees.
+                if want >= 0 && have >= (want as usize) { break; }
+            }
+            option::Option[usize]::None => { }
+        }
+    }
+    // The body alone: the decode above this is JSON, not HTTP.
+    let v: str = raw;
+    let body: text::Text = match v.find("\r\n\r\n") {
+        option::Option[usize]::Some(at) => match v.slice(at +% (4 as usize), #str_len(v)) {
+            option::Option[str]::Some(b) => text::from_str(b),
+            option::Option[str]::None => text::new(),
+        },
+        option::Option[usize]::None => text::new(),
+    };
+    return Reply { body: body, expired: expired };
+}
+
+// `Content-Length: N` out of the header block, or -1 when it is absent.
+fn content_length_of(v: str, header_end: usize) -> i64 {
+    let head: str = match v.slice(0 as usize, header_end) {
+        option::Option[str]::Some(h) => h,
+        option::Option[str]::None => { return - 1; }
+    };
+    let lower: text::Text = head.to_text().lowercased();
+    let lv: str = lower;
+    return match lv.find("content-length:") {
+        option::Option[usize]::Some(at) => {
+            let n: usize = #str_len(lv);
+            let bytes: *u8 = #str_ptr(lv);
+            // Skip whatever separates the colon from the number — a space, by
+            // convention, but the grammar allows none and allows several.
+            var j: usize = at +% (15 as usize);
+            var scanning: bool = true;
+            while scanning && j < n {
+                let c: u8 = { *(bytes + j) };
+                if c >= (48 as u8) && c <= (57 as u8) { scanning = false; }
+                else { j = j +% (1 as usize); }
+            }
+            var acc: i64 = 0;
+            var saw: bool = false;
+            while j < n {
+                let c: u8 = { *(bytes + j) };
+                if c < (48 as u8) || c > (57 as u8) { j = n; }
+                else {
+                    saw = true;
+                    acc = acc *% (10 as i64) +% ((c -% (48 as u8)) as i64);
+                    j = j +% (1 as usize);
+                }
+            }
+            if saw { acc } else { (- 1) as i64 }
+        }
+        option::Option[usize]::None => - 1,
+    };
 }
 
 fn member_of(k: str, take v: json::Value) -> json::Member {
@@ -266,17 +620,31 @@ fn set_fault(rp: *Remote, msg: str) {
 // or protocol failure and the fault says which; a REFUSAL is not a failure —
 // it comes back as a result whose outcome the verb maps.
 fn rpc(rp: *Remote, method: str, take params: json::Value) -> option::Option[json::Value] {
+    { (*rp)._answered = false };
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member_of("jsonrpc", json::Value::Text(text::from_str("2.0"))));
     m.append(member_of("id", json::Value::Number(1.0f64)));
     m.append(member_of("method", json::Value::Text(text::from_str(method))));
     m.append(member_of("params", params));
-    var line: text::Text = json::Value::Object(m).to_text();
-    let _nl: status::Status = line.append("\n");
+    let body: text::Text = json::Value::Object(m).to_text();
+    // THE WIRE DECIDES THE FRAME, and only the frame — the JSON-RPC inside is
+    // the same object either way, which is what lets one client speak to a
+    // desktop socket and to an HTTP endpoint without a second decoder.
+    var line: text::Text = text::new();
+    let is_http: bool = match { (*rp).wire } { Wire::Http => true, Wire::Line => false };
+    if is_http {
+        let host_t: text::Text = { (*rp).host }.clone();
+        let host: str = host_t;
+        let bs: str = body;
+        line = "POST / HTTP/1.1\r\nHost: ${host}\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(bs)}\r\nConnection: close\r\n\r\n${bs}";
+    } else {
+        line = body.clone();
+        let _nl: status::Status = line.append("\n");
+    }
 
     let path_t: text::Text = { (*rp).path }.clone();
     let ps: str = path_t;
-    let fd: i32 = connect_to(ps);
+    let fd: i32 = connect_to(ps, { (*rp).timeout_secs });
     if fd < 0 {
         set_fault(rp, "no app is listening at the run socket");
         return option::Option[json::Value]::None;
@@ -287,14 +655,27 @@ fn rpc(rp: *Remote, method: str, take params: json::Value) -> option::Option[jso
         set_fault(rp, "the app stopped reading mid-request");
         return option::Option[json::Value]::None;
     }
-    let reply: text::Text = read_reply(fd);
+    let reply: Reply = if is_http { read_http_reply(fd) } else { read_reply(fd) };
     { close(fd) };
-    if reply.is_empty() {
+    // THE SILENT TARGET, and it is its own sentence because it is its own
+    // situation: the connection was accepted, so the address is right and
+    // something is listening — it just never spoke. On a phone that reads as
+    // "the forward is up and the app behind it is not", which is a different
+    // thing to go and check than "no app is listening".
+    if reply.expired {
+        let secs: i64 = { (*rp).timeout_secs };
+        let why: text::Text =
+            "the app accepted the connection and did not answer within ${secs}s";
+        set_fault(rp, why.view());
+        return option::Option[json::Value]::None;
+    }
+    let answer: text::Text = reply.body.clone();
+    if answer.is_empty() {
         set_fault(rp, "the app closed without answering");
         return option::Option[json::Value]::None;
     }
     let parsed: result::Result[json::Value, json::ParseError] =
-        json::Value::parse(reply.view());
+        json::Value::parse(answer.view());
     let v: json::Value = match parsed {
         result::Result[json::Value, json::ParseError]::Ok(val) => val,
         result::Result[json::Value, json::ParseError]::Err(_e) => {
@@ -302,6 +683,9 @@ fn rpc(rp: *Remote, method: str, take params: json::Value) -> option::Option[jso
             return option::Option[json::Value]::None;
         }
     };
+    // IT SPOKE, and well enough to be read. Everything below this line is the
+    // server having an opinion — a result or a refusal — and both are answers.
+    { (*rp)._answered = true };
     match v.value("result") {
         option::Option[json::Value]::Some(res) => {
             { (*rp)._fault = text::new() };
@@ -380,7 +764,7 @@ fn text_at(obj: *json::Value, key: str) -> text::Text {
 // The index a remote handle carries, one-biased so index 0 is not `none()`.
 fn handle_for(index: usize, revision: u64) -> insp::Handle {
     return insp::Handle {
-        node: (index +% 1) as *core::Node,
+        node: (index +% 1) as *u8,
         seen: revision,
         window: 0,
     };
@@ -388,7 +772,7 @@ fn handle_for(index: usize, revision: u64) -> insp::Handle {
 
 // The wire index back out of a handle, or `None` for `Handle::none()`.
 fn index_of(h: insp::Handle) -> option::Option[usize] {
-    let raw: usize = #addr(h.node);
+    let raw: usize = #addr(tree::node_of(h));
     if raw == 0 { return option::Option[usize]::None; }
     return option::Option[usize]::Some(raw -% 1);
 }
@@ -400,7 +784,7 @@ fn index_of(h: insp::Handle) -> option::Option[usize] {
 fn kind_from_name(name: str) -> u32 {
     var k: u32 = 0u32;
     while k < 64 {
-        if insp::kind_name(k) == name { return k; }
+        if tree::kind_name(k) == name { return k; }
         k = k +% 1;
     }
     return 0u32;
@@ -430,9 +814,9 @@ fn channel_of(arr: *json::Value, at: usize) -> f64 {
 
 // A colour, decoded by what it IS — literal rgba, adaptive pair, or a theme
 // role whose channels genuinely are not there. The inverse of `color_json`.
-fn color_of(v: *json::Value) -> vocab::Color {
+fn color_of(v: *json::Value) -> insp::Color {
     let token: u32 = num_at(v, "token", 0.0) as u32;
-    var c: vocab::Color = vocab::Color {
+    var c: insp::Color = insp::Color {
         token: token,
         r: 0.0, g: 0.0, b: 0.0, a: 0.0,
         r2: 0.0, g2: 0.0, b2: 0.0, a2: 0.0,
@@ -495,7 +879,7 @@ fn node_of(obj: *json::Value, revision: u64) -> insp::Node {
         key: text_at(obj, "key"),
         slot: text::new(),
         kind: kind_from_name(kind_t.view()),
-        frame: flex::Frame {
+        frame: insp::Frame {
             left: num_at(fp, "x", 0.0),
             top: num_at(fp, "y", 0.0),
             width: num_at(fp, "w", 0.0),
@@ -631,7 +1015,7 @@ fn append_hex_byte(out: *text::Text, chan: f64) {
 // "#rrggbb" — the one spelling the far side's parser reads. Only a literal
 // colour can be said this way, and only a literal is what the panel's own
 // parse produces; alpha is the parser's own 1.0, matching what it will read.
-fn hex_of(c: vocab::Color) -> text::Text {
+fn hex_of(c: insp::Color) -> text::Text {
     var out: text::Text = text::from_str("#");
     append_hex_byte(#addr_of(out), c.r);
     append_hex_byte(#addr_of(out), c.g);
@@ -663,7 +1047,7 @@ fn wire_value(v: insp::Value) -> option::Option[json::Value] {
 
 fn r_describe(s: *u8) -> vec::Vec[insp::Node] {
     let rp: *Remote = s as *Remote;
-    return match rpc(rp, "inspector.describe", no_params()) {
+    return match rpc(rp, verbs::V_DESCRIBE_TREE, no_params()) {
         option::Option[json::Value]::Some(res) => {
             let out: vec::Vec[insp::Node] = nodes_of(#addr_of(res));
             { (*rp).revision = num_at(#addr_of(res), "revision", 0.0) as u64 };
@@ -685,7 +1069,7 @@ fn r_inspect(s: *u8, h: insp::Handle) -> option::Option[insp::Detail] {
         option::Option[usize]::Some(i) => i,
         option::Option::None => { return option::Option[insp::Detail]::None; }
     };
-    return match rpc(rp, "inspector.inspect", node_params(index)) {
+    return match rpc(rp, verbs::V_INSPECT, node_params(index)) {
         option::Option[json::Value]::Some(res) => detail_of(#addr_of(res)),
         option::Option::None => option::Option[insp::Detail]::None,
     };
@@ -705,7 +1089,7 @@ fn r_set(s: *u8, h: insp::Handle, p: str, take v: insp::Value) -> insp::Outcome 
     m.append(member_of("node", json::Value::Number(index as f64)));
     m.append(member_of("property", json::Value::Text(text::from_str(p))));
     m.append(member_of("value", wv));
-    return match rpc(rp, "inspector.set", json::Value::Object(m)) {
+    return match rpc(rp, verbs::V_SET, json::Value::Object(m)) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,
     };
@@ -720,7 +1104,7 @@ fn r_reset(s: *u8, h: insp::Handle, p: str) -> insp::Outcome {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member_of("node", json::Value::Number(index as f64)));
     m.append(member_of("property", json::Value::Text(text::from_str(p))));
-    return match rpc(rp, "inspector.reset", json::Value::Object(m)) {
+    return match rpc(rp, verbs::V_RESET, json::Value::Object(m)) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,
     };
@@ -731,7 +1115,7 @@ fn r_highlight(s: *u8, h: insp::Handle) {
     match index_of(h) {
         option::Option[usize]::Some(i) => {
             let _r: option::Option[json::Value] =
-                rpc(rp, "inspector.highlight", node_params(i));
+                rpc(rp, verbs::V_HIGHLIGHT, node_params(i));
         }
         option::Option::None => { }
     }
@@ -740,7 +1124,7 @@ fn r_highlight(s: *u8, h: insp::Handle) {
 fn r_clear_highlight(s: *u8) {
     let rp: *Remote = s as *Remote;
     let _r: option::Option[json::Value] =
-        rpc(rp, "inspector.clear_highlight", no_params());
+        rpc(rp, verbs::V_CLEAR_HIGHLIGHT, no_params());
 }
 
 fn r_insert(s: *u8, h: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome {
@@ -760,7 +1144,7 @@ fn r_insert(s: *u8, h: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Ou
     var wire_at: usize = at;
     if wire_at > 1000000000 { wire_at = 1000000000; }
     m.append(member_of("at", json::Value::Number(wire_at as f64)));
-    return match rpc(rp, "inspector.insert", json::Value::Object(m)) {
+    return match rpc(rp, verbs::V_INSERT, json::Value::Object(m)) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,
     };
@@ -772,7 +1156,7 @@ fn r_remove(s: *u8, h: insp::Handle) -> insp::Outcome {
         option::Option[usize]::Some(i) => i,
         option::Option::None => { return insp::Outcome::NotFound; }
     };
-    return match rpc(rp, "inspector.remove", node_params(index)) {
+    return match rpc(rp, verbs::V_REMOVE, node_params(index)) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,
     };
@@ -794,7 +1178,7 @@ fn r_reparent(s: *u8, h: insp::Handle, parent: insp::Handle, at: usize) -> insp:
     var wire_at: usize = at;
     if wire_at > 1000000000 { wire_at = 1000000000; }
     m.append(member_of("at", json::Value::Number(wire_at as f64)));
-    return match rpc(rp, "inspector.reparent", json::Value::Object(m)) {
+    return match rpc(rp, verbs::V_REPARENT, json::Value::Object(m)) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,
     };
@@ -802,10 +1186,109 @@ fn r_reparent(s: *u8, h: insp::Handle, parent: insp::Handle, at: usize) -> insp:
 
 fn r_undo(s: *u8) -> insp::Outcome {
     let rp: *Remote = s as *Remote;
-    return match rpc(rp, "inspector.undo", no_params()) {
+    return match rpc(rp, verbs::V_UNDO, no_params()) {
         option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
         option::Option::None => insp::Outcome::Stale,
     };
+}
+
+// The change LEDGER, over the wire — what the Copy button copies.
+//
+// The panel used to read the walker's ledger directly, which is the LOCAL tree.
+// Pointed at another process it copied its own empty one and reported "nothing
+// changed yet" over a screen of edits it had just made through this very
+// backend. So the ledger is a vtable read like everything else, and this is the
+// remote half of it.
+//
+// `journal` already carries it — `{"changes": {"button#tap": {"width": 12}}}`,
+// grouped by node, which is the shape `Change` is a flat list of.
+//
+// NAMES ARE INTERNED on the way in, exactly as the property decode does: a
+// `Change.prop` is a borrowed literal from this package's own table, and a
+// request-scoped string off the wire would dangle. A name in no table is
+// dropped — this build could not have drawn an editor for it anyway.
+//
+// The value carries no type tag here (the diff is the thing a person pastes,
+// so it is bare JSON), so it is read as what it arrived as.
+fn change_value(v: *json::Value) -> insp::Value {
+    match { (*v).as_boolean() } {
+        option::Option[bool]::Some(b) => { return insp::Value::Bool(b); }
+        option::Option::None => { }
+    }
+    match { (*v).as_number() } {
+        option::Option[f64]::Some(x) => { return insp::Value::Num(x); }
+        option::Option::None => { }
+    }
+    match { (*v).as_text() } {
+        option::Option[text::Text]::Some(t) => { return insp::Value::Str(t); }
+        option::Option::None => { }
+    }
+    return insp::Value::Nothing;
+}
+
+// The member NAMES of a JSON object, so the two nested loops below can read
+// each value back through `field_of` — which clones — rather than moving a
+// field out of a Drop-carrying `Member`.
+fn member_names(v: *json::Value) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    if !{ (*v).is_object() } { return out; }
+    let n: usize = { (*v).item_count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match { (*v).key(i) } {
+            option::Option[text::Text]::Some(k) => { let _a: status::Status = out.append(k); }
+            option::Option[text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn r_changes(s: *u8) -> vec::Vec[insp::Change] {
+    var out: vec::Vec[insp::Change] = vec::new::[insp::Change]();
+    let rp: *Remote = s as *Remote;
+    match rpc(rp, verbs::V_JOURNAL, no_params()) {
+        option::Option[json::Value]::Some(res) => {
+            let groups: json::Value = field_of(#addr_of(res), "changes");
+            let gp: *json::Value = #addr_of(groups);
+            let nodes: vec::Vec[text::Text] = member_names(gp);
+            var i: usize = 0 as usize;
+            while i < nodes.count() {
+                match nodes.at_ptr(i) {
+                    option::Option[*text::Text]::Some(nm) => {
+                        let label: str = { (*nm).view() };
+                        let props: json::Value = field_of(gp, label);
+                        let pp: *json::Value = #addr_of(props);
+                        let names: vec::Vec[text::Text] = member_names(pp);
+                        var j: usize = 0 as usize;
+                        while j < names.count() {
+                            match names.at_ptr(j) {
+                                option::Option[*text::Text]::Some(pn) => {
+                                    let raw: json::Value = field_of(pp, { (*pn).view() });
+                                    match intern_name({ (*pn).view() }) {
+                                        option::Option[str]::Some(lit) => {
+                                            let _a: status::Status = out.append(insp::Change {
+                                                node: text::from_str(label),
+                                                prop: lit,
+                                                now: change_value(#addr_of(raw)),
+                                            });
+                                        }
+                                        option::Option[str]::None => { }
+                                    }
+                                }
+                                option::Option[*text::Text]::None => { }
+                            }
+                            j = j +% (1 as usize);
+                        }
+                    }
+                    option::Option[*text::Text]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+        }
+        option::Option::None => { }
+    }
+    return out;
 }
 
 // ---- tests -------------------------------------------------------------------
@@ -836,9 +1319,9 @@ fn a_remote_handle_is_the_wire_index_one_biased_never_a_pointer() {
 
 #[test]
 fn kind_names_read_back_as_the_codes_that_wrote_them() {
-    assert insp::kind_name(kind_from_name("label")) == "label";
-    assert insp::kind_name(kind_from_name("button")) == "button";
-    assert insp::kind_name(kind_from_name("scroll")) == "scroll";
+    assert tree::kind_name(kind_from_name("label")) == "label";
+    assert tree::kind_name(kind_from_name("button")) == "button";
+    assert tree::kind_name(kind_from_name("scroll")) == "scroll";
     // The fallback both ways: an unknown name is a plain node, code 0.
     assert kind_from_name("node") == 0;
     assert kind_from_name("no_such_kind") == 0;
@@ -863,7 +1346,7 @@ fn a_describe_answer_becomes_rows_with_parents_frames_and_wire_handles() {
     }
     match rows.at_ptr(1) {
         option::Option[*insp::Node]::Some(p) => {
-            assert insp::kind_name({ (*p).kind }) == "label";
+            assert tree::kind_name({ (*p).kind }) == "label";
             assert { (*p).is_inspector };
             assert match { (*p).parent } {
                 option::Option[usize]::Some(x) => x == 0,
@@ -936,8 +1419,11 @@ fn a_write_crosses_as_number_boolean_or_string_and_a_colour_as_hex() {
         },
         option::Option::None => false,
     };
-    let c: vocab::Color = vocab::Color::rgba(
-        34.0 / 255.0, 119.0 / 255.0, 255.0 / 255.0, 1.0);
+    let c: insp::Color = insp::Color {
+        token: 255,
+        r: 34.0 / 255.0, g: 119.0 / 255.0, b: 255.0 / 255.0, a: 1.0,
+        r2: 0.0, g2: 0.0, b2: 0.0, a2: 0.0,
+    };
     assert match wire_value(insp::Value::Color(c)) {
         option::Option[json::Value]::Some(v) => match v {
             json::Value::Text(t) => t.view() == "#2277ff",
@@ -955,4 +1441,254 @@ fn a_write_crosses_as_number_boolean_or_string_and_a_colour_as_hex() {
 #[test]
 fn probing_a_path_nobody_listens_on_answers_no_rather_than_hanging() {
     assert !probe("/tmp/iris-remote-inspector-test-nothing-here.sock");
+}
+
+// ---- a target that accepts and says nothing --------------------------------
+//
+// The failure `probe` cannot see. Nobody listening is the easy case and the
+// test above pins it; the hard one is a socket that ACCEPTS and then never
+// speaks, because every check short of asking a question says it is fine.
+//
+// A listener that never calls `accept(2)` is exactly that peer: the kernel
+// completes the handshake out of the backlog, so the client's `connect`
+// succeeds, and no byte ever arrives because nothing is on the other end to
+// send one. Five lines, no emulator, and the same shape as `adb forward
+// tcp:P tcp:P` pointed at a device whose app is not serving.
+
+extern fn bind(fd: i32, addr: *u8, addrlen: u32) -> i32;
+extern fn listen(fd: i32, backlog: i32) -> i32;
+extern fn getpid() -> i32;
+
+// The same silence over TCP, which is the shape the bug was FOUND on: a phone
+// serves HTTP on its own loopback and `adb forward` republishes that port on
+// the Mac, so the client's `connect` lands on the forward and the answer has to
+// come all the way from a device that may not be serving. Answers the bound
+// port, or -1.
+//
+// The port is picked by trying: the ephemeral one the kernel would choose is
+// not readable through the raw calls this module already has, and a fixed one
+// collides with whatever else is on the machine.
+fn silent_tcp_listener(port_out: *i32) -> i32 {
+    var port: i32 = 39877;
+    while port < 39917 {
+        var addr: [u8; 16] = [0; 16];
+        addr[0] = 16;
+        addr[1] = 2;
+        addr[2] = { ((port / 256) & 255) as u8 };
+        addr[3] = { (port & 255) as u8 };
+        addr[4] = 127;
+        addr[7] = 1;
+        let fd: i32 = { socket(2, 1, 0) };
+        if fd < 0 { return - 1; }
+        if { bind(fd, #addr_of(addr[0]), 16) } == 0 && { listen(fd, 8) } == 0 {
+            { (*port_out) = port };
+            return fd;
+        }
+        { close(fd) };
+        port = port +% 1;
+    }
+    return - 1;
+}
+
+// Bind and listen on `path`, and never accept. -1 if the socket could not be
+// made.
+fn silent_listener(path: str) -> i32 {
+    let plen: usize = #str_len(path);
+    if plen > 100 { return - 1; }
+    var addr: [u8; 110] = [0; 110];
+    addr[1] = 1; // sun_family = AF_UNIX
+    let pbytes: *u8 = #str_ptr(path);
+    var i: usize = 0;
+    while i < plen {
+        addr[(2 as usize) +% i] = { *(pbytes + i) };
+        i = i +% 1;
+    }
+    let addrlen: u32 = ((2 as usize) +% plen +% (1 as usize)) as u32;
+    let fd: i32 = { socket(1, 1, 0) };
+    if fd < 0 { return - 1; }
+    if { bind(fd, #addr_of(addr[0]), addrlen) } != 0 { { close(fd) }; return - 1; }
+    if { listen(fd, 8) } != 0 { { close(fd) }; return - 1; }
+    return fd;
+}
+
+// A silent target must cost the DEADLINE and then read as a fault, rather than
+// hanging the caller for good.
+//
+// This is the bug this transport was pointed at an Android emulator to find:
+// `sample` on the frozen IDE put 1670 of 1670 main-thread samples inside this
+// module's read, reached from the panel's first `describe_tree`. Every check
+// before it had passed, because every check before it was a `connect(2)`.
+//
+// THE TEST PROVES ITSELF: without a deadline the read never returns and the
+// suite hangs here rather than failing an assertion. One second rather than
+// the shipped five, which is what `timeout_secs` is a field for.
+#[test]
+fn a_target_that_accepts_and_never_answers_expires_rather_than_hanging() {
+    let pid: i32 = { getpid() };
+    let path: text::Text = "/tmp/iris-remote-silent-${pid}.sock";
+    let _gone: result::Result[bool, result::IoError] = fs::remove_file(path.view());
+
+    let srv: i32 = silent_listener(path.view());
+    assert srv >= 0;
+
+    var r: Remote = Remote::new(path.view());
+    r.timeout_secs = 1 as i64;
+
+    let began: i64 = time::now_millis();
+    let answer: option::Option[json::Value] =
+        rpc({ #addr_of(r) }, verbs::V_DESCRIBE_TREE, no_params());
+    let took: i64 = time::now_millis() -% began;
+
+    // It came back, and it came back as a REFUSAL rather than as an empty
+    // tree — the panel renders the sentence instead of "0 nodes".
+    assert match answer {
+        option::Option[json::Value]::Some(_v) => false,
+        option::Option::None => true,
+    };
+    assert r.faulted();
+    // AND NOT AS AN ANSWER. This is the bit `_fault` alone cannot say: a
+    // refused verb also sets a fault, and a caller deciding whether a target
+    // is worth attaching to needs the difference.
+    assert !r.answered();
+    // The sentence names the shape — accepted, then silent — because "no app
+    // is listening" would send a developer to check the wrong thing.
+    let why: text::Text = r.fault();
+    assert why.view().contains("did not answer");
+
+    // It WAITED, and it STOPPED. A deadline that failed to apply comes back
+    // instantly; one that is not there does not come back at all.
+    assert took >= (900 as i64);
+    assert took < (5000 as i64);
+
+    { close(srv) };
+    let _rm: result::Result[bool, result::IoError] = fs::remove_file(path.view());
+}
+
+// THE SAME SILENCE ON THE HTTP WIRE, because that is where it was found and
+// because the two wires read the socket with different loops. The line reader
+// stops at a newline; the HTTP one stops at a stated Content-Length, and a
+// reader that never sees a header block has a second way to wait for good.
+//
+// This is `adb forward tcp:P tcp:P` with the device unplugged from the app's
+// point of view: the forward accepts on the Mac, and nothing behind it answers.
+#[test]
+fn a_silent_http_target_expires_the_same_way_the_line_wire_does() {
+    var port: i32 = 0;
+    let srv: i32 = silent_tcp_listener({ #addr_of(port) });
+    assert srv >= 0;
+
+    var r: Remote = Remote::http("127.0.0.1", port);
+    r.timeout_secs = 1 as i64;
+
+    let began: i64 = time::now_millis();
+    let answer: option::Option[json::Value] =
+        rpc({ #addr_of(r) }, verbs::V_DESCRIBE_TREE, no_params());
+    let took: i64 = time::now_millis() -% began;
+
+    assert match answer {
+        option::Option[json::Value]::Some(_v) => false,
+        option::Option::None => true,
+    };
+    assert r.faulted();
+    assert !r.answered();
+    let why: text::Text = r.fault();
+    assert why.view().contains("did not answer");
+    assert took >= (900 as i64);
+    assert took < (5000 as i64);
+
+    // And through the door a host uses, spelled the way a descriptor spells it.
+    let target: text::Text = "http://127.0.0.1:${port}/";
+    assert accepts(target.view());
+    assert !reachable(target.view(), 1 as i64);
+
+    { close(srv) };
+}
+
+// The same target, through the door a host actually uses. `reachable` is what
+// `widget::connect` runs on its worker, and it used to answer YES here — a
+// `connect(2)` to a backlog succeeds — which is how the freeze reached the UI
+// thread: the probe passed, and the first real verb blocked on the caller.
+#[test]
+fn reaching_a_silent_target_answers_no_rather_than_yes_and_then_freezing() {
+    let pid: i32 = { getpid() };
+    let path: text::Text = "/tmp/iris-remote-silent-reach-${pid}.sock";
+    let _gone: result::Result[bool, result::IoError] = fs::remove_file(path.view());
+
+    let srv: i32 = silent_listener(path.view());
+    assert srv >= 0;
+
+    // The bare `connect(2)` still says yes, and that is the whole point: it is
+    // not wrong, it is answering a different question — the one `accepts`
+    // keeps asking, so that a host can tell a silent target from an absent one.
+    assert probe(path.view());
+    assert accepts(path.view());
+    assert !reachable(path.view(), 1 as i64);
+
+    { close(srv) };
+    let _rm: result::Result[bool, result::IoError] = fs::remove_file(path.view());
+}
+
+// THE COPY BUTTON'S LEDGER, decoded from the wire.
+//
+// The panel's Copy button read the WALKER's ledger — the local tree — while the
+// panel was pointed at another process. It copied its own empty ledger and said
+// "nothing changed yet" over a screen of edits it had just made through this
+// backend. The ledger is a vtable read now, and this is the decode half.
+//
+// Canned wire JSON in, this package's own `Change` rows out. No socket: the
+// transport is one syscall wide and `probe` covers it.
+#[test]
+fn the_change_ledger_decodes_from_the_journals_own_shape() {
+    let wire: json::Value = parsed(
+        "{\"changes\":{\"button#tap\":{\"opacity\":0.75,\"corner_radius\":12},\"label#hello\":{\"text\":\"hi\"}},\"structural\":[]}");
+    let groups: json::Value = field_of(#addr_of(wire), "changes");
+    let gp: *json::Value = #addr_of(groups);
+
+    // Two nodes, and the names come back in the object's own order.
+    let nodes: vec::Vec[text::Text] = member_names(gp);
+    assert nodes.count() == (2 as usize);
+    match nodes.at_ptr(0 as usize) {
+        option::Option[*text::Text]::Some(n) => { assert { (*n).view() } == "button#tap"; }
+        option::Option[*text::Text]::None => { assert false; }
+    }
+
+    // ...and a node's properties, likewise.
+    let props: json::Value = field_of(gp, "button#tap");
+    let names: vec::Vec[text::Text] = member_names(#addr_of(props));
+    assert names.count() == (2 as usize);
+
+    // A bare JSON scalar reads as what it arrived as — the diff carries no type
+    // tag, because it is the thing a person pastes.
+    let n1: json::Value = field_of(#addr_of(props), "opacity");
+    assert match change_value(#addr_of(n1)) {
+        insp::Value::Num(x) => x > 0.74 && x < 0.76,
+        _ => false,
+    };
+    let holder: json::Value = parsed("{\"text\":\"hi\"}");
+    let t1: json::Value = field_of(#addr_of(holder), "text");
+    assert match change_value(#addr_of(t1)) {
+        insp::Value::Str(s) => s.view() == "hi",
+        _ => false,
+    };
+
+    // A NAME IN NO TABLE IS DROPPED rather than kept as a dangling borrow:
+    // `Change.prop` is one of this package's literals, and a wire string is
+    // request-scoped.
+    assert match intern_name("opacity") {
+        option::Option[str]::Some(_) => true,
+        option::Option[str]::None => false,
+    };
+    assert match intern_name("no_such_property_anywhere") {
+        option::Option[str]::Some(_) => false,
+        option::Option[str]::None => true,
+    };
+}
+
+// An empty ledger is an empty vector, not a fault — the button says "nothing
+// changed yet" and copies nothing, which is the honest answer.
+#[test]
+fn an_empty_change_ledger_decodes_to_no_rows() {
+    let wire: json::Value = parsed("{\"changes\":{},\"structural\":[]}");
+    let groups: json::Value = field_of(#addr_of(wire), "changes");
+    assert member_names(#addr_of(groups)).count() == (0 as usize);
 }
