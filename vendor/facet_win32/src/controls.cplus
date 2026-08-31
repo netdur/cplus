@@ -2559,6 +2559,22 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         }
         let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
     }
+    // A CAROUSEL'S ANCHOR IS ITS POSITION, not a pixel offset. `scroll_anchor`
+    // asks where the viewport stays when items are inserted around it, and a
+    // carousel rests on a PAGE — so the answer is which page it rests on, and
+    // it is re-applied rather than recomputed. `KeepLastItemInView` is the one
+    // that moves: a carousel showing the last page keeps showing the last page
+    // when one is appended, which is the whole difference from keeping the
+    // index it had.
+    if (dirty & carousel::P_SCROLL_ANCHOR) != (0 as u64) {
+        let count: i64 = carousel_count(n);
+        let want: i64 = match { (*p).items_view.scroll_anchor } {
+            vocab::ScrollAnchor::KeepLastItemInView => count -% (1 as i64),
+            vocab::ScrollAnchor::KeepItemsInView => { (*p).position },
+            vocab::ScrollAnchor::KeepScrollOffset => { (*p).position },
+        };
+        show_page(v, n, p, want, false);
+    }
     if (dirty & (carousel::P_COLUMNS | carousel::P_PEEK_INSETS
                  | carousel::P_ITEM_SIZING)) != (0 as u64) {
         size_pages(v, n, p);

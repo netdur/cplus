@@ -44,7 +44,7 @@ Two probes under `playground/`, and the division is deliberate:
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
 
 ```
-362 declared prop bits     264 answered    72%   (gtk 358, appkit 336, uikit 323, android 321)
+362 declared prop bits     268 answered    74%   (gtk 358, appkit 336, uikit 323, android 321)
  68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
@@ -319,23 +319,22 @@ colour — have nowhere to be drawn.
 `popup.is_open` and `selected_index` are unaffected and still answered —
 `CB_SHOWDROPDOWN` and `CB_GETDROPPEDSTATE` are ordinary messages.
 
-### `carousel.bounces` and `carousel.scroll_anchor`
+### `carousel.bounces`
 
-`bounces` is the rubber-band at the ends of an overscroll. It is a TOUCH
-affordance — the finger keeps going, the content follows and springs back — and
-there is no overscroll on a desktop to rubber-band against: a wheel notch past
-the last page is not a gesture with distance, it is the end of the list.
-facet_gtk records the same verb absent for the same kind, which is the whole of
-why it is here rather than approximated.
+The rubber-band at the ends of an overscroll. It is a TOUCH affordance — the
+finger keeps going, the content follows and springs back — and there is no
+overscroll on a desktop to rubber-band against: a wheel notch past the last
+page is not a gesture with distance, it is the end of the list. facet_gtk
+records the same verb absent for the same kind, which is why it is here rather
+than approximated.
 
-`scroll_anchor` (`ItemsUpdatingScrollMode`) says where the viewport stays when
-items are inserted around it — keep the item, keep the offset, or jump to the
-last. Answering it needs the carousel to observe INSERTS AND REMOVES against
-its own children and adjust before the next layout, and this package's carousel
-does not watch its child list at all: it reads `child_count_of` when it is
-asked to move. That is §2 rather than §1 — Win32 puts nothing in the way — and
-it is written here rather than left as a gap because the verb silently doing
-nothing is indistinguishable from the default mode.
+(The scroll-anchor verb was recorded beside it and is answered now — see
+`recycler::apply_scroll_anchor` and `controls::apply_carousel`. It was written
+down as debt because it needs the state from BEFORE a splice, which looked
+like it needed the carousel to watch its child list; it needs only the splice
+fields the recycler was already being handed. Its name is not in backticks
+here on purpose: `parity.py` reads a backticked prop name in §1 as a claim of
+absence, and cannot tell a claim from a mention.)
 
 ### `date_picker.is_open` — opening and closing are NOT symmetric
 
@@ -697,13 +696,20 @@ the top, and neither is adjustable. The verb is answered for a `label`, where
 
 Worth recording because the verb LOOKS present on both kinds and is not.
 
-`ReorderableItemsViewProps` — which carries `can_reorder_items` and
-`on_reorder_completed` — is embedded in `CollectionProps` and in nothing else.
-A `list` has `reorder_from` and `reorder_to` to READ, and `P_REORDER` is
+`ReorderableItemsViewProps` — which carries the capability flag and the
+completion handler — is embedded in `CollectionProps` and in nothing else. A
+list has the two read-only "what moved" fields, and its reorder bit is
 declared, but there is no way to ask a list to be reorderable and no handler to
 hear that it was. A drag there would be a gesture with no contract behind it,
-so `collection` reorders and `list` does not. facet_gtk reads
+so a collection reorders and a `list` does not. facet_gtk reads
 `CollectionProps` and only that, for the same reason.
+
+**The names are deliberately not in backticks above.** `parity.py` reads a
+backticked prop name in §1 as "this backend decided it absent", and it does not
+know which KIND the sentence was about — so naming a collection's verbs while
+explaining a list's absence marked them absent on the collection too, where
+they are implemented. Two verbs read as gaps for no reason but this file's
+prose.
 
 Reordering here is mouse capture rather than OLE drag-and-drop, and the COM
 note in the entry below does not apply to it: a reorder never leaves the

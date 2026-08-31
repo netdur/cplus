@@ -204,6 +204,9 @@ struct SeqSource {
     on_refreshing: fn(*u8, *u8),
     on_refreshing_ctx: usize,
     scroll_to_index: i64,
+    scroll_anchor: vocab::ScrollAnchor,
+    splice_at: i64,
+    splice_count: i64,
     // Grouping. `group_size` and `group_header` are the application's, exactly
     // as `row` is — this file never invents a section.
     is_grouped: bool,
@@ -231,6 +234,8 @@ fn no_source() -> SeqSource {
         refresh_color: vocab::Color::clear(),
         on_refreshing: props::no_handler, on_refreshing_ctx: 0 as usize,
         scroll_to_index: (0 as i64) -% (1 as i64),
+        scroll_anchor: vocab::ScrollAnchor::KeepScrollOffset,
+        splice_at: (0 as i64) -% (1 as i64), splice_count: 0 as i64,
         is_grouped: false, can_mix_groups: false, group_count: 0 as i64,
         group_size: props::no_group_size, group_size_ctx: 0 as usize,
         group_header: props::no_group_header, group_header_ctx: 0 as usize,
@@ -274,6 +279,11 @@ fn source_of(n: *core::Node) -> SeqSource {
             on_refreshing: { (*p).on_refreshing },
             on_refreshing_ctx: { #addr((*p).on_refreshing_ctx) },
             scroll_to_index: { (*p).scroll_to_index },
+            // A `list` declares no `scroll_anchor` — it is an ItemsView verb —
+            // so it keeps the offset, which is what it has always done.
+            scroll_anchor: vocab::ScrollAnchor::KeepScrollOffset,
+            splice_at: { (*p).splice_at },
+            splice_count: { (*p).splice_count },
             is_grouped: { (*p).is_grouped },
             // A `list` has no `ReorderableItemsViewProps` — see §1 — so it
             // never reorders and the answer here cannot matter.
@@ -314,6 +324,9 @@ fn source_of(n: *core::Node) -> SeqSource {
             refresh_color: vocab::Color::clear(),
             on_refreshing: props::no_handler, on_refreshing_ctx: 0 as usize,
             scroll_to_index: { (*p).items_view.scroll_to_index },
+            scroll_anchor: { (*p).items_view.scroll_anchor },
+            splice_at: { (*p).splice_at },
+            splice_count: { (*p).splice_count },
             is_grouped: { (*p).groupable_items_view.is_grouped },
             can_mix_groups: { (*p).reorderable_items_view.can_mix_groups },
             group_count: { (*p).group_count },
@@ -1149,6 +1162,8 @@ struct SeqBits {
     scroll_to: u64,
     threshold: u64,
     mix_groups: u64,
+    reorder_gate: u64,
+    anchor: u64,
     separator: u64,
     refreshing: u64,
     begin_refresh: u64,
@@ -1167,6 +1182,8 @@ fn bits_for(n: *core::Node) -> SeqBits {
             scroll_to: fcollection::P_SCROLL_TO,
             threshold: fcollection::P_REMAINING_THRESHOLD,
             mix_groups: fcollection::P_CAN_MIX_GROUPS,
+            reorder_gate: fcollection::P_CAN_REORDER_ITEMS,
+            anchor: fcollection::P_SCROLL_ANCHOR,
             // A COLLECTION HAS NEITHER, and zero is the honest answer: a bit
             // that is never set can never match, so the branch is simply never
             // taken rather than taken on some other verb's bit.
@@ -1187,6 +1204,9 @@ fn bits_for(n: *core::Node) -> SeqBits {
         // the mix rule a Reorderable one, and a list embeds neither struct.
         threshold: 0 as u64,
         mix_groups: 0 as u64,
+        reorder_gate: 0 as u64,
+        // A `list` declares no scroll anchor — it is an ItemsView verb.
+        anchor: 0 as u64,
         separator: flist::P_SEPARATOR | flist::P_SEPARATOR_COLOR,
         refreshing: flist::P_IS_REFRESHING,
         begin_refresh: flist::P_BEGIN_REFRESH,
@@ -1204,7 +1224,15 @@ fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
     let p: *SeqSource = #addr_of(src);
     let b: SeqBits = bits_for(n);
     if (dirty & b.model) != (0 as u64) {
+        // WHERE THE VIEWPORT WAS, before the model moves under it. `scroll_anchor`
+        // is answered by adjusting the offset AFTER the rebuild, and both the
+        // "was at the bottom" test and the "how much came in above" sum need the
+        // OLD map to be meaningful.
+        let anchor: vocab::ScrollAnchor = { (*p).scroll_anchor };
+        let was_at_end: bool = at_end(v, s);
+        let before: f64 = inserted_above(s, p);
         rebuild_map(s, p);
+        apply_scroll_anchor(v, s, p, anchor, was_at_end, before);
         // EVERY LIVE CELL IS RELEASED when the model changes. A cell still
         // pointing at row 40 of a list that now has 12 rows is showing data
         // that is gone, and `fill_cell` would rebind it only if it happened to
@@ -1250,6 +1278,30 @@ fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
     if b.mix_groups != (0 as u64) && (dirty & b.mix_groups) != (0 as u64) {
         if reorder_host() == v { cancel_reorder(); }
     }
+    // THE CAPABILITY WITHDRAWN MID-DRAG stops the drag, for the same reason
+    // and more bluntly: an application that sets `can_reorder_items` false
+    // while a row is in flight has said reordering is not allowed, and
+    // reporting the move it was in the middle of would be reporting one it
+    // just forbade.
+    if b.reorder_gate != (0 as u64) && (dirty & b.reorder_gate) != (0 as u64) {
+        if reorder_host() == v && !reorders(n) { cancel_reorder(); }
+    }
+    // SETTING THE ANCHOR TAKES EFFECT AT ONCE for the one mode that names a
+    // position rather than a rule. An application that says "keep the last item
+    // in view" while scrolled halfway means it NOW, not at the next insert —
+    // waiting would leave the list somewhere the anchor says it should not be
+    // until something unrelated happened. The other two modes describe what to
+    // do WHEN the model moves and have nothing to do until it does.
+    if b.anchor != (0 as u64) && (dirty & b.anchor) != (0 as u64) {
+        if match { (*p).scroll_anchor } {
+            vocab::ScrollAnchor::KeepLastItemInView => true,
+            vocab::ScrollAnchor::KeepItemsInView => false,
+            vocab::ScrollAnchor::KeepScrollOffset => false,
+        } {
+            apply_scroll_anchor(v, s, p, { (*p).scroll_anchor }, true, 0.0f64);
+            layout_rows(v, n);
+        }
+    }
     if (dirty & b.scroll_to) != (0 as u64) {
         scroll_to_row(v, n, { (*p).scroll_to_index });
     }
@@ -1280,6 +1332,71 @@ fn refreshing_of(n: *core::Node) -> bool {
     if raw == (0 as *u8) { return false; }
     if { (*d).kind } != props::K_LIST { return false; }
     return { (*(raw as *props::ListProps)).is_refreshing };
+}
+
+// Was the viewport resting at the bottom? Asked BEFORE the rebuild, because
+// afterwards the content has changed height and the question is unanswerable.
+//
+// A POINT OF SLACK. A list scrolled to the end sits at exactly `content - vh`,
+// but an uneven-row list recomputes its heights on rebuild and can land a
+// fraction off; requiring exact equality would make "keep the last item in
+// view" fail on precisely the lists that need it.
+fn at_end(v: *u8, s: *ListState) -> bool {
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return false; }
+    let vh: f64 = (r.bottom -% r.top) as f64;
+    if { (*s).content } <= vh { return true; }
+    return { (*s).scroll } >= ({ (*s).content } - vh - (1.0 as f64));
+}
+
+// How much height a pending splice ADDS ABOVE the viewport. Rows inserted below
+// what is showing do not move it; rows inserted above push everything down by
+// their height, which is what `KeepItemsInView` has to undo.
+//
+// The splice is described in DATA rows and the offsets are in DISPLAY rows, so
+// this measures with the map that is still current — which is the whole reason
+// it is taken before the rebuild.
+fn inserted_above(s: *ListState, p: *SeqSource) -> f64 {
+    let at: i64 = { (*p).splice_at };
+    let n: i64 = { (*p).splice_count };
+    if at < (0 as i64) || n == (0 as i64) { return 0.0f64; }
+    let first: i64 = row_at(s, { (*s).scroll }, p);
+    if at > first { return 0.0f64; }
+    let h: f64 = if { (*s).uniform } > (0.0 as f64) { { (*s).uniform } }
+                 else { default_row_height() };
+    return (n as f64) * h;
+}
+
+// Put the viewport back where the anchor says it belongs.
+fn apply_scroll_anchor(v: *u8, s: *ListState, p: *SeqSource,
+                       anchor: vocab::ScrollAnchor, was_at_end: bool,
+                       above: f64) {
+    match anchor {
+        // The DEFAULT, and what this file did before there was an anchor at
+        // all: the pixel offset is kept and the content moves under it.
+        vocab::ScrollAnchor::KeepScrollOffset => { }
+        // The same ITEMS stay under the eye. Rows inserted above the viewport
+        // would otherwise push what the user was reading off the top.
+        vocab::ScrollAnchor::KeepItemsInView => {
+            if above != (0.0 as f64) { { (*s).scroll = { (*s).scroll } + above }; }
+        }
+        // A list that was pinned to the bottom stays pinned — the chat-window
+        // rule, and the one anchor whose absence is noticed immediately.
+        vocab::ScrollAnchor::KeepLastItemInView => {
+            if was_at_end {
+                var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                                 right: 0 as i32, bottom: 0 as i32 };
+                if { u::GetClientRect(v, #addr_of(r)) } != (0 as i32) {
+                    let vh: f64 = (r.bottom -% r.top) as f64;
+                    var to: f64 = { (*s).content } - vh;
+                    if to < (0.0 as f64) { to = 0.0f64; }
+                    { (*s).scroll = to };
+                }
+            }
+        }
+    }
+    return;
 }
 
 fn release_all(s: *ListState) {
@@ -2143,6 +2260,11 @@ fn report_reorder(v: *u8, n: *core::Node, from: i64, to: i64) -> bool {
     // not happen.
     { (*p).reorder_from = from };
     { (*p).reorder_to = to };
+    // AND THE BIT, so a cursor watching the node learns a move happened. The
+    // handler is one way to hear it and `reorder_from`/`reorder_to` are the
+    // other; an application that polls rather than subscribes has nothing to
+    // poll ON without this.
+    core::touch(n, fcollection::P_REORDER);
     let h: fn(*u8, *u8) = { (*p).reorderable_items_view.on_reorder_completed };
     if h == props::no_handler { return true; }
     h(v, { (*p).reorderable_items_view.on_reorder_completed_ctx });
@@ -2350,5 +2472,77 @@ fn each_kind_gets_its_own_bits() {
     assert cb.separator == (0 as u64);
     assert cb.refreshing == (0 as u64);
     assert lb.separator != (0 as u64);
+    return;
+}
+
+// ---- the scroll anchor -----------------------------------------------------------
+
+#[test]
+fn keeping_the_offset_is_the_default_and_moves_nothing() {
+    // What this file did before there was an anchor at all, and what a `list`
+    // still gets — the offset is kept and the content moves under it.
+    var st: ListState = new_state();
+    { st.scroll = 40.0f64 };
+    { st.content = 500.0f64 };
+    var src: SeqSource = no_source();
+    apply_scroll_anchor(0 as *u8, #addr_of(st), #addr_of(src),
+                        vocab::ScrollAnchor::KeepScrollOffset, true, 120.0f64);
+    assert st.scroll == (40.0 as f64);
+    return;
+}
+
+#[test]
+fn keeping_items_in_view_undoes_what_was_inserted_above() {
+    // Rows inserted ABOVE the viewport push what the user was reading off the
+    // top. The offset moves by exactly their height so the same items stay
+    // under the eye.
+    var st: ListState = new_state();
+    { st.scroll = 200.0f64 };
+    var src: SeqSource = no_source();
+    apply_scroll_anchor(0 as *u8, #addr_of(st), #addr_of(src),
+                        vocab::ScrollAnchor::KeepItemsInView, false, 60.0f64);
+    assert st.scroll == (260.0 as f64);
+    // Nothing above means nothing to undo — an insert BELOW the viewport does
+    // not move it, which is the case that would otherwise jump the list.
+    { st.scroll = 200.0f64 };
+    apply_scroll_anchor(0 as *u8, #addr_of(st), #addr_of(src),
+                        vocab::ScrollAnchor::KeepItemsInView, false, 0.0f64);
+    assert st.scroll == (200.0 as f64);
+    return;
+}
+
+#[test]
+fn a_splice_below_the_viewport_moves_nothing() {
+    // `inserted_above` is the measurement `KeepItemsInView` acts on, and it has
+    // to answer ZERO for rows added below what is showing — otherwise a chat
+    // window appending a message would scroll away from it.
+    var st: ListState = new_state();
+    { st.count = 100 as i64 };
+    { st.uniform = 20.0f64 };
+    { st.content = 2000.0f64 };
+    { st.scroll = 0.0f64 };
+    var src: SeqSource = no_source();
+    { src.splice_at = 90 as i64 };
+    { src.splice_count = 5 as i64 };
+    assert inserted_above(#addr_of(st), #addr_of(src)) == (0.0 as f64);
+    // ...and a non-zero answer for rows added at the very top.
+    { src.splice_at = 0 as i64 };
+    { st.scroll = 400.0f64 };
+    assert inserted_above(#addr_of(st), #addr_of(src)) == (100.0 as f64);
+    return;
+}
+
+#[test]
+fn a_splice_that_is_not_pending_measures_nothing() {
+    // `splice_at` is -1 when there is no pending splice, and `splice_count` is
+    // zero. Either alone has to mean "nothing moved" — reading -1 as a row
+    // index would measure the whole list.
+    var st: ListState = new_state();
+    { st.uniform = 20.0f64 };
+    var src: SeqSource = no_source();
+    assert inserted_above(#addr_of(st), #addr_of(src)) == (0.0 as f64);
+    { src.splice_at = 0 as i64 };
+    { src.splice_count = 0 as i64 };
+    assert inserted_above(#addr_of(st), #addr_of(src)) == (0.0 as f64);
     return;
 }
