@@ -423,6 +423,45 @@ fn join_worker_bridges_a_thread_result_into_async() {
     assert v == (42 as i64);
 }
 
+// ---- spawn_local ----
+//
+// THERE WAS NO TEST FOR THIS, and that is the whole reason it needs one. When
+// `Future` gained a destructor (v0.0.30, so a merely-dropped future stops
+// leaking its frame), `spawn_local`'s own `take f` local began dropping at the
+// end of the wrapper and destroying the frame the reactor was still driving.
+// The spawned task stopped running — silently, no crash — and every suite in
+// the tree stayed green, because nothing anywhere called `spawn_local`.
+//
+// The fix is that `#reactor_spawn_local` now moves the handle OUT of the value,
+// which is the ownership transfer the name always implied. This check is what
+// says so.
+
+static _SPAWNED_RAN: u64 = 0 as u64;
+
+async fn _spawned_background() -> i32 {
+    await yield_now();
+    atomic::store_u64(#addr_of(_SPAWNED_RAN), 1 as u64, atomic::Ordering::Release);
+    return 5;
+}
+
+async fn _spawns_then_yields() -> i32 {
+    spawn_local::[i32](_spawned_background());
+    // Three passes: the spawned task self-enqueued on the pending queue, and
+    // the drive loop's drain step is what resumes it.
+    await yield_now();
+    await yield_now();
+    await yield_now();
+    return 1;
+}
+
+#[test]
+fn a_spawn_local_task_actually_runs() {
+    atomic::store_u64(#addr_of(_SPAWNED_RAN), 0 as u64, atomic::Ordering::Release);
+    let v: i32 = block_on::[i32](_spawns_then_yields());
+    assert v == 1;
+    assert atomic::load_u64(#addr_of(_SPAWNED_RAN), atomic::Ordering::Acquire) == (1 as u64);
+}
+
 // ---- the deadlines ----
 //
 // A DEADLINE THAT DOES NOT EXPIRE MUST CHANGE NOTHING, which is half of what

@@ -16781,8 +16781,21 @@ impl<'a> FnState<'a> {
     /// while that source stays armed. When the source later fires,
     /// `poll_one_event` resumes the now-completed coroutine (its resume
     /// pointer nulled at final suspend) and the program jumps through
-    /// null → SEGV. So we consume the future (keeping its frame alive —
-    /// `Future` has no destroying drop glue) without enqueuing.
+    /// null → SEGV. So we consume the future without enqueuing.
+    ///
+    /// CONSUMING MEANS NULLING THE SOURCE, and it did not used to. This said
+    /// "keeping its frame alive — `Future` has no destroying drop glue", which
+    /// was true until v0.0.30 gave it one so a merely-dropped future would stop
+    /// leaking. After that, `spawn_local`'s own `take f` local dropped at the
+    /// end of the wrapper and destroyed the frame the reactor was still
+    /// driving: the spawned task simply never ran, silently, and no test in the
+    /// tree called `spawn_local` to notice.
+    ///
+    /// So the handle is moved OUT of the value here — the transfer of ownership
+    /// the name always implied. The argument is the wrapper's own `take`
+    /// parameter, a place, so its slot is reachable; a non-place argument keeps
+    /// the old behaviour, which is the pre-v0.0.30 leak rather than a
+    /// use-after-free.
     fn gen_reactor_spawn_local(&mut self, args: &[Expr]) -> Option<(String, Ty)> {
         let (fut_val, fut_ty) = self.gen_expr(&args[0]).expect("spawn_local future arg");
         // Extract the handle to consume the moved-in Future; the task is
@@ -16791,6 +16804,14 @@ impl<'a> FnState<'a> {
         let fut_llvm = self.lty(&fut_ty);
         let hdl = self.next_tmp();
         self.emit(&format!("{hdl} = extractvalue {fut_llvm} {fut_val}, 0"));
+        if Self::is_place_expr(&args[0]) {
+            let (slot, _) = self.gen_place(&args[0]);
+            let fld = self.next_tmp();
+            self.emit(&format!(
+                "{fld} = getelementptr inbounds {fut_llvm}, ptr {slot}, i32 0, i32 0"
+            ));
+            self.emit(&format!("store ptr null, ptr {fld}"));
+        }
         None
     }
 
