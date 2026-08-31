@@ -61,6 +61,51 @@ fn set_nosigpipe(fd: i32) -> i32 {
     return { setsockopt(fd, sol_socket(), so_nosigpipe(), #addr_of(one) as *u8, 4 as u32) };
 }
 
+// setsockopt optname for SO_RCVTIMEO / SO_SNDTIMEO. macOS: 0x1006 / 0x1005.
+fn so_rcvtimeo() -> i32 { return 0x1006 as i32; }
+fn so_sndtimeo() -> i32 { return 0x1005 as i32; }
+
+// `struct timeval`, as setsockopt wants it for the two timeout options.
+//
+// The real one is `{ time_t tv_sec; suseconds_t tv_usec; }`, and the second
+// field is 8 bytes on Linux and 4 (plus 4 of padding) on Darwin. Both make the
+// struct 16 bytes, and a caller here only ever sets whole seconds — so the
+// microseconds are zero either way and one shape serves both. Sub-second
+// deadlines would have to split this per platform.
+struct Timeval {
+    sec: i64,
+    usec: i64,
+}
+
+// Bound how long a read or a write on this socket may WAIT.
+//
+// Without it, a peer that accepts a connection and then says nothing hangs the
+// calling thread for good — not slowly, permanently — and there is no way back
+// short of killing the process. That is survivable on a worker and fatal on a
+// UI thread, and it is not detectable in advance: a `connect(2)` that succeeds
+// says a socket accepted, not that anything behind it will answer. A port
+// forward (`adb forward`, `iproxy`) accepts on behalf of a peer that may never
+// reply, which is exactly the case a connect probe cannot see.
+//
+// SECONDS, because the honest floor is "a device at the end of a cable is
+// legitimately slow". This is a liveness bound, not a latency budget.
+//
+// BOTH DIRECTIONS. A peer that stops draining stalls a write the same way, and
+// a caller that wanted one wants the other.
+//
+// After it expires the syscall returns -1 with `eagain()`, which is how a
+// caller tells a deadline from a peer that closed (0 bytes). Returns 0 on
+// success, non-zero if the option could not be set — harmless, and the caller
+// carries on with a socket that simply has no deadline.
+fn set_timeout(fd: i32, seconds: i64) -> i32 {
+    var tv: Timeval = Timeval { sec: seconds, usec: 0 as i64 };
+    let p: *u8 = { #addr_of(tv) as *u8 };
+    let r: i32 = { setsockopt(fd, sol_socket(), so_rcvtimeo(), p, 16 as u32) };
+    let w: i32 = { setsockopt(fd, sol_socket(), so_sndtimeo(), p, 16 as u32) };
+    if r != (0 as i32) { return r; }
+    return w;
+}
+
 // First two bytes of `sockaddr_in`. macOS lays it out as
 // `{ uint8_t sin_len; sa_family_t sin_family; ... }`, so byte0 = sin_len
 // (16 for sockaddr_in) and byte1 = AF_INET (2).

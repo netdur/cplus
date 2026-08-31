@@ -19,6 +19,7 @@ import "./future" as future;
 // resolver's `_linux` override). Keeps this file platform-neutral.
 import "./netsys" as netsys;
 import "./thread" as thread;
+import "./time" as time;
 
 extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
 extern fn connect(fd: i32, addr: *u8, len: u32) -> i32;
@@ -452,6 +453,48 @@ fn a_write_to_a_departed_peer_reports_instead_of_killing_us() {
         i = i +% 1;
     }
     { netsys::close_fd(fds[0]); }
+}
+
+// A peer that is THERE and SILENT must not hang the reader for good.
+//
+// The dangerous shape is not a dead peer — that reports EPIPE, which the test
+// above pins. It is a live one that accepts and then says nothing: `read`
+// blocks until it speaks, and it never does. On a worker that is a leaked
+// thread; on a UI thread it is a frozen window with no way back short of
+// killing the process. It is also invisible in advance, which is the part that
+// makes a deadline the only answer — a `connect(2)` that succeeds says a
+// socket accepted, not that anything behind it will reply, and a port forward
+// (`adb forward`, `iproxy`) accepts on behalf of a peer that may never answer.
+//
+// A socketpair is exactly that peer: fds[1] is open — so no EOF, no EPIPE —
+// and nothing is ever written to it.
+//
+// THIS TEST PROVES ITSELF the way the SIGPIPE one does: without the deadline
+// the read never returns and the suite hangs here rather than failing an
+// assertion.
+#[test]
+fn a_read_from_a_silent_peer_expires_instead_of_hanging_for_good() {
+    var fds: [i32; 2] = [0, 0];
+    assert { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(fds) as *i32) } == 0;
+    assert netsys::set_timeout(fds[0], 1 as i64) == (0 as i32);
+
+    let began: i64 = time::now_millis();
+    var buf: [u8; 8] = [0u8; 8];
+    let n: isize = { netsys::recv_fd(fds[0], #addr_of(buf) as *u8, 8 as usize) };
+    let took: i64 = time::now_millis() -% began;
+
+    // -1 and EAGAIN, which is how a caller tells an expiry from a peer that
+    // closed (0 bytes) or a peer that answered (> 0).
+    assert n < (0 as isize);
+    assert netsys::errno() == netsys::eagain();
+    // It WAITED. An option that silently failed to apply would come back
+    // instantly with some other error, and the assertion above would not see
+    // the difference.
+    assert took >= (900 as i64);
+    assert took < (5000 as i64);
+
+    { netsys::close_fd(fds[0]); }
+    { netsys::close_fd(fds[1]); }
 }
 
 // Parks in accept() on a listener nobody connects to; only cancellation
