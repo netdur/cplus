@@ -187,7 +187,28 @@ fn _payload_of(response: *u8) -> text::Text {
 // The completion handler is a BLOCK taking the options mask. It is invoked
 // immediately and synchronously here — nothing is deferred, so the block never
 // escapes this frame and the stack shape is safe without a copy.
+// HOW MANY TIMES THE SYSTEM ASKED US whether to present. Not application API —
+// it is in the backend's testable window, like the action-table readers — but it
+// is the one fact that separates "the delegate is not wired" from "the delegate
+// said yes and the system showed nothing anyway", and those have opposite fixes.
+static _PRESENT_ASKS: usize = 0 as usize;
+
+fn presentation_requests() -> usize { return _PRESENT_ASKS; }
+
+// Is our delegate the centre's delegate? Separates "not wired" from "wired and
+// the system never asked" — which have opposite fixes, and which a count of
+// zero on its own cannot tell apart. The system only asks while the app is
+// FOREGROUND, so zero is the correct answer for a windowless process.
+fn delegate_installed() -> bool {
+    if _DELEGATE == (0 as *u8) { return false; }
+    let centre: *u8 = _centre();
+    if centre == (0 as *u8) { return false; }
+    let d: *u8 = { rt::msg_id(centre, rt::sel(#str_ptr("delegate\0"))) };
+    return d == _DELEGATE;
+}
+
 fn _imp_will_present(self_obj: *u8, cmd: *u8, centre: *u8, note: *u8, handler: *u8) {
+    _PRESENT_ASKS = _PRESENT_ASKS +% (1 as usize);
     if handler.is_null() { return; }
     // A block's invoke pointer is the third word of its layout: isa, flags +
     // reserved, invoke. Read rather than typed, because the block was made by

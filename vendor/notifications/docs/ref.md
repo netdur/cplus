@@ -112,7 +112,11 @@ fn schedule(n: Notification) -> Outcome
 Post or schedule. Scheduling an id that is already pending **replaces** it.
 
 Reads the notification permission first and answers `NotPermitted` rather than
-handing the platform a notification it will accept and never show.
+handing the platform a notification it will accept and never show — but **only
+for a definite refusal** (`Denied`, `Blocked`, `Unsupported`). `Unknown`
+proceeds: Apple has no synchronous read of that permission, so a cold cache
+answers `Unknown` on the first call of a process, and refusing there would fail
+the first `schedule` of every run for an authorised app. See the guide.
 
 On Android a deferred notification does **not** survive the process being
 killed; `Ok` means the schedule was accepted.

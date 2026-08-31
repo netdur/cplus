@@ -137,12 +137,21 @@ struct Notification {
     // CANNOT BE SWIPED AWAY. **ANDROID ONLY**, and named that way rather than
     // quietly ignored on Apple.
     //
-    // iOS and macOS notifications are always dismissible, by design — there is
-    // no API for this and nothing to fall back to. The two things people reach
-    // for instead answer different questions: `UNNotificationInterruptionLevel`
-    // (`.timeSensitive`, `.critical`) decides whether a notification pierces
-    // Focus, and Live Activities are ActivityKit — a widget extension with its
-    // own lifecycle, not a notification at all.
+    // iOS notifications are always dismissible and there is no API for this
+    // there; `UNNotificationInterruptionLevel` decides whether a notification
+    // pierces Focus and Live Activities are ActivityKit, a widget extension —
+    // neither is "make this one stay".
+    //
+    // MACOS IS DIFFERENT, and an earlier version of this comment said it was
+    // not. macOS has an ALERT style that stays on screen until somebody
+    // interacts with it, and an app asks for it with an Info.plist key:
+    //
+    //     <key>NSUserNotificationAlertStyle</key><string>alert</string>
+    //
+    // That is APP-WIDE rather than per-notification — a plist key, not an API —
+    // which is why this field stays Android-only rather than becoming portable.
+    // A person can override it in System Settings, and their choice wins.
+    // `examples/notifications_demo/bundle.sh` sets it.
     //
     // WHAT IT ACTUALLY BUYS, measured on an emulator rather than assumed:
     //
@@ -205,7 +214,8 @@ impl Notification {
 //
 // `NotPermitted` is checked HERE rather than left to the platform, which accepts
 // a notification it will never show and reports nothing — the silent failure
-// this package exists to prevent.
+// this package exists to prevent. It answers that only for a DEFINITE refusal;
+// see `allowed`.
 fn schedule(n: Notification) -> Outcome {
     if n.id == "" { return Outcome::InvalidInput; }
     if n.title == "" { return Outcome::InvalidInput; }
@@ -228,22 +238,36 @@ fn schedule(n: Notification) -> Outcome {
     return Outcome::from_code(rc);
 }
 
-// True when the platform will actually show what this package posts. The
-// permission package owns the question; this is the one place its answer is
-// turned into a decision.
+// Would the platform show what this package posts? The permissions package owns
+// the question; this is the one place its answer becomes a decision.
 //
-// `Limited` COUNTS AS ALLOWED: a provisional notification authorisation on iOS
-// delivers quietly to the notification centre, which is showing, just not
-// loudly. Refusing to schedule there would be this package overruling a choice
-// the person made.
+// IT REFUSES ONLY ON A DEFINITE NO. See the note on `Unknown` below — the first
+// version refused on that too and broke the first post of every process.
 fn allowed() -> bool {
     return match permissions::state(of: permissions::NOTIFICATIONS) {
         permissions::State::Granted => true,
+        // A provisional authorisation on iOS delivers quietly to the
+        // notification centre — that is showing, just not loudly — and refusing
+        // there would be this package overruling a choice the person made.
         permissions::State::Limited => true,
-        // `Unknown` is "never asked", and scheduling is not the place to ask —
-        // a prompt that appears because a background job scheduled a reminder
-        // is a prompt with no context. The application asks; this reports.
-        permissions::State::Unknown => false,
+        // `Unknown` MEANS "NOT KNOWN", AND REFUSING ON IGNORANCE IS WRONG.
+        //
+        // This used to return false, and it made the FIRST `schedule` of every
+        // process fail on Apple even for an app whose permission was granted —
+        // measured, with a probe that posted nothing and reported
+        // `NotPermitted`. The cause is structural: Apple has no synchronous
+        // read of the notification permission, so `permissions` answers from a
+        // cache that is cold on the first call of a process and refreshes
+        // asynchronously behind it. A gate that refuses on a cold cache refuses
+        // on its own latency.
+        //
+        // The trade is between two failures, and they are not equal. Refusing
+        // when the app is actually allowed BREAKS something the platform would
+        // have done — that is a bug this package invented. Attempting when it is
+        // not allowed reproduces exactly what the platform does on its own: the
+        // notification is accepted and never shown. So `Unknown` attempts, and
+        // the gate keeps its value for the states that are definitely refusals.
+        permissions::State::Unknown => true,
         permissions::State::Denied => false,
         permissions::State::Blocked => false,
         permissions::State::Unsupported => false,
@@ -849,4 +873,32 @@ fn a_picture_and_a_compact_row_cannot_both_be_asked_for() {
 fn a_picture_defaults_to_none() {
     assert Notification::new("id", "T").picture == "";
     assert Notification::new("id", "T", picture: "/x.png").picture == "/x.png";
+}
+
+#[test]
+fn the_gate_refuses_only_a_definite_no() {
+    // `Unknown` attempts. Apple has no synchronous read of the notification
+    // permission, so a cold cache answers `Unknown` on the first call of a
+    // process — and refusing there made the first `schedule` of every run fail
+    // for an app that was actually allowed. Measured with a probe before this
+    // was written.
+    assert gate(permissions::State::Granted);
+    assert gate(permissions::State::Limited);
+    assert gate(permissions::State::Unknown);
+    assert gate(permissions::State::Denied) == false;
+    assert gate(permissions::State::Blocked) == false;
+    assert gate(permissions::State::Unsupported) == false;
+}
+
+// The decision `allowed` makes, split from the platform read so it can be
+// tested without one.
+fn gate(s: permissions::State) -> bool {
+    return match s {
+        permissions::State::Granted => true,
+        permissions::State::Limited => true,
+        permissions::State::Unknown => true,
+        permissions::State::Denied => false,
+        permissions::State::Blocked => false,
+        permissions::State::Unsupported => false,
+    };
 }

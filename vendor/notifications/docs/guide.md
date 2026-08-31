@@ -30,13 +30,39 @@ It is accepted and never shown. So `schedule` reads the gate first and answers
 `NotPermitted`, and this package depends on `permissions` to have somewhere to
 read it from.
 
-`Limited` counts as allowed. A provisional authorisation on iOS delivers quietly
-to the notification centre — that is showing, just not loudly — and refusing to
-schedule there would be this package overruling a choice the person made.
+**It refuses only on a definite no** — `Denied`, `Blocked`, `Unsupported`.
+`Granted`, `Limited` and `Unknown` all proceed.
 
-**`Unknown` does not count**, and that is deliberate: scheduling is not the
-place to prompt. A permission dialog that appears because a background job set a
-reminder is a dialog with no context. The application asks; this reports.
+`Limited` proceeds because a provisional authorisation on iOS delivers quietly
+to the notification centre: that is showing, just not loudly, and refusing there
+would be this package overruling a choice the person made.
+
+### Gotcha: why `Unknown` proceeds, and please leave it that way
+
+`Unknown` means *not known*, and refusing on ignorance is a bug this package
+invented once already.
+
+Apple has **no synchronous read** of the notification permission —
+`getNotificationSettingsWithCompletionHandler:` answers through a block — so
+`permissions` serves it from a cache that is **cold on the first call of a
+process** and refreshes asynchronously behind it. An earlier version of this
+gate treated `Unknown` as a refusal, which meant *the first `schedule` of every
+run failed for an app whose permission was granted*. Measured with a probe:
+`schedule` answered `NotPermitted` and posted nothing, on an authorised app.
+
+The two failure modes are not equal:
+
+| | |
+|---|---|
+| Refuse when actually allowed | **breaks** something the platform would have done — a bug this package invented |
+| Attempt when not allowed | reproduces exactly what the platform does anyway: accepted, never shown |
+
+So `Unknown` attempts. The gate keeps its value for the states that are
+definitely refusals, which is where the silent-failure risk actually lives.
+
+**Scheduling still never prompts.** A permission dialog appearing because a
+background job set a reminder is a dialog with no context. The application asks
+with `permissions::request`; this package only reports.
 
 ## When the callback… there isn't one
 
@@ -170,11 +196,39 @@ it — except `picture`, which Apple does support as an attachment.
 
 ## What `sticky` buys, and what it does not
 
-**Android only.** iOS and macOS notifications are always dismissible by design;
-there is no API for this and nothing to fall back to. Interruption levels decide
-whether a notification pierces Focus, and Live Activities are ActivityKit — a
-widget extension, not a notification. `sticky` is read on Android and
-deliberately unread on Apple, rather than mapped onto something adjacent.
+**The field is Android only**, but the capability is not — and an earlier
+version of this guide said macOS had nothing, which was wrong.
+
+| | Persistent notification? | How |
+|---|---|---|
+| Android | yes | `sticky: true` — per notification |
+| **macOS** | **yes** | `NSUserNotificationAlertStyle` = `alert` in your Info.plist — **app-wide** |
+| iOS | no | always dismissible; interruption levels and Live Activities answer different questions |
+
+macOS's is a plist key rather than an API, and it applies to every notification
+your app posts. That asymmetry is why `sticky` stays a one-platform field
+instead of becoming portable: a per-notification bool cannot express an app-wide
+setting, and pretending otherwise would have `sticky: false` silently doing
+nothing on macOS.
+
+**If your macOS notifications only appear in Notification Centre and never on
+screen, this is the first thing to check.** An app whose alert style resolves to
+`none` is delivered straight to Notification Centre, which looks exactly like a
+broken notification. `examples/notifications_demo/bundle.sh` sets the key;
+System Settings > Notifications is where a person overrides it, and their choice
+wins.
+
+Code signing matters too: ad-hoc signed apps (`codesign --sign -`, which the
+demo uses) are sometimes blamed for macOS notification oddities, though an
+ad-hoc signature is documented as sufficient for `UNUserNotificationCenter`.
+
+**Before blaming the package**, the chain up to macOS is checkable from inside
+the app. `permissions::state(of: NOTIFICATIONS)` after a run-loop turn says
+whether you are authorised; `schedule`'s `Outcome` says whether the request was
+accepted; and the backend's `delegate_installed()` and `presentation_requests()`
+say whether macOS asked the presentation delegate and got an answer. All four
+green with nothing on screen means the decision was macOS's — the app's alert
+style, or Focus.
 
 On Android it sets `ONGOING_EVENT` and turns auto-cancel off, which are one
 decision: a notification meant to stay should not vanish because somebody tapped
