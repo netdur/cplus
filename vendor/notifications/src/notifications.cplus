@@ -186,7 +186,7 @@ fn delay_of(w: When) -> f64 {
         When::Now => 0.0f64,
         When::After(s) => { if s < 1.0f64 { 0.0f64 } else { s } }
         When::At(t) => {
-            let d: f64 = t - now_seconds();
+            let d: f64 = t - _now_seconds();
             if d < 1.0f64 { 0.0f64 } else { d }
         }
     };
@@ -335,7 +335,10 @@ extern fn cplus_notifications_pending_v1(out: *u8) -> i32;
 #[link_name = "time"]
 extern fn c_time(t: *u8) -> i64;
 
-fn now_seconds() -> f64 {
+// This process's wall clock, for `When::At`'s arithmetic. Module-private: an
+// application building an `At` uses `stdlib/time::now()`, which is the clock
+// the rest of the tree already reads.
+fn _now_seconds() -> f64 {
     return { c_time(0 as *u8) } as f64;
 }
 
@@ -361,13 +364,13 @@ fn an_interval_survives_intact() {
 fn a_past_instant_degrades_to_now_rather_than_being_refused() {
     // A reminder whose moment has gone is still worth showing.
     assert delay_of(When::At(1.0f64)) == 0.0f64;
-    assert delay_of(When::At(now_seconds() - 500.0f64)) == 0.0f64;
+    assert delay_of(When::At(_now_seconds() - 500.0f64)) == 0.0f64;
 }
 
 #[test]
 fn a_future_instant_becomes_a_delay() {
-    let d: f64 = delay_of(When::At(now_seconds() + 120.0f64));
-    // Within a second of 120: `now_seconds` is read twice and the clock moves.
+    let d: f64 = delay_of(When::At(_now_seconds() + 120.0f64));
+    // Within a second of 120: `_now_seconds` is read twice and the clock moves.
     assert d > 118.0f64 && d <= 120.0f64;
 }
 

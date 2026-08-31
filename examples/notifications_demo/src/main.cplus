@@ -1,26 +1,32 @@
-// notifications_demo — schedule one, see it arrive.
+// notifications_demo — one permission, and a button per kind of notification
+// this package can post.
 //
-// WHAT TO WATCH, because the interesting parts are the ones that look like bugs:
+// The permission row is first because nothing below it works until it says
+// Granted: both platforms accept a notification from an unauthorised app and
+// silently never show it, and this package answers `NotPermitted` instead.
 //
-//   1. The permission row. Until it says Granted, every Schedule button answers
-//      NotPermitted and posts nothing — which is this package refusing to do
-//      what both platforms do silently, and the reason it depends on
-//      `permissions` at all. Press Ask first.
-//   2. "In 5 seconds", then leave the app in front. The banner still appears —
-//      because the package installs a `UNUserNotificationCenterDelegate` that
-//      says to present it. WITHOUT that delegate nothing would show while the
-//      app is foregrounded, and the code would be perfectly correct. That is
-//      the single most common "notifications don't work" report there is.
-//   3. Schedule the same id twice. One notification, updated in place, because
-//      both platforms key replacement on the id.
-//   4. "In 30 seconds", then Cancel before it fires. Nothing arrives.
-//   5. Pending lists what this package believes is scheduled — its own record,
-//      not the platform's, because Android has no listing API and an answer
-//      that only worked on one platform would not be an answer.
+// WHAT EACH ROW IS FOR
+//
+//   content    the shapes a notification can take — with a body, without one,
+//              with more text than fits a banner
+//   timing     `Now`, an interval, and an absolute instant. The five-second one
+//              is the interesting one: LEAVE THE APP IN FRONT and the banner
+//              still appears, because this package installs a presentation
+//              delegate. Without it nothing would show while the app is
+//              foregrounded and the code would be perfectly correct — the most
+//              common "notifications don't work" report there is.
+//   behaviour  three distinct ids stack; one id posted twice REPLACES; a
+//              payload comes back when you click the banner
+//   manage     cancel one, cancel everything pending, clear what is showing
+//
+// The two readouts at the bottom are the last outcome and the last tapped
+// payload. Click a delivered notification and the payload appears — including
+// one that was delivered before this demo was running.
 
 import "stdlib/option" as option;
-import "stdlib/text" as text;
 import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/time" as time;
 import "stdlib/vec" as vec;
 import "facet/facet" as core;
 import "facet/elements" as ui;
@@ -32,14 +38,20 @@ import "facet_runtime/runtime" as runtime;
 import "permissions/permissions" as permissions;
 import "notifications/notifications" as notifications;
 
-const STATUS_KEY: str = "status";
 const PERM_KEY: str = "perm";
+const STATUS_KEY: str = "status";
 const PENDING_KEY: str = "pending";
+const TAP_KEY: str = "tap";
 
-// One id reused on purpose: pressing Schedule twice must produce ONE
-// notification, updated, rather than two. The demo would hide that with unique
-// ids.
-const DEMO_ID: str = "demo:reminder";
+// ---- the readouts -------------------------------------------------------------
+
+fn set_label(key: str, v: str) {
+    match label::find(key) {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(v); }
+        option::Option::None => { }
+    }
+    return;
+}
 
 fn word(o: notifications::Outcome) -> str {
     return match o {
@@ -62,67 +74,160 @@ fn perm_word(s: permissions::State) -> str {
     };
 }
 
-fn set_label(key: str, v: str) {
-    match label::find(key) {
-        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(v); }
-        option::Option::None => { }
-    }
-    return;
-}
-
 fn refresh() {
     set_label(PERM_KEY, perm_word(permissions::state(of: permissions::NOTIFICATIONS)));
     var ids: vec::Vec[str] = vec::new::[str]();
-    let _p: notifications::Outcome = notifications::pending({ #addr_of(ids) as *vec::Vec[str] });
+    let _p: notifications::Outcome =
+        notifications::pending({ #addr_of(ids) as *vec::Vec[str] });
     let n: usize = ids.count();
     set_label(PENDING_KEY, text::from_str("pending: ${n}").view());
     return;
 }
 
-fn answered(name: str, s: permissions::State, ctx: *u8) { refresh(); return; }
-
-fn ask(sender: *u8, ctx: *u8) {
-    let _s: status::Status = permissions::request(permissions::NOTIFICATIONS,
-                                                  on_answer: answered);
-    refresh();
-    return;
-}
-
-fn post(when: notifications::When, body: str) {
-    let o: notifications::Outcome = notifications::schedule(
-        notifications::Notification::new(DEMO_ID, "C+ notifications",
-                                         body: body, when: when,
-                                         payload: "demo:tapped"));
+fn report(o: notifications::Outcome) {
     set_label(STATUS_KEY, word(o));
     refresh();
     return;
 }
 
-fn now(sender: *u8, ctx: *u8) { post(notifications::When::Now, "Posted immediately."); return; }
+// ---- the permission -----------------------------------------------------------
+
+fn answered(name: str, s: permissions::State, ctx: *u8) { refresh(); return; }
+
+fn ask(sender: *u8, ctx: *u8) {
+    let _s: status::Status =
+        permissions::request(permissions::NOTIFICATIONS, on_answer: answered);
+    refresh();
+    return;
+}
+
+// ---- taps ---------------------------------------------------------------------
+
+// Registered from `on_attach`, deliberately LATE: a notification tapped while
+// this app was not running fired its payload before anything here existed, and
+// `app_events` latches it so registering afterwards still works.
+fn tapped(payload: str, ctx: *u8) {
+    set_label(TAP_KEY, text::from_str("tapped: ${payload}").view());
+    return;
+}
+
+// ---- content ------------------------------------------------------------------
+
+fn post(id: str, title: str, body: str, when: notifications::When, payload: str) {
+    report(notifications::schedule(
+        notifications::Notification::new(id, title, body: body, when: when,
+                                         payload: payload)));
+    return;
+}
+
+fn with_body(sender: *u8, ctx: *u8) {
+    post("demo:body", "With a body", "Two lines: a title and this.",
+         notifications::When::Now, "demo:body");
+    return;
+}
+
+fn title_only(sender: *u8, ctx: *u8) {
+    // A title is required; a body is not. This is the minimum a notification
+    // can be, and it is what a "3 new messages" summary looks like.
+    post("demo:title", "Title only", "", notifications::When::Now, "demo:title");
+    return;
+}
+
+fn long_body(sender: *u8, ctx: *u8) {
+    post("demo:long", "More than fits",
+         "A banner shows one or two lines and the rest is revealed when the notification is expanded, which is the platform's decision rather than this package's.",
+         notifications::When::Now, "demo:long");
+    return;
+}
+
+// ---- timing -------------------------------------------------------------------
 
 fn in_five(sender: *u8, ctx: *u8) {
-    // Leave the app in front and watch: it still appears, because of the
-    // presentation delegate. That is the point of this button.
-    post(notifications::When::After(5.0f64), "Scheduled five seconds ago.");
+    // LEAVE THE APP IN FRONT. The banner still appears, because of the
+    // presentation delegate — that is what this button is really for.
+    post("demo:5s", "Five seconds", "Scheduled five seconds ago.",
+         notifications::When::After(5.0f64), "demo:5s");
     return;
 }
 
 fn in_thirty(sender: *u8, ctx: *u8) {
-    post(notifications::When::After(30.0f64), "Scheduled thirty seconds ago.");
+    post("demo:30s", "Thirty seconds", "Long enough to cancel before it fires.",
+         notifications::When::After(30.0f64), "demo:30s");
     return;
 }
 
-fn cancel_one(sender: *u8, ctx: *u8) {
-    set_label(STATUS_KEY, word(notifications::cancel(DEMO_ID)));
-    refresh();
+fn at_absolute(sender: *u8, ctx: *u8) {
+    // The other road to the same place: an instant rather than an interval.
+    // `stdlib/time::now()` is the clock — the package's own is private.
+    let t: f64 = { time::now() as f64 } + 10.0f64;
+    post("demo:at", "At an instant", "Scheduled with When::At, not After.",
+         notifications::When::At(t), "demo:at");
     return;
 }
 
-fn clear(sender: *u8, ctx: *u8) {
-    let _a: notifications::Outcome = notifications::cancel_all();
-    set_label(STATUS_KEY, word(notifications::clear_shown()));
-    refresh();
+// ---- behaviour ----------------------------------------------------------------
+
+fn three_at_once(sender: *u8, ctx: *u8) {
+    // THREE DISTINCT IDS, so three notifications. Contrast with Replace below.
+    let _a: notifications::Outcome = notifications::schedule(
+        notifications::Notification::new("demo:a", "First", body: "of three",
+                                         payload: "demo:a"));
+    let _b: notifications::Outcome = notifications::schedule(
+        notifications::Notification::new("demo:b", "Second", body: "of three",
+                                         payload: "demo:b"));
+    report(notifications::schedule(
+        notifications::Notification::new("demo:c", "Third", body: "of three",
+                                         payload: "demo:c")));
     return;
+}
+
+static REPLACED: i32 = 0 as i32;
+
+fn replace(sender: *u8, ctx: *u8) {
+    // ONE ID, posted again. Both platforms key replacement on it, so this
+    // updates in place instead of stacking — which is what an "N unread"
+    // notification wants. Press it repeatedly and watch the count change
+    // without the list growing.
+    REPLACED = REPLACED + (1 as i32);
+    post("demo:replace", "Replaced in place",
+         text::from_str("posted ${REPLACED} times, still one notification").view(),
+         notifications::When::Now, "demo:replace");
+    return;
+}
+
+fn with_payload(sender: *u8, ctx: *u8) {
+    // Click the delivered banner and the payload appears in the readout below.
+    post("demo:deep", "Click me", "The payload comes back through on_tap.",
+         notifications::When::Now, "order:1234");
+    return;
+}
+
+// ---- manage -------------------------------------------------------------------
+
+fn cancel_thirty(sender: *u8, ctx: *u8) {
+    report(notifications::cancel("demo:30s"));
+    return;
+}
+
+fn cancel_all(sender: *u8, ctx: *u8) {
+    report(notifications::cancel_all());
+    return;
+}
+
+fn clear_shown(sender: *u8, ctx: *u8) {
+    // The other question: `cancel_all` is about the future, this is about what
+    // is sitting in Notification Centre right now.
+    report(notifications::clear_shown());
+    return;
+}
+
+fn do_refresh(sender: *u8, ctx: *u8) { refresh(); return; }
+
+// ---- the screen ---------------------------------------------------------------
+
+fn heading(t: str) -> core::Node {
+    return ui::label(t, font_size: 11.0, font_weight: vocab::FontWeight::Semibold)
+        .padding(2.0);
 }
 
 struct Demo { }
@@ -137,34 +242,58 @@ impl Demo: component::Component {
         b.add(ui::label("Notifications", font_size: 20.0,
                         font_weight: vocab::FontWeight::Bold).padding(4.0));
 
+        // ONE PERMISSION, and nothing below works until it is Granted.
         var perm: core::Builder = core::Builder::new();
-        perm.add(ui::label("permission:", font_size: 13.0).width(90.0));
+        perm.add(ui::label("notifications:", font_size: 13.0).width(110.0));
         perm.add(ui::label("...", key: PERM_KEY, font_size: 13.0,
-                           font_weight: vocab::FontWeight::Semibold).width(120.0));
+                           font_weight: vocab::FontWeight::Semibold).width(130.0));
         perm.add(ui::text_button("Ask", on_click: ask));
         b.add(core::row(perm).gap(8.0).padding(4.0));
 
-        var acts: core::Builder = core::Builder::new();
-        acts.add(ui::text_button("Now", on_click: now));
-        acts.add(ui::text_button("In 5 seconds", on_click: in_five));
-        acts.add(ui::text_button("In 30 seconds", on_click: in_thirty));
-        b.add(core::row(acts).gap(10.0).padding(4.0));
+        b.add(heading("content"));
+        var r1: core::Builder = core::Builder::new();
+        r1.add(ui::text_button("With body", on_click: with_body));
+        r1.add(ui::text_button("Title only", on_click: title_only));
+        r1.add(ui::text_button("Long body", on_click: long_body));
+        b.add(core::row(r1).gap(10.0).padding(4.0));
 
-        var acts2: core::Builder = core::Builder::new();
-        acts2.add(ui::text_button("Cancel", on_click: cancel_one));
-        acts2.add(ui::text_button("Clear all", on_click: clear));
-        b.add(core::row(acts2).gap(10.0).padding(4.0));
+        b.add(heading("timing"));
+        var r2: core::Builder = core::Builder::new();
+        r2.add(ui::text_button("In 5s", on_click: in_five));
+        r2.add(ui::text_button("In 30s", on_click: in_thirty));
+        r2.add(ui::text_button("At +10s", on_click: at_absolute));
+        b.add(core::row(r2).gap(10.0).padding(4.0));
+
+        b.add(heading("behaviour"));
+        var r3: core::Builder = core::Builder::new();
+        r3.add(ui::text_button("Three at once", on_click: three_at_once));
+        r3.add(ui::text_button("Replace", on_click: replace));
+        r3.add(ui::text_button("Click me", on_click: with_payload));
+        b.add(core::row(r3).gap(10.0).padding(4.0));
+
+        b.add(heading("manage"));
+        var r4: core::Builder = core::Builder::new();
+        r4.add(ui::text_button("Cancel 30s", on_click: cancel_thirty));
+        r4.add(ui::text_button("Cancel all", on_click: cancel_all));
+        r4.add(ui::text_button("Clear shown", on_click: clear_shown));
+        r4.add(ui::text_button("Refresh", on_click: do_refresh));
+        b.add(core::row(r4).gap(10.0).padding(4.0));
 
         b.add(ui::label("...", key: STATUS_KEY, font_size: 13.0).padding(4.0));
-        b.add(ui::label("...", key: PENDING_KEY, font_size: 13.0).padding(4.0));
-        b.add(ui::label("Every button reuses one id, so scheduling twice updates in place rather than stacking.",
-                        font_size: 11.0).padding(4.0));
+        b.add(ui::label("...", key: PENDING_KEY, font_size: 13.0).padding(2.0));
+        b.add(ui::label("tapped: —", key: TAP_KEY, font_size: 13.0).padding(2.0));
         return core::column(b).padding(16.0);
     }
 }
 
 impl Demo: component::Lifecycle {
-    fn on_attach(ref this) { refresh(); return; }
+    fn on_attach(ref this) {
+        // LATE ON PURPOSE — see `tapped`. A notification clicked while this app
+        // was closed still reaches the handler, because app_events latched it.
+        let _t: notifications::Outcome = notifications::on_tap(tapped);
+        refresh();
+        return;
+    }
     fn on_detach(ref this) { return; }
 }
 
@@ -173,6 +302,6 @@ fn main() -> i32 {
         primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
     ));
     runtime::run_component(Demo::new(), title: "Notifications",
-                           width: 520.0, height: 380.0);
+                           width: 560.0, height: 560.0);
     return 0;
 }

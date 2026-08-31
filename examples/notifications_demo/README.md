@@ -26,32 +26,49 @@ or contacts, there is no `NS…UsageDescription` to forget. What is load-bearing
 is `CFBundleIdentifier`, plus the ad-hoc signature so TCC remembers the answer
 across rebuilds.
 
-## What to watch, in order
+## What the buttons do
 
-1. **Press Ask first.** Until the permission row says Granted, every schedule
-   button answers `NotPermitted` and posts nothing. That is this package
-   refusing to do what both platforms do silently — accept a notification they
-   will never show — and it is why it depends on `permissions` at all.
+**One permission, at the top.** Nothing below it works until it says Granted:
+both platforms accept a notification from an unauthorised app and silently never
+show it, and this package answers `NotPermitted` instead. Press **Ask** first.
 
-2. **Press "In 5 seconds" and leave the app in front.** The banner still
-   appears. Without the `UNUserNotificationCenterDelegate` this package installs,
-   nothing would show while the app is foregrounded and the code would be
-   perfectly correct. That is the single most common "notifications don't work"
-   report there is, and it is why the delegate exists before the tap tier needs
-   it.
+### content — the shapes a notification can take
 
-3. **Press a schedule button twice.** One notification, updated in place. Both
-   platforms key replacement on the id, so the demo reuses one on purpose —
-   unique ids would hide it.
+| Button | What it shows |
+|---|---|
+| **With body** | The ordinary case: a title and a second line |
+| **Title only** | A body is optional, a title is not. This is what a "3 new messages" summary looks like |
+| **Long body** | More text than a banner shows. How much is revealed is the platform's decision, not this package's |
 
-4. **Press "In 30 seconds", then Cancel.** Nothing arrives, and the pending
-   count returns to zero.
+### timing
 
-5. **Read the pending count.** It is this package's own record, not the
-   platform's. Apple can be asked and Android cannot — `NotificationManager` has
-   no listing API — so an answer that works on both has to be the one kept here.
-   It can go stale in one direction only: an entry may outlive a notification
-   the system already delivered.
+| Button | What it shows |
+|---|---|
+| **In 5s** | **Leave the app in front.** The banner still appears — because this package installs a `UNUserNotificationCenterDelegate` that says to present it. Without that, nothing would show while the app is foregrounded and the code would be perfectly correct. It is the most common "notifications don't work" report there is |
+| **In 30s** | Long enough to press **Cancel 30s** before it fires |
+| **At +10s** | The other road to the same place: `When::At(instant)` rather than `When::After(seconds)` |
+
+### behaviour
+
+| Button | What it shows |
+|---|---|
+| **Three at once** | Three distinct ids, so three notifications stack |
+| **Replace** | One id posted repeatedly. It updates **in place** and the list does not grow — both platforms key replacement on the id, which is what an "N unread" notification wants. The body counts the presses |
+| **Click me** | Posts one carrying a payload. **Click the delivered banner** and the payload appears in the `tapped:` readout. Close the app, click a banner, reopen it — the payload still arrives, because `facet/app_events` latches a tap that happened before anything subscribed |
+
+### manage
+
+**Cancel 30s** takes back a pending one. **Cancel all** is about the future;
+**Clear shown** is about the past — what is sitting in Notification Centre right
+now. They are different questions, which is why they are different verbs.
+
+**Refresh** re-reads the permission and the pending count.
+
+## The two readouts
+
+`pending:` is this package's own record, not the platform's — Apple can be asked
+and Android cannot, so an answer that works on both has to be the one kept here.
+`tapped:` is the last payload routed back through `on_tap`.
 
 ## Resetting
 
