@@ -243,6 +243,18 @@ fn dt_end_ellipsis() -> u32 { return 0x00008000 as u32; }
 fn bkmode_transparent() -> i32 { return 1 as i32; }
 fn bkmode_opaque() -> i32 { return 2 as i32; }
 
+// The system's own answer to "how far is a drag" — the distance a press has to
+// travel before it stops being a click. Every draggable thing in this package
+// asks it rather than picking a number, which is what makes a swipeable's slop
+// agree with the desktop's.
+fn sm_cxdrag() -> i32 { return 68 as i32; }
+fn sm_cydrag() -> i32 { return 69 as i32; }
+
+// The selection pair, which is what a revealed row action is drawn in when the
+// application has not asked for a colour: the user's own accent, not a guess.
+fn color_highlight() -> i32 { return 13 as i32; }
+fn color_highlighttext() -> i32 { return 14 as i32; }
+
 // `CreateWindowEx` takes this for "let Windows choose", and it is the SIGNED
 // reading of 0x80000000 — built by negation rather than written as a literal,
 // because an integer literal wraps through i32 before `as` and the direct
@@ -271,6 +283,10 @@ fn prop_brush() -> *u8 { return { #str_ptr("facet-win32-brush\0") }; }
 fn prop_drop() -> *u8 { return { #str_ptr("facet-win32-drop\0") }; }
 fn prop_imagelist() -> *u8 { return { #str_ptr("facet-win32-imagelist\0") }; }
 fn prop_classic() -> *u8 { return { #str_ptr("facet-win32-classic\0") }; }
+// How far a swipeable has been swiped, in whole points PLUS ONE — see `swipe`
+// for why the offset, and why the travel belongs to the window rather than to a
+// static this package could have reached more easily.
+fn prop_swipe() -> *u8 { return { #str_ptr("facet-win32-swipe\0") }; }
 
 // ---- this package's own window class -----------------------------------------
 //

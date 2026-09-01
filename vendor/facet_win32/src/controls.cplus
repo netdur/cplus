@@ -2970,9 +2970,9 @@ static INPUT_SCOPE_TRIED: bool = false;
 fn input_scope_fn() -> fn(*u8, i32) -> i32 {
     if !INPUT_SCOPE_TRIED {
         INPUT_SCOPE_TRIED = true;
-        let m: *u8 = { LoadLibraryA({ #str_ptr("msctf.dll ") } as *i8) };
+        let m: *u8 = { LoadLibraryA({ #str_ptr("msctf.dll\0") } as *i8) };
         if m != (0 as *u8) {
-            let p: *u8 = { GetProcAddress(m, { #str_ptr("SetInputScope ") } as *i8) };
+            let p: *u8 = { GetProcAddress(m, { #str_ptr("SetInputScope\0") } as *i8) };
             INPUT_SCOPE_FN = { #addr(p) };
         }
     }

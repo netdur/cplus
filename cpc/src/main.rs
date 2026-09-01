@@ -66,13 +66,17 @@ usage:
                                     code until the consumer instantiates it)
   cpc doc FILE                      extract public items + `///` docs from FILE, emit
                                     Markdown to ./target/doc/<basename>.md
-  cpc test [FILE] [--json]          discover + run `#[test]` functions. Single-file mode
+  cpc test [FILE] [--json] [--filter S]
+                                    discover + run `#[test]` functions. Single-file mode
                                     if FILE is given; project mode (reads ./Cplus.toml)
                                     otherwise. Honors the build flags below, so
                                     `--release` runs the suite at -O3 and `--asan`/`--ubsan`
                                     instrument the test binary.
                                     `--json` emits one JSON object per test
-                                    plus a final summary line.
+                                    plus a final summary line. `--filter S`
+                                    builds and runs only the tests whose name
+                                    contains S — a package's driver holds every
+                                    dependency's tests as well as its own.
   cpc fmt FILE|DIR [...]            format C+ source. By default: rewrites in place.
                                     flags: --check (no write, exit non-zero on diff)
                                            --emit  (print to stdout, leave file alone)
@@ -206,13 +210,19 @@ reference focused on the project's stable surface.
         }
         Some(Subcommand::Test) => {
             "\
-cpc test [FILE] [--json]
+cpc test [FILE] [--json] [--filter SUBSTRING]
 
 Discover and run every `#[test]` function in the project (or in FILE if
 given). Each test compiles into the test driver and runs sequentially.
 Doctests embedded in `///` comments are extracted into synthesized
 `#[test]` functions before running. With `--json`, emits one JSON object
 per test plus a final summary line — for tool consumption.
+
+`--filter SUBSTRING` keeps only the tests whose display name contains
+SUBSTRING, and does it before codegen, so the driver is built smaller as
+well as run shorter. The name is `<package>::<path>::<fn>`, so a filter
+can name a package, a module or one function. Matching nothing is an
+error rather than an empty pass.
 "
         }
         Some(Subcommand::Fmt) => {
@@ -801,6 +811,24 @@ fn main() -> ExitCode {
                 test_opts.json = true;
                 i += 1;
             }
+            Some("--filter") if matches!(subcommand, Some(Subcommand::Test)) => {
+                match args.get(i + 1).map(|v| v.to_string_lossy().into_owned()) {
+                    Some(v) if !v.starts_with('-') && !v.is_empty() => {
+                        test_opts.filter = Some(v);
+                        i += 2;
+                    }
+                    _ => {
+                        eprintln!("cpc test: --filter requires a substring");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            Some(a)
+                if a.starts_with("--filter=") && matches!(subcommand, Some(Subcommand::Test)) =>
+            {
+                test_opts.filter = Some(a["--filter=".len()..].to_string());
+                i += 1;
+            }
             // `cpc fmt`-specific flags. Only recognized after `fmt`.
             Some("--check") if matches!(subcommand, Some(Subcommand::Fmt)) => {
                 fmt_opts.check = true;
@@ -1009,9 +1037,21 @@ struct FmtOpts {
     stdin: bool,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 struct TestOpts {
     json: bool,
+    /// `--filter SUBSTRING`: run only the tests whose display name contains it.
+    ///
+    /// A package's driver holds every DEPENDENCY's tests as well as its own —
+    /// `vendor/facet_win32` runs ~800, of which 117 are the package's — so
+    /// checking one function has meant rebuilding and rerunning all of them.
+    /// It is also the only way to make progress when one test in a dependency
+    /// hangs: without a filter, everything ordered after it is unreachable.
+    /// See bugs/cpc-test-hangs-on-windows-in-facets-own-suite.md.
+    ///
+    /// Filtered at DISCOVERY, not at run time: the tests that do not match are
+    /// never emitted into the driver, so the build shrinks with the run.
+    filter: Option<String>,
 }
 
 /// The clang executable cpc shells out to for assembling and linking.
@@ -3904,7 +3944,25 @@ fn run_test(
             (program, entry_src, mono, la)
         }
     };
-    let tests = attrs::discover_tests(&program);
+    let mut tests = attrs::discover_tests(&program);
+    // `--filter`, applied here so the driver is BUILT smaller and not merely
+    // run selectively: a package's driver carries every dependency's tests,
+    // and emitting eight hundred of them to run five is most of the wait.
+    //
+    // NOTHING MATCHED IS AN ERROR, not an empty green run. A filter is a
+    // question about tests the caller believes exist, and answering "0 passed;
+    // 0 failed" to a typo reads as "they all pass".
+    if let Some(pat) = opts.filter.as_deref() {
+        let before = tests.len();
+        tests.retain(|t| t.display_name.contains(pat));
+        if tests.is_empty() {
+            eprintln!("cpc test: --filter {pat:?} matched none of the {before} tests");
+            return ExitCode::FAILURE;
+        }
+        if !opts.json {
+            println!("running {} of {before} tests matching {pat:?}", tests.len());
+        }
+    }
     if tests.is_empty() {
         if opts.json {
             println!("{{\"passed\":0,\"failed\":0}}");

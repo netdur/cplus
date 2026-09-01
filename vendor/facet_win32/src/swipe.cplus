@@ -1,0 +1,513 @@
+// facet_win32/swipe — swipe-to-reveal, assembled.
+//
+// Win32 has no swipeable row. It has mouse capture and a container that takes
+// explicit positions, and that is the whole recipe: a strip of actions UNDER
+// the content, the content translating with the pointer, and where it lands
+// when the pointer lifts decided by `reveal_threshold`.
+//
+// THE SAME SHAPE AS `facet_gtk/swipe.cplus`, and that is not an accident: GTK
+// has no swipeable row either, said so in its own header, and built it from a
+// drag gesture on a desktop.
+//
+// ---- this file exists because a §1 entry was wrong -------------------------------
+//
+// MANIFEST §1 recorded all six swipe verbs absent, arguing that a swipe is a
+// TOUCH gesture and "a mouse drag can be made to imitate it and the imitation
+// is worse than the absence: an application built against a tracking reveal on
+// a desktop would have every list row shifting under a stray drag".
+//
+// The first half is true and the conclusion did not follow. facet_gtk answers
+// this kind on a desktop, from a drag, and ships it. The "stray drag" is
+// answered the way every other drag in this package is — `SM_CXDRAG` slop
+// before anything moves, which is the same guard `is_swipe` already uses and
+// the reason a click that jitters a pixel is not a pan.
+//
+// ---- where the offset lives ------------------------------------------------------
+//
+// On the WINDOW, as a property, in whole points PLUS ONE — so a swipeable that
+// has never been touched (no property) and one sitting closed (zero travel)
+// read the same, which is what they are. A swipe reveal is not a subpixel
+// affair, and this buys a state that cannot outlive its window: a static would
+// be one swipeable's travel shared by every swipeable on screen, which a list
+// of them makes wrong on the first row.
+//
+// ---- and how the content actually moves ------------------------------------------
+//
+// Through `geometry`, not through this file. `reposition_children` places every
+// child at its computed frame, and it asks a hook — filled at install with
+// `content_shift` below — how far the host it is placing INTO has been swiped.
+// One subtraction, in the one place that positions anything.
+//
+// The alternative was `core::set_translation_x`, and it is wrong twice: this
+// package does not honour the transform band at all (MANIFEST §1), so it would
+// move nothing; and it is the application's prop, so writing it would silently
+// discard whatever the app had put there.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/swipeable" as swipeable;
+import "facet/swipe_item" as swipe_item;
+import "win32/winuser" as u;
+import "win32/wingdi" as gdi;
+import "./sys" as sys;
+import "./paint" as paint;
+import "./geometry" as geometry;
+
+// How wide one action is. Win32 has no metric for this — a swipe action is not
+// a Win32 idea — so the number is stated here, matching facet_gtk's, and it is
+// the same on both because an application that sizes a row around its actions
+// should not have to ask which desktop it is on.
+fn action_width() -> f64 { return 88.0f64; }
+
+fn swipeable_props(n: *core::Node) -> *props::SwipeableProps {
+    if n == (0 as *core::Node) { return 0 as *props::SwipeableProps; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::SwipeableProps; }
+    if { (*d).kind } != props::K_SWIPEABLE { return 0 as *props::SwipeableProps; }
+    return { (*d).props } as *props::SwipeableProps;
+}
+
+fn swipe_item_props(n: *core::Node) -> *props::SwipeItemProps {
+    if n == (0 as *core::Node) { return 0 as *props::SwipeItemProps; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::SwipeItemProps; }
+    if { (*d).kind } != props::K_SWIPE_ITEM { return 0 as *props::SwipeItemProps; }
+    return { (*d).props } as *props::SwipeItemProps;
+}
+
+fn is_swipeable(n: *core::Node) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    return core::kind_of(n) == props::K_SWIPEABLE;
+}
+
+// ---- the travel, and the actions under it ----------------------------------------
+
+fn travel_of(v: *u8) -> f64 {
+    if v == (0 as *u8) { return 0.0f64; }
+    let raw: *u8 = { u::GetPropA(v, sys::prop_swipe() as *i8) };
+    if raw == (0 as *u8) { return 0.0f64; }
+    return (({ #addr(raw) } as i64) -% (1 as i64)) as f64;
+}
+
+fn set_travel(v: *u8, t: f64) {
+    if v == (0 as *u8) { return; }
+    var clamped: f64 = t;
+    if clamped < (0.0 as f64) { clamped = 0.0f64; }
+    let stamped: usize = ((clamped as i64) +% (1 as i64)) as usize;
+    let _p: i32 = { u::SetPropA(v, sys::prop_swipe() as *i8, stamped as *u8) };
+    return;
+}
+
+// THE HOOK `geometry` ASKS. Any window that has never been swiped answers zero,
+// so this is safe to consult for every host in the tree — which is what it is.
+fn content_shift(host: *u8) -> f64 {
+    return travel_of(host);
+}
+
+// A SWIPE ITEM IS NOT A VIEW. It is a row the way a `menu_item` is —
+// `views::non_view_kind` says so — so the actions are counted from the node's
+// children rather than found as windows.
+fn count_items(n: *core::Node) -> i64 {
+    if n == (0 as *core::Node) { return 0 as i64; }
+    var count: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    let total: usize = core::child_count_of(n);
+    while i < total {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM { count = count +% (1 as i64); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return count;
+}
+
+// How far the row opens: one action's width each. Zero when there are no
+// actions, and every mover treats that as "there is nothing to reveal" rather
+// than as a division to do.
+fn open_width(n: *core::Node) -> f64 {
+    return action_width() * (count_items(n) as f64);
+}
+
+// THE THRESHOLD, which is the whole reason this is a drag rather than a
+// platform control: `reveal_threshold` is the distance past which letting go
+// opens rather than closes, and zero means halfway — what an application that
+// never named one expects.
+//
+// Kept apart from the handler so a test can ask about it without a pointer.
+fn threshold_of(p: *props::SwipeableProps, limit: f64) -> f64 {
+    if p == (0 as *props::SwipeableProps) { return limit / (2.0 as f64); }
+    var bar: f64 = { (*p).reveal_threshold };
+    if bar <= (0.0 as f64) { bar = limit / (2.0 as f64); }
+    // A bar further than the row can travel could never be crossed, so the row
+    // would never open however far it was dragged.
+    if bar > limit { bar = limit; }
+    return bar;
+}
+
+fn fire(h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
+    if h == props::no_handler { return; }
+    h(sender, ctx);
+    return;
+}
+
+// ---- laying it out ---------------------------------------------------------------
+//
+// The same call the layout walk makes, because a swipeable that is open when
+// the window resizes has to stay open and a swipeable being dragged has to
+// move. One rule, one place.
+
+fn relayout(n: *core::Node, v: *u8) {
+    if n == (0 as *core::Node) { return; }
+    if v == (0 as *u8) { return; }
+    geometry::reposition_children(n, v, { (*n).frame() });
+    // The strip lives in the swipeable's own pixels, so the row has to repaint
+    // even when no child window moved — which is the case at travel zero.
+    let _r: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return;
+}
+
+// ---- the drag ---------------------------------------------------------------------
+//
+// One swipeable at a time, which is what a pointer can do — and the same shape
+// the divider drag and the row reorder already use.
+
+static SWIPING: usize = 0;
+static SWIPE_FROM: i32 = 0;
+static SWIPE_BASE: f64 = 0.0f64;
+static SWIPE_MOVED: bool = false;
+
+fn active() -> bool { return SWIPING != (0 as usize); }
+fn is_dragging(v: *u8) -> bool { return SWIPING == { #addr(v) }; }
+fn moved() -> bool { return SWIPE_MOVED; }
+
+fn begin(v: *u8, n: *core::Node, x: i32) -> bool {
+    if v == (0 as *u8) { return false; }
+    if swipeable_props(n) == (0 as *props::SwipeableProps) { return false; }
+    // Nothing under the row is nothing to reveal, and a row with no actions
+    // must keep behaving like the plain container it is.
+    if open_width(n) <= (0.0 as f64) { return false; }
+    SWIPING = { #addr(v) };
+    SWIPE_FROM = x;
+    SWIPE_BASE = travel_of(v);
+    SWIPE_MOVED = false;
+    return true;
+}
+
+// PAST THE SLOP, or it is not a swipe. `SM_CXDRAG` is the system's own answer
+// to "how far is a drag", and using it rather than a number of this file's own
+// means a swipeable agrees with every other draggable thing on the desktop.
+fn drag(v: *u8, n: *core::Node, x: i32) -> bool {
+    if !is_dragging(v) { return false; }
+    let p: *props::SwipeableProps = swipeable_props(n);
+    if p == (0 as *props::SwipeableProps) { return false; }
+    let dx: i32 = SWIPE_FROM -% x;
+    if !SWIPE_MOVED {
+        var mag: i32 = dx;
+        if mag < (0 as i32) { mag = (0 as i32) -% mag; }
+        if mag < { u::GetSystemMetrics(sys::sm_cxdrag()) } { return false; }
+        SWIPE_MOVED = true;
+        fire({ (*p).on_swipe_started }, { (*p).on_swipe_started_ctx }, v);
+    }
+    let limit: f64 = open_width(n);
+    var to: f64 = SWIPE_BASE + (dx as f64);
+    // LEFT ONLY, and never past the strip: a swipeable opens toward its actions
+    // and there is nothing on the other side to reveal. It does not rubber-band
+    // past them either — travel beyond `limit` would drag the content off its
+    // own actions and show the container behind.
+    if to < (0.0 as f64) { to = 0.0f64; }
+    if to > limit { to = limit; }
+    set_travel(v, to);
+    relayout(n, v);
+    fire({ (*p).observe_swipe_changing }, { (*p).observe_swipe_changing_ctx }, v);
+    return true;
+}
+
+fn end(v: *u8, n: *core::Node) -> bool {
+    let was: bool = is_dragging(v);
+    let travelled: bool = SWIPE_MOVED;
+    SWIPING = 0 as usize;
+    SWIPE_MOVED = false;
+    if !was { return false; }
+    // A PRESS THAT NEVER MOVED IS A CLICK on whatever is in the row, not a
+    // swipe that landed closed — reporting the pair for it would fire a
+    // gesture the user did not make, and would eat the click.
+    if !travelled { return false; }
+    let p: *props::SwipeableProps = swipeable_props(n);
+    if p == (0 as *props::SwipeableProps) { return false; }
+    let limit: f64 = open_width(n);
+    if limit <= (0.0 as f64) { return false; }
+    settle(v, n, travel_of(v) >= threshold_of(p, limit));
+    fire({ (*p).on_swipe_ended }, { (*p).on_swipe_ended_ctx }, v);
+    return true;
+}
+
+// Open or closed, and the matching handler told. `on_open_requested` and
+// `on_close_requested` are the two names the ledger gives this moment, and they
+// fire on the LANDING rather than during the gesture — a swipe dragged back to
+// where it started requested nothing.
+//
+// IT LANDS RATHER THAN GLIDES. `anim` has a tween and this could use it; what
+// stopped it is that the settle would then be running while the next layout
+// pass writes the same positions, and two writers of one frame is a bug this
+// family has already paid for once. facet_gtk records the identical decision.
+fn settle(v: *u8, n: *core::Node, open: bool) {
+    let p: *props::SwipeableProps = swipeable_props(n);
+    if p == (0 as *props::SwipeableProps) { return; }
+    var shown: f64 = 0.0f64;
+    if open { shown = open_width(n); }
+    set_travel(v, shown);
+    relayout(n, v);
+    if open { fire({ (*p).on_open_requested }, { (*p).on_open_requested_ctx }, v); }
+    else { fire({ (*p).on_close_requested }, { (*p).on_close_requested_ctx }, v); }
+    return;
+}
+
+// ---- the strip -------------------------------------------------------------------
+//
+// Painted into the swipeable's own client area, in its WM_PAINT — the actions
+// are viewless nodes, so there is nothing to place, nothing to destroy when
+// they change, and no strip to rebuild when the item list is edited.
+//
+// It is drawn from `window`'s WNDPROC beside the recycler's separators, and for
+// the same reason: this is furniture belonging to the CONTAINER rather than to
+// any child, and `controls` cannot reach it without an import cycle.
+
+fn strip_left(r: u::tagRECT, count: i64) -> i32 {
+    return r.right -% ((count as i32) *% (action_width() as i32));
+}
+
+fn draw_actions(v: *u8, n: *core::Node, hdc: *u8) {
+    if !is_swipeable(n) { return; }
+    if travel_of(v) <= (0.0 as f64) { return; }
+    let count: i64 = count_items(n);
+    if count <= (0 as i64) { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    let w: i32 = action_width() as i32;
+    let base: i32 = strip_left(r, count);
+    // LEFT TO RIGHT from where the strip starts: the first action sits nearest
+    // the content, which is where every platform that has this puts it.
+    var slot: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    let total: usize = core::child_count_of(n);
+    while i < total {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM {
+                    let left: i32 = base +% ((slot as i32) *% w);
+                    let box: u::tagRECT = u::tagRECT {
+                        left: left, top: r.top, right: left +% w, bottom: r.bottom,
+                    };
+                    draw_action(hdc, box, c);
+                    slot = slot +% (1 as i64);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn draw_action(hdc: *u8, box: u::tagRECT, c: *core::Node) {
+    let p: *props::SwipeItemProps = swipe_item_props(c);
+    if p == (0 as *props::SwipeItemProps) { return; }
+    // A DESTRUCTIVE ACTION IS RED, and this is the one place in this package
+    // where `is_destructive` can be honoured — the strip is entirely our own
+    // pixels. §1 keeps `menu_item.is_destructive` absent for the opposite
+    // reason: a red item in a system-drawn MENU sits beside items this package
+    // did not draw, and reads as a rendering fault rather than a warning.
+    var fill: u32 = { u::GetSysColor(sys::color_highlight()) };
+    if { (*p).menu_item.is_destructive } {
+        fill = paint::colorref(0.80f64, 0.16f64, 0.16f64);
+    }
+    let brush: *u8 = paint::brush_for(fill);
+    if brush != (0 as *u8) {
+        var fr: u::tagRECT = box;
+        let _f: i32 = { u::FillRect(hdc, #addr_of(fr), brush) };
+    }
+    let _t: u32 = { gdi::SetTextColor(hdc, { u::GetSysColor(sys::color_highlighttext()) }) };
+    let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
+    // THE ICON IS THE LABEL when there is no text. `swipe_item.icon` names a
+    // system symbol this package has no table for, and drawing its name is what
+    // `controls::create_symbol` already does with the same kind of name — an
+    // action reading `trash` is legible; a blank red square is not.
+    var label: str = { (*p).menu_item.text.view() };
+    if label == "" { label = { (*p).menu_item.icon.view() }; }
+    let w16: *u16 = sys::to_wide(label);
+    if w16 != (0 as *u16) {
+        var tr: u::tagRECT = box;
+        let flags: u32 = sys::dt_center() | sys::dt_vcenter()
+                       | sys::dt_singleline() | sys::dt_noprefix()
+                       | sys::dt_end_ellipsis();
+        let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                     #addr_of(tr), flags) };
+        sys::free_wide(w16);
+    }
+    return;
+}
+
+// A click inside the revealed strip runs the action it landed on. `on_clicked`
+// then `on_invoked`, in that order, which is the pair the ledger names — the
+// first is the menu item's and the second is the swipe item's own. Then the row
+// closes, which is what tapping an action means.
+fn click_action(v: *u8, n: *core::Node, x: i32) -> bool {
+    if !is_swipeable(n) { return false; }
+    if travel_of(v) <= (0.0 as f64) { return false; }
+    let count: i64 = count_items(n);
+    if count <= (0 as i64) { return false; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return false; }
+    let base: i32 = strip_left(r, count);
+    if x < base { return false; }
+    let which: i64 = ((x -% base) / (action_width() as i32)) as i64;
+    if which >= count { return false; }
+    var slot: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    let total: usize = core::child_count_of(n);
+    while i < total {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM {
+                    if slot == which {
+                        let _f: bool = invoke(c);
+                        settle(v, n, false);
+                        return true;
+                    }
+                    slot = slot +% (1 as i64);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// THE ITEM NODE IS THE SENDER. A swipe item has no window — `gestures`' own
+// rule for a viewless node is that it sends itself — and a handler given the
+// swipeable's HWND could not tell which of three actions ran.
+fn invoke(c: *core::Node) -> bool {
+    let p: *props::SwipeItemProps = swipe_item_props(c);
+    if p == (0 as *props::SwipeItemProps) { return false; }
+    let sender: *u8 = c as *u8;
+    fire({ (*p).menu_item.on_clicked }, { (*p).menu_item.on_clicked_ctx }, sender);
+    fire({ (*p).on_invoked }, { (*p).on_invoked_ctx }, sender);
+    return true;
+}
+
+// ---- the two kinds -----------------------------------------------------------------
+
+// `reveal_threshold` is READ at the end of a drag rather than written to
+// anything, so a change to it needs nothing done — except that a row already
+// sitting open has to be re-checked against a strip whose width follows the
+// ACTION COUNT, or it stays open at a distance that no longer exists.
+//
+// AND EVERY EDIT REPAINTS, which is how a `swipe_item`'s three writes are
+// answered. An item is viewless, so its edit never reaches `apply` at all:
+// `mount` raises `touch_all` on the HOST, which is this node. There is no
+// widget holding a stale copy of an action's text — `draw_action` reads the
+// props at paint time — so an invalidate IS the update, and the alternative
+// would be a strip rebuilt from scratch on every keystroke.
+fn apply(v: *u8, n: *core::Node, dirty: u64) {
+    if v == (0 as *u8) { return; }
+    if (dirty & swipeable::P_REVEAL_THRESHOLD) != (0 as u64) {
+        let limit: f64 = open_width(n);
+        if travel_of(v) > limit { set_travel(v, limit); relayout(n, v); }
+    }
+    if item_bits(dirty) { let _r: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) }; }
+    return;
+}
+
+// The three an item carries. Named rather than inlined because they are
+// `swipe_item`'s numbering and not this node's — the per-kind bit trap this
+// package has paid for three times — and reading them here is the one place
+// that borrow is deliberate: `touch_all` sets every bit, so it is the presence
+// of the word rather than a bit's meaning on `swipeable` that is being asked.
+fn item_bits(dirty: u64) -> bool {
+    let touched: u64 = swipe_item::P_ICON | swipe_item::P_IS_DESTRUCTIVE
+                     | swipe_item::P_TEXT;
+    return (dirty & touched) != (0 as u64);
+}
+
+#[test]
+fn an_unnamed_threshold_is_halfway() {
+    // What an application that never named one expects, and the value
+    // facet_gtk uses for it.
+    assert threshold_of(0 as *props::SwipeableProps, 200.0f64) == (100.0 as f64);
+    return;
+}
+
+#[test]
+fn a_threshold_past_the_actions_is_clamped_to_them() {
+    var s: core::Node = swipeable::swipeable(key: "s");
+    let p: *props::SwipeableProps = swipeable_props(#addr_of(s));
+    assert p != (0 as *props::SwipeableProps);
+    // A bar further than the row can travel could never be crossed.
+    { (*p).reveal_threshold = 500.0f64 };
+    assert threshold_of(p, 176.0f64) == (176.0 as f64);
+    { (*p).reveal_threshold = 40.0f64 };
+    assert threshold_of(p, 176.0f64) == (40.0 as f64);
+    return;
+}
+
+#[test]
+fn the_strip_is_as_wide_as_its_actions_and_pinned_to_the_trailing_edge() {
+    var s: core::Node = swipeable::swipeable(key: "s");
+    s.add_child(swipe_item::swipe_item(key: "a", text: "Archive"));
+    s.add_child(swipe_item::swipe_item(key: "d", text: "Delete", destructive: true));
+    // A CHILD THAT IS NOT AN ACTION IS NOT COUNTED — the content lives in the
+    // same node, and counting it would open the row onto empty pixels.
+    s.add_child(core::node_with("content", core::K_NODE, 0 as *u8, core::no_release));
+    assert count_items(#addr_of(s)) == (2 as i64);
+    assert open_width(#addr_of(s)) == (176.0 as f64);
+    let r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 400 as i32, bottom: 44 as i32 };
+    assert strip_left(r, 2 as i64) == (224 as i32);
+    return;
+}
+
+#[test]
+fn a_row_with_no_actions_has_nothing_to_reveal() {
+    // Every mover asks `open_width` first, and zero has to mean "there is
+    // nothing under this row" rather than a division to do.
+    var s: core::Node = swipeable::swipeable(key: "s");
+    assert open_width(#addr_of(s)) == (0.0 as f64);
+    assert !begin(4321 as *u8, #addr_of(s), 10 as i32);
+    assert !active();
+    return;
+}
+
+#[test]
+fn a_press_that_never_moved_is_not_a_swipe() {
+    // The whole answer to the §1 worry that started this file: a press that
+    // never crossed the system's own drag threshold moves nothing and reports
+    // nothing, so a click that jitters a pixel is still a click.
+    var s: core::Node = swipeable::swipeable(key: "s");
+    s.add_child(swipe_item::swipe_item(key: "a", text: "Archive"));
+    assert begin(4321 as *u8, #addr_of(s), 100 as i32);
+    assert active();
+    assert !moved();
+    // `end` answers false — it did not take the release — so the click the
+    // press began still fires.
+    assert !end(4321 as *u8, #addr_of(s));
+    assert !active();
+    return;
+}
+
+#[test]
+fn travel_is_stamped_so_closed_and_untouched_read_alike() {
+    // The +1. A window property that was never set answers null, and a closed
+    // row's travel is zero — without the offset the two are the same value, and
+    // `content_shift` would have to guess which it was looking at.
+    assert content_shift(0 as *u8) == (0.0 as f64);
+    let closed: usize = ((0 as i64) +% (1 as i64)) as usize;
+    assert closed != (0 as usize);
+    return;
+}

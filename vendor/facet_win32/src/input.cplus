@@ -43,6 +43,7 @@ import "./sys" as sys;
 import "./controls" as controls;
 import "./recycler" as recycler;
 import "./dnd" as dnd;
+import "./swipe" as swipe;
 import "./menus" as menus;
 
 // ---- binding a node onto its window -------------------------------------------
@@ -695,6 +696,25 @@ fn on_mouse(v: *u8, msg: u32, w: u64, l: i64) -> bool {
         // the press — a drag that never moves is still a click, and the
         // selection has to happen on release exactly as it did before.
         let _r: bool = begin_row_reorder(v, hi_word(l));
+        // A PRESS ON A SWIPEABLE. A press in the REVEALED strip is an action
+        // and takes the event; anywhere else it may be the start of a swipe,
+        // which — like the reorder above — does not consume the press.
+        if press_swipeable(v, lo_word(l)) { return true; }
+    }
+    if swipe::active() {
+        let row: *u8 = swipeable_above(v);
+        if msg == sys::wm_mousemove() {
+            let _d: bool = swipe::drag(row, node_of_window(row), swipe_at(v, lo_word(l)));
+        }
+        if msg == sys::wm_lbuttonup() {
+            if { u::GetCapture() } == row { let _r: i32 = { u::ReleaseCapture() }; }
+            // A SWIPE THAT TRAVELLED EATS THE CLICK: the press landed on the
+            // row's content, and firing its `on_click` after the user dragged
+            // the row open is the same mistake as firing one after a divider
+            // drag. A press that never moved answers false and the click below
+            // runs exactly as it always did.
+            if swipe::end(row, node_of_window(row)) { return true; }
+        }
     }
     if recycler::reorder_active() {
         if msg == sys::wm_mousemove() {
@@ -1418,6 +1438,62 @@ fn begin_row_reorder(v: *u8, y: i32) -> bool {
     };
 }
 
+// THE SWIPEABLE ABOVE A PRESSED WINDOW, and this walk is the whole reason a
+// swipe works at all.
+//
+// A press never lands on the swipeable itself. Its content is a child WINDOW
+// covering the row — a panel with a background, a label, a button — and Win32
+// delivers a mouse message to the topmost child under the pointer and does not
+// bubble it. So the first build of this answered only presses in whatever
+// margin the content did not cover, which on a full-width row is nothing at
+// all: a swipeable that could not be swiped, found by dragging one in the
+// probe. `list_above` exists for the identical reason one level up.
+fn swipeable_above(ctl: *u8) -> *u8 {
+    var cur: *u8 = ctl;
+    while cur != (0 as *u8) {
+        let n: *core::Node = node_of_window(cur);
+        if n != (0 as *core::Node) {
+            if core::kind_of(n) == props::K_SWIPEABLE { return cur; }
+        }
+        cur = { u::GetParent(cur) };
+    }
+    return 0 as *u8;
+}
+
+// A press on a swipeable, and the two things it can be.
+//
+// THROUGH THE SCREEN, because the press and the strip are measured in
+// different windows' client spaces — the same conversion `end_row_reorder`
+// makes for the same reason, and comparing the two directly is how a drag
+// reports the wrong place.
+//
+// THE CAPTURE IS TAKEN ON THE SWIPEABLE, not on the window that was pressed.
+// That is what makes every later message arrive here in the ROW's coordinates,
+// and without a capture at all a drag heading for the edge stops reporting the
+// moment it leaves the child — the divider grab captures for the same reason.
+fn press_swipeable(v: *u8, x: i32) -> bool {
+    let host: *u8 = swipeable_above(v);
+    if host == (0 as *u8) { return false; }
+    let n: *core::Node = node_of_window(host);
+    if n == (0 as *core::Node) { return false; }
+    let hx: i32 = client_x(host, screen_x(v, x));
+    // An open row's actions come first: a press inside the revealed strip is a
+    // press on an action, and starting a swipe from it would drag the row shut
+    // under the pointer instead of running what was tapped.
+    if swipe::click_action(host, n, hx) { return true; }
+    if swipe::begin(host, n, hx) { let _c: *u8 = { u::SetCapture(host) }; }
+    return false;
+}
+
+// Where a swipe drag is, in the row's own client space. The capture means `v`
+// is normally the swipeable already, and the walk costs one property read when
+// it is.
+fn swipe_at(v: *u8, x: i32) -> i32 {
+    let host: *u8 = swipeable_above(v);
+    if host == (0 as *u8) || host == v { return x; }
+    return client_x(host, screen_x(v, x));
+}
+
 fn end_row_reorder(v: *u8, y: i32) -> bool {
     let host: *u8 = recycler::reorder_host();
     if host == (0 as *u8) { return false; }
@@ -1442,6 +1518,20 @@ fn viewport_y(host: *u8, sy: i32) -> i32 {
     var r: u::tagRECT = #zero::[u::tagRECT]();
     if { u::GetWindowRect(host, #addr_of(r)) } == (0 as i32) { return sy; }
     return sy -% r.top;
+}
+
+// The same pair across, for a swipe: the press lands on a child window and the
+// strip is measured in the row's.
+fn screen_x(v: *u8, x: i32) -> i32 {
+    var r: u::tagRECT = #zero::[u::tagRECT]();
+    if { u::GetWindowRect(v, #addr_of(r)) } == (0 as i32) { return x; }
+    return r.left +% x;
+}
+
+fn client_x(host: *u8, sx: i32) -> i32 {
+    var r: u::tagRECT = #zero::[u::tagRECT]();
+    if { u::GetWindowRect(host, #addr_of(r)) } == (0 as i32) { return sx; }
+    return sx -% r.left;
 }
 
 fn begin_divider_drag(v: *u8, x: i32, y: i32) -> bool {

@@ -25,6 +25,7 @@ recycler     list / collection / tree, virtualised over a scrolling panel
 imaging      the bitmap decoder — GDI+, and a GIF's own frame delays
 anim         the two things that move on their own: a progress tween, a page slide
 dnd          receiving a drop, without COM
+swipe        swipe-to-reveal: a drag, and the strip of actions under the row
 menus        HMENU, and the one command-id table
 dialogs      alert / choose / prompt as facet trees, and the file chooser
 sys          constants, and the UTF-8 <-> UTF-16 door every string goes through
@@ -58,12 +59,12 @@ $ python3 ../facet_gtk/tools/parity.py win32
 
 362 prop bits declared across facet's kind modules
   gtk       358 / 362    98%
-  appkit    336 / 362    92%
-  win32     290 / 362    80%   <-- this package
+  appkit    337 / 362    93%
+  win32     294 / 362    81%   <-- this package
 
  68 declared handlers
   gtk        68 / 68    100%
-  win32      53 / 68     77%   <-- this package
+  win32      59 / 68     86%   <-- this package
 
  21 shared-band bits
   win32      16 / 21     76%   <-- this package
@@ -83,10 +84,12 @@ owner-drawn and can simply be given a border. The rule that came out of it:
 name a verb in §1 only where the sentence decides that verb across the whole
 backend; when a kind is the exception, describe it without backticks.
 
-## Three ways to check it
+## Four ways to check it
 
 ```bash
-cd vendor/facet_win32 && ../../target/release/cpc test      # 111 tests, no window needed
+cd vendor/facet_win32 && ../../target/release/cpc test --filter facet_win32
+# running 117 of 543 tests matching "facet_win32"
+# test result: 117 passed; 0 failed
 
 cd playground/win32_probe         && ../../target/release/cpc build   # the SEAM
 cd playground/win32_runtime_probe && ../../target/release/cpc build   # the FACADE
@@ -95,6 +98,12 @@ cd playground/win32_runtime_probe && ../../target/release/cpc build   # the FACA
 The suite pins what the backend DECIDES — the mappings, the style bits, the
 arithmetic, the encoders — and opens no window, because a suite that needs a
 desktop session is a suite that stops running.
+
+**`--filter` is not optional on Windows, it is the only way in.** A package's
+driver carries every dependency's tests — 543 here for 117 of this package's —
+and one of stdlib's hangs on this host, which used to make everything ordered
+after it unreachable. `bugs/cpc-test-hangs-on-windows-in-facets-own-suite.md`
+has the measurement and the reproduction.
 
 The probes are the other half. `win32_probe` calls the backend directly and
 proves the seam; `win32_runtime_probe` goes through `runtime::App` and proves
@@ -121,6 +130,23 @@ found.
 **It does not return list ROWS**, and that is facet's shape rather than this
 backend's — a virtualised row is realised without becoming a child of the list
 node, so the tree walk never reaches it. MANIFEST §3 has the detail.
+
+### ...and the fourth: send it the messages a mouse would
+
+An agent has no hands either, and the gesture kinds are the ones a test cannot
+reach. `PostMessage` can: WM_LBUTTONDOWN, a run of WM_MOUSEMOVE and
+WM_LBUTTONUP, posted to the deepest child under the point, go through the real
+WNDPROC and the real `input::on_mouse`. That is how the swipe was verified —
+the row's content window measured 176 points to the left afterwards, and the
+application's `on_open_requested` label had changed.
+
+Two things make the synthesis match a mouse rather than merely resemble one.
+Descend from the TOP-LEVEL window with `ChildWindowFromPointEx`, not
+`WindowFromPoint`, which answers about the whole desktop and hands back the
+terminal that happens to be in front. And stop the descent at a system control:
+a `Static` answers WM_NCHITTEST with HTTRANSPARENT so a real press falls
+through to the panel behind it, while a POSTED message is eaten by the
+static's own WNDPROC and never reaches facet at all.
 
 ## Diagnostics
 

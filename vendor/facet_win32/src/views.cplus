@@ -40,6 +40,7 @@ import "./fonts" as fonts;
 import "./menus" as menus;
 import "./window" as window;
 import "./recycler" as recycler;
+import "./swipe" as swipe;
 
 // Kinds that are not rectangles at all — read as NODES by whatever owns them,
 // never given a window of their own. Same list, same reasons, as the AppKit
@@ -171,6 +172,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == ftree::K_TREE { recycler::apply_tree(v, n, dirty); return; }
     if kind == props::K_SCROLL { controls::apply_scroll_props(v, n, dirty); return; }
     if kind == props::K_BOX { controls::apply_box(v, n, dirty); return; }
+    if kind == props::K_SWIPEABLE { swipe::apply(v, n, dirty); return; }
     return;
 }
 

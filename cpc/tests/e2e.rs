@@ -5699,6 +5699,64 @@ fn cpc_test_runs_passing_tests() {
     assert!(stdout.contains("2 passed; 0 failed"));
 }
 
+// `--filter` keeps the tests whose display name contains the substring, and
+// drops the rest BEFORE codegen — so the run is shorter and the build with it.
+// The reason it exists: a package's driver carries every dependency's tests as
+// well as its own, and one hanging test in a dependency otherwise makes every
+// test ordered after it unreachable.
+#[test]
+fn cpc_test_filter_runs_only_the_matching_tests() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "#[test]\nfn alpha_one() { assert true; }\n\
+         #[test]\nfn alpha_two() { assert true; }\n\
+         #[test]\nfn beta_one() { assert false; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .arg("--filter")
+        .arg("alpha")
+        .output()
+        .expect("invoke cpc");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // The failing test is not merely unreported — it never ran, which is what
+    // makes a filter usable against a suite with a hang in it.
+    assert!(
+        out.status.success(),
+        "expected the filtered run to pass, stdout: {stdout}"
+    );
+    assert!(stdout.contains("running 2 of 3 tests"), "got: {stdout}");
+    assert!(stdout.contains("test alpha_one ... ok"), "got: {stdout}");
+    assert!(stdout.contains("test alpha_two ... ok"), "got: {stdout}");
+    assert!(!stdout.contains("beta_one"), "got: {stdout}");
+    assert!(stdout.contains("2 passed; 0 failed"), "got: {stdout}");
+}
+
+// A filter matching nothing FAILS rather than reporting an empty pass: it is a
+// question about tests the caller believes exist, and "0 passed; 0 failed" to a
+// typo reads as "they all pass".
+#[test]
+fn cpc_test_filter_matching_nothing_is_an_error() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, "#[test]\nfn alpha_one() { assert true; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .arg("--filter=nothing_is_called_this")
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "expected failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("matched none of the 1 tests"), "got: {stderr}");
+}
+
 #[test]
 fn cpc_test_reports_failing_test() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -27084,7 +27142,11 @@ fn an_async_assoc_fn_is_still_addressable() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    // THROUGH THE HELPER, which is why it exists: a bare `std::os::unix` call
+    // does not merely fail on Windows, it does not COMPILE there — and one of
+    // them in a 27,000-line file takes the whole `e2e` target down, so no test
+    // in it can run on that host at all.
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )

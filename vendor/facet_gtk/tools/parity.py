@@ -365,10 +365,23 @@ def field_touches(directory):
             for m in re.finditer(r"\.\s*(?:(\w+)\.)?([a-z_][a-z_0-9]*)\b", body):
                 qualifier, field = m.group(1), m.group(2)
                 if qualifier:
-                    embedded = "".join(x.title() for x in qualifier.split("_")) + "Props"
-                    per.setdefault(embedded, set()).add(field)
-                    # The qualifier is itself a field of whatever is in scope.
+                    # AN EMBEDDED READ ANSWERS THE OUTER KIND, not the embedded
+                    # one. `(*p).menu_item.is_destructive` inside a swipe
+                    # action's painter is how `swipe_item` declares that prop —
+                    # facet puts it in the embedded block — and it says nothing
+                    # about whether a real MENU ITEM is drawn red. Crediting
+                    # `MenuItemProps` for it moved facet_win32 from 294 to 295
+                    # while `menus.cplus` ignored the field and MANIFEST §1 said
+                    # it would, which is the same disagreement between the
+                    # number and the document that took the floor from 357 to
+                    # 356.
+                    #
+                    # A backend that genuinely implements the embedded kind
+                    # reads it UNQUALIFIED, with that Props type in scope —
+                    # `menus.cplus` does — so nothing real is lost.
                     for st in in_scope:
+                        per.setdefault(st, set()).add(field)
+                        # The qualifier is itself a field of whatever is in scope.
                         per.setdefault(st, set()).add(qualifier)
                     continue
                 for st in in_scope:

@@ -46,6 +46,7 @@ import "./observers" as observers;
 import "./menus" as menus;
 import "./recycler" as recycler;
 import "./dnd" as dnd;
+import "./swipe" as swipe;
 
 fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
 
@@ -199,6 +200,10 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
                     recycler::draw_separators(hwnd, pn, hdc);
                     recycler::draw_refresh_bar(hwnd, pn, hdc);
                 }
+                // A SWIPEABLE'S ACTIONS ARE FURNITURE TOO, and here for the
+                // same reason: they belong to the row's own pixels rather than
+                // to any child window, and the content slides off them.
+                swipe::draw_actions(hwnd, pn, hdc);
             }
             let _e: i32 = { u::EndPaint(hwnd, #addr_of(ps)) };
         }

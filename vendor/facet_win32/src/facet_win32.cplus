@@ -47,6 +47,7 @@ import "./scheduler" as scheduler;
 import "./window" as window;
 import "./geometry" as geometry;
 import "./recycler" as recycler;
+import "./swipe" as swipe;
 
 fn renderer() -> mount::Renderer {
     return mount::Renderer {
@@ -79,6 +80,9 @@ fn install() {
     // The layout walk cannot reach a list's rows on its own — see
     // `geometry::set_rows_hook`.
     geometry::set_rows_hook(recycler::layout_rows);
+    // ...nor can it know how far a swipeable has been swiped without asking —
+    // see `geometry::set_swipe_hook`.
+    geometry::set_swipe_hook(swipe::content_shift);
     theme::set_is_dark_fn(window::is_dark);
     theme::set_theme_changed_fn(theme_changed);
     window::sync_appearance();

@@ -236,28 +236,45 @@ reason. These are decided absent.
 * **`time_picker.on_opened` / `on_closed`** — the same wall as
   `time_picker.is_open` above. A `SysDateTimePick32` in a time format has no
   drop-down to open, so there is no edge to report.
-* **`swipe_item.on_invoked` and the five `swipeable` verbs** — a swipe is a
-  TOUCH gesture. `input::on_mouse` does synthesise one from a press and a
-  distant release, and that is what `.gesture(on_swipe:)` rides — but
-  `swipeable`'s verbs describe a REVEAL that tracks the finger continuously,
-  with an open state, a close request and a changing observation. A mouse drag
-  can be made to imitate it and the imitation is worse than the absence: an
-  application built against a tracking reveal on a desktop would have every
-  list row shifting under a stray drag.
 
-And these are §2 — Win32 has them and this package has not built them:
+*(The swipe item's invoked event and the five swipeable verbs were here, argued
+absent on the grounds that a swipe is a TOUCH gesture and "a mouse drag can be
+made to imitate it and the imitation is worse than the absence: an application
+built against a tracking reveal on a desktop would have every list row shifting
+under a stray drag". The first half is true; the conclusion did not follow.
+facet_gtk answers this kind on a desktop, from a drag, and the stray drag is
+answered by `SM_CXDRAG` — the system's own drag threshold, the same guard every
+other drag in this package uses. They are BUILT, in `swipe.cplus`; the section
+below says how. This is the fifth time this file's own prose was the thing
+keeping a verb absent, and the first where the prose was wrong about the
+PLATFORM rather than about which kinds a sentence reached — so the names are
+spelled out in words here, because a backticked one in §1 is what the tool
+reads as a decision.)*
 
-* **`on_submit` on the three input kinds** — an `EDIT` does not notify its
-  parent when Enter is pressed; the dialog manager turns it into `IDOK` for a
-  default button, which a facet tree has none of. Reading it needs the control
-  SUBCLASSED, which this package does not do anywhere yet — it is the same
-  missing machinery `tabs.bar_background` would have needed before the strip
-  was drawn here, and the same machinery `text_area.on_selection_changed`
-  wants (`EN_SELCHANGE` only reaches a RichEdit).
-* **`split.on_move`** — the splitter drag. `split` places its two panes and its
-  divider is not yet a draggable window.
-* **`carousel` and `reorder`** — neither kind is built.
-* **`web` / `hybrid_web`** — WebView2, which is a separate SDK.
+And this is §2 — Win32 has it and this package has not built it:
+
+* **`web` / `hybrid_web`** — WebView2, which is a separate SDK. Seven handlers,
+  and the only ones left in the read half besides the time picker's pair above.
+
+Four rows stood here until 2026-09-01. They are struck rather than deleted,
+because what unblocked each is the useful part — and their names are spelled
+without backticks, because a backticked one anywhere in §1 is a DECISION as far
+as the tool is concerned, and these are history:
+
+* ~~the submit event on the three input kinds~~ — needed the control
+  SUBCLASSED, "which this package does not do anywhere yet". It does now:
+  `subclass.cplus` replaces the EDIT's window procedure, and Enter submits a
+  field while Ctrl-Enter submits a text area (Enter is a newline there).
+* ~~the split's move event~~ — "its divider is not yet a draggable window". It
+  is: `input::begin_divider_drag`, with the mouse captured so a drag heading
+  for the edge keeps reporting.
+* ~~the carousel, and reordering a collection~~ — both built. The carousel
+  pages with a slide tween of its own; the reorder is the recycler's, and it
+  stays inside a section when the collection is grouped. (A LIST still cannot
+  be reordered, and that is facet's shape rather than this package's — its own
+  entry below.)
+* ~~the swipe verbs~~ — see directly above: they were in §1 rather than here,
+  and the argument was wrong.
 
 ### Rich text: `label.formatted_text`, `label.text_format`, `text_area.style_runs`
 
@@ -644,6 +661,48 @@ caret or an accessibility role to reproduce.
 `PS_INSIDEFRAME` is the detail worth keeping. A pen is centred on its path by
 default, so half of a wide stroke falls outside the node's own box and is
 clipped — a 6-point border drawing as 3, with nothing to explain it.
+### A SWIPEABLE IS ASSEMBLED, from a drag and a strip this package paints
+
+Win32 has no swipeable row, and neither does GTK — the two backends build it
+the same way, from the same three parts: a strip of actions painted UNDER the
+content, the content translating with the pointer, and where it lands when the
+pointer lifts decided by the swipeable's reveal threshold (zero meaning
+halfway, which is what an application that never named one expects).
+
+Three details are worth the space:
+
+**The travel lives on the WINDOW**, as a property, in whole points plus one.
+The offset is what makes "never touched" (no property) and "sitting closed"
+(zero travel) read alike, which is what they are. A static would be one
+swipeable's travel shared by every swipeable on screen, and a list of them
+makes that wrong on the first row.
+
+**The content is moved by `geometry`, not by this kind.** `reposition_children`
+asks a hook how far the host it is placing into has been swiped, and subtracts
+it once. The alternative was `core::set_translation_x`, and it is wrong twice:
+this package does not honour the transform band at all (above), so it would
+move nothing; and it is the APPLICATION's prop, so writing it would discard
+whatever the app had put there.
+
+That change surfaced a real bug in the walk. `place` rounded x and y with
+`round_i32`, which CLAMPS NEGATIVES TO ZERO — right for an extent, where a
+stray −1 becomes a four-billion-pixel width, and wrong for an origin, where a
+child left of its host is a real position. A swiped-open row is exactly that
+position, so the first build of this moved nothing at all. `round_origin` is
+the second rounding, and the two are named for the difference.
+
+**It lands rather than glides.** `anim` has a tween and this could use it; the
+settle would then be running while the next layout pass writes the same
+positions, and two writers of one frame is a bug this family has already paid
+for once. facet_gtk records the identical decision.
+
+A swipe item's destructive marking IS honoured here — the strip is entirely our
+own pixels, so the action draws red. `menu_item.is_destructive` stays absent for
+the opposite reason: a red item in a system-drawn MENU sits beside items this
+package did not draw, and reads as a rendering fault rather than as a warning.
+(That one is backticked and this one is not, and the difference is the rule: the
+menu sentence decides its verb, the swipe sentence implements one.)
+
 ### The MOBILE INPUT verbs that remain — `return_key`, `predicts_text`, `checks_spelling`
 
 Three `InputView` rows that describe a SOFT keyboard, and a desktop has none.
@@ -752,12 +811,23 @@ hear that it was. A drag there would be a gesture with no contract behind it,
 so a collection reorders and a `list` does not. facet_gtk reads
 `CollectionProps` and only that, for the same reason.
 
-**The names are deliberately not in backticks above.** `parity.py` reads a
-backticked prop name in §1 as "this backend decided it absent", and it does not
-know which KIND the sentence was about — so naming a collection's verbs while
-explaining a list's absence marked them absent on the collection too, where
-they are implemented. Two verbs read as gaps for no reason but this file's
-prose.
+So: `list.reorder` is decided absent, and that name IS in backticks because
+this sentence is the decision about it. It is the one name here that should be
+— which is the whole rule.
+
+**The other names above are deliberately not in backticks.** `parity.py` reads
+a backticked prop name in §1 as "this backend decided it absent", and it does
+not know which KIND the sentence was about — so naming a collection's verbs
+while explaining a list's absence marked them absent on the collection too,
+where they are implemented. Two verbs read as gaps for no reason but this
+file's prose.
+
+(The leaf `reorder` is shared with `collection.reorder`, which is BUILT. That
+is safe and worth knowing why: the tool takes an implemented verb as answered
+whatever §1 says about the name, so a decision about one kind cannot take
+another kind's working verb away. It can only fail the other direction — by
+marking absent something nobody implemented — which is exactly what the four
+earlier slips did.)
 
 Reordering here is mouse capture rather than OLE drag-and-drop, and the COM
 note in the entry below does not apply to it: a reorder never leaves the
