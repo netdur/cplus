@@ -93,7 +93,41 @@ not one. A control is a constructor plus a typed cursor, and every verb on that
 cursor is an imperative API in the sense this page means, so the guideline
 applies to it in full.
 
-## Current state (2026-08-31)
+## Current state (2026-09-01)
+
+- securestore (pass done 2026-09-01, **written against this page and then
+  audited** — the cheaper order permissions recommends, and it showed: both
+  backends needed nothing). Findings:
+  - **`set(key, value)` was two adjacent same-typed positional strings**, which
+    is the third time this page has recorded that exact mistake — http's
+    `set_header(name, value)` and permissions' `register_apple`. Swappable at
+    the call site, silent when reversed, and a stored secret under the wrong key
+    is the worst possible version of it. Now `set(key, to: value)`, the shape
+    `set_header(name, to:)` and `Vec::set(value, at:)` already use.
+  - **The out-parameter was unlabelled**: `get(key, #addr_of(t))` said nothing
+    about which way the data flowed. Now `get(key, into: #addr_of(t))`.
+  - **`DEFAULT_SERVICE` was public and no verb took it.** That is the test this
+    page states — permissions' `S_*` constants stay public *because*
+    `register_apple` takes them — and this one failed it: it existed only as a
+    default value nobody types. Deleted; the default is `""` inline, and the
+    namespace rule is documented once above the verbs rather than encoded in a
+    constant.
+  - **The five `C_*` seam codes were public.** They are the integers the two
+    halves meet at, meaningless to a caller, and now `_C_*`.
+  - `clear(service)` took its one argument positionally while the other four
+    labelled the same argument. Labelled, so `service:` reads the same
+    everywhere.
+  - A **deliberate deviation, recorded rather than hidden**: `get` writes
+    through an out-parameter instead of returning `Option[Text]`. A caller must
+    tell "absent" from "refused" from "broken", and `Option` collapses the last
+    two into the first — this is a value plus five reasons, which the error
+    model calls a `Result` and which the out-parameter plus `Outcome` spells
+    without a generic.
+  - Both backends passed the audit with nothing to change, which is the argument
+    for writing to this page first: `permissions` was retrofitted and had about
+    twenty identifiers to hide.
+
+## Earlier state (2026-08-31)
 
 - permissions (pass done 2026-08-31, retrofitted — the package was written to
   work and then brought to this page, which is the more expensive order and

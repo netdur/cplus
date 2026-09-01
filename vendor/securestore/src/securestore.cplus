@@ -52,8 +52,11 @@ enum Outcome {
     Failed,
 }
 
-// The namespace a key lives in. Empty means the app's own default — the bundle
-// identifier on Apple, a per-package preferences file on Android.
+// ---- the namespace ------------------------------------------------------------
+//
+// `service` is the namespace a key lives in, and every verb takes it, defaulted
+// to `""` — the app's own: the bundle identifier on Apple, a per-package
+// preferences file on Android.
 //
 // It exists so an app with two independent secret sets — a user's token and a
 // device credential, say — can `clear` one without touching the other. Most
@@ -63,7 +66,6 @@ enum Outcome {
 // a footgun: there is no shape of call that matches items outside one
 // namespace, so the worst a wrong `service` can do is clear the wrong app-owned
 // set rather than everything the process can see.
-const DEFAULT_SERVICE: str = "";
 
 // FOUR KILOBYTES PER VALUE, enforced at both ends rather than documented.
 //
@@ -87,45 +89,52 @@ const MAX_VALUE_BYTES: usize = 4096 as usize;
 // because from the app's side it is its own item and the intent is unambiguous.
 // A Developer-ID-signed app has a stable identity and never reaches that path.
 // Measured: plans/securestore.md §5.
-fn set(key: str, value: str, service: str = DEFAULT_SERVICE) -> Outcome {
+fn set(key: str, to: str, service: str = "") -> Outcome {
     if #str_len(key) == (0 as usize) { return Outcome::Failed; }
     // REFUSED AT THE WRITE, which is the only place it can be reported to
     // somebody who can act on it — see MAX_VALUE_BYTES.
-    if #str_len(value) > MAX_VALUE_BYTES { return Outcome::Failed; }
+    if #str_len(to) > MAX_VALUE_BYTES { return Outcome::Failed; }
     return _from_code(_c_set(#str_ptr(key), #str_len(key),
-                             #str_ptr(value), #str_len(value),
+                             #str_ptr(to), #str_len(to),
                              #str_ptr(service), #str_len(service)));
 }
 
 // Read the item under `key` into `out`, replacing its contents.
 //
-// AN OUT-PARAMETER RATHER THAN AN OPTION, and the reason is the enum above: a
-// caller has to tell "absent" from "refused" from "broken", and only the first
-// of those is a `None`. `Option[Text]` would collapse the other two into it.
+// AN OUT-PARAMETER RATHER THAN AN OPTION, and it is a deliberate deviation from
+// the naming guideline's "a value that can be absent returns `Option[T]`",
+// recorded rather than hidden.
+//
+// A caller has to tell "absent" from "refused" from "broken", and only the
+// first of those is a `None`. `Option[Text]` would collapse a keychain that
+// refused the app and a keychain that is not there into the same answer as a
+// key nobody has written yet — and those three want different code. The
+// guideline's own error model says the same thing from the other side: a
+// value-plus-reason is a `Result`, and this is a value plus five reasons.
 //
 // `out` is left UNTOUCHED on anything but `Ok`, so a caller that ignores the
 // outcome reads whatever it put there rather than an empty string that looks
 // like a stored value.
-fn get(key: str, out: *text::Text, service: str = DEFAULT_SERVICE) -> Outcome {
+fn get(key: str, into: *text::Text, service: str = "") -> Outcome {
     if #str_len(key) == (0 as usize) { return Outcome::Failed; }
-    if { out as *u8 } == (0 as *u8) { return Outcome::Failed; }
+    if { into as *u8 } == (0 as *u8) { return Outcome::Failed; }
     var buf: [u8; 4096] = #zero::[[u8; 4096]]();
     let p: *u8 = { #addr_of(buf) as *u8 };
-    // The backend answers C_FAILED rather than a short count when the item does
+    // The backend answers _C_FAILED rather than a short count when the item does
     // not fit — see MAX_VALUE_BYTES. `cap` is the contract, not a hint.
     let n: i64 = _c_get(#str_ptr(key), #str_len(key),
                         #str_ptr(service), #str_len(service),
                         p, MAX_VALUE_BYTES);
     // Negative is a status code; zero or more is a byte count.
     if n < (0 as i64) { return _from_code({ n as i32 }); }
-    { *out = text::from_str({ #str_from_raw_parts(p, { n as usize }) }) };
+    { *into = text::from_str({ #str_from_raw_parts(p, { n as usize }) }) };
     return Outcome::Ok;
 }
 
 // Remove the item under `key`. `NotFound` when there was none, which is not an
 // error — a caller clearing a token it may never have written should not have
 // to check first.
-fn remove(key: str, service: str = DEFAULT_SERVICE) -> Outcome {
+fn remove(key: str, service: str = "") -> Outcome {
     if #str_len(key) == (0 as usize) { return Outcome::Failed; }
     return _from_code(_c_remove(#str_ptr(key), #str_len(key),
                                 #str_ptr(service), #str_len(service)));
@@ -136,7 +145,7 @@ fn remove(key: str, service: str = DEFAULT_SERVICE) -> Outcome {
 // A BOOL, not an Outcome, because the three failures collapse honestly here:
 // refused, absent and broken all mean "you cannot read a value under this key",
 // and a caller that needs to tell them apart is calling `get`.
-fn contains(key: str, service: str = DEFAULT_SERVICE) -> bool {
+fn contains(key: str, service: str = "") -> bool {
     if #str_len(key) == (0 as usize) { return false; }
     return _c_contains(#str_ptr(key), #str_len(key),
                        #str_ptr(service), #str_len(service)) != (0 as i32);
@@ -148,7 +157,7 @@ fn contains(key: str, service: str = DEFAULT_SERVICE) -> bool {
 // reach items outside the namespace it was given, and on Apple it cannot reach
 // items belonging to another application at all. `Ok` when there was nothing to
 // remove — an empty namespace is already in the state this asks for.
-fn clear(service: str = DEFAULT_SERVICE) -> Outcome {
+fn clear(service: str = "") -> Outcome {
     return _from_code(_c_clear(#str_ptr(service), #str_len(service)));
 }
 
@@ -161,17 +170,17 @@ fn clear(service: str = DEFAULT_SERVICE) -> Outcome {
 // The integer answers are NEGATIVE for a status and non-negative for data, so
 // `_c_get` can report a byte count and a failure through one return.
 
-const C_OK: i32 = 0 as i32;
-const C_NOT_FOUND: i32 = 0 - 1;
-const C_DENIED: i32 = 0 - 2;
-const C_UNSUPPORTED: i32 = 0 - 3;
-const C_FAILED: i32 = 0 - 4;
+const _C_OK: i32 = 0 as i32;
+const _C_NOT_FOUND: i32 = 0 - 1;
+const _C_DENIED: i32 = 0 - 2;
+const _C_UNSUPPORTED: i32 = 0 - 3;
+const _C_FAILED: i32 = 0 - 4;
 
 fn _from_code(c: i32) -> Outcome {
-    if c == C_OK { return Outcome::Ok; }
-    if c == C_NOT_FOUND { return Outcome::NotFound; }
-    if c == C_DENIED { return Outcome::Denied; }
-    if c == C_UNSUPPORTED { return Outcome::Unsupported; }
+    if c == _C_OK { return Outcome::Ok; }
+    if c == _C_NOT_FOUND { return Outcome::NotFound; }
+    if c == _C_DENIED { return Outcome::Denied; }
+    if c == _C_UNSUPPORTED { return Outcome::Unsupported; }
     return Outcome::Failed;
 }
 
@@ -202,11 +211,11 @@ extern fn _c_clear(service: *u8, service_len: usize) -> i32;
 
 #[test]
 fn every_backend_code_maps_to_exactly_one_outcome() {
-    assert _from_code(C_OK) == Outcome::Ok;
-    assert _from_code(C_NOT_FOUND) == Outcome::NotFound;
-    assert _from_code(C_DENIED) == Outcome::Denied;
-    assert _from_code(C_UNSUPPORTED) == Outcome::Unsupported;
-    assert _from_code(C_FAILED) == Outcome::Failed;
+    assert _from_code(_C_OK) == Outcome::Ok;
+    assert _from_code(_C_NOT_FOUND) == Outcome::NotFound;
+    assert _from_code(_C_DENIED) == Outcome::Denied;
+    assert _from_code(_C_UNSUPPORTED) == Outcome::Unsupported;
+    assert _from_code(_C_FAILED) == Outcome::Failed;
     // AND ANYTHING ELSE IS `Failed`, which is the property worth pinning: a
     // backend that grows a code this facade has not learned must degrade to the
     // honest catch-all rather than to whichever variant happens to be first.
@@ -216,16 +225,16 @@ fn every_backend_code_maps_to_exactly_one_outcome() {
 
 #[test]
 fn the_codes_are_distinct_so_no_two_outcomes_collide() {
-    assert C_OK != C_NOT_FOUND;
-    assert C_NOT_FOUND != C_DENIED;
-    assert C_DENIED != C_UNSUPPORTED;
-    assert C_UNSUPPORTED != C_FAILED;
+    assert _C_OK != _C_NOT_FOUND;
+    assert _C_NOT_FOUND != _C_DENIED;
+    assert _C_DENIED != _C_UNSUPPORTED;
+    assert _C_UNSUPPORTED != _C_FAILED;
     // Non-negative is DATA on the `_c_get` seam, so every status must be
     // negative or a byte count would read as a failure.
-    assert C_NOT_FOUND < (0 as i32);
-    assert C_DENIED < (0 as i32);
-    assert C_UNSUPPORTED < (0 as i32);
-    assert C_FAILED < (0 as i32);
+    assert _C_NOT_FOUND < (0 as i32);
+    assert _C_DENIED < (0 as i32);
+    assert _C_UNSUPPORTED < (0 as i32);
+    assert _C_FAILED < (0 as i32);
 }
 
 #[test]

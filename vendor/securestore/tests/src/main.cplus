@@ -90,7 +90,7 @@ fn word(o: ss::Outcome) -> str {
 
 fn read(key: str) -> text::Text {
     var t: text::Text = text::new();
-    let _o: ss::Outcome = ss::get(key, #addr_of(t), service: SERVICE);
+    let _o: ss::Outcome = ss::get(key, into: #addr_of(t), service: SERVICE);
     return t;
 }
 
@@ -121,13 +121,13 @@ export extern fn securestore_tests_main() -> i32 {
     // and train a reader to ignore this runner. What still gets checked is the
     // part that is this package's own: that it answers a clean `Denied` on
     // every verb instead of crashing, hanging, or reporting success.
-    let probe: ss::Outcome = ss::set("probe", "v", service: SERVICE);
+    let probe: ss::Outcome = ss::set("probe", to: "v", service: SERVICE);
     if probe != ss::Outcome::Ok {
         say("  --   keychain unreachable (${word(probe)}) — this build has no");
         say("       entitlement, and the simulator will not launch one that does.");
         say("       Storage checks skipped; degradation checked instead.");
         check("get degrades to the same answer, not a crash",
-              ss::get("probe", #addr_of(MISS), service: SERVICE) != ss::Outcome::Ok);
+              ss::get("probe", into: #addr_of(MISS), service: SERVICE) != ss::Outcome::Ok);
         check("contains answers false rather than hanging",
               !ss::contains("probe", service: SERVICE));
         check("remove degrades", ss::remove("probe", service: SERVICE) != ss::Outcome::Ok);
@@ -139,7 +139,7 @@ export extern fn securestore_tests_main() -> i32 {
     }
     let _rm: ss::Outcome = ss::remove("probe", service: SERVICE);
 
-    let s1: ss::Outcome = ss::set("token", "first-value", service: SERVICE);
+    let s1: ss::Outcome = ss::set("token", to: "first-value", service: SERVICE);
     check("set answers Ok — got ${word(s1)}", s1 == ss::Outcome::Ok);
 
     check("contains says yes", ss::contains("token", service: SERVICE));
@@ -147,19 +147,19 @@ export extern fn securestore_tests_main() -> i32 {
 
     // The update-or-insert path: a `set` that only ADDS works once and then
     // silently never changes the value again.
-    let s2: ss::Outcome = ss::set("token", "second-value", service: SERVICE);
+    let s2: ss::Outcome = ss::set("token", to: "second-value", service: SERVICE);
     check("a second set answers Ok — got ${word(s2)}", s2 == ss::Outcome::Ok);
     check("the value REPLACED rather than kept the first",
           read("token").view() == "second-value");
 
     // Absent is NotFound and not a failure — the state a first launch is in.
     var miss: text::Text = text::new();
-    let g0: ss::Outcome = ss::get("never-written", #addr_of(miss), service: SERVICE);
+    let g0: ss::Outcome = ss::get("never-written", into: #addr_of(miss), service: SERVICE);
     check("a missing key reads NotFound — got ${word(g0)}", g0 == ss::Outcome::NotFound);
     check("a missing key leaves `out` untouched", { miss.count() } == (0 as usize));
 
     // Two keys are independent.
-    let _s3: ss::Outcome = ss::set("other", "elsewhere", service: SERVICE);
+    let _s3: ss::Outcome = ss::set("other", to: "elsewhere", service: SERVICE);
     check("a second key does not disturb the first",
           read("token").view() == "second-value");
     check("and reads back its own", read("other").view() == "elsewhere");
@@ -172,7 +172,7 @@ export extern fn securestore_tests_main() -> i32 {
         let _a: status::Status = edge.append("x");
         i = i +% (1 as usize);
     }
-    let big: ss::Outcome = ss::set("edge", edge.view(), service: SERVICE);
+    let big: ss::Outcome = ss::set("edge", to: edge.view(), service: SERVICE);
     check("exactly 4096 bytes is accepted — got ${word(big)}", big == ss::Outcome::Ok);
     check("and round-trips whole", { read("edge").count() } == (4096 as usize));
 
