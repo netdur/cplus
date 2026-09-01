@@ -721,7 +721,7 @@ fn on_mouse(v: *u8, msg: u32, w: u64, l: i64) -> bool {
             let _d: bool = recycler::drag_reorder(v, screen_y(v, hi_word(l)));
         }
         if msg == sys::wm_lbuttonup() {
-            if end_row_reorder(v, hi_word(l)) { return true; }
+            if end_row_reorder(v, lo_word(l), hi_word(l)) { return true; }
         }
     }
     if DRAG_SPLIT != (0 as usize) {
@@ -1494,7 +1494,7 @@ fn swipe_at(v: *u8, x: i32) -> i32 {
     return client_x(host, screen_x(v, x));
 }
 
-fn end_row_reorder(v: *u8, y: i32) -> bool {
+fn end_row_reorder(v: *u8, x: i32, y: i32) -> bool {
     let host: *u8 = recycler::reorder_host();
     if host == (0 as *u8) { return false; }
     let n: *core::Node = node_of_window(host);
@@ -1503,7 +1503,11 @@ fn end_row_reorder(v: *u8, y: i32) -> bool {
     // different row windows, each with its own origin, so both are converted
     // through the screen — comparing two client-relative values from different
     // windows is how a drag reports the row it started on.
-    return recycler::end_reorder(n, viewport_y(host, screen_y(v, y)));
+    //
+    // BOTH AXES, because a collection with `columns` has more than one item per
+    // line: `y` alone would name the line and leave the column to a guess.
+    return recycler::end_reorder(n, client_x(host, screen_x(v, x)),
+                                 viewport_y(host, screen_y(v, y)));
 }
 
 // A window-relative y in SCREEN coordinates.

@@ -90,9 +90,18 @@ struct ListState {
     // The prefix sums, when heights are UNEVEN. Empty when every row is the
     // same height, which is the common case and needs no array at all — see
     // `offset_of`.
+    //
+    // KEYED BY LINE. With one column a line is a display row and the two
+    // numbers below are equal; with `columns`, a line holds up to that many
+    // rows and `lines` is what the offsets are indexed by.
     offsets: vec::Vec[f64],
     uniform: f64,
     count: i64,
+    // How many LINES the map has. Kept beside `count` rather than recomputed
+    // from the props, because `row_at` searches the MAP and the map's own
+    // length is the only honest bound for that search — a source and a state
+    // can disagree, and when they do the state is what was built.
+    lines: i64,
     selected: i64,
     // THE SECOND MAP. Empty for a sequence; a pre-order flattening of the
     // expanded model for a tree. `is_tree` says which map is live, because the
@@ -118,6 +127,7 @@ fn new_state() -> ListState {
         offsets: vec::new::[f64](),
         uniform: 0.0f64,
         count: 0 as i64,
+        lines: 0 as i64,
         selected: (0 as i64) -% (1 as i64),
         tree_rows: vec::new::[TreeRow](),
         is_tree: false,
@@ -216,6 +226,11 @@ struct SeqSource {
     group_size_ctx: usize,
     group_header: fn(usize, *u8) -> flex::Node,
     group_header_ctx: usize,
+    // MORE THAN ONE ITEM PER LINE. 1 for a list, which declares no such verb;
+    // a collection's `columns`, where 0 means "not stated" and is also 1. See
+    // the grid section below for what it costs — which is less than §1
+    // estimated, because the answer was not a cell holding N items.
+    columns: i64,
 }
 
 fn no_source() -> SeqSource {
@@ -239,6 +254,7 @@ fn no_source() -> SeqSource {
         is_grouped: false, can_mix_groups: false, group_count: 0 as i64,
         group_size: props::no_group_size, group_size_ctx: 0 as usize,
         group_header: props::no_group_header, group_header_ctx: 0 as usize,
+        columns: 1 as i64,
     };
 }
 
@@ -293,6 +309,10 @@ fn source_of(n: *core::Node) -> SeqSource {
             group_size_ctx: { #addr((*p).group_size_ctx) },
             group_header: { (*p).group_header },
             group_header_ctx: { #addr((*p).group_header_ctx) },
+            // A `list` declares no `columns`. It is a StructuredItemsView verb
+            // and a list is not one, so a list is one item per line by the
+            // contract rather than by this package's choice.
+            columns: 1 as i64,
         };
     }
     if k == props::K_COLLECTION {
@@ -334,6 +354,7 @@ fn source_of(n: *core::Node) -> SeqSource {
             group_size_ctx: { #addr((*p).group_size_ctx) },
             group_header: { (*p).group_header },
             group_header_ctx: { #addr((*p).group_header_ctx) },
+            columns: { (*p).structured_items_view.columns } as i64,
         };
     }
     // `table` deliberately falls through: it is not a row source. See the
@@ -469,16 +490,187 @@ fn data_index(p: *SeqSource, at: usize) -> i64 {
     return slot.data as i64;
 }
 
+// ---- the grid: MORE THAN ONE ITEM PER LINE, by arithmetic ------------------------
+//
+// MANIFEST §1 priced this as "a cell that holds N items and an item slot that
+// survives it", and that was the expensive answer to a question with a cheap
+// one. The two objections it recorded were real:
+//
+//   `bind` TAKES ONE NODE, so a row holding three items has nothing to rebind
+//   through — every scroll would rebuild instead of recycling.
+//
+//   SELECTION WOULD BE WRONG. A cell carries one item slot, so clicking the
+//   second item in a three-item cell reports the cell's row.
+//
+// Both are objections to the CELL holding several items. It does not have to:
+// a cell already is one display index, one node, one window, one item slot, and
+// a grid is what happens when those windows are placed side by side. So the
+// pool, the recycling, the binding, the hit test, the selection and the reorder
+// are all untouched — the change is that OFFSETS ARE KEYED BY LINE rather than
+// by display index, and a cell knows which column it is in.
+//
+// A LINE IS NOT A DISPLAY INDEX any more, which is the whole of the new
+// bookkeeping. Ungrouped, line `i / C` holds displays `i*C ..= i*C+C-1`.
+// Grouped, a HEADER TAKES A WHOLE LINE — a section title beside two items would
+// read as a third item — and each section's items start a fresh line, so a
+// group of four with three columns is two lines, the second holding one item.
+//
+// The map is still not stored, for the reason the grouping section states: it
+// would be one entry per display row and this file exists to not have that.
+
+fn columns_of(p: *SeqSource) -> i64 {
+    let c: i64 = { (*p).columns };
+    // ZERO IS "NOT STATED", which facet's own default is, and one column is
+    // what a collection that never asked has always drawn.
+    if c < (2 as i64) { return 1 as i64; }
+    return c;
+}
+
+fn is_grid(p: *SeqSource) -> bool { return columns_of(p) > (1 as i64); }
+
+// Lines per group of `n` items: the last one is short unless the count divides.
+fn lines_for(n: i64, c: i64) -> i64 {
+    if n <= (0 as i64) { return 0 as i64; }
+    return (n + c -% (1 as i64)) / c;
+}
+
+// How many LINES the whole sequence occupies.
+fn line_count(p: *SeqSource) -> i64 {
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return display_count(p); }
+    if !grouped(p) { return lines_for({ (*p).count }, c); }
+    var total: i64 = 0 as i64;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) { total = total + (1 as i64); }
+        total = total + lines_for(group_size_at(p, g) as i64, c);
+        g = g +% (1 as usize);
+    }
+    return total;
+}
+
+// Which line a display row sits on, and which column within it. A header
+// answers column 0 and is understood to span the line — see `span_of`.
+fn line_of(p: *SeqSource, at: usize) -> i64 {
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return at as i64; }
+    if !grouped(p) { return (at as i64) / c; }
+    var line: i64 = 0 as i64;
+    var seen: usize = 0 as usize;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) {
+            if seen == at { return line; }
+            seen = seen +% (1 as usize);
+            line = line + (1 as i64);
+        }
+        let size: usize = group_size_at(p, g);
+        if at < seen +% size {
+            return line + (((at -% seen) as i64) / c);
+        }
+        seen = seen +% size;
+        line = line + lines_for(size as i64, c);
+        g = g +% (1 as usize);
+    }
+    return if line > (0 as i64) { line -% (1 as i64) } else { 0 as i64 };
+}
+
+fn col_of(p: *SeqSource, at: usize) -> i64 {
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return 0 as i64; }
+    let slot: Slot = slot_at(p, at);
+    // A HEADER IS ALWAYS AT THE START of its own line, whatever the arithmetic
+    // would say about the display index.
+    if slot.is_header { return 0 as i64; }
+    if !grouped(p) { return (at as i64) % c; }
+    // Within its own group, because each section starts a fresh line.
+    return ((at as i64) -% group_start_display(p, slot.group)) % c;
+}
+
+// How many columns a display row covers: a header covers the line, an item
+// covers one. What makes a section title full-width without a second layout.
+fn span_of(p: *SeqSource, at: usize) -> i64 {
+    if !is_grid(p) { return 1 as i64; }
+    if slot_at(p, at).is_header { return columns_of(p); }
+    return 1 as i64;
+}
+
+// The display index a group's first ITEM has (past its header, if it has one).
+fn group_start_display(p: *SeqSource, g: usize) -> i64 {
+    var seen: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < g {
+        if has_headers(p) { seen = seen + (1 as i64); }
+        seen = seen + (group_size_at(p, i) as i64);
+        i = i +% (1 as usize);
+    }
+    if has_headers(p) { seen = seen + (1 as i64); }
+    return seen;
+}
+
+// The first and last display rows ON a line — the inverse walk, and the reason
+// the visible window can still be stated in display indices after being found
+// in lines.
+fn first_display_of_line(p: *SeqSource, line: i64) -> i64 {
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return line; }
+    if !grouped(p) { return line * c; }
+    var at: i64 = 0 as i64;
+    var l: i64 = 0 as i64;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) {
+            if l == line { return at; }
+            l = l + (1 as i64);
+            at = at + (1 as i64);
+        }
+        let size: i64 = group_size_at(p, g) as i64;
+        let lines: i64 = lines_for(size, c);
+        if line < l + lines { return at + ((line -% l) * c); }
+        l = l + lines;
+        at = at + size;
+        g = g +% (1 as usize);
+    }
+    return at;
+}
+
+fn last_display_of_line(p: *SeqSource, line: i64) -> i64 {
+    let first: i64 = first_display_of_line(p, line);
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return first; }
+    if slot_at(p, first as usize).is_header { return first; }
+    var last: i64 = first;
+    var k: i64 = 1 as i64;
+    while k < c {
+        let at: i64 = first + k;
+        // OFF THE END, or into the next section — either way the line stops.
+        if at >= display_count(p) { return last; }
+        if line_of(p, at as usize) != line { return last; }
+        last = at;
+        k = k + (1 as i64);
+    }
+    return last;
+}
+
+// The offsets are keyed by LINE. With one column a line IS a display row and
+// nothing about this changed; with more, a line is up to `columns` of them and
+// its height is the TALLEST — an item shorter than its neighbour sits at the
+// top of the line rather than dragging the next line up over it.
 fn rebuild_map(s: *ListState, p: *SeqSource) {
     // DISPLAY rows, not data rows — a grouped sequence has a header between
-    // sections and every offset below is measured in what is shown.
+    // sections — and `count` stays the display count, because every OTHER part
+    // of this file addresses cells by display index. Only the offsets are per
+    // line.
     let count: i64 = display_count(p);
     { (*s).count = count };
+    { (*s).lines = 0 as i64 };
     { (*s).offsets = vec::new::[f64]() };
     { (*s).content = 0.0f64 };
     { (*s).uniform = 0.0f64 };
     if count <= (0 as i64) { return; }
-    let n: usize = count as usize;
+    let lines: i64 = line_count(p);
+    { (*s).lines = lines };
+    let n: usize = lines as usize;
     let first: f64 = height_of_row(p, 0 as usize);
     // Is every row the same height? Asked by SAMPLING rather than by walking:
     // a `row_height_of` that is absent is uniform by construction, and one that
@@ -493,7 +685,7 @@ fn rebuild_map(s: *ListState, p: *SeqSource) {
     var even: bool = true;
     var i: usize = 0 as usize;
     while i < n {
-        let h: f64 = height_of_row(p, i);
+        let h: f64 = line_height(p, i as i64);
         if h != first { even = false; }
         let _e: status::Status = { (*s).offsets.append(total) };
         total = total + h;
@@ -509,6 +701,24 @@ fn rebuild_map(s: *ListState, p: *SeqSource) {
     return;
 }
 
+// The tallest thing on a line, which with one column is just that row's own
+// height and costs the same call it always did.
+fn line_height(p: *SeqSource, line: i64) -> f64 {
+    let first: i64 = first_display_of_line(p, line);
+    var h: f64 = height_of_row(p, first as usize);
+    if !is_grid(p) { return h; }
+    let last: i64 = last_display_of_line(p, line);
+    var at: i64 = first + (1 as i64);
+    while at <= last {
+        let other: f64 = height_of_row(p, at as usize);
+        if other > h { h = other; }
+        at = at + (1 as i64);
+    }
+    return h;
+}
+
+// `i` is a LINE. Every caller that holds a display index goes through
+// `line_of` first — which is the one rule the grid adds to this file.
 fn offset_of(s: *ListState, i: usize) -> f64 {
     if { (*s).uniform } > (0.0 as f64) { return { (*s).uniform } * (i as f64); }
     return match { (*s).offsets.at(i) } {
@@ -524,25 +734,35 @@ fn offset_of(s: *ListState, i: usize) -> f64 {
 // is otherwise luck.
 fn height_at(s: *ListState, i: usize, p: *SeqSource) -> f64 {
     if { (*s).uniform } > (0.0 as f64) { return { (*s).uniform }; }
-    return height_of_row(p, i);
+    return line_height(p, i as i64);
 }
 
-// The first row whose bottom is past `y`. Binary search on the uneven path;
+// The first LINE whose bottom is past `y`. Binary search on the uneven path;
 // arithmetic on the uniform one.
+//
+// It answers a line and not a display row, and with one column those are the
+// same number — which is why every existing caller and every existing test
+// still reads correctly. A caller that wants rows asks
+// `first_display_of_line` / `last_display_of_line` for the ends.
+//
 // Same contract as `height_at` about `p`: the uniform path answers first, and a
 // tree is always uniform.
 fn row_at(s: *ListState, y: f64, p: *SeqSource) -> i64 {
-    let count: i64 = { (*s).count };
-    if count <= (0 as i64) { return 0 as i64; }
+    // THE MAP'S OWN LENGTH, not the source's. `row_at` searches what was
+    // built, and a tree fills the same field from a different builder — so
+    // this needs no branch on `is_tree` and cannot be told a line count by
+    // props that have moved on since the map was made.
+    let total: i64 = { (*s).lines };
+    if total <= (0 as i64) { return 0 as i64; }
     if y <= (0.0 as f64) { return 0 as i64; }
     let uni: f64 = { (*s).uniform };
     if uni > (0.0 as f64) {
         let idx: i64 = (y / uni) as i64;
-        if idx >= count { return count -% (1 as i64); }
+        if idx >= total { return total -% (1 as i64); }
         return idx;
     }
     var lo: i64 = 0 as i64;
-    var hi: i64 = count -% (1 as i64);
+    var hi: i64 = total -% (1 as i64);
     while lo < hi {
         let mid: i64 = lo + (hi -% lo) / (2 as i64);
         let top: f64 = offset_of(s, mid as usize);
@@ -887,13 +1107,26 @@ fn layout_rows(v: *u8, n: *core::Node) {
     var first: i64 = 0 as i64;
     var last: i64 = (0 as i64) -% (1 as i64);
     if count > (0 as i64) {
-        first = row_at(s, top, p);
-        last = row_at(s, top + vh, p);
-        // ONE ROW OF SLACK either side. A row scrolled halfway in is a row that
-        // has to already exist, and building it on the frame it becomes visible
-        // is the stutter every list of this shape has.
-        if first > (0 as i64) { first = first -% (1 as i64); }
-        if last < (count -% (1 as i64)) { last = last + (1 as i64); }
+        // FOUND IN LINES, then stated in display rows. With one column the two
+        // are the same number and this is the arithmetic it always was; with
+        // more, a line holds up to `columns` cells and all of them have to be
+        // realised together or half a line is missing.
+        var first_line: i64 = row_at(s, top, p);
+        var last_line: i64 = row_at(s, top + vh, p);
+        // ONE LINE OF SLACK either side. A row scrolled halfway in is a row
+        // that has to already exist, and building it on the frame it becomes
+        // visible is the stutter every list of this shape has.
+        if first_line > (0 as i64) { first_line = first_line -% (1 as i64); }
+        let lines: i64 = { (*s).lines };
+        if last_line < (lines -% (1 as i64)) { last_line = last_line + (1 as i64); }
+        if { (*s).is_tree } {
+            first = first_line;
+            last = last_line;
+        } else {
+            first = first_display_of_line(p, first_line);
+            last = last_display_of_line(p, last_line);
+        }
+        if last > (count -% (1 as i64)) { last = count -% (1 as i64); }
     }
 
     // FREE FIRST, then fill — so a row leaving the window releases its cell
@@ -956,11 +1189,27 @@ fn layout_rows(v: *u8, n: *core::Node) {
                 if rr >= (0 as i64) {
                     let rp: *core::Node = { (*c).node } as *core::Node;
                     if rp != (0 as *core::Node) {
-                        let y: f64 = offset_of(s, rr as usize) - top + strip;
-                        let h: f64 = height_at(s, rr as usize, p);
+                        // THE LINE carries the offset, and the COLUMN carries
+                        // the x. With one column `line_of` is the identity and
+                        // the column is zero, so this is the placement it was.
+                        let line: i64 = if { (*s).is_tree } { rr }
+                                        else { line_of(p, rr as usize) };
+                        let y: f64 = offset_of(s, line as usize) - top + strip;
+                        let h: f64 = height_at(s, line as usize, p);
+                        var x: f64 = 0.0f64;
+                        var w: f64 = vw;
+                        if !{ (*s).is_tree } && is_grid(p) {
+                            let c: f64 = columns_of(p) as f64;
+                            let cw: f64 = vw / c;
+                            // A HEADER SPANS THE LINE — a section title beside
+                            // two items would read as a third item.
+                            let span: f64 = span_of(p, rr as usize) as f64;
+                            x = (col_of(p, rr as usize) as f64) * cw;
+                            w = cw * span;
+                        }
                         { (*c).top = y };
                         { (*c).height = h };
-                        place_row(v, rp, y, vw, h);
+                        place_row(v, rp, x, y, w, h);
                     }
                 }
             }
@@ -980,14 +1229,14 @@ fn layout_rows(v: *u8, n: *core::Node) {
 // it. A row built off-screen has no frame, and `calculate_layout` is what turns
 // its tree into positions — so the row is a little layout root of its own,
 // which is exactly what `realise` made it.
-fn place_row(v: *u8, rp: *core::Node, y: f64, width: f64, height: f64) {
+fn place_row(v: *u8, rp: *core::Node, x: f64, y: f64, width: f64, height: f64) {
     { (*rp).calculate_layout(width: width, height: height) };
     let view: *u8 = core::view_of(rp);
     let host: *u8 = controls::document_host(v);
     let own: flex::Frame = { (*rp).frame() };
     if view != (0 as *u8) {
         let _s: i32 = { u::ShowWindow(view, sys::sw_show()) };
-        geometry::place(host, view, 0.0f64, y, width, height);
+        geometry::place(host, view, x, y, width, height);
         // The row IS the host for its own children, so their absolute frames
         // are relative to the row's own origin — which is what passing the
         // row's frame subtracts.
@@ -999,7 +1248,7 @@ fn place_row(v: *u8, rp: *core::Node, y: f64, width: f64, height: f64) {
         // said: `reposition_children` subtracts it, so every child lands `y`
         // lower than its own frame.
         var shifted: flex::Frame = own;
-        shifted.left = 0.0f64;
+        shifted.left = 0.0f64 - x;
         shifted.top = 0.0f64 - y;
         geometry::reposition_children(rp, host, shifted);
     }
@@ -1149,7 +1398,11 @@ fn collection_model_bits() -> u64 {
     return fcollection::P_COUNT | fcollection::P_ROW
          | fcollection::P_INVALIDATE_ROW | fcollection::P_SPLICE_ROWS
          | fcollection::P_IS_GROUPED | fcollection::P_GROUP_COUNT
-         | fcollection::P_GROUP | fcollection::P_ITEM_SIZING;
+         | fcollection::P_GROUP | fcollection::P_ITEM_SIZING
+         // COLUMNS CHANGE WHICH LINE EVERY ITEM IS ON, so the offsets are
+         // stale in the same way a new group count makes them stale — this is
+         // a map rebuild and not a re-place.
+         | fcollection::P_COLUMNS;
 }
 
 // One row of the table per verb this file acts on, so the two numbering schemes
@@ -1361,7 +1614,7 @@ fn inserted_above(s: *ListState, p: *SeqSource) -> f64 {
     let at: i64 = { (*p).splice_at };
     let n: i64 = { (*p).splice_count };
     if at < (0 as i64) || n == (0 as i64) { return 0.0f64; }
-    let first: i64 = row_at(s, { (*s).scroll }, p);
+    let first: i64 = first_display_of_line(p, row_at(s, { (*s).scroll }, p));
     if at > first { return 0.0f64; }
     let h: f64 = if { (*s).uniform } > (0.0 as f64) { { (*s).uniform } }
                  else { default_row_height() };
@@ -1443,6 +1696,14 @@ fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
     // is reported before the selectable gate.
     fire_item_tapped(v, n, index);
     if !selectable { return false; }
+    // A CLICK ON THE SELECTED ROW CHANGED NOTHING, and `on_selection_changed`
+    // is named for the change rather than for the click. Firing it on a
+    // re-click makes an application re-select what it already had — and where
+    // the handler rebuilds a pane, that is a whole pane rebuilt for nothing.
+    // facet_gtk records the same rule and notes that AppKit never had the
+    // problem, because `outlineViewSelectionDidChange:` is not posted for a
+    // click on the selected row. This backend used to fire every time.
+    let already: bool = src.selected_index == data;
     { (*s).selected = index as i64 };
     // THE SELECTION IS WRITTEN BACK THROUGH THE REAL PROPS, not through the
     // resolved copy — `SeqSource` is a snapshot for reading and writing to it
@@ -1451,9 +1712,16 @@ fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
     // its own sequence; handing it a display index would name a different row
     // in any grouped list, and the wrong one by a growing margin.
     write_selected(n, data);
+    if already { return true; }
     let h: fn(*u8, *u8) = src.on_item_selected;
     if h == props::no_handler { return false; }
-    h(v, src.on_item_selected_ctx as *u8);
+    // THE ROW'S WINDOW IS THE SENDER, not the list's — which is what lets a
+    // handler ask `component::item_index_of(sender)` which row it is on, and
+    // what facet_gtk passes. Handing it the list gave every handler a sender
+    // with no item slot above it, so the reader answered None and an
+    // application reading its click that way was told nothing at all. The same
+    // contract `fire_item_tapped` next door already used.
+    h(row_view_at(v, n, index), src.on_item_selected_ctx as *u8);
     return true;
 }
 
@@ -1510,6 +1778,9 @@ fn the_row_at_a_scroll_position_is_arithmetic_when_uniform() {
     var s: ListState = new_state();
     s.uniform = 20.0f64;
     s.count = 100 as i64;
+    // ONE COLUMN, so a line is a display row and the map is a hundred lines
+    // deep. `row_at` searches the MAP, so the map's length is what it is told.
+    s.lines = 100 as i64;
     var empty: SeqSource = no_source();
     let p: *SeqSource = #addr_of(empty);
     assert row_at(#addr_of(s), 0.0f64, p) == (0 as i64);
@@ -1524,6 +1795,7 @@ fn a_negative_scroll_reads_as_the_top() {
     var s: ListState = new_state();
     s.uniform = 20.0f64;
     s.count = 10 as i64;
+    s.lines = 10 as i64;
     var empty: SeqSource = no_source();
     let p: *SeqSource = #addr_of(empty);
     assert row_at(#addr_of(s), 0.0f64 - 50.0f64, p) == (0 as i64);
@@ -1576,6 +1848,9 @@ fn rebuild_tree_map(s: *ListState, p: *ftree::TreeProps) {
     walk_children(s, p, root, 0 as usize);
     let n: usize = { (*s).tree_rows.count() };
     { (*s).count = n as i64 };
+    // A TREE IS ONE ROW PER LINE. It declares no `columns` — the verb is a
+    // StructuredItemsView's — so its map is the shape it always was.
+    { (*s).lines = n as i64 };
     let h: f64 = tree_row_height(p);
     { (*s).uniform = h };
     { (*s).content = h * (n as f64) };
@@ -1797,7 +2072,12 @@ fn scroll_to_row(v: *u8, n: *core::Node, at: i64) {
     let n_rows: i64 = row_count(s);
     if n_rows == (0 as i64) { return; }
     if i >= n_rows { i = n_rows -% (1 as i64); }
-    { (*s).scroll = offset_of(s, i as usize) };
+    // THE ROW'S LINE, which with one column is the row. A grid scrolls to the
+    // line the item is on — there is nowhere else to put it.
+    var src: SeqSource = source_of(n);
+    let line: i64 = if { (*s).is_tree } || !src.live { i }
+                    else { line_of(#addr_of(src), i as usize) };
+    { (*s).scroll = offset_of(s, line as usize) };
     // `layout_rows` clamps to the content, so a scroll_to near the end lands at
     // the end rather than past it.
     layout_rows(v, n);
@@ -2187,6 +2467,17 @@ fn begin_reorder(v: *u8, n: *core::Node, index: usize, y: i32) -> bool {
     return true;
 }
 
+// The viewport's own width, which a grid needs to know how wide one column is.
+// Zero when the window is gone, and every caller treats that as "no columns to
+// resolve" rather than dividing by it.
+fn viewport_width(v: *u8) -> f64 {
+    if v == (0 as *u8) { return 0.0f64; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return 0.0f64; }
+    return (r.right -% r.left) as f64;
+}
+
 // PAST THE SLOP, or it is not a drag. Every click jitters a pixel between down
 // and up; without this every click on a reorderable row is also a reorder onto
 // itself.
@@ -2201,10 +2492,15 @@ fn drag_reorder(v: *u8, y: i32) -> bool {
     return true;
 }
 
-// The release. `y` is in the VIEWPORT's coordinates — the caller converts,
-// because the release may land on a different row's window than the press did
-// and each has its own origin.
-fn end_reorder(n: *core::Node, y: i32) -> bool {
+// The release. `x` and `y` are in the VIEWPORT's coordinates — the caller
+// converts, because the release may land on a different row's window than the
+// press did and each has its own origin.
+//
+// `x` MATTERS ONLY IN A GRID, and it is what makes a drop there land on an
+// item rather than on a line: with three columns, `y` alone names three
+// possible destinations and picking the first would move a row to the start of
+// whatever line it was dropped anywhere on.
+fn end_reorder(n: *core::Node, x: i32, y: i32) -> bool {
     let v: *u8 = REORDER_LIST as *u8;
     let from: i64 = REORDER_FROM;
     let moved: bool = REORDER_MOVED;
@@ -2223,7 +2519,21 @@ fn end_reorder(n: *core::Node, y: i32) -> bool {
     // to come back on, or dropping onto a scrolled list reports the row that
     // happens to be at that screen position in an unscrolled one.
     let at: f64 = (y as f64) + { (*s).scroll } - strip_height(s);
-    var to: i64 = row_at(s, at, p);
+    let line: i64 = row_at(s, at, p);
+    var to: i64 = first_display_of_line(p, line);
+    if is_grid(p) {
+        // Which item ON that line: the pointer's x over the column width, held
+        // to the line's own last item so a drop in the empty tail of a short
+        // final line lands on its last item rather than past it.
+        let cw: f64 = viewport_width(v) / (columns_of(p) as f64);
+        if cw > (0.0 as f64) {
+            var col: i64 = ((x as f64) / cw) as i64;
+            if col < (0 as i64) { col = 0 as i64; }
+            to = to + col;
+            let last: i64 = last_display_of_line(p, line);
+            if to > last { to = last; }
+        }
+    }
     let count: i64 = row_count(s);
     if count <= (0 as i64) { return false; }
     if to < (0 as i64) { to = 0 as i64; }
@@ -2309,8 +2619,179 @@ fn a_press_that_never_moved_is_a_click_and_not_a_reorder() {
     // Two pixels is jitter, not a drag.
     assert !drag_reorder(4321 as *u8, 102 as i32);
     // And the release then reports nothing.
-    assert !end_reorder(#addr_of(l), 102 as i32);
+    assert !end_reorder(#addr_of(l), 0 as i32, 102 as i32);
     assert !reorder_active();
+    return;
+}
+
+#[test]
+fn a_click_on_the_selected_row_is_not_a_selection_change() {
+    // `on_selection_changed` is named for the CHANGE. A re-click on the row
+    // that is already selected changed nothing, and firing makes an
+    // application re-select what it had — a whole pane rebuilt for nothing
+    // where the handler rebuilds one. facet_gtk records the same rule.
+    //
+    // Asserted through the props rather than through a click, because a click
+    // needs a window: the gate is `selected_index` already holding the data
+    // index, which is what `on_row_click` compares before it fires.
+    var c: core::Node = fcollection::collection(key: "c",
+                                                selection_mode: vocab::SelectionMode::Single);
+    let p: *props::CollectionProps =
+        controls::props_of(#addr_of(c), props::K_COLLECTION) as *props::CollectionProps;
+    { (*p).count = 5 as i64 };
+    { (*p).row = a_data_row };
+    { (*p).selected_index = 2 as i64 };
+    var src: SeqSource = source_of(#addr_of(c));
+    assert src.selected_index == (2 as i64);
+    assert data_index(#addr_of(src), 2 as usize) == (2 as i64);
+    // A DIFFERENT row is a change; the same one is not.
+    assert data_index(#addr_of(src), 3 as usize) != src.selected_index;
+    return;
+}
+
+// ---- the grid ---------------------------------------------------------------------
+
+#[test]
+fn one_column_is_the_arithmetic_it_always_was() {
+    // The property that makes the grid safe to add to a file every list in the
+    // package already goes through: with one column a LINE IS A DISPLAY ROW,
+    // and every conversion is the identity.
+    var src: SeqSource = no_source();
+    src.count = 50 as i64;
+    let p: *SeqSource = #addr_of(src);
+    assert columns_of(p) == (1 as i64);
+    assert !is_grid(p);
+    assert line_count(p) == (50 as i64);
+    var i: i64 = 0 as i64;
+    while i < (50 as i64) {
+        assert line_of(p, i as usize) == i;
+        assert col_of(p, i as usize) == (0 as i64);
+        assert first_display_of_line(p, i) == i;
+        assert last_display_of_line(p, i) == i;
+        i = i + (1 as i64);
+    }
+    return;
+}
+
+#[test]
+fn a_stated_column_count_under_two_is_one_column() {
+    // ZERO IS FACET'S DEFAULT — "not stated" — and one column is what a
+    // collection that never asked has always drawn. Reading zero as a column
+    // count would divide the viewport by nothing.
+    var src: SeqSource = no_source();
+    src.count = 9 as i64;
+    src.columns = 0 as i64;
+    assert columns_of(#addr_of(src)) == (1 as i64);
+    src.columns = 1 as i64;
+    assert columns_of(#addr_of(src)) == (1 as i64);
+    src.columns = 3 as i64;
+    assert columns_of(#addr_of(src)) == (3 as i64);
+    assert is_grid(#addr_of(src));
+    return;
+}
+
+#[test]
+fn a_grid_wraps_every_n_items_and_the_last_line_is_short() {
+    // Ten items in three columns: four lines, the last holding one.
+    var src: SeqSource = no_source();
+    src.count = 10 as i64;
+    src.columns = 3 as i64;
+    let p: *SeqSource = #addr_of(src);
+    assert line_count(p) == (4 as i64);
+    assert line_of(p, 0 as usize) == (0 as i64);
+    assert line_of(p, 2 as usize) == (0 as i64);
+    assert line_of(p, 3 as usize) == (1 as i64);
+    assert line_of(p, 9 as usize) == (3 as i64);
+    assert col_of(p, 0 as usize) == (0 as i64);
+    assert col_of(p, 2 as usize) == (2 as i64);
+    assert col_of(p, 3 as usize) == (0 as i64);
+    assert first_display_of_line(p, 1) == (3 as i64);
+    assert last_display_of_line(p, 1) == (5 as i64);
+    // THE SHORT LAST LINE stops at the item it has, not at the column count —
+    // otherwise the visible window would ask for row 10 of a ten-row model.
+    assert first_display_of_line(p, 3) == (9 as i64);
+    assert last_display_of_line(p, 3) == (9 as i64);
+    return;
+}
+
+#[test]
+fn a_section_starts_a_fresh_line_and_its_header_takes_a_whole_one() {
+    // Two groups of two, with headers, in three columns:
+    //
+    //     line 0   H(group 0)
+    //     line 1   a  b
+    //     line 2   H(group 1)
+    //     line 3   c  d
+    //
+    // The alternative — packing display rows three at a time — would put a
+    // section title beside two items and start the next group in whatever
+    // column the previous one ran out on.
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 2 as i64, true);
+    let cp: *props::CollectionProps =
+        controls::props_of(#addr_of(c), props::K_COLLECTION) as *props::CollectionProps;
+    { (*cp).structured_items_view.columns = 3 as usize };
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert columns_of(p) == (3 as i64);
+    assert display_count(p) == (6 as i64);
+    assert line_count(p) == (4 as i64);
+
+    assert line_of(p, 0 as usize) == (0 as i64);   // the first header
+    assert line_of(p, 1 as usize) == (1 as i64);   // a
+    assert line_of(p, 2 as usize) == (1 as i64);   // b, beside it
+    assert line_of(p, 3 as usize) == (2 as i64);   // the second header
+    assert line_of(p, 4 as usize) == (3 as i64);   // c
+    assert line_of(p, 5 as usize) == (3 as i64);   // d
+
+    // A header is at the start of its line whatever the arithmetic would say,
+    // and it SPANS the line — a title one third of the way across a row reads
+    // as a mislaid item.
+    assert col_of(p, 0 as usize) == (0 as i64);
+    assert col_of(p, 3 as usize) == (0 as i64);
+    assert span_of(p, 3 as usize) == (3 as i64);
+    assert span_of(p, 4 as usize) == (1 as i64);
+    // ...and each group's columns are counted from its OWN start, not from the
+    // display index, which the header before it has already shifted.
+    assert col_of(p, 4 as usize) == (0 as i64);
+    assert col_of(p, 5 as usize) == (1 as i64);
+
+    assert first_display_of_line(p, 1) == (1 as i64);
+    assert last_display_of_line(p, 1) == (2 as i64);
+    assert first_display_of_line(p, 2) == (3 as i64);
+    // A HEADER'S LINE ENDS AT THE HEADER, so the visible window does not ask
+    // for the two items after it as though they shared its line.
+    assert last_display_of_line(p, 2) == (3 as i64);
+    assert first_display_of_line(p, 3) == (4 as i64);
+    assert last_display_of_line(p, 3) == (5 as i64);
+    return;
+}
+
+#[test]
+fn a_grid_is_as_tall_as_its_lines_not_its_items() {
+    // The content height is what the scroll bar is built from: ten items in
+    // three columns is FOUR rows of height, not ten. Getting this wrong scrolls
+    // past the end by more than a screen.
+    var c: core::Node = fcollection::collection(key: "c");
+    let cp: *props::CollectionProps =
+        controls::props_of(#addr_of(c), props::K_COLLECTION) as *props::CollectionProps;
+    { (*cp).count = 10 as i64 };
+    { (*cp).row = a_data_row };
+    { (*cp).structured_items_view.columns = 3 as usize };
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    var s: ListState = new_state();
+    rebuild_map(#addr_of(s), p);
+    // `count` stays the DISPLAY count — every other part of this file addresses
+    // cells by display index, and only the offsets are per line.
+    assert s.count == (10 as i64);
+    assert s.uniform == default_row_height();
+    assert s.content == (default_row_height() * (4.0 as f64));
+    // And the same model in one column is ten lines deep.
+    { (*cp).structured_items_view.columns = 1 as usize };
+    var one: SeqSource = source_of(#addr_of(c));
+    rebuild_map(#addr_of(s), #addr_of(one));
+    assert s.content == (default_row_height() * (10.0 as f64));
     return;
 }
 

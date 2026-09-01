@@ -837,29 +837,51 @@ is a count plus a builder, so the order belongs to the application; a backend
 that shuffled rows itself would be shuffling a view of data it does not own,
 and the next rebuild would put them back.
 
-### `collection.columns`
+### A GRID IS A PLACEMENT, not a cell that holds N items
 
-More than one item per row. facet_gtk answers it by handing the model to a
+More than one item per line. facet_gtk answers it by handing the model to a
 `GtkGridView`, which lays the items out itself; there is no such control here,
-so `recycler.cplus` would have to do it — and the layout is the easy half.
+so `recycler.cplus` does it.
 
-Two things stop it being a small change, and the second is the real one.
+This entry used to be a §2 estimate, and the estimate was wrong in a way worth
+keeping. It said the work was "a cell that holds N items and an item slot that
+survives it", and priced two obstacles:
 
-`bind` TAKES ONE NODE. `set_row_bind` is `fn(index, *Node, ctx)` — a row and
-the item that goes in it — so a row holding three items has nothing to rebind
-through and every scroll would REBUILD instead of recycling. That is a
-performance loss rather than a correctness one, and it would be acceptable.
+> `bind` TAKES ONE NODE — a row holding three items has nothing to rebind
+> through, so every scroll would REBUILD instead of recycling.
+>
+> SELECTION WOULD BE WRONG. A cell carries one item slot, and `on_row_click`
+> turns the clicked window back into a row index through it. With three items
+> in a cell, clicking the second reports the row.
 
-SELECTION WOULD BE WRONG. A cell carries one item slot (`set_item_index`), and
-`on_row_click` turns the clicked window back into a row index through it. With
-three items in a cell, clicking the second reports the row — so a click selects
-the wrong item, and reports it confidently. Fixing that means per-item hit
-resolution inside a cell, which is a second addressing scheme beside the one
-`item_of` already defines.
+Both are true, and both are objections to THE CELL HOLDING SEVERAL ITEMS. It
+does not have to. A cell is already one display index, one node, one window,
+one item slot — and a grid is what happens when those windows are placed side
+by side. So the pool, the recycling, the binding, the hit test, the selection
+and the reorder are all untouched, and what changed is one thing:
 
-So this is §2 with a shape attached rather than a line of debt: the work is a
-cell that holds N items and an item slot that survives it, not a loop over
-columns.
+**The offsets are keyed by LINE rather than by display index.** With one column
+a line IS a display row and every conversion is the identity, which is why the
+list, the tree and every existing test go through the new code unchanged and
+unaware. `line_of`, `col_of`, `first_display_of_line` and `last_display_of_line`
+are the whole of the new bookkeeping, and the map is still not stored — it is
+the same arithmetic-over-groups the grouping section describes, for the same
+reason.
+
+Three details that are decisions rather than mechanics:
+
+**A section starts a fresh line, and its header takes a whole one.** Packing
+display rows N at a time would put a section title beside two items and start
+the next group in whatever column the previous one ran out on.
+
+**A line is as tall as its tallest item.** With `row_height_of` answering
+differently per item, the alternative — the first item's height — clips the
+others.
+
+**A drop in a reorder needs BOTH axes.** `y` alone names the line, and picking
+the first item on it would move a row to the start of whatever line it was
+dropped anywhere on. `input::end_row_reorder` passes x through for that, and it
+is the only signature the grid changed.
 
 ### The drag half of drag-and-drop, and the two travelling edges
 

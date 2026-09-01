@@ -21,7 +21,7 @@ measure      intrinsic size, in each control's own font
 fonts        the font cache, and which props are typography per kind
 scheduler    schedule + the Scheduler service, over the message queue
 window       the host HWND, the WNDPROC every window shares, and the menus
-recycler     list / collection / tree, virtualised over a scrolling panel
+recycler     list / collection / tree, virtualised over a scrolling panel — and the grid
 imaging      the bitmap decoder — GDI+, and a GIF's own frame delays
 anim         the two things that move on their own: a progress tween, a page slide
 dnd          receiving a drop, without COM
@@ -60,7 +60,7 @@ $ python3 ../facet_gtk/tools/parity.py win32
 362 prop bits declared across facet's kind modules
   gtk       358 / 362    98%
   appkit    337 / 362    93%
-  win32     294 / 362    81%   <-- this package
+  win32     295 / 362    81%   <-- this package
 
  68 declared handlers
   gtk        68 / 68    100%
@@ -88,8 +88,8 @@ backend; when a kind is the exception, describe it without backticks.
 
 ```bash
 cd vendor/facet_win32 && ../../target/release/cpc test --filter facet_win32
-# running 117 of 543 tests matching "facet_win32"
-# test result: 117 passed; 0 failed
+# running 123 of 549 tests matching "facet_win32"
+# test result: 123 passed; 0 failed
 
 cd playground/win32_probe         && ../../target/release/cpc build   # the SEAM
 cd playground/win32_runtime_probe && ../../target/release/cpc build   # the FACADE
@@ -100,7 +100,7 @@ arithmetic, the encoders — and opens no window, because a suite that needs a
 desktop session is a suite that stops running.
 
 **`--filter` is not optional on Windows, it is the only way in.** A package's
-driver carries every dependency's tests — 543 here for 117 of this package's —
+driver carries every dependency's tests — 549 here for 123 of this package's —
 and one of stdlib's hangs on this host, which used to make everything ordered
 after it unreachable. `bugs/cpc-test-hangs-on-windows-in-facets-own-suite.md`
 has the measurement and the reproduction.
