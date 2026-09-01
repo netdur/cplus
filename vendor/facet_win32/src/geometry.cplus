@@ -26,6 +26,7 @@ import "facet/props" as props;
 import "win32/winuser" as u;
 import "./sys" as sys;
 import "./controls" as controls;
+import "./paint" as paint;
 
 // ---- seeing what was computed ------------------------------------------------
 //
@@ -115,7 +116,7 @@ fn round_origin(v: f64) -> i32 {
 // order — `views::insert` sets it and `component::raise` moves a node through
 // it — so a placement that also normalised z-order would silently undo both on
 // the next layout pass.
-fn place(host: *u8, child: *u8, x: f64, y: f64, w: f64, h: f64) {
+fn place(host: *u8, child: *u8, node: *core::Node, x: f64, y: f64, w: f64, h: f64) {
     if child == (0 as *u8) { return; }
     let nx: i32 = round_origin(x);
     let ny: i32 = round_origin(y);
@@ -134,6 +135,12 @@ fn place(host: *u8, child: *u8, x: f64, y: f64, w: f64, h: f64) {
     if { u::GetParent(child) } != host { let _p: *u8 = { u::SetParent(child, host) }; }
     let flags: u32 = sys::swp_nozorder() | sys::swp_noactivate();
     let _r: i32 = { u::SetWindowPos(child, sys::hwnd_top(), nx, ny, nw, nh, flags) };
+    // A CLIP IS MEASURED IN PIXELS, so a window that changed size needs its
+    // region rebuilt: a rounded card that grew otherwise keeps the corners it
+    // had when it was small and the rest of it is simply cut off. Only on a
+    // real move — `same_rect` returned above when nothing changed — and only
+    // for a node that asked to be clipped.
+    paint::reclip(child, node);
     return;
 }
 
@@ -184,7 +191,7 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
                     // 0x0-on-restore bug facet's own `relayout` note warns
                     // about, seen from the backend side.
                     show_window(v, !core::is_hidden(c));
-                    place(host, v, (cf.left - host_abs.left) - shift,
+                    place(host, v, c, (cf.left - host_abs.left) - shift,
                           cf.top - host_abs.top, cf.width, cf.height);
                     // A list re-lays its own rows: they are realised windows in
                     // its viewport rather than facet children, so this walk

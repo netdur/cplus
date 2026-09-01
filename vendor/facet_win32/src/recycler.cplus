@@ -1236,7 +1236,7 @@ fn place_row(v: *u8, rp: *core::Node, x: f64, y: f64, width: f64, height: f64) {
     let own: flex::Frame = { (*rp).frame() };
     if view != (0 as *u8) {
         let _s: i32 = { u::ShowWindow(view, sys::sw_show()) };
-        geometry::place(host, view, x, y, width, height);
+        geometry::place(host, view, rp, x, y, width, height);
         // The row IS the host for its own children, so their absolute frames
         // are relative to the row's own origin — which is what passing the
         // row's frame subtracts.

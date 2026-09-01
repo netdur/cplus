@@ -25,6 +25,7 @@ recycler     list / collection / tree, virtualised over a scrolling panel — an
 imaging      the bitmap decoder — GDI+, and a GIF's own frame delays
 anim         the two things that move on their own: a progress tween, a page slide
 dnd          receiving a drop, without COM
+shadow       the band's drop shadow — a blurred DIB the PARENT blits
 swipe        swipe-to-reveal: a drag, and the strip of actions under the row
 menus        HMENU, and the one command-id table
 dialogs      alert / choose / prompt as facet trees, and the file chooser
@@ -67,13 +68,21 @@ $ python3 ../facet_gtk/tools/parity.py win32
   win32      59 / 68     86%   <-- this package
 
  21 shared-band bits
-  win32      16 / 21     76%   <-- this package
+  win32      15 / 21     71%   <-- this package
 
 Nothing unanswered is unrecorded: every gap is either built or argued in MANIFEST §1.
 ```
 
 That closing line is the number that matters more than the percentage. Every
 kind reads either `n/n` or `decided absent:` — there is no `not yet:` row.
+
+**The band number went DOWN on 2026-09-01, and that is the point.** It read
+16/21 because `C_OPACITY`, `C_SHADOW` and `C_CLIP` were named in
+`paint::band_bits()` and acted on nowhere — the tool reads a named `C_*` as
+answered, so three verbs that did nothing reported as covered. Two are built
+now and the third is measured impossible (MANIFEST §1), which leaves 15 real
+ones where there were 13. facet_gtk shipped the identical mistake with
+`C_SHADOW` and records it.
 
 **Read [MANIFEST.md](MANIFEST.md) before trusting any adjective here, including
 that one.** And run the tool rather than quoting it: four separate times this
@@ -84,12 +93,12 @@ owner-drawn and can simply be given a border. The rule that came out of it:
 name a verb in §1 only where the sentence decides that verb across the whole
 backend; when a kind is the exception, describe it without backticks.
 
-## Four ways to check it
+## Five ways to check it
 
 ```bash
 cd vendor/facet_win32 && ../../target/release/cpc test --filter facet_win32
-# running 123 of 549 tests matching "facet_win32"
-# test result: 123 passed; 0 failed
+# running 127 of 559 tests matching "facet_win32"
+# test result: 127 passed; 0 failed
 
 cd playground/win32_probe         && ../../target/release/cpc build   # the SEAM
 cd playground/win32_runtime_probe && ../../target/release/cpc build   # the FACADE
@@ -100,7 +109,7 @@ arithmetic, the encoders — and opens no window, because a suite that needs a
 desktop session is a suite that stops running.
 
 **`--filter` is not optional on Windows, it is the only way in.** A package's
-driver carries every dependency's tests — 549 here for 123 of this package's —
+driver carries every dependency's tests — 559 here for 127 of this package's —
 and one of stdlib's hangs on this host, which used to make everything ordered
 after it unreachable. `bugs/cpc-test-hangs-on-windows-in-facets-own-suite.md`
 has the measurement and the reproduction.
@@ -147,6 +156,20 @@ terminal that happens to be in front. And stop the descent at a system control:
 a `Static` answers WM_NCHITTEST with HTTRANSPARENT so a real press falls
 through to the panel behind it, while a POSTED message is eaten by the
 static's own WNDPROC and never reaches facet at all.
+
+### ...and the fifth: look at it
+
+`PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)` renders a window into a bitmap
+of your own, which is how the shadow and the clip above were checked: the
+falloff under a card is four numbers, and a circular clip is either a circle or
+it is not.
+
+Two things make it work where a screenshot does not. It asks the WINDOW to
+paint, so z-order and occlusion stop mattering — a screen capture with a
+terminal in front samples the terminal, which is how a pixel test lies. And the
+`PW_RENDERFULLCONTENT` flag (2) is what includes CHILD windows: without it a
+window made of child controls — which is every window this backend builds —
+prints as an empty client area.
 
 ## Diagnostics
 

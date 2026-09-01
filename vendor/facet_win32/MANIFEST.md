@@ -72,14 +72,86 @@ a panel, drawn in its own WM_PAINT, where the alpha can go through
 `AlphaBlend` and a scale through the world transform.
 
 They are not answerable on a system control. A child HWND has no alpha channel:
-`SetLayeredWindowAttributes` requires `WS_EX_LAYERED`, which Windows honours on
-**top-level windows only** — on a child it is documented as undefined and in
-practice does nothing. There is no per-window transform either; `SetWorldTransform`
-applies to a device context, and a control acquires its own DC when it paints.
+`SetLayeredWindowAttributes` requires `WS_EX_LAYERED`, and there is no
+per-window transform either — `SetWorldTransform` applies to a device context,
+and a control acquires its own DC when it paints.
 
-So `button.set_opacity(0.5)` is a no-op here and a fade on a control is a jump.
-The honest fix is owner-drawing every control, which is a different backend and
-a much larger one — see §2's note on the ceiling.
+**And it is not answerable on a PANEL either, which this entry used to imply.**
+`C_OPACITY` was named in `paint::band_bits()` and acted on nowhere, so the band
+reported it as covered while `set_opacity` did nothing anywhere in the package.
+It is out of the list now, and the claim above it is out with it.
+
+The interesting half is why the obvious fix does not work. Windows 8 changed the
+documentation — `WS_EX_LAYERED` is supported for **child windows** since then,
+which is the whole platform this package targets. So it was measured on Windows
+11 rather than argued from the note:
+
+    exstyle after = 0x80000 (layered bit True)
+    SetLayeredWindowAttributes -> True (err 0)
+    GetLayeredWindowAttributes -> True alpha=0 flags=2
+    panel pixels, alpha 0:  #F0F0F0    <- unchanged. Fully opaque.
+
+The API accepts the style, stores the alpha and reads it back, and composites
+nothing. It is not the parent's `WS_CLIPCHILDREN` either — the same measurement
+with the style removed from the parent gives the same pixels. And the harness is
+not lying: the same alpha on the TOP-LEVEL window turns those pixels from
+`#F0F0F0` to `#7E7E7E` on the spot.
+
+So `button.set_opacity(0.5)` is a no-op here, a fade is a jump, and a panel is
+no better off than a control. The honest fix is owner-drawing every control into
+a composited surface, which is a different backend and a much larger one — see
+§2's note on the ceiling.
+
+### A CLIP IS A WINDOW REGION, which clips the children too
+
+`C_CLIP` was the second of the three bits this band NAMED and did not answer.
+It is built now, and Win32 is better at this than a paint-time clip would be:
+`SetWindowRgn` sets the area where a window may draw, and **every child in it is
+clipped by the same region**. A `SelectClipRgn` in the node's own WM_PAINT would
+clip only the pixels this package draws and leave every child control square —
+the same half-answer opacity would have been.
+
+`Shape.kind` maps exactly: 1 is the box, 2 a `CreateRoundRectRgn`, 3 a
+`CreateEllipticRgn`. Three details are worth keeping:
+
+The region is the SYSTEM'S once it is set — `SetWindowRgn` takes ownership on
+success, so deleting it afterwards is a use-after-free the window then draws
+through, and only the FAILURE path deletes.
+
+No clip is a NULL region and not an empty one. An empty region is a window with
+no permitted area, which is to say an invisible one.
+
+A clip is measured in PIXELS, so `geometry::place` rebuilds it after a resize.
+Without that a rounded card that grew keeps the corners it had when it was
+small, and everything past them is cut off.
+
+### A DROP SHADOW IS DRAWN BY THE PARENT
+
+The third bit, and the reason it needs a file of its own (`shadow.cplus`): a
+child window cannot paint one pixel outside itself, and a shadow is entirely
+outside it. So the node that casts one cannot draw it and its HOST does —
+the same answer the list's separators and the swipe strip reached.
+
+GDI has no blur. It has `AlphaBlend`, which takes a 32-bit PREMULTIPLIED
+source, so the shadow is a DIB: the node's own rounded-rect shape in alpha, box
+-blurred three times (close enough to a gaussian that nobody has noticed),
+multiplied by the colour, blitted at the offset. Measured down from a card's
+bottom edge, with a 10pt radius and a 4pt offset:
+
+    inside the card  #FFFFFF
+    +1px             #A9A9A9
+    +5px             #D7D7D7
+    +9px             #EDEDED
+    +13px            #F0F0F0   <- background, the reach exhausted
+
+`CS_DROPSHADOW` is what Win32 offers instead and it is not this: a class style
+for TOP-LEVEL windows, with no colour, no offset and no radius.
+
+**The mask samples the pixel's CENTRE**, in doubled coordinates. Sampling its
+top-left corner puts the left circle a full pixel inside the edge and the right
+one two thirds of it, and a rounded box comes out with two round corners and two
+sharp ones — which is what the first build did, and what the test now pins on
+all four.
 
 ### A per-corner `corner_radius`
 

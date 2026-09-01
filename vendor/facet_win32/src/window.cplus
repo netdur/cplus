@@ -47,6 +47,7 @@ import "./menus" as menus;
 import "./recycler" as recycler;
 import "./dnd" as dnd;
 import "./swipe" as swipe;
+import "./shadow" as shadow;
 
 fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
 
@@ -196,6 +197,12 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
             // refresh strip belong to the VIEWPORT — a row is a child window
             // and cannot draw outside itself.
             if pn != (0 as *core::Node) {
+                // A CHILD'S SHADOW IS ITS PARENT'S TO DRAW, because a child
+                // window cannot paint one pixel outside itself and a shadow is
+                // entirely outside it. Third piece of furniture answered here
+                // for that same reason — after the host's own background, or
+                // the background would cover it.
+                shadow::draw_child_shadows(hwnd, pn, hdc);
                 if recycler::holds_rows(pn) {
                     recycler::draw_separators(hwnd, pn, hdc);
                     recycler::draw_refresh_bar(hwnd, pn, hdc);
@@ -597,7 +604,7 @@ fn relayout(slot: usize, width: f64, height: f64) {
     let rf: flex::Frame = { (*root).frame() };
     let rv: *u8 = core::view_of(root);
     if rv != (0 as *u8) {
-        geometry::place(WINDOWS[slot] as *u8, rv, 0.0f64, 0.0f64, width, height);
+        geometry::place(WINDOWS[slot] as *u8, rv, root, 0.0f64, 0.0f64, width, height);
     }
     // The ROOT is the one node `reposition_children` never visits, and a
     // screen's own size is the commonest thing to observe.
