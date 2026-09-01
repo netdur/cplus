@@ -70,6 +70,13 @@ xcrun simctl launch --console-pty $DEV dev.cplus.facetgalleryios
 No signing, no account, no Xcode project. `--console-pty` gives you the app's
 stderr, which is where facet's diagnostics go.
 
+**If the app needs an entitlement** (keychain, anything with a capability): on
+a simulator, entitlements are embedded as a `__TEXT,__entitlements` linker
+section and the ad-hoc signature stays PLAIN — a signature that carries
+entitlements makes SpringBoard refuse the launch, with errors that all point
+away from the signature. `vendor/securestore/tools/run_ios_tests.sh` is the
+worked example, facts in its header.
+
 **What the simulator cannot tell you:** whether
 `UIApplicationMain(0, NULL, …)` works (it does — verified on device), how touch
 actually feels, or anything reached over USB. Those need the real thing.

@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
-# Run securestore's checks on a REAL iOS DEVICE, which is the only place they
-# can actually store anything.
+# Run securestore's checks on a REAL iOS DEVICE.
 #
-# WHY NOT THE SIMULATOR. iOS has one keychain, always the data-protection one,
-# and it scopes every item to an access group taken from the app's
-# `application-identifier` entitlement. No entitlement, no group, no storage —
-# an unsigned or plainly-signed bundle answers -34018 errSecMissingEntitlement
-# on every verb.
+# The simulator run (`tools/run_ios_tests.sh`) verifies storage too, but
+# against the simulator's keychain, whose entitlement checking is lenient —
+# it reads a `__TEXT,__entitlements` linker section and validates no
+# signature. A device is the real policy: entitlements in the SIGNATURE,
+# backed by a provisioning profile, enforced by AMFI, with hardware-backed
+# key material. This runner is where "signing is actually right" is proven.
 #
-# And an ENTITLED bundle will not launch on a simulator. Entitlements have to be
-# backed by a provisioning profile, a profile names the DEVICES it covers, and a
-# simulator can never be one of them. Measured 2026-09-01 across both signing
-# identities, four entitlement spellings, `simctl launch` and `simctl spawn`:
-# "denied by service delegate" every time, even with a real profile's exact
-# app-id. `tools/run_ios_tests.sh` runs the same checks on the simulator and
-# reports PARTIAL for exactly this reason.
+# (An earlier header here claimed an entitled bundle can never launch on a
+# simulator. Wrong lesson: what SpringBoard refuses is an entitled SIGNATURE.
+# Entitlements embedded as a linker section launch fine and are honored —
+# measured 2026-09-01; the simulator script owns that trick.)
 #
 #     SECURESTORE_PROFILE=~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/<uuid>.mobileprovision \
 #     vendor/securestore/tools/run_device_tests.sh [device-identifier]

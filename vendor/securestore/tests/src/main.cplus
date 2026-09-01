@@ -100,31 +100,31 @@ export extern fn securestore_tests_main() -> i32 {
 
     // ---- can this build reach the keychain at all? -------------------------
     //
-    // A CATCH-22 ON THE SIMULATOR, measured three ways (2026-09-01):
+    // On the simulator this depends on WHERE the entitlements live, measured
+    // four ways (2026-09-01):
     //
-    //   unsigned                     launches; every keychain call -34018
-    //   signed, no entitlements      launches; every keychain call -34018
-    //   signed, ANY entitlements     SpringBoard refuses the launch outright,
-    //                                and `simctl spawn` answers "Security
-    //                                policy issue" — ad-hoc or
-    //                                Apple-Development, with or without
-    //                                get-task-allow, alike
+    //   unsigned                       launches; every keychain call -34018
+    //   signed, no entitlements        launches; every keychain call -34018
+    //   signature CARRIES entitlements SpringBoard refuses the launch outright
+    //   entitlements as a LINKER
+    //   section, plain signature       launches AND stores — the verified path
     //
-    // iOS has one keychain, always the data-protection one, and it scopes every
-    // item to an access group from `application-identifier`. No entitlement, no
-    // group, no storage — and the simulator will not launch an entitled bundle
-    // without a provisioning profile, which needs an Xcode project this repo
-    // does not have.
+    // securityd reads a simulator binary's entitlements from its
+    // `__TEXT,__entitlements` section, which is how Xcode builds for the
+    // simulator; the signature must stay plain. run_ios_tests.sh embeds the
+    // section and owns the details.
     //
-    // So the storage checks are SKIPPED rather than failed when the keychain is
-    // out of reach. Fourteen red lines that all mean "no profile" teach nothing
-    // and train a reader to ignore this runner. What still gets checked is the
-    // part that is this package's own: that it answers a clean `Denied` on
-    // every verb instead of crashing, hanging, or reporting success.
+    // The storage checks are still SKIPPED rather than failed when the keychain
+    // is out of reach — that is what a bundle built WITHOUT the section (or any
+    // future policy change) degrades to. Fourteen red lines that all mean "no
+    // entitlement" teach nothing and train a reader to ignore this runner. What
+    // still gets checked then is the part that is this package's own: that it
+    // answers a clean `Denied` on every verb instead of crashing, hanging, or
+    // reporting success — and the harness reports PARTIAL, never green.
     let probe: ss::Outcome = ss::set("probe", to: "v", service: SERVICE);
     if probe != ss::Outcome::Ok {
-        say("  --   keychain unreachable (${word(probe)}) — this build has no");
-        say("       entitlement, and the simulator will not launch one that does.");
+        say("  --   keychain unreachable (${word(probe)}) — this build carries no");
+        say("       usable entitlement (simulator: __TEXT,__entitlements section).");
         say("       Storage checks skipped; degradation checked instead.");
         check("get degrades to the same answer, not a crash",
               ss::get("probe", into: #addr_of(MISS), service: SERVICE) != ss::Outcome::Ok);

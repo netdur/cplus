@@ -8,18 +8,27 @@
 #
 #     vendor/securestore/tools/run_ios_tests.sh [device-udid]
 #
-# ---- three things that each cost an hour, written down -----------------------
+# ---- four things that each cost hours, written down --------------------------
 #
-# 1. THE APP MUST BE SIGNED WITH `keychain-access-groups`. Without it every verb
-#    answers -34018 errSecMissingEntitlement. No provisioning profile is needed
-#    for this on a simulator — an ad-hoc signature carrying the entitlement is
-#    enough, and the group is just the bundle id.
+# 1. THE APP MUST CARRY `keychain-access-groups`. Without it every verb answers
+#    -34018 errSecMissingEntitlement. No provisioning profile is needed on a
+#    simulator, and the group is just the bundle id.
 #
-# 2. UNINSTALL BEFORE INSTALLING. Installing over an app whose ENTITLEMENTS have
+# 2. ON A SIMULATOR, ENTITLEMENTS GO INTO THE BINARY, NOT THE SIGNATURE.
+#    securityd reads them from the `__TEXT,__entitlements` section the LINKER
+#    embeds — which is how Xcode builds for the simulator. The signature must
+#    stay a PLAIN ad-hoc one: a signature carrying ANY entitlements makes
+#    SpringBoard refuse the launch outright ("denied by service delegate"),
+#    which reads as "needs a provisioning profile" and is not that. Measured
+#    2026-09-01 on the iOS 26.4 runtime: XML section alone verifies storage;
+#    the DER `__ents_der` twin alone answers -34018. Both are embedded here
+#    because Xcode embeds both.
+#
+# 3. UNINSTALL BEFORE INSTALLING. Installing over an app whose ENTITLEMENTS have
 #    changed keeps the old ones, and the launch is then refused with no process
 #    and nothing in the log — indistinguishable from every other failure here.
 #
-# 3. `simctl launch` ALWAYS REPORTS FAILURE for this runner, and it is lying.
+# 4. `simctl launch` ALWAYS REPORTS FAILURE for this runner, and it is lying.
 #    `main` returns instead of entering a run loop, and SpringBoard calls a
 #    process that exits immediately a failed launch: "denied by service
 #    delegate", stdout discarded. The process ran — the system log shows its
@@ -82,18 +91,6 @@ cat > "$app/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# `--print-link-args` rather than a find over vendor/: it walks the same path
-# the compiler links a host build with and brings the slices up to date first.
-# DEPLOYING.md §0 explains why the find form silently missed store slices.
-# shellcheck disable=SC2046 # word splitting is the point
-xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=14.0 \
-  -I "$runner/target/$triple/debug" \
-  "$runner/ios/main.m" \
-  "$runner/target/$triple/debug/libsecurestore_tests.a" \
-  $(cd "$runner" && "$cpc" build --target "$triple" --print-link-args) \
-  -framework Foundation -lobjc \
-  -o "$app/SecureStoreTests"
-
 cat > "$out/entitlements.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -104,23 +101,42 @@ cat > "$out/entitlements.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-codesign --force --sign - --entitlements "$out/entitlements.plist" "$app"
-# `codesign` reports success for a signature carrying no entitlements at all,
-# and the install then logs "had no entitlements" three layers from the -34018
-# it causes.
+xcrun derq query -f xml -i "$out/entitlements.plist" -o "$out/entitlements.der" --raw
+
+( cd "$runner" && "$cpc" build --target "$triple" >/dev/null )
+
+# `--print-link-args` rather than a find over vendor/: it walks the same path
+# the compiler links a host build with and brings the slices up to date first.
+# DEPLOYING.md §0 explains why the find form silently missed store slices.
+# shellcheck disable=SC2046 # word splitting is the point
+xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=14.0 \
+  -I "$runner/target/$triple/debug" \
+  "$runner/ios/main.m" \
+  "$runner/target/$triple/debug/libsecurestore_tests.a" \
+  $(cd "$runner" && "$cpc" build --target "$triple" --print-link-args) \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$out/entitlements.plist" \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __ents_der -Xlinker "$out/entitlements.der" \
+  -o "$app/SecureStoreTests"
+
+otool -s __TEXT __entitlements "$app/SecureStoreTests" | grep -q "Contents of" \
+  || { echo "the entitlements section did not embed" >&2; exit 2; }
+
+# Plain, and it has to stay plain — see note 2. Passing `--entitlements` here
+# is the mistake this harness spent a day inside: the bundle then never
+# launches, and every error message points somewhere else.
+codesign --force --sign - "$app"
 codesign -d --entitlements - "$app" 2>&1 | grep -q "keychain-access-groups" \
-  || { echo "entitlements did not embed" >&2; exit 2; }
+  && { echo "the SIGNATURE carries entitlements — the launch will be refused" >&2; exit 2; }
 
 xcrun simctl terminate "$dev" "$bundle_id" >/dev/null 2>&1 || true
 xcrun simctl uninstall "$dev" "$bundle_id" >/dev/null 2>&1 || true
 xcrun simctl install "$dev" "$app"
 
-# Failure here is expected — see note 3 at the top. The report is the truth.
+# Failure here is expected — see note 4 at the top. The report is the truth.
 set +e
 xcrun simctl launch --console "$dev" "$bundle_id" >/dev/null 2>&1
 set -e
 
-log="$out/log.txt"
 container="$(xcrun simctl get_app_container "$dev" "$bundle_id" data 2>/dev/null || true)"
 report="$container/Documents/securestore_result.txt"
 [ -f "$report" ] || { echo "the runner produced no report — it did not run" >&2; exit 1; }

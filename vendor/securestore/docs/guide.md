@@ -135,14 +135,17 @@ The platform round-trips live in probes, run on purpose:
 |---|---|---|
 | macOS | `playground/securestoreprobe` | 19/19, cleans up after itself |
 | Android | `playground/ssprobe` on a device or emulator | 13/13, plus the `run-as` check below |
-| iOS | `vendor/securestore/tools/run_ios_tests.sh` | **blocked** — see below |
+| iOS | `vendor/securestore/tools/run_ios_tests.sh` | 18/18 on the simulator, cleans up after itself |
 
 The Android probe makes the assertion that matters from outside the process:
 the plaintext appears zero times in `shared_prefs/probe.xml`, and two keys
 holding the *same* secret have entirely different ciphertexts — a fresh IV per
 encryption, which is the one property GCM cannot survive losing.
 
-**iOS storage is unverified.** The runner builds and the package answers a clean
-`Denied` on every verb, but the simulator will not launch the entitled bundle
-storage needs. `bugs/ios-securestore-runner-will-not-launch-on-the-simulator.md`
-has the four facts the harness depends on and the lead worth trying first.
+The iOS runner needs `keychain-access-groups`, and on a simulator that
+entitlement must be embedded as a `__TEXT,__entitlements` linker section with a
+PLAIN ad-hoc signature — a signature that carries entitlements is refused
+launch outright. The script owns those details; its header records the four
+facts it depends on. A real-device run (`tools/run_device_tests.sh`) is where
+signature-carried entitlements and a provisioning profile are actually
+exercised.

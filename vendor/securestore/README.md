@@ -58,5 +58,5 @@ cd vendor/securestore && cpc test
 Unit tests are `#[test]` blocks in `src/securestore.cplus`. They **never touch a
 real keychain**, deliberately — the round-trips live in `playground/
 securestoreprobe` (macOS) and `playground/ssprobe` (Android), run on purpose.
-The guide's testing section says why, and records that iOS storage is currently
-unverified.
+The guide's testing section says why, and what each platform's
+verification actually covers.
