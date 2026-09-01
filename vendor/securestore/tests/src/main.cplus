@@ -1,0 +1,204 @@
+// securestore on iOS — the checks a host `cpc test` cannot reach.
+//
+// The Apple backend is one file serving macOS and iOS, and that makes it easy
+// to assume a macOS pass covers both. It does not:
+//
+//   macOS   TWO keychains. This package uses the legacy file one, because the
+//           data-protection one answers errSecMissingEntitlement in every
+//           configuration this repo can build. Items carry a code-identity ACL.
+//   iOS     ONE keychain, always data-protection, gated on the
+//           application-identifier entitlement a simulator build gets
+//           implicitly. No legacy keychain exists.
+//
+// So the question this runner answers is the blunt one: can an iOS app store
+// and read anything at all, and does the same surface behave the same way.
+//
+// EVERYTHING IS SCOPED TO ITS OWN SERVICE and cleared at the end, so a run
+// leaves the simulator's keychain as it found it.
+
+import "stdlib/io" as io;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "stdlib/fs" as fs;
+import "stdlib/env" as env;
+import "stdlib/result" as result;
+import "stdlib/option" as option;
+import "securestore/securestore" as ss;
+
+const SERVICE: str = "dev.cplus.securestoretests";
+
+
+static FAILED: i32 = 0 as i32;
+
+// EVERY LINE GOES TO A FILE AS WELL AS STDOUT, and the file is the one that
+// gets read.
+//
+// `simctl launch --console` streams stdout only while SpringBoard thinks the
+// launch succeeded — and it does not, because this runner's `main` RETURNS
+// instead of entering a run loop. SpringBoard calls a process that exits
+// immediately a failed launch ("denied by service delegate"), throws the
+// output away, and reports a failure for a run that in fact completed. The
+// system log proves the run happened (`SecItemUpdate_ios` and friends appear
+// under this process) but carries no stdout.
+//
+// So the results are written into the app's own container, where
+// `simctl get_app_container ... data` can find them afterwards.
+static REPORT: text::Text = #zero::[text::Text]();
+
+fn say(line: str) {
+    io::println(line);
+    let _a: status::Status = REPORT.append(line);
+    let _b: status::Status = REPORT.append("\n");
+    return;
+}
+
+// `NSHomeDirectory()`, not `getenv("HOME")`. An iOS app's home IS its data
+// container and Foundation knows it definitionally; the environment variable is
+// not guaranteed to be set for a process launchd started, and when it is absent
+// the write goes somewhere unreadable and the run looks like it never happened.
+fn flush_report() {
+    let home: text::Text = match env::var("HOME") {
+        option::Option[text::Text]::Some(h) => h,
+        option::Option::None => text::from_str("/tmp"),
+    };
+    let path: text::Text = text::from_str("${home}/Documents/securestore_result.txt");
+    let _w: result::Result[usize, result::IoError] =
+        fs::write_string(path.view(), REPORT.view());
+    return;
+}
+
+
+// A scratch destination for a `get` whose VALUE is not the point.
+static MISS: text::Text = #zero::[text::Text]();
+
+fn check(name: str, ok: bool) {
+    if ok { say("  ok   ${name}"); return; }
+    say("  FAIL ${name}");
+    FAILED = FAILED + (1 as i32);
+    return;
+}
+
+fn word(o: ss::Outcome) -> str {
+    return match o {
+        ss::Outcome::Ok => "Ok",
+        ss::Outcome::NotFound => "NotFound",
+        ss::Outcome::Denied => "Denied",
+        ss::Outcome::Unsupported => "Unsupported",
+        ss::Outcome::Failed => "Failed",
+    };
+}
+
+fn read(key: str) -> text::Text {
+    var t: text::Text = text::new();
+    let _o: ss::Outcome = ss::get(key, #addr_of(t), service: SERVICE);
+    return t;
+}
+
+export extern fn securestore_tests_main() -> i32 {
+    say("securestore (iOS)");
+    let _c0: ss::Outcome = ss::clear(SERVICE);
+
+    // ---- can this build reach the keychain at all? -------------------------
+    //
+    // A CATCH-22 ON THE SIMULATOR, measured three ways (2026-09-01):
+    //
+    //   unsigned                     launches; every keychain call -34018
+    //   signed, no entitlements      launches; every keychain call -34018
+    //   signed, ANY entitlements     SpringBoard refuses the launch outright,
+    //                                and `simctl spawn` answers "Security
+    //                                policy issue" — ad-hoc or
+    //                                Apple-Development, with or without
+    //                                get-task-allow, alike
+    //
+    // iOS has one keychain, always the data-protection one, and it scopes every
+    // item to an access group from `application-identifier`. No entitlement, no
+    // group, no storage — and the simulator will not launch an entitled bundle
+    // without a provisioning profile, which needs an Xcode project this repo
+    // does not have.
+    //
+    // So the storage checks are SKIPPED rather than failed when the keychain is
+    // out of reach. Fourteen red lines that all mean "no profile" teach nothing
+    // and train a reader to ignore this runner. What still gets checked is the
+    // part that is this package's own: that it answers a clean `Denied` on
+    // every verb instead of crashing, hanging, or reporting success.
+    let probe: ss::Outcome = ss::set("probe", "v", service: SERVICE);
+    if probe != ss::Outcome::Ok {
+        say("  --   keychain unreachable (${word(probe)}) — this build has no");
+        say("       entitlement, and the simulator will not launch one that does.");
+        say("       Storage checks skipped; degradation checked instead.");
+        check("get degrades to the same answer, not a crash",
+              ss::get("probe", #addr_of(MISS), service: SERVICE) != ss::Outcome::Ok);
+        check("contains answers false rather than hanging",
+              !ss::contains("probe", service: SERVICE));
+        check("remove degrades", ss::remove("probe", service: SERVICE) != ss::Outcome::Ok);
+        check("clear degrades", ss::clear(SERVICE) != ss::Outcome::Ok);
+        let n0: i32 = FAILED;
+        say("securestore result: ${n0} failed");
+        flush_report();
+        return n0;
+    }
+    let _rm: ss::Outcome = ss::remove("probe", service: SERVICE);
+
+    let s1: ss::Outcome = ss::set("token", "first-value", service: SERVICE);
+    check("set answers Ok — got ${word(s1)}", s1 == ss::Outcome::Ok);
+
+    check("contains says yes", ss::contains("token", service: SERVICE));
+    check("the value round-trips", read("token").view() == "first-value");
+
+    // The update-or-insert path: a `set` that only ADDS works once and then
+    // silently never changes the value again.
+    let s2: ss::Outcome = ss::set("token", "second-value", service: SERVICE);
+    check("a second set answers Ok — got ${word(s2)}", s2 == ss::Outcome::Ok);
+    check("the value REPLACED rather than kept the first",
+          read("token").view() == "second-value");
+
+    // Absent is NotFound and not a failure — the state a first launch is in.
+    var miss: text::Text = text::new();
+    let g0: ss::Outcome = ss::get("never-written", #addr_of(miss), service: SERVICE);
+    check("a missing key reads NotFound — got ${word(g0)}", g0 == ss::Outcome::NotFound);
+    check("a missing key leaves `out` untouched", { miss.count() } == (0 as usize));
+
+    // Two keys are independent.
+    let _s3: ss::Outcome = ss::set("other", "elsewhere", service: SERVICE);
+    check("a second key does not disturb the first",
+          read("token").view() == "second-value");
+    check("and reads back its own", read("other").view() == "elsewhere");
+
+    // The size boundary the host suite cannot reach without writing 4KB into a
+    // developer's own login keychain.
+    var edge: text::Text = text::new();
+    var i: usize = 0 as usize;
+    while i < (4096 as usize) {
+        let _a: status::Status = edge.append("x");
+        i = i +% (1 as usize);
+    }
+    let big: ss::Outcome = ss::set("edge", edge.view(), service: SERVICE);
+    check("exactly 4096 bytes is accepted — got ${word(big)}", big == ss::Outcome::Ok);
+    check("and round-trips whole", { read("edge").count() } == (4096 as usize));
+
+    // Remove, and removing twice.
+    let r1: ss::Outcome = ss::remove("other", service: SERVICE);
+    check("remove answers Ok — got ${word(r1)}", r1 == ss::Outcome::Ok);
+    check("and it is gone", !ss::contains("other", service: SERVICE));
+    let r2: ss::Outcome = ss::remove("other", service: SERVICE);
+    check("removing it again is NotFound, not Failed — got ${word(r2)}",
+          r2 == ss::Outcome::NotFound);
+
+    // CLEAR REMOVES EVERY ITEM IN THE NAMESPACE, which is the bug the macOS
+    // probe caught: `SecItemDelete` removes ONE match on the legacy keychain,
+    // so `clear` deleted the first key and left the second. iOS is the
+    // data-protection keychain, where the documented behaviour differs — which
+    // is exactly why it is worth asserting here separately rather than assuming
+    // the macOS fix covers it.
+    let c1: ss::Outcome = ss::clear(SERVICE);
+    check("clear answers Ok — got ${word(c1)}", c1 == ss::Outcome::Ok);
+    check("token is gone", !ss::contains("token", service: SERVICE));
+    check("edge is gone", !ss::contains("edge", service: SERVICE));
+    let c2: ss::Outcome = ss::clear(SERVICE);
+    check("clearing an empty namespace is Ok — got ${word(c2)}", c2 == ss::Outcome::Ok);
+
+    let n: i32 = FAILED;
+    say("securestore result: ${n} failed");
+    flush_report();
+    return n;
+}

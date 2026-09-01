@@ -1,0 +1,295 @@
+// securestore_backend — the Apple half. macOS and iOS share every line.
+//
+// `SecItemAdd` / `SecItemCopyMatching` / `SecItemUpdate` / `SecItemDelete`,
+// reached through `dlopen` the way `vendor/permissions` reaches its frameworks:
+// an app that never stores a secret never loads Security.framework, and no
+// build gains a link flag.
+//
+// ---- the two macOS keychains, and why this uses the older one -------------
+//
+// MEASURED, not assumed (playground/keychainprobe, plans/securestore.md §5):
+//
+//   kSecUseDataProtectionKeychain = true   -34018 errSecMissingEntitlement in
+//                                          EVERY configuration this repo can
+//                                          build — unsigned, bundled, ad-hoc
+//                                          signed. Asking for the entitlement
+//                                          with an ad-hoc signature does not
+//                                          fail politely: AMFI SIGKILLs the
+//                                          process before `main`.
+//   (key absent)                           works everywhere, including an
+//                                          unsigned bare binary.
+//
+// So this uses the legacy file keychain. It is what most shipped macOS apps
+// use; the modern one needs a Developer ID and a provisioning profile, which is
+// a shipping concern and belongs behind an opt-in this package does not have
+// yet. On iOS there is only one keychain and the question does not arise.
+//
+// ---- the trap that would cost an afternoon --------------------------------
+//
+// The dictionary KEYS are exported DATA symbols holding CFStringRefs, not
+// functions. `dlsym` answers the address OF the variable, so every one needs a
+// deref. Getting it wrong does not crash: SecItemAdd treats the unknown key as
+// absent, the write "succeeds", and every read finds nothing.
+
+import "stdlib/text" as text;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "./securestore" as ss;
+
+#[link_name = "dlopen"]
+extern fn _dlopen(path: *u8, mode: i32) -> *u8;
+#[link_name = "dlsym"]
+extern fn _dlsym(handle: *u8, symbol: *u8) -> *u8;
+
+// The OSStatus values this file acts on. Copied rather than imported: the only
+// binding in the tree is `vendor/accelerate`, which is `cpc-bindgen --framework
+// Accelerate` output that picked these up through a header chain. Depending on
+// a linear-algebra package for four integers would be worse than four lines.
+fn _err_success() -> i32 { return 0 as i32; }
+fn _err_item_not_found() -> i32 { return 0 -% 25300; }
+fn _err_duplicate_item() -> i32 { return 0 -% 25299; }
+fn _err_invalid_owner_edit() -> i32 { return 0 -% 25244; }
+fn _err_missing_entitlement() -> i32 { return 0 -% 34018; }
+fn _err_auth_failed() -> i32 { return 0 -% 25293; }
+fn _err_interaction_not_allowed() -> i32 { return 0 -% 25308; }
+
+static _SEC: *u8 = #zero::[*u8]();
+static _SEC_TRIED: bool = false;
+
+fn _security() -> *u8 {
+    if _SEC_TRIED { return _SEC; }
+    _SEC_TRIED = true;
+    // RTLD_LAZY(1) | RTLD_LOCAL(4), built arithmetically so both stay legible.
+    _SEC = { _dlopen(#str_ptr("/System/Library/Frameworks/Security.framework/Security\0"),
+                     (1 as i32) + (4 as i32)) };
+    return _SEC;
+}
+
+// A CFStringRef constant. See the trap note above: one deref, always.
+fn _const(name: *u8) -> *u8 {
+    let h: *u8 = _security();
+    if h == (0 as *u8) { return 0 as *u8; }
+    let p: **u8 = { _dlsym(h, name) as **u8 };
+    if { p as *u8 } == (0 as *u8) { return 0 as *u8; }
+    return { *p };
+}
+
+fn _fn2(name: *u8) -> fn(*u8, *u8) -> i32 {
+    let h: *u8 = _security();
+    if h == (0 as *u8) { return 0 as fn(*u8, *u8) -> i32; }
+    return { _dlsym(h, name) as fn(*u8, *u8) -> i32 };
+}
+
+fn _fn1(name: *u8) -> fn(*u8) -> i32 {
+    let h: *u8 = _security();
+    if h == (0 as *u8) { return 0 as fn(*u8) -> i32; }
+    return { _dlsym(h, name) as fn(*u8) -> i32 };
+}
+
+// An NSMutableDictionary IS a CFDictionaryRef — toll-free bridged — so a
+// Keychain query needs no CoreFoundation binding at all, which is the whole
+// reason this file is short.
+fn _dict() -> *u8 {
+    return rt::msg_id(rt::get_class(#str_ptr("NSMutableDictionary\0")),
+                      rt::sel(#str_ptr("dictionary\0")));
+}
+
+fn _put(d: *u8, key: *u8, value: *u8) {
+    if d == (0 as *u8) { return; }
+    if key == (0 as *u8) { return; }
+    if value == (0 as *u8) { return; }
+    { rt::msg_void_id_id(d, rt::sel(#str_ptr("setObject:forKey:\0")), value, key) };
+    return;
+}
+
+fn _yes() -> *u8 {
+    // Toll-free bridges to kCFBooleanTrue, which saves dlsym'ing CoreFoundation
+    // for one constant.
+    return rt::msg_id_i8(rt::get_class(#str_ptr("NSNumber\0")),
+                         rt::sel(#str_ptr("numberWithBool:\0")), 1 as i8);
+}
+
+fn _view(p: *u8, n: usize) -> str { return { #str_from_raw_parts(p, n) }; }
+
+// The service a query is scoped to. Empty means this app's own bundle id, so
+// two apps never see each other's items and `clear` cannot reach outside.
+static _BUNDLE: text::Text = #zero::[text::Text]();
+
+fn _service_or_default(service: str) -> str {
+    if #str_len(service) > (0 as usize) { return service; }
+    if { _BUNDLE.count() } == (0 as usize) {
+        let b: *u8 = rt::msg_id(
+            rt::msg_id(rt::get_class(#str_ptr("NSBundle\0")), rt::sel(#str_ptr("mainBundle\0"))),
+            rt::sel(#str_ptr("bundleIdentifier\0")));
+        if b != (0 as *u8) {
+            _BUNDLE = bridge::to_text(b);
+        } else {
+            // A bare binary has no bundle id. Still usable — the legacy
+            // keychain does not require one — so a probe or a CLI gets a
+            // stable name rather than an empty service attribute.
+            _BUNDLE = text::from_str("dev.cplus.securestore");
+        }
+    }
+    return { _BUNDLE.view() };
+}
+
+// Every query carries class + service + account, and nothing else identifies an
+// item. That is what bounds `clear`: there is no shape of call here that can
+// match outside one service.
+fn _query(key: str, service: str) -> *u8 {
+    let d: *u8 = _dict();
+    _put(d, _const(#str_ptr("kSecClass\0")),
+            _const(#str_ptr("kSecClassGenericPassword\0")));
+    _put(d, _const(#str_ptr("kSecAttrService\0")),
+            bridge::nsstring(_service_or_default(service)));
+    if #str_len(key) > (0 as usize) {
+        _put(d, _const(#str_ptr("kSecAttrAccount\0")), bridge::nsstring(key));
+    }
+    return d;
+}
+
+fn _data(value: str) -> *u8 {
+    // NSUTF8StringEncoding = 4.
+    return rt::msg_id_u64(bridge::nsstring(value),
+                          rt::sel(#str_ptr("dataUsingEncoding:\0")), 4 as u64);
+}
+
+fn _map(code: i32) -> i32 {
+    if code == _err_success() { return 0 as i32; }
+    if code == _err_item_not_found() { return 0 -% 1; }
+    if code == _err_missing_entitlement() { return 0 -% 2; }
+    if code == _err_auth_failed() { return 0 -% 2; }
+    if code == _err_interaction_not_allowed() { return 0 -% 2; }
+    if code == _err_invalid_owner_edit() { return 0 -% 2; }
+    return 0 -% 4;
+}
+
+fn _usable() -> bool {
+    if _security() == (0 as *u8) { return false; }
+    // The constants resolving is the real readiness test — a missing deref or a
+    // renamed symbol reads as a clean success with an empty keychain otherwise.
+    return _const(#str_ptr("kSecClass\0")) != (0 as *u8);
+}
+
+export extern fn _c_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
+                        service: *u8, service_len: usize) -> i32 {
+    if !_usable() { return 0 -% 3; }
+    let k: str = _view(key, key_len);
+    let s: str = _view(service, service_len);
+    let v: str = _view(value, value_len);
+
+    let update: fn(*u8, *u8) -> i32 = _fn2(#str_ptr("SecItemUpdate\0"));
+    let add: fn(*u8, *u8) -> i32 = _fn2(#str_ptr("SecItemAdd\0"));
+    let del: fn(*u8) -> i32 = _fn1(#str_ptr("SecItemDelete\0"));
+    if add == (0 as fn(*u8, *u8) -> i32) { return 0 -% 3; }
+
+    // UPDATE FIRST, then add. `SecItemAdd` answers errSecDuplicateItem on an
+    // existing key, so a `set` that only added would work exactly once and then
+    // silently never change the value again — the classic shape of this bug.
+    let changes: *u8 = _dict();
+    _put(changes, _const(#str_ptr("kSecValueData\0")), _data(v));
+    let updated: i32 = update(_query(k, s), changes);
+    if updated == _err_success() { return 0 as i32; }
+
+    // A REBUILT DEV BINARY IS DENIED ITS OWN DATA, and this is where that shows
+    // up. The legacy keychain ties edit rights to the code identity that
+    // created the item, and an ad-hoc signature changes whenever the binary
+    // does — so the previous build's item refuses this build's update. From the
+    // app's side it is its own item and the intent is unambiguous, so: drop it
+    // and write a fresh one. Measured in plans/securestore.md §5.
+    if updated == _err_invalid_owner_edit() {
+        if del != (0 as fn(*u8) -> i32) { let _d: i32 = del(_query(k, s)); }
+    } else if updated != _err_item_not_found() {
+        return _map(updated);
+    }
+
+    let insert: *u8 = _query(k, s);
+    _put(insert, _const(#str_ptr("kSecValueData\0")), _data(v));
+    // AfterFirstUnlockThisDeviceOnly: readable by a background task once the
+    // user has unlocked since boot, and never carried to a new device by a
+    // backup. `WhenUnlocked` would break every background refresh; anything
+    // without ThisDeviceOnly puts the secret in an iCloud backup.
+    _put(insert, _const(#str_ptr("kSecAttrAccessible\0")),
+                 _const(#str_ptr("kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly\0")));
+    return _map(add(insert, 0 as *u8));
+}
+
+export extern fn _c_get(key: *u8, key_len: usize, service: *u8, service_len: usize,
+                        out: *u8, cap: usize) -> i64 {
+    if !_usable() { return (0 -% 3) as i64; }
+    let copy: fn(*u8, *u8) -> i32 = _fn2(#str_ptr("SecItemCopyMatching\0"));
+    if copy == (0 as fn(*u8, *u8) -> i32) { return (0 -% 3) as i64; }
+
+    let q: *u8 = _query(_view(key, key_len), _view(service, service_len));
+    _put(q, _const(#str_ptr("kSecReturnData\0")), _yes());
+    _put(q, _const(#str_ptr("kSecMatchLimit\0")), _const(#str_ptr("kSecMatchLimitOne\0")));
+    var found: *u8 = 0 as *u8;
+    let code: i32 = copy(q, { #addr_of(found) as *u8 });
+    if code != _err_success() { return { _map(code) as i64 }; }
+    if found == (0 as *u8) { return (0 -% 1) as i64; }
+
+    let n: u64 = rt::msg_u64(found, rt::sel(#str_ptr("length\0")));
+    // TOO BIG IS A REFUSAL, not a short read: half a token fails
+    // authentication somewhere far away and nobody traces it back to here.
+    if { n as usize } > cap { return (0 -% 4) as i64; }
+    if n == (0 as u64) { return 0 as i64; }
+    let bytes: *u8 = rt::msg_id(found, rt::sel(#str_ptr("bytes\0")));
+    if bytes == (0 as *u8) { return (0 -% 4) as i64; }
+    { memcpy(out, bytes, { n as usize }) };
+    return { n as i64 };
+}
+
+#[link_name = "memcpy"]
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+
+export extern fn _c_remove(key: *u8, key_len: usize,
+                           service: *u8, service_len: usize) -> i32 {
+    if !_usable() { return 0 -% 3; }
+    let del: fn(*u8) -> i32 = _fn1(#str_ptr("SecItemDelete\0"));
+    if del == (0 as fn(*u8) -> i32) { return 0 -% 3; }
+    return _map(del(_query(_view(key, key_len), _view(service, service_len))));
+}
+
+export extern fn _c_contains(key: *u8, key_len: usize,
+                             service: *u8, service_len: usize) -> i32 {
+    if !_usable() { return 0 as i32; }
+    let copy: fn(*u8, *u8) -> i32 = _fn2(#str_ptr("SecItemCopyMatching\0"));
+    if copy == (0 as fn(*u8, *u8) -> i32) { return 0 as i32; }
+    let q: *u8 = _query(_view(key, key_len), _view(service, service_len));
+    // NO kSecReturnData: existence is an attribute question, and asking for the
+    // bytes is what makes the legacy keychain prompt for a password when the
+    // code identity has changed. `contains` must never put a dialog up.
+    _put(q, _const(#str_ptr("kSecMatchLimit\0")), _const(#str_ptr("kSecMatchLimitOne\0")));
+    if copy(q, 0 as *u8) == _err_success() { return 1 as i32; }
+    return 0 as i32;
+}
+
+export extern fn _c_clear(service: *u8, service_len: usize) -> i32 {
+    if !_usable() { return 0 -% 3; }
+    let del: fn(*u8) -> i32 = _fn1(#str_ptr("SecItemDelete\0"));
+    if del == (0 as fn(*u8) -> i32) { return 0 -% 3; }
+    // ONE CALL DELETES ONE ITEM on the legacy keychain, which is the whole
+    // reason this loops. `SecItemDelete` with a query matching several items
+    // removes a single match there; `kSecMatchLimitAll` is documented for the
+    // data-protection keychain and is not reliable on the file one. Measured:
+    // `playground/securestoreprobe` stored two keys, called `clear` once, and
+    // found the second still present.
+    //
+    // BOUNDED BY THE ITEM COUNT: every iteration either deletes one item or
+    // stops. The cap is belt and braces against a platform that answers
+    // `errSecSuccess` without removing anything — an unbounded loop inside a
+    // teardown verb is worse than an incomplete clear.
+    // `rounds`, not `guard`: `guard` is a RESERVED KEYWORD and the parse error
+    // it causes ("expected `;` or `}`") names the token without saying why.
+    let s: str = _view(service, service_len);
+    var rounds: i32 = 0 as i32;
+    while rounds < (4096 as i32) {
+        let code: i32 = del(_query("", s));
+        // An empty namespace is already in the state this asks for, whether it
+        // started that way or this loop got it there.
+        if code == _err_item_not_found() { return 0 as i32; }
+        if code != _err_success() { return _map(code); }
+        rounds = rounds +% (1 as i32);
+    }
+    return 0 as i32;
+}

@@ -1,0 +1,34 @@
+[package]
+name    = "securestore_tests"
+version = "0.0.1"
+edition = "2026"
+
+# The iOS test runner for securestore — the package's OWN checks, not an example.
+#
+# Here rather than under examples/ for the reason facet_uikit's says: a reader
+# looking for a sample program should not find a harness, and a reader looking
+# for this package's tests should not have to know they were filed with the
+# demos.
+#
+# WHY IT EXISTS AT ALL. `cpc test` builds a HOST binary, so the Apple backend it
+# links is the macOS one — and macOS and iOS are the same source but NOT the
+# same keychain. macOS has two of them and a code-identity ACL; iOS has one,
+# always data-protection, gated on the application-identifier entitlement a
+# simulator build gets implicitly. A macOS pass says nothing about whether an
+# iOS app can store anything at all.
+#
+# It is not an app: `main` runs the checks, prints them, and RETURNS a count.
+# UIApplicationMain is never called — no check needs a run loop, and a process
+# that never exits cannot report a failure to a shell.
+#
+#     vendor/securestore/tools/run_ios_tests.sh
+
+[ios]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib      = "*"
+securestore = "*"
+
+[ios.dependencies]
+objc = "*"
