@@ -70,12 +70,63 @@ xcrun simctl launch --console-pty $DEV dev.cplus.facetgalleryios
 No signing, no account, no Xcode project. `--console-pty` gives you the app's
 stderr, which is where facet's diagnostics go.
 
-**If the app needs an entitlement** (keychain, anything with a capability): on
-a simulator, entitlements are embedded as a `__TEXT,__entitlements` linker
-section and the ad-hoc signature stays PLAIN — a signature that carries
-entitlements makes SpringBoard refuse the launch, with errors that all point
-away from the signature. `vendor/securestore/tools/run_ios_tests.sh` is the
-worked example, facts in its header.
+### 0a. If the app needs an entitlement
+
+Keychain, biometrics, app groups — anything with a capability. **On a simulator
+the entitlement goes in the BINARY, not in the signature**, and the ad-hoc
+signature has to stay plain. That is how Xcode builds for a simulator;
+`securityd` reads the `__TEXT,__entitlements` section the linker embeds.
+
+```
+cat > /tmp/ent.plist <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>keychain-access-groups</key>
+	<array><string>dev.cplus.yourapp</string></array>
+</dict>
+</plist>
+PLIST
+xcrun derq query -f xml -i /tmp/ent.plist -o /tmp/ent.der --raw
+
+# ...at the end of the clang line that links the app:
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker /tmp/ent.plist \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __ents_der    -Xlinker /tmp/ent.der
+
+codesign --force --sign - $S/Gallery.app      # PLAIN. no --entitlements.
+```
+
+Both sections, because Xcode embeds both: on the iOS 26.4 runtime the XML one
+alone is what the keychain honours, and the DER twin alone answers `-34018`.
+
+**`codesign --entitlements` is the trap.** A signature carrying entitlements
+makes SpringBoard refuse the launch outright, and none of the errors mention
+signing: `denied by service delegate (SBMainWorkspace)`, `Security policy
+issue` from `simctl spawn`, `had no entitlements` in the install log. It reads
+as "this needs a provisioning profile" and it is not that — **no profile, no
+device and no Xcode project are involved.** Profiles are a device concern
+(§1 onward).
+
+Two more that cost the same day:
+
+- **`simctl install` over an app whose entitlements changed keeps the OLD
+  ones**, and the launch is then refused with no process and nothing in the
+  log. `simctl uninstall` first.
+- **`simctl launch` calls a fast-exiting process a failed launch** and discards
+  its stdout. A test runner whose `main` returns rather than entering a run
+  loop always gets "denied by service delegate" even when it ran to completion
+  — the system log shows its work. Write the result into the app's container
+  and read it back with `simctl get_app_container <dev> <id> data`.
+
+`vendor/securestore/tools/run_ios_tests.sh` is the worked example. It asserts
+both halves, the second inverted, because either silently reintroduces the bug:
+
+```
+otool -s __TEXT __entitlements "$app/Bin" | grep -q "Contents of"   # section IS there
+codesign -d --entitlements - "$app" | grep -q keychain-access-groups \
+  && { echo "the SIGNATURE carries entitlements — launch will be refused"; exit 2; }
+```
 
 **What the simulator cannot tell you:** whether
 `UIApplicationMain(0, NULL, …)` works (it does — verified on device), how touch

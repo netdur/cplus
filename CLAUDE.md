@@ -72,6 +72,36 @@ Their history is in git if a trap ever needs archaeology.)
 - **Don't commit unless asked.** Flip task-tracker checkboxes in the same turn
   as the work.
 
+## iOS: entitlements go in the BINARY on a simulator
+
+Anything with a capability — keychain, biometrics, app groups — needs an
+entitlement, and on a SIMULATOR `securityd` reads it from the
+`__TEXT,__entitlements` section the LINKER embeds, not from the signature.
+The ad-hoc signature must stay PLAIN.
+
+    -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker ent.plist
+    -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __ents_der    -Xlinker ent.der
+    codesign --force --sign -            # no --entitlements
+
+`codesign --entitlements` **on a simulator bundle** makes SpringBoard refuse the
+launch, and every error points elsewhere: "denied by service delegate",
+"Security policy issue", "had no entitlements". A day was spent inside that,
+concluding twice — wrongly — that a device and then an Xcode project were
+required. Neither is.
+
+On a DEVICE it is the other way round: entitlements ride in the signature and
+are validated against a provisioning profile. `tools/run_device_tests.sh` beside
+the simulator script is that path.
+
+Two more from the same day. `simctl launch` calls a fast-exiting process a
+failed launch and throws its stdout away, so a runner whose `main` returns
+should write into its container and be read back with `get_app_container`. And
+`simctl install` over an app whose ENTITLEMENTS changed keeps the old ones —
+uninstall first.
+
+`vendor/securestore/tools/run_ios_tests.sh` is the worked example; its header
+carries the facts and it asserts both halves, the second inverted.
+
 ## Testing
 
 Full coverage per module — unit, e2e, and negative. Don't propose a lighter
@@ -90,7 +120,8 @@ Suites, all expected green:
   rather than pattern-matching from Rust.
 - Integer literals wrap through `i32` before `as`; build big masks
   arithmetically (const expressions fold now).
-- `take` is a reserved keyword, including as a local name.
+- `take`, `guard` and `gen` are reserved keywords, including as local names.
+  The parse error names the token without saying why (`expected \`;\` or \`}\``).
 - No array→slice coercion; go through `Vec::as_slice`.
 - Explicit `return` for a VALUE — there are no implicit tail returns (E0333).
   A unit fn needs no trailing `return;` and should not have one.
