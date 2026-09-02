@@ -40,7 +40,7 @@ run on the other would be wrong by 9.8× with no error anywhere.
 | | macOS | iOS | Android |
 |---|---|---|---|
 | accelerometer, gyroscope, magnetometer | hardware permitting | ✅ | ✅ |
-| barometer | ❌ | ❌ | ✅ |
+| barometer | ❌ no hardware | ✅ needs `NSMotionUsageDescription` | ✅ |
 
 Verified live on an iPad Pro M1 and an Android emulator, 2026-09-02.
 
@@ -48,8 +48,9 @@ A Mac answers `Unavailable` for everything — CoreMotion links there and the
 hardware does not exist. That is deliberately **not** `Unsupported`, which
 means "this build cannot ask at all".
 
-The barometer is Android-only for now: Apple's is `CMAltimeter`, a separate
-class with no polled entry point. See [docs/guide.md](docs/guide.md).
+The barometer needs `NSMotionUsageDescription` in the app's Info.plist on
+Apple — without it `CMAltimeter` starts, reports available, and delivers
+nothing at all. See [docs/guide.md](docs/guide.md).
 
 - [tutorial](docs/tutorial.md) · [guide](docs/guide.md) · [ref](docs/ref.md)
 

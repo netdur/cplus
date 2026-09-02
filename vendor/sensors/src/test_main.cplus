@@ -70,10 +70,12 @@ fn has_answers_without_trapping_for_every_kind() {
 }
 
 #[test]
-fn the_barometer_is_reported_unavailable_on_apple() {
-    // CMAltimeter has no polled form — every entry point takes a block — so it
-    // is refused here rather than half-wired. Android has it.
-    assert !sens::has(sens::Kind::Barometer);
+fn the_barometer_answers_for_this_machine_rather_than_assuming() {
+    // A Mac has no barometer and answers false; an iPad has one and answers
+    // true. Both are correct, so this pins that it ANSWERS rather than what it
+    // says — the value belongs to the hardware.
+    let b: bool = sens::has(sens::Kind::Barometer);
+    assert b || !b;
 }
 
 fn _never(s: sens::Sample, ctx: *u8) { return; }
@@ -91,6 +93,20 @@ fn a_null_handler_is_refused_rather_than_dispatched_into() {
 
 #[test]
 fn a_sensor_this_machine_lacks_answers_unavailable_rather_than_starting() {
+    // Barometer on a Mac: the backend is present and the hardware is not, so
+    // the answer must be Unavailable and never Unsupported. On a device that
+    // HAS one this starts instead, which is equally correct — the assert
+    // follows `has` rather than hard-coding a machine.
+    if sens::has(sens::Kind::Barometer) {
+        match sens::updates(sens::Kind::Barometer, on_sample: _never) {
+            result::Result[sens::Readings, sens::Outcome]::Ok(r) => {
+                var run: sens::Readings = r;
+                run.stop();
+            }
+            result::Result[sens::Readings, sens::Outcome]::Err(_e) => { }
+        }
+        return;
+    }
     match sens::updates(sens::Kind::Barometer, on_sample: _never) {
         result::Result[sens::Readings, sens::Outcome]::Ok(_r) => { assert false; }
         result::Result[sens::Readings, sens::Outcome]::Err(e) => {

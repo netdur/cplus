@@ -28,15 +28,29 @@ A Mac answers `Unavailable` for all four: CoreMotion links on macOS and every
 availability probe returns false. Collapsing the two would let a wiring bug
 hide behind a hardware excuse.
 
-## The barometer is Android-only
+## The barometer needs a plist key on Apple
 
-Apple's barometer is `CMAltimeter`, not `CMMotionManager`, and **every one of
-its entry points takes a block** — there is no polled form to read from. The
-three motion sensors have both forms, and this package uses the polled one (see
-below), so the altimeter does not fit the same shape.
+`CMAltimeter` is the only sensor here that requires **Motion & Fitness**
+authorization, and the failure mode is silence:
 
-`available(Kind::Barometer)` therefore answers `false` on Apple, and `updates`
-answers `Unavailable`. Android has `TYPE_PRESSURE` as an ordinary sensor.
+```xml
+<key>NSMotionUsageDescription</key><string>…</string>
+```
+
+Without it the altimeter starts, reports available, and delivers **nothing** —
+no error, no denial. Measured: the first run of this backend produced zero
+samples and looked like proof that its callback was broken. Adding the key
+produced 1009.6 hPa at 1 Hz from the same code.
+
+`CMAltimeter.authorizationStatus` answers 0 (notDetermined) until the person
+has been asked, and iOS asks on the first `startRelativeAltitudeUpdates…`.
+
+It is also the one place this backend takes a **block** rather than polling —
+the altimeter has no `pressureData` to read. That block is built on the stack
+of the generated method and CoreMotion keeps calling it long after that frame
+returns, which is safe because the framework copies it. Verified on an iPad
+rather than assumed, and it means `*_to_queue:withHandler:` bindings are usable
+for stored handlers generally.
 
 ## Why Apple polls
 

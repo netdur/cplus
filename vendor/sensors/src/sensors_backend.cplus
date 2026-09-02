@@ -71,11 +71,19 @@ fn _availability_selector(kind: i32) -> *u8 {
     return rt::sel(#str_ptr("isAccelerometerAvailable\0"));
 }
 
+// Apple's altimeter reports kilopascals; the facade promises hectopascals.
+const _KPA_TO_HPA: f64 = 10.0f64;
+
 export extern fn _c_available(kind: i32) -> i32 {
-    // THE BAROMETER IS A DIFFERENT CLASS. `CMAltimeter` has no polled form at
-    // all — every entry point takes a block — so it is reported unavailable
-    // here rather than half-wired. Android has it; see the guide.
-    if kind == _KIND_BARO { return 0; }
+    // THE BAROMETER IS A DIFFERENT CLASS and the only one here that takes a
+    // BLOCK — `CMAltimeter` has no polled form. See `_start_barometer`.
+    if kind == _KIND_BARO {
+        let acls: *u8 = rt::get_class(#str_ptr("CMAltimeter\0"));
+        if acls.is_null() { return 0; }
+        let on: i8 = rt::msg_i8(acls, rt::sel(#str_ptr("isRelativeAltitudeAvailable\0")));
+        if on != (0 as i8) { return 1; }
+        return 0;
+    }
     let m: *u8 = _manager();
     if m.is_null() { return 0; }
     let on: i8 = rt::msg_i8(m, _availability_selector(kind));
@@ -146,6 +154,82 @@ fn _imp_tick(self_obj: *u8, cmd: *u8, timer: *u8) {
     return;
 }
 
+// THE ONE BLOCK IN THIS BACKEND, and it is here because `CMAltimeter` offers
+// nothing else — every entry point takes a handler and there is no `pressureData`
+// to poll.
+//
+// THE STACK BLOCK SURVIVES, measured on an iPad Pro M1 2026-09-02 and worth
+// recording because it applies to every `*_to_queue:withHandler:` binding in
+// this repo, not just this one. cpc-bindgen builds the block on the stack of
+// the generated method; CoreMotion went on calling this handler for a minute
+// after that frame returned. The framework copies it, as an ObjC API that
+// stores a block is supposed to.
+//
+// NSMotionUsageDescription IS REQUIRED and this is the trap: `CMAltimeter` is
+// the only sensor here that needs Motion & Fitness authorization, and without
+// the plist key it does not fail — it delivers NOTHING, silently, which reads
+// exactly like a dead callback. The first run of this code looked like proof
+// that stack blocks were unusable; the key was the whole difference.
+fn _baro_callback(ctx: *u8, data: *u8, error: *u8) {
+    if ctx.is_null() { return; }
+    let s: *_Session = ctx as *_Session;
+    if !{ (*s).running } { return; }
+    if data.is_null() { return; }
+
+    let d: cm::AltitudeData = cm::AltitudeData::from_raw(data);
+    let n: *u8 = d.pressure();
+    if n.is_null() { return; }
+    let kpa: f64 = rt::msg_f64(n, rt::sel(#str_ptr("doubleValue\0")));
+
+    var out: sens::Sample = #zero::[sens::Sample]();
+    out.x = kpa * _KPA_TO_HPA;
+    out.timestamp_ms = _now_ms();
+
+    let f: fn(sens::Sample, *u8) = { (*s).on_sample };
+    if f.is_not_null() { f(out, { (*s).ctx }); }
+    return;
+}
+
+fn _start_barometer(on_sample: fn(sens::Sample, *u8), ctx: *u8,
+                    out_code: *i32) -> *u8 {
+    let acls: *u8 = rt::get_class(#str_ptr("CMAltimeter\0"));
+    if acls.is_null() {
+        if out_code.is_not_null() { { *out_code = 1 }; }
+        return 0 as *u8;
+    }
+    let alt: *u8 = rt::msg_id(rt::msg_id(acls, rt::sel(#str_ptr("alloc\0"))),
+                              rt::sel(#str_ptr("init\0")));
+    if alt.is_null() {
+        if out_code.is_not_null() { { *out_code = 4 }; }
+        return 0 as *u8;
+    }
+
+    var blank: _Session = _Session {
+        manager: alt, timer: 0 as *u8, kind: _KIND_BARO,
+        on_sample: on_sample, ctx: ctx, running: true,
+    };
+    var s: *_Session = match box::new::[_Session](blank) {
+        option::Option[box::Box[_Session]]::Some(b) => { b.into_raw() as *_Session },
+        option::Option[box::Box[_Session]]::None => { 0 as *_Session },
+    };
+    if s.is_null() {
+        rt::release(alt);
+        if out_code.is_not_null() { { *out_code = 4 }; }
+        return 0 as *u8;
+    }
+
+    // THE MAIN QUEUE, so the handler lands where every other sample in this
+    // package does. CoreMotion will happily deliver on a background queue and
+    // a facet mutation from one is a data race.
+    let queue: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSOperationQueue\0")),
+                                rt::sel(#str_ptr("mainQueue\0")));
+    let a: cm::Altimeter = cm::Altimeter::from_raw(alt);
+    a.start_relative_altitude_updates_to_queue(queue, _baro_callback, { s as *u8 });
+
+    if out_code.is_not_null() { { *out_code = 0 }; }
+    return s as *u8;
+}
+
 export extern fn _c_start(kind: i32, req: *sens::Request,
                           on_sample: fn(sens::Sample, *u8), ctx: *u8,
                           out_code: *i32) -> *u8 {
@@ -154,6 +238,7 @@ export extern fn _c_start(kind: i32, req: *sens::Request,
         if out_code.is_not_null() { { *out_code = 2 }; }
         return 0 as *u8;
     }
+    if kind == _KIND_BARO { return _start_barometer(on_sample, ctx, out_code); }
     let m: *u8 = _manager();
     if m.is_null() {
         if out_code.is_not_null() { { *out_code = 1 }; }
@@ -246,6 +331,10 @@ export extern fn _c_stop(h: *u8) {
     let m: *u8 = { (*s).manager };
     if m.is_not_null() {
         let kind: i32 = { (*s).kind };
+        if kind == _KIND_BARO {
+            rt::msg_void(m, rt::sel(#str_ptr("stopRelativeAltitudeUpdates\0")));
+            return;
+        }
         if kind == _KIND_GYRO {
             rt::msg_void(m, rt::sel(#str_ptr("stopGyroUpdates\0")));
         } else if kind == _KIND_MAG {
