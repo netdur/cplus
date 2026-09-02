@@ -35,6 +35,9 @@ fn wm_settingchange() -> u32 { return 0x001A as u32; }
 fn wm_setfont() -> u32 { return 0x0030 as u32; }
 fn wm_getminmaxinfo() -> u32 { return 0x0024 as u32; }
 fn wm_notify() -> u32 { return 0x004E as u32; }
+// WM_MEASUREITEM arrives BEFORE the first WM_DRAWITEM, once per
+// owner-drawn item, and a window that ignores it gets a zero-sized row.
+fn wm_measureitem() -> u32 { return 0x002C as u32; }
 fn wm_keydown() -> u32 { return 0x0100 as u32; }
 fn wm_keyup() -> u32 { return 0x0101 as u32; }
 fn wm_char() -> u32 { return 0x0102 as u32; }
@@ -50,6 +53,10 @@ fn wm_lbuttondblclk() -> u32 { return 0x0203 as u32; }
 fn wm_rbuttondown() -> u32 { return 0x0204 as u32; }
 fn wm_rbuttonup() -> u32 { return 0x0205 as u32; }
 fn wm_mousewheel() -> u32 { return 0x020A as u32; }
+// Sent by `DefWindowProc` after a right-click, and BUBBLED to the parent
+// when the control does not handle it — which is how a right-click on a
+// label reaches the card that owns the context menu.
+fn wm_contextmenu() -> u32 { return 0x007B as u32; }
 fn wm_dpichanged() -> u32 { return 0x02E0 as u32; }
 
 // The CTLCOLOR family: a control asks its PARENT for its colours just before
@@ -130,6 +137,10 @@ fn sw_show() -> i32 { return 5 as i32; }
 fn gwlp_wndproc() -> i32 { return 0 -% (4 as i32); }
 fn gwlp_userdata() -> i32 { return 0 -% (21 as i32); }
 fn gwl_style() -> i32 { return 0 -% (16 as i32); }
+// GWLP_ID. A control's own id, which is the low word of the wParam in the
+// WM_COMMAND it sends — so a notification this package SYNTHESISES has to carry
+// it or the parent cannot tell which control spoke.
+fn gwl_id() -> i32 { return 0 -% (12 as i32); }
 fn gwl_exstyle() -> i32 { return 0 -% (20 as i32); }
 
 // ---- control classes ---------------------------------------------------------
@@ -239,6 +250,10 @@ fn dt_calcrect() -> u32 { return 0x00000400 as u32; }
 fn dt_noprefix() -> u32 { return 0x00000800 as u32; }
 fn dt_editcontrol() -> u32 { return 0x00002000 as u32; }
 fn dt_end_ellipsis() -> u32 { return 0x00008000 as u32; }
+// A TAB IS THE ACCELERATOR COLUMN in a menu string — `AppendMenu` splits on
+// it and right-aligns what follows. An owner-drawn item has to expand tabs
+// itself or the shortcut runs into the label.
+fn dt_expandtabs() -> u32 { return 0x00000040 as u32; }
 
 fn bkmode_transparent() -> i32 { return 1 as i32; }
 fn bkmode_opaque() -> i32 { return 2 as i32; }

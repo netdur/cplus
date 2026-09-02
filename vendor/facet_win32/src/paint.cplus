@@ -97,6 +97,17 @@ static DARK: bool = false;
 fn set_dark(v: bool) { DARK = v; return; }
 fn is_dark() -> bool { return DARK; }
 
+// Are the system's controls actually wearing the dark appearance?
+//
+// The question every take-the-pixels decision asks before it fires on a dark
+// system, and it is not the same as `is_dark`: High Contrast is a dark
+// appearance the SYSTEM draws correctly, and a Windows without the uxtheme
+// opt-in draws light controls whatever this package thinks. Both are cases
+// where owner-drawing would replace a correct control with an approximation.
+fn dark_controls() -> bool {
+    return is_dark() && !high_contrast();
+}
+
 // ---- resolving a colour ------------------------------------------------------
 //
 // The four kinds, told apart by `token`:
@@ -628,22 +639,30 @@ fn ctl_color(ctl: *u8, hdc: *u8) -> *u8 {
     let n: *core::Node = { u::GetPropA(ctl, sys::prop_node() as *i8) } as *core::Node;
     if n == (0 as *core::Node) { return 0 as *u8; }
 
+    var has_bg: bool = false;
+    let bg: u32 = resolve(core::background_color(n), #addr_of(has_bg));
+
     var has_fg: bool = false;
     let fg: u32 = resolve(text_color_of(n), #addr_of(has_fg));
     if has_fg { let _t: u32 = { gdi::SetTextColor(hdc, fg) }; }
     // A CONTROL WHOSE TEXT COLOUR NOBODY STATED keeps the system's, which is
     // BLACK on a dark system — `GetSysColor` does not follow dark mode, see
     // `high_contrast`. On a panel this package has painted dark that is a label
-    // nobody can read, and it is the commonest node in any tree. So the
-    // appearance's own default is written when the application named none.
-    if !has_fg && is_dark() && !high_contrast() {
-        var d: bool = false;
-        let ink: u32 = resolve(vocab::Color::text(), #addr_of(d));
-        if d { let _t: u32 = { gdi::SetTextColor(hdc, ink) }; }
+    // nobody can read, and it is the commonest node in any tree.
+    //
+    // THE INK FOLLOWS THE BACKGROUND, not the appearance. Writing the dark
+    // appearance's light ink was the first fix and it was wrong the other way:
+    // a card the application coloured WHITE on a dark system got white text on
+    // it. Found by looking at the probe. What decides the default is the same
+    // thing that decides it in facet's own `Color::on` — the luminance of what
+    // is actually behind the text, at the same 0.55 threshold `resolve_depth`
+    // uses, which is above the arithmetic midpoint because a mid grey reads
+    // lighter than it measures.
+    if !has_fg {
+        let behind: u32 = if has_bg { bg } else { effective_bg(ctl) };
+        let _t: u32 = { gdi::SetTextColor(hdc, ink_over(behind)) };
     }
 
-    var has_bg: bool = false;
-    let bg: u32 = resolve(core::background_color(n), #addr_of(has_bg));
     // NO BACKGROUND OF ITS OWN MEANS INHERIT ONE, not paint nothing — see
     // `effective_bg`. A control has to erase before it draws or its new string
     // lands on top of its old one.
@@ -655,6 +674,22 @@ fn ctl_color(ctl: *u8, hdc: *u8) -> *u8 {
     let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_opaque()) };
     let _b: u32 = { gdi::SetBkColor(hdc, fill) };
     return brush_for(fill);
+}
+
+// Black or white over `bg`, by luminance. facet resolves a DERIVED ink the same
+// way for `Color::on(...)`; this is that rule for a colour that arrived as a
+// COLORREF from the platform rather than as a facet token.
+//
+// A COLORREF is 0x00BBGGRR — the channels come back in the reverse of the order
+// they are named in, and reading them the other way round gives a threshold
+// that is right for grey and wrong for everything else.
+fn ink_over(bg: u32) -> u32 {
+    let r: f64 = ((bg & (0xFF as u32)) as f64) / (255.0 as f64);
+    let g: f64 = (((bg >> (8 as u32)) & (0xFF as u32)) as f64) / (255.0 as f64);
+    let b: f64 = (((bg >> (16 as u32)) & (0xFF as u32)) as f64) / (255.0 as f64);
+    let lum: f64 = (0.2126 as f64) * r + (0.7152 as f64) * g + (0.0722 as f64) * b;
+    if lum > (0.55 as f64) { return colorref(0.0f64, 0.0f64, 0.0f64); }
+    return colorref(0.95f64, 0.95f64, 0.95f64);
 }
 
 // A node's own text colour, per kind. Not a shared-band prop — each control
@@ -1050,5 +1085,26 @@ fn an_unstated_radius_is_not_a_radius() {
     // difference decides whether a control keeps its native drawing.
     assert !radius_stated(vocab::Corners::none());
     assert radius_stated(vocab::Corners::all(6.0f64));
+    return;
+}
+
+#[test]
+fn the_default_ink_follows_what_is_behind_it() {
+    // The bug this replaced: a control with no stated text colour was given the
+    // APPEARANCE's ink, so a card the application coloured white on a dark
+    // system got white text on it. What decides the default is the luminance of
+    // what is actually behind the text.
+    //
+    // COLORREF is 0x00BBGGRR, so white and black are the two that read the same
+    // either way — the third case is what catches a reversed channel order.
+    let white: u32 = colorref(1.0f64, 1.0f64, 1.0f64);
+    let black: u32 = colorref(0.0f64, 0.0f64, 0.0f64);
+    assert ink_over(white) == black;
+    assert ink_over(black) == colorref(0.95f64, 0.95f64, 0.95f64);
+    // A saturated BLUE is dark by luminance (0.0722 of it) and a saturated
+    // GREEN is light (0.7152) — the pair that fails if the channels are read
+    // in the wrong order.
+    assert ink_over(colorref(0.0f64, 0.0f64, 1.0f64)) != black;
+    assert ink_over(colorref(0.0f64, 1.0f64, 0.0f64)) == black;
     return;
 }

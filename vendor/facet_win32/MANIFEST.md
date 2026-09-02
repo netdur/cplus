@@ -189,12 +189,31 @@ The recipe, since every account of it online is missing a step:
 
 **Ordinal 133 is the step that is usually left out**, and without it the third
 line answers S_OK and changes nothing — which is the shape of every "it does not
-work" report about this API. Measured here: buttons stayed light through 135 +
-`SetWindowTheme` alone, and came out `#2B2B2B` once 133 was added.
+work" report about this API.
 
-Part-lists: `DarkMode_Explorer` for buttons, list views, tree views;
-`DarkMode_CFD` for edits and combo boxes — CFD is the common file dialog, which
-is where the dark input field lives.
+Part-lists: `DarkMode_Explorer` for the glyph controls, list views and tree
+views; `DarkMode_CFD` for edits and combo boxes — CFD is the common file
+dialog, which is where the dark input field lives.
+
+**A PUSH BUTTON HAS NO DARK PART-LIST AT ALL**, which is the thing to know
+before spending an afternoon on this. With the process opted in and
+`DarkMode_Explorer` applied to both, measured on screen:
+
+    checkbox glyph   #090909      the theme darkened it
+    push button face #F2F2F2      unchanged, light
+
+*(An earlier revision of this entry claimed the buttons came out `#2B2B2B` once
+133 was added. That reading was taken through `PrintWindow`, which renders a
+themed control with its LIGHT part-list whatever it wears on screen, and from a
+mis-converted coordinate besides. Both mistakes are recorded here because the
+tooling note is the useful half: anything about a system control's APPEARANCE
+has to be read from the screen with the window in front.)*
+
+So a push button is dark here because this package DRAWS it — `button_wants_draw`
+returns true whenever the controls are wearing dark, which is the one case where
+the owner-draw door opens for every button rather than for the few that asked
+for something. The face comes from `control_background` through `sys_or_dark`,
+so it is the system's colour on a light system and under High Contrast.
 
 **And the palette had to move with it**, which was the larger half of the bug.
 `GetSysColor` does NOT follow Windows 10/11 dark mode — it answers COLOR_WINDOW
@@ -214,6 +233,14 @@ drawn by the classic non-client renderer, and no part-list on the window
 reaches it. Explorer's dark bars belong to a `SysListView32` — a CONTROL's
 bars, not a window's — so the fix is drawing them, which is a scroll bar this
 package would own end to end.
+
+**A POPUP MENU.** `FlushMenuThemes` (ordinal 136) is called and the menu still
+comes up light — measured, with a context menu open on a dark window. A dark
+popup menu is owner-drawn in every application that has one, which is the same
+trade as the menu bar: this package would take over the check column, the
+submenu arrow and the keyboard highlight for every item to change a background.
+The destructive-item row below is deliberately NOT that — it owner-draws one
+item and leaves the system's colours around it.
 
 ### THE `*A` / `*W` / UTF-8 SITUATION, and why it is settled
 
@@ -314,16 +341,24 @@ open:
   drop-down at all. It is a spin field: `DTM_GETMONTHCAL` answers null forever
   and F4 does nothing, because there is no calendar to open. `date_picker.is_open`
   IS answered — see below.
-* **`text_field.clear_button`** — there is no clear button on an `EDIT`. The
-  one in Explorer's box is Explorer drawing over the control, the same as the
-  magnifier in the entry below.
-* **`search_field.search_icon_color` / `search_field.cancel_button_color`** —
-  colours of two things that do not exist here, for the reason the entry below
-  gives.
-* **`menu_item.is_destructive` / `context_menu_item.is_destructive`** — a Win32
-  menu item has no destructive style. `MFT_OWNERDRAW` would let this package
-  paint one red, and a red item in an otherwise system-drawn menu reads as a
-  rendering fault rather than as a warning.
+*(Five rows stood here until 2026-09-02 and are BUILT. Their names are spelled
+in words rather than backticks below, because a backticked one in §1 is a
+decision as far as the tool is concerned and these are history:*
+
+*• **the text field's clear button**, and the search field's **icon** and
+**cancel** colours — argued absent because "the one in Explorer's box is
+Explorer DRAWING OVER THE CONTROL". That is what this package does to an input
+kind now: `subclass.cplus` paints the placeholder after the control's own
+WM_PAINT, and `field_furniture.cplus` paints a magnifier and a clear button in
+the same place. The entry was written before the subclass existed and was never
+revisited when it arrived.*
+
+*• **destructive menu items**, both kinds — argued absent because "a red item in
+an otherwise system-drawn menu reads as a rendering fault rather than as a
+warning". That is the swipe argument again: a destructive item IS red beside
+ordinary ones on every platform that has the verb, and the contrast is the point
+of it. See the entry below for what is owner-drawn and what is deliberately left
+to the system.)*
 
 ### The handlers a control does not report
 
@@ -874,14 +909,58 @@ box records its owner inside `CreateWindowEx`, this renderer parks controls on
 `HWND_MESSAGE` until `insert`, and across a whole run there were zero
 `ODT_COMBOBOX` draws. The entry below has the numbers.
 
-### The search field's own furniture — `search_icon_color`, `cancel_button_color`
+### The search field's own furniture, drawn the way Explorer draws it
 
-Windows has no search-field class. The magnifier and the clear button in
-Explorer's box are Explorer's own drawing over an ordinary `EDIT`, not a
-control anyone can create — there is no `WC_SEARCHBOX`. So there is no icon and
-no cancel button here, and a colour for either is a colour for something that
-does not exist. `text_field.clear_button` is the same absence from the other
-side.
+Windows has no search-field class — there is no `WC_SEARCHBOX`, and the
+magnifier and clear button in Explorer's box are Explorer's own drawing over an
+ordinary `EDIT`. This entry used to stop there and call the colours absent.
+
+The subclass is what changed it. An input kind's window procedure is already
+replaced (for Enter, for the caret, for the placeholder), so the same brush
+stroke in the same place answers three more verbs: a magnifier at the leading
+edge, a clear button at the trailing one, and the two colours they are drawn
+in.
+
+Four details are decisions:
+
+**Glyphs, not controls.** A button inside the field would take the focus off
+the text on its first click, would need its own z-order against the caret, and
+would be one more window per field in a form that may have twenty.
+
+**`EM_SETMARGINS` moves the text out of the way.** An EDIT lays out inside a
+margin it owns; a glyph drawn over that margin sits on top of the first
+characters. The margins follow the TEXT as well as the props, because the clear
+button appears when the first character is typed.
+
+**GDI primitives rather than a font glyph** — a circle with a handle and two
+crossed lines. Same reasoning as the glyph tier in `controls`: a codepoint the
+user's font lacks draws a box, and there is no way to ask in advance.
+
+**The magnifier is not clickable and the clear button takes the press before the
+EDIT does.** The magnifier is a LABEL for the box, as it is in Explorer; a
+press on it falls through and puts the caret where it always would. A press
+that reached the EDIT before clearing would move the caret to the end of text
+that is about to stop existing.
+
+### A destructive menu item is owner-drawn, and NOTHING ELSE is
+
+`MF_OWNERDRAW` on exactly the items that ask for it. The alternative — owner-
+drawing every item so the red one has company — would put this package in
+charge of the check column, the submenu arrow, the accelerator column and the
+keyboard highlight of every menu in every application, to change the colour of
+one row.
+
+So an owner-drawn row is drawn to match what the system draws around it: the
+menu's own background (`COLOR_MENU`), the system's highlight when selected,
+`SM_CXMENUCHECK` for where the text starts and `SM_CYMENU` for how tall the row
+is. Only the text colour is this package's, and only when the row is not
+selected — red on the selection's blue is unreadable, and a selected row is
+already unmistakable.
+
+The measure is taken in the SCREEN's DC, which carries the shell font rather
+than the menu font. That is a real approximation in the safe direction: a
+slightly generous width leaves a little space at the end of one row, where a
+short one would clip its text.
 
 (The placeholder's colour was recorded here and is answered now.
 `EM_SETCUEBANNER` still has none — what changed is that the input kinds are

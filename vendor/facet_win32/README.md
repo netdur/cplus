@@ -26,6 +26,7 @@ imaging      the bitmap decoder — GDI+, and a GIF's own frame delays
 anim         the two things that move on their own: a progress tween, a page slide
 dnd          receiving a drop, without COM
 darkmode     the appearance the system controls wear, and the ordinal it needs
+field_furniture  the magnifier and the clear button, drawn over an EDIT
 shadow       the band's drop shadow — a blurred DIB the PARENT blits
 scroller     a `scroll` that scrolls: the document's extent, the wheel, the bars
 swipe        swipe-to-reveal: a drag, and the strip of actions under the row
@@ -63,7 +64,7 @@ $ python3 ../facet_gtk/tools/parity.py win32
 362 prop bits declared across facet's kind modules
   gtk       358 / 362    98%
   appkit    337 / 362    93%
-  win32     295 / 362    81%   <-- this package
+  win32     300 / 362    82%   <-- this package
 
  68 declared handlers
   gtk        68 / 68    100%
@@ -99,8 +100,8 @@ backend; when a kind is the exception, describe it without backticks.
 
 ```bash
 cd vendor/facet_win32 && ../../target/release/cpc test --filter facet_win32
-# running 132 of 564 tests matching "facet_win32"
-# test result: 132 passed; 0 failed
+# running 139 of 571 tests matching "facet_win32"
+# test result: 139 passed; 0 failed
 
 cd playground/win32_probe         && ../../target/release/cpc build   # the SEAM
 cd playground/win32_runtime_probe && ../../target/release/cpc build   # the FACADE
@@ -111,7 +112,7 @@ arithmetic, the encoders — and opens no window, because a suite that needs a
 desktop session is a suite that stops running.
 
 **`--filter` is not optional on Windows, it is the only way in.** A package's
-driver carries every dependency's tests — 564 here for 132 of this package's —
+driver carries every dependency's tests — 571 here for 139 of this package's —
 and one of stdlib's hangs on this host, which used to make everything ordered
 after it unreachable. `bugs/cpc-test-hangs-on-windows-in-facets-own-suite.md`
 has the measurement and the reproduction.

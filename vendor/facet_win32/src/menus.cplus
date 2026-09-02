@@ -37,6 +37,8 @@ import "facet/vocabulary" as vocab;
 import "facet/menu" as fmenu;
 import "facet/menu_item" as fmenu_item;
 import "facet/context_menu_item" as fctx_item;
+import "win32/wingdi" as gdi;
+import "./paint" as paint;
 import "facet/screen" as screen;
 import "win32/winuser" as u;
 import "./sys" as sys;
@@ -253,6 +255,13 @@ fn fill_from_children(menu: *u8, parent: *core::Node) {
                         if t.view() == "" {
                             let _r: i32 = { u::AppendMenuA(menu, mf_separator(),
                                                            0 as u64, 0 as *i8) };
+                        } else if destructive(c) {
+                            // OWNER-DRAWN, and only this item. See
+                            // `draw_menu_item` for why the §1 argument against
+                            // it was the swipe argument again.
+                            let _r: i32 = { u::AppendMenuA(menu, mf_ownerdraw(),
+                                                           add_node_command(c) as u64,
+                                                           c as *i8) };
                         } else {
                             append_text(menu, mf_string(), add_node_command(c), t);
                         }
@@ -263,6 +272,196 @@ fn fill_from_children(menu: *u8, parent: *core::Node) {
         }
         i = i +% (1 as usize);
     }
+    return;
+}
+
+// ---- a destructive item, drawn ------------------------------------------------------
+//
+// `MF_OWNERDRAW` and the two messages behind it. MANIFEST §1 recorded
+// `menu_item.is_destructive` absent on the argument that "a red item in an
+// otherwise system-drawn menu reads as a rendering fault rather than as a
+// warning" — and that is the swipe argument again, wrong the same way.
+//
+// A destructive item IS red beside ordinary ones on every platform that has the
+// verb; the contrast is the WHOLE POINT of it. macOS draws one red row in a
+// menu of black ones and nobody reads it as a fault. And the alternative on
+// offer — owner-drawing every item so the red one has company — is worse: it
+// would put this package in charge of the check column, the submenu arrow, the
+// accelerator column and the keyboard highlight of every menu in every
+// application, to change the colour of one row.
+//
+// So exactly the destructive items are owner-drawn, and they are drawn to match
+// what the system draws around them: the menu's own background, the system's
+// own highlight when the item is selected, and the standard check-column indent
+// so the text lines up with its neighbours'.
+
+fn mf_ownerdraw() -> u32 { return 0x0100 as u32; }
+fn odt_menu() -> u32 { return 1 as u32; }
+fn ods_selected() -> u32 { return 0x0001 as u32; }
+fn ods_grayed() -> u32 { return 0x0002 as u32; }
+
+// MEASUREITEMSTRUCT on x64: CtlType, CtlID, itemID, itemWidth, itemHeight as
+// UINTs, then itemData at 24 after the alignment padding.
+fn mi_off_type() -> usize { return 0 as usize; }
+fn mi_off_width() -> usize { return 12 as usize; }
+fn mi_off_height() -> usize { return 16 as usize; }
+fn mi_off_data() -> usize { return 24 as usize; }
+
+// DRAWITEMSTRUCT — the same offsets `controls` reads for an owner-drawn button,
+// plus `itemData` at the end.
+fn di_off_type() -> usize { return 0 as usize; }
+fn di_off_state() -> usize { return 16 as usize; }
+fn di_off_hdc() -> usize { return 32 as usize; }
+fn di_off_rect() -> usize { return 40 as usize; }
+fn di_off_data() -> usize { return 56 as usize; }
+
+fn read_u32_at(p: *u8, at: usize) -> u32 {
+    let q: *u32 = { (p + at) } as *u32;
+    return { *q };
+}
+
+fn write_u32_at(p: *u8, at: usize, v: u32) {
+    let q: *u32 = { (p + at) } as *u32;
+    { *q = v };
+    return;
+}
+
+fn read_ptr_at(p: *u8, at: usize) -> *u8 {
+    let q: *usize = { (p + at) } as *usize;
+    return { *q } as *u8;
+}
+
+fn destructive(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return false; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_MENU_ITEM {
+        return { (*(p as *props::MenuItemProps)).is_destructive };
+    }
+    if kind == props::K_CONTEXT_MENU_ITEM {
+        return { (*(p as *props::ContextMenuItemProps)).menu_item.is_destructive };
+    }
+    return false;
+}
+
+// SM_CXMENUCHECK is the check-mark column an item's text starts after, and
+// SM_CYMENU is the standard row height. Asked of the system rather than stated,
+// because both follow the DPI and the user's text scaling — an item that
+// guessed either would be a different size from the ones around it.
+fn check_column() -> i32 { return { u::GetSystemMetrics(71 as i32) } +% (4 as i32); }
+fn menu_row_height() -> i32 { return { u::GetSystemMetrics(15 as i32) }; }
+
+// WM_MEASUREITEM. The width is the text plus the check column and the trailing
+// pad the system leaves; the height is the system's own menu row.
+//
+// MEASURED IN THE SCREEN'S DC, which carries the system font rather than the
+// menu's. That is a real approximation and it is the safe direction: the menu
+// font is at most a point or two off the shell font, and a width that is
+// slightly generous leaves a little space at the end of one row rather than
+// clipping its text.
+fn measure_menu_item(mi: *u8) -> bool {
+    if mi == (0 as *u8) { return false; }
+    if read_u32_at(mi, mi_off_type()) != odt_menu() { return false; }
+    let n: *core::Node = read_ptr_at(mi, mi_off_data()) as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    let t: text::Text = item_text(n);
+    var w: i32 = check_column() +% (32 as i32);
+    let hdc: *u8 = { u::GetDC(0 as *u8) };
+    if hdc != (0 as *u8) {
+        var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                         right: 0 as i32, bottom: 0 as i32 };
+        let w16: *u16 = sys::to_wide(t.view());
+        if w16 != (0 as *u16) {
+            let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                         #addr_of(r),
+                                         sys::dt_calcrect() | sys::dt_singleline()
+                                         | sys::dt_noprefix()) };
+            w = (r.right -% r.left) +% check_column() +% (32 as i32);
+            sys::free_wide(w16);
+        }
+        let _r: i32 = { u::ReleaseDC(0 as *u8, hdc) };
+    }
+    write_u32_at(mi, mi_off_width(), w as u32);
+    write_u32_at(mi, mi_off_height(), menu_row_height() as u32);
+    return true;
+}
+
+// WM_DRAWITEM for a menu. The background and the highlight are the system's
+// colours; only the TEXT is red, which is the whole of what the verb asks for.
+fn draw_menu_item(di: *u8) -> bool {
+    if di == (0 as *u8) { return false; }
+    if read_u32_at(di, di_off_type()) != odt_menu() { return false; }
+    let n: *core::Node = read_ptr_at(di, di_off_data()) as *core::Node;
+    if n == (0 as *core::Node) { return false; }
+    let hdc: *u8 = read_ptr_at(di, di_off_hdc());
+    if hdc == (0 as *u8) { return false; }
+    let state: u32 = read_u32_at(di, di_off_state());
+    let selected: bool = (state & ods_selected()) != (0 as u32);
+    let grayed: bool = (state & ods_grayed()) != (0 as u32);
+    var r: u::tagRECT = u::tagRECT {
+        left: read_u32_at(di, di_off_rect()) as i32,
+        top: read_u32_at(di, di_off_rect() +% (4 as usize)) as i32,
+        right: read_u32_at(di, di_off_rect() +% (8 as usize)) as i32,
+        bottom: read_u32_at(di, di_off_rect() +% (12 as usize)) as i32,
+    };
+    // COLOR_MENU / COLOR_HIGHLIGHT — the system's, so the row sits IN the menu
+    // rather than on top of it.
+    let bg: u32 = if selected { { u::GetSysColor(13 as i32) } }
+                  else { { u::GetSysColor(4 as i32) } };
+    let brush: *u8 = paint::brush_for(bg);
+    if brush != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), brush) }; }
+    // THE HIGHLIGHT WINS OVER THE WARNING. Red text on the selection's blue is
+    // unreadable, and a selected row is already unmistakable — so a highlighted
+    // destructive item is drawn in the highlight's own text colour, which is
+    // what macOS does with the same row.
+    var fg: u32 = paint::colorref(0.80f64, 0.16f64, 0.16f64);
+    if selected { fg = { u::GetSysColor(14 as i32) }; }
+    if grayed { fg = { u::GetSysColor(17 as i32) }; }
+    let _t: u32 = { gdi::SetTextColor(hdc, fg) };
+    let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
+    var tr: u::tagRECT = r;
+    tr.left = tr.left +% check_column();
+    let w16: *u16 = sys::to_wide(item_text(n).view());
+    if w16 != (0 as *u16) {
+        // DT_EXPANDTABS, because the accelerator column is a TAB — see
+        // `with_shortcut`, which builds the string the system would have split
+        // itself had this item not been owner-drawn.
+        let flags: u32 = sys::dt_singleline() | sys::dt_vcenter()
+                       | sys::dt_noprefix() | sys::dt_expandtabs();
+        let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                     #addr_of(tr), flags) };
+        sys::free_wide(w16);
+    }
+    return true;
+}
+
+#[test]
+fn only_a_destructive_item_leaves_the_system_to_draw_nothing() {
+    // The gate. Every other item stays MF_STRING and the system draws it — the
+    // check column, the accelerator column and the keyboard highlight included.
+    var plain: core::Node = props_menu_item(false);
+    var red: core::Node = props_menu_item(true);
+    assert !destructive(#addr_of(plain));
+    assert destructive(#addr_of(red));
+    return;
+}
+
+fn props_menu_item(is_destructive: bool) -> core::Node {
+    var n: core::Node = fmenu_item::menu_item(key: "m", text: "Delete",
+                                              destructive: is_destructive);
+    return n;
+}
+
+#[test]
+fn an_owner_drawn_row_is_the_systems_own_height() {
+    // An item a different size from its neighbours is the tell that a menu is
+    // half owner-drawn, so the height comes from SM_CYMENU rather than from a
+    // number here — and the text starts after the check column for the same
+    // reason.
+    assert menu_row_height() > (0 as i32);
+    assert check_column() > (0 as i32);
     return;
 }
 

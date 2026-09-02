@@ -53,6 +53,7 @@ import "facet/icon_button" as icon_button;
 import "stdlib/io" as io;
 import "./paint" as paint;
 import "./darkmode" as darkmode;
+import "./field_furniture" as field_furniture;
 import "./anim" as anim;
 import "facet/radio" as radio;
 import "facet/text_area" as text_area;
@@ -326,10 +327,18 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
         let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
         let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
-    return;
     // NATIVE UNTIL ASKED OTHERWISE — see the owner-draw section. Re-evaluated
     // on every apply rather than latched, so a node that drops the verb goes
     // back to the theme.
+    //
+    // A STRAY `return` STOOD HERE and made everything below it unreachable:
+    // the owner-draw gate and the button's image, both dead, both counted as
+    // answered by `parity.py` because their bits are named a few lines down.
+    // So `border_color`, `border_width`, `corner_radius`, `character_spacing`,
+    // a borderless button and `image` all did nothing at all on a `button` —
+    // and the tests passed, because they exercise `button_wants_draw` rather
+    // than the apply that calls it. Found by asking why a dark button stayed
+    // light.
     let looks: u64 = button::P_BORDERED | button::P_BORDER_COLOR
                    | button::P_BORDER_WIDTH | button::P_CORNER_RADIUS
                    | button::P_CHARACTER_SPACING | button::P_TEXT_COLOR
@@ -397,6 +406,12 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
         if { u::GetFocus() } != v { set_window_text(v, { (*p).input_view.text }.clone()); }
     }
     apply_input_view(v, #addr_of((*p).input_view), dirty, text_field_bits());
+    // THE CLEAR BUTTON'S ROOM. A field that grew or lost one has to re-inset
+    // its own text — the glyph is drawn OVER the control, so the text has to be
+    // told to stop before it. See `field_furniture`.
+    if (dirty & (text_field::P_CLEAR_BUTTON | text_field::P_TEXT)) != (0 as u64) {
+        field_furniture::apply_margins(v, n);
+    }
     if (dirty & (text_field::P_TEXT_ALIGN | text_field::P_IS_SECURE)) != (0 as u64) {
         apply_field_style(v, { (*p).text_align }, { (*p).is_secure });
     }
@@ -537,6 +552,15 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
     apply_input_view(v, #addr_of((*p).input_view), dirty, search_field_bits());
     if (dirty & search_field::P_TEXT_ALIGN) != (0 as u64) {
         apply_field_style(v, { (*p).text_align }, false);
+    }
+    // A SEARCH FIELD ALWAYS HAS ITS MAGNIFIER — the glyph is what says the box
+    // is a search box — so the left inset is set on every apply rather than
+    // gated on a colour the application may never state. The right inset
+    // follows the text, because the cancel button appears with it.
+    field_furniture::apply_margins(v, n);
+    if (dirty & (search_field::P_SEARCH_ICON_COLOR
+                 | search_field::P_CANCEL_BUTTON_COLOR)) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
     return;
 }
@@ -3053,6 +3077,17 @@ fn apply_keyboard(v: *u8, k: vocab::Keyboard) {
 // so a node that gains or loses the verb moves between the paths on the next
 // apply.
 fn button_wants_draw(p: *props::ButtonProps) -> bool {
+    // A DARK SYSTEM IS ITSELF A REASON, and it is the one case where every
+    // button in the application needs this door rather than the few that asked
+    // for something.
+    //
+    // comctl32 has NO dark part-list for a push button. Measured, with the
+    // process opted in and `DarkMode_Explorer` applied: a checkbox's glyph
+    // comes out #212121 and a push button's face stays #F2F2F2 — the theme
+    // darkens the glyph controls and leaves the pushes alone. So a dark
+    // application keeps one light rectangle per button unless this package
+    // draws them, which is exactly the trade §1's owner-draw door exists for.
+    if paint::dark_controls() { return true; }
     // `bordered` DEFAULTS TO TRUE, because a native push button IS bordered —
     // so the flag being set is the ordinary state and means nothing. It is the
     // INVERSE that the theme cannot do: `BS_FLAT` is ignored by the theme
@@ -3130,7 +3165,18 @@ fn draw_button(di: *u8) -> bool {
     var bg: u32 = paint::effective_bg(v);
     var bhas: bool = false;
     let stated: u32 = paint::resolve(core::background_color(n), #addr_of(bhas));
-    if bhas { bg = stated; } else { bg = { u::GetSysColor(15 as i32) }; }
+    if bhas { bg = stated; }
+    else {
+        // THE APPEARANCE'S CONTROL FACE, not `GetSysColor(COLOR_BTNFACE)` —
+        // which answers #F0F0F0 on a dark system and would draw the light
+        // button this door exists to replace. `control_background` goes
+        // through `sys_or_dark`: the system's colour on a light system and
+        // under High Contrast, and the dark face otherwise.
+        var fhas: bool = false;
+        let face: u32 = paint::resolve(vocab::Color::control_background(),
+                                       #addr_of(fhas));
+        if fhas { bg = face; } else { bg = { u::GetSysColor(15 as i32) }; }
+    }
     // PRESSED AND HOVER ARE OURS NOW. A themed button fades between them; this
     // steps, which is what a classic button does and what an application asking
     // for a flat bordered button expects to see.
@@ -3981,5 +4027,28 @@ fn a_statics_type_is_five_bits_and_not_four() {
     // that swaps type keeps both.
     assert (sys::ss_notify() & ss_typemask()) == (0 as u32);
     assert (sys::ss_endellipsis() & ss_typemask()) == (0 as u32);
+    return;
+}
+
+#[test]
+fn a_dark_system_takes_the_pixels_of_every_button() {
+    // The one case where the gate fires for a button nobody styled: comctl32
+    // has no dark part-list for a PUSH button, measured — a checkbox's glyph
+    // comes out #212121 with the process opted in and a push button's face
+    // stays #F2F2F2. So on a dark system every button is drawn here or every
+    // button is a light rectangle in a dark window.
+    var b: core::Node = button::button("Go", key: "b");
+    let p: *props::ButtonProps = props_of(#addr_of(b), props::K_BUTTON) as *props::ButtonProps;
+    assert p != (0 as *props::ButtonProps);
+    let was: bool = paint::is_dark();
+    paint::set_dark(false);
+    assert !button_wants_draw(p);
+    paint::set_dark(true);
+    // ...unless the SYSTEM is drawing dark correctly already, which is what
+    // High Contrast is — there the control is right and taking its pixels
+    // would replace it with an approximation.
+    if paint::high_contrast() { assert !button_wants_draw(p); }
+    else { assert button_wants_draw(p); }
+    paint::set_dark(was);
     return;
 }

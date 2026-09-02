@@ -681,6 +681,42 @@ fn is_swipe(gs: *gestures::Gestures, l: i64) -> bool {
 }
 // Route one mouse message. Answers true when facet took it, so the WNDPROC
 // knows whether to pass it to DefWindowProc.
+// A RIGHT-CLICK THAT LANDED ON A CONTROL, bubbled up as WM_CONTEXTMENU.
+//
+// `wm_rbuttonup` reaches this package only for the windows it owns. A right-
+// click on a LABEL does not: a static carries `SS_NOTIFY` (which is what makes
+// a label clickable at all — see `controls::create_label`), and that makes it
+// OPAQUE to the hit test, so the press stops there. The same is true of every
+// system control.
+//
+// WM_CONTEXTMENU is Win32's own answer: `DefWindowProc` sends it after a
+// right-click and, unhandled, it BUBBLES to the parent with the originating
+// window in wParam. So one branch on the host answers for every control in it,
+// and no control needs subclassing for this.
+//
+// The COORDINATES are screen ones and may be (-1,-1) — that is the keyboard
+// menu key rather than a mouse — which is why the menu is positioned from the
+// window rather than from the point.
+fn on_context_menu(host: *u8, from: *u8) -> bool {
+    var v: *u8 = from;
+    if v == (0 as *u8) { v = host; }
+    return context_menu_shown(v);
+}
+
+// Offer the right-click to a `context_menu` on this node or above it.
+//
+// IT TAKES THE EVENT WHEN THERE IS ONE. A node that declared both a
+// `context_menu` and an `on_right_click` meant the menu — and a menu dismissed
+// without choosing is still ours, because letting the click fall through to a
+// handler after the user cancelled fires it for a gesture they undid.
+fn context_menu_shown(v: *u8) -> bool {
+    let n: *core::Node = node_at_or_above(v);
+    if n == (0 as *core::Node) { return false; }
+    if !menus::has_context_menu(n) { return false; }
+    let _s: bool = menus::show_context_menu(v, n);
+    return true;
+}
+
 fn on_mouse(v: *u8, msg: u32, w: u64, l: i64) -> bool {
     // A TAB IS NOT A CONTROL HERE — the strip is painted into the panel, so
     // there is no child window to send a notification and the click has to be
@@ -736,6 +772,17 @@ fn on_mouse(v: *u8, msg: u32, w: u64, l: i64) -> bool {
     // not the band's. So it is read here, before the gestures guard: a canvas
     // that carries no `.gesture()` at all still has every one of them.
     let canvas: bool = fire_canvas(v, msg, l);
+    // A CONTEXT MENU IS NOT A GESTURE, and it was answered below the guard —
+    // so a node that declared a `context_menu` and no `.gesture()` never got
+    // one. Which is almost every node that has a menu: a card with a
+    // right-click menu rarely has a click handler too, and the probe's did
+    // not. Nothing opened, and nothing reported anything.
+    //
+    // Same shape as the tab strip, the divider and the swipeable above: those
+    // are read before the guard for exactly this reason.
+    if msg == sys::wm_rbuttonup() {
+        if context_menu_shown(v) { return true; }
+    }
     let gs: *gestures::Gestures = gestures_at(v);
     if gs == (0 as *gestures::Gestures) { return canvas; }
 
@@ -787,20 +834,9 @@ fn on_mouse(v: *u8, msg: u32, w: u64, l: i64) -> bool {
     }
 
     if msg == sys::wm_rbuttonup() {
-        // THE CONTEXT MENU FIRST, and it takes the event when there is one. A
-        // node that declared both a `context_menu` and an `on_right_click`
-        // meant the menu — the handler is what a node says when it has no menu
-        // to show.
-        let n: *core::Node = node_at_or_above(v);
-        if n != (0 as *core::Node) {
-            if menus::has_context_menu(n) {
-                if menus::show_context_menu(v, n) { return true; }
-                // Dismissed without choosing. Still ours: the menu was shown,
-                // and letting the right-click fall through to a handler after
-                // the user cancelled would fire it for a gesture they undid.
-                return true;
-            }
-        }
+        // The menu was already offered this event above the gestures guard —
+        // see `context_menu_shown`. What is left is the HANDLER, which is what
+        // a node says when it has no menu to show.
         return fire_of(v, { (*gs).on_right_click }, { (*gs).on_right_click_ctx });
     }
 
