@@ -95,6 +95,61 @@ applies to it in full.
 
 ## Current state (2026-09-01)
 
+- sensors (pass done 2026-09-02, **written against this page**, and the
+  cheapest pass yet — one rename). Findings:
+  - **`available(kind)` became `has(kind)`.** The call site is a question, and
+    `sens::has(Kind::Barometer)` reads as one where
+    `sens::available(Kind::Barometer)` reads as a noun with an argument stuck
+    on. `camera::has(Facing::Back)` is the same shape and already had the right
+    word; `location::available()` takes no argument and keeps its own name
+    honestly. The rule is "read as a grammatical phrase", and the test is
+    whether the call is a sentence.
+  - A **deliberate deviation, recorded rather than hidden**: the stream handle
+    is `Readings` where `location`'s is `Updates`. Cross-package uniformity
+    would say pick one word, and this page says clarity at the point of use
+    wins — a stream of sensor readings is not a stream of updates, and
+    `READINGS.stop()` says more than `UPDATES.stop()` would.
+  - `Request::defaults()` is the SAME deviation location recorded, for the same
+    reason: `Request::new()` cannot be a default-argument expression (E0308).
+    Two packages in, this is a language limitation worth a line in the Rules
+    section rather than a repeated note in the changelog.
+  - The facade declares a private `#[link_name = "sqrt"] extern fn _sqrt`
+    because stdlib has no math module. That is allowed rather than a leak: the
+    rule governs the SURFACE, and `Sample::magnitude()` hides it completely —
+    the same test `securestore::get`'s pointer failed and this passes.
+
+- location (pass done 2026-09-02, **written against this page and then
+  audited** — the cheaper order, and it showed: four small corrections, no
+  restructuring). Findings:
+  - **`to_code` without `from_code`, for the third time.** `Outcome` could be
+    written to the seam and not read back from it. camera's pass already
+    recorded this twice in one package and suggested the pairing belonged in
+    the Rules section rather than the changelog; three packages in, that is now
+    plainly true — **a code a type can produce, it must be able to consume**.
+  - **`enabled()` answered a question nobody asked.** At the call site
+    `location::enabled()` reads as "is the location package enabled", which is
+    not what it means — it is the DEVICE's system-wide switch. Now
+    `services_enabled()`. The rule this failed is "name for role and meaning":
+    the short name was shorter and wronger.
+  - **The JNI callback was `export`ed**, verbatim the mistake camera's pass
+    found: `RegisterNatives` takes a function POINTER, not a linker symbol. Two
+    packages, same reflex. Worth noting that removing `export` from an
+    `extern fn` does NOT leave a valid definition — a plain `extern fn` is a
+    declaration and must end in `;` — so the correct form is a plain `fn`,
+    which is what camera has.
+  - A **deliberate deviation, recorded rather than hidden**: `Request` has two
+    constructors where this page says to collapse them into one with defaults.
+    `Request::defaults()` exists because `Request::new()` **cannot be a
+    default-argument expression** even though every one of its parameters has a
+    default — E0308 counts the parameters before filling them. camera's
+    `open(request: Request = Request::new())` compiles, so the restriction is
+    positional rather than absolute; not chased further.
+  - Also not naming, and the same shape as camera's `println` finding: the
+    macOS probe used `io::println`, whose stdout is **fully buffered when
+    redirected**, so a probe killed with `pkill` produced an empty log that
+    read exactly like "the events never fired". `io::eprintln` is the one to
+    use, and this project's own memory already said so.
+
 - camera (pass done 2026-09-01, **retrofitted** — written to work and then
   brought to this page, the expensive order permissions warned about, and it
   cost more than securestore's pass did). Findings:

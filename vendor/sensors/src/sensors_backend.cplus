@@ -1,0 +1,258 @@
+// CoreMotion, for macOS and iOS.
+//
+// ---- polled, not blocked ---------------------------------------------------
+//
+// CoreMotion offers each motion sensor twice: `startXUpdatesToQueue:withHandler:`
+// takes a block, and bare `startXUpdates` starts the sensor and lets you read
+// `xData` whenever you like. This uses the SECOND, and drives it from an
+// NSTimer.
+//
+// The reason is block lifetime. cpc-bindgen builds a STACK block — correct for
+// `enumerateAttributesInRange:`, which calls it and returns, and unverified for
+// a handler CoreMotion stores and calls for minutes. It would work if the
+// framework copies the block (ObjC APIs that store one are supposed to), and
+// the copy would leave the descriptor pointing at a dead frame. That is a
+// question to settle on a device with a measurement, not to guess at here, and
+// the polled form makes it moot.
+//
+// ---- a Mac has no gyroscope -------------------------------------------------
+//
+// CoreMotion links on macOS and answers `false` to every availability probe on
+// a machine with no motion hardware. That is `Unavailable`, not `Unsupported`,
+// and the distinction is the whole reason both exist.
+
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "coremotion/coremotion" as cm;
+import "./sensors" as sens;
+
+// `objc/runtime` has no msgSend variant of this shape, and inventing one
+// there for a single caller would be worse than declaring it here: the shape
+// is `(f64, id, SEL, id, BOOL) -> id`, which is
+// `scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:` and
+// nothing else.
+#[link_name = "objc_msgSend"]
+extern fn _msg_scheduled_timer(recv: *u8, sel: *u8, interval: f64, target: *u8,
+                               selector: *u8, user_info: *u8, repeats: i8) -> *u8;
+
+const _KIND_ACCEL: i32 = 0;
+const _KIND_GYRO: i32 = 1;
+const _KIND_MAG: i32 = 2;
+const _KIND_BARO: i32 = 3;
+
+// Apple reports acceleration in G. The facade promises m/s^2, so this is the
+// conversion an app would otherwise have to know about — and get wrong once.
+const _G_TO_MS2: f64 = 9.80665f64;
+
+struct _Session {
+    opaque manager: *u8,
+    opaque timer: *u8,
+    kind: i32,
+    on_sample: fn(sens::Sample, *u8),
+    opaque ctx: *u8,
+    running: bool,
+}
+
+static _SESSION_KEY: u8 = 0 as u8;
+static _TICKER_CLASS: *u8 = 0 as *u8;
+
+fn _manager() -> *u8 {
+    let cls: *u8 = rt::get_class(#str_ptr("CMMotionManager\0"));
+    if cls.is_null() { return 0 as *u8; }
+    return rt::msg_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                      rt::sel(#str_ptr("init\0")));
+}
+
+fn _availability_selector(kind: i32) -> *u8 {
+    if kind == _KIND_GYRO { return rt::sel(#str_ptr("isGyroAvailable\0")); }
+    if kind == _KIND_MAG { return rt::sel(#str_ptr("isMagnetometerAvailable\0")); }
+    return rt::sel(#str_ptr("isAccelerometerAvailable\0"));
+}
+
+export extern fn _c_available(kind: i32) -> i32 {
+    // THE BAROMETER IS A DIFFERENT CLASS. `CMAltimeter` has no polled form at
+    // all — every entry point takes a block — so it is reported unavailable
+    // here rather than half-wired. Android has it; see the guide.
+    if kind == _KIND_BARO { return 0; }
+    let m: *u8 = _manager();
+    if m.is_null() { return 0; }
+    let on: i8 = rt::msg_i8(m, _availability_selector(kind));
+    rt::release(m);
+    if on != (0 as i8) { return 1; }
+    return 0;
+}
+
+fn _ticker_class() -> *u8 {
+    if _TICKER_CLASS.is_not_null() { return _TICKER_CLASS; }
+    let sup: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    if sup.is_null() { return 0 as *u8; }
+    let cls: *u8 = synth::allocate_class_pair(sup, #str_ptr("CplusSensorTicker\0"), 0 as usize);
+    if cls.is_null() { return 0 as *u8; }
+    let _ = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tick:\0")),
+                                    _imp_tick, #str_ptr("v@:@\0"));
+    synth::register_class_pair(cls);
+    _TICKER_CLASS = cls;
+    return cls;
+}
+
+fn _now_ms() -> i64 {
+    let d: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSDate\0")),
+                            rt::sel(#str_ptr("date\0")));
+    if d.is_null() { return 0 as i64; }
+    let secs: f64 = rt::msg_f64(d, rt::sel(#str_ptr("timeIntervalSince1970\0")));
+    return { (secs * (1000.0 as f64)) as i64 };
+}
+
+fn _imp_tick(self_obj: *u8, cmd: *u8, timer: *u8) {
+    let raw: *u8 = synth::get_associated(self_obj, #addr_of(_SESSION_KEY));
+    if raw.is_null() { return; }
+    let s: *_Session = raw as *_Session;
+    if !{ (*s).running } { return; }
+    let m: *u8 = { (*s).manager };
+    if m.is_null() { return; }
+
+    let kind: i32 = { (*s).kind };
+    var out: sens::Sample = #zero::[sens::Sample]();
+    out.timestamp_ms = _now_ms();
+
+    if kind == _KIND_GYRO {
+        let d: *u8 = rt::msg_id(m, rt::sel(#str_ptr("gyroData\0")));
+        if d.is_null() { return; }
+        let r: cm::RotationRate = cm::GyroData::from_raw(d).rotation_rate();
+        out.x = r.x;
+        out.y = r.y;
+        out.z = r.z;
+    } else if kind == _KIND_MAG {
+        let d: *u8 = rt::msg_id(m, rt::sel(#str_ptr("magnetometerData\0")));
+        if d.is_null() { return; }
+        let f: cm::MagneticField = cm::MagnetometerData::from_raw(d).magnetic_field();
+        out.x = f.x;
+        out.y = f.y;
+        out.z = f.z;
+    } else {
+        let d: *u8 = rt::msg_id(m, rt::sel(#str_ptr("accelerometerData\0")));
+        if d.is_null() { return; }
+        let a: cm::Acceleration = cm::AccelerometerData::from_raw(d).acceleration();
+        // G -> m/s^2, so the two platforms agree.
+        out.x = a.x * _G_TO_MS2;
+        out.y = a.y * _G_TO_MS2;
+        out.z = a.z * _G_TO_MS2;
+    }
+
+    let f: fn(sens::Sample, *u8) = { (*s).on_sample };
+    if f.is_not_null() { f(out, { (*s).ctx }); }
+    return;
+}
+
+export extern fn _c_start(kind: i32, req: *sens::Request,
+                          on_sample: fn(sens::Sample, *u8), ctx: *u8,
+                          out_code: *i32) -> *u8 {
+    if _c_available(kind) == 0 {
+        // 2 = Unavailable: there is a backend, the device has no such sensor.
+        if out_code.is_not_null() { { *out_code = 2 }; }
+        return 0 as *u8;
+    }
+    let m: *u8 = _manager();
+    if m.is_null() {
+        if out_code.is_not_null() { { *out_code = 1 }; }
+        return 0 as *u8;
+    }
+
+    // 0 takes CoreMotion's own default rather than meaning "as fast as
+    // possible", which would pin a core for a UI that redraws at 60Hz.
+    var secs: f64 = 0.1f64;
+    let ms: i64 = { (*req).interval_ms };
+    if ms > (0 as i64) { secs = { ms as f64 } / (1000.0 as f64); }
+
+    if kind == _KIND_GYRO {
+        rt::msg_void_f64(m, rt::sel(#str_ptr("setGyroUpdateInterval:\0")), secs);
+        rt::msg_void(m, rt::sel(#str_ptr("startGyroUpdates\0")));
+    } else if kind == _KIND_MAG {
+        rt::msg_void_f64(m, rt::sel(#str_ptr("setMagnetometerUpdateInterval:\0")), secs);
+        rt::msg_void(m, rt::sel(#str_ptr("startMagnetometerUpdates\0")));
+    } else {
+        rt::msg_void_f64(m, rt::sel(#str_ptr("setAccelerometerUpdateInterval:\0")), secs);
+        rt::msg_void(m, rt::sel(#str_ptr("startAccelerometerUpdates\0")));
+    }
+
+    let tcls: *u8 = _ticker_class();
+    if tcls.is_null() {
+        rt::release(m);
+        if out_code.is_not_null() { { *out_code = 1 }; }
+        return 0 as *u8;
+    }
+    let ticker: *u8 = rt::msg_id(rt::msg_id(tcls, rt::sel(#str_ptr("alloc\0"))),
+                                 rt::sel(#str_ptr("init\0")));
+    if ticker.is_null() {
+        rt::release(m);
+        if out_code.is_not_null() { { *out_code = 4 }; }
+        return 0 as *u8;
+    }
+
+    var blank: _Session = _Session {
+        manager: m, timer: 0 as *u8, kind: kind,
+        on_sample: on_sample, ctx: ctx, running: true,
+    };
+    var s: *_Session = match box::new::[_Session](blank) {
+        option::Option[box::Box[_Session]]::Some(b) => { b.into_raw() as *_Session },
+        option::Option[box::Box[_Session]]::None => { 0 as *_Session },
+    };
+    if s.is_null() {
+        rt::release(ticker);
+        rt::release(m);
+        if out_code.is_not_null() { { *out_code = 4 }; }
+        return 0 as *u8;
+    }
+    synth::set_associated(ticker, #addr_of(_SESSION_KEY), s as *u8);
+
+    // SCHEDULED on the current run loop, which is the main one for every caller
+    // this package expects. A timer created off a run-loop thread never fires,
+    // and does so silently.
+    let timer: *u8 = { _msg_scheduled_timer(
+        rt::get_class(#str_ptr("NSTimer\0")),
+        rt::sel(#str_ptr("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:\0")),
+        secs, ticker, rt::sel(#str_ptr("tick:\0")), 0 as *u8, 1 as i8) };
+    { (*s).timer = timer };
+
+    if out_code.is_not_null() { { *out_code = 0 }; }
+    return s as *u8;
+}
+
+export extern fn _c_kind(h: *u8) -> i32 {
+    if h.is_null() { return 0; }
+    let s: *_Session = h as *_Session;
+    return { (*s).kind };
+}
+
+export extern fn _c_running(h: *u8) -> i32 {
+    if h.is_null() { return 0; }
+    let s: *_Session = h as *_Session;
+    if { (*s).running } { return 1; }
+    return 0;
+}
+
+export extern fn _c_stop(h: *u8) {
+    if h.is_null() { return; }
+    let s: *_Session = h as *_Session;
+    if !{ (*s).running } { return; }
+    { (*s).running = false };
+
+    let t: *u8 = { (*s).timer };
+    if t.is_not_null() { rt::msg_void(t, rt::sel(#str_ptr("invalidate\0"))); }
+    { (*s).timer = 0 as *u8 };
+
+    let m: *u8 = { (*s).manager };
+    if m.is_not_null() {
+        let kind: i32 = { (*s).kind };
+        if kind == _KIND_GYRO {
+            rt::msg_void(m, rt::sel(#str_ptr("stopGyroUpdates\0")));
+        } else if kind == _KIND_MAG {
+            rt::msg_void(m, rt::sel(#str_ptr("stopMagnetometerUpdates\0")));
+        } else {
+            rt::msg_void(m, rt::sel(#str_ptr("stopAccelerometerUpdates\0")));
+        }
+    }
+    return;
+}

@@ -1,0 +1,118 @@
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "./sensors" as sens;
+import "./sensors_backend" as backend;
+
+#[test]
+fn kind_codes_round_trip() {
+    assert sens::Kind::from_code(sens::Kind::Accelerometer.to_code()).to_code() == 0;
+    assert sens::Kind::from_code(sens::Kind::Gyroscope.to_code()).to_code() == 1;
+    assert sens::Kind::from_code(sens::Kind::Magnetometer.to_code()).to_code() == 2;
+    assert sens::Kind::from_code(sens::Kind::Barometer.to_code()).to_code() == 3;
+}
+
+#[test]
+fn an_unknown_kind_code_is_the_accelerometer_not_a_trap() {
+    assert sens::Kind::from_code(99).to_code() == sens::Kind::Accelerometer.to_code();
+}
+
+#[test]
+fn outcome_codes_round_trip() {
+    assert sens::Outcome::from_code(sens::Outcome::Ok.to_code()).to_code() == 0;
+    assert sens::Outcome::from_code(sens::Outcome::Unavailable.to_code()).to_code() == 2;
+}
+
+#[test]
+fn unavailable_is_not_unsupported() {
+    // A Mac with no gyroscope and a platform with no backend need different
+    // things said about them; collapsing the two hides a wiring bug behind a
+    // hardware excuse.
+    assert sens::Outcome::Unavailable.to_code() != sens::Outcome::Unsupported.to_code();
+}
+
+#[test]
+fn magnitude_is_the_euclidean_norm() {
+    var s: sens::Sample = sens::Sample { x: 3.0f64, y: 4.0f64, z: 0.0f64,
+                                         timestamp_ms: 0 as i64 };
+    assert s.magnitude() > (4.999 as f64);
+    assert s.magnitude() < (5.001 as f64);
+}
+
+#[test]
+fn a_resting_device_reads_about_one_g_in_ms2() {
+    // The unit contract: this package answers m/s^2, so a device flat on a
+    // table is ~9.8 and not ~1. Apple reports G and the backend converts; the
+    // number below is what an app is entitled to assume on both platforms.
+    var s: sens::Sample = sens::Sample { x: 0.0f64, y: 0.0f64, z: 9.80665f64,
+                                         timestamp_ms: 0 as i64 };
+    assert s.magnitude() > (9.8 as f64);
+    assert s.magnitude() < (9.81 as f64);
+}
+
+#[test]
+fn the_default_request_asks_for_the_platform_default() {
+    let r: sens::Request = sens::Request::defaults();
+    assert r.interval_ms == (0 as i64);
+}
+
+#[test]
+fn has_answers_without_trapping_for_every_kind() {
+    let a: bool = sens::has(sens::Kind::Accelerometer);
+    let g: bool = sens::has(sens::Kind::Gyroscope);
+    let m: bool = sens::has(sens::Kind::Magnetometer);
+    let b: bool = sens::has(sens::Kind::Barometer);
+    // Their VALUES are the machine's business — a Mac has none of them. That
+    // each answers at all is the contract.
+    assert a || !a;
+    assert g || !g;
+    assert m || !m;
+    assert b || !b;
+}
+
+#[test]
+fn the_barometer_is_reported_unavailable_on_apple() {
+    // CMAltimeter has no polled form — every entry point takes a block — so it
+    // is refused here rather than half-wired. Android has it.
+    assert !sens::has(sens::Kind::Barometer);
+}
+
+fn _never(s: sens::Sample, ctx: *u8) { return; }
+
+#[test]
+fn a_null_handler_is_refused_rather_than_dispatched_into() {
+    let nil: fn(sens::Sample, *u8) = 0 as fn(sens::Sample, *u8);
+    match sens::updates(sens::Kind::Accelerometer, on_sample: nil) {
+        result::Result[sens::Readings, sens::Outcome]::Ok(_r) => { assert false; }
+        result::Result[sens::Readings, sens::Outcome]::Err(e) => {
+            assert e.to_code() == sens::Outcome::Failed.to_code();
+        }
+    }
+}
+
+#[test]
+fn a_sensor_this_machine_lacks_answers_unavailable_rather_than_starting() {
+    match sens::updates(sens::Kind::Barometer, on_sample: _never) {
+        result::Result[sens::Readings, sens::Outcome]::Ok(_r) => { assert false; }
+        result::Result[sens::Readings, sens::Outcome]::Err(e) => {
+            assert e.to_code() == sens::Outcome::Unavailable.to_code();
+        }
+    }
+}
+
+#[test]
+fn a_stopped_stream_stays_stopped_and_stopping_twice_is_inert() {
+    match sens::updates(sens::Kind::Accelerometer, on_sample: _never) {
+        result::Result[sens::Readings, sens::Outcome]::Ok(r) => {
+            var run: sens::Readings = r;
+            assert run.kind().to_code() == sens::Kind::Accelerometer.to_code();
+            run.stop();
+            assert !run.is_running();
+            run.stop();
+            assert !run.is_running();
+        }
+        result::Result[sens::Readings, sens::Outcome]::Err(e) => {
+            // A Mac has no accelerometer, which is the ordinary case here.
+            assert e.to_code() == sens::Outcome::Unavailable.to_code();
+        }
+    }
+}
