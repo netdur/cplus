@@ -80,8 +80,7 @@ fn perm_word(s: permissions::State) -> str {
 fn refresh() {
     set_label(PERM_KEY, perm_word(permissions::state(of: permissions::NOTIFICATIONS)));
     var ids: vec::Vec[str] = vec::new::[str]();
-    let _p: notifications::Outcome =
-        notifications::pending({ #addr_of(ids) as *vec::Vec[str] });
+    let _p: notifications::Outcome = notifications::pending(ids);
     let n: usize = ids.count();
     set_label(PENDING_KEY, text::from_str("pending: ${n}").view());
     return;

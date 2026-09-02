@@ -48,7 +48,7 @@ would work once and silently never change the value again.
 ## `get`
 
 ```cplus
-fn get(key: str, into: *text::Text, service: str = "") -> Outcome
+fn get(key: str, ref into: text::Text, service: str = "") -> Outcome
 ```
 
 Read the item under `key` into `into`, replacing its contents.

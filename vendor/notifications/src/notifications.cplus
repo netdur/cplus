@@ -322,9 +322,8 @@ fn clear_shown() -> Outcome {
 // no listing API at all — so the record is kept here and persisted, and it is
 // the only answer that can be given on both. It goes stale in one direction
 // only: an entry may survive a notification the system already delivered.
-fn pending(out: *vec::Vec[str]) -> Outcome {
-    if out.is_null() { return Outcome::InvalidInput; }
-    return Outcome::from_code({ cplus_notifications_pending_v1({ out as *u8 }) });
+fn pending(ref out: vec::Vec[str]) -> Outcome {
+    return Outcome::from_code({ cplus_notifications_pending_v1({ #addr_of(out) as *u8 }) });
 }
 
 // ---- actions -------------------------------------------------------------------

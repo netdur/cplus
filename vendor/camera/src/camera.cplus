@@ -648,9 +648,9 @@ impl Camera {
     // The device this session actually opened — the platform's own identifier,
     // which is what to store if an app wants to reopen the same camera later.
     // Empty when the backend will not say.
-    fn device(this, into: *text::Text) -> Outcome {
+    fn device(this, ref into: text::Text) -> Outcome {
         if this._h.is_null() { return Outcome::Failed; }
-        return Outcome::from_code({ _c_device(this._h, into) });
+        return Outcome::from_code({ _c_device(this._h, #addr_of(into)) });
     }
 
     // THE FRAME SIZE THE PLATFORM SETTLED ON. `Size::any()` before the session

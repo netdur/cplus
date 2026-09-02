@@ -112,12 +112,16 @@ fn set(key: str, to: str, service: str = "") -> Outcome {
 // guideline's own error model says the same thing from the other side: a
 // value-plus-reason is a `Result`, and this is a value plus five reasons.
 //
-// `out` is left UNTOUCHED on anything but `Ok`, so a caller that ignores the
+// `into` is left UNTOUCHED on anything but `Ok`, so a caller that ignores the
 // outcome reads whatever it put there rather than an empty string that looks
 // like a stored value.
-fn get(key: str, into: *text::Text, service: str = "") -> Outcome {
+//
+// `ref`, NOT `*text::Text`. The pointer form was the C seam leaking into the
+// surface — this page's own rule is that public APIs take `Text`, and that the
+// bridging is hidden inside the method. It cost every call site an `#addr_of`,
+// and it cost this function a null check that a `ref` makes unrepresentable.
+fn get(key: str, ref into: text::Text, service: str = "") -> Outcome {
     if #str_len(key) == (0 as usize) { return Outcome::Failed; }
-    if { into as *u8 } == (0 as *u8) { return Outcome::Failed; }
     var buf: [u8; 4096] = #zero::[[u8; 4096]]();
     let p: *u8 = { #addr_of(buf) as *u8 };
     // The backend answers _C_FAILED rather than a short count when the item does
@@ -127,7 +131,7 @@ fn get(key: str, into: *text::Text, service: str = "") -> Outcome {
                         p, MAX_VALUE_BYTES);
     // Negative is a status code; zero or more is a byte count.
     if n < (0 as i64) { return _from_code({ n as i32 }); }
-    { *into = text::from_str({ #str_from_raw_parts(p, { n as usize }) }) };
+    into = text::from_str({ #str_from_raw_parts(p, { n as usize }) });
     return Outcome::Ok;
 }
 
@@ -247,13 +251,13 @@ fn an_empty_key_is_refused_before_it_reaches_the_platform() {
     assert remove("") == Outcome::Failed;
     assert !contains("");
     var out: text::Text = text::new();
-    assert get("", #addr_of(out)) == Outcome::Failed;
+    assert get("", into: out) == Outcome::Failed;
 }
 
-#[test]
-fn a_null_out_pointer_is_refused_rather_than_written_through() {
-    assert get("k", 0 as *text::Text) == Outcome::Failed;
-}
+// `a_null_out_pointer_is_refused_rather_than_written_through` was here and is
+// DELETED, not moved: `get` takes `ref into` now, and a `ref` cannot be null.
+// The test guarded a state the type system no longer admits, so keeping it
+// would mean keeping the pointer that made it possible.
 
 #[test]
 fn a_value_over_the_limit_is_refused_at_the_write() {

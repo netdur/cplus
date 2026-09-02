@@ -27,7 +27,7 @@ import "stdlib/text" as text;
 let _s: securestore::Outcome = securestore::set("token", to: session_token);
 
 var token: text::Text = text::new();
-match securestore::get("token", into: #addr_of(token)) {
+match securestore::get("token", into: token) {
     securestore::Outcome::Ok       => { /* token.view() */ }
     securestore::Outcome::NotFound => { /* first run */ }
     securestore::Outcome::Denied   => { }

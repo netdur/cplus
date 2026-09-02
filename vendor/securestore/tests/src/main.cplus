@@ -90,7 +90,7 @@ fn word(o: ss::Outcome) -> str {
 
 fn read(key: str) -> text::Text {
     var t: text::Text = text::new();
-    let _o: ss::Outcome = ss::get(key, into: #addr_of(t), service: SERVICE);
+    let _o: ss::Outcome = ss::get(key, into: t, service: SERVICE);
     return t;
 }
 
@@ -127,7 +127,7 @@ export extern fn securestore_tests_main() -> i32 {
         say("       usable entitlement (simulator: __TEXT,__entitlements section).");
         say("       Storage checks skipped; degradation checked instead.");
         check("get degrades to the same answer, not a crash",
-              ss::get("probe", into: #addr_of(MISS), service: SERVICE) != ss::Outcome::Ok);
+              ss::get("probe", into: MISS, service: SERVICE) != ss::Outcome::Ok);
         check("contains answers false rather than hanging",
               !ss::contains("probe", service: SERVICE));
         check("remove degrades", ss::remove("probe", service: SERVICE) != ss::Outcome::Ok);
@@ -154,7 +154,7 @@ export extern fn securestore_tests_main() -> i32 {
 
     // Absent is NotFound and not a failure — the state a first launch is in.
     var miss: text::Text = text::new();
-    let g0: ss::Outcome = ss::get("never-written", into: #addr_of(miss), service: SERVICE);
+    let g0: ss::Outcome = ss::get("never-written", into: miss, service: SERVICE);
     check("a missing key reads NotFound — got ${word(g0)}", g0 == ss::Outcome::NotFound);
     check("a missing key leaves `out` untouched", { miss.count() } == (0 as usize));
 
