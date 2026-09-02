@@ -1,0 +1,1429 @@
+// camera — the device's cameras: enumerate, preview, capture a still.
+//
+//     match camera::open(facing: camera::Facing::Back) {
+//         result::Result::Ok(cam) => {
+//             b.add(cam.preview(key: "live").grow(1.0));   // an ordinary node
+//             let _ = cam.capture(on_photo: got_photo);    // JPEG bytes, later
+//         }
+//         result::Result::Err(why) => { ... }
+//     }
+//
+//     fn got_photo(jpeg: u8[], ctx: *u8) { ... }
+//
+// The arms need no type arguments, and `preview`/`capture`/`is_open` BORROW —
+// so they work on `cam` directly, without the `var` a `ref this` receiver would
+// have forced on every caller of a `match`.
+//
+// ---- the preview is a facet node, through the seam facet already has --------
+//
+// `preview` returns a `facet::Node` built with `adopt_native_with`, the FACTORY
+// escape hatch: the platform view is created at mount time, once per mount,
+// and the previous one released first. That is the right form rather than
+// `adopt_native` for exactly the reason facet's own comment gives — a capture
+// preview registers itself with a session, and holding two live while one is
+// being built means both are listening.
+//
+// So there is NO new ledger element and no `tools/gen_contract.py` change. A
+// camera preview is an ordinary node that happens to be filled by this package.
+//
+// ---- permission is the caller's to ask for ---------------------------------
+//
+// `open` REPORTS `Denied`; it never prompts. Prompting is asynchronous and
+// making the one synchronous verb in this package able to put a dialog on
+// screen would make every caller asynchronous for the sake of the first run:
+//
+//     permissions::request(permissions::CAMERA, on_answer, ctx);   // then open
+//
+// The check is done here anyway, before touching the platform, because the
+// error a camera API gives you for "no permission" is not the same on the two
+// platforms and is occasionally just a session that never delivers a frame.
+//
+// ---- what it is not --------------------------------------------------------
+//
+// NOT a video recorder in v1. Movie capture is a second output, a file lifetime
+// and a permission (microphone) that stills do not need; it is a verb to add,
+// not a reason to widen this one.
+//
+// NOT a frame pipeline. There is no per-frame callback, because handing a
+// caller raw sample buffers at 30Hz across this seam is a different package
+// with different lifetime rules. Preview draws itself; `capture` answers bytes.
+
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "flex_layout/flex_layout" as flex;
+import "permissions/permissions" as perm;
+
+// Which way the lens points.
+//
+// TWO, not a device list, and that is a deliberate narrowing. "Back" and
+// "front" is what an application means and what both platforms answer well;
+// a phone with three back lenses presents them as one logical device that
+// switches for you, and enumerating physical lenses would make every caller
+// carry a device-picker it did not want.
+enum Facing {
+    Back,
+    Front,
+    // A camera that is neither: a USB webcam on a desktop, a plugged-in camera
+    // on Android. Apple and Android both report this position; Windows and V4L2
+    // have no concept of facing at all and address cameras by id or path, which
+    // is what `Request::device` is for.
+    External,
+    // THE PLATFORM WILL NOT SAY. Only ever comes OUT of `Camera::facing()`;
+    // requesting it is the same as requesting `Back`.
+    //
+    // Measured on macOS: a MacBook's built-in FaceTime camera reports
+    // `AVCaptureDevicePosition.unspecified`, so there is no honest way to call
+    // it front or back. Reporting the REQUEST back would be worse — it is
+    // exactly the lie this whole type exists to prevent.
+    Unspecified,
+}
+
+impl Facing {
+    fn to_code(this) -> i32 {
+        return match this {
+            Facing::Back     => { 0 as i32 },
+            Facing::Front    => { 1 as i32 },
+            Facing::External => { 2 as i32 },
+            Facing::Unspecified => { 3 as i32 },
+        };
+    }
+
+    fn from_code(c: i32) -> Facing {
+        if c == (1 as i32) { return Facing::Front; }
+        if c == (2 as i32) { return Facing::External; }
+        if c == (3 as i32) { return Facing::Unspecified; }
+        return Facing::Back;
+    }
+}
+
+// What a call answered.
+//
+// `Unsupported` and `Denied` are separate for the reason permissions gives at
+// length: "there is no camera here" and "the person said no" call for opposite
+// responses, and an app that could not tell them apart would show a
+// grant-access prompt on a machine with no lens.
+enum Outcome {
+    Ok,
+    // Camera permission is not granted. Ask with `permissions::request`.
+    Denied,
+    // No camera on this device. The iOS SIMULATOR is the case that matters:
+    // it enumerates zero capture devices, always, and that is not a bug to
+    // work around. A Mac without a built-in or attached camera is the other.
+    Unsupported,
+    // A camera is here but another client holds it.
+    Busy,
+    // Something else went wrong. The platform's own code is lost here, the
+    // same judgement securestore makes: a caller cannot act on one AVFoundation
+    // error differently from another, and leaking them would make every
+    // consumer platform-specific to read.
+    Failed,
+}
+
+const _C_OK: i32 = 0 as i32;
+const _C_DENIED: i32 = 1 as i32;
+const _C_UNSUPPORTED: i32 = 2 as i32;
+const _C_BUSY: i32 = 3 as i32;
+const _C_FAILED: i32 = 4 as i32;
+
+impl Outcome {
+    fn to_code(this) -> i32 {
+        return match this {
+            Outcome::Ok          => { _C_OK },
+            Outcome::Denied      => { _C_DENIED },
+            Outcome::Unsupported => { _C_UNSUPPORTED },
+            Outcome::Busy        => { _C_BUSY },
+            Outcome::Failed      => { _C_FAILED },
+        };
+    }
+
+    // An unknown code is `Failed`, never `Ok`. A backend that grows a return
+    // value this build does not know about must not have it read as success.
+    //
+    // Paired with `to_code` rather than left as a loose `outcome_from_code`:
+    // one round trip should read as one pair. `permissions::State::from_code`
+    // is the same correction, made for the same reason.
+    fn from_code(c: i32) -> Outcome {
+        if c == _C_OK { return Outcome::Ok; }
+        if c == _C_DENIED { return Outcome::Denied; }
+        if c == _C_UNSUPPORTED { return Outcome::Unsupported; }
+        if c == _C_BUSY { return Outcome::Busy; }
+        return Outcome::Failed;
+    }
+}
+
+// How many capture devices this process can see, across both facings.
+//
+// Needs no permission on either platform, which is what makes it usable for
+// "should this screen exist at all" before any prompt.
+fn count() -> usize {
+    let n: i64 = { _c_count() };
+    if n <= (0 as i64) { return 0 as usize; }
+    return n as usize;
+}
+
+// Is there a camera pointing this way?
+//
+// A DESKTOP CAMERA ANSWERS BOTH. macOS reports its built-in camera's position
+// as "unspecified" — there is no front/back distinction on a machine with one
+// lens above the screen — so this answers true for either facing rather than
+// false for both. Measured: `playground/cameraprobe` on a MacBook reports
+// `count() == 1` with `has(Back)` and `has(Front)` both true, and `open`
+// succeeds for either. The alternative reads worse: `has` saying no on a
+// machine where `open` works.
+fn has(facing: Facing) -> bool {
+    return { _c_has(facing.to_code()) } != (0 as i32);
+}
+
+// Permission, without the platform's own vocabulary.
+//
+// `Limited` counts as granted: no platform has a partial camera grant today,
+// and if one appears, some access is access — the alternative is refusing to
+// open a camera the person has already allowed.
+fn _permitted() -> Outcome {
+    return match perm::state(perm::CAMERA) {
+        perm::State::Granted     => { Outcome::Ok },
+        perm::State::Limited     => { Outcome::Ok },
+        perm::State::Denied      => { Outcome::Denied },
+        perm::State::Blocked     => { Outcome::Denied },
+        // Unknown means never asked. Not a refusal — let the platform's own
+        // open decide, because on macOS opening IS what raises the first
+        // prompt and pre-empting it here would make the camera unreachable.
+        perm::State::Unknown     => { Outcome::Ok },
+        perm::State::Unsupported => { Outcome::Ok },
+    };
+}
+
+// One video frame, borrowed for the duration of the callback.
+//
+// LUMA ONLY, and that is the design decision worth arguing with. Both platforms
+// deliver 4:2:0 planar YUV natively — `420YpCbCr8BiPlanar` on Apple,
+// `YUV_420_888` on Android — and the Y plane has an IDENTICAL layout on both:
+// one byte per pixel, `stride` bytes per row. So this is the one surface that
+// needs no conversion anywhere.
+//
+// Handing back RGBA would mean a full colour conversion per frame on at least
+// one platform, at 30Hz, for callers that mostly do not want it: motion,
+// exposure, barcode and face work all read luminance. When a caller genuinely
+// needs colour, the honest answer is a second verb that says what it costs —
+// not a default that quietly spends a conversion on everyone.
+//
+// `stride` IS NOT `width`. Rows are padded for alignment, and a caller that
+// walks `width * height` bytes reads a sheared image on most hardware; index
+// with `y * stride + x`.
+struct Frame {
+    opaque _luma: *u8,
+    _width: i32,
+    _height: i32,
+    _stride: i32,
+    opaque _native: *u8,
+}
+
+impl Frame {
+    fn width(this) -> i32 { return this._width; }
+    fn height(this) -> i32 { return this._height; }
+
+    // Bytes per row, always >= width. See the note above.
+    fn stride(this) -> i32 { return this._stride; }
+
+    // A PACKED FRAME IS NOT EMPTY. A BGRA buffer has no luma plane, so `_luma`
+    // is null while `_native` carries the whole image — and this used to read
+    // that as empty. The cost was a day: `Request::pixel = Bgra32` was honoured
+    // end to end, every handler opened with `if frame.is_empty() { return; }`,
+    // and the honoured request looked exactly like an ignored one. See
+    // bugs/closed/camera-pixel-format-request-never-reaches-the-capture-output.md.
+    fn is_empty(this) -> bool {
+        if this._width <= (0 as i32) || this._height <= (0 as i32) { return true; }
+        return this._luma.is_null() && this._native.is_null();
+    }
+
+    // THE PLATFORM'S OWN BUFFER, or 0 where there is not one.
+    //
+    // The escape hatch, and the same one facet blesses with `core::native` for
+    // a view: portable code reads `luma()`, and code that already knows which
+    // platform it is on can take the buffer whole.
+    //
+    // It exists because the alternative is a copy. `CVPixelBuffer` on Apple is
+    // what `MLFeatureValue.featureValueWithPixelBuffer:` wants, so a camera
+    // frame reaches CoreML without being touched — no conversion, no
+    // allocation, no bridge. Rebuilding one from `luma()` would cost a copy per
+    // frame to hand back the object the platform already had.
+    //
+    // VALID FOR THIS CALL ONLY, like `luma()`. The platform reclaims it when
+    // the handler returns, and on Apple it is unlocked the moment this returns.
+    //
+    //   macOS/iOS   a `CVPixelBufferRef`, in the format the session settled on:
+    //               420 biplanar by default, packed BGRA when the request asked
+    //               for `Bgra32`. `Camera::pixel_format()` says which.
+    //   Android     0 — the frame arrives as a `java.nio.ByteBuffer` over one
+    //               plane, and there is no single native object to hand back
+    fn native(this) -> *u8 { return this._native; }
+
+    // The Y plane: `stride * height` bytes, valid for THIS CALL ONLY. The
+    // platform reclaims the buffer when the handler returns, so copy anything
+    // that outlives it.
+    //
+    // EMPTY FOR A PACKED FRAME. A `Bgra32` session delivers no luminance plane;
+    // the image is in `native()`. Check `Camera::pixel_format()` — or this
+    // slice's own emptiness — before reading pixels out of it.
+    fn luma(this) -> u8[] {
+        if this._luma.is_null() || this.is_empty() {
+            return { #slice_from_raw_parts(0 as *u8, 0 as usize) };
+        }
+        let n: usize = { (this._stride as usize) * (this._height as usize) };
+        return { #slice_from_raw_parts(this._luma, n) };
+    }
+}
+
+// A three-state wish for a feature that is on, off, or the platform's choice.
+//
+// `Auto` is not "on": it means this package does not touch the setting, so the
+// device keeps whatever it or the OS decided. That is a different outcome from
+// `On` on hardware that supports the feature but has it disabled by default.
+enum Wish {
+    Auto,
+    On,
+    Off,
+}
+
+impl Wish {
+    fn to_code(this) -> i32 {
+        return match this {
+            Wish::Auto => { 0 as i32 },
+            Wish::On   => { 1 as i32 },
+            Wish::Off  => { 2 as i32 },
+        };
+    }
+}
+
+// What the frame buffers hold.
+//
+// `Luma8` is the only one this package delivers today — see `Frame`. The others
+// are named because the request has to be able to SAY them before a backend can
+// answer them, and a caller that asks for one it cannot get should learn that
+// from `Camera::pixel_format()` rather than from a silently wrong image.
+enum PixelFormat {
+    Any,
+    // 8-bit luminance, one byte per pixel. Plane 0 of 4:2:0 on every platform.
+    Luma8,
+    Bgra32,
+    Depth16,
+}
+
+impl PixelFormat {
+    fn to_code(this) -> i32 {
+        return match this {
+            PixelFormat::Any     => { 0 as i32 },
+            PixelFormat::Luma8   => { 1 as i32 },
+            PixelFormat::Bgra32  => { 2 as i32 },
+            PixelFormat::Depth16 => { 3 as i32 },
+        };
+    }
+
+    // An unknown code is `Any` — "the backend will not say" — never a guess at
+    // a concrete format a caller might then read pixels by.
+    fn from_code(c: i32) -> PixelFormat {
+        if c == (1 as i32) { return PixelFormat::Luma8; }
+        if c == (2 as i32) { return PixelFormat::Bgra32; }
+        if c == (3 as i32) { return PixelFormat::Depth16; }
+        return PixelFormat::Any;
+    }
+}
+
+enum ColorSpace {
+    Any,
+    Srgb,
+    P3,
+    Rec709,
+}
+
+impl ColorSpace {
+    fn to_code(this) -> i32 {
+        return match this {
+            ColorSpace::Any    => { 0 as i32 },
+            ColorSpace::Srgb   => { 1 as i32 },
+            ColorSpace::P3     => { 2 as i32 },
+            ColorSpace::Rec709 => { 3 as i32 },
+        };
+    }
+}
+
+// How a continuously-adjusted control behaves. The MODES are portable; the
+// underlying VALUES are not — an exposure duration in seconds, an ISO number
+// and a white-balance temperature mean different things on different sensors
+// and have different valid ranges on each. So this package sets modes and does
+// not pretend to a portable scale.
+enum Mode {
+    // The device adjusts continuously. Every platform's default.
+    Auto,
+    // Adjust once, then hold. `AVCaptureFocusModeAutoFocus` and its siblings.
+    Once,
+    // Stop adjusting and hold whatever is current.
+    Locked,
+}
+
+impl Mode {
+    fn to_code(this) -> i32 {
+        return match this {
+            Mode::Auto   => { 0 as i32 },
+            Mode::Once   => { 1 as i32 },
+            Mode::Locked => { 2 as i32 },
+        };
+    }
+}
+
+// A size in pixels.
+//
+// `Size::any()` is the zero size and means "you choose" — it is not a valid
+// request for a 0x0 image, and no platform can answer one.
+struct Size {
+    width: i32,
+    height: i32,
+}
+
+impl Size {
+    fn new(width: i32, height: i32) -> Size {
+        return Size { width: width, height: height };
+    }
+
+    // No preference. The platform picks, which is usually what you want.
+    fn any() -> Size { return Size { width: 0, height: 0 }; }
+
+    fn is_any(this) -> bool {
+        return this.width <= (0 as i32) || this.height <= (0 as i32);
+    }
+}
+
+// What you ASK a camera for.
+//
+// EVERY FIELD IS A WISH. Called `Request` and not `Config` for exactly that
+// reason: a config implies the values stick, and none of these do. A camera
+// answers with the nearest thing it can actually do, and what you got is read
+// back from `Camera` — `facing()`, `frame_size()` and friends — not from here.
+//
+// The two ways this bites, both real:
+//
+//   * ASKING FOR `Back` ON A LAPTOP GIVES YOU THE FRONT CAMERA, because there
+//     is no back one and refusing would be useless. `Camera::facing()` is how
+//     you find out, and a UI that mirrors the preview for a front camera has
+//     to ask rather than assume.
+//   * A PHONE WITH FIVE LENSES picks one for you. Three back cameras present
+//     as one logical device that switches by zoom; two front ones likewise.
+//
+// ---- OPEN-TIME ONLY -------------------------------------------------------
+//
+// Everything here is fixed for the life of the session: changing one means
+// tearing the capture session down and building another. The controls that
+// change WHILE STREAMING — zoom, torch, focus, exposure, white balance — are
+// verbs on `Camera` instead, because putting them here would imply a session
+// rebuild to move the zoom.
+//
+// ---- WHAT IS ACTUALLY HONOURED --------------------------------------------
+//
+// Each field carries its own status line. They are filled in by MEASUREMENT,
+// one platform at a time, and a field with no line for a platform has not been
+// tested there — which is not the same as "ignored", and must not be read as
+// either a promise or a denial.
+//
+// macOS is done. iOS, Android, Windows and Linux are not.
+struct Request {
+    // A platform device identifier, or "" for "any".
+    //
+    // The escape hatch for machines where facing means nothing: a desktop with
+    // three USB cameras, a V4L2 `/dev/videoN` path, a Windows device id. When
+    // set, it wins over `facing`.
+    //
+    //   macOS   HONOURED — matched against AVCaptureDevice.uniqueID. An id
+    //           that does not resolve FAILS with `Unsupported`; it does NOT
+    //           fall back to `facing`. Facing is a preference and substituting
+    //           is helpful; an id is a demand, and quietly opening a different
+    //           camera than the one named is the lie this type exists to stop.
+    device: str,
+
+    // Which way the lens points. Ignored when `device` is set.
+    //
+    //   macOS   PARTIAL, and the partiality is the whole lesson. A MacBook's
+    //           built-in camera reports `AVCaptureDevicePosition.unspecified`,
+    //           so `Back`, `Front` and `External` ALL resolve to the same
+    //           device and `Camera::facing()` answers `Unspecified` for every
+    //           one of them. Measured. A UI that mirrors the preview for a
+    //           front camera cannot learn what it needs here on a Mac.
+    facing: Facing,
+
+    // The preferred size for `on_frame` delivery. `Size::any()` lets the
+    // platform choose, which is the sane default — a frame handler doing work
+    // per pixel usually wants SMALL, and the platform's default is closer to
+    // that than the sensor's native size.
+    //
+    //   macOS   HONOURED — nearest supported `AVCaptureDeviceFormat` by area,
+    //           via `setActiveFormat:`. Read back with `frame_size()`.
+    //           Measured on a FaceTime HD camera: 320x240 -> 640x480 (nearest
+    //           available), 1920x1080 -> exact, unset -> 1920x1080.
+    frames: Size,
+
+    // Frames per second. 0 means "any".
+    //
+    //   macOS   HONOURED, within the active format's published range, via
+    //           `setActiveVideoMin/MaxFrameDuration:`. A rate outside it is
+    //           DROPPED rather than forced — AVFoundation raises rather than
+    //           failing, and a raise is a crash. Measured: 15 -> 15, 999 -> 30
+    //           (the default, unchanged).
+    //
+    //           IT IS NOT SET ONCE, and that cost three wrong answers. Any
+    //           later change to the session — `startRunning`, attaching a
+    //           preview layer, adding the frame output — re-evaluates the
+    //           session preset, reconfigures the device and resets the
+    //           duration. The backend therefore RE-ASSERTS the requested rate
+    //           after each of those. Measured end to end: a demo asking for
+    //           15fps read 15 after `open` and 30 the instant its preview
+    //           mounted. A harness that never showed a preview never saw it.
+    frame_rate: i32,
+
+    // What the frame buffers should hold.
+    //
+    //   macOS   HONOURED for `Bgra32`, measured end to end 2026-09-01: frames
+    //           arrive as packed `kCVPixelFormatType_32BGRA`, with the preview
+    //           mounted, and stay that way. `Any` and `Luma8` deliver planar
+    //           420 (see `Frame`); `Depth16` is accepted and ignored. Read
+    //           reality back with `Camera::pixel_format()`.
+    //
+    //           A PACKED FRAME HAS NO LUMA PLANE: `Frame::luma()` is empty and
+    //           the image is `Frame::native()`, the CVPixelBuffer itself. The
+    //           first "never reaches the output" verdict on this field was
+    //           actually `Frame::is_empty()` calling every honoured BGRA frame
+    //           empty — see the closed bug report named below `is_empty`.
+    pixel: PixelFormat,
+
+    //   macOS   NOT IMPLEMENTED — accepted and ignored.
+    color: ColorSpace,
+
+    //   macOS   NOT IMPLEMENTED — accepted and ignored.
+    hdr: Wish,
+
+    //   macOS   NOT IMPLEMENTED — accepted and ignored.
+    stabilization: Wish,
+
+    //   macOS   NOT IMPLEMENTED — accepted and ignored.
+    depth: Wish,
+
+    // High frame-rate capture (slow motion). Android calls it a constrained
+    // high-speed session; Apple exposes it as a device format.
+    //
+    //   macOS   NOT IMPLEMENTED — accepted and ignored.
+    high_speed: Wish,
+
+    // How many frame buffers the pipeline holds. 0 means "platform default".
+    //
+    // Named because V4L2 and Media Foundation both make it a first-class
+    // decision. Apple does not expose it at all, which is a finding rather
+    // than an omission.
+    //
+    //   macOS   NOT APPLICABLE — AVFoundation does not expose a buffer count.
+    //           `alwaysDiscardsLateVideoFrames` is the only related control and
+    //           it is a boolean, not a depth. A finding, not an omission.
+    buffers: i32,
+}
+
+impl Request {
+    fn new(device: str = "",
+           facing: Facing = Facing::Back,
+           frames: Size = Size::any(),
+           frame_rate: i32 = 0,
+           pixel: PixelFormat = PixelFormat::Any,
+           color: ColorSpace = ColorSpace::Any,
+           hdr: Wish = Wish::Auto,
+           stabilization: Wish = Wish::Auto,
+           depth: Wish = Wish::Auto,
+           high_speed: Wish = Wish::Auto,
+           buffers: i32 = 0) -> Request {
+        return Request {
+            device: device,
+            facing: facing,
+            frames: frames,
+            frame_rate: frame_rate,
+            pixel: pixel,
+            color: color,
+            hdr: hdr,
+            stabilization: stabilization,
+            depth: depth,
+            high_speed: high_speed,
+            buffers: buffers,
+        };
+    }
+}
+
+// The request as the seam carries it: plain scalars, and the one `str` split
+// into a pointer and a length the way every other `_c_*` in this tree splits
+// them. Both halves are C+, so the layout agrees by construction.
+#[repr(C)]
+struct _CRequest {
+    opaque device: *u8,
+    device_len: usize,
+    facing: i32,
+    width: i32,
+    height: i32,
+    frame_rate: i32,
+    pixel: i32,
+    color: i32,
+    hdr: i32,
+    stabilization: i32,
+    depth: i32,
+    high_speed: i32,
+    buffers: i32,
+}
+
+fn _c_request_of(r: Request) -> _CRequest {
+    return _CRequest {
+        device: { #str_ptr(r.device) },
+        device_len: { #str_len(r.device) },
+        facing: r.facing.to_code(),
+        width: r.frames.width,
+        height: r.frames.height,
+        frame_rate: r.frame_rate,
+        pixel: r.pixel.to_code(),
+        color: r.color.to_code(),
+        hdr: r.hdr.to_code(),
+        stabilization: r.stabilization.to_code(),
+        depth: r.depth.to_code(),
+        high_speed: r.high_speed.to_code(),
+        buffers: r.buffers,
+    };
+}
+
+// A live capture session.
+//
+// OWNED: `drop` closes it, so a `Camera` that goes out of scope releases the
+// device and turns the recording light off. That is not tidiness — a camera
+// left open is visible to the person using the machine, and a leak here is the
+// one kind of leak a user can see.
+struct Camera {
+    opaque _h: *u8,
+}
+
+// Open the camera facing this way.
+//
+// SYNCHRONOUS, and it does not prompt — see the header. On macOS the FIRST
+// open is what raises the system's own permission dialog, which is why an
+// `Unknown` permission state is passed through rather than refused here.
+fn open(request: Request = Request::new()) -> result::Result[Camera, Outcome] {
+    let p: Outcome = _permitted();
+    if p.to_code() != _C_OK {
+        return result::Result[Camera, Outcome]::Err(p);
+    }
+    var creq: _CRequest = _c_request_of(request);
+    let h: *u8 = { _c_open(#addr_of(creq)) };
+    if h.is_null() {
+        return result::Result[Camera, Outcome]::Err(Outcome::from_code({ _c_last_error() }));
+    }
+    return result::Result[Camera, Outcome]::Ok(Camera { _h: h });
+}
+
+impl Camera {
+    // READ METHODS TAKE `this`, NOT `ref this`, and that is not a detail.
+    //
+    // A `ref this` receiver needs a MUTABLE binding, and a `match` binding is
+    // frozen — so `open` returning a `Result` forced every caller to write
+    // `var live: Camera = c;` inside the arm before it could do anything. A
+    // by-value `this` BORROWS (it does not consume; only `take` does), so these
+    // three work directly on the binding the match hands over. Only the two
+    // verbs that actually write `_h` ask for `ref`.
+    fn is_open(this) -> bool {
+        return this._h.is_not_null();
+    }
+
+    // WHICH WAY THE LENS YOU GOT ACTUALLY POINTS, which is not always what you
+    // asked for. A laptop has one camera and reports it as front; asking for
+    // `Back` there succeeds and answers `Front` here.
+    fn facing(this) -> Facing {
+        if this._h.is_null() { return Facing::Unspecified; }
+        return Facing::from_code({ _c_actual_facing(this._h) });
+    }
+
+    // Frames per second the device settled on. 0 when it will not say.
+    fn frame_rate(this) -> i32 {
+        if this._h.is_null() { return 0; }
+        return { _c_frame_rate(this._h) };
+    }
+
+    // The device this session actually opened — the platform's own identifier,
+    // which is what to store if an app wants to reopen the same camera later.
+    // Empty when the backend will not say.
+    fn device(this, into: *text::Text) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        return Outcome::from_code({ _c_device(this._h, into) });
+    }
+
+    // THE FRAME SIZE THE PLATFORM SETTLED ON. `Size::any()` before the session
+    // has one — on a closed camera, or a backend that cannot say until frames
+    // flow. `Frame` carries its own width and height, so a handler never has to
+    // trust this; it is for laying out a UI before the first frame arrives.
+    fn frame_size(this) -> Size {
+        if this._h.is_null() { return Size::any(); }
+        var w: i32 = 0;
+        var h: i32 = 0;
+        { _c_frame_size(this._h, #addr_of(w), #addr_of(h)) };
+        return Size::new(w, h);
+    }
+
+    // WHAT THE FRAMES ACTUALLY HOLD — read back from the platform, never echoed
+    // from the request, for the same reason `facing()` and `frame_size()` read
+    // the device. `Any` before `on_frame` has armed the stream (there is no
+    // delivery format until there is a delivery) and on a backend that will
+    // not say.
+    //
+    // `Luma8` here means plan for `Frame::luma()`; `Bgra32` means `luma()` is
+    // EMPTY and the image rides in `Frame::native()`.
+    fn pixel_format(this) -> PixelFormat {
+        if this._h.is_null() { return PixelFormat::Any; }
+        return PixelFormat::from_code({ _c_pixel_format(this._h) });
+    }
+
+    // The preview surface, as a node to put in a facet tree.
+    //
+    // The view is built at MOUNT and released on unmount, so this may be called
+    // before the tree is mounted and the node may be mounted more than once.
+    // Size it with the ordinary layout verbs: a preview fills the box it is
+    // given and reports no intrinsic size of its own, which is why no `measure`
+    // is installed — the same choice facet's doc describes for a map view.
+    //
+    // AT MOUNT THE VIEW HAS NO SIZE YET. flex lays out after the walk, so a
+    // caller reading geometry off `core::native` during mount sees zeros.
+    fn preview(this, key: str = "") -> core::Node {
+        return core::adopt_native_with(_preview_create, this._h, _preview_release, key);
+    }
+
+    // Capture one still. The bytes arrive later, as JPEG.
+    //
+    // ON THE MAIN THREAD. The platform delivers a photo on its own session
+    // queue and both backends hop before calling `on_photo`, because the
+    // overwhelmingly likely next statement is a facet mutation and a package
+    // whose callback lands on a background queue makes that a crash the caller
+    // has to already know about.
+    //
+    // THE HANDLER TAKES A SLICE, not a pointer and a length. `u8[]` carries
+    // both as one value, so there is no way to pass a length that does not
+    // belong to the buffer; `#slice_ptr` and `#slice_len` are there for a
+    // caller that has to hand the bytes to C. Its CONTEXT COMES LAST, which is
+    // the shape that can receive a bound method (`on_photo: this.got_photo`);
+    // a context-first handler cannot, and warns W0825.
+    //
+    // The bytes are borrowed FOR THE DURATION OF THE CALL and freed after it
+    // returns. Copy what you keep. Answering an owned buffer would make every
+    // caller responsible for a free across a seam where forgetting is silent.
+    //
+    // `Ok` here means the request was ACCEPTED, not that a photo exists yet.
+    fn capture(this, on_photo: fn(u8[], *u8), on_photo_ctx: *u8 = 0 as *u8) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        if on_photo.is_null() { return Outcome::Failed; }
+        let slot: *u8 = _remember(this._h, on_photo, on_photo_ctx);
+        if slot.is_null() { return Outcome::Failed; }
+        return Outcome::from_code({ _c_capture(this._h, _deliver, slot) });
+    }
+
+    // Start delivering frames to `on_frame`. `stop_frames` ends it, and so
+    // does `close`.
+    //
+    // ON A BACKGROUND THREAD — the OPPOSITE of `capture`, and the single most
+    // important thing on this page. A preview runs at 30 frames a second, and
+    // hopping every one of them to the main thread would spend the UI thread
+    // on work the UI is not waiting for. So the handler runs off-main: it must
+    // not touch a facet node, and anything it wants to show has to be handed
+    // over deliberately.
+    //
+    // FRAMES ARE DROPPED, not queued, when the handler is slower than the
+    // camera. That is the right failure for live video — a queue would grow
+    // without bound and deliver frames describing a moment that has passed —
+    // but it means a handler cannot assume it sees every frame.
+    fn on_frame(this, on_frame: fn(Frame, *u8), on_frame_ctx: *u8 = 0 as *u8) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        if on_frame.is_null() { return Outcome::Failed; }
+        let slot: *u8 = _remember_frame(this._h, on_frame, on_frame_ctx);
+        if slot.is_null() { return Outcome::Failed; }
+        return Outcome::from_code({ _c_on_frame(this._h, _deliver_frame, slot) });
+    }
+
+    // ---- runtime controls ---------------------------------------------------
+    //
+    // These change WHILE THE SESSION RUNS. That is the whole reason they are
+    // here and not on `Request`: a zoom that needed a session rebuild would
+    // drop frames and blink the preview every time a finger moved.
+    //
+    // Each answers `Unsupported` on a device that cannot do it, which is
+    // different from `Failed` — a caller should hide a torch button rather
+    // than show one that reports an error.
+
+    // Magnification. 1.0 is no zoom; `max_zoom()` is the ceiling.
+    //
+    //   macOS   IMPLEMENTED, but a FaceTime HD camera reports
+    //           `maxAvailableVideoZoomFactor == 1`, so every `set_zoom` on it
+    //           answers `Unsupported`. Ask `max_zoom()` before offering a
+    //           control. Untested on hardware that actually zooms.
+    fn set_zoom(this, factor: f64) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        return Outcome::from_code({ _c_set_zoom(this._h, factor) });
+    }
+
+    fn zoom(this) -> f64 {
+        if this._h.is_null() { return 1.0; }
+        return { _c_zoom(this._h) };
+    }
+
+    // The largest `set_zoom` this device accepts. 1.0 means no zoom at all.
+    fn max_zoom(this) -> f64 {
+        if this._h.is_null() { return 1.0; }
+        return { _c_max_zoom(this._h) };
+    }
+
+    // The lamp, held on — not a photo flash.
+    //
+    //   macOS   IMPLEMENTED; `hasTorch` is false on a Mac, so `Unsupported`.
+    //           Ask `has_torch()` before showing a button. Untested on
+    //           hardware with a lamp.
+    fn set_torch(this, on: bool) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        var v: i32 = 0 as i32;
+        if on { v = 1 as i32; }
+        return Outcome::from_code({ _c_set_torch(this._h, v) });
+    }
+
+    fn has_torch(this) -> bool {
+        if this._h.is_null() { return false; }
+        return { _c_has_torch(this._h) } != (0 as i32);
+    }
+
+    //   macOS   IMPLEMENTED; the FaceTime HD camera supports NO mode of
+    //           this control — not even `Auto` — so every call answers
+    //           `Unsupported`. Measured, all three modes. A fixed webcam
+    //           genuinely has nothing to set.
+    fn set_focus(this, mode: Mode) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        return Outcome::from_code({ _c_set_focus(this._h, mode.to_code()) });
+    }
+
+    //   macOS   IMPLEMENTED; the FaceTime HD camera supports NO mode of
+    //           this control — not even `Auto` — so every call answers
+    //           `Unsupported`. Measured, all three modes. A fixed webcam
+    //           genuinely has nothing to set.
+    fn set_exposure(this, mode: Mode) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        return Outcome::from_code({ _c_set_exposure(this._h, mode.to_code()) });
+    }
+
+    //   macOS   IMPLEMENTED; the FaceTime HD camera supports NO mode of
+    //           this control — not even `Auto` — so every call answers
+    //           `Unsupported`. Measured, all three modes. A fixed webcam
+    //           genuinely has nothing to set.
+    fn set_white_balance(this, mode: Mode) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        return Outcome::from_code({ _c_set_white_balance(this._h, mode.to_code()) });
+    }
+
+    // Stop delivering frames. The preview keeps running.
+    //
+    // A frame already in the handler when this is called still finishes; this
+    // ends the stream, it does not interrupt a call in progress.
+    fn stop_frames(this) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        let c: i32 = { _c_stop_frames(this._h) };
+        _forget_frame(this._h);
+        return Outcome::from_code(c);
+    }
+
+    // Point the session at the other lens.
+    //
+    // THE SESSION SURVIVES — same handle, different device. That matters
+    // because `preview()` captured this handle as its factory context: a
+    // close-and-reopen would leave a mounted preview node pointing at a dead
+    // session, and the fix is not something a caller should have to know.
+    //
+    // The preview keeps running across the switch; the frame stream, if armed,
+    // resumes on the new lens. What CHANGES is anything the new device
+    // negotiates differently — `frame_size()` and `pixel_format()` are worth
+    // re-reading rather than assumed.
+    //
+    // `Unsupported` when there is no camera facing that way. Asking for the
+    // facing you already have is not an error and not a no-op: it re-opens.
+    //
+    //   macOS   swaps the AVCaptureDeviceInput inside one configuration
+    //           block; the device is never torn down
+    //   Android closes the CameraDevice and opens the other id — camera2
+    //           cannot re-point one — keeping the thread, the readers and
+    //           the TextureView, so only the session is rebuilt
+    fn switch_to(this, facing: Facing) -> Outcome {
+        if this._h.is_null() { return Outcome::Failed; }
+        return Outcome::from_code({ _c_switch_to(this._h, facing.to_code()) });
+    }
+
+    // Stop the session and release the device.
+    //
+    // IDEMPOTENT, and `drop` calls it. Explicit because "the light goes off
+    // now" is often the point, and waiting for a scope to end is not always
+    // what a screen transition wants.
+    fn close(ref this) {
+        if this._h.is_null() { return; }
+        let h: *u8 = this._h;
+        this._h = 0 as *u8;
+        // STOP THE STREAM FIRST. Clearing the handler while frames are still
+        // arriving is the one ordering that can call a handler belonging to a
+        // screen that has gone.
+        let _s: i32 = { _c_stop_frames(h) };
+        _forget(h);
+        { _c_close(h) };
+    }
+
+    fn drop(ref this) {
+        this.close();
+    }
+}
+
+// ---- the delivery bridge ------------------------------------------------------
+//
+// The seam hands bytes across as a POINTER AND A LENGTH, the way every other
+// `_c_*` in this tree does — `securestore` splits its `str` arguments the same
+// way, because a fat pointer through a C-ABI declaration is a promise this repo
+// does not make. The public handler takes a slice. Something has to join them,
+// and this is it.
+//
+// A FIXED TABLE rather than a heap record per capture, and the reason is the
+// leak: on Apple the delegate lives as long as the session and each `capture`
+// overwrites the handler it holds, so a per-capture allocation whose photo
+// never arrives would never be freed. A slot keyed by the session handle is
+// overwritten in place instead, and `close` clears it.
+//
+// FOUR, because opening two cameras at once is already unusual and opening four
+// is not a thing hardware does. A fifth `capture` on a fifth live session
+// answers `Failed` rather than silently dropping a handler.
+
+const _SLOTS: usize = 4 as usize;
+
+struct _Handler {
+    opaque session: *u8,
+    on_photo: fn(u8[], *u8),
+    opaque ctx: *u8,
+    // The frame handler shares the slot but not the pair: a caller can stream
+    // frames without ever taking a photo, and stop streaming without losing the
+    // photo handler.
+    on_frame: fn(Frame, *u8),
+    opaque frame_ctx: *u8,
+}
+
+static _HANDLERS: [_Handler; 4] = #zero::[[_Handler; 4]]();
+
+// Claim (or reuse) this session's slot. Answers the slot address, which is what
+// the backend carries back as the context.
+fn _remember(session: *u8, on_photo: fn(u8[], *u8), ctx: *u8) -> *u8 {
+    var i: usize = 0 as usize;
+    while i < _SLOTS {
+        if _HANDLERS[i].session == session {
+            _HANDLERS[i].on_photo = on_photo;
+            _HANDLERS[i].ctx = ctx;
+            return { #addr_of(_HANDLERS[i]) as *u8 };
+        }
+        i = i + (1 as usize);
+    }
+    i = 0 as usize;
+    while i < _SLOTS {
+        if _HANDLERS[i].session.is_null() {
+            _HANDLERS[i].session = session;
+            _HANDLERS[i].on_photo = on_photo;
+            _HANDLERS[i].ctx = ctx;
+            return { #addr_of(_HANDLERS[i]) as *u8 };
+        }
+        i = i + (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+fn _forget(session: *u8) {
+    var i: usize = 0 as usize;
+    while i < _SLOTS {
+        if _HANDLERS[i].session == session {
+            _HANDLERS[i].session = 0 as *u8;
+            _HANDLERS[i].on_photo = 0 as fn(u8[], *u8);
+            _HANDLERS[i].ctx = 0 as *u8;
+            _HANDLERS[i].on_frame = 0 as fn(Frame, *u8);
+            _HANDLERS[i].frame_ctx = 0 as *u8;
+        }
+        i = i + (1 as usize);
+    }
+}
+
+// The frame half of the same slot. Separate from `_remember` because streaming
+// and stills are independent: either can be armed without the other.
+fn _remember_frame(session: *u8, on_frame: fn(Frame, *u8), ctx: *u8) -> *u8 {
+    var i: usize = 0 as usize;
+    while i < _SLOTS {
+        if _HANDLERS[i].session == session {
+            _HANDLERS[i].on_frame = on_frame;
+            _HANDLERS[i].frame_ctx = ctx;
+            return { #addr_of(_HANDLERS[i]) as *u8 };
+        }
+        i = i + (1 as usize);
+    }
+    i = 0 as usize;
+    while i < _SLOTS {
+        if _HANDLERS[i].session.is_null() {
+            _HANDLERS[i].session = session;
+            _HANDLERS[i].on_frame = on_frame;
+            _HANDLERS[i].frame_ctx = ctx;
+            return { #addr_of(_HANDLERS[i]) as *u8 };
+        }
+        i = i + (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// Disarm streaming WITHOUT releasing the slot: a photo handler on the same
+// session must survive `stop_frames`.
+fn _forget_frame(session: *u8) {
+    var i: usize = 0 as usize;
+    while i < _SLOTS {
+        if _HANDLERS[i].session == session {
+            _HANDLERS[i].on_frame = 0 as fn(Frame, *u8);
+            _HANDLERS[i].frame_ctx = 0 as *u8;
+        }
+        i = i + (1 as usize);
+    }
+}
+
+// What the backend calls. `slot` is what `_remember` handed out.
+//
+// A FAILED CAPTURE ARRIVES HERE TOO, as a null pointer and a zero length, and
+// is passed on as an empty slice rather than swallowed: a caller waiting for a
+// shutter needs to know it is not coming, and a callback that sometimes never
+// fires is the worst shape this seam could have.
+// What the backend calls per frame, ON A BACKGROUND THREAD.
+//
+// Reads the handler into a local BEFORE calling it. `stop_frames` and `close`
+// clear the slot from another thread, and a handler read twice could be
+// non-null on the check and null on the call.
+fn _deliver_frame(luma: *u8, width: i32, height: i32, stride: i32, native: *u8, slot: *u8) {
+    if slot.is_null() { return; }
+    let h: *_Handler = slot as *_Handler;
+    let f: fn(Frame, *u8) = { (*h).on_frame };
+    if f.is_null() { return; }
+    f(Frame { _luma: luma, _width: width, _height: height, _stride: stride,
+              _native: native },
+      { (*h).frame_ctx });
+}
+
+fn _deliver(data: *u8, len: usize, slot: *u8) {
+    if slot.is_null() { return; }
+    let h: *_Handler = slot as *_Handler;
+    let f: fn(u8[], *u8) = { (*h).on_photo };
+    if f.is_null() { return; }
+    if data.is_null() || len == (0 as usize) {
+        f({ #slice_from_raw_parts(0 as *u8, 0 as usize) }, { (*h).ctx });
+        return;
+    }
+    f({ #slice_from_raw_parts(data, len) }, { (*h).ctx });
+}
+
+// The factory facet calls at mount: `ctx` is the session handle `preview`
+// paired with the node. Free functions rather than methods because this IS the
+// C-shaped hook facet hands to a backend.
+fn _preview_create(ctx: *u8) -> *u8 {
+    if ctx.is_null() { return 0 as *u8; }
+    return { _c_preview_create(ctx) };
+}
+
+fn _preview_release(v: *u8) {
+    if v.is_null() { return; }
+    { _c_preview_release(v) };
+}
+
+extern fn _c_count() -> i64;
+extern fn _c_has(facing: i32) -> i32;
+extern fn _c_open(req: *_CRequest) -> *u8;
+extern fn _c_actual_facing(h: *u8) -> i32;
+extern fn _c_frame_rate(h: *u8) -> i32;
+extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32);
+extern fn _c_pixel_format(h: *u8) -> i32;
+extern fn _c_device(h: *u8, into: *text::Text) -> i32;
+extern fn _c_set_zoom(h: *u8, factor: f64) -> i32;
+extern fn _c_zoom(h: *u8) -> f64;
+extern fn _c_max_zoom(h: *u8) -> f64;
+extern fn _c_set_torch(h: *u8, on: i32) -> i32;
+extern fn _c_has_torch(h: *u8) -> i32;
+extern fn _c_set_focus(h: *u8, mode: i32) -> i32;
+extern fn _c_set_exposure(h: *u8, mode: i32) -> i32;
+extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32;
+extern fn _c_last_error() -> i32;
+extern fn _c_close(h: *u8);
+extern fn _c_switch_to(h: *u8, facing: i32) -> i32;
+extern fn _c_preview_create(h: *u8) -> *u8;
+extern fn _c_preview_release(v: *u8);
+extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32;
+extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32;
+extern fn _c_stop_frames(h: *u8) -> i32;
+
+// ---- tests -------------------------------------------------------------------
+//
+// NOTHING HERE OPENS A CAMERA, and that is the securestore rule for the same
+// reason. `cpc test` builds an unsigned binary and runs it on the developer's
+// own machine: a suite that opened the lens would light the recording indicator
+// on every run, and on macOS the first open raises a system permission dialog.
+// A test suite that can interrupt you with a dialog is one you stop running.
+//
+// The platform round-trips live in probes, run on purpose — see
+// plans/camera.md §4 for what each target can and cannot prove. The short
+// version: the iOS simulator has no camera at all, and the Android emulator's
+// two cameras are synthetic.
+
+#[test]
+fn every_outcome_has_a_distinct_code() {
+    assert Outcome::Ok.to_code() != Outcome::Denied.to_code();
+    assert Outcome::Denied.to_code() != Outcome::Unsupported.to_code();
+    assert Outcome::Unsupported.to_code() != Outcome::Busy.to_code();
+    assert Outcome::Busy.to_code() != Outcome::Failed.to_code();
+    assert Outcome::Ok.to_code() != Outcome::Failed.to_code();
+    return;
+}
+
+#[test]
+fn a_code_round_trips_through_the_seam_form() {
+    assert Outcome::from_code(Outcome::Ok.to_code()).to_code() == Outcome::Ok.to_code();
+    assert Outcome::from_code(Outcome::Denied.to_code()).to_code() == Outcome::Denied.to_code();
+    assert Outcome::from_code(Outcome::Unsupported.to_code()).to_code() == Outcome::Unsupported.to_code();
+    assert Outcome::from_code(Outcome::Busy.to_code()).to_code() == Outcome::Busy.to_code();
+    assert Outcome::from_code(Outcome::Failed.to_code()).to_code() == Outcome::Failed.to_code();
+    return;
+}
+
+// The one that matters: a backend grown a code this build does not know must
+// not have it read as success.
+#[test]
+fn an_unknown_code_is_failed_not_ok() {
+    assert Outcome::from_code(99 as i32).to_code() == Outcome::Failed.to_code();
+    assert Outcome::from_code(0 - (1 as i32)).to_code() == Outcome::Failed.to_code();
+    return;
+}
+
+#[test]
+fn the_two_facings_are_distinct() {
+    assert Facing::Back.to_code() != Facing::Front.to_code();
+    return;
+}
+
+#[test]
+fn a_closed_session_is_not_open() {
+    var c: Camera = Camera { _h: 0 as *u8 };
+    assert !c.is_open();
+    return;
+}
+
+// `close` on an already-closed session must be a no-op rather than a second
+// release: `drop` calls it, so any explicit `close` is followed by one.
+#[test]
+fn close_is_idempotent() {
+    var c: Camera = Camera { _h: 0 as *u8 };
+    c.close();
+    c.close();
+    assert !c.is_open();
+    return;
+}
+
+#[test]
+fn capture_on_a_closed_session_fails_rather_than_reaching_the_backend() {
+    var c: Camera = Camera { _h: 0 as *u8 };
+    assert c.capture(t_photo, 0 as *u8).to_code() == Outcome::Failed.to_code();
+    return;
+}
+
+fn t_photo(jpeg: u8[], ctx: *u8) {
+    return;
+}
+
+// A null handler is refused HERE. The backend would otherwise hold a null it
+// calls once a photo arrives, and the crash would land far from the mistake.
+#[test]
+fn capture_without_a_handler_is_refused() {
+    var c: Camera = Camera { _h: 8 as *u8 };
+    assert c.capture(0 as fn(u8[], *u8), 0 as *u8).to_code() == Outcome::Failed.to_code();
+    c._h = 0 as *u8;
+    return;
+}
+
+// The factory hooks are what facet calls with whatever the node carries. A null
+// context is the unmounted/closed case and must answer a null view, not a trap.
+#[test]
+fn the_preview_factory_tolerates_a_null_session() {
+    assert _preview_create(0 as *u8).is_null();
+    _preview_release(0 as *u8);
+    return;
+}
+
+// ---- the delivery bridge, under test -----------------------------------------
+//
+// The table is the one piece of real bookkeeping in this file, and every one of
+// its failure modes is silent: a slot leaked per capture would exhaust the
+// table after four photos, a slot not cleared on close would deliver the next
+// session's photo to the previous session's handler, and a full table that
+// answered a slot anyway would corrupt one.
+
+static _T_SEEN: i32 = 0;
+static _T_LAST_LEN: usize = 0 as usize;
+
+fn t_count_photo(jpeg: u8[], ctx: *u8) {
+    _T_SEEN = _T_SEEN +% 1;
+    _T_LAST_LEN = jpeg.count();
+}
+
+// One session capturing repeatedly must REUSE its slot. A slot per capture
+// would run the table out after four photos and then start refusing.
+#[test]
+fn repeated_captures_on_one_session_reuse_one_slot() {
+    _forget(8 as *u8);
+    let a: *u8 = _remember(8 as *u8, t_count_photo, 0 as *u8);
+    let b: *u8 = _remember(8 as *u8, t_count_photo, 0 as *u8);
+    let c: *u8 = _remember(8 as *u8, t_count_photo, 0 as *u8);
+    assert a.is_not_null();
+    assert a == b;
+    assert b == c;
+    _forget(8 as *u8);
+    return;
+}
+
+#[test]
+fn two_sessions_get_two_slots() {
+    _forget(8 as *u8);
+    _forget(16 as *u8);
+    let a: *u8 = _remember(8 as *u8, t_count_photo, 0 as *u8);
+    let b: *u8 = _remember(16 as *u8, t_count_photo, 0 as *u8);
+    assert a.is_not_null();
+    assert b.is_not_null();
+    assert a != b;
+    _forget(8 as *u8);
+    _forget(16 as *u8);
+    return;
+}
+
+// A full table REFUSES rather than overwriting somebody else's slot. `capture`
+// turns that null into `Failed`, which is a caller's problem to see; a silent
+// overwrite would be a photo delivered to the wrong handler.
+#[test]
+fn a_full_table_refuses_rather_than_evicting() {
+    var i: usize = 0 as usize;
+    while i < _SLOTS {
+        assert _remember({ (i + (100 as usize)) as *u8 }, t_count_photo, 0 as *u8).is_not_null();
+        i = i + (1 as usize);
+    }
+    assert _remember(999 as *u8, t_count_photo, 0 as *u8).is_null();
+    i = 0 as usize;
+    while i < _SLOTS {
+        _forget({ (i + (100 as usize)) as *u8 });
+        i = i + (1 as usize);
+    }
+    // And once forgotten, the table takes new work again.
+    let after: *u8 = _remember(999 as *u8, t_count_photo, 0 as *u8);
+    assert after.is_not_null();
+    _forget(999 as *u8);
+    return;
+}
+
+#[test]
+fn forget_releases_the_slot_for_a_later_session() {
+    _forget(8 as *u8);
+    let a: *u8 = _remember(8 as *u8, t_count_photo, 0 as *u8);
+    _forget(8 as *u8);
+    let b: *u8 = _remember(16 as *u8, t_count_photo, 0 as *u8);
+    assert a == b;
+    _forget(16 as *u8);
+    return;
+}
+
+#[test]
+fn deliver_hands_the_bytes_over_as_a_slice() {
+    _forget(8 as *u8);
+    let slot: *u8 = _remember(8 as *u8, t_count_photo, 0 as *u8);
+    _T_SEEN = 0;
+    _T_LAST_LEN = 99 as usize;
+    var bytes: [u8; 3] = [0xFF as u8, 0xD8 as u8, 7 as u8];
+    _deliver(#addr_of(bytes[0]), 3 as usize, slot);
+    assert _T_SEEN == 1;
+    assert _T_LAST_LEN == (3 as usize);
+    _forget(8 as *u8);
+    return;
+}
+
+// A FAILED capture still calls back, with an empty slice. A caller waiting on a
+// shutter has nothing to time out against otherwise.
+#[test]
+fn a_failed_capture_still_calls_back_with_an_empty_slice() {
+    _forget(8 as *u8);
+    let slot: *u8 = _remember(8 as *u8, t_count_photo, 0 as *u8);
+    _T_SEEN = 0;
+    _T_LAST_LEN = 99 as usize;
+    _deliver(0 as *u8, 0 as usize, slot);
+    assert _T_SEEN == 1;
+    assert _T_LAST_LEN == (0 as usize);
+    _forget(8 as *u8);
+    return;
+}
+
+// The backend hands back whatever context it was given. A null one means the
+// slot went away — after `close`, say — and must not be dereferenced.
+#[test]
+fn deliver_with_no_slot_is_a_noop() {
+    _T_SEEN = 0;
+    _deliver(0 as *u8, 0 as usize, 0 as *u8);
+    assert _T_SEEN == 0;
+    return;
+}
+
+// `close` must clear the slot, or the NEXT session to take that slot inherits a
+// handler pointing at a screen that is gone.
+#[test]
+fn closing_a_session_clears_its_handler() {
+    _forget(8 as *u8);
+    let slot: *u8 = _remember(8 as *u8, t_count_photo, 0 as *u8);
+    assert slot.is_not_null();
+    _forget(8 as *u8);
+    _T_SEEN = 0;
+    _deliver(0 as *u8, 0 as usize, slot);
+    assert _T_SEEN == 0;
+    return;
+}
+
+// ---- frames, under test ------------------------------------------------------
+
+static _T_FRAMES: i32 = 0;
+static _T_LAST_W: i32 = 0;
+static _T_LAST_LUMA: usize = 0 as usize;
+
+fn t_count_frame(f: Frame, ctx: *u8) {
+    _T_FRAMES = _T_FRAMES +% 1;
+    _T_LAST_W = f.width();
+    _T_LAST_LUMA = f.luma().count();
+}
+
+// `stride` is NOT `width`, and `luma()` must be sized by stride — a slice sized
+// `width * height` would walk off the end of the last row on any padded buffer.
+#[test]
+fn luma_is_sized_by_stride_not_width() {
+    var buf: [u8; 32] = #zero::[[u8; 32]]();
+    let f: Frame = Frame { _luma: #addr_of(buf[0]), _width: 3, _height: 4, _stride: 8, _native: 0 as *u8 };
+    assert f.width() == 3;
+    assert f.height() == 4;
+    assert f.stride() == 8;
+    assert f.luma().count() == (32 as usize);
+    return;
+}
+
+// A PACKED frame — BGRA has no luma plane — is NOT empty: the image rides in
+// `native()`. `is_empty()` calling it empty is exactly the bug that made an
+// honoured `Bgra32` request look like an ignored one for a day; see
+// bugs/closed/camera-pixel-format-request-never-reaches-the-capture-output.md.
+#[test]
+fn a_packed_frame_with_only_a_native_buffer_is_not_empty() {
+    let f: Frame = Frame { _luma: 0 as *u8, _width: 640, _height: 480, _stride: 0, _native: 8 as *u8 };
+    assert !f.is_empty();
+    assert f.luma().is_empty();
+    assert f.native().is_not_null();
+    return;
+}
+
+// `_CRequest` is written BY HAND in three files — this one,
+// `camera_backend.cplus` and `camera_backend_android.cplus` — and nothing else
+// checks them against each other. Pinning the size forces whoever adds a field
+// here to visit the other two: the number below only moves when the layout
+// does, and a mismatch across the seam reads a neighbouring field as `pixel`.
+#[test]
+fn the_seam_request_layout_is_pinned() {
+    assert { #size_of::[_CRequest]() } == (64 as usize);
+    return;
+}
+
+#[test]
+fn pixel_format_codes_round_trip_and_unknown_is_any() {
+    assert PixelFormat::from_code(PixelFormat::Luma8.to_code()).to_code() == PixelFormat::Luma8.to_code();
+    assert PixelFormat::from_code(PixelFormat::Bgra32.to_code()).to_code() == PixelFormat::Bgra32.to_code();
+    assert PixelFormat::from_code(PixelFormat::Depth16.to_code()).to_code() == PixelFormat::Depth16.to_code();
+    assert PixelFormat::from_code(99 as i32).to_code() == PixelFormat::Any.to_code();
+    return;
+}
+
+// A closed camera will not say what frames hold — `Any`, without reaching the
+// backend at all.
+#[test]
+fn a_closed_camera_reports_no_pixel_format() {
+    let c: Camera = Camera { _h: 0 as *u8 };
+    assert c.pixel_format().to_code() == PixelFormat::Any.to_code();
+    return;
+}
+
+#[test]
+fn a_frame_with_no_pixels_is_empty_and_answers_an_empty_slice() {
+    let f: Frame = Frame { _luma: 0 as *u8, _width: 640, _height: 480, _stride: 640, _native: 0 as *u8 };
+    assert f.is_empty();
+    assert f.luma().is_empty();
+    var buf: [u8; 4] = #zero::[[u8; 4]]();
+    let z: Frame = Frame { _luma: #addr_of(buf[0]), _width: 0, _height: 0, _stride: 0, _native: 0 as *u8 };
+    assert z.is_empty();
+    return;
+}
+
+// Streaming and stills share a slot but not a handler: arming one must not
+// disturb the other, or a `stop_frames` would silently drop the photo handler.
+#[test]
+fn frames_and_photos_are_armed_independently() {
+    _forget(8 as *u8);
+    let a: *u8 = _remember(8 as *u8, t_count_photo, 0 as *u8);
+    let b: *u8 = _remember_frame(8 as *u8, t_count_frame, 0 as *u8);
+    assert a == b;
+
+    _T_SEEN = 0;
+    _T_FRAMES = 0;
+    var px: [u8; 16] = #zero::[[u8; 16]]();
+    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0 as *u8, b);
+    assert _T_FRAMES == 1;
+
+    // Disarming frames leaves the photo handler alone.
+    _forget_frame(8 as *u8);
+    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0 as *u8, b);
+    assert _T_FRAMES == 1;
+    _deliver(#addr_of(px[0]), 3 as usize, a);
+    assert _T_SEEN == 1;
+
+    _forget(8 as *u8);
+    return;
+}
+
+#[test]
+fn deliver_frame_passes_the_geometry_through() {
+    _forget(8 as *u8);
+    let slot: *u8 = _remember_frame(8 as *u8, t_count_frame, 0 as *u8);
+    _T_FRAMES = 0;
+    _T_LAST_W = 0;
+    _T_LAST_LUMA = 0 as usize;
+    var px: [u8; 64] = #zero::[[u8; 64]]();
+    _deliver_frame(#addr_of(px[0]), 6, 4, 16, 0 as *u8, slot);
+    assert _T_FRAMES == 1;
+    assert _T_LAST_W == 6;
+    assert _T_LAST_LUMA == (64 as usize);   // stride 16 * height 4
+    _forget(8 as *u8);
+    return;
+}
+
+// `close` calls `_forget`, which must clear BOTH halves — a live frame handler
+// surviving a close would fire into a screen that is gone.
+#[test]
+fn closing_clears_the_frame_handler_too() {
+    _forget(8 as *u8);
+    let slot: *u8 = _remember_frame(8 as *u8, t_count_frame, 0 as *u8);
+    _forget(8 as *u8);
+    _T_FRAMES = 0;
+    var px: [u8; 16] = #zero::[[u8; 16]]();
+    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0 as *u8, slot);
+    assert _T_FRAMES == 0;
+    return;
+}
+
+#[test]
+fn deliver_frame_with_no_slot_is_a_noop() {
+    _T_FRAMES = 0;
+    var px: [u8; 16] = #zero::[[u8; 16]]();
+    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0 as *u8, 0 as *u8);
+    assert _T_FRAMES == 0;
+    return;
+}

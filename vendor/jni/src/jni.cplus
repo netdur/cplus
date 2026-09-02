@@ -422,7 +422,11 @@ struct JNINativeInterface {
     // 229: wrap native memory as a java.nio.ByteBuffer. The memory must
     // outlive the buffer; `#include_bytes` blobs (static lifetime) qualify.
     NewDirectByteBuffer: fn(*JNIEnv, *u8, jlong) -> jobject,
-    opaque reserved_get_direct_buffer_address: *u8,
+    // Typed rather than reserved: reading a direct ByteBuffer's memory IN
+    // PLACE is the whole point of handing one to native code, and a camera
+    // frame plane is the case that needed it. Same layout either way — this
+    // slot always held a function pointer.
+    GetDirectBufferAddress: fn(*JNIEnv, jobject) -> *u8,
     opaque reserved_get_direct_buffer_capacity: *u8,
     opaque reserved_get_object_ref_type: *u8,
 }
