@@ -130,6 +130,18 @@ fn set_window_text(v: *u8, t: text::Text) {
     return;
 }
 
+// The same, for a control that BREAKS ON CRLF — which is a multiline `EDIT` and
+// nothing else in this package. See `sys::to_wide_crlf`: a bare LF is not a
+// line break to an EDIT, so a text area written with facet's own line endings
+// came up as one line with every break swallowed.
+fn set_multiline_text(v: *u8, t: text::Text) {
+    let w: *u16 = sys::to_wide_crlf(t.view());
+    if w == (0 as *u16) { return; }
+    let _r: i32 = { u::SetWindowTextW(v, w) };
+    sys::free_wide(w);
+    return;
+}
+
 // ---- the panel: this package's GtkFixed --------------------------------------
 //
 // A container that neither clips its children's layout nor negotiates for
@@ -547,7 +559,9 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
     // same bytes back would still collapse the selection and jump the caret to
     // the end on every sync.
     if (dirty & text_area::P_TEXT) != (0 as u64) {
-        if { u::GetFocus() } != v { set_window_text(v, { (*p).input_view.text }.clone()); }
+        if { u::GetFocus() } != v {
+            set_multiline_text(v, { (*p).input_view.text }.clone());
+        }
     }
     apply_input_view(v, #addr_of((*p).input_view), dirty, text_area_bits());
     if (dirty & text_area::P_TEXT_ALIGN) != (0 as u64) {

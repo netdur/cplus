@@ -482,14 +482,29 @@ fn fire_search_changed(v: *u8, n: *core::Node) -> bool {
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
+// What the user typed, read back.
+//
+// WIDE, like everything else in this package. It was `GetWindowTextA`, which
+// decodes through the process ANSI codepage while a C+ string is UTF-8 — so a
+// field with any character above ASCII came back mangled, which on a Windows
+// desktop is most users' own name. The same bug `to_wide`'s header describes,
+// on the reading side, where it had survived because the probe only ever typed
+// ASCII.
+//
+// AND THE LINE ENDINGS COME BACK AS FACET'S. A multiline EDIT stores CRLF —
+// see `sys::to_wide_crlf` — and an application must get back what it wrote, or
+// a round trip through a text area does not compare equal to itself and its
+// length grows by one per line on every keystroke.
 fn window_text(v: *u8) -> text::Text {
-    let n: i32 = { u::GetWindowTextLengthA(v) };
+    let n: i32 = { u::GetWindowTextLengthW(v) };
     if n <= (0 as i32) { return text::from_str(""); }
-    let buf: *u8 = { malloc((n as usize) +% (1 as usize)) };
+    let bytes: usize = ((n as usize) +% (1 as usize)) *% (2 as usize);
+    let buf: *u8 = { malloc(bytes) };
     if buf.is_null() { return text::from_str(""); }
-    let got: i32 = { u::GetWindowTextA(v, buf as *i8, n +% (1 as i32)) };
+    let w: *u16 = buf as *u16;
+    let got: i32 = { u::GetWindowTextW(v, w, n +% (1 as i32)) };
     var out: text::Text = text::from_str("");
-    if got > (0 as i32) { out = { #str_from_raw_parts(buf, got as usize) }.to_text(); }
+    if got > (0 as i32) { out = sys::from_wide_lf(w); }
     { free(buf) };
     return out;
 }

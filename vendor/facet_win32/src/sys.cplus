@@ -421,6 +421,98 @@ fn to_wide(s: str) -> *u16 {
     }
 }
 
+// ---- the line ending an EDIT actually wants ----------------------------------------
+//
+// A MULTILINE `EDIT` BREAKS ON CRLF AND ON NOTHING ELSE. A bare LF is not a
+// line break to it — it is a control character it draws as nothing — so a
+// `text_area` whose text contains "\n" comes up as ONE line with the break
+// silently swallowed. Seen in `examples/facet_gallery`'s Inputs page: "Write a
+// few lines...Second line", where the demo wrote two.
+//
+// facet's strings are LF, like every other platform's, so the translation
+// belongs at this door in both directions — out through `to_wide_crlf` and back
+// through `from_wide_lf`. An application must get back what it wrote: leaving
+// the CR in would make `text.len()` grow by one per line every time the user
+// typed, and a round trip through a text area would not compare equal to
+// itself.
+
+// Convert and expand: every LF that is not already preceded by a CR becomes
+// CRLF. Done on the UTF-16 buffer rather than on the UTF-8 string so there is
+// one allocation and no second scan of the text.
+fn to_wide_crlf(s: str) -> *u16 {
+    let flat: *u16 = to_wide(s);
+    if flat == (0 as *u16) { return 0 as *u16; }
+    // How many LFs need a CR in front of them.
+    var extra: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    var prev: u16 = 0 as u16;
+    while true {
+        let ch: u16 = read_u16(flat, i);
+        if ch == (0 as u16) { break; }
+        if ch == (10 as u16) && prev != (13 as u16) { extra = extra +% (1 as usize); }
+        prev = ch;
+        i = i +% (1 as usize);
+    }
+    if extra == (0 as usize) { return flat; }
+    let len: usize = i;
+    let out: *u8 = { malloc(((len +% extra +% (1 as usize))) *% (2 as usize)) };
+    if out.is_null() { return flat; }
+    let w: *u16 = out as *u16;
+    var src: usize = 0 as usize;
+    var dst: usize = 0 as usize;
+    prev = 0 as u16;
+    while src < len {
+        let ch: u16 = read_u16(flat, src);
+        if ch == (10 as u16) && prev != (13 as u16) {
+            write_u16(w, dst, 13 as u16);
+            dst = dst +% (1 as usize);
+        }
+        write_u16(w, dst, ch);
+        prev = ch;
+        dst = dst +% (1 as usize);
+        src = src +% (1 as usize);
+    }
+    write_u16(w, dst, 0 as u16);
+    free_wide(flat);
+    return w;
+}
+
+fn read_u16(w: *u16, at: usize) -> u16 {
+    let p: *u16 = { ((w as *u8) + (at *% (2 as usize))) } as *u16;
+    return { *p };
+}
+
+fn write_u16(w: *u16, at: usize, v: u16) {
+    let p: *u16 = { ((w as *u8) + (at *% (2 as usize))) } as *u16;
+    { *p = v };
+    return;
+}
+
+#[test]
+fn a_bare_newline_becomes_a_crlf_and_an_existing_one_is_left_alone() {
+    // The property that matters: expanding twice must not double the CRs. A
+    // text area's string goes out on every apply, and a text that grew a CR per
+    // pass would push the caret further from where the user left it each time.
+    let a: *u16 = to_wide_crlf("one\ntwo");
+    assert a != (0 as *u16);
+    assert read_u16(a, 3 as usize) == (13 as u16);
+    assert read_u16(a, 4 as usize) == (10 as u16);
+    free_wide(a);
+    let b: *u16 = to_wide_crlf("one\r\ntwo");
+    assert b != (0 as *u16);
+    assert read_u16(b, 3 as usize) == (13 as u16);
+    assert read_u16(b, 4 as usize) == (10 as u16);
+    assert read_u16(b, 5 as usize) == (116 as u16);      // 't'
+    free_wide(b);
+    // A string with no newline is handed back untouched — the common case pays
+    // one scan and no second allocation.
+    let c: *u16 = to_wide_crlf("plain");
+    assert c != (0 as *u16);
+    assert read_u16(c, 5 as usize) == (0 as u16);
+    free_wide(c);
+    return;
+}
+
 fn free_wide(w: *u16) {
     if w == (0 as *u16) { return; }
     { free(w as *u8) };
@@ -435,6 +527,52 @@ fn free_wide(w: *u16) {
 extern fn WideCharToMultiByte(codepage: u32, flags: u32, wide: *u16, wide_len: i32,
                               mb: *u8, mb_len: i32, default_char: *u8,
                               used_default: *i32) -> i32;
+
+// The reading side of `to_wide_crlf`: the same conversion, with the CR of every
+// CRLF dropped so an application gets back the line endings it wrote. A lone CR
+// is left alone — it is a character the user typed, not a line ending this
+// package inserted.
+fn from_wide_lf(w: *u16) -> text::Text {
+    if w == (0 as *u16) { return text::new(); }
+    // Collapse in place is not an option — the buffer is the caller's — so the
+    // CRs are dropped on the way through a copy, and only when a LF follows.
+    var len: usize = 0 as usize;
+    while read_u16(w, len) != (0 as u16) { len = len +% (1 as usize); }
+    let out: *u8 = { malloc((len +% (1 as usize)) *% (2 as usize)) };
+    if out.is_null() { return from_wide(w); }
+    let c: *u16 = out as *u16;
+    var src: usize = 0 as usize;
+    var dst: usize = 0 as usize;
+    while src < len {
+        let ch: u16 = read_u16(w, src);
+        let next: u16 = if src +% (1 as usize) < len { read_u16(w, src +% (1 as usize)) }
+                        else { 0 as u16 };
+        if ch == (13 as u16) && next == (10 as u16) {
+            src = src +% (1 as usize);
+            continue;
+        }
+        write_u16(c, dst, ch);
+        dst = dst +% (1 as usize);
+        src = src +% (1 as usize);
+    }
+    write_u16(c, dst, 0 as u16);
+    let t: text::Text = from_wide(c);
+    { free(out) };
+    return t;
+}
+
+#[test]
+fn the_crlf_an_edit_stores_comes_back_as_facets_own_newline() {
+    // The round trip is the property: what an application wrote must be what it
+    // reads back, or a text area's string grows a byte per line on every
+    // keystroke and never compares equal to itself.
+    let w: *u16 = to_wide_crlf("one\ntwo");
+    assert w != (0 as *u16);
+    let back: text::Text = from_wide_lf(w);
+    assert back.view() == "one\ntwo";
+    free_wide(w);
+    return;
+}
 
 fn from_wide(w: *u16) -> text::Text {
     if w == (0 as *u16) { return text::new(); }
