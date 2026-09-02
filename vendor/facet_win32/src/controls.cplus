@@ -197,6 +197,17 @@ fn create_label(n: *core::Node) -> *u8 {
                       sys::ss_notify() | sys::ss_left(), 0 as u32);
 }
 
+// Does this label wrap? The same question `measure::wraps` asks of the node,
+// asked of the props — and the two have to agree or a label is measured for one
+// shape and drawn in another.
+//
+// `max_lines` of exactly 1 is a single line whatever the break mode says, which
+// is what makes a one-line ellipsised label still centre vertically.
+fn label_wraps(p: *props::LabelProps) -> bool {
+    if { (*p).max_lines } == (1 as i64) { return false; }
+    return break_wraps({ (*p).line_break });
+}
+
 fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
     if p == (0 as *props::LabelProps) { return; }
@@ -217,17 +228,32 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
         // draws; this is what makes it draw again.
         let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
-    if (dirty & label::P_VERTICAL_ALIGN) != (0 as u64) {
-        // SS_CENTERIMAGE (0x0200) vertically centres a static's text in its
-        // box. It is the only vertical placement a static has: top is the
-        // default and there is no bottom, which MANIFEST.md §1 records.
+    // VERTICAL ALIGNMENT AND WRAPPING CANNOT BOTH BE HAD, and the default said
+    // otherwise. `vertical_align` DEFAULTS TO CENTER on facet's label, and
+    // SS_CENTERIMAGE — the only vertical placement a static has — makes the
+    // control draw ONE LINE, centred. So every label in every application wore
+    // it, and no wrapping label in this backend had ever wrapped: flex measured
+    // two lines, allocated a box two lines tall, and the control drew one line
+    // clipped at its own right edge.
+    //
+    // Found in `examples/facet_gallery`, whose every body paragraph came out as
+    // a single cut-off line. The measure was right, the frame was right, and
+    // the style word undid both.
+    //
+    // So WRAPPING WINS. A label that asked to wrap is a paragraph, and a
+    // paragraph's vertical alignment inside a box sized to its own content is
+    // meaningless; a single-line label still centres, which is what the verb is
+    // for. §1 records the narrowing.
+    if (dirty & (label::P_VERTICAL_ALIGN | label::P_LINE_BREAK
+                 | label::P_MAX_LINES)) != (0 as u64) {
         var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
-        let centred: bool = match { (*p).vertical_align } {
+        let asked: bool = match { (*p).vertical_align } {
             vocab::TextAlign::Center => true,
             vocab::TextAlign::Start => false,
             vocab::TextAlign::End => false,
             vocab::TextAlign::Justify => false,
         };
+        let centred: bool = asked && !label_wraps(p);
         if centred { style = style | (0x0200 as u32); }
         else { style = style & ~(0x0200 as u32); }
         let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
@@ -3107,6 +3133,15 @@ fn button_wants_draw(p: *props::ButtonProps) -> bool {
 }
 
 fn radio_wants_draw(p: *props::RadioProps) -> bool {
+    // THE GLYPH GOES DARK AND THE TEXT DOES NOT. `DarkMode_Explorer` darkens a
+    // radio's and a checkbox's MARK — measured, #090909 for a checkbox — and
+    // leaves the label the control draws beside it in the light theme's ink,
+    // which on a dark window is unreadable. Seen in the gallery's Controls
+    // page: "Alpha / Beta / Gamma" in near-black on near-black.
+    //
+    // So the same door the push button takes: on a dark system the control's
+    // pixels are ours, glyph included.
+    if paint::dark_controls() { return true; }
     if { (*p).border_width } > (0.0 as f64) { return true; }
     if { (*p).character_spacing } != (0.0 as f64) { return true; }
     var has: bool = false;
@@ -3116,6 +3151,9 @@ fn radio_wants_draw(p: *props::RadioProps) -> bool {
 }
 
 fn checkbox_wants_draw(p: *props::CheckboxProps) -> bool {
+    // Same as the radio next door: the mark follows the appearance and the
+    // label the control draws does not.
+    if paint::dark_controls() { return true; }
     var has: bool = false;
     let _c: u32 = paint::resolve({ (*p).color }, #addr_of(has));
     return has;
@@ -3224,8 +3262,15 @@ fn draw_button_label(hdc: *u8, v: *u8, r: u::tagRECT, state: u32, title: str,
     if font != (0 as *u8) { oldf = { gdi::SelectObject(hdc, font) }; }
     var has: bool = false;
     var fg: u32 = paint::resolve(colour, #addr_of(has));
-    if !has { fg = { u::GetSysColor(18 as i32) }; }          // COLOR_BTNTEXT
-    if (state & ods_disabled()) != (0 as u32) { fg = { u::GetSysColor(17 as i32) }; }
+    // NO STATED COLOUR FOLLOWS THE BACKGROUND, not `COLOR_BTNTEXT` — which is
+    // BLACK on a dark system, because `GetSysColor` does not follow dark mode.
+    // That is what made the gallery's radio labels near-black on near-black
+    // once the glyphs went dark: the mark was ours and the text was the
+    // classic palette's.
+    if !has { fg = paint::ink_over(paint::effective_bg(v)); }
+    if (state & ods_disabled()) != (0 as u32) {
+        fg = { u::GetSysColor(17 as i32) };
+    }
     let _t: u32 = { gdi::SetTextColor(hdc, fg) };
     let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
     let extra: i32 = spacing as i32;
@@ -3271,9 +3316,19 @@ fn draw_toggle_like(di: *u8, round: bool) -> bool {
     let back: *u8 = paint::brush_for(paint::effective_bg(v));
     if back != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), back) }; }
 
-    // `ODS_CHECKED` is the control's own state, which is still authoritative:
-    // owner-draw takes the PIXELS and `BS_AUTO*` keeps the check.
-    let on: bool = (state & ods_checked()) != (0 as u32);
+    // THE NODE IS THE TRUTH, not `ODS_CHECKED`.
+    //
+    // This used to read the state word, on the reasoning that "owner-draw takes
+    // the PIXELS and `BS_AUTO*` keeps the check". It does not: `BS_OWNERDRAW`
+    // REPLACES the type bits, so the control is no longer a `BS_AUTORADIOBUTTON`
+    // and `BM_SETCHECK` no longer moves anything the system reports back —
+    // ODS_CHECKED simply never arrives. Measured in the gallery: three radios,
+    // one of them selected, all three drawn empty.
+    //
+    // Reading the prop is also the rule the rest of this package follows for a
+    // control whose pixels are ours (`input::fire_button` says the same about a
+    // toggling button), so the two cannot disagree.
+    var on: bool = (state & ods_checked()) != (0 as u32);
     let side: i32 = indicator_side();
     let top: i32 = r.top +% (((r.bottom -% r.top) -% side) / (2 as i32));
     var box: u::tagRECT = u::tagRECT { left: r.left, top: top,
@@ -3291,6 +3346,7 @@ fn draw_toggle_like(di: *u8, round: bool) -> bool {
         spacing = { (*rp).character_spacing };
         title = { (*rp).text }.view();
         colour = { (*rp).text_color };
+        on = { (*rp).on };
         var bh: bool = false;
         let bc: u32 = paint::resolve({ (*rp).border_color }, #addr_of(bh));
         if bh { mark = bc; accent = true; }
@@ -3298,17 +3354,30 @@ fn draw_toggle_like(di: *u8, round: bool) -> bool {
         let cp: *props::CheckboxProps =
             props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
         if cp == (0 as *props::CheckboxProps) { return false; }
+        on = { (*cp).on };
         var ch: bool = false;
         let cc: u32 = paint::resolve({ (*cp).color }, #addr_of(ch));
         if ch { mark = cc; accent = true; }
     }
     let _unused: bool = accent;
-    let face: *u8 = paint::brush_for({ u::GetSysColor(5 as i32) });   // COLOR_WINDOW
+    // THE INDICATOR'S FACE AND ITS OUTLINE FOLLOW THE APPEARANCE. Both used to
+    // be `GetSysColor` — COLOR_WINDOW and COLOR_BTNSHADOW — which answer WHITE
+    // and a light grey on a dark system, so an owner-drawn checkbox came out
+    // as a white square in a dark window. `control_background` and `separator`
+    // go through `sys_or_dark`, so this is still the system's palette on a
+    // light system and under High Contrast.
+    var fh: bool = false;
+    var face_rgb: u32 = paint::resolve(vocab::Color::control_background(), #addr_of(fh));
+    if !fh { face_rgb = { u::GetSysColor(5 as i32) }; }
+    let face: *u8 = paint::brush_for(face_rgb);
     if face != (0 as *u8) {
         if round { paint::fill_ellipse(hdc, box, face); }
         else { let _f: i32 = { u::FillRect(hdc, #addr_of(box), face) }; }
     }
-    paint::stroke_rect(hdc, box, { u::GetSysColor(16 as i32) }, 1 as i32,
+    var eh: bool = false;
+    var edge: u32 = paint::resolve(vocab::Color::separator(), #addr_of(eh));
+    if !eh { edge = { u::GetSysColor(16 as i32) }; }
+    paint::stroke_rect(hdc, box, edge, 1 as i32,
                        if round { (side as f64) / (2.0 as f64) } else { 0.0f64 });
     if on {
         let inset: i32 = 3 as i32;
@@ -4050,5 +4119,26 @@ fn a_dark_system_takes_the_pixels_of_every_button() {
     if paint::high_contrast() { assert !button_wants_draw(p); }
     else { assert button_wants_draw(p); }
     paint::set_dark(was);
+    return;
+}
+
+#[test]
+fn a_wrapping_label_gives_up_vertical_centring() {
+    // The two cannot both be had: SS_CENTERIMAGE is the only vertical
+    // placement a static has and it makes the control draw ONE line. Since
+    // `vertical_align` DEFAULTS to Center, wearing it unconditionally meant no
+    // label in this backend ever wrapped — measured two lines, allocated two
+    // lines, drew one and clipped it.
+    var l: core::Node = label::label("a paragraph", key: "l");
+    let p: *props::LabelProps = props_of(#addr_of(l), props::K_LABEL) as *props::LabelProps;
+    assert p != (0 as *props::LabelProps);
+    // The default: one line, so it centres.
+    assert !label_wraps(p);
+    { (*p).line_break = vocab::LineBreak::WordWrap };
+    assert label_wraps(p);
+    // ...unless the application pinned it to a single line, which is a label
+    // that cannot wrap whatever the break mode says.
+    { (*p).max_lines = 1 as i64 };
+    assert !label_wraps(p);
     return;
 }
