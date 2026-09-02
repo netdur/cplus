@@ -267,7 +267,23 @@ fn fire_checkbox(v: *u8, n: *core::Node) -> bool {
     let p: *props::CheckboxProps =
         controls::props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
     if p == (0 as *props::CheckboxProps) { return false; }
-    { (*p).on = controls::is_checked(v) };
+    // AN OWNER-DRAWN BOX DOES NOT TOGGLE ITSELF. `BS_OWNERDRAW` replaces the
+    // type bits, so the control is no longer a `BS_AUTOCHECKBOX` — it reports
+    // the click and changes nothing, and reading its check state gives the same
+    // answer for ever. That is what made a checkbox on a dark system look
+    // unclickable: the click arrived, the state did not move, the box redrew
+    // itself exactly as it was.
+    //
+    // So the NODE is flipped here, which is what `fire_toggle` next door
+    // already does for the switch — and the native path keeps reading the
+    // control, which is still authoritative when the system owns the state.
+    if controls::owner_drawn(v) {
+        { (*p).on = !{ (*p).on } };
+        controls::set_checked(v, { (*p).on });
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    } else {
+        { (*p).on = controls::is_checked(v) };
+    }
     let h: fn(*u8, *u8) = { (*p).on_checked_changed };
     if h == props::no_handler { return false; }
     h(v, { (*p).on_checked_changed_ctx });

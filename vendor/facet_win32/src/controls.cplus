@@ -424,6 +424,22 @@ fn is_checked(v: *u8) -> bool {
     return { u::SendMessageA(v, sys::bm_getcheck(), 0 as u64, 0 as i64) } == (1 as i64);
 }
 
+// IS THIS CONTROL'S STATE STILL THE SYSTEM'S? `BS_OWNERDRAW` REPLACES the type
+// bits, so a control wearing it is no longer a `BS_AUTOCHECKBOX` or a
+// `BS_AUTORADIOBUTTON`: it does not toggle itself on a click, `BM_SETCHECK`
+// moves nothing anyone can see, and `BM_GETCHECK` answers what it answered
+// before the user touched it.
+//
+// Everything that reads or writes a check has to ask this first. Missing it is
+// what made a dark-mode checkbox unclickable and a radio group stop being a
+// group — both reported from a real run, both introduced by turning owner-draw
+// on for the appearance.
+fn owner_drawn(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    let style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    return (style & bs_typemask()) == sys::bs_ownerdraw_style();
+}
+
 // ---- text field --------------------------------------------------------------
 
 fn create_text_field(n: *core::Node) -> *u8 {
@@ -531,7 +547,15 @@ fn set_radio_on(n: *core::Node, on: bool) {
     if p == (0 as *props::RadioProps) { return; }
     { (*p).on = on };
     let v: *u8 = core::view_of(n);
-    if v != (0 as *u8) { set_checked(v, on); }
+    if v == (0 as *u8) { return; }
+    set_checked(v, on);
+    // AND REPAINT IT. `BM_SETCHECK` redraws a control that is still a
+    // `BS_AUTORADIOBUTTON`; an owner-drawn one has no check to set and no
+    // reason to repaint, so the radios this call CLEARS kept their filled dots
+    // and the group looked like it had stopped excluding. Reported from a real
+    // run; the invalidate is unconditional because it costs one message and
+    // the native path was already repainting.
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     return;
 }
 

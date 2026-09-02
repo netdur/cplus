@@ -235,15 +235,30 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
 // reason `reposition_children` walks through one.
 fn size_document(view: *u8, doc: *u8, node: *core::Node, node_abs: flex::Frame) {
     if doc == (0 as *u8) { return; }
+    // The viewport still has to EXIST — a window with no client area is one
+    // being torn down, and sizing its document then is a call into nothing.
     var vr: u::tagRECT = zero_rect();
     if { u::GetClientRect(view, #addr_of(vr)) } == (0 as i32) { return; }
-    var w: f64 = (vr.right -% vr.left) as f64;
-    var h: f64 = (vr.bottom -% vr.top) as f64;
     var ext_w: f64 = 0.0f64;
     var ext_h: f64 = 0.0f64;
     extent_of(node, node_abs, #addr_of(ext_w), #addr_of(ext_h));
-    if ext_w > w { w = ext_w; }
-    if ext_h > h { h = ext_h; }
+    // THE CONTENT'S OWN SIZE, and NOT `max(content, viewport)` — which is what
+    // this did and which oscillates:
+    //
+    //   content fits across, overflows down  ->  a vertical bar appears
+    //   the bar takes 17px off the CLIENT width
+    //   the document, sized to the OLD client width, is now wider than it
+    //   ->  a horizontal bar appears, and the client loses height too
+    //
+    // Reported from a real run as a pane with both bars showing and nothing to
+    // scroll sideways. A document smaller than its viewport leaves the
+    // viewport's own background showing, which is the same colour it paints
+    // anyway — so there is nothing to gain by stretching it and a loop to lose.
+    var w: f64 = ext_w;
+    var h: f64 = ext_h;
+    if w < (1.0 as f64) { w = 1.0f64; }
+    if h < (1.0 as f64) { h = 1.0f64; }
+
     // NO MOVE. The document's position IS the scroll offset — `apply_scroll`
     // writes it — and re-sizing must not put it back at the origin, which
     // would scroll the view to the top on every layout pass.

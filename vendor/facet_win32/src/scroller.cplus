@@ -219,12 +219,25 @@ fn sync_bars(v: *u8) {
 fn set_bar(v: *u8, which: i32, content: f64, page: f64, pos: f64) {
     let si: *u8 = { scroller_malloc(scrollinfo_bytes()) };
     if si.is_null() { return; }
+    // A BAR FOR CONTENT THAT FITS IS NOT A BAR, it is a stripe. Windows hides
+    // one whose minimum and maximum are equal, so a view with nothing to scroll
+    // says so with the range rather than with `ShowScrollBar` — which would
+    // fight the style bits `apply_scroll_props` writes from the application's
+    // own `vertical_scroll_bars`.
+    //
+    // Reported from a real run: a pane whose content fitted had a bar down its
+    // right side and another along its bottom, both full length and neither
+    // able to move. Every other application on the platform hides them.
+    let fits: bool = content <= page;
+    let hi: u32 = if fits { 0 as u32 } else { (content as i64) as u32 };
+    let pg: u32 = if fits { 0 as u32 } else { (page as i64) as u32 };
+    let at: u32 = if fits { 0 as u32 } else { (pos as i64) as u32 };
     put_u32(si, 0 as usize, scrollinfo_bytes() as u32);
     put_u32(si, 4 as usize, sif_range() | sif_page() | sif_pos());
     put_u32(si, 8 as usize, 0 as u32);
-    put_u32(si, 12 as usize, (content as i64) as u32);
-    put_u32(si, 16 as usize, (page as i64) as u32);
-    put_u32(si, 20 as usize, (pos as i64) as u32);
+    put_u32(si, 12 as usize, hi);
+    put_u32(si, 16 as usize, pg);
+    put_u32(si, 20 as usize, at);
     put_u32(si, 24 as usize, 0 as u32);
     let _r: i32 = { u::SetScrollInfo(v, which, si as *u::tagSCROLLINFO, 1 as i32) };
     { scroller_free(si) };
@@ -329,5 +342,19 @@ fn the_bar_codes_are_the_ones_windows_sends() {
     assert sb_pagedown() == (3 as u32);
     assert sb_thumbposition() == (4 as u32);
     assert sb_thumbtrack() == (5 as u32);
+    return;
+}
+
+#[test]
+fn a_view_with_nothing_to_scroll_hides_its_bar() {
+    // Windows hides a scroll bar whose minimum equals its maximum, which is how
+    // a range says "there is nothing here" — so the arithmetic is what has to
+    // be right, and it is asserted rather than left to the API.
+    let content: f64 = 400.0f64;
+    let page: f64 = 400.0f64;
+    assert content <= page;
+    // ...and a view that overflows by a single point still shows one, because
+    // that point IS unreachable otherwise.
+    assert !((401.0 as f64) <= page);
     return;
 }

@@ -255,10 +255,19 @@ fn fill_from_children(menu: *u8, parent: *core::Node) {
                         if t.view() == "" {
                             let _r: i32 = { u::AppendMenuA(menu, mf_separator(),
                                                            0 as u64, 0 as *i8) };
-                        } else if destructive(c) {
-                            // OWNER-DRAWN, and only this item. See
-                            // `draw_menu_item` for why the §1 argument against
-                            // it was the swipe argument again.
+                        } else if destructive(c) || paint::dark_controls() {
+                            // OWNER-DRAWN — for a destructive item always, and
+                            // for EVERY item on a dark system.
+                            //
+                            // The second is a trade this file argued against
+                            // and lost to the platform: `SetPreferredAppMode`
+                            // and `FlushMenuThemes` are both called and a popup
+                            // menu still comes up white, measured. So a dark
+                            // application has one white rectangle per menu
+                            // unless this package draws them, and drawing them
+                            // means owning the check column, the submenu arrow
+                            // and the keyboard highlight — which `draw_menu_item`
+                            // does, from the system's own metrics.
                             let _r: i32 = { u::AppendMenuA(menu, mf_ownerdraw(),
                                                            add_node_command(c) as u64,
                                                            c as *i8) };
@@ -408,15 +417,30 @@ fn draw_menu_item(di: *u8) -> bool {
     };
     // COLOR_MENU / COLOR_HIGHLIGHT — the system's, so the row sits IN the menu
     // rather than on top of it.
-    let bg: u32 = if selected { { u::GetSysColor(13 as i32) } }
+    //
+    // ON A DARK SYSTEM THE SYSTEM'S IS WRONG: `GetSysColor(COLOR_MENU)` answers
+    // the classic light grey whatever the appearance, which is the whole reason
+    // a popup menu comes up white. The appearance's own raised surface is what
+    // a dark menu is, and the highlight stays the user's accent either way.
+    var bg: u32 = if selected { { u::GetSysColor(13 as i32) } }
                   else { { u::GetSysColor(4 as i32) } };
+    if !selected && paint::dark_controls() {
+        var mh: bool = false;
+        let dark_face: u32 = paint::resolve(vocab::Color::control_background(),
+                                            #addr_of(mh));
+        if mh { bg = dark_face; }
+    }
     let brush: *u8 = paint::brush_for(bg);
     if brush != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), brush) }; }
     // THE HIGHLIGHT WINS OVER THE WARNING. Red text on the selection's blue is
     // unreadable, and a selected row is already unmistakable — so a highlighted
     // destructive item is drawn in the highlight's own text colour, which is
     // what macOS does with the same row.
-    var fg: u32 = paint::colorref(0.80f64, 0.16f64, 0.16f64);
+    // A DESTRUCTIVE ITEM IS RED; every other owner-drawn one takes the ink the
+    // background asks for, which on a dark menu is light and on a light one is
+    // the black it always was.
+    var fg: u32 = if destructive(n) { paint::colorref(0.80f64, 0.16f64, 0.16f64) }
+                  else { paint::ink_over(bg) };
     if selected { fg = { u::GetSysColor(14 as i32) }; }
     if grayed { fg = { u::GetSysColor(17 as i32) }; }
     let _t: u32 = { gdi::SetTextColor(hdc, fg) };

@@ -487,6 +487,14 @@ fn arm(v: *u8, n: *core::Node) {
     if !has_intrinsic_size(core::kind_of(n)) { return; }
     { (*n).set_context(v) };
     { (*n).set_measure(measure_view) };
+    // AND THE NODE IS STALE THE MOMENT IT GAINS ONE. Whatever flex last
+    // measured for this node, it measured WITHOUT this function — so the cache
+    // holds an answer from before the control existed, and flex prunes a
+    // subtree whose style has not changed. Same call and same reason as
+    // `remeasure` below; it is here because installing a measure IS a content
+    // change, and the one node that would keep a wrong box is the one nothing
+    // writes to afterwards.
+    { (*n).mark_content_changed() };
     return;
 }
 
