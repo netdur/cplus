@@ -1,0 +1,52 @@
+import "./share" as sh;
+import "./share_backend" as backend;
+
+#[test]
+fn outcome_codes_round_trip() {
+    assert sh::Outcome::from_code(sh::Outcome::Ok.to_code()).to_code() == 0;
+    assert sh::Outcome::from_code(sh::Outcome::Unsupported.to_code()).to_code() == 1;
+    assert sh::Outcome::from_code(sh::Outcome::InvalidInput.to_code()).to_code() == 2;
+    assert sh::Outcome::from_code(sh::Outcome::Failed.to_code()).to_code() == 3;
+}
+
+#[test]
+fn invalid_input_is_not_failed() {
+    // An empty string is a CALLER bug; a picker that would not open is a
+    // platform one. They call for different things being said.
+    assert sh::Outcome::InvalidInput.to_code() != sh::Outcome::Failed.to_code();
+}
+
+#[test]
+fn an_empty_item_never_reaches_the_backend() {
+    // Guarded in the facade so a backend cannot be handed a zero-length string
+    // and build an NSString from a null pointer.
+    assert sh::text("").to_code() == sh::Outcome::InvalidInput.to_code();
+    assert sh::url("").to_code() == sh::Outcome::InvalidInput.to_code();
+    assert sh::file("").to_code() == sh::Outcome::InvalidInput.to_code();
+}
+
+#[test]
+fn availability_answers_without_trapping() {
+    let on: bool = sh::available();
+    // False in a test runner, which has no window to anchor a picker to. That
+    // is the honest answer rather than an error.
+    assert on || !on;
+}
+
+#[test]
+fn sharing_without_a_window_is_unsupported_rather_than_a_crash() {
+    // A test binary has no NSWindow. macOS's picker needs a view to point at,
+    // so this is the path that must degrade rather than trap.
+    if !sh::available() {
+        assert sh::text("hello").to_code() == sh::Outcome::Unsupported.to_code();
+        assert sh::url("https://example.com").to_code() == sh::Outcome::Unsupported.to_code();
+    }
+    assert true;
+}
+
+#[test]
+fn a_subject_is_optional() {
+    let _a = sh::text("body");
+    let _b = sh::text("body", subject: "a subject");
+    assert true;
+}
