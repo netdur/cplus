@@ -1,0 +1,247 @@
+// facet_win32/darkmode — making the SYSTEM CONTROLS follow the appearance.
+//
+// MANIFEST §1 recorded this as read-and-not-worn: `window::is_dark` answered
+// correctly, the title bar followed it, everything this package paints followed
+// it, and the system controls stayed light. It also recorded WHY it was left:
+// the switch is an undocumented export, and "the decision to depend on one
+// belongs to whoever maintains this, not to the commit that noticed".
+//
+// This is that decision, taken, with the reasons on both sides written down.
+//
+// ---- what the switch is ---------------------------------------------------------
+//
+// comctl32 v6 does not follow the app's appearance on its own. Two things turn
+// it on, and only one of them is documented:
+//
+//   `SetWindowTheme(hwnd, L"DarkMode_Explorer", NULL)`   documented, exported
+//                                                        by name, per control.
+//   `SetPreferredAppMode(AllowDark)`                     uxtheme ORDINAL 135.
+//                                                        Undocumented, exported
+//                                                        by no name at all.
+//
+// The first without the second does nothing: a control asks the theme engine
+// for the dark part-list and the engine refuses until the PROCESS has opted in.
+//
+// ---- why it is taken, and how the risk is bounded --------------------------------
+//
+// The cost of not taking it is not cosmetic. On a dark system this package
+// produced a UI that disagreed with itself — dark panels this package painted,
+// light buttons the system painted, and until `paint::sys_or_dark` a black
+// system default for every label on top of them. `examples/facet_gallery` on
+// this machine is the evidence.
+//
+// The risk is bounded three ways:
+//
+//   1. IT IS RESOLVED, NOT LINKED. `GetProcAddress` by ordinal answers null on
+//      a Windows that does not have it — anything before 1809, and anything
+//      after that drops it — and null means this file does nothing at all. The
+//      package still builds, still runs, and looks exactly as it did before.
+//   2. NOTHING ELSE DEPENDS ON IT. No layout, no input, no measurement reads
+//      the result; the only consequence of the call is which bitmaps comctl32
+//      draws with.
+//   3. IT IS ASKED FOR ONCE, at install, and only when the system is dark.
+//
+// The counter-argument, kept because it is a real one: Microsoft has never
+// blessed this, and a future Windows may renumber the ordinal. If it does, the
+// resolve fails and the controls go back to light. That is the whole failure
+// mode — a UI half a shade wrong, not a crash — and it is the same bet every
+// dark-mode Win32 application on the platform has already made.
+
+import "facet/facet" as core;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./paint" as paint;
+
+#[link_name = "LoadLibraryA"]
+extern fn load_library(name: *i8) -> *u8;
+#[link_name = "GetProcAddress"]
+extern fn get_proc_address(module: *u8, name: *i8) -> *u8;
+// `SetWindowTheme` IS documented and exported by name — uxtheme.lib is already
+// on this package's link line for the visual-styles work.
+#[link_name = "SetWindowTheme"]
+extern fn set_window_theme(hwnd: *u8, sub_app: *u16, sub_id: *u16) -> i64;
+
+// AllowDark(1) rather than ForceDark(2). The difference is what happens when
+// the user switches to a light system while the app is running: AllowDark
+// follows them, ForceDark does not — and an application that stays dark after
+// its owner asked for light is a bug with a colour rather than a preference.
+fn allow_dark() -> i32 { return 1 as i32; }
+
+static TRIED: bool = false;
+static SET_PREFERRED: usize = 0;
+static FLUSH_MENU: usize = 0;
+// Ordinal 133, `AllowDarkModeForWindow(HWND, BOOL)`. The per-WINDOW half of the
+// opt-in: 135 tells the process it may, and this tells the theme engine which
+// windows it applies to. Both are needed — `SetWindowTheme` on a window that
+// was never allowed answers S_OK and changes nothing, which is the shape of
+// every "it does not work" report about this API.
+static ALLOW_FOR_WINDOW: usize = 0;
+
+// Ordinal 135 is `SetPreferredAppMode` and 136 is `FlushMenuThemes`, and
+// `GetProcAddress` takes an ordinal in the low word of the NAME pointer — which
+// is what `MAKEINTRESOURCE` is in C, and a cast here.
+fn resolve() {
+    if TRIED { return; }
+    TRIED = true;
+    let m: *u8 = { load_library({ #str_ptr("uxtheme.dll\0") } as *i8) };
+    if m == (0 as *u8) { return; }
+    let p: *u8 = { get_proc_address(m, 135 as *i8) };
+    SET_PREFERRED = { #addr(p) };
+    let f: *u8 = { get_proc_address(m, 136 as *i8) };
+    FLUSH_MENU = { #addr(f) };
+    let a: *u8 = { get_proc_address(m, 133 as *i8) };
+    ALLOW_FOR_WINDOW = { #addr(a) };
+    return;
+}
+
+// Let one window wear the dark part-lists. Called for a window and for every
+// control in it — the engine tracks them individually.
+fn allow_for(hwnd: *u8) {
+    if ALLOW_FOR_WINDOW == (0 as usize) { return; }
+    let allow: fn(*u8, i32) -> i32 = ALLOW_FOR_WINDOW as fn(*u8, i32) -> i32;
+    let _r: i32 = allow(hwnd, 1 as i32);
+    return;
+}
+
+fn available() -> bool {
+    resolve();
+    return SET_PREFERRED != (0 as usize);
+}
+
+// Opt the PROCESS in. Called once at install, and only on a dark system: a
+// light system needs nothing, and asking anyway would be a call whose only
+// effect is to make this harder to reason about.
+fn install() {
+    if !paint::is_dark() { return; }
+    if !available() { return; }
+    let set: fn(i32) -> i32 = SET_PREFERRED as fn(i32) -> i32;
+    let _m: i32 = set(allow_dark());
+    // The MENU BAR is themed separately and does not re-read on its own — a
+    // window that already has one keeps a light bar until this is called.
+    if FLUSH_MENU != (0 as usize) {
+        let flush: fn() = FLUSH_MENU as fn();
+        flush();
+    }
+    return;
+}
+
+// ---- per control -----------------------------------------------------------------
+//
+// The theme name is per CLASS and there is no list of them anywhere official.
+// These three are what every dark-mode application uses:
+//
+//   "DarkMode_Explorer"  buttons, list views, tree views, scroll bars — the
+//                        Explorer part-list, which is the one Microsoft
+//                        themed.
+//   "DarkMode_CFD"       edits and combo boxes. CFD is the common file dialog,
+//                        which is where the dark input field lives.
+//   ""                   nothing to do: a class this package OWNS draws its own
+//                        pixels and takes its colours from `paint`.
+fn theme_for(class_name: str) -> str {
+    if class_name == "BUTTON" { return "DarkMode_Explorer"; }
+    if class_name == "SysListView32" { return "DarkMode_Explorer"; }
+    if class_name == "SysTreeView32" { return "DarkMode_Explorer"; }
+    if class_name == "SCROLLBAR" { return "DarkMode_Explorer"; }
+    if class_name == "EDIT" { return "DarkMode_CFD"; }
+    if class_name == "COMBOBOX" { return "DarkMode_CFD"; }
+    // THIS PACKAGE'S OWN PANEL, for its NON-CLIENT parts. A panel paints its
+    // own client area from `paint` and a theme cannot touch that.
+    //
+    // It does not buy the scroll-bar TRACK, which was the hope: measured, a
+    // window's own WS_VSCROLL keeps the classic light track whatever part-list
+    // the window wears. Explorer's dark bars belong to a SysListView32 — a
+    // CONTROL's bars, not a window's. MANIFEST §1 records the stripe.
+    if class_name == "FacetWin32Panel" { return "DarkMode_Explorer"; }
+    return "";
+}
+
+// Dress one control. Safe to call for every child this package makes: a class
+// with no dark part-list answers "" and nothing happens, and on a light system
+// nothing happens either.
+fn dress(hwnd: *u8, class_name: str) {
+    if hwnd == (0 as *u8) { return; }
+    if !paint::is_dark() { return; }
+    if !available() { return; }
+    let name: str = theme_for(class_name);
+    if name == "" { return; }
+    // ALLOWED FIRST, THEN THEMED. The other order is the same no-op as not
+    // calling 133 at all.
+    allow_for(hwnd);
+    let w: *u16 = sys::to_wide(name);
+    if w == (0 as *u16) { return; }
+    let _r: i64 = { set_window_theme(hwnd, w, 0 as *u16) };
+    sys::free_wide(w);
+    // The control already has the light part-list in hand; WM_THEMECHANGED is
+    // what makes it go and ask again.
+    let _s: i64 = { u::SendMessageA(hwnd, wm_themechanged(), 0 as u64, 0 as i64) };
+    return;
+}
+
+fn wm_themechanged() -> u32 { return 0x031A as u32; }
+
+// A TOP-LEVEL window. Its frame is already dark through
+// `DWMWA_USE_IMMERSIVE_DARK_MODE`; this is what lets the MENU BAR and the
+// non-client scroll bars follow, and it is separate from `dress_window`
+// because a top-level window is not a child and has no class of ours.
+fn dress_top_level(hwnd: *u8) {
+    if hwnd == (0 as *u8) { return; }
+    if !paint::is_dark() { return; }
+    if !available() { return; }
+    allow_for(hwnd);
+    let w: *u16 = sys::to_wide("DarkMode_Explorer");
+    if w == (0 as *u16) { return; }
+    let _r: i64 = { set_window_theme(hwnd, w, 0 as *u16) };
+    sys::free_wide(w);
+    return;
+}
+
+// Dress a window by asking it what it IS. `make_child` takes the class as a
+// pointer to a literal and the callers pass `sys::button_class()` and friends,
+// so comparing pointers would be comparing the linker's decisions about string
+// folding. `GetClassNameA` asks the window, which cannot be wrong.
+//
+// ASCII, deliberately: every class named here is one of Windows' own and they
+// are all ASCII by definition. The `*W` rule this package follows everywhere
+// else is about USER TEXT.
+fn dress_window(hwnd: *u8) {
+    if hwnd == (0 as *u8) { return; }
+    // The dark check FIRST, so a light system pays one bool for every control
+    // it creates rather than a `GetClassName` each.
+    if !paint::is_dark() { return; }
+    if !available() { return; }
+    var buf: [u8; 64] = [0; 64];
+    let n: i32 = { u::GetClassNameA(hwnd, { #addr_of(buf[0]) } as *i8, 64 as i32) };
+    if n <= (0 as i32) { return; }
+    dress(hwnd, { #str_from_raw_parts({ #addr_of(buf[0]) }, n as usize) });
+    return;
+}
+
+#[test]
+fn only_the_classes_with_a_dark_part_list_are_dressed() {
+    // The table is the whole of this file's platform knowledge, and it is
+    // asserted rather than left to a live control because a wrong name is a
+    // silent no-op: `SetWindowTheme` answers S_OK for a part-list that does not
+    // exist, and the control simply stays light.
+    assert theme_for("BUTTON") == "DarkMode_Explorer";
+    assert theme_for("EDIT") == "DarkMode_CFD";
+    assert theme_for("COMBOBOX") == "DarkMode_CFD";
+    // This package's own panel is dressed for its NON-CLIENT parts — a
+    // `scroll`'s bars are the system's to draw even on a window whose client
+    // area is entirely ours.
+    assert theme_for("FacetWin32Panel") == "DarkMode_Explorer";
+    // A static's colours come through WM_CTLCOLORSTATIC, which `paint` answers.
+    assert theme_for("Static") == "";
+    return;
+}
+
+#[test]
+fn a_light_system_asks_for_nothing() {
+    // The guard that makes this file free on the appearance where it has no
+    // work: no library load, no ordinal resolve, no per-control call.
+    let was: bool = paint::is_dark();
+    paint::set_dark(false);
+    dress(4321 as *u8, "BUTTON");
+    install();
+    paint::set_dark(was);
+    return;
+}

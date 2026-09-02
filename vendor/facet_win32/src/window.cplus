@@ -48,6 +48,7 @@ import "./recycler" as recycler;
 import "./dnd" as dnd;
 import "./swipe" as swipe;
 import "./shadow" as shadow;
+import "./darkmode" as darkmode;
 import "./scroller" as scroller;
 
 fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
@@ -515,6 +516,10 @@ fn create_titled(style: u32, t: text::Text, w: i32, h: i32) -> *u8 {
                                         0 as *u8) };
     if win == (0 as *u8) { return 0 as *u8; }
     controls::set_window_text(win, t);
+    // The frame is already dark through `DWMWA_USE_IMMERSIVE_DARK_MODE`; this
+    // is what lets the MENU BAR and the non-client scroll bars follow. See
+    // `darkmode` for the export it rests on.
+    darkmode::dress_top_level(win);
     return win;
 }
 

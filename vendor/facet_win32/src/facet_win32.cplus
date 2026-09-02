@@ -48,6 +48,7 @@ import "./window" as window;
 import "./geometry" as geometry;
 import "./recycler" as recycler;
 import "./swipe" as swipe;
+import "./darkmode" as darkmode;
 
 fn renderer() -> mount::Renderer {
     return mount::Renderer {
@@ -86,6 +87,12 @@ fn install() {
     theme::set_is_dark_fn(window::is_dark);
     theme::set_theme_changed_fn(theme_changed);
     window::sync_appearance();
+    // THE PROCESS OPTS IN TO DARK CONTROLS, after `sync_appearance` has read
+    // the system and before any window is made — a control created first would
+    // have been dressed against an appearance nobody had read yet. See
+    // `darkmode` for the undocumented export this rests on and why the bet is
+    // bounded.
+    darkmode::install();
     window::report_theme(icc);
     return;
 }

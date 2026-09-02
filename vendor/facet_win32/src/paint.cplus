@@ -157,6 +157,69 @@ fn fixed(r: f64, g: f64, b: f64, alpha: f64) -> vocab::Color {
 //
 // COLOR_* indices: WINDOW 5, WINDOWTEXT 8, HIGHLIGHT 13, BTNFACE 15,
 // GRAYTEXT 17, HOTLIGHT 26.
+// IS THE SYSTEM PALETTE MEANINGFUL RIGHT NOW?
+//
+// `GetSysColor` is the real user preference in exactly two of the three
+// appearances, and the comment above used to claim all three. It follows HIGH
+// CONTRAST — the one accessibility mode Windows users actually switch on — and
+// it follows the classic light theme. It does NOT follow Windows 10/11 dark
+// mode: with `AppsUseLightTheme = 0` it still answers COLOR_WINDOW as white and
+// COLOR_WINDOWTEXT as black. Measured on this machine, in dark mode:
+//
+//     GetSysColor(COLOR_WINDOW)      = 0xFFFFFF
+//     GetSysColor(COLOR_WINDOWTEXT)  = 0x000000
+//     GetSysColor(COLOR_BTNFACE)     = 0xF0F0F0
+//
+// So a backend that reads the system palette for its surfaces and an adaptive
+// pair for everything else produces a UI that disagrees with ITSELF on a dark
+// system: light panels, dark cards, black text on the dark ones. That is what
+// `examples/facet_gallery`'s code blocks looked like — dark ink on a dark
+// sunken surface, unreadable — and it was this, not the application's colours.
+//
+// High contrast is asked about separately because it is the case where the
+// palette DOES lead: a high-contrast dark theme sets COLOR_WINDOW to black
+// itself, and overriding it with this file's own greys would throw away the
+// user's actual accessibility setting.
+static HC_READ: bool = false;
+static HC_ON: bool = false;
+
+fn hc_flag_on() -> u32 { return 0x00000001 as u32; }
+fn spi_gethighcontrast() -> u32 { return 0x0042 as u32; }
+
+#[link_name = "SystemParametersInfoA"]
+extern fn system_parameters_info(action: u32, param: u32, pv: *u8, ini: u32) -> i32;
+#[link_name = "malloc"]
+extern fn hc_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn hc_free(p: *u8);
+
+// HIGHCONTRAST is { UINT cbSize; DWORD dwFlags; LPSTR lpszDefaultScheme } — 16
+// bytes with the pointer's alignment. Asked ONCE: a user who turns high
+// contrast on mid-session gets it at the next launch, and the alternative is a
+// system call inside every colour resolution in every paint.
+fn high_contrast() -> bool {
+    if HC_READ { return HC_ON; }
+    HC_READ = true;
+    let buf: *u8 = { hc_malloc(16 as usize) };
+    if buf.is_null() { return HC_ON; }
+    let size: *u32 = buf as *u32;
+    { *size = 16 as u32 };
+    if { system_parameters_info(spi_gethighcontrast(), 16 as u32, buf, 0 as u32) } != (0 as i32) {
+        let flags: *u32 = { (buf + (4 as usize)) } as *u32;
+        HC_ON = ({ *flags } & hc_flag_on()) != (0 as u32);
+    }
+    { hc_free(buf) };
+    return HC_ON;
+}
+
+// The system's colour, or this file's dark one — see `high_contrast` for which
+// wins when. `d` is the grey a dark appearance wants; the system's answer is
+// used whenever the system has a real opinion.
+fn sys_or_dark(index: i32, d: f64, alpha: f64) -> vocab::Color {
+    if DARK && !high_contrast() { return vocab::Color::rgba(d, d, d, alpha); }
+    return sys_color(index, alpha);
+}
+
 fn sys_color(index: i32, alpha: f64) -> vocab::Color {
     let v: u32 = { u::GetSysColor(index) };
     // A COLORREF is 0x00BBGGRR — the channels come back in the reverse of the
@@ -168,15 +231,15 @@ fn sys_color(index: i32, alpha: f64) -> vocab::Color {
 }
 
 fn platform_color(t: u32, alpha: f64) -> vocab::Color {
-    if t == (1 as u32) { return sys_color(8 as i32, alpha); }       // text
-    if t == (2 as u32) { return sys_color(17 as i32, alpha); }      // text_secondary
-    if t == (9 as u32) { return sys_color(17 as i32, alpha); }      // text_tertiary
-    if t == (15 as u32) { return sys_color(17 as i32, alpha); }     // placeholder
+    if t == (1 as u32) { return sys_or_dark(8 as i32, 0.92f64, alpha); }    // text
+    if t == (2 as u32) { return sys_or_dark(17 as i32, 0.68f64, alpha); }   // text_secondary
+    if t == (9 as u32) { return sys_or_dark(17 as i32, 0.58f64, alpha); }   // text_tertiary
+    if t == (15 as u32) { return sys_or_dark(17 as i32, 0.55f64, alpha); }  // placeholder
     if t == (16 as u32) { return sys_color(26 as i32, alpha); }     // link (HOTLIGHT)
     if t == (3 as u32) { return sys_color(13 as i32, alpha); }      // accent (HIGHLIGHT)
-    if t == (11 as u32) { return sys_color(15 as i32, alpha); }     // window_background
+    if t == (11 as u32) { return sys_or_dark(15 as i32, 0.13f64, alpha); }  // window_background
     if t == (12 as u32) { return mono(0.09f64, 0.94f64, alpha); }   // under_page
-    if t == (13 as u32) { return sys_color(5 as i32, alpha); }      // control_background
+    if t == (13 as u32) { return sys_or_dark(5 as i32, 0.17f64, alpha); }   // control_background
     if t == (14 as u32) { return mono(0.28f64, 0.80f64, alpha); }   // fill
     if t == (19 as u32) { return mono(0.24f64, 0.86f64, alpha); }   // fill_secondary
     if t == (17 as u32) { return sys_color(13 as i32, alpha); }     // selected content
@@ -533,7 +596,12 @@ fn effective_bg(v: *u8) -> u32 {
         cur = { u::GetParent(cur) };
     }
     // COLOR_BTNFACE — the dialog face, which is what a window with no stated
-    // background IS on this platform.
+    // background IS on this platform. Through `sys_or_dark`, because the
+    // classic palette answers #F0F0F0 on a dark system and a window nobody
+    // coloured would come out light under everything that IS dark.
+    var has: bool = false;
+    let face: u32 = resolve(vocab::Color::window_background(), #addr_of(has));
+    if has { return face; }
     return { u::GetSysColor(15 as i32) };
 }
 
@@ -563,6 +631,16 @@ fn ctl_color(ctl: *u8, hdc: *u8) -> *u8 {
     var has_fg: bool = false;
     let fg: u32 = resolve(text_color_of(n), #addr_of(has_fg));
     if has_fg { let _t: u32 = { gdi::SetTextColor(hdc, fg) }; }
+    // A CONTROL WHOSE TEXT COLOUR NOBODY STATED keeps the system's, which is
+    // BLACK on a dark system — `GetSysColor` does not follow dark mode, see
+    // `high_contrast`. On a panel this package has painted dark that is a label
+    // nobody can read, and it is the commonest node in any tree. So the
+    // appearance's own default is written when the application named none.
+    if !has_fg && is_dark() && !high_contrast() {
+        var d: bool = false;
+        let ink: u32 = resolve(vocab::Color::text(), #addr_of(d));
+        if d { let _t: u32 = { gdi::SetTextColor(hdc, ink) }; }
+    }
 
     var has_bg: bool = false;
     let bg: u32 = resolve(core::background_color(n), #addr_of(has_bg));

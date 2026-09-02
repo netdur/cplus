@@ -170,24 +170,50 @@ uses the ANSI entry points throughout (see `win32`'s own manifest for why), so a
 placeholder is passed as bytes and anything outside ASCII is dropped rather than
 mojibaked. Narrowing, not absence: it comes back whole when the wide path lands.
 
-### DARK CONTROLS — the appearance is READ, and not yet WORN
+### DARK CONTROLS — worn now, and the two things that still are not
 
-`window::is_dark` answers correctly and the title bar follows it
-(`DwmSetWindowAttribute`, `DWMWA_USE_IMMERSIVE_DARK_MODE`). Everything this
-package PAINTS itself — panels, the shared band, adaptive colour pairs — is
-dark on a dark system.
+This entry used to record the appearance as READ and not WORN, and to defer the
+fix because it needs an undocumented export: "the decision to depend on one
+belongs to whoever maintains this, not to the commit that noticed". The
+decision is taken. `darkmode.cplus` carries the reasoning; the short version is
+that the cost of not taking it was not cosmetic, and the risk is bounded by the
+export being RESOLVED rather than linked — a Windows without it gets the old
+behaviour and nothing else changes.
 
-The system CONTROLS are not. comctl32 v6 does not follow the app's appearance
-on its own: each control has to be told, with
-`SetWindowTheme(hwnd, L"DarkMode_Explorer", NULL)`, and the process has to opt
-in first through `SetPreferredAppMode` — which is exported from uxtheme **by
-ordinal 135 and by no name at all**. It is undocumented, every dark-mode Win32
-application in the world uses it, and Microsoft has never blessed it.
+The recipe, since every account of it online is missing a step:
 
-So the state is: dark chrome, dark facet-painted surfaces, light system
-controls. Recorded here rather than fixed because the fix is an undocumented
-export and the decision to depend on one belongs to whoever maintains this, not
-to the commit that noticed.
+    SetPreferredAppMode(AllowDark)        uxtheme ordinal 135, once per process
+    AllowDarkModeForWindow(hwnd, TRUE)    uxtheme ordinal 133, per window
+    SetWindowTheme(hwnd, L"DarkMode_…")   documented, per control
+    SendMessage(hwnd, WM_THEMECHANGED)    or the control keeps what it had
+
+**Ordinal 133 is the step that is usually left out**, and without it the third
+line answers S_OK and changes nothing — which is the shape of every "it does not
+work" report about this API. Measured here: buttons stayed light through 135 +
+`SetWindowTheme` alone, and came out `#2B2B2B` once 133 was added.
+
+Part-lists: `DarkMode_Explorer` for buttons, list views, tree views;
+`DarkMode_CFD` for edits and combo boxes — CFD is the common file dialog, which
+is where the dark input field lives.
+
+**And the palette had to move with it**, which was the larger half of the bug.
+`GetSysColor` does NOT follow Windows 10/11 dark mode — it answers COLOR_WINDOW
+as white and COLOR_WINDOWTEXT as black on a system that asked for dark — so a
+backend reading the system palette for its surfaces and an adaptive pair for
+everything else disagrees with ITSELF: light panels, dark cards, black text on
+the dark ones. `paint::sys_or_dark` is the fix, and it keeps reading the system
+palette under HIGH CONTRAST, where the system genuinely does lead.
+
+Two things stay light and both are the system's own drawing:
+
+**The MENU BAR.** `DefWindowProc` draws it and it is not appearance-aware;
+every dark Win32 application owner-draws its own. This package has not.
+
+**A `scroll`'s own scroll-bar track.** Measured: a window's own `WS_VSCROLL` is
+drawn by the classic non-client renderer, and no part-list on the window
+reaches it. Explorer's dark bars belong to a `SysListView32` — a CONTROL's
+bars, not a window's — so the fix is drawing them, which is a scroll bar this
+package would own end to end.
 
 ### THE `*A` / `*W` / UTF-8 SITUATION, and why it is settled
 

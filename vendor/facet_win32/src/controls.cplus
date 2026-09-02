@@ -52,6 +52,7 @@ import "facet/symbol" as symbol;
 import "facet/icon_button" as icon_button;
 import "stdlib/io" as io;
 import "./paint" as paint;
+import "./darkmode" as darkmode;
 import "./anim" as anim;
 import "facet/radio" as radio;
 import "facet/text_area" as text_area;
@@ -98,10 +99,16 @@ fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
 // mount, and exactly what `geometry::show_window` exists to sequence properly.
 fn make_child(class: *u8, title: *u8, style: u32, exstyle: u32) -> *u8 {
     let s: u32 = style | sys::ws_child() | sys::ws_clipsiblings();
-    return { u::CreateWindowExA(exstyle, class as *i8, title as *i8, s,
-                                0 as i32, 0 as i32, 0 as i32, 0 as i32,
-                                message_only_parent(), 0 as *u8, hinstance(),
-                                0 as *u8) };
+    let w: *u8 = { u::CreateWindowExA(exstyle, class as *i8, title as *i8, s,
+                                      0 as i32, 0 as i32, 0 as i32, 0 as i32,
+                                      message_only_parent(), 0 as *u8, hinstance(),
+                                      0 as *u8) };
+    // THE APPEARANCE, once, at creation. A system control does not follow the
+    // app's dark mode on its own — it has to be told, per control, and this is
+    // the one place every child this package makes goes through. Free on a
+    // light system: `dress_window` answers on a bool before it asks anything.
+    darkmode::dress_window(w);
+    return w;
 }
 
 // HWND_MESSAGE. A child window must have a parent at creation, and this is the
@@ -1622,6 +1629,16 @@ fn apply_scroll_props(v: *u8, n: *core::Node, dirty: u64) {
         if bars_shown({ (*p).vertical_scroll_bars }) { style = style | sys::ws_vscroll(); }
         if bars_shown({ (*p).horizontal_scroll_bars }) { style = style | sys::ws_hscroll(); }
         let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+        // The window was dressed for the appearance at CREATION, when it had
+        // no scroll bar; dressed again now that it has one.
+        //
+        // MEASURED: this does NOT darken the track. A window's own WS_VSCROLL
+        // is drawn by the classic non-client renderer, which the Explorer
+        // part-list does not reach — Explorer's own dark bars belong to a
+        // SysListView32, whose bars are the control's rather than the window's.
+        // Kept because it is the right call at the right moment and costs one
+        // theme write; the stripe is recorded in MANIFEST §1.
+        darkmode::dress_window(v);
     }
     if (dirty & (scroll::P_SCROLL_X | scroll::P_SCROLL_Y)) != (0 as u64) {
         // The document is MOVED rather than the viewport scrolled: a GtkFixed
