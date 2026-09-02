@@ -58,3 +58,10 @@ __pycache__/
 
 # javac scratch for tools/build_dex.sh; the DEX is the artifact, not these.
 vendor/facet_android/classes/
+
+# CoreML models. A compiled .mlpackage is a multi-megabyte binary weight blob
+# that git cannot diff and that nothing tracked references — the probes using
+# one live under playground/, which is ignored already. Fetch or convert the
+# model where you need it rather than carrying it in history.
+*.mlpackage/
+*.mlmodelc/
