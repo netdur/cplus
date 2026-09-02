@@ -65,3 +65,8 @@ vendor/facet_android/classes/
 # model where you need it rather than carrying it in history.
 *.mlpackage/
 *.mlmodelc/
+
+# tools/mvnresolve.py's download cache. Maven artifacts fetched to price an
+# AAR's closure — megabytes of third-party .aar and .pom that git should never
+# carry. Delete it freely; the resolver refetches.
+m2/
