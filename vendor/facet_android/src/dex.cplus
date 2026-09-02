@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 39184;
+const DEX_LEN: usize = 41100;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -170,6 +170,13 @@ struct NativeLIFF_Z {
 }
 
 #[repr(C)]
+struct Native1I {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32),
+}
+
+#[repr(C)]
 struct Native2I {
     opaque name: *u8,
     opaque signature: *u8,
@@ -192,6 +199,7 @@ extern fn facet_android_tab(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, i
 extern fn facet_android_menu_item(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                   index: i32);
 extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8;
+extern fn facet_android_app_event(envp: *jni::JNIEnv, cls: jni::jobject, kind: i32);
 extern fn facet_android_permission_result(envp: *jni::JNIEnv, cls: jni::jobject,
                                           request_code: i32, permission: jni::jobject,
                                           result: i32);
@@ -283,7 +291,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 39184] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 41100] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -723,6 +731,22 @@ fn bind_natives(env: rt::Env) {
         };
         let _r21: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
                                                           #addr_of(link_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // The Activity lifecycle's door — onResume / onPause / onDestroy /
+        // onLowMemory, all four through one native carrying the kind. Separate
+        // call and separate result for the same reason as the three above: an
+        // APK whose FacetActivity predates this override must not take them
+        // down with it. That case is REAL here and not theoretical — every
+        // Android app built before this change has such an APK, and its only
+        // symptom should be the lifecycle it never had.
+        var life_rec: Native1I = Native1I {
+            name: #str_ptr("nativeAppEvent\0"),
+            signature: #str_ptr("(I)V\0"),
+            fn_ptr: facet_android_app_event,
+        };
+        let _r22: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(life_rec) as *u8, 1) };
         if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
     }
 

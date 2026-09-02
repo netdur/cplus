@@ -62,8 +62,10 @@ impl Radius: component::Component {
     }
 }
 impl Radius: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- brush -------------------------------------------------------------------
@@ -93,8 +95,10 @@ impl Brush: component::Component {
     }
 }
 impl Brush: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- shadow ------------------------------------------------------------------
@@ -120,8 +124,10 @@ impl Shadow: component::Component {
     }
 }
 impl Shadow: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- clip --------------------------------------------------------------------
@@ -161,8 +167,10 @@ impl Clip: component::Component {
     }
 }
 impl Clip: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- transform ---------------------------------------------------------------
@@ -188,6 +196,8 @@ impl Transform: component::Component {
     }
 }
 impl Transform: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }

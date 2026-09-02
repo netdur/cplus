@@ -207,7 +207,8 @@ impl Responsive: component::Component {
 }
 
 impl Responsive: component::Lifecycle {
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         match mount::find("rp:root") {
             option::Option[*core::Node]::Some(n) => {
                 this.watch = services::observe_size(n, reclassify, 0 as *u8);
@@ -220,5 +221,6 @@ impl Responsive: component::Lifecycle {
         // layout pass that placed the tree already applied it.
         reclassify(0 as *u8);
     }
-    fn on_detach(ref this) { return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }

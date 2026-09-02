@@ -13310,31 +13310,53 @@ fn a_real_appkit_notification_reaches_a_subscriber() {
     AE_COUNT = 0;
     assert ev::on_app_event(ae_record).is_ok();
 
-    // Post the actual notification AppKit posts when the app comes forward.
     let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")),
                              rt::sel(#str_ptr("defaultCenter\0")));
+
+    // THE TWO LEVELS, and this test used to pin them CROSSED: it asserted
+    // `didBecomeActive` -> E_FOREGROUND and `didResignActive` -> E_BACKGROUND,
+    // which is the focus edge answering with the visibility kind. It passed
+    // for months because it pinned the implementation rather than the meaning.
+    //
+    // FOCUS. Another app came forward or went away; our windows are still on
+    // screen and an app that holds a camera must NOT release here.
     rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
                        bridge::nsstring("NSApplicationDidBecomeActiveNotification"),
                        0 as *u8);
-
     assert AE_COUNT == 1;
-    assert AE_SEEN == ev::E_FOREGROUND;
+    assert AE_SEEN == ev::E_ACTIVE;
 
-    // And the other three are wired to the right kinds — a copy-paste that
-    // pointed two observers at one kind would pass a single-event test.
     rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
                        bridge::nsstring("NSApplicationDidResignActiveNotification"),
                        0 as *u8);
+    assert AE_SEEN == ev::E_INACTIVE;
+
+    // VISIBILITY on macOS is HIDE, not "another app is in front".
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                       bridge::nsstring("NSApplicationDidHideNotification"),
+                       0 as *u8);
     assert AE_SEEN == ev::E_BACKGROUND;
+
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                       bridge::nsstring("NSApplicationDidUnhideNotification"),
+                       0 as *u8);
+    assert AE_SEEN == ev::E_FOREGROUND;
+
     rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
                        bridge::nsstring("NSApplicationWillTerminateNotification"),
                        0 as *u8);
     assert AE_SEEN == ev::E_TERMINATING;
+    // LAUNCH RAISES TWO: E_LAUNCHED and then E_FOREGROUND. macOS has no
+    // `didUnhide` at launch — the app was never hidden — so without the second
+    // one a Mac cold start would read `Mount` then `Active` while iOS and
+    // Android both raise a foreground in between. Measured on all three,
+    // 2026-09-02. `AE_SEEN` is therefore the FOREGROUND, and the count goes up
+    // by two rather than one.
     rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
                        bridge::nsstring("NSApplicationDidFinishLaunchingNotification"),
                        0 as *u8);
-    assert AE_SEEN == ev::E_LAUNCHED;
-    assert AE_COUNT == 4;
+    assert AE_SEEN == ev::E_FOREGROUND;
+    assert AE_COUNT == 7;
 
     ev::clear_app_events();
     backend::uninstall();

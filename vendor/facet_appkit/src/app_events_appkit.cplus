@@ -49,11 +49,29 @@ static OBS_LAUNCHED: services::Cancellable = #zero::[services::Cancellable]();
 static OBS_FOREGROUND: services::Cancellable = #zero::[services::Cancellable]();
 static OBS_BACKGROUND: services::Cancellable = #zero::[services::Cancellable]();
 static OBS_TERMINATING: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_ACTIVE: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_INACTIVE: services::Cancellable = #zero::[services::Cancellable]();
 static ARMED: bool = false;
 
-fn on_launched(ctx: *u8) { ev::fire_plain(ev::E_LAUNCHED); return; }
+// LAUNCH RAISES FOREGROUND TOO, and macOS is the only platform where it has to
+// be said explicitly. `didUnhide` is the visibility edge here, and it cannot
+// fire for an app that was never hidden — so without this, a Mac cold start is
+// `Mount` then `Active` while iOS and Android both raise a foreground in
+// between. Measured on all three, 2026-09-02.
+//
+// The app IS becoming visible, so this is completing the contract rather than
+// inventing an event. The exception is an app that launches without showing a
+// window (an LSUIElement agent); facet apps open one, and a backend for that
+// case would suppress this.
+fn on_launched(ctx: *u8) {
+    ev::fire_plain(ev::E_LAUNCHED);
+    ev::fire_plain(ev::E_FOREGROUND);
+    return;
+}
 fn on_foreground(ctx: *u8) { ev::fire_plain(ev::E_FOREGROUND); return; }
 fn on_background(ctx: *u8) { ev::fire_plain(ev::E_BACKGROUND); return; }
+fn on_active(ctx: *u8) { ev::fire_plain(ev::E_ACTIVE); return; }
+fn on_inactive(ctx: *u8) { ev::fire_plain(ev::E_INACTIVE); return; }
 fn on_terminating(ctx: *u8) { ev::fire_plain(ev::E_TERMINATING); return; }
 
 // A URL arrived. `text` is it, spelled as `absoluteString` — whole, undecided,
@@ -74,8 +92,21 @@ fn arm() {
     if ARMED { return; }
     ARMED = true;
     OBS_LAUNCHED = observe("NSApplicationDidFinishLaunchingNotification", on_launched);
-    OBS_FOREGROUND = observe("NSApplicationDidBecomeActiveNotification", on_foreground);
-    OBS_BACKGROUND = observe("NSApplicationDidResignActiveNotification", on_background);
+    // THE TWO LEVELS, and the previous mapping had them crossed: it fired
+    // E_BACKGROUND from `didResignActive`, which is the FOCUS edge — so
+    // clicking another window told the app it had been backgrounded and a
+    // camera app released its device every time the user looked away.
+    //
+    // VISIBILITY on macOS is HIDE, not "another app is in front". A Mac app is
+    // never *stopped* the way a phone app is, so this edge is rare here —
+    // which is accurate, not a gap: macOS neither kills the app nor revokes
+    // its devices. Occlusion is deliberately NOT mapped; a window merely
+    // covered by another is a rendering concern, and folding it in would make
+    // E_BACKGROUND fire constantly on a busy desktop.
+    OBS_FOREGROUND = observe("NSApplicationDidUnhideNotification", on_foreground);
+    OBS_BACKGROUND = observe("NSApplicationDidHideNotification", on_background);
+    OBS_ACTIVE = observe("NSApplicationDidBecomeActiveNotification", on_active);
+    OBS_INACTIVE = observe("NSApplicationDidResignActiveNotification", on_inactive);
     OBS_TERMINATING = observe("NSApplicationWillTerminateNotification", on_terminating);
     // THE DELEGATE SEAM, not an observation — there is nothing to observe. The
     // return is dropped on purpose: false means the application set its own

@@ -47,11 +47,35 @@ import "./facet" as core;
 
 // The process is up and the first window can be shown. No payload.
 const E_LAUNCHED: u32 = 1u32;
-// The app came to the front. No payload. (macOS: didBecomeActive; iOS:
-// didBecomeActive; Android: onResume.)
+// ---- the two lifecycle LEVELS ------------------------------------------------
+//
+// FOREGROUND/BACKGROUND is VISIBILITY. ACTIVE/INACTIVE is FOCUS. They are not
+// two names for one thing, and conflating them is measurably wrong: in
+// split-screen on a foldable, and on any desktop, an app loses FOCUS while
+// remaining fully VISIBLE and doing useful work. An app told to release its
+// camera on the focus edge stops working in front of the person watching it.
+//
+// This distinction was measured, not assumed — Galaxy Fold SM_F966B,
+// 2026-09-02. Focus moved four times in split-screen with NO onPause and no
+// onResume at all; the activity stays resumed while unfocused and visible.
+// Before that measurement all three backends fired E_BACKGROUND from the FOCUS
+// edge on two platforms and the VISIBILITY edge on the third.
+//
+//   level        macOS            iOS                     Android
+//   visibility   didHide/Unhide   did/willEnterBackground onStop/onStart
+//   focus        did/willResign   did/willResignActive    onWindowFocusChanged
+//
+// The two nest: going out, INACTIVE then BACKGROUND; coming back, FOREGROUND
+// then ACTIVE. A cold start is neither — it is E_LAUNCHED then E_ACTIVE, with
+// no E_FOREGROUND, on every platform.
+
+// The app is VISIBLE again after being fully gone. No payload. Re-acquire
+// exclusive devices here. NOT raised at launch.
 const E_FOREGROUND: u32 = 2u32;
-// The app went behind. No payload. The last safe moment to persist — on
-// Android and iOS the process can be killed after this without another word.
+// The app is NO LONGER VISIBLE. No payload. The last safe moment to persist —
+// on Android and iOS the process can be killed after this without another
+// word — and the edge at which Android revokes the camera whether the app
+// cooperates or not.
 const E_BACKGROUND: u32 = 3u32;
 // The process is going down cleanly. No payload. NOT guaranteed on mobile.
 const E_TERMINATING: u32 = 4u32;
@@ -100,10 +124,20 @@ const E_PERMISSION_RESULT: u32 = 10u32;
 // invisible to a subscriber.
 const E_NOTIFICATION_TAP: u32 = 11u32;
 
+// The app is FRONTMOST and taking input. No payload. Fires at launch and
+// every time focus returns — a dismissed dialog, a closed Control Centre, the
+// other pane of a split screen handing focus back. May fire WITHOUT a
+// preceding E_INACTIVE.
+const E_ACTIVE: u32 = 12u32;
+// The app LOST FOCUS but may still be visible. No payload. A dialog, a
+// notification shade, the other app in split-screen taking over. NOT a signal
+// to release anything: the app is still on screen and may still be working.
+const E_INACTIVE: u32 = 13u32;
+
 // The highest kind this build knows. A subscriber that switches on `kind`
 // should ignore what it does not recognise rather than assert — a newer facet
 // firing a newer kind must not break an older SDK package.
-const E_MAX: u32 = 11u32;
+const E_MAX: u32 = 13u32;
 
 // ---- the payload -------------------------------------------------------------
 

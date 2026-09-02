@@ -12,7 +12,7 @@ Tier 2
 
 1 securestore — Keychain (iOS) / Keystore-backed EncryptedSharedPreferences or equivalent (Android)
 
-2 camera — capture photo/video + preview surface as a Facet-embeddable native view (your Apple Maps escape-hatch test proves the pattern). iOS: AVFoundation; Android: CameraX (not Camera2 — CameraX exists precisely because Camera2 broke everyone on the device long tail)
+2 camera — capture photo/video + preview surface as a Facet-embeddable native view (your Apple Maps escape-hatch test proves the pattern). iOS: AVFoundation; Android: Camera2 — SUPERSEDED, see plans/camera.md §1. The original line here said CameraX; measurement put it at 845× the dex for the quirk database, and the trade was taken the other way
 
 3 location — one-shot + continuous, accuracy tiers, background-mode flags
 

@@ -95,8 +95,10 @@ impl Type: component::Component {
 }
 
 impl Type: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- fields ------------------------------------------------------------------
@@ -208,8 +210,10 @@ impl Fields: component::Component {
 }
 
 impl Fields: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- keyboards ---------------------------------------------------------------
@@ -245,6 +249,8 @@ impl Keyboards: component::Component {
 }
 
 impl Keyboards: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }

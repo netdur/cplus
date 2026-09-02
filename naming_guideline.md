@@ -95,6 +95,61 @@ applies to it in full.
 
 ## Current state (2026-09-01)
 
+- camera (pass done 2026-09-01, **retrofitted** — written to work and then
+  brought to this page, the expensive order permissions warned about, and it
+  cost more than securestore's pass did). Findings:
+  - **`ref this` on read-only methods was the whole readability problem.** A
+    `match` binding is FROZEN, so `open() -> Result[Camera, Outcome]` forced
+    every caller to write `var live: Camera = c;` inside the arm before it could
+    call anything. A by-value `this` BORROWS — only `take` consumes — so
+    `is_open`, `preview` and `capture` take `this` and only `close`/`drop` ask
+    for `ref`. The ugliness read as a flaw in returning `Result`; it was a
+    reflex in the receiver list.
+  - **The docs taught the long match arm.** Every example wrote
+    `result::Result[camera::Camera, camera::Outcome]::Ok(c)`. The type arguments
+    are INFERRED — `result::Result::Ok(c)` compiles — so the noise was invented
+    by the documentation, not required by the language. Measured with a throwaway
+    package rather than assumed.
+  - **`outcome_from_code` and `facing_code` were loose functions.** Now
+    `Outcome::from_code` and `Facing::to_code`, paired with the `to_code` that
+    already existed. This is permissions' `State::from_code` correction verbatim,
+    twice in one package, which suggests the pairing rule belongs in the Rules
+    section above rather than only in the changelog.
+  - **The photo handler took a pointer and a length.** Now `fn(u8[], *u8)`: a
+    slice carries both as one value, so a length that does not belong to the
+    buffer is unrepresentable, and `#slice_ptr` / `#slice_len` are the FFI tier
+    when the bytes go on to C. The `_c_*` seam still splits them, the way
+    securestore's `str` arguments do — a fat pointer through a C-ABI declaration
+    is a promise this repo does not make — so the facade bridges with a fixed
+    four-slot table keyed by session handle.
+  - **`count()` returned `i64`**, which was the seam's type leaking into the
+    surface. `usize`, matching `Vec::count` and `str::count`.
+  - **The Android backend exposed five transport identifiers** — `DEX_LEN`,
+    `LOADER`, `C_CAMERA`, `NativeLB`, `camera_android_photo` — now all
+    `_`-prefixed, http's rule. `camera_android_photo` was also `export`ed for no
+    reason: `RegisterNatives` takes a function POINTER, not a linker symbol.
+    Removing it was re-verified on the emulator, because "it still compiles" is
+    not evidence for a JNI binding. The Apple backend needed nothing.
+  - A **deliberate deviation, recorded rather than hidden**: `capture` returns
+    `Outcome` where `Ok` means the request was ACCEPTED, not that a photo
+    exists. The verb starts an asynchronous operation and the photo arrives on a
+    handler; there is no return value that could carry the result, and `Status`
+    has no arm for "in flight".
+  - **A required `_ctx` slot cannot receive a bound method**, which is worth
+    recording because facet's own comment on `adopt_native_with` says the
+    opposite. Measured: the compiler fills a handler's context slot with the
+    receiver only when that slot has a DEFAULT — a required one is rejected by
+    the arity check first (E0308), even though E0824 shows the fill was
+    intended. `facet::services::run_on_main(work, ctx)` was the only one of its
+    three neighbours without a default (`after` and `observe_size` both have
+    one), so `run_on_main(this.publish)` did not compile. Defaulted.
+  - Not naming, but found by the same pass and worth the same warning: the
+    probes were full of `var m: text::Text = "..."; io::println(m.view());`.
+    An interpolated literal passed DIRECTLY to `io::print`/`println`/`eprintln`
+    is a SINK — zero heap, no `Text` materialised — and the reference says so.
+    The ceremony was both slower and uglier. A named binding is right only when
+    the message is used twice.
+
 - securestore (pass done 2026-09-01, **written against this page and then
   audited** — the cheaper order permissions recommends, and it showed: both
   backends needed nothing). Findings:

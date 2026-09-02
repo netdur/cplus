@@ -367,12 +367,14 @@ impl Probe: component::Lifecycle {
     // The timer is held in a STATIC because `services::Cancellable` is an RAII
     // handle whose drop cancels — a `let` here arms a timer and revokes it at
     // the end of the scope, which is how a probe comes to print exactly one line.
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         report("attach");
         TIMER = services::after(0.5f64, tick);
         return;
     }
-    fn on_detach(ref this) { return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 impl Probe: screen::Screen {

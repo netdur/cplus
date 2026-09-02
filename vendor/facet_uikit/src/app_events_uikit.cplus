@@ -59,12 +59,16 @@ static OBS_LAUNCHED: services::Cancellable = #zero::[services::Cancellable]();
 static OBS_FOREGROUND: services::Cancellable = #zero::[services::Cancellable]();
 static OBS_BACKGROUND: services::Cancellable = #zero::[services::Cancellable]();
 static OBS_TERMINATING: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_ACTIVE: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_INACTIVE: services::Cancellable = #zero::[services::Cancellable]();
 static OBS_LOW_MEMORY: services::Cancellable = #zero::[services::Cancellable]();
 static ARMED: bool = false;
 
 fn on_launched(ctx: *u8) { ev::fire_plain(ev::E_LAUNCHED); return; }
 fn on_foreground(ctx: *u8) { ev::fire_plain(ev::E_FOREGROUND); return; }
 fn on_background(ctx: *u8) { ev::fire_plain(ev::E_BACKGROUND); return; }
+fn on_active(ctx: *u8) { ev::fire_plain(ev::E_ACTIVE); return; }
+fn on_inactive(ctx: *u8) { ev::fire_plain(ev::E_INACTIVE); return; }
 fn on_terminating(ctx: *u8) { ev::fire_plain(ev::E_TERMINATING); return; }
 
 // `code` is the platform's level where it has one, and iOS has none — the
@@ -90,16 +94,25 @@ fn arm() {
     if ARMED { return; }
     ARMED = true;
     OBS_LAUNCHED = observe("UIApplicationDidFinishLaunchingNotification", on_launched);
-    // E_FOREGROUND is `didBecomeActive`, not `willEnterForeground` — the
-    // portable kind's own comment fixes that mapping ("macOS: didBecomeActive;
-    // iOS: didBecomeActive; Android: onResume"), and it is the more useful of
-    // the two: an app returning from the app switcher preview gets it, and a
-    // cold launch gets it as well.
-    OBS_FOREGROUND = observe("UIApplicationDidBecomeActiveNotification", on_foreground);
-    // `didEnterBackground`, not `willResignActive`: E_BACKGROUND means "the
-    // last safe moment to persist", and resigning active is a control-centre
-    // swipe, not a moment the process can be killed after.
+    // THE TWO LEVELS. The previous mapping used `didBecomeActive` for
+    // E_FOREGROUND and `didEnterBackground` for E_BACKGROUND — one from each
+    // level, which is why the same reason meant different things here and on
+    // Android.
+    //
+    // STILL ON UIApplication* NAMES, NOT UIScene*. Four of the five app
+    // DELEGATE lifecycle methods are not sent to an app that has adopted
+    // UIScene, and every app `cpc new` scaffolds does — see
+    // `bugs/closed/ios-lifecycle-verbs-never-fire-under-scenes.md`. These
+    // notifications carry neither that note nor the iOS 26 deprecation.
+    //
+    // UNVERIFIED ON iPad: with several windows, the app-level notifications
+    // aggregate across scenes, so one window losing focus in Split View or
+    // Stage Manager may raise nothing. That is the same shape as Android's
+    // multi-resume, and it needs measuring on a device before it is believed.
+    OBS_FOREGROUND = observe("UIApplicationWillEnterForegroundNotification", on_foreground);
     OBS_BACKGROUND = observe("UIApplicationDidEnterBackgroundNotification", on_background);
+    OBS_ACTIVE = observe("UIApplicationDidBecomeActiveNotification", on_active);
+    OBS_INACTIVE = observe("UIApplicationWillResignActiveNotification", on_inactive);
     OBS_TERMINATING = observe("UIApplicationWillTerminateNotification", on_terminating);
     OBS_LOW_MEMORY = observe("UIApplicationDidReceiveMemoryWarningNotification", on_low_memory);
 }

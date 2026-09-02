@@ -240,7 +240,7 @@ fn default_will_close(ctx: *u8) { return; }
 // frame that owns it never unwinds.
 fn attach_trampoline[C: component::Component + component::Lifecycle](ctx: *u8) {
     let p: *C = ctx as *C;
-    { (*p).on_attach() };
+    { (*p).on_attach(component::Attach::Mount) };
 }
 
 // A component that owns its own lifetime.
@@ -277,6 +277,11 @@ fn run_component[C: component::Component + component::Lifecycle](
                                            max_zoom: max_zoom));
     nav::set_close_fn(close_current);
     host::set_launched(attach_trampoline::[C], #addr_of(owned) as *u8);
+    // THE APP LIFECYCLE. No matching unbind, and that is not an oversight:
+    // `run_loop` below never returns, so this frame is immortal and `owned`
+    // outlives every event that could reach it. The desktop hosts, whose loop
+    // DOES return, unbind before the frame unwinds.
+    let _bound: status::Status = component::bind_app_lifecycle::[C](#addr_of(owned));
     host::run_loop();   // does not return
     // Unreachable in a running app, and `owned` is returned rather than
     // rebuilt so the SHAPE matches the macOS facade exactly — an application
@@ -301,6 +306,11 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     let _w: *u8 = host::open_window(#addr_of(root), c);
     nav::set_close_fn(close_current);
     host::set_launched(attach_trampoline::[S], #addr_of(owned) as *u8);
+    // THE APP LIFECYCLE. No matching unbind, and that is not an oversight:
+    // `run_loop` below never returns, so this frame is immortal and `owned`
+    // outlives every event that could reach it. The desktop hosts, whose loop
+    // DOES return, unbind before the frame unwinds.
+    let _bound: status::Status = component::bind_app_lifecycle::[S](#addr_of(owned));
     host::run_loop();   // does not return
     return owned;
 }
@@ -674,7 +684,7 @@ fn show_route(route: str) -> bool {
         option::Option[box::Box[screen::ScreenBox]]::Some(b) => {
             let sp: *screen::ScreenBox = b.into_raw() as *screen::ScreenBox;
             CURRENT_SB = sp as *u8;
-            { (*sp).on_attach() };
+            { (*sp).on_attach(component::Attach::Mount) };
         }
         option::Option[box::Box[screen::ScreenBox]]::None => { }
     }
@@ -684,7 +694,7 @@ fn show_route(route: str) -> bool {
 fn drop_current_screen() {
     if CURRENT_SB.is_null() { return; }
     let sp: *screen::ScreenBox = CURRENT_SB as *screen::ScreenBox;
-    { (*sp).on_detach() };
+    { (*sp).on_detach(component::Detach::Unmount) };
     CURRENT_SB = 0 as *u8;
     // The ScreenBox and the tree it built are deliberately NOT freed. A worker
     // may still be inside the screen's data, and the macOS facade settles the
@@ -741,7 +751,7 @@ fn push_screen(route: str, arg: str) -> bool {
     };
     if sbp.is_null() { return false; }
     if !host::push_screen(tp, c.title(), sbp) { return false; }
-    { (*(sbp as *screen::ScreenBox)).on_attach() };
+    { (*(sbp as *screen::ScreenBox)).on_attach(component::Attach::Mount) };
     return true;
 }
 
@@ -750,7 +760,7 @@ fn push_screen(route: str, arg: str) -> bool {
 // not try: it reports what is no longer on the stack.
 fn pushed_gone(box_: *u8) {
     if box_.is_null() { return; }
-    { (*(box_ as *screen::ScreenBox)).on_detach() };
+    { (*(box_ as *screen::ScreenBox)).on_detach(component::Detach::Unmount) };
     // The ScreenBox and its tree are deliberately NOT freed, for the reason
     // `drop_current_screen` gives: there is no moment on this platform where
     // the loop has returned and the job queue is settled, so freeing something

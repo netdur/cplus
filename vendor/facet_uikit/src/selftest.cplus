@@ -1483,16 +1483,34 @@ fn every_activity_in_a_set_is_delivered() -> bool {
     return n == (2 as i32);
 }
 
-fn becoming_active_is_foreground_not_background() -> bool {
+// FOCUS AND VISIBILITY ARE DIFFERENT KINDS, and this test used to assert them
+// conflated: `didBecomeActive` answering E_FOREGROUND. That is the focus edge
+// wearing the visibility kind, and it is why the same reason meant one thing
+// here and another on Android. An app loses focus to a dialog or to the other
+// half of a Split View while remaining fully visible, and must not release a
+// camera for it.
+fn becoming_active_is_the_focus_level_not_the_visibility_level() -> bool {
     app_events_uikit::arm();
     SEEN_KIND = 0 as u32;
     SEEN_COUNT = 0 as i32;
     let s: status::Status = ev::on_app_event(record_kind, 0 as *u8);
     if s != status::Status::Ok { return false; }
+
     post("UIApplicationDidBecomeActiveNotification");
-    let kind: u32 = SEEN_KIND;
+    if SEEN_KIND != ev::E_ACTIVE { let _a: status::Status = ev::off_app_event(record_kind, 0 as *u8); return false; }
+
+    post("UIApplicationWillResignActiveNotification");
+    if SEEN_KIND != ev::E_INACTIVE { let _b: status::Status = ev::off_app_event(record_kind, 0 as *u8); return false; }
+
+    // And the visibility level answers its own kinds, from its own pair.
+    post("UIApplicationWillEnterForegroundNotification");
+    if SEEN_KIND != ev::E_FOREGROUND { let _c: status::Status = ev::off_app_event(record_kind, 0 as *u8); return false; }
+
+    post("UIApplicationDidEnterBackgroundNotification");
+    let last: u32 = SEEN_KIND;
+    let n: i32 = SEEN_COUNT;
     let _o: status::Status = ev::off_app_event(record_kind, 0 as *u8);
-    return kind == ev::E_FOREGROUND;
+    return last == ev::E_BACKGROUND && n == (4 as i32);
 }
 
 // ---- the dialog tier ---------------------------------------------------------------
@@ -2094,8 +2112,8 @@ fn run_all() -> i32 {
           a_cancelled_observation_frees_its_registry_slot());
     check("a real notification reaches an app_events subscriber",
           a_real_notification_reaches_an_app_events_subscriber());
-    check("becoming active is foreground, not background",
-          becoming_active_is_foreground_not_background());
+    check("focus and visibility answer different kinds",
+          becoming_active_is_the_focus_level_not_the_visibility_level());
     check("a url reaches a subscriber as its absolute string",
           a_url_reaches_a_subscriber_as_its_absolute_string());
     check("a link delivered before anyone subscribed still arrives",

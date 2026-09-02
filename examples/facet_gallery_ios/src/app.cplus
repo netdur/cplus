@@ -273,7 +273,8 @@ impl Gallery: component::Lifecycle {
     // AFTER the mount: `set_content` needs a live tree to find its outlet in,
     // and the tree needs to be realised before its sections can be expanded.
     // Both are exactly what on_attach is the seam for.
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         match tree::find("g:catalog") {
             option::Option[tree::Tree]::Some(t) => { catalog::expand_all(t); }
             option::Option::None => { }
@@ -288,5 +289,6 @@ impl Gallery: component::Lifecycle {
         nav::set_pop_fn(gallery_pop);
         this.show();
     }
-    fn on_detach(ref this) { return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }

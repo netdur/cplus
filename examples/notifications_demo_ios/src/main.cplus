@@ -488,7 +488,8 @@ impl Demo: component::Component {
 }
 
 impl Demo: component::Lifecycle {
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         // LATE ON PURPOSE — see `tapped`. A notification clicked while this app
         // was closed still reaches the handler, because app_events latched it.
         // Registered before anything is posted — see `register_the_actions`.
@@ -501,7 +502,8 @@ impl Demo: component::Lifecycle {
         refresh();
         return;
     }
-    fn on_detach(ref this) { return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 export extern fn notifications_demo_ios_main() -> i32 {

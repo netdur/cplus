@@ -205,9 +205,11 @@ impl Responsive: component::Component {
 }
 
 impl Responsive: component::Lifecycle {
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         this.classify(560.0);
         this.paint();
     }
-    fn on_detach(ref this) { return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }

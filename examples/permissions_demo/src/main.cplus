@@ -187,8 +187,10 @@ impl Demo: component::Component {
 impl Demo: component::Lifecycle {
     // ON ATTACH, not in `build`: the state labels are found by key, and a key
     // lookup against a tree nothing has walked yet finds nothing.
-    fn on_attach(ref this) { refresh(); return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } refresh(); return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 fn main() -> i32 {

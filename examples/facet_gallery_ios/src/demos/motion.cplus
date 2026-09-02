@@ -100,8 +100,10 @@ impl Fade: component::Component {
     }
 }
 impl Fade: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- rotation ----------------------------------------------------------------
@@ -140,8 +142,10 @@ impl Spin: component::Component {
     }
 }
 impl Spin: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- scale -------------------------------------------------------------------
@@ -194,8 +198,10 @@ impl Pop: component::Component {
     }
 }
 impl Pop: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- entrance ----------------------------------------------------------------
@@ -226,13 +232,15 @@ impl Entrance: component::Component {
     }
 }
 impl Entrance: component::Lifecycle {
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         match mount::find("m:entrance") {
             option::Option[*core::Node]::Some(n) => { fade_in(n); }
             option::Option::None => { }
         }
     }
-    fn on_detach(ref this) { return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 // ---- the silent failure ------------------------------------------------------
@@ -271,6 +279,8 @@ impl DeadSnap: component::Component {
     }
 }
 impl DeadSnap: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }

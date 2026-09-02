@@ -242,9 +242,15 @@ fn run_component[C: component::Component + component::Lifecycle](
     // pending intent after the return, the way an App loop does.
     CURRENT_ROOT = #addr_of(root);
     nav::set_close_fn(close_current);
-    owned.on_attach();
+    // THE APP LIFECYCLE, bound around the loop and not around the process.
+    // `owned` is in THIS frame, so the subscription must die with the frame:
+    // an event delivered after `run_loop` returns would call a method on a
+    // dead stack slot. Bound after on_attach so a component sees attach first.
+    owned.on_attach(component::Attach::Mount);
+    let _bound: status::Status = component::bind_app_lifecycle::[C](#addr_of(owned));
     host::run_loop();
-    owned.on_detach();
+    let _unbound: status::Status = component::unbind_app_lifecycle::[C](#addr_of(owned));
+    owned.on_detach(component::Detach::Unmount);
     nav::set_close_fn(0 as fn());
     CURRENT_ROOT = 0 as *core::Node;
     settle_and_teardown(#addr_of(root));
@@ -271,9 +277,15 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     let _w: *u8 = host::open_window(#addr_of(root), c);
     CURRENT_ROOT = #addr_of(root);
     nav::set_close_fn(close_current);
-    owned.on_attach();
+    // THE APP LIFECYCLE, bound around the loop and not around the process.
+    // `owned` is in THIS frame, so the subscription must die with the frame:
+    // an event delivered after `run_loop` returns would call a method on a
+    // dead stack slot. Bound after on_attach so a component sees attach first.
+    owned.on_attach(component::Attach::Mount);
+    let _bound: status::Status = component::bind_app_lifecycle::[S](#addr_of(owned));
     host::run_loop();
-    owned.on_detach();
+    let _unbound: status::Status = component::unbind_app_lifecycle::[S](#addr_of(owned));
+    owned.on_detach(component::Detach::Unmount);
     nav::set_close_fn(0 as fn());
     CURRENT_ROOT = 0 as *core::Node;
     settle_and_teardown(#addr_of(root));
@@ -722,10 +734,10 @@ impl App {
             // holds the surface's ADDRESS, so re-opening in place retargets
             // every later request rather than needing the worker restarted.
             if w.is_not_null() { app::agent_attach(w); }
-            sb.on_attach();
+            sb.on_attach(component::Attach::Mount);
             host::run_loop();        // blocks until this screen's window closes
             close_all_pushed();      // replacing the root dismisses pushed screens
-            sb.on_detach();
+            sb.on_detach(component::Detach::Unmount);
             // A worker may still be inside this screen's data, and `sb` is
             // freed a few lines down: settling here is what stops a worker
             // writing into freed memory.
@@ -853,7 +865,7 @@ fn push_screen(route: str, arg: str) -> bool {
     app::agent_attach(w);
     let stack: *vec::Vec[PushedScreen] = #addr_of(PUSHED);
     { (*stack).append(PushedScreen { root: tp, sbp: sbp }) };
-    { (*(sbp as *screen::ScreenBox)).on_attach() };
+    { (*(sbp as *screen::ScreenBox)).on_attach(component::Attach::Mount) };
     return true;
 }
 
@@ -862,7 +874,7 @@ fn push_screen(route: str, arg: str) -> bool {
 // unmounts, so the screen's views are alive for on_detach.
 fn pushed_closed(ctx: *u8) {
     if ctx.is_null() { return; }
-    { (*(ctx as *screen::ScreenBox)).on_detach() };
+    { (*(ctx as *screen::ScreenBox)).on_detach(component::Detach::Unmount) };
     pushed_remove(ctx);
     // THE FREE IS DEFERRED, and the two things it is not are both mistakes
     // that were made here.

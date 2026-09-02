@@ -242,6 +242,33 @@ export extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8
     return 0 as u8;
 }
 
+// THE ACTIVITY'S LIFECYCLE, forwarded as an app event.
+//
+// This backend fired NONE of app_events' lifecycle kinds until now, while
+// facet_appkit and facet_uikit fired theirs from the start — so a component
+// that released the camera on background and re-acquired it on foreground
+// worked on two platforms out of three and froze on the third. The kinds were
+// already defined; nothing on Android had ever raised them.
+//
+// ONE NATIVE CARRYING THE KIND rather than one native per event. The mapping
+// lives in Java (`onResume` -> E_FOREGROUND, and so on), the registration is a
+// single guarded RegisterNatives, and a kind added later costs a constant on
+// both sides instead of a new symbol, a new record struct and a new call.
+//
+// UNKNOWN KINDS ARE DROPPED. The Java half is in the APK and the native half is
+// in the .so, and the two are versioned separately — an APK built against a
+// newer facet can send a kind this library has never heard of, and the honest
+// answer to that is silence rather than a fabricated event.
+export extern fn facet_android_app_event(envp: *jni::JNIEnv, cls: jni::jobject,
+                                         kind: i32) {
+    e::set_env(rt::from_native(envp));
+    let k: u32 = { kind as u32 };
+    if k == (0u32) { return; }
+    if k > ev::E_MAX { return; }
+    ev::fire_plain(k);
+    return;
+}
+
 // A PERMISSION WAS ANSWERED. `FacetActivity.onRequestPermissionsResult` calls
 // this once per permission in the batch — see the comment on the override for
 // why the loop is on the Java side.

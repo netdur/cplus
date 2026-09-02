@@ -398,12 +398,12 @@ fn sb_build_tramp[S: component::Component](p: *u8) -> Node {
 
 fn sb_attach_tramp[S: component::Lifecycle](p: *u8) {
     let q: *S = p as *S;
-    { (*q).on_attach() };
+    { (*q).on_attach(component::Attach::Mount) };
 }
 
 fn sb_detach_tramp[S: component::Lifecycle](p: *u8) {
     let q: *S = p as *S;
-    { (*q).on_detach() };
+    { (*q).on_detach(component::Detach::Unmount) };
 }
 
 fn sb_chrome_tramp[S: Screen](p: *u8) -> Chrome {
@@ -448,13 +448,15 @@ impl ScreenBox {
         return f(this._p);
     }
 
-    fn on_attach(this) {
+    fn on_attach(this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         if !this.valid() { return; }
         let f: fn(*u8) = this._attach;
         f(this._p);
     }
 
-    fn on_detach(this) {
+    fn on_detach(this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; }
         if !this.valid() { return; }
         let f: fn(*u8) = this._detach;
         f(this._p);
@@ -687,10 +689,12 @@ impl SbtScreen: component::Component {
 }
 
 impl SbtScreen: component::Lifecycle {
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         SBT_ATTACHES = SBT_ATTACHES + 1;
     }
-    fn on_detach(ref this) {
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; }
         SBT_DETACHES = SBT_DETACHES + 1;
     }
 }
@@ -746,8 +750,8 @@ fn screen_box_drives_the_erased_screen() {
         // build / lifecycle reach the real methods.
         var root: Node = sb.build();
         root.calculate_layout(width: 100.0f64, height: 100.0f64);
-        sb.on_attach();
-        sb.on_detach();
+        sb.on_attach(component::Attach::Mount);
+        sb.on_detach(component::Detach::Unmount);
         assert SBT_BUILDS == 1;
         assert SBT_ATTACHES == 1;
         assert SBT_DETACHES == 1;
@@ -768,8 +772,8 @@ fn screen_box_invalid_noops() {
         // Every verb no-ops instead of trapping; chrome yields the defaults.
         var root: Node = sb.build();
         root.calculate_layout(width: 100.0f64, height: 100.0f64);
-        sb.on_attach();
-        sb.on_detach();
+        sb.on_attach(component::Attach::Mount);
+        sb.on_detach(component::Detach::Unmount);
         let c: Chrome = sb.chrome();
         assert c.title() == "facet";
     }

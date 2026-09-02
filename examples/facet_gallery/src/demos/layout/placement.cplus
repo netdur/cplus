@@ -132,6 +132,8 @@ impl Placement: component::Component {
 }
 
 impl Placement: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }

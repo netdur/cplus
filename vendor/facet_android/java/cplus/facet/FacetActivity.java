@@ -202,6 +202,163 @@ public class FacetActivity extends android.app.Activity {
     private static native void nativePermissionResult(int requestCode, String permission,
                                                       int result);
 
+    // ---- THE ACTIVITY LIFECYCLE ------------------------------------------
+    //
+    // These four overrides did not exist, and their absence was invisible until
+    // something held a device the system takes back. Android REVOKES the camera
+    // from an app that is no longer frontmost — CameraService disconnects the
+    // client outright — and with no onPause/onResume reaching C+, a facet app
+    // came back from a task switch still believing it had a camera, showing the
+    // last frame it ever received. The microphone and location have the same
+    // shape.
+    //
+    // The KINDS are facet's app_events constants, restated here rather than
+    // imported because this class is compiled into the APK and the constants
+    // live in the .so. They are part of the two halves' contract; changing one
+    // without the other is the trap, which is why the native drops kinds it
+    // does not know instead of trusting the number.
+    private static final int E_FOREGROUND  = 2;
+    private static final int E_BACKGROUND  = 3;
+    private static final int E_TERMINATING = 4;
+    private static final int E_LOW_MEMORY  = 6;
+    private static final int E_ACTIVE      = 12;
+    private static final int E_INACTIVE    = 13;
+
+
+    // onResume / onPause rather than onStart / onStop, and the pair is chosen
+    // to match what the CAMERA actually does. The system takes exclusive
+    // devices when the Activity stops being resumed — a dialog over the app, a
+    // split-screen partner taking focus — not only when it is fully hidden, so
+    // pausing is the edge that matters. It is also the pair iOS's
+    // didBecomeActive / didEnterBackground most nearly means.
+    //
+    // onResume ALSO fires on the way IN at cold start, right after onCreate.
+    // That is one event a component would see before it has attached, and it
+    // is why `nativeAppEvent` is called AFTER super and why facet's
+    // `on_foreground` is documented as "fires on the way back in": the very
+    // first onResume happens before setContentView's tree is mounted on a cold
+    // start only in the sense that the mount already ran inside onCreate — so
+    // by here the tree IS live and the event is safe to deliver.
+    // onResume / onPause FIRE NOTHING, and that is the correction this whole
+    // exercise produced. They look like the lifecycle and they are not: on a
+    // Fold in split-screen, focus moved between the two panes FOUR TIMES with
+    // no onPause and no onResume at all — the activity stays RESUMED while
+    // unfocused and visible (multi-resume). An app releasing its camera on
+    // onPause therefore released it for a DIALOG but not for the case that
+    // actually mattered.
+    //
+    // Measured 2026-09-02, Galaxy Fold SM_F966B. Traced only.
+    @Override protected void onResume() {
+        super.onResume();
+        trace("onResume");
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        trace("onPause");
+    }
+
+    // isFinishing, because onDestroy ALSO runs for a configuration change — a
+    // rotation, a fold, a theme flip — where the process lives on and the
+    // Activity is rebuilt immediately. Telling an app it is terminating and
+    // then carrying on is worse than saying nothing.
+    @Override protected void onDestroy() {
+        trace("onDestroy finishing=" + isFinishing());
+        if (isFinishing()) fireAppEvent(E_TERMINATING);
+        super.onDestroy();
+    }
+
+    @Override public void onLowMemory() {
+        super.onLowMemory();
+        fireAppEvent(E_LOW_MEMORY);
+    }
+
+    // ---- LIFECYCLE TRACE ---------------------------------------------------
+    //
+    // onStart / onStop are NOT wired to app events — they are the second level
+    // (visibility), and which reason they should raise is still being decided
+    // (plans/lifecycle-levels.md). They are logged because the decision cannot
+    // be made without seeing the real order on a real device: in split-screen
+    // an activity can be PAUSED and still fully VISIBLE, and only onStop means
+    // gone. Guessing that from documentation is what produced the current
+    // mapping, which is wrong on two platforms out of three.
+    //
+    // The identity hash is here because a fold RECREATES the Activity — this
+    // manifest's configChanges covers orientation|screenSize|keyboardHidden
+    // and NOT screenLayout|smallestScreenSize — and a recreation is otherwise
+    // invisible in the log.
+    private void trace(String edge) {
+        try {
+            android.util.Log.i("FacetLife", edge
+                + "  activity=" + Integer.toHexString(System.identityHashCode(this))
+                + "  multiWindow=" + isInMultiWindowMode()
+                + "  focus=" + hasWindowFocus());
+        } catch (Throwable ignored) { }
+    }
+
+    // VISIBILITY is onStart / onStop. This is the edge at which Android
+    // revokes the camera from a backgrounded app, so it is where an app must
+    // give exclusive devices back.
+    @Override protected void onStart() {
+        super.onStart();
+        trace("onStart");
+        // FIRES AT LAUNCH TOO, and that is deliberate. An earlier version
+        // swallowed the first one to make a cold start read `Mount` then
+        // `Active`, on the belief that no Apple platform raises a launch-time
+        // foreground. MEASURED ON AN iPad 2026-09-02: iOS raises
+        // willEnterForeground at launch. Suppressing here produced exactly the
+        // per-platform drift it was meant to prevent, so it is gone: the
+        // contract is Mount, Foreground, Active, everywhere.
+        fireAppEvent(E_FOREGROUND);
+    }
+
+    @Override protected void onStop() {
+        super.onStop();
+        trace("onStop");
+        fireAppEvent(E_BACKGROUND);
+    }
+
+    @Override protected void onRestart() { super.onRestart(); trace("onRestart"); }
+
+    // FOCUS is onWindowFocusChanged, and on modern Android it is the ONLY
+    // signal that moves in split-screen — see the note on onResume above.
+    @Override public void onWindowFocusChanged(boolean has) {
+        super.onWindowFocusChanged(has);
+        trace("onWindowFocusChanged=" + has);
+        fireAppEvent(has ? E_ACTIVE : E_INACTIVE);
+    }
+
+    // Fires only for the changes this activity DECLARED it handles. A fold is
+    // not among them, so the absence of this line beside a new identity hash
+    // is the recreation.
+    @Override public void onConfigurationChanged(android.content.res.Configuration c) {
+        super.onConfigurationChanged(c);
+        trace("onConfigurationChanged");
+    }
+
+    @Override public void onMultiWindowModeChanged(boolean in,
+                                                   android.content.res.Configuration c) {
+        super.onMultiWindowModeChanged(in, c);
+        trace("onMultiWindowModeChanged=" + in);
+    }
+
+    // GUARDED, and this is the one that would crash an app rather than degrade
+    // it. onPause runs during teardown paths where the library may already be
+    // gone, and onResume can precede a successful System.loadLibrary if the
+    // .so is missing — in both cases the native is unresolved and the call
+    // throws UnsatisfiedLinkError out of a lifecycle method, which the system
+    // turns into a crash. A missing lifecycle event is a bug; a crash on the
+    // way out is a worse one.
+    private void fireAppEvent(int kind) {
+        try {
+            nativeAppEvent(kind);
+        } catch (Throwable t) {
+            // No native yet, or no longer. Nothing to notify.
+        }
+    }
+
+    private static native void nativeAppEvent(int kind);
+
     private String libraryName() {
         try {
             android.content.pm.ActivityInfo info = getPackageManager().getActivityInfo(
