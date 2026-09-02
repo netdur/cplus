@@ -1,0 +1,333 @@
+// facet_win32/scroller — making a `scroll` actually scroll.
+//
+// The kind was HALF BUILT and the half that was missing is the one a user
+// touches. `create_scroll` makes the two windows, `apply_scroll_props` writes
+// the style bits and moves the document when the application sets `scroll_x` /
+// `scroll_y` — and nothing answered the WHEEL or the SCROLL BARS, so a scroll
+// view could be scrolled by the program and not by the person.
+//
+// Three things were wrong at once and each hid the next:
+//
+//   1. The document was never SIZED (`create_scroll` makes it 0x0), so every
+//      child of every scroll was clipped away. Fixed in `geometry`.
+//   2. `input::scrollable_above` recognised lists, trees and carousels — the
+//      recycler's kinds — and not `scroll`, so the wheel walked past it.
+//   3. The bars were STYLE ONLY. `WS_VSCROLL` draws a bar; it does not give it
+//      a range, a thumb, or a response. Without `SetScrollInfo` the thumb has
+//      nowhere to sit, and without a WM_VSCROLL handler dragging it does
+//      nothing.
+//
+// THE DOCUMENT'S POSITION IS THE OFFSET. There is no scroll origin to write on
+// a Win32 window — `ScrollWindowEx` moves pixels and leaves the child windows
+// where they were — so the offset is where the document sits inside its
+// viewport, negative going down. That is what `apply_scroll_props` already
+// wrote, and this file reads it back rather than keeping a second copy that
+// could disagree.
+
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/scroll" as scroll;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./controls" as controls;
+
+// How far one wheel notch moves a scroll view. `recycler` scrolls by ROWS
+// because a list has them; a scroll view has no rows, so this is the system's
+// own three-lines-per-notch turned into points at the same 16pt line the
+// recycler uses for a list with no stated row height.
+fn wheel_step() -> f64 { return 48.0f64; }
+
+fn is_scroll(n: *core::Node) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    return core::kind_of(n) == props::K_SCROLL;
+}
+
+fn scroll_props(n: *core::Node) -> *props::ScrollProps {
+    return controls::props_of(n, props::K_SCROLL) as *props::ScrollProps;
+}
+
+// ---- what there is to scroll -------------------------------------------------------
+
+fn viewport_size(v: *u8, w: *f64, h: *f64) -> bool {
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return false; }
+    { *w = (r.right -% r.left) as f64 };
+    { *h = (r.bottom -% r.top) as f64 };
+    return true;
+}
+
+fn document_size(v: *u8, w: *f64, h: *f64) -> bool {
+    let doc: *u8 = controls::document_host(v);
+    if doc == v { return false; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetWindowRect(doc, #addr_of(r)) } == (0 as i32) { return false; }
+    { *w = (r.right -% r.left) as f64 };
+    { *h = (r.bottom -% r.top) as f64 };
+    return true;
+}
+
+// How far past the viewport the content goes, on each axis. Zero when it fits,
+// which is what every mover checks before doing anything: a scroll view whose
+// content fits must not move, or the wheel drags it off its own top.
+fn overflow(v: *u8, x: *f64, y: *f64) -> bool {
+    var vw: f64 = 0.0f64;
+    var vh: f64 = 0.0f64;
+    var dw: f64 = 0.0f64;
+    var dh: f64 = 0.0f64;
+    if !viewport_size(v, #addr_of(vw), #addr_of(vh)) { return false; }
+    if !document_size(v, #addr_of(dw), #addr_of(dh)) { return false; }
+    { *x = if dw > vw { dw - vw } else { 0.0f64 } };
+    { *y = if dh > vh { dh - vh } else { 0.0f64 } };
+    return true;
+}
+
+// ---- the offset ---------------------------------------------------------------------
+
+fn offset_of(v: *u8, x: *f64, y: *f64) -> bool {
+    let doc: *u8 = controls::document_host(v);
+    if doc == v { return false; }
+    var dr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetWindowRect(doc, #addr_of(dr)) } == (0 as i32) { return false; }
+    if { u::GetWindowRect(v, #addr_of(vr)) } == (0 as i32) { return false; }
+    // The document sits at a NEGATIVE position when scrolled, so the offset is
+    // the negation — which is the number `scroll_x` / `scroll_y` carry.
+    { *x = (vr.left -% dr.left) as f64 };
+    { *y = (vr.top -% dr.top) as f64 };
+    return true;
+}
+
+// Move to an offset, clamped to what there is. Answers whether anything
+// actually moved — a wheel at the end must not report a scroll, or an
+// application listening for one is told about a gesture that changed nothing.
+fn scroll_to(v: *u8, n: *core::Node, to_x: f64, to_y: f64) -> bool {
+    let doc: *u8 = controls::document_host(v);
+    if doc == v { return false; }
+    var max_x: f64 = 0.0f64;
+    var max_y: f64 = 0.0f64;
+    if !overflow(v, #addr_of(max_x), #addr_of(max_y)) { return false; }
+    var x: f64 = to_x;
+    var y: f64 = to_y;
+    if x < (0.0 as f64) { x = 0.0f64; }
+    if y < (0.0 as f64) { y = 0.0f64; }
+    if x > max_x { x = max_x; }
+    if y > max_y { y = max_y; }
+    var was_x: f64 = 0.0f64;
+    var was_y: f64 = 0.0f64;
+    let known: bool = offset_of(v, #addr_of(was_x), #addr_of(was_y));
+    if known && was_x == x && was_y == y { return false; }
+    let _m: i32 = { u::SetWindowPos(doc, sys::hwnd_top(),
+                                    (0.0f64 - x) as i32, (0.0f64 - y) as i32,
+                                    0 as i32, 0 as i32,
+                                    sys::swp_nosize() | sys::swp_nozorder()
+                                    | sys::swp_noactivate()) };
+    // WRITTEN BACK THROUGH THE PROPS, so an application asking `scroll_y()`
+    // after the user scrolled is told what the user did rather than what it
+    // last set. The same rule the recycler's selection follows.
+    let p: *props::ScrollProps = scroll_props(n);
+    if p != (0 as *props::ScrollProps) {
+        { (*p).scroll_x = x };
+        { (*p).scroll_y = y };
+        let h: fn(*u8, *u8) = { (*p).observe_scrolled };
+        if h != props::no_handler { h(v, { (*p).observe_scrolled_ctx }); }
+    }
+    sync_bars(v);
+    return true;
+}
+
+fn scroll_by(v: *u8, n: *core::Node, dx: f64, dy: f64) -> bool {
+    var x: f64 = 0.0f64;
+    var y: f64 = 0.0f64;
+    if !offset_of(v, #addr_of(x), #addr_of(y)) { return false; }
+    return scroll_to(v, n, x + dx, y + dy);
+}
+
+// One wheel notch. `lines` is negative for a scroll UP, which is the sign
+// `input::on_wheel` hands the recycler for the same gesture.
+fn wheel(v: *u8, n: *core::Node, lines: f64) -> bool {
+    var max_x: f64 = 0.0f64;
+    var max_y: f64 = 0.0f64;
+    if !overflow(v, #addr_of(max_x), #addr_of(max_y)) { return false; }
+    // A VIEW THAT CANNOT SCROLL DOWN ANSWERS FALSE, so the wheel falls through
+    // to whatever is behind it rather than being swallowed by something that
+    // has stopped moving — the rule `carousel_step` already follows at its ends.
+    if max_y <= (0.0 as f64) && max_x <= (0.0 as f64) { return false; }
+    if max_y > (0.0 as f64) { return scroll_by(v, n, 0.0f64, lines * wheel_step()); }
+    // A view that only overflows sideways scrolls sideways from the plain
+    // wheel, which is what a horizontal strip should do with no shift key.
+    return scroll_by(v, n, lines * wheel_step(), 0.0f64);
+}
+
+// ---- the bars -------------------------------------------------------------------------
+
+fn sb_horz() -> i32 { return 0 as i32; }
+fn sb_vert() -> i32 { return 1 as i32; }
+fn sif_range() -> u32 { return 0x0001 as u32; }
+fn sif_page() -> u32 { return 0x0002 as u32; }
+fn sif_pos() -> u32 { return 0x0004 as u32; }
+fn sif_trackpos() -> u32 { return 0x0010 as u32; }
+fn sif_all() -> u32 { return sif_range() | sif_page() | sif_pos() | sif_trackpos(); }
+
+// SCROLLINFO is six DWORDs and an int: cbSize, fMask, nMin, nMax, nPage, nPos,
+// nTrackPos. Laid out by hand for the same reason `recycler`'s copy is — it is
+// 28 bytes and binding it would cost more than writing it.
+fn scrollinfo_bytes() -> usize { return 28 as usize; }
+
+#[link_name = "malloc"]
+extern fn scroller_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn scroller_free(p: *u8);
+
+fn put_u32(p: *u8, at: usize, v: u32) {
+    let q: *u32 = { (p + at) } as *u32;
+    { *q = v };
+    return;
+}
+
+fn get_i32(p: *u8, at: usize) -> i32 {
+    let q: *i32 = { (p + at) } as *i32;
+    return { *q };
+}
+
+// Give each bar a range, a page and a position — which is what turns a drawn
+// bar into one with a thumb that is the right size and in the right place.
+//
+// nMax IS INCLUSIVE and nPage counts against it: a range of 0..max with a page
+// of `page` leaves a thumb whose travel is `max - page + 1`. Setting nMax to
+// the content size and nPage to the viewport is the shape Windows expects, and
+// getting it wrong gives a thumb that reaches the bottom before the content
+// does.
+fn sync_bars(v: *u8) {
+    var vw: f64 = 0.0f64;
+    var vh: f64 = 0.0f64;
+    var dw: f64 = 0.0f64;
+    var dh: f64 = 0.0f64;
+    if !viewport_size(v, #addr_of(vw), #addr_of(vh)) { return; }
+    if !document_size(v, #addr_of(dw), #addr_of(dh)) { return; }
+    var x: f64 = 0.0f64;
+    var y: f64 = 0.0f64;
+    let _o: bool = offset_of(v, #addr_of(x), #addr_of(y));
+    set_bar(v, sb_vert(), dh, vh, y);
+    set_bar(v, sb_horz(), dw, vw, x);
+    return;
+}
+
+fn set_bar(v: *u8, which: i32, content: f64, page: f64, pos: f64) {
+    let si: *u8 = { scroller_malloc(scrollinfo_bytes()) };
+    if si.is_null() { return; }
+    put_u32(si, 0 as usize, scrollinfo_bytes() as u32);
+    put_u32(si, 4 as usize, sif_range() | sif_page() | sif_pos());
+    put_u32(si, 8 as usize, 0 as u32);
+    put_u32(si, 12 as usize, (content as i64) as u32);
+    put_u32(si, 16 as usize, (page as i64) as u32);
+    put_u32(si, 20 as usize, (pos as i64) as u32);
+    put_u32(si, 24 as usize, 0 as u32);
+    let _r: i32 = { u::SetScrollInfo(v, which, si as *u::tagSCROLLINFO, 1 as i32) };
+    { scroller_free(si) };
+    return;
+}
+
+fn current_pos(v: *u8, which: i32, track: *i32) -> i32 {
+    let si: *u8 = { scroller_malloc(scrollinfo_bytes()) };
+    if si.is_null() { return 0 as i32; }
+    put_u32(si, 0 as usize, scrollinfo_bytes() as u32);
+    put_u32(si, 4 as usize, sif_all());
+    let ok: i32 = { u::GetScrollInfo(v, which, si as *u::tagSCROLLINFO) };
+    var pos: i32 = 0 as i32;
+    if ok != (0 as i32) {
+        pos = get_i32(si, 20 as usize);
+        { *track = get_i32(si, 24 as usize) };
+    }
+    { scroller_free(si) };
+    return pos;
+}
+
+// The bar codes. Named rather than inlined because `SB_THUMBTRACK` and
+// `SB_THUMBPOSITION` are the two that matter and their numbers say nothing.
+fn sb_lineup() -> u32 { return 0 as u32; }
+fn sb_linedown() -> u32 { return 1 as u32; }
+fn sb_pageup() -> u32 { return 2 as u32; }
+fn sb_pagedown() -> u32 { return 3 as u32; }
+fn sb_thumbposition() -> u32 { return 4 as u32; }
+fn sb_thumbtrack() -> u32 { return 5 as u32; }
+fn sb_top() -> u32 { return 6 as u32; }
+fn sb_bottom() -> u32 { return 7 as u32; }
+
+// A scroll bar message on the viewport itself — `lParam` is 0, which is how a
+// window's OWN bar is told apart from a trackbar control sending the same
+// message. See `window`'s WNDPROC.
+//
+// TRACKING IS LIVE. `SB_THUMBTRACK` arrives continuously while the thumb is
+// held and `SB_THUMBPOSITION` once when it is let go; answering only the second
+// gives a bar whose content jumps at the end of a drag instead of following it.
+fn on_bar(v: *u8, n: *core::Node, code: u32, vertical: bool) -> bool {
+    if !is_scroll(n) { return false; }
+    let which: i32 = if vertical { sb_vert() } else { sb_horz() };
+    var track: i32 = 0 as i32;
+    let pos: i32 = current_pos(v, which, #addr_of(track));
+    var vw: f64 = 0.0f64;
+    var vh: f64 = 0.0f64;
+    if !viewport_size(v, #addr_of(vw), #addr_of(vh)) { return false; }
+    let page: f64 = if vertical { vh } else { vw };
+    var to: f64 = pos as f64;
+    if code == sb_lineup() { to = to - line_step(); }
+    else if code == sb_linedown() { to = to + line_step(); }
+    else if code == sb_pageup() { to = to - page; }
+    else if code == sb_pagedown() { to = to + page; }
+    else if code == sb_thumbtrack() { to = track as f64; }
+    else if code == sb_thumbposition() { to = track as f64; }
+    else if code == sb_top() { to = 0.0f64; }
+    else if code == sb_bottom() { to = 1000000.0f64; }   // clamped by `scroll_to`
+    else { return false; }
+    var x: f64 = 0.0f64;
+    var y: f64 = 0.0f64;
+    let _k: bool = offset_of(v, #addr_of(x), #addr_of(y));
+    if vertical { return scroll_to(v, n, x, to); }
+    return scroll_to(v, n, to, y);
+}
+
+// One click of a bar's arrow. The system's own line height for a scroll view is
+// not exposed; this is the same 16pt line the wheel step is built from, which
+// keeps three arrow clicks equal to one notch.
+fn line_step() -> f64 { return 16.0f64; }
+
+#[test]
+fn a_view_whose_content_fits_does_not_scroll() {
+    // The guard every mover runs first. Asked without a window, which is the
+    // point: `overflow` answers false when there is no document to measure, and
+    // every caller treats that as "nothing to do" rather than scrolling to a
+    // number it made up.
+    var x: f64 = 0.0f64;
+    var y: f64 = 0.0f64;
+    assert !overflow(0 as *u8, #addr_of(x), #addr_of(y));
+    assert !scroll_to(0 as *u8, 0 as *core::Node, 10.0f64, 10.0f64);
+    assert !wheel(0 as *u8, 0 as *core::Node, 1.0f64);
+    return;
+}
+
+#[test]
+fn three_arrow_clicks_are_one_wheel_notch() {
+    // Not arithmetic for its own sake: a bar whose arrow moves a different
+    // distance from the wheel reads as two different scroll views.
+    assert wheel_step() == (line_step() * (3.0 as f64));
+    return;
+}
+
+#[test]
+fn the_bar_codes_are_the_ones_windows_sends() {
+    // Pinned because they are small integers with no spelling in the header
+    // this package binds, and a transposed pair is a bar that pages when it
+    // should line — which reads as a jumpy scroll rather than as a wrong
+    // constant.
+    assert sb_lineup() == (0 as u32);
+    assert sb_linedown() == (1 as u32);
+    assert sb_pageup() == (2 as u32);
+    assert sb_pagedown() == (3 as u32);
+    assert sb_thumbposition() == (4 as u32);
+    assert sb_thumbtrack() == (5 as u32);
+    return;
+}

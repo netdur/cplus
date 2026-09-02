@@ -26,6 +26,7 @@ imaging      the bitmap decoder — GDI+, and a GIF's own frame delays
 anim         the two things that move on their own: a progress tween, a page slide
 dnd          receiving a drop, without COM
 shadow       the band's drop shadow — a blurred DIB the PARENT blits
+scroller     a `scroll` that scrolls: the document's extent, the wheel, the bars
 swipe        swipe-to-reveal: a drag, and the strip of actions under the row
 menus        HMENU, and the one command-id table
 dialogs      alert / choose / prompt as facet trees, and the file chooser
@@ -97,8 +98,8 @@ backend; when a kind is the exception, describe it without backticks.
 
 ```bash
 cd vendor/facet_win32 && ../../target/release/cpc test --filter facet_win32
-# running 127 of 559 tests matching "facet_win32"
-# test result: 127 passed; 0 failed
+# running 130 of 562 tests matching "facet_win32"
+# test result: 130 passed; 0 failed
 
 cd playground/win32_probe         && ../../target/release/cpc build   # the SEAM
 cd playground/win32_runtime_probe && ../../target/release/cpc build   # the FACADE
@@ -109,10 +110,17 @@ arithmetic, the encoders — and opens no window, because a suite that needs a
 desktop session is a suite that stops running.
 
 **`--filter` is not optional on Windows, it is the only way in.** A package's
-driver carries every dependency's tests — 559 here for 127 of this package's —
+driver carries every dependency's tests — 562 here for 130 of this package's —
 and one of stdlib's hangs on this host, which used to make everything ordered
 after it unreachable. `bugs/cpc-test-hangs-on-windows-in-facets-own-suite.md`
 has the measurement and the reproduction.
+
+**And `examples/facet_gallery` runs**, which MANIFEST §4 said it could not:
+the two symbols that blocked the link are gone, and the four bugs its first
+launch found — an unsized scroll document, a wheel that skipped `scroll`, dead
+scroll bars, and a tree that drew nothing without a row builder — are fixed.
+It is the best test this package has, because it is the only one written
+without Win32 in mind.
 
 The probes are the other half. `win32_probe` calls the backend directly and
 proves the seam; `win32_runtime_probe` goes through `runtime::App` and proves

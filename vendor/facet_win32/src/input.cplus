@@ -44,6 +44,7 @@ import "./controls" as controls;
 import "./recycler" as recycler;
 import "./dnd" as dnd;
 import "./swipe" as swipe;
+import "./scroller" as scroller;
 import "./menus" as menus;
 
 // ---- binding a node onto its window -------------------------------------------
@@ -885,6 +886,12 @@ fn scrollable_above(v: *u8) -> *u8 {
         if n != (0 as *core::Node) {
             if recycler::holds_rows(n) { return cur; }
             if core::kind_of(n) == props::K_CAROUSEL { return cur; }
+            // AND A PLAIN `scroll`, which this walk did not recognise — it knew
+            // the recycler's kinds and the carousel, so the wheel passed
+            // straight over the one container whose whole purpose is scrolling.
+            // Nothing in the probe used one; the gallery is built on them, and
+            // every page of it was stuck at the top.
+            if core::kind_of(n) == props::K_SCROLL { return cur; }
         }
         cur = { u::GetParent(cur) };
     }
@@ -921,8 +928,11 @@ fn on_wheel(w: u64, l: i64) -> bool {
     // towards row zero. The sign flip is the whole of the mapping and getting
     // it wrong is a list that scrolls the wrong way, which reads as broken
     // rather than inverted.
-    return recycler::scroll_by(host, n,
-                               (0.0f64 - (notches as f64)) * (wheel_lines() as f64));
+    let lines: f64 = (0.0f64 - (notches as f64)) * (wheel_lines() as f64);
+    // A `scroll` moves its DOCUMENT; a list moves its own offset and re-lays
+    // its rows. Same gesture, two mechanisms, and the kind is what says which.
+    if core::kind_of(n) == props::K_SCROLL { return scroller::wheel(host, n, lines); }
+    return recycler::scroll_by(host, n, lines);
 }
 
 fn point_of(x: i32, y: i32) -> u::tagPOINT {

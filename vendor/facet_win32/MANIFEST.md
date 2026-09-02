@@ -1196,13 +1196,56 @@ Three rows a notch is stated in `input::wheel_lines`. Windows carries the
 user's own answer in `SystemParametersInfo(SPI_GETWHEELSCROLLLINES)`, including
 the "one screen at a time" setting, and nothing reads it yet.
 
-### The scroll actually scrolling
+### The scroll actually scrolling — DONE, and it was worse than this said
 
-`controls::create_scroll` builds the viewport and the document and parents them
-correctly, and `views::insert` routes children into the document. What is
-missing is the scroll bars themselves (`WS_VSCROLL` plus `SetScrollInfo`), the
-`WM_VSCROLL` handling that moves the document, and the content extent that says
-how far it goes.
+This entry used to name three missing pieces: the scroll bars, the `WM_VSCROLL`
+handling, and the content extent. All three are built (`scroller.cplus`). What
+it did not know is that a fourth thing was missing underneath them, and that it
+made the kind not merely unscrollable but INVISIBLE.
+
+**The document was never sized.** `create_scroll` makes it 0x0 and nothing ever
+gave it an extent, so every child of every `scroll` was placed correctly inside
+a window with no area — and clipped away entirely. Not misplaced, not
+mis-drawn: absent. No probe caught it because none used a `scroll`; the first
+thing built on one was `examples/facet_gallery`, whose whole detail pane came
+up blank.
+
+The other three, for the record, are the ones this entry named:
+
+**The bars were STYLE ONLY.** `WS_VSCROLL` draws a bar. It does not give it a
+range, a thumb of the right size, or a response — that is `SetScrollInfo`, and
+without it the thumb has nowhere to sit.
+
+**`WM_VSCROLL` with a zero `lParam` is the window's OWN bar**, the same rule
+`WM_COMMAND` follows for a menu. It used to fall through to `DefWindowProc`,
+which drew the thumb moving and scrolled nothing.
+
+**The wheel walked straight past it.** `input::scrollable_above` recognised the
+recycler's kinds and the carousel — a `scroll` is neither, so the one container
+whose whole purpose is scrolling was the one the wheel ignored.
+
+Measured after: the document moves for a wheel, for `SB_PAGEDOWN`, for
+`SB_TOP`, and stops at both ends.
+
+### A tree draws its own row, and its own triangle
+
+`build_tree_row` used to answer NULL when the application stated no `row`
+builder, so a tree built without one realised nothing: a viewport, a scroll bar
+and no rows. That is not what the verb means. `row` REPLACES a row's content;
+the depth, the indent and the disclosure triangle are the backend's, exactly as
+they are in facet_gtk — which composes `disclosure_cell` + `content_cell` and
+falls back to the model node's label. This package does the same now.
+
+`▾` / `▸` for the triangle, which every Windows UI font has. Indentation is a
+leading PAD rather than a gutter this file draws, because indentation is layout
+and layout is flex's.
+
+**Clicking the triangle toggles the branch**, and that is the backend's job
+rather than the application's: `on_select` reports a SELECTION, and a tree's
+handler almost always returns early for a branch — the gallery's does. Without
+it a tree can be built expanded and never opened again. The handler lives in
+`recycler` rather than in `input` because `input` imports `recycler` and the
+arrow cannot run both ways.
 
 ### `toolbar_item` and `window_chrome`
 
@@ -1333,23 +1376,36 @@ stated constant.
 
 ---
 
-## 4. What blocks the GALLERY, which is not this package
+## 4. The GALLERY, which now runs — and the four bugs it found
 
-`examples/facet_gallery` builds for Windows and does not yet LINK, and neither
-remaining symbol belongs to facet_win32. Recorded here because the gallery is
-the target every backend is measured against, and "the gallery does not run"
-would otherwise read as a gap in this package.
+`examples/facet_gallery` builds, links and runs on Windows as of 2026-09-02.
+It is the best test this package has, for one reason: it is the only one
+written without Win32 in mind. Four bugs surfaced in its first two minutes,
+every one of them invisible to 127 passing tests and two probes:
 
-**`agent_mcp`'s prebuilt archive carries POSIX-only test helpers.** The link
-fails on `pipe`, `usleep` and `socketpair`, all referenced from two of that
-package's own `#[test]` functions —
-`read_line_reports_cancellation_instead_of_parking_forever` and
-`write_all_to_a_departed_client_does_not_kill_the_server`. They are in
-`libagent_mcp.a` and therefore in every application that links it, test or not.
-Two things are wrong and only one is the tests': the helpers need a Windows
-spelling (`netsys_windows` already has the loopback-TCP substitute for
-`socketpair`), and a prebuilt library should not be exporting its test bodies
-into consumers at all.
+1. **A `scroll`'s document was never sized**, so its whole detail pane was
+   blank. §3.
+2. **The wheel skipped `scroll`**, so no page could be read past its first
+   screenful. §3.
+3. **The scroll bars were style only** — drawn, ranged at nothing, answering
+   nothing. §3.
+4. **A tree with no `row` builder drew no rows**, so the navigation pane was
+   empty. §3.
+
+The lesson is the one this file keeps learning in other forms: a suite pins
+what the author thought of. An application written for another platform is what
+finds the rest.
+
+*(This section used to record what BLOCKED the gallery — two POSIX-only symbols
+in `agent_mcp`'s prebuilt archive, `pipe` / `usleep` / `socketpair`. Those are
+fixed: the test helpers go through `thread_sys` and `netsys`, which have
+Windows spellings. The second half of the note stands and is kept below.)*
+
+**A prebuilt library still exports its test bodies into every consumer**, which
+is the half of that problem nobody fixed. The POSIX-only helpers were given
+Windows spellings and the link went green; a `#[test]` in a vendor package is
+still linked into every application that depends on it, and the next
+POSIX-only helper anyone writes will break the same builds the same way.
 
 **`facet_agent` on Windows serves over TCP, not a Unix socket.** That part is
 DONE — `agent_windows.cplus` reads the path as a port, the way `agent_ios.cplus`

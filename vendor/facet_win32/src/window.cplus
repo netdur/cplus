@@ -48,6 +48,7 @@ import "./recycler" as recycler;
 import "./dnd" as dnd;
 import "./swipe" as swipe;
 import "./shadow" as shadow;
+import "./scroller" as scroller;
 
 fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
 
@@ -145,6 +146,18 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
         if ctl != (0 as *u8) {
             let code: u32 = (w & (0xFFFF as u64)) as u32;
             if input::on_scroll(ctl, code) { return 0 as i64; }
+            return { u::DefWindowProcA(hwnd, msg, w, l) };
+        }
+        // lParam ZERO IS THIS WINDOW'S OWN BAR — the same rule WM_COMMAND
+        // follows for a menu. A `scroll` wears `WS_VSCROLL`, so the bar it
+        // draws reports here and nowhere else; before this it reported to
+        // DefWindowProc, which drew the thumb moving and scrolled nothing.
+        let sn: *core::Node = input::node_of_window(hwnd);
+        if sn != (0 as *core::Node) {
+            let code: u32 = (w & (0xFFFF as u64)) as u32;
+            if scroller::on_bar(hwnd, sn, code, msg == sys::wm_vscroll()) {
+                return 0 as i64;
+            }
         }
         return { u::DefWindowProcA(hwnd, msg, w, l) };
     }
