@@ -269,6 +269,40 @@ export extern fn facet_android_app_event(envp: *jni::JNIEnv, cls: jni::jobject,
     return;
 }
 
+// A FOREIGN UI FLOW RETURNED — `onActivityResult`.
+//
+// The kind this fires has been declared in app_events since the sign-in work
+// and was unreachable until now, because `FacetActivity` had no override to
+// fire it from. `code` is the request code, `result` the result code, and
+// `text` the Intent's data URI or "" when it carried none.
+//
+// The URI is read into a stack buffer and the `str` handed to the fan-out
+// VIEWS that buffer — valid for the dispatch and not one instant longer, which
+// is the borrow `AppEvent.text` documents.
+//
+// 2048 rather than 256: a content:// URI from the Storage Access Framework
+// carries an encoded document id and a provider authority, and runs long.
+export extern fn facet_android_activity_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                               request_code: i32, result_code: i32,
+                                               uri: jni::jobject) {
+    let env: rt::Env = rt::from_native(envp);
+    e::set_env(env);
+    var buf: [u8; 2048] = #zero::[[u8; 2048]]();
+    let ptr: *u8 = { #addr_of(buf) as *u8 };
+    if uri != (0 as jni::jobject) {
+        let _ok: bool = env.string_utf_into(uri, ptr, 2048 as usize);
+    }
+    var ae: ev::AppEvent = ev::AppEvent::new(ev::E_NATIVE_RESULT);
+    ae.text = { #str_from_raw_parts(ptr, { _c_strlen(ptr) }) };
+    ae.code = { request_code as i64 };
+    ae.result = { result_code as i64 };
+    ev::fire(#addr_of(ae));
+    return;
+}
+
+#[link_name = "strlen"]
+extern fn _c_strlen(s: *u8) -> usize;
+
 // A PERMISSION WAS ANSWERED. `FacetActivity.onRequestPermissionsResult` calls
 // this once per permission in the batch — see the comment on the override for
 // why the loop is on the Java side.

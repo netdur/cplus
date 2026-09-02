@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 41100;
+const DEX_LEN: usize = 41352;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -170,6 +170,13 @@ struct NativeLIFF_Z {
 }
 
 #[repr(C)]
+struct Native3IIS {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32, i32, jni::jobject),
+}
+
+#[repr(C)]
 struct Native1I {
     opaque name: *u8,
     opaque signature: *u8,
@@ -200,6 +207,9 @@ extern fn facet_android_menu_item(envp: *jni::JNIEnv, cls: jni::jobject, token: 
                                   index: i32);
 extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8;
 extern fn facet_android_app_event(envp: *jni::JNIEnv, cls: jni::jobject, kind: i32);
+extern fn facet_android_activity_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                        request_code: i32, result_code: i32,
+                                        uri: jni::jobject);
 extern fn facet_android_permission_result(envp: *jni::JNIEnv, cls: jni::jobject,
                                           request_code: i32, permission: jni::jobject,
                                           result: i32);
@@ -291,7 +301,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 41100] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 41352] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -747,6 +757,18 @@ fn bind_natives(env: rt::Env) {
         };
         let _r22: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
                                                           #addr_of(life_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // `onActivityResult`'s door. Separate call for the same reason as the
+        // others: an APK whose FacetActivity predates this override must not
+        // take them down with it.
+        var res_rec: Native3IIS = Native3IIS {
+            name: #str_ptr("nativeActivityResult\0"),
+            signature: #str_ptr("(IILjava/lang/String;)V\0"),
+            fn_ptr: facet_android_activity_result,
+        };
+        let _r23: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(res_rec) as *u8, 1) };
         if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
     }
 

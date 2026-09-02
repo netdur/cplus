@@ -359,6 +359,44 @@ public class FacetActivity extends android.app.Activity {
 
     private static native void nativeAppEvent(int kind);
 
+    // ---- A FOREIGN UI FLOW RETURNED ---------------------------------------
+    //
+    // `E_NATIVE_RESULT` has existed in facet's app_events since the sign-in
+    // work and NOTHING EVER FIRED IT — the kind was declared, documented, and
+    // unreachable, because this override did not exist. The same shape as the
+    // lifecycle kinds before they were wired.
+    //
+    // Every flow that hands the screen to another Activity comes back here: a
+    // document picker, a Google Sign-In, a camera intent. The request code is
+    // how a subscriber tells its own flow from somebody else's, which is why
+    // it is carried rather than swallowed.
+    //
+    // THE DATA IS PASSED AS A STRING, not as the Intent. `AppEvent` has a
+    // `text` field and no place for a jobject a subscriber could safely hold
+    // past the dispatch — so the Intent's data URI, which is what a picker or
+    // a share returns, is what crosses. A flow needing more of the Intent than
+    // its URI has to reach for the Activity itself.
+    @Override protected void onActivityResult(int requestCode, int resultCode,
+                                              android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        String uri = "";
+        try {
+            if (data != null && data.getData() != null) {
+                uri = data.getData().toString();
+            }
+        } catch (Throwable ignored) { }
+        try {
+            nativeActivityResult(requestCode, resultCode, uri);
+        } catch (Throwable ignored) {
+            // No native yet, or no longer — the same guard `fireAppEvent` uses,
+            // and for the same reason: an UnsatisfiedLinkError out of a
+            // lifecycle method is a crash.
+        }
+    }
+
+    private static native void nativeActivityResult(int requestCode, int resultCode,
+                                                    String uri);
+
     private String libraryName() {
         try {
             android.content.pm.ActivityInfo info = getPackageManager().getActivityInfo(

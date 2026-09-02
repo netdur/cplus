@@ -1,0 +1,48 @@
+import "./filepicker" as fp;
+import "./filepicker_backend" as backend;
+
+#[test]
+fn outcome_codes_round_trip() {
+    assert fp::Outcome::from_code(fp::Outcome::Ok.to_code()).to_code() == 0;
+    assert fp::Outcome::from_code(fp::Outcome::Unavailable.to_code()).to_code() == 2;
+    assert fp::Outcome::from_code(fp::Outcome::InvalidInput.to_code()).to_code() == 4 - 1;
+}
+
+#[test]
+fn unavailable_is_not_unsupported() {
+    // No window to present from is not the same as no backend, and an app
+    // should say different things about them.
+    assert fp::Outcome::Unavailable.to_code() != fp::Outcome::Unsupported.to_code();
+}
+
+#[test]
+fn a_cancelled_pick_is_an_empty_path_not_an_error() {
+    // THE CONTRACT: the handler runs either way and a dismissed picker is an
+    // ANSWER. `chose()` is the check, and an app reading `path` without it
+    // gets "".
+    var cancelled: fp::Pick = fp::Pick { path: "" };
+    assert !cancelled.chose();
+    var chosen: fp::Pick = fp::Pick { path: "/tmp/x.png" };
+    assert chosen.chose();
+}
+
+fn _never(p: fp::Pick, ctx: *u8) { return; }
+
+#[test]
+fn a_null_handler_is_refused_before_any_panel() {
+    let nil: fn(fp::Pick, *u8) = 0 as fn(fp::Pick, *u8);
+    assert fp::open(nil).to_code() == fp::Outcome::InvalidInput.to_code();
+    assert fp::save("x.txt", nil).to_code() == fp::Outcome::InvalidInput.to_code();
+}
+
+#[test]
+fn saving_without_a_name_is_refused() {
+    // A save panel with an empty name field is a dialog nobody can complete.
+    assert fp::save("", _never).to_code() == fp::Outcome::InvalidInput.to_code();
+}
+
+#[test]
+fn availability_answers_without_trapping() {
+    let on: bool = fp::available();
+    assert on || !on;
+}
