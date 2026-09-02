@@ -234,6 +234,16 @@ reaches it. Explorer's dark bars belong to a `SysListView32` — a CONTROL's
 bars, not a window's — so the fix is drawing them, which is a scroll bar this
 package would own end to end.
 
+**A TRACKBAR AND A MARQUEE PROGRESS BAR.** `msctls_trackbar32` has no dark
+part-list either, and unlike the push button it cannot simply be owner-drawn —
+it has no `BS_OWNERDRAW` equivalent, only `NM_CUSTOMDRAW` for its channel,
+thumb and ticks. Those three ARE coloured from the appearance now, and
+`paint::go_classic` drops the control out of visual styles so the background
+comes from `WM_CTLCOLORSTATIC` — and measured, the bar is still light. The
+determinate progress bar next to it went dark from the same treatment, so the
+difference is the trackbar's own drawing rather than the approach. Left as a
+finding rather than guessed at.
+
 **A POPUP MENU.** `FlushMenuThemes` (ordinal 136) is called and the menu still
 comes up light — measured, with a context menu open on a dark window. A dark
 popup menu is owner-drawn in every application that has one, which is the same

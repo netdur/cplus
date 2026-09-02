@@ -829,6 +829,14 @@ fn create_slider(n: *core::Node) -> *u8 {
 fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
     if p == (0 as *props::SliderProps) { return; }
+    // OUT OF VISUAL STYLES ON A DARK SYSTEM, for the reason the progress bar
+    // goes: a themed trackbar paints its own BACKGROUND from a part-list that
+    // has no dark variant, so the control comes up as a white bar in a dark
+    // window whatever the custom draw does to the channel. Classic, it asks its
+    // parent through WM_CTLCOLORSTATIC — which `paint::ctl_color` answers with
+    // the node's own background — and the custom draw keeps the channel and the
+    // thumb. Idempotent: `go_classic` marks the window and returns.
+    if paint::dark_controls() { paint::go_classic(v); }
     if (dirty & (slider::P_VALUE | slider::P_MINIMUM | slider::P_MAXIMUM))
        != (0 as u64) {
         let pos: i32 = slider_pos_of({ (*p).value }, { (*p).minimum }, { (*p).maximum });
@@ -3587,12 +3595,26 @@ fn pbs_marquee_bit() -> u32 { return 0x08 as u32; }
 
 fn apply_progress_color(v: *u8, c: vocab::Color) {
     var has: bool = false;
-    let rgb: u32 = paint::resolve(c, #addr_of(has));
-    // AN UNSTATED COLOUR PAYS NOTHING. Only a node that actually asked to be
-    // recoloured trades the modern look for the classic renderer.
+    var rgb: u32 = paint::resolve(c, #addr_of(has));
+    // AN UNSTATED COLOUR PAYS NOTHING — on a LIGHT system. Only a node that
+    // actually asked to be recoloured trades the modern look for the classic
+    // renderer.
+    //
+    // On a dark one the trade is already lost: a progress bar has no dark part
+    // -list, so the modern look is a white trough in a dark window. So the
+    // appearance supplies both colours and the classic renderer draws them.
+    var trough: u32 = 0 as u32;
+    var t_has: bool = false;
+    if !has && paint::dark_controls() {
+        rgb = paint::resolve(vocab::Color::accent(), #addr_of(has));
+        trough = paint::resolve(vocab::Color::control_background(), #addr_of(t_has));
+    }
     if !has { return; }
     paint::go_classic(v);
     let _r: i64 = { u::SendMessageA(v, pbm_setbarcolor(), 0 as u64, rgb as i64) };
+    if t_has {
+        let _b: i64 = { u::SendMessageA(v, pbm_setbkcolor(), 0 as u64, trough as i64) };
+    }
     return;
 }
 
@@ -3658,7 +3680,14 @@ fn slider_customdraw(v: *u8, nm: *u8) -> i64 {
             return cdrf_skipdefault();
         }
         var has: bool = false;
-        let c: u32 = paint::resolve({ (*p).thumb_color }, #addr_of(has));
+        var c: u32 = paint::resolve({ (*p).thumb_color }, #addr_of(has));
+        // A DARK SYSTEM IS ITSELF A REASON, as it is for the button: a trackbar
+        // has no dark part-list either, so a slider nobody coloured comes up as
+        // a white track with a light thumb in a dark window. Measured in the
+        // gallery's Values page.
+        if !has && paint::dark_controls() {
+            c = paint::resolve(vocab::Color::accent(), #addr_of(has));
+        }
         if !has { return cdrf_dodefault(); }
         let b: *u8 = paint::brush_for(c);
         if b == (0 as *u8) { return cdrf_dodefault(); }
@@ -3671,6 +3700,15 @@ fn slider_customdraw(v: *u8, nm: *u8) -> i64 {
         var hi_has: bool = false;
         var lo: u32 = paint::resolve({ (*p).minimum_track_color }, #addr_of(lo_has));
         var hi: u32 = paint::resolve({ (*p).maximum_track_color }, #addr_of(hi_has));
+        // The same default on a dark system, and the same reason. The FILLED
+        // side takes the accent and the empty side the separator grey, which
+        // is what a dark trackbar looks like everywhere it exists.
+        if !lo_has && paint::dark_controls() {
+            lo = paint::resolve(vocab::Color::accent(), #addr_of(lo_has));
+        }
+        if !hi_has && paint::dark_controls() {
+            hi = paint::resolve(vocab::Color::separator(), #addr_of(hi_has));
+        }
         if !lo_has && !hi_has { return cdrf_dodefault(); }
         // ONE STATED COLOUR STILL TAKES THE WHOLE CHANNEL. Filling only the
         // half that was asked for and letting the theme draw the rest cannot
