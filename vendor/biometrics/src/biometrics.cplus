@@ -1,0 +1,124 @@
+// Ask the person to prove they own the device.
+
+import "stdlib/option" as option;
+
+// What this device can ask with.
+enum Kind {
+    // No biometric hardware, or none enrolled. `available()` says which.
+    None,
+    Fingerprint,
+    Face,
+    // Optic ID, on Vision Pro. Named for the sensor rather than for Apple's
+    // product so the enum survives the next one.
+    Iris,
+}
+
+impl Kind {
+    fn to_code(this) -> i32 {
+        match this {
+            Kind::None => { return 0; }
+            Kind::Fingerprint => { return 1; }
+            Kind::Face => { return 2; }
+            Kind::Iris => { return 3; }
+        }
+    }
+
+    fn from_code(c: i32) -> Kind {
+        if c == 1 { return Kind::Fingerprint; }
+        if c == 2 { return Kind::Face; }
+        if c == 3 { return Kind::Iris; }
+        return Kind::None;
+    }
+}
+
+enum Outcome {
+    // The person proved it.
+    Ok,
+    // No backend, or an API level too old to ask.
+    Unsupported,
+    // The hardware is not there, or is disabled by policy.
+    Unavailable,
+    // Hardware present, NOTHING ENROLLED. The fix is Settings, and it is a
+    // different sentence to a person than "that was not you".
+    NotEnrolled,
+    // The check ran and did not pass — a wrong finger, an unrecognised face.
+    Rejected,
+    // The person dismissed the prompt, or the app hid it. NOT a failure, and
+    // an app that treats it as one nags somebody who already said no.
+    Cancelled,
+    // Too many attempts. The platform locks biometrics out until a passcode
+    // is entered; asking again immediately does nothing.
+    LockedOut,
+    Failed,
+}
+
+impl Outcome {
+    fn to_code(this) -> i32 {
+        match this {
+            Outcome::Ok => { return 0; }
+            Outcome::Unsupported => { return 1; }
+            Outcome::Unavailable => { return 2; }
+            Outcome::NotEnrolled => { return 3; }
+            Outcome::Rejected => { return 4; }
+            Outcome::Cancelled => { return 5; }
+            Outcome::LockedOut => { return 6; }
+            Outcome::Failed => { return 7; }
+        }
+    }
+
+    fn from_code(c: i32) -> Outcome {
+        if c == 1 { return Outcome::Unsupported; }
+        if c == 2 { return Outcome::Unavailable; }
+        if c == 3 { return Outcome::NotEnrolled; }
+        if c == 4 { return Outcome::Rejected; }
+        if c == 5 { return Outcome::Cancelled; }
+        if c == 6 { return Outcome::LockedOut; }
+        if c == 7 { return Outcome::Failed; }
+        return Outcome::Ok;
+    }
+}
+
+// What the device has, whether or not anything is enrolled.
+fn kind() -> Kind {
+    return Kind::from_code({ _c_kind() });
+}
+
+// Can a prompt be shown right now?
+//
+// FALSE FOR SEVERAL DIFFERENT REASONS, and they need different things said:
+// no hardware, nothing enrolled, or locked out after too many tries.
+// `authenticate` reports which; this is the cheap yes/no for hiding a button.
+fn available() -> bool {
+    return { _c_available() } != (0 as i32);
+}
+
+// Ask.
+//
+// `reason` IS SHOWN TO THE PERSON and is not optional on Apple — an empty one
+// throws there. Write it as a sentence completing "…to", because that is how
+// iOS renders it: "Unlock your notes".
+//
+// `allow_passcode` lets the device's own passcode stand in when biometrics
+// fail or are unavailable. TRUE BY DEFAULT, because the alternative locks a
+// person out of their own data over a wet finger — turn it off only when the
+// biometric itself is the point.
+//
+// THE RETURN VALUE IS WHETHER THE PROMPT WAS RAISED. The answer arrives on the
+// handler, because a face takes seconds and nothing here blocks.
+fn authenticate(reason: str,
+                on_result: fn(Outcome, *u8),
+                ctx: *u8 = 0 as *u8,
+                allow_passcode: bool = true) -> Outcome {
+    if on_result.is_null() { return Outcome::Failed; }
+    if #str_len(reason) == (0 as usize) { return Outcome::Failed; }
+    var pass: i32 = 0;
+    if allow_passcode { pass = 1; }
+    return Outcome::from_code({ _c_authenticate(#str_ptr(reason), #str_len(reason),
+                                                on_result, ctx, pass) });
+}
+
+extern fn _c_kind() -> i32;
+extern fn _c_available() -> i32;
+extern fn _c_authenticate(reason: *u8, reason_len: usize,
+                          on_result: fn(Outcome, *u8), ctx: *u8,
+                          allow_passcode: i32) -> i32;
