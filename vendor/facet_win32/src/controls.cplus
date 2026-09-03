@@ -3642,6 +3642,61 @@ fn paint_node(v: *u8, n: *core::Node, hdc: *u8) {
     if kind == props::K_REFRESHABLE { draw_refreshable(v, n, hdc); return; }
     if kind == split::K_SPLIT { draw_split(v, n, hdc); return; }
     if kind == props::K_IMAGE { draw_image(v, n, hdc); return; }
+    if kind == props::K_WEB { draw_web_placeholder(v, n, hdc); return; }
+    return;
+}
+
+// THE WEB VIEW, HONESTLY ABSENT.
+//
+// `web` is a WebView2 host on Windows, and WebView2 is COM: an environment
+// created asynchronously through `CreateCoreWebView2EnvironmentWithOptions`, a
+// completion handler this package would implement as a vtable, a controller, an
+// `ICoreWebView2` reached through more vtable calls. This package has NO COM
+// anywhere — `dnd` and `imaging` each chose the non-COM route specifically to
+// keep it that way — so the deliberate decision is `WebView2` OR the first COM
+// in the package, and that belongs to whoever maintains it. MANIFEST §2 records
+// the surface.
+//
+// What was WRONG is that a `web` node drew NOTHING — a blank rectangle where a
+// browser should be, which reads as a broken layout rather than an unbuilt
+// verb. So it draws its own absence: a framed panel naming the kind and the URL
+// it would have loaded, which is honest and legible where a void was neither.
+fn draw_web_placeholder(v: *u8, n: *core::Node, hdc: *u8) {
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    // A sunken ground, so it reads as a surface a browser would fill rather
+    // than as a control.
+    var gh: bool = false;
+    var ground: u32 = paint::resolve(vocab::Color::under_page_background(), #addr_of(gh));
+    if !gh { ground = { u::GetSysColor(15 as i32) }; }
+    let bg: *u8 = paint::brush_for(ground);
+    if bg != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), bg) }; }
+    var eh: bool = false;
+    var edge: u32 = paint::resolve(vocab::Color::separator(), #addr_of(eh));
+    if !eh { edge = { u::GetSysColor(16 as i32) }; }
+    paint::stroke_rect(hdc, r, edge, 1 as i32, 0.0f64);
+
+    var fg: bool = false;
+    let ink: u32 = paint::resolve(vocab::Color::text_secondary(), #addr_of(fg));
+    let _t: u32 = { gdi::SetTextColor(hdc, if fg { ink } else { { u::GetSysColor(17 as i32) } }) };
+    let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
+
+    var line: text::Text = text::from_str("Web view — requires WebView2 (not built)");
+    let p: *props::WebProps = props_of(n, props::K_WEB) as *props::WebProps;
+    if p != (0 as *props::WebProps) {
+        let src: str = { (*p).source }.view();
+        if src != "" { line = line.appending("\n").appending(src); }
+    }
+    let w16: *u16 = sys::to_wide(line.view());
+    if w16 != (0 as *u16) {
+        let flags: u32 = sys::dt_center() | sys::dt_vcenter() | sys::dt_wordbreak()
+                       | sys::dt_noprefix();
+        var tr: u::tagRECT = r;
+        let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                     #addr_of(tr), flags) };
+        sys::free_wide(w16);
+    }
     return;
 }
 
