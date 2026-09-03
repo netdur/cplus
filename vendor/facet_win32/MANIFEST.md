@@ -462,6 +462,16 @@ draw nothing. It rendered as an empty box.
 Parking new controls on the first real window instead of `HWND_MESSAGE` was
 tried and changed neither count.
 
+*(2026-09-03: the cache turned out to be wider than this entry — EVERY
+`WM_NOTIFY` in the application was going to the message-only window, measured
+as a painting trackbar sending zero notifications anywhere. Controls are born
+to the first open window now (`controls::set_creation_parent`), which brought
+`NM_CUSTOMDRAW`, `UDN_DELTAPOS` and the pickers' `DTN_*` to life. The
+owner-draw experiment above predates that fix and its "tried and changed
+neither count" was measured against a build that still parked on
+`HWND_MESSAGE` at the moment the combo box was created — so the wall this
+entry describes should be RETESTED before anyone trusts it again.)*
+
 **Why the owner-drawn BUTTONS are fine.** `text_button`, `icon_button` and
 `toggle` are `BS_OWNERDRAW`, which needs no `WM_MEASUREITEM` — a button is sized
 by its window rect — and their `WM_DRAWITEM` does arrive. Owner-draw is
