@@ -75,7 +75,7 @@ fn panel(
         .grow(1.0);
     page.set_background_color(vocab::Color::surface());
 
-    var root: core::Node = ui::scroll(key: "demo:scroll").grow(1.0);
+    var root: core::Node = ui::scroll(key: "demo:scroll", axis: vocab::ScrollAxis::Vertical).grow(1.0);
     match scroll::find("demo:scroll", within: #addr_of(root)) {
         option::Option[scroll::Scroll]::Some(s) => {
             let _s: scroll::Scroll = s.set_content(page);

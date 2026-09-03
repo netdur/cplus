@@ -52,6 +52,15 @@ fn sm_cxmenucheck() -> i32 { return 71 as i32; }
 
 fn metric(i: i32) -> i32 { return { u::GetSystemMetrics(i) }; }
 
+// A stepper is two stacked arrows and is as tall as a real control needs to be
+// clickable: the system spin-button height, SM_CYVSCROLL doubled so each arrow
+// is a square hit target.
+fn stepper_height() -> i32 {
+    let a: i32 = metric(20 as i32);
+    if a > (0 as i32) { return a * (2 as i32); }
+    return 22 as i32;
+}
+
 // ---- measuring text --------------------------------------------------------------
 
 // Measure `s` in `v`'s own font. `wrap_at` is the width to wrap within, or 0
@@ -191,7 +200,7 @@ fn fixed_height(kind: u32) -> i32 {
     if kind == props::K_SLIDER { return 30 as i32; }
     // An up-down control is the shell's own arrows and has no text to measure;
     // SM_CXVSCROLL wide is what a spinner is beside an edit box.
-    if kind == props::K_STEPPER { return 22 as i32; }
+
     if kind == props::K_PROGRESS { return 18 as i32; }
     if kind == props::K_SPINNER { return 18 as i32; }
     return 0 as i32;
@@ -374,6 +383,15 @@ fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     // A kind with no text at all is its stated height and whatever width it was
     // offered — see `fixed_height`. Measuring the empty string would answer
     // zero and the control would vanish.
+    // A STEPPER IS NOT A FULL-LINE CONTROL. It is `msctls_updown32` — two
+    // stacked arrows — and stretching it across the line draws a stripe of
+    // arrow, which is what a stepper laid out at `avail_w` came out as
+    // (reported from the gallery's Values page). Its width is its own: the two
+    // arrows are a scroll-bar width, `SM_CXVSCROLL`, and nothing wider.
+    if kind == props::K_STEPPER {
+        let arrows: i32 = metric(2 as i32);
+        return flex::Size { width: arrows as f64, height: stepper_height() as f64 };
+    }
     let fixed: i32 = fixed_height(kind);
     if fixed > (0 as i32) {
         var fw: f64 = 120.0f64;

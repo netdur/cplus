@@ -556,11 +556,25 @@ fn build_bar(win: *u8, root: *core::Node) {
 fn build_app_menu(win: *u8, m: *screen::AppMenu) {
     if win == (0 as *u8) { return; }
     if m == (0 as *screen::AppMenu) { return; }
+    let items: *vec::Vec[screen::MenuItem] = #addr_of((*m).items);
+    let n: usize = { (*items).count() };
+    // NO ITEMS IS NO BAR. An application that returns an empty `menu_items`
+    // wanted no menu bar — the gallery does — and creating one anyway leaves a
+    // bare strip of `COLOR_MENU` across the top of the window, taking a row of
+    // client height and drawing nothing. Reported as a white bar under the
+    // title. A window that HAD a bar and now has none has it removed.
+    if n == (0 as usize) {
+        let had: *u8 = { u::GetMenu(win) };
+        if had != (0 as *u8) {
+            let _r: i32 = { u::SetMenu(win, 0 as *u8) };
+            let _d: i32 = { u::DestroyMenu(had) };
+            let _b: i32 = { u::DrawMenuBar(win) };
+        }
+        return;
+    }
     reset_commands();
     let bar: *u8 = { u::CreateMenu() };
     if bar == (0 as *u8) { return; }
-    let items: *vec::Vec[screen::MenuItem] = #addr_of((*m).items);
-    let n: usize = { (*items).count() };
     var made: vec::Vec[text::Text] = vec::new::[text::Text]();
     var i: usize = 0 as usize;
     while i < n {

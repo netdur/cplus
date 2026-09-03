@@ -626,9 +626,16 @@ impl App {
     fn build_menu(this) -> AppMenu {
         let f: fn() -> AppMenu = this.menu_fn;
         if f != (0 as fn() -> AppMenu) { return f(); }
-        var m: AppMenu = screen::app_menu(this.name());
-        m.add_item(this.name(), "Quit", "q", screen::menu_action_quit());
-        return m;
+        // NO DEFAULT MENU BAR ON WINDOWS. macOS has a system-wide menu bar and
+        // an app that declared none still shows the Apple/App menu, so the
+        // AppKit runtime synthesises a Quit there. Windows has no such thing: a
+        // menu bar is per-window chrome an app opts INTO, and manufacturing a
+        // lone "App > Quit" bar for an app that asked for none is both clutter
+        // and — because the bar sits on the dark title with no dark part-list —
+        // a white strip under the caption. An app that wants a menu declares
+        // one with ; one that does not gets no bar. The window's own
+        // close button and Alt+F4 are the platform's quit.
+        return screen::empty_app_menu();
     }
 
     // Run the app: show `initial` (its `arg()` reads `arg`), then follow nav
