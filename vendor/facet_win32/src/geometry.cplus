@@ -93,6 +93,15 @@ fn trace_tree(n: *core::Node, depth: usize) {
 // 99.6pt column truncated to 99 loses a pixel at every nesting level, and
 // facet's trees nest deeply enough for that to be visible as drift. The same
 // call, for the same reason, as facet_gtk's `round_i32`.
+// A stepper's natural width: the shell's own up-down arrows are a scroll-bar
+// wide, and no wider. Stated here rather than measured because a spin control's
+// arrows are `SM_CXVSCROLL` by construction.
+fn stepper_width() -> i32 {
+    let w: i32 = { u::GetSystemMetrics(2 as i32) };
+    if w > (0 as i32) { return w; }
+    return 17 as i32;
+}
+
 fn round_i32(v: f64) -> i32 {
     if v <= (0.0 as f64) { return 0 as i32; }
     return (v + (0.5 as f64)) as i32;
@@ -192,8 +201,25 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
                     // 0x0-on-restore bug facet's own `relayout` note warns
                     // about, seen from the backend side.
                     show_window(v, !core::is_hidden(c));
-                    place(host, v, c, (cf.left - host_abs.left) - shift,
-                          cf.top - host_abs.top, cf.width, cf.height);
+                    // A STEPPER DOES NOT STRETCH. facet's stepper is
+                    // `msctls_updown32` — two stacked arrows, the value read by
+                    // the application rather than shown — and a column with the
+                    // default `align: stretch` gives it the full line, which an
+                    // updown draws as a wide stripe of arrow. So it is pinned to
+                    // its natural width at the TRAILING edge of its allocation,
+                    // the way a spin control sits at the right of its field.
+                    // Nothing else in the frame walk special-cases a control's
+                    // size, which is why this is here and named.
+                    var cw: f64 = cf.width;
+                    var cx: f64 = (cf.left - host_abs.left) - shift;
+                    if core::kind_of(c) == props::K_STEPPER {
+                        let natural: f64 = stepper_width() as f64;
+                        if cw > natural {
+                            cx = cx + (cw - natural);
+                            cw = natural;
+                        }
+                    }
+                    place(host, v, c, cx, cf.top - host_abs.top, cw, cf.height);
                     // A list re-lays its own rows: they are realised windows in
                     // its viewport rather than facet children, so this walk
                     // would never otherwise reach them. See `set_rows_hook`.
