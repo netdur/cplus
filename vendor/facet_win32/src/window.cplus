@@ -50,6 +50,8 @@ import "./swipe" as swipe;
 import "./shadow" as shadow;
 import "./darkmode" as darkmode;
 import "./scroller" as scroller;
+import "./fonts" as fonts;
+import "./measure" as measure;
 
 fn hinstance() -> *u8 { return { ll::GetModuleHandleA(0 as *i8) }; }
 
@@ -104,6 +106,32 @@ fn slot_of_root(r: *core::Node) -> usize {
 }
 
 fn open_window_count() -> i64 { return OPEN_WINDOWS; }
+
+// Rebuild every control's font at the window's CURRENT DPI, and mark it
+// stale for measurement. Walked from the root on WM_DPICHANGED: fonts are
+// created against `GetDpiForWindow` at apply time, so a window that moved
+// monitors is wearing every one of them at the wrong size until they are
+// re-made.
+fn refont_tree(n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) {
+        fonts::apply(v, n);
+        measure::remeasure(n);
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { refont_tree(c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+
 
 // ---- the shared WNDPROC ----------------------------------------------------------
 
@@ -254,7 +282,31 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
         return 1 as i64;
     }
 
-    if msg == sys::wm_dpichanged() { fire_observers(OBS_DENSITY); return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+    // A PER-MONITOR-V2 WINDOW MUST DO THREE THINGS HERE, and this did none of
+    // them — the manifest declared the capability and the handler observed the
+    // event. lParam is the RECT Windows suggests for the new monitor; ignoring
+    // it leaves the window its old physical size, and every font in it was
+    // built against the OLD monitor's DPI (`fonts::height_for` asks
+    // `GetDpiForWindow` at apply time). Text sized for one monitor in boxes
+    // laid out for another is clipped labels with nothing in the tree to
+    // explain them.
+    if msg == sys::wm_dpichanged() {
+        let slot: usize = slot_of_window(hwnd);
+        let r: *u::tagRECT = l as *u::tagRECT;
+        if r != (0 as *u::tagRECT) {
+            let _m: i32 = { u::SetWindowPos(hwnd, sys::hwnd_top(),
+                                            { (*r).left }, { (*r).top },
+                                            { (*r).right } -% { (*r).left },
+                                            { (*r).bottom } -% { (*r).top },
+                                            sys::swp_nozorder() | sys::swp_noactivate()) };
+        }
+        if slot < MAX_WINDOWS {
+            refont_tree(ROOTS[slot] as *core::Node);
+            relayout_from_client(slot);
+        }
+        fire_observers(OBS_DENSITY);
+        return 0 as i64;
+    }
 
     // THE POINTER BAND. A gesture lands on a PANEL, which is our own class, so
     // these arrive here rather than through a controller attached to a widget.

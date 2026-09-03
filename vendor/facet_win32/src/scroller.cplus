@@ -211,8 +211,26 @@ fn sync_bars(v: *u8) {
     var x: f64 = 0.0f64;
     var y: f64 = 0.0f64;
     let _o: bool = offset_of(v, #addr_of(x), #addr_of(y));
-    set_bar(v, sb_vert(), dh, vh, y);
-    set_bar(v, sb_horz(), dw, vw, x);
+    // CONTENT THAT FITS THE FRAME FITS, even when a bar has eaten into the
+    // client. `GetClientRect` shrinks by SM_CXVSCROLL the moment the vertical
+    // bar shows, and content flex laid at the frame's full width is suddenly
+    // 17px "too wide" — so a page that only overflowed DOWNWARD grew a
+    // horizontal bar that could scroll 17 useless pixels. The classic Win32
+    // scroll-bar feedback, reported from a real run.
+    //
+    // So the fits test is against the WINDOW rect — the width the layout was
+    // actually given — and the sliver under the bar is clipped instead of
+    // scrolled to, which is what every toolkit's overlay does with it.
+    var wr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    var fw: f64 = vw;
+    var fh: f64 = vh;
+    if { u::GetWindowRect(v, #addr_of(wr)) } != (0 as i32) {
+        fw = (wr.right -% wr.left) as f64;
+        fh = (wr.bottom -% wr.top) as f64;
+    }
+    set_bar(v, sb_vert(), if dh <= fh { 0.0f64 } else { dh }, vh, y);
+    set_bar(v, sb_horz(), if dw <= fw { 0.0f64 } else { dw }, vw, x);
     return;
 }
 

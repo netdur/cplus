@@ -210,6 +210,14 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     if wants_subclass(core::kind_of(n)) { subclass::install(v); }
     // Configure it WHOLE — the same call apply makes, with every bit set.
     configure(v, n, paint::all_bits());
+    // EVERY CONTROL WEARS A REAL FONT, whether or not its kind has a
+    // typography surface. A `CreateWindowEx` control that is never sent
+    // WM_SETFONT draws in the bitmap System font — the single loudest tell of
+    // an unfinished Win32 application — and `configure` only reaches
+    // `fonts::apply` for kinds with font bits. A kind without them (checkbox,
+    // toggle, stepper, tabs...) gets the default spec here, which
+    // `fonts::font_for` resolves to Segoe UI at 9pt at THIS window's DPI.
+    if fonts::font_bits(core::kind_of(n)) == (0 as u64) { fonts::apply(v, n); }
     // The READ half. `arm` binds the node onto the window, which every backed
     // node needs whether or not it has a handler, because the sender readers
     // walk it.
