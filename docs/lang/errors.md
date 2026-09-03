@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **193 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **151** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **194 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **151** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2665,6 +2665,22 @@ objc = "*"
 **Fix.** Declare the package once, or give every declaration the same spec. Platform sections are for packages that only apply to that platform.
 
 <sub>repro: scenario · cplus-core/src/manifest.rs:459 · test cpc/tests/platform_deps.rs:conflicting_dependency_declarations_fail_with_e0869</sub>
+
+### E0877 · Invalid Maven coordinate
+
+An `[android.maven]` entry is not a `"group:artifact" = "version"` pin — the version is in the key, a half is missing, the value is a wildcard — or the table appears under a platform other than `android`. Maven artifacts are an Android ecosystem, and their versions are exact pins: there is no version solver, on purpose.
+
+```toml
+[package]
+name = "app"
+
+[android.maven]
+"com.google.android.gms:play-services-maps:19.0.0" = "19.0.0"
+```
+
+**Fix.** Write the coordinate as `"group:artifact" = "exact.version"` under `[android.maven]`. `cpc pm add . --maven group:artifact:version` writes it for you and downloads the closure.
+
+<sub>repro: scenario · cplus-core/src/manifest.rs:1097 · test cpc/tests/platform_deps.rs:malformed_maven_coordinates_fail_with_e0877</sub>
 
 ### E0914 · Relative import escapes the project directory
 

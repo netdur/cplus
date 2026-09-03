@@ -200,6 +200,72 @@ fn conflicting_dependency_declarations_fail_with_e0869() {
     assert!(all.contains("E0869"), "expected E0869, got:\n{all}");
 }
 
+/// `[android.maven]` is a real table, not an unknown key: `deny_unknown_fields`
+/// would otherwise make a valid manifest a hard parse error, and a
+/// SILENTLY-accepted one would drop the coordinate on the floor.
+#[test]
+fn android_maven_coordinates_parse_and_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path();
+    write(
+        &project.join("Cplus.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n         [android.maven]\n\"com.google.android.gms:play-services-maps\" = \"19.0.0\"\n",
+    );
+    write(
+        &project.join("src/main.cplus"),
+        "fn main() -> i32 {\n    return 0;\n}\n",
+    );
+    let out = build(project);
+    assert!(
+        out.status.success(),
+        "a manifest with [android.maven] must build:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The three ways an `[android.maven]` entry is wrong, each E0877. Validated
+/// by the compiler because it is the one tool that reads every manifest, and
+/// a coordinate that is quietly dropped is a class missing at runtime on a
+/// device.
+#[test]
+fn malformed_maven_coordinates_fail_with_e0877() {
+    for (section, key, version) in [
+        // Maven is an Android ecosystem; the table anywhere else is a mistake.
+        ("ios", "com.x:y", "1.0"),
+        // The version is the VALUE, not a third field in the key.
+        ("android", "com.x:y:1.0", "1.0"),
+        ("android", "com.x", "1.0"),
+        // Exact pins only — there is no version solver here, on purpose.
+        ("android", "com.x:y", "*"),
+        ("android", "com.x:y", ""),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(
+            &project.join("Cplus.toml"),
+            &format!(
+                "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n                 [{section}.maven]\n\"{key}\" = \"{version}\"\n"
+            ),
+        );
+        write(
+            &project.join("src/main.cplus"),
+            "fn main() -> i32 {\n    return 0;\n}\n",
+        );
+        let out = build(project);
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!out.status.success(), "`[{section}.maven] {key} = {version}` must fail");
+        assert!(
+            all.contains("E0877"),
+            "expected E0877 for `[{section}.maven] {key} = {version}`, got:\n{all}"
+        );
+    }
+}
+
 #[test]
 fn platform_suffix_module_shadows_the_base_file() {
     // The `<name>_<platform>.cplus` override is keyed off the ACTIVE

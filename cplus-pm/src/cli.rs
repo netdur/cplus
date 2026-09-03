@@ -27,9 +27,22 @@ usage:
                                   a tree-URL pins a third-party package.
                                   extra flag: --platform P (repeatable) extends
                                   the target set beyond declared+host
+  cpc pm add DIR --maven G:A:V    add a third-party Maven/AAR coordinate to
+                                  [android.maven], print what its closure
+                                  costs, and download it. No Gradle.
   cpc pm remove DIR NAME          delete DIR/vendor/NAME (the project copy;
                                   the shared store is never touched)
   cpc pm manifest [DIR]           parse DIR/Cplus.toml and print normalized JSON
+  cpc pm maven [WHAT] [DIR]       what the Maven closure gives an Android
+                                  build, resolved offline from the local repo.
+                                  WHAT: list (default — the priced closure),
+                                  classpath (jars for `d8`), manifests, res,
+                                  jni, root (the local repo path)
+  cpc pm maven price G:A:V        what one coordinate WOULD cost: resolve and
+                                  download its closure, print the artifact
+                                  count and the megabytes. No project, no
+                                  manifest touched. Run this BEFORE taking on
+                                  an AAR dependency — see plans/aar.md
   cpc pm -h | --help              show this message
 
 install/update/add flags:
@@ -40,6 +53,13 @@ install/update/add flags:
   --toolchain-repo R     toolchain monorepo, e.g. github.com/netdur/cplus
   --toolchain-version V  toolchain version — names the store tier
                           (`cpc pm` supplies both automatically)
+  --maven G:A:V          (add only) add a Maven coordinate instead of a
+                          C+ package
+  --m2 DIR               local Maven repo (default <store>/m2)
+  --maven-repo URL       remote Maven repo, repeatable, in order
+                          (default: Google's Maven, then Maven Central)
+  --maven-offline        never download a Maven artifact; resolve from the
+                          local repo or fail
 
 (also available as the standalone `cplus-pm` command)
 ";
@@ -67,6 +87,7 @@ pub fn run_with_toolchain(
         Some("add") => add_cmd(&args[1..], toolchain),
         Some("remove") => remove_cmd(&args[1..]),
         Some("manifest") => manifest_cmd(&args[1..]),
+        Some("maven") => maven_cmd(&args[1..], toolchain),
         Some(command) => Err(format!("unknown command `{command}`\n\n{USAGE}")),
     }
 }
@@ -74,7 +95,9 @@ pub fn run_with_toolchain(
 fn install_cmd(args: &[String], toolchain: Option<ToolchainContext>) -> Result<(), String> {
     // `None` means `-h`/`--help` was handled (usage printed): do NOT fall
     // through and install the current directory.
-    let (positional, options, _platforms) = match parse_install_args(args, toolchain)? {
+    let Parsed {
+        positional, options, ..
+    } = match parse_install_args(args, toolchain)? {
         Some(parsed) => parsed,
         None => return Ok(()),
     };
@@ -112,10 +135,18 @@ fn update_cmd(args: &[String], toolchain: Option<ToolchainContext>) -> Result<()
 /// `add DIR NAME [SPEC]` — write the dependency + its declared closure into
 /// the manifest (D17), then materialize with the same install path.
 fn add_cmd(args: &[String], toolchain: Option<ToolchainContext>) -> Result<(), String> {
-    let (positional, options, platforms) = match parse_install_args(args, toolchain)? {
+    let Parsed {
+        positional,
+        options,
+        platforms,
+        maven,
+    } = match parse_install_args(args, toolchain)? {
         Some(parsed) => parsed,
         None => return Ok(()),
     };
+    if let Some(coordinate) = maven {
+        return add_maven_cmd(&positional, &coordinate, &options);
+    }
     if positional.len() < 2 || positional.len() > 3 {
         return Err(format!("add requires DIR and NAME (and an optional SPEC)\n\n{USAGE}"));
     }
@@ -147,6 +178,254 @@ fn add_cmd(args: &[String], toolchain: Option<ToolchainContext>) -> Result<(), S
     }
     let fresh = installed.packages.iter().filter(|p| p.fresh).count();
     println!("installed {fresh} of {} dependencies", installed.packages.len());
+    report_maven(&installed);
+    Ok(())
+}
+
+/// `add DIR --maven G:A:V` — pin a third-party Maven/AAR coordinate in
+/// `[android.maven]`, print what its closure costs, and download it (D18).
+fn add_maven_cmd(
+    positional: &[String],
+    coordinate: &str,
+    options: &InstallOptions,
+) -> Result<(), String> {
+    if positional.len() != 1 {
+        return Err(format!("add --maven requires DIR\n\n{USAGE}"));
+    }
+    let project_dir = PathBuf::from(&positional[0]);
+    let report = crate::add::add_maven(&project_dir, coordinate, options)
+        .map_err(|err| err.to_string())?;
+    match &report.action {
+        crate::add::AddAction::Added => println!(
+            "added    \"{}\" = \"{}\"  in [android.maven]",
+            report.coord.ga(),
+            report.coord.version
+        ),
+        crate::add::AddAction::Present => {
+            println!("present  {}  in [android.maven]", report.coord.ga())
+        }
+        crate::add::AddAction::KeptDifferent { existing } => println!(
+            "kept     \"{}\" = \"{existing}\"  in [android.maven] (add wanted \"{}\")",
+            report.coord.ga(),
+            report.coord.version
+        ),
+    }
+    // The resolved closure belongs to the coordinate that was ASKED for. If
+    // the manifest kept a different pin, printing it would price a closure
+    // this project does not have — the install report below prints the real
+    // one either way.
+    if !matches!(report.action, crate::add::AddAction::KeptDifferent { .. }) {
+        println!("closure: {} artifacts", report.closure.order.len());
+        if !report.closure.bom_imports.is_empty() {
+            println!(
+                "BOM imports followed: {}",
+                report.closure.bom_imports.join(", ")
+            );
+        }
+    }
+    let installed = vendor::install(&project_dir, options).map_err(|err| err.to_string())?;
+    for warning in &installed.warnings {
+        eprintln!("warning: {warning}");
+    }
+    report_maven(&installed);
+    Ok(())
+}
+
+/// Say where this resolver and a Gradle build would disagree, and only
+/// there. Nearest-wins vs highest-wins is the documented divergence
+/// (`plans/aar.md` §2), but it only BITES when the nearest version is the
+/// older one — a CameraX closure asks for kotlin-stdlib eight times and
+/// agrees with Gradle every time.
+fn report_conflicts(closure: &vendor::MavenClosure) {
+    for conflict in closure.divergent() {
+        eprintln!(
+            "warning: {} resolved to {} (Maven nearest-wins) but {} was also requested \u{2014} Gradle would take the higher one; pin it in [android.maven] to match",
+            conflict.ga,
+            conflict.kept,
+            conflict.dropped.join(", "),
+        );
+    }
+    let agreed = closure.conflicts.len() - closure.divergent().count();
+    if agreed > 0 {
+        println!("{agreed} version conflicts resolved to the highest version (as Gradle would)");
+    }
+}
+
+/// The Maven side of an install report: what landed, and what it costs.
+/// The byte total is the number the decision to take an AAR turns on
+/// (`plans/aar.md` §3 — 178x the dex for one feature).
+fn report_maven(installed: &vendor::InstallReport) {
+    if installed.maven.is_empty() {
+        return;
+    }
+    let mut total = 0u64;
+    let mut fresh = 0usize;
+    for artifact in &installed.maven {
+        total += artifact.bytes;
+        fresh += usize::from(artifact.fresh);
+        println!(
+            "{} {:>4} {:>8} KB  {}{}",
+            if artifact.fresh { "fetched " } else { "present " },
+            artifact.kind.ext(),
+            artifact.bytes / 1024,
+            artifact.coord,
+            // A facade AAR: no code of its own, its variant is in the
+            // closure. Worth showing so nobody hunts for a missing jar.
+            if artifact.classes.is_none() { "  (no code)" } else { "" },
+        );
+    }
+    println!(
+        "maven: {} artifacts, {:.1} MB ({fresh} fetched this run)",
+        installed.maven.len(),
+        total as f64 / 1048576.0
+    );
+    if let Some(closure) = &installed.maven_closure {
+        report_conflicts(closure);
+    }
+}
+
+/// `cpc pm maven [WHAT] [DIR]` — what the resolved Maven closure gives an
+/// Android build.
+///
+/// ALWAYS OFFLINE. These are build inputs: a `d8` invocation that reaches
+/// the network is a build that fails differently on a plane. Everything is
+/// resolved from the local Maven repo `install` filled; a gap says so and
+/// names `cpc pm install`.
+fn maven_cmd(args: &[String], toolchain: Option<ToolchainContext>) -> Result<(), String> {
+    const WHAT: [&str; 7] = [
+        "list",
+        "classpath",
+        "manifests",
+        "res",
+        "jni",
+        "root",
+        "price",
+    ];
+    let Parsed {
+        positional,
+        mut options,
+        ..
+    } = match parse_install_args(args, toolchain)? {
+        Some(parsed) => parsed,
+        None => return Ok(()),
+    };
+    // `price` is the one that may reach out: its whole job is to fetch a
+    // closure nobody has yet, to find out what it weighs.
+    options.maven_offline = positional.first().map(String::as_str) != Some("price");
+    let (what, dir) = match positional.split_first() {
+        Some((first, rest)) if WHAT.contains(&first.as_str()) => (first.as_str(), rest.first()),
+        Some((first, _)) if first.starts_with('-') => {
+            return Err(format!("unknown flag `{first}`\n\n{USAGE}"))
+        }
+        Some((dir, rest)) if rest.is_empty() => ("list", Some(dir)),
+        None => ("list", None),
+        Some(_) => return Err(format!("maven takes at most WHAT and DIR\n\n{USAGE}")),
+    };
+    let registry = options.registry().map_err(|err| err.to_string())?;
+    if what == "root" {
+        println!("{}", registry.root.display());
+        return Ok(());
+    }
+    if what == "price" {
+        let coordinate = dir.ok_or_else(|| {
+            format!("maven price needs a `group:artifact:version` coordinate\n\n{USAGE}")
+        })?;
+        return price_cmd(&registry, coordinate);
+    }
+
+    let project_dir = PathBuf::from(dir.map(String::as_str).unwrap_or("."));
+    // NOT `install`: these are build inputs, and a `d8` line that can start a
+    // git clone is a build that behaves differently on a plane.
+    let (artifacts, closure) =
+        vendor::maven_artifacts(&project_dir, &options).map_err(|err| err.to_string())?;
+    if artifacts.is_empty() {
+        // Not an error: a project with no `[android.maven]` prints nothing,
+        // so a build script can interpolate this command unconditionally.
+        if what == "list" {
+            println!("no Maven dependencies");
+        }
+        return Ok(());
+    }
+    match what {
+        "list" => {
+            let mut total = 0u64;
+            for artifact in &artifacts {
+                total += artifact.bytes;
+                println!(
+                    "  {:>4} {:>8} KB  {}{}",
+                    artifact.kind.ext(),
+                    artifact.bytes / 1024,
+                    artifact.coord,
+                    if artifact.classes.is_none() {
+                        "  (no code)"
+                    } else {
+                        ""
+                    },
+                );
+            }
+            println!(
+                "maven: {} artifacts, {:.1} MB",
+                artifacts.len(),
+                total as f64 / 1048576.0
+            );
+            report_conflicts(&closure);
+            Ok(())
+        }
+        "classpath" => print_paths(artifacts.iter().map(|a| a.classes.clone())),
+        "manifests" => print_paths(artifacts.iter().map(|a| a.manifest.clone())),
+        "res" => print_paths(artifacts.iter().map(|a| a.res.clone())),
+        "jni" => print_paths(artifacts.iter().map(|a| a.jni.clone())),
+        other => Err(format!("unknown `maven` query `{other}`\n\n{USAGE}")),
+    }
+}
+
+/// `cpc pm maven price G:A:V` — what one coordinate would cost, before
+/// anyone commits to it.
+///
+/// The measurement in `plans/aar.md` is the argument this exists to make
+/// cheap: CameraX is 35 artifacts and 8.2 MB, which dexes to 178x facet's
+/// whole dex for one feature. That number is what the decision turns on, and
+/// it is printable in thirty seconds — so print it first.
+fn price_cmd(registry: &crate::maven::Registry, coordinate: &str) -> Result<(), String> {
+    let coord = crate::maven::Coord::parse(coordinate).map_err(|err| err.to_string())?;
+    let closure = crate::maven::resolve(registry, std::slice::from_ref(&coord))
+        .map_err(|err| err.to_string())?;
+    let (artifacts, missing) =
+        crate::maven::materialize_lenient(registry, &closure).map_err(|err| err.to_string())?;
+    let mut total = 0u64;
+    for artifact in &artifacts {
+        total += artifact.bytes;
+        println!(
+            "  {:>4} {:>8} KB  {}{}",
+            artifact.kind.ext(),
+            artifact.bytes / 1024,
+            artifact.coord,
+            if artifact.classes.is_none() {
+                "  (no code)"
+            } else {
+                ""
+            },
+        );
+    }
+    println!(
+        "closure: {} artifacts, {:.1} MB",
+        artifacts.len(),
+        total as f64 / 1048576.0
+    );
+    if !closure.bom_imports.is_empty() {
+        println!("BOM imports followed: {}", closure.bom_imports.join(", "));
+    }
+    report_conflicts(&closure);
+    for entry in closure.unresolved.iter().chain(&missing) {
+        eprintln!("UNRESOLVED: {} — {}", entry.what, entry.reason);
+    }
+    Ok(())
+}
+
+fn print_paths(paths: impl Iterator<Item = Option<PathBuf>>) -> Result<(), String> {
+    for path in paths.flatten() {
+        println!("{}", path.display());
+    }
     Ok(())
 }
 
@@ -186,15 +465,28 @@ fn manifest_cmd(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The parsed form of an `install`/`update`/`add`/`maven` command line.
+#[derive(Debug, Default)]
+struct Parsed {
+    positional: Vec<String>,
+    options: InstallOptions,
+    /// `--platform` values: extra target platforms for `add`'s closure.
+    platforms: Vec<String>,
+    /// `--maven G:A:V`: add a Maven coordinate rather than a C+ package.
+    maven: Option<String>,
+}
+
 /// Parse `install`/`update` arguments. Returns `Ok(None)` when `-h`/`--help`
 /// was handled (usage already printed) so the caller stops instead of
 /// installing; `Ok(Some(..))` carries the parsed positional args + options.
 fn parse_install_args(
     args: &[String],
     toolchain: Option<ToolchainContext>,
-) -> Result<Option<(Vec<String>, InstallOptions, Vec<String>)>, String> {
+) -> Result<Option<Parsed>, String> {
     let mut positional = Vec::new();
     let mut platforms = Vec::new();
+    let mut maven = None;
+    let mut maven_repos: Vec<String> = Vec::new();
     let mut options = InstallOptions::new();
     options.toolchain = toolchain;
     let mut iter = args.iter();
@@ -209,6 +501,10 @@ fn parse_install_args(
         match arg.as_str() {
             "--local" => options.local = true,
             "--platform" => platforms.push(take("--platform", &mut iter)?),
+            "--maven" => maven = Some(take("--maven", &mut iter)?),
+            "--m2" => options.m2_root = Some(PathBuf::from(take("--m2", &mut iter)?)),
+            "--maven-repo" => maven_repos.push(take("--maven-repo", &mut iter)?),
+            "--maven-offline" => options.maven_offline = true,
             "--store" => options.store_root = Some(PathBuf::from(take("--store", &mut iter)?)),
             "--cache" => options.cache_root = Some(PathBuf::from(take("--cache", &mut iter)?)),
             "--repo-url" => options.repo_url_override = Some(take("--repo-url", &mut iter)?),
@@ -258,7 +554,15 @@ fn parse_install_args(
         }
     }
 
-    Ok(Some((positional, options, platforms)))
+    if !maven_repos.is_empty() {
+        options.maven_repos = Some(maven_repos);
+    }
+    Ok(Some(Parsed {
+        positional,
+        options,
+        platforms,
+        maven,
+    }))
 }
 
 #[cfg(test)]
@@ -279,7 +583,9 @@ mod tests {
 
     #[test]
     fn install_parses_positional_dir_and_flags() {
-        let (positional, options, _) = parse_install_args(
+        let Parsed {
+            positional, options, ..
+        } = parse_install_args(
             &[
                 "mydir".to_string(),
                 "--local".to_string(),
@@ -301,7 +607,7 @@ mod tests {
     #[test]
     fn toolchain_flags_build_and_override_the_context() {
         // Flags alone build a context…
-        let (_, options, _) = parse_install_args(
+        let Parsed { options, .. } = parse_install_args(
             &[
                 "--toolchain-repo".to_string(),
                 "github.com/x/y".to_string(),
@@ -323,7 +629,7 @@ mod tests {
             version: "0.0.27".to_string(),
             package_root: "vendor".to_string(),
         };
-        let (_, options, _) = parse_install_args(
+        let Parsed { options, .. } = parse_install_args(
             &["--toolchain-version".to_string(), "0.0.9".to_string()],
             Some(base),
         )
@@ -332,6 +638,42 @@ mod tests {
         let t = options.toolchain.unwrap();
         assert_eq!(t.repo, "github.com/netdur/cplus");
         assert_eq!(t.version, "0.0.9");
+    }
+
+    #[test]
+    fn maven_flags_parse() {
+        let Parsed {
+            maven,
+            options,
+            positional,
+            ..
+        } = parse_install_args(
+            &[
+                ".".to_string(),
+                "--maven".to_string(),
+                "com.x:y:1.0".to_string(),
+                "--m2".to_string(),
+                "/tmp/m2".to_string(),
+                "--maven-repo".to_string(),
+                "file:///a".to_string(),
+                "--maven-repo".to_string(),
+                "file:///b".to_string(),
+                "--maven-offline".to_string(),
+            ],
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(positional, vec![".".to_string()]);
+        assert_eq!(maven.as_deref(), Some("com.x:y:1.0"));
+        assert_eq!(options.m2_root.as_deref(), Some("/tmp/m2".as_ref()));
+        // Repo ORDER is load-bearing: androidx is on Google's Maven and
+        // Central answers 404 for it.
+        assert_eq!(
+            options.maven_repos.as_deref(),
+            Some(["file:///a".to_string(), "file:///b".to_string()].as_slice())
+        );
+        assert!(options.maven_offline);
     }
 
     #[test]

@@ -103,7 +103,9 @@ src/reactor_linux.cplus    # SHADOWS it when the target's platform is linux
 2. **`[<platform>.dependencies]`** in `Cplus.toml` for a package that exists
    only there. Importing an off-platform package is E0866 naming the
    platform it was declared for. A misspelled platform section is E0406, not
-   a silently-ignored table.
+   a silently-ignored table. Android also takes **`[android.maven]`** —
+   third-party AAR pins, `"group:artifact" = "version"`, exact, written by
+   `cpc pm add . --maven G:A:V` (no Gradle; E0877 on any other platform).
 3. **`#platform()` / `#arch()` / `#target()`** — `str` constants for the
    active target. Value-level only: both arms of an `if` on one compile
    everywhere, so they can pick a padding or a port, never an import.

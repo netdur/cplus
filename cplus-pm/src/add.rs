@@ -21,6 +21,7 @@
 
 use crate::fetch::Checkout;
 use crate::manifest::{is_valid_dep_name, MANIFEST_NAME, PLATFORMS};
+use crate::maven::{self, Closure, Coord};
 use crate::spec::DepSpec;
 use crate::store;
 use crate::vendor::{self, InstallOptions, VendorError};
@@ -54,6 +55,15 @@ pub struct AddReport {
     pub entries: Vec<AddEntry>,
     /// The target platform set the closure was expanded for.
     pub platforms: Vec<String>,
+}
+
+/// What `add --maven` resolved, so the caller can print the price before
+/// anything else happens.
+#[derive(Debug)]
+pub struct MavenAddReport {
+    pub coord: Coord,
+    pub closure: Closure,
+    pub action: AddAction,
 }
 
 #[derive(Debug)]
@@ -273,6 +283,88 @@ pub fn add(
     Ok(report)
 }
 
+/// Add a Maven coordinate to `[android.maven]` (D18) and resolve its
+/// closure. The caller runs `install` afterwards to materialize.
+///
+/// ONLY THE ROOT COORDINATE IS WRITTEN, unlike the C+ side which writes a
+/// package's whole declared closure into the manifest. The reason is that
+/// Maven resolution is derivable: a coordinate's POM is immutable, so the
+/// closure is a function of the pin and re-deriving it is reading cached
+/// XML. Writing 35 transitive coordinates into `Cplus.toml` would be a
+/// lockfile with extra steps (D3), and it would go stale the moment the
+/// root version changed. The closure is PRINTED instead — the artifact
+/// count and the megabytes are the numbers the decision actually turns on
+/// (`plans/aar.md` §3).
+pub fn add_maven(
+    project_dir: &Path,
+    coordinate: &str,
+    options: &InstallOptions,
+) -> Result<MavenAddReport, AddError> {
+    let coord = Coord::parse(coordinate).map_err(|e| AddError::Vendor(VendorError::Maven(e)))?;
+    let manifest_path = project_dir.join(MANIFEST_NAME);
+    let text = fs::read_to_string(&manifest_path).map_err(|source| AddError::Io {
+        path: manifest_path.clone(),
+        source,
+    })?;
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| AddError::ManifestSyntax {
+        message: format!("{e}"),
+    })?;
+
+    // Resolve BEFORE writing: a coordinate that does not resolve should not
+    // leave a line in the user's manifest behind.
+    let registry = options.registry().map_err(AddError::Vendor)?;
+    let closure = maven::resolve(&registry, std::slice::from_ref(&coord))
+        .map_err(|e| AddError::Vendor(VendorError::Maven(e)))?;
+    if !closure.is_complete() {
+        return Err(AddError::Vendor(VendorError::Maven(
+            maven::MavenError::Incomplete {
+                entries: closure.unresolved,
+            },
+        )));
+    }
+
+    let mut entries = Vec::new();
+    upsert_maven(&mut doc, &coord, &mut entries);
+    fs::write(&manifest_path, doc.to_string()).map_err(|source| AddError::Io {
+        path: manifest_path,
+        source,
+    })?;
+    Ok(MavenAddReport {
+        coord,
+        closure,
+        action: entries.remove(0),
+    })
+}
+
+/// Write `"group:artifact" = "version"` into `[android.maven]`, leaving an
+/// existing entry alone (the manifest is the user's file).
+fn upsert_maven(doc: &mut toml_edit::DocumentMut, coord: &Coord, out: &mut Vec<AddAction>) {
+    use toml_edit::{Item, Table};
+    if doc.get("android").is_none() {
+        let mut table = Table::new();
+        table.set_implicit(true);
+        doc.insert("android", Item::Table(table));
+    }
+    let android = doc["android"].as_table_mut().expect("android is a table");
+    if android.get("maven").is_none() {
+        android.insert("maven", Item::Table(Table::new()));
+    }
+    let table = android["maven"]
+        .as_table_mut()
+        .expect("android.maven is a table");
+    let key = coord.ga();
+    out.push(match table.get(&key).and_then(|i| i.as_str()) {
+        Some(existing) if existing == coord.version => AddAction::Present,
+        Some(existing) => AddAction::KeptDifferent {
+            existing: existing.to_string(),
+        },
+        None => {
+            table.insert(&key, toml_edit::value(coord.version.clone()));
+            AddAction::Added
+        }
+    });
+}
+
 /// Read a package manifest's dependency sections SEPARATELY (the pm's
 /// `Manifest` merges them — add must map platform to platform).
 type DepMap = BTreeMap<String, String>;
@@ -405,6 +497,37 @@ mod tests {
             AddAction::KeptDifferent { ref existing } if existing == "*"
         ));
         assert!(doc.to_string().contains("stdlib = \"*\""));
+    }
+
+    #[test]
+    fn maven_upsert_writes_android_maven_and_keeps_an_existing_pin() {
+        let text = "# app\n[package]\nname = \"app\"\n\n[dependencies]\nstdlib = \"*\"\n";
+        let mut doc: toml_edit::DocumentMut = text.parse().unwrap();
+        let coord = Coord::parse("com.google.android.gms:play-services-maps:19.0.0").unwrap();
+        let mut actions = Vec::new();
+        upsert_maven(&mut doc, &coord, &mut actions);
+        let out = doc.to_string();
+        assert!(out.contains("[android.maven]"), "{out}");
+        assert!(!out.contains("[android]\n"), "no bare platform header: {out}");
+        assert!(
+            out.contains(r#""com.google.android.gms:play-services-maps" = "19.0.0""#),
+            "{out}"
+        );
+        assert!(out.contains("# app"), "comments survive: {out}");
+        assert_eq!(actions[0], AddAction::Added);
+
+        // Re-adding the same pin is a no-op; a different one is reported.
+        let mut actions = Vec::new();
+        upsert_maven(&mut doc, &coord, &mut actions);
+        assert_eq!(actions[0], AddAction::Present);
+        let older = Coord::parse("com.google.android.gms:play-services-maps:18.0.0").unwrap();
+        let mut actions = Vec::new();
+        upsert_maven(&mut doc, &older, &mut actions);
+        assert!(matches!(
+            actions[0],
+            AddAction::KeptDifferent { ref existing } if existing == "19.0.0"
+        ));
+        assert!(doc.to_string().contains(r#"= "19.0.0""#));
     }
 
     #[test]

@@ -214,8 +214,11 @@ cpc init [--kind cli|gui] [--platform P]... [NAME]
 cpc pm install [DIR]                  # resolve deps into the store
 cpc pm update  [DIR]                  # re-resolve and refresh
 cpc pm add DIR NAME [SPEC]            # add a package and its declared closure
+cpc pm add DIR --maven G:A:V          # add a third-party Maven/AAR pin
 cpc pm remove DIR NAME                # delete DIR/vendor/NAME
 cpc pm manifest [DIR]                 # normalized JSON of a manifest
+cpc pm maven [WHAT] [DIR]             # list | classpath | manifests | res | jni
+cpc pm maven price G:A:V              # what a coordinate would cost
 ```
 
 `cpc init` with no `--platform` scaffolds the zero-config host app. With
@@ -237,6 +240,24 @@ to prevent.
 Store flags: `--local` installs into `DIR/vendor/` instead of the per-user
 store; `--store DIR` overrides the store root (default `$CPLUS_HOME`, else
 `~/.cplus`); `--repo-url URL` pointed at a local path is the offline mode.
+
+**Android's Java side, without Gradle.** `cpc pm add . --maven
+com.google.android.gms:play-services-maps:19.0.0` pins the coordinate in
+`[android.maven]`, resolves the POM closure (parent chains, property
+interpolation, `dependencyManagement`, BOM imports) and downloads it into
+`~/.cplus/m2`, exploding each AAR. Nothing in the Android toolchain resolves
+dependencies — Gradle *is* the resolver — but resolution over pinned
+coordinates is reading XML, so `cpc pm` does it. A build then reads the
+result back, always offline:
+
+```bash
+d8 --release --min-api 26 --lib "$AJ" --output out $(cpc pm maven classpath)
+```
+
+`manifests`, `res` and `jni` name the other three things an AAR carries;
+merging those is still the build script's job. Run `cpc pm maven price
+<coord>` before taking a dependency — an AAR is priced per library, and the
+number is printable.
 
 ## 7. Introspection
 

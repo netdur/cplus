@@ -2642,6 +2642,26 @@ fn main() -> i32 {
 '''
 
 [[code]]
+id = "E0877"
+title = "Invalid Maven coordinate"
+category = "Targets and packages"
+severity = "error"
+repro = "scenario"
+lang = "toml"
+verified = true
+emit_site = "cplus-core/src/manifest.rs:1097"
+test = "cpc/tests/platform_deps.rs:malformed_maven_coordinates_fail_with_e0877"
+cause = "An `[android.maven]` entry is not a `\"group:artifact\" = \"version\"` pin — the version is in the key, a half is missing, the value is a wildcard — or the table appears under a platform other than `android`. Maven artifacts are an Android ecosystem, and their versions are exact pins: there is no version solver, on purpose."
+fix = "Write the coordinate as `\"group:artifact\" = \"exact.version\"` under `[android.maven]`. `cpc pm add . --maven group:artifact:version` writes it for you and downloads the closure."
+example = '''
+[package]
+name = "app"
+
+[android.maven]
+"com.google.android.gms:play-services-maps:19.0.0" = "19.0.0"
+'''
+
+[[code]]
 id = "E0890"
 title = "Duplicate `#asm` operand name"
 category = "Attributes"

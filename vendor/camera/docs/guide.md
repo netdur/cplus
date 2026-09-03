@@ -26,7 +26,7 @@ CameraX is `androidx.camera`, an AAR, and it is a real thing to give up: what it
 carries is the device-quirk database for the OEM long tail — orientation,
 stretched preview, aspect-ratio bugs on specific hardware.
 
-The measurement that decided it (`tools/mvnresolve.py`, plans/aar.md):
+The measurement that decided it (`cpc pm maven price`, plans/aar.md):
 
 | | this package | CameraX |
 |---|---|---|
