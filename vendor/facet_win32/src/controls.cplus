@@ -33,6 +33,7 @@ import "facet/button" as button;
 import "facet/text_field" as text_field;
 import "facet/toggle" as toggle;
 import "facet/checkbox" as checkbox;
+import "facet/box" as fbox;
 import "facet/table" as table;
 import "facet/text_button" as text_button;
 import "facet/date_picker" as date_picker;
@@ -192,7 +193,15 @@ fn create_box(n: *core::Node) -> *u8 { return create_panel(n); }
 
 // A `box` is a coloured rectangle and nothing else — the band already answers
 // its colour, so there is no per-kind write left to make.
-fn apply_box(v: *u8, n: *core::Node, dirty: u64) { return; }
+fn apply_box(v: *u8, n: *core::Node, dirty: u64) {
+    // A box paints its own colour and radius in ; a change to either
+    // has to trigger the repaint, which the band does not because they are not
+    // band props.
+    if (dirty & (fbox::P_COLOR | fbox::P_CORNER_RADIUS)) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
 
 // ---- the scroll document -----------------------------------------------------
 //
@@ -3632,6 +3641,31 @@ fn draw_image(v: *u8, n: *core::Node, hdc: *u8) {
 // The dispatch lives here rather than in `paint` because `controls` already
 // imports `paint`, and an import back would be a cycle. `window`'s WM_PAINT
 // calls this.
+// A `box` IS A SOLID COLOUR BLOCK, and its colour is its OWN prop rather than
+// the shared band's `background_color` — `BoxProps.color`, which
+// `paint_band_background` never reads. So a box painted only the band, which is
+// nothing, and came out the colour of the page behind it. Found in the
+// gallery's Graphics page: three 64x64 blocks, all invisible.
+//
+// The corner radius is the box's own too, and a box is exactly the kind that
+// wants it — a rounded swatch is half the point of the verb.
+fn draw_box(v: *u8, n: *core::Node, hdc: *u8) {
+    let p: *props::BoxProps = props_of(n, props::K_BOX) as *props::BoxProps;
+    if p == (0 as *props::BoxProps) { return; }
+    var has: bool = false;
+    let c: u32 = paint::resolve({ (*p).color }, #addr_of(has));
+    if !has { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    let brush: *u8 = paint::brush_for(c);
+    if brush == (0 as *u8) { return; }
+    let radius: f64 = paint::uniform_radius({ (*p).corner_radius });
+    if radius > (0.0 as f64) { paint::paint_rounded(hdc, r, brush, radius); }
+    else { let _f: i32 = { u::FillRect(hdc, #addr_of(r), brush) }; }
+    return;
+}
+
 fn paint_node(v: *u8, n: *core::Node, hdc: *u8) {
     if n == (0 as *core::Node) { return; }
     paint::paint_band_background(v, n, hdc);
@@ -3643,6 +3677,7 @@ fn paint_node(v: *u8, n: *core::Node, hdc: *u8) {
     if kind == split::K_SPLIT { draw_split(v, n, hdc); return; }
     if kind == props::K_IMAGE { draw_image(v, n, hdc); return; }
     if kind == props::K_WEB { draw_web_placeholder(v, n, hdc); return; }
+    if kind == props::K_BOX { draw_box(v, n, hdc); return; }
     return;
 }
 
