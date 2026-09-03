@@ -112,10 +112,42 @@ fn make_child(class: *u8, title: *u8, style: u32, exstyle: u32) -> *u8 {
     return w;
 }
 
-// HWND_MESSAGE. A child window must have a parent at creation, and this is the
-// one parent that costs nothing: it never renders, never lays out and never
-// paints, so a window parked here between `create` and `insert` is inert.
-fn message_only_parent() -> *u8 { return ((0 as i64) -% (3 as i64)) as *u8; }
+// The parent a control is BORN to, and it must be a real window.
+//
+// It was HWND_MESSAGE, on the reasoning that a parking spot between `create`
+// and `insert` should cost nothing — and that reasoning lost to a fact this
+// package had already paid for once and recorded in §1: a common control
+// CACHES ITS NOTIFY OWNER AT CREATION. The combo box's WM_MEASUREITEM was the
+// first sighting; the second was every WM_NOTIFY in the application going to
+// the message-only window — a black hole — so NM_CUSTOMDRAW never fired and a
+// slider's colours were dead code from the day they were written. Measured:
+// a painting trackbar, 450 panel paints, zero notifications.
+//
+// The first open window is the parent now. WHICH window receives a
+// notification does not matter — every handler resolves the CONTROL from the
+// message (`lParam` for WM_COMMAND, `hwndFrom` for WM_NOTIFY) and walks to its
+// node — so a control created before its real host still reports correctly,
+// it merely reports through the first window's procedure.
+static CREATION_PARENT: usize = 0;
+
+fn set_creation_parent(w: *u8) {
+    // The FIRST window wins and keeps the job: notifications cached against it
+    // keep arriving somewhere this package listens even after more windows
+    // open, and a parent that changed per-window would scatter them.
+    if CREATION_PARENT != (0 as usize) { return; }
+    CREATION_PARENT = { #addr(w) };
+    return;
+}
+
+fn creation_parent_closed(w: *u8) {
+    if CREATION_PARENT == { #addr(w) } { CREATION_PARENT = 0 as usize; }
+    return;
+}
+
+fn message_only_parent() -> *u8 {
+    if CREATION_PARENT != (0 as usize) { return CREATION_PARENT as *u8; }
+    return ((0 as i64) -% (3 as i64)) as *u8;
+}
 
 // The empty C string, for a window created with no title.
 fn empty_title() -> *u8 { return { #str_ptr("\0") }; }
@@ -3648,6 +3680,12 @@ fn apply_progress_color(v: *u8, c: vocab::Color) {
         trough = paint::resolve(vocab::Color::control_background(), #addr_of(t_has));
     }
     if !has { return; }
+    // A MARQUEE DIES WITHOUT THE THEME. `PBS_MARQUEE` is drawn by the theme
+    // engine and a classic progress bar simply does not animate it — so a
+    // spinner asked for a colour would trade its motion for it, which is the
+    // whole control gone for a tint. It keeps the platform's drawing.
+    let style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    if (style & pbs_marquee_bit()) != (0 as u32) { return; }
     paint::go_classic(v);
     let _r: i64 = { u::SendMessageA(v, pbm_setbarcolor(), 0 as u64, rgb as i64) };
     if t_has {
@@ -3693,7 +3731,29 @@ fn cd_off_itemspec() -> usize { return 56 as usize; }
 
 fn slider_customdraw(v: *u8, nm: *u8) -> i64 {
     let stage: u32 = read_u32_at(nm, cd_off_stage());
-    if stage == cdds_prepaint() { return cdrf_notifyitemdraw(); }
+    if stage == cdds_prepaint() {
+        // THE CONTROL'S FACE, painted here rather than trusted to the
+        // control. A trackbar does not reliably ask its parent for its
+        // background — dropped out of visual styles it filled with the classic
+        // face regardless, measured as a white stripe across a dark page — and
+        // CDDS_PREPAINT hands us the DC before anything else draws, which is
+        // the one moment the whole client can be grounded. Only on a dark
+        // system; a light one keeps the platform's own drawing untouched.
+        if paint::dark_controls() {
+            let hdc0: *u8 = read_ptr_at(nm, cd_off_hdc());
+            if hdc0 != (0 as *u8) {
+                var cr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                                  right: 0 as i32, bottom: 0 as i32 };
+                if { u::GetClientRect(v, #addr_of(cr)) } != (0 as i32) {
+                    let ground: *u8 = paint::brush_for(paint::effective_bg(v));
+                    if ground != (0 as *u8) {
+                        let _f: i32 = { u::FillRect(hdc0, #addr_of(cr), ground) };
+                    }
+                }
+            }
+        }
+        return cdrf_notifyitemdraw();
+    }
     if stage != cdds_itemprepaint() { return cdrf_dodefault(); }
     let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
     if n == (0 as *core::Node) { return cdrf_dodefault(); }
