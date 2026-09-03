@@ -144,6 +144,12 @@ fn theme_for(class_name: str) -> str {
     if class_name == "SCROLLBAR" { return "DarkMode_Explorer"; }
     if class_name == "EDIT" { return "DarkMode_CFD"; }
     if class_name == "COMBOBOX" { return "DarkMode_CFD"; }
+    // The date and time pickers are `SysDateTimePick32`, and the Explorer part
+    // -list is the one that darkens their field. Coverage is INCOMPLETE — the
+    // drop-down calendar button and the up/down spin keep the light theme even
+    // in Explorer itself — so this darkens the body and the rest is recorded in
+    // §1 rather than owner-drawn.
+    if class_name == "SysDateTimePick32" { return "DarkMode_CFD"; }
     // THIS PACKAGE'S OWN PANEL, for its NON-CLIENT parts. A panel paints its
     // own client area from `paint` and a theme cannot touch that.
     //
@@ -225,6 +231,7 @@ fn only_the_classes_with_a_dark_part_list_are_dressed() {
     assert theme_for("BUTTON") == "DarkMode_Explorer";
     assert theme_for("EDIT") == "DarkMode_CFD";
     assert theme_for("COMBOBOX") == "DarkMode_CFD";
+    assert theme_for("SysDateTimePick32") == "DarkMode_CFD";
     // This package's own panel is dressed for its NON-CLIENT parts — a
     // `scroll`'s bars are the system's to draw even on a window whose client
     // area is entirely ours.

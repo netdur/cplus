@@ -244,6 +244,16 @@ determinate progress bar next to it went dark from the same treatment, so the
 difference is the trackbar's own drawing rather than the approach. Left as a
 finding rather than guessed at.
 
+**THE PICKERS AND THE COMBO BOX.** A `SysDateTimePick32` (date and time pickers)
+and a `CBS_DROPDOWNLIST` combo (`popup`) keep the light theme on a dark system.
+`SetWindowTheme(…, DarkMode_CFD)` is applied to both and does not take — this is
+comctl32's own incomplete dark coverage, the same gap Explorer's date fields
+have. The only routes past it are `go_classic` (which trades the modern control
+for the Win95 renderer, uglier than the light control it replaces) or full
+owner-draw (a combo that measures items, which is the popup owner-draw wall
+recorded in §2 — worth a retest now the creation-parent bug is fixed, but a
+larger piece). Left light and recorded rather than made worse.
+
 **A POPUP MENU.** `FlushMenuThemes` (ordinal 136) is called and the menu still
 comes up light — measured, with a context menu open on a dark window. A dark
 popup menu is owner-drawn in every application that has one, which is the same
