@@ -41,6 +41,7 @@ import "win32/winuser" as u;
 import "win32/wingdi" as gdi;
 import "./sys" as sys;
 import "./controls" as controls;
+import "./drawing" as drawing;
 
 // ---- system metrics -------------------------------------------------------------
 //
@@ -284,7 +285,6 @@ fn fills_line(kind: u32) -> bool {
     // side — GTK's `fills_line`, AppKit's `fittingSize` answering zero.
     if kind == props::K_SLIDER { return true; }
     if kind == props::K_PROGRESS { return true; }
-    if kind == props::K_SPINNER { return true; }
     if kind == props::K_SEARCH_FIELD { return true; }
     if kind == props::K_TEXT_AREA { return true; }
     return false;
@@ -292,7 +292,24 @@ fn fills_line(kind: u32) -> bool {
 
 // The measure callback flex calls. `context` is flex's spare slot and carries
 // the HWND: facet's own Data rides the attachment, so nothing else wants it.
+// THE MEASURE BOUNDARY, in POINTS. flex lays out in logical points now; a
+// control measures its text in the DPI-scaled font, which is PHYSICAL pixels, so
+// the available space is scaled UP into physical before measuring and the answer
+// scaled DOWN into points after. Because the SAME factor is applied both ways, a
+// content-sized control ends up at EXACTLY the physical size it had before this
+// change — `geometry::place` multiplies the points back to the same pixels —
+// while a STATED dimension, which never passes through here, finally scales with
+// the DPI. A NaN available (an unconstrained axis) is left untouched.
 fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
+                avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
+    let scale: f64 = sys::dpi_scale(ctx);
+    let aw: f64 = if avail_w == avail_w { avail_w * scale } else { avail_w };
+    let ah: f64 = if avail_h == avail_h { avail_h * scale } else { avail_h };
+    let p: flex::Size = measure_view_physical(ctx, aw, wm, ah, hm);
+    return flex::Size { width: p.width / scale, height: p.height / scale };
+}
+
+fn measure_view_physical(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
                 avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
     if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
     let n: *core::Node = { u::GetPropA(ctx, sys::prop_node() as *i8) } as *core::Node;
@@ -388,9 +405,18 @@ fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     // arrow, which is what a stepper laid out at `avail_w` came out as
     // (reported from the gallery's Values page). Its width is its own: the two
     // arrows are a scroll-bar width, `SM_CXVSCROLL`, and nothing wider.
+    // A STEPPER IS A SPIN BOX: a number field with arrows on its right. It has
+    // a stated natural size — wide enough for the value, tall as a field — and
+    // does not stretch, the way the checkbox and toggle do not.
     if kind == props::K_STEPPER {
-        let arrows: i32 = metric(2 as i32);
-        return flex::Size { width: arrows as f64, height: stepper_height() as f64 };
+        return flex::Size { width: controls::stepper_box_width() as f64,
+                            height: controls::stepper_box_height() as f64 };
+    }
+    // A SPINNER IS A SQUARE RING, not a stretched bar — it draws a circular
+    // arc, so it asks for a fixed side rather than the whole line.
+    if kind == props::K_SPINNER {
+        let side: i32 = drawing::spinner_side();
+        return flex::Size { width: side as f64, height: side as f64 };
     }
     let fixed: i32 = fixed_height(kind);
     if fixed > (0 as i32) {

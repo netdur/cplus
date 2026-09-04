@@ -119,6 +119,13 @@ struct ListState {
     // threshold. Kept so the handler fires on the EDGE rather than on every
     // scroll message inside the band — see `fire_threshold`.
     in_threshold: bool,
+    // THE DPI THE MAP WAS BUILT AT. Row heights are scaled to the DPI
+    // (`row_scale`) when the map is built, but the map is rebuilt only on a
+    // MODEL change — and the very first build happens at mount, before the
+    // viewport is parented onto its DPI-aware top window, so it can bake a
+    // stale 96. `layout_rows` compares this against the live DPI and rebuilds
+    // when they differ, which also carries a window dragged between monitors.
+    built_dpi: u32,
 }
 
 fn new_state() -> ListState {
@@ -135,6 +142,7 @@ fn new_state() -> ListState {
         is_tree: false,
         refreshing: false,
         in_threshold: false,
+        built_dpi: 0 as u32,
     };
 }
 
@@ -156,7 +164,27 @@ fn state_of(v: *u8) -> *ListState {
 // uniform; making it walk an array of 20,000 doubles to find a scroll position
 // would be paying for a generality it does not use.
 
-fn default_row_height() -> f64 { return 24.0f64; }
+// A ROW HEIGHT SCALES WITH THE DPI. 24 is the logical fallback for a row whose
+// application stated no height; unscaled it was 24 PHYSICAL pixels, and on a
+// 125% display the label inside — whose font IS scaled to the DPI — is ~30 tall,
+// so the rows overlapped and the text clipped. Seen on the gallery's List and
+// Collection pages at 120 DPI. The current view's DPI is stashed by the sync and
+// layout paths before any height is asked for; a test never sets it and reads
+// the plain 24 the assertions were written against.
+static ROW_DPI: u32 = 96;
+
+fn note_row_dpi(v: *u8) {
+    if v == (0 as *u8) { return; }
+    let d: u32 = { u::GetDpiForWindow(v) };
+    if d > (0 as u32) { ROW_DPI = d; }
+    return;
+}
+
+// 1.0 at 96 DPI, 1.25 at 120, and so on — the factor a LOGICAL row height is
+// multiplied by to reach physical pixels, matching the font scaling.
+fn row_scale() -> f64 { return (ROW_DPI as f64) / (96.0 as f64); }
+
+fn default_row_height() -> f64 { return 24.0f64 * row_scale(); }
 
 // ---- the row source, read WITHOUT a cast ---------------------------------------
 //
@@ -384,10 +412,14 @@ fn height_of_data_row(p: *SeqSource, i: usize) -> f64 {
         // ZERO MEANS "NO ANSWER", not a zero-height row — facet's own props
         // file says so at the default's declaration. A row that measured zero
         // would be invisible and unreachable.
-        if h > (0.0 as f64) { return h; }
+        // SCALED to the DPI, like the default and like the fonts, because a
+        // stated height is a LOGICAL one and the font inside the row is not:
+        // `list(row_height: 56)` with a font that is 15px on a 125% display
+        // needs the row to be 70, not 56, or the two lines overflow it.
+        if h > (0.0 as f64) { return h * row_scale(); }
     }
     let stated: i64 = { (*p).row_height };
-    if stated > (0 as i64) { return stated as f64; }
+    if stated > (0 as i64) { return (stated as f64) * row_scale(); }
     return default_row_height();
 }
 
@@ -665,6 +697,7 @@ fn rebuild_map(s: *ListState, p: *SeqSource) {
     // line.
     let count: i64 = display_count(p);
     { (*s).count = count };
+    { (*s).built_dpi = ROW_DPI };
     { (*s).lines = 0 as i64 };
     { (*s).offsets = vec::new::[f64]() };
     { (*s).content = 0.0f64 };
@@ -1073,6 +1106,7 @@ fn has_model(s: *ListState, n: *core::Node) -> bool {
 fn layout_rows(v: *u8, n: *core::Node) {
     let s: *ListState = state_of(v);
     if s == (0 as *ListState) { return; }
+    note_row_dpi(v);
     // EITHER MAP will do — see `row_shape` / `make_row` / `rebind_cell`. The
     // visible-window arithmetic below reads `ListState` alone and never asks
     // which one filled it.
@@ -1082,6 +1116,25 @@ fn layout_rows(v: *u8, n: *core::Node) {
     // `rebuild_tree_map` always sets.
     var src: SeqSource = source_of(n);
     let p: *SeqSource = #addr_of(src);
+    // THE MAP CAN BE STALE ON DPI. Row heights are scaled to the DPI when the
+    // map is built, but the map is rebuilt only on a model change — and the
+    // first build is at mount, before the viewport is on its DPI-aware top
+    // window, so it can bake a stale 96. Rebuild when the live DPI no longer
+    // matches; this also carries a window dragged between monitors. See
+    // `built_dpi`.
+    if { (*s).built_dpi } != ROW_DPI {
+        if { (*s).is_tree } {
+            let tp: *ftree::TreeProps = tree_props(n);
+            if tp != (0 as *ftree::TreeProps) { rebuild_tree_map(s, tp); }
+        } else {
+            rebuild_map(s, p);
+        }
+        // AND THE LIVE CELLS ARE STALE TOO. A pooled cell was built and had its
+        // fonts measured at the old DPI; the new map alone would place those old
+        // windows. Releasing them makes the fill loop below build fresh ones at
+        // the live DPI — the same release `apply_sequence` does on a model change.
+        release_all(s);
+    }
     let count: i64 = { (*s).count };
 
     var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
@@ -1232,13 +1285,27 @@ fn layout_rows(v: *u8, n: *core::Node) {
 // its tree into positions — so the row is a little layout root of its own,
 // which is exactly what `realise` made it.
 fn place_row(v: *u8, rp: *core::Node, x: f64, y: f64, width: f64, height: f64) {
-    { (*rp).calculate_layout(width: width, height: height) };
+    // THE RECYCLER COUNTS IN PIXELS; A ROW LAYS OUT IN POINTS. Everything the
+    // list does with rows — the viewport, the scroll offset, the row heights
+    // (`row_scale` already made those physical) — is in pixels, so `x`, `y`,
+    // `width`, `height` arrive here in pixels. But a row is its own little layout
+    // root and `measure` now answers in points, so the row is laid out at the
+    // POINT size and `place` multiplies it straight back to the pixels it came in
+    // as. This is the ONE seam where the recycler meets the scaled world; nothing
+    // else in this file changed unit.
+    let scale: f64 = sys::dpi_scale(v);
+    let lx: f64 = x / scale;
+    let ly: f64 = y / scale;
+    let lw: f64 = width / scale;
+    let lh: f64 = height / scale;
+    { (*rp).calculate_layout(width: lw, height: lh) };
+    { (*rp).round_to_pixel(scale) };
     let view: *u8 = core::view_of(rp);
     let host: *u8 = controls::document_host(v);
     let own: flex::Frame = { (*rp).frame() };
     if view != (0 as *u8) {
         let _s: i32 = { u::ShowWindow(view, sys::sw_show()) };
-        geometry::place(host, view, rp, x, y, width, height);
+        geometry::place(host, view, rp, lx, ly, lw, lh);
         // The row IS the host for its own children, so their absolute frames
         // are relative to the row's own origin — which is what passing the
         // row's frame subtracts.
@@ -1248,10 +1315,10 @@ fn place_row(v: *u8, rp: *core::Node, x: f64, y: f64, width: f64, height: f64) {
         // children go into the VIEWPORT and have to carry the row's offset
         // themselves. A host frame with `top` pushed back by `y` is how that is
         // said: `reposition_children` subtracts it, so every child lands `y`
-        // lower than its own frame.
+        // lower than its own frame. In points, since the child frames are.
         var shifted: flex::Frame = own;
-        shifted.left = 0.0f64 - x;
-        shifted.top = 0.0f64 - y;
+        shifted.left = 0.0f64 - lx;
+        shifted.top = 0.0f64 - ly;
         geometry::reposition_children(rp, host, shifted);
     }
     return;
@@ -1474,6 +1541,7 @@ fn bits_for(n: *core::Node) -> SeqBits {
 fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
     let s: *ListState = state_of(v);
     if s == (0 as *ListState) { return; }
+    note_row_dpi(v);
     var src: SeqSource = source_of(n);
     if !src.live { return; }
     let p: *SeqSource = #addr_of(src);
@@ -1841,6 +1909,7 @@ struct TreeRow {
 // Flatten the expanded model into the row list. Called when the root, the
 // expansion set or the row builder changes — never per scroll.
 fn rebuild_tree_map(s: *ListState, p: *ftree::TreeProps) {
+    { (*s).built_dpi = ROW_DPI };
     { (*s).tree_rows = vec::new::[TreeRow]() };
     { (*s).offsets = vec::new::[f64]() };
     let root: *ftree::TreeNode = #addr_of((*p).root);

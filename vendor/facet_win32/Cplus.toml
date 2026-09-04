@@ -75,4 +75,4 @@ win32       = "*"
 # package's link line.
 # `gdiplus` is the bitmap decoder — see `imaging.cplus` for why it is GDI+ and
 # not WIC. It ships with every Windows since XP and needs no registration.
-libs = ["user32", "gdi32", "comctl32", "uxtheme", "dwmapi", "advapi32", "gdiplus"]
+libs = ["user32", "gdi32", "comctl32", "uxtheme", "dwmapi", "advapi32", "gdiplus", "ole32"]

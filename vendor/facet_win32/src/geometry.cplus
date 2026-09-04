@@ -26,6 +26,7 @@ import "facet/props" as props;
 import "win32/winuser" as u;
 import "./sys" as sys;
 import "./controls" as controls;
+import "./anim" as anim;
 import "./paint" as paint;
 import "./scroller" as scroller;
 
@@ -93,15 +94,6 @@ fn trace_tree(n: *core::Node, depth: usize) {
 // 99.6pt column truncated to 99 loses a pixel at every nesting level, and
 // facet's trees nest deeply enough for that to be visible as drift. The same
 // call, for the same reason, as facet_gtk's `round_i32`.
-// A stepper's natural width: the shell's own up-down arrows are a scroll-bar
-// wide, and no wider. Stated here rather than measured because a spin control's
-// arrows are `SM_CXVSCROLL` by construction.
-fn stepper_width() -> i32 {
-    let w: i32 = { u::GetSystemMetrics(2 as i32) };
-    if w > (0 as i32) { return w; }
-    return 17 as i32;
-}
-
 fn round_i32(v: f64) -> i32 {
     if v <= (0.0 as f64) { return 0 as i32; }
     return (v + (0.5 as f64)) as i32;
@@ -128,10 +120,24 @@ fn round_origin(v: f64) -> i32 {
 // the next layout pass.
 fn place(host: *u8, child: *u8, node: *core::Node, x: f64, y: f64, w: f64, h: f64) {
     if child == (0 as *u8) { return; }
-    let nx: i32 = round_origin(x);
-    let ny: i32 = round_origin(y);
-    let nw: i32 = round_i32(w);
-    let nh: i32 = round_i32(h);
+    // POINTS IN, PIXELS OUT. flex gives frames in logical points; a child window
+    // lives in physical pixels, so this is the ONE boundary that multiplies by
+    // the DPI scale — the mirror of `measure`, which divided by it. A stated
+    // dimension is a point count that never passed through `measure`, so this is
+    // where it finally grows with the DPI.
+    let scale: f64 = sys::dpi_scale(child);
+    let bx: i32 = round_origin(x * scale);
+    let by: i32 = round_origin(y * scale);
+    // THE ANIMATED OFFSET RIDES ON TOP OF THE LAYOUT. A node being slid by
+    // `animate_translation` carries a displayed translation (already in pixels);
+    // the layout base is recorded so an in-flight tween offsets the CURRENT
+    // position, and the offset is added here so a relayout mid-slide does not
+    // snap it back.
+    anim::store_layout_base(child, bx, by);
+    let nx: i32 = bx +% anim::displayed_tx(child);
+    let ny: i32 = by +% anim::displayed_ty(child);
+    let nw: i32 = round_i32(w * scale);
+    let nh: i32 = round_i32(h * scale);
     if same_rect(child, host, nx, ny, nw, nh) { return; }
     // THE VACATED PIXELS ARE THE PARENT'S PROBLEM. A control that shrinks or
     // moves leaves whatever it was covering exactly as it was — Windows
@@ -187,7 +193,12 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
     // HOW FAR THIS HOST HAS BEEN SWIPED, which for every window that is not an
     // opened swipeable is zero. Asked once per host rather than per child: it
     // is a property of the container, and the whole content moves together.
-    let shift: f64 = swipe_shift(host);
+    // IN POINTS, like every frame in this walk. A swipe offset is a pixel drag,
+    // so it is divided down to points before it is taken off a child's frame;
+    // `place` scales the result back. `rscale` also puts the stepper's pixel
+    // width into points below.
+    let rscale: f64 = sys::dpi_scale(host);
+    let shift: f64 = swipe_shift(host) / rscale;
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(node);
     while i < count {
@@ -201,21 +212,18 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
                     // 0x0-on-restore bug facet's own `relayout` note warns
                     // about, seen from the backend side.
                     show_window(v, !core::is_hidden(c));
-                    // A STEPPER DOES NOT STRETCH. facet's stepper is
-                    // `msctls_updown32` — two stacked arrows, the value read by
-                    // the application rather than shown — and a column with the
-                    // default `align: stretch` gives it the full line, which an
-                    // updown draws as a wide stripe of arrow. So it is pinned to
-                    // its natural width at the TRAILING edge of its allocation,
-                    // the way a spin control sits at the right of its field.
-                    // Nothing else in the frame walk special-cases a control's
-                    // size, which is why this is here and named.
+                    // A STEPPER DOES NOT STRETCH. It is an owner-drawn spin box —
+                    // a number field with arrows — with a stated natural size, so
+                    // a column's default `align: stretch` must not give it the
+                    // whole line. It is capped to its box width at the LEADING
+                    // edge of its allocation, where a field sits, rather than
+                    // stretched. Nothing else in the frame walk special-cases a
+                    // control's size, which is why this is here and named.
                     var cw: f64 = cf.width;
                     var cx: f64 = (cf.left - host_abs.left) - shift;
                     if core::kind_of(c) == props::K_STEPPER {
-                        let natural: f64 = stepper_width() as f64;
+                        let natural: f64 = (controls::stepper_box_width() as f64) / rscale;
                         if cw > natural {
-                            cx = cx + (cw - natural);
                             cw = natural;
                         }
                     }
@@ -280,8 +288,13 @@ fn size_document(view: *u8, doc: *u8, node: *core::Node, node_abs: flex::Frame) 
     // scroll sideways. A document smaller than its viewport leaves the
     // viewport's own background showing, which is the same colour it paints
     // anyway — so there is nothing to gain by stretching it and a loop to lose.
-    var w: f64 = ext_w;
-    var h: f64 = ext_h;
+    // POINTS TO PIXELS. `extent_of` sums frames, which are logical points; the
+    // document is a physical child window and the scroll bar (`scroller`) counts
+    // in the same pixels as the viewport, so the content is scaled up to pixels
+    // here — the same multiply `place` does for every other window.
+    let scale: f64 = sys::dpi_scale(view);
+    var w: f64 = ext_w * scale;
+    var h: f64 = ext_h * scale;
     if w < (1.0 as f64) { w = 1.0f64; }
     if h < (1.0 as f64) { h = 1.0f64; }
 

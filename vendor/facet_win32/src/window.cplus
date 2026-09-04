@@ -701,11 +701,19 @@ fn host_for(slot: usize) -> *u8 {
 fn relayout(slot: usize, width: f64, height: f64) {
     let root: *core::Node = ROOTS[slot] as *core::Node;
     if root == (0 as *core::Node) { return; }
-    { (*root).calculate_layout(width: width, height: height) };
+    // IN POINTS. The client size arrives in physical pixels; flex is laid out in
+    // logical points, so it is divided down here and `round_to_pixel` snaps every
+    // frame to the physical grid so the scaled result has no seams. `place`
+    // multiplies back to pixels.
+    let scale: f64 = sys::dpi_scale(WINDOWS[slot] as *u8);
+    let lw: f64 = width / scale;
+    let lh: f64 = height / scale;
+    { (*root).calculate_layout(width: lw, height: lh) };
+    { (*root).round_to_pixel(scale) };
     let rf: flex::Frame = { (*root).frame() };
     let rv: *u8 = core::view_of(root);
     if rv != (0 as *u8) {
-        geometry::place(WINDOWS[slot] as *u8, rv, root, 0.0f64, 0.0f64, width, height);
+        geometry::place(WINDOWS[slot] as *u8, rv, root, 0.0f64, 0.0f64, lw, lh);
     }
     // The ROOT is the one node `reposition_children` never visits, and a
     // screen's own size is the commonest thing to observe.

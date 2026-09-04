@@ -65,42 +65,50 @@ them in that order.
 
 ## 1. Decided absent — Win32 has no such thing
 
-### `opacity` and `transform` on a CONTROL
+### `opacity` — ANSWERABLE, and a `fade` really fades
 
-`C_OPACITY` and `C_TRANSFORM` are answerable on a node this package PAINTS —
-a panel, drawn in its own WM_PAINT, where the alpha can go through
-`AlphaBlend` and a scale through the world transform.
+This entry used to say opacity was a hard platform wall, with a measurement to
+back it: a layered child window stored its alpha and composited nothing, its
+pixels staying `#F0F0F0` while the same alpha on the top-level window blended on
+the spot. That measurement was real, and it was INCOMPLETE — it never tried the
+one flag that turns child compositing on.
 
-They are not answerable on a system control. A child HWND has no alpha channel:
-`SetLayeredWindowAttributes` requires `WS_EX_LAYERED`, and there is no
-per-window transform either — `SetWorldTransform` applies to a device context,
-and a control acquires its own DC when it paints.
+`WS_EX_LAYERED` is supported for child windows since Windows 8, but for the
+system to actually blend a child into its parent the PARENT must be told to
+composite bottom-up: `WS_EX_COMPOSITED`. That flag was added to the host window
+later in this port, for double-buffering, and it is what the old measurement was
+missing. Re-measured on Windows 11 with it in place:
 
-**And it is not answerable on a PANEL either, which this entry used to imply.**
-`C_OPACITY` was named in `paint::band_bits()` and acted on nowhere, so the band
-reported it as covered while `set_opacity` did nothing anywhere in the package.
-It is out of the list now, and the claim above it is out with it.
+    WS_EX_LAYERED on the child + SetLayeredWindowAttributes(alpha)
+    with WS_EX_COMPOSITED on the top window
+    -> the child AND its child controls composite at that alpha.
 
-The interesting half is why the obvious fix does not work. Windows 8 changed the
-documentation — `WS_EX_LAYERED` is supported for **child windows** since then,
-which is the whole platform this package targets. So it was measured on Windows
-11 rather than argued from the note:
+Verified live fading a button, then a whole `card` with its labels as one layer,
+then the gallery's animate demo — `Fade` takes the card from 1.0 to 0.15 and
+back, smoothly. So `set_opacity` is answered now (`anim::set_opacity_now`), and
+`animate_opacity` is the progress tween writing the layered alpha each frame
+(`anim.cplus`, wired through `views::opacity_band` on `C_OPACITY` / `C_ANIMATE` /
+`C_CANCEL_ANIMATIONS`). An opaque control is left unlayered — the alpha is only
+reached for when there is something to fade.
 
-    exstyle after = 0x80000 (layered bit True)
-    SetLayeredWindowAttributes -> True (err 0)
-    GetLayeredWindowAttributes -> True alpha=0 flags=2
-    panel pixels, alpha 0:  #F0F0F0    <- unchanged. Fully opaque.
+### `transform` (scale / rotation) on a CONTROL — still a wall
 
-The API accepts the style, stores the alpha and reads it back, and composites
-nothing. It is not the parent's `WS_CLIPCHILDREN` either — the same measurement
-with the style removed from the parent gives the same pixels. And the harness is
-not lying: the same alpha on the TOP-LEVEL window turns those pixels from
-`#F0F0F0` to `#7E7E7E` on the spot.
+Opacity fell; scale and rotation did not. A child HWND has no per-window
+transform: `SetWorldTransform` applies to a DEVICE CONTEXT, and a control
+acquires its own DC when it paints, so there is nothing to rotate or scale the
+control's pixels through. TRANSLATION is the exception, and it IS wired now — a
+`SetWindowPos` moves a child window, the same primitive the carousel slides
+with. `anim::animate_translation` tweens a DISPLAYED offset stored on the window
+and `geometry::place` adds it on top of the layout position, so the move rides
+the layout and survives a relayout. `set_scale` / `set_rotation` change the
+model (reads stay truthful) but not the picture — the honest edge, because the
+control cannot wear them.
 
-So `button.set_opacity(0.5)` is a no-op here, a fade is a jump, and a panel is
-no better off than a control. The honest fix is owner-drawing every control into
-a composited surface, which is a different backend and a much larger one — see
-§2's note on the ceiling.
+On a node this package PAINTS ITSELF (a panel, the canvas) all of it is
+reachable — `AlphaBlend`, and scale/rotation through the GDI+ world transform
+the canvas replay already uses — which is the tractable slice if the full
+transform band is ever wanted. The general answer for system controls remains
+owner-drawing them onto a composited surface: a different, larger backend.
 
 ### A CLIP IS A WINDOW REGION, which clips the children too
 
@@ -406,8 +414,12 @@ reads as a decision.)*
 
 And this is §2 — Win32 has it and this package has not built it:
 
-* **`web` / `hybrid_web`** — WebView2, which is a separate SDK. Seven handlers,
-  and the only ones left in the read half besides the time picker's pair above.
+* **`hybrid_web`** — the JS bridge on top of a web view: `postMessage` in both
+  directions, a script injected before every document, a host object exposed to
+  the page. That is `add_WebMessageReceived`, `AddScriptToExecuteOnDocumentCreated`
+  and `PostWebMessageAsString` on the `ICoreWebView2` — a second, larger COM
+  surface than the browser itself, and one nothing in the gallery exercises. The
+  plain `web` view it builds ON is built (see below); the bridge is not.
 
 Four rows stood here until 2026-09-01. They are struck rather than deleted,
 because what unblocked each is the useful part — and their names are spelled
@@ -428,6 +440,16 @@ as the tool is concerned, and these are history:
   entry below.)
 * ~~the swipe verbs~~ — see directly above: they were in §1 rather than here,
   and the argument was wrong.
+* ~~the web view~~ — "WebView2, which is a separate SDK", and the package had
+  no COM. It has some now, in one file: `webview2.cplus` builds the completion
+  handlers as hand-laid vtables, creates the environment and controller through
+  `WebView2Loader.dll`, and shows a page. `web.source` navigates, the host
+  resizes the controller, teardown Closes and Releases it, and the three
+  navigation events (`on_navigating` / `on_navigated` / `on_process_terminated`)
+  fire with `can_go_back` / `can_go_forward` / `source` written back. The loader
+  is resolved by name with absolute fallbacks; a machine without it keeps the
+  framed placeholder rather than crashing. `hybrid_web`'s bridge is the part
+  still in §2 above.
 
 ### Rich text: `label.formatted_text`, `label.text_format`, `text_area.style_runs`
 
@@ -540,12 +562,14 @@ control anyone can create — there is no `WC_SEARCHBOX`. So a `search_field`
 here behaves like a search field and does not look like one: the placeholder,
 the text and `on_text_changed` all work, and there is no magnifier.
 
-### A `spinner` IS A BAR, NOT A RING
+### A `spinner` IS A RING, drawn — not the marquee bar Win32 offers
 
-Win32 has no circular activity indicator. `PBS_MARQUEE` — the barber's pole —
-is what every shell dialog uses for "working, no idea how long", and it is a
-horizontal strip. An application expecting the small ring the other three
-backends draw gets a bar in the space it reserved.
+Win32 has no circular activity indicator; `PBS_MARQUEE`, the barber's pole, is
+what the shell uses for "working, no idea how long", and it is a horizontal
+strip. So the ring the other three backends draw is drawn here instead —
+`drawing::draw_spinner` paints a rotating GDI+ arc on an owner-drawn panel and a
+per-window timer advances it (see §4). What Win32 gives out of the box is the
+bar; what this package shows is the ring.
 
 ### A `slider` RUNS OVER 1000 INTEGER STEPS
 
@@ -1085,6 +1109,47 @@ the next group in whatever column the previous one ran out on.
 differently per item, the alternative — the first item's height — clips the
 others.
 
+**A ROW HEIGHT IS SCALED TO THE DPI, because a font is.** The recycler counts in
+PHYSICAL pixels, so every row height — the 24 default, a stated `row_height`, a
+`row_height_of` answer — is multiplied by `GetDpiForWindow / 96`
+(`recycler::row_scale`). It had to: fonts are built at the window's DPI, so a
+label is ~30px tall on a 125% display, and a row height stated in points would
+otherwise clip it. `place_row` then divides the pixel rect back to points to lay
+the row's own subtree out, because a row is a little layout root and `measure`
+answers in points — see the DPI section below for why the recycler is the one
+subsystem that stays in pixels. **The map can bake a stale DPI.** Row heights are
+scaled when the map is built, but the map is rebuilt only on a MODEL change, and
+the first build is at mount — before the viewport is parented onto its DPI-aware
+top window, so it bakes a 96. `ListState.built_dpi` records the DPI each build
+used; `layout_rows` rebuilds (and releases the pooled cells, whose fonts were
+also measured at the old DPI) when the live DPI no longer matches, which also
+carries a window dragged between monitors.
+
+**THE WHOLE LAYOUT IS IN POINTS NOW, scaled to pixels at two seams.** This is the
+general fix the row-height note above used to defer. flex lays out in LOGICAL
+points; `measure::measure_view` divides its physical text extent DOWN into points
+and `geometry::place` multiplies frames UP into pixels — the two mirror seams, so
+a content-sized control lands at exactly the pixels it did before while a STATED
+dimension (`.width`, `.height`, a padding, a `corner_radius`) finally grows with
+the DPI. `window::relayout` lays the root out at `client / scale` and calls
+`round_to_pixel(scale)` so the scaled frames have no seams; `size_document`
+multiplies the content extent up for the scroll document; `reposition_children`
+puts the stepper cap and the swipe shift into points; `paint` scales the clip and
+the fill radii. The recycler is the ONE holdout that stays in pixels (its
+viewport, scroll offset and row heights are all pixels), and `place_row` converts
+at its single boundary. `window::scale_factor`, defined and called nowhere, is
+now redundant — `sys::dpi_scale(v)` is the one answer everything reads.
+
+**Known gap — a `collection`'s content-sized cells are not measured.** A
+`collection` states no `row_height`; its cells size through `item_sizing`, which
+the comment in `source_of` calls "the measured default." But the recycler has no
+cell-measuring path: `height_of_data_row` falls back to the plain 24-point
+`default_row_height`, so a cell whose content (padding + a DPI-scaled label) is
+taller than that clips — visible on the gallery's Collection at 120 DPI, where
+the label is ~30px and overflows the 30px row. This is a recycler feature gap,
+not the DPI scaling (which is correct here — the row IS 30 physical px); it
+predates the point-layout work and needs a measured-row path to close.
+
 **A drop in a reorder needs BOTH axes.** `y` alone names the line, and picking
 the first item on it would move a row to the start of whatever line it was
 dropped anywhere on. `input::end_row_reorder` passes x through for that, and it
@@ -1125,17 +1190,18 @@ decision can be made with the price in view: five verbs, plus dropped TEXT
 verb EVERY node has — a gap in one is a gap everywhere, which makes it worth
 more words than a per-kind prop.
 
-**`C_ANIMATE`, `C_CANCEL_ANIMATIONS`, `C_TRANSFORM`** — the same root cause as
-the `opacity` row above, and it is worth stating as one thing: a child HWND has
-no alpha and no transform. There is nothing to interpolate TO. An animation
-tier over values a control cannot wear would run its timer, compute its curve,
-and write results nothing could display — which is worse than not having one,
-because the app would believe it was animating.
-
-They become answerable exactly when controls are owner-drawn, which is §2's
-ceiling. On a PANEL — which this package paints itself — a transform is
-reachable through `SetWorldTransform` and an opacity through `AlphaBlend`, and
-that is the half worth building first if anyone needs it.
+**`C_ANIMATE` / `C_CANCEL_ANIMATIONS` — the OPACITY channel is built; the
+TRANSFORM channel is not.** The shared band splits into two channels, and they
+land on opposite sides of what a child HWND can do (see the `opacity` and
+`transform` rows above). Both are wired now, in `views::anim_band`. `C_ANIMATE`
+for `ANIM_OPACITY` runs `anim::animate_opacity` (the progress tween writing a
+layered alpha); for `ANIM_TRANSFORM` it runs `anim::animate_translation`, the
+translation part of the matrix, a `SetWindowPos` slide. `C_CANCEL_ANIMATIONS`
+stops both and snaps to the model. What is NOT answered is the SCALE and
+ROTATION of that matrix — a control cannot wear them, so those numbers move the
+model and not the picture, the honest edge. They become answerable only when
+controls are owner-drawn onto a composited surface (§2's ceiling), where the
+GDI+ world transform the canvas already uses would draw them.
 
 **`C_SAFE_AREA`** — a Win32 desktop window has no such inset. The verb exists
 for a notch, a home indicator, a status bar overlaying the content; a window on
@@ -1198,10 +1264,11 @@ The classes are all there and all initialised (`InitCommonControlsEx` with
 
 | facet kind | Win32 class |
 |---|---|
-| `stepper` | `msctls_updown32` |
+| `stepper` | owner-drawn spin box on a `FacetWin32Panel` (number + arrows) |
 | `date_picker` / `time_picker` | `SysDateTimePick32` |
 | `slider` | `msctls_trackbar32`, with `NM_CUSTOMDRAW` for its three colours |
-| `progress` / `spinner` | `msctls_progress32` |
+| `progress` | `msctls_progress32` |
+| `spinner` | owner-drawn ring on a `FacetWin32Panel` (rotating GDI+ arc) |
 | `popup` | `COMBOBOX` (`CBS_DROPDOWNLIST`), the theme's own — see §1 |
 | `text_button` / `icon_button` / `toggle` | `BUTTON`, `BS_OWNERDRAW` — see §1 |
 | `symbol` | `STATIC`, drawing a codepoint in the bundled icon font |
@@ -1526,6 +1593,51 @@ every one of them invisible to 127 passing tests and two probes:
    nothing. §3.
 4. **A tree with no `row` builder drew no rows**, so the navigation pane was
    empty. §3.
+5. **A `background` Brush painted nothing** — a gradient OR a solid set through
+   `set_background` writes a DIFFERENT band from `set_background_color`, and the
+   band painter read only the colour one. The Brush page's panel was invisible.
+   Fixed: `paint.cplus` reads the brush band first and fills a GDI+ linear
+   gradient (rect-with-angle, so 0° is left-to-right and 90° top-to-bottom, the
+   way facet measures it) or a flat solid, rounded when a radius is asked for.
+6. **A `canvas` drew nothing** — the one surface an application draws freely on,
+   and this package had no replay for it. Fixed: `drawing.cplus` records the
+   `Drawable` on WM_PAINT and executes the command list against GDI+ —
+   gradients, stroked and filled shapes, rounded rects, built paths (quads
+   raised to cubics), the transform and clip stack, and text in a box. GDI+
+   because GDI has no gradient, no path fill mode, no world transform and no
+   antialiasing; it is the same flat API `imaging` already starts up. Shadows,
+   blend modes, `DrawSpans` and `DrawImage` inside a canvas are the remaining
+   ops — recorded here rather than faked. The host is subclassed for one reason:
+   a panel's window class has a NULL background brush, so a canvas that has not
+   painted yet — a size change repainting only the newly-uncovered strip, or a
+   stale `WS_EX_COMPOSITED` buffer after an in-window navigation — showed pure
+   BLACK, not the theme ground. The subclass erases to the theme ground on
+   WM_ERASEBKGND and invalidates the whole client on WM_SIZE, so the replay
+   always covers a real background and every resize redraws the whole recording.
+7. **A `slider`'s thumb sat at the far right** at value 0.4 — `TBM_SETRANGEMIN` /
+   `TBM_SETRANGEMAX` were the wrong message numbers (`0x041E`/`0x041F` for
+   `0x0407`/`0x0408`), so the range never left the default 0..100 and a
+   `TBM_SETPOS` past 100 clamped to the end. The channel fill read the value and
+   still looked right, hiding it. Fixed in `sys.cplus`.
+8. **A `slider` went blank on every repaint, and its thumb flashed then
+   vanished while dragging.** Two faults in the custom-draw, one fix. The blank:
+   the parts were drawn from the per-item stages (TBCD_CHANNEL / TBCD_THUMB),
+   but a trackbar sends those only on its FIRST paint — a stage log showed a
+   programmatic repaint (a `TBM_SETPOS` from `apply`, the value driven from the
+   stepper, a `RedrawWindow`) firing CDDS_PREPAINT alone — so every repaint left
+   the ground filled and the parts missing. The flash: the channel split read
+   the node's `value`, which lags the control by a message during a drag. Both
+   are fixed by drawing the WHOLE control in CDDS_PREPAINT and returning
+   CDRF_SKIPDEFAULT — geometry from `TBM_GETCHANNELRECT` / `TBM_GETTHUMBRECT`,
+   the split from `TBM_GETPOS` — so nothing depends on the item stages and the
+   channel tracks the live thumb.
+9. **A `stepper` was two bare arrows pinned to the far edge**, reading as broken.
+   It is an owner-drawn SPIN BOX now — a number field with up/down arrows —
+   `controls::draw_stepper` paints it and a subclass turns a click on either
+   arrow into a `±increment` bump that fires `on_value_changed`. The macOS/iOS
+   stepper is arrows-only; the Windows one is a spin box, and this is the Windows
+   backend.
+10. **A `spinner` was a horizontal marquee bar** — see §1, now a drawn ring.
 
 The lesson is the one this file keeps learning in other forms: a suite pins
 what the author thought of. An application written for another platform is what

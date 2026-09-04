@@ -54,6 +54,8 @@ import "facet/icon_button" as icon_button;
 import "stdlib/io" as io;
 import "./paint" as paint;
 import "./darkmode" as darkmode;
+import "./webview2" as webview2;
+import "./drawing" as drawing;
 import "./field_furniture" as field_furniture;
 import "./anim" as anim;
 import "facet/radio" as radio;
@@ -190,6 +192,31 @@ fn create_panel(n: *core::Node) -> *u8 {
 }
 
 fn create_box(n: *core::Node) -> *u8 { return create_panel(n); }
+
+// A `web` node is a panel that hosts a WebView2 controller. `webview2::attach`
+// kicks off the asynchronous environment/controller creation and subclasses the
+// host for resize and teardown. Until (or unless) the browser mounts, the panel
+// paints the framed placeholder in `draw_web_placeholder`.
+fn create_web(n: *core::Node) -> *u8 {
+    let host: *u8 = create_panel(n);
+    if host == (0 as *u8) { return host; }
+    webview2::attach(host, n);
+    return host;
+}
+
+fn apply_web(v: *u8, n: *core::Node, dirty: u64) {
+    webview2::apply(v, n, dirty);
+    return;
+}
+
+// A `canvas` is a panel we paint the recording onto. The subclass guarantees it
+// repaints on every resize and never shows the panel class's black ground.
+fn create_canvas(n: *core::Node) -> *u8 {
+    let host: *u8 = create_panel(n);
+    if host == (0 as *u8) { return host; }
+    drawing::attach(host);
+    return host;
+}
 
 // A `box` is a coloured rectangle and nothing else — the band already answers
 // its colour, so there is no per-kind write left to make.
@@ -829,7 +856,15 @@ fn apply_field_style(v: *u8, align: vocab::TextAlign, secure: bool) {
     // `EM_SETPASSWORDCHAR` is the runtime spelling — a non-zero character turns
     // masking on and zero turns it off — and it is what makes `is_secure`
     // answerable after mount rather than only at create.
-    let ch: u64 = if secure { 0x25CF as u64 } else { 0 as u64 };
+    //
+    // THE MASK CHARACTER IS A BULLET, and getting there takes one fact: these
+    // EDITs are ANSI windows (`CreateWindowExA`), so `wParam` is a single BYTE
+    // in the system code page, not a Unicode code point. `0x25CF` (●) was
+    // therefore truncated to its low byte 0xCF and masked with `Ï`; sending it
+    // wide did not help, because W→A on an ANSI window maps ● to `?`. The byte
+    // that IS a bullet is `0x95`, which the Western default code page (1252)
+    // maps to U+2022 (•) — a plain `SendMessageA` with it gives the round mask.
+    let ch: u64 = if secure { 0x95 as u64 } else { 0 as u64 };
     let _p: i64 = { u::SendMessageA(v, em_setpasswordchar(), ch, 0 as i64) };
     let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     return;
@@ -1010,9 +1045,15 @@ fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
 // It is a BAR and not a ring, which is the narrowing: an application expecting
 // the small circular spinner the other three backends draw gets a horizontal
 // strip. MANIFEST.md §1 records it rather than leaving it to be discovered.
+// A ring, not a bar. The panel is owner-drawn — `drawing::draw_spinner` paints a
+// rotating GDI+ arc and a per-window timer drives it — so the circular spinner
+// the other three backends show is drawn here too, rather than the marquee
+// progress bar Win32 offers in its place.
 fn create_spinner(n: *core::Node) -> *u8 {
-    return make_child(sys::progress_class(), empty_title(), sys::pbs_marquee(),
-                      0 as u32);
+    let host: *u8 = create_panel(n);
+    if host == (0 as *u8) { return host; }
+    drawing::attach_spinner(host);
+    return host;
 }
 
 fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
@@ -1020,15 +1061,11 @@ fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
         props_of(n, props::K_SPINNER) as *props::SpinnerProps;
     if p == (0 as *props::SpinnerProps) { return; }
     if (dirty & spinner::P_IS_RUNNING) != (0 as u64) {
-        let on: u64 = if { (*p).is_running } { 1 as u64 } else { 0 as u64 };
-        // lParam is the step interval in milliseconds; 30 is what the shell
-        // uses and it is ignored entirely when wParam turns the marquee off.
-        let _r: i64 = { u::SendMessageA(v, sys::pbm_setmarquee(), on, 30 as i64) };
+        drawing::spinner_set_running(v, { (*p).is_running });
     }
-    // A spinner IS a marquee progress bar here, so its colour takes the same
-    // door — see `apply_progress_color` for what that costs.
+    // The colour is read at paint time; a change just needs the next frame.
     if (dirty & spinner::P_COLOR) != (0 as u64) {
-        apply_progress_color(v, { (*p).color });
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 0 as i32) };
     }
     return;
 }
@@ -1393,55 +1430,188 @@ extern fn dt_memset(p: *u8, v: i32, n: usize) -> *u8;
 
 // ---- stepper -------------------------------------------------------------------------
 //
-// `msctls_updown32` — the two arrows. UDS_SETBUDDYINT would pair it with an
-// edit control showing the number; facet's `stepper` is the arrows alone, and
-// the value it carries is read by the application rather than displayed.
-//
-// THE RANGE IS 32-BIT AND facet's IS f64, the same mismatch the slider has. The
-// stepper's is worse in one way and better in another: its increment is stated,
-// so the control can run over the REAL range in whole increments rather than a
-// fixed step count — which is exact whenever the increment divides the range,
-// and that is what a stepper is for.
-fn uds_setrange32() -> u32 { return 0x046F as u32; }
-fn udm_setpos32() -> u32 { return 0x0471 as u32; }
-fn udm_getpos32() -> u32 { return 0x0472 as u32; }
-
-fn stepper_steps(p: *props::StepperProps) -> i32 {
-    let span: f64 = { (*p).maximum } - { (*p).minimum };
-    var inc: f64 = { (*p).increment };
-    if inc <= (0.0 as f64) { inc = 1.0f64; }
-    if span <= (0.0 as f64) { return 0 as i32; }
-    return (span / inc) as i32;
-}
+// An owner-drawn SPIN BOX. `msctls_updown32`, the bare arrows, was the macOS/iOS
+// stepper shape and read as broken laid out on its own; a Windows stepper is a
+// NUMBER FIELD with the arrows on its right. So this draws a bordered box with
+// the value, an up and a down arrow, and a click on either bumps the value by
+// the increment and fires `on_value_changed`.
+fn stepper_box_width() -> i32 { return 68 as i32; }
+fn stepper_arrow_w() -> i32 { return 18 as i32; }
+fn stepper_box_height() -> i32 { return 26 as i32; }
 
 fn create_stepper(n: *core::Node) -> *u8 {
-    return make_child(sys::updown_class(), empty_title(),
-                      sys::ws_tabstop(), 0 as u32);
+    let host: *u8 = make_child(sys::panel_class(), empty_title(),
+                               sys::ws_tabstop(), 0 as u32);
+    if host == (0 as *u8) { return host; }
+    stepper_install(host);
+    return host;
 }
 
 fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
-    let p: *props::StepperProps =
-        props_of(n, props::K_STEPPER) as *props::StepperProps;
-    if p == (0 as *props::StepperProps) { return; }
-    if (dirty & (stepper::P_MINIMUM | stepper::P_MAXIMUM | stepper::P_INCREMENT))
-       != (0 as u64) {
-        let _r: i64 = { u::SendMessageA(v, uds_setrange32(), 0 as u64,
-                                        stepper_steps(p) as i64) };
-    }
-    if (dirty & stepper::P_VALUE) != (0 as u64) {
-        var inc: f64 = { (*p).increment };
-        if inc <= (0.0 as f64) { inc = 1.0f64; }
-        let step: i32 = (({ (*p).value } - { (*p).minimum }) / inc) as i32;
-        let _r: i64 = { u::SendMessageA(v, udm_setpos32(), 0 as u64, step as i64) };
+    if (dirty & (stepper::P_VALUE | stepper::P_MINIMUM | stepper::P_MAXIMUM
+                 | stepper::P_INCREMENT)) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
     return;
 }
 
 fn stepper_value_of(v: *u8, p: *props::StepperProps) -> f64 {
-    let step: i64 = { u::SendMessageA(v, udm_getpos32(), 0 as u64, 0 as i64) };
+    return { (*p).value };
+}
+
+// The value shown: an integer where the value is whole, else one decimal.
+fn stepper_display(value: f64) -> text::Text {
+    let neg: bool = value < (0.0 as f64);
+    let a: f64 = if neg { (0.0 as f64) - value } else { value };
+    var whole: i64 = a as i64;
+    var d1: i64 = ((a - (whole as f64)) * (10.0 as f64) + (0.5 as f64)) as i64;
+    if d1 >= (10 as i64) { whole = whole +% (1 as i64); d1 = 0 as i64; }
+    let sign: str = if neg { "-" } else { "" };
+    if d1 == (0 as i64) { return "${sign}${whole}"; }
+    return "${sign}${whole}.${d1}";
+}
+
+fn stepper_bump(v: *u8, n: *core::Node, dir: i32) {
+    let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
     var inc: f64 = { (*p).increment };
     if inc <= (0.0 as f64) { inc = 1.0f64; }
-    return { (*p).minimum } + (step as f64) * inc;
+    var nv: f64 = { (*p).value } + (dir as f64) * inc;
+    if nv < { (*p).minimum } { nv = { (*p).minimum }; }
+    if nv > { (*p).maximum } { nv = { (*p).maximum }; }
+    if nv == { (*p).value } { return; }
+    { (*p).value = nv };
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    let h: fn(*u8, *u8) = { (*p).on_value_changed };
+    if h != props::no_handler { h(v, { (*p).on_value_changed_ctx }); }
+    return;
+}
+
+fn draw_stepper(v: *u8, n: *core::Node, hdc: *u8) {
+    if n == (0 as *core::Node) { return; }
+    let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    let field: *u8 = paint::brush_for(paint::effective_bg(v));
+    if field != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), field) }; }
+    var eh: bool = false;
+    var edge: u32 = paint::resolve(vocab::Color::separator(), #addr_of(eh));
+    if !eh { edge = { u::GetSysColor(16 as i32) }; }
+    paint::stroke_rect(hdc, r, edge, 1 as i32, 0.0f64);
+
+    let aw: i32 = stepper_arrow_w();
+    let ax: i32 = r.right -% aw;
+    let ink: u32 = paint::ink_over(paint::effective_bg(v));
+    let _t: u32 = { gdi::SetTextColor(hdc, ink) };
+    let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
+    let font: *u8 = { gdi::GetStockObject(17 as i32) };
+    var oldf: *u8 = 0 as *u8;
+    if font != (0 as *u8) { oldf = { gdi::SelectObject(hdc, font) }; }
+    let w16: *u16 = sys::to_wide(stepper_display({ (*p).value }).view());
+    if w16 != (0 as *u16) {
+        var tr: u::tagRECT = u::tagRECT { left: r.left +% (8 as i32), top: r.top,
+                                          right: ax -% (4 as i32), bottom: r.bottom };
+        let flags: u32 = sys::dt_left() | sys::dt_vcenter() | sys::dt_singleline()
+                       | sys::dt_noprefix();
+        let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                     #addr_of(tr), flags) };
+        sys::free_wide(w16);
+    }
+    if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
+
+    paint::stroke_rect(hdc, u::tagRECT { left: ax, top: r.top, right: ax +% (1 as i32),
+                                         bottom: r.bottom }, edge, 1 as i32, 0.0f64);
+    let midy: i32 = (r.top +% r.bottom) / (2 as i32);
+    draw_stepper_arrow(hdc, ax, r.top, r.right, midy, ink, true);
+    draw_stepper_arrow(hdc, ax, midy, r.right, r.bottom, ink, false);
+    return;
+}
+
+fn draw_stepper_arrow(hdc: *u8, l: i32, t: i32, rr: i32, b: i32, color: u32, up: bool) {
+    let cx: i32 = (l +% rr) / (2 as i32);
+    let cy: i32 = (t +% b) / (2 as i32);
+    let hw: i32 = 4 as i32;
+    let hh: i32 = 3 as i32;
+    var pts: [gdi::tagPOINT; 3] = [
+        gdi::tagPOINT { x: 0 as i32, y: 0 as i32 },
+        gdi::tagPOINT { x: 0 as i32, y: 0 as i32 },
+        gdi::tagPOINT { x: 0 as i32, y: 0 as i32 },
+    ];
+    if up {
+        pts[0] = gdi::tagPOINT { x: cx -% hw, y: cy +% hh };
+        pts[1] = gdi::tagPOINT { x: cx +% hw, y: cy +% hh };
+        pts[2] = gdi::tagPOINT { x: cx, y: cy -% hh };
+    } else {
+        pts[0] = gdi::tagPOINT { x: cx -% hw, y: cy -% hh };
+        pts[1] = gdi::tagPOINT { x: cx +% hw, y: cy -% hh };
+        pts[2] = gdi::tagPOINT { x: cx, y: cy +% hh };
+    }
+    let dc_brush: *u8 = { gdi::GetStockObject(18 as i32) };
+    let _bc: u32 = { gdi::SetDCBrushColor(hdc, color) };
+    let old_b: *u8 = { gdi::SelectObject(hdc, dc_brush) };
+    let null_pen: *u8 = { gdi::GetStockObject(8 as i32) };
+    let old_p: *u8 = { gdi::SelectObject(hdc, null_pen) };
+    let _pg: i32 = { gdi::Polygon(hdc, #addr_of(pts[0]), 3 as i32) };
+    let _rb: *u8 = { gdi::SelectObject(hdc, old_b) };
+    let _rp: *u8 = { gdi::SelectObject(hdc, old_p) };
+    return;
+}
+
+fn prop_stepper_old() -> *u8 { return { #str_ptr("facet-stepper-oldproc\0") }; }
+
+fn stepper_lo_word(l: i64) -> i32 {
+    var v: i32 = (l & (0xFFFF as i64)) as i32;
+    if v > (32767 as i32) { v = v -% (65536 as i32); }
+    return v;
+}
+fn stepper_hi_word(l: i64) -> i32 {
+    var v: i32 = ((l >> (16 as i64)) & (0xFFFF as i64)) as i32;
+    if v > (32767 as i32) { v = v -% (65536 as i32); }
+    return v;
+}
+
+fn stepper_proc_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, i64) -> i64 = stepper_proc;
+    return f as *u8;
+}
+
+fn stepper_install(host: *u8) {
+    if host == (0 as *u8) { return; }
+    if { u::GetPropA(host, prop_stepper_old() as *i8) } != (0 as *u8) { return; }
+    let old: i64 = { u::SetWindowLongPtrA(host, sys::gwlp_wndproc(), stepper_proc_addr() as i64) };
+    if old == (0 as i64) { return; }
+    let _p: i32 = { u::SetPropA(host, prop_stepper_old() as *i8, old as *u8) };
+    return;
+}
+
+fn stepper_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    let old: *u8 = { u::GetPropA(hwnd, prop_stepper_old() as *i8) };
+    if old == (0 as *u8) { return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+    if msg == sys::wm_lbuttondown() {
+        let n: *core::Node = { u::GetPropA(hwnd, sys::prop_node() as *i8) } as *core::Node;
+        if n != (0 as *core::Node) {
+            var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                             right: 0 as i32, bottom: 0 as i32 };
+            if { u::GetClientRect(hwnd, #addr_of(r)) } != (0 as i32) {
+                let x: i32 = stepper_lo_word(l);
+                let y: i32 = stepper_hi_word(l);
+                if x >= (r.right -% stepper_arrow_w()) {
+                    let midy: i32 = (r.top +% r.bottom) / (2 as i32);
+                    stepper_bump(hwnd, n, if y < midy { 1 as i32 } else { (0 as i32) -% (1 as i32) });
+                    let _f: *u8 = { u::SetFocus(hwnd) };
+                    return 0 as i64;
+                }
+            }
+        }
+    }
+    if msg == 0x0082 as u32 {
+        let _o: i64 = { u::SetWindowLongPtrA(hwnd, sys::gwlp_wndproc(), old as i64) };
+        let _r: *u8 = { u::RemovePropA(hwnd, prop_stepper_old() as *i8) };
+        return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+    }
+    return { u::CallWindowProcA(old, hwnd, msg, w, l) };
 }
 
 // ---- tabs ----------------------------------------------------------------------------
@@ -1918,7 +2088,7 @@ fn draw_toggle(di: *u8) -> bool {
         };
         paint::fill_ellipse(hdc, thumb, thumb_brush);
     }
-    if (state & ods_focus()) != (0 as u32) {
+    if (state & ods_focus()) != (0 as u32) && (state & ods_nofocusrect()) == (0 as u32) {
         let _fr: i32 = { u::DrawFocusRect(hdc, #addr_of(track)) };
     }
     return true;
@@ -2176,7 +2346,7 @@ fn draw_icon_button(di: *u8) -> bool {
         }
     }
     if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
-    if (state & ods_focus()) != (0 as u32) {
+    if (state & ods_focus()) != (0 as u32) && (state & ods_nofocusrect()) == (0 as u32) {
         let _r: i32 = { u::DrawFocusRect(hdc, #addr_of(r)) };
     }
     return true;
@@ -2326,6 +2496,11 @@ fn di_off_rect() -> usize { return 40 as usize; }
 fn ods_selected() -> u32 { return 0x0001 as u32; }
 fn ods_disabled() -> u32 { return 0x0004 as u32; }
 fn ods_focus() -> u32 { return 0x0010 as u32; }
+// ODS_NOFOCUSRECT 0x0200 — the state Windows sets when focus indicators are to
+// be HIDDEN (it follows UISF_HIDEFOCUS: on until the user navigates by
+// keyboard). Honouring it is what keeps the focus ring off after a mouse click
+// while still showing it for Tab users.
+fn ods_nofocusrect() -> u32 { return 0x0200 as u32; }
 
 fn read_u32_at(p: *u8, at: usize) -> u32 {
     let q: *u32 = { (p + at) } as *u32;
@@ -2432,7 +2607,7 @@ fn draw_text_button(di: *u8) -> bool {
     // indication at all unless it draws one, and a keyboard user then cannot
     // see where they are — which is the accessibility half this kind chose
     // owner-draw to keep.
-    if (state & ods_focus()) != (0 as u32) {
+    if (state & ods_focus()) != (0 as u32) && (state & ods_nofocusrect()) == (0 as u32) {
         let _r: i32 = { u::DrawFocusRect(hdc, #addr_of(r)) };
     }
     return true;
@@ -2653,6 +2828,20 @@ fn size_panes(n: *core::Node, p: *split::SplitProps) {
     { (*trail).set_flex_shrink(1.0f64) };
     if columns { { (*trail).set_min_width(flex::StyleLength::points(trail_min)) }; }
     else { { (*trail).set_min_height(flex::StyleLength::points(trail_min)) }; }
+    // THE DIVIDER IS A GAP, not just a painted bar. The bar is drawn on this
+    // panel at `[extent, extent+thickness]`, but the trailing pane is a CHILD
+    // WINDOW that paints over the parent — placed edge-to-edge it covered the
+    // bar and the split showed no handle. So the trailing pane is inset by the
+    // thickness on its leading edge: the gap it leaves is where the divider
+    // shows through, and the grab band straddles it.
+    let gap: f64 = split_thickness(p);
+    if columns {
+        { (*trail).set_margin(flex::Edge::Left, flex::StyleLength::points(gap)) };
+        { (*trail).set_margin(flex::Edge::Top, flex::StyleLength::points(0.0f64)) };
+    } else {
+        { (*trail).set_margin(flex::Edge::Top, flex::StyleLength::points(gap)) };
+        { (*trail).set_margin(flex::Edge::Left, flex::StyleLength::points(0.0f64)) };
+    }
     // A COLLAPSED TRAILING PANE gives its space to the leading one, which then
     // has to be the pane that grows — otherwise the split leaves a hole where
     // the trailing pane was.
@@ -2682,8 +2871,11 @@ fn draw_split(v: *u8, n: *core::Node, hdc: *u8) {
     if p == (0 as *split::SplitProps) { return; }
     var has: bool = false;
     var c: u32 = paint::resolve({ (*p).divider_color }, #addr_of(has));
-    // COLOR_3DFACE — the shell's own divider colour, and the one a splitter
-    // wears in every Windows application that has one.
+    // The separator colour, resolved through `paint` so it follows the
+    // appearance — a splitter that defaulted to `COLOR_3DFACE` came up as a
+    // bright bar on a dark window, because `GetSysColor` does not track dark
+    // mode.
+    if !has { c = paint::resolve(vocab::Color::separator(), #addr_of(has)); }
     if !has { c = { u::GetSysColor(15 as i32) }; }
     let brush: *u8 = paint::brush_for(c);
     if brush == (0 as *u8) { return; }
@@ -3332,7 +3524,7 @@ fn draw_button(di: *u8) -> bool {
                       // which is what a push button is. `text_button` is the
                       // kind that has one.
                       vocab::TextAlign::Center, { (*p).line_break });
-    if (state & ods_focus()) != (0 as u32) {
+    if (state & ods_focus()) != (0 as u32) && (state & ods_nofocusrect()) == (0 as u32) {
         let _fr: i32 = { u::DrawFocusRect(hdc, #addr_of(r)) };
     }
     return true;
@@ -3487,7 +3679,7 @@ fn draw_toggle_like(di: *u8, round: bool) -> bool {
         draw_button_label(hdc, v, text_box, state, title, colour, spacing,
                           vocab::TextAlign::Start, vocab::LineBreak::TailTruncation);
     }
-    if (state & ods_focus()) != (0 as u32) {
+    if (state & ods_focus()) != (0 as u32) && (state & ods_nofocusrect()) == (0 as u32) {
         let _fr: i32 = { u::DrawFocusRect(hdc, #addr_of(r)) };
     }
     return true;
@@ -3677,11 +3869,16 @@ fn paint_node(v: *u8, n: *core::Node, hdc: *u8) {
     if kind == split::K_SPLIT { draw_split(v, n, hdc); return; }
     if kind == props::K_IMAGE { draw_image(v, n, hdc); return; }
     if kind == props::K_WEB { draw_web_placeholder(v, n, hdc); return; }
+    if kind == props::K_CANVAS { drawing::paint_canvas(v, n, hdc); return; }
+    if kind == props::K_SPINNER { drawing::draw_spinner(v, n, hdc); return; }
+    if kind == props::K_STEPPER { draw_stepper(v, n, hdc); return; }
     if kind == props::K_BOX { draw_box(v, n, hdc); return; }
     return;
 }
 
-// THE WEB VIEW, HONESTLY ABSENT.
+// THE WEB VIEW'S GROUND, under the browser and instead of it. `web` is a real
+// WebView2 host now (see `webview2.cplus`); this paints what shows before the
+// first frame, and instead of it where the WebView2 loader cannot be found.
 //
 // `web` is a WebView2 host on Windows, and WebView2 is COM: an environment
 // created asynchronously through `CreateCoreWebView2EnvironmentWithOptions`, a
@@ -3717,7 +3914,7 @@ fn draw_web_placeholder(v: *u8, n: *core::Node, hdc: *u8) {
     let _t: u32 = { gdi::SetTextColor(hdc, if fg { ink } else { { u::GetSysColor(17 as i32) } }) };
     let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
 
-    var line: text::Text = text::from_str("Web view — requires WebView2 (not built)");
+    var line: text::Text = text::from_str("Loading web view…");
     let p: *props::WebProps = props_of(n, props::K_WEB) as *props::WebProps;
     if p != (0 as *props::WebProps) {
         let src: str = { (*p).source }.view();
@@ -3819,117 +4016,92 @@ fn cd_off_hdc() -> usize { return 32 as usize; }
 fn cd_off_rect() -> usize { return 40 as usize; }
 fn cd_off_itemspec() -> usize { return 56 as usize; }
 
+// The slider is drawn ENTIRELY in CDDS_PREPAINT and the default is skipped.
+//
+// The per-item stages (TBCD_CHANNEL, TBCD_THUMB) are not reliable: a trackbar
+// sends them on its first paint and then, on a programmatic repaint — a
+// `TBM_SETPOS` from `apply`, a `RedrawWindow`, the value driven from the stepper
+// — sends CDDS_PREPAINT ALONE and no items. Custom-drawing the parts from the
+// item stages therefore left the ground filled and the channel and thumb
+// missing: the slider went blank on every repaint after the first. Measured on
+// the gallery's Values page with a stage log. So the whole control is drawn
+// here in one stage, from `TBM_GETCHANNELRECT` / `TBM_GETTHUMBRECT` for the
+// geometry and `TBM_GETPOS` for the split, and CDRF_SKIPDEFAULT is returned so
+// nothing else touches it.
+//
+// A LIGHT system with no stated colours keeps the native themed slider: there
+// is nothing to customise, so the default is left to draw.
 fn slider_customdraw(v: *u8, nm: *u8) -> i64 {
     let stage: u32 = read_u32_at(nm, cd_off_stage());
-    if stage == cdds_prepaint() {
-        // THE CONTROL'S FACE, painted here rather than trusted to the
-        // control. A trackbar does not reliably ask its parent for its
-        // background — dropped out of visual styles it filled with the classic
-        // face regardless, measured as a white stripe across a dark page — and
-        // CDDS_PREPAINT hands us the DC before anything else draws, which is
-        // the one moment the whole client can be grounded. Only on a dark
-        // system; a light one keeps the platform's own drawing untouched.
-        if paint::dark_controls() {
-            let hdc0: *u8 = read_ptr_at(nm, cd_off_hdc());
-            if hdc0 != (0 as *u8) {
-                var cr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
-                                                  right: 0 as i32, bottom: 0 as i32 };
-                if { u::GetClientRect(v, #addr_of(cr)) } != (0 as i32) {
-                    let ground: *u8 = paint::brush_for(paint::effective_bg(v));
-                    if ground != (0 as *u8) {
-                        let _f: i32 = { u::FillRect(hdc0, #addr_of(cr), ground) };
-                    }
-                }
-            }
-        }
-        return cdrf_notifyitemdraw();
-    }
-    if stage != cdds_itemprepaint() { return cdrf_dodefault(); }
+    if stage != cdds_prepaint() { return cdrf_dodefault(); }
     let n: *core::Node = { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
     if n == (0 as *core::Node) { return cdrf_dodefault(); }
     let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
     if p == (0 as *props::SliderProps) { return cdrf_dodefault(); }
     let hdc: *u8 = read_ptr_at(nm, cd_off_hdc());
     if hdc == (0 as *u8) { return cdrf_dodefault(); }
-    let spec: u64 = read_ptr_at(nm, cd_off_itemspec()) as u64;
-    var r: u::tagRECT = u::tagRECT {
-        left: read_u32_at(nm, cd_off_rect()) as i32,
-        top: read_u32_at(nm, cd_off_rect() +% (4 as usize)) as i32,
-        right: read_u32_at(nm, cd_off_rect() +% (8 as usize)) as i32,
-        bottom: read_u32_at(nm, cd_off_rect() +% (12 as usize)) as i32,
-    };
+    let dark: bool = paint::dark_controls();
 
-    if spec == tbcd_thumb() {
-        // A PICTURE WINS OVER A COLOUR. `thumb_image` is the more specific
-        // verb — an application that stated both meant the picture, and
-        // filling the colour underneath would show at its edges.
-        if imaging::draw(hdc, r, { (*p).thumb_image }.view(),
-                         vocab::ImageFit::AspectFit) {
-            return cdrf_skipdefault();
-        }
-        var has: bool = false;
-        var c: u32 = paint::resolve({ (*p).thumb_color }, #addr_of(has));
-        // A DARK SYSTEM IS ITSELF A REASON, as it is for the button: a trackbar
-        // has no dark part-list either, so a slider nobody coloured comes up as
-        // a white track with a light thumb in a dark window. Measured in the
-        // gallery's Values page.
-        if !has && paint::dark_controls() {
-            c = paint::resolve(vocab::Color::accent(), #addr_of(has));
-        }
-        if !has { return cdrf_dodefault(); }
-        let b: *u8 = paint::brush_for(c);
-        if b == (0 as *u8) { return cdrf_dodefault(); }
-        let _f: i32 = { u::FillRect(hdc, #addr_of(r), b) };
-        return cdrf_skipdefault();
+    var lo_has: bool = false;
+    var hi_has: bool = false;
+    var th_has: bool = false;
+    var lo: u32 = paint::resolve({ (*p).minimum_track_color }, #addr_of(lo_has));
+    var hi: u32 = paint::resolve({ (*p).maximum_track_color }, #addr_of(hi_has));
+    var thc: u32 = paint::resolve({ (*p).thumb_color }, #addr_of(th_has));
+    let has_image: bool = { (*p).thumb_image }.view() != "";
+    if !dark && !lo_has && !hi_has && !th_has && !has_image {
+        return cdrf_dodefault();
+    }
+    if dark {
+        if !lo_has { lo = paint::resolve(vocab::Color::accent(), #addr_of(lo_has)); }
+        if !hi_has { hi = paint::resolve(vocab::Color::separator(), #addr_of(hi_has)); }
+        if !th_has { thc = paint::resolve(vocab::Color::accent(), #addr_of(th_has)); }
+    }
+    if !lo_has { lo = { u::GetSysColor(13 as i32) }; }
+    if !hi_has { hi = { u::GetSysColor(16 as i32) }; }
+    if !th_has { thc = { u::GetSysColor(13 as i32) }; }
+
+    var cr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(cr)) } != (0 as i32) {
+        let ground: *u8 = paint::brush_for(paint::effective_bg(v));
+        if ground != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(cr), ground) }; }
     }
 
-    if spec == tbcd_channel() {
-        var lo_has: bool = false;
-        var hi_has: bool = false;
-        var lo: u32 = paint::resolve({ (*p).minimum_track_color }, #addr_of(lo_has));
-        var hi: u32 = paint::resolve({ (*p).maximum_track_color }, #addr_of(hi_has));
-        // The same default on a dark system, and the same reason. The FILLED
-        // side takes the accent and the empty side the separator grey, which
-        // is what a dark trackbar looks like everywhere it exists.
-        if !lo_has && paint::dark_controls() {
-            lo = paint::resolve(vocab::Color::accent(), #addr_of(lo_has));
-        }
-        if !hi_has && paint::dark_controls() {
-            hi = paint::resolve(vocab::Color::separator(), #addr_of(hi_has));
-        }
-        if !lo_has && !hi_has { return cdrf_dodefault(); }
-        // ONE STATED COLOUR STILL TAKES THE WHOLE CHANNEL. Filling only the
-        // half that was asked for and letting the theme draw the rest cannot
-        // work — the default draw paints the entire channel and would cover
-        // it. So once either colour is stated this package owns both halves,
-        // and the unstated one falls back to the system colour a classic
-        // trackbar uses for it.
-        if !lo_has { lo = { u::GetSysColor(13 as i32) }; }   // COLOR_HIGHLIGHT
-        if !hi_has { hi = { u::GetSysColor(16 as i32) }; }   // COLOR_3DSHADOW
-        // WHERE THE THUMB IS, as a fraction — the channel rect is the whole
-        // track, so the split has to be computed from the value rather than
-        // read off the rect.
-        let span: f64 = { (*p).maximum } - { (*p).minimum };
-        var t: f64 = 0.0f64;
-        if span > (0.0 as f64) { t = ({ (*p).value } - { (*p).minimum }) / span; }
-        if t < (0.0 as f64) { t = 0.0f64; }
-        if t > (1.0 as f64) { t = 1.0f64; }
-        let cut: i32 = r.left +% ((((r.right -% r.left) as f64) * t) as i32);
-        let bl: *u8 = paint::brush_for(lo);
-        if bl != (0 as *u8) {
-            var lr: u::tagRECT = u::tagRECT { left: r.left, top: r.top,
-                                              right: cut, bottom: r.bottom };
-            let _f: i32 = { u::FillRect(hdc, #addr_of(lr), bl) };
-        }
-        let bh: *u8 = paint::brush_for(hi);
-        if bh != (0 as *u8) {
-            var hr: u::tagRECT = u::tagRECT { left: cut, top: r.top,
-                                              right: r.right, bottom: r.bottom };
-            let _f: i32 = { u::FillRect(hdc, #addr_of(hr), bh) };
-        }
-        return cdrf_skipdefault();
+    var chan: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                        right: 0 as i32, bottom: 0 as i32 };
+    let _gc: i64 = { u::SendMessageA(v, sys::tbm_getchannelrect(), 0 as u64, #addr_of(chan) as i64) };
+    let pos: i64 = { u::SendMessageA(v, sys::tbm_getpos(), 0 as u64, 0 as i64) };
+    var t: f64 = (pos as f64) / (slider_steps() as f64);
+    if t < (0.0 as f64) { t = 0.0f64; }
+    if t > (1.0 as f64) { t = 1.0f64; }
+    let cut: i32 = chan.left +% ((((chan.right -% chan.left) as f64) * t) as i32);
+    let bl: *u8 = paint::brush_for(lo);
+    if bl != (0 as *u8) {
+        var lr: u::tagRECT = u::tagRECT { left: chan.left, top: chan.top,
+                                          right: cut, bottom: chan.bottom };
+        let _f: i32 = { u::FillRect(hdc, #addr_of(lr), bl) };
     }
-    return cdrf_dodefault();
+    let bh: *u8 = paint::brush_for(hi);
+    if bh != (0 as *u8) {
+        var hr: u::tagRECT = u::tagRECT { left: cut, top: chan.top,
+                                          right: chan.right, bottom: chan.bottom };
+        let _f: i32 = { u::FillRect(hdc, #addr_of(hr), bh) };
+    }
+
+    var thumb: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                         right: 0 as i32, bottom: 0 as i32 };
+    let _gt: i64 = { u::SendMessageA(v, sys::tbm_getthumbrect(), 0 as u64, #addr_of(thumb) as i64) };
+    if has_image {
+        if !imaging::draw(hdc, thumb, { (*p).thumb_image }.view(), vocab::ImageFit::AspectFit) {
+            let bt: *u8 = paint::brush_for(thc);
+            if bt != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(thumb), bt) }; }
+        }
+    } else {
+        let bt: *u8 = paint::brush_for(thc);
+        if bt != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(thumb), bt) }; }
+    }
+    return cdrf_skipdefault();
 }
 
 #[test]

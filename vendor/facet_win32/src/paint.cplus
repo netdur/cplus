@@ -43,6 +43,23 @@ import "stdlib/text" as text;
 import "win32/winuser" as u;
 import "win32/wingdi" as gdi;
 import "./sys" as sys;
+import "./imaging" as imaging;
+
+// ---- GDI+, for the one thing GDI cannot do: a gradient ------------------------
+//
+// A `background` Brush is a linear gradient — two colours across a box at an
+// angle — and GDI has no primitive for it. GDI+ does, through the same flat C
+// API `imaging` already starts up for the bitmap decoder. A rect-with-angle
+// line brush spans the box edge to edge along the angle, and GDI+ measures that
+// angle the way facet does: 0° left-to-right, 90° top-to-bottom.
+#[repr(C)] struct GpRectF { x: f32, y: f32, w: f32, h: f32 }
+extern fn GdipCreateFromHDC(hdc: *u8, graphics: *usize) -> i32;
+extern fn GdipDeleteGraphics(graphics: usize) -> i32;
+extern fn GdipSetSmoothingMode(graphics: usize, mode: i32) -> i32;
+extern fn GdipCreateLineBrushFromRectWithAngle(rect: *GpRectF, c1: u32, c2: u32,
+    angle: f32, scalable: i32, wrap: i32, brush: *usize) -> i32;
+extern fn GdipDeleteBrush(brush: usize) -> i32;
+extern fn GdipFillRectangleI(graphics: usize, brush: usize, x: i32, y: i32, w: i32, h: i32) -> i32;
 
 // Every state bit — the CREATE pass. Matches `facet_appkit::paint::all_bits`
 // and `facet_gtk`'s: create configures the new window with every bit set,
@@ -380,7 +397,7 @@ fn apply_clip(v: *u8, n: *core::Node) {
     let w: i32 = r.right -% r.left;
     let h: i32 = r.bottom -% r.top;
     if w <= (0 as i32) || h <= (0 as i32) { return; }
-    let rgn: *u8 = region_for(shape, n, w, h);
+    let rgn: *u8 = region_for(shape, n, w, h, sys::dpi_scale(v));
     if rgn == (0 as *u8) { return; }
     if { u::SetWindowRgn(v, rgn, 1 as i32) } == (0 as i32) {
         let _d: i32 = { gdi::DeleteObject(rgn) };
@@ -393,7 +410,7 @@ fn apply_clip(v: *u8, n: *core::Node) {
 //
 // `kind`: 0 none, 1 rect, 2 rounded, 3 ellipse — the same four `bordered`
 // reads, and an ellipse is the box's own inscribed one.
-fn region_for(shape: vocab::Shape, n: *core::Node, w: i32, h: i32) -> *u8 {
+fn region_for(shape: vocab::Shape, n: *core::Node, w: i32, h: i32, scale: f64) -> *u8 {
     if shape.kind == (3 as i64) {
         return { gdi::CreateEllipticRgn(0 as i32, 0 as i32, w, h) };
     }
@@ -723,26 +740,99 @@ fn text_color_of(n: *core::Node) -> vocab::Color {
 // `controls` already imports this module, and an import back would be a cycle.
 fn paint_band_background(v: *u8, n: *core::Node, hdc: *u8) {
     if n == (0 as *core::Node) { return; }
-
-    var has: bool = false;
-    let c: u32 = resolve(core::background_color(n), #addr_of(has));
-    if !has { return; }
     var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
                                      right: 0 as i32, bottom: 0 as i32 };
     if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    // POINTS TO PIXELS. `corner_radius` is a stated point count and the fills
+    // below draw on the window's PIXEL client rect, so it scales with the DPI
+    // like every other dimension — otherwise a 10pt corner is 8px at 125%.
+    let radius: f64 = uniform_radius(core::corner_radius(n)) * sys::dpi_scale(v);
+
+    // THE BRUSH BAND FIRST. `set_background` writes a `Brush` — a gradient or a
+    // solid — into a DIFFERENT band from `set_background_color`, and reading
+    // only the colour band left every gradient AND every solid brush unpainted:
+    // the node had a window (`wants_view` counts the brush) and then drew the
+    // dark ground under it. Seen on the gallery's Brush page as an invisible
+    // panel where a gradient should be.
+    let bg: vocab::Brush = core::background(n);
+    if bg.start.is_set() {
+        if bg.is_gradient && bg.end.is_set() {
+            if fill_gradient_rect(hdc, r, bg, radius) { return; }
+            // GDI+ absent or refused: the start colour is a legible fallback.
+        }
+        var bs: bool = false;
+        let sc: u32 = resolve(bg.start, #addr_of(bs));
+        if bs { fill_solid(hdc, r, sc, radius); }
+        return;
+    }
+
+    // THE COLOUR BAND. The flat shorthand, unchanged.
+    var has: bool = false;
+    let c: u32 = resolve(core::background_color(n), #addr_of(has));
+    if !has { return; }
+    fill_solid(hdc, r, c, radius);
+    return;
+}
+
+// A flat fill, rounded or square. `brush_for` is cached, so this does not leak.
+fn fill_solid(hdc: *u8, r: u::tagRECT, c: u32, radius: f64) {
     let brush: *u8 = { gdi::CreateSolidBrush(c) };
     if brush == (0 as *u8) { return; }
-    let radius: vocab::Corners = core::corner_radius(n);
-    if uniform_radius(radius) > (0.0 as f64) {
-        paint_rounded(hdc, r, brush, uniform_radius(radius));
-    } else {
-        let _f: i32 = { u::FillRect(hdc, #addr_of(r), brush) };
-    }
-    // EVERY GDI OBJECT IS RELEASED. A brush leaked per paint is a handle leak
-    // at frame rate, and the process dies at 10,000 handles with an error that
-    // names none of this.
+    if radius > (0.0 as f64) { paint_rounded(hdc, r, brush, radius); }
+    else { let _f: i32 = { u::FillRect(hdc, #addr_of(r), brush) }; }
     let _d: i32 = { gdi::DeleteObject(brush) };
     return;
+}
+
+// An ARGB word from a colour. GDI+ wants 0xAARRGGBB — the straight order,
+// unlike a COLORREF's reversed one — and `chan` clamps each 0..1 component.
+fn argb(c: vocab::Color) -> u32 {
+    let live: vocab::Color = resolved(c);
+    let a: u32 = chan(live.a);
+    let rr: u32 = chan(live.r);
+    let g: u32 = chan(live.g);
+    let b: u32 = chan(live.b);
+    return (a << (24 as u32)) | (rr << (16 as u32)) | (g << (8 as u32)) | b;
+}
+
+// Fill `r` with `b`'s gradient. When a radius is asked for, the HDC is clipped
+// to the rounded rectangle first — GDI+ from an HDC honours its clip — and the
+// clip is saved and restored so the paint's own update region survives.
+fn fill_gradient_rect(hdc: *u8, r: u::tagRECT, b: vocab::Brush, radius: f64) -> bool {
+    let w: i32 = r.right -% r.left;
+    let h: i32 = r.bottom -% r.top;
+    if w <= (0 as i32) || h <= (0 as i32) { return false; }
+    if !imaging::ensure_gdiplus() { return false; }
+
+    let saved: i32 = { gdi::SaveDC(hdc) };
+    var rgn: *u8 = 0 as *u8;
+    if radius > (0.0 as f64) {
+        let d: i32 = (radius * (2.0 as f64)) as i32;
+        rgn = { gdi::CreateRoundRectRgn(r.left, r.top, r.right +% (1 as i32),
+                                        r.bottom +% (1 as i32), d, d) };
+        if rgn != (0 as *u8) { let _c: i32 = { gdi::ExtSelectClipRgn(hdc, rgn, 1 as i32) }; }
+    }
+
+    var g: usize = 0 as usize;
+    var ok: bool = false;
+    if { GdipCreateFromHDC(hdc, #addr_of(g)) } == imaging::gp_ok() {
+        let _sm: i32 = { GdipSetSmoothingMode(g, 4 as i32) };   // AntiAlias
+        var rect: GpRectF = GpRectF { x: r.left as f32, y: r.top as f32,
+                                      w: w as f32, h: h as f32 };
+        var br: usize = 0 as usize;
+        if { GdipCreateLineBrushFromRectWithAngle(#addr_of(rect), argb(b.start),
+                argb(b.end), b.angle as f32, 0 as i32, 0 as i32, #addr_of(br)) }
+           == imaging::gp_ok() {
+            let _f: i32 = { GdipFillRectangleI(g, br, r.left, r.top, w, h) };
+            let _db: i32 = { GdipDeleteBrush(br) };
+            ok = true;
+        }
+        let _dg: i32 = { GdipDeleteGraphics(g) };
+    }
+
+    let _r: i32 = { gdi::RestoreDC(hdc, saved) };
+    if rgn != (0 as *u8) { let _d: i32 = { gdi::DeleteObject(rgn) }; }
+    return ok;
 }
 
 // A rounded rectangle needs a PEN as well as a brush, because `RoundRect`

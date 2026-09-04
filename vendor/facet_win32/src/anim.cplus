@@ -144,6 +144,257 @@ fn read_fraction(v: *u8) -> f64 {
 
 fn pbm_getpos() -> u32 { return 0x0408 as u32; }
 
+// ---- the shared band: opacity and translation, CONCURRENTLY ------------------
+//
+// Both of the two animation channels a child HWND can wear (see MANIFEST):
+// OPACITY through a layered-window alpha, and the TRANSLATION part of the
+// transform through `SetWindowPos`. Scale and rotation cannot touch a control's
+// pixels and are left to the model alone.
+//
+// A REGISTRY, not a single outstanding tween. The progress bar and the carousel
+// animate one thing, but the shared band does not: the gallery's Easing page
+// launches ELEVEN translations at once to compare the curves, so anything
+// single-outstanding would show one row moving and ten snapping. So a fixed set
+// of slots is walked by one 16ms timer, and a fade and a slide on the same node
+// are two slots that run together.
+//
+// A DISPLAYED value lives on the window, separate from the model, because the
+// model already holds the destination the moment the verb is called. For
+// translation `geometry::place` reads the displayed offset and adds it on top of
+// the layout, so a move survives a relayout mid-slide.
+
+// -- layered opacity --
+
+fn lwa_alpha() -> u32 { return 0x2 as u32; }
+
+fn ensure_layered(v: *u8) {
+    let ex: i64 = { u::GetWindowLongPtrA(v, sys::gwl_exstyle()) };
+    if (ex & (sys::ws_ex_layered() as i64)) == (0 as i64) {
+        let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_exstyle(),
+                                             ex | (sys::ws_ex_layered() as i64)) };
+    }
+    return;
+}
+
+fn alpha_byte(opacity: f64) -> u8 {
+    var a: i32 = (clamped(opacity) * (255.0 as f64) + (0.5 as f64)) as i32;
+    if a < (0 as i32) { a = 0 as i32; }
+    if a > (255 as i32) { a = 255 as i32; }
+    return a as u8;
+}
+
+fn set_opacity_now(v: *u8, opacity: f64) {
+    if v == (0 as *u8) { return; }
+    ensure_layered(v);
+    let _r: i32 = { u::SetLayeredWindowAttributes(v, 0 as u32, alpha_byte(opacity), lwa_alpha()) };
+    return;
+}
+
+fn current_opacity(v: *u8) -> f64 {
+    var a: u8 = 255 as u8;
+    var key: u32 = 0 as u32;
+    var flags: u32 = 0 as u32;
+    if { u::GetLayeredWindowAttributes(v, #addr_of(key), #addr_of(a), #addr_of(flags)) } == (0 as i32) {
+        return 1.0f64;
+    }
+    return (a as f64) / (255.0 as f64);
+}
+
+// -- translation offset, stored on the window --
+
+fn prop_tx() -> *u8 { return { #str_ptr("facet-anim-tx\0") }; }
+fn prop_ty() -> *u8 { return { #str_ptr("facet-anim-ty\0") }; }
+fn prop_bx() -> *u8 { return { #str_ptr("facet-anim-bx\0") }; }
+fn prop_by() -> *u8 { return { #str_ptr("facet-anim-by\0") }; }
+
+fn read_i32_prop(v: *u8, name: *u8) -> i32 {
+    return ((({ u::GetPropA(v, name as *i8) } as usize) as i64) as i32);
+}
+fn write_i32_prop(v: *u8, name: *u8, x: i32) {
+    let _r: i32 = { u::SetPropA(v, name as *i8, ((x as i64) as usize) as *u8) };
+    return;
+}
+
+// The layout position, before translation. `geometry::place` records it on
+// every placement so an in-flight tween offsets the CURRENT base.
+fn store_layout_base(v: *u8, x: i32, y: i32) {
+    write_i32_prop(v, prop_bx(), x);
+    write_i32_prop(v, prop_by(), y);
+    return;
+}
+fn displayed_tx(v: *u8) -> i32 { return read_i32_prop(v, prop_tx()); }
+fn displayed_ty(v: *u8) -> i32 { return read_i32_prop(v, prop_ty()); }
+
+fn place_translated(v: *u8) {
+    let bx: i32 = read_i32_prop(v, prop_bx());
+    let by: i32 = read_i32_prop(v, prop_by());
+    let flags: u32 = sys::swp_nozorder() | sys::swp_noactivate() | sys::swp_nosize();
+    let _r: i32 = { u::SetWindowPos(v, sys::hwnd_top(),
+                                    bx +% displayed_tx(v), by +% displayed_ty(v),
+                                    0 as i32, 0 as i32, flags) };
+    return;
+}
+
+fn round_px(x: f64) -> i32 {
+    if x < (0.0 as f64) { return (0 as i32) -% (((0.0 as f64) - x) + (0.5 as f64)) as i32; }
+    return (x + (0.5 as f64)) as i32;
+}
+
+fn set_translation_now(v: *u8, x: f64, y: f64) {
+    if v == (0 as *u8) { return; }
+    write_i32_prop(v, prop_tx(), round_px(x));
+    write_i32_prop(v, prop_ty(), round_px(y));
+    place_translated(v);
+    return;
+}
+
+// -- the concurrent tween registry --
+
+fn a_opacity() -> i32 { return 0 as i32; }
+fn a_translate() -> i32 { return 1 as i32; }
+fn amax() -> usize { return 48 as usize; }
+
+struct ASlot {
+    win: usize,        // 0 = free
+    kind: i32,
+    fx: f64,           // FROM (opacity uses fx/tx only)
+    fy: f64,
+    tx: f64,           // TO
+    ty: f64,
+    step: i64,
+    steps: i64,
+    curve: vocab::Easing,
+}
+
+static SLOTS: [ASlot; 48] = #zero::[[ASlot; 48]]();
+static ANIM_TIMER: u64 = 0;
+
+fn slot_of(win: usize, kind: i32) -> i32 {
+    var i: usize = 0 as usize;
+    while i < amax() {
+        if SLOTS[i].win == win && SLOTS[i].kind == kind { return i as i32; }
+        i = i +% (1 as usize);
+    }
+    return (0 as i32) -% (1 as i32);
+}
+
+fn free_slot() -> i32 {
+    var i: usize = 0 as usize;
+    while i < amax() {
+        if SLOTS[i].win == (0 as usize) { return i as i32; }
+        i = i +% (1 as usize);
+    }
+    return (0 as i32) -% (1 as i32);
+}
+
+fn any_active() -> bool {
+    var i: usize = 0 as usize;
+    while i < amax() {
+        if SLOTS[i].win != (0 as usize) { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn anim_tick_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, u32) = anim_tick;
+    return f as *u8;
+}
+
+fn ensure_anim_timer() {
+    if ANIM_TIMER == (0 as u64) {
+        ANIM_TIMER = { u::SetTimer(0 as *u8, 0 as u64, frame_ms(), anim_tick_addr()) };
+    }
+    return;
+}
+
+// Arm (or re-arm) a slot for `v` and `kind` — a second animation of the same
+// channel on the same node REPLACES the first, which is what a re-issued verb
+// means. A full registry drops the request rather than growing.
+fn arm_slot(v: *u8, kind: i32, fx: f64, fy: f64, tx: f64, ty: f64,
+            steps: i64, curve: vocab::Easing) {
+    var idx: i32 = slot_of({ #addr(v) }, kind);
+    if idx < (0 as i32) { idx = free_slot(); }
+    if idx < (0 as i32) { return; }
+    let i: usize = idx as usize;
+    SLOTS[i].win = { #addr(v) };
+    SLOTS[i].kind = kind;
+    SLOTS[i].fx = fx;
+    SLOTS[i].fy = fy;
+    SLOTS[i].tx = tx;
+    SLOTS[i].ty = ty;
+    SLOTS[i].step = 0 as i64;
+    SLOTS[i].steps = steps;
+    SLOTS[i].curve = curve;
+    ensure_anim_timer();
+    return;
+}
+
+fn free_for(v: *u8, kind: i32) {
+    let idx: i32 = slot_of({ #addr(v) }, kind);
+    if idx >= (0 as i32) { SLOTS[idx as usize].win = 0 as usize; }
+    return;
+}
+
+fn apply_slot(i: usize, at: f64) {
+    if SLOTS[i].kind == a_opacity() {
+        let a: f64 = SLOTS[i].fx + ((SLOTS[i].tx - SLOTS[i].fx) * at);
+        set_opacity_now(SLOTS[i].win as *u8, a);
+    } else {
+        let v: *u8 = SLOTS[i].win as *u8;
+        let x: f64 = SLOTS[i].fx + ((SLOTS[i].tx - SLOTS[i].fx) * at);
+        let y: f64 = SLOTS[i].fy + ((SLOTS[i].ty - SLOTS[i].fy) * at);
+        write_i32_prop(v, prop_tx(), round_px(x));
+        write_i32_prop(v, prop_ty(), round_px(y));
+        place_translated(v);
+    }
+    return;
+}
+
+fn anim_tick(w: *u8, msg: u32, id: u64, ticks: u32) {
+    var i: usize = 0 as usize;
+    while i < amax() {
+        if SLOTS[i].win != (0 as usize) {
+            SLOTS[i].step = SLOTS[i].step +% (1 as i64);
+            let t: f64 = (SLOTS[i].step as f64) / (SLOTS[i].steps as f64);
+            apply_slot(i, eased(t, SLOTS[i].curve));
+            if SLOTS[i].step >= SLOTS[i].steps {
+                apply_slot(i, 1.0f64);          // land exactly on the end value
+                SLOTS[i].win = 0 as usize;
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    if !any_active() {
+        if ANIM_TIMER != (0 as u64) { let _k: i32 = { u::KillTimer(0 as *u8, ANIM_TIMER) }; }
+        ANIM_TIMER = 0 as u64;
+    }
+    return;
+}
+
+// -- the public verbs the band calls --
+
+fn animate_opacity(v: *u8, opacity: f64, duration: vocab::Duration, curve: vocab::Easing) {
+    if v == (0 as *u8) { return; }
+    if duration.seconds <= (0.0 as f64) { set_opacity_now(v, opacity); return; }
+    ensure_layered(v);
+    arm_slot(v, a_opacity(), current_opacity(v), 0.0f64, opacity, 0.0f64,
+             steps_for(duration), curve);
+    return;
+}
+
+fn cancel_opacity(v: *u8) { free_for(v, a_opacity()); return; }
+
+fn animate_translation(v: *u8, to_x: f64, to_y: f64, duration: vocab::Duration, curve: vocab::Easing) {
+    if v == (0 as *u8) { return; }
+    if duration.seconds <= (0.0 as f64) { set_translation_now(v, to_x, to_y); return; }
+    arm_slot(v, a_translate(), displayed_tx(v) as f64, displayed_ty(v) as f64,
+             to_x, to_y, steps_for(duration), curve);
+    return;
+}
+
+fn cancel_translation(v: *u8) { free_for(v, a_translate()); return; }
+
 // ---- the eleven curves ---------------------------------------------------------
 //
 // `t` runs 0..1 and the answer runs 0..1, except where the curve deliberately

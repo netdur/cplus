@@ -34,6 +34,8 @@ import "./sys" as sys;
 import "./controls" as controls;
 import "./subclass" as subclass;
 import "./paint" as paint;
+import "./anim" as anim;
+import "./drawing" as drawing;
 import "./input" as input;
 import "./measure" as measure;
 import "./fonts" as fonts;
@@ -132,6 +134,8 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_COLLECTION { return recycler::create_sequence(n); }
     if kind == ftree::K_TREE { return recycler::create_tree(n); }
     if kind == props::K_SCROLL { return controls::create_scroll(n); }
+    if kind == props::K_WEB { return controls::create_web(n); }
+    if kind == props::K_CANVAS { return controls::create_canvas(n); }
     if kind == props::K_BOX { return controls::create_box(n); }
     // Every remaining backed kind is a plain panel until it has a body: it
     // holds children and honours the band, which is more than a null window
@@ -171,6 +175,8 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_COLLECTION { recycler::apply_sequence(v, n, dirty); return; }
     if kind == ftree::K_TREE { recycler::apply_tree(v, n, dirty); return; }
     if kind == props::K_SCROLL { controls::apply_scroll_props(v, n, dirty); return; }
+    if kind == props::K_WEB { controls::apply_web(v, n, dirty); return; }
+    if kind == props::K_CANVAS { drawing::apply_canvas(v, n, dirty); return; }
     if kind == props::K_BOX { controls::apply_box(v, n, dirty); return; }
     if kind == props::K_SWIPEABLE { swipe::apply(v, n, dirty); return; }
     return;
@@ -181,11 +187,54 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
 // kind.
 fn configure(v: *u8, n: *core::Node, d: u64) {
     paint::band(v, n, d);
+    anim_band(v, n, d);
     // THE FONT BEFORE THE KIND'S OWN WRITES, because a control measures its text
     // in whatever font it is wearing — so a body that sets a string first would
     // have sized it in the old one.
     if (d & fonts::font_bits(core::kind_of(n))) != (0 as u64) { fonts::apply(v, n); }
     apply_for_kind(core::kind_of(n), v, n, d);
+    return;
+}
+
+// THE ANIMATION BAND, the two channels a child HWND can wear. `C_OPACITY` /
+// `ANIM_OPACITY` is a layered-alpha fade; `C_TRANSFORM` / `ANIM_TRANSFORM` is a
+// `SetWindowPos` MOVE for the translation part of the matrix. Scale and rotation
+// are the rest of that matrix and are NOT applied — a control's pixels cannot be
+// scaled or rotated — so animating them changes the model (reads stay truthful)
+// but not the picture, which is the honest platform edge MANIFEST records.
+fn anim_band(v: *u8, n: *core::Node, d: u64) {
+    if v == (0 as *u8) { return; }
+    if (d & props::C_CANCEL_ANIMATIONS) != (0 as u64) {
+        anim::cancel_opacity(v);
+        anim::set_opacity_now(v, core::opacity(n));
+        anim::cancel_translation(v);
+        anim::set_translation_now(v, core::translation_x(n), core::translation_y(n));
+    }
+    if (d & props::C_ANIMATE) != (0 as u64) {
+        let ch: u32 = core::animate_channels_of(n);
+        if (ch & props::ANIM_OPACITY) != (0 as u32) {
+            anim::animate_opacity(v, core::opacity(n),
+                                  core::animate_duration_of(n), core::animate_easing_of(n));
+        }
+        if (ch & props::ANIM_TRANSFORM) != (0 as u32) {
+            anim::animate_translation(v, core::translation_x(n), core::translation_y(n),
+                                      core::animate_duration_of(n), core::animate_easing_of(n));
+        }
+        core::clear_animate_channels(n);
+        return;
+    }
+    // A plain set. Opacity only reaches for a layered window when it is actually
+    // below 1.0 (an opaque control stays unlayered and pays nothing); the move
+    // only when there is a non-zero offset, so a create at (0,0) does not fight
+    // the layout that has not run yet.
+    if (d & props::C_OPACITY) != (0 as u64) {
+        if core::opacity(n) < (1.0 as f64) { anim::set_opacity_now(v, core::opacity(n)); }
+    }
+    if (d & props::C_TRANSFORM) != (0 as u64) {
+        if core::translation_x(n) != (0.0 as f64) || core::translation_y(n) != (0.0 as f64) {
+            anim::set_translation_now(v, core::translation_x(n), core::translation_y(n));
+        }
+    }
     return;
 }
 

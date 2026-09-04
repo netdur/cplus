@@ -143,6 +143,19 @@ fn gwl_style() -> i32 { return 0 -% (16 as i32); }
 fn gwl_id() -> i32 { return 0 -% (12 as i32); }
 fn gwl_exstyle() -> i32 { return 0 -% (20 as i32); }
 
+// THE DPI SCALE — the factor between facet's LOGICAL points and Win32's PHYSICAL
+// pixels: 1.0 at 96 DPI, 1.25 at 120. flex lays out in points and the backend
+// multiplies by this at placement (`geometry::place`) and divides by it at
+// measurement (`measure::measure_view`), so a stated `.width(200)` is 250
+// physical pixels on a 125% display — the same way the fonts already scale.
+// `GetDpiForWindow` is the per-monitor answer and needs no window state.
+fn dpi_scale(v: *u8) -> f64 {
+    if v == (0 as *u8) { return 1.0f64; }
+    let d: u32 = { u::GetDpiForWindow(v) };
+    if d == (0 as u32) { return 1.0f64; }
+    return (d as f64) / (96.0 as f64);
+}
+
 // ---- control classes ---------------------------------------------------------
 //
 // The system classes are STRINGS, and the SDK spells them as `#define`s too.
@@ -227,8 +240,18 @@ fn pbs_marquee() -> u32 { return 0x08 as u32; }
 
 fn tbm_getpos() -> u32 { return 0x0400 as u32; }
 fn tbm_setpos() -> u32 { return 0x0405 as u32; }
-fn tbm_setrangemin() -> u32 { return 0x041E as u32; }
-fn tbm_setrangemax() -> u32 { return 0x041F as u32; }
+// TBM_SETRANGEMIN / TBM_SETRANGEMAX are WM_USER+7 / WM_USER+8 = 0x0407 / 0x0408.
+// They were 0x041E / 0x041F (WM_USER+30/31) — a different message entirely — so
+// the range never left the trackbar's default 0..100, and a `TBM_SETPOS` for a
+// value past 100 clamped to the far right. The channel fill reads the value and
+// so still looked right, which hid the thumb sitting at the wrong end. Seen on
+// the gallery's Values page: a slider at 0.4 with its handle pinned to the end.
+fn tbm_setrangemin() -> u32 { return 0x0407 as u32; }
+fn tbm_setrangemax() -> u32 { return 0x0408 as u32; }
+// TBM_GETTHUMBRECT = WM_USER+25, TBM_GETCHANNELRECT = WM_USER+26 — each fills a
+// RECT* in lParam with the part's bounds in client coordinates.
+fn tbm_getthumbrect() -> u32 { return 0x0419 as u32; }
+fn tbm_getchannelrect() -> u32 { return 0x041A as u32; }
 fn tbs_horz() -> u32 { return 0x0000 as u32; }
 // TBS_NOTICKS is 0x0010. 0x0080 is TBS_NOTHUMB, which removes the GRIP — the
 // one part of a slider a hand can grab. Written here wrong once and visible

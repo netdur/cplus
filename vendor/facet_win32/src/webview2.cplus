@@ -1,0 +1,724 @@
+// facet_win32/webview2 — the `web` kind, an embedded browser.
+//
+// THE FIRST COM IN THE PACKAGE, and a deliberate one. `dnd` chose WM_DROPFILES
+// over IDropTarget and `imaging` chose GDI+ over WIC precisely to keep this
+// package free of COM — but a `web` view IS WebView2, and WebView2 is COM to
+// the ground: an environment created asynchronously, a completion handler this
+// module implements as a hand-built vtable, a controller, an `ICoreWebView2`
+// reached through more vtable calls. There is no non-COM door. So this file is
+// the one place the package speaks it, kept to the smallest surface that shows
+// a page: environment, controller, Navigate, Bounds, and the teardown.
+//
+// WHAT A COM OBJECT IS, laid out by hand because C+ has no `interface`: a block
+// of memory whose first machine word points at a VTABLE — an array of function
+// pointers. Interface methods are called by reading that word, indexing the
+// table, and calling the slot with the object as the first argument. Our own
+// completion handlers are the mirror image: a vtable we fill with C+ functions
+// and a small object carrying one field of context, handed to WebView2 to call
+// back. The Microsoft x64 calling convention is the only one native code uses
+// here, which is why a plain C+ `fn` can BE a COM method — the same fact that
+// lets `window::wnd_proc` be a WNDPROC.
+//
+// THE LOADER. `CreateCoreWebView2EnvironmentWithOptions` lives in
+// `WebView2Loader.dll`; the loader finds the installed Edge WebView2 runtime
+// and talks to it. It is resolved by name (an app ships it beside its exe) with
+// absolute fallbacks, and if it cannot be found the `web` node keeps the framed
+// placeholder `controls::draw_web_placeholder` paints under it — the honest
+// absence, not a crash.
+
+import "facet/facet" as core;
+import "facet/props" as props;
+import "stdlib/text" as text;
+import "win32/winuser" as u;
+import "./sys" as sys;
+
+#[link_name = "malloc"]
+extern fn wv_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn wv_free(p: *u8);
+#[link_name = "LoadLibraryA"]
+extern fn load_library_a(name: *i8) -> *u8;
+#[link_name = "GetProcAddress"]
+extern fn get_proc_address(module: *u8, name: *i8) -> *u8;
+#[link_name = "CoInitializeEx"]
+extern fn co_initialize_ex(reserved: *u8, coinit: u32) -> i32;
+#[link_name = "GetTempPathW"]
+extern fn get_temp_path_w(len: u32, buf: *u16) -> u32;
+#[link_name = "CoTaskMemFree"]
+extern fn co_task_mem_free(p: *u8);
+
+// ---- global state ------------------------------------------------------------
+//
+// One environment serves every controller in the process, so it is created
+// once and cached. A `web` node that mounts before it is ready parks its host
+// window in PENDING and is served when the environment's completion handler
+// drains the list.
+
+static WV2_TRIED: bool = false;
+static WV2_CREATE: usize = 0;          // CreateCoreWebView2EnvironmentWithOptions
+static WV2_ENV: usize = 0;             // ICoreWebView2Environment*, once ready
+static WV2_INFLIGHT: bool = false;
+static WV2_PENDING: [usize; 16] = [0 as usize; 16];
+static WV2_PENDING_N: i32 = 0;
+static ENV_VTBL: usize = 0;
+static CTL_VTBL: usize = 0;
+static NOOP_VTBL: usize = 0;
+static NAVSTART_VTBL: usize = 0;
+static NAVDONE_VTBL: usize = 0;
+static PROCFAIL_VTBL: usize = 0;
+
+// ---- reading raw memory ------------------------------------------------------
+
+fn read_ptr(base: *u8, off: usize) -> *u8 {
+    let p: *usize = { (base + off) } as *usize;
+    return { *p } as *u8;
+}
+
+fn write_ptr(base: *u8, off: usize, v: *u8) {
+    let p: *usize = { (base + off) } as *usize;
+    { *p = v as usize };
+    return;
+}
+
+// The vtable pointer is machine word 0 of any COM object; a method is the
+// idx-th pointer in the table it names.
+fn slot(obj: *u8, idx: usize) -> *u8 {
+    let vt: *u8 = read_ptr(obj, 0 as usize);
+    return read_ptr(vt, idx *% (8 as usize));
+}
+
+// ---- calling a COM method by index -------------------------------------------
+
+fn call0(obj: *u8, idx: usize) -> i32 {
+    let f: fn(*u8) -> i32 = slot(obj, idx) as fn(*u8) -> i32;
+    return f(obj);
+}
+fn call_p(obj: *u8, idx: usize, a: *u8) -> i32 {
+    let f: fn(*u8, *u8) -> i32 = slot(obj, idx) as fn(*u8, *u8) -> i32;
+    return f(obj, a);
+}
+fn call_i(obj: *u8, idx: usize, a: i32) -> i32 {
+    let f: fn(*u8, i32) -> i32 = slot(obj, idx) as fn(*u8, i32) -> i32;
+    return f(obj, a);
+}
+fn call_pp(obj: *u8, idx: usize, a: *u8, b: *u8) -> i32 {
+    let f: fn(*u8, *u8, *u8) -> i32 = slot(obj, idx) as fn(*u8, *u8, *u8) -> i32;
+    return f(obj, a, b);
+}
+fn com_addref(obj: *u8) -> u32 {
+    let f: fn(*u8) -> u32 = slot(obj, 1 as usize) as fn(*u8) -> u32;
+    return f(obj);
+}
+fn com_release(obj: *u8) -> u32 {
+    let f: fn(*u8) -> u32 = slot(obj, 2 as usize) as fn(*u8) -> u32;
+    return f(obj);
+}
+
+// ---- the vtable indices, from the WebView2 IDL --------------------------------
+//
+// COM interfaces are append-only, so these offsets are stable across runtime
+// versions — a later interface adds methods after the ones it inherits, never
+// between them.
+//
+//   ICoreWebView2Environment   CreateCoreWebView2Controller = 3
+//   ICoreWebView2Controller    put_IsVisible = 4, put_Bounds = 6,
+//                              Close = 24, get_CoreWebView2 = 25
+//   ICoreWebView2              Navigate = 5, ExecuteScript = 29, Reload = 31,
+//                              GoBack = 40, GoForward = 41
+//
+// put_Bounds takes a RECT BY VALUE; on x64 a 16-byte aggregate is passed as a
+// pointer to a caller-owned copy, so `call_p` with the address of the RECT is
+// exactly the ABI the method expects.
+
+fn idx_create_controller() -> usize { return 3 as usize; }
+fn idx_put_visible() -> usize { return 4 as usize; }
+fn idx_put_bounds() -> usize { return 6 as usize; }
+fn idx_close() -> usize { return 24 as usize; }
+fn idx_get_core() -> usize { return 25 as usize; }
+fn idx_navigate() -> usize { return 5 as usize; }
+fn idx_execute_script() -> usize { return 29 as usize; }
+fn idx_reload() -> usize { return 31 as usize; }
+fn idx_go_back() -> usize { return 40 as usize; }
+fn idx_go_forward() -> usize { return 41 as usize; }
+
+// The navigation events, and the reads `on_navigated` refreshes from.
+//   ICoreWebView2  add_NavigationStarting = 7, add_NavigationCompleted = 15,
+//                  add_ProcessFailed = 25, get_Source = 4,
+//                  get_CanGoBack = 38, get_CanGoForward = 39
+fn idx_add_nav_starting() -> usize { return 7 as usize; }
+fn idx_add_nav_completed() -> usize { return 15 as usize; }
+fn idx_add_process_failed() -> usize { return 25 as usize; }
+fn idx_get_source() -> usize { return 4 as usize; }
+fn idx_get_can_back() -> usize { return 38 as usize; }
+fn idx_get_can_forward() -> usize { return 39 as usize; }
+
+// ---- our completion handlers -------------------------------------------------
+//
+// The object is 40 bytes: the vtable pointer, a reference count, and one
+// pointer of context (the host HWND). WebView2 owns the object through the
+// count — it AddRefs to keep, Releases when done, and the last Release frees.
+
+fn handler_new(vtbl: *u8, host: *u8) -> *u8 {
+    let o: *u8 = { wv_malloc(40 as usize) };
+    if o == (0 as *u8) { return 0 as *u8; }
+    write_ptr(o, 0 as usize, vtbl);
+    let rp: *i32 = { (o + (8 as usize)) } as *i32;
+    { *rp = 1 as i32 };
+    write_ptr(o, 16 as usize, host);
+    return o;
+}
+
+fn handler_host(slf: *u8) -> *u8 { return read_ptr(slf, 16 as usize); }
+
+// E_NOINTERFACE = 0x80004002, built by subtraction because a 64-bit-looking
+// literal wraps through i32 before the cast.
+fn e_nointerface() -> i32 { return (0 as i32) -% (2147467262 as i32); }
+
+fn guid_eq(riid: *u8, r: *u8) -> bool {
+    var i: usize = 0 as usize;
+    while i < (16 as usize) {
+        if { *({ (riid + i) }) } != { *({ (r + i) }) } { return false; }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+// QueryInterface, strict: yes to IUnknown and to the two completion-handler
+// IIDs, E_NOINTERFACE to everything else. The strictness matters — an
+// accept-all QI that said yes to IMarshal or IAgileObject would have WebView2
+// call a method past slot 3, off the end of a four-entry table.
+fn h_query(slf: *u8, riid: *u8, ppv: *u8) -> i32 {
+    var unk: [u8; 16] = [0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8,
+                         0xC0u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x46u8];
+    var env: [u8; 16] = [0x89u8, 0x33u8, 0x8au8, 0x4eu8, 0xd8u8, 0xc9u8, 0xd2u8, 0x4bu8,
+                         0xb6u8, 0xb5u8, 0x12u8, 0x4fu8, 0xeeu8, 0x6cu8, 0xc1u8, 0x4du8];
+    var ctl: [u8; 16] = [0xf3u8, 0x19u8, 0x48u8, 0x6cu8, 0xb7u8, 0xc9u8, 0x60u8, 0x42u8,
+                         0x81u8, 0x27u8, 0xc9u8, 0xf5u8, 0xbdu8, 0xe7u8, 0xf6u8, 0x8cu8];
+    // The three navigation-event handler IIDs, so a QI during add_* succeeds.
+    var nvs: [u8; 16] = [0x29u8, 0xe4u8, 0xdbu8, 0x9au8, 0x6du8, 0xf3u8, 0x2bu8, 0x43u8,
+                         0x9du8, 0xdcu8, 0xf8u8, 0x88u8, 0x1fu8, 0xbdu8, 0x76u8, 0xe3u8];
+    var nvc: [u8; 16] = [0xbfu8, 0x35u8, 0x3au8, 0xd3u8, 0x49u8, 0x1cu8, 0x98u8, 0x4fu8,
+                         0x93u8, 0xabu8, 0x00u8, 0x6eu8, 0x05u8, 0x33u8, 0xfeu8, 0x1cu8];
+    var pf: [u8; 16] = [0x79u8, 0x02u8, 0xd4u8, 0xbbu8, 0xd5u8, 0x66u8, 0x59u8, 0x40u8,
+                        0x86u8, 0x03u8, 0xc0u8, 0x9du8, 0x03u8, 0x02u8, 0xa5u8, 0xb0u8];
+    var ok: bool = false;
+    if guid_eq(riid, { #addr_of(unk[0]) }) { ok = true; }
+    if guid_eq(riid, { #addr_of(env[0]) }) { ok = true; }
+    if guid_eq(riid, { #addr_of(ctl[0]) }) { ok = true; }
+    if guid_eq(riid, { #addr_of(nvs[0]) }) { ok = true; }
+    if guid_eq(riid, { #addr_of(nvc[0]) }) { ok = true; }
+    if guid_eq(riid, { #addr_of(pf[0]) }) { ok = true; }
+    if ok {
+        write_ptr(ppv, 0 as usize, slf);
+        let _r: u32 = h_addref(slf);
+        return 0 as i32;
+    }
+    write_ptr(ppv, 0 as usize, 0 as *u8);
+    return e_nointerface();
+}
+
+fn h_addref(slf: *u8) -> u32 {
+    let rp: *i32 = { (slf + (8 as usize)) } as *i32;
+    { *rp = { *rp } +% (1 as i32) };
+    return { *rp } as u32;
+}
+
+fn h_release(slf: *u8) -> u32 {
+    let rp: *i32 = { (slf + (8 as usize)) } as *i32;
+    { *rp = { *rp } -% (1 as i32) };
+    let n: i32 = { *rp };
+    if n <= (0 as i32) { { wv_free(slf) }; return 0 as u32; }
+    return n as u32;
+}
+
+// The environment is ready. Keep it, then serve every host that mounted while
+// it was being built.
+fn env_invoke(slf: *u8, hr: i32, env: *u8) -> i32 {
+    WV2_INFLIGHT = false;
+    if hr < (0 as i32) { return 0 as i32; }
+    if env == (0 as *u8) { return 0 as i32; }
+    let _a: u32 = com_addref(env);
+    WV2_ENV = env as usize;
+    var i: i32 = 0 as i32;
+    while i < WV2_PENDING_N {
+        let host: *u8 = WV2_PENDING[i as usize] as *u8;
+        if host != (0 as *u8) { make_controller(env, host); }
+        WV2_PENDING[i as usize] = 0 as usize;
+        i = i +% (1 as i32);
+    }
+    WV2_PENDING_N = 0 as i32;
+    return 0 as i32;
+}
+
+// The controller is ready. Store it on the host, reach the ICoreWebView2 under
+// it, size it to the host and point it at the URL the node carried.
+fn ctl_invoke(slf: *u8, hr: i32, controller: *u8) -> i32 {
+    let host: *u8 = handler_host(slf);
+    if hr < (0 as i32) { return 0 as i32; }
+    if controller == (0 as *u8) { return 0 as i32; }
+    if host == (0 as *u8) { return 0 as i32; }
+    let _a: u32 = com_addref(controller);
+    let _s: i32 = { u::SetPropA(host, prop_ctrl() as *i8, controller) };
+    var corev: usize = 0 as usize;
+    let _g: i32 = call_p(controller, idx_get_core(), { #addr_of(corev) } as *u8);
+    let core_ptr: *u8 = corev as *u8;
+    if core_ptr != (0 as *u8) {
+        let _c: i32 = { u::SetPropA(host, prop_core() as *i8, core_ptr) };
+        register_events(core_ptr, host);
+        let url: *u8 = { u::GetPropA(host, prop_url() as *i8) };
+        if url != (0 as *u8) { let _n: i32 = call_p(core_ptr, idx_navigate(), url); }
+    }
+    resize_controller(controller, host);
+    let _v: i32 = call_i(controller, idx_put_visible(), 1 as i32);
+    return 0 as i32;
+}
+
+// A completion handler we hand ExecuteScript and do not care about: its Invoke
+// takes (HRESULT, LPCWSTR result) and drops both.
+fn noop_invoke(slf: *u8, hr: i32, result: *u8) -> i32 { return 0 as i32; }
+
+// ---- the navigation events ---------------------------------------------------
+//
+// Three handlers, each an `Invoke(sender, args)`. facet's contract wants the
+// same shape every backend gives it: `h(sender, ctx)` with the sender being the
+// native web-view handle — here the host HWND — and `on_navigated` additionally
+// writing the live URL and history flags back onto the node so a contract read
+// (`web.source()`, `web.can_go_back()`) answers what is on screen.
+//
+// The node is resolved fresh from a window property at fire time rather than
+// captured, so a handler that outlives its node (teardown removes the property)
+// reads null and does nothing instead of touching freed memory.
+
+fn nav_start_invoke(slf: *u8, sender: *u8, args: *u8) -> i32 {
+    fire_web(handler_host(slf), 0 as i32);
+    return 0 as i32;
+}
+fn nav_done_invoke(slf: *u8, sender: *u8, args: *u8) -> i32 {
+    fire_web(handler_host(slf), 1 as i32);
+    return 0 as i32;
+}
+fn proc_fail_invoke(slf: *u8, sender: *u8, args: *u8) -> i32 {
+    fire_web(handler_host(slf), 2 as i32);
+    return 0 as i32;
+}
+
+fn fire_web(host: *u8, which: i32) {
+    if host == (0 as *u8) { return; }
+    let node_raw: *u8 = { u::GetPropA(host, prop_node() as *i8) };
+    if node_raw == (0 as *u8) { return; }
+    let n: *core::Node = node_raw as *core::Node;
+    let p: *props::WebProps = web_props(n);
+    if p == (0 as *props::WebProps) { return; }
+    if which == (1 as i32) { refresh_nav_state(host, p); }
+    var h: fn(*u8, *u8) = props::no_handler;
+    var ctx: *u8 = 0 as *u8;
+    if which == (0 as i32) { h = { (*p).on_navigating }; ctx = { (*p).on_navigating_ctx }; }
+    if which == (1 as i32) { h = { (*p).on_navigated }; ctx = { (*p).on_navigated_ctx }; }
+    if which == (2 as i32) { h = { (*p).on_process_terminated }; ctx = { (*p).on_process_terminated_ctx }; }
+    if h != props::no_handler { h(host, ctx); }
+    return;
+}
+
+// The history flags and the live URL, read off the ICoreWebView2 stored on the
+// host and written back onto the node.
+fn refresh_nav_state(host: *u8, p: *props::WebProps) {
+    let core_ptr: *u8 = { u::GetPropA(host, prop_core() as *i8) };
+    if core_ptr == (0 as *u8) { return; }
+    var back: i32 = 0 as i32;
+    let _b: i32 = call_p(core_ptr, idx_get_can_back(), { #addr_of(back) } as *u8);
+    { (*p).can_go_back = back != (0 as i32) };
+    var fwd: i32 = 0 as i32;
+    let _f: i32 = call_p(core_ptr, idx_get_can_forward(), { #addr_of(fwd) } as *u8);
+    { (*p).can_go_forward = fwd != (0 as i32) };
+    var src: usize = 0 as usize;
+    let _s: i32 = call_p(core_ptr, idx_get_source(), { #addr_of(src) } as *u8);
+    if src != (0 as usize) {
+        { (*p).source = sys::from_wide(src as *u16) };
+        { co_task_mem_free(src as *u8) };
+    }
+    return;
+}
+
+// ---- vtable construction -----------------------------------------------------
+//
+// Three tables, built once into stable memory and shared by every handler
+// object of their kind. All three share QueryInterface / AddRef / Release and
+// differ only in the fourth slot, Invoke.
+
+fn addr_query() -> *u8 { let f: fn(*u8, *u8, *u8) -> i32 = h_query; return f as *u8; }
+fn addr_addref() -> *u8 { let f: fn(*u8) -> u32 = h_addref; return f as *u8; }
+fn addr_release() -> *u8 { let f: fn(*u8) -> u32 = h_release; return f as *u8; }
+fn addr_env_invoke() -> *u8 { let f: fn(*u8, i32, *u8) -> i32 = env_invoke; return f as *u8; }
+fn addr_ctl_invoke() -> *u8 { let f: fn(*u8, i32, *u8) -> i32 = ctl_invoke; return f as *u8; }
+fn addr_noop_invoke() -> *u8 { let f: fn(*u8, i32, *u8) -> i32 = noop_invoke; return f as *u8; }
+fn addr_nav_start() -> *u8 { let f: fn(*u8, *u8, *u8) -> i32 = nav_start_invoke; return f as *u8; }
+fn addr_nav_done() -> *u8 { let f: fn(*u8, *u8, *u8) -> i32 = nav_done_invoke; return f as *u8; }
+fn addr_proc_fail() -> *u8 { let f: fn(*u8, *u8, *u8) -> i32 = proc_fail_invoke; return f as *u8; }
+
+fn fill_vtable(invoke: *u8) -> usize {
+    let t: *u8 = { wv_malloc(32 as usize) };
+    if t == (0 as *u8) { return 0 as usize; }
+    write_ptr(t, 0 as usize, addr_query());
+    write_ptr(t, 8 as usize, addr_addref());
+    write_ptr(t, 16 as usize, addr_release());
+    write_ptr(t, 24 as usize, invoke);
+    return t as usize;
+}
+
+fn build_vtables() {
+    if ENV_VTBL != (0 as usize) { return; }
+    ENV_VTBL = fill_vtable(addr_env_invoke());
+    CTL_VTBL = fill_vtable(addr_ctl_invoke());
+    NOOP_VTBL = fill_vtable(addr_noop_invoke());
+    NAVSTART_VTBL = fill_vtable(addr_nav_start());
+    NAVDONE_VTBL = fill_vtable(addr_nav_done());
+    PROCFAIL_VTBL = fill_vtable(addr_proc_fail());
+    return;
+}
+
+// ---- the loader --------------------------------------------------------------
+//
+// Resolved once. By name first — an app that ships `WebView2Loader.dll` beside
+// its exe is found here — then a short list of absolute paths where a Microsoft
+// component has already put a copy. A machine with the Edge WebView2 runtime
+// but no loader on any of these paths gets the placeholder, which is the honest
+// state rather than a crash.
+
+fn ensure_ready() {
+    if WV2_TRIED { return; }
+    WV2_TRIED = true;
+    build_vtables();
+    // WebView2 requires COM on the calling thread; the message-loop thread has
+    // none until now. APARTMENTTHREADED (2) is the mode a UI thread wants; a
+    // second call anywhere returns S_FALSE and changes nothing.
+    let _co: i32 = { co_initialize_ex(0 as *u8, 2 as u32) };
+    var dll: *u8 = { load_library_a({ #str_ptr("WebView2Loader.dll\0") } as *i8) };
+    if dll == (0 as *u8) {
+        dll = { load_library_a({ #str_ptr("C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\WebView2Loader.dll\0") } as *i8) };
+    }
+    if dll == (0 as *u8) {
+        dll = { load_library_a({ #str_ptr("C:\\Program Files\\Microsoft Office\\root\\Office16\\WebView2Loader.dll\0") } as *i8) };
+    }
+    if dll == (0 as *u8) { return; }
+    let fnp: *u8 = { get_proc_address(dll, { #str_ptr("CreateCoreWebView2EnvironmentWithOptions\0") } as *i8) };
+    WV2_CREATE = fnp as usize;
+    return;
+}
+
+// A writable user-data folder under %TEMP%. WebView2 will not run without one
+// it can write; the default is beside the exe, which fails from a read-only
+// install directory, so slf names an always-writable path instead.
+fn user_data_folder() -> *u16 {
+    let raw: *u8 = { wv_malloc((520 as usize) *% (2 as usize)) };
+    if raw == (0 as *u8) { return 0 as *u16; }
+    let w: *u16 = raw as *u16;
+    let n: u32 = { get_temp_path_w(500 as u32, w) };
+    if n == (0 as u32) { { wv_free(raw) }; return 0 as *u16; }
+    let suffix: *u16 = sys::to_wide("facet_win32_webview2");
+    if suffix == (0 as *u16) { { wv_free(raw) }; return 0 as *u16; }
+    var i: usize = 0 as usize;
+    while true {
+        let ch: u16 = read_u16(suffix, i);
+        write_u16(w, (n as usize) +% i, ch);
+        if ch == (0 as u16) { break; }
+        i = i +% (1 as usize);
+    }
+    sys::free_wide(suffix);
+    return w;
+}
+
+fn read_u16(w: *u16, at: usize) -> u16 {
+    let p: *u16 = { ((w as *u8) + (at *% (2 as usize))) } as *u16;
+    return { *p };
+}
+fn write_u16(w: *u16, at: usize, v: u16) {
+    let p: *u16 = { ((w as *u8) + (at *% (2 as usize))) } as *u16;
+    { *p = v };
+    return;
+}
+
+// ---- the environment/controller flow ----------------------------------------
+
+fn make_controller(env: *u8, host: *u8) {
+    let h: *u8 = handler_new(CTL_VTBL as *u8, host);
+    if h == (0 as *u8) { return; }
+    let _r: i32 = call_pp(env, idx_create_controller(), host, h);
+    // Drop the reference we created it with; CreateCoreWebView2Controller took
+    // its own, and holds it until it Invokes and Releases.
+    let _d: u32 = h_release(h);
+    return;
+}
+
+fn request_controller(host: *u8) {
+    ensure_ready();
+    if WV2_CREATE == (0 as usize) { return; }
+    if WV2_ENV != (0 as usize) { make_controller(WV2_ENV as *u8, host); return; }
+    // No environment yet: park slf host and, if nobody else has, kick off the
+    // one asynchronous creation that will serve the whole queue.
+    if WV2_PENDING_N < (16 as i32) {
+        WV2_PENDING[WV2_PENDING_N as usize] = host as usize;
+        WV2_PENDING_N = WV2_PENDING_N +% (1 as i32);
+    }
+    if WV2_INFLIGHT { return; }
+    WV2_INFLIGHT = true;
+    let create: fn(*u16, *u16, *u8, *u8) -> i32 = WV2_CREATE as fn(*u16, *u16, *u8, *u8) -> i32;
+    let h: *u8 = handler_new(ENV_VTBL as *u8, 0 as *u8);
+    if h == (0 as *u8) { WV2_INFLIGHT = false; return; }
+    let udf: *u16 = user_data_folder();
+    let _r: i32 = create(0 as *u16, udf, 0 as *u8, h);
+    // The call copied the folder string synchronously; ours to free now.
+    if udf != (0 as *u16) { { wv_free(udf as *u8) }; }
+    let _d: u32 = h_release(h);
+    return;
+}
+
+// Subscribe the three navigation events. Each add_* AddRefs and holds its
+// handler; the token it writes back is unused because the whole subscription
+// is torn down at once when the core is Released in `teardown`.
+fn register_events(core_ptr: *u8, host: *u8) {
+    register_one(core_ptr, host, idx_add_nav_starting(), NAVSTART_VTBL);
+    register_one(core_ptr, host, idx_add_nav_completed(), NAVDONE_VTBL);
+    register_one(core_ptr, host, idx_add_process_failed(), PROCFAIL_VTBL);
+    return;
+}
+
+fn register_one(core_ptr: *u8, host: *u8, add_idx: usize, vtbl: usize) {
+    if vtbl == (0 as usize) { return; }
+    let h: *u8 = handler_new(vtbl as *u8, host);
+    if h == (0 as *u8) { return; }
+    var token: i64 = 0 as i64;
+    let _r: i32 = call_pp(core_ptr, add_idx, h, { #addr_of(token) } as *u8);
+    let _d: u32 = h_release(h);
+    return;
+}
+
+fn resize_controller(controller: *u8, host: *u8) {
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(host, { #addr_of(r) }) } == (0 as i32) { return; }
+    let _b: i32 = call_p(controller, idx_put_bounds(), { #addr_of(r) } as *u8);
+    return;
+}
+
+// ---- props ------------------------------------------------------------------
+
+fn web_props(n: *core::Node) -> *props::WebProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::WebProps; }
+    if { (*d).kind } != props::K_WEB { return 0 as *props::WebProps; }
+    return { (*d).props } as *props::WebProps;
+}
+
+fn source_wide(n: *core::Node) -> *u16 {
+    let p: *props::WebProps = web_props(n);
+    if p == (0 as *props::WebProps) { return 0 as *u16; }
+    let s: str = { (*p).source }.view();
+    if s == "" { return 0 as *u16; }
+    return sys::to_wide(s);
+}
+
+fn eval_wide(n: *core::Node) -> *u16 {
+    let p: *props::WebProps = web_props(n);
+    if p == (0 as *props::WebProps) { return 0 as *u16; }
+    let s: str = { (*p).eval_script }.view();
+    if s == "" { return 0 as *u16; }
+    return sys::to_wide(s);
+}
+
+// ---- prop names / messages --------------------------------------------------
+
+fn prop_ctrl() -> *u8 { return { #str_ptr("facet-wv2-ctrl\0") }; }
+fn prop_core() -> *u8 { return { #str_ptr("facet-wv2-core\0") }; }
+fn prop_url() -> *u8 { return { #str_ptr("facet-wv2-url\0") }; }
+fn prop_old() -> *u8 { return { #str_ptr("facet-wv2-oldproc\0") }; }
+fn prop_node() -> *u8 { return { #str_ptr("facet-wv2-node\0") }; }
+fn wm_ncdestroy() -> u32 { return 0x0082 as u32; }
+
+// The URL is stashed as a window property so the controller's completion
+// handler — which runs later, on the message loop — can read it without the
+// node. Replacing it frees the previous one.
+fn store_url(host: *u8, n: *core::Node) {
+    let old: *u8 = { u::GetPropA(host, prop_url() as *i8) };
+    if old != (0 as *u8) { { wv_free(old) }; }
+    let w: *u16 = source_wide(n);
+    if w == (0 as *u16) { let _r: *u8 = { u::RemovePropA(host, prop_url() as *i8) }; return; }
+    let _s: i32 = { u::SetPropA(host, prop_url() as *i8, w as *u8) };
+    return;
+}
+
+// ---- the host window's subclass ---------------------------------------------
+//
+// The controller fills the host's client area; a resize has to be forwarded to
+// it, and its COM references released when the host is destroyed. Both come to
+// the host as messages, so the host is subclassed rather than the shared panel
+// procedure taught about `web`.
+
+fn web_proc_addr() -> *u8 {
+    let p: fn(*u8, u32, u64, i64) -> i64 = web_proc;
+    return p as *u8;
+}
+
+fn sub_install(host: *u8) {
+    if host == (0 as *u8) { return; }
+    if { u::GetPropA(host, prop_old() as *i8) } != (0 as *u8) { return; }
+    let old: i64 = { u::SetWindowLongPtrA(host, sys::gwlp_wndproc(), web_proc_addr() as i64) };
+    if old == (0 as i64) { return; }
+    let _p: i32 = { u::SetPropA(host, prop_old() as *i8, old as *u8) };
+    return;
+}
+
+fn web_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    let old: *u8 = { u::GetPropA(hwnd, prop_old() as *i8) };
+    if old == (0 as *u8) { return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+    if msg == sys::wm_size() {
+        let ctrl: *u8 = { u::GetPropA(hwnd, prop_ctrl() as *i8) };
+        if ctrl != (0 as *u8) { resize_controller(ctrl, hwnd); }
+    }
+    if msg == wm_ncdestroy() {
+        teardown(hwnd);
+        let _o: i64 = { u::SetWindowLongPtrA(hwnd, sys::gwlp_wndproc(), old as i64) };
+        let _r: *u8 = { u::RemovePropA(hwnd, prop_old() as *i8) };
+        return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+    }
+    return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+}
+
+// Close the controller first — it tears the browser process down — then drop
+// our references to it and the core, and free the stashed URL.
+fn teardown(host: *u8) {
+    let ctrl: *u8 = { u::GetPropA(host, prop_ctrl() as *i8) };
+    if ctrl != (0 as *u8) {
+        let _c: i32 = call0(ctrl, idx_close());
+        let _r: u32 = com_release(ctrl);
+        let _p: *u8 = { u::RemovePropA(host, prop_ctrl() as *i8) };
+    }
+    let core_ptr: *u8 = { u::GetPropA(host, prop_core() as *i8) };
+    if core_ptr != (0 as *u8) {
+        let _r: u32 = com_release(core_ptr);
+        let _p: *u8 = { u::RemovePropA(host, prop_core() as *i8) };
+    }
+    let url: *u8 = { u::GetPropA(host, prop_url() as *i8) };
+    if url != (0 as *u8) {
+        { wv_free(url) };
+        let _p: *u8 = { u::RemovePropA(host, prop_url() as *i8) };
+    }
+    let _nd: *u8 = { u::RemovePropA(host, prop_node() as *i8) };
+    return;
+}
+
+// ---- the seam controls.cplus calls ------------------------------------------
+
+// Mount time: stash the URL, subclass the host, and ask for a controller. If
+// WebView2 is unavailable slf is a few cheap no-ops and the placeholder the
+// panel paints stays on screen.
+fn attach(host: *u8, n: *core::Node) {
+    if host == (0 as *u8) { return; }
+    let _nd: i32 = { u::SetPropA(host, prop_node() as *i8, n as *u8) };
+    store_url(host, n);
+    sub_install(host);
+    request_controller(host);
+    return;
+}
+
+// Apply time. The commands (reload / back / forward / eval) only reach a live
+// core; a source change is stored for the pending case and navigated now if the
+// core is up.
+fn apply(host: *u8, n: *core::Node, dirty: u64) {
+    if host == (0 as *u8) { return; }
+    let core_ptr: *u8 = { u::GetPropA(host, prop_core() as *i8) };
+    if (dirty & (1 as u64)) != (0 as u64) {          // P_SOURCE
+        store_url(host, n);
+        if core_ptr != (0 as *u8) {
+            let url: *u8 = { u::GetPropA(host, prop_url() as *i8) };
+            if url != (0 as *u8) { let _n: i32 = call_p(core_ptr, idx_navigate(), url); }
+        }
+    }
+    if core_ptr == (0 as *u8) { return; }
+    if (dirty & (32 as u64)) != (0 as u64) { let _r: i32 = call0(core_ptr, idx_reload()); }     // P_RELOAD
+    if (dirty & (8 as u64)) != (0 as u64) { let _b: i32 = call0(core_ptr, idx_go_back()); }     // P_GO_BACK
+    if (dirty & (16 as u64)) != (0 as u64) { let _f: i32 = call0(core_ptr, idx_go_forward()); } // P_GO_FORWARD
+    if (dirty & (4 as u64)) != (0 as u64) {                                                     // P_EVAL
+        let js: *u16 = eval_wide(n);
+        if js != (0 as *u16) {
+            let noop: *u8 = handler_new(NOOP_VTBL as *u8, 0 as *u8);
+            let _e: i32 = call_pp(core_ptr, idx_execute_script(), js as *u8, noop);
+            if noop != (0 as *u8) { let _d: u32 = h_release(noop); }
+            sys::free_wide(js);
+        }
+    }
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+//
+// The COM flow itself needs the installed WebView2 runtime and a message loop,
+// so it is verified on screen in the gallery rather than here. What IS pure —
+// the failure HRESULT, the GUID compare that keeps QueryInterface strict, the
+// reference count that frees a handler, and the vtable indexing every call goes
+// through — is pinned below, because those are the pieces a silent mistake in
+// would corrupt memory rather than merely fail to draw.
+
+#[test]
+fn e_nointerface_is_the_com_bit_pattern() {
+    // 0x80004002 reinterpreted as a signed 32-bit integer. A wrong value here
+    // would read to WebView2 as a DIFFERENT failure — or, if positive, as
+    // SUCCESS, which is the dangerous one: it would then use a null interface.
+    assert e_nointerface() == ((0 as i32) -% (2147467262 as i32));
+    assert e_nointerface() < (0 as i32);
+    return;
+}
+
+#[test]
+fn guid_eq_is_exact() {
+    var a: [u8; 16] = [0x89u8, 0x33u8, 0x8au8, 0x4eu8, 0xd8u8, 0xc9u8, 0xd2u8, 0x4bu8,
+                       0xb6u8, 0xb5u8, 0x12u8, 0x4fu8, 0xeeu8, 0x6cu8, 0xc1u8, 0x4du8];
+    var b: [u8; 16] = [0x89u8, 0x33u8, 0x8au8, 0x4eu8, 0xd8u8, 0xc9u8, 0xd2u8, 0x4bu8,
+                       0xb6u8, 0xb5u8, 0x12u8, 0x4fu8, 0xeeu8, 0x6cu8, 0xc1u8, 0x4du8];
+    assert guid_eq({ #addr_of(a[0]) }, { #addr_of(b[0]) });
+    // A single differing byte — the last one — must not compare equal, or an
+    // accept-all QueryInterface would follow with a call off the end of the
+    // four-entry vtable.
+    b[15] = 0x4eu8;
+    assert !guid_eq({ #addr_of(a[0]) }, { #addr_of(b[0]) });
+    // A difference in the FIRST byte too, so the loop is not trusting position.
+    b[15] = 0x4du8;
+    b[0] = 0x00u8;
+    assert !guid_eq({ #addr_of(a[0]) }, { #addr_of(b[0]) });
+    return;
+}
+
+#[test]
+fn a_handler_carries_its_host_and_frees_on_the_last_release() {
+    // handler_new stamps refs = 1 and stashes the host; the vtable pointer is a
+    // dummy because AddRef/Release touch only the count at offset 8.
+    let host: *u8 = (0x1234 as usize) as *u8;
+    let h: *u8 = handler_new((0xdead as usize) as *u8, host);
+    assert h != (0 as *u8);
+    assert handler_host(h) == host;
+    assert h_addref(h) == (2 as u32);      // an interested party keeps it
+    assert h_release(h) == (1 as u32);      // and lets go
+    assert h_release(h) == (0 as u32);      // the creating reference, freed here
+    return;
+}
+
+#[test]
+fn a_method_is_the_indexed_slot_of_the_object_s_vtable() {
+    // Build a four-entry vtable of recognisable words and an object pointing at
+    // it, then prove `slot` reads word 0 of the object and indexes from there —
+    // the one operation every COM call in this file is built on.
+    let vt: *u8 = { wv_malloc(32 as usize) };
+    assert vt != (0 as *u8);
+    write_ptr(vt, 0 as usize, (0xa0 as usize) as *u8);
+    write_ptr(vt, 8 as usize, (0xb1 as usize) as *u8);
+    write_ptr(vt, 16 as usize, (0xc2 as usize) as *u8);
+    write_ptr(vt, 24 as usize, (0xd3 as usize) as *u8);
+    let obj: *u8 = { wv_malloc(8 as usize) };
+    assert obj != (0 as *u8);
+    write_ptr(obj, 0 as usize, vt);
+    assert slot(obj, 0 as usize) == ((0xa0 as usize) as *u8);
+    assert slot(obj, 2 as usize) == ((0xc2 as usize) as *u8);
+    assert slot(obj, 3 as usize) == ((0xd3 as usize) as *u8);
+    { wv_free(obj) };
+    { wv_free(vt) };
+    return;
+}
