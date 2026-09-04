@@ -71,6 +71,12 @@ Their history is in git if a trap ever needs archaeology.)
 - **`examples/`** is tracked. Commit-worthy sample programs go there.
 - **Don't commit unless asked.** Flip task-tracker checkboxes in the same turn
   as the work.
+- **Never create a branch.** Commit to whatever branch is checked out —
+  including `main`. An agent's default is to branch before committing on the
+  default branch; here that is wrong. Twenty-six branches accumulated this way
+  between June and September 2026, twenty-five of them fully merged and never
+  deleted, each one invisible to the session that came after it. If a branch is
+  genuinely wanted, the ask will say so.
 
 ## iOS: entitlements go in the BINARY on a simulator
 
