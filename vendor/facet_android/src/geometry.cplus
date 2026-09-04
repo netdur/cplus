@@ -22,6 +22,7 @@ import "flex_layout/flex_layout" as flex;
 import "android_view/runtime" as rt;
 import "android_view/widgets" as w;
 import "facet/facet" as core;
+import "facet/bands" as bands;
 import "./env" as e;
 import "./paint" as paint;
 import "./controls" as controls;
@@ -94,15 +95,15 @@ fn measure_node(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     // The extents arrive in facet's units and a MeasureSpec is in pixels.
     if is_number(avail_w) {
         match wm {
-            flex::MeasureMode::Exactly => { w_spec = spec_exactly({ px(avail_w) as i32 }); }
-            flex::MeasureMode::AtMost => { w_spec = spec_at_most({ px(avail_w) as i32 }); }
+            flex::MeasureMode::Exactly => { w_spec = spec_exactly(px_i32(avail_w)); }
+            flex::MeasureMode::AtMost => { w_spec = spec_at_most(px_i32(avail_w)); }
             flex::MeasureMode::Undefined => { }
         }
     }
     if is_number(avail_h) {
         match hm {
-            flex::MeasureMode::Exactly => { h_spec = spec_exactly({ px(avail_h) as i32 }); }
-            flex::MeasureMode::AtMost => { h_spec = spec_at_most({ px(avail_h) as i32 }); }
+            flex::MeasureMode::Exactly => { h_spec = spec_exactly(px_i32(avail_h)); }
+            flex::MeasureMode::AtMost => { h_spec = spec_at_most(px_i32(avail_h)); }
             flex::MeasureMode::Undefined => { }
         }
     }
@@ -129,23 +130,44 @@ fn measure_intrinsic(v: *u8, max_w: f64, max_h: f64) -> flex::Size {
 fn px(v: f64) -> f64 { return e::px(v); }
 fn dp(v: f64) -> f64 { return e::dp(v); }
 
+// THE CROSSING ROUNDS; IT DOES NOT TRUNCATE, and the two are a visible pixel
+// apart at every density that is not a whole number — which is most of them
+// (2.75 is the common phone). `px(v) as i32` truncates toward zero, so a
+// 100.4dp column at density 2.75 is 276.1px and becomes 276, and the NEXT
+// column starts at 276 while this one's right edge wanted 276.1. One pixel of
+// background shows through, per boundary, and it compounds down a nested tree.
+//
+// `relayout_root` snaps every frame to this density's pixel grid before the
+// walk (flex's `round_to_pixel`), so by the time a number arrives here it is
+// already a whole pixel and this rounding only absorbs float error. The two
+// belong together: snapping without rounding here throws the snap away.
+fn px_i32(v: f64) -> i32 {
+    let p: f64 = px(v);
+    if p < 0.0f64 { return { (p - 0.5f64) as i32 }; }
+    return { (p + 0.5f64) as i32 };
+}
+
 // MEASURED, NOT PLACED. A cell in a GridView is positioned by the GRID — one
 // column across — and laying it out ourselves at the origin stacks every cell
 // on top of the first. The measure still has to happen, because a View that was
 // never measured has no internal layout.
 fn measure_only(v: *u8, wd: f64, ht: f64) {
     var view: w::View = paint::wrap(v);
-    view.measure(spec_exactly({ px(wd) as i32 }), spec_exactly({ px(ht) as i32 }));
+    view.measure(spec_exactly(px_i32(wd)), spec_exactly(px_i32(ht)));
     paint::unwrap_keep(view);
     return;
 }
 
 fn place(v: *u8, x: f64, y: f64, wd: f64, ht: f64) {
     var view: w::View = paint::wrap(v);
-    let iw: i32 = { px(wd) as i32 };
-    let ih: i32 = { px(ht) as i32 };
-    let ix: i32 = { px(x) as i32 };
-    let iy: i32 = { px(y) as i32 };
+    let ix: i32 = px_i32(x);
+    let iy: i32 = px_i32(y);
+    // WIDTH IS THE DIFFERENCE OF TWO ROUNDED EDGES, not a rounded width. Rounding
+    // the extent on its own re-opens the seam the snap closed: two neighbours
+    // whose shared boundary rounds one way get a gap or an overlap. Deriving
+    // from the edges makes the boundary a single number both of them use.
+    let iw: i32 = px_i32(x + wd) -% ix;
+    let ih: i32 = px_i32(y + ht) -% iy;
     // MEASURE THEN LAYOUT, always. A View that was never measured has no
     // internal layout — a TextView builds its text Layout in onMeasure — and
     // draws nothing at whatever rect it is given.
@@ -180,7 +202,7 @@ fn size_document(n: *core::Node, v: *u8, frame: flex::Frame) {
     // UNSPECIFIED height, and take THAT as the scroll range. The host has to be
     // able to answer that question on its own.
     if e::have_env() {
-        dex::host_set_wanted(e::env(), doc, { px(e_size.width) as i32 }, { px(e_size.height) as i32 });
+        dex::host_set_wanted(e::env(), doc, px_i32(e_size.width), px_i32(e_size.height));
     }
     place(doc, 0.0f64, 0.0f64, e_size.width, e_size.height);
     if !e::have_env() { return; }
@@ -264,7 +286,13 @@ static INSET_TOP: f64 = 0.0f64;
 fn inset_left() -> f64 { return INSET_LEFT; }
 fn inset_top() -> f64 { return INSET_TOP; }
 
-fn relayout_root(root: *core::Node, width: f64, height: f64) {
+// `scale` is the display density (2.75 on a common phone): snapping frames to
+// the device pixel grid keeps edges seamless and text crisp, AND keeps the
+// numbers bit-stable pass to pass, which is what lets the layout cache report a
+// hit at an unchanged size. Same argument as facet_appkit and facet_uikit; this
+// backend simply never had the step, so every frame reached `place` fractional
+// and was truncated there.
+fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
     if root == (0 as *core::Node) { return; }
     let ins: Insets = safe_insets(root);
     INSET_LEFT = ins.left;
@@ -281,7 +309,12 @@ fn relayout_root(root: *core::Node, width: f64, height: f64) {
     // page simply ran off the bottom of the window.
     { (*root).set_width(flex::StyleLength::points(width)) };
     { (*root).set_height(flex::StyleLength::points(height)) };
-    { (*root).calculate_layout(width, height) };
+    // The app's band vocabulary rides along, so a node carrying `hide`/`show`
+    // rules is resolved against the box it actually sits in — as part of THIS
+    // pass, not by a size observer firing a second one afterwards. Omitting it
+    // passes a null BandSet, which is silently "no bands": every `hide`/`show`
+    // in the tree was a no-op on this backend, with no error to say so.
+    { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
     // THE SPLITS, WHICH READ THEIR OWN EXTENT. A split's clamps are against the
     // box its parent gave it, so the division cannot be written until there has
     // been a layout — and writing it changes styles, so there has to be another.
@@ -291,10 +324,14 @@ fn relayout_root(root: *core::Node, width: f64, height: f64) {
     while pass < (2 as i32) {
         if !settle_splits(root) { pass = 2 as i32; }
         else {
-            { (*root).calculate_layout(width, height) };
+            { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
             pass = pass +% (1 as i32);
         }
     }
+    // AFTER THE LAST PASS, never between them: a settle reads extents and
+    // writes styles, so a snap in the middle would be undone by the pass that
+    // follows it.
+    if scale > 0.0f64 { { (*root).round_to_pixel(scale) }; }
     reposition(root);
     return;
 }

@@ -484,7 +484,10 @@ fn drain_reload_jobs() {
 
 fn pending_reload_count() -> usize { return { RELOAD_JOBS.count() }; }
 
-fn layout_window(root: *core::Node) {
+// `force` rides through to the frame walk — see `geometry::relayout_root`. The
+// only caller that passes it is the backing-scale change, where the layout is a
+// cache hit and the frames moved anyway.
+fn layout_window(root: *core::Node, force: bool = false) {
     let win: *u8 = app::window_native(root);
     if win.is_null() { return; }
     match ak::Window::from_raw(win).content_view() {
@@ -506,7 +509,7 @@ fn layout_window(root: *core::Node) {
             let ins: ak::EdgeInsets = safe_insets(content, root);
             let w: f64 = f.w - ins.left - ins.right;
             let h: f64 = f.h - ins.top - ins.bottom;
-            geometry::relayout_root(root, w, h, ak::Window::from_raw(win).backing_scale_factor());
+            geometry::relayout_root(root, w, h, ak::Window::from_raw(win).backing_scale_factor(), force);
             // The root's own view fills the safe box: mount inserted it
             // nowhere (the facade did), so the frame walk never sizes it.
             let rv: *u8 = core::view_of(root);

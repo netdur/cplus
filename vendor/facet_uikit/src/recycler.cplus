@@ -195,7 +195,7 @@ fn layout_cell(cell: *u8, root: *core::Node) {
     if content == (0 as *u8) { return; }
     let b: rt::Rect = ui::View::from_raw(content).bounds();
     if b.w <= 0.0f64 { return; }
-    geometry::relayout_root(root, b.w, b.h, geometry::screen_scale());
+    geometry::relayout_root(root, b.w, b.h, geometry::scale_of_view(content));
     let rv: *u8 = core::view_of(root);
     if rv != (0 as *u8) {
         geometry::set_view_frame(rv, rt::Rect { x: 0.0f64, y: 0.0f64, w: b.w, h: b.h });
@@ -1203,7 +1203,7 @@ fn indent_cell(cell: *u8, root: *core::Node, depth: i64) {
     let x: f64 = (depth as f64) * step;
     let w: f64 = b.w - x;
     if w <= 0.0f64 { return; }
-    geometry::relayout_root(root, w, b.h, geometry::screen_scale());
+    geometry::relayout_root(root, w, b.h, geometry::scale_of_view(content));
     let rv: *u8 = core::view_of(root);
     if rv != (0 as *u8) {
         geometry::set_view_frame(rv, rt::Rect { x: x, y: 0.0f64, w: w, h: b.h });

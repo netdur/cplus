@@ -298,9 +298,27 @@ static APPEARANCE_SENTINEL_CLASS: *u8 = 0 as *u8;
 // be a real cost for no reason. -1 is "not read yet"; the styles are 0, 1, 2.
 static LAST_UI_STYLE: i64 = -1 as i64;
 
+// AND THE DISPLAY SCALE, which rides the same notification and is a different
+// question. It changes when a scene moves to a screen with another scale — an
+// external display, or an iPad window Stage Manager has dragged to one — and
+// the scene's SIZE need not change with it. So no resize fires,
+// `calculate_layout` is a cache hit and `layout_changed()` says false, while
+// every frame in the tree is snapped to the old screen's pixel grid. Hence the
+// forced walk: the layout did not change, the frames did.
+//
+// 0 is "not read yet", and the first reading is not a change — the tree was
+// laid out at that scale to begin with.
+static LAST_DISPLAY_SCALE: f64 = 0.0f64;
+
 fn imp_trait_collection_did_change(self_obj: *u8, cmd: *u8, previous: *u8) {
     let tc: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("traitCollection\0"))) };
     if tc == (0 as *u8) { return; }
+    let scale: f64 = { rt::msg_f64(tc, rt::sel(#str_ptr("displayScale\0"))) };
+    if scale > 0.0f64 && scale != LAST_DISPLAY_SCALE {
+        let was: f64 = LAST_DISPLAY_SCALE;
+        LAST_DISPLAY_SCALE = scale;
+        if was > 0.0f64 { scheduler::layout_all_windows(force: true); }
+    }
     let style: i64 = { rt::msg_i64(tc, rt::sel(#str_ptr("userInterfaceStyle\0"))) };
     if style == LAST_UI_STYLE { return; }
     LAST_UI_STYLE = style;

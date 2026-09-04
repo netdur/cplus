@@ -199,6 +199,13 @@ fn touch_all_walk(n: *core::Node) {
 // from: inside the entry point the host has no size at all, so laying out there
 // would size the whole tree against zero.
 fn size_changed(wd: i32, ht: i32) {
+    // THE DENSITY CAN HAVE MOVED, and this is the edge that says so. An app
+    // that declares `screenLayout` in its own configChanges is NOT recreated
+    // across a fold, so `set_activity` never runs and a new size is the only
+    // signal there is. Three JNI calls on a resize — a rotation, the IME, a
+    // split-screen drag — is nothing; the cache exists to keep them out of the
+    // per-frame conversion, not out of this.
+    e::forget_density();
     // THE WINDOW ARRIVES IN PIXELS and facet lays out in its own units, so the
     // size crosses the density boundary here — the one place a window size
     // enters the system. See geometry's `px` / `dp`.

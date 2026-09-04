@@ -145,12 +145,15 @@ fn tick_now() {
 
 // ---- the layout pass ----------------------------------------------------------
 
-fn layout_all_windows() {
+// `force` rides through to the frame walk — see `geometry::relayout_root`. The
+// only caller that passes it is the display-scale change, where the layout is a
+// cache hit and the frames moved anyway.
+fn layout_all_windows(force: bool = false) {
     var i: usize = 0 as usize;
     let n: usize = app::window_count();
     while i < n {
         let root: *core::Node = app::window_root(i);
-        if root != (0 as *core::Node) { layout_window(root); }
+        if root != (0 as *core::Node) { layout_window(root, force); }
         i = i +% (1 as usize);
     }
     return;
@@ -163,7 +166,7 @@ fn layout_all_windows() {
 // answered together — where the AppKit backend has to work out what a titlebar
 // is doing. It is also the band that MATTERS on this platform: a phone screen
 // with content under the notch is broken in a way a Mac window is not.
-fn layout_window(root: *core::Node) {
+fn layout_window(root: *core::Node, force: bool = false) {
     let win: *u8 = app::window_native(root);
     if win == (0 as *u8) { return; }
     let content: *u8 = content_view_of(win);
@@ -183,7 +186,7 @@ fn layout_window(root: *core::Node) {
     let ins: ui::EdgeInsets = safe_insets(cv, root);
     let w: f64 = f.w - ins.left - ins.right;
     let h: f64 = f.h - ins.top - ins.bottom;
-    geometry::relayout_root(root, w, h, geometry::screen_scale());
+    geometry::relayout_root(root, w, h, geometry::scale_of_view(content), force);
     // GUARDED FOR THE SAME REASON THE WALK IS, and separately because the walk's
     // transaction has already committed by here. These are the frames
     // `relayout_root` does NOT write — the root's own view, or the topmost

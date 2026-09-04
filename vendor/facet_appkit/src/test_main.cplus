@@ -824,6 +824,137 @@ fn a_full_cache_hit_walks_nothing() {
     backend::uninstall();
 }
 
+// ---- the pixel grid ----------------------------------------------------------
+//
+// `relayout_root` snaps every frame to the backing scale before the walk. Three
+// 33.4-tall rows are the shape that shows it: their edges land at 33.4 / 66.8 /
+// 100.2, none of which is on any device grid.
+
+#[test]
+fn frames_snap_to_the_backing_scale_grid_and_stay_seamless() {
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "a").height(33.4f64));
+    b.add(core::column(core::Builder::new(), key: "b").height(33.4f64));
+    b.add(core::column(core::Builder::new(), key: "c").height(33.4f64));
+    var root: core::Node = core::column(b, key: "root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    // Retina: the grid is half a point.
+    geometry::relayout_root(rp, 200.0f64, 100.0f64, 2.0f64);
+    let fa: rt::Rect = frame_of_key(rp, "a");
+    let fb: rt::Rect = frame_of_key(rp, "b");
+    let fc: rt::Rect = frame_of_key(rp, "c");
+    // On the grid: every edge is a whole number of half-points.
+    assert on_grid(fa.y, 2.0f64) && on_grid(fa.h, 2.0f64);
+    assert on_grid(fb.y, 2.0f64) && on_grid(fb.h, 2.0f64);
+    assert on_grid(fc.y, 2.0f64) && on_grid(fc.h, 2.0f64);
+    // SEAMLESS, which is the property rounding the extent on its own destroys:
+    // each row starts exactly where the one above it ended. No gap, no overlap.
+    assert fa.y + fa.h == fb.y;
+    assert fb.y + fb.h == fc.y;
+    // And the snapped edges are the nearest ones: 33.4 -> 33.5, 66.8 -> 67.0.
+    assert fb.y == 33.5f64;
+    assert fc.y == 67.0f64;
+    mount::unmount(rp);
+    backend::uninstall();
+}
+
+#[test]
+fn a_1x_display_snaps_to_whole_points() {
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "a").height(33.4f64));
+    b.add(core::column(core::Builder::new(), key: "b").height(33.4f64));
+    var root: core::Node = core::column(b, key: "root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 200.0f64, 100.0f64, 1.0f64);
+    let fa: rt::Rect = frame_of_key(rp, "a");
+    let fb: rt::Rect = frame_of_key(rp, "b");
+    assert fa.h == 33.0f64;
+    assert fb.y == 33.0f64;
+    // 66.8 rounds to 67, so this row is a point taller than the one above it —
+    // which is the correct answer, and the one a per-row rounding cannot give.
+    assert fb.h == 34.0f64;
+    assert fa.y + fa.h == fb.y;
+    mount::unmount(rp);
+    backend::uninstall();
+}
+
+#[test]
+fn a_scale_of_zero_does_not_snap() {
+    // The negative case, and it is the fallback every backend takes when it
+    // cannot learn the scale — a window with no screen, a GTK factor of 0.
+    // Fractional frames are less crisp; frames snapped to a grid of nothing
+    // would be collapsed onto each other.
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "a").height(33.4f64));
+    b.add(core::column(core::Builder::new(), key: "b").height(33.4f64));
+    var root: core::Node = core::column(b, key: "root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 200.0f64, 100.0f64, 0.0f64);
+    let fb: rt::Rect = frame_of_key(rp, "b");
+    assert fb.y > 33.39f64 && fb.y < 33.41f64;
+    mount::unmount(rp);
+    backend::uninstall();
+}
+
+// ---- the forced walk ----------------------------------------------------------
+
+#[test]
+fn force_repositions_views_the_cache_would_have_skipped() {
+    // What `windowDidChangeBackingProperties` needs. The window does not resize
+    // when it moves to a display with another scale, so the second pass here is
+    // a cache hit and the frame walk would prune itself — while the frames it
+    // was going to write are on a different grid from the ones the views hold.
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "child").height(40.0f64));
+    var root: core::Node = core::column(b, key: "root");
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    geometry::relayout_root(rp, 200.0f64, 100.0f64, 1.0f64);
+    let v: *u8 = view_of_key(rp, "child");
+    assert v.is_not_null();
+    // Move the view out from under the layout. Nothing in the tree changed, so
+    // the engine has no way to know and will report a cache hit.
+    geometry::set_view_frame(v, rt::Rect { x: 0.0f64, y: 999.0f64, w: 10.0f64, h: 10.0f64 });
+    geometry::relayout_root(rp, 200.0f64, 100.0f64, 1.0f64);
+    assert { (*rp).layout_changed() } == false;
+    // THE SKIP, asserted rather than assumed: without `force` the walk prunes
+    // and the view keeps the wrong frame. This half is what makes the next one
+    // mean something.
+    assert ak::View::from_raw(v).frame().y == 999.0f64;
+    geometry::relayout_root(rp, 200.0f64, 100.0f64, 1.0f64, force: true);
+    assert ak::View::from_raw(v).frame().y == 0.0f64;
+    assert ak::View::from_raw(v).frame().h == 40.0f64;
+    mount::unmount(rp);
+    backend::uninstall();
+}
+
+// Is `v` a whole number of 1/scale units? The test's own arithmetic, kept out
+// of the assertions so they read as the claim rather than the check.
+fn on_grid(v: f64, scale: f64) -> bool {
+    let t: f64 = v * scale;
+    return { ((t as i64) as f64) } == t;
+}
+
+fn view_of_key(rp: *core::Node, key: str) -> *u8 {
+    match core::find_in(rp, key) {
+        option::Option[*core::Node]::Some(p) => { return core::view_of(p); }
+        option::Option[*core::Node]::None => { return 0 as *u8; }
+    }
+}
+
+fn frame_of_key(rp: *core::Node, key: str) -> rt::Rect {
+    let v: *u8 = view_of_key(rp, key);
+    assert v.is_not_null();
+    return ak::View::from_raw(v).frame();
+}
+
 // ---- the tick ----------------------------------------------------------------
 
 #[test]
