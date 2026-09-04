@@ -360,7 +360,7 @@ fn _run_sleepy_local(take x: i64) -> i64 {
 fn cancelling_through_an_awaited_LOCAL_destroys_once_and_runs_its_drops() {
     let before: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
     let h: thread::JoinHandle[i64] = thread::spawn_with::[i64, i64](0 as i64, _run_sleepy_local);
-    usleep(20000 as u32);
+    sync_sys::sleep_us(20000 as u32);
     h.cancel();
     assert h.join() == (78 as i64);
     // The probe live at the suspend point still dropped exactly once — a
@@ -531,7 +531,7 @@ fn _slow_double(take x: i64) -> i64 {
     // enough that a suite waiting on it is not noticeably slower. The worker
     // never checks `thread::cancelled()`, deliberately: the deadline is a
     // deadline on the ASKING, and this pins that it still waits for the value.
-    usleep(120000 as u32);
+    sync_sys::sleep_us(120000 as u32);
     return x *% (2 as i64);
 }
 
