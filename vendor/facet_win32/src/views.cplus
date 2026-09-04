@@ -348,31 +348,50 @@ fn insert(ctx: *u8, raw_host: *u8, child: *u8, slot: usize) {
 // of the z-order", which is HWND_TOP.
 fn place_at_slot(host: *u8, child: *u8, slot: usize) {
     let flags: u32 = sys::swp_nomove() | sys::swp_nosize() | sys::swp_noactivate();
-    if slot == (0 as usize) {
+    // facet's slot is the child's index among its host's facet children, and
+    // facet paints them in that order: index 0 FIRST — at the back — and the
+    // last index ON TOP. A `zstack`'s "later children paint above", an absolute
+    // overlay, and a badge over a card all rely on it, and NSView's subviews and
+    // GtkFixed's children order the same way, so this is what the other backends
+    // do too. Win32's HWND_TOP is the FRONT of the z-order (painted last), so
+    // slot 0 belongs at the BACK, not the front — the inverse of what this
+    // package did until a zstack's badge came out behind its base.
+    //
+    // Count facet siblings first (a scroll's document and other package-owned
+    // windows carry no node and must not shift the slots).
+    var m: usize = 0 as usize;
+    var cur: *u8 = first_child(host);
+    while cur != (0 as *u8) {
+        if cur != child && input::node_of_window(cur) != (0 as *core::Node) {
+            m = m +% (1 as usize);
+        }
+        cur = next_sibling(cur);
+    }
+    // At or past the end of the list, the child is the new FRONTMOST.
+    if slot >= m {
         let _r: i32 = { u::SetWindowPos(child, sys::hwnd_top(), 0 as i32, 0 as i32,
                                         0 as i32, 0 as i32, flags) };
         return;
     }
-    var prev: *u8 = 0 as *u8;
+    // `first_child`/`next_sibling` walk TOP -> BOTTOM, so the sibling at facet
+    // `slot` counting from the BOTTOM is the (m-1-slot)-th one seen. The child
+    // sits directly below it — `SetWindowPos` places a window under its
+    // insert-after target — which puts exactly `slot` siblings beneath it.
+    let target: usize = (m -% (1 as usize)) -% slot;
     var seen: usize = 0 as usize;
-    var cur: *u8 = first_child(host);
+    cur = first_child(host);
     while cur != (0 as *u8) {
-        // Only windows carrying a NODE are facet's children. A scroll's
-        // document lives in the same parent and belongs to this package, so
-        // counting it would shift every slot after it by one.
         if cur != child && input::node_of_window(cur) != (0 as *core::Node) {
-            prev = cur;
-            seen = seen +% (1 as usize);
-            if seen == slot {
-                let _r: i32 = { u::SetWindowPos(child, prev, 0 as i32, 0 as i32,
+            if seen == target {
+                let _r: i32 = { u::SetWindowPos(child, cur, 0 as i32, 0 as i32,
                                                 0 as i32, 0 as i32, flags) };
                 return;
             }
+            seen = seen +% (1 as usize);
         }
         cur = next_sibling(cur);
     }
-    // Fewer siblings than the slot asked for: the bottom is where it belongs.
-    let _r: i32 = { u::SetWindowPos(child, sys::hwnd_bottom(), 0 as i32, 0 as i32,
+    let _r: i32 = { u::SetWindowPos(child, sys::hwnd_top(), 0 as i32, 0 as i32,
                                     0 as i32, 0 as i32, flags) };
     return;
 }
