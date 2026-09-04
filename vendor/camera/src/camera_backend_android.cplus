@@ -1,0 +1,607 @@
+// camera_backend_android — camera2 through this package's own dex.
+//
+// WHY A DEX AT ALL. camera2's callbacks are ABSTRACT CLASSES —
+// `CameraDevice.StateCallback`, `CameraCaptureSession.StateCallback` — and
+// `java.lang.reflect.Proxy` implements interfaces only. There is no way to
+// answer them from native code, so real subclasses must exist, and real
+// subclasses need a dex. `vendor/facet_android` reached the same conclusion for
+// its listeners; this package carries its own rather than adding to facet's,
+// because an app that never opens a camera should not ship the camera classes.
+//
+// Given the dex was unavoidable, `java/cplus/camera/CplusCamera.java` owns the
+// whole pipeline and this file sees five methods. Driving camera2 verb by verb
+// over JNI would have been the same dex plus a JNI call per step.
+//
+// THE DEX IS A COMMITTED BUILD ARTIFACT. Editing the Java changes nothing until
+// `tools/build_dex.sh` runs. The symptom is a Java method that is plainly there
+// and never called.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/box" as box;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "facet/app_events" as ev;
+import "./camera" as cam;
+
+// Kept in step by tools/build_dex.sh; do not hand-edit.
+const _DEX_LEN: usize = 13280;
+
+static _LOADER: usize = 0;
+static _C_CAMERA: usize = 0;
+
+// The photo buffer is copied out of the jbyteArray into this before the
+// callback runs. 1920x1080 JPEG is comfortably under a megabyte; a frame that
+// somehow exceeds it is truncated to the cap rather than overrunning, and the
+// callback sees the short length.
+const _MAX_PHOTO: usize = 4194304 as usize;
+
+#[repr(C)]
+struct _NativeLOIII {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, jni::jobject, i32, i32, i32),
+}
+
+#[repr(C)]
+struct _NativeLB {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, jni::jobject),
+}
+
+// The request as the facade packs it. Layout must match `camera::_CRequest`.
+#[repr(C)]
+struct _CRequest {
+    opaque device: *u8,
+    device_len: usize,
+    facing: i32,
+    width: i32,
+    height: i32,
+    frame_rate: i32,
+    pixel: i32,
+    color: i32,
+    hdr: i32,
+    stabilization: i32,
+    depth: i32,
+    high_speed: i32,
+    buffers: i32,
+}
+
+// A live session. Heap-allocated; `_c_open` hands out the pointer, `_c_close`
+// is the only thing that frees it. Every pointer is `opaque` for the same
+// reason the Apple half's is: this is reached through a raw `*u8` across the C
+// seam, so no `drop` on it would ever run (E0510).
+struct _Session {
+    opaque obj: jni::jobject,     // CplusCamera, global ref
+    cb: fn(*u8, usize, *u8),
+    opaque ctx: *u8,
+    frame_cb: fn(*u8, i32, i32, i32, *u8, *u8),
+    opaque frame_ctx: *u8,
+}
+
+static _LAST_ERROR: i32 = 0 as i32;
+
+// ---- the JVM ---------------------------------------------------------------
+
+fn _env() -> rt::Env {
+    let vm: *jni::JavaVM = { ev::host_runtime() as *jni::JavaVM };
+    if vm.is_null() { return rt::from_native(0 as *jni::JNIEnv); }
+    var envp: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    // AS DAEMON: a photo can be delivered on a thread this package does not
+    // own, and a non-daemon attachment would keep the VM alive past it.
+    let rc: i32 = { (*(*vm)).AttachCurrentThreadAsDaemon(vm, { #addr_of(envp) as *u8 },
+                                                         0 as *u8) };
+    if rc != (0 as i32) { return rt::from_native(0 as *jni::JNIEnv); }
+    return rt::from_native(envp);
+}
+
+// A build with no Activity and no VM is a build with no facet backend — a
+// headless tool linking this package. `Unsupported` is the honest answer.
+fn _ready() -> bool {
+    if !ev::has_host() { return false; }
+    if !ev::has_host_runtime() { return false; }
+    return true;
+}
+
+// A JVM exception left pending poisons the NEXT JNI call, which then fails for
+// a reason that has nothing to do with it. Cleared at every exit from this file.
+fn _threw(env: rt::Env) -> bool {
+    if !env.has_pending_exception() { return false; }
+    env.clear_exception();
+    return true;
+}
+
+// The Activity, which is the `Context` every camera2 entry point wants.
+fn _context() -> jni::jobject {
+    return { ev::host() as jni::jobject };
+}
+
+// ---- the dex ---------------------------------------------------------------
+
+fn _ensure_loaded(env: rt::Env) -> bool {
+    if _LOADER != 0 { return _C_CAMERA != 0; }
+
+    // MERGED FIRST. An app whose build fed `camera.dex` to `d8` alongside its
+    // own classes already has this class, and loading the in-memory copy too
+    // would give the process two — natives registered on one, instances of the
+    // other, and `nativePhoto` never arriving.
+    let merged: jni::jclass = env.find_class(#str_ptr("cplus/camera/CplusCamera\0"));
+    if merged != (0 as jni::jclass) {
+        _C_CAMERA = { #addr(env.retain_local_as_global(merged)) };
+        _LOADER = 1 as usize;
+        _bind_natives(env);
+        return true;
+    }
+    // Not an error: the ordinary case is an app that did not merge. Clear the
+    // pending NoClassDefFoundError rather than leaving it for the next call.
+    env.clear_exception();
+
+    let dex: *[u8; 13280] = #include_bytes("../camera.dex");
+    let buffer: jni::jobject = {
+        (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, _DEX_LEN as i64)
+    };
+    let app_loader: jni::jobject = env.call_object_0(
+        _context(), #str_ptr("android/content/Context\0"), #str_ptr("getClassLoader\0"),
+        #str_ptr("()Ljava/lang/ClassLoader;\0"));
+
+    let imdcl: jni::jclass = env.find_class(#str_ptr("dalvik/system/InMemoryDexClassLoader\0"));
+    let ctor: jni::jmethodID = env.method_id(imdcl, #str_ptr("<init>\0"),
+        #str_ptr("(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V\0"));
+    var ctor_args: [jni::JValue; 2] = [jni::arg_object(buffer), jni::arg_object(app_loader)];
+    let loader: jni::jobject = {
+        (*(*env.raw())).NewObjectA(env.raw(), imdcl, ctor, #addr_of(ctor_args[0]))
+    };
+    if loader == (0 as jni::jobject) {
+        env.clear_exception();
+        return false;
+    }
+    _LOADER = { #addr(env.new_global_ref(loader)) };
+
+    let name: jni::jstring = env.new_string_utf(#str_ptr("cplus.camera.CplusCamera\0"));
+    let local: jni::jobject = env.call_object_1(
+        loader, #str_ptr("java/lang/ClassLoader\0"), #str_ptr("loadClass\0"),
+        #str_ptr("(Ljava/lang/String;)Ljava/lang/Class;\0"), jni::arg_object(name));
+    if local == (0 as jni::jobject) {
+        env.clear_exception();
+        return false;
+    }
+    _C_CAMERA = { #addr(env.new_global_ref(local)) };
+
+    _bind_natives(env);
+
+    env.delete_local_ref(local);
+    env.delete_local_ref(name);
+    env.delete_local_ref(loader);
+    env.delete_local_ref(imdcl);
+    env.delete_local_ref(app_loader);
+    env.delete_local_ref(buffer);
+    return true;
+}
+
+// ART resolves a `native` method by symbol only through a classloader's own
+// native-library namespace, which an in-memory loader does not have — and
+// `nativePhoto` is private besides. Explicit binding is not optional.
+fn _bind_natives(env: rt::Env) {
+    var rec: _NativeLB = _NativeLB {
+        name: #str_ptr("nativePhoto\0"),
+        signature: #str_ptr("(J[B)V\0"),
+        fn_ptr: _camera_android_photo,
+    };
+    let _r: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { _C_CAMERA as *u8 },
+                                                    #addr_of(rec) as *u8, 1) };
+    var frec: _NativeLOIII = _NativeLOIII {
+        name: #str_ptr("nativeFrame\0"),
+        signature: #str_ptr("(JLjava/nio/ByteBuffer;III)V\0"),
+        fn_ptr: _camera_android_frame,
+    };
+    let _rf: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { _C_CAMERA as *u8 },
+                                                     #addr_of(frec) as *u8, 1) };
+}
+
+// ---- the photo callback ----------------------------------------------------
+//
+// Already on the MAIN THREAD: the Java side posts to the main looper before
+// crossing, so the package's "the photo arrives on the main thread" contract
+// holds on both platforms.
+fn _camera_android_photo(envp: *jni::JNIEnv, self_: jni::jobject,
+                               token: i64, jpeg: jni::jobject) {
+    if token == (0 as i64) { return; }
+    let s: *_Session = { token as *_Session };
+    let f: fn(*u8, usize, *u8) = { (*s).cb };
+    if f.is_null() { return; }
+    let env: rt::Env = rt::from_native(envp);
+
+    if jpeg == (0 as jni::jobject) {
+        f(0 as *u8, 0 as usize, { (*s).ctx });
+        return;
+    }
+    let n: i32 = env.byte_array_len({ jpeg as jni::jbyteArray });
+    if n <= (0 as i32) {
+        f(0 as *u8, 0 as usize, { (*s).ctx });
+        return;
+    }
+    var want: usize = n as usize;
+    if want > _MAX_PHOTO { want = _MAX_PHOTO; }
+    // The buffer is the callback's for the duration of the call and freed here,
+    // which is exactly the contract the facade states.
+    let buf: *u8 = { _malloc(want) };
+    if buf.is_null() {
+        f(0 as *u8, 0 as usize, { (*s).ctx });
+        return;
+    }
+    let got: i32 = env.byte_array_into({ jpeg as jni::jbyteArray }, buf, want as i32);
+    if got > (0 as i32) {
+        f(buf, got as usize, { (*s).ctx });
+    } else {
+        f(0 as *u8, 0 as usize, { (*s).ctx });
+    }
+    { _free(buf) };
+}
+
+// ON THE CAMERA'S BACKGROUND THREAD, and it stays there — the Java side does
+// not hop for frames the way it does for a photo.
+//
+// `GetDirectBufferAddress` reads the plane IN PLACE. The buffer belongs to the
+// Image and is recycled the moment `deliverFrame` closes it, which is why the
+// handler contract says the slice is valid for the call only.
+fn _camera_android_frame(envp: *jni::JNIEnv, self_: jni::jobject, token: i64,
+                         luma: jni::jobject, width: i32, height: i32, stride: i32) {
+    if token == (0 as i64) { return; }
+    let s: *_Session = { token as *_Session };
+    let f: fn(*u8, i32, i32, i32, *u8, *u8) = { (*s).frame_cb };
+    if f.is_null() { return; }
+    if luma == (0 as jni::jobject) { return; }
+    let base: *u8 = { (*(*envp)).GetDirectBufferAddress(envp, luma) };
+    if base.is_null() { return; }
+    // 0 for the native slot: a camera2 frame is a `java.nio.ByteBuffer`
+    // over one plane, not a single native object worth handing back.
+    f(base, width, height, stride, 0 as *u8, { (*s).frame_ctx });
+}
+
+#[link_name = "malloc"]
+extern fn _malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn _free(p: *u8);
+
+// ---- the seam --------------------------------------------------------------
+
+export extern fn _c_count() -> i64 {
+    if !_ready() { return 0 as i64; }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return 0 as i64; }
+    if !_ensure_loaded(env) { return 0 as i64; }
+    let m: jni::jmethodID = env.method_id_static({ _C_CAMERA as *u8 }, #str_ptr("count\0"),
+        #str_ptr("(Landroid/content/Context;)I\0"));
+    if m == (0 as jni::jmethodID) { env.clear_exception(); return 0 as i64; }
+    var args: [jni::JValue; 1] = [jni::arg_object(_context())];
+    let n: i32 = { (*(*env.raw())).CallStaticIntMethodA(env.raw(), { _C_CAMERA as *u8 }, m,
+                                                        #addr_of(args[0])) };
+    if _threw(env) { return 0 as i64; }
+    return n as i64;
+}
+
+export extern fn _c_has(facing: i32) -> i32 {
+    if !_ready() { return 0 as i32; }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return 0 as i32; }
+    if !_ensure_loaded(env) { return 0 as i32; }
+    let m: jni::jmethodID = env.method_id_static({ _C_CAMERA as *u8 }, #str_ptr("has\0"),
+        #str_ptr("(Landroid/content/Context;Z)Z\0"));
+    if m == (0 as jni::jmethodID) { env.clear_exception(); return 0 as i32; }
+    var args: [jni::JValue; 2] = [jni::arg_object(_context()), rt::arg_bool(facing == (1 as i32))];
+    let ok: u8 = { (*(*env.raw())).CallStaticBooleanMethodA(env.raw(), { _C_CAMERA as *u8 }, m,
+                                                            #addr_of(args[0])) };
+    if _threw(env) { return 0 as i32; }
+    if ok == (0 as u8) { return 0 as i32; }
+    return 1 as i32;
+}
+
+export extern fn _c_last_error() -> i32 {
+    return _LAST_ERROR;
+}
+
+export extern fn _c_open(req: *_CRequest) -> *u8 {
+    if req.is_null() { return 0 as *u8; }
+    let facing: i32 = { (*req).facing };
+    let want_width: i32 = { (*req).width };
+    let want_height: i32 = { (*req).height };
+    _LAST_ERROR = cam::Outcome::Failed.to_code();
+    if !_ready() {
+        _LAST_ERROR = cam::Outcome::Unsupported.to_code();
+        return 0 as *u8;
+    }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return 0 as *u8; }
+    if !_ensure_loaded(env) {
+        _LAST_ERROR = cam::Outcome::Unsupported.to_code();
+        return 0 as *u8;
+    }
+
+    // The token the Java side hands back with every photo IS the session
+    // pointer, so the box has to exist before the object that carries it.
+    var st: _Session = _Session {
+        obj: 0 as jni::jobject,
+        cb: 0 as fn(*u8, usize, *u8),
+        ctx: 0 as *u8,
+        frame_cb: 0 as fn(*u8, i32, i32, i32, *u8, *u8),
+        frame_ctx: 0 as *u8,
+    };
+    var raw: *u8 = 0 as *u8;
+    match box::new::[_Session](st) {
+        option::Option[box::Box[_Session]]::Some(b) => { raw = b.into_raw() as *u8; },
+        option::Option[box::Box[_Session]]::None => { return 0 as *u8; },
+    }
+    if raw.is_null() { return 0 as *u8; }
+    let s: *_Session = raw as *_Session;
+
+    let ctor: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("(J)V\0"));
+    if ctor == (0 as jni::jmethodID) {
+        env.clear_exception();
+        box::from_raw::[_Session](raw);
+        return 0 as *u8;
+    }
+    var ctor_args: [jni::JValue; 1] = [jni::arg_long({ raw as i64 })];
+    let local: jni::jobject = {
+        (*(*env.raw())).NewObjectA(env.raw(), { _C_CAMERA as *u8 }, ctor, #addr_of(ctor_args[0]))
+    };
+    if local == (0 as jni::jobject) {
+        env.clear_exception();
+        box::from_raw::[_Session](raw);
+        return 0 as *u8;
+    }
+    { (*s).obj = env.new_global_ref(local) };
+    env.delete_local_ref(local);
+
+    let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("open\0"),
+        #str_ptr("(Landroid/content/Context;ZII)Z\0"));
+    if m == (0 as jni::jmethodID) {
+        env.clear_exception();
+        _c_close(raw);
+        return 0 as *u8;
+    }
+    var args: [jni::JValue; 4] = [jni::arg_object(_context()), rt::arg_bool(facing == (1 as i32)),
+                                  rt::arg_int(want_width), rt::arg_int(want_height)];
+    let ok: u8 = { (*(*env.raw())).CallBooleanMethodA(env.raw(), { (*s).obj }, m,
+                                                      #addr_of(args[0])) };
+    if _threw(env) || ok == (0 as u8) {
+        // ASK THE JAVA SIDE WHY, do not infer it. This inferred `Busy` from
+        // "a camera exists and open failed", which reported a PERMISSION
+        // DENIAL as "another app is using the camera" — measured on a real
+        // device with the grant revoked. `openCamera` throws SecurityException
+        // rather than prompting, and only the Java catch can tell the two
+        // apart.
+        var why: i32 = cam::Outcome::Failed.to_code();
+        let le: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("lastError\0"),
+                                               #str_ptr("()I\0"));
+        if le != (0 as jni::jmethodID) {
+            let code: i32 = { (*(*env.raw())).CallIntMethodA(env.raw(), { (*s).obj }, le,
+                                                             0 as *jni::JValue) };
+            if !_threw(env) && code != (0 as i32) { why = code; }
+        } else {
+            env.clear_exception();
+        }
+        _c_close(raw);
+        _LAST_ERROR = why;
+        return 0 as *u8;
+    }
+    _LAST_ERROR = cam::Outcome::Ok.to_code();
+    return raw;
+}
+
+export extern fn _c_close(h: *u8) {
+    if h.is_null() { return; }
+    let s: *_Session = h as *_Session;
+    let obj: jni::jobject = { (*s).obj };
+    if obj != (0 as jni::jobject) {
+        let env: rt::Env = _env();
+        if env.raw().is_not_null() {
+            // THROUGH `_C_CAMERA`, never through a class NAME. See the note on
+            // `_c_preview_create`.
+            let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("close\0"),
+                                                  #str_ptr("()V\0"));
+            if m != (0 as jni::jmethodID) {
+                { (*(*env.raw())).CallVoidMethodA(env.raw(), obj, m, 0 as *jni::JValue) };
+            }
+            let _ = _threw(env);
+            env.delete_global_ref(obj);
+        }
+    }
+    { (*s).obj = 0 as jni::jobject };
+    { (*s).cb = 0 as fn(*u8, usize, *u8) };
+    { (*s).ctx = 0 as *u8 };
+    { (*s).frame_cb = 0 as fn(*u8, i32, i32, i32, *u8, *u8) };
+    { (*s).frame_ctx = 0 as *u8 };
+    box::from_raw::[_Session](h);
+}
+
+export extern fn _c_preview_create(h: *u8) -> *u8 {
+    if h.is_null() { return 0 as *u8; }
+    let s: *_Session = h as *_Session;
+    let obj: jni::jobject = { (*s).obj };
+    if obj == (0 as jni::jobject) { return 0 as *u8; }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return 0 as *u8; }
+    // THROUGH `_C_CAMERA`, never through a class NAME — and this cost a crash.
+    //
+    // `env.call_object_1` and friends resolve the class with `FindClass`, and
+    // **JNI's FindClass cannot see a class from an InMemoryDexClassLoader**: it
+    // searches the loader of the calling native frame, which for our code is
+    // the system loader. An app that MERGED camera.dex has the class in its own
+    // dex and the name-based call works, so this path passed every test until
+    // the merge was removed — then `preview` crashed the process inside the
+    // mount walk. `_C_CAMERA` is the global ref taken from the loader that
+    // actually loaded the class, and is right on both paths.
+    let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("preview\0"),
+        #str_ptr("(Landroid/content/Context;)Landroid/view/View;\0"));
+    if m == (0 as jni::jmethodID) { env.clear_exception(); return 0 as *u8; }
+    var args: [jni::JValue; 1] = [jni::arg_object(_context())];
+    let local: jni::jobject = {
+        (*(*env.raw())).CallObjectMethodA(env.raw(), obj, m, #addr_of(args[0]))
+    };
+    if _threw(env) || local == (0 as jni::jobject) { return 0 as *u8; }
+    // A GLOBAL REF, because facet holds this across the mount and a local ref
+    // dies when this JNI frame does. `_c_preview_release` is the matching
+    // delete, and facet guarantees it — the factory contract pairs them.
+    let g: jni::jobject = env.new_global_ref(local);
+    env.delete_local_ref(local);
+    return { g as *u8 };
+}
+
+export extern fn _c_preview_release(v: *u8) {
+    if v.is_null() { return; }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return; }
+    env.delete_global_ref({ v as jni::jobject });
+}
+
+export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    if h.is_null() { return cam::Outcome::Failed.to_code(); }
+    let s: *_Session = h as *_Session;
+    let obj: jni::jobject = { (*s).obj };
+    if obj == (0 as jni::jobject) { return cam::Outcome::Failed.to_code(); }
+    { (*s).cb = cb };
+    { (*s).ctx = ctx };
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return cam::Outcome::Failed.to_code(); }
+    let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("capture\0"),
+                                          #str_ptr("()Z\0"));
+    if m == (0 as jni::jmethodID) { env.clear_exception(); return cam::Outcome::Failed.to_code(); }
+    let ok: u8 = { (*(*env.raw())).CallBooleanMethodA(env.raw(), obj, m, 0 as *jni::JValue) };
+    if _threw(env) { return cam::Outcome::Failed.to_code(); }
+    if ok == (0 as u8) {
+        // The session is not configured yet. Not a failure of the request so
+        // much as of its timing, and `Busy` is the closest honest answer.
+        return cam::Outcome::Busy.to_code();
+    }
+    return cam::Outcome::Ok.to_code();
+}
+
+
+export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+    if h.is_null() { return cam::Outcome::Failed.to_code(); }
+    let s: *_Session = h as *_Session;
+    let obj: jni::jobject = { (*s).obj };
+    if obj == (0 as jni::jobject) { return cam::Outcome::Failed.to_code(); }
+    { (*s).frame_cb = cb };
+    { (*s).frame_ctx = ctx };
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return cam::Outcome::Failed.to_code(); }
+    let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("startFrames\0"),
+                                          #str_ptr("()Z\0"));
+    if m == (0 as jni::jmethodID) { env.clear_exception(); return cam::Outcome::Failed.to_code(); }
+    let ok: u8 = { (*(*env.raw())).CallBooleanMethodA(env.raw(), obj, m, 0 as *jni::JValue) };
+    if _threw(env) { return cam::Outcome::Failed.to_code(); }
+    if ok == (0 as u8) { return cam::Outcome::Busy.to_code(); }
+    return cam::Outcome::Ok.to_code();
+}
+
+export extern fn _c_stop_frames(h: *u8) -> i32 {
+    if h.is_null() { return cam::Outcome::Failed.to_code(); }
+    let s: *_Session = h as *_Session;
+    { (*s).frame_cb = 0 as fn(*u8, i32, i32, i32, *u8, *u8) };
+    let obj: jni::jobject = { (*s).obj };
+    if obj == (0 as jni::jobject) { return cam::Outcome::Ok.to_code(); }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return cam::Outcome::Ok.to_code(); }
+    let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("stopFrames\0"),
+                                          #str_ptr("()Z\0"));
+    if m == (0 as jni::jmethodID) { env.clear_exception(); return cam::Outcome::Ok.to_code(); }
+    let _ok: u8 = { (*(*env.raw())).CallBooleanMethodA(env.raw(), obj, m, 0 as *jni::JValue) };
+    let _t: bool = _threw(env);
+    return cam::Outcome::Ok.to_code();
+}
+
+
+// An `int` getter on the Java side, by name. Three of them, all trivial, so one
+// helper rather than three near-identical blocks.
+fn _int_getter(h: *u8, name: *u8) -> i32 {
+    if h.is_null() { return 0 as i32; }
+    let s: *_Session = h as *_Session;
+    let obj: jni::jobject = { (*s).obj };
+    if obj == (0 as jni::jobject) { return 0 as i32; }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return 0 as i32; }
+    let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, name, #str_ptr("()I\0"));
+    if m == (0 as jni::jmethodID) { env.clear_exception(); return 0 as i32; }
+    let v: i32 = { (*(*env.raw())).CallIntMethodA(env.raw(), obj, m, 0 as *jni::JValue) };
+    if _threw(env) { return 0 as i32; }
+    return v;
+}
+
+export extern fn _c_actual_facing(h: *u8) -> i32 {
+    return _int_getter(h, #str_ptr("actualFacing\0"));
+}
+
+export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
+    { (*out_width) = _int_getter(h, #str_ptr("frameWidth\0")) };
+    { (*out_height) = _int_getter(h, #str_ptr("frameHeight\0")) };
+}
+
+// Android has exactly one delivery today: `YUV_420_888`, whose plane 0 is
+// 8-bit luma — `Luma8` (1) in `camera::PixelFormat::to_code()`. Not a stub:
+// this is the true answer for every frame this backend hands over.
+export extern fn _c_pixel_format(h: *u8) -> i32 {
+    if h.is_null() { return 0 as i32; }
+    return 1 as i32;
+}
+
+
+// ---- not yet built on Android ------------------------------------------------
+//
+// These EXIST so the package links; every one answers `Unsupported`, which is
+// the honest code for "this build has no implementation" and is distinct from
+// `Failed`. camera2 has all of them — `CaptureRequest.CONTROL_AF_MODE`,
+// `SCALER_CROP_REGION` for zoom, `FLASH_MODE` for the torch — so this is work
+// not yet done, not a platform limit. The macOS half is the one being measured
+// first; see the status lines on `camera::Request`.
+
+export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_zoom(h: *u8) -> f64 { return 1.0; }
+export extern fn _c_max_zoom(h: *u8) -> f64 { return 1.0; }
+
+export extern fn _c_has_torch(h: *u8) -> i32 { return 0 as i32; }
+
+export extern fn _c_set_torch(h: *u8, on: i32) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_frame_rate(h: *u8) -> i32 { return 0 as i32; }
+
+
+export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
+    if h.is_null() { return cam::Outcome::Failed.to_code(); }
+    let s: *_Session = h as *_Session;
+    let obj: jni::jobject = { (*s).obj };
+    if obj == (0 as jni::jobject) { return cam::Outcome::Failed.to_code(); }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return cam::Outcome::Failed.to_code(); }
+    let m: jni::jmethodID = env.method_id({ _C_CAMERA as *u8 }, #str_ptr("switchTo\0"),
+        #str_ptr("(Landroid/content/Context;Z)Z\0"));
+    if m == (0 as jni::jmethodID) { env.clear_exception(); return cam::Outcome::Failed.to_code(); }
+    var args: [jni::JValue; 2] = [jni::arg_object(_context()), rt::arg_bool(facing == (1 as i32))];
+    let ok: u8 = { (*(*env.raw())).CallBooleanMethodA(env.raw(), obj, m, #addr_of(args[0])) };
+    if _threw(env) { return cam::Outcome::Failed.to_code(); }
+    if ok == (0 as u8) { return cam::Outcome::Unsupported.to_code(); }
+    return cam::Outcome::Ok.to_code();
+}

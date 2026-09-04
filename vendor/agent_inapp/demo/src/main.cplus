@@ -131,12 +131,14 @@ impl Home: component::Component {
 }
 
 impl Home: component::Lifecycle {
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         services::run_on_main(run_agent, 0 as *u8);
         return;
     }
 
-    fn on_detach(ref this) { return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 impl Home: screen::Screen {

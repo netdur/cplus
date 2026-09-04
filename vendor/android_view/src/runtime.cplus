@@ -328,6 +328,178 @@ impl Env {
         };
     }
 
+    // ---- int and boolean returns --------------------------------------------
+    //
+    // ADDED FOR `vendor/permissions`, and the gap is worth recording because it
+    // is the shape of gap this wrapper will have again: the raw `jni` table has
+    // bound `CallIntMethodA` and `CallBooleanMethodA` since the beginning, and
+    // this CACHING wrapper — the one every caller actually uses — only ever
+    // grew the arities its callers needed. Everything before permissions
+    // returned void or an object.
+    //
+    //     Context.checkSelfPermission(String) -> int
+    //     Activity.shouldShowRequestPermissionRationale(String) -> boolean
+
+    fn call_int_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8,
+                  arg0: jni::JValue) -> i32 {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 1] = [arg0];
+        return { (*(*this._env)).CallIntMethodA(this._env, obj, mid, #addr_of(args[0])) };
+    }
+
+    fn call_bool_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8,
+                   arg0: jni::JValue) -> bool {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 1] = [arg0];
+        return { (*(*this._env)).CallBooleanMethodA(this._env, obj, mid,
+                                                    #addr_of(args[0])) } as i8 != 0;
+    }
+
+    // ---- two more arities, added for `vendor/notifications` -------------------
+    //
+    // The same gap `permissions` found and for the same reason: this caching
+    // wrapper only ever grew the arities its callers needed. A
+    // `Notification.Builder` is constructed from (Context, String) and posted
+    // with `notify(String, int, Notification)`.
+
+    fn new_object_2(this, class_name: *u8, ctor_sig: *u8,
+                    arg0: jni::JValue, arg1: jni::JValue) -> jni::jobject {
+        let cls: jni::jclass = this.class_cached(class_name);
+        if cls == (0 as jni::jclass) { return 0 as jni::jobject; }
+        let ctor: jni::jmethodID = this.method(class_name, #str_ptr("<init>\0"), ctor_sig);
+        var args: [jni::JValue; 2] = [arg0, arg1];
+        return { (*(*this._env)).NewObjectA(this._env, cls, ctor, #addr_of(args[0])) };
+    }
+
+    fn call_void_3(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8,
+                   arg0: jni::JValue, arg1: jni::JValue, arg2: jni::JValue) {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 3] = [arg0, arg1, arg2];
+        { (*(*this._env)).CallVoidMethodA(this._env, obj, mid, #addr_of(args[0])); };
+    }
+
+    fn new_object_3(this, class_name: *u8, ctor_sig: *u8,
+                    arg0: jni::JValue, arg1: jni::JValue, arg2: jni::JValue) -> jni::jobject {
+        let cls: jni::jclass = this.class_cached(class_name);
+        if cls == (0 as jni::jclass) { return 0 as jni::jobject; }
+        let ctor: jni::jmethodID = this.method(class_name, #str_ptr("<init>\0"), ctor_sig);
+        var args: [jni::JValue; 3] = [arg0, arg1, arg2];
+        return { (*(*this._env)).NewObjectA(this._env, cls, ctor, #addr_of(args[0])) };
+    }
+
+    fn call_object_2(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8,
+                     arg0: jni::JValue, arg1: jni::JValue) -> jni::jobject {
+        let mid: jni::jmethodID = this.method(class_name, name, sig);
+        var args: [jni::JValue; 2] = [arg0, arg1];
+        return { (*(*this._env)).CallObjectMethodA(this._env, obj, mid, #addr_of(args[0])) };
+    }
+
+    // ---- object arrays --------------------------------------------------------
+    //
+    // `Activity.requestPermissions(String[], int)` is the only caller so far,
+    // and a String[] cannot be built from anything already here.
+    //
+    // `initial` fills every slot; pass null and set the elements. The class is
+    // named rather than passed so the CLASS CACHE serves it, which is the whole
+    // reason these live on `Env` rather than being written out at each call
+    // site — resolving per call measured 2x slower on a 400-node mount.
+    fn new_object_array(this, len: i32, class_name: *u8,
+                        initial: jni::jobject) -> jni::jobjectArray {
+        let cls: jni::jclass = this.class_cached(class_name);
+        if cls == (0 as jni::jclass) { return 0 as jni::jobjectArray; }
+        return { (*(*this._env)).NewObjectArray(this._env, len as jni::jsize, cls, initial) };
+    }
+
+    fn set_object_array_element(this, arr: jni::jobjectArray, index: i32,
+                                value: jni::jobject) {
+        { (*(*this._env)).SetObjectArrayElement(this._env, arr, index as jni::jsize, value); };
+    }
+
+    // ---- static object calls, added for `vendor/securestore` -----------------
+    //
+    // THE THIRD TIME THIS WRAPPER HAS BEEN SHORT AN ARITY, after permissions
+    // and notifications, and the comment on those two predicted it. The raw
+    // `jni` table has bound `CallStaticObjectMethodA` since the beginning; this
+    // caching wrapper only ever grew what its callers needed, and until now
+    // every static call in the tree returned an int (`View.generateViewId`,
+    // `View.combineMeasuredStates`) and went through the raw table directly.
+    //
+    // The whole of Java's crypto surface is reached through static factories:
+    //
+    //     KeyStore.getInstance(String)                   -> KeyStore
+    //     Cipher.getInstance(String)                     -> Cipher
+    //     KeyGenerator.getInstance(String, String)       -> KeyGenerator
+
+    fn call_object_static_1(this, class_name: *u8, name: *u8, sig: *u8,
+                            arg0: jni::JValue) -> jni::jobject {
+        let cls: jni::jclass = this.class_cached(class_name);
+        if cls == (0 as jni::jclass) { return 0 as jni::jobject; }
+        let mid: jni::jmethodID = this.method_static(class_name, name, sig);
+        if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+        var args: [jni::JValue; 1] = [arg0];
+        return {
+            (*(*this._env)).CallStaticObjectMethodA(this._env, cls, mid, #addr_of(args[0]))
+        };
+    }
+
+    fn call_object_static_2(this, class_name: *u8, name: *u8, sig: *u8,
+                            arg0: jni::JValue, arg1: jni::JValue) -> jni::jobject {
+        let cls: jni::jclass = this.class_cached(class_name);
+        if cls == (0 as jni::jclass) { return 0 as jni::jobject; }
+        let mid: jni::jmethodID = this.method_static(class_name, name, sig);
+        if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+        var args: [jni::JValue; 2] = [arg0, arg1];
+        return {
+            (*(*this._env)).CallStaticObjectMethodA(this._env, cls, mid, #addr_of(args[0]))
+        };
+    }
+
+    // ---- byte arrays, added for `vendor/securestore` --------------------------
+    //
+    // A `byte[]` is how every cipher in Java takes and returns its bytes, and
+    // there was no way to build or read one here — `new_object_array` covers
+    // `String[]` and nothing else, because a `jbyteArray` is a PRIMITIVE array
+    // with its own JNI calls.
+    //
+    // THE REGION CALLS, not `GetByteArrayElements`. The element form hands back
+    // a pointer that may or may not be a copy and must be released with a mode
+    // flag; the region form copies into memory the caller already owns, which
+    // is one call, no release, and nothing to leak if an exception is pending.
+    // For the few kilobytes this is for, the copy costs nothing.
+
+    fn new_byte_array(this, len: i32) -> jni::jbyteArray {
+        return { (*(*this._env)).NewByteArray(this._env, len as jni::jsize) };
+    }
+
+    // Fill `arr[0..len)` from `src`. The caller guarantees `len` bytes there.
+    fn byte_array_set(this, arr: jni::jbyteArray, src: *u8, len: i32) {
+        { (*(*this._env)).SetByteArrayRegion(this._env, arr, 0 as jni::jsize,
+                                             len as jni::jsize, src); };
+    }
+
+    // How many bytes the array holds. 0 for a null array, so a caller that
+    // forgot to check an exception reads an empty result rather than a crash.
+    fn byte_array_len(this, arr: jni::jbyteArray) -> i32 {
+        if arr == (0 as jni::jbyteArray) { return 0 as i32; }
+        return { (*(*this._env)).GetArrayLength(this._env, arr) } as i32;
+    }
+
+    // Copy `arr` into `dst`, at most `cap` bytes; answers how many were copied.
+    //
+    // CLAMPED HERE rather than trusted: `GetByteArrayRegion` with a length past
+    // the end throws ArrayIndexOutOfBounds and writes nothing, which turns a
+    // caller's arithmetic slip into a pending exception two calls later instead
+    // of a short read here.
+    fn byte_array_into(this, arr: jni::jbyteArray, dst: *u8, cap: i32) -> i32 {
+        let n: i32 = this.byte_array_len(arr);
+        if n == (0 as i32) { return 0 as i32; }
+        var take_n: i32 = n;
+        if take_n > cap { take_n = cap; }
+        { (*(*this._env)).GetByteArrayRegion(this._env, arr, 0 as jni::jsize,
+                                             take_n as jni::jsize, dst); };
+        return take_n;
+    }
+
     // A pending JVM exception reads as an assertion, not a raw 0/1 sentinel.
     fn has_pending_exception(this) -> bool {
         return { (*(*this._env)).ExceptionCheck(this._env) } as i8 != 0;

@@ -183,6 +183,10 @@ struct WindowHost {
     will_close: fn(*u8),
     opaque will_close_ctx: *u8,
     delegate: ak::WindowDelegate,
+    // The backing scale the last layout pass snapped to. See
+    // `appkit_did_change_backing_properties`: the notification also fires for a
+    // colour-space change, and this is what tells the two apart.
+    scale: f64,
 }
 
 fn host_key() -> *u8 { return 29010 as *u8; }
@@ -231,6 +235,36 @@ fn appkit_did_resize(user: *u8, notif: *u8) {
     if root.is_not_null() { scheduler::layout_window(root); }
 }
 
+// windowDidChangeBackingProperties: the window moved to a display with a
+// different backing scale, so the pixel grid under it changed.
+//
+// THE SIZE DID NOT CHANGE, which is the whole difficulty. Dragging a window
+// from a Retina display to a 1x one leaves it exactly as many points wide, so
+// no resize fires, `calculate_layout` is a cache hit and `layout_changed()`
+// reports false — while every frame in the tree is snapped to a half-point grid
+// that the new display cannot render. Text goes soft and edges blur, and it
+// stays that way until something else resizes the window. Hence the forced
+// walk: the layout did not change, the FRAMES did.
+//
+// The notification also fires when only the colour space changes, and a whole
+// frame walk for that is work with no output, so the scale is compared first.
+fn appkit_did_change_backing_properties(user: *u8, notif: *u8) {
+    if user.is_null() { return; }
+    let h: *WindowHost = user as *WindowHost;
+    let root: *core::Node = { (*h).root };
+    if root.is_null() { return; }
+    let win: *u8 = app::window_native(root);
+    if win.is_null() { return; }
+    // The typed wrapper, not a raw msgSend: this is a cold path — a display
+    // change, not a frame — and the file's rule is that only the frame walk
+    // speaks to the runtime directly.
+    let now: f64 = ak::Window::from_raw(win).backing_scale_factor();
+    if now <= 0.0f64 { return; }
+    if now == { (*h).scale } { return; }
+    { (*h).scale = now };
+    scheduler::layout_window(root, force: true);
+}
+
 fn install_window_host(win: ak::Window, root: *core::Node,
                        should_close: fn(*u8) -> bool, should_close_ctx: *u8,
                        will_close: fn(*u8), will_close_ctx: *u8) {
@@ -241,6 +275,7 @@ fn install_window_host(win: ak::Window, root: *core::Node,
         will_close: will_close,
         will_close_ctx: will_close_ctx,
         delegate: ak::WindowDelegate_new(0 as *u8),
+        scale: 0.0f64,
     };
     match box::new::[WindowHost](h) {
         option::Option[box::Box[WindowHost]]::Some(b) => {
@@ -252,6 +287,12 @@ fn install_window_host(win: ak::Window, root: *core::Node,
             { (*host).delegate.set_window_should_close(appkit_should_close) };
             { (*host).delegate.set_window_will_close(appkit_will_close) };
             { (*host).delegate.set_window_did_resize(appkit_did_resize) };
+            { (*host).delegate.set_window_did_change_backing_properties(
+                appkit_did_change_backing_properties) };
+            // Seeded from the window it is being installed on, so the first
+            // notification after a move is a real change and not the discovery
+            // of the scale the window already had.
+            { (*host).scale = win.backing_scale_factor() };
             let obj: *u8 = ak::create_WindowDelegate(#addr_of((*host).delegate));
             win.set_delegate(obj);
             // Pin both to the window: it outlives this frame and owns them.

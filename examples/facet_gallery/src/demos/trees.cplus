@@ -82,7 +82,8 @@ impl Trees: component::Component {
 }
 
 impl Trees: component::Lifecycle {
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         match tree::find("tr:demo") {
             option::Option[tree::Tree]::Some(t) => {
                 let _a: tree::Tree = t.expand("animals");
@@ -91,5 +92,6 @@ impl Trees: component::Lifecycle {
             option::Option::None => { }
         }
     }
-    fn on_detach(ref this) { return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }

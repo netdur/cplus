@@ -252,9 +252,15 @@ fn run_component[C: component::Component + component::Lifecycle](
     // pending intent after the return, the way an App loop does.
     CURRENT_ROOT = #addr_of(root);
     nav::set_close_fn(close_current);
-    owned.on_attach();
+    // THE APP LIFECYCLE, bound around the loop and not around the process.
+    // `owned` is in THIS frame, so the subscription must die with the frame:
+    // an event delivered after `run_loop` returns would call a method on a
+    // dead stack slot. Bound after on_attach so a component sees attach first.
+    owned.on_attach(component::Attach::Mount);
+    let _bound: status::Status = component::bind_app_lifecycle::[C](#addr_of(owned));
     host::run_loop();
-    owned.on_detach();
+    let _unbound: status::Status = component::unbind_app_lifecycle::[C](#addr_of(owned));
+    owned.on_detach(component::Detach::Unmount);
     nav::set_close_fn(0 as fn());
     CURRENT_ROOT = 0 as *core::Node;
     settle_and_teardown(#addr_of(root));
@@ -281,9 +287,15 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     let _w: *u8 = host::open_window(#addr_of(root), c);
     CURRENT_ROOT = #addr_of(root);
     nav::set_close_fn(close_current);
-    owned.on_attach();
+    // THE APP LIFECYCLE, bound around the loop and not around the process.
+    // `owned` is in THIS frame, so the subscription must die with the frame:
+    // an event delivered after `run_loop` returns would call a method on a
+    // dead stack slot. Bound after on_attach so a component sees attach first.
+    owned.on_attach(component::Attach::Mount);
+    let _bound: status::Status = component::bind_app_lifecycle::[S](#addr_of(owned));
     host::run_loop();
-    owned.on_detach();
+    let _unbound: status::Status = component::unbind_app_lifecycle::[S](#addr_of(owned));
+    owned.on_detach(component::Detach::Unmount);
     nav::set_close_fn(0 as fn());
     CURRENT_ROOT = 0 as *core::Node;
     settle_and_teardown(#addr_of(root));
@@ -736,10 +748,10 @@ impl App {
             // retargets every later request rather than needing the worker
             // restarted.
             let _shown: *u8 = w;
-            sb.on_attach();
+            sb.on_attach(component::Attach::Mount);
             host::run_loop();        // blocks until this screen's window closes
             close_all_pushed();      // replacing the root dismisses pushed screens
-            sb.on_detach();
+            sb.on_detach(component::Detach::Unmount);
             // A worker may still be inside this screen's data, and `sb` is
             // freed a few lines down: settling here is what stops a worker
             // writing into freed memory.
@@ -778,7 +790,7 @@ static CURRENT_ROOT: *core::Node = #zero::[*core::Node]();
 // down where nothing of ours can run.
 //
 // That is the whole fix. `terminate:` never returns to `host::run_loop()`, so
-// `sb.on_detach()` and `App::on_quit` — both of which sit after that return —
+// `sb.on_detach(component::Detach::Unmount)` and `App::on_quit` — both of which sit after that return —
 // never ran on the one path every user takes. `nav::quit()` closes the current
 // window with nothing pending, `run_loop()` returns, and the loop in `run`
 // reaches those two lines exactly where it always did. ⌘Q becomes the same
@@ -883,7 +895,7 @@ fn push_screen(route: str, arg: str) -> bool {
     // others that used to disagree about whether to.
     let stack: *vec::Vec[PushedScreen] = #addr_of(PUSHED);
     { (*stack).append(PushedScreen { root: tp, sbp: sbp }) };
-    { (*(sbp as *screen::ScreenBox)).on_attach() };
+    { (*(sbp as *screen::ScreenBox)).on_attach(component::Attach::Mount) };
     return true;
 }
 
@@ -892,7 +904,7 @@ fn push_screen(route: str, arg: str) -> bool {
 // unmounts, so the screen's views are alive for on_detach.
 fn pushed_closed(ctx: *u8) {
     if ctx.is_null() { return; }
-    { (*(ctx as *screen::ScreenBox)).on_detach() };
+    { (*(ctx as *screen::ScreenBox)).on_detach(component::Detach::Unmount) };
     pushed_remove(ctx);
     // THE FREE IS DEFERRED, and the two things it is not are both mistakes
     // that were made here.
@@ -1395,6 +1407,12 @@ fn the_terminate_seam_yields_to_an_application_that_owns_the_delegate() {
     // (a) AN APPLICATION'S OWN DELEGATE WINS. It is answering this selector
     // itself, or wants to, and replacing it would silently break whatever else
     // it answers — so the seam declines rather than taking it.
+    // FORGET FIRST. `facet_appkit`'s event wiring arms the URL half of this
+    // same delegate at backend-install time, and if it has run in this process
+    // the seam is already ours — the call below would answer true from its own
+    // cache without ever looking at the squatter. Dropping the cache is what
+    // makes the refusal a real decision again rather than a replay.
+    akx::t_forget_delegate();
     let squatter: *u8 = rt::msg_id(rt::msg_id(rt::get_class(#str_ptr("NSObject\0")),
                                               rt::sel(#str_ptr("alloc\0"))),
                                    rt::sel(#str_ptr("init\0")));

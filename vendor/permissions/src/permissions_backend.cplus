@@ -1,0 +1,1378 @@
+// permissions_backend — the Apple half: AVFoundation, Photos, Contacts and
+// EventKit, and nothing else.
+//
+// THE PLATFORM DEFAULT, in the resolver's sense: this file has no
+// `_<platform>` suffix, so it is what the build takes anywhere that has no
+// sibling shadowing it — macOS and iOS, which share it because these four are
+// the same classes with the same selectors on both.
+//
+// It implements the stable symbols declared in `permissions.cplus`; the seam is
+// documented where they are declared.
+//
+// ---------------------------------------------------------------------------
+// A DOMAIN IS A ROW, NOT A FUNCTION
+// ---------------------------------------------------------------------------
+//
+// Eight Apple _domains are not eight special cases. Every one of them is:
+//
+//     load a framework, _find a class, send a status selector, map the answer
+//
+// so the table below is DATA, and `register_apple` lets an application _add a
+// row for a domain this package has not shipped. That is the escape hatch that
+// makes the closed Apple half survivable — see the note on the name type in
+// `permissions.cplus`.
+//
+// Location is the one that does not fit: its answer arrives on a
+// `CLLocationManagerDelegate` rather than from a class method, so it cannot be
+// expressed as a row and is not in this table. It has its own pass.
+//
+// ---------------------------------------------------------------------------
+// _dlopen, NOT `[link] frameworks`
+// ---------------------------------------------------------------------------
+//
+// Naming all four in the manifest would put them in the launch-time dyld work
+// of any application that wanted one of them. Every class here is reached by
+// NAME, so the framework is loaded on first use and a domain nobody asks about
+// costs nothing. These are public system frameworks, which is permitted and
+// ship-legal; it is private-API _dlopen that gets an app rejected.
+//
+// `RTLD_LAZY | RTLD_LOCAL` and the handle is deliberately leaked: a framework
+// that has been loaded is loaded for the process, and there is nothing to
+// close.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "./permissions" as perm;
+
+#[link_name = "dlopen"]
+extern fn _dlopen(path: *u8, mode: i32) -> *u8;
+
+// RTLD_LAZY(0x1) | RTLD_LOCAL(0x4). Built arithmetically rather than written as
+// 5, so the two flags stay legible.
+fn _rtld_lazy_local() -> i32 { return (1 as i32) + (4 as i32); }
+
+// ---- the shapes a status read can have ---------------------------------------
+//
+// THREE, and the count is the whole reason the table works. Every Apple
+// authorization status is one of:
+//
+//   S_MEDIA     +authorizationStatusForMediaType:   (an NSString argument)
+//   S_ENTITY    +authorizationStatusForEntityType:  (an integer argument)
+//   S_LEVEL     +authorizationStatusForAccessLevel: (an integer argument)
+//
+// and all three return the same 0..4 enum — see `_map_status`.
+const S_MEDIA: u32 = 1 as u32;
+const S_ENTITY: u32 = 2 as u32;
+const S_LEVEL: u32 = 3 as u32;
+// The fourth, and it is the one that breaks the pattern: UserNotifications has
+// NO synchronous status read. `-getNotificationSettingsWithCompletionHandler:`
+// answers through a block, so `state` cannot be a call — it is a CACHE that a
+// call refreshes. See `notify_code`.
+const S_ASYNC_NOTIFY: u32 = 4 as u32;
+
+// WHICH ENUM THE ANSWER IS, and the reason this field exists at all.
+//
+// The spike claimed one map for every Apple framework, and for four of them
+// that is true — AV, PH, CN and EK all number NotDetermined 0, Restricted 1,
+// Denied 2, Authorized 3. UNAuthorizationStatus does NOT: it is NotDetermined
+// 0, **Denied 1**, Authorized 2, Provisional 3, Ephemeral 4. Running
+// notifications through the shared map would report a refusal as `Blocked` and
+// an authorisation as `Denied` — both silently, both wrong.
+const M_STANDARD: u32 = 1 as u32;
+const M_NOTIFY: u32 = 2 as u32;
+
+// A domain, as data.
+//
+// EVERY FIELD IS AN INTERNED `str`, which is what makes a static registry of
+// these sound with no owner and no drop: `text::intern` copies into a
+// process-lifetime table and hands back a view of the table's bytes, declared
+// `#[keeps(nothing)]` so the view borrows none of its argument. A row built
+// from an application's own temporary string outlives that string.
+//
+// The three `_c` fields are interned WITH A TRAILING NUL, because
+// `rt::get_class` and `rt::sel` take C strings and a `str` is a view with a
+// length. Interning the NUL along with the bytes means the pointer is a valid C
+// string for the life of the process and nothing has to be built per call.
+struct _Domain {
+    // The portable name an application passes. No NUL: this one is compared,
+    // not handed to C.
+    name: str,
+    framework_c: str,
+    class_c: str,
+    sel_c: str,
+    // Which of the three status shapes — see S_MEDIA / S_ENTITY / S_LEVEL.
+    shape: u32,
+    // The prompt: its selector (NUL-terminated) and which of the four request
+    // shapes it is — see R_CLASS_MEDIA and friends. Empty selector means the
+    // domain can be READ but not asked for, which is a real state: macOS screen
+    // recording is exactly that.
+    req_sel_c: str,
+    req_shape: u32,
+    // Which enum `status_sel` answers in — see M_STANDARD / M_NOTIFY.
+    map_kind: u32,
+    // How to get the instance the request selector is sent to, for the shapes
+    // that need one. Empty means `alloc`/`init` (Contacts, EventKit); a
+    // selector means a class method answering a shared object
+    // (`currentNotificationCenter`). NUL-terminated.
+    instance_sel_c: str,
+    // The selector's argument: an NSString built from this for S_MEDIA (so no
+    // NUL — `bridge::nsstring` takes a view), an integer for the other two.
+    arg_text: str,
+    arg_int: i64,
+    // THE USAGE-DESCRIPTION KEY, carried as DATA and not as prose.
+    //
+    // A domain whose key is missing from the application's Info.plist does not
+    // fail the request — the OS terminates the process, on macOS as well as
+    // iOS. `cpc` does not check this (recorded in plans/permissions.md §7), so
+    // the key living next to the class and the selector is what keeps the
+    // documentation from drifting: the pair list an application reads is
+    // generated from this field rather than maintained beside it.
+    plist_key: str,
+    // The macOS System Settings anchor, the tail of
+    // `x-apple.systempreferences:com.apple.preference.security?<this>`. Empty
+    // means no specific pane, and the app's own is used instead.
+    anchor: str,
+}
+
+static DOMAINS: vec::Vec[_Domain] = #zero::[vec::Vec[_Domain]]();
+static SEEDED: bool = false;
+
+// The built-in rows. Seeded lazily rather than at load: a `static` initialiser
+// cannot allocate, and every entry point below goes through `_domains()`.
+fn _domains() -> *vec::Vec[_Domain] {
+    let reg: *vec::Vec[_Domain] = { #addr_of(DOMAINS) };
+    if SEEDED { return reg; }
+    SEEDED = true;
+
+    let av: str = "/System/Library/Frameworks/AVFoundation.framework/AVFoundation";
+    // AVMediaTypeVideo and AVMediaTypeAudio are NSString constants whose VALUES
+    // are these four-character codes. Spelled out rather than _dlsym'd: the
+    // symbol lookup would need the framework loaded first anyway, and the
+    // values are contractual — they are what a `.mov` track type is on disk.
+    _add(perm::CAMERA, av, "AVCaptureDevice", "authorizationStatusForMediaType:",
+        S_MEDIA, "vide", 0 as i64, "NSCameraUsageDescription", "Privacy_Camera",
+        "requestAccessForMediaType:completionHandler:", R_CLASS_MEDIA,
+        M_STANDARD, "");
+    _add(perm::MICROPHONE, av, "AVCaptureDevice", "authorizationStatusForMediaType:",
+        S_MEDIA, "soun", 0 as i64, "NSMicrophoneUsageDescription", "Privacy_Microphone",
+        "requestAccessForMediaType:completionHandler:", R_CLASS_MEDIA,
+        M_STANDARD, "");
+
+    let ph: str = "/System/Library/Frameworks/Photos.framework/Photos";
+    // PHAccessLevelAddOnly = 1, PHAccessLevelReadWrite = 2.
+    _add(perm::PHOTOS_READ, ph, "PHPhotoLibrary", "authorizationStatusForAccessLevel:",
+        S_LEVEL, "", 2 as i64, "NSPhotoLibraryUsageDescription", "Privacy_Photos",
+        "requestAuthorizationForAccessLevel:handler:", R_CLASS_LEVEL,
+        M_STANDARD, "");
+    _add(perm::PHOTOS_ADD, ph, "PHPhotoLibrary", "authorizationStatusForAccessLevel:",
+        S_LEVEL, "", 1 as i64, "NSPhotoLibraryAddUsageDescription", "Privacy_Photos",
+        "requestAuthorizationForAccessLevel:handler:", R_CLASS_LEVEL,
+        M_STANDARD, "");
+
+    // CNEntityTypeContacts = 0.
+    _add(perm::CONTACTS, "/System/Library/Frameworks/Contacts.framework/Contacts",
+        "CNContactStore", "authorizationStatusForEntityType:",
+        S_ENTITY, "", 0 as i64, "NSContactsUsageDescription", "Privacy_Contacts",
+        "requestAccessForEntityType:completionHandler:", R_INST_ENTITY,
+        M_STANDARD, "");
+
+    // EKEntityTypeEvent = 0.
+    _add(perm::CALENDAR, "/System/Library/Frameworks/EventKit.framework/EventKit",
+        "EKEventStore", "authorizationStatusForEntityType:",
+        S_ENTITY, "", 0 as i64, "NSCalendarsFullAccessUsageDescription", "Privacy_Calendars",
+        "requestFullAccessToEventsWithCompletion:", R_INST_PLAIN,
+        M_STANDARD, "");
+
+    // NOTIFICATIONS. The odd one in three separate ways, each recorded on the
+    // constant it needs: an asynchronous status read (S_ASYNC_NOTIFY), its own
+    // status enum (M_NOTIFY), and a shared centre rather than a store you
+    // construct (`currentNotificationCenter`).
+    //
+    // `arg_int` 7 is UNAuthorizationOptionBadge|Sound|Alert (1|2|4), built
+    // arithmetically below so the three are legible.
+    //
+    // NO USAGE-DESCRIPTION KEY EXISTS for notifications — it is the one
+    // permission Apple gates on nothing but the prompt — so `plist_key` would
+    // be empty, and `register_apple` refuses an empty key. The built-in table
+    // does not go through that check, and this comment is why the row is
+    // allowed to have none.
+    _add(perm::NOTIFICATIONS,
+        "/System/Library/Frameworks/UserNotifications.framework/UserNotifications",
+        "UNUserNotificationCenter", "getNotificationSettingsWithCompletionHandler:",
+        S_ASYNC_NOTIFY, "", (1 as i64) + (2 as i64) + (4 as i64),
+        "", "Privacy_Notifications",
+        "requestAuthorizationWithOptions:completionHandler:", R_INST_UINT,
+        M_NOTIFY, "currentNotificationCenter");
+
+    return reg;
+}
+
+fn _add(name: str, framework: str, class_name: str, status_sel: str,
+       shape: u32, arg_text: str, arg_int: i64, plist_key: str, anchor: str,
+       req_sel: str, req_shape: u32, map_kind: u32, instance_sel: str) {
+    let reg: *vec::Vec[_Domain] = { #addr_of(DOMAINS) };
+    let _s: status::Status = (*reg).append(_Domain {
+        name: text::intern(name),
+        framework_c: _intern_c(framework),
+        class_c: _intern_c(class_name),
+        sel_c: _intern_c(status_sel),
+        shape: shape,
+        req_sel_c: _intern_c(req_sel),
+        req_shape: req_shape,
+        map_kind: map_kind,
+        instance_sel_c: _intern_c(instance_sel),
+        arg_text: text::intern(arg_text),
+        arg_int: arg_int,
+        plist_key: text::intern(plist_key),
+        anchor: text::intern(anchor),
+    });
+    return;
+}
+
+// Intern `s` with a trailing NUL, so the interned view is also a C string. The
+// `Text` is a scratch buffer: `intern` copies, so it is dropped at the end of
+// this call and the returned view points into the table, not into it.
+fn _intern_c(s: str) -> str {
+    if s == "" { return ""; }
+    let t: text::Text = text::from_str(s).appending("\0");
+    return text::intern({ t.view() });
+}
+
+// Add a domain this package did not ship. Additive: an application that needs
+// `NSSpeechRecognitionUsageDescription` writes one call and is unblocked,
+// rather than waiting for a release here.
+//
+// EVERY ARGUMENT AFTER THE NAME IS LABELLED, and the four that most rows do not
+// need are defaulted. The first draft took eleven positional parameters with
+// three adjacent strings among them, which is the exact shape
+// `naming_guideline.md` records http fixing — same-typed positional arguments
+// are swappable at the call site and a label is the fix the language already
+// has. It reads:
+//
+//     register_apple("speech",
+//                    class_name: "SFSpeechRecognizer",
+//                    status_sel: "authorizationStatus",
+//                    shape: S_ENTITY,
+//                    request_sel: "requestAuthorization:",
+//                    request_shape: R_CLASS_LEVEL,
+//                    plist_key: "NSSpeechRecognitionUsageDescription",
+//                    framework: "/System/Library/Frameworks/Speech.framework/Speech")
+//
+// REFUSED WITHOUT A `plist_key`, and that is the only validation. A row without
+// one is a process kill waiting for its first user, and the failure is silent
+// until then — so it fails here instead, where there is someone to tell.
+//
+// Cannot express location (a delegate, not a class method); a row pointed at
+// `CLLocationManager` would register cleanly and never answer.
+fn register_apple(name: str,
+                  class_name: str,
+                  status_sel: str,
+                  shape: u32,
+                  request_sel: str,
+                  request_shape: u32,
+                  plist_key: str,
+                  framework: str = "",
+                  argument: str = "",
+                  value: i64 = 0 as i64,
+                  settings_anchor: str = "") -> status::Status {
+    if name == "" { return status::Status::InvalidInput; }
+    if plist_key == "" { return status::Status::InvalidInput; }
+    if class_name == "" { return status::Status::InvalidInput; }
+    if shape != S_MEDIA && shape != S_ENTITY && shape != S_LEVEL {
+        return status::Status::InvalidInput;
+    }
+    let _d: *vec::Vec[_Domain] = _domains();
+    // LAST WINS, deliberately: registering over a built-in is how an
+    // application corrects a row this package got wrong on an OS version it
+    // predates. `_find` walks backwards for that reason.
+    //
+    // A REGISTERED ROW IS ALWAYS M_STANDARD and always constructs its own
+    // instance. The notification enum and the shared-centre accessor are
+    // built-in facts about one framework, not a generality worth widening this
+    // signature for — a caller that needs either is asking for a domain this
+    // package already ships.
+    _add(name, framework, class_name, status_sel, shape, argument, value,
+         plist_key, settings_anchor, request_sel, request_shape, M_STANDARD, "");
+    return status::Status::Ok;
+}
+
+// The row for `name`, or null. BACKWARDS, so a registered row shadows a
+// built-in of the same name.
+fn _find(name: str) -> *_Domain {
+    let reg: *vec::Vec[_Domain] = _domains();
+    let n: usize = { (*reg).count() };
+    if n == (0 as usize) { return 0 as *_Domain; }
+    var i: usize = n;
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match (*reg).at_ptr(i) {
+            option::Option[*_Domain]::Some(d) => {
+                if { (*d).name } == name { return d; }
+            }
+            option::Option[*_Domain]::None => { }
+        }
+    }
+    return 0 as *_Domain;
+}
+
+// The domain's class, with its framework loaded if this is the first ask.
+//
+// `objc_getClass` BEFORE the _dlopen: a framework already in the process —
+// linked by the application, or pulled in by another domain — needs no load,
+// and asking first keeps the common case to one lookup.
+fn _class_of(d: *_Domain) -> *u8 {
+    let cls: *u8 = { rt::get_class(#str_ptr({ (*d).class_c })) };
+    if cls != (0 as *u8) { return cls; }
+    if { (*d).framework_c } == "" { return 0 as *u8; }
+    let _h: *u8 = { _dlopen(#str_ptr({ (*d).framework_c }), _rtld_lazy_local()) };
+    return { rt::get_class(#str_ptr({ (*d).class_c })) };
+}
+
+// ---- the status map ----------------------------------------------------------
+//
+// ONE MAP FOR ALL FOUR FRAMEWORKS, which is not luck: AVAuthorizationStatus,
+// PHAuthorizationStatus, CNAuthorizationStatus and EKAuthorizationStatus all
+// number NotDetermined 0, Restricted 1, Denied 2, Authorized 3.
+//
+// 4 is where they diverge and where it stops mattering: PHAuthorizationStatus
+// spells it `Limited` (the "selected photos" grant) and EKAuthorizationStatus
+// spells it `WriteOnly` (_add events, read none). Both are PARTIAL ACCESS, which
+// is exactly what `State::Limited` means, so they map together honestly rather
+// than by coincidence.
+//
+// RESTRICTED IS `Blocked`, NOT `Denied`. Parental controls or an MDM profile
+// refused, the person cannot change it from inside this app, and a dialog would
+// not appear if one were requested — which is the definition this package's
+// `Blocked` carries.
+fn _map_status(raw: i64) -> u32 {
+    if raw == (0 as i64) { return perm::State::Unknown.to_code(); }
+    if raw == (1 as i64) { return perm::State::Blocked.to_code(); }
+    if raw == (2 as i64) { return perm::State::Denied.to_code(); }
+    if raw == (3 as i64) { return perm::State::Granted.to_code(); }
+    if raw == (4 as i64) { return perm::State::Limited.to_code(); }
+    // A status this build has never heard of. `Unknown` rather than
+    // `Unsupported`: the domain plainly IS supported — the class answered — so
+    // the honest reading is "cannot tell", and `request` will prompt, which is
+    // the safe move.
+    return perm::State::Unknown.to_code();
+}
+
+// UNAuthorizationStatus, which is NOT the enum the other four share:
+//
+//     NotDetermined 0, Denied 1, Authorized 2, Provisional 3, Ephemeral 4
+//
+// PROVISIONAL is `Limited`, and that is the honest reading rather than a
+// convenience: a provisional authorisation delivers quietly to the notification
+// centre with no prompt shown, so the app HAS access and has less of it than a
+// full grant. EPHEMERAL — an App Clip's session-scoped grant — is the same
+// shape and maps the same way.
+//
+// There is no `Restricted` in this enum at all, so nothing here maps to
+// `Blocked`. A person who refuses notifications can turn them back on in
+// Settings, and `Denied` is exactly right for that.
+fn _map_notify_status(raw: i64) -> u32 {
+    if raw == (0 as i64) { return perm::State::Unknown.to_code(); }
+    if raw == (1 as i64) { return perm::State::Denied.to_code(); }
+    if raw == (2 as i64) { return perm::State::Granted.to_code(); }
+    if raw == (3 as i64) { return perm::State::Limited.to_code(); }
+    if raw == (4 as i64) { return perm::State::Limited.to_code(); }
+    return perm::State::Unknown.to_code();
+}
+
+fn _map_by_kind(kind: u32, raw: i64) -> u32 {
+    if kind == M_NOTIFY { return _map_notify_status(raw); }
+    return _map_status(raw);
+}
+
+// ---- the notification cache --------------------------------------------------
+//
+// `state` is synchronous and UserNotifications is not, so this is the one
+// domain whose state is REMEMBERED rather than read. The contract, stated
+// plainly because a caller can observe it:
+//
+//   - the first `state("notifications")` of a process answers `Unknown` and
+//     starts a refresh;
+//   - every later one answers what the last refresh found, and starts another;
+//   - a completed `request` writes the answer in directly, so the common
+//     sequence — ask, then read — is never stale.
+//
+// `Unknown` is the right first answer rather than a wrong confident one:
+// `can_prompt` says true for it, so an application's first move is to ask,
+// which is what it would have done anyway.
+//
+// NOT A SEMAPHORE. Blocking `state` on the settings callback would be a
+// synchronous wait on an arbitrary queue from whatever thread called — on the
+// main thread, in an app whose completion lands on the main queue, that is a
+// deadlock in a verb documented as cheap enough to call while building a
+// screen.
+static NOTIFY_CODE: u32 = 0 as u32;   // State::Unknown
+static NOTIFY_REFRESHING: bool = false;
+
+// The settings block: one object argument, no token needed.
+fn _on_settings(block: *u8, settings: *u8) {
+    NOTIFY_REFRESHING = false;
+    if settings.is_null() { return; }
+    let raw: i64 = { rt::msg_i64(settings, rt::sel(#str_ptr("authorizationStatus\0"))) };
+    NOTIFY_CODE = _map_notify_status(raw);
+    return;
+}
+
+// Start a refresh if one is not already in flight. In flight is tracked because
+// `state` may be called every frame and each call would otherwise queue another
+// settings read.
+fn _notify_refresh(d: *_Domain) {
+    if NOTIFY_REFRESHING { return; }
+    let centre: *u8 = _instance_of(d);
+    if centre == (0 as *u8) { return; }
+    let sel: *u8 = { rt::sel(#str_ptr({ (*d).sel_c })) };
+    if !_responds(centre, sel) { return; }
+    NOTIFY_REFRESHING = true;
+    let h: fn(*u8, *u8) = _on_settings;
+    var blk: _Block = _make_block({ h as *u8 }, 0 as u64);
+    { rt::msg_void_id(centre, sel, { #addr_of(blk) as *u8 }) };
+    return;
+}
+
+// The instance a request or an async read is sent to. Empty `instance_sel_c`
+// means construct one; otherwise it is a class method answering a shared object.
+fn _instance_of(d: *_Domain) -> *u8 {
+    let cls: *u8 = _class_of(d);
+    if cls == (0 as *u8) { return 0 as *u8; }
+    // NO BUNDLE IDENTIFIER, NO SHARED INSTANCE — and `_responds` does not save
+    // you, which is the trap.
+    //
+    // `+currentNotificationCenter` is present on the class and RAISES when the
+    // process has no bundle: "bundleProxyForCurrentProcess is nil". An
+    // unhandled ObjC exception aborts, so a bare `cpc build` binary asking for
+    // the notification state does not get `Unsupported` — it gets SIGABRT.
+    //
+    // MEASURED: `vendor/notifications` grew this guard first, for its own
+    // centre, and this file did not. The abort surfaced the moment a
+    // notifications test called `schedule` with a valid id and title, which is
+    // the first call anywhere that reaches `state(of: NOTIFICATIONS)` from a
+    // bundle-less process. Every earlier test stopped at a guard before it.
+    if { (*d).instance_sel_c } != "" {
+        if !_has_bundle_id() { return 0 as *u8; }
+        let sel: *u8 = { rt::sel(#str_ptr({ (*d).instance_sel_c })) };
+        if !_responds(cls, sel) { return 0 as *u8; }
+        return { rt::msg_id(cls, sel) };
+    }
+    return { rt::msg_id({ rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) },
+                        rt::sel(#str_ptr("init\0"))) };
+}
+
+// ---- the seam ----------------------------------------------------------------
+
+export extern fn cplus_permissions_state_v1(name_ptr: *u8, name_len: usize) -> u32 {
+    let name: str = { #str_from_raw_parts(name_ptr, name_len) };
+    let d: *_Domain = _find(name);
+    if d.is_null() { return perm::State::Unsupported.to_code(); }
+    let cls: *u8 = _class_of(d);
+    // The framework did not load or the class is absent — an older OS, or a
+    // platform this row does not exist on. `Unsupported` is the honest answer,
+    // and it is what keeps a missing framework from reading as a refusal.
+    if cls == (0 as *u8) { return perm::State::Unsupported.to_code(); }
+    let sel: *u8 = { rt::sel(#str_ptr({ (*d).sel_c })) };
+    // ASK BEFORE SENDING. An unrecognised selector does not return nil — it
+    // raises, and an unhandled ObjC exception aborts the process. A row can
+    // name a selector this OS does not have (a registered row written against a
+    // newer SDK, or a built-in whose floor this machine is below), and the
+    // honest answer is `Unsupported`, not a crash. `_fire` guards the request
+    // side the same way, and this guard was added because a test that
+    // registered a deliberately-absent selector killed the runner with SIGABRT.
+    // The asynchronous one answers from the cache and starts the next refresh.
+    // `_responds` is checked inside `_notify_refresh`, on the CENTRE rather than
+    // on the class, because that is where the selector lives.
+    if { (*d).shape } == S_ASYNC_NOTIFY {
+        _notify_refresh(d);
+        return NOTIFY_CODE;
+    }
+    if !_responds(cls, sel) { return perm::State::Unsupported.to_code(); }
+    if { (*d).shape } == S_MEDIA {
+        let a: *u8 = bridge::nsstring({ (*d).arg_text });
+        return _map_by_kind({ (*d).map_kind }, { rt::msg_i64_id(cls, sel, a) });
+    }
+    return _map_by_kind({ (*d).map_kind }, { rt::msg_i64_i64(cls, sel, { (*d).arg_int }) });
+}
+
+export extern fn cplus_permissions_open_settings_v1(name_ptr: *u8, name_len: usize) -> i32 {
+    return _open_pane({ #str_from_raw_parts(name_ptr, name_len) });
+}
+
+// ---- the settings pane -------------------------------------------------------
+//
+// TWO PLATFORMS, TWO OPENERS, and which one this is running on is asked of the
+// runtime rather than of `#platform()`: a class that resolves is the same fact
+// and cannot drift from the SDK this binary was built against. `window.cplus`
+// makes the same choice for its one version gate, and says so.
+//
+//   macOS   NSWorkspace -openURL:, and a PER-DOMAIN deep link — the Privacy
+//           pane has a tab per domain and landing on the right one is most of
+//           the value of this verb.
+//   iOS     UIApplication -openURL:options:completionHandler:, and one
+//           app-level page: `app-settings:` is the whole vocabulary iOS has.
+
+fn _open_pane(name: str) -> i32 {
+    let url: *u8 = _settings_url(name);
+    if url == (0 as *u8) { return 1 as i32; }
+
+    // AppKit first. It is absent on iOS, so this fork needs no version check.
+    let ws_cls: *u8 = { rt::get_class(#str_ptr("NSWorkspace\0")) };
+    if ws_cls == (0 as *u8) {
+        let _h: *u8 = { _dlopen(#str_ptr("/System/Library/Frameworks/AppKit.framework/AppKit\0"),
+                               _rtld_lazy_local()) };
+    }
+    let ws: *u8 = { rt::get_class(#str_ptr("NSWorkspace\0")) };
+    if ws != (0 as *u8) {
+        let shared: *u8 = { rt::msg_id(ws, rt::sel(#str_ptr("sharedWorkspace\0"))) };
+        if shared != (0 as *u8) {
+            let _ok: i8 = { rt::msg_i8_id(shared, rt::sel(#str_ptr("openURL:\0")), url) };
+            return 0 as i32;
+        }
+    }
+
+    let app_cls: *u8 = { rt::get_class(#str_ptr("UIApplication\0")) };
+    if app_cls != (0 as *u8) {
+        let app: *u8 = { rt::msg_id(app_cls, rt::sel(#str_ptr("sharedApplication\0"))) };
+        if app != (0 as *u8) {
+            // `openURL:options:completionHandler:` with no options and no
+            // handler. The three-argument form because the one-argument
+            // `openURL:` has been deprecated since iOS 10 and a deprecated
+            // selector is one an OS may stop answering.
+            { rt::msg_void_id_id_id(app,
+                rt::sel(#str_ptr("openURL:options:completionHandler:\0")),
+                url, 0 as *u8, 0 as *u8) };
+            return 0 as i32;
+        }
+    }
+    return 1 as i32;
+}
+
+// The URL to open, or null when neither platform is present.
+//
+// A NAME WITH NO ROW IS NOT AN ERROR here: an application that was refused
+// something this build does not know about still wants the settings page, so an
+// unknown name falls through to the app's own pane rather than answering
+// nothing.
+fn _settings_url(name: str) -> *u8 {
+    var spec: text::Text = text::new();
+    if { rt::get_class(#str_ptr("UIApplication\0")) } != (0 as *u8) {
+        // UIApplicationOpenSettingsURLString. One page, no anchors.
+        let _s: status::Status = spec.append("app-settings:");
+    } else {
+        let _s: status::Status = spec.append("x-apple.systempreferences:com.apple.preference.security");
+        let d: *_Domain = _find(name);
+        if d.is_not_null() {
+            if { (*d).anchor } != "" {
+                let _q: status::Status = spec.append("?");
+                let _a: status::Status = spec.append({ (*d).anchor });
+            }
+        }
+    }
+    let cls: *u8 = { rt::get_class(#str_ptr("NSURL\0")) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let ns: *u8 = bridge::nsstring({ spec.view() });
+    return { rt::msg_id_id(cls, rt::sel(#str_ptr("URLWithString:\0")), ns) };
+}
+
+// What a row's usage-description key is — the pair list an application has to
+// put in its Info.plist, read out of the same data the status reads use. Empty
+// for a name with no row.
+fn _plist_key_of(name: str) -> str {
+    let d: *_Domain = _find(name);
+    if d.is_null() { return ""; }
+    return { (*d).plist_key };
+}
+
+// ---- tests -------------------------------------------------------------------
+// These run on the HOST, which for this package's `cpc test` is macOS — so the
+// status reads below are REAL reads against the real frameworks, not fakes.
+
+#[test]
+fn every_builtin_domain_resolves_to_a_row() {
+    assert _find(perm::CAMERA).is_not_null();
+    assert _find(perm::MICROPHONE).is_not_null();
+    assert _find(perm::PHOTOS_READ).is_not_null();
+    assert _find(perm::PHOTOS_ADD).is_not_null();
+    assert _find(perm::CONTACTS).is_not_null();
+    assert _find(perm::CALENDAR).is_not_null();
+}
+
+#[test]
+fn a_name_with_no_row_is_unsupported() {
+    assert _find("not.a.real.permission").is_null();
+    assert { cplus_permissions_state_v1(#str_ptr("not.a.real.permission"), #str_len("not.a.real.permission")) }
+        == perm::State::Unsupported.to_code();
+    // The Android escape hatch is a legitimate call that this half cannot
+    // answer, and it must read as "this build cannot ask" rather than "no".
+    assert { cplus_permissions_state_v1(#str_ptr("android.permission.NFC"), #str_len("android.permission.NFC")) }
+        == perm::State::Unsupported.to_code();
+}
+
+#[test]
+fn every_builtin_domain_carries_its_plist_key() {
+    // A row without one is a process kill waiting for its first user, so this
+    // is the guard on the data rather than on the code that reads it.
+    assert _plist_key_of(perm::CAMERA) == "NSCameraUsageDescription";
+    assert _plist_key_of(perm::MICROPHONE) == "NSMicrophoneUsageDescription";
+    assert _plist_key_of(perm::PHOTOS_READ) == "NSPhotoLibraryUsageDescription";
+    assert _plist_key_of(perm::PHOTOS_ADD) == "NSPhotoLibraryAddUsageDescription";
+    assert _plist_key_of(perm::CONTACTS) == "NSContactsUsageDescription";
+    assert _plist_key_of(perm::CALENDAR) == "NSCalendarsFullAccessUsageDescription";
+}
+
+#[test]
+fn the_two_photo_levels_are_different_rows() {
+    // Same class, same selector, different argument — the exact shape a
+    // copy-paste would collapse, and the symptom would be an app asking for
+    // _add-only access and being told it has full access.
+    let r: *_Domain = _find(perm::PHOTOS_READ);
+    let a: *_Domain = _find(perm::PHOTOS_ADD);
+    assert r.is_not_null() && a.is_not_null();
+    assert { (*r).arg_int } != { (*a).arg_int };
+    assert { (*r).class_c } == { (*a).class_c };
+}
+
+#[test]
+fn every_status_value_maps_and_restricted_is_blocked() {
+    assert _map_status(0 as i64) == perm::State::Unknown.to_code();
+    // RESTRICTED, not denied: the person cannot change it from inside the app.
+    assert _map_status(1 as i64) == perm::State::Blocked.to_code();
+    assert _map_status(2 as i64) == perm::State::Denied.to_code();
+    assert _map_status(3 as i64) == perm::State::Granted.to_code();
+    // PHAuthorizationStatusLimited and EKAuthorizationStatusWriteOnly share
+    // this number and both mean partial access.
+    assert _map_status(4 as i64) == perm::State::Limited.to_code();
+    // Unheard-of: cannot tell, so prompt. NOT `Unsupported` — the class did
+    // answer, so the domain exists.
+    assert _map_status(99 as i64) == perm::State::Unknown.to_code();
+}
+
+#[test]
+fn a_real_status_read_answers_a_known_state() {
+    // A REAL read against AVFoundation, _dlopen'd by this call. Which state the
+    // machine is in is not assertable — a developer's Mac may have granted
+    // camera access to the terminal or not — but "the framework loaded, the
+    // class answered, and the number mapped" is, and that is the whole path
+    // this package exists to walk.
+    let c: u32 = { cplus_permissions_state_v1(#str_ptr(perm::CAMERA), #str_len(perm::CAMERA)) };
+    assert c != perm::State::Unsupported.to_code();
+    assert c <= perm::State::Blocked.to_code();
+}
+
+#[test]
+fn dlopen_reaches_a_framework_the_binary_never_linked() {
+    // The point of the _dlopen design, asserted rather than assumed: nothing in
+    // this package's `[link]` names Contacts, and the class must still resolve.
+    let d: *_Domain = _find(perm::CONTACTS);
+    assert d.is_not_null();
+    assert _class_of(d).is_not_null();
+}
+
+#[test]
+fn a_registered_row_shadows_a_builtin() {
+    // `_find` walks backwards so an application can correct a row this package
+    // got wrong on an OS it predates.
+    let before: *_Domain = _find(perm::CAMERA);
+    assert { (*before).class_c } == "AVCaptureDevice\0";
+    let s: status::Status = register_apple(perm::CAMERA,
+        class_name: "AVCaptureDeviceDiscoverySession",
+        status_sel: "authorizationStatusForMediaType:", shape: S_MEDIA,
+        request_sel: "requestAccessForMediaType:completionHandler:",
+        request_shape: R_CLASS_MEDIA,
+        plist_key: "NSCameraUsageDescription",
+        framework: "/System/Library/Frameworks/AVFoundation.framework/AVFoundation",
+        argument: "vide", settings_anchor: "Privacy_Camera");
+    assert s == status::Status::Ok;
+    let after: *_Domain = _find(perm::CAMERA);
+    assert { (*after).class_c } == "AVCaptureDeviceDiscoverySession\0";
+}
+
+#[test]
+fn a_row_without_a_plist_key_is_refused() {
+    assert register_apple("x.no.key", class_name: "SomeClass",
+                          status_sel: "s:", shape: S_ENTITY,
+                          request_sel: "r:", request_shape: R_INST_ENTITY,
+                          plist_key: "") == status::Status::InvalidInput;
+    assert register_apple("", class_name: "SomeClass", status_sel: "s:",
+                          shape: S_ENTITY, request_sel: "r:",
+                          request_shape: R_INST_ENTITY,
+                          plist_key: "K") == status::Status::InvalidInput;
+    assert register_apple("x.bad.shape", class_name: "SomeClass", status_sel: "s:",
+                          shape: 99 as u32, request_sel: "r:",
+                          request_shape: R_INST_ENTITY,
+                          plist_key: "K") == status::Status::InvalidInput;
+    assert _find("x.no.key").is_null();
+    assert _find("x.bad.shape").is_null();
+}
+
+// ==========================================================================
+// request — the prompt, and the block that carries the answer back
+// ==========================================================================
+//
+// FOUR REQUEST SHAPES, not the three the spike guessed. The status reads
+// collapse to three because they are all class methods returning the same
+// enum; the requests do not, because two of them are instance methods on a
+// store you have to make first, and one of those takes no argument at all:
+//
+//   R_CLASS_MEDIA   +requestAccessForMediaType:completionHandler:      block(BOOL)
+//   R_CLASS_LEVEL   +requestAuthorizationForAccessLevel:handler:       block(NSInteger)
+//   R_INST_ENTITY   -requestAccessForEntityType:completionHandler:     block(BOOL, NSError*)
+//   R_INST_PLAIN    -requestFullAccessToEventsWithCompletion:          block(BOOL, NSError*)
+//
+// THE OS FLOOR IS MODERN AND SAID SO. `requestFullAccessToEvents` is macOS 14 /
+// iOS 17; the older `requestAccessToEntityType:completion:` is not wired.
+// An application that has to run below that floor registers its own row —
+// `register_apple` takes the request selector and shape for exactly this.
+const R_CLASS_MEDIA: u32 = 1 as u32;
+const R_CLASS_LEVEL: u32 = 2 as u32;
+const R_INST_ENTITY: u32 = 3 as u32;
+const R_INST_PLAIN: u32 = 4 as u32;
+// The fifth: an instance from a class method rather than one you construct,
+// with an unsigned option mask. UserNotifications only.
+const R_INST_UINT: u32 = 5 as u32;
+
+// ---- the block ---------------------------------------------------------------
+//
+// ONE STRUCT FOR ALL FOUR, which is the difference from `http`'s transport: its
+// `_CompletionBlock` types `invoke` as the exact handler signature, so three
+// arities would be three structs and three descriptors. Here `invoke` is
+// `opaque *u8` and the four handlers below are cast into it, so there is one
+// layout, one size and one descriptor. A block's invoke pointer is never called
+// by C+ — the system calls it — so the field's static type buys nothing and
+// costs a struct per arity.
+//
+// flags 0, so there are no copy/dispose helpers and `Block_copy` is a flat
+// memcpy of these 40 bytes. That is what makes `#addr_of` on a stack local safe
+// here: what escapes is the system's copy, not this frame.
+//
+// THE ONLY CAPTURE IS A TOKEN, and that is the load-bearing difference from
+// http's block. http captures two pointers into the frame that is blocked in
+// `dispatch_semaphore_wait`, so the frame outlives the call. `request` RETURNS
+// immediately — its frame is gone long before the person taps Allow — so
+// nothing here may point into it. A `u64` index into a static table survives
+// the memcpy and survives the frame.
+#[repr(C)]
+struct _Block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    opaque invoke: *u8,
+    opaque descriptor: *u8,
+    token: u64,
+}
+
+// Shared by every copy the system makes and read after the copy, so it must
+// outlive any one call — hence a `static`. Fully initialised at its
+// declaration, which is what makes two requests in flight safe: nothing ever
+// writes it.
+static _BLOCK_DESC: rt::BlockDescriptor = rt::BlockDescriptor {
+    reserved: 0 as u64,
+    // A literal because a `static` initialiser takes no `#size_of` (E0911).
+    // `the_block_is_the_flags_zero_stack_shape` is the guard: it fails the
+    // moment the struct stops being 40 bytes.
+    size: 40 as u64,
+};
+
+fn _block_desc() -> *u8 { return { #addr_of(_BLOCK_DESC) as *u8 }; }
+
+fn _make_block(invoke: *u8, token: u64) -> _Block {
+    return _Block {
+        isa: rt::stack_block_isa(),
+        flags: 0 as i32,
+        reserved: 0 as i32,
+        invoke: invoke,
+        descriptor: _block_desc(),
+        token: token,
+    };
+}
+
+// The four handlers. Each reads the token out of the block it was called with
+// and hands a State code to `_finish`; none of them touches the pending row
+// directly, because they run on whatever queue the platform chose.
+fn _on_bool(block: *u8, granted: i8) {
+    let b: *_Block = { block as *_Block };
+    _finish({ (*b).token }, _bool_code(granted));
+    return;
+}
+
+fn _on_bool_err(block: *u8, granted: i8, err: *u8) {
+    let b: *_Block = { block as *_Block };
+    // The NSError is ignored on purpose. Contacts and EventKit report "the
+    // person said no" as granted=NO with a nil error, and a real failure as
+    // granted=NO with one — and an application's move is the same either way:
+    // it does not have access. Reading the error would mean surfacing a
+    // platform object through a portable facade for no decision it changes.
+    _finish({ (*b).token }, _bool_code(granted));
+    return;
+}
+
+fn _on_enum(block: *u8, raw: i64) {
+    let b: *_Block = { block as *_Block };
+    _finish({ (*b).token }, _map_status(raw));
+    return;
+}
+
+// A BOOL answer is Granted or Denied, never Blocked: the prompt was shown and
+// answered. `Restricted` cannot arrive here — it is a state you read, not one a
+// person can choose.
+fn _bool_code(granted: i8) -> u32 {
+    if granted != (0 as i8) { return perm::State::Granted.to_code(); }
+    return perm::State::Denied.to_code();
+}
+
+// ---- the pending table -------------------------------------------------------
+
+struct _Pending {
+    token: u64,
+    // Interned, so this row holds no view into the caller's string. The `str`
+    // handed to the callback is this one — the package's own copy.
+    name: str,
+    cb: fn(str, perm::State, *u8),
+    opaque ctx: *u8,
+    code: u32,
+    live: bool,
+}
+
+static PENDING: vec::Vec[_Pending] = #zero::[vec::Vec[_Pending]]();
+static NEXT_TOKEN: u64 = 1 as u64;
+
+fn _pending_at(token: u64) -> *_Pending {
+    let reg: *vec::Vec[_Pending] = { #addr_of(PENDING) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_Pending]::Some(p) => {
+                if { (*p).token } == token && { (*p).live } { return p; }
+            }
+            option::Option[*_Pending]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *_Pending;
+}
+
+fn _pending_count() -> usize {
+    let reg: *vec::Vec[_Pending] = { #addr_of(PENDING) };
+    let n: usize = { (*reg).count() };
+    var live: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_Pending]::Some(p) => {
+                if { (*p).live } { live = live +% (1 as usize); }
+            }
+            option::Option[*_Pending]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return live;
+}
+
+// ---- the main-thread hop -----------------------------------------------------
+//
+// `dispatch_get_main_queue()` is a macro over a libdispatch GLOBAL, so there is
+// no function to call — the address is `_dlsym`'d, the way
+// `facet_agent/inspect_platform` already does it.
+//
+// `_dispatch_async_f` and not `dispatch_async`: the `_f` form takes a plain C
+// function pointer and a context, so hopping needs no second block. The context
+// is the token, which is an integer and fits a pointer — nothing is allocated
+// for the hop and nothing can leak if it never runs.
+
+#[link_name = "dlsym"]
+extern fn _dlsym(handle: *u8, symbol: *u8) -> *u8;
+
+#[link_name = "dispatch_async_f"]
+extern fn _dispatch_async_f(queue: *u8, ctx: *u8, work: fn(*u8));
+
+fn _main_queue() -> *u8 {
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    return { _dlsym(rtld_default, #str_ptr("_dispatch_main_q\0")) };
+}
+
+#[link_name = "pthread_main_np"]
+extern fn _pthread_main_np() -> i32;
+
+// Called from whatever queue the platform's completion chose. Records the
+// answer, then gets onto the main thread before anything reads it.
+//
+// ALREADY ON MAIN IS DELIVERED DIRECTLY, and that is not only an optimisation:
+// a `cpc test` host binary has no run loop pumping the main queue, so a hop
+// there would enqueue work that never runs and every test would hang waiting
+// for a callback. The platform completions this exists for arrive off-main and
+// take the hop; everything else is direct.
+fn _finish(token: u64, code: u32) {
+    let p: *_Pending = _pending_at(token);
+    if p.is_null() { return; }
+    { (*p).code = code };
+    // NOTIFICATIONS ALSO UPDATE THE CACHE, and only notifications: its state
+    // cannot be read synchronously, so an answer that arrived here is the only
+    // fresh one there is. Writing it makes the ask-then-read sequence correct
+    // rather than stale until the next refresh lands. Keyed on the name because
+    // the block carries a token and nothing else.
+    if { (*p).name } == perm::NOTIFICATIONS { NOTIFY_CODE = code; }
+    if { _pthread_main_np() } != (0 as i32) {
+        _deliver_on_main({ token as *u8 });
+        return;
+    }
+    let q: *u8 = _main_queue();
+    if q == (0 as *u8) {
+        // No libdispatch to hop with. Delivering off-thread is worse than
+        // delivering late, so this drops — and it cannot happen on a platform
+        // that got far enough to show a prompt.
+        return;
+    }
+    { _dispatch_async_f(q, { token as *u8 }, _deliver_on_main) };
+    return;
+}
+
+fn _deliver_on_main(ctx: *u8) {
+    let token: u64 = { ctx as u64 };
+    let p: *_Pending = _pending_at(token);
+    if p.is_null() { return; }
+    let f: fn(str, perm::State, *u8) = { (*p).cb };
+    let name: str = { (*p).name };
+    let s: perm::State = perm::State::from_code({ (*p).code });
+    let c: *u8 = { (*p).ctx };
+    // RETIRED BEFORE THE CALL, not after. A callback that starts another
+    // request for the same name would otherwise _find this row still live and
+    // be refused as a duplicate.
+    { (*p).live = false };
+    if f != (0 as fn(str, perm::State, *u8)) { f(name, s, c); }
+    return;
+}
+
+// ---- the seam ----------------------------------------------------------------
+
+export extern fn cplus_permissions_request_v1(name_ptr: *u8, name_len: usize,
+                                              cb_raw: *u8, ctx: *u8) -> i32 {
+    let name: str = { #str_from_raw_parts(name_ptr, name_len) };
+    if cb_raw.is_null() { return 1 as i32; }
+    // THE CALLBACK CROSSES AS AN OPAQUE POINTER, not as its own type: a
+    // `fn(str, ...)` is not C-ABI compatible as an `export extern fn`
+    // parameter either — the `str` inside the function-pointer type is the same
+    // fat pointer E0410 refuses at the top level. Both halves of this package
+    // are C+ and both know the real shape, so the cast is honest; it is the
+    // ABI declaration that cannot express it.
+    let cb: fn(str, perm::State, *u8) = { cb_raw as fn(str, perm::State, *u8) };
+
+    let d: *_Domain = _find(name);
+    let interned: str = text::intern(name);
+
+    // No row: answer, do not prompt, and do not fail silently. The callback
+    // still runs, because a caller that gets `Ok` and no callback has no way to
+    // _finish whatever it was doing.
+    if d.is_null() {
+        cb(interned, perm::State::Unsupported, ctx);
+        return 0 as i32;
+    }
+
+    // ALREADY ANSWERED. Granted, Limited and Blocked need no dialog and asking
+    // would show none; `Denied` is the interesting one — on Apple a second ask
+    // returns immediately without a prompt, so it is routed to the platform
+    // anyway and comes back through the block, which keeps one path for
+    // "the platform decides".
+    let now: u32 = { cplus_permissions_state_v1(name_ptr, name_len) };
+    if now == perm::State::Granted.to_code()
+        || now == perm::State::Limited.to_code()
+        || now == perm::State::Blocked.to_code()
+        || now == perm::State::Unsupported.to_code() {
+        cb(interned, perm::State::from_code(now), ctx);
+        return 0 as i32;
+    }
+
+    let cls: *u8 = _class_of(d);
+    if cls == (0 as *u8) {
+        cb(interned, perm::State::Unsupported, ctx);
+        return 0 as i32;
+    }
+
+    let token: u64 = NEXT_TOKEN;
+    NEXT_TOKEN = NEXT_TOKEN +% (1 as u64);
+    let reg: *vec::Vec[_Pending] = { #addr_of(PENDING) };
+    let _s: status::Status = (*reg).append(_Pending {
+        token: token, name: interned, cb: cb, ctx: ctx,
+        code: perm::State::Unknown.to_code(), live: true,
+    });
+
+    if !_fire(d, cls, token) {
+        // The selector was not there. Retire the row rather than leaving it
+        // live forever, and tell the caller through the callback.
+        let p: *_Pending = _pending_at(token);
+        if p.is_not_null() { { (*p).live = false }; }
+        cb(interned, perm::State::Unsupported, ctx);
+        return 0 as i32;
+    }
+    return 0 as i32;
+}
+
+// The batch, Apple-side: there is no batch API, so this is a loop.
+//
+// PROMPTS ARRIVE IN SEQUENCE, not at once, and that is the platform rather than
+// this code: `AVCaptureDevice` and friends each raise their own dialog, and
+// asking for three puts three in the queue. The callback still fires once per
+// name, which is the contract `request_many` documents, so a caller written for
+// Android behaves correctly here without knowing the difference.
+export extern fn cplus_permissions_request_many_v1(names: *str, count: usize,
+                                                   cb_raw: *u8, ctx: *u8) -> i32 {
+    if cb_raw.is_null() { return 1 as i32; }
+    if count == (0 as usize) { return 1 as i32; }
+    var i: usize = 0 as usize;
+    while i < count {
+        let n: str = { *(names + i) };
+        let _rc: i32 = cplus_permissions_request_v1(#str_ptr(n), #str_len(n), cb_raw, ctx);
+        i = i +% (1 as usize);
+    }
+    return 0 as i32;
+}
+
+// Send the request selector with a block carrying `token`. False when the
+// class or instance does not answer the selector, which is how an OS older than
+// this row's floor reports itself.
+fn _fire(d: *_Domain, cls: *u8, token: u64) -> bool {
+    let shape: u32 = { (*d).req_shape };
+    let sel: *u8 = { rt::sel(#str_ptr({ (*d).req_sel_c })) };
+
+    if shape == R_CLASS_MEDIA {
+        if !_responds(cls, sel) { return false; }
+        let h: fn(*u8, i8) = _on_bool;
+        var blk: _Block = _make_block({ h as *u8 }, token);
+        let a: *u8 = bridge::nsstring({ (*d).arg_text });
+        { _msg_void_id_id(cls, sel, a, { #addr_of(blk) as *u8 }) };
+        return true;
+    }
+    if shape == R_CLASS_LEVEL {
+        if !_responds(cls, sel) { return false; }
+        let h: fn(*u8, i64) = _on_enum;
+        var blk: _Block = _make_block({ h as *u8 }, token);
+        { _msg_void_i64_id(cls, sel, { (*d).arg_int }, { #addr_of(blk) as *u8 }) };
+        return true;
+    }
+
+    // The three instance shapes need an object to send to — a store they
+    // construct, or a shared centre the class hands over. `_instance_of` knows
+    // which from the row.
+    let store: *u8 = _instance_of(d);
+    if store == (0 as *u8) { return false; }
+    if !_responds(store, sel) { rt::release(store); return false; }
+
+    // THE STORE IS LEAKED FOR THE LIFE OF THE REQUEST, on purpose. EventKit and
+    // Contacts both call the completion on a queue of their own and neither
+    // documents the store being retained for the duration; releasing here would
+    // be a use-after-free on a slow answer. One store per prompt, and a person
+    // answers a handful of prompts in an app's life.
+    let h: fn(*u8, i8, *u8) = _on_bool_err;
+    if shape == R_INST_UINT {
+        // The options mask is unsigned in the header. It crosses as u64 rather
+        // than i64 so a mask with the top bit set is not sign-extended into a
+        // different number on the way in — none of the current options is that
+        // high, and relying on that is exactly the kind of thing that stops
+        // being true one SDK later.
+        var blku: _Block = _make_block({ h as *u8 }, token);
+        { _msg_void_u64_id(store, sel, { (*d).arg_int } as u64, { #addr_of(blku) as *u8 }) };
+        return true;
+    }
+    if shape == R_INST_PLAIN {
+        var blk: _Block = _make_block({ h as *u8 }, token);
+        { rt::msg_void_id(store, sel, { #addr_of(blk) as *u8 }) };
+        return true;
+    }
+    var blk2: _Block = _make_block({ h as *u8 }, token);
+    { _msg_void_i64_id(store, sel, { (*d).arg_int }, { #addr_of(blk2) as *u8 }) };
+    return true;
+}
+
+// Does this process have a bundle identifier? False for a bare binary, which
+// is every `cpc build` output not wrapped in a .app.
+fn _has_bundle_id() -> bool {
+    let cls: *u8 = { rt::get_class(#str_ptr("NSBundle\0")) };
+    if cls == (0 as *u8) { return false; }
+    let main: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("mainBundle\0"))) };
+    if main == (0 as *u8) { return false; }
+    let bid: *u8 = { rt::msg_id(main, rt::sel(#str_ptr("bundleIdentifier\0"))) };
+    return bid.is_not_null();
+}
+
+fn _responds(obj: *u8, sel: *u8) -> bool {
+    return { rt::msg_i8_id(obj, rt::sel(#str_ptr("respondsToSelector:\0")), sel) } != (0 as i8);
+}
+
+// `objc_msgSend` at two arities the `objc` package does not bind. Declared here
+// rather than added there, the same way `facet_uikit/keyboard.cplus` declares
+// its own four-object form: a caller that needs one arity should not grow a
+// shared binding for it.
+#[link_name = "objc_msgSend"]
+extern fn _msg_void_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8);
+#[link_name = "objc_msgSend"]
+extern fn _msg_void_i64_id(recv: *u8, sel: *u8, a: i64, b: *u8);
+#[link_name = "objc_msgSend"]
+extern fn _msg_void_u64_id(recv: *u8, sel: *u8, a: u64, b: *u8);
+
+// ---- request tests -----------------------------------------------------------
+//
+// WHAT CANNOT BE TESTED HERE, said plainly so nobody reads the coverage as
+// larger than it is: a real prompt. `request` on a domain the machine has never
+// been asked about puts a system dialog on screen and waits for a person, and
+// an agent has no hands. Every test below takes a path that provably shows no
+// dialog — an unknown name, an already-answered state, or a row whose selector
+// does not exist — and the block machinery underneath is asserted structurally.
+//
+// The prompt itself belongs to a probe someone runs by hand.
+
+static T_CALLS: i32 = 0 as i32;
+static T_CODE: u32 = 99 as u32;
+static T_NAME_MATCHED: bool = false;
+static T_CTX_MATCHED: bool = false;
+static T_SENTINEL: i32 = 4242 as i32;
+
+fn t_record(name: str, s: perm::State, ctx: *u8) {
+    T_CALLS = T_CALLS + (1 as i32);
+    T_CODE = s.to_code();
+    T_NAME_MATCHED = name != "";
+    let p: *i32 = { ctx as *i32 };
+    if p.is_not_null() { T_CTX_MATCHED = { (*p) } == (4242 as i32); }
+    return;
+}
+
+fn t_reset() {
+    T_CALLS = 0 as i32;
+    T_CODE = 99 as u32;
+    T_NAME_MATCHED = false;
+    T_CTX_MATCHED = false;
+    return;
+}
+
+fn t_request(name: str) -> i32 {
+    t_reset();
+    let h: fn(str, perm::State, *u8) = t_record;
+    return { cplus_permissions_request_v1(#str_ptr(name), #str_len(name),
+                                          { h as *u8 },
+                                          { #addr_of(T_SENTINEL) as *u8 }) };
+}
+
+#[test]
+fn the_block_is_the_flags_zero_stack_shape() {
+    // The descriptor's `size` MUST equal this or `Block_copy` copies the wrong
+    // number of bytes — and the symptom is a corrupted token read from past the
+    // end of the block, long after the frame that made it is gone.
+    assert #size_of::[_Block]() == (40 as usize);
+    let d: *rt::BlockDescriptor = { _block_desc() as *rt::BlockDescriptor };
+    assert { (*d).size } == (40 as u64);
+    assert { (*d).reserved } == (0 as u64);
+    assert rt::stack_block_isa().is_not_null();
+}
+
+#[test]
+fn an_unknown_name_answers_unsupported_without_prompting() {
+    assert t_request("not.a.real.permission") == (0 as i32);
+    assert T_CALLS == (1 as i32);
+    assert T_CODE == perm::State::Unsupported.to_code();
+    // The callback still ran, which is the contract: a caller that got Ok and
+    // no callback has no way to _finish what it was doing.
+    assert T_NAME_MATCHED;
+    assert T_CTX_MATCHED;
+}
+
+#[test]
+fn a_null_callback_is_refused_and_nothing_is_queued() {
+    let before: usize = _pending_count();
+    assert { cplus_permissions_request_v1(#str_ptr(perm::CAMERA), #str_len(perm::CAMERA),
+                                          0 as *u8, 0 as *u8) } != (0 as i32);
+    assert _pending_count() == before;
+}
+
+#[test]
+fn a_row_whose_selector_is_absent_answers_and_retires_its_slot() {
+    // A row pointing at a real class with a selector that does not exist — the
+    // shape of an OS older than the row's floor. It must answer `Unsupported`
+    // and leave nothing live behind, because a pending row that is never
+    // retired is a callback the caller waits for forever.
+    let s: status::Status = register_apple("x.absent.selector",
+        class_name: "AVCaptureDevice", status_sel: "cplusNoSuchStatusSelector:",
+        shape: S_MEDIA, request_sel: "cplusNoSuchRequestSelector:",
+        request_shape: R_CLASS_MEDIA, plist_key: "NSCameraUsageDescription",
+        framework: "/System/Library/Frameworks/AVFoundation.framework/AVFoundation",
+        argument: "vide");
+    assert s == status::Status::Ok;
+    let before: usize = _pending_count();
+    assert t_request("x.absent.selector") == (0 as i32);
+    assert T_CALLS == (1 as i32);
+    assert T_CODE == perm::State::Unsupported.to_code();
+    // The status read went first and answered `Unknown` for a selector the
+    // class does not have... so the request path was entered, the _fire failed,
+    // and the slot was retired. Either way nothing may be left live.
+    assert _pending_count() == before;
+}
+
+#[test]
+fn deliver_retires_the_row_before_calling_back() {
+    // A callback that starts another request for the same name must not _find
+    // its own row still live. Driven through the table directly, because the
+    // only other way to reach `_deliver_on_main` is a real prompt.
+    t_reset();
+    let h: fn(str, perm::State, *u8) = t_record;
+    let token: u64 = NEXT_TOKEN;
+    NEXT_TOKEN = NEXT_TOKEN +% (1 as u64);
+    let reg: *vec::Vec[_Pending] = { #addr_of(PENDING) };
+    let _s: status::Status = (*reg).append(_Pending {
+        token: token, name: text::intern(perm::CAMERA), cb: h,
+        ctx: { #addr_of(T_SENTINEL) as *u8 },
+        code: perm::State::Granted.to_code(), live: true,
+    });
+    assert _pending_at(token).is_not_null();
+    _deliver_on_main({ token as *u8 });
+    assert T_CALLS == (1 as i32);
+    assert T_CODE == perm::State::Granted.to_code();
+    assert T_CTX_MATCHED;
+    // Retired, and a second delivery on the same token is inert rather than a
+    // double callback — which is what a platform that calls its completion
+    // twice would otherwise produce.
+    assert _pending_at(token).is_null();
+    _deliver_on_main({ token as *u8 });
+    assert T_CALLS == (1 as i32);
+}
+
+#[test]
+fn finish_on_the_main_thread_delivers_without_the_hop() {
+    // `cpc test` runs on the main thread with no run loop, so a hop would
+    // enqueue work nothing ever pumps. This is the branch that keeps the
+    // package usable in a program that has no run loop at all.
+    t_reset();
+    let h: fn(str, perm::State, *u8) = t_record;
+    let token: u64 = NEXT_TOKEN;
+    NEXT_TOKEN = NEXT_TOKEN +% (1 as u64);
+    let reg: *vec::Vec[_Pending] = { #addr_of(PENDING) };
+    let _s: status::Status = (*reg).append(_Pending {
+        token: token, name: text::intern(perm::CONTACTS), cb: h,
+        ctx: 0 as *u8, code: perm::State::Unknown.to_code(), live: true,
+    });
+    assert { _pthread_main_np() } != (0 as i32);
+    _finish(token, perm::State::Denied.to_code());
+    assert T_CALLS == (1 as i32);
+    assert T_CODE == perm::State::Denied.to_code();
+}
+
+#[test]
+fn finish_on_a_dead_token_is_inert() {
+    t_reset();
+    _finish(999999 as u64, perm::State::Granted.to_code());
+    assert T_CALLS == (0 as i32);
+}
+
+#[test]
+fn a_bool_answer_is_granted_or_denied_and_never_blocked() {
+    // The prompt was shown and answered, so `Restricted` cannot arrive on this
+    // path — it is a state you read, not one a person can choose.
+    assert _bool_code(1 as i8) == perm::State::Granted.to_code();
+    assert _bool_code(0 as i8) == perm::State::Denied.to_code();
+    assert _bool_code(1 as i8) != perm::State::Blocked.to_code();
+}
+
+#[test]
+fn the_main_queue_and_the_block_isa_both_resolve() {
+    // Both are _dlsym'd libdispatch/libobjc globals rather than externs, so a
+    // rename in either would surface as a silent null and a callback that never
+    // arrives. Asserted here so it surfaces as a failing test instead.
+    assert _main_queue().is_not_null();
+    assert rt::stack_block_isa().is_not_null();
+}
+
+// ---- notification tests ------------------------------------------------------
+//
+// The map is the whole point of these. UserNotifications is the one framework
+// whose status enum is NOT the shared 0/1/2/3, and running it through the
+// shared map would report a refusal as `Blocked` and an authorisation as
+// `Denied` — both silently. So the two maps are asserted against each other.
+
+#[test]
+fn the_notification_enum_is_not_the_shared_one() {
+    // 1 is Restricted in AV/PH/CN/EK and Denied in UN. 2 is Denied there and
+    // Authorized here. If these two ever agree, one of the maps is wrong.
+    assert _map_status(1 as i64) != _map_notify_status(1 as i64);
+    assert _map_status(2 as i64) != _map_notify_status(2 as i64);
+    assert _map_status(3 as i64) != _map_notify_status(3 as i64);
+    // They agree on 0 only, and that is the one value both spell the same.
+    assert _map_status(0 as i64) == _map_notify_status(0 as i64);
+}
+
+#[test]
+fn the_notification_map_reads_its_own_enum() {
+    assert _map_notify_status(0 as i64) == perm::State::Unknown.to_code();
+    assert _map_notify_status(1 as i64) == perm::State::Denied.to_code();
+    assert _map_notify_status(2 as i64) == perm::State::Granted.to_code();
+    // Provisional and Ephemeral are both "has access, has less of it".
+    assert _map_notify_status(3 as i64) == perm::State::Limited.to_code();
+    assert _map_notify_status(4 as i64) == perm::State::Limited.to_code();
+    // Nothing in this enum is `Blocked`: there is no Restricted, and a person
+    // who refused can turn it back on in Settings.
+    assert _map_notify_status(1 as i64) != perm::State::Blocked.to_code();
+    assert _map_notify_status(99 as i64) == perm::State::Unknown.to_code();
+}
+
+#[test]
+fn map_by_kind_routes_to_the_right_enum() {
+    assert _map_by_kind(M_STANDARD, 1 as i64) == perm::State::Blocked.to_code();
+    assert _map_by_kind(M_NOTIFY, 1 as i64) == perm::State::Denied.to_code();
+    // An unrecognised kind falls back to the standard map rather than to
+    // nothing: the four frameworks that share it are the majority, and a row
+    // that forgot the field should read plausibly rather than blankly.
+    assert _map_by_kind(0 as u32, 3 as i64) == perm::State::Granted.to_code();
+}
+
+#[test]
+fn the_notifications_row_is_the_odd_one_in_all_three_ways() {
+    let d: *_Domain = _find(perm::NOTIFICATIONS);
+    assert d.is_not_null();
+    assert { (*d).shape } == S_ASYNC_NOTIFY;
+    assert { (*d).map_kind } == M_NOTIFY;
+    assert { (*d).instance_sel_c } == "currentNotificationCenter\0";
+    // Badge|Sound|Alert.
+    assert { (*d).arg_int } == (7 as i64);
+    // The one built-in with no usage-description key, because Apple gates
+    // notifications on nothing but the prompt. `register_apple` would refuse
+    // this row; the built-in table does not go through that check.
+    assert { (*d).plist_key } == "";
+}
+
+#[test]
+fn a_registered_row_is_always_standard_and_constructs_its_own_instance() {
+    let s: status::Status = register_apple("x.registered.defaults",
+        class_name: "NSObject", status_sel: "description", shape: S_ENTITY,
+        request_sel: "description", request_shape: R_INST_ENTITY, plist_key: "K");
+    assert s == status::Status::Ok;
+    let d: *_Domain = _find("x.registered.defaults");
+    assert d.is_not_null();
+    assert { (*d).map_kind } == M_STANDARD;
+    assert { (*d).instance_sel_c } == "";
+}
+
+#[test]
+fn the_notification_cache_starts_unknown_so_the_first_move_is_to_ask() {
+    // Not asserted as "the cache is Unknown right now" — another test in this
+    // binary may have refreshed it. Asserted as the CONTRACT: whatever it
+    // holds is a state this package can name, and `Unknown` is what it is
+    // seeded with, which is what makes `can_prompt` true on first run.
+    assert NOTIFY_CODE <= perm::State::Unsupported.to_code();
+    assert perm::State::from_code(0 as u32).to_code() == perm::State::Unknown.to_code();
+}
+
+#[test]
+fn reading_the_notification_state_from_a_bare_binary_does_not_abort() {
+    // `+currentNotificationCenter` RAISES without a bundle identifier, and an
+    // unhandled ObjC exception aborts the process — `respondsToSelector:` does
+    // not help, because the class does respond. This test exists because the
+    // abort was found from OUTSIDE: a `vendor/notifications` test called
+    // `schedule` with a valid id and title, which was the first call anywhere
+    // to reach this path from a bundle-less process.
+    //
+    // Reaching this assertion at all is the assertion.
+    let c: u32 = { cplus_permissions_state_v1(#str_ptr(perm::NOTIFICATIONS),
+                                              #str_len(perm::NOTIFICATIONS)) };
+    assert c <= perm::State::Unsupported.to_code();
+}

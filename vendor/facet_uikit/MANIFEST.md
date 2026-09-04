@@ -275,15 +275,66 @@ false. It now has none:
 | `alert` / `choose` / `prompt` | `UIAlertController`, presented on the topmost controller. NOT blocking — iOS has no nested modal loop, and the answer arrives in a handler |
 | `nav::push` / `nav::pop` | a `UINavigationController` at the window root. The back button and the SWIPE-BACK gesture come with the stack rather than being drawn |
 | `present_window` | a modal sheet. A push is a journey and has a back button; a presentation is an interruption and is dismissed — facet's two verbs mean that difference, so they get the two UIKit shapes |
-| `observe_backgrounding` / `observe_resumed` / `observe_stopped` | the app delegate's lifecycle edges |
-| `observe_window_active` / `observe_window_inactive` | `didBecomeActive` / `willResignActive` — the same question a desktop asks of a window, asked of the app |
+| `observe_backgrounding` / `observe_resumed` / `observe_stopped` | `UIApplicationDidEnterBackground` / `WillEnterForeground` / `WillTerminate`, through `notify::observe_named` |
+| `observe_window_active` / `observe_window_inactive` | `UIApplicationDidBecomeActive` / `WillResignActive` — the same question a desktop asks of a window, asked of the app |
 | `observe_window_size` | `services::observe_size` over the window's root node |
 
-Two notes worth keeping. `observe_stopped` rides `applicationWillTerminate:`,
-which iOS does NOT guarantee — a backgrounded app is usually killed without it,
-so an app that must save state should save it on BACKGROUNDING. And
-`present_window`'s `width` / `height` are read and ignored: a sheet is sized by
-its presentation style and has no size of its own.
+**NOTIFICATIONS, NOT THE APP DELEGATE, and it is a correction.** These five used
+to ride `applicationDidEnterBackground:` and its three siblings through a
+lifecycle registry local to `window.cplus`. UIKit does not send any of those
+four to an app that has adopted UIScene — which every app `cpc new` scaffolds
+has — so four of the five verbs fired for nobody, and the two tests covering
+them called the registry's `fire_phase` directly and stayed green.
+`bugs/closed/ios-lifecycle-verbs-never-fire-under-scenes.md` has the trace. The
+`UIApplication*Notification` names carry neither the "not called under scenes"
+note nor the iOS 26 deprecation the delegate methods do, and this backend is now
+structurally the same as facet_appkit, which answers the same five verbs through
+`akx::observe_named`.
+
+Two notes worth keeping. `observe_stopped` rides
+`UIApplicationWillTerminateNotification`, which iOS does NOT guarantee — a
+backgrounded app is usually killed without it, so an app that must save state
+should save it on BACKGROUNDING. And `present_window`'s `width` / `height` are
+read and ignored: a sheet is sized by its presentation style and has no size of
+its own.
+
+### The app-events fan-out
+
+`facet/app_events` is the door an SDK package uses for the application-level
+callbacks a backend's one delegate owns. `src/app_events_uikit.cplus` is this
+backend's half, armed from `backend::install` — which runs before
+`UIApplicationMain`, so `E_LAUNCHED` is reachable.
+
+| kind | fired from |
+|---|---|
+| `E_LAUNCHED` | `UIApplicationDidFinishLaunchingNotification` |
+| `E_FOREGROUND` | `UIApplicationDidBecomeActiveNotification` |
+| `E_BACKGROUND` | `UIApplicationDidEnterBackgroundNotification` |
+| `E_TERMINATING` | `UIApplicationWillTerminateNotification` |
+| `E_LOW_MEMORY` | `UIApplicationDidReceiveMemoryWarningNotification`, `code` 0 (iOS has no level) |
+
+And one that is NOT a notification, because there is none to observe — a URL
+reaches an iOS app through the scene delegate and nowhere else. The class is
+built in `window.cplus`; the mapping to a facet kind stays in
+`app_events_uikit.cplus` with the rest:
+
+| kind | UIKit moment | when |
+|---|---|---|
+| `E_OPEN_URL` | `scene:openURLContexts:` | custom scheme, app running |
+| `E_OPEN_URL` | `connectionOptions.URLContexts` in `scene:willConnectToSession:options:` | custom scheme, cold start |
+| `E_OPEN_URL` | `scene:continueUserActivity:` | universal link, app running |
+| `E_OPEN_URL` | `connectionOptions.userActivities` in the same | universal link, cold start |
+
+The payload is the URL's `absoluteString` in all four. A universal link is
+recognised by carrying a `webpageURL`, not by its `activityType` — the property
+being read is the one that decides.
+
+Not fired here, and recorded rather than missing:
+
+- `E_PUSH_TOKEN` / `E_PUSH_MESSAGE` — delegate-only; no notification exists.
+  They arrive with notifications.
+- `E_NATIVE_RESULT` — Android's `onActivityResult`. Apple returns through
+  `E_OPEN_URL`, so this is absent by design.
 
 ### Bands that are still unfilled
 

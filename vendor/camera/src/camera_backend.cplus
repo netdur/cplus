@@ -1,0 +1,1293 @@
+// camera_backend — the Apple half. macOS and iOS share every line.
+//
+// AVFoundation, through the typed `vendor/avfoundation` binding rather than
+// `dlopen` + selector strings the way `permissions` and `securestore` reach
+// their frameworks. Those two touch four functions each; this one drives a
+// capture graph, and hand-spelling that many selectors is what a binding
+// generator exists to prevent.
+//
+// THE BINDING DID NOT EXIST UNTIL THIS PACKAGE and finding that out cost two
+// bindgen fixes — `--framework AVFoundation` reported success while writing a
+// package with ZERO capture types. See plans/camera.md §3.
+//
+// ---- one synthesized class, two shapes -----------------------------------
+//
+// The preview view is a layer-backed view whose layer is an
+// `AVCaptureVideoPreviewLayer`, and the two platforms want that arranged
+// differently:
+//
+//   macOS  NSView is LAYER-HOSTING — `setLayer:` then `setWantsLayer:YES`, in
+//          that order. The layer then resizes with the view for free.
+//   iOS    UIView's `layer` is read-only, so the subclass answers `+layerClass`
+//          and UIKit builds the right layer itself. Also free resizing, and
+//          without a `layoutSubviews` override that would need a second
+//          synthesized method.
+//
+// Both go through one synthesized subclass because the superclass is whichever
+// of NSView/UIView this process has.
+//
+// ---- the photo arrives on the MAIN THREAD --------------------------------
+//
+// AVFoundation delivers `captureOutput:didFinishProcessingPhoto:error:` on its
+// own queue. The next thing a caller does is almost always a facet mutation, so
+// the delegate hops before calling anything this package was handed —
+// `performSelectorOnMainThread:withObject:waitUntilDone:NO`, with the NSData as
+// the object. That is a plain NSObject method on both platforms and needs no
+// block, no dispatch import and no queue of our own.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "avfoundation/avfoundation" as av;
+import "./camera" as cam;
+
+#[link_name = "memcpy"]
+extern fn _memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+
+// CoreVideo and CoreMedia are reached through `dlopen`, the way `permissions`
+// and `securestore` reach theirs, and NOT because it is tidier: the manifest
+// has no `[<platform>.link]` section (vendor/http records the same finding), so
+// a cross-platform package cannot name an Apple-only framework. Verified rather
+// than assumed — AVFoundation does not re-export them, and a direct `extern`
+// ends in `ld: symbol(s) not found`.
+//
+// `dispatch_queue_create` needs none of this: it is libSystem, always linked.
+#[link_name = "dlopen"]
+extern fn _dlopen(path: *u8, mode: i32) -> *u8;
+#[link_name = "dlsym"]
+extern fn _dlsym(handle: *u8, name: *u8) -> *u8;
+#[link_name = "dispatch_queue_create"]
+extern fn _dispatch_queue_create(label: *u8, attr: *u8) -> *u8;
+#[link_name = "dispatch_queue_attr_make_with_qos_class"]
+extern fn _dispatch_queue_attr_make_with_qos_class(attr: *u8, qos_class: u32, relative_priority: i32) -> *u8;
+
+// `QOS_CLASS_USER_INITIATED`. The frames queue SAYS its QoS rather than
+// leaving it unspecified: an unclassed queue is macOS's to demote under
+// sustained load, and frames feeding a live preview are user-initiated work
+// by definition. Verified from inside a handler (`qos_class_self` == 25).
+const _QOS_USER_INITIATED: u32 = 0x19u32;
+
+const _RTLD_LAZY: i32 = 1 as i32;
+
+static _CORE_VIDEO: *u8 = 0 as *u8;
+static _CORE_MEDIA: *u8 = 0 as *u8;
+
+fn _core_video() -> *u8 {
+    if _CORE_VIDEO.is_not_null() { return _CORE_VIDEO; }
+    _CORE_VIDEO = { _dlopen(#str_ptr("/System/Library/Frameworks/CoreVideo.framework/CoreVideo\0"), _RTLD_LAZY) };
+    return _CORE_VIDEO;
+}
+
+fn _core_media() -> *u8 {
+    if _CORE_MEDIA.is_not_null() { return _CORE_MEDIA; }
+    _CORE_MEDIA = { _dlopen(#str_ptr("/System/Library/Frameworks/CoreMedia.framework/CoreMedia\0"), _RTLD_LAZY) };
+    return _CORE_MEDIA;
+}
+
+// The CoreVideo / CoreMedia entry points, resolved once.
+static _CM_IMAGE_BUFFER: fn(*u8) -> *u8 = 0 as fn(*u8) -> *u8;
+static _CV_LOCK: fn(*u8, u64) -> i32 = 0 as fn(*u8, u64) -> i32;
+static _CV_UNLOCK: fn(*u8, u64) -> i32 = 0 as fn(*u8, u64) -> i32;
+static _CV_PLANE_BASE: fn(*u8, usize) -> *u8 = 0 as fn(*u8, usize) -> *u8;
+static _CV_PLANE_WIDTH: fn(*u8, usize) -> usize = 0 as fn(*u8, usize) -> usize;
+static _CV_PLANE_HEIGHT: fn(*u8, usize) -> usize = 0 as fn(*u8, usize) -> usize;
+static _CV_PLANE_STRIDE: fn(*u8, usize) -> usize = 0 as fn(*u8, usize) -> usize;
+static _CV_IS_PLANAR: fn(*u8) -> i8 = 0 as fn(*u8) -> i8;
+// `CMVideoFormatDescriptionGetDimensions` answers a `CMVideoDimensions`
+// — `{ int32 width; int32 height; }`, 8 bytes, returned in ONE register on
+// arm64. Taken as a `u64` and unpacked rather than declared as a by-value
+// struct through a dlsym'd pointer: the unpack is defined by the layout, while
+// small-struct return through a function-pointer type is an ABI promise this
+// does not need to make.
+static _CM_DIMENSIONS: fn(*u8) -> u64 = 0 as fn(*u8) -> u64;
+// The NON-PLANE reads, for a packed buffer like BGRA where there is no plane 0.
+static _CV_BASE: fn(*u8) -> *u8 = 0 as fn(*u8) -> *u8;
+static _CV_WIDTH: fn(*u8) -> usize = 0 as fn(*u8) -> usize;
+static _CV_HEIGHT: fn(*u8) -> usize = 0 as fn(*u8) -> usize;
+static _CV_STRIDE: fn(*u8) -> usize = 0 as fn(*u8) -> usize;
+static _CV_READY: bool = false;
+
+// `kCVPixelBufferLockFlags_ReadOnly`.
+const _CV_LOCK_READONLY: u64 = 1u64;
+
+// `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` — the FourCC `420v` as an
+// integer. Biplanar 4:2:0, luma in plane 0, one byte per pixel: the same layout
+// Android's `YUV_420_888` plane 0 has, which is what lets `Frame` be one type
+// on both platforms.
+//
+// REQUESTING IT IS NOT OPTIONAL. macOS defaults an AVCaptureVideoDataOutput to
+// PACKED `2vuy` (4:2:2, luma interleaved with chroma), which has no plane 0 to
+// read — measured: 162 frames delivered, 162 skipped by the planar guard, and
+// the stream looked simply dead from the outside.
+const _PIXEL_420V: u32 = 0x34323076u32;
+
+// `kCVPixelFormatType_32BGRA`. PACKED, so it has no plane 0 and `Frame::luma`
+// is empty for it — but it is what an image consumer (CoreML, Vision) wants,
+// and asking the CAPTURE PIPELINE for it means the conversion happens wherever
+// AVFoundation does it rather than per-frame on the consumer's thread.
+const _PIXEL_BGRA: u32 = 0x42475241u32;
+
+// `kCVPixelBufferPixelFormatTypeKey` is an exported DATA symbol holding a
+// CFStringRef, not a function — so `dlsym` answers the address OF the variable
+// and it needs a DEREF. Getting that wrong does not crash: the dictionary gets
+// an unknown key, the format request is ignored, and the packed default comes
+// back. `vendor/securestore` records the same trap for the keychain constants.
+fn _pixel_format_key() -> *u8 {
+    let cv: *u8 = _core_video();
+    if cv.is_null() { return 0 as *u8; }
+    let slot: *u8 = { _dlsym(cv, #str_ptr("kCVPixelBufferPixelFormatTypeKey\0")) };
+    if slot.is_null() { return 0 as *u8; }
+    return { *(slot as **u8) };
+}
+
+// `{ kCVPixelBufferPixelFormatTypeKey: 420v }`, or null if the key is missing.
+fn _video_settings(fourcc: u32) -> *u8 {
+    let key: *u8 = _pixel_format_key();
+    if key.is_null() { return 0 as *u8; }
+    let num: *u8 = rt::msg_id_u32(rt::get_class(#str_ptr("NSNumber\0")),
+                                  rt::sel(#str_ptr("numberWithUnsignedInt:\0")), fourcc);
+    if num.is_null() { return 0 as *u8; }
+    return rt::msg_id_id_id(rt::get_class(#str_ptr("NSDictionary\0")),
+                            rt::sel(#str_ptr("dictionaryWithObject:forKey:\0")), num, key);
+}
+
+fn _cv_ready() -> bool {
+    if _CV_READY { return _CM_IMAGE_BUFFER.is_not_null(); }
+    _CV_READY = true;
+    let cv: *u8 = _core_video();
+    let cm: *u8 = _core_media();
+    if cv.is_null() || cm.is_null() { return false; }
+    _CM_IMAGE_BUFFER = { _dlsym(cm, #str_ptr("CMSampleBufferGetImageBuffer\0")) as fn(*u8) -> *u8 };
+    _CV_LOCK = { _dlsym(cv, #str_ptr("CVPixelBufferLockBaseAddress\0")) as fn(*u8, u64) -> i32 };
+    _CV_UNLOCK = { _dlsym(cv, #str_ptr("CVPixelBufferUnlockBaseAddress\0")) as fn(*u8, u64) -> i32 };
+    _CV_PLANE_BASE = { _dlsym(cv, #str_ptr("CVPixelBufferGetBaseAddressOfPlane\0")) as fn(*u8, usize) -> *u8 };
+    _CV_PLANE_WIDTH = { _dlsym(cv, #str_ptr("CVPixelBufferGetWidthOfPlane\0")) as fn(*u8, usize) -> usize };
+    _CV_PLANE_HEIGHT = { _dlsym(cv, #str_ptr("CVPixelBufferGetHeightOfPlane\0")) as fn(*u8, usize) -> usize };
+    _CV_PLANE_STRIDE = { _dlsym(cv, #str_ptr("CVPixelBufferGetBytesPerRowOfPlane\0")) as fn(*u8, usize) -> usize };
+    _CV_IS_PLANAR = { _dlsym(cv, #str_ptr("CVPixelBufferIsPlanar\0")) as fn(*u8) -> i8 };
+    _CM_DIMENSIONS = { _dlsym(cm, #str_ptr("CMVideoFormatDescriptionGetDimensions\0")) as fn(*u8) -> u64 };
+    _CV_BASE = { _dlsym(cv, #str_ptr("CVPixelBufferGetBaseAddress\0")) as fn(*u8) -> *u8 };
+    _CV_WIDTH = { _dlsym(cv, #str_ptr("CVPixelBufferGetWidth\0")) as fn(*u8) -> usize };
+    _CV_HEIGHT = { _dlsym(cv, #str_ptr("CVPixelBufferGetHeight\0")) as fn(*u8) -> usize };
+    _CV_STRIDE = { _dlsym(cv, #str_ptr("CVPixelBufferGetBytesPerRow\0")) as fn(*u8) -> usize };
+    return _CM_IMAGE_BUFFER.is_not_null() && _CV_PLANE_BASE.is_not_null();
+}
+
+// `AVMediaTypeVideo` is an NSString constant whose VALUE is this four-character
+// code — the same spelling `vendor/permissions` uses and for the same reason:
+// resolving the symbol would need the framework loaded first anyway, and the
+// value is contractual, it is what a `.mov` video track type is on disk.
+const _MEDIA_VIDEO: str = "vide";
+
+// The request as the facade packs it. Layout must match `camera::_CRequest`.
+#[repr(C)]
+struct _CRequest {
+    opaque device: *u8,
+    device_len: usize,
+    facing: i32,
+    width: i32,
+    height: i32,
+    frame_rate: i32,
+    pixel: i32,
+    color: i32,
+    hdr: i32,
+    stabilization: i32,
+    depth: i32,
+    high_speed: i32,
+    buffers: i32,
+}
+
+// A live session. Heap-allocated; `_c_open` hands out the pointer and
+// `_c_close` is the only thing that frees it.
+// Every pointer is `opaque`: this struct is reached only through a raw `*u8`
+// across the C seam, so it can have no `drop` that would ever run. `_c_close`
+// is the single owner and releases all four (E0510).
+struct _Session {
+    opaque session: *u8,     // AVCaptureSession, +1
+    opaque output: *u8,      // AVCapturePhotoOutput, +1
+    opaque input: *u8,       // AVCaptureDeviceInput, +1
+    opaque delegate: *u8,    // our photo delegate, +1 — see below
+    cb: fn(*u8, usize, *u8),
+    opaque ctx: *u8,
+    // The streaming half, built lazily: a session that never streams pays for
+    // no video output and no queue.
+    opaque video: *u8,       // AVCaptureVideoDataOutput, +1
+    opaque frame_delegate: *u8,
+    opaque queue: *u8,       // the dispatch queue frames arrive on, +1
+    frame_cb: fn(*u8, i32, i32, i32, *u8, *u8),
+    opaque frame_ctx: *u8,
+    // What the device actually settled on, answered by `_c_actual_facing` and
+    // `_c_frame_size`. Filled at open; a request is only ever a wish.
+    actual_facing: i32,
+    actual_width: i32,
+    actual_height: i32,
+    opaque device: *u8,      // the AVCaptureDevice, +1 — runtime controls need it
+    // The REQUESTED rate, kept so it can be re-applied. See `_reassert_rate`.
+    want_frame_rate: i32,
+    // `camera::PixelFormat::to_code()`. Decides the capture format and, with it,
+    // whether `Frame::luma` has anything in it.
+    want_pixel: i32,
+}
+
+// The last failure `_c_open` saw. A single slot rather than a per-session field
+// because it exists to explain a NULL return, and a NULL return has no session
+// to hang it off.
+static _LAST_ERROR: i32 = 0 as i32;
+
+// ---- the preview view class ----------------------------------------------
+
+static _PREVIEW_CLASS: *u8 = 0 as *u8;
+static _IS_UIKIT: bool = false;
+
+fn _preview_class() -> *u8 {
+    if _PREVIEW_CLASS.is_not_null() { return _PREVIEW_CLASS; }
+
+    var sup: *u8 = rt::get_class(#str_ptr("NSView\0"));
+    if sup.is_null() {
+        sup = rt::get_class(#str_ptr("UIView\0"));
+        _IS_UIKIT = true;
+    }
+    if sup.is_null() { return 0 as *u8; }
+
+    let cls: *u8 = synth::allocate_class_pair(sup, #str_ptr("CplusCameraPreview\0"), 0 as usize);
+    if cls.is_null() { return 0 as *u8; }
+
+    // UIKit only: `+layerClass` is a CLASS method, so it goes on the METACLASS.
+    // Adding it to the class itself compiles, registers, and is never called —
+    // the view then gets a plain CALayer and shows nothing.
+    //
+    // THE METACLASS COMES FROM THE CLASS POINTER, not from its name. An
+    // allocated-but-unregistered class is not yet visible to `objc_getClass`
+    // or `objc_getMetaClass`, so the name lookup this used to do returned NULL
+    // and the method was silently never added — `object_getClass(cls)` answers
+    // the metaclass immediately, before registration.
+    //
+    // Measured on an iPad 2026-09-02, and it CRASHED rather than degraded: the
+    // runtime printed `class 'CplusCameraPreview' not linked into application`
+    // (that warning IS the failed name lookup), UIKit built a plain CALayer,
+    // and the first `-[CALayer setSession:]` took the process down with an
+    // unrecognized selector. macOS never saw it because AppKit takes a layer
+    // handed to it and never asks the class for one.
+    if _IS_UIKIT {
+        let meta: *u8 = { synth::object_class(cls) };
+        if meta.is_not_null() {
+            let _ = synth::add_method_id_0id(meta, rt::sel(#str_ptr("layerClass\0")),
+                                             _imp_layer_class, #str_ptr("#@:\0"));
+        }
+        let _lay = synth::add_method_v_0id(cls, rt::sel(#str_ptr("layoutSubviews\0")),
+                                           _imp_layout_subviews, #str_ptr("v@:\0"));
+    }
+
+    synth::register_class_pair(cls);
+    _PREVIEW_CLASS = cls;
+    return cls;
+}
+
+fn _imp_layer_class(cls: *u8, cmd: *u8) -> *u8 {
+    return rt::get_class(#str_ptr("AVCaptureVideoPreviewLayer\0"));
+}
+
+// POINT THE PREVIEW THE WAY THE DEVICE IS HELD.
+//
+// `AVCaptureVideoPreviewLayer` renders in the CONNECTION's orientation, which
+// defaults to portrait and never changes on its own. Rotate the iPad and UIKit
+// turns the view while the layer goes on drawing the sensor's portrait frame
+// into it — measured on an iPad Pro M1: upright with the camera on top, wrong
+// in landscape.
+//
+// The raw values of `UIInterfaceOrientation` and `AVCaptureVideoOrientation`
+// are deliberately the same (portrait 1, upside-down 2, landscapeRight 3,
+// landscapeLeft 4), so the interface orientation is passed straight through.
+// It is `UIDeviceOrientation` that is the false friend — its landscape pair is
+// swapped relative to these two, and it also reports faceUp/faceDown, which
+// are not orientations a camera can be pointed in.
+//
+// THROUGH THE WINDOW SCENE, not `UIApplication.statusBarOrientation`: that is
+// deprecated, and on iPadOS it answers for the whole app rather than for this
+// window — which is wrong the moment the app is in Split View.
+fn _apply_video_orientation(view: *u8) {
+    if view.is_null() { return; }
+    let layer: *u8 = rt::msg_id(view, rt::sel(#str_ptr("layer\0")));
+    if layer.is_null() { return; }
+    let conn: *u8 = rt::msg_id(layer, rt::sel(#str_ptr("connection\0")));
+    if conn.is_null() { return; }
+    // Not every connection can be rotated; asking first is cheaper than an
+    // unrecognized-selector crash on a device we have not seen.
+    if rt::msg_i8(conn, rt::sel(#str_ptr("isVideoOrientationSupported\0"))) == (0 as i8) { return; }
+
+    let win: *u8 = rt::msg_id(view, rt::sel(#str_ptr("window\0")));
+    if win.is_null() { return; }
+    let scene: *u8 = rt::msg_id(win, rt::sel(#str_ptr("windowScene\0")));
+    if scene.is_null() { return; }
+    let o: i64 = rt::msg_i64(scene, rt::sel(#str_ptr("interfaceOrientation\0")));
+    // 0 is `unknown`, which is what a window not yet on screen answers.
+    if o <= (0 as i64) { return; }
+    rt::msg_void_i64(conn, rt::sel(#str_ptr("setVideoOrientation:\0")), o);
+    return;
+}
+
+// `layoutSubviews` is where the rotation lands: UIKit re-lays the view out on
+// every orientation change and every Split View resize, and the window scene
+// is already reporting the new orientation by then. The header above used to
+// say this override was unnecessary because resizing is free — true of SIZE,
+// and orientation is a different fact that nothing else reports.
+fn _imp_layout_subviews(self_obj: *u8, cmd: *u8) {
+    let sup: *u8 = { synth::super_imp_below(self_obj, cmd, _PREVIEW_CLASS) };
+    if sup.is_not_null() {
+        let f: fn(*u8, *u8) = { sup as fn(*u8, *u8) };
+        f(self_obj, cmd);
+    }
+    _apply_video_orientation(self_obj);
+    return;
+}
+
+// ---- the photo delegate class --------------------------------------------
+
+static _DELEGATE_CLASS: *u8 = 0 as *u8;
+// The association key only has to be a stable unique address; its contents are
+// never read. Taking the address of a static is the cheapest way to have one.
+static _SESSION_KEY: u8 = 0 as u8;
+
+fn _delegate_class() -> *u8 {
+    if _DELEGATE_CLASS.is_not_null() { return _DELEGATE_CLASS; }
+    let sup: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    if sup.is_null() { return 0 as *u8; }
+    let cls: *u8 = synth::allocate_class_pair(sup, #str_ptr("CplusCameraPhotoDelegate\0"), 0 as usize);
+    if cls.is_null() { return 0 as *u8; }
+
+    let _ = synth::conform(cls, #str_ptr("AVCapturePhotoCaptureDelegate\0"));
+    let _ = synth::add_method_v_3id(cls,
+        rt::sel(#str_ptr("captureOutput:didFinishProcessingPhoto:error:\0")),
+        _imp_did_finish, #str_ptr("v@:@@@\0"));
+    let _ = synth::add_method_v_1id(cls, rt::sel(#str_ptr("cplusDeliver:\0")),
+        _imp_deliver, #str_ptr("v@:@\0"));
+
+    synth::register_class_pair(cls);
+    _DELEGATE_CLASS = cls;
+    return cls;
+}
+
+// On AVFoundation's queue. Does as little as possible and hops.
+fn _imp_did_finish(self_: *u8, cmd: *u8, output: *u8, photo: *u8, error: *u8) {
+    if self_.is_null() { return; }
+    // An error means no photo. Deliver a ZERO-LENGTH buffer rather than
+    // silently never calling back: a caller waiting for a shutter needs to know
+    // it is not coming, and a callback that sometimes never fires is the worst
+    // shape this seam could have.
+    var data: *u8 = 0 as *u8;
+    if photo.is_not_null() && error.is_null() {
+        let p: av::CapturePhoto = av::CapturePhoto::from_raw(photo);
+        match p.file_data_representation() {
+            option::Option[av::NSData]::Some(d) => { data = rt::retain(d.raw()); },
+            option::Option[av::NSData]::None => { },
+        }
+    }
+    // waitUntilDone:NO — this queue must not block on the main thread, which
+    // may well be inside a facet layout waiting on nothing in particular.
+    rt::msg_void_id_id_i8(self_, rt::sel(#str_ptr("performSelectorOnMainThread:withObject:waitUntilDone:\0")),
+                          rt::sel(#str_ptr("cplusDeliver:\0")), data, 0 as i8);
+    if data.is_not_null() { rt::release(data); }
+}
+
+// On the main thread. `obj` is the NSData, or null when the capture failed.
+fn _imp_deliver(self_: *u8, cmd: *u8, obj: *u8) {
+    let raw: *u8 = synth::get_associated(self_, #addr_of(_SESSION_KEY));
+    if raw.is_null() { return; }
+    let s: *_Session = raw as *_Session;
+    let f: fn(*u8, usize, *u8) = { (*s).cb };
+    if f.is_null() { return; }
+    if obj.is_null() {
+        f(0 as *u8, 0 as usize, { (*s).ctx });
+        return;
+    }
+    // `NSData` comes out of the binding as a bare handle — it is a Foundation
+    // type, so AVFoundation's headers declare none of its methods and bindgen
+    // has nothing to emit. `length` and `bytes` are plain msgSends.
+    let n: i64 = rt::msg_i64(obj, rt::sel(#str_ptr("length\0")));
+    let bytes: *u8 = rt::msg_id(obj, rt::sel(#str_ptr("bytes\0")));
+    if bytes.is_null() || n <= (0 as i64) {
+        f(0 as *u8, 0 as usize, { (*s).ctx });
+        return;
+    }
+    f(bytes, n as usize, { (*s).ctx });
+}
+
+// ---- the frame delegate ---------------------------------------------------
+
+static _FRAME_CLASS: *u8 = 0 as *u8;
+static _FRAME_KEY: u8 = 0 as u8;
+
+fn _frame_class() -> *u8 {
+    if _FRAME_CLASS.is_not_null() { return _FRAME_CLASS; }
+    let sup: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    if sup.is_null() { return 0 as *u8; }
+    let cls: *u8 = synth::allocate_class_pair(sup, #str_ptr("CplusCameraFrameDelegate\0"), 0 as usize);
+    if cls.is_null() { return 0 as *u8; }
+    let _ = synth::conform(cls, #str_ptr("AVCaptureVideoDataOutputSampleBufferDelegate\0"));
+    let _ = synth::add_method_v_3id(cls,
+        rt::sel(#str_ptr("captureOutput:didOutputSampleBuffer:fromConnection:\0")),
+        _imp_did_output, #str_ptr("v@:@@@\0"));
+    synth::register_class_pair(cls);
+    _FRAME_CLASS = cls;
+    return cls;
+}
+
+// On the session's own dispatch queue — NOT the main thread, which is the whole
+// point of streaming. Straight through: no hop, no copy.
+fn _imp_did_output(self_: *u8, cmd: *u8, output: *u8, sample: *u8, conn: *u8) {
+    if self_.is_null() || sample.is_null() { return; }
+    let raw: *u8 = synth::get_associated(self_, #addr_of(_FRAME_KEY));
+    if raw.is_null() { return; }
+    let s: *_Session = raw as *_Session;
+    let f: fn(*u8, i32, i32, i32, *u8, *u8) = { (*s).frame_cb };
+    if f.is_null() { return; }
+    if !_cv_ready() { return; }
+
+    // A `static` holding a function pointer cannot be CALLED through its name;
+    // each has to be bound to a local first (E0300).
+    let image_buffer: fn(*u8) -> *u8 = _CM_IMAGE_BUFFER;
+    let is_planar: fn(*u8) -> i8 = _CV_IS_PLANAR;
+    let lock: fn(*u8, u64) -> i32 = _CV_LOCK;
+    let unlock: fn(*u8, u64) -> i32 = _CV_UNLOCK;
+    let plane_base: fn(*u8, usize) -> *u8 = _CV_PLANE_BASE;
+    let plane_width: fn(*u8, usize) -> usize = _CV_PLANE_WIDTH;
+    let plane_height: fn(*u8, usize) -> usize = _CV_PLANE_HEIGHT;
+    let plane_stride: fn(*u8, usize) -> usize = _CV_PLANE_STRIDE;
+
+    let pixels: *u8 = image_buffer(sample);
+    if pixels.is_null() { return; }
+
+    // PLANAR OR PACKED, and both are legitimate now. A 420 buffer has luma in
+    // plane 0; a BGRA buffer is packed and has no planes at all, so `luma` is
+    // empty and `native` is the whole point. Reading plane 0 of a packed buffer
+    // would be garbage, which is why this branches rather than assuming.
+    var planar: bool = false;
+    if is_planar.is_not_null() {
+        planar = is_planar(pixels) != (0 as i8);
+    }
+    if lock(pixels, _CV_LOCK_READONLY) != (0 as i32) { return; }
+    var base: *u8 = 0 as *u8;
+    var w: usize = 0 as usize;
+    var h: usize = 0 as usize;
+    var stride: usize = 0 as usize;
+    if planar {
+        base = plane_base(pixels, 0 as usize);
+        w = plane_width(pixels, 0 as usize);
+        h = plane_height(pixels, 0 as usize);
+        stride = plane_stride(pixels, 0 as usize);
+    } else {
+        let bw: fn(*u8) -> usize = _CV_WIDTH;
+        let bh: fn(*u8) -> usize = _CV_HEIGHT;
+        // `luma` stays NULL for a packed buffer: there is no luminance plane to
+        // hand back, and a caller that wanted one asked for the wrong format.
+        w = bw(pixels);
+        h = bh(pixels);
+    }
+    f(base, w as i32, h as i32, stride as i32, pixels, { (*s).frame_ctx });
+    // UNLOCK ON EVERY PATH. A pixel buffer left locked is not returned to the
+    // pool, and the capture stalls after a handful of frames with no error.
+    let _u: i32 = unlock(pixels, _CV_LOCK_READONLY);
+}
+
+// ---- device lookup --------------------------------------------------------
+
+fn _position_for(facing: i32) -> av::CaptureDevicePosition {
+    if facing == (1 as i32) { return av::CaptureDevicePosition::Front; }
+    // `External` has no AVCaptureDevicePosition of its own — Apple reports an
+    // external camera as `Unspecified`, which is the same answer a built-in
+    // laptop camera gives. `_device_for`'s fallback already picks those up.
+    if facing == (2 as i32) { return av::CaptureDevicePosition::Unspecified; }
+    return av::CaptureDevicePosition::Back;
+}
+
+// The device facing this way, or null.
+//
+// `devicesWithMediaType:` and a position filter rather than a discovery
+// session: the discovery API wants an array of device-type NSString constants,
+// which are exported DATA symbols, and a Mac's built-in camera reports
+// `Unspecified` for its position anyway — so a strict position match would find
+// nothing on the one machine this is developed against.
+// A device by its platform id, or null.
+fn _device_by_id(id: str) -> *u8 {
+    if { #str_len(id) } == (0 as usize) { return 0 as *u8; }
+    return match av::CaptureDevice::device_with_unique_i_d(id) {
+        option::Option[av::CaptureDevice]::Some(d) => { d.raw() },
+        option::Option[av::CaptureDevice]::None => { 0 as *u8 },
+    };
+}
+
+fn _device_for(facing: i32) -> *u8 {
+    let want: av::CaptureDevicePosition = _position_for(facing);
+    let devices: vec::Vec[av::CaptureDevice] = av::CaptureDevice::devices_with_media_type(_MEDIA_VIDEO);
+    var i: usize = 0 as usize;
+    var fallback: *u8 = 0 as *u8;
+    while i < devices.count() {
+        // `at_ptr`, not `at`: `at` reads by bitwise copy and is bounded on
+        // `Copy`, which `CaptureDevice` is not — it owns a retain.
+        match devices.at_ptr(i) {
+            option::Option[*av::CaptureDevice]::Some(dp) => {
+                let handle: *u8 = { (*dp).raw() };
+                let p: av::CaptureDevicePosition = { (*dp).position() };
+                if av::capture_device_position_raw(p) == av::capture_device_position_raw(want) {
+                    return handle;
+                }
+                // A camera that will not say which way it points is a Mac's
+                // built-in one. Keep it, but only if nothing matches outright.
+                if av::capture_device_position_raw(p) == av::capture_device_position_raw(av::CaptureDevicePosition::Unspecified) {
+                    if fallback.is_null() { fallback = handle; }
+                }
+            },
+            option::Option[*av::CaptureDevice]::None => { },
+        }
+        i = i + (1 as usize);
+    }
+    return fallback;
+}
+
+// The dimensions of a device format, or 0x0 if CoreMedia will not say.
+fn _format_size(f: av::CaptureDeviceFormat, out_w: *i32, out_h: *i32) {
+    { (*out_w) = 0 };
+    { (*out_h) = 0 };
+    if !_cv_ready() { return; }
+    let dims: fn(*u8) -> u64 = _CM_DIMENSIONS;
+    if dims.is_null() { return; }
+    let desc: *u8 = f.format_description();
+    if desc.is_null() { return; }
+    let packed: u64 = dims(desc);
+    // `{ int32 width; int32 height; }` little-endian in one register.
+    { (*out_w) = { (packed & 0xFFFFFFFFu64) as i32 } };
+    { (*out_h) = { (packed >> 32u64) as i32 } };
+}
+
+// NEGOTIATE a frame size: pick the supported format nearest the wish.
+//
+// Nearest by AREA DIFFERENCE, not by width — a request is a rough statement of
+// how much work the caller wants to do per frame, and 640x480 and 800x600 are
+// closer to each other than an aspect-ratio match would suggest.
+//
+// Does nothing when the wish is `any`, which leaves the device on whatever it
+// chose. That is the common case and the platform's own default is usually
+// closer to "small enough to process" than the sensor's native size.
+fn _negotiate_format(dev: *u8, want_w: i32, want_h: i32, out_w: *i32, out_h: *i32) {
+    { (*out_w) = 0 };
+    { (*out_h) = 0 };
+    let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
+
+    // Report whatever is active, even when nothing is requested.
+    var cur_w: i32 = 0;
+    var cur_h: i32 = 0;
+    _format_size(device.active_format(), #addr_of(cur_w), #addr_of(cur_h));
+    { (*out_w) = cur_w };
+    { (*out_h) = cur_h };
+
+    if want_w <= (0 as i32) || want_h <= (0 as i32) { return; }
+
+    let want_area: i64 = { (want_w as i64) * (want_h as i64) };
+    let formats: vec::Vec[av::CaptureDeviceFormat] = device.formats();
+    var best: *u8 = 0 as *u8;
+    var best_w: i32 = 0;
+    var best_h: i32 = 0;
+    var best_diff: i64 = 0 as i64;
+    var have: bool = false;
+
+    var i: usize = 0 as usize;
+    while i < formats.count() {
+        match formats.at_ptr(i) {
+            option::Option[*av::CaptureDeviceFormat]::Some(fp) => {
+                var fw: i32 = 0;
+                var fh: i32 = 0;
+                _format_size({ *fp }, #addr_of(fw), #addr_of(fh));
+                if fw > (0 as i32) && fh > (0 as i32) {
+                    let area: i64 = { (fw as i64) * (fh as i64) };
+                    var diff: i64 = area - want_area;
+                    if diff < (0 as i64) { diff = (0 as i64) - diff; }
+                    if !have || diff < best_diff {
+                        have = true;
+                        best_diff = diff;
+                        best = { (*fp).raw() };
+                        best_w = fw;
+                        best_h = fh;
+                    }
+                }
+            },
+            option::Option[*av::CaptureDeviceFormat]::None => { },
+        }
+        i = i + (1 as usize);
+    }
+
+    if !have || best.is_null() { return; }
+    if best_w == cur_w && best_h == cur_h { return; }
+
+    // `setActiveFormat:` REQUIRES the device to be locked. Without the lock it
+    // does not fail politely — AVFoundation raises, which is a crash.
+    if !device.lock_for_configuration(0 as *u8) { return; }
+    device.set_active_format(av::CaptureDeviceFormat::from_raw(best));
+    device.unlock_for_configuration();
+    { (*out_w) = best_w };
+    { (*out_h) = best_h };
+}
+
+// Clamp the frame rate into a range the ACTIVE FORMAT publishes.
+//
+// `setActiveVideoMinFrameDuration:` outside the format's supported range does
+// not fail — AVFoundation RAISES, which is a crash. So an unsupported rate is
+// dropped rather than forced, and `Camera` reports what the device settled on.
+fn _apply_frame_rate(dev: *u8, fps: i32) {
+    if fps <= (0 as i32) { return; }
+    let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
+    let ranges: vec::Vec[av::FrameRateRange] = device.active_format().video_supported_frame_rate_ranges();
+    var ok: bool = false;
+    var i: usize = 0 as usize;
+    while i < ranges.count() {
+        match ranges.at_ptr(i) {
+            option::Option[*av::FrameRateRange]::Some(rp) => {
+                let lo: f64 = { (*rp).min_frame_rate() };
+                let hi: f64 = { (*rp).max_frame_rate() };
+                if (fps as f64) >= lo && (fps as f64) <= hi { ok = true; }
+            },
+            option::Option[*av::FrameRateRange]::None => { },
+        }
+        i = i + (1 as usize);
+    }
+    if !ok { return; }
+    if !device.lock_for_configuration(0 as *u8) { return; }
+    // CMTime { value, timescale, flags, epoch }: 1/fps seconds. flags = 1 is
+    // kCMTimeFlags_Valid; a zero-flag CMTime is "invalid" and is ignored.
+    var d: av::CMTime = av::CMTime { value: 1 as i64, timescale: fps, flags: 1 as u32, epoch: 0 as i64 };
+    device.set_active_video_min_frame_duration(d);
+    device.set_active_video_max_frame_duration(d);
+    device.unlock_for_configuration();
+}
+
+// RE-APPLY THE REQUESTED RATE after anything that touches the session.
+//
+// A frame rate is not set once. Attaching an `AVCaptureVideoPreviewLayer` or
+// adding an output re-evaluates the session preset, which reconfigures the
+// device and resets `activeVideoMinFrameDuration` to the format default.
+// Measured end to end: a demo that asked for 15fps read 15 after `open` and 30
+// the moment its preview mounted. `camcaps` never saw it because it never
+// showed a preview — which is exactly the kind of gap a harness leaves.
+fn _reassert_rate(h: *u8) {
+    if h.is_null() { return; }
+    let s: *_Session = h as *_Session;
+    let dev: *u8 = { (*s).device };
+    if dev.is_null() { return; }
+
+    // THE FORMAT GOES FIRST, and for the same reason the rate needs re-asserting
+    // at all: a preview layer or a new output makes the session re-apply its
+    // preset, which puts the device back on the preset's format. Re-selecting
+    // the format then resets the duration, so the rate must follow it.
+    let want_w: i32 = { (*s).actual_width };
+    let want_h: i32 = { (*s).actual_height };
+    if want_w > (0 as i32) && want_h > (0 as i32) {
+        var got_w: i32 = 0;
+        var got_h: i32 = 0;
+        _negotiate_format(dev, want_w, want_h, #addr_of(got_w), #addr_of(got_h));
+    }
+
+    let want: i32 = { (*s).want_frame_rate };
+    if want > (0 as i32) { _apply_frame_rate(dev, want); }
+
+    // AND THE OUTPUT'S PIXEL FORMAT. Third time this pattern has bitten:
+    // re-applying the session preset resets the frame duration, the active
+    // format AND the video output's `videoSettings`. A BGRA request made at
+    // `_c_on_frame` was silently back to 420 by the time frames arrived —
+    // measured, `luma()` was still 640*480 bytes.
+    let v: *u8 = { (*s).video };
+    if v.is_null() { return; }
+    var fourcc: u32 = _PIXEL_420V;
+    if { (*s).want_pixel } == (2 as i32) { fourcc = _PIXEL_BGRA; }
+    let settings: *u8 = _video_settings(fourcc);
+    if settings.is_not_null() {
+        rt::msg_void_id(v, rt::sel(#str_ptr("setVideoSettings:\0")), settings);
+    }
+}
+
+// Every runtime control is `lockForConfiguration` + a property + unlock. The
+// lock is NOT optional: without it these raise rather than fail.
+fn _with_locked_device(h: *u8) -> *u8 {
+    if h.is_null() { return 0 as *u8; }
+    let s: *_Session = h as *_Session;
+    return { (*s).device };
+}
+
+// ---- the seam -------------------------------------------------------------
+
+export extern fn _c_count() -> i64 {
+    let devices: vec::Vec[av::CaptureDevice] = av::CaptureDevice::devices_with_media_type(_MEDIA_VIDEO);
+    return devices.count() as i64;
+}
+
+export extern fn _c_has(facing: i32) -> i32 {
+    if _device_for(facing).is_null() { return 0 as i32; }
+    return 1 as i32;
+}
+
+export extern fn _c_last_error() -> i32 {
+    return _LAST_ERROR;
+}
+
+export extern fn _c_open(req: *_CRequest) -> *u8 {
+    _LAST_ERROR = cam::Outcome::Failed.to_code();
+    if req.is_null() { return 0 as *u8; }
+
+    let facing: i32 = { (*req).facing };
+    let want_width: i32 = { (*req).width };
+    let want_height: i32 = { (*req).height };
+
+    // An explicit device id WINS over facing — that is what it is for — and an
+    // id that does not resolve FAILS rather than falling back.
+    //
+    // Facing is a preference and a substitution is helpful; a device id is a
+    // demand. Silently opening a different camera than the one named is the
+    // same lie `Camera::facing()` used to tell, and a caller that stored an id
+    // to reopen "the camera the user chose" would get someone else's.
+    let wanted: str = { #str_from_raw_parts({ (*req).device }, { (*req).device_len }) };
+    var dev: *u8 = 0 as *u8;
+    if { #str_len(wanted) } > (0 as usize) {
+        dev = _device_by_id(wanted);
+        if dev.is_null() {
+            _LAST_ERROR = cam::Outcome::Unsupported.to_code();
+            return 0 as *u8;
+        }
+    } else {
+        dev = _device_for(facing);
+    }
+    if dev.is_null() {
+        // No lens. The iOS simulator is always here.
+        _LAST_ERROR = cam::Outcome::Unsupported.to_code();
+        return 0 as *u8;
+    }
+
+    // WHAT THE DEVICE ACTUALLY IS, not what was asked for. A laptop reports
+    // its one camera as `Unspecified`; `_device_for` hands it back for either
+    // request, and this is where the caller finds out which way it points.
+    // REPORTS THE DEVICE, NEVER THE REQUEST. This defaulted to `facing` and
+    // therefore echoed the question back on any camera reporting `Unspecified`
+    // — which is every built-in Mac camera. `Unspecified` (3) is now its own
+    // answer rather than a guess.
+    let pos: av::CaptureDevicePosition = av::CaptureDevice::from_raw(dev).position();
+    var got_facing: i32 = 3 as i32;
+    if av::capture_device_position_raw(pos) == av::capture_device_position_raw(av::CaptureDevicePosition::Front) {
+        got_facing = 1 as i32;
+    }
+    if av::capture_device_position_raw(pos) == av::capture_device_position_raw(av::CaptureDevicePosition::Back) {
+        got_facing = 0 as i32;
+    }
+
+    var got_w: i32 = 0;
+    var got_h: i32 = 0;
+    _negotiate_format(dev, want_width, want_height, #addr_of(got_w), #addr_of(got_h));
+
+    let session: *u8 = rt::alloc_init(#str_ptr("AVCaptureSession\0"));
+    if session.is_null() { return 0 as *u8; }
+    let s: av::CaptureSession = av::CaptureSession::from_raw(session);
+
+    // No out-error: the only thing this package does with an NSError is decide
+    // between `Busy` and `Failed`, and a null input already says that.
+    let input: av::CaptureDeviceInput = av::CaptureDeviceInput::new(av::CaptureDevice::from_raw(dev), 0 as *u8);
+    if input.raw().is_null() {
+        // The device is here and would not open: something else holds it.
+        rt::release(session);
+        _LAST_ERROR = cam::Outcome::Busy.to_code();
+        return 0 as *u8;
+    }
+
+    let output: av::CapturePhotoOutput = av::CapturePhotoOutput::new();
+    if output.raw().is_null() {
+        rt::release(input.raw());
+        rt::release(session);
+        return 0 as *u8;
+    }
+
+    s.begin_configuration();
+    if !s.can_add_input(input.as_capture_input()) {
+        s.commit_configuration();
+        rt::release(output.raw());
+        rt::release(input.raw());
+        rt::release(session);
+        _LAST_ERROR = cam::Outcome::Busy.to_code();
+        return 0 as *u8;
+    }
+    s.add_input(input.as_capture_input());
+    if s.can_add_output(output.as_capture_output()) {
+        s.add_output(output.as_capture_output());
+    }
+    s.commit_configuration();
+    s.start_running();
+
+    // FRAME RATE AFTER `startRunning`, and the ordering was MEASURED rather
+    // than reasoned about — twice, because the first answer was wrong.
+    //
+    // `startRunning` re-applies the session preset, which reconfigures the
+    // device's active format and resets `activeVideoMinFrameDuration` to the
+    // format default. Set before this line the value reads back correctly at
+    // the moment of setting and is 30 again a line later. A session with NO
+    // OUTPUTS does not show it — the preset has nothing to satisfy — which is
+    // why an isolated probe said the setting was fine.
+    _apply_frame_rate(dev, { (*req).frame_rate });
+
+    var st: _Session = _Session {
+        session: rt::retain(session),
+        output: rt::retain(output.raw()),
+        input: rt::retain(input.raw()),
+        delegate: 0 as *u8,
+        cb: 0 as fn(*u8, usize, *u8),
+        ctx: 0 as *u8,
+        video: 0 as *u8,
+        frame_delegate: 0 as *u8,
+        queue: 0 as *u8,
+        frame_cb: 0 as fn(*u8, i32, i32, i32, *u8, *u8),
+        frame_ctx: 0 as *u8,
+        actual_facing: got_facing,
+        actual_width: got_w,
+        actual_height: got_h,
+        device: rt::retain(dev),
+        want_frame_rate: { (*req).frame_rate },
+        want_pixel: { (*req).pixel },
+    };
+    rt::release(session);
+
+    return match box::new::[_Session](st) {
+        option::Option[box::Box[_Session]]::Some(b) => {
+            _LAST_ERROR = cam::Outcome::Ok.to_code();
+            b.into_raw() as *u8
+        },
+        option::Option[box::Box[_Session]]::None => { 0 as *u8 },
+    };
+}
+
+export extern fn _c_close(h: *u8) {
+    if h.is_null() { return; }
+    let s: *_Session = h as *_Session;
+    let sess: *u8 = { (*s).session };
+    if sess.is_not_null() {
+        av::CaptureSession::from_raw(sess).stop_running();
+    }
+    // The stream comes down BEFORE anything it points at. Clearing the
+    // delegate is what guarantees no further callback reaches a freed session.
+    let v: *u8 = { (*s).video };
+    if v.is_not_null() {
+        av::CaptureVideoDataOutput::from_raw(v).set_sample_buffer_delegate(0 as *u8, 0 as *u8);
+        if sess.is_not_null() {
+            av::CaptureSession::from_raw(sess).remove_output(
+                av::CaptureVideoDataOutput::from_raw(v).as_capture_output());
+        }
+        rt::release(v);
+    }
+    { (*s).frame_cb = 0 as fn(*u8, i32, i32, i32, *u8, *u8) };
+    let fd: *u8 = { (*s).frame_delegate };
+    if fd.is_not_null() { rt::release(fd); }
+    let q: *u8 = { (*s).queue };
+    if q.is_not_null() { rt::release(q); }
+    { (*s).video = 0 as *u8 };
+    { (*s).frame_delegate = 0 as *u8 };
+    { (*s).queue = 0 as *u8 };
+
+    let d: *u8 = { (*s).delegate };
+    if d.is_not_null() { rt::release(d); }
+    let o: *u8 = { (*s).output };
+    if o.is_not_null() { rt::release(o); }
+    let i: *u8 = { (*s).input };
+    if i.is_not_null() { rt::release(i); }
+    let dv: *u8 = { (*s).device };
+    if dv.is_not_null() { rt::release(dv); }
+    { (*s).device = 0 as *u8 };
+    if sess.is_not_null() { rt::release(sess); }
+    { (*s).session = 0 as *u8 };
+    { (*s).output = 0 as *u8 };
+    { (*s).input = 0 as *u8 };
+    { (*s).delegate = 0 as *u8 };
+    { (*s).cb = 0 as fn(*u8, usize, *u8) };
+    box::from_raw::[_Session](s as *u8);
+}
+
+export extern fn _c_preview_create(h: *u8) -> *u8 {
+    if h.is_null() { return 0 as *u8; }
+    let s: *_Session = h as *_Session;
+    let sess: *u8 = { (*s).session };
+    if sess.is_null() { return 0 as *u8; }
+
+    let cls: *u8 = _preview_class();
+    if cls.is_null() { return 0 as *u8; }
+    let view: *u8 = rt::msg_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                               rt::sel(#str_ptr("init\0")));
+    if view.is_null() { return 0 as *u8; }
+
+    if _IS_UIKIT {
+        // `+layerClass` already built an AVCaptureVideoPreviewLayer; it only
+        // needs the session.
+        let layer: *u8 = rt::msg_id(view, rt::sel(#str_ptr("layer\0")));
+        if layer.is_not_null() {
+            rt::msg_void_id(layer, rt::sel(#str_ptr("setSession:\0")), sess);
+        }
+        // The first layout pass has not run yet, and on a device already held
+        // in landscape the preview would be wrong until something moved.
+        _apply_video_orientation(view);
+        _reassert_rate(h);
+        return view;
+    }
+
+    let layer: av::CaptureVideoPreviewLayer =
+        av::CaptureVideoPreviewLayer::new(av::CaptureSession::from_raw(sess));
+    if layer.raw().is_null() { return view; }
+    // ORDER: setLayer: before setWantsLayer:. The other way round makes the
+    // view layer-BACKED — AppKit installs a layer of its own first and then
+    // owns it — and the preview never appears.
+    rt::msg_void_id(view, rt::sel(#str_ptr("setLayer:\0")), layer.raw());
+    rt::msg_void_i8(view, rt::sel(#str_ptr("setWantsLayer:\0")), 1 as i8);
+    _reassert_rate(h);
+    return view;
+}
+
+export extern fn _c_preview_release(v: *u8) {
+    if v.is_null() { return; }
+    rt::release(v);
+}
+
+export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    if h.is_null() { return cam::Outcome::Failed.to_code(); }
+    let s: *_Session = h as *_Session;
+    let out: *u8 = { (*s).output };
+    if out.is_null() { return cam::Outcome::Failed.to_code(); }
+
+    { (*s).cb = cb };
+    { (*s).ctx = ctx };
+
+    // ONE DELEGATE PER SESSION, built on first use and released by `_c_close`.
+    // AVFoundation does not keep it alive for you across the whole capture on
+    // every OS version, and a delegate freed between the shutter and the
+    // callback is a crash that reproduces about one time in five.
+    var d: *u8 = { (*s).delegate };
+    if d.is_null() {
+        let cls: *u8 = _delegate_class();
+        if cls.is_null() { return cam::Outcome::Failed.to_code(); }
+        d = rt::msg_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
+        if d.is_null() { return cam::Outcome::Failed.to_code(); }
+        // ASSIGN, not retain: the session owns the delegate, so a retain back
+        // would be a cycle neither side ever breaks.
+        synth::set_associated(d, #addr_of(_SESSION_KEY), h);
+        { (*s).delegate = d };
+    }
+
+    let settings: av::CapturePhotoSettings = av::CapturePhotoSettings::photo_settings();
+    if settings.raw().is_null() { return cam::Outcome::Failed.to_code(); }
+    av::CapturePhotoOutput::from_raw(out).capture_photo_with_settings(settings, d);
+    return cam::Outcome::Ok.to_code();
+}
+
+
+export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+    if h.is_null() { return cam::Outcome::Failed.to_code(); }
+    let s: *_Session = h as *_Session;
+    let sess: *u8 = { (*s).session };
+    if sess.is_null() { return cam::Outcome::Failed.to_code(); }
+    if !_cv_ready() { return cam::Outcome::Unsupported.to_code(); }
+
+    { (*s).frame_cb = cb };
+    { (*s).frame_ctx = ctx };
+
+    // BUILT ONCE. Re-arming with a new handler must not add a second output to
+    // the session — that would deliver every frame twice.
+    if { (*s).video }.is_null() {
+        let out: av::CaptureVideoDataOutput = av::CaptureVideoDataOutput::new();
+        if out.raw().is_null() { return cam::Outcome::Failed.to_code(); }
+        // LATE FRAMES ARE DROPPED. The alternative is an unbounded queue of
+        // moments that have already passed.
+        out.set_always_discards_late_video_frames(true);
+
+        // ASK FOR PLANAR 420 — see `_PIXEL_420V`. Set through a raw msgSend
+        // rather than the binding's `video_settings`, which is typed as a
+        // `StringMap[AnyObject]` and would mean building one to hold a single
+        // CFString key that is not a `str`.
+        // `PixelFormat::Bgra32` is 2 in `camera::PixelFormat::to_code()`.
+        var fourcc: u32 = _PIXEL_420V;
+        if { (*s).want_pixel } == (2 as i32) { fourcc = _PIXEL_BGRA; }
+        let settings: *u8 = _video_settings(fourcc);
+        if settings.is_not_null() {
+            rt::msg_void_id(out.raw(), rt::sel(#str_ptr("setVideoSettings:\0")), settings);
+        }
+
+        let session: av::CaptureSession = av::CaptureSession::from_raw(sess);
+        session.begin_configuration();
+        if !session.can_add_output(out.as_capture_output()) {
+            session.commit_configuration();
+            rt::release(out.raw());
+            return cam::Outcome::Busy.to_code();
+        }
+        session.add_output(out.as_capture_output());
+        session.commit_configuration();
+        { (*s).video = rt::retain(out.raw()) };
+        rt::release(out.raw());
+    }
+
+    if { (*s).queue }.is_null() {
+        let attr: *u8 = { _dispatch_queue_attr_make_with_qos_class(0 as *u8, _QOS_USER_INITIATED, 0 as i32) };
+        { (*s).queue = { _dispatch_queue_create(#str_ptr("cplus.camera.frames\0"), attr) } };
+    }
+    if { (*s).frame_delegate }.is_null() {
+        let cls: *u8 = _frame_class();
+        if cls.is_null() { return cam::Outcome::Failed.to_code(); }
+        let d: *u8 = rt::msg_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0")));
+        if d.is_null() { return cam::Outcome::Failed.to_code(); }
+        // ASSIGN, not retain: the session owns the delegate.
+        synth::set_associated(d, #addr_of(_FRAME_KEY), h);
+        { (*s).frame_delegate = d };
+    }
+
+    av::CaptureVideoDataOutput::from_raw({ (*s).video })
+        .set_sample_buffer_delegate({ (*s).frame_delegate }, { (*s).queue });
+    _reassert_rate(h);
+    return cam::Outcome::Ok.to_code();
+}
+
+export extern fn _c_stop_frames(h: *u8) -> i32 {
+    if h.is_null() { return cam::Outcome::Failed.to_code(); }
+    let s: *_Session = h as *_Session;
+    let v: *u8 = { (*s).video };
+    if v.is_null() { return cam::Outcome::Ok.to_code(); }
+    // A nil delegate is how AVFoundation is told to stop. The output stays on
+    // the session, so re-arming is cheap.
+    av::CaptureVideoDataOutput::from_raw(v).set_sample_buffer_delegate(0 as *u8, 0 as *u8);
+    { (*s).frame_cb = 0 as fn(*u8, i32, i32, i32, *u8, *u8) };
+    return cam::Outcome::Ok.to_code();
+}
+
+
+export extern fn _c_actual_facing(h: *u8) -> i32 {
+    if h.is_null() { return 0 as i32; }
+    let s: *_Session = h as *_Session;
+    return { (*s).actual_facing };
+}
+
+// The active format's min frame duration, as a rate. `CMTime` is
+// value/timescale seconds, so fps is timescale/value.
+export extern fn _c_frame_rate(h: *u8) -> i32 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return 0 as i32; }
+    let d: av::CMTime = av::CaptureDevice::from_raw(dev).active_video_min_frame_duration();
+    if d.value <= (0 as i64) { return 0 as i32; }
+    return { ((d.timescale as i64) / d.value) as i32 };
+}
+
+// READS THE DEVICE, NOT A RECORD. It returned the value negotiated at `open`,
+// and that value goes stale: attaching a preview layer re-evaluates the session
+// preset and resets the ACTIVE FORMAT, exactly as it resets the frame duration.
+// Measured — a session that negotiated 640x480 reported 640x480 here while
+// delivering 1920x1080 frames, and the only thing that noticed was CoreML
+// refusing the wrong-sized input.
+export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
+    { (*out_width) = 0 };
+    { (*out_height) = 0 };
+    if h.is_null() { return; }
+    let s: *_Session = h as *_Session;
+    let dev: *u8 = { (*s).device };
+    if dev.is_not_null() {
+        var w: i32 = 0;
+        var hgt: i32 = 0;
+        _format_size(av::CaptureDevice::from_raw(dev).active_format(), #addr_of(w), #addr_of(hgt));
+        if w > (0 as i32) {
+            { (*out_width) = w };
+            { (*out_height) = hgt };
+            return;
+        }
+    }
+    { (*out_width) = { (*s).actual_width } };
+    { (*out_height) = { (*s).actual_height } };
+}
+
+// WHAT THE STREAM DELIVERS, read back from the output's `videoSettings` rather
+// than remembered from the request — the `_c_frame_size` judgement again: a
+// remembered answer goes stale the moment the session preset is re-applied.
+// No video output yet means no delivery format yet, which is `Any` (0).
+export extern fn _c_pixel_format(h: *u8) -> i32 {
+    if h.is_null() { return 0 as i32; }
+    let s: *_Session = h as *_Session;
+    let v: *u8 = { (*s).video };
+    if v.is_null() { return 0 as i32; }
+    let dict: *u8 = rt::msg_id(v, rt::sel(#str_ptr("videoSettings\0")));
+    if dict.is_null() { return 0 as i32; }
+    let key: *u8 = _pixel_format_key();
+    if key.is_null() { return 0 as i32; }
+    let num: *u8 = rt::msg_id_id(dict, rt::sel(#str_ptr("objectForKey:\0")), key);
+    if num.is_null() { return 0 as i32; }
+    let fourcc: u32 = rt::msg_u32(num, rt::sel(#str_ptr("unsignedIntValue\0")));
+    // `camera::PixelFormat::to_code()`: Luma8 = 1, Bgra32 = 2.
+    if fourcc == _PIXEL_BGRA { return 2 as i32; }
+    if fourcc == _PIXEL_420V { return 1 as i32; }
+    return 0 as i32;
+}
+
+export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return cam::Outcome::Failed.to_code(); }
+    var id: text::Text = av::CaptureDevice::from_raw(dev).unique_i_d();
+    { (*into) = id };
+    return cam::Outcome::Ok.to_code();
+}
+
+export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return cam::Outcome::Failed.to_code(); }
+    let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
+    if device.max_available_video_zoom_factor() <= (1.0) {
+        return cam::Outcome::Unsupported.to_code();
+    }
+    if factor < (1.0) { return cam::Outcome::Failed.to_code(); }
+    if factor > device.max_available_video_zoom_factor() {
+        return cam::Outcome::Failed.to_code();
+    }
+    if !device.lock_for_configuration(0 as *u8) { return cam::Outcome::Denied.to_code(); }
+    device.set_video_zoom_factor(factor);
+    device.unlock_for_configuration();
+    return cam::Outcome::Ok.to_code();
+}
+
+export extern fn _c_zoom(h: *u8) -> f64 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return 1.0; }
+    return av::CaptureDevice::from_raw(dev).video_zoom_factor();
+}
+
+export extern fn _c_max_zoom(h: *u8) -> f64 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return 1.0; }
+    return av::CaptureDevice::from_raw(dev).max_available_video_zoom_factor();
+}
+
+export extern fn _c_has_torch(h: *u8) -> i32 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return 0 as i32; }
+    if av::CaptureDevice::from_raw(dev).has_torch() { return 1 as i32; }
+    return 0 as i32;
+}
+
+export extern fn _c_set_torch(h: *u8, on: i32) -> i32 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return cam::Outcome::Failed.to_code(); }
+    let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
+    if !device.has_torch() { return cam::Outcome::Unsupported.to_code(); }
+    var mode: av::CaptureTorchMode = av::CaptureTorchMode::Off;
+    if on != (0 as i32) { mode = av::CaptureTorchMode::On; }
+    if !device.is_torch_mode_supported(mode) { return cam::Outcome::Unsupported.to_code(); }
+    if !device.lock_for_configuration(0 as *u8) { return cam::Outcome::Denied.to_code(); }
+    device.set_torch_mode(mode);
+    device.unlock_for_configuration();
+    return cam::Outcome::Ok.to_code();
+}
+
+export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return cam::Outcome::Failed.to_code(); }
+    let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
+    var m: av::CaptureFocusMode = av::CaptureFocusMode::ContinuousAutoFocus;
+    if mode == (1 as i32) { m = av::CaptureFocusMode::AutoFocus; }
+    if mode == (2 as i32) { m = av::CaptureFocusMode::Locked; }
+    if !device.is_focus_mode_supported(m) { return cam::Outcome::Unsupported.to_code(); }
+    if !device.lock_for_configuration(0 as *u8) { return cam::Outcome::Denied.to_code(); }
+    device.set_focus_mode(m);
+    device.unlock_for_configuration();
+    return cam::Outcome::Ok.to_code();
+}
+
+export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return cam::Outcome::Failed.to_code(); }
+    let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
+    var m: av::CaptureExposureMode = av::CaptureExposureMode::ContinuousAutoExposure;
+    if mode == (1 as i32) { m = av::CaptureExposureMode::AutoExpose; }
+    if mode == (2 as i32) { m = av::CaptureExposureMode::Locked; }
+    if !device.is_exposure_mode_supported(m) { return cam::Outcome::Unsupported.to_code(); }
+    if !device.lock_for_configuration(0 as *u8) { return cam::Outcome::Denied.to_code(); }
+    device.set_exposure_mode(m);
+    device.unlock_for_configuration();
+    return cam::Outcome::Ok.to_code();
+}
+
+export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+    let dev: *u8 = _with_locked_device(h);
+    if dev.is_null() { return cam::Outcome::Failed.to_code(); }
+    let device: av::CaptureDevice = av::CaptureDevice::from_raw(dev);
+    var m: av::CaptureWhiteBalanceMode = av::CaptureWhiteBalanceMode::ContinuousAutoWhiteBalance;
+    if mode == (1 as i32) { m = av::CaptureWhiteBalanceMode::AutoWhiteBalance; }
+    if mode == (2 as i32) { m = av::CaptureWhiteBalanceMode::Locked; }
+    if !device.is_white_balance_mode_supported(m) { return cam::Outcome::Unsupported.to_code(); }
+    if !device.lock_for_configuration(0 as *u8) { return cam::Outcome::Denied.to_code(); }
+    device.set_white_balance_mode(m);
+    device.unlock_for_configuration();
+    return cam::Outcome::Ok.to_code();
+}
+
+// The other half of the facade's `the_seam_request_layout_is_pinned`: the same
+// number, asserted against THIS file's hand-written copy of `_CRequest`.
+#[test]
+fn the_seam_request_layout_matches_the_facade() {
+    assert { #size_of::[_CRequest]() } == (64 as usize);
+    return;
+}
+
+
+// SWAP THE INPUT, do not rebuild the session. AVFoundation allows one
+// `beginConfiguration` block to remove the old device input and add the new
+// one — the session, its outputs, the preview layer's connection and the frame
+// delegate all survive, so the preview does not blink.
+//
+// The negotiated format and rate belong to the DEVICE, so both are re-applied
+// against the new one; `_reassert_rate` does the pair.
+export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
+    if h.is_null() { return cam::Outcome::Failed.to_code(); }
+    let s: *_Session = h as *_Session;
+    let sess: *u8 = { (*s).session };
+    if sess.is_null() { return cam::Outcome::Failed.to_code(); }
+
+    let dev: *u8 = _device_for(facing);
+    if dev.is_null() { return cam::Outcome::Unsupported.to_code(); }
+
+    let session: av::CaptureSession = av::CaptureSession::from_raw(sess);
+    let fresh: av::CaptureDeviceInput = av::CaptureDeviceInput::new(
+        av::CaptureDevice::from_raw(dev), 0 as *u8);
+    if fresh.raw().is_null() { return cam::Outcome::Busy.to_code(); }
+
+    session.begin_configuration();
+    let old: *u8 = { (*s).input };
+    if old.is_not_null() {
+        session.remove_input(av::CaptureDeviceInput::from_raw(old).as_capture_input());
+    }
+    if !session.can_add_input(fresh.as_capture_input()) {
+        // Put the old one back rather than leaving the session with no input.
+        if old.is_not_null() {
+            session.add_input(av::CaptureDeviceInput::from_raw(old).as_capture_input());
+        }
+        session.commit_configuration();
+        rt::release(fresh.raw());
+        return cam::Outcome::Busy.to_code();
+    }
+    session.add_input(fresh.as_capture_input());
+    session.commit_configuration();
+
+    if old.is_not_null() { rt::release(old); }
+    { (*s).input = rt::retain(fresh.raw()) };
+    rt::release(fresh.raw());
+
+    let prev: *u8 = { (*s).device };
+    if prev.is_not_null() { rt::release(prev); }
+    { (*s).device = rt::retain(dev) };
+
+    // What the new device actually is, never the request. Same rule as `_c_open`.
+    let pos: av::CaptureDevicePosition = av::CaptureDevice::from_raw(dev).position();
+    var got: i32 = 3 as i32;
+    if av::capture_device_position_raw(pos) == av::capture_device_position_raw(av::CaptureDevicePosition::Front) { got = 1 as i32; }
+    if av::capture_device_position_raw(pos) == av::capture_device_position_raw(av::CaptureDevicePosition::Back) { got = 0 as i32; }
+    { (*s).actual_facing = got };
+
+    // Format and rate are the DEVICE's, so they do not come across with the
+    // session — re-negotiate against the new one.
+    var w: i32 = 0;
+    var hh: i32 = 0;
+    _negotiate_format(dev, { (*s).actual_width }, { (*s).actual_height }, #addr_of(w), #addr_of(hh));
+    _reassert_rate(h);
+    return cam::Outcome::Ok.to_code();
+}

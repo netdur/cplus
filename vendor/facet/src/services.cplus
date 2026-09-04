@@ -64,7 +64,14 @@ static SCHEDULER: Scheduler = #zero::[Scheduler]();
 fn install_scheduler(take s: Scheduler) { SCHEDULER = s; return; }
 fn uninstall_scheduler() { SCHEDULER = scheduler_none(); return; }
 
-fn run_on_main(work: fn(*u8), ctx: *u8) {
+// `ctx` is DEFAULTED, like `after`'s and `observe_size`'s beside it, and that is
+// load-bearing rather than tidy: the compiler fills a handler's context slot
+// with the receiver when a caller passes a bound method (`this.publish`), but
+// only when that slot has a default — a REQUIRED one is rejected by the arity
+// check before the fill happens (E0308, though E0824 shows the fill was
+// intended). This verb was the only one of the three without it, so
+// `run_on_main(this.publish)` did not compile while `after(1.0, this.tick)` did.
+fn run_on_main(work: fn(*u8), ctx: *u8 = 0 as *u8) {
     let f: fn(fn(*u8), *u8) = SCHEDULER.run_on_main;
     if f.is_not_null() { f(work, ctx); }
 }

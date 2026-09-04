@@ -1,0 +1,76 @@
+// Hand-written additions to the generated CoreLocation binding.
+//
+// `src/corelocation.cplus` is cpc-bindgen output and is REGENERATED — anything
+// written into it survives exactly until the next run. This file is the place
+// for what the generator could not see, and it is the same arrangement
+// `appkit_ext.cplus` uses for the same reason.
+//
+// WHAT IS MISSING AND WHY IT MATTERS: the generator emitted `CLLocation` with
+// nothing on it but `raw`/`from_raw`. Every reading a fix is made of —
+// coordinate, altitude, accuracy, speed, course, timestamp — is absent, so the
+// generated binding can hand you a location object and no way to read it.
+// These are the seven accessors that make it useful.
+
+import "objc/runtime" as rt;
+import "./corelocation" as cl;
+
+// THE COORDINATE IS TWO DOUBLES, and `rt::Point` is two doubles, so the ABI is
+// the same one — a struct of two f64 returned in floating-point registers.
+// This is a deliberate reuse of an identical layout, not a cast through an
+// unrelated type: `CLLocationCoordinate2D { CLLocationDegrees latitude;
+// CLLocationDegrees longitude; }` and `CGPoint { CGFloat x; CGFloat y; }` are
+// the same shape on every Apple 64-bit target.
+//
+// `x` IS LATITUDE and `y` IS LONGITUDE, in declaration order. Naming them the
+// wrong way round puts you in the sea off West Africa, which is the classic
+// symptom and worth stating rather than leaving to the reader.
+struct Coordinate {
+    latitude: f64,
+    longitude: f64,
+}
+
+impl cl::Location {
+    fn coordinate(this) -> Coordinate {
+        let p: rt::Point = rt::msg_point(this.raw(), rt::sel(#str_ptr("coordinate\0")));
+        return Coordinate { latitude: p.x, longitude: p.y };
+    }
+
+    // Metres above sea level. Meaningless unless `vertical_accuracy` is >= 0.
+    fn altitude(this) -> f64 {
+        return rt::msg_f64(this.raw(), rt::sel(#str_ptr("altitude\0")));
+    }
+
+    // Metres. NEGATIVE means the coordinate is invalid and must not be used —
+    // CoreLocation's way of saying "I produced an object but not a fix".
+    fn horizontal_accuracy(this) -> f64 {
+        return rt::msg_f64(this.raw(), rt::sel(#str_ptr("horizontalAccuracy\0")));
+    }
+
+    // Metres. Negative means altitude is unavailable.
+    fn vertical_accuracy(this) -> f64 {
+        return rt::msg_f64(this.raw(), rt::sel(#str_ptr("verticalAccuracy\0")));
+    }
+
+    // Metres per second. Negative = unknown.
+    fn speed(this) -> f64 {
+        return rt::msg_f64(this.raw(), rt::sel(#str_ptr("speed\0")));
+    }
+
+    // Degrees clockwise from true north. Negative = unknown, which includes
+    // standing still — a stationary device has no course.
+    fn course(this) -> f64 {
+        return rt::msg_f64(this.raw(), rt::sel(#str_ptr("course\0")));
+    }
+
+    // UNIX MILLISECONDS, flattened here rather than handing back an NSDate.
+    // A caller comparing a fix against "now" wants a number, and `NSDate` would
+    // drag Foundation object lifetime across the seam for two multiplications.
+    //
+    // A cached fix can be minutes old; this is how you find out.
+    fn timestamp_ms(this) -> i64 {
+        let date: *u8 = rt::msg_id(this.raw(), rt::sel(#str_ptr("timestamp\0")));
+        if date.is_null() { return 0 as i64; }
+        let secs: f64 = rt::msg_f64(date, rt::sel(#str_ptr("timeIntervalSince1970\0")));
+        return { (secs * (1000.0 as f64)) as i64 };
+    }
+}

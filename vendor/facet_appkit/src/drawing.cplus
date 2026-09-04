@@ -146,10 +146,32 @@ fn canvas_draw_rect_imp(self_obj: *u8, cmd: *u8, dirty: rt::Rect) {
         vocab::Size::of(bounds.w, bounds.h),
         scale_of(self_obj));
 
+    // THE DIRTY RECT IS NOT THE VIEW. AppKit is allowed to hand `drawRect:` a
+    // rect BIGGER than the bounds — measured: a 608x443 canvas given
+    // (-16,-48) 640x532, the whole window in view coordinates — and the
+    // CGContext's clip follows that rect, so a drawable trusting `dirty` for
+    // its geometry painted OVER THE VIEWS AROUND IT. Two containments, both
+    // needed: the context is clipped to the bounds before the replay, and the
+    // rect the drawable sees is the dirty region INTERSECTED with the bounds,
+    // so it can never be told about space it does not own.
+    rt::msg_void_rect(rt::get_class(#str_ptr("NSBezierPath\0")),
+                      rt::sel(#str_ptr("clipRect:\0")),
+                      rt::Rect { x: 0.0f64, y: 0.0f64, w: bounds.w, h: bounds.h });
+    var dx0: f64 = dirty.x;
+    var dy0: f64 = dirty.y;
+    var dx1: f64 = dirty.x + dirty.w;
+    var dy1: f64 = dirty.y + dirty.h;
+    if dx0 < 0.0f64 { dx0 = 0.0f64; }
+    if dy0 < 0.0f64 { dy0 = 0.0f64; }
+    if dx1 > bounds.w { dx1 = bounds.w; }
+    if dy1 > bounds.h { dy1 = bounds.h; }
+    if dx1 < dx0 { dx1 = dx0; }
+    if dy1 < dy0 { dy1 = dy0; }
+
     // The application draws. It appends commands and touches nothing else.
     let f: fn(*vocab::Canvas, vocab::Rect, *u8) = d.draw;
     f(#addr_of(surface),
-      vocab::Rect::of(dirty.x, dirty.y, dirty.w, dirty.h), d.ctx);
+      vocab::Rect::of(dx0, dy0, dx1 - dx0, dy1 - dy0), d.ctx);
 
     replay(ctx, #addr_of(surface));
 }

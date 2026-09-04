@@ -458,7 +458,8 @@ impl Gallery: component::Component {
 }
 
 impl Gallery: component::Lifecycle {
-    fn on_attach(ref this) {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
         match tree::find("gallery:nav") {
             option::Option[tree::Tree]::Some(t) => {
                 let _b: tree::Tree = t.expand(SEC_VIEWS);
@@ -487,7 +488,8 @@ impl Gallery: component::Lifecycle {
             start_walk();
         }
     }
-    fn on_detach(ref this) { return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 impl Gallery: screen::Screen {

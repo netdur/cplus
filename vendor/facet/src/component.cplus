@@ -9,6 +9,8 @@ import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 import "./vocabulary" as vocab;
 import "./application" as app;
+import "./app_events" as ev;
+import "stdlib/status" as status;
 
 type Node = flex::Node;
 
@@ -69,9 +71,118 @@ interface Component {
 // app's policy, never facet's. This is the imperative, non-reactive mirror of
 // Web Components (connectedCallback / disconnectedCallback): no re-render,
 // no diff.
+// WHY a component is being attached or detached, because the same two hooks
+// carry two different kinds of event and only the reason tells them apart.
+//
+// There is ONE axis — you have the component's world, or you do not — and the
+// reason says what moved. A component holding an exclusive device (camera,
+// microphone, location) wants the SAME code on every edge: take it on the way
+// in, give it back on the way out. Splitting that across four methods made
+// every such component write its body twice.
+//
+// TWO ENUMS rather than one, so the impossible values do not exist. `on_attach`
+// can never mean "backgrounded" and `on_detach` can never mean "mounted"; one
+// shared enum would put both in reach of both and force a `_` arm on every
+// match that means nothing.
+//
+// The reason is LOAD-BEARING, not informational, and this is the trap it makes
+// visible: building views belongs to `Mount` alone, while acquiring a device
+// belongs to every attach. Code written for the first and run for the second
+// mounts a second copy of everything it built — measured as a camera preview
+// that gained one dead, frozen band per task switch.
+enum Attach {
+    // The component just entered the live tree. Fires ONCE per attachment and
+    // is the only moment `mount::find` and `mount::add_child` are meaningful:
+    // this is where views are built.
+    //
+    // NOT the place to acquire an exclusive device. On Android this runs
+    // inside `onCreate`, where the process may still be BACKGROUND as far as
+    // the camera service is concerned — `openCamera` then throws
+    // CAMERA_DISABLED. `Active` always follows, and is where devices belong.
+    Mount,
+    // VISIBLE again after being fully gone. Fires many times over one Mount
+    // and NEVER at launch — a cold start is Mount then Active, on all three
+    // platforms.
+    Foreground,
+    // FRONTMOST and taking input. Fires at launch and every time focus
+    // returns. May arrive with NO preceding `Inactive` — a dialog dismissing
+    // is one way.
+    Active,
+}
+
+enum Detach {
+    // Lost FOCUS but possibly still VISIBLE. A dialog, a notification shade,
+    // the other pane of a split screen taking over.
+    //
+    // NOT A RELEASE SIGNAL, and this is the reason the two levels exist. On a
+    // desktop it fires whenever the user clicks another window; in split-screen
+    // it fires while the app is fully on screen. An app that released its
+    // camera here would stop working in front of the person watching it.
+    // Measured on a Fold: focus moved four times in split-screen and the app
+    // kept streaming at 30fps throughout.
+    Inactive,
+    // The app is no longer frontmost. The component is STILL ATTACHED and its
+    // views are still live; what is gone is the platform's willingness to let
+    // it hold exclusive devices. Android revokes the camera outright within a
+    // second of this, so releasing here is the difference between handing a
+    // device back and having it taken.
+    Background,
+    // The component is leaving the tree. Its views are alive as this runs and
+    // will not be afterwards.
+    Unmount,
+    // The app is closing. Flush anything unsaved.
+    //
+    // Raised on all three: `NSApplicationWillTerminateNotification` on macOS,
+    // `willTerminate` on iOS, and `onDestroy` guarded by `isFinishing` on
+    // Android — the guard matters there because a rotation or a fold also
+    // destroys the Activity while the process lives on.
+    //
+    // NOT GUARANTEED, and never the only place work is saved. A process killed
+    // for memory, or swiped out of the task switcher, reaches none of them.
+    Terminate,
+}
+
 interface Lifecycle {
-    fn on_attach(ref this);
-    fn on_detach(ref this);
+    fn on_attach(ref this, why: Attach);
+    fn on_detach(ref this, why: Detach);
+}
+
+// ---- binding a component to the app's lifecycle -------------------------------
+// The runtime calls this once, with the component's address, right where it
+// registers the attach trampoline. Everything below is the (fn_ptr, ctx) pair
+// rule applied to a monomorphised dispatcher: `app_events` speaks a C-ABI
+// handler, `Lifecycle` speaks methods, and this is the one place that
+// translates.
+//
+// The address must OUTLIVE the subscription, which is why this takes a pointer
+// and not a value — every runtime either boxes the component or holds it in a
+// frame that outlives the loop, and neither is freed while bound.
+fn app_lifecycle_tramp[C: Lifecycle](e: *ev::AppEvent, ctx: *u8) {
+    if e.is_null() { return; }
+    if ctx.is_null() { return; }
+    let p: *C = ctx as *C;
+    let kind: u32 = { (*e).kind };
+    if kind == ev::E_ACTIVE { { (*p).on_attach(Attach::Active) }; return; }
+    if kind == ev::E_FOREGROUND { { (*p).on_attach(Attach::Foreground) }; return; }
+    if kind == ev::E_INACTIVE { { (*p).on_detach(Detach::Inactive) }; return; }
+    if kind == ev::E_BACKGROUND { { (*p).on_detach(Detach::Background) }; return; }
+    if kind == ev::E_TERMINATING { { (*p).on_detach(Detach::Terminate) }; return; }
+    return;
+}
+
+fn bind_app_lifecycle[C: Lifecycle](p: *C) -> status::Status {
+    if p.is_null() { return status::Status::InvalidInput; }
+    return ev::on_app_event(app_lifecycle_tramp::[C], { p as *u8 });
+}
+
+// The mirror, and NOT optional on a host that keeps the component on its
+// STACK. macOS and Linux hold `owned` in the frame that runs the loop, so the
+// subscription must come off before that frame unwinds — an event delivered
+// afterwards would call a method on a dead stack slot. Android and iOS box the
+// component and never free it, so unbinding there is only tidiness.
+fn unbind_app_lifecycle[C: Lifecycle](p: *C) -> status::Status {
+    if p.is_null() { return status::Status::InvalidInput; }
+    return ev::off_app_event(app_lifecycle_tramp::[C], { p as *u8 });
 }
 
 // ---- the sender readers ------------------------------------------------------
@@ -208,15 +319,218 @@ fn component_at[C](key: str) -> option::Option[*C] {
 // teardown fire it — notify, don't wait.
 fn lc_detach_tramp[C: Lifecycle](p: *u8) {
     let q: *C = p as *C;
-    { (*q).on_detach() };
+    { (*q).on_detach(Detach::Unmount) };
 }
 
 // ---- tests ------------------------------------------------------------------
 
+// Each reason counted separately, so a test can tell which arrived.
+struct AlTestComp {
+    mount: i32, fg: i32, active: i32,
+    inactive: i32, bg: i32, unmount: i32, term: i32,
+}
+impl AlTestComp: Lifecycle {
+    fn on_attach(ref this, why: Attach) {
+        match why {
+            Attach::Mount => { this.mount = this.mount + 1; }
+            Attach::Foreground => { this.fg = this.fg + 1; }
+            Attach::Active => { this.active = this.active + 1; }
+        }
+        return;
+    }
+    fn on_detach(ref this, why: Detach) {
+        match why {
+            Detach::Inactive => { this.inactive = this.inactive + 1; }
+            Detach::Background => { this.bg = this.bg + 1; }
+            Detach::Unmount => { this.unmount = this.unmount + 1; }
+            Detach::Terminate => { this.term = this.term + 1; }
+        }
+        return;
+    }
+}
+
+fn al_new() -> AlTestComp {
+    return AlTestComp { mount: 0, fg: 0, active: 0,
+                        inactive: 0, bg: 0, unmount: 0, term: 0 };
+}
+
+#[test]
+fn the_app_lifecycle_arrives_as_attach_and_detach_with_a_reason() {
+    ev::clear_app_events();
+    ev::clear_latches();
+    var c: AlTestComp = al_new();
+    assert bind_app_lifecycle::[AlTestComp](#addr_of(c)) == status::Status::Ok;
+
+    ev::fire_plain(ev::E_FOREGROUND);
+    assert c.fg == 1;
+    assert c.bg == 0;
+    // FOREGROUND IS NOT A MOUNT. A component that builds its views in
+    // `on_attach` without reading the reason would build them a second time
+    // here, which is the doubled camera preview this enum exists to prevent.
+    assert c.mount == 0;
+
+    ev::fire_plain(ev::E_BACKGROUND);
+    assert c.bg == 1;
+    assert c.unmount == 0;
+    assert c.term == 0;
+
+    // Repeats are repeats: an app crosses this edge many times over one mount.
+    ev::fire_plain(ev::E_FOREGROUND);
+    ev::fire_plain(ev::E_BACKGROUND);
+    assert c.fg == 2;
+    assert c.bg == 2;
+    assert c.mount == 0;
+
+    let _u: status::Status = unbind_app_lifecycle::[AlTestComp](#addr_of(c));
+    ev::clear_app_events();
+}
+
+#[test]
+fn the_two_levels_are_separate_reasons() {
+    ev::clear_app_events();
+    ev::clear_latches();
+    var c: AlTestComp = al_new();
+    assert bind_app_lifecycle::[AlTestComp](#addr_of(c)) == status::Status::Ok;
+
+    // FOCUS ALONE. A dialog opens over a still-visible app: the app must hear
+    // Inactive and NOT Background, or it releases devices it still owns and
+    // stops working in front of the person watching it.
+    ev::fire_plain(ev::E_INACTIVE);
+    assert c.inactive == 1;
+    assert c.bg == 0;
+
+    ev::fire_plain(ev::E_ACTIVE);
+    assert c.active == 1;
+    assert c.fg == 0;
+
+    // VISIBILITY. Now the app really leaves, and both levels fire in order.
+    ev::fire_plain(ev::E_INACTIVE);
+    ev::fire_plain(ev::E_BACKGROUND);
+    assert c.inactive == 2;
+    assert c.bg == 1;
+
+    ev::fire_plain(ev::E_FOREGROUND);
+    ev::fire_plain(ev::E_ACTIVE);
+    assert c.fg == 1;
+    assert c.active == 2;
+
+    // NEITHER is a mount. Views are built once; this axis repeats forever.
+    assert c.mount == 0;
+    assert c.unmount == 0;
+
+    let _u: status::Status = unbind_app_lifecycle::[AlTestComp](#addr_of(c));
+    ev::clear_app_events();
+}
+
+#[test]
+fn active_can_arrive_without_a_preceding_inactive() {
+    ev::clear_app_events();
+    ev::clear_latches();
+    var c: AlTestComp = al_new();
+    assert bind_app_lifecycle::[AlTestComp](#addr_of(c)) == status::Status::Ok;
+    // MEASURED on iOS and macOS: `didBecomeActive` fires at launch and after a
+    // dialog that never raised `willResignActive`. A component that treats the
+    // pair as balanced would double-acquire.
+    ev::fire_plain(ev::E_ACTIVE);
+    ev::fire_plain(ev::E_ACTIVE);
+    assert c.active == 2;
+    assert c.inactive == 0;
+    let _u: status::Status = unbind_app_lifecycle::[AlTestComp](#addr_of(c));
+    ev::clear_app_events();
+}
+
+#[test]
+fn terminating_is_a_detach_with_its_own_reason() {
+    ev::clear_app_events();
+    ev::clear_latches();
+    var c: AlTestComp = al_new();
+    assert bind_app_lifecycle::[AlTestComp](#addr_of(c)) == status::Status::Ok;
+    ev::fire_plain(ev::E_TERMINATING);
+    assert c.term == 1;
+    // NOT conflated with backgrounding. An app that flushes on Terminate and
+    // merely releases on Background needs them apart.
+    assert c.bg == 0;
+    assert c.unmount == 0;
+    let _u: status::Status = unbind_app_lifecycle::[AlTestComp](#addr_of(c));
+    ev::clear_app_events();
+}
+
+#[test]
+fn an_unrelated_app_event_reaches_neither_hook() {
+    ev::clear_app_events();
+    ev::clear_latches();
+    var c: AlTestComp = al_new();
+    assert bind_app_lifecycle::[AlTestComp](#addr_of(c)) == status::Status::Ok;
+    ev::fire_plain(ev::E_LAUNCHED);
+    ev::fire_plain(ev::E_LOW_MEMORY);
+    ev::fire_text(ev::E_OPEN_URL, "cplus://x");
+    assert c.mount == 0;
+    assert c.fg == 0;
+    assert c.bg == 0;
+    assert c.unmount == 0;
+    assert c.term == 0;
+    let _u: status::Status = unbind_app_lifecycle::[AlTestComp](#addr_of(c));
+    ev::clear_app_events();
+}
+
+#[test]
+fn unbinding_stops_delivery() {
+    ev::clear_app_events();
+    ev::clear_latches();
+    var c: AlTestComp = al_new();
+    assert bind_app_lifecycle::[AlTestComp](#addr_of(c)) == status::Status::Ok;
+    ev::fire_plain(ev::E_FOREGROUND);
+    assert c.fg == 1;
+
+    assert unbind_app_lifecycle::[AlTestComp](#addr_of(c)) == status::Status::Ok;
+    ev::fire_plain(ev::E_FOREGROUND);
+    // THE POINT. macOS and Linux keep the component in the frame that runs the
+    // loop, so a delivery after the unbind would be a call into a dead stack
+    // slot — this assert is that use-after-free, caught where it is cheap.
+    assert c.fg == 1;
+    ev::clear_app_events();
+}
+
+#[test]
+fn binding_a_null_component_is_refused_rather_than_dispatched_into() {
+    ev::clear_app_events();
+    assert bind_app_lifecycle::[AlTestComp](0 as *AlTestComp) == status::Status::InvalidInput;
+    assert unbind_app_lifecycle::[AlTestComp](0 as *AlTestComp) == status::Status::InvalidInput;
+    ev::fire_plain(ev::E_FOREGROUND);
+    assert ev::subscriber_count() == (0 as usize);
+    ev::clear_app_events();
+}
+
+#[test]
+fn two_components_on_the_same_axis_are_two_subscribers() {
+    ev::clear_app_events();
+    ev::clear_latches();
+    var a: AlTestComp = al_new();
+    var b: AlTestComp = al_new();
+    // SAME fn-pointer, different ctx — the case app_events documents as two
+    // subscribers rather than a duplicate registration. A nav stack holding
+    // several screens is exactly this.
+    assert bind_app_lifecycle::[AlTestComp](#addr_of(a)) == status::Status::Ok;
+    assert bind_app_lifecycle::[AlTestComp](#addr_of(b)) == status::Status::Ok;
+    assert ev::subscriber_count() == (2 as usize);
+    ev::fire_plain(ev::E_BACKGROUND);
+    assert a.bg == 1;
+    assert b.bg == 1;
+
+    assert unbind_app_lifecycle::[AlTestComp](#addr_of(a)) == status::Status::Ok;
+    ev::fire_plain(ev::E_BACKGROUND);
+    assert a.bg == 1;
+    assert b.bg == 2;
+    let _u: status::Status = unbind_app_lifecycle::[AlTestComp](#addr_of(b));
+    ev::clear_app_events();
+}
+
 struct CaTestComp { hits: i32 }
 impl CaTestComp: Lifecycle {
-    fn on_attach(ref this) { this.hits = this.hits + 1; return; }
-    fn on_detach(ref this) { this.hits = this.hits + 100; return; }
+    fn on_attach(ref this, why: Attach) {
+        if why != Attach::Mount { return; } this.hits = this.hits + 1; return; }
+    fn on_detach(ref this, why: Detach) {
+        if why != Detach::Unmount { return; } this.hits = this.hits + 100; return; }
 }
 
 #[test]

@@ -1,0 +1,492 @@
+// applinks — a link that opens this app, routed to whoever asked for it.
+//
+// ONE DOOR FOR TWO ROADS. A deep link (`myapp://record/42`) and a universal
+// link (`https://example.com/record/42`) are different features: different
+// registration, different verification, different failure. They are the same
+// EVENT, and an app that had to subscribe twice would be writing the platform
+// fork this package exists to remove.
+//
+//     applinks::on_link(handle, scheme: "myapp");
+//     applinks::on_link(handle, host: "example.com");
+//
+// COLD AND WARM ARE INDISTINGUISHABLE, which is the property that costs the
+// most to build and the one an app most needs. A link that launched a dead
+// process is delivered before any subscriber exists — so `facet/app_events`
+// latches it, this package latches it again for its own rows, and a handler
+// registered in `on_attach` still receives the link that started the app.
+//
+// ---- what this package is NOT responsible for -----------------------------
+//
+// REGISTRATION. That a link reaches the app at all is a matter of Info.plist
+// keys, an entitlement, an intent-filter, and a file on a web server. None of
+// it is code and none of it is here; `docs/guide.md` has all four, and it is
+// the first thing to read when links do not arrive.
+//
+// OPENING one. Handing a URL to the system needs no registration and is a
+// different feature in the other direction.
+//
+// WHAT THE LINK MEANS. The URL arrives whole, exactly as the system spelled
+// it. Take it apart with `stdlib/url`, whose `segment` verb exists for this —
+// and read the deep-link trap at the top of that file before matching on
+// `path`, because `myapp://record/42` does not have "record" in its path.
+
+import "stdlib/status" as status;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/url" as url;
+import "facet/app_events" as ev;
+
+// What a registration answered.
+//
+// `Ok` MEANS REGISTERED, not that links will arrive. Whether one ever does is
+// a matter of the platform's own wiring and of the registration files this
+// package does not own — so a green answer here and no link is the ordinary
+// symptom of a missing Info.plist key, not of a failure this call could have
+// reported.
+enum Outcome {
+    Ok,
+    // A null handler, or a filter that is the empty string. Both are almost
+    // certainly a bug at the call site rather than a thing to route.
+    InvalidInput,
+    // Every slot is taken. See `SLOT_COUNT`.
+    TooMany,
+}
+
+// Eight, and the same reasoning `app_events` gives for sixteen: a fixed table
+// with no allocation, sized for the SDKs and the app itself rather than for an
+// unbounded registry. An app with more than eight distinct link filters has a
+// dispatcher, not eight subscribers.
+const SLOT_COUNT: usize = 8 as usize;
+
+struct _Row {
+    // "" means "any". Both may be set, and then both must match.
+    scheme: str,
+    host: str,
+    on_link: fn(str, *u8),
+    // `opaque`: the caller owns this and hands it in; nothing here frees it.
+    opaque on_link_ctx: *u8,
+    live: bool,
+}
+
+static _ROWS: [_Row; 8] = #zero::[[_Row; 8]]();
+static _SUBSCRIBED: bool = false;
+
+// THE LATCH, and it is this package's own rather than a read of the one
+// underneath. `app_events` replays its latched URL to a NEW subscriber, and
+// this package subscribes exactly once — so the replay lands here, on the
+// first row registered, and every row registered afterwards would miss the
+// link that started the app. Holding it again is what makes the third
+// `on_link` behave like the first.
+//
+// Interned, so the view outlives the dispatch that carried it. That is the
+// same trade `app_events` makes and it has the same cost: a distinct URL is
+// held for the life of the process. Bounded by the links a person actually
+// opens, and identical links intern to one copy.
+static _LATCHED: str = "";
+static _HAS_LATCH: bool = false;
+
+// Register `f(url, ctx)` for the links this app receives.
+//
+// FILTERS, and both default to "everything":
+//
+//   scheme:  only URLs with this scheme, ignoring case. "myapp" for a deep
+//            link. This is the filter a sign-in SDK uses too — the channel
+//            underneath carries OAuth callbacks, and matching your own scheme
+//            is what keeps two subscribers out of each other's traffic.
+//
+//   host:    only http/https URLs on this host, ignoring case. THE UNIVERSAL
+//            LINK filter, and the web restriction is deliberate rather than
+//            incidental — see below.
+//
+// WHY `host` IMPLIES http/https, and it is the one place this package refuses
+// to do what it is told. A verified universal link is trustworthy BECAUSE the
+// operating system checked the domain association before delivering it; a
+// custom scheme has no such proof, and anything may register `myapp://`. If
+// `host: "example.com"` also matched `myapp://example.com/...`, then a handler
+// written for a verified link would run on an unverified one, and the check
+// that makes the feature safe would be bypassed by spelling. So it does not.
+// Match a custom scheme's first segment with `scheme:` plus `url::segment(0)`.
+//
+// Giving both narrows: both must match.
+//
+// A URL that does not parse reaches only the unfiltered rows — a filter cannot
+// be applied to something with no scheme to read.
+//
+// THE UI THREAD, always, because `app_events` guarantees it and a handler's
+// usual next move is `nav::go`.
+fn on_link(f: fn(str, *u8), ctx: *u8 = 0 as *u8,
+           scheme: str = "", host: str = "") -> Outcome {
+    if f.is_null() { return Outcome::InvalidInput; }
+    // An empty filter means "any", and passing one explicitly is far more
+    // likely to be an uninitialised variable than an intention.
+    var i: usize = 0 as usize;
+    while i < SLOT_COUNT {
+        if !_ROWS[i].live {
+            _ROWS[i] = _Row {
+                scheme: text::intern(scheme),
+                host: text::intern(host),
+                on_link: f,
+                on_link_ctx: ctx,
+                live: true,
+            };
+            // ONE REPLAY, FROM ONE OF TWO PLACES, and getting this wrong
+            // delivered the launch link twice to the first subscriber.
+            //
+            // Subscribing to the channel makes `app_events` replay ITS latch
+            // into `_on_app_event`, which dispatches to every live row — the
+            // one just added included. So on the call that actually
+            // subscribes, the new row is already served and replaying here
+            // again would double it. On every later call there is no channel
+            // replay, and this is the only thing that can hand the row the
+            // link that arrived before it existed.
+            let already: bool = _subscribe_once();
+            if already && _HAS_LATCH { _deliver_to(i, _LATCHED); }
+            return Outcome::Ok;
+        }
+        i = i +% (1 as usize);
+    }
+    return Outcome::TooMany;
+}
+
+// Take a handler back out. Matching is by FUNCTION, not by filter: a package
+// that registered two rows with the same function removes both, which is the
+// behaviour that lets an `on_detach` undo an `on_attach` without recording
+// what it passed.
+fn cancel(f: fn(str, *u8)) -> Outcome {
+    if f.is_null() { return Outcome::InvalidInput; }
+    var i: usize = 0 as usize;
+    while i < SLOT_COUNT {
+        if _ROWS[i].live && _ROWS[i].on_link == f { _ROWS[i].live = false; }
+        i = i +% (1 as usize);
+    }
+    return Outcome::Ok;
+}
+
+// Does `u` pass row `i`'s filters?
+fn _row_matches(i: usize, raw: str) -> bool {
+    let want_scheme: bool = #str_len(_ROWS[i].scheme) > (0 as usize);
+    let want_host: bool = #str_len(_ROWS[i].host) > (0 as usize);
+    if !want_scheme && !want_host { return true; }
+    return match url::parse(raw) {
+        option::Option[url::Url]::Some(u) => {
+            if want_scheme && !u.is_scheme(_ROWS[i].scheme) { return false; }
+            // The web restriction lives HERE, in one place, so it cannot drift
+            // from the comment on `on_link` that promises it.
+            if want_host && !u.is_web() { return false; }
+            if want_host && !u.host.equals_ignoring_case(_ROWS[i].host) { return false; }
+            return true;
+        }
+        option::Option::None => false,
+    };
+}
+
+fn _deliver_to(i: usize, raw: str) {
+    if !_ROWS[i].live { return; }
+    if !_row_matches(i, raw) { return; }
+    let f: fn(str, *u8) = _ROWS[i].on_link;
+    if f.is_null() { return; }
+    f(raw, _ROWS[i].on_link_ctx);
+    return;
+}
+
+// Once per process: a second subscription would double every link, and "the
+// deep link was followed twice" is a symptom a long way from its cause.
+// The one subscription to the channel underneath. True when it was ALREADY
+// there — which is the caller's signal that no channel replay is coming and it
+// must hand the new row the latch itself.
+fn _subscribe_once() -> bool {
+    if _SUBSCRIBED { return true; }
+    _SUBSCRIBED = true;
+    let _s: status::Status = ev::on_app_event(_on_app_event);
+    return false;
+}
+
+fn _on_app_event(e: *ev::AppEvent, ctx: *u8) {
+    if { (*e).kind } != ev::E_OPEN_URL { return; }
+    let raw: str = { (*e).text };
+    if #str_len(raw) == (0 as usize) { return; }
+    // INTERN BEFORE DISPATCH. `AppEvent.text` is borrowed for the duration of
+    // the fan-out and not one instant longer; latching the view would leave a
+    // dangling `str` the moment the delegate method returned.
+    _LATCHED = text::intern(raw);
+    _HAS_LATCH = true;
+    var i: usize = 0 as usize;
+    while i < SLOT_COUNT {
+        _deliver_to(i, _LATCHED);
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Everything this package is holding, dropped. FOR TESTS: a suite that
+// registers rows in one check and asserts a count in the next needs the table
+// empty between them, and there is no other way to get there.
+fn _t_reset() {
+    var i: usize = 0 as usize;
+    while i < SLOT_COUNT {
+        _ROWS[i].live = false;
+        i = i +% (1 as usize);
+    }
+    _HAS_LATCH = false;
+    _LATCHED = "";
+    // AND THE SUBSCRIPTION FLAG, which is not obvious and cost a full suite to
+    // find. A test that also calls `ev::t_reset()` empties the channel's
+    // subscriber list — including this module's — and a `_SUBSCRIBED` left
+    // true would leave the package permanently deaf for every later check.
+    // Re-subscribing costs nothing when the row is still there: `on_app_event`
+    // refuses a duplicate.
+    _SUBSCRIBED = false;
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+//
+// WHAT THESE CAN AND CANNOT REACH. Every check below drives the fan-out
+// directly with `ev::fire_text(ev::E_OPEN_URL, ...)`, which is exactly what a
+// backend's delegate method does — so the routing, the filters and the latch
+// are covered on the host with no window and no platform. What no host test
+// can reach is whether a backend fires that event at all, which is the
+// delegate seam's own business and is checked from outside with `open`,
+// `simctl openurl` and `am start`. See docs/guide.md.
+
+static _SEEN: usize = 0 as usize;
+static _LAST: text::Text = #zero::[text::Text]();
+static _SEEN_B: usize = 0 as usize;
+
+fn _record(u: str, ctx: *u8) {
+    _SEEN = _SEEN +% (1 as usize);
+    _LAST = text::from_str(u);
+    return;
+}
+
+fn _record_b(u: str, ctx: *u8) {
+    _SEEN_B = _SEEN_B +% (1 as usize);
+    return;
+}
+
+fn _clear() {
+    _t_reset();
+    ev::t_reset();
+    _SEEN = 0 as usize;
+    _SEEN_B = 0 as usize;
+    _LAST = text::new();
+    return;
+}
+
+#[test]
+fn a_link_reaches_an_unfiltered_handler_whole() {
+    _clear();
+    assert on_link(_record) == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "myapp://record/42?x=1#f");
+    assert _SEEN == (1 as usize);
+    // WHOLE, and that is the contract: no decoding, no trimming, no opinion.
+    assert _LAST.view() == "myapp://record/42?x=1#f";
+    let _c: Outcome = cancel(_record);
+}
+
+#[test]
+fn a_scheme_filter_keeps_two_subscribers_out_of_each_others_traffic() {
+    // The case `app_events` names: a sign-in SDK watches the same channel for
+    // its OAuth callback, and neither should see the other's URLs.
+    _clear();
+    assert on_link(_record, scheme: "myapp") == Outcome::Ok;
+    assert on_link(_record_b, scheme: "signin") == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "myapp://record/42");
+    assert _SEEN == (1 as usize);
+    assert _SEEN_B == (0 as usize);
+    ev::fire_text(ev::E_OPEN_URL, "signin://callback?code=9");
+    assert _SEEN == (1 as usize);
+    assert _SEEN_B == (1 as usize);
+    let _a: Outcome = cancel(_record);
+    let _b: Outcome = cancel(_record_b);
+}
+
+#[test]
+fn a_scheme_filter_ignores_case_because_the_grammar_does() {
+    _clear();
+    assert on_link(_record, scheme: "MyApp") == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "MYAPP://x");
+    assert _SEEN == (1 as usize);
+    let _c: Outcome = cancel(_record);
+}
+
+#[test]
+fn a_host_filter_takes_the_universal_link_and_not_the_custom_scheme() {
+    // THE SECURITY-RELEVANT ONE, and the reason `host` implies http/https. A
+    // verified link is trustworthy because the SYSTEM checked the domain
+    // association. Anyone may register `myapp://`, so a handler written for
+    // the verified road must not run on the unverified one just because the
+    // spelling of the host matches.
+    _clear();
+    assert on_link(_record, host: "example.com") == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "https://example.com/record/42");
+    assert _SEEN == (1 as usize);
+    ev::fire_text(ev::E_OPEN_URL, "http://example.com/record/42");
+    assert _SEEN == (2 as usize);
+    // Same host, unverifiable scheme: refused.
+    ev::fire_text(ev::E_OPEN_URL, "myapp://example.com/record/42");
+    assert _SEEN == (2 as usize);
+    // A different host on the right scheme: refused.
+    ev::fire_text(ev::E_OPEN_URL, "https://evil.example/record/42");
+    assert _SEEN == (2 as usize);
+    let _c: Outcome = cancel(_record);
+}
+
+#[test]
+fn a_host_filter_ignores_case() {
+    _clear();
+    assert on_link(_record, host: "Example.COM") == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "https://EXAMPLE.com/p");
+    assert _SEEN == (1 as usize);
+    let _c: Outcome = cancel(_record);
+}
+
+#[test]
+fn giving_both_filters_narrows_rather_than_widens() {
+    _clear();
+    assert on_link(_record, scheme: "https", host: "example.com") == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "https://example.com/p");
+    assert _SEEN == (1 as usize);
+    ev::fire_text(ev::E_OPEN_URL, "http://example.com/p");
+    assert _SEEN == (1 as usize);
+    let _c: Outcome = cancel(_record);
+}
+
+#[test]
+fn a_url_that_does_not_parse_reaches_only_the_unfiltered_rows() {
+    // A filter cannot be applied to something with no scheme to read, and
+    // guessing would be worse than not delivering.
+    _clear();
+    assert on_link(_record) == Outcome::Ok;
+    assert on_link(_record_b, scheme: "myapp") == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "not a url at all");
+    assert _SEEN == (1 as usize);
+    assert _SEEN_B == (0 as usize);
+    let _a: Outcome = cancel(_record);
+    let _b: Outcome = cancel(_record_b);
+}
+
+#[test]
+fn a_handler_registered_after_the_link_still_receives_it() {
+    // THE COLD START, in the only form a host test can take it: the link
+    // arrives before anybody has subscribed, and the subscriber that turns up
+    // afterwards is handed it anyway. Without this, an app that registers in
+    // `on_attach` never sees the link that launched it.
+    _clear();
+    ev::fire_text(ev::E_OPEN_URL, "myapp://record/42");
+    assert _SEEN == (0 as usize);
+    assert on_link(_record) == Outcome::Ok;
+    assert _SEEN == (1 as usize);
+    assert _LAST.view() == "myapp://record/42";
+    let _c: Outcome = cancel(_record);
+}
+
+#[test]
+fn the_replay_respects_the_filters_like_any_other_delivery() {
+    _clear();
+    ev::fire_text(ev::E_OPEN_URL, "myapp://record/42");
+    assert on_link(_record_b, scheme: "other") == Outcome::Ok;
+    assert _SEEN_B == (0 as usize);
+    assert on_link(_record, scheme: "myapp") == Outcome::Ok;
+    assert _SEEN == (1 as usize);
+    let _a: Outcome = cancel(_record);
+    let _b: Outcome = cancel(_record_b);
+}
+
+#[test]
+fn the_third_subscriber_gets_the_launch_link_and_not_only_the_first() {
+    // The bug this package's own latch exists to prevent. `app_events` replays
+    // to a NEW subscriber and this package subscribes exactly once — so
+    // without a second latch the replay would land on whichever row happened
+    // to register first, and every later one would silently miss it.
+    _clear();
+    ev::fire_text(ev::E_OPEN_URL, "myapp://record/42");
+    assert on_link(_record_b) == Outcome::Ok;
+    assert _SEEN_B == (1 as usize);
+    assert on_link(_record) == Outcome::Ok;
+    assert _SEEN == (1 as usize);
+    let _a: Outcome = cancel(_record);
+    let _b: Outcome = cancel(_record_b);
+}
+
+#[test]
+fn a_cancelled_handler_stops_receiving() {
+    _clear();
+    assert on_link(_record) == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "myapp://a");
+    assert _SEEN == (1 as usize);
+    assert cancel(_record) == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "myapp://b");
+    assert _SEEN == (1 as usize);
+}
+
+#[test]
+fn a_cancelled_slot_is_reused_rather_than_leaked() {
+    _clear();
+    var i: usize = 0 as usize;
+    while i < (SLOT_COUNT +% (4 as usize)) {
+        assert on_link(_record) == Outcome::Ok;
+        assert cancel(_record) == Outcome::Ok;
+        i = i +% (1 as usize);
+    }
+}
+
+#[test]
+fn the_table_reports_rather_than_overflowing() {
+    _clear();
+    var i: usize = 0 as usize;
+    while i < SLOT_COUNT {
+        assert on_link(_record_b) == Outcome::Ok;
+        i = i +% (1 as usize);
+    }
+    assert on_link(_record) == Outcome::TooMany;
+    // And nothing was lost: the eight that fit still fire.
+    ev::fire_text(ev::E_OPEN_URL, "myapp://x");
+    assert _SEEN_B == (8 as usize);
+    assert _SEEN == (0 as usize);
+    let _b: Outcome = cancel(_record_b);
+}
+
+#[test]
+fn a_null_handler_is_refused_rather_than_stored() {
+    _clear();
+    assert on_link(0 as fn(str, *u8)) == Outcome::InvalidInput;
+    assert cancel(0 as fn(str, *u8)) == Outcome::InvalidInput;
+}
+
+#[test]
+fn an_empty_link_is_not_delivered_and_does_not_latch() {
+    // A backend with nothing to say should say nothing. Latching "" would
+    // hand every later subscriber an empty string as if it were a link.
+    _clear();
+    ev::fire_text(ev::E_OPEN_URL, "");
+    assert on_link(_record) == Outcome::Ok;
+    assert _SEEN == (0 as usize);
+    let _c: Outcome = cancel(_record);
+}
+
+#[test]
+fn another_kind_on_the_same_channel_is_ignored() {
+    // The channel carries notification taps and lifecycle events too, and a
+    // notification payload is not a URL.
+    _clear();
+    assert on_link(_record) == Outcome::Ok;
+    ev::fire_text(ev::E_NOTIFICATION_TAP, "myapp://record/42");
+    ev::fire_plain(ev::E_LAUNCHED);
+    assert _SEEN == (0 as usize);
+    let _c: Outcome = cancel(_record);
+}
+
+#[test]
+fn one_link_is_delivered_once_per_row_and_not_once_per_registration_call() {
+    // Guards the subscribe-once rule: a second `on_app_event` would double
+    // every link, and a doubled deep link is a route followed twice.
+    _clear();
+    assert on_link(_record) == Outcome::Ok;
+    assert on_link(_record_b) == Outcome::Ok;
+    ev::fire_text(ev::E_OPEN_URL, "myapp://x");
+    assert _SEEN == (1 as usize);
+    assert _SEEN_B == (1 as usize);
+    let _a: Outcome = cancel(_record);
+    let _b: Outcome = cancel(_record_b);
+}

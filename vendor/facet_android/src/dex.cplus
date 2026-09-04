@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 37684;
+const DEX_LEN: usize = 41352;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -54,6 +54,22 @@ static C_INSETS: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
+// (int, String, int) -> void, for the Activity's permission result.
+// (String) -> void, for the Activity's notification tap. `S` for String —
+// `Native1L` is already taken by the (long) shape, where L is the JNI type
+// letter for a long rather than for an object.
+struct Native1S {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, jni::jobject),
+}
+
+struct Native3ILI {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32, jni::jobject, i32),
+}
+
 struct Native0Z {
     opaque name: *u8,
     opaque signature: *u8,
@@ -154,6 +170,20 @@ struct NativeLIFF_Z {
 }
 
 #[repr(C)]
+struct Native3IIS {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32, i32, jni::jobject),
+}
+
+#[repr(C)]
+struct Native1I {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32),
+}
+
+#[repr(C)]
 struct Native2I {
     opaque name: *u8,
     opaque signature: *u8,
@@ -176,6 +206,17 @@ extern fn facet_android_tab(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, i
 extern fn facet_android_menu_item(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                   index: i32);
 extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8;
+extern fn facet_android_app_event(envp: *jni::JNIEnv, cls: jni::jobject, kind: i32);
+extern fn facet_android_activity_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                        request_code: i32, result_code: i32,
+                                        uri: jni::jobject);
+extern fn facet_android_permission_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                          request_code: i32, permission: jni::jobject,
+                                          result: i32);
+extern fn facet_android_notification_tap(envp: *jni::JNIEnv, cls: jni::jobject,
+                                         payload: jni::jobject);
+extern fn facet_android_open_url(envp: *jni::JNIEnv, cls: jni::jobject,
+                                         payload: jni::jobject);
 extern fn facet_android_layout_requested(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_insets(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_carousel_page(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
@@ -260,7 +301,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 37684] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 41352] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -663,6 +704,72 @@ fn bind_natives(env: rt::Env) {
         };
         let _r17: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
                                                           #addr_of(back_rec) as *u8, 1) };
+
+        // The permission answer's door. Registered on the SAME class and in the
+        // same guarded block: an app whose APK predates this override has a
+        // FacetActivity without the method, and RegisterNatives on a missing
+        // one throws — so a stale APK must not take the back button down with
+        // it. Separate call, separate result.
+        var perm_rec: Native3ILI = Native3ILI {
+            name: #str_ptr("nativePermissionResult\0"),
+            signature: #str_ptr("(ILjava/lang/String;I)V\0"),
+            fn_ptr: facet_android_permission_result,
+        };
+        let _r18: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(perm_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // The notification tap's door. Separate call for the same reason as the
+        // permission result: an APK whose FacetActivity predates this override
+        // must not take the others down with it.
+        var tap_rec: Native1S = Native1S {
+            name: #str_ptr("nativeNotificationTap\0"),
+            signature: #str_ptr("(Ljava/lang/String;)V\0"),
+            fn_ptr: facet_android_notification_tap,
+        };
+        let _r20: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(tap_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // The deep link's door. Separate call for the same reason as the two
+        // above: an APK whose FacetActivity predates this override must not
+        // take the others down with it.
+        var link_rec: Native1S = Native1S {
+            name: #str_ptr("nativeOpenUrl\0"),
+            signature: #str_ptr("(Ljava/lang/String;)V\0"),
+            fn_ptr: facet_android_open_url,
+        };
+        let _r21: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(link_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // The Activity lifecycle's door — onResume / onPause / onDestroy /
+        // onLowMemory, all four through one native carrying the kind. Separate
+        // call and separate result for the same reason as the three above: an
+        // APK whose FacetActivity predates this override must not take them
+        // down with it. That case is REAL here and not theoretical — every
+        // Android app built before this change has such an APK, and its only
+        // symptom should be the lifecycle it never had.
+        var life_rec: Native1I = Native1I {
+            name: #str_ptr("nativeAppEvent\0"),
+            signature: #str_ptr("(I)V\0"),
+            fn_ptr: facet_android_app_event,
+        };
+        let _r22: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(life_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // `onActivityResult`'s door. Separate call for the same reason as the
+        // others: an APK whose FacetActivity predates this override must not
+        // take them down with it.
+        var res_rec: Native3IIS = Native3IIS {
+            name: #str_ptr("nativeActivityResult\0"),
+            signature: #str_ptr("(IILjava/lang/String;)V\0"),
+            fn_ptr: facet_android_activity_result,
+        };
+        let _r23: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(res_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
     }
 
     var insets_rec: Native0 = Native0 {

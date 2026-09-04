@@ -1,0 +1,297 @@
+// Android's BiometricPrompt, through a small Java class.
+//
+// The Java half exists because `BiometricPrompt.AuthenticationCallback` is an
+// ABSTRACT CLASS, which JNI can no more subclass than it can implement an
+// interface. `java/cplus/biometrics/CplusBiometrics.java` is that class, and
+// `biometrics.dex` is it compiled — a COMMITTED BUILD ARTIFACT that
+// `tools/build_dex.sh` regenerates. Editing the .java changes nothing until
+// that runs.
+//
+// ---- API 28, and nothing below it -------------------------------------------
+//
+// The framework `BiometricPrompt` arrived in API 28 and `BiometricManager` in
+// 29; this project's floor is 26. Below those levels every verb here answers
+// `Unsupported` rather than falling back to the deprecated
+// `FingerprintManager`, which draws no dialog and would mean this package
+// shipping a UI.
+//
+// androidx.biometric would cover 23+ and draw its own dialog. It is an AAR with
+// a transitive closure the AAR measurement priced in megabytes of dex, which is
+// a large thing to ship to authenticate a fingerprint.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "stdlib/box" as box;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "facet/app_events" as ev;
+import "./biometrics" as bio;
+
+const _DEX_LEN: usize = 4248;
+
+static _C_BIOMETRICS: usize = 0;
+static _LOADER: usize = 0;
+
+// One outstanding prompt. There is normally exactly one — a second dialog on
+// top of the first is a platform error, not a use case — but the table is kept
+// because the token has to survive the round trip either way.
+struct _Session {
+    token: i64,
+    obj: usize,
+    on_result: fn(bio::Outcome, *u8),
+    opaque ctx: *u8,
+    running: bool,
+}
+
+const _MAX_SESSIONS: usize = 8 as usize;
+static _SESSIONS: [usize; 8] = #zero::[[usize; 8]]();
+static _NEXT_TOKEN: i64 = 1 as i64;
+
+fn _remember(s: *_Session) -> bool {
+    var i: usize = 0 as usize;
+    while i < _MAX_SESSIONS {
+        if _SESSIONS[i] == 0 { _SESSIONS[i] = { #addr(s) }; return true; }
+        i = i + (1 as usize);
+    }
+    return false;
+}
+
+fn _forget(s: *_Session) {
+    var i: usize = 0 as usize;
+    while i < _MAX_SESSIONS {
+        if _SESSIONS[i] == { #addr(s) } { _SESSIONS[i] = 0; return; }
+        i = i + (1 as usize);
+    }
+    return;
+}
+
+fn _by_token(token: i64) -> *_Session {
+    var i: usize = 0 as usize;
+    while i < _MAX_SESSIONS {
+        let raw: usize = _SESSIONS[i];
+        if raw != 0 {
+            let s: *_Session = { raw as *_Session };
+            if { (*s).token } == token { return s; }
+        }
+        i = i + (1 as usize);
+    }
+    return 0 as *_Session;
+}
+
+#[repr(C)]
+struct _NativeResult {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32),
+}
+
+fn _context() -> jni::jobject {
+    return { ev::host() as jni::jobject };
+}
+
+// ATTACHED AS A DAEMON: a sample can arrive on a thread this package does not
+// own, and a non-daemon attachment would hold the VM open past it.
+fn _env() -> rt::Env {
+    let vm: *jni::JavaVM = { ev::host_runtime() as *jni::JavaVM };
+    if vm.is_null() { return rt::from_native(0 as *jni::JNIEnv); }
+    var envp: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    let rc: i32 = { (*(*vm)).AttachCurrentThreadAsDaemon(vm, { #addr_of(envp) as *u8 },
+                                                         0 as *u8) };
+    if rc != (0 as i32) { return rt::from_native(0 as *jni::JNIEnv); }
+    return rt::from_native(envp);
+}
+
+fn _ensure_loaded(env: rt::Env) -> bool {
+    if _LOADER != 0 { return _C_BIOMETRICS != 0; }
+
+    // MERGED FIRST. An app that fed `biometrics.dex` to `d8` alongside its own
+    // classes already has this class; loading the in-memory copy too would give
+    // the process two — natives bound on one, instances of the other.
+    let merged: jni::jclass = env.find_class(#str_ptr("cplus/biometrics/CplusBiometrics\0"));
+    if merged != (0 as jni::jclass) {
+        _C_BIOMETRICS = { #addr(env.retain_local_as_global(merged)) };
+        _LOADER = 1 as usize;
+        _bind_natives(env);
+        return true;
+    }
+    env.clear_exception();
+
+    let dex: *[u8; 4248] = #include_bytes("../biometrics.dex");
+    let buffer: jni::jobject = {
+        (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, _DEX_LEN as i64)
+    };
+    let app_loader: jni::jobject = env.call_object_0(
+        _context(), #str_ptr("android/content/Context\0"), #str_ptr("getClassLoader\0"),
+        #str_ptr("()Ljava/lang/ClassLoader;\0"));
+
+    let imdcl: jni::jclass = env.find_class(#str_ptr("dalvik/system/InMemoryDexClassLoader\0"));
+    let ctor: jni::jmethodID = env.method_id(imdcl, #str_ptr("<init>\0"),
+        #str_ptr("(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V\0"));
+    var ctor_args: [jni::JValue; 2] = [jni::arg_object(buffer), jni::arg_object(app_loader)];
+    let loader: jni::jobject = {
+        (*(*env.raw())).NewObjectA(env.raw(), imdcl, ctor, #addr_of(ctor_args[0]))
+    };
+    if loader == (0 as jni::jobject) { env.clear_exception(); return false; }
+    _LOADER = { #addr(env.new_global_ref(loader)) };
+
+    let name: jni::jstring = env.new_string_utf(#str_ptr("cplus.biometrics.CplusBiometrics\0"));
+    let local: jni::jobject = env.call_object_1(
+        loader, #str_ptr("java/lang/ClassLoader\0"), #str_ptr("loadClass\0"),
+        #str_ptr("(Ljava/lang/String;)Ljava/lang/Class;\0"), jni::arg_object(name));
+    if local == (0 as jni::jobject) { env.clear_exception(); return false; }
+    _C_BIOMETRICS = { #addr(env.new_global_ref(local)) };
+
+    _bind_natives(env);
+
+    env.delete_local_ref(local);
+    env.delete_local_ref(name);
+    env.delete_local_ref(loader);
+    env.delete_local_ref(imdcl);
+    env.delete_local_ref(app_loader);
+    env.delete_local_ref(buffer);
+    return true;
+}
+
+// ART resolves a `native` method by symbol only through a classloader's own
+// native-library namespace, which an in-memory loader does not have — and
+// `nativeSample` is private besides. Explicit binding is not optional.
+fn _bind_natives(env: rt::Env) {
+    var rec: _NativeResult = _NativeResult {
+        name: #str_ptr("nativeResult\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: _biometrics_android_result,
+    };
+    let _r: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { _C_BIOMETRICS as *u8 },
+                                                    #addr_of(rec) as *u8, 1) };
+    return;
+}
+
+
+// A `str` is a fat pointer with no terminator and `NewStringUTF` reads a C
+// string, so a runtime string is copied and terminated first.
+fn _jstr(env: rt::Env, s: str) -> jni::jstring {
+    var buf: text::Text = text::from_str(s);
+    let _a: status::Status = buf.append("\0");
+    return env.new_string_utf(#str_ptr(buf.view()));
+}
+
+// ---- the seam --------------------------------------------------------------
+
+fn _env_ready() -> option::Option[rt::Env] {
+    if !ev::has_host_runtime() { return option::Option[rt::Env]::None; }
+    if !ev::has_host() { return option::Option[rt::Env]::None; }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return option::Option[rt::Env]::None; }
+    if !_ensure_loaded(env) { return option::Option[rt::Env]::None; }
+    return option::Option[rt::Env]::Some(env);
+}
+
+// The answer, from the Java callback. Already on the MAIN thread — the prompt
+// is built with `getMainExecutor()` — so a handler that touches the UI does
+// not have to hop, which is the opposite of the Apple backend.
+fn _biometrics_android_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                              token: i64, outcome: i32) {
+    let s: *_Session = _by_token(token);
+    if s.is_null() { return; }
+    if !{ (*s).running } { return; }
+    { (*s).running = false };
+    let f: fn(bio::Outcome, *u8) = { (*s).on_result };
+    _forget(s);
+    if f.is_null() { return; }
+    f(bio::Outcome::from_code(outcome), { (*s).ctx });
+    return;
+}
+
+fn _static_int(env: rt::Env, name: *u8) -> i32 {
+    var a: [jni::JValue; 1] = [jni::arg_object(_context())];
+    let m: jni::jmethodID = env.method_id_static({ _C_BIOMETRICS as jni::jclass },
+        name, #str_ptr("(Landroid/content/Context;)I\0"));
+    let v: i32 = {
+        (*(*env.raw())).CallStaticIntMethodA(env.raw(), { _C_BIOMETRICS as *u8 },
+                                             m, #addr_of(a[0]))
+    };
+    if env.has_pending_exception() { env.clear_exception(); return 0; }
+    return v;
+}
+
+export extern fn _c_kind() -> i32 {
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 0; }
+        option::Option[rt::Env]::Some(env) => {
+            return _static_int(env, #str_ptr("kind\0"));
+        }
+    }
+}
+
+export extern fn _c_available() -> i32 {
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 0; }
+        option::Option[rt::Env]::Some(env) => {
+            if _static_int(env, #str_ptr("status\0")) == 0 { return 1; }
+            return 0;
+        }
+    }
+}
+
+export extern fn _c_authenticate(reason: *u8, reason_len: usize,
+                                 on_result: fn(bio::Outcome, *u8), ctx: *u8,
+                                 allow_passcode: i32) -> i32 {
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 1; }
+        option::Option[rt::Env]::Some(env) => {
+            // ASK THE STATUS FIRST so "no sensor" and "nothing enrolled" come
+            // back as themselves rather than as a prompt that fails.
+            let st: i32 = _static_int(env, #str_ptr("status\0"));
+            if st != 0 { return st; }
+
+            let token: i64 = _NEXT_TOKEN;
+            _NEXT_TOKEN = token + (1 as i64);
+
+            let ctor: jni::jmethodID = env.method_id({ _C_BIOMETRICS as jni::jclass },
+                #str_ptr("<init>\0"), #str_ptr("(J)V\0"));
+            var cargs: [jni::JValue; 1] = [jni::arg_long(token)];
+            let local: jni::jobject = {
+                (*(*env.raw())).NewObjectA(env.raw(), { _C_BIOMETRICS as *u8 }, ctor,
+                                           #addr_of(cargs[0]))
+            };
+            if local == (0 as jni::jobject) { env.clear_exception(); return 7; }
+            let obj: jni::jobject = env.new_global_ref(local);
+            env.delete_local_ref(local);
+
+            var blank: _Session = _Session {
+                token: token, obj: { #addr(obj) },
+                on_result: on_result, ctx: ctx, running: true,
+            };
+            var s: *_Session = match box::new::[_Session](blank) {
+                option::Option[box::Box[_Session]]::Some(b) => { b.into_raw() as *_Session },
+                option::Option[box::Box[_Session]]::None => { 0 as *_Session },
+            };
+            if s.is_null() { return 7; }
+            if !_remember(s) { return 7; }
+
+            var pass: u8 = 0 as u8;
+            if allow_passcode != 0 { pass = 1 as u8; }
+            let jr: jni::jstring = _jstr(env, { #str_from_raw_parts(reason, reason_len) });
+            var aa: [jni::JValue; 3] = [
+                jni::arg_object(_context()),
+                jni::arg_object(jr),
+                jni::arg_bool(pass),
+            ];
+            let am: jni::jmethodID = env.method_id({ _C_BIOMETRICS as jni::jclass },
+                #str_ptr("authenticate\0"),
+                #str_ptr("(Landroid/app/Activity;Ljava/lang/String;Z)I\0"));
+            let code: i32 = {
+                (*(*env.raw())).CallIntMethodA(env.raw(), obj, am, #addr_of(aa[0]))
+            };
+            env.delete_local_ref(jr);
+            if env.has_pending_exception() { env.clear_exception(); }
+            if code != 0 {
+                { (*s).running = false };
+                _forget(s);
+                return code;
+            }
+            return 0;
+        }
+    }
+}

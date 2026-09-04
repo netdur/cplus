@@ -31,8 +31,10 @@ impl Gallery: component::Lifecycle {
     // the hook that says it is. Doing it in `build` would call `switch_to`
     // against a tree nothing has walked yet — the same trap facet_uikit records
     // about its launch hook.
-    fn on_attach(ref this) { gallery::show_home(); return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } gallery::show_home(); return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
 }
 
 export extern fn facet_gallery_android_main() -> i32 {

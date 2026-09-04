@@ -38,6 +38,9 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
 import "uikit/uikit" as ui;
+// The URL seam. No cycle: `app_events_uikit` imports facet and this file
+// imports it, never the other way round.
+import "./app_events_uikit" as appev;
 import "./geometry" as geometry;
 import "./scheduler" as scheduler;
 import "./device" as device;
@@ -295,9 +298,27 @@ static APPEARANCE_SENTINEL_CLASS: *u8 = 0 as *u8;
 // be a real cost for no reason. -1 is "not read yet"; the styles are 0, 1, 2.
 static LAST_UI_STYLE: i64 = -1 as i64;
 
+// AND THE DISPLAY SCALE, which rides the same notification and is a different
+// question. It changes when a scene moves to a screen with another scale — an
+// external display, or an iPad window Stage Manager has dragged to one — and
+// the scene's SIZE need not change with it. So no resize fires,
+// `calculate_layout` is a cache hit and `layout_changed()` says false, while
+// every frame in the tree is snapped to the old screen's pixel grid. Hence the
+// forced walk: the layout did not change, the frames did.
+//
+// 0 is "not read yet", and the first reading is not a change — the tree was
+// laid out at that scale to begin with.
+static LAST_DISPLAY_SCALE: f64 = 0.0f64;
+
 fn imp_trait_collection_did_change(self_obj: *u8, cmd: *u8, previous: *u8) {
     let tc: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("traitCollection\0"))) };
     if tc == (0 as *u8) { return; }
+    let scale: f64 = { rt::msg_f64(tc, rt::sel(#str_ptr("displayScale\0"))) };
+    if scale > 0.0f64 && scale != LAST_DISPLAY_SCALE {
+        let was: f64 = LAST_DISPLAY_SCALE;
+        LAST_DISPLAY_SCALE = scale;
+        if was > 0.0f64 { scheduler::layout_all_windows(force: true); }
+    }
     let style: i64 = { rt::msg_i64(tc, rt::sel(#str_ptr("userInterfaceStyle\0"))) };
     if style == LAST_UI_STYLE { return; }
     LAST_UI_STYLE = style;
@@ -883,95 +904,27 @@ fn imp_significant_time_change(self_obj: *u8, cmd: *u8, application: *u8) {
     return;
 }
 
-// ---- the lifecycle band ------------------------------------------------------
-// The five edges facet declares, straight off the app delegate. UIKit posts
-// notifications for all of them too, and the delegate is the shorter road:
-// this package already owns the class.
+// ---- the lifecycle band: GONE, and where it went ----------------------------
 //
-// THE ONE PLATFORM IS RICHER HERE. Backgrounding and resuming are frequent,
-// user-visible moments on a phone; on a desktop they are hide and unhide and
-// an application can reasonably ignore them. An app that needs to save state
-// should save it on BACKGROUNDING — `willTerminate` is not guaranteed, because
-// a backgrounded app is usually killed without it.
-
-const PHASE_BACKGROUND: i32 = 0 as i32;
-const PHASE_FOREGROUND: i32 = 1 as i32;
-const PHASE_ACTIVE: i32 = 2 as i32;
-const PHASE_INACTIVE: i32 = 3 as i32;
-const PHASE_TERMINATE: i32 = 4 as i32;
-
-struct LifeWatch {
-    phase: i32,
-    cb: fn(*u8),
-    opaque ctx: *u8,
-    live: bool,
-}
-
-static LIFE: vec::Vec[LifeWatch] = #zero::[vec::Vec[LifeWatch]]();
-static LIFE_SEQ: u64 = 0 as u64;
-
-fn observe_lifecycle(phase: i32, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
-    if cb == (0 as fn(*u8)) { return services::Cancellable::none(); }
-    LIFE_SEQ = LIFE_SEQ +% (1 as u64);
-    let _s: status::Status = LIFE.append(LifeWatch {
-        phase: phase, cb: cb, ctx: ctx, live: true,
-    });
-    return services::Cancellable::of(LIFE_SEQ, cancel_lifecycle);
-}
-
-// Cancelled by index; the entry stays and stops being called. One per observer,
-// not one per event.
-fn cancel_lifecycle(id: u64) {
-    if id == (0 as u64) { return; }
-    match LIFE.at_ptr((id -% (1 as u64)) as usize) {
-        option::Option[*LifeWatch]::Some(w) => { { (*w).live = false }; }
-        option::Option[*LifeWatch]::None => { }
-    }
-    return;
-}
-
-fn fire_phase(phase: i32) {
-    var i: usize = 0 as usize;
-    let n: usize = LIFE.count();
-    while i < n {
-        match LIFE.at_ptr(i) {
-            option::Option[*LifeWatch]::Some(w) => {
-                if { (*w).live } && { (*w).phase } == phase {
-                    let f: fn(*u8) = { (*w).cb };
-                    if f != (0 as fn(*u8)) { f({ (*w).ctx }); }
-                }
-            }
-            option::Option[*LifeWatch]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return;
-}
-
-fn imp_did_enter_background(self_obj: *u8, cmd: *u8, application: *u8) {
-    fire_phase(PHASE_BACKGROUND);
-    return;
-}
-
-fn imp_will_enter_foreground(self_obj: *u8, cmd: *u8, application: *u8) {
-    fire_phase(PHASE_FOREGROUND);
-    return;
-}
-
-fn imp_did_become_active(self_obj: *u8, cmd: *u8, application: *u8) {
-    fire_phase(PHASE_ACTIVE);
-    return;
-}
-
-fn imp_will_resign_active(self_obj: *u8, cmd: *u8, application: *u8) {
-    fire_phase(PHASE_INACTIVE);
-    return;
-}
-
-fn imp_will_terminate(self_obj: *u8, cmd: *u8, application: *u8) {
-    fire_phase(PHASE_TERMINATE);
-    return;
-}
+// This file used to carry `PHASE_BACKGROUND/FOREGROUND/ACTIVE/INACTIVE/TERMINATE`,
+// `observe_lifecycle`, `fire_phase` and five IMPs feeding them off the app
+// delegate. All of it is deleted.
+//
+// It was a second lifecycle vocabulary living in a backend, which this
+// package's own manifest calls drift, and — worse — four of the five delegate
+// methods under it are ones UIKit does not send to an app that has adopted
+// UIScene. Every app `cpc new` scaffolds adopts UIScene. They fired for nobody,
+// and the two tests that covered them called `fire_phase` directly, so the
+// suite stayed green. See `bugs/closed/ios-lifecycle-verbs-never-fire-under-scenes.md`.
+//
+// The replacements, both on `UIApplication*Notification` names, which carry
+// neither the "not called under scenes" note nor the iOS 26 deprecation:
+//
+//   facet_runtime/runtime_ios   the five public verbs, through `notify`
+//   ./app_events_uikit          facet's portable SDK fan-out
+//
+// `applicationSignificantTimeChange:` stays on the delegate below: it is not a
+// scene-lifecycle method, carries no note and no deprecation, and is still sent.
 
 // ---- the scene delegate ------------------------------------------------------
 //
@@ -1217,6 +1170,42 @@ fn imp_scene_will_connect(self_obj: *u8, cmd: *u8, scene: *u8, session: *u8, opt
     // in the pipeline knows that: flex caches a measurement whose inputs have
     // not changed, and from flex's side nothing has.
     relayout_all();
+        // THE COLD-START LINK, and this is its only door.
+    //
+    // A URL that LAUNCHED the app is not delivered to `scene:openURLContexts:`
+    // — it is already in `connectionOptions` by the time this scene connects,
+    // and an app that only implemented the warm method would work perfectly
+    // while running and never open a link from cold. Both kinds ride in here:
+    // `URLContexts` for a custom scheme, `userActivities` for a universal
+    // link.
+    //
+    // LAST in this function, after the window is adopted and the tree is
+    // measured, so a subscriber that navigates on the link is writing a tree
+    // that is already up. The latch in `app_events` covers the subscriber that
+    // has not registered yet, which at this point is most of them.
+    if options != (0 as *u8) {
+        appev::deliver_url_contexts(
+            rt::msg_id(options, rt::sel(#str_ptr("URLContexts\0"))));
+        appev::deliver_user_activities(
+            rt::msg_id(options, rt::sel(#str_ptr("userActivities\0"))));
+    }
+    return;
+}
+
+// THE WARM DOORS. Both are `UISceneDelegate` methods, and the class already
+// claims that protocol — so these are two more methods on a conformance that
+// exists rather than a new claim.
+
+// A custom scheme, delivered while the app is running. UIKit passes an NSSet
+// because several can arrive at once.
+fn imp_scene_open_url_contexts(self_obj: *u8, cmd: *u8, scene: *u8, contexts: *u8) {
+    appev::deliver_url_contexts(contexts);
+    return;
+}
+
+// A universal link, delivered while the app is running.
+fn imp_scene_continue_user_activity(self_obj: *u8, cmd: *u8, scene: *u8, activity: *u8) {
+    appev::deliver_user_activity(activity);
     return;
 }
 
@@ -1308,6 +1297,13 @@ fn scene_delegate_class() -> *u8 {
     let _g: i8 = synth::add_method_v_2id(cls,
         rt::sel(#str_ptr("windowScene:didUpdateEffectiveGeometry:\0")),
         imp_scene_geometry_changed, #str_ptr("v@:@@\0"));
+    // THE LINK DOORS, on the conformance the class already claims below.
+    let _u: i8 = synth::add_method_v_2id(cls,
+        rt::sel(#str_ptr("scene:openURLContexts:\0")),
+        imp_scene_open_url_contexts, #str_ptr("v@:@@\0"));
+    let _c: i8 = synth::add_method_v_2id(cls,
+        rt::sel(#str_ptr("scene:continueUserActivity:\0")),
+        imp_scene_continue_user_activity, #str_ptr("v@:@@\0"));
     // ONLY WHERE THE VOCABULARY EXISTS. `UISceneWindowingControlStyle` arrived
     // in iOS 26; on anything older there is no object to answer with, and the
     // header declares the method nonnull. UIKit's documented way to say nothing
@@ -1355,21 +1351,6 @@ fn delegate_class() -> *u8 {
     let _b: i8 = synth::add_method_v_1id(cls,
         rt::sel(#str_ptr("applicationSignificantTimeChange:\0")),
         imp_significant_time_change, #str_ptr("v@:@\0"));
-    let _c: i8 = synth::add_method_v_1id(cls,
-        rt::sel(#str_ptr("applicationDidEnterBackground:\0")),
-        imp_did_enter_background, #str_ptr("v@:@\0"));
-    let _d: i8 = synth::add_method_v_1id(cls,
-        rt::sel(#str_ptr("applicationWillEnterForeground:\0")),
-        imp_will_enter_foreground, #str_ptr("v@:@\0"));
-    let _e: i8 = synth::add_method_v_1id(cls,
-        rt::sel(#str_ptr("applicationDidBecomeActive:\0")),
-        imp_did_become_active, #str_ptr("v@:@\0"));
-    let _f: i8 = synth::add_method_v_1id(cls,
-        rt::sel(#str_ptr("applicationWillResignActive:\0")),
-        imp_will_resign_active, #str_ptr("v@:@\0"));
-    let _g: i8 = synth::add_method_v_1id(cls,
-        rt::sel(#str_ptr("applicationWillTerminate:\0")),
-        imp_will_terminate, #str_ptr("v@:@\0"));
     { synth::register_class_pair(cls) };
     DELEGATE_CLASS = cls;
     return DELEGATE_CLASS;

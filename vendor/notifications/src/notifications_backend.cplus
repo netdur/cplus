@@ -1,0 +1,733 @@
+// notifications_backend — the Apple half: UserNotifications, and nothing else.
+//
+// THE PLATFORM DEFAULT in the resolver's sense: no `_<platform>` suffix, so it
+// is what the build takes on macOS and iOS, which share it because
+// `UNUserNotificationCenter` is the same class with the same selectors on both.
+//
+// It implements the stable symbols declared in `notifications.cplus`.
+//
+// ---------------------------------------------------------------------------
+// THE FRAMEWORK IS dlopen'd, not linked
+// ---------------------------------------------------------------------------
+//
+// Same reasoning as `permissions`: `UNUserNotificationCenter` is reached by
+// name, so naming UserNotifications in `[link]` would put it in the launch-time
+// dyld work of every application that depends on this package, including ones
+// that never post anything. It loads on first use instead.
+//
+// ---------------------------------------------------------------------------
+// NOTHING APPEARS WHILE THE APP IS IN FRONT — the first thing anyone hits
+// ---------------------------------------------------------------------------
+//
+// A notification scheduled five seconds out, with the app foregrounded,
+// delivers to nothing visible. That is correct platform behaviour, not a bug:
+// UNUserNotificationCenter asks its delegate whether to present, and with no
+// delegate the answer is "no". So this file synthesises one and answers with
+// banner + sound + list. An application that wants the silent default can stop
+// installing it; there is nothing else useful to be done with that method.
+//
+// The delegate is also where a TAP will arrive when that tier lands
+// (`didReceiveNotificationResponse:`). It is installed now, with only the
+// presentation method, so the tap work is one `add_method` rather than a new
+// class.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "./notifications" as notify;
+import "facet/app_events" as ev;
+
+#[link_name = "dlopen"]
+extern fn _dlopen(path: *u8, mode: i32) -> *u8;
+
+fn _rtld_lazy_local() -> i32 { return (1 as i32) + (4 as i32); }
+
+// The centre, with UserNotifications loaded if this is the first ask. Null on a
+// platform or an OS that does not have it, and on macOS for a binary whose
+// signature the framework will not accept — which is why the demo app is a
+// signed bundle and a bare `cpc build` binary reads `Unsupported`.
+fn _centre() -> *u8 {
+    var cls: *u8 = { rt::get_class(#str_ptr("UNUserNotificationCenter\0")) };
+    if cls == (0 as *u8) {
+        let _h: *u8 = { _dlopen(
+            #str_ptr("/System/Library/Frameworks/UserNotifications.framework/UserNotifications\0"),
+            _rtld_lazy_local()) };
+        cls = { rt::get_class(#str_ptr("UNUserNotificationCenter\0")) };
+    }
+    if cls == (0 as *u8) { return 0 as *u8; }
+
+    // NO BUNDLE IDENTIFIER, NO CENTRE — and `respondsToSelector:` does not save
+    // you here, which is the trap.
+    //
+    // `+currentNotificationCenter` is present on the class and RAISES when the
+    // process has no bundle: "bundleProxyForCurrentProcess is nil". An
+    // unhandled ObjC exception aborts, so a bare `cpc build` binary asking for
+    // the centre does not get null — it gets SIGABRT. Measured: the first
+    // version of this file killed the test runner exactly that way, which is
+    // the same lesson `permissions` learned from an absent selector and the
+    // same reason its status read grew a guard.
+    //
+    // So the guard is the bundle, checked before the class is messaged at all.
+    // A non-bundled executable has a `mainBundle` whose `bundleIdentifier` is
+    // nil, and that is a question with no exception behind it.
+    if !_has_bundle_id() { return 0 as *u8; }
+
+    let sel: *u8 = { rt::sel(#str_ptr("currentNotificationCenter\0")) };
+    if !_responds(cls, sel) { return 0 as *u8; }
+    return { rt::msg_id(cls, sel) };
+}
+
+// Does this process have a bundle identifier? False for a bare binary, which is
+// every `cpc build` output that has not been wrapped in a .app.
+fn _has_bundle_id() -> bool {
+    let cls: *u8 = { rt::get_class(#str_ptr("NSBundle\0")) };
+    if cls == (0 as *u8) { return false; }
+    let main: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("mainBundle\0"))) };
+    if main == (0 as *u8) { return false; }
+    let bid: *u8 = { rt::msg_id(main, rt::sel(#str_ptr("bundleIdentifier\0"))) };
+    return bid.is_not_null();
+}
+
+fn _responds(obj: *u8, sel: *u8) -> bool {
+    return { rt::msg_i8_id(obj, rt::sel(#str_ptr("respondsToSelector:\0")), sel) } != (0 as i8);
+}
+
+// ---- the presentation delegate ------------------------------------------------
+
+fn _delegate_key() -> *u8 { return { 29060 as *u8 }; }
+
+// UNNotificationPresentationOptionBanner(1<<4=16) | Sound(1<<1=2) | List(1<<3=8).
+// Built arithmetically rather than written as 26, so the three are legible —
+// and `.Badge` (1<<0) is deliberately absent: a package that bumped the badge
+// on every notification would be making an application's counting decision.
+fn _present_options() -> u64 {
+    return (16 as u64) + (2 as u64) + (8 as u64);
+}
+
+// `userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:`
+//
+// THE TAP. Reaches here for a warm app and for a cold one alike — a tap that
+// launches the process calls this after launch, so a delegate set before the
+// run loop turned sees it. `backend::install` runs before `UIApplicationMain`,
+// which is what makes that true rather than hopeful.
+//
+// The payload comes back out of the notification's `userInfo` under the one key
+// this package writes. Anything else in there was not put there by us and is
+// left alone.
+fn _imp_did_receive_response(self_obj: *u8, cmd: *u8, centre: *u8,
+                             response: *u8, handler: *u8) {
+    // The Text is held for the whole dispatch: `fire_text` hands its view to
+    // every subscriber and `app_events` interns a copy into the latch, so the
+    // owner has to outlive the fire and no longer.
+    var payload: text::Text = _payload_of(response);
+    if { payload.is_empty() } == false {
+        // WHICH BUTTON, packed in front of the payload. Apple answers the
+        // default identifier for a tap on the body itself, which this maps to
+        // "no button" rather than passing a constant nobody outside UIKit
+        // should have to know.
+        var action: text::Text = _action_of(response);
+        var encoded: text::Text = notify::encode_tap({ action.view() }, { payload.view() });
+        ev::fire_text(ev::E_NOTIFICATION_TAP, { encoded.view() });
+    }
+    // THE COMPLETION HANDLER MUST BE CALLED, always and exactly once. UIKit
+    // logs a warning and may hold the notification open otherwise; it takes no
+    // argument, so this is the same read-the-invoke-pointer shape as the
+    // presentation handler above.
+    if handler.is_null() { return; }
+    let invoke: *u8 = { *((handler + (16 as usize)) as **u8) };
+    if invoke.is_null() { return; }
+    let f: fn(*u8) = { invoke as fn(*u8) };
+    f(handler);
+    return;
+}
+
+// The pressed button's identifier, or empty for a tap on the body.
+//
+// `UNNotificationDefaultActionIdentifier` is the constant Apple uses for the
+// body, and `UNNotificationDismissActionIdentifier` for a swipe-away. Both are
+// mapped to empty: an application asked which BUTTON was pressed, and "none of
+// them" is the honest answer for both.
+fn _action_of(response: *u8) -> text::Text {
+    if response.is_null() { return text::new(); }
+    let ns: *u8 = { rt::msg_id(response, rt::sel(#str_ptr("actionIdentifier\0"))) };
+    if ns.is_null() { return text::new(); }
+    let t: text::Text = bridge::to_text(ns);
+    let v: str = { t.view() };
+    if v == "com.apple.UNNotificationDefaultActionIdentifier" { return text::new(); }
+    if v == "com.apple.UNNotificationDismissActionIdentifier" { return text::new(); }
+    return t;
+}
+
+// `response.notification.request.content.userInfo[PAYLOAD_KEY]`, copied out of
+// the NSString. OWNED rather than a view: `bridge` has no `to_str`, and a view
+// into an autoreleased NSString would outlive the pool this runs inside.
+// Empty for a notification this package did not schedule.
+fn _payload_of(response: *u8) -> text::Text {
+    if response.is_null() { return text::new(); }
+    let note: *u8 = { rt::msg_id(response, rt::sel(#str_ptr("notification\0"))) };
+    if note.is_null() { return text::new(); }
+    let req: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("request\0"))) };
+    if req.is_null() { return text::new(); }
+    let content: *u8 = { rt::msg_id(req, rt::sel(#str_ptr("content\0"))) };
+    if content.is_null() { return text::new(); }
+    let info: *u8 = { rt::msg_id(content, rt::sel(#str_ptr("userInfo\0"))) };
+    if info.is_null() { return text::new(); }
+    let v: *u8 = { rt::msg_id_id(info, rt::sel(#str_ptr("objectForKey:\0")),
+                                 bridge::nsstring(PAYLOAD_KEY)) };
+    if v.is_null() { return text::new(); }
+    return bridge::to_text(v);
+}
+
+// `userNotificationCenter:willPresentNotification:withCompletionHandler:`
+//
+// The completion handler is a BLOCK taking the options mask. It is invoked
+// immediately and synchronously here — nothing is deferred, so the block never
+// escapes this frame and the stack shape is safe without a copy.
+// HOW MANY TIMES THE SYSTEM ASKED US whether to present. Not application API —
+// it is in the backend's testable window, like the action-table readers — but it
+// is the one fact that separates "the delegate is not wired" from "the delegate
+// said yes and the system showed nothing anyway", and those have opposite fixes.
+static _PRESENT_ASKS: usize = 0 as usize;
+
+fn presentation_requests() -> usize { return _PRESENT_ASKS; }
+
+// Is our delegate the centre's delegate? Separates "not wired" from "wired and
+// the system never asked" — which have opposite fixes, and which a count of
+// zero on its own cannot tell apart. The system only asks while the app is
+// FOREGROUND, so zero is the correct answer for a windowless process.
+fn delegate_installed() -> bool {
+    if _DELEGATE == (0 as *u8) { return false; }
+    let centre: *u8 = _centre();
+    if centre == (0 as *u8) { return false; }
+    let d: *u8 = { rt::msg_id(centre, rt::sel(#str_ptr("delegate\0"))) };
+    return d == _DELEGATE;
+}
+
+fn _imp_will_present(self_obj: *u8, cmd: *u8, centre: *u8, note: *u8, handler: *u8) {
+    _PRESENT_ASKS = _PRESENT_ASKS +% (1 as usize);
+    if handler.is_null() { return; }
+    // A block's invoke pointer is the third word of its layout: isa, flags +
+    // reserved, invoke. Read rather than typed, because the block was made by
+    // UIKit and this side only calls it.
+    let invoke: *u8 = { *((handler + (16 as usize)) as **u8) };
+    if invoke.is_null() { return; }
+    let f: fn(*u8, u64) = { invoke as fn(*u8, u64) };
+    f(handler, _present_options());
+    return;
+}
+
+static _DELEGATE_CLASS: *u8 = 0 as *u8;
+static _DELEGATE: *u8 = 0 as *u8;
+
+fn _delegate_class() -> *u8 {
+    if _DELEGATE_CLASS != (0 as *u8) { return _DELEGATE_CLASS; }
+    let name: *u8 = #str_ptr("CplusNotificationsDelegate\0");
+    let existing: *u8 = { rt::get_class(name) };
+    if existing != (0 as *u8) { _DELEGATE_CLASS = existing; return _DELEGATE_CLASS; }
+    let base: *u8 = { rt::get_class(#str_ptr("NSObject\0")) };
+    if base == (0 as *u8) { return 0 as *u8; }
+    let cls: *u8 = { synth::allocate_class_pair(base, name, 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_v_3id(cls,
+        rt::sel(#str_ptr("userNotificationCenter:willPresentNotification:withCompletionHandler:\0")),
+        _imp_will_present, #str_ptr("v@:@@@\0"));
+    let _t: i8 = synth::add_method_v_3id(cls,
+        rt::sel(#str_ptr("userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:\0")),
+        _imp_did_receive_response, #str_ptr("v@:@@@\0"));
+    // CONFORMANCE, not merely the method. UIKit checks the protocol list on
+    // some paths and a class that answers every message while claiming nothing
+    // is refused — the trap `facet_uikit`'s scene delegate records.
+    let _p: i8 = synth::conform(cls, #str_ptr("UNUserNotificationCenterDelegate\0"));
+    { synth::register_class_pair(cls) };
+    _DELEGATE_CLASS = cls;
+    return _DELEGATE_CLASS;
+}
+
+// Installed once per process, from the first call that needs the centre.
+//
+// THE CENTRE HOLDS ITS DELEGATE WEAKLY, so the instance lives in a static. A
+// local would be released at the end of this function and the centre would
+// message freed memory — the same unretained-observer trap
+// `facet_uikit/notify.cplus` records for the notification centre.
+fn _install_delegate(centre: *u8) {
+    if _DELEGATE != (0 as *u8) { return; }
+    let cls: *u8 = _delegate_class();
+    if cls == (0 as *u8) { return; }
+    let d: *u8 = { synth::alloc_init_class(cls) };
+    if d == (0 as *u8) { return; }
+    _DELEGATE = d;
+    let sel: *u8 = { rt::sel(#str_ptr("setDelegate:\0")) };
+    if !_responds(centre, sel) { return; }
+    { rt::msg_void_id(centre, sel, d) };
+    return;
+}
+
+// ---- categories ----------------------------------------------------------------
+//
+// Apple's actions live on the CENTRE, not on a notification: a set of
+// `UNNotificationCategory` objects registered up front, each holding its
+// `UNNotificationAction`s, and a notification names one. So this rebuilds the
+// whole set whenever the facade says it changed — `setNotificationCategories:`
+// replaces rather than merges, so incremental updates would drop everything
+// registered earlier.
+//
+// UNNotificationActionOptionForeground = 1 << 2. Without it a tapped button
+// leaves the app in the background, and a deep link that does not open the app
+// is not a deep link.
+fn _action_options() -> u64 { return 4 as u64; }
+
+export extern fn cplus_notifications_publish_categories_v1() {
+    let centre: *u8 = _centre();
+    if centre == (0 as *u8) { return; }
+    let set_cls: *u8 = { rt::get_class(#str_ptr("NSMutableSet\0")) };
+    if set_cls == (0 as *u8) { return; }
+    let set: *u8 = { rt::msg_id(set_cls, rt::sel(#str_ptr("set\0"))) };
+    if set == (0 as *u8) { return; }
+
+    var ci: usize = 0 as usize;
+    while ci < notify::MAX_CATEGORIES {
+        let name: str = notify::category_name(ci);
+        if name != "" {
+            let cat: *u8 = _build_category(name);
+            if cat != (0 as *u8) {
+                { rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), cat) };
+            }
+        }
+        ci = ci +% (1 as usize);
+    }
+    { rt::msg_void_id(centre, rt::sel(#str_ptr("setNotificationCategories:\0")), set) };
+    return;
+}
+
+fn _build_category(name: str) -> *u8 {
+    let act_cls: *u8 = { rt::get_class(#str_ptr("UNNotificationAction\0")) };
+    let cat_cls: *u8 = { rt::get_class(#str_ptr("UNNotificationCategory\0")) };
+    let arr_cls: *u8 = { rt::get_class(#str_ptr("NSMutableArray\0")) };
+    if act_cls == (0 as *u8) { return 0 as *u8; }
+    if cat_cls == (0 as *u8) { return 0 as *u8; }
+    if arr_cls == (0 as *u8) { return 0 as *u8; }
+    let actions: *u8 = { rt::msg_id(arr_cls, rt::sel(#str_ptr("array\0"))) };
+    if actions == (0 as *u8) { return 0 as *u8; }
+
+    let n: usize = notify::action_count(name);
+    var i: usize = 0 as usize;
+    while i < n {
+        let a: *u8 = { _msg_id_id_id_u64(act_cls,
+            rt::sel(#str_ptr("actionWithIdentifier:title:options:\0")),
+            bridge::nsstring(notify::action_id(name, i)),
+            bridge::nsstring(notify::action_title(name, i)),
+            _action_options()) };
+        if a != (0 as *u8) {
+            { rt::msg_void_id(actions, rt::sel(#str_ptr("addObject:\0")), a) };
+        }
+        i = i +% (1 as usize);
+    }
+    let empty: *u8 = { rt::msg_id(arr_cls, rt::sel(#str_ptr("array\0"))) };
+    return { _msg_id_id_id_id_u64(cat_cls,
+        rt::sel(#str_ptr("categoryWithIdentifier:actions:intentIdentifiers:options:\0")),
+        bridge::nsstring(name), actions, empty, 0 as u64) };
+}
+
+// ---- the record ---------------------------------------------------------------
+//
+// WHAT THIS PACKAGE BELIEVES IS PENDING, kept here rather than asked of the
+// platform. Apple can be asked — `getPendingNotificationRequestsWithCompletionHandler:`
+// — and Android cannot, so an answer that exists on both platforms has to be
+// this one. `notifications.cplus` documents the consequence: an entry may
+// outlive a notification the system already delivered.
+
+static _IDS: vec::Vec[str] = #zero::[vec::Vec[str]]();
+
+fn _remember(id: str) {
+    if _index_of(id) >= (0 as i64) { return; }
+    let reg: *vec::Vec[str] = { #addr_of(_IDS) };
+    let _s: status::Status = (*reg).append(text::intern(id));
+    return;
+}
+
+fn _forget(id: str) {
+    let i: i64 = _index_of(id);
+    if i < (0 as i64) { return; }
+    let reg: *vec::Vec[str] = { #addr_of(_IDS) };
+    let _g: option::Option[str] = (*reg).remove(at: i as usize);
+    return;
+}
+
+fn _index_of(id: str) -> i64 {
+    let reg: *vec::Vec[str] = { #addr_of(_IDS) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*str]::Some(p) => { if { *p } == id { return i as i64; } }
+            option::Option[*str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as i64 -% (1 as i64);
+}
+
+// ---- the seam -----------------------------------------------------------------
+
+export extern fn cplus_notifications_schedule_v1(
+    id_ptr: *u8, id_len: usize,
+    title_ptr: *u8, title_len: usize,
+    body_ptr: *u8, body_len: usize,
+    payload_ptr: *u8, payload_len: usize,
+    channel_ptr: *u8, channel_len: usize,
+    category_ptr: *u8, category_len: usize,
+    sticky: bool,
+    compact: bool,
+    picture_ptr: *u8, picture_len: usize,
+    delay_seconds: f64) -> i32 {
+
+    let id: str = { #str_from_raw_parts(id_ptr, id_len) };
+    let title: str = { #str_from_raw_parts(title_ptr, title_len) };
+    let body: str = { #str_from_raw_parts(body_ptr, body_len) };
+    let payload: str = { #str_from_raw_parts(payload_ptr, payload_len) };
+    let category: str = { #str_from_raw_parts(category_ptr, category_len) };
+    let picture: str = { #str_from_raw_parts(picture_ptr, picture_len) };
+    // `sticky` and `compact` ARE IGNORED HERE, and deliberately unread rather than mapped onto
+    // something adjacent. Apple has no ongoing notification: iOS and macOS
+    // notifications are always dismissible, and the nearest APIs — interruption
+    // levels, Live Activities — answer different questions. Pretending would be
+    // worse than the honest nothing.
+
+    let centre: *u8 = _centre();
+    if centre == (0 as *u8) { return notify::Outcome::Unsupported.to_code(); }
+    _install_delegate(centre);
+
+    let content: *u8 = _content(title, body, payload, category, picture);
+    if content == (0 as *u8) { return notify::Outcome::Failed.to_code(); }
+    let trigger: *u8 = _trigger(delay_seconds);
+    // A null trigger is DELIVER NOW, which is what `UNNotificationRequest`
+    // means by a nil trigger — not a failure.
+    let request: *u8 = _request(id, content, trigger);
+    rt::release(content);
+    if request == (0 as *u8) { return notify::Outcome::Failed.to_code(); }
+
+    // The completion handler is optional and nil means "do not tell me". The
+    // failure it would report is an invalid request, which the guards above
+    // have already excluded.
+    { _msg_void_id_id(centre,
+        rt::sel(#str_ptr("addNotificationRequest:withCompletionHandler:\0")),
+        request, 0 as *u8) };
+    _remember(id);
+    return notify::Outcome::Ok.to_code();
+}
+
+// UNMutableNotificationContent with the payload in `userInfo` under one key.
+// ONE KEY rather than spreading the payload across userInfo, so the tap tier
+// reads it back without guessing what an application put there.
+fn _content(title: str, body: str, payload: str, category: str,
+            picture: str) -> *u8 {
+    let cls: *u8 = { rt::get_class(#str_ptr("UNMutableNotificationContent\0")) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let c: *u8 = { synth::alloc_init_class(cls) };
+    if c == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_id(c, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title)) };
+    if body != "" {
+        { rt::msg_void_id(c, rt::sel(#str_ptr("setBody:\0")), bridge::nsstring(body)) };
+    }
+    if payload != "" {
+        let dict_cls: *u8 = { rt::get_class(#str_ptr("NSDictionary\0")) };
+        if dict_cls != (0 as *u8) {
+            let d: *u8 = { _msg_id_id_id(dict_cls,
+                rt::sel(#str_ptr("dictionaryWithObject:forKey:\0")),
+                bridge::nsstring(payload), bridge::nsstring(PAYLOAD_KEY)) };
+            if d != (0 as *u8) {
+                { rt::msg_void_id(c, rt::sel(#str_ptr("setUserInfo:\0")), d) };
+            }
+        }
+    }
+    // THE CATEGORY IS WHAT PUTS BUTTONS ON IT. Apple attaches actions by
+    // naming a category that was registered with the centre beforehand; a name
+    // with no registered category is not an error and simply shows no buttons,
+    // which is why `register_action` must run first.
+    if category != "" {
+        { rt::msg_void_id(c, rt::sel(#str_ptr("setCategoryIdentifier:\0")),
+                          bridge::nsstring(category)) };
+    }
+    // A FULL-WIDTH IMAGE. Apple's is an ATTACHMENT — a file URL handed to
+    // `UNNotificationAttachment`, which copies the file into its own store — so
+    // unlike Android there is no bitmap to decode and no memory budget to
+    // respect. An unreadable path yields a nil attachment, which is left off
+    // rather than failing the whole notification: a photo that will not load is
+    // a reason to show the text, not to show nothing.
+    if picture != "" {
+        let att: *u8 = _attachment(picture);
+        if att != (0 as *u8) {
+            let arr_cls: *u8 = { rt::get_class(#str_ptr("NSArray\0")) };
+            if arr_cls != (0 as *u8) {
+                let arr: *u8 = { rt::msg_id_id(arr_cls,
+                    rt::sel(#str_ptr("arrayWithObject:\0")), att) };
+                if arr != (0 as *u8) {
+                    { rt::msg_void_id(c, rt::sel(#str_ptr("setAttachments:\0")), arr) };
+                }
+            }
+        }
+    }
+    return c;
+}
+
+// `+attachmentWithIdentifier:URL:options:error:`. The identifier is empty —
+// Apple generates one — and the error is discarded: a nil return says the same
+// thing and the caller's only move either way is to show the text.
+fn _attachment(path: str) -> *u8 {
+    let cls: *u8 = { rt::get_class(#str_ptr("UNNotificationAttachment\0")) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let url_cls: *u8 = { rt::get_class(#str_ptr("NSURL\0")) };
+    if url_cls == (0 as *u8) { return 0 as *u8; }
+    let url: *u8 = { rt::msg_id_id(url_cls, rt::sel(#str_ptr("fileURLWithPath:\0")),
+                                   bridge::nsstring(path)) };
+    if url == (0 as *u8) { return 0 as *u8; }
+    var err: *u8 = 0 as *u8;
+    return { _msg_id_id_id_id_id(cls,
+        rt::sel(#str_ptr("attachmentWithIdentifier:URL:options:error:\0")),
+        bridge::nsstring(""), url, 0 as *u8, { #addr_of(err) as *u8 }) };
+}
+
+// The one `userInfo` key this package writes and the tap tier will read.
+const PAYLOAD_KEY: str = "cplus.payload";
+
+// A time-interval trigger, or null for immediate delivery.
+//
+// `repeats: NO` — repeating triggers are out of this pass, and Apple's minimum
+// interval for a repeating one is 60 seconds, which would silently reshape a
+// caller's request.
+fn _trigger(delay: f64) -> *u8 {
+    if delay <= 0.0f64 { return 0 as *u8; }
+    let cls: *u8 = { rt::get_class(#str_ptr("UNTimeIntervalNotificationTrigger\0")) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    return { _msg_id_f64_i8(cls,
+        rt::sel(#str_ptr("triggerWithTimeInterval:repeats:\0")), delay, 0 as i8) };
+}
+
+fn _request(id: str, content: *u8, trigger: *u8) -> *u8 {
+    let cls: *u8 = { rt::get_class(#str_ptr("UNNotificationRequest\0")) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    return { _msg_id_id_id_id(cls,
+        rt::sel(#str_ptr("requestWithIdentifier:content:trigger:\0")),
+        bridge::nsstring(id), content, trigger) };
+}
+
+export extern fn cplus_notifications_cancel_v1(id_ptr: *u8, id_len: usize) -> i32 {
+    let id: str = { #str_from_raw_parts(id_ptr, id_len) };
+    let centre: *u8 = _centre();
+    if centre == (0 as *u8) { return notify::Outcome::Unsupported.to_code(); }
+    let arr: *u8 = _one_string_array(id);
+    if arr != (0 as *u8) {
+        { rt::msg_void_id(centre,
+            rt::sel(#str_ptr("removePendingNotificationRequestsWithIdentifiers:\0")), arr) };
+        // A tap on a delivered notification is gone too: cancelling by id means
+        // "this notification should not be anywhere", and leaving the delivered
+        // copy in the shade would contradict a `pending` list that no longer
+        // names it.
+        { rt::msg_void_id(centre,
+            rt::sel(#str_ptr("removeDeliveredNotificationsWithIdentifiers:\0")), arr) };
+    }
+    _forget(id);
+    return notify::Outcome::Ok.to_code();
+}
+
+fn _one_string_array(s: str) -> *u8 {
+    let cls: *u8 = { rt::get_class(#str_ptr("NSArray\0")) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id_id(cls, rt::sel(#str_ptr("arrayWithObject:\0")), bridge::nsstring(s)) };
+}
+
+export extern fn cplus_notifications_cancel_all_v1() -> i32 {
+    let centre: *u8 = _centre();
+    if centre == (0 as *u8) { return notify::Outcome::Unsupported.to_code(); }
+    { rt::msg_void(centre, rt::sel(#str_ptr("removeAllPendingNotificationRequests\0"))) };
+    let reg: *vec::Vec[str] = { #addr_of(_IDS) };
+    (*reg).remove_all();
+    return notify::Outcome::Ok.to_code();
+}
+
+export extern fn cplus_notifications_clear_shown_v1() -> i32 {
+    let centre: *u8 = _centre();
+    if centre == (0 as *u8) { return notify::Outcome::Unsupported.to_code(); }
+    { rt::msg_void(centre, rt::sel(#str_ptr("removeAllDeliveredNotifications\0"))) };
+    return notify::Outcome::Ok.to_code();
+}
+
+export extern fn cplus_notifications_pending_v1(out: *u8) -> i32 {
+    if out.is_null() { return notify::Outcome::InvalidInput.to_code(); }
+    let dst: *vec::Vec[str] = { out as *vec::Vec[str] };
+    let reg: *vec::Vec[str] = { #addr_of(_IDS) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*str]::Some(p) => { let _s: status::Status = (*dst).append({ *p }); }
+            option::Option[*str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return notify::Outcome::Ok.to_code();
+}
+
+// `objc_msgSend` at arities the `objc` package does not bind. Declared here
+// rather than added there, the way `facet_uikit/keyboard.cplus` declares its own.
+#[link_name = "objc_msgSend"]
+extern fn _msg_void_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8);
+#[link_name = "objc_msgSend"]
+extern fn _msg_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn _msg_id_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn _msg_id_f64_i8(recv: *u8, sel: *u8, a: f64, b: i8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn _msg_id_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: u64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn _msg_id_id_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn _msg_id_id_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: u64) -> *u8;
+
+// ---- tests --------------------------------------------------------------------
+//
+// These run on the HOST, which for this package is macOS — so the framework
+// below is the real one, dlopen'd at test time.
+//
+// WHAT THEY CANNOT SEE, said plainly: a notification. `cpc test` builds a bare
+// binary with no bundle and no signature, and `UNUserNotificationCenter` will
+// not hand one out to that — so `_centre()` answers null here and every seam
+// verb answers `Unsupported`. THAT IS THE THING WORTH ASSERTING: an application
+// that forgets to bundle gets a clean `Unsupported` rather than a crash or a
+// silent no-op. Delivery is `examples/notifications_demo`'s job.
+
+#[test]
+fn a_bare_binary_has_no_centre_and_says_so() {
+    // No bundle, no signature, no centre. Every verb must degrade to
+    // `Unsupported` — never `Ok`, which would claim a notification was posted.
+    let c: *u8 = _centre();
+    if c == (0 as *u8) {
+        assert { cplus_notifications_cancel_all_v1() }
+            == notify::Outcome::Unsupported.to_code();
+        assert { cplus_notifications_clear_shown_v1() }
+            == notify::Outcome::Unsupported.to_code();
+        return;
+    }
+    // A signed bundle DOES get a centre, and then the same calls must succeed.
+    // Written as a fork rather than an assumption so this test says something
+    // true in both worlds instead of only in the one the CI happens to be.
+    assert { cplus_notifications_cancel_all_v1() } == notify::Outcome::Ok.to_code();
+}
+
+#[test]
+fn the_delegate_class_is_synthesised_and_conforms() {
+    // Independent of the centre: the class is built from the ObjC runtime, and
+    // it is what makes a notification visible while the app is in front. If it
+    // ever fails to register, nothing appears and nothing reports why.
+    let cls: *u8 = _delegate_class();
+    assert cls.is_not_null();
+    // Built once and cached — a second class pair with the same name would fail
+    // to register and leave the first in place.
+    assert _delegate_class() == cls;
+    let sel: *u8 = { rt::sel(#str_ptr("userNotificationCenter:willPresentNotification:withCompletionHandler:\0")) };
+    assert { rt::msg_i8_id(cls, rt::sel(#str_ptr("instancesRespondToSelector:\0")), sel) } != (0 as i8);
+}
+
+#[test]
+fn the_presentation_options_ask_for_banner_sound_and_list_but_not_badge() {
+    // Banner 1<<4, Sound 1<<1, List 1<<3.
+    assert _present_options() == (26 as u64);
+    // BADGE (1<<0) IS DELIBERATELY ABSENT: a package that bumped the badge on
+    // every notification would be making an application's counting decision.
+    assert (_present_options() & (1 as u64)) == (0 as u64);
+}
+
+#[test]
+fn the_record_remembers_forgets_and_does_not_duplicate() {
+    let reg: *vec::Vec[str] = { #addr_of(_IDS) };
+    (*reg).remove_all();
+    _remember("a");
+    _remember("b");
+    // Scheduling the same id twice REPLACES on both platforms, so the record
+    // must hold one entry — a duplicate here would report a pending id that
+    // cancelling once could not clear.
+    _remember("a");
+    assert { (*reg).count() } == (2 as usize);
+    assert _index_of("a") >= (0 as i64);
+    assert _index_of("b") >= (0 as i64);
+    assert _index_of("nope") < (0 as i64);
+    _forget("a");
+    assert _index_of("a") < (0 as i64);
+    assert { (*reg).count() } == (1 as usize);
+    // Forgetting something absent is inert, not an error.
+    _forget("nope");
+    assert { (*reg).count() } == (1 as usize);
+    (*reg).remove_all();
+}
+
+#[test]
+fn pending_appends_rather_than_replacing() {
+    let reg: *vec::Vec[str] = { #addr_of(_IDS) };
+    (*reg).remove_all();
+    _remember("x");
+    _remember("y");
+    var out: vec::Vec[str] = vec::new::[str]();
+    let _s: status::Status = out.append("pre-existing");
+    assert { cplus_notifications_pending_v1({ #addr_of(out) as *u8 }) }
+        == notify::Outcome::Ok.to_code();
+    // The caller's own entry survives: this package appends to a Vec it does
+    // not own.
+    assert out.count() == (3 as usize);
+    (*reg).remove_all();
+}
+
+#[test]
+fn pending_into_nothing_is_refused_rather_than_dereferenced() {
+    assert { cplus_notifications_pending_v1(0 as *u8) }
+        == notify::Outcome::InvalidInput.to_code();
+}
+
+#[test]
+fn cancel_all_empties_the_record_only_when_it_reached_the_platform() {
+    // THE RECORD AND THE PLATFORM MUST NOT DIVERGE, and that is what decides
+    // this rather than convenience. Emptying the record after a call that never
+    // reached the centre would make `pending` answer "nothing scheduled" while
+    // the system still held notifications — a lie in the direction that hides
+    // work, which is worse than the direction that reports stale work.
+    //
+    // With no centre there is also nothing to diverge from: `schedule` answers
+    // `Unsupported` too, so a real record cannot have entries. This test puts
+    // them there by hand to pin the branch.
+    let reg: *vec::Vec[str] = { #addr_of(_IDS) };
+    (*reg).remove_all();
+    _remember("one");
+    _remember("two");
+    let rc: i32 = { cplus_notifications_cancel_all_v1() };
+    if rc == notify::Outcome::Unsupported.to_code() {
+        assert { (*reg).count() } == (2 as usize);
+        (*reg).remove_all();
+        return;
+    }
+    assert rc == notify::Outcome::Ok.to_code();
+    assert { (*reg).count() } == (0 as usize);
+}
+
+#[test]
+fn scheduling_without_a_centre_never_claims_success() {
+    // The whole point of the `Unsupported` path. A bare binary that schedules
+    // must not be told `Ok` — an application would show "reminder set".
+    let c: *u8 = _centre();
+    if c != (0 as *u8) { return; }
+    let rc: i32 = { cplus_notifications_schedule_v1(
+        #str_ptr("t1"), #str_len("t1"),
+        #str_ptr("Title"), #str_len("Title"),
+        #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        false, false,
+        #str_ptr(""), #str_len(""),
+        0.0f64) };
+    assert rc == notify::Outcome::Unsupported.to_code();
+    assert rc != notify::Outcome::Ok.to_code();
+}

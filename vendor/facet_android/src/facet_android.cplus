@@ -14,6 +14,8 @@ import "android_view/runtime" as rt;
 import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/nav" as nav;
+import "facet/app_events" as ev;
+import "stdlib/text" as text;
 import "facet/services" as services;
 import "facet/theme" as theme;
 import "./views" as views;
@@ -238,6 +240,149 @@ export extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8
     e::set_env(rt::from_native(envp));
     if nav::pop() { return 1 as u8; }
     return 0 as u8;
+}
+
+// THE ACTIVITY'S LIFECYCLE, forwarded as an app event.
+//
+// This backend fired NONE of app_events' lifecycle kinds until now, while
+// facet_appkit and facet_uikit fired theirs from the start — so a component
+// that released the camera on background and re-acquired it on foreground
+// worked on two platforms out of three and froze on the third. The kinds were
+// already defined; nothing on Android had ever raised them.
+//
+// ONE NATIVE CARRYING THE KIND rather than one native per event. The mapping
+// lives in Java (`onResume` -> E_FOREGROUND, and so on), the registration is a
+// single guarded RegisterNatives, and a kind added later costs a constant on
+// both sides instead of a new symbol, a new record struct and a new call.
+//
+// UNKNOWN KINDS ARE DROPPED. The Java half is in the APK and the native half is
+// in the .so, and the two are versioned separately — an APK built against a
+// newer facet can send a kind this library has never heard of, and the honest
+// answer to that is silence rather than a fabricated event.
+export extern fn facet_android_app_event(envp: *jni::JNIEnv, cls: jni::jobject,
+                                         kind: i32) {
+    e::set_env(rt::from_native(envp));
+    let k: u32 = { kind as u32 };
+    if k == (0u32) { return; }
+    if k > ev::E_MAX { return; }
+    ev::fire_plain(k);
+    return;
+}
+
+// A FOREIGN UI FLOW RETURNED — `onActivityResult`.
+//
+// The kind this fires has been declared in app_events since the sign-in work
+// and was unreachable until now, because `FacetActivity` had no override to
+// fire it from. `code` is the request code, `result` the result code, and
+// `text` the Intent's data URI or "" when it carried none.
+//
+// The URI is read into a stack buffer and the `str` handed to the fan-out
+// VIEWS that buffer — valid for the dispatch and not one instant longer, which
+// is the borrow `AppEvent.text` documents.
+//
+// 2048 rather than 256: a content:// URI from the Storage Access Framework
+// carries an encoded document id and a provider authority, and runs long.
+export extern fn facet_android_activity_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                               request_code: i32, result_code: i32,
+                                               uri: jni::jobject) {
+    let env: rt::Env = rt::from_native(envp);
+    e::set_env(env);
+    var buf: [u8; 2048] = #zero::[[u8; 2048]]();
+    let ptr: *u8 = { #addr_of(buf) as *u8 };
+    if uri != (0 as jni::jobject) {
+        let _ok: bool = env.string_utf_into(uri, ptr, 2048 as usize);
+    }
+    var ae: ev::AppEvent = ev::AppEvent::new(ev::E_NATIVE_RESULT);
+    ae.text = { #str_from_raw_parts(ptr, { _c_strlen(ptr) }) };
+    ae.code = { request_code as i64 };
+    ae.result = { result_code as i64 };
+    ev::fire(#addr_of(ae));
+    return;
+}
+
+#[link_name = "strlen"]
+extern fn _c_strlen(s: *u8) -> usize;
+
+// A PERMISSION WAS ANSWERED. `FacetActivity.onRequestPermissionsResult` calls
+// this once per permission in the batch — see the comment on the override for
+// why the loop is on the Java side.
+//
+// The Java String is read into a stack buffer and the `str` handed to the
+// fan-out VIEWS that buffer, which is exactly the borrow `AppEvent.text`
+// documents: valid for the dispatch and not one instant longer. A subscriber
+// that keeps it copies it.
+//
+// 256 bytes because the longest permission string Android ships is under 60 and
+// an OEM one that overflowed would be truncated rather than corrupt — the read
+// below NUL-terminates within the buffer either way.
+export extern fn facet_android_permission_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                                 request_code: i32, permission: jni::jobject,
+                                                 result: i32) {
+    let env: rt::Env = rt::from_native(envp);
+    e::set_env(env);
+    var buf: [u8; 256] = #zero::[[u8; 256]]();
+    let ptr: *u8 = { #addr_of(buf) as *u8 };
+    if !env.string_utf_into(permission, ptr, 256 as usize) { return; }
+    var ae: ev::AppEvent = ev::AppEvent::new(ev::E_PERMISSION_RESULT);
+    ae.text = { #str_from_raw_parts(ptr, c_len(ptr, 256 as usize)) };
+    ae.code = request_code as i64;
+    ae.result = result as i64;
+    ev::fire(#addr_of(ae));
+    return;
+}
+
+// The length of a NUL-terminated buffer, capped. `string_utf_into` writes a C
+// string and a `str` needs the length, and there is no strlen in this closure.
+fn c_len(p: *u8, cap: usize) -> usize {
+    var i: usize = 0 as usize;
+    while i < cap {
+        if { *(p + i) } == (0 as u8) { return i; }
+        i = i +% (1 as usize);
+    }
+    return cap;
+}
+
+// A NOTIFICATION WAS TAPPED. `FacetActivity.deliverPayload` calls this from
+// `onCreate` (cold) or `onNewIntent` (warm) — see the override for why it fires
+// once per intent.
+//
+// The payload is read into a stack buffer and the `str` handed to the fan-out
+// VIEWS it, which is the borrow `AppEvent.text` documents. The LATCH in
+// app_events interns a copy, so a subscriber arriving later still gets it.
+export extern fn facet_android_notification_tap(envp: *jni::JNIEnv, cls: jni::jobject,
+                                                payload: jni::jobject) {
+    let env: rt::Env = rt::from_native(envp);
+    e::set_env(env);
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let ptr: *u8 = { #addr_of(buf) as *u8 };
+    if !env.string_utf_into(payload, ptr, 1024 as usize) { return; }
+    ev::fire_text(ev::E_NOTIFICATION_TAP,
+                  { #str_from_raw_parts(ptr, c_len(ptr, 1024 as usize)) });
+    return;
+}
+
+// A DEEP LINK ARRIVED. `FacetActivity.deliverLink` calls this from `onCreate`
+// (cold) or `onNewIntent` (warm) — see the override for why it fires once per
+// intent, and why the Activity must be `singleTop` for the warm case to exist
+// at all.
+//
+// The same buffer-and-view shape as the notification tap above, and the same
+// reason: `AppEvent.text` is BORROWED for the dispatch, and the latch in
+// app_events interns a copy so a subscriber arriving later still gets it.
+//
+// 1024 bytes is the cap. A URL longer than that is truncated rather than
+// refused — a truncated link routes to the wrong place, which is visible,
+// where a silently dropped one looks like the feature not working.
+export extern fn facet_android_open_url(envp: *jni::JNIEnv, cls: jni::jobject,
+                                        url: jni::jobject) {
+    let env: rt::Env = rt::from_native(envp);
+    e::set_env(env);
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let ptr: *u8 = { #addr_of(buf) as *u8 };
+    if !env.string_utf_into(url, ptr, 1024 as usize) { return; }
+    ev::fire_text(ev::E_OPEN_URL,
+                  { #str_from_raw_parts(ptr, c_len(ptr, 1024 as usize)) });
+    return;
 }
 
 // A WIDGET ASKED FOR A LAYOUT. facet places views only when its own geometry

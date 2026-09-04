@@ -1,0 +1,37 @@
+[package]
+name    = "haptics"
+version = "0.0.1"
+edition = "2026"
+
+# haptics — the small physical taps a UI makes.
+#
+# FIRE AND FORGET. Every verb returns whether the platform ACCEPTED the request,
+# never whether anything was felt: a person can disable haptics system-wide, a
+# Mac without a Force Touch trackpad has nowhere to play one, and neither
+# reports back. An app that branches on the answer is asking a question the
+# hardware does not take.
+
+[dependencies]
+stdlib = "*"
+
+[macos.dependencies]
+objc       = "*"
+appkit     = "*"
+# appkit's own closure, restated: the resolver validates every import in the
+# build against ONE flat set taken from THIS manifest.
+quartzcore = "*"
+webkit     = "*"
+
+[ios.dependencies]
+objc       = "*"
+uikit      = "*"
+quartzcore = "*"
+webkit     = "*"
+
+[android.dependencies]
+jni          = "*"
+android_view = "*"
+facet        = "*"
+facet_android = "*"
+flex_layout  = "*"
+events       = "*"

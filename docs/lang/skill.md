@@ -103,7 +103,9 @@ src/reactor_linux.cplus    # SHADOWS it when the target's platform is linux
 2. **`[<platform>.dependencies]`** in `Cplus.toml` for a package that exists
    only there. Importing an off-platform package is E0866 naming the
    platform it was declared for. A misspelled platform section is E0406, not
-   a silently-ignored table.
+   a silently-ignored table. Android also takes **`[android.maven]`** —
+   third-party AAR pins, `"group:artifact" = "version"`, exact, written by
+   `cpc pm add . --maven G:A:V` (no Gradle; E0877 on any other platform).
 3. **`#platform()` / `#arch()` / `#target()`** — `str` constants for the
    active target. Value-level only: both arms of an `if` on one compile
    everywhere, so they can pick a padding or a port, never an import.
@@ -927,15 +929,28 @@ fn worker(take x: i64) -> i64 {
   cannot skip a drop. `block_on` stays the drive-to-completion form: a
   cancel request does not stop it (same doctrine as a compute loop that
   never checks `cancelled()`).
-- `Future::cancel(take this)` is explicit drop-to-cancel for a future you
-  will not drive. A future that is merely *dropped* still leaks its frame —
-  consume it with `await`, `block_on`, `run`, or `cancel`.
-- The async↔thread bridge: `executor::join_worker[O](take h)` awaits a
-  spawned thread's result without blocking the executor;
-  `executor::receive_or_cancel[T](take ch)` is an async channel receive that
-  surfaces `ReceiveResult::Cancelled`. Both poll on the reactor's timer.
+- **Dropping a future cancels it.** `Future` has a destructor: wherever the
+  value goes out of scope the frame is destroyed and every suspend point's
+  cancel edge runs, so no drop is skipped. `Future::cancel(take this)` is the
+  same thing said as a verb, for when "I am giving up on this" should read at
+  the call site. (Before v0.0.30 a merely-dropped future leaked its frame and
+  you had to consume it — that is no longer true.)
+- The async↔thread bridge: `executor::join_worker[O](take h, timeout: f64 = 0)`
+  awaits a spawned thread's result without blocking the executor;
+  `executor::receive_or_cancel[T](take ch, timeout: f64 = 0)` is an async
+  channel receive that surfaces `ReceiveResult::Cancelled`. Both poll on the
+  reactor's timer. `timeout` is seconds; `<= 0` means no deadline. An expiry
+  answers in each one's existing vocabulary — `receive_or_cancel` returns
+  `Cancelled`, and `join_worker` requests cancellation and still joins, so the
+  deadline is on the asking rather than a kill.
 - `thread::cancelled()` works inside `async fn` bodies too — the token is
   ambient to the thread, not to the coroutine.
+- **A `thread::Scope` is a cancellation boundary.** Cancelling the thread that
+  owns one does not reach the workers it lent data to; `Scope::drop` still
+  joins, so the parent waits. The borrow's soundness rests on that join, and a
+  cancellation racing it would trade a hang for a use-after-free. A worker that
+  must be stoppable takes its own `JoinHandle` and cannot borrow a parent
+  local.
 
 ### Interface default method bodies
 

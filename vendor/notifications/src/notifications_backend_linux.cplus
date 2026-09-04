@@ -1,0 +1,56 @@
+// notifications_backend_linux — the honest Linux answer, which is "cannot".
+//
+// THIS FILE EXISTS SO A LINUX BUILD LINKS. `notifications.cplus` declares five
+// stable symbols and something must define them on every platform the package
+// claims to build for; without this the failure is an undefined symbol in the
+// CONSUMER's build, naming a mangled C+ symbol.
+//
+// WHY NOT `org.freedesktop.Notifications`, and it is parked rather than
+// forgotten. The D-Bus spec is a good fit for `schedule(When::Now)` — a
+// `Notify` call returns an id and `CloseNotification` cancels it. What it has
+// no concept of is SCHEDULING: there is no trigger, so a deferred notification
+// would be this package holding a timer and firing at the right moment, which
+// works only while the process lives. That is the same limitation the Android
+// half currently has and it would be permanent here, so the honest first
+// version answers `Unsupported` rather than shipping half a contract.
+//
+// Parked with the standing backend priority (AppKit first). When it is built,
+// `pending` is answerable — the ids are this package's own record either way.
+
+import "./notifications" as notify;
+
+export extern fn cplus_notifications_schedule_v1(
+    id_ptr: *u8, id_len: usize,
+    title_ptr: *u8, title_len: usize,
+    body_ptr: *u8, body_len: usize,
+    payload_ptr: *u8, payload_len: usize,
+    channel_ptr: *u8, channel_len: usize,
+    category_ptr: *u8, category_len: usize,
+    sticky: bool,
+    compact: bool,
+    picture_ptr: *u8, picture_len: usize,
+    delay_seconds: f64) -> i32 {
+    return notify::Outcome::Unsupported.to_code();
+}
+
+export extern fn cplus_notifications_cancel_v1(id_ptr: *u8, id_len: usize) -> i32 {
+    return notify::Outcome::Unsupported.to_code();
+}
+
+export extern fn cplus_notifications_publish_categories_v1() { return; }
+
+export extern fn cplus_notifications_cancel_all_v1() -> i32 {
+    return notify::Outcome::Unsupported.to_code();
+}
+
+export extern fn cplus_notifications_clear_shown_v1() -> i32 {
+    return notify::Outcome::Unsupported.to_code();
+}
+
+// `Ok` WITH NOTHING APPENDED, not `Unsupported`: "what is pending" has a true
+// answer here and it is "nothing". Reporting `Unsupported` would make a caller
+// treat an empty list as a failure it has to handle.
+export extern fn cplus_notifications_pending_v1(out: *u8) -> i32 {
+    if out.is_null() { return notify::Outcome::InvalidInput.to_code(); }
+    return notify::Outcome::Ok.to_code();
+}

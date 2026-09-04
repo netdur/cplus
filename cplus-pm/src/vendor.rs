@@ -21,9 +21,13 @@
 
 use crate::fetch::{Checkout, FetchError};
 use crate::manifest::{is_valid_dep_name, Manifest, ManifestError, MANIFEST_NAME};
+use crate::maven::{self, MavenError};
+
+/// Re-exported so callers can report a closure without naming the module.
+pub use crate::maven::Closure as MavenClosure;
 use crate::spec::{DepSpec, SpecError};
 use crate::store::{self, Store, ToolchainContext};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,6 +59,7 @@ pub enum VendorError {
         actual: String,
     },
     Fetch(FetchError),
+    Maven(MavenError),
     MissingPackageDir { name: String, path: PathBuf },
     Io { path: PathBuf, source: std::io::Error },
     NotInstalled { name: String },
@@ -86,6 +91,13 @@ pub struct Resolved {
 #[derive(Debug, Default)]
 pub struct InstallReport {
     pub packages: Vec<Resolved>,
+    /// Third-party Maven/AAR artifacts materialized into the local repo
+    /// (D18) — the closure of every `[android.maven]` coordinate declared by
+    /// the project or by any package it pulls in.
+    pub maven: Vec<maven::Artifact>,
+    /// The resolution behind [`InstallReport::maven`] — kept so the caller
+    /// can report where nearest-wins diverged from what Gradle would do.
+    pub maven_closure: Option<MavenClosure>,
     pub warnings: Vec<String>,
 }
 
@@ -120,6 +132,13 @@ pub struct InstallOptions {
     pub toolchain: Option<ToolchainContext>,
     /// Install into `<project>/vendor/` instead of the store (D16).
     pub local: bool,
+    /// Local Maven repo override. Default: `<store root>/m2`.
+    pub m2_root: Option<PathBuf>,
+    /// Remote Maven repos, in order. Default: Google's Maven then Central.
+    pub maven_repos: Option<Vec<String>>,
+    /// Refuse to download Maven artifacts — resolve from the local repo or
+    /// fail. What a build uses so it never reaches the network.
+    pub maven_offline: bool,
 }
 
 impl InstallOptions {
@@ -129,6 +148,19 @@ impl InstallOptions {
 
     pub(crate) fn resolved_store_root(&self) -> Option<PathBuf> {
         self.store_root.clone().or_else(store::default_root)
+    }
+
+    /// The local Maven repo to resolve against, and whether it may fetch.
+    pub fn registry(&self) -> Result<maven::Registry, VendorError> {
+        let root = match &self.m2_root {
+            Some(root) => root.clone(),
+            None => store::m2_dir(&self.resolved_store_root().ok_or(VendorError::NoStoreRoot)?),
+        };
+        let mut registry = maven::Registry::new(root).offline(self.maven_offline);
+        if let Some(repos) = &self.maven_repos {
+            registry.repos = repos.clone();
+        }
+        Ok(registry)
     }
 }
 
@@ -147,7 +179,31 @@ pub fn install(
 ) -> Result<InstallReport, VendorError> {
     let manifest = Manifest::load_dir(project_dir).map_err(VendorError::Manifest)?;
     let mut report = InstallReport::default();
+    // `[android.maven]` coordinates, gathered from the project AND from every
+    // package the walk visits: a C+ binding package (a `maps` that wraps
+    // play-services) is exactly where an AAR dependency belongs, so a project
+    // that never names a coordinate can still need one materialized.
+    let mut maven_roots: BTreeMap<String, (String, String)> = BTreeMap::new();
+    let mut collect_maven = |source: &str,
+                             found: &BTreeMap<String, String>,
+                             warnings: &mut Vec<String>| {
+        for (ga, version) in found {
+            match maven_roots.get(ga) {
+                // First seen wins, and the loser is named — D9's rule, which
+                // is also Maven's nearest-wins (the project is nearest).
+                Some((kept, by)) if kept != version => warnings.push(format!(
+                    "{ga}: pinned {kept} (via {by}); {source} wanted {version}"
+                )),
+                Some(_) => {}
+                None => {
+                    maven_roots.insert(ga.clone(), (version.clone(), source.to_string()));
+                }
+            }
+        }
+    };
+    collect_maven(&manifest.name, &manifest.maven, &mut report.warnings);
     if manifest.deps.is_empty() {
+        install_maven(&maven_roots, options, &mut report)?;
         return Ok(report);
     }
 
@@ -220,6 +276,7 @@ pub fn install(
         let vendored = local_vendor.join(&dep.name);
         if read_stamp(&vendored).is_none() && vendored.join(MANIFEST_NAME).is_file() {
             let sub_manifest = Manifest::load_dir(&vendored).map_err(VendorError::Manifest)?;
+            collect_maven(&dep.name, &sub_manifest.maven, &mut report.warnings);
             report.packages.push(Resolved {
                 name: dep.name.clone(),
                 repo: dep.repo.clone(),
@@ -345,6 +402,7 @@ pub fn install(
         };
 
         winners.insert(dep.name.clone(), dep.clone());
+        collect_maven(&dep.name, &sub_manifest.maven, &mut report.warnings);
 
         // Walk the package's own dependencies (present or fresh alike).
         // Duplicates are queued anyway: the pop-side check is what compares
@@ -355,7 +413,106 @@ pub fn install(
     }
 
     report.packages.sort_by(|a, b| a.name.cmp(&b.name));
+    drop(collect_maven);
+    install_maven(&maven_roots, options, &mut report)?;
     Ok(report)
+}
+
+/// Resolve the collected `[android.maven]` coordinates and materialize the
+/// closure into the local Maven repo (D18).
+///
+/// An INCOMPLETE closure stops the install. A missing transitive artifact is
+/// a `NoClassDefFoundError` at runtime on a device — the worst place to
+/// learn it — and unlike a C+ package there is no link step that would have
+/// caught it first.
+fn install_maven(
+    roots: &BTreeMap<String, (String, String)>,
+    options: &InstallOptions,
+    report: &mut InstallReport,
+) -> Result<(), VendorError> {
+    if roots.is_empty() {
+        return Ok(());
+    }
+    let registry = options.registry()?;
+    let mut coords = Vec::new();
+    for (ga, (version, _)) in roots {
+        coords.push(maven::Coord::from_ga(ga, version).map_err(VendorError::Maven)?);
+    }
+    let closure = maven::resolve(&registry, &coords).map_err(VendorError::Maven)?;
+    if !closure.is_complete() {
+        return Err(VendorError::Maven(MavenError::Incomplete {
+            entries: closure.unresolved,
+        }));
+    }
+    report.maven = maven::materialize(&registry, &closure).map_err(VendorError::Maven)?;
+    report.maven_closure = Some(closure);
+    Ok(())
+}
+
+/// The Maven artifacts a project needs, resolved WITHOUT fetching anything.
+///
+/// This is what a build asks, so it must not reach out: `cpc pm maven
+/// classpath` inside a `build.sh` running a full `install` would make every
+/// `d8` invocation a potential git clone, and a build that fails differently
+/// on a plane is the thing this avoids.
+///
+/// So the dependency walk uses only the rungs already on disk — the same
+/// ladder `cpc build` walks (`<project>/vendor/<name>`, a sibling
+/// `<project>/../<name>`, then the store tier) — and a package that is not
+/// there yet is SKIPPED rather than fetched. A skipped package's coordinates
+/// are invisible, but so is the package: `cpc pm install` is the command
+/// that was missed, and the build will say so on its own terms.
+pub fn maven_artifacts(
+    project_dir: &Path,
+    options: &InstallOptions,
+) -> Result<(Vec<maven::Artifact>, MavenClosure), VendorError> {
+    let manifest = Manifest::load_dir(project_dir).map_err(VendorError::Manifest)?;
+    let store_dir = match (options.resolved_store_root(), options.toolchain.as_ref()) {
+        (Some(root), Some(tc)) => Some(Store::new(root, &tc.version).vendor_dir()),
+        _ => None,
+    };
+    let local_vendor = vendor_dir(project_dir);
+    let parent = project_dir.parent().map(Path::to_path_buf);
+
+    let mut roots: BTreeMap<String, String> = manifest.maven.clone();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut queue: VecDeque<String> = manifest.deps.keys().cloned().collect();
+    while let Some(name) = queue.pop_front() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let found = [
+            Some(local_vendor.join(&name)),
+            parent.as_ref().map(|p| p.join(&name)),
+            store_dir.as_ref().map(|s| s.join(&name)),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|dir| Manifest::load_dir(&dir).ok());
+        let Some(package) = found else { continue };
+        for (ga, version) in package.maven {
+            // First seen wins, as install resolves it (D9).
+            roots.entry(ga).or_insert(version);
+        }
+        queue.extend(package.deps.keys().cloned());
+    }
+
+    if roots.is_empty() {
+        return Ok((Vec::new(), MavenClosure::default()));
+    }
+    let registry = options.registry()?;
+    let mut coords = Vec::new();
+    for (ga, version) in &roots {
+        coords.push(maven::Coord::from_ga(ga, version).map_err(VendorError::Maven)?);
+    }
+    let closure = maven::resolve(&registry, &coords).map_err(VendorError::Maven)?;
+    if !closure.is_complete() {
+        return Err(VendorError::Maven(MavenError::Incomplete {
+            entries: closure.unresolved,
+        }));
+    }
+    let artifacts = maven::materialize(&registry, &closure).map_err(VendorError::Maven)?;
+    Ok((artifacts, closure))
 }
 
 /// Remove a package's directory from `<project>/vendor/`. The store is
@@ -572,6 +729,7 @@ impl fmt::Display for VendorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             VendorError::Manifest(source) => source.fmt(f),
+            VendorError::Maven(source) => source.fmt(f),
             VendorError::Spec { source, .. } => source.fmt(f),
             VendorError::RootSiblingDependency { name } => write!(
                 f,
@@ -680,6 +838,9 @@ mod tests {
             repo_url_override: Some(repo.to_string_lossy().into_owned()),
             toolchain: Some(ctx()),
             local: false,
+            m2_root: None,
+            maven_repos: None,
+            maven_offline: false,
         }
     }
 

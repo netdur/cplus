@@ -3692,6 +3692,100 @@ fn test_round_half_scale() {
     assert approx(must(root.child_frame(0)).width, 10.5);   // 10.3 -> 10.5
 }
 
+#[test]
+fn test_round_is_seamless_through_nesting() {
+    // The property the backends depend on, one level deeper than the flat case:
+    // a snapped child's edges must still abut inside a snapped parent, or the
+    // seam simply moves down a level. Rows of 33.4 inside a column offset by
+    // 10.3 puts every edge off the grid at both levels.
+    var root: Node = Node::new();
+    var outer: Node = Node::new();
+    outer.set_margin(Edge::Top, pts(10.3));
+    var a: Node = Node::new(); a.set_height(pts(33.4)); a.set_width(pts(50.0));
+    var b: Node = Node::new(); b.set_height(pts(33.4)); b.set_width(pts(50.0));
+    var c: Node = Node::new(); c.set_height(pts(33.4)); c.set_width(pts(50.0));
+    outer.add_child(a); outer.add_child(b); outer.add_child(c);
+    root.add_child(outer);
+    root.calculate_layout(100.0, 200.0, Direction::LTR);
+    root.round_to_pixel(2.0);
+    let o: Frame = must(root.child_frame(0));
+    let fa: Frame = must(o_child(root, 0, 0));
+    let fb: Frame = must(o_child(root, 0, 1));
+    let fc: Frame = must(o_child(root, 0, 2));
+    // Seamless between siblings, and flush with the parent's own snapped edge.
+    assert approx(o.top, fa.top);
+    assert approx(fa.top + fa.height, fb.top);
+    assert approx(fb.top + fb.height, fc.top);
+    // On the half-point grid, all of them.
+    assert on_half_grid(fa.top) && on_half_grid(fa.height);
+    assert on_half_grid(fb.top) && on_half_grid(fb.height);
+    assert on_half_grid(fc.top) && on_half_grid(fc.height);
+}
+
+#[test]
+fn test_round_is_seamless_across_negative_coordinates() {
+    // A frame LEFT of the origin, which `position: absolute` with a negative
+    // offset produces and a scrolled document reaches routinely. Rounding is
+    // biased toward zero there rather than away from it, which is a choice —
+    // but it is the SAME choice for both edges of a boundary, so neighbours
+    // still meet. Seamlessness is what the backends need; the bias only shifts
+    // where the whole pair sits.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var a: Node = Node::new();
+    a.set_position_type(PositionType::Absolute);
+    a.set_position(Edge::Left, pts(-20.3));
+    a.set_width(pts(10.4)); a.set_height(pts(10.0));
+    var b: Node = Node::new();
+    b.set_position_type(PositionType::Absolute);
+    b.set_position(Edge::Left, pts(-9.9));
+    b.set_width(pts(10.4)); b.set_height(pts(10.0));
+    root.add_child(a); root.add_child(b);
+    root.calculate_layout(100.0, 100.0, Direction::LTR);
+    root.round_to_pixel(1.0);
+    let fa: Frame = must(root.child_frame(0));
+    let fb: Frame = must(root.child_frame(1));
+    // Not vacuous: the frames really are left of the origin. An absolute
+    // position that failed to apply would leave both at 0 and the seam
+    // assertion below would hold for the wrong reason.
+    assert fa.left < 0.0;
+    assert fb.left < 0.0;
+    // -20.3 .. -9.9 and -9.9 .. 0.5 share the boundary at -9.9: whatever it
+    // rounds to, both sides must use the same number.
+    assert approx(fa.left + fa.width, fb.left);
+    assert approx(fa.left - (fa.left as i64 as f64), 0.0);
+    assert approx(fb.left - (fb.left as i64 as f64), 0.0);
+}
+
+#[test]
+fn test_round_at_zero_scale_is_a_noop() {
+    // The negative case. Every backend falls back to a scale it could not read
+    // — a window with no screen, a GTK factor of 0, a density read before the
+    // Activity existed — and a grid of nothing would collapse every frame onto
+    // the origin. Leaving them fractional is less crisp and always correct.
+    var root: Node = Node::new();
+    var a: Node = Node::new(); a.set_width(pts(10.3)); a.set_height(pts(10.7));
+    root.add_child(a);
+    root.calculate_layout(100.0, 100.0, Direction::LTR);
+    root.round_to_pixel(0.0);
+    assert approx(must(root.child_frame(0)).width, 10.3);
+    root.round_to_pixel(-2.0);
+    assert approx(must(root.child_frame(0)).height, 10.7);
+}
+
+// A grandchild's frame, for the nesting test. `child_frame` answers one level.
+fn o_child(ref root: Node, i: usize, j: usize) -> option::Option[Frame] {
+    match root.child_ptr(i) {
+        option::Option[*Node]::Some(p) => { return { (*p).child_frame(j) }; }
+        option::Option::None => { return option::Option[Frame]::None; }
+    }
+}
+
+fn on_half_grid(v: f64) -> bool {
+    let t: f64 = v * 2.0;
+    return approx(t - (t as i64 as f64), 0.0);
+}
+
 // ---- Phase 3: baseline align ----
 
 #[test]

@@ -16,6 +16,7 @@
 // the `Send`/`Sync` design that v0.0.4 will tackle.
 
 import "./future" as future;
+import "./time" as time;
 // v0.0.4 Phase 3 Slice 3A.1: pull in the reactor so block_on's
 // reactor-integrated drive loop has its stable-symbol callees
 // (`stdlib_reactor_*_v1`) available at link time. block_on itself
@@ -80,14 +81,20 @@ fn run[T: Send](take f: future::Future[T]) -> RunResult[T] {
         if { #coro_done(hdl) } != (0 as i32) {
             let prom: *T = { #coro_promise::[T](hdl) };
             let v: T = { #take::[T](prom) };
-            // A notified awaiter this loop resumed directly may still sit in
-            // the pending queue — purge before the frame is freed.
-            reactor::unregister_pending(hdl);
-            { #coro_destroy(hdl); }
+            // `cancel` CONSUMES the future, and consuming it is what frees the
+            // frame — `Future::drop` purges the pending queue and destroys.
+            // Explicit rather than left to scope exit so the order is on the
+            // page: the value is out of the promise before the frame goes.
+            f.cancel();
             return RunResult[T]::Done(v);
         }
         if thread::cancelled() {
-            { #coro_destroy(hdl); }
+            // DESTROY BEFORE TEARDOWN, and the order is load-bearing: the
+            // frame's cancel edges unregister awaiters and pending entries,
+            // and `teardown` has already freed those arrays and closed the
+            // kqueue. Consuming `f` here is what keeps the two in this order —
+            // leaving it to scope exit would run them the other way round.
+            f.cancel();
             reactor::teardown();
             return RunResult[T]::Cancelled;
         }
@@ -114,9 +121,47 @@ async fn _tick() {
 // cancelled while waiting, its frame is destroyed at the await — the
 // moved-in handle drops, which DETACHES the worker rather than cancelling
 // it (cancel the handle yourself first if the worker should stop too).
-async fn join_worker[O: Send](take h: thread::JoinHandle[O]) -> O {
+// THE DEADLINE, on both bridges below, and it answers with the vocabulary each
+// one already has rather than inventing one.
+//
+// `timeout` is SECONDS, and anything <= 0 means "no deadline" — today's
+// behaviour, and the default, so no existing call changes. It is a wall-clock
+// deadline (`time::now_millis`): stdlib has no monotonic clock, so a system
+// clock stepped BACKWARDS by NTP defers the expiry rather than firing it early.
+// Recorded rather than hidden; a monotonic read is the refinement, not a
+// different design.
+//
+// Before this, an async caller wanting "this, or give up after two seconds" had
+// to build it from a timer future and a race — and there is no `select`/`race`
+// either, so what it actually wrote was a poll loop with a sleep in it.
+fn _deadline_from(timeout: f64) -> i64 {
+    if timeout <= 0.0f64 { return 0 as i64; }
+    return time::now_millis() +% { (timeout * 1000.0f64) as i64 };
+}
+
+fn _expired(deadline: i64) -> bool {
+    if deadline == (0 as i64) { return false; }
+    return time::now_millis() > deadline;
+}
+
+// Await a worker thread's result, optionally giving up after `timeout` seconds.
+//
+// GIVING UP CANCELS AND STILL JOINS, which is why this can keep returning `O`
+// rather than growing an Option. A cancelled worker's `join` returns its value
+// under the phase-1 contract — "the value just says the work was cut short" —
+// so the expiry path requests cancellation and then waits for the thread to
+// notice, which is the only way to get the value out at all. A worker that
+// never checks `thread::cancelled()` and never returns will still be waited
+// for: this is a deadline on the ASKING, not a kill.
+async fn join_worker[O: Send](take h: thread::JoinHandle[O], timeout: f64 = 0.0f64) -> O {
+    let deadline: i64 = _deadline_from(timeout);
+    var asked: bool = false;
     loop {
         if h.is_finished() { return h.join(); }
+        if !asked && _expired(deadline) {
+            h.cancel();
+            asked = true;
+        }
         await _tick();
     }
 }
@@ -126,7 +171,10 @@ async fn join_worker[O: Send](take h: thread::JoinHandle[O]) -> O {
 // task's cancellation as `ReceiveResult::Cancelled` — the same vocabulary
 // the blocking `receive` uses for a cancelled thread. Buffered data still
 // wins over cancellation.
-async fn receive_or_cancel[T: Send](take ch: channel::Channel[T]) -> channel::ReceiveResult[T] {
+async fn receive_or_cancel[T: Send](take ch: channel::Channel[T],
+                                    timeout: f64 = 0.0f64)
+        -> channel::ReceiveResult[T] {
+    let deadline: i64 = _deadline_from(timeout);
     loop {
         match ch.try_receive() {
             channel::TryReceiveResult::Value(v) => {
@@ -137,6 +185,16 @@ async fn receive_or_cancel[T: Send](take ch: channel::Channel[T]) -> channel::Re
             }
             channel::TryReceiveResult::Empty => {
                 if thread::cancelled() {
+                    return channel::ReceiveResult[T]::Cancelled;
+                }
+                // AN EXPIRY IS `Cancelled`, the variant this already answers
+                // with, because from the caller's side the two are the same
+                // fact: no value, and none coming. A third variant would make
+                // every `match` here grow an arm to say the same thing.
+                //
+                // CHECKED AFTER `try_receive`, so buffered data still wins over
+                // an expiry exactly as it wins over a cancellation.
+                if _expired(deadline) {
                     return channel::ReceiveResult[T]::Cancelled;
                 }
             }
@@ -270,6 +328,47 @@ fn run_reports_cancellation_and_runs_the_frames_drops() {
     assert after == before +% (1 as u64);
 }
 
+// THE SAME SHAPE THROUGH A NAMED LOCAL, and the reason it is a separate
+// fixture: `_sleepy_with_probe` above awaits a TEMPORARY, and a temporary and a
+// named binding reach the drop machinery by different routes. At an await's
+// cancel edge the lowering destroys the awaited frame and then runs the drops
+// of the locals live at that suspend point — so a future held in a local is the
+// shape where those two could collide into a double destroy.
+//
+// Uncovered until v0.0.30 gave `Future` a destructor, which is when the
+// question started having a wrong answer.
+async fn _sleepy_via_a_named_local() -> i32 {
+    let p: _AsyncProbe = _AsyncProbe { _v: 5 as i64 };
+    let f: future::Future[i32] = _long_nap_value();
+    let _v: i32 = await f;
+    return p._v as i32;
+}
+
+async fn _long_nap_value() -> i32 {
+    await _long_nap();
+    return 3;
+}
+
+fn _run_sleepy_local(take x: i64) -> i64 {
+    return match run::[i32](_sleepy_via_a_named_local()) {
+        RunResult::Done(v) => { (v as i64) }
+        RunResult::Cancelled => { 78 as i64 }
+    };
+}
+
+#[test]
+fn cancelling_through_an_awaited_LOCAL_destroys_once_and_runs_its_drops() {
+    let before: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    let h: thread::JoinHandle[i64] = thread::spawn_with::[i64, i64](0 as i64, _run_sleepy_local);
+    usleep(20000 as u32);
+    h.cancel();
+    assert h.join() == (78 as i64);
+    // The probe live at the suspend point still dropped exactly once — a
+    // double destroy of the inner frame would abort long before this reads.
+    let after: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    assert after == before +% (1 as u64);
+}
+
 async fn _quick_value() -> i32 {
     return 9;
 }
@@ -322,6 +421,199 @@ async fn _bridge_join() -> i64 {
 fn join_worker_bridges_a_thread_result_into_async() {
     let v: i64 = block_on::[i64](_bridge_join());
     assert v == (42 as i64);
+}
+
+// ---- spawn_local ----
+//
+// THERE WAS NO TEST FOR THIS, and that is the whole reason it needs one. When
+// `Future` gained a destructor (v0.0.30, so a merely-dropped future stops
+// leaking its frame), `spawn_local`'s own `take f` local began dropping at the
+// end of the wrapper and destroying the frame the reactor was still driving.
+// The spawned task stopped running — silently, no crash — and every suite in
+// the tree stayed green, because nothing anywhere called `spawn_local`.
+//
+// The fix is that `#reactor_spawn_local` now moves the handle OUT of the value,
+// which is the ownership transfer the name always implied. This check is what
+// says so.
+
+static _SPAWNED_RAN: u64 = 0 as u64;
+
+async fn _spawned_background() -> i32 {
+    await yield_now();
+    atomic::store_u64(#addr_of(_SPAWNED_RAN), 1 as u64, atomic::Ordering::Release);
+    return 5;
+}
+
+async fn _spawns_then_yields() -> i32 {
+    spawn_local::[i32](_spawned_background());
+    // Three passes: the spawned task self-enqueued on the pending queue, and
+    // the drive loop's drain step is what resumes it.
+    await yield_now();
+    await yield_now();
+    await yield_now();
+    return 1;
+}
+
+#[test]
+fn a_spawn_local_task_actually_runs() {
+    atomic::store_u64(#addr_of(_SPAWNED_RAN), 0 as u64, atomic::Ordering::Release);
+    let v: i32 = block_on::[i32](_spawns_then_yields());
+    assert v == 1;
+    assert atomic::load_u64(#addr_of(_SPAWNED_RAN), atomic::Ordering::Acquire) == (1 as u64);
+}
+
+// TEARDOWN OWNS WHAT NOTHING AWAITS, which is §2 of the cancellation report.
+//
+// A `spawn_local` task is reached by no cascade — nothing awaits it — so before
+// v0.0.30 its frame was nobody's and `teardown` freed the reactor's arrays
+// around it. The reactor registers spawned frames now, and `destroy_spawned`
+// runs before those arrays go.
+//
+// The probe local is the part worth asserting: destroying a frame is only right
+// if it runs the drops of the locals live at its suspend point, and a teardown
+// that merely `free`d the frame would leak them while looking identical from
+// outside.
+async fn _spawned_that_parks_with_a_probe() -> i32 {
+    let p: _AsyncProbe = _AsyncProbe { _v: 9 as i64 };
+    await _long_nap();
+    return p._v as i32;
+}
+
+#[test]
+fn teardown_destroys_a_spawned_task_nothing_awaits_and_runs_its_drops() {
+    // A FRESH REACTOR, because an earlier check in this file may have left a
+    // parked frame in this thread's kqueue.
+    reactor::teardown();
+    let before: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    assert reactor::spawned_count() == (0 as i32);
+
+    // Runs eagerly to its first suspend at the call site, so by here it is
+    // parked on an hour-long timer and owned by the reactor.
+    spawn_local::[i32](_spawned_that_parks_with_a_probe());
+    assert reactor::spawned_count() == (1 as i32);
+
+    reactor::teardown();
+    let after: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    assert after == before +% (1 as u64);
+    assert reactor::spawned_count() == (0 as i32);
+}
+
+#[test]
+fn the_spawned_table_grows_and_teardown_destroys_every_one() {
+    // TWENTY, past the table's initial capacity of eight, so the realloc path
+    // is the one under test as well as the destroy loop. A teardown that freed
+    // the array without walking it would leak twenty frames and twenty probes
+    // while looking exactly like this from outside — which is what the drop
+    // count is here to tell apart.
+    reactor::teardown();
+    let before: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    var i: i32 = 0;
+    while i < (20 as i32) {
+        spawn_local::[i32](_spawned_that_parks_with_a_probe());
+        i = i +% (1 as i32);
+    }
+    assert reactor::spawned_count() == (20 as i32);
+    reactor::teardown();
+    let after: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
+    assert after == before +% (20 as u64);
+    assert reactor::spawned_count() == (0 as i32);
+}
+
+// ---- the deadlines ----
+//
+// A DEADLINE THAT DOES NOT EXPIRE MUST CHANGE NOTHING, which is half of what
+// these check: the useful assertion is not only "it gives up" but "it does not
+// give up early". A timeout implemented as an unconditional expiry would pass
+// a test that only ever watched the giving-up half.
+
+fn _slow_double(take x: i64) -> i64 {
+    // Long enough that a 20ms deadline is certain to expire first, and short
+    // enough that a suite waiting on it is not noticeably slower. The worker
+    // never checks `thread::cancelled()`, deliberately: the deadline is a
+    // deadline on the ASKING, and this pins that it still waits for the value.
+    usleep(120000 as u32);
+    return x *% (2 as i64);
+}
+
+async fn _join_with_deadline(ms: f64) -> i64 {
+    let h: thread::JoinHandle[i64] = thread::spawn_with::[i64, i64](21 as i64, _slow_double);
+    return await join_worker::[i64](h, timeout: ms);
+}
+
+#[test]
+fn a_join_deadline_that_does_not_expire_returns_the_value() {
+    let v: i64 = block_on::[i64](_join_with_deadline(5.0f64));
+    assert v == (42 as i64);
+}
+
+#[test]
+fn an_expired_join_deadline_still_hands_back_the_workers_value() {
+    // The phase-1 contract: a cancelled worker's `join` returns its value, the
+    // value just says the work was cut short. This one ignores the request, so
+    // the value is the full answer — which is exactly the point being pinned:
+    // the deadline asks, it does not kill, and it never loses the result.
+    let t0: i64 = time::now_millis();
+    let v: i64 = block_on::[i64](_join_with_deadline(0.02f64));
+    let elapsed: i64 = time::now_millis() - t0;
+    assert v == (42 as i64);
+    // And it really waited for the worker rather than returning at the
+    // deadline with something invented.
+    assert elapsed >= (100 as i64);
+}
+
+async fn _recv_with_deadline(take ch: channel::Channel[i32], secs: f64)
+        -> channel::ReceiveResult[i32] {
+    return await receive_or_cancel::[i32](ch, timeout: secs);
+}
+
+#[test]
+fn an_expired_receive_deadline_answers_cancelled() {
+    match channel::new::[i32]() {
+        option::Option[channel::Channel[i32]]::Some(ch) => {
+            let t0: i64 = time::now_millis();
+            match block_on::[channel::ReceiveResult[i32]](_recv_with_deadline(ch.clone(), 0.05f64)) {
+                channel::ReceiveResult[i32]::Cancelled => { }
+                channel::ReceiveResult[i32]::Value(_) => { assert false; }
+                channel::ReceiveResult[i32]::Closed => { assert false; }
+            };
+            let elapsed: i64 = time::now_millis() - t0;
+            // It waited for the deadline rather than expiring on the first
+            // empty poll — the failure a "timeout" that is really a try_receive
+            // would have.
+            assert elapsed >= (40 as i64);
+        }
+        option::Option[channel::Channel[i32]]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_value_arriving_before_the_deadline_wins() {
+    // Buffered data beats an expiry exactly as it beats a cancellation, which
+    // is why the deadline is checked AFTER `try_receive` and not before.
+    match channel::new::[i32]() {
+        option::Option[channel::Channel[i32]]::Some(ch) => {
+            let sender: thread::JoinHandle[i64] =
+                thread::spawn_with::[channel::Channel[i32], i64](ch.clone(), _send_late);
+            match block_on::[channel::ReceiveResult[i32]](_recv_with_deadline(ch.clone(), 5.0f64)) {
+                channel::ReceiveResult[i32]::Value(v) => { assert v == 33; }
+                channel::ReceiveResult[i32]::Cancelled => { assert false; }
+                channel::ReceiveResult[i32]::Closed => { assert false; }
+            };
+            let _z: i64 = sender.join();
+        }
+        option::Option[channel::Channel[i32]]::None => { assert false; }
+    }
+}
+
+#[test]
+fn no_deadline_is_the_default_and_zero_means_the_same() {
+    // The existing calls elsewhere in this file pass no timeout at all; this
+    // pins that the sentinel and the default agree, so a caller writing
+    // `timeout: 0.0` explicitly does not get an instant expiry.
+    assert _deadline_from(0.0f64) == (0 as i64);
+    assert _deadline_from(0.0f64 - 1.0f64) == (0 as i64);
+    assert !_expired(_deadline_from(0.0f64));
+    assert !_expired(_deadline_from(60.0f64));
 }
 
 fn _send_late(take ch: channel::Channel[i32]) -> i64 {

@@ -23,6 +23,7 @@ import "android_view/runtime" as rt;
 import "android_view/widgets" as w;
 import "./env" as e;
 import "./dex" as dex;
+import "facet/app_events" as ev;
 
 // The VM, read once from the UI thread's env. It is process-wide and outlives
 // every thread, which is exactly why it is the thing to keep rather than an env.
@@ -35,7 +36,13 @@ fn remember_vm(env: rt::Env) {
     // would type-check and then pass the wrong thing.
     var vm: *jni::JavaVM = 0 as *jni::JavaVM;
     let rc: i32 = { (*(*env.raw())).GetJavaVM(env.raw(), { #addr_of(vm) as *u8 }) };
-    if rc == (0 as i32) { VM = { #addr(vm) }; }
+    if rc == (0 as i32) {
+        VM = { #addr(vm) };
+        // Published for the packages that are not this backend. A services
+        // package needs an env and must not depend on a UI backend to get one —
+        // see the note on `app_events::set_host_runtime`.
+        ev::set_host_runtime({ vm as *u8 });
+    }
     return;
 }
 

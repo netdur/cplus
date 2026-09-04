@@ -1,0 +1,30 @@
+[package]
+name    = "sensors"
+version = "0.0.1"
+edition = "2026"
+
+# sensors — accelerometer, gyroscope, magnetometer, barometer.
+#
+# UNITS ARE NORMALISED, which is the package's main job besides the plumbing.
+# The two platforms disagree: Apple reports acceleration in G and pressure in
+# kilopascals, Android in m/s^2 and hectopascals. An app written against one
+# and run on the other would be wrong by 9.8x or 10x with no error anywhere, so
+# everything here is SI-ish and stated: m/s^2, rad/s, microtesla, hectopascal.
+
+[dependencies]
+stdlib = "*"
+
+[macos.dependencies]
+objc       = "*"
+coremotion = "*"
+
+[ios.dependencies]
+objc       = "*"
+coremotion = "*"
+
+[android.dependencies]
+jni          = "*"
+android_view = "*"
+facet        = "*"
+flex_layout  = "*"
+events       = "*"

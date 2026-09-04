@@ -1,0 +1,680 @@
+// permissions_backend_android — the Android half.
+//
+// Three platform calls and one genuine ambiguity, and the ambiguity is most of
+// the file:
+//
+//     Context.checkSelfPermission(String) -> 0 granted / -1 denied      API 23
+//     Activity.requestPermissions(String[], int)                        API 23
+//     Activity.shouldShowRequestPermissionRationale(String) -> boolean  API 23
+//
+// All three reached reflectively through `android_view`'s caching `Env` — no
+// Java of our own, no dex to merge. The same route `vendor/http`'s Android
+// transport takes to `HttpURLConnection`.
+//
+// ---------------------------------------------------------------------------
+// THE AMBIGUITY, which every cross-platform framework gets wrong at least once
+// ---------------------------------------------------------------------------
+//
+// `denied + shouldShowRationale == false` means EITHER "never asked" OR "don't
+// ask again". The platform cannot tell them apart and neither can this file, so
+// it remembers: a bit per permission, written the first time this process asks,
+// read to decide between `Unknown` and `Blocked`.
+//
+//     denied,  rationale true   -> Denied   (ask again; a dialog will appear)
+//     denied, rationale false, never asked -> Unknown  (ask; a dialog appears)
+//     denied, rationale false, asked before -> Blocked (nothing will appear)
+//
+// Without the bit, "Open Settings" gets offered to people who were never asked.
+//
+// ---------------------------------------------------------------------------
+// THE ACTIVITY COMES FROM `app_events::host()`, NEVER FROM A CACHE
+// ---------------------------------------------------------------------------
+//
+// `requestPermissions` and `shouldShowRequestPermissionRationale` are Activity
+// methods, and this package must not depend on `facet_android` to reach one.
+// facet publishes the Activity into a single slot at `set_activity`, which runs
+// again on every recreation — so this file reads it per call. A rotation while
+// a dialog is up replaces the jobject, and a cached one would be dead.
+//
+// The pending table is a C+ static and survives that recreation, which is what
+// makes the answer still _find its caller.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "stdlib/result" as result;
+import "stdlib/fs" as fs;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "facet/app_events" as ev;
+import "./permissions" as perm;
+
+const PERMISSION_GRANTED: i32 = 0 as i32;
+
+// ---- the name map ------------------------------------------------------------
+//
+// A portable name maps to a platform string; ANYTHING ELSE IS PASSED THROUGH.
+// That is the whole reason a permission is a `str` in this package — Android's
+// space is open by construction, ~180 platform permissions plus whatever an OEM
+// adds, and a table that had to list them would make an application wait for a
+// release to ask for something the platform has had for years.
+//
+// A name that is not portable and contains a dot is taken to be a platform
+// string already. A name that is neither is `Unsupported`.
+fn _platform_name(name: str) -> str {
+    if name == perm::CAMERA { return "android.permission.CAMERA"; }
+    if name == perm::MICROPHONE { return "android.permission.RECORD_AUDIO"; }
+    if name == perm::CONTACTS { return "android.permission.READ_CONTACTS"; }
+    if name == perm::CALENDAR { return "android.permission.READ_CALENDAR"; }
+    if name == perm::LOCATION_WHEN_IN_USE { return "android.permission.ACCESS_FINE_LOCATION"; }
+    if name == perm::LOCATION_ALWAYS { return "android.permission.ACCESS_BACKGROUND_LOCATION"; }
+    // NOTIFICATIONS is API 33+. Below it the permission does not exist and
+    // notifications are on unless a person turned them off in Settings, which
+    // is a different call entirely — see `notifications_state`.
+    if name == perm::NOTIFICATIONS { return "android.permission.POST_NOTIFICATIONS"; }
+    // PHOTOS split at API 33: READ_EXTERNAL_STORAGE became READ_MEDIA_IMAGES
+    // and friends. `photos.read` takes the modern one; an app that must run
+    // below 33 passes the old string itself, which is what the door is for.
+    if name == perm::PHOTOS_READ { return "android.permission.READ_MEDIA_IMAGES"; }
+    // There is no _add-only media permission: writing to the shared store goes
+    // through MediaStore, which needs no permission on modern Android at all.
+    if name == perm::PHOTOS_ADD { return ""; }
+    if name.count_of(".") > (0 as usize) { return name; }
+    return "";
+}
+
+// THE COMPANION, and it is only location that has one.
+//
+// `ACCESS_FINE_LOCATION` MUST be requested together with
+// `ACCESS_COARSE_LOCATION` from API 31. Asking for fine alone gives a dialog
+// with no "Precise" option — the person can only grant approximate, the fine
+// permission comes back denied, and an app that asked for one thing is told no
+// while the person believes they said yes. Requesting the pair is what puts the
+// Precise/Approximate toggle on the dialog.
+//
+// Empty for every other domain, which is why this is a function and not a field
+// on some larger structure.
+fn _companion(name: str) -> str {
+    if name == perm::LOCATION_WHEN_IN_USE { return "android.permission.ACCESS_COARSE_LOCATION"; }
+    return "";
+}
+
+// ---- the platform calls ------------------------------------------------------
+
+fn _activity() -> jni::jobject { return ev::host(); }
+
+static SDK_CACHE: i32 = 0 as i32;
+
+fn _sdk(env: rt::Env) -> i32 {
+    if SDK_CACHE != (0 as i32) { return SDK_CACHE; }
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/os/Build$VERSION\0"));
+    if cls == (0 as jni::jclass) { return 0 as i32; }
+    let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("SDK_INT\0"), #str_ptr("I\0"));
+    if fid == (0 as jni::jfieldID) { return 0 as i32; }
+    SDK_CACHE = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+    return SDK_CACHE;
+}
+
+fn _check_self(env: rt::Env, act: jni::jobject, platform: str) -> i32 {
+    let s: jni::jstring = env.new_string_utf(#str_ptr(_nul(platform)));
+    if s == (0 as jni::jstring) { return 0 as i32 -% (1 as i32); }
+    let r: i32 = env.call_int_1(act, #str_ptr("android/content/Context\0"),
+                                #str_ptr("checkSelfPermission\0"),
+                                #str_ptr("(Ljava/lang/String;)I\0"),
+                                rt::arg_object(s));
+    env.delete_local_ref(s);
+    return r;
+}
+
+fn _should_show_rationale(env: rt::Env, act: jni::jobject, platform: str) -> bool {
+    let s: jni::jstring = env.new_string_utf(#str_ptr(_nul(platform)));
+    if s == (0 as jni::jstring) { return false; }
+    let r: bool = env.call_bool_1(act, #str_ptr("android/app/Activity\0"),
+                                  #str_ptr("shouldShowRequestPermissionRationale\0"),
+                                  #str_ptr("(Ljava/lang/String;)Z\0"),
+                                  rt::arg_object(s));
+    env.delete_local_ref(s);
+    return r;
+}
+
+// A NUL-terminated view of `s`, interned so the pointer is good for the process
+// and nothing has to be built per call. Same helper the Apple half uses, same
+// reason: JNI takes C strings and a `str` is a view with a length.
+fn _nul(s: str) -> str {
+    if s == "" { return ""; }
+    let t: text::Text = text::from_str(s).appending("\0");
+    return text::intern({ t.view() });
+}
+
+// ---- the "have asked" bit ----------------------------------------------------
+//
+// A FILE, not SharedPreferences. `Context.getFilesDir()` is one JNI call and
+// `stdlib/fs` does the rest; SharedPreferences is five calls and a second
+// storage concept for one boolean per permission.
+//
+// The file is a flat list of platform permission strings, one per line, each
+// written the first time this process asks for it. Append-only and never
+// pruned: it is bounded by the number of permissions an app declares, and a
+// stale entry for a permission the app stopped using costs nothing.
+
+static ASKED_PATH: str = "";
+
+fn _asked_path(env: rt::Env) -> str {
+    if ASKED_PATH != "" { return ASKED_PATH; }
+    let act: jni::jobject = _activity();
+    if act == (0 as jni::jobject) { return ""; }
+    let dir: jni::jobject = env.call_object_0(act, #str_ptr("android/content/Context\0"),
+                                              #str_ptr("getFilesDir\0"),
+                                              #str_ptr("()Ljava/io/File;\0"));
+    if dir == (0 as jni::jobject) { return ""; }
+    let path: jni::jobject = env.call_object_0(dir, #str_ptr("java/io/File\0"),
+                                               #str_ptr("getAbsolutePath\0"),
+                                               #str_ptr("()Ljava/lang/String;\0"));
+    env.delete_local_ref(dir);
+    if path == (0 as jni::jobject) { return ""; }
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let ptr: *u8 = { #addr_of(buf) as *u8 };
+    let ok: bool = env.string_utf_into(path, ptr, 1024 as usize);
+    env.delete_local_ref(path);
+    if !ok { return ""; }
+    var t: text::Text = text::from_str({ #str_from_raw_parts(ptr, _c_len(ptr, 1024 as usize)) });
+    let _s: status::Status = t.append("/cplus_permissions_asked");
+    ASKED_PATH = text::intern({ t.view() });
+    return ASKED_PATH;
+}
+
+fn _c_len(p: *u8, cap: usize) -> usize {
+    var i: usize = 0 as usize;
+    while i < cap {
+        if { *(p + i) } == (0 as u8) { return i; }
+        i = i +% (1 as usize);
+    }
+    return cap;
+}
+
+fn _have_asked(env: rt::Env, platform: str) -> bool {
+    let path: str = _asked_path(env);
+    if path == "" { return false; }
+    match fs::read_to_string(path) {
+        result::Result[text::Text, result::IoError]::Ok(t) => {
+            // Line-anchored so `READ_MEDIA_IMAGES` does not match a longer
+            // permission that starts with it: the needle carries a newline on
+            // both sides and every entry is written with a trailing one.
+            var needle: text::Text = text::from_str("\n");
+            let _a: status::Status = needle.append(platform);
+            let _b: status::Status = needle.append("\n");
+            return { t.view() }.count_of({ needle.view() }) > (0 as usize);
+        }
+        result::Result[text::Text, result::IoError]::Err(e) => { return false; }
+    }
+}
+
+// APPEND, not read-modify-write. The file is a log and `fs::append_string`
+// creates it if it is not there, so the first mark and the tenth are the same
+// call — and a process killed between the two leaves a shorter file rather than
+// a truncated one.
+fn _mark_asked(env: rt::Env, platform: str) {
+    if _have_asked(env, platform) { return; }
+    let path: str = _asked_path(env);
+    if path == "" { return; }
+    var line: text::Text = text::from_str("\n");
+    let _p: status::Status = line.append(platform);
+    let _e: status::Status = line.append("\n");
+    let _w: result::Result[usize, result::IoError] = fs::append_string(path, { line.view() });
+    return;
+}
+
+// ---- the state read ----------------------------------------------------------
+
+export extern fn cplus_permissions_state_v1(name_ptr: *u8, name_len: usize) -> u32 {
+    let name: str = { #str_from_raw_parts(name_ptr, name_len) };
+    if name == "" { return perm::State::Unsupported.to_code(); }
+    if !_ready() { return perm::State::Unsupported.to_code(); }
+    let env: rt::Env = _current_env();
+    if env.raw().is_null() { return perm::State::Unsupported.to_code(); }
+    let act: jni::jobject = _activity();
+
+    let platform: str = _platform_name(name);
+    if platform == "" {
+        // PHOTOS_ADD lands here and is `Granted`, not `Unsupported`: writing to
+        // the shared store through MediaStore needs no permission on the levels
+        // this backend targets, so an app gated on this should proceed.
+        if name == perm::PHOTOS_ADD { return perm::State::Granted.to_code(); }
+        return perm::State::Unsupported.to_code();
+    }
+
+    // NOTIFICATIONS BELOW API 33 are a different question with a different
+    // answer: the permission does not exist, and whether notifications appear
+    // is `NotificationManager.areNotificationsEnabled()` — a setting, not a
+    // grant. This is the one domain that needs a version fork.
+    if name == perm::NOTIFICATIONS && _sdk(env) < (33 as i32) {
+        return _notifications_enabled(env, act);
+    }
+
+    if _check_self(env, act, platform) == PERMISSION_GRANTED {
+        return perm::State::Granted.to_code();
+    }
+
+    // BACKGROUND LOCATION WITHOUT FOREGROUND IS `Denied`, SAID DELIBERATELY.
+    //
+    // It already read that way by accident — `shouldShowRationale` answers true
+    // for it — and an accident that happens to be right is one refactor away
+    // from being wrong. More to the point, `request` refuses this case outright
+    // (see the gate there), so a state that said `Unknown` would make
+    // `can_prompt` promise a dialog that will never appear.
+    //
+    // `Denied` is the honest word: the app does not have it, and there IS a way
+    // to get it — grant foreground first, then ask again.
+    if name == perm::LOCATION_ALWAYS {
+        let fg: u32 = _fg_location_state(env, act);
+        if fg != perm::State::Granted.to_code() && fg != perm::State::Limited.to_code() {
+            return perm::State::Denied.to_code();
+        }
+    }
+
+    // COARSE-ONLY LOCATION IS `Limited`, not `Denied`, and this is the clearest
+    // case in the package for that arm existing. From API 31 a person can grant
+    // approximate location and refuse precise: fine reads denied, coarse reads
+    // granted, and the app HAS location — just less of it. Reporting `Denied`
+    // there would send an app to a settings button while it could already show
+    // a map.
+    if name == perm::LOCATION_WHEN_IN_USE {
+        if _check_self(env, act, "android.permission.ACCESS_COARSE_LOCATION")
+            == PERMISSION_GRANTED {
+            return perm::State::Limited.to_code();
+        }
+    }
+    if _should_show_rationale(env, act, platform) {
+        return perm::State::Denied.to_code();
+    }
+    // Denied with no rationale: never asked, or asked and refused permanently.
+    // Only our own record can tell.
+    if _have_asked(env, platform) { return perm::State::Blocked.to_code(); }
+    return perm::State::Unknown.to_code();
+}
+
+// The foreground location state, read directly. Split out because the
+// background gate needs it before it is willing to ask for anything, and
+// routing that through the seam would mean building a `str` view of a constant
+// to answer a question this file already knows.
+fn _fg_location_state(env: rt::Env, act: jni::jobject) -> u32 {
+    if _check_self(env, act, "android.permission.ACCESS_FINE_LOCATION") == PERMISSION_GRANTED {
+        return perm::State::Granted.to_code();
+    }
+    if _check_self(env, act, "android.permission.ACCESS_COARSE_LOCATION") == PERMISSION_GRANTED {
+        return perm::State::Limited.to_code();
+    }
+    return perm::State::Denied.to_code();
+}
+
+fn _notifications_enabled(env: rt::Env, act: jni::jobject) -> u32 {
+    let nm: jni::jobject = env.call_object_1(act, #str_ptr("android/content/Context\0"),
+        #str_ptr("getSystemService\0"),
+        #str_ptr("(Ljava/lang/String;)Ljava/lang/Object;\0"),
+        rt::arg_object(env.new_string_utf(#str_ptr("notification\0"))));
+    if nm == (0 as jni::jobject) { return perm::State::Unknown.to_code(); }
+    let on: bool = env.call_bool_1(nm, #str_ptr("android/app/NotificationManager\0"),
+        #str_ptr("areNotificationsEnabled\0"), #str_ptr("()Z\0"), rt::arg_int(0 as i32));
+    env.delete_local_ref(nm);
+    if on { return perm::State::Granted.to_code(); }
+    // Turned off in Settings, and no prompt can turn them back on below 33.
+    return perm::State::Blocked.to_code();
+}
+
+// This thread's env, from the process's JavaVM.
+//
+// THE VM, NEVER A CACHED ENV. A JNIEnv belongs to one thread; the VM is
+// process-wide and is the only handle from which a thread the JVM never called
+// into can get an env of its own. `facet_android` publishes it through
+// `app_events::set_host_runtime` when it reads it off the UI thread's env —
+// this package cannot ask for it directly, because the alternative was defining
+// `JNI_OnLoad`, and a shared library has exactly one of those and `vendor/http`
+// already took it.
+//
+// ATTACHED AS A DAEMON and never detached, for the same reasons `http` and
+// `facet_android/mainthread` both write down: a non-daemon attachment keeps the
+// VM alive, and attaching is not free so a thread that asked once usually asks
+// again.
+fn _current_env() -> rt::Env {
+    let raw: *u8 = ev::host_runtime();
+    if raw.is_null() { return rt::from_native(0 as *jni::JNIEnv); }
+    let vm: *jni::JavaVM = { raw as *jni::JavaVM };
+    var envp: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    // JNI_VERSION_1_6 = 0x00010006.
+    let got: i32 = { (*(*vm)).GetEnv(vm, { #addr_of(envp) as *u8 }, 65542 as i32) };
+    if got == (0 as i32) { return rt::from_native(envp); }
+    let rc: i32 = { (*(*vm)).AttachCurrentThreadAsDaemon(vm, { #addr_of(envp) as *u8 },
+                                                         0 as *u8) };
+    if rc != (0 as i32) { return rt::from_native(0 as *jni::JNIEnv); }
+    return rt::from_native(envp);
+}
+
+// Everything below needs BOTH the Activity and an env, and a build with neither
+// is a build with no facet backend installed — a headless tool linking this
+// package, say. `Unsupported` is the honest answer there.
+fn _ready() -> bool {
+    if !ev::has_host() { return false; }
+    if !ev::has_host_runtime() { return false; }
+    return true;
+}
+
+// ---- the request -------------------------------------------------------------
+
+struct _Pending {
+    request_code: i32,
+    platform: str,
+    name: str,
+    cb: fn(str, perm::State, *u8),
+    opaque ctx: *u8,
+    live: bool,
+}
+
+static PENDING: vec::Vec[_Pending] = #zero::[vec::Vec[_Pending]]();
+static NEXT_CODE: i32 = 9000 as i32;
+static SUBSCRIBED: bool = false;
+
+// One subscription for the process, taken the first time anything is asked for.
+// `app_events` refuses a duplicate registration, so this is belt and braces —
+// but it also keeps a process that never asks for a permission from carrying a
+// subscriber at all.
+fn _subscribe() {
+    if SUBSCRIBED { return; }
+    SUBSCRIBED = true;
+    let _s: status::Status = ev::on_app_event(_on_permission_event, 0 as *u8);
+    return;
+}
+
+fn _on_permission_event(e: *ev::AppEvent, ctx: *u8) {
+    if { (*e).kind } != ev::E_PERMISSION_RESULT { return; }
+    let code: i32 = { (*e).code } as i32;
+    let platform: str = { (*e).text };
+
+    let reg: *vec::Vec[_Pending] = { #addr_of(PENDING) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*_Pending]::Some(p) => {
+                if { (*p).live } && { (*p).request_code } == code
+                    && { (*p).platform } == platform {
+                    let f: fn(str, perm::State, *u8) = { (*p).cb };
+                    let nm: str = { (*p).name };
+                    let c: *u8 = { (*p).ctx };
+                    // Retired BEFORE the call, so a callback that asks again
+                    // does not _find its own row live.
+                    { (*p).live = false };
+                    // THE RECORD GOES DOWN WHEN THE ANSWER ARRIVES, not when
+                    // the dialog goes up — and the first draft had it the other
+                    // way, which `playground/permprobe` caught on the first
+                    // real prompt it showed.
+                    //
+                    // Marking before the dialog makes the state read BEHIND
+                    // that dialog `Blocked`: `checkSelfPermission` says denied,
+                    // `shouldShowRationale` is still false because nobody has
+                    // refused yet, and the bit is already set — which is
+                    // exactly the three-way that means "don't ask again". So an
+                    // app that redraws while its own prompt is up tells the
+                    // person their answer is final before they have given one.
+                    //
+                    // The bit means "we asked AND got an answer". A process
+                    // killed behind the dialog got no answer, so losing the bit
+                    // is correct: the next launch reads `Unknown` and asks,
+                    // which is what never having been answered deserves.
+                    _mark_asked(_current_env(), platform);
+                    // RE-READ RATHER THAN TRUST THE GRANT BIT. The event says
+                    // yes or no for ONE permission string, and that is not
+                    // always the answer to the question that was asked: a
+                    // location request sends fine and coarse together, and a
+                    // person who grants approximate makes the fine event say
+                    // denied while the app plainly has location. Reading the
+                    // state back after the record is written gives `Limited`
+                    // there, and the identical answer everywhere else.
+                    let s: perm::State = perm::State::from_code(
+                        { cplus_permissions_state_v1(#str_ptr(nm), #str_len(nm)) });
+                    if f != (0 as fn(str, perm::State, *u8)) { f(nm, s, c); }
+                    return;
+                }
+            }
+            option::Option[*_Pending]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+export extern fn cplus_permissions_request_v1(name_ptr: *u8, name_len: usize,
+                                              cb_raw: *u8, ctx: *u8) -> i32 {
+    let name: str = { #str_from_raw_parts(name_ptr, name_len) };
+    if cb_raw.is_null() { return 1 as i32; }
+    let cb: fn(str, perm::State, *u8) = { cb_raw as fn(str, perm::State, *u8) };
+    let interned: str = text::intern(name);
+
+    let now: u32 = { cplus_permissions_state_v1(name_ptr, name_len) };
+    // Everything except `Unknown` and `Denied` is answered without a dialog —
+    // and on Android, unlike Apple, a `Denied` that can still prompt is exactly
+    // what `shouldShowRationale` told us, so both go to the platform.
+    if now != perm::State::Unknown.to_code() && now != perm::State::Denied.to_code() {
+        cb(interned, perm::State::from_code(now), ctx);
+        return 0 as i32;
+    }
+
+    let env: rt::Env = _current_env();
+    let act: jni::jobject = _activity();
+    if act == (0 as jni::jobject) || env.raw().is_null() {
+        cb(interned, perm::State::Unsupported, ctx);
+        return 0 as i32;
+    }
+    let platform: str = _platform_name(name);
+    if platform == "" {
+        cb(interned, perm::State::from_code(now), ctx);
+        return 0 as i32;
+    }
+
+    // BACKGROUND LOCATION IS A SECOND REQUEST, and only after the first was
+    // granted. From API 30 the system denies a background request outright when
+    // foreground is not held — no dialog, no explanation — and the damage is
+    // not the refusal but the RECORD: the answer would set this package's
+    // "have asked" bit, and the next read would be `Blocked` forever for a
+    // permission nobody was ever offered.
+    //
+    // So it is refused here, before anything is asked and before anything is
+    // written down. `Denied` rather than `Unsupported`: the domain exists and
+    // the app can still get there, just not from this state.
+    if name == perm::LOCATION_ALWAYS {
+        let fg: u32 = _fg_location_state(env, act);
+        if fg != perm::State::Granted.to_code() && fg != perm::State::Limited.to_code() {
+            cb(interned, perm::State::Denied, ctx);
+            return 0 as i32;
+        }
+    }
+
+    _subscribe();
+    let code: i32 = NEXT_CODE;
+    NEXT_CODE = NEXT_CODE + (1 as i32);
+    let reg: *vec::Vec[_Pending] = { #addr_of(PENDING) };
+    let _a: status::Status = (*reg).append(_Pending {
+        request_code: code, platform: text::intern(platform), name: interned,
+        cb: cb, ctx: ctx, live: true,
+    });
+
+    // ONE ENTRY, OR TWO WHEN THE DOMAIN HAS A COMPANION — see `_companion`.
+    let mate: str = _companion(name);
+    var n: i32 = 1 as i32;
+    if mate != "" { n = 2 as i32; }
+    let arr: jni::jobjectArray = env.new_object_array(n,
+        #str_ptr("java/lang/String\0"), 0 as jni::jobject);
+    if arr == (0 as jni::jobjectArray) {
+        cb(interned, perm::State::Unsupported, ctx);
+        return 0 as i32;
+    }
+    let s: jni::jstring = env.new_string_utf(#str_ptr(_nul(platform)));
+    env.set_object_array_element(arr, 0 as i32, s);
+    if mate != "" {
+        let s2: jni::jstring = env.new_string_utf(#str_ptr(_nul(mate)));
+        env.set_object_array_element(arr, 1 as i32, s2);
+        env.delete_local_ref(s2);
+    }
+    env.call_void_2(act, #str_ptr("android/app/Activity\0"),
+                    #str_ptr("requestPermissions\0"),
+                    #str_ptr("([Ljava/lang/String;I)V\0"),
+                    rt::arg_object(arr), rt::arg_int(code));
+    env.delete_local_ref(s);
+    env.delete_local_ref(arr);
+    return 0 as i32;
+}
+
+// The batch, Android-side: ONE array and ONE dialog, which is the whole reason
+// this verb exists. Asking three times in a row shows three dialogs, and a
+// person who sees a second one reads it as the app not having listened.
+//
+// Names that need no prompt are answered immediately and left out of the array;
+// if none is left the platform is never asked at all. `_companion` still
+// applies per name, so a batch containing location carries coarse as well.
+export extern fn cplus_permissions_request_many_v1(names: *str, count: usize,
+                                                   cb_raw: *u8, ctx: *u8) -> i32 {
+    if cb_raw.is_null() { return 1 as i32; }
+    if count == (0 as usize) { return 1 as i32; }
+    let cb: fn(str, perm::State, *u8) = { cb_raw as fn(str, perm::State, *u8) };
+    if !_ready() { 
+        var k: usize = 0 as usize;
+        while k < count {
+            cb({ *(names + k) }, perm::State::Unsupported, ctx);
+            k = k +% (1 as usize);
+        }
+        return 0 as i32;
+    }
+    let env: rt::Env = _current_env();
+    let act: jni::jobject = _activity();
+    if act == (0 as jni::jobject) || env.raw().is_null() {
+        var k2: usize = 0 as usize;
+        while k2 < count {
+            cb({ *(names + k2) }, perm::State::Unsupported, ctx);
+            k2 = k2 +% (1 as usize);
+        }
+        return 0 as i32;
+    }
+
+    _subscribe();
+    let code: i32 = NEXT_CODE;
+    NEXT_CODE = NEXT_CODE + (1 as i32);
+
+    // TWO PASSES, because the array has to be sized before it is filled and a
+    // name that needs no dialog must not take a slot in it.
+    var wanted: i32 = 0 as i32;
+    var i: usize = 0 as usize;
+    while i < count {
+        let n: str = { *(names + i) };
+        if _asks(env, act, n) {
+            wanted = wanted + (1 as i32);
+            if _companion(n) != "" { wanted = wanted + (1 as i32); }
+        }
+        i = i +% (1 as usize);
+    }
+    if wanted == (0 as i32) {
+        var j: usize = 0 as usize;
+        while j < count {
+            let n2: str = { *(names + j) };
+            cb(text::intern(n2), perm::State::from_code(
+                { cplus_permissions_state_v1(#str_ptr(n2), #str_len(n2)) }), ctx);
+            j = j +% (1 as usize);
+        }
+        return 0 as i32;
+    }
+
+    let arr: jni::jobjectArray = env.new_object_array(wanted,
+        #str_ptr("java/lang/String\0"), 0 as jni::jobject);
+    if arr == (0 as jni::jobjectArray) { return 1 as i32; }
+    let reg: *vec::Vec[_Pending] = { #addr_of(PENDING) };
+    var slot: i32 = 0 as i32;
+    var m: usize = 0 as usize;
+    while m < count {
+        let n3: str = { *(names + m) };
+        if _asks(env, act, n3) {
+            let platform: str = _platform_name(n3);
+            let _a: status::Status = (*reg).append(_Pending {
+                request_code: code, platform: text::intern(platform),
+                name: text::intern(n3), cb: cb, ctx: ctx, live: true,
+            });
+            let js: jni::jstring = env.new_string_utf(#str_ptr(_nul(platform)));
+            env.set_object_array_element(arr, slot, js);
+            env.delete_local_ref(js);
+            slot = slot + (1 as i32);
+            let mate: str = _companion(n3);
+            if mate != "" {
+                let js2: jni::jstring = env.new_string_utf(#str_ptr(_nul(mate)));
+                env.set_object_array_element(arr, slot, js2);
+                env.delete_local_ref(js2);
+                slot = slot + (1 as i32);
+            }
+        } else {
+            cb(text::intern(n3), perm::State::from_code(
+                { cplus_permissions_state_v1(#str_ptr(n3), #str_len(n3)) }), ctx);
+        }
+        m = m +% (1 as usize);
+    }
+
+    env.call_void_2(act, #str_ptr("android/app/Activity\0"),
+                    #str_ptr("requestPermissions\0"),
+                    #str_ptr("([Ljava/lang/String;I)V\0"),
+                    rt::arg_object(arr), rt::arg_int(code));
+    env.delete_local_ref(arr);
+    return 0 as i32;
+}
+
+// Would this name actually raise a dialog? The same gate `request` applies,
+// split out so the batch can size its array without asking twice.
+fn _asks(env: rt::Env, act: jni::jobject, name: str) -> bool {
+    if _platform_name(name) == "" { return false; }
+    if name == perm::LOCATION_ALWAYS {
+        let fg: u32 = _fg_location_state(env, act);
+        if fg != perm::State::Granted.to_code() && fg != perm::State::Limited.to_code() {
+            return false;
+        }
+    }
+    let now: u32 = { cplus_permissions_state_v1(#str_ptr(name), #str_len(name)) };
+    return now == perm::State::Unknown.to_code() || now == perm::State::Denied.to_code();
+}
+
+// ---- settings ----------------------------------------------------------------
+
+export extern fn cplus_permissions_open_settings_v1(name_ptr: *u8, name_len: usize) -> i32 {
+    if !_ready() { return 1 as i32; }
+    let env: rt::Env = _current_env();
+    let act: jni::jobject = _activity();
+    if act == (0 as jni::jobject) || env.raw().is_null() { return 1 as i32; }
+
+    // ACTION_APPLICATION_DETAILS_SETTINGS with a `package:` uri. One page for
+    // the whole app — Android has no per-permission deep link, which is why
+    // `open_settings`'s name argument is ignored here and load-bearing on macOS.
+    let pkg: jni::jobject = env.call_object_0(act, #str_ptr("android/content/Context\0"),
+        #str_ptr("getPackageName\0"), #str_ptr("()Ljava/lang/String;\0"));
+    if pkg == (0 as jni::jobject) { return 1 as i32; }
+
+    let uri_cls: jni::jclass = env.class_cached(#str_ptr("android/net/Uri\0"));
+    if uri_cls == (0 as jni::jclass) { return 1 as i32; }
+    let mid: jni::jmethodID = env.method_id_static(uri_cls, #str_ptr("fromParts\0"),
+        #str_ptr("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;\0"));
+    if mid == (0 as jni::jmethodID) { return 1 as i32; }
+    var uargs: [jni::JValue; 3] = [
+        rt::arg_object(env.new_string_utf(#str_ptr("package\0"))),
+        rt::arg_object(pkg),
+        rt::arg_object(0 as jni::jobject),
+    ];
+    let uri: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), uri_cls, mid,
+                                                                     #addr_of(uargs[0])) };
+    if uri == (0 as jni::jobject) { return 1 as i32; }
+
+    let intent: jni::jobject = env.new_object_1(#str_ptr("android/content/Intent\0"),
+        #str_ptr("(Ljava/lang/String;)V\0"),
+        rt::arg_object(env.new_string_utf(
+            #str_ptr("android.settings.APPLICATION_DETAILS_SETTINGS\0"))));
+    if intent == (0 as jni::jobject) { return 1 as i32; }
+    let _d: jni::jobject = env.call_object_1(intent, #str_ptr("android/content/Intent\0"),
+        #str_ptr("setData\0"), #str_ptr("(Landroid/net/Uri;)Landroid/content/Intent;\0"),
+        rt::arg_object(uri));
+    env.call_void_1(act, #str_ptr("android/content/Context\0"),
+        #str_ptr("startActivity\0"), #str_ptr("(Landroid/content/Intent;)V\0"),
+        rt::arg_object(intent));
+    return 0 as i32;
+}

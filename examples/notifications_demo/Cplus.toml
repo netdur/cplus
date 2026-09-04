@@ -1,0 +1,39 @@
+[package]
+name    = "notifications_demo"
+version = "0.0.1"
+edition = "2026"
+
+# notifications_demo — vendor/notifications on macOS, in a real .app bundle.
+#
+# WHY IT IS A BUNDLE, and it is the whole reason this example exists rather than
+# a paragraph in the docs. `UNUserNotificationCenter` refuses a process with no
+# bundle identifier — `+currentNotificationCenter` RAISES rather than returning
+# nil, which killed this package's own test runner with SIGABRT before the guard
+# went in — so a bare `cpc build` binary cannot post a notification at all. The
+# package answers `Unsupported` there, honestly and invisibly.
+#
+# This is the smallest thing that can actually deliver one.
+#
+#   cd examples/notifications_demo && ./bundle.sh && open out/Notifications.app
+
+[macos]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib        = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+permissions   = "*"
+notifications = "*"
+applinks      = "*"
+
+# The resolver validates every import against ONE flat set taken from THIS
+# manifest, so the backend's closure and permissions' own `objc` are named here.
+[macos.dependencies]
+facet_appkit = "*"
+objc         = "*"
+appkit       = "*"
+quartzcore   = "*"
+webkit       = "*"

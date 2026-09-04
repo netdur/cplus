@@ -1,0 +1,512 @@
+// notifications_demo — one permission, and a button per kind of notification
+// this package can post.
+//
+// The permission row is first because nothing below it works until it says
+// Granted: both platforms accept a notification from an unauthorised app and
+// silently never show it, and this package answers `NotPermitted` instead.
+//
+// WHAT EACH ROW IS FOR
+//
+//   content    the shapes a notification can take — with a body, without one,
+//              with more text than fits a banner
+//   timing     `Now`, an interval, and an absolute instant. The five-second one
+//              is the interesting one: LEAVE THE APP IN FRONT and the banner
+//              still appears, because this package installs a presentation
+//              delegate. Without it nothing would show while the app is
+//              foregrounded and the code would be perfectly correct — the most
+//              common "notifications don't work" report there is.
+//   behaviour  three distinct ids stack; one id posted twice REPLACES; a
+//              payload comes back when you click the banner
+//   manage     cancel one, cancel everything pending, clear what is showing
+//
+// The two readouts at the bottom are the last outcome and the last tapped
+// payload. Click a delivered notification and the payload appears — including
+// one that was delivered before this demo was running.
+
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/time" as time;
+import "stdlib/vec" as vec;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/theme" as theme;
+import "facet/vocabulary" as vocab;
+import "facet_runtime/runtime" as runtime;
+import "permissions/permissions" as permissions;
+import "notifications/notifications" as notifications;
+import "applinks/applinks" as applinks;
+import "stdlib/url" as url;
+
+const PERM_KEY: str = "perm";
+const STATUS_KEY: str = "status";
+const PENDING_KEY: str = "pending";
+const TAP_KEY: str = "tap";
+const LINK_KEY: str = "link";
+
+// ---- the readouts -------------------------------------------------------------
+
+fn set_label(key: str, v: str) {
+    match label::find(key) {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(v); }
+        option::Option::None => { }
+    }
+    return;
+}
+
+fn word(o: notifications::Outcome) -> str {
+    return match o {
+        notifications::Outcome::Ok => "Ok",
+        notifications::Outcome::InvalidInput => "InvalidInput",
+        notifications::Outcome::NotPermitted => "NotPermitted — press Ask",
+        notifications::Outcome::Unsupported => "Unsupported — not a bundle?",
+        notifications::Outcome::Failed => "Failed",
+    };
+}
+
+fn perm_word(s: permissions::State) -> str {
+    return match s {
+        permissions::State::Unknown => "Unknown",
+        permissions::State::Granted => "Granted",
+        permissions::State::Limited => "Limited",
+        permissions::State::Denied => "Denied",
+        permissions::State::Blocked => "Blocked",
+        permissions::State::Unsupported => "Unsupported",
+    };
+}
+
+fn refresh() {
+    set_label(PERM_KEY, perm_word(permissions::state(of: permissions::NOTIFICATIONS)));
+    var ids: vec::Vec[str] = vec::new::[str]();
+    let _p: notifications::Outcome = notifications::pending(ids);
+    let n: usize = ids.count();
+    set_label(PENDING_KEY, text::from_str("pending: ${n}").view());
+    return;
+}
+
+fn report(o: notifications::Outcome) {
+    set_label(STATUS_KEY, word(o));
+    refresh();
+    return;
+}
+
+// ---- the permission -----------------------------------------------------------
+
+fn answered(name: str, s: permissions::State, ctx: *u8) { refresh(); return; }
+
+fn ask(sender: *u8, ctx: *u8) {
+    let _s: status::Status =
+        permissions::request(permissions::NOTIFICATIONS, on_answer: answered);
+    refresh();
+    return;
+}
+
+// ---- taps ---------------------------------------------------------------------
+
+// Registered from `on_attach`, deliberately LATE: a notification tapped while
+// this app was not running fired its payload before anything here existed, and
+// `app_events` latches it so registering afterwards still works.
+fn tapped(payload: str, action: str, ctx: *u8) {
+    if action == "" {
+        set_label(TAP_KEY, text::from_str("tapped body: ${payload}").view());
+        return;
+    }
+    set_label(TAP_KEY, text::from_str("tapped [${action}]: ${payload}").view());
+    return;
+}
+
+// A DEEP LINK LANDED, and it lands beside the notification tap on purpose.
+//
+// The two are the same shape from an app's side — something outside the
+// process decided this app should be looking at a particular thing — and they
+// reach the app through the same latched channel, so a link that launched a
+// dead app arrives exactly like one clicked while it was running.
+//
+// Try it with the app running and with it closed:
+//
+//     open "cplusdemo://record/42?from=terminal"
+//
+// The URL arrives WHOLE. `stdlib/url` takes it apart, and `segment` is what
+// makes the route readable: `record` is the URL's HOST, not the first path
+// component, and an app that matched on `path` would never find it.
+fn linked(u: str, ctx: *u8) {
+    let route: str = match url::parse(u) {
+        option::Option[url::Url]::Some(parsed) => parsed.segment(0 as usize),
+        option::Option::None => "?",
+    };
+    set_label(LINK_KEY, text::from_str("link [${route}]: ${u}").view());
+    return;
+}
+
+// ---- content ------------------------------------------------------------------
+
+fn post(id: str, title: str, body: str, when: notifications::When, payload: str) {
+    report(notifications::schedule(
+        notifications::Notification::new(id, title, body: body, when: when,
+                                         payload: payload)));
+    return;
+}
+
+fn with_body(sender: *u8, ctx: *u8) {
+    post("demo:body", "With a body", "Two lines: a title and this.",
+         notifications::When::Now, "demo:body");
+    return;
+}
+
+fn title_only(sender: *u8, ctx: *u8) {
+    // A title is required; a body is not. This is the minimum a notification
+    // can be, and it is what a "3 new messages" summary looks like.
+    post("demo:title", "Title only", "", notifications::When::Now, "demo:title");
+    return;
+}
+
+fn long_body(sender: *u8, ctx: *u8) {
+    post("demo:long", "More than fits",
+         "A banner shows one or two lines and the rest is revealed when the notification is expanded, which is the platform's decision rather than this package's.",
+         notifications::When::Now, "demo:long");
+    return;
+}
+
+// ---- timing -------------------------------------------------------------------
+
+fn in_five(sender: *u8, ctx: *u8) {
+    // LEAVE THE APP IN FRONT. The banner still appears, because of the
+    // presentation delegate — that is what this button is really for.
+    post("demo:5s", "Five seconds", "Scheduled five seconds ago.",
+         notifications::When::After(5.0f64), "demo:5s");
+    return;
+}
+
+fn in_thirty(sender: *u8, ctx: *u8) {
+    post("demo:30s", "Thirty seconds", "Long enough to cancel before it fires.",
+         notifications::When::After(30.0f64), "demo:30s");
+    return;
+}
+
+fn at_absolute(sender: *u8, ctx: *u8) {
+    // The other road to the same place: an instant rather than an interval.
+    // `stdlib/time::now()` is the clock — the package's own is private.
+    let t: f64 = { time::now() as f64 } + 10.0f64;
+    post("demo:at", "At an instant", "Scheduled with When::At, not After.",
+         notifications::When::At(t), "demo:at");
+    return;
+}
+
+// ---- behaviour ----------------------------------------------------------------
+
+fn three_at_once(sender: *u8, ctx: *u8) {
+    // THREE DISTINCT IDS, so three notifications. Contrast with Replace below.
+    let _a: notifications::Outcome = notifications::schedule(
+        notifications::Notification::new("demo:a", "First", body: "of three",
+                                         payload: "demo:a"));
+    let _b: notifications::Outcome = notifications::schedule(
+        notifications::Notification::new("demo:b", "Second", body: "of three",
+                                         payload: "demo:b"));
+    report(notifications::schedule(
+        notifications::Notification::new("demo:c", "Third", body: "of three",
+                                         payload: "demo:c")));
+    return;
+}
+
+static REPLACED: i32 = 0 as i32;
+
+fn replace(sender: *u8, ctx: *u8) {
+    // ONE ID, posted again. Both platforms key replacement on it, so this
+    // updates in place instead of stacking — which is what an "N unread"
+    // notification wants. Press it repeatedly and watch the count change
+    // without the list growing.
+    REPLACED = REPLACED + (1 as i32);
+    post("demo:replace", "Replaced in place",
+         text::from_str("posted ${REPLACED} times, still one notification").view(),
+         notifications::When::Now, "demo:replace");
+    return;
+}
+
+fn with_payload(sender: *u8, ctx: *u8) {
+    // Click the delivered banner and the payload appears in the readout below.
+    post("demo:deep", "Click me", "The payload comes back through on_tap.",
+         notifications::When::Now, "order:1234");
+    return;
+}
+
+// ---- actions -------------------------------------------------------------------
+
+// TWO BUTTONS ON THE NOTIFICATION. The set is registered once, at attach, and
+// named by the notification — because Apple registers categories with the
+// centre UP FRONT and a set registered after the notification was posted shows
+// nothing. Android builds them per notification and does not care, so
+// registering early is the order that works on both.
+fn register_the_actions() {
+    let _c: notifications::Outcome = notifications::clear_actions();
+    let _a: notifications::Outcome =
+        notifications::register_action("demo:mail", "reply", "Reply");
+    let _b: notifications::Outcome =
+        notifications::register_action("demo:mail", "archive", "Archive");
+
+    // A SECOND SET, three buttons, for the player below. Registering two sets
+    // up front is the ordering Apple needs and Android does not mind.
+    // NAMED PLATFORM DRAWABLES. A package ships no resources and an app's `R`
+    // class is not its to read, so platform names are the one icon vocabulary
+    // that needs nothing from the caller's build.
+    let _p: notifications::Outcome = notifications::register_action(
+        "demo:player", "prev", "Previous", icon: "ic_media_previous");
+    let _q: notifications::Outcome = notifications::register_action(
+        "demo:player", "playpause", "Play", icon: "ic_media_play");
+    let _r: notifications::Outcome = notifications::register_action(
+        "demo:player", "next", "Next", icon: "ic_media_next");
+    return;
+}
+
+// STICKY + ACTIONS + COMPACT: a persistent notification with a row of ICON
+// buttons, which is what a media-player notification looks like once the
+// MediaSession is taken out of it.
+//
+// On Android the buttons are icons rather than labels (`compact`) and pressing
+// one does NOT open the app — actions route through a broadcast, so the shade
+// stays where it is. What none of this gives is the media area of the shade,
+// the seek bar or hardware media keys: those come from a MediaSession, not from
+// the notification.
+// ---- a full-width photo --------------------------------------------------------
+//
+// The package takes a FILE PATH, which is what a real application has: an image
+// it downloaded or captured. A demo has no such file, so it writes one — the
+// PNG below is compiled in and dropped somewhere readable on first use.
+//
+// POSIX `open`/`write` rather than `fs::write_string`: this is binary and that
+// verb takes a `str`. A demo declaring three externs is more honest than a
+// stdlib gaining a bytes-write for one caller.
+
+#[link_name = "open"]
+extern fn c_open(path: *u8, flags: i32, mode: i32) -> i32;
+#[link_name = "write"]
+extern fn c_write(fd: i32, buf: *u8, n: usize) -> i64;
+#[link_name = "close"]
+extern fn c_close(fd: i32) -> i32;
+
+const ANDROID_PHOTO: str = "";
+
+const PHOTO_LEN: usize = 24706;
+
+// `#include_bytes` belongs in a `let`, not in a static initializer (E0911) —
+// the same shape `facet_android/dex.cplus` uses for its dex.
+fn photo_bytes() -> *u8 {
+    let b: *[u8; 24706] = #include_bytes("../assets_photo.png");
+    return { b as *u8 };
+}
+
+// O_WRONLY|O_CREAT|O_TRUNC = 1|512|1024 on Darwin, 1|64|512 on Linux/Android.
+// Built per platform rather than guessed: the numbers genuinely differ, and a
+// wrong O_CREAT is a file that never appears.
+fn open_flags() -> i32 {
+    if #platform() == "android" { return (1 as i32) + (64 as i32) + (512 as i32); }
+    return (1 as i32) + (512 as i32) + (1024 as i32);
+}
+
+fn photo_path() -> str {
+    if #platform() == "android" { return ANDROID_PHOTO; }
+    return "/tmp/cplus_notifications_photo.png";
+}
+
+fn write_photo() -> bool {
+    let path: str = photo_path();
+    var buf: [u8; 512] = #zero::[[u8; 512]]();
+    let cp: *u8 = { #addr_of(buf) as *u8 };
+    let n: usize = #str_len(path);
+    if n >= (511 as usize) { return false; }
+    let src: *u8 = #str_ptr(path);
+    var i: usize = 0 as usize;
+    while i < n { { *(cp + i) = { *(src + i) } }; i = i +% (1 as usize); }
+    let fd: i32 = { c_open(cp, open_flags(), 420 as i32) };
+    if fd < (0 as i32) { return false; }
+    let wrote: i64 = { c_write(fd, photo_bytes(), PHOTO_LEN) };
+    let _c: i32 = { c_close(fd) };
+    return wrote == (PHOTO_LEN as i64);
+}
+
+fn photo(sender: *u8, ctx: *u8) {
+    if !write_photo() {
+        set_label(STATUS_KEY, "could not write the demo image");
+        return;
+    }
+    // NOT `compact`: one style per notification on Android, and the facade
+    // refuses a caller that asks for both an icon row and a photo.
+    report(notifications::schedule(
+        notifications::Notification::new("demo:photo", "A photo",
+                                         body: "Expand it to see the picture.",
+                                         payload: "photo:1",
+                                         picture: photo_path())));
+    return;
+}
+
+fn player(sender: *u8, ctx: *u8) {
+    report(notifications::schedule(
+        notifications::Notification::new("demo:player", "Now playing",
+                                         body: "Three controls, and it stays.",
+                                         payload: "track:7",
+                                         category: "demo:player",
+                                         sticky: true, compact: true)));
+    return;
+}
+
+// STICKY IS ANDROID-ONLY, and this button is here to show that rather than to
+// hide it: on macOS and iOS the same call produces an ordinary, dismissible
+// notification, because those platforms have no ongoing one.
+//
+// WHAT "ONGOING" ACTUALLY BUYS on Android, measured on an emulator rather than
+// assumed — the first version of this comment said "will not swipe away", and
+// one direction plainly does:
+//
+//   the shade's Clear all   GONE while an ongoing notification is present
+//   swipe right             resists
+//   swipe left              dismisses it
+//   this app's Cancel all   removes it, as it should — the app owns it
+//
+// The last three are the platform's, not this package's. Android 14 made
+// ongoing notifications user-dismissible for apps with no foreground service,
+// and the shade implements that as a directional gesture. An app that needs one
+// to truly persist needs a foreground service.
+fn sticky(sender: *u8, ctx: *u8) {
+    report(notifications::schedule(
+        notifications::Notification::new("demo:sticky", "Sticky",
+                                         body: "Android: ongoing — no Clear all. Apple: ordinary.",
+                                         payload: "sticky:1",
+                                         sticky: true)));
+    return;
+}
+
+fn with_actions(sender: *u8, ctx: *u8) {
+    // Press Reply or Archive on the delivered notification and the readout
+    // says which — `on_tap` reports the button alongside the payload, and a
+    // tap on the body itself reports no button at all.
+    report(notifications::schedule(
+        notifications::Notification::new("demo:actions", "Two buttons",
+                                         body: "Reply or Archive — the readout says which.",
+                                         payload: "mail:99",
+                                         category: "demo:mail")));
+    return;
+}
+
+// ---- manage -------------------------------------------------------------------
+
+fn cancel_thirty(sender: *u8, ctx: *u8) {
+    report(notifications::cancel("demo:30s"));
+    return;
+}
+
+fn cancel_all(sender: *u8, ctx: *u8) {
+    report(notifications::cancel_all());
+    return;
+}
+
+fn clear_shown(sender: *u8, ctx: *u8) {
+    // The other question: `cancel_all` is about the future, this is about what
+    // is sitting in Notification Centre right now.
+    report(notifications::clear_shown());
+    return;
+}
+
+fn do_refresh(sender: *u8, ctx: *u8) { refresh(); return; }
+
+// ---- the screen ---------------------------------------------------------------
+
+fn heading(t: str) -> core::Node {
+    return ui::label(t, font_size: 11.0, font_weight: vocab::FontWeight::Semibold)
+        .padding(2.0);
+}
+
+struct Demo { }
+
+impl Demo {
+    fn new() -> Demo { return Demo { }; }
+}
+
+impl Demo: component::Component {
+    fn build(ref this) -> core::Node {
+        var b: core::Builder = core::Builder::new();
+        b.add(ui::label("Notifications", font_size: 20.0,
+                        font_weight: vocab::FontWeight::Bold).padding(4.0));
+
+        // ONE PERMISSION, and nothing below works until it is Granted.
+        var perm: core::Builder = core::Builder::new();
+        perm.add(ui::label("notifications:", font_size: 13.0).width(110.0));
+        perm.add(ui::label("...", key: PERM_KEY, font_size: 13.0,
+                           font_weight: vocab::FontWeight::Semibold).width(130.0));
+        perm.add(ui::text_button("Ask", on_click: ask));
+        b.add(core::row(perm).gap(8.0).padding(4.0));
+
+        b.add(heading("content"));
+        var r1: core::Builder = core::Builder::new();
+        r1.add(ui::text_button("With body", on_click: with_body));
+        r1.add(ui::text_button("Title only", on_click: title_only));
+        r1.add(ui::text_button("Long body", on_click: long_body));
+        b.add(core::row(r1).gap(10.0).padding(4.0));
+
+        b.add(heading("timing"));
+        var r2: core::Builder = core::Builder::new();
+        r2.add(ui::text_button("In 5s", on_click: in_five));
+        r2.add(ui::text_button("In 30s", on_click: in_thirty));
+        r2.add(ui::text_button("At +10s", on_click: at_absolute));
+        b.add(core::row(r2).gap(10.0).padding(4.0));
+
+        b.add(heading("behaviour"));
+        var r3: core::Builder = core::Builder::new();
+        r3.add(ui::text_button("Three at once", on_click: three_at_once));
+        r3.add(ui::text_button("Replace", on_click: replace));
+        r3.add(ui::text_button("Click me", on_click: with_payload));
+        b.add(core::row(r3).gap(10.0).padding(4.0));
+        // A SECOND ROW rather than a fifth button: a row clips at the right
+        // edge instead of wrapping, so an overflowing one silently loses its
+        // last control. It cost a test cycle the first time.
+        var r3b: core::Builder = core::Builder::new();
+        r3b.add(ui::text_button("Two buttons", on_click: with_actions));
+        r3b.add(ui::text_button("Sticky", on_click: sticky));
+        r3b.add(ui::text_button("Player", on_click: player));
+        r3b.add(ui::text_button("Photo", on_click: photo));
+        b.add(core::row(r3b).gap(10.0).padding(4.0));
+
+        b.add(heading("manage"));
+        var r4: core::Builder = core::Builder::new();
+        r4.add(ui::text_button("Cancel 30s", on_click: cancel_thirty));
+        r4.add(ui::text_button("Cancel all", on_click: cancel_all));
+        r4.add(ui::text_button("Clear shown", on_click: clear_shown));
+        r4.add(ui::text_button("Refresh", on_click: do_refresh));
+        b.add(core::row(r4).gap(10.0).padding(4.0));
+
+        b.add(ui::label("...", key: STATUS_KEY, font_size: 13.0).padding(4.0));
+        b.add(ui::label("...", key: PENDING_KEY, font_size: 13.0).padding(2.0));
+        b.add(ui::label("tapped: —", key: TAP_KEY, font_size: 13.0).padding(2.0));
+        b.add(ui::label("link: — (try: open \"cplusdemo://record/42\")", key: LINK_KEY,
+                        font_size: 13.0).padding(2.0));
+        return core::column(b).padding(16.0);
+    }
+}
+
+impl Demo: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; }
+        // LATE ON PURPOSE — see `tapped`. A notification clicked while this app
+        // was closed still reaches the handler, because app_events latched it.
+        // Registered before anything is posted — see `register_the_actions`.
+        register_the_actions();
+        let _t: notifications::Outcome = notifications::on_tap(tapped);
+        // The SAME late registration, for the same reason: a link that
+        // launched this process was delivered before this component existed,
+        // and applinks latches it so registering here still receives it.
+        let _l: applinks::Outcome = applinks::on_link(linked, scheme: "cplusdemo");
+        refresh();
+        return;
+    }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
+}
+
+fn main() -> i32 {
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
+    ));
+    runtime::run_component(Demo::new(), title: "Notifications",
+                           width: 560.0, height: 560.0);
+    return 0;
+}

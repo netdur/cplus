@@ -208,12 +208,12 @@ fn run_component[C: component::Component + component::Lifecycle](
 // the instance is boxed and never freed.
 fn attach_trampoline[C: component::Component + component::Lifecycle](ctx: *u8) {
     let p: *C = ctx as *C;
-    { (*p).on_attach() };
+    { (*p).on_attach(component::Attach::Mount) };
 }
 
 fn attach_trampoline_screen[S: component::Component + component::Lifecycle + screen::Screen](ctx: *u8) {
     let p: *S = ctx as *S;
-    { (*p).on_attach() };
+    { (*p).on_attach(component::Attach::Mount) };
 }
 
 // The half `run_component` and `run_screen` share: box the component so its
@@ -242,6 +242,13 @@ fn hold_and_build[C: component::Component + component::Lifecycle](take c: C) -> 
             // component that calls `mount::find` in `on_attach` would get None
             // and come up with its shell and no content.
             entry::on_attached(attach_trampoline::[C], { #addr(held) as *u8 });
+            // THE APP LIFECYCLE, and on Android this is the one that matters
+            // most: the Activity is PAUSED and RESUMED many times over a run
+            // while the tree stays attached the whole time, and the system
+            // revokes exclusive devices — the camera above all — on the way
+            // out. `held` is boxed and never freed, so the subscription is
+            // good for the life of the process and there is nothing to unbind.
+            let _bound: status::Status = component::bind_app_lifecycle::[C](held);
         }
         option::Option[box::Box[C]]::None => { no_backend("run_component (out of memory)"); }
     }

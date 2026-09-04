@@ -28,6 +28,7 @@ import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
+import "facet/bands" as bands;
 import "facet/application" as app;
 import "facet/theme" as theme;
 import "facet/mount" as mount;
@@ -419,7 +420,30 @@ fn relayout(slot: usize, width: f64, height: f64) {
     let root: *core::Node = ROOTS[slot] as *core::Node;
     if root == (0 as *core::Node) { return; }
     let c0: i64 = if timing() { { g_get_monotonic_time() } } else { 0 as i64 };
-    { (*root).calculate_layout(width: width, height: height) };
+    // The app's band vocabulary rides along, so a node carrying `hide`/`show`
+    // rules is resolved against the box it actually sits in. Omitting it passes
+    // a null BandSet, which is silently "no bands" — every `hide`/`show` in the
+    // tree was a no-op on this backend, with no error to say so.
+    { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
+    // SNAP BEFORE THE WALK, exactly as facet_appkit and facet_uikit do. Frames
+    // arrive fractional and `geometry::place` used to round the SIZE while
+    // leaving the POSITION fractional, which is the seam this closes: rounding
+    // an extent on its own means two neighbours disagree about where their
+    // shared boundary is. Snapping rounds each edge once, so the boundary is a
+    // single number and both sizes fall out of it.
+    //
+    // AT 1.0, AND NOT AT THE SCALE FACTOR — which is the one place this backend
+    // parts company with the Apple two. `gtk_widget_set_size_request` takes
+    // INTS, in logical pixels, so a half-logical-pixel width is not a thing GTK
+    // can be told even on a HiDPI screen where the position could carry it
+    // (GtkFixed takes doubles). Snapping to a grid finer than the allocation
+    // can express just means it gets rounded a second time on the way out, and
+    // the second rounding is the non-seamless one. Whole logical pixels is what
+    // the toolkit can actually hold, so that is the grid.
+    //
+    // It also keeps the numbers bit-stable pass to pass, which is what lets the
+    // layout cache report a hit at an unchanged size.
+    { (*root).round_to_pixel(1.0f64) };
     let c1: i64 = if timing() { { g_get_monotonic_time() } } else { 0 as i64 };
     let moved: bool = { (*root).layout_changed() };
     let rf: flex::Frame = { (*root).frame() };

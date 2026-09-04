@@ -93,6 +93,7 @@ Cross-module use inside stdlib is normal (`vec` imports `option`, `status`,
 | `netsys` | Platform constants/errno for `net` (auto-overridden per OS) |
 | `env` | env vars and argv |
 | `base64` | base64 and base64url, strict decoding |
+| `url` | take a URL apart — views, not copies; routing reads `segment`, not `path` |
 | `crypto` | SHA-2, HMAC, CSPRNG — over the platform's own (macOS today) |
 
 ## Error model

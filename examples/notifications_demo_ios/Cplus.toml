@@ -1,0 +1,63 @@
+[package]
+name    = "notifications_demo_ios"
+version = "0.0.1"
+edition = "2026"
+
+# notifications_demo_ios — the same demo as examples/notifications_demo, on a
+# phone.
+#
+# THE SOURCE IS THE SAME IDEA, not a port: one permission row and a button per
+# kind of notification. What differs is the entry (`export extern fn`, because
+# an iOS binary's `main` is ObjC and calls in) and the plist, which is where a
+# platform's configuration belongs.
+#
+#     ./run_sim.sh            build, bundle, install, launch on a simulator
+#
+# An iOS target stops at object emission — Xcode owns the final link normally —
+# so `run_sim.sh` does that link itself, the way facet_uikit's own probes do.
+# For a device, see examples/facet_gallery_ios/DEPLOYING.md: the same archive
+# plus an Xcode project for signing.
+
+[ios]
+entry = "src/main.cplus"
+
+# ANDROID RUNS THE SAME SOURCE, the way examples/facet_gallery_ios does — the
+# entry is the same file and the same function, and what differs is the
+# manifest, which is where a platform's configuration belongs.
+# `facet_android`'s Activity finds `notifications_demo_ios_main` by name, from
+# AndroidManifest.xml's `cplus.facet.main`, so this app needs no Android-shaped
+# export, no Java and no Gradle.
+#
+# The package name says `_ios` and now builds for both. Historical, and the same
+# way `facet_gallery_ios` reads — renaming it would churn every path that
+# already points here for the sake of a word.
+[android]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib        = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+permissions   = "*"
+notifications = "*"
+applinks      = "*"
+
+# The resolver validates every import against ONE flat set taken from THIS
+# manifest, so the backend's closure and permissions' own `objc` are named here.
+[android.dependencies]
+facet_android = "*"
+android_view  = "*"
+jni           = "*"
+
+[ios.dependencies]
+facet_uikit = "*"
+objc        = "*"
+uikit       = "*"
+quartzcore  = "*"
+webkit      = "*"
+agent_uikit = "*"
+agent_core  = "*"
+agent_mcp   = "*"
+json        = "*"

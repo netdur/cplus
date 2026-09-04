@@ -1,0 +1,85 @@
+// Hand something to the rest of the system.
+//
+// Three verbs, one for each kind of thing worth sharing. Not one verb with a
+// kind parameter, because the platforms treat them differently and the
+// difference is visible: a URL gets a rich preview and an app list a plain
+// string does not, and a file goes through a provider that a string never
+// touches. A caller who has a URL should say so.
+
+import "stdlib/option" as option;
+
+enum Outcome {
+    // The sheet was PRESENTED. Not that anything was shared — see below.
+    Ok,
+    // No backend, or nothing to present from.
+    Unsupported,
+    // The item was empty, which is a caller bug rather than a platform one.
+    InvalidInput,
+    Failed,
+}
+
+impl Outcome {
+    fn to_code(this) -> i32 {
+        match this {
+            Outcome::Ok => { return 0; }
+            Outcome::Unsupported => { return 1; }
+            Outcome::InvalidInput => { return 2; }
+            Outcome::Failed => { return 3; }
+        }
+    }
+
+    fn from_code(c: i32) -> Outcome {
+        if c == 1 { return Outcome::Unsupported; }
+        if c == 2 { return Outcome::InvalidInput; }
+        if c == 3 { return Outcome::Failed; }
+        return Outcome::Ok;
+    }
+}
+
+// Is there a sheet to show?
+fn available() -> bool {
+    return { _c_available() } != (0 as i32);
+}
+
+// Share plain text.
+//
+// `subject` is a HINT and mostly ignored: Mail uses it as the subject line,
+// almost nothing else looks at it, and Android carries it as EXTRA_SUBJECT.
+// Passing "" is the ordinary case.
+//
+// THE RETURN VALUE IS "THE SHEET OPENED", never "the person shared". No
+// platform tells you reliably which app was chosen or whether the send
+// completed — iOS's completion handler reports cancellation but lies about
+// success for several targets, and Android's chooser reports nothing at all.
+// An app that needs to know something was sent has to observe the result
+// itself, which is why this returns no such answer rather than a wrong one.
+fn text(body: str, subject: str = "") -> Outcome {
+    if #str_len(body) == (0 as usize) { return Outcome::InvalidInput; }
+    return Outcome::from_code({ _c_text(#str_ptr(body), #str_len(body),
+                                        #str_ptr(subject), #str_len(subject)) });
+}
+
+// Share a URL.
+//
+// SEPARATE FROM `text` ON PURPOSE. Every platform gives a real URL a richer
+// treatment — a preview card, a different app list, "Copy Link" instead of
+// "Copy" — and a URL passed as text gets none of it.
+fn url(link: str) -> Outcome {
+    if #str_len(link) == (0 as usize) { return Outcome::InvalidInput; }
+    return Outcome::from_code({ _c_url(#str_ptr(link), #str_len(link)) });
+}
+
+// Share a file by path.
+//
+// The file must EXIST and be readable when this is called: the platforms read
+// it while the sheet is up, not when the item is created, so a temporary file
+// deleted immediately after this returns arrives empty.
+fn file(path: str) -> Outcome {
+    if #str_len(path) == (0 as usize) { return Outcome::InvalidInput; }
+    return Outcome::from_code({ _c_file(#str_ptr(path), #str_len(path)) });
+}
+
+extern fn _c_available() -> i32;
+extern fn _c_text(body: *u8, body_len: usize, subject: *u8, subject_len: usize) -> i32;
+extern fn _c_url(link: *u8, link_len: usize) -> i32;
+extern fn _c_file(path: *u8, path_len: usize) -> i32;

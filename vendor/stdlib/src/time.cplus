@@ -8,7 +8,6 @@
 import "./future" as future;
 import "./time_sys" as time_sys;
 import "./reactor" as reactor;
-import "./executor" as executor;
 
 //
 // v0.0.5 Phase 4 Slice 4A: `sleep(milliseconds)` suspends the current async task
@@ -52,6 +51,12 @@ fn now_millis() -> i64 {
 
 // ───────────────────────────── tests ─────────────────────────────
 
+// THE INTRINSIC, not `executor::block_on`, and it is a one-line difference for
+// a real reason: `executor` gained a deadline on its bridge helpers and needs
+// `time::now_millis` for it, which made `time -> executor` a cycle (E0404).
+// `executor::block_on` is itself only `return { #block_on::[T](f) };`, so
+// calling the intrinsic here costs nothing and leaves the dependency pointing
+// one way.
 async fn _sleep_then_value() -> i32 {
     await sleep(milliseconds: 1 as u64);
     return 7;
@@ -61,7 +66,7 @@ async fn _sleep_then_value() -> i32 {
 fn sleep_completes_via_block_on() {
     // Drives the reactor's EVFILT_TIMER path: block_on polls -> sleep registers
     // a 1ms timer -> Pending -> reactor fires -> resume -> Ready(7).
-    let v: i32 = executor::block_on::[i32](_sleep_then_value());
+    let v: i32 = { #block_on::[i32](_sleep_then_value()) };
     assert v == 7;
 }
 
@@ -90,7 +95,7 @@ async fn _nap(ms: u64) -> i64 {
 #[test]
 fn sleep_actually_waits_rather_than_merely_completing() {
     let t0: i64 = now_millis();
-    let v: i64 = executor::block_on::[i64](_nap(120 as u64));
+    let v: i64 = { #block_on::[i64](_nap(120 as u64)) };
     let elapsed: i64 = now_millis() - t0;
     assert v == (1 as i64);
     assert elapsed >= (100 as i64);

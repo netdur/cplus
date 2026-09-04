@@ -68,14 +68,20 @@ fn set_view_frame(v: *u8, r: rt::Rect) {
 // `scale` is the backing scale factor (2.0 on Retina): snapping frames to the
 // device pixel grid keeps text crisp AND keeps the numbers bit-stable pass to
 // pass, which is what lets the layout cache report a hit at an unchanged size.
-fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
+// `force` is for the caller that changed something the LAYOUT cannot see. A
+// backing-scale change is the case it exists for: the window is the same size,
+// so `calculate_layout` is a cache hit and `layout_changed()` says false — yet
+// every frame moved, because `round_to_pixel` snapped it to a different grid.
+// Skipping the walk on that verdict leaves the views on the old display's grid.
+fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64,
+                 force: bool = false) {
     if root.is_null() { return; }
     // The app's band vocabulary rides along, so a node carrying `hide`/`show`
     // rules is resolved against the box it actually sits in — as part of THIS
     // pass, not by a size observer firing a second one afterwards.
     { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
     if scale > 0.0f64 { { (*root).round_to_pixel(scale) }; }
-    reposition(root);
+    reposition(root, force);
 }
 
 // Walk an already-mounted tree and set every EXISTING view's frame from the

@@ -103,7 +103,7 @@ fn relayout_current() {
     if WIDTH <= 0.0f64 { return; }
     let root: *core::Node = mount::mounted_root();
     if root == (0 as *core::Node) { return; }
-    geometry::relayout_root(root, WIDTH, HEIGHT);
+    geometry::relayout_root(root, WIDTH, HEIGHT, e::density());
     return;
 }
 

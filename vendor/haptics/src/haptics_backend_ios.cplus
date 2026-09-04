@@ -1,0 +1,103 @@
+// UIKit's feedback generators. iOS only.
+//
+// ---- three generators, and the `Feel` vocabulary was built for them ---------
+//
+// This is the platform the enum is shaped after, so the mapping is a lookup
+// rather than a judgement:
+//
+//   Selection             UISelectionFeedbackGenerator
+//   Light/Medium/Heavy    UIImpactFeedbackGenerator, styles 0/1/2
+//   Success/Warning/Error UINotificationFeedbackGenerator, types 0/1/2
+//
+// ---- generators are cheap to make and expensive to make LATE ---------------
+//
+// The Taptic Engine idles, and a tap played on a cold engine lands late enough
+// to feel disconnected from the touch that caused it. `prepare` is the warm-up
+// Apple documents; it is held for a few seconds and then idles again, which is
+// why this keeps ONE generator per family alive rather than building one per
+// tap and losing the warmth with it.
+
+import "objc/runtime" as rt;
+import "uikit/uikit" as uk;
+import "./haptics" as hap;
+
+const _SELECTION: i32 = 0;
+const _SUCCESS: i32 = 4;
+
+// Held for the process. A generator is a small object and the warmth lives in
+// it, so making a fresh one per tap would discard the thing `prepare` bought.
+static _IMPACT: [*u8; 3] = #zero::[[*u8; 3]]();
+static _NOTIFY: *u8 = 0 as *u8;
+static _SELECT: *u8 = 0 as *u8;
+
+fn _impact(style: i32) -> *u8 {
+    var idx: usize = { style as usize };
+    if idx > (2 as usize) { idx = 2 as usize; }
+    if _IMPACT[idx].is_not_null() { return _IMPACT[idx]; }
+    let cls: *u8 = rt::get_class(#str_ptr("UIImpactFeedbackGenerator\0"));
+    if cls.is_null() { return 0 as *u8; }
+    let g: *u8 = rt::msg_id_i64(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                                rt::sel(#str_ptr("initWithStyle:\0")),
+                                { idx as i64 });
+    _IMPACT[idx] = g;
+    return g;
+}
+
+fn _notify() -> *u8 {
+    if _NOTIFY.is_not_null() { return _NOTIFY; }
+    let cls: *u8 = rt::get_class(#str_ptr("UINotificationFeedbackGenerator\0"));
+    if cls.is_null() { return 0 as *u8; }
+    _NOTIFY = rt::msg_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                         rt::sel(#str_ptr("init\0")));
+    return _NOTIFY;
+}
+
+fn _select() -> *u8 {
+    if _SELECT.is_not_null() { return _SELECT; }
+    let cls: *u8 = rt::get_class(#str_ptr("UISelectionFeedbackGenerator\0"));
+    if cls.is_null() { return 0 as *u8; }
+    _SELECT = rt::msg_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                         rt::sel(#str_ptr("init\0")));
+    return _SELECT;
+}
+
+fn _generator_for(feel: i32) -> *u8 {
+    if feel == _SELECTION { return _select(); }
+    if feel >= _SUCCESS { return _notify(); }
+    // Light/Medium/Heavy are 1/2/3 here and styles 0/1/2 there.
+    return _impact(feel - (1 as i32));
+}
+
+export extern fn _c_available() -> i32 {
+    // THE CLASS EXISTING IS THE ANSWER. UIKit offers no availability query:
+    // a device without a Taptic Engine has the classes and plays nothing,
+    // which is exactly the no-op this package promises. iPads are the common
+    // case — they have no haptics at all.
+    if rt::get_class(#str_ptr("UIImpactFeedbackGenerator\0")).is_null() { return 0; }
+    return 1;
+}
+
+export extern fn _c_play(feel: i32) -> i32 {
+    let g: *u8 = _generator_for(feel);
+    if g.is_null() { return 0; }
+
+    if feel == _SELECTION {
+        rt::msg_void(g, rt::sel(#str_ptr("selectionChanged\0")));
+        return 1;
+    }
+    if feel >= _SUCCESS {
+        // Success/Warning/Error are 4/5/6 here and types 0/1/2 there.
+        rt::msg_void_i64(g, rt::sel(#str_ptr("notificationOccurred:\0")),
+                         { (feel - _SUCCESS) as i64 });
+        return 1;
+    }
+    rt::msg_void(g, rt::sel(#str_ptr("impactOccurred\0")));
+    return 1;
+}
+
+export extern fn _c_prepare(feel: i32) {
+    let g: *u8 = _generator_for(feel);
+    if g.is_null() { return; }
+    rt::msg_void(g, rt::sel(#str_ptr("prepare\0")));
+    return;
+}

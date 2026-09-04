@@ -28,6 +28,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/application" as app;
+import "facet/app_events" as ev;
 import "facet/tree" as tree;
 import "facet/vocabulary" as vocab;
 import "facet/elements" as ui;
@@ -39,6 +40,8 @@ import "./views" as views;
 import "./recycler" as recycler;
 import "./input" as input;
 import "./keys" as keys;
+import "./notify" as notify;
+import "./app_events_uikit" as app_events_uikit;
 import "./window" as window;
 import "./device" as device;
 import "./keyboard" as keyboard;
@@ -881,35 +884,140 @@ fn a_collections_scroll_reaches_the_app() -> bool {
 }
 
 // ---- the agent surface -----------------------------------------------------------
-// The reader walks a live UIView tree into agent_core's identity registry. It
-// runs here rather than in agent_uikit's own suite for the reason everything
-// else does: the walk needs UIKit, and only an iOS binary has it.
+//
+// WHY HERE AND NOT IN `agent_uikit`. The walk needs UIKit, and `agent_uikit`
+// cannot link `facet_uikit` on a macOS host — so its own suite could not build
+// a facet tree with views in it. The AppKit sibling lives in
+// `agent_appkit/src/test_main.cplus` because that one CAN run on the host. The
+// asymmetry is the platform's, not a preference.
+//
+// `open` WALKS FACET'S TREE, not the view hierarchy — `window_roots_for_native`
+// looks the window's registered roots up and `walk_facet` reads each node's
+// `key()`. It walked subviews once, and the check below was written against
+// that; `b4b63eaf` moved the walk and did not touch this file, which left the
+// iOS suite red for a day and made red its normal state. See
+// `bugs/closed/ios-agent-walk-test-not-updated-for-the-facet-tree-walk.md`.
+//
+// The fixture is `agent_appkit`'s `mirror` ported: build the views, mirror them
+// into the facet tree those views would have belonged to, and register it as a
+// window so the walk can find it.
+
+// The tests own their views; facet must not free them.
+fn noop_release(v: *u8) { }
+
+// Mirror a view subtree into a facet tree, keyed wherever the view is tagged.
+//
+// A FIXTURE, not a shortcut. The real path builds facet first and mounts views
+// from it; this constructs the tree those views would have belonged to, and the
+// shape that comes out is the same.
+//
+// `get_agent_id` supplies the key, which is also how `accessibilityIdentifier`
+// stays covered on this platform. facet writes a node's key into it — "one
+// token doing three jobs", as that function's own comment puts it — and this
+// reads the same token back out, so a change to either end fails here.
+fn mirror(view: *u8) -> core::Node {
+    let k: text::Text = match agent::get_agent_id(view) {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::new(),
+    };
+    var n: core::Node = core::column(core::Builder::new(), key: k.view());
+    core::set_view(#addr_of(n), view, noop_release);
+    var i: usize = 0 as usize;
+    let c: usize = agent::subview_count(view);
+    while i < c {
+        let _s: status::Status = n.add_child(mirror(agent::subview_at(view, i)));
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+// Register `root` as the window's tree, the way `mount` does.
+//
+// Resets first: `set_window_native` only fills in an EXISTING record, so a
+// second mount against the same native handle would add a second one and
+// `window_roots_for_native` returns the FIRST match — a re-mounting test would
+// go on walking its first tree.
+//
+// THE CALLER HOLDS THE ROOT, in two lines, and the reason is the move: a helper
+// that returned it would register the address of its own local and then move it
+// out, leaving the registration pointing at a dead frame.
+fn mount_tree(root: *core::Node, win: *u8) {
+    app::reset_default_for_tests();
+    app::open_window(root);
+    app::set_window_native(root, win);
+}
+
+fn tag_view(view: *u8, id: str) {
+    { rt::msg_void_id(view, rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
+                      bridge::nsstring(id)) };
+    return;
+}
+
+fn surface_has_id(nodes: *vec::Vec[mcpb::UiNode], id: str) -> bool {
+    var i: usize = 0 as usize;
+    while i < { (*nodes).count() } {
+        match { (*nodes).at_ptr(i) } {
+            option::Option[*mcpb::UiNode]::Some(n) => {
+                if { (*n).id.view() } == id { return true; }
+            }
+            option::Option[*mcpb::UiNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
 
 fn the_agent_walk_finds_a_tagged_view() -> bool {
     let root: uik::View = uik::View::new_with_frame(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
     let btn: uik::Button = uik::Button::button_with_type(uik::ButtonType::System);
     btn.set_title("Save", 0 as u64);
-    { rt::msg_void_id(btn.as_view().raw(),
-                      rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
-                      bridge::nsstring("save")) };
+    tag_view(btn.as_view().raw(), "save");
     root.add_subview(btn.as_view());
-    // `open` takes a WINDOW and walks its subviews, so the root stands in for
-    // one: the walk is the same either way.
+
+    var tree: core::Node = mirror(root.raw());
+    mount_tree(#addr_of(tree), root.raw());
+
     let s: agent::Surface = agent::open(root.raw());
     let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
-    var found: bool = false;
-    var i: usize = 0 as usize;
-    while i < nodes.count() {
-        match nodes.at_ptr(i) {
-            option::Option[*mcpb::UiNode]::Some(n) => {
-                if { (*n).id.view() } == "save" { found = true; }
-            }
-            option::Option[*mcpb::UiNode]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return found;
+    return surface_has_id(#addr_of(nodes), "save");
+}
+
+// AN UNREGISTERED WINDOW ANSWERS NOTHING BENEATH IT, and this is the check the
+// old one had accidentally become. `open` resolves roots by native handle, so a
+// view that never went through `open_window` has no tree — the surface is the
+// app root and a window node and nothing else.
+//
+// Worth asserting rather than leaving implicit: it is the exact state the stale
+// test was in for a day while reading as an ordinary failure, and it is what an
+// app looks like if a backend ever stops registering its roots.
+fn an_unregistered_window_exposes_no_children() -> bool {
+    let root: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    let btn: uik::Button = uik::Button::button_with_type(uik::ButtonType::System);
+    tag_view(btn.as_view().raw(), "orphan");
+    root.add_subview(btn.as_view());
+    app::reset_default_for_tests();
+
+    let s: agent::Surface = agent::open(root.raw());
+    let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
+    return !surface_has_id(#addr_of(nodes), "orphan");
+}
+
+// THE WINDOW NODE'S OWN ID, which is the second surviving reader of
+// `accessibilityIdentifier` and the one `open` uses directly. A tagged window
+// carries its tag into the surface.
+fn a_tagged_window_carries_its_own_id() -> bool {
+    let root: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    tag_view(root.raw(), "main-window");
+
+    var tree: core::Node = mirror(root.raw());
+    mount_tree(#addr_of(tree), root.raw());
+
+    let s: agent::Surface = agent::open(root.raw());
+    let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
+    return surface_has_id(#addr_of(nodes), "main-window");
 }
 
 fn a_button_classifies_as_a_button() -> bool {
@@ -1117,36 +1225,292 @@ fn runs_are_read_from_a_labels_attributed_text() -> bool {
 }
 
 // ---- the lifecycle band -----------------------------------------------------------
-// Pure registry logic, so it runs with no app: register, fire, check it ran;
-// cancel, fire again, check it did not. The five phases are separate lists in
-// one vector and a fire must not cross them.
+// THROUGH THE REAL NOTIFICATION CENTRE, and that is the whole point of these.
+//
+// What was here before were two REGISTRY tests: they called `window::fire_phase`
+// themselves, asserted the fan-out, and never touched delivery. They were
+// correct about the registry and they stayed green for years while the four
+// app-delegate methods underneath fired for nobody — UIKit does not send them
+// to a scene-based app. See
+// `bugs/closed/ios-lifecycle-verbs-never-fire-under-scenes.md`.
+//
+// So these post an ACTUAL `UIApplication*Notification` and check that a
+// subscriber sees it. `NSNotificationCenter` delivers synchronously on the
+// posting thread, so there is no waiting and no run loop needed — which is
+// what makes a delivery test possible with no app at all.
+//
+// Each is checked AGAINST ITS OWN NAME: two observers pointed at one
+// notification would pass a single-event test.
 
 static FIRED: i32 = 0 as i32;
+static OTHER_FIRED: i32 = 0 as i32;
 fn count_fire(ctx: *u8) { FIRED = FIRED + (1 as i32); return; }
+fn count_other(ctx: *u8) { OTHER_FIRED = OTHER_FIRED + (1 as i32); return; }
 
-fn a_lifecycle_observer_fires_for_its_own_phase() -> bool {
-    FIRED = 0 as i32;
-    var h: services::Cancellable = window::observe_lifecycle(
-        window::PHASE_BACKGROUND, count_fire, 0 as *u8);
-    window::fire_phase(window::PHASE_BACKGROUND);
-    let after_own: i32 = FIRED;
-    // A DIFFERENT phase must not reach it: five edges in one vector, and a
-    // fire that crossed them would tell an app it was backgrounded when it
-    // was merely resigning active.
-    window::fire_phase(window::PHASE_ACTIVE);
-    let after_other: i32 = FIRED;
-    h.cancel();
-    return after_own == (1 as i32) && after_other == (1 as i32);
+// Post `name` with no object and no userInfo.
+fn post(name: str) {
+    let c: *u8 = notify::notification_center();
+    if c == (0 as *u8) { return; }
+    { rt::msg_void_id_id(c, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                         bridge::nsstring(name), 0 as *u8) };
+    return;
 }
 
-fn a_cancelled_lifecycle_observer_stops_firing() -> bool {
+fn a_real_notification_reaches_its_observer() -> bool {
     FIRED = 0 as i32;
-    var h: services::Cancellable = window::observe_lifecycle(
-        window::PHASE_TERMINATE, count_fire, 0 as *u8);
-    window::fire_phase(window::PHASE_TERMINATE);
+    OTHER_FIRED = 0 as i32;
+    var h: services::Cancellable = runtime_observe_background();
+    // A DIFFERENT notification must not reach it. Backgrounding and resigning
+    // active are the two an app confuses at its peril: one means "you may be
+    // killed after this", the other means "a control centre swipe".
+    var g: services::Cancellable = services::Cancellable::of(
+        notify::observe_named("UIApplicationWillResignActiveNotification",
+                              0 as *u8, count_other, 0 as *u8),
+        notify::cancel_observe);
+    post("UIApplicationDidEnterBackgroundNotification");
+    let mine: i32 = FIRED;
+    let theirs: i32 = OTHER_FIRED;
     h.cancel();
-    window::fire_phase(window::PHASE_TERMINATE);
+    g.cancel();
+    return mine == (1 as i32) && theirs == (0 as i32);
+}
+
+fn a_cancelled_observation_stops_being_delivered() -> bool {
+    FIRED = 0 as i32;
+    var h: services::Cancellable = runtime_observe_background();
+    post("UIApplicationDidEnterBackgroundNotification");
+    h.cancel();
+    post("UIApplicationDidEnterBackgroundNotification");
     return FIRED == (1 as i32);
+}
+
+// The observation the five public verbs are built from, made the same way
+// `runtime_ios::observe_backgrounding` makes it. Named rather than inlined so
+// the test exercises the pairing of id and canceller, which is the half a
+// wrong `Cancellable::of` would break silently.
+fn runtime_observe_background() -> services::Cancellable {
+    let id: u64 = notify::observe_named("UIApplicationDidEnterBackgroundNotification",
+                                        0 as *u8, count_fire, 0 as *u8);
+    return services::Cancellable::of(id, notify::cancel_observe);
+}
+
+fn a_cancelled_observation_frees_its_registry_slot() -> bool {
+    let before: usize = notify::pending_count();
+    var h: services::Cancellable = runtime_observe_background();
+    let during: usize = notify::pending_count();
+    h.cancel();
+    let after: usize = notify::pending_count();
+    return during == before +% (1 as usize) && after == before;
+}
+
+// ---- the app-events fan-out ---------------------------------------------------
+// Same discipline one level up: post the real notification, and check the
+// PORTABLE kind a subscriber sees. This is the seam an SDK package subscribes
+// to, so a wrong kind here is a push handled as a backgrounding.
+
+static SEEN_KIND: u32 = 0 as u32;
+static SEEN_COUNT: i32 = 0 as i32;
+fn record_kind(e: *ev::AppEvent, ctx: *u8) {
+    SEEN_KIND = { (*e).kind };
+    SEEN_COUNT = SEEN_COUNT + (1 as i32);
+    return;
+}
+
+fn a_real_notification_reaches_an_app_events_subscriber() -> bool {
+    app_events_uikit::arm();
+    SEEN_KIND = 0 as u32;
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_kind, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    post("UIApplicationDidEnterBackgroundNotification");
+    let kind: u32 = SEEN_KIND;
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_kind, 0 as *u8);
+    return kind == ev::E_BACKGROUND && n == (1 as i32);
+}
+
+// ---- the URL road ------------------------------------------------------------
+//
+// WHAT THESE REACH AND WHAT THEY DO NOT. Every check below builds a REAL
+// Foundation object and drives `app_events_uikit`'s delivery verbs with it, on
+// the simulator, through real `objc_msgSend` — so the NSSet walking, the
+// `absoluteString` read and the `webpageURL` test are covered against the
+// actual runtime rather than a mock.
+//
+// What they cannot reach is UIKit deciding to CALL the scene delegate. That
+// needs a link arriving from outside the process, and `simctl openurl` puts a
+// SpringBoard confirmation in front of it that no scriptable interface here can
+// dismiss. It is one tap, and it is recorded in vendor/applinks/docs/guide.md
+// as the one step of this feature an agent cannot take.
+
+// EVERY CHECK BELOW STARTS WITH `ev::t_reset()`, and it is not hygiene — it is
+// the feature. `E_OPEN_URL` is a LATCHED kind, so `on_app_event` replays the
+// last URL to each new subscriber; without the reset, every check after the
+// first began with one delivery already counted and four of the five failed on
+// their first run. That the latch fires here is the cold-start contract
+// working on the real platform, and the check below asserts it deliberately
+// rather than tripping over it.
+static SEEN_URL: text::Text = #zero::[text::Text]();
+
+fn record_url(e: *ev::AppEvent, ctx: *u8) {
+    if { (*e).kind } != ev::E_OPEN_URL { return; }
+    SEEN_URL = text::from_str({ (*e).text });
+    SEEN_COUNT = SEEN_COUNT + (1 as i32);
+    return;
+}
+
+// An NSURL from a C+ string, the way the system would hand one over.
+fn ns_url(s: str) -> *u8 {
+    return rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                         rt::sel(#str_ptr("URLWithString:\0")), bridge::nsstring(s));
+}
+
+fn a_url_reaches_a_subscriber_as_its_absolute_string() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    SEEN_URL = text::new();
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    app_events_uikit::deliver_url(ns_url("myapp://record/42?x=1"));
+    let seen: bool = SEEN_URL.view() == "myapp://record/42?x=1";
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return seen && n == (1 as i32);
+}
+
+// THE COLD START, on the real platform. A URL delivered while nothing is
+// subscribed must still reach a subscriber that turns up afterwards — which is
+// what makes a link that launched the app reach a handler registered in
+// `on_attach`, and it is the single most load-bearing property of this road.
+fn a_link_delivered_before_anyone_subscribed_still_arrives() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    SEEN_URL = text::new();
+    app_events_uikit::deliver_url(ns_url("myapp://cold/7"));
+    if SEEN_COUNT != (0 as i32) { return false; }
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let seen: bool = SEEN_URL.view() == "myapp://cold/7";
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return seen && n == (1 as i32);
+}
+
+fn a_null_url_is_not_an_event() -> bool {
+    ev::t_reset();
+    // The delegate handing over a context with no URL must cost nothing, not
+    // crash and not fire an empty link that a subscriber would try to route.
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    app_events_uikit::deliver_url(0 as *u8);
+    app_events_uikit::deliver_url_contexts(0 as *u8);
+    app_events_uikit::deliver_user_activity(0 as *u8);
+    app_events_uikit::deliver_user_activities(0 as *u8);
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return n == (0 as i32);
+}
+
+// A universal link is an NSUserActivity carrying a webpageURL, and this one is
+// the real class — `initWithActivityType:` then `setWebpageURL:` is exactly
+// what iOS hands the scene delegate.
+fn a_user_activity_with_a_webpage_url_is_a_link() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    SEEN_URL = text::new();
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    let raw: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let ua: *u8 = rt::msg_id_id(raw, rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("NSUserActivityTypeBrowsingWeb"));
+    rt::msg_void_id(ua, rt::sel(#str_ptr("setWebpageURL:\0")),
+                    ns_url("https://example.com/record/42"));
+    app_events_uikit::deliver_user_activity(ua);
+    let seen: bool = SEEN_URL.view() == "https://example.com/record/42";
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return seen && n == (1 as i32);
+}
+
+// AN ACTIVITY THAT IS NOT A LINK. Handoff and Siri activities reach the same
+// delegate method and carry no webpageURL; firing an empty E_OPEN_URL for them
+// would hand every applinks subscriber a link that does not exist.
+fn a_user_activity_without_a_webpage_url_is_not_a_link() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    let raw: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let ua: *u8 = rt::msg_id_id(raw, rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("com.example.something"));
+    app_events_uikit::deliver_user_activity(ua);
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return n == (0 as i32);
+}
+
+// The SET walk, which is the shape both cold-start payloads arrive in. Two
+// activities in one set must produce two events — a delegate handing over
+// several is the case the loop exists for, and a loop that stopped at the
+// first would look correct in every single-link test.
+fn every_activity_in_a_set_is_delivered() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    let a1: *u8 = rt::msg_id_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                                rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("NSUserActivityTypeBrowsingWeb"));
+    rt::msg_void_id(a1, rt::sel(#str_ptr("setWebpageURL:\0")), ns_url("https://a.example/1"));
+    let a2: *u8 = rt::msg_id_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                                rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("NSUserActivityTypeBrowsingWeb"));
+    rt::msg_void_id(a2, rt::sel(#str_ptr("setWebpageURL:\0")), ns_url("https://b.example/2"));
+    // NSMutableSet, NOT `+setWithObjects:` — that one is nil-terminated
+    // variadic, and a two-argument `objc_msgSend` to it reads whatever happens
+    // to sit past the second register.
+    let set: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableSet\0")),
+                              rt::sel(#str_ptr("set\0")));
+    rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), a1);
+    rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), a2);
+    app_events_uikit::deliver_user_activities(set);
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return n == (2 as i32);
+}
+
+// FOCUS AND VISIBILITY ARE DIFFERENT KINDS, and this test used to assert them
+// conflated: `didBecomeActive` answering E_FOREGROUND. That is the focus edge
+// wearing the visibility kind, and it is why the same reason meant one thing
+// here and another on Android. An app loses focus to a dialog or to the other
+// half of a Split View while remaining fully visible, and must not release a
+// camera for it.
+fn becoming_active_is_the_focus_level_not_the_visibility_level() -> bool {
+    app_events_uikit::arm();
+    SEEN_KIND = 0 as u32;
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_kind, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+
+    post("UIApplicationDidBecomeActiveNotification");
+    if SEEN_KIND != ev::E_ACTIVE { let _a: status::Status = ev::off_app_event(record_kind, 0 as *u8); return false; }
+
+    post("UIApplicationWillResignActiveNotification");
+    if SEEN_KIND != ev::E_INACTIVE { let _b: status::Status = ev::off_app_event(record_kind, 0 as *u8); return false; }
+
+    // And the visibility level answers its own kinds, from its own pair.
+    post("UIApplicationWillEnterForegroundNotification");
+    if SEEN_KIND != ev::E_FOREGROUND { let _c: status::Status = ev::off_app_event(record_kind, 0 as *u8); return false; }
+
+    post("UIApplicationDidEnterBackgroundNotification");
+    let last: u32 = SEEN_KIND;
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_kind, 0 as *u8);
+    return last == ev::E_BACKGROUND && n == (4 as i32);
 }
 
 // ---- the dialog tier ---------------------------------------------------------------
@@ -1732,15 +2096,34 @@ fn run_all() -> i32 {
     check("named keys map from HID codes", named_keys_map_from_hid_codes());
     check("modifier flags map onto facet's bits", modifier_flags_map_onto_facets_bits());
     check("the agent walk finds a tagged view", the_agent_walk_finds_a_tagged_view());
+    check("an unregistered window exposes no children",
+          an_unregistered_window_exposes_no_children());
+    check("a tagged window carries its own id", a_tagged_window_carries_its_own_id());
     check("a button classifies as a button", a_button_classifies_as_a_button());
     check("a label is Text and a field is Input", a_label_classifies_as_text_and_a_field_as_input());
     check("a secure field is sensitive by class", a_secure_field_is_sensitive_by_class());
     check("a control is clickable, a bare view is not",
           a_control_is_clickable_and_a_bare_view_is_not());
-    check("a lifecycle observer fires for its own phase",
-          a_lifecycle_observer_fires_for_its_own_phase());
-    check("a cancelled lifecycle observer stops firing",
-          a_cancelled_lifecycle_observer_stops_firing());
+    check("a real notification reaches its observer",
+          a_real_notification_reaches_its_observer());
+    check("a cancelled observation stops being delivered",
+          a_cancelled_observation_stops_being_delivered());
+    check("a cancelled observation frees its registry slot",
+          a_cancelled_observation_frees_its_registry_slot());
+    check("a real notification reaches an app_events subscriber",
+          a_real_notification_reaches_an_app_events_subscriber());
+    check("focus and visibility answer different kinds",
+          becoming_active_is_the_focus_level_not_the_visibility_level());
+    check("a url reaches a subscriber as its absolute string",
+          a_url_reaches_a_subscriber_as_its_absolute_string());
+    check("a link delivered before anyone subscribed still arrives",
+          a_link_delivered_before_anyone_subscribed_still_arrives());
+    check("a null url is not an event", a_null_url_is_not_an_event());
+    check("a user activity with a webpage url is a link",
+          a_user_activity_with_a_webpage_url_is_a_link());
+    check("a user activity without a webpage url is not a link",
+          a_user_activity_without_a_webpage_url_is_not_a_link());
+    check("every activity in a set is delivered", every_activity_in_a_set_is_delivered());
     check("an alert carries one button per named title",
           an_alert_carries_one_button_per_named_title());
     check("a prompt gets exactly one text field", a_prompt_gets_exactly_one_text_field());

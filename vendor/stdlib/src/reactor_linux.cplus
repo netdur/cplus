@@ -80,7 +80,10 @@ fn epollin_oneshot() -> u32 { return 0x40000001 as u32; }
 fn epollout_oneshot() -> u32 { return 0x40000004 as u32; }
 fn clock_monotonic() -> i32 { return 1 as i32; }
 
-fn header_bytes() -> usize { return 96 as usize; }
+// 112, not 96: the last three slots are the SPAWNED TABLE. Kept in step with
+// the Darwin reactor deliberately — the two files are separate implementations
+// of one contract, and `executor` calls the same names on both.
+fn header_bytes() -> usize { return 112 as usize; }
 // Scratch slot reused for the 12-byte epoll_event (register + wait). The
 // 32-byte allocation from the kqueue layout is kept so the state-block
 // offsets are byte-identical to reactor.cplus.
@@ -110,6 +113,9 @@ fn off_n_awaiters() -> usize { return 72 as usize; }
 fn off_cap_awaiters() -> usize { return 76 as usize; }
 fn off_awaitee_hdls() -> usize { return 80 as usize; }
 fn off_awaiter_hdls() -> usize { return 88 as usize; }
+fn off_n_spawned() -> usize { return 96 as usize; }
+fn off_cap_spawned() -> usize { return 100 as usize; }
+fn off_spawned_hdls() -> usize { return 104 as usize; }
 
 // Waiter-table filter tags. Internal markers only (NOT kernel values on
 // Linux): they let poll_one_event tell a read waiter from a write waiter
@@ -160,6 +166,13 @@ fn ensure() -> *u8 {
     { *ae_slot = malloc((8 *% 8) as usize); }
     let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
     { *ar_slot = malloc((8 *% 8) as usize); }
+    // The spawned table — the frames this reactor OWNS. See `register_spawned`.
+    let ns_slot: *i32 = { (state + off_n_spawned()) as *i32 };
+    { *ns_slot = 0 as i32; }
+    let cs_slot: *i32 = { (state + off_cap_spawned()) as *i32 };
+    { *cs_slot = 8 as i32; }
+    let sh_slot: **u8 = { (state + off_spawned_hdls()) as **u8 };
+    { *sh_slot = malloc((8 *% 8) as usize); }
     { #reactor_set_state(state); }
     let _x: *u8 = null_p;
     return state;
@@ -582,9 +595,116 @@ fn unregister_awaiter(awaitee: *u8) {
 // NOT freed here: the frames those handles point into. The cancelling executor
 // destroys the task tree it owns, and this purge is what guarantees no reactor
 // entry can reach a freed frame afterwards.
+// ---- spawned tasks: the frames the reactor OWNS ----
+//
+// The Darwin twin carries the full reasoning; the short version is that a
+// `spawn_local` task is awaited by nothing, so no cancel cascade reaches it,
+// and since `Future` gained a destructor the frame is always owned by
+// something. `#reactor_spawn_local` moves the handle out of the value and this
+// is where it lands.
+//
+// A flat array with NULL HOLES: `unregister_spawned` nulls in place, so an
+// entry's index never moves under an iteration.
+fn register_spawned(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let state: *u8 = ensure();
+    let ns_slot: *i32 = { (state + off_n_spawned()) as *i32 };
+    let cs_slot: *i32 = { (state + off_cap_spawned()) as *i32 };
+    let sh_slot: **u8 = { (state + off_spawned_hdls()) as **u8 };
+    var n: i32 = { *ns_slot };
+    var cap: i32 = { *cs_slot };
+    // Reuse a hole before growing, or a long-lived reactor spawning in a loop
+    // grows without bound.
+    let hs0: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        if ptr_is_null({ *(hs0 + (s as usize)) }) {
+            let dst0: **u8 = { hs0 + (s as usize) };
+            { *dst0 = hdl; }
+            return;
+        }
+        s = s +% (1 as i32);
+    }
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let grown: *u8 = { realloc(*sh_slot, (cap *% 8) as usize) };
+        { *sh_slot = grown; }
+        { *cs_slot = cap; }
+    }
+    let hs: **u8 = { *sh_slot as **u8 };
+    let dst: **u8 = { hs + (n as usize) };
+    { *dst = hdl; }
+    { *ns_slot = n +% (1 as i32); }
+}
+
+// Give up ownership WITHOUT destroying — the door for a frame something else
+// already freed, so teardown cannot destroy it twice.
+fn unregister_spawned(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        let slot: **u8 = { hs + (s as usize) };
+        if { *slot } == hdl { { *slot = 0 as *u8; } }
+        s = s +% (1 as i32);
+    }
+}
+
+// How many spawned frames this reactor still owns. Read by the tests.
+fn spawned_count() -> i32 {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return 0 as i32; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var live: i32 = 0;
+    var s: i32 = 0;
+    while s < n {
+        if !ptr_is_null({ *(hs + (s as usize)) }) { live = live +% (1 as i32); }
+        s = s +% (1 as i32);
+    }
+    return live;
+}
+
+// Destroy every spawned frame still owned, running each one's cancel edges.
+// Called by `teardown` BEFORE the arrays go, because a cancel edge unregisters
+// awaiter and pending entries and those arrays have to still be there.
+fn destroy_spawned() {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        let slot: **u8 = { hs + (s as usize) };
+        let h: *u8 = { *slot };
+        // Nulled BEFORE the destroy: cancel edges run arbitrary drops and one
+        // could re-enter. An entry already taken cannot be taken twice.
+        { *slot = 0 as *u8; }
+        if !ptr_is_null(h) {
+            unregister_pending(h);
+            unregister_awaiter(h);
+            { #coro_destroy(h); }
+        }
+        s = s +% (1 as i32);
+    }
+    { *ns_slot = 0 as i32; }
+}
+
 fn teardown() {
     let cur: *u8 = { #reactor_get_state() };
     if ptr_is_null(cur) { return; }
+    // The spawned frames first, while the arrays their cancel edges write to
+    // are still allocated.
+    destroy_spawned();
     let epfd: i32 = { *((cur + off_kqfd()) as *i32) };
     { close(epfd); }
     { free(*((cur + off_waiter_fds()) as **u8)); }
@@ -594,6 +714,7 @@ fn teardown() {
     { free(*((cur + off_waiter_filters()) as **u8)); }
     { free(*((cur + off_awaitee_hdls()) as **u8)); }
     { free(*((cur + off_awaiter_hdls()) as **u8)); }
+    { free(*((cur + off_spawned_hdls()) as **u8)); }
     { free(cur); }
     { #reactor_set_state(0 as *u8); }
 }
@@ -631,6 +752,16 @@ fn reactor_fd() -> i32 {
 // generated IR rather than a resolve error — `use of undefined value
 // '@stdlib_reactor_unregister_awaiter_v1'` — so it names the shim and not the
 // caller.
+
+// The codegen door for `#reactor_spawn_local` — the same stable symbol the
+// Darwin reactor exports, because the intrinsic emits one call site for both.
+export extern fn stdlib_reactor_register_spawned_v1(hdl: *u8) {
+    register_spawned(hdl);
+}
+
+export extern fn stdlib_reactor_unregister_spawned_v1(hdl: *u8) {
+    unregister_spawned(hdl);
+}
 
 export extern fn stdlib_reactor_unregister_pending_v1(hdl: *u8) {
     unregister_pending(hdl);

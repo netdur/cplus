@@ -37,6 +37,11 @@ pub struct Manifest {
     /// and must build on every OS the manifest supports, so install fetches
     /// the union; the compiler's build driver is what filters by platform.
     pub deps: BTreeMap<String, String>,
+    /// `[android.maven]` — third-party Maven/AAR coordinates, keyed
+    /// `group:artifact` → version (D18). Android-only by construction: the
+    /// compiler rejects the table under any other platform, so this is a
+    /// flat map rather than one per platform.
+    pub maven: BTreeMap<String, String>,
     /// Directory the manifest lives in (used to place `vendor/`).
     pub root: PathBuf,
 }
@@ -56,6 +61,14 @@ pub enum ManifestError {
     InvalidDependencyName {
         path: PathBuf,
         name: String,
+    },
+    /// A `[<platform>.maven]` key that is not a `group:artifact`
+    /// coordinate, or the table on a platform that has no Maven (D18).
+    InvalidMavenCoordinate {
+        path: PathBuf,
+        platform: String,
+        key: String,
+        message: String,
     },
     /// One dependency name declared twice with incompatible meaning: in
     /// `[dependencies]` AND a `[<platform>.dependencies]` section, or in two
@@ -136,6 +149,7 @@ impl Manifest {
         // only cares WHICH packages exist, not where they're active. The
         // duplicate rules mirror the compiler's E0869: base + section is a
         // conflict; two sections may share a dep only with an identical spec.
+        let mut maven: BTreeMap<String, String> = BTreeMap::new();
         let sections: [(&str, Option<RawPlatformSection>); 7] = [
             ("macos", raw.macos),
             ("linux", raw.linux),
@@ -150,6 +164,37 @@ impl Manifest {
         let mut scoped_origin: BTreeMap<String, &str> = BTreeMap::new();
         for (platform, section) in sections {
             let Some(section) = section else { continue };
+            // `[<platform>.maven]`. Android is the only platform with a
+            // Maven ecosystem; the table anywhere else is a mistake worth
+            // naming rather than a silently ignored key (the compiler
+            // raises E0877 for the same shape).
+            for (key, version) in section.maven {
+                if platform != "android" {
+                    return Err(ManifestError::InvalidMavenCoordinate {
+                        path: root.join(MANIFEST_NAME),
+                        platform: platform.to_string(),
+                        key,
+                        message: "Maven artifacts are an Android-only ecosystem — use `[android.maven]`".to_string(),
+                    });
+                }
+                if key.split(':').count() != 2 || key.split(':').any(|p| p.trim().is_empty()) {
+                    return Err(ManifestError::InvalidMavenCoordinate {
+                        path: root.join(MANIFEST_NAME),
+                        platform: platform.to_string(),
+                        key,
+                        message: "expected a `\"group:artifact\" = \"version\"` entry".to_string(),
+                    });
+                }
+                if version.trim().is_empty() {
+                    return Err(ManifestError::InvalidMavenCoordinate {
+                        path: root.join(MANIFEST_NAME),
+                        platform: platform.to_string(),
+                        key,
+                        message: "version is empty — Maven coordinates are exact pins (D2), never `*`".to_string(),
+                    });
+                }
+                maven.insert(key, version);
+            }
             for (name, spec) in section.dependencies {
                 if !is_valid_dep_name(&name) {
                     return Err(ManifestError::InvalidDependencyName {
@@ -189,6 +234,7 @@ impl Manifest {
             name: raw.package.name,
             version: raw.package.version,
             deps,
+            maven,
             root,
         })
     }
@@ -237,6 +283,9 @@ struct RawManifest {
 struct RawPlatformSection {
     #[serde(default)]
     dependencies: BTreeMap<String, String>,
+    /// `[android.maven]` — `"group:artifact" = "version"` (D18).
+    #[serde(default)]
+    maven: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -257,6 +306,16 @@ impl fmt::Display for ManifestError {
             ManifestError::InvalidDependencyName { path, name } => write!(
                 f,
                 "invalid dependency name `{name}` in {}: a package name must be a lowercase identifier ([a-z][a-z0-9_]*)",
+                path.display()
+            ),
+            ManifestError::InvalidMavenCoordinate {
+                path,
+                platform,
+                key,
+                message,
+            } => write!(
+                f,
+                "invalid `[{platform}.maven]` entry `{key}` in {}: {message}",
                 path.display()
             ),
             ManifestError::ConflictingDependency {
@@ -428,6 +487,73 @@ objc = "https://github.com/netdur/cplus/tree/main/vendor/objc@0.0.25"
             error,
             ManifestError::InvalidDependencyName { .. }
         ));
+    }
+
+    #[test]
+    fn android_maven_coordinates_are_read() {
+        let manifest = Manifest::parse(
+            r#"
+[package]
+name = "maps"
+version = "0.0.1"
+
+[android.dependencies]
+jni = "*"
+
+[android.maven]
+"com.google.android.gms:play-services-maps" = "19.0.0"
+"androidx.annotation:annotation" = "1.1.0"
+"#,
+        )
+        .unwrap();
+        assert_eq!(manifest.deps["jni"], "*");
+        assert_eq!(
+            manifest.maven["com.google.android.gms:play-services-maps"],
+            "19.0.0"
+        );
+        assert_eq!(manifest.maven.len(), 2);
+    }
+
+    #[test]
+    fn maven_outside_android_is_rejected() {
+        // Maven is an Android ecosystem. The table elsewhere would be a
+        // silently-ignored key, which is how a dependency goes missing.
+        let error = Manifest::parse(
+            "[package]\nname = \"p\"\nversion = \"0.0.1\"\n\n[ios.maven]\n\"com.x:y\" = \"1.0\"\n",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, ManifestError::InvalidMavenCoordinate { ref platform, .. } if platform == "ios"),
+            "got: {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_maven_coordinate_is_rejected() {
+        for (key, version) in [
+            ("com.x", "1.0"),          // no artifact
+            ("com.x:y:1.0", "1.0"),    // version in the key
+            ("com.x:", "1.0"),         // empty artifact
+            (":y", "1.0"),             // empty group
+            ("com.x:y", ""),           // no version
+            ("com.x:y", "*"),          // a wildcard is not a Maven version…
+        ] {
+            let src = format!(
+                "[package]\nname = \"p\"\nversion = \"0.0.1\"\n\n[android.maven]\n\"{key}\" = \"{version}\"\n"
+            );
+            let parsed = Manifest::parse(&src);
+            if version == "*" {
+                // …but that one is caught when the coordinate is resolved,
+                // not here: `*` is a legal-looking string. Assert the shape
+                // check passes so the failure lands with a Maven message.
+                assert!(parsed.is_ok(), "`{key}` = `{version}`");
+                continue;
+            }
+            assert!(
+                matches!(parsed, Err(ManifestError::InvalidMavenCoordinate { .. })),
+                "`{key}` = `{version}` should be rejected"
+            );
+        }
     }
 
     #[test]

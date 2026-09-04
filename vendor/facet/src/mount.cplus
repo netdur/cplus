@@ -972,7 +972,7 @@ fn set_content[C: component::Component + component::Lifecycle](outlet: *core::No
         }
     }
     // The component-level lifecycle, exactly as the old verb fired it.
-    c.on_attach();
+    c.on_attach(component::Attach::Mount);
     core::touch(outlet, props::C_FLUSH);
     return true;
 }
@@ -1711,8 +1711,10 @@ impl ScComp: component::Component {
 }
 
 impl ScComp: component::Lifecycle {
-    fn on_attach(ref this) { this.attaches = this.attaches + 1; return; }
-    fn on_detach(ref this) { this.detaches = this.detaches + 1; return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } this.attaches = this.attaches + 1; return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } this.detaches = this.detaches + 1; return; }
 }
 
 // `find` answers what `find_node` answers, and `within:` scopes it the same

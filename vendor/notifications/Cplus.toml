@@ -1,0 +1,47 @@
+[package]
+name    = "notifications"
+version = "0.0.1"
+edition = "2026"
+
+# notifications — build one, schedule it, and route its tap.
+#
+# THE BOUNDARY, because the name invites a wrong guess: this package owns
+# everything from "a notification exists" onward. Obtaining a PUSH TOKEN is not
+# part of it — a token is a device credential and a round trip to a server you
+# own, needing an entitlement and a provisioning profile on Apple and the whole
+# Firebase AAR pipeline on Android. A remote notification that arrives travels
+# this package's code path exactly; how it got there is somebody else's problem.
+# plans/notifications.md §6 says where the token lives instead.
+#
+# ONE PACKAGE ON EVERY PLATFORM, the shape vendor/http proved and
+# vendor/permissions copied: `notifications/notifications` is what an
+# application imports, and the half underneath is swapped by the resolver's
+# `_<platform>` file override. The two halves meet at stable symbols rather than
+# through an import, because the backend imports this module for its types and a
+# cycle back is rejected (E0404).
+
+[dependencies]
+stdlib      = "*"
+# THE TAP RIDES `facet/app_events`, on every platform. A notification tapped
+# while the app is dead launches it and the payload arrives before anything has
+# subscribed; app_events LATCHES that kind, which is what makes a cold tap and a
+# warm one indistinguishable to a caller. facet is the portable core here, not a
+# backend.
+facet       = "*"
+flex_layout = "*"
+events      = "*"
+# THE GATE, and a deliberate coupling rather than a convenience. Scheduling
+# without the permission does not fail loudly on either platform — it is
+# accepted and never shown — so a package that let that through would be
+# shipping the silent failure it exists to prevent.
+permissions = "*"
+
+[macos.dependencies]
+objc = "*"
+
+[ios.dependencies]
+objc = "*"
+
+[android.dependencies]
+jni          = "*"
+android_view = "*"

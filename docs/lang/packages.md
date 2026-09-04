@@ -158,6 +158,15 @@ Three mechanisms, three axes — they compose and don't compete:
 Off-platform imports fail honestly: importing a `[macos.dependencies]`
 package in an iOS build is E0866 naming the platform it was declared for.
 
+Android has one more, for the Java side: **`[android.maven]`** pins a
+third-party AAR by Maven coordinate, `"group:artifact" = "version"`, exact.
+`cpc pm add . --maven com.google.android.gms:play-services-maps:19.0.0`
+writes it, resolves the POM closure and downloads it — no Gradle anywhere,
+because Gradle is only the resolver and resolution over pinned coordinates
+is reading XML. `cpc pm maven classpath` then hands `d8` the jars. Price a
+coordinate before taking it: `cpc pm maven price <coord>` prints the
+artifact count and the megabytes, which is what the decision turns on.
+
 The rule of thumb from the framework work: OS decides *files* (backends,
 syscalls), form factor decides *values* (a phone-shaped shell is portable
 facet code — pick it at runtime, not per-OS).

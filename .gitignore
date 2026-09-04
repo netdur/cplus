@@ -52,6 +52,22 @@ __pycache__/
 # The Android build's staging directory: unpacked APK, dex, .so, signed output.
 # `build.sh` recreates it from scratch on every run.
 /examples/*/out/
+# `run_sim.sh` links and bundles here. The .app holds a ~15 MB simulator binary,
+# which is an artifact of a build and not a source of one.
+/examples/*/build/
 
 # javac scratch for tools/build_dex.sh; the DEX is the artifact, not these.
 vendor/facet_android/classes/
+
+# CoreML models. A compiled .mlpackage is a multi-megabyte binary weight blob
+# that git cannot diff and that nothing tracked references — the probes using
+# one live under playground/, which is ignored already. Fetch or convert the
+# model where you need it rather than carrying it in history.
+*.mlpackage/
+*.mlmodelc/
+
+# A local Maven repo. `cpc pm` keeps the real one in ~/.cplus/m2; a `--m2 .`
+# or an older `tools/mvnresolve.py` run leaves one here. Megabytes of
+# third-party .aar and .pom that git should never carry — delete it freely,
+# `cpc pm install` refetches.
+m2/

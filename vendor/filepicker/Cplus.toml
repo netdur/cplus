@@ -1,0 +1,34 @@
+[package]
+name    = "filepicker"
+version = "0.0.1"
+edition = "2026"
+
+# filepicker — the system's own file chooser.
+#
+# ASYNCHRONOUS EVERYWHERE, and the API says so: every platform hands the screen
+# to another process and answers later. There is no blocking form even on
+# macOS, where `runModal` exists — a modal run loop inside a facet app is a
+# reentrancy problem, not a convenience.
+
+[dependencies]
+stdlib = "*"
+
+[macos.dependencies]
+objc       = "*"
+appkit     = "*"
+quartzcore = "*"
+webkit     = "*"
+
+[ios.dependencies]
+objc       = "*"
+uikit      = "*"
+quartzcore = "*"
+webkit     = "*"
+
+[android.dependencies]
+jni           = "*"
+android_view  = "*"
+facet         = "*"
+facet_android = "*"
+flex_layout   = "*"
+events        = "*"

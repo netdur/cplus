@@ -1,0 +1,14 @@
+// The iOS test runner's entry point.
+//
+// No `UIApplicationMain` and no backend install: nothing here draws, and the
+// one check that needs the main run loop turns it itself with a deadline
+// (`selftest::spin`). An app that never exits could not report a failure count
+// to a shell, which is the whole output of this binary.
+//
+// Returns the FAILURE COUNT, so the exit status is the result.
+
+import "./selftest" as selftest;
+
+export extern fn permissions_tests_main() -> i32 {
+    return selftest::run_all();
+}

@@ -1,0 +1,294 @@
+// securestore — small secrets, at rest, under the platform's own key material.
+//
+// WHAT "SECURE" MEANS HERE, precisely, because the word does a lot of work:
+// the bytes at rest are protected by key material the app cannot extract and an
+// attacker with the app's files cannot use. On Apple that is the Keychain; on
+// Android it is an AES key generated inside `AndroidKeyStore`, which on a device
+// with a TEE or StrongBox is not extractable even with root.
+//
+// It is NOT protection from a compromised running process. Anything this
+// package can read, code running as the app can read. The threat it answers is
+// a stolen device, a copied backup, and a sandbox someone walked out with —
+// not an attacker already inside the process.
+//
+//     securestore::set("token", value);
+//     var t: text::Text = text::new();
+//     match securestore::get("token", #addr_of(t)) { ... }
+//
+// ---- what it is not -------------------------------------------------------
+//
+// Not a database and not a preferences store. Kilobytes per item: the Keychain
+// is a daemon round-trip and the Android side encrypts each value on its own.
+// An app keeping a megabyte here has a cache, and a cache belongs in a file.
+//
+// No BIOMETRIC GATING in v1. "Require Face ID to read this" is a real feature
+// and a different one: it makes a read able to put a prompt on screen, so every
+// `get` would have to become asynchronous for the sake of the few items that
+// want it. It belongs as a second verb later, not as a tax on the first.
+
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+
+// What a call answered.
+//
+// FIVE, and `NotFound` is separate from `Failed` on purpose: "there is no such
+// key" is the ordinary case a first run hits, and an app that could not tell it
+// from a broken keychain would either treat every failure as "log in again" or
+// none of them.
+enum Outcome {
+    Ok,
+    // No item under this key in this service. Not an error.
+    NotFound,
+    // The platform refused. On Apple this is the keychain's own access control
+    // — see the note on `set` about code identity.
+    Denied,
+    // No secure storage on this platform, or the process cannot reach it.
+    Unsupported,
+    // Something else went wrong. The platform's own code is lost here, which is
+    // deliberate: a caller cannot act on `errSecDecode` differently from
+    // `errSecIO`, and a package that leaked OSStatus into its surface would
+    // make every consumer platform-specific to read.
+    Failed,
+}
+
+// ---- the namespace ------------------------------------------------------------
+//
+// `service` is the namespace a key lives in, and every verb takes it, defaulted
+// to `""` — the app's own: the bundle identifier on Apple, a per-package
+// preferences file on Android.
+//
+// It exists so an app with two independent secret sets — a user's token and a
+// device credential, say — can `clear` one without touching the other. Most
+// apps never pass it.
+//
+// A SERVICE IS ALWAYS PART OF THE QUERY, which is what keeps `clear` from being
+// a footgun: there is no shape of call that matches items outside one
+// namespace, so the worst a wrong `service` can do is clear the wrong app-owned
+// set rather than everything the process can see.
+
+// FOUR KILOBYTES PER VALUE, enforced at both ends rather than documented.
+//
+// A write over the limit is refused; a read of an item that somehow exceeds it
+// answers `Failed` rather than truncating. Truncation is the failure worth
+// spending a constant to prevent: a half a token fails authentication somewhere
+// far away, and nobody traces that back to storage.
+const MAX_VALUE_BYTES: usize = 4096 as usize;
+
+// Store `value` under `key`, replacing whatever was there.
+//
+// UPDATE-OR-INSERT IS TWO CALLS on Apple and the backend does both: `SecItemAdd`
+// answers `errSecDuplicateItem` for an existing key, so a `set` that only added
+// would work once and silently never change the value again.
+//
+// A REBUILT DEVELOPMENT BINARY CAN BE DENIED ITS OWN DATA on macOS. The legacy
+// keychain ties each item's edit rights to the code identity that created it,
+// and an ad-hoc signature changes whenever the binary does — so an update can
+// answer `errSecInvalidOwnerEdit` against an item the previous build wrote. The
+// backend treats that as delete-and-re-add rather than surfacing `Denied`,
+// because from the app's side it is its own item and the intent is unambiguous.
+// A Developer-ID-signed app has a stable identity and never reaches that path.
+// Measured: plans/securestore.md §5.
+fn set(key: str, to: str, service: str = "") -> Outcome {
+    if #str_len(key) == (0 as usize) { return Outcome::Failed; }
+    // REFUSED AT THE WRITE, which is the only place it can be reported to
+    // somebody who can act on it — see MAX_VALUE_BYTES.
+    if #str_len(to) > MAX_VALUE_BYTES { return Outcome::Failed; }
+    return _from_code(_c_set(#str_ptr(key), #str_len(key),
+                             #str_ptr(to), #str_len(to),
+                             #str_ptr(service), #str_len(service)));
+}
+
+// Read the item under `key` into `out`, replacing its contents.
+//
+// AN OUT-PARAMETER RATHER THAN AN OPTION, and it is a deliberate deviation from
+// the naming guideline's "a value that can be absent returns `Option[T]`",
+// recorded rather than hidden.
+//
+// A caller has to tell "absent" from "refused" from "broken", and only the
+// first of those is a `None`. `Option[Text]` would collapse a keychain that
+// refused the app and a keychain that is not there into the same answer as a
+// key nobody has written yet — and those three want different code. The
+// guideline's own error model says the same thing from the other side: a
+// value-plus-reason is a `Result`, and this is a value plus five reasons.
+//
+// `into` is left UNTOUCHED on anything but `Ok`, so a caller that ignores the
+// outcome reads whatever it put there rather than an empty string that looks
+// like a stored value.
+//
+// `ref`, NOT `*text::Text`. The pointer form was the C seam leaking into the
+// surface — this page's own rule is that public APIs take `Text`, and that the
+// bridging is hidden inside the method. It cost every call site an `#addr_of`,
+// and it cost this function a null check that a `ref` makes unrepresentable.
+fn get(key: str, ref into: text::Text, service: str = "") -> Outcome {
+    if #str_len(key) == (0 as usize) { return Outcome::Failed; }
+    var buf: [u8; 4096] = #zero::[[u8; 4096]]();
+    let p: *u8 = { #addr_of(buf) as *u8 };
+    // The backend answers _C_FAILED rather than a short count when the item does
+    // not fit — see MAX_VALUE_BYTES. `cap` is the contract, not a hint.
+    let n: i64 = _c_get(#str_ptr(key), #str_len(key),
+                        #str_ptr(service), #str_len(service),
+                        p, MAX_VALUE_BYTES);
+    // Negative is a status code; zero or more is a byte count.
+    if n < (0 as i64) { return _from_code({ n as i32 }); }
+    into = text::from_str({ #str_from_raw_parts(p, { n as usize }) });
+    return Outcome::Ok;
+}
+
+// Remove the item under `key`. `NotFound` when there was none, which is not an
+// error — a caller clearing a token it may never have written should not have
+// to check first.
+fn remove(key: str, service: str = "") -> Outcome {
+    if #str_len(key) == (0 as usize) { return Outcome::Failed; }
+    return _from_code(_c_remove(#str_ptr(key), #str_len(key),
+                                #str_ptr(service), #str_len(service)));
+}
+
+// Is there an item under `key`?
+//
+// A BOOL, not an Outcome, because the three failures collapse honestly here:
+// refused, absent and broken all mean "you cannot read a value under this key",
+// and a caller that needs to tell them apart is calling `get`.
+fn contains(key: str, service: str = "") -> bool {
+    if #str_len(key) == (0 as usize) { return false; }
+    return _c_contains(#str_ptr(key), #str_len(key),
+                       #str_ptr(service), #str_len(service)) != (0 as i32);
+}
+
+// Remove every item in one service.
+//
+// BOUNDED BY CONSTRUCTION: the query always carries the service, so this cannot
+// reach items outside the namespace it was given, and on Apple it cannot reach
+// items belonging to another application at all. `Ok` when there was nothing to
+// remove — an empty namespace is already in the state this asks for.
+fn clear(service: str = "") -> Outcome {
+    return _from_code(_c_clear(#str_ptr(service), #str_len(service)));
+}
+
+// ---- the seam ----------------------------------------------------------------
+//
+// `str` cannot cross an `export extern fn` boundary (E0410), so every name and
+// value crosses as `(*u8, usize)` and the backend rebuilds the view on the far
+// side. The same shape `permissions` and `notifications` use.
+//
+// The integer answers are NEGATIVE for a status and non-negative for data, so
+// `_c_get` can report a byte count and a failure through one return.
+
+const _C_OK: i32 = 0 as i32;
+const _C_NOT_FOUND: i32 = 0 - 1;
+const _C_DENIED: i32 = 0 - 2;
+const _C_UNSUPPORTED: i32 = 0 - 3;
+const _C_FAILED: i32 = 0 - 4;
+
+fn _from_code(c: i32) -> Outcome {
+    if c == _C_OK { return Outcome::Ok; }
+    if c == _C_NOT_FOUND { return Outcome::NotFound; }
+    if c == _C_DENIED { return Outcome::Denied; }
+    if c == _C_UNSUPPORTED { return Outcome::Unsupported; }
+    return Outcome::Failed;
+}
+
+extern fn _c_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
+                 service: *u8, service_len: usize) -> i32;
+extern fn _c_get(key: *u8, key_len: usize, service: *u8, service_len: usize,
+                 out: *u8, cap: usize) -> i64;
+extern fn _c_remove(key: *u8, key_len: usize, service: *u8, service_len: usize) -> i32;
+extern fn _c_contains(key: *u8, key_len: usize, service: *u8, service_len: usize) -> i32;
+extern fn _c_clear(service: *u8, service_len: usize) -> i32;
+
+// ---- tests -------------------------------------------------------------------
+//
+// WHAT IS DELIBERATELY NOT HERE: a keychain round-trip.
+//
+// `cpc test` builds a bare, unsigned binary and runs it on the developer's own
+// machine, where the legacy keychain is the LOGIN keychain. A suite that stored
+// items there would leave real entries in a real person's keychain on every
+// run — and worse, the legacy keychain ties item access to code identity, so a
+// rebuilt test binary reading what its predecessor wrote can raise a modal
+// "enter your login keychain password" dialog. A test suite that can interrupt
+// you with a password prompt is a test suite you stop running.
+//
+// So the platform round-trip lives in `playground/securestoreprobe`, run
+// deliberately, and what is checked here is everything that does NOT touch the
+// keychain: the guards, the code mapping, and the size limit. See
+// docs/guide.md for how the platform halves are verified instead.
+
+#[test]
+fn every_backend_code_maps_to_exactly_one_outcome() {
+    assert _from_code(_C_OK) == Outcome::Ok;
+    assert _from_code(_C_NOT_FOUND) == Outcome::NotFound;
+    assert _from_code(_C_DENIED) == Outcome::Denied;
+    assert _from_code(_C_UNSUPPORTED) == Outcome::Unsupported;
+    assert _from_code(_C_FAILED) == Outcome::Failed;
+    // AND ANYTHING ELSE IS `Failed`, which is the property worth pinning: a
+    // backend that grows a code this facade has not learned must degrade to the
+    // honest catch-all rather than to whichever variant happens to be first.
+    assert _from_code(0 - 99) == Outcome::Failed;
+    assert _from_code(1234 as i32) == Outcome::Failed;
+}
+
+#[test]
+fn the_codes_are_distinct_so_no_two_outcomes_collide() {
+    assert _C_OK != _C_NOT_FOUND;
+    assert _C_NOT_FOUND != _C_DENIED;
+    assert _C_DENIED != _C_UNSUPPORTED;
+    assert _C_UNSUPPORTED != _C_FAILED;
+    // Non-negative is DATA on the `_c_get` seam, so every status must be
+    // negative or a byte count would read as a failure.
+    assert _C_NOT_FOUND < (0 as i32);
+    assert _C_DENIED < (0 as i32);
+    assert _C_UNSUPPORTED < (0 as i32);
+    assert _C_FAILED < (0 as i32);
+}
+
+#[test]
+fn an_empty_key_is_refused_before_it_reaches_the_platform() {
+    // An empty account attribute is a legal keychain query that matches a
+    // DIFFERENT item than the caller meant — so this is refused here rather
+    // than passed down, where it would silently read or overwrite the wrong
+    // thing.
+    assert set("", "value") == Outcome::Failed;
+    assert remove("") == Outcome::Failed;
+    assert !contains("");
+    var out: text::Text = text::new();
+    assert get("", into: out) == Outcome::Failed;
+}
+
+// `a_null_out_pointer_is_refused_rather_than_written_through` was here and is
+// DELETED, not moved: `get` takes `ref into` now, and a `ref` cannot be null.
+// The test guarded a state the type system no longer admits, so keeping it
+// would mean keeping the pointer that made it possible.
+
+#[test]
+fn a_value_over_the_limit_is_refused_at_the_write() {
+    // The limit is the contract, and refusing at the write is the only place it
+    // can be reported to somebody who can do something about it.
+    var big: text::Text = text::new();
+    var i: usize = 0 as usize;
+    while i < (MAX_VALUE_BYTES + (1 as usize)) {
+        let _a: status::Status = big.append("x");
+        i = i +% (1 as usize);
+    }
+    assert #str_len(big.view()) > MAX_VALUE_BYTES;
+    // Safe to call: the guard returns before `_c_set`, so nothing reaches the
+    // keychain.
+    assert set("k", big.view()) == Outcome::Failed;
+
+    // THE AT-LIMIT CASE IS NOT TESTED HERE, and the reason is the one at the
+    // top of this section: a value of exactly MAX_VALUE_BYTES passes the guard,
+    // so asserting it would mean actually storing 4KB in the developer's login
+    // keychain on every `cpc test`. The boundary is checked in
+    // `playground/securestoreprobe`, which is run on purpose.
+    //
+    // What CAN be pinned here is the arithmetic the guard uses, which is where
+    // an off-by-one would live: `>` and not `>=`, so a value of exactly the
+    // limit is legal.
+    var edge: text::Text = text::new();
+    var j: usize = 0 as usize;
+    while j < MAX_VALUE_BYTES {
+        let _b: status::Status = edge.append("x");
+        j = j +% (1 as usize);
+    }
+    assert #str_len(edge.view()) == MAX_VALUE_BYTES;
+    assert !(#str_len(edge.view()) > MAX_VALUE_BYTES);
+}

@@ -271,6 +271,31 @@ there.
   expression is checked.
 - **The iOS simulator is not a platform.** `[ios.dependencies]` covers
   both; only `#target()` tells them apart.
+- **On the iOS SIMULATOR, entitlements go in the BINARY, not the
+  signature.** `securityd` reads them from the `__TEXT,__entitlements`
+  section the LINKER embeds — which is how Xcode builds for a simulator —
+  and the ad-hoc signature must stay PLAIN. A signature carrying
+  entitlements makes SpringBoard refuse the launch outright, and every
+  error message points somewhere else ("denied by service delegate",
+  "Security policy issue"). Needed by anything with a capability: the
+  keychain, biometrics, app groups.
+
+  ```
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker ent.plist
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __ents_der    -Xlinker ent.der
+  codesign --force --sign -            # PLAIN. no --entitlements.
+  ```
+
+  No provisioning profile, no device and no Xcode project are involved.
+  A DEVICE is the opposite case: there entitlements ride in the SIGNATURE
+  and are validated against a profile. `vendor/securestore/tools/run_ios_tests.sh`
+  is the worked example and asserts both halves, the second inverted:
+  the section must be present AND the signature must not carry them.
+- **`simctl launch` calls a fast-exiting process a failed launch.** A test
+  runner whose `main` returns rather than entering a run loop always gets
+  "denied by service delegate", and its stdout is discarded — for a run
+  that completed. Write the result into the app's container and read it
+  back with `simctl get_app_container`.
 - **`#platform()` is the target's, not the host's.** A `--target
   ios-arm64` build from a Mac sees `"ios"`. Code that logs "running on
   macos" from a cross build is reading the wrong axis.
