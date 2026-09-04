@@ -183,8 +183,34 @@ fn alpha_byte(opacity: f64) -> u8 {
     return a as u8;
 }
 
+// Take the layered style back off. A WS_EX_LAYERED window with LWA_ALPHA does
+// NOT composite its CHILD windows — user32 alpha-blends the window's own paint
+// and leaves child HWNDs rendered BLACK. A leaf (a coloured box) has none and
+// fades cleanly; a card that holds labels or controls, faded in and left
+// layered, shows those children as black bars. So at full opacity — the one
+// state where the children matter and the alpha does not — the style comes off
+// and the children paint normally again. The frame change makes the ex-style
+// take, and the redraw brings the children back from the black.
+fn unlayer(v: *u8) {
+    let ex: i64 = { u::GetWindowLongPtrA(v, sys::gwl_exstyle()) };
+    if (ex & (sys::ws_ex_layered() as i64)) == (0 as i64) { return; }
+    let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_exstyle(),
+                                         ex & ~(sys::ws_ex_layered() as i64)) };
+    // SWP_FRAMECHANGED (0x0020): re-apply the frame so the dropped ex-style
+    // takes effect without a move, size or z change.
+    let flags: u32 = sys::swp_nomove() | sys::swp_nosize() | sys::swp_nozorder()
+                   | sys::swp_noactivate() | (0x0020 as u32);
+    let _p: i32 = { u::SetWindowPos(v, sys::hwnd_top(), 0 as i32, 0 as i32,
+                                    0 as i32, 0 as i32, flags) };
+    // RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW — repaint the
+    // window AND every child, now, so the blacked-out children come back.
+    let _r: i32 = { u::RedrawWindow(v, 0 as *u::tagRECT, 0 as *u8, 0x0185 as u32) };
+    return;
+}
+
 fn set_opacity_now(v: *u8, opacity: f64) {
     if v == (0 as *u8) { return; }
+    if opacity >= (1.0 as f64) { unlayer(v); return; }
     ensure_layered(v);
     let _r: i32 = { u::SetLayeredWindowAttributes(v, 0 as u32, alpha_byte(opacity), lwa_alpha()) };
     return;
