@@ -204,6 +204,10 @@ fn fixed_height(kind: u32) -> i32 {
 
     if kind == props::K_PROGRESS { return 18 as i32; }
     if kind == props::K_SPINNER { return 18 as i32; }
+    // A page-dots strip draws no string either — it is owner-drawn dots
+    // (`controls::draw_page_dots`) centred in its box. 20 points is room for the
+    // 8-point default dot with breathing space above and below.
+    if kind == props::K_PAGE_DOTS { return 20 as i32; }
     return 0 as i32;
 }
 
@@ -257,6 +261,11 @@ fn has_intrinsic_size(kind: u32) -> bool {
     if kind == props::K_SLIDER { return true; }
     if kind == props::K_PROGRESS { return true; }
     if kind == props::K_SPINNER { return true; }
+    // A PAGE-DOTS STRIP is owner-drawn dots with no string, the same 0x0 trap:
+    // without a measure callback it lays out at nothing and the dots draw off
+    // the top of a zero-height box. `fixed_height` and `fills_line` answer for
+    // it below.
+    if kind == props::K_PAGE_DOTS { return true; }
     // A SWITCH AND A GLYPH are both fixed affordances — see `square_side` and
     // `toggle_size`. Neither draws a string the layout could measure, so
     // leaving them out here is the same 0x0 the slider had: the callback is
@@ -287,6 +296,9 @@ fn fills_line(kind: u32) -> bool {
     if kind == props::K_PROGRESS { return true; }
     if kind == props::K_SEARCH_FIELD { return true; }
     if kind == props::K_TEXT_AREA { return true; }
+    // A page-dots strip fills the line and centres its dots in it (see
+    // `draw_page_dots`), so a stated natural width would left-align them.
+    if kind == props::K_PAGE_DOTS { return true; }
     return false;
 }
 
