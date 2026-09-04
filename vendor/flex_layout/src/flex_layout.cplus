@@ -2223,9 +2223,14 @@ impl Node {
             if is_defined(left_in) && is_defined(right_in) { cw = f_max(0.0, main_or_cross_w(row, main_inner, cross_inner) - left_in - right_in); }
             else { cw = 0.0; }
         }
+        // With no horizontal inset the box sits at its STATIC position, and a
+        // margin offsets it from there — which is how a `zstack` layer, made
+        // absolute with `left`/`top` auto, is nudged into a corner with
+        // `margin_edge`. A pinned inset positions the box directly, so the
+        // margin does not also apply there.
         var cx: f64 = if is_defined(left_in) { (if row { main_lead } else { cross_lead }) + left_in }
                       else if is_defined(right_in) { (if row { main_lead } else { cross_lead }) + main_or_cross_w(row, main_inner, cross_inner) - right_in - cw }
-                      else { if row { main_lead } else { cross_lead } };
+                      else { (if row { main_lead } else { cross_lead }) + or_zero(cs.margin_left.resolve(node_w)) };
 
         // Vertical.
         if is_undefined(ch) {
@@ -2234,7 +2239,7 @@ impl Node {
         }
         var cy: f64 = if is_defined(top_in) { (if row { cross_lead } else { main_lead }) + top_in }
                       else if is_defined(bottom_in) { (if row { cross_lead } else { main_lead }) + main_or_cross_h(row, main_inner, cross_inner) - bottom_in - ch }
-                      else { if row { cross_lead } else { main_lead } };
+                      else { (if row { cross_lead } else { main_lead }) + or_zero(cs.margin_top.resolve(node_h)) };
 
         let child_left: f64 = this._layout.left + cx;
         let child_top: f64 = this._layout.top + cy;
