@@ -318,12 +318,25 @@ fn source_of(n: *core::Node) -> SeqSource {
             on_item_selected_ctx: { #addr((*p).on_item_selected_ctx) },
             vertical_scroll_bars: { (*p).vertical_scroll_bars },
             horizontal_scroll_bars: { (*p).horizontal_scroll_bars },
-            // `Separator::Default` MEANS SHOWN. facet's enum is
-            // Default-or-None rather than a bool, which is the same shape
-            // `ScrollBars` has and means the same thing: the platform's usual
-            // answer, or explicitly nothing.
+            // `Separator::Default` MEANS "the platform's usual answer" — the
+            // enum is Default-or-None, the same shape `ScrollBars` has. On
+            // Windows that answer is NO RULE between rows: modern Windows lists
+            // (WinUI, Fluent, the classic ListView with gridlines off) do not
+            // draw one, and appkit/gtk answer `true` because ruled rows are
+            // THEIR convention, not because the enum demands it.
+            //
+            // There is a second, harder reason it must be off here. A cell's
+            // controls are OPAQUE child windows — deliberately, so a rebound
+            // label erases its old string instead of drawing the new one on top
+            // of it (see `paint::ctl_color`). A separator drawn on the viewport
+            // is BEHIND those windows, so a full-width rule survives only in the
+            // row's padding gutter, where no control covers it — a 1px sliver at
+            // the left edge that reads as a stray tick, not a line. Drawing it
+            // cleanly would need a pool of 1px line windows z-ordered above the
+            // cells; until that exists, `Default` is honestly off. `None` was
+            // already off, so only an app that asked for the default changes.
             separator: match { (*p).separator } {
-                vocab::Separator::Default => true,
+                vocab::Separator::Default => false,
                 vocab::Separator::None => false,
             },
             separator_color: { (*p).separator_color },
@@ -2575,10 +2588,12 @@ fn a_list_reads_its_separator_and_refresh_from_its_own_props() {
     var l: core::Node = flist::list(key: "l", refreshable: true, refresh: true);
     let src: SeqSource = source_of(#addr_of(l));
     assert src.live;
-    // `Separator::Default` is the unstated value and it MEANS SHOWN — the enum
-    // is Default-or-None, not on-or-off, and reading Default as "no separator"
-    // would silently drop the line from every list that said nothing.
-    assert src.separator;
+    // `Separator::Default` is the unstated value; on Windows the platform's
+    // usual answer is NO rule between rows, so it resolves to false here (see
+    // the source's own note for the second, rendering reason). The refresh
+    // fields below are what prove the source READS the list's own props rather
+    // than reading a collection's absent ones — the point this test guards.
+    assert !src.separator;
     assert src.is_refreshable;
     assert src.can_refresh;
     return;

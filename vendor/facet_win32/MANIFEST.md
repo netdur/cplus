@@ -1109,6 +1109,21 @@ the next group in whatever column the previous one ran out on.
 differently per item, the alternative — the first item's height — clips the
 others.
 
+**A LIST'S `Separator::Default` IS OFF ON WINDOWS, for two reasons.** The enum is
+Default-or-None — "the platform's usual answer, or explicitly nothing" — and the
+Windows answer is no rule between rows: WinUI and Fluent lists do not draw one,
+and the classic ListView ships with gridlines off. appkit and gtk resolve
+Default to shown because ruled rows are THEIR convention. The second reason is
+this backend's own: a cell's controls are OPAQUE child windows (deliberately —
+`paint::ctl_color` erases with an inherited background so a rebound label does
+not draw its new string over its old one), and a separator painted on the
+viewport sits BEHIND them. A full-width rule then survives only in the row's
+padding gutter, where no control covers it — a 1px sliver at the left edge that
+reads as a stray tick, not a line. It was visible on the gallery's List until
+`Default` was answered false. A clean rule would need a pool of 1px line windows
+z-ordered above the cells; that is the shape the fix takes if a Windows list ever
+wants ruled rows.
+
 **A ROW HEIGHT IS SCALED TO THE DPI, because a font is.** The recycler counts in
 PHYSICAL pixels, so every row height — the 24 default, a stated `row_height`, a
 `row_height_of` answer — is multiplied by `GetDpiForWindow / 96`
