@@ -2184,11 +2184,41 @@ impl Node {
                       main_inner: f64, cross_inner: f64, row: bool) {
         let cs: Style = this.child_style(index);
         let node_w: f64 = this._layout.width;
+        let node_h: f64 = this._layout.height;
 
-        // Horizontal.
         let left_in: f64 = cs.position_left.resolve(node_w);
         let right_in: f64 = cs.position_right.resolve(node_w);
+        let top_in: f64 = cs.position_top.resolve(node_h);
+        let bottom_in: f64 = cs.position_bottom.resolve(node_h);
+
         var cw: f64 = cs.width.resolve(node_w);
+        var ch: f64 = cs.height.resolve(node_h);
+
+        // SHRINK-TO-FIT. An axis with no explicit size and NOT both insets pinned
+        // sizes to its CONTENT — the rule CSS uses for an auto-sized absolute
+        // box. Without this the box came out 0 and its whole subtree collapsed
+        // with it: laid out, but zero-wide, so invisible on any backend that
+        // clips a child to its parent's rectangle (a badge over a card was a
+        // 0x0 window with a 0-wide label inside it). The available space is the
+        // containing inner box less the pinned insets, and `intrinsic_size` lays
+        // the subtree out within it and reports the box it wants. The both-insets
+        // and explicit-size cases below are untouched.
+        let need_w: bool = is_undefined(cw) && !(is_defined(left_in) && is_defined(right_in));
+        let need_h: bool = is_undefined(ch) && !(is_defined(top_in) && is_defined(bottom_in));
+        if need_w || need_h {
+            let avail_w: f64 = f_max(0.0, main_or_cross_w(row, main_inner, cross_inner) - or_zero(left_in) - or_zero(right_in));
+            let avail_h: f64 = f_max(0.0, main_or_cross_h(row, main_inner, cross_inner) - or_zero(top_in) - or_zero(bottom_in));
+            match this.child_ptr(index) {
+                option::Option[*Node]::Some(p) => {
+                    let content: Size = { (*p).intrinsic_size(avail_w, avail_h) };
+                    if need_w { cw = content.width; }
+                    if need_h { ch = content.height; }
+                }
+                option::Option[*Node]::None => {}
+            }
+        }
+
+        // Horizontal.
         if is_undefined(cw) {
             if is_defined(left_in) && is_defined(right_in) { cw = f_max(0.0, main_or_cross_w(row, main_inner, cross_inner) - left_in - right_in); }
             else { cw = 0.0; }
@@ -2198,10 +2228,6 @@ impl Node {
                       else { if row { main_lead } else { cross_lead } };
 
         // Vertical.
-        let node_h: f64 = this._layout.height;
-        let top_in: f64 = cs.position_top.resolve(node_h);
-        let bottom_in: f64 = cs.position_bottom.resolve(node_h);
-        var ch: f64 = cs.height.resolve(node_h);
         if is_undefined(ch) {
             if is_defined(top_in) && is_defined(bottom_in) { ch = f_max(0.0, main_or_cross_h(row, main_inner, cross_inner) - top_in - bottom_in); }
             else { ch = 0.0; }
