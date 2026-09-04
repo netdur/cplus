@@ -1068,6 +1068,33 @@ fn fill_cell(v: *u8, s: *ListState, p: *SeqSource, slot: usize, i: usize) {
     return;
 }
 
+// Hide every window a freed cell owns. A cell whose ROOT is a real window (a
+// `box` row) is hidden by hiding that one — its children are child windows of it
+// and go with it. But a BARE CONTAINER (a `column` row, the common case) has no
+// window of its own: `place_row`'s else-branch realised its children straight
+// into the VIEWPORT, so each of THEIR windows has to be hidden here, and a nested
+// container's the same way down. Without this a freed bare-container cell leaves
+// its labels on the viewport and the next row draws over the ghost — seen when a
+// scrolled list showed the top row's old binding behind its new one.
+fn hide_cell_windows(rp: *core::Node) {
+    if rp == (0 as *core::Node) { return; }
+    let view: *u8 = core::view_of(rp);
+    if view != (0 as *u8) {
+        let _s: i32 = { u::ShowWindow(view, sys::sw_hide()) };
+        return;
+    }
+    let count: usize = core::child_count_of(rp);
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(rp, i) {
+            option::Option[*core::Node]::Some(c) => { hide_cell_windows(c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
 fn free_cell(s: *ListState, slot: usize) {
     match { (*s).cells.at_ptr(slot) } {
         option::Option[*Cell]::Some(c) => {
@@ -1078,12 +1105,7 @@ fn free_cell(s: *ListState, slot: usize) {
             // Off-screen rather than destroyed. A hidden window costs nothing
             // to keep and everything to rebuild.
             let rp: *core::Node = { (*c).node } as *core::Node;
-            if rp != (0 as *core::Node) {
-                let view: *u8 = core::view_of(rp);
-                if view != (0 as *u8) {
-                    let _s: i32 = { u::ShowWindow(view, sys::sw_hide()) };
-                }
-            }
+            hide_cell_windows(rp);
         }
         option::Option[*Cell]::None => { }
     }
