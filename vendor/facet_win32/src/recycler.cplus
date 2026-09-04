@@ -126,6 +126,13 @@ struct ListState {
     // stale 96. `layout_rows` compares this against the live DPI and rebuilds
     // when they differ, which also carries a window dragged between monitors.
     built_dpi: u32,
+    // Whether a CONTENT-SIZED source (no `row_height`, no `row_height_of` — a
+    // `collection` whose cells carry their own height) has had a probe cell laid
+    // out to learn that height. The map's `default_row_height` is wrong for such
+    // a source, so `apply_content_sizing` measures once the viewport has a width
+    // and overrides `uniform`; this flag stops it re-measuring every frame. A
+    // rebuild clears it.
+    content_measured: bool,
 }
 
 fn new_state() -> ListState {
@@ -143,6 +150,7 @@ fn new_state() -> ListState {
         refreshing: false,
         in_threshold: false,
         built_dpi: 0 as u32,
+        content_measured: false,
     };
 }
 
@@ -698,6 +706,7 @@ fn rebuild_map(s: *ListState, p: *SeqSource) {
     let count: i64 = display_count(p);
     { (*s).count = count };
     { (*s).built_dpi = ROW_DPI };
+    { (*s).content_measured = false };
     { (*s).lines = 0 as i64 };
     { (*s).offsets = vec::new::[f64]() };
     { (*s).content = 0.0f64 };
@@ -955,6 +964,65 @@ fn drop_row(rp: *core::Node) {
     return;
 }
 
+// ---- content-sized rows: a cell that carries its OWN height ----
+//
+// A `collection` states no `row_height` and supplies no `row_height_of`; its
+// `source_of` sets `row_height: 0` with the comment "the measured default
+// applies." But `height_of_data_row` has no cell to measure and falls back to
+// the fixed 24-point `default_row_height` — so a cell that states `.height(72)`
+// (the gallery's card does) is packed into a 30px row and every one overlaps its
+// neighbour. The fix is to lay a probe cell out and read the height the cell
+// itself asks for.
+
+fn is_content_sized(p: *SeqSource) -> bool {
+    return { (*p).row_height } == (0 as i64)
+        && { (*p).row_height_of } == props::no_row_height_of;
+}
+
+// Build one probe cell, lay it out at the column width with its height
+// UNCONSTRAINED so the cell's own stated (or natural) height wins, read that,
+// and throw the cell away. Returns a PHYSICAL height to match `uniform`, or 0
+// when there is nothing to measure yet (no viewport width, no rows).
+fn measured_uniform(v: *u8, s: *ListState, n: *core::Node, p: *SeqSource) -> f64 {
+    if { (*s).count } <= (0 as i64) { return 0.0f64; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return 0.0f64; }
+    let scale: f64 = sys::dpi_scale(v);
+    let vw: f64 = ((vr.right -% vr.left) as f64) / scale;   // logical viewport
+    if vw <= (0.0 as f64) { return 0.0f64; }
+    let cols: f64 = columns_of(p) as f64;
+    let cw: f64 = if cols > (0.0 as f64) { vw / cols } else { vw };
+    let rp: *core::Node = make_row(v, s, n, 0 as usize);
+    if rp == (0 as *core::Node) { return 0.0f64; }
+    // Width constrained to the column, height left to the cell.
+    { (*rp).calculate_layout(width: cw) };
+    let h: f64 = { (*rp).frame() }.height;   // logical
+    drop_row(rp);
+    if h <= (0.0 as f64) { return 0.0f64; }
+    return h * scale;   // to physical, as `uniform` is
+}
+
+// Once per rebuild, for a content-sized source, replace the default `uniform`
+// with the height the cell actually wants. Gated on `content_measured` so the
+// probe is built once — the first frame the viewport has a width — and not on
+// every scroll. A rebuild clears the flag.
+fn apply_content_sizing(v: *u8, s: *ListState, n: *core::Node) {
+    if { (*s).content_measured } { return; }
+    if { (*s).is_tree } { return; }
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    let p: *SeqSource = #addr_of(src);
+    if !is_content_sized(p) { { (*s).content_measured = true }; return; }
+    let mu: f64 = measured_uniform(v, s, n, p);
+    if mu <= (0.0 as f64) { return; }   // viewport not ready — try again next frame
+    { (*s).uniform = mu };
+    { (*s).content = mu * ({ (*s).lines } as f64) };
+    { (*s).offsets = vec::new::[f64]() };
+    { (*s).content_measured = true };
+    return;
+}
+
 // Point a free cell at row `i`. Cheap when the application supplied a `bind`
 // and the shapes match; a rebuild otherwise.
 fn fill_cell(v: *u8, s: *ListState, p: *SeqSource, slot: usize, i: usize) {
@@ -1135,6 +1203,11 @@ fn layout_rows(v: *u8, n: *core::Node) {
         // the live DPI — the same release `apply_sequence` does on a model change.
         release_all(s);
     }
+    // A CONTENT-SIZED SOURCE gets the height its cell asks for, not the fixed
+    // default the map baked. Measured once the viewport has a width (which it
+    // may not have had when the map was first built), then cached. See
+    // `apply_content_sizing`.
+    apply_content_sizing(v, s, n);
     let count: i64 = { (*s).count };
 
     var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,

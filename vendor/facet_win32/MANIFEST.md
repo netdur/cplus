@@ -1140,15 +1140,19 @@ viewport, scroll offset and row heights are all pixels), and `place_row` convert
 at its single boundary. `window::scale_factor`, defined and called nowhere, is
 now redundant — `sys::dpi_scale(v)` is the one answer everything reads.
 
-**Known gap — a `collection`'s content-sized cells are not measured.** A
-`collection` states no `row_height`; its cells size through `item_sizing`, which
-the comment in `source_of` calls "the measured default." But the recycler has no
-cell-measuring path: `height_of_data_row` falls back to the plain 24-point
-`default_row_height`, so a cell whose content (padding + a DPI-scaled label) is
-taller than that clips — visible on the gallery's Collection at 120 DPI, where
-the label is ~30px and overflows the 30px row. This is a recycler feature gap,
-not the DPI scaling (which is correct here — the row IS 30 physical px); it
-predates the point-layout work and needs a measured-row path to close.
+**A content-sized cell carries its OWN height, and the recycler measures it.** A
+`collection` states no `row_height` and no `row_height_of`; its `source_of` sets
+`row_height: 0` with the comment "the measured default applies." The cell itself
+carries the height — the gallery's card states `.height(72)` — so the map's fixed
+24-point `default_row_height` is simply wrong: a 72pt card packed into 30px rows
+overlaps every neighbour. `apply_content_sizing` lays a PROBE cell out (`make_row`
+at the column width, height unconstrained so the cell's own height wins), reads
+its frame height, and `drop_row`s it, overriding `uniform` with the answer. It
+runs once per map rebuild — gated on `ListState.content_measured`, which
+`rebuild_map` clears — because the first build is at mount, before the viewport
+has a width to divide into columns; `layout_rows` retries each frame until the
+width is there, then caches. A stated `row_height` (the gallery's List) or a
+`row_height_of` skips all of this, unchanged.
 
 **A drop in a reorder needs BOTH axes.** `y` alone names the line, and picking
 the first item on it would move a row to the start of whatever line it was
