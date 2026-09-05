@@ -805,7 +805,7 @@ fn rematching_a_consumed_binding_rejected_e0335() {
 /// The vendor/sqlite shape. `guard let` desugars to a binding match, so its
 /// else block cannot re-match the same local to reach the complement payload —
 /// the payload's destructor has already run by the time the else body starts.
-/// Use the `else |Pat|` complement binding instead (pinned to still work by
+/// Name the else-pattern instead (pinned to still work by
 /// `guard_let_complement_binding_reaches_the_payload`).
 #[test]
 fn guard_let_else_cannot_rematch_the_scrutinee() {
@@ -826,9 +826,9 @@ fn guard_let_else_cannot_rematch_the_scrutinee() {
     );
 }
 
-/// The sanctioned replacement for the rejected re-match above: `else |Pat|`
-/// binds the complement payload directly, so it is still live in the else
-/// block and drops exactly once.
+/// The sanctioned replacement for the rejected re-match above: a named
+/// else-pattern binds the complement payload directly, so it is still live in
+/// the else block and drops exactly once.
 #[test]
 fn guard_let_complement_binding_reaches_the_payload() {
     let out = compile_and_run_src(
@@ -840,7 +840,7 @@ fn guard_let_complement_binding_reaches_the_payload() {
          fn mkb() -> E { return E::B(R { data: { 0 as *u8 } }); }\n\
          fn probe() -> i32 {\n\
            let e: E = mkb();\n\
-           guard let E::A(v) = e else |E::B(bad)| {\n\
+           guard let E::A(v) = e else E::B(bad) {\n\
              let _held: R = bad;\n\
              return 7;\n\
            };\n\
@@ -4248,7 +4248,7 @@ fn guard_var_binding_is_mutable() {
          \x20   return c;\n\
          }\n\
          fn sad() -> i32 {\n\
-         \x20   guard var R::Ok(c) = get(false) else |R::Err(e)| { return e; };\n\
+         \x20   guard var R::Ok(c) = get(false) else R::Err(e) { return e; };\n\
          \x20   c = c +% 1;\n\
          \x20   return c;\n\
          }\n\
@@ -4328,7 +4328,7 @@ fn let_pattern_bindings_stay_immutable() {
             "guard_var_complement",
             "enum M { S(i32), N(i32) }\n\
              fn main() -> i32 {\n\
-             \x20   guard var M::S(v) = M::S(1) else |M::N(e)| { e = e +% 1; return e; };\n\
+             \x20   guard var M::S(v) = M::S(1) else M::N(e) { e = e +% 1; return e; };\n\
              \x20   return v;\n\
              }\n",
         ),
@@ -5759,6 +5759,238 @@ fn cpc_test_json_output() {
     assert_eq!(v1["result"], "fail");
     assert_eq!(v2["passed"], 1);
     assert_eq!(v2["failed"], 1);
+}
+
+// ---- v0.0.31: `async fn main` / `#[test] async fn` — the compiler drives the entry ----
+
+/// The entry shape settled on 2026-09-04: `main` may be `async`, and the
+/// compiler drives it with the one loop the language has — lower splits it
+/// into a private async body plus a synchronous `main` whose whole body is
+/// the `#block_on` drive, exactly what `executor::block_on(main_async())`
+/// spelled by hand. This is the whole program a user writes; it must build,
+/// park on a real reactor timer, and exit with the awaited value.
+#[test]
+fn async_main_is_driven_to_completion() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"amain\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/time\" as time;\n\
+         async fn inner() -> i32 { await time::sleep(10); return 41; }\n\
+         async fn outer() -> i32 { return (await inner()) +% 1; }\n\
+         async fn main() -> i32 { return await outer(); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "async main must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/amain"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(42), "main's awaited value is the exit code");
+}
+
+/// The entry is judged as the synchronous wrapper it desugars to, so a
+/// unit-returning `async fn main()` is E0309 for the same reason `fn main()`
+/// is. And `await` in a synchronous `main` is still E0901: the entry may be
+/// async, the keyword did not grow a blocking meaning.
+#[test]
+fn async_main_shape_errors_are_the_sync_ones() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let cases: [(&str, &str); 2] = [
+        (
+            "import \"stdlib/time\" as time;\n\
+             async fn main() { await time::sleep(1); }\n",
+            "E0309",
+        ),
+        (
+            "import \"stdlib/time\" as time;\n\
+             async fn inner() -> i32 { await time::sleep(1); return 1; }\n\
+             fn main() -> i32 { return await inner(); }\n",
+            "E0901",
+        ),
+    ];
+    for (src, code) in cases {
+        let dir = tempdir();
+        std::fs::write(
+            dir.join("Cplus.toml"),
+            "[package]\nname = \"amainbad\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::os::unix::fs::symlink(
+            format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+            dir.join("vendor"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("src/main.cplus"), src).unwrap();
+        let out = Command::new(cpc)
+            .arg("build")
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc build");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "must be rejected:\n{src}");
+        assert!(stderr.contains(code), "expected {code} for:\n{src}\ngot: {stderr}");
+    }
+}
+
+/// Driving a future from a SYNCHRONOUS fn is a method on the value
+/// (v0.0.31): `f.wait()` blocks this thread, running its reactor, until the
+/// value is out, and consumes the future the way `JoinHandle::join` consumes
+/// a handle. No executor import, no turbofish. This is the program that
+/// settled the shape; it parks on a real timer.
+#[test]
+fn future_wait_drives_from_a_sync_fn() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fwait\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/time\" as time;\n\
+         import \"stdlib/text\" as text;\n\
+         async fn get_data() -> i32 { await time::sleep(5); return 41; }\n\
+         async fn get_name() -> text::Text { await time::sleep(5); let t: text::Text = \"abc\"; return t; }\n\
+         fn normal() -> i32 {\n\
+             let x: i32 = get_data().wait();\n\
+             let n: text::Text = get_name().wait();\n\
+             return x +% (n.count() as i32);\n\
+         }\n\
+         fn main() -> i32 { return normal(); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "wait() must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/fwait"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(44), "41 + count(\"abc\")");
+}
+
+/// `wait` takes the future (`take this`), so a second use is the ordinary
+/// use-after-move error — the frame has one owner and one drive.
+#[test]
+fn future_wait_consumes_the_future() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fwait2\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/future\" as future;\n\
+         async fn get_data() -> i32 { return 41; }\n\
+         fn main() -> i32 {\n\
+             let f: future::Future[i32] = get_data();\n\
+             let a: i32 = f.wait();\n\
+             let b: i32 = f.wait();\n\
+             return a +% b;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a second wait must be rejected");
+    assert!(stderr.contains("E0335"), "expected use-after-move, got: {stderr}");
+}
+
+/// `#[test] async fn` is discovered and driven by `cpc test` the same way:
+/// the attribute rides with the synchronous wrapper the runner sees. Both
+/// allowed test shapes, unit and `-> i32`, each parking on a real timer.
+#[test]
+fn cpc_test_drives_async_test_fns() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"atest\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/time\" as time;\n\
+         fn main() -> i32 { return 0; }\n\
+         async fn seven() -> i32 { await time::sleep(1); return 7; }\n\
+         #[test]\n\
+         async fn awaits_a_timer() { let v: i32 = await seven(); assert v == 7; }\n\
+         #[test]\n\
+         async fn returns_i32() -> i32 { let v: i32 = await seven(); if v != 7 { return 1; } return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc test");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "async tests must pass, stderr: {}\nstdout: {stdout}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    // Package mode qualifies test names by module path and runs the
+    // dependency's own tests alongside, so match the tail of each name and
+    // the absence of any failure rather than a count.
+    assert!(stdout.contains("::awaits_a_timer ... ok"), "got: {stdout}");
+    assert!(stdout.contains("::returns_i32 ... ok"), "got: {stdout}");
+    assert!(!stdout.contains("FAILED"), "got: {stdout}");
+    assert!(stdout.contains("; 0 failed"), "got: {stdout}");
 }
 
 #[test]
@@ -26631,7 +26863,7 @@ fn thread_cancel_unparks_a_blocking_read_end_to_end() {
 }
 
 /// v0.0.29 phase 2, end to end through codegen: cancelling a thread that
-/// drives async work with `executor::run` destroys the suspended frame tree
+/// drives async work with `future::wait_or_cancel` destroys the suspended frame tree
 /// through the awaits' cancel edges — running the drops of locals live
 /// across the await — unregisters the reactor entries, tears down the
 /// thread's reactor, and reports `Cancelled`; `join` still returns.
@@ -26655,7 +26887,7 @@ fn run_cancel_destroys_the_frame_tree_and_runs_drops_end_to_end() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/io\" as io;\n\
-         import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/future\" as future;\n\
          import \"stdlib/thread\" as thread;\n\
          import \"stdlib/atomic\" as atomic;\n\
          \n\
@@ -26683,9 +26915,9 @@ fn run_cancel_destroys_the_frame_tree_and_runs_drops_end_to_end() {
          }\n\
          \n\
          fn worker(take x: i64) -> i64 {\n\
-             return match executor::run::[i32](sleepy()) {\n\
-                 executor::RunResult::Done(v) => { (v as i64) }\n\
-                 executor::RunResult::Cancelled => { 77 as i64 }\n\
+             return match future::wait_or_cancel(sleepy()) {\n\
+                 future::WaitResult::Done(v) => { (v as i64) }\n\
+                 future::WaitResult::Cancelled => { 77 as i64 }\n\
              };\n\
          }\n\
          \n\
@@ -26891,12 +27123,11 @@ fn a_prebuilt_packages_async_fn_runs_the_archives_body() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/io\" as io;\n\
-         import \"stdlib/executor\" as executor;\n\
          import \"asynclib/engine\" as engine;\n\
          \n\
          fn main() -> i32 {\n\
              io::println(\"plain ${engine::plain_answer()}\");\n\
-             let v: i32 = executor::block_on::[i32](engine::answer());\n\
+             let v: i32 = engine::answer().wait();\n\
              io::println(\"async ${v}\");\n\
              return 0;\n\
          }\n",

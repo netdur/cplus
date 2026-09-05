@@ -41,7 +41,7 @@
 //     `(fd, current_coro_handle)` with the reactor, then issues
 //     `llvm.coro.suspend`.
 //
-//   - `executor::block_on(future)` drives the outer coroutine. When
+//   - `Future::wait` (the `#block_on` intrinsic) drives the outer coroutine. When
 //     `coro.resume(outer)` returns and `coro.done(outer)` is false,
 //     block_on first drains any tasks `spawn_local` queued, then
 //     calls `reactor::poll_one_event` which blocks on `kevent` until

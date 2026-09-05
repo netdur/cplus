@@ -131,12 +131,14 @@ The order is deliberate: prefer the top. Most designs that reach for
 4. **`Arc` + `Mutex[T]`** last. Two guards in one scope deadlock — scope
    each lock.
 
-`async fn` + `executor::block_on` exist for I/O-bound work over the
-platform's reactor (kqueue on Darwin, epoll on Linux and Android).
-Borrow-shaped types (`str`, slices, `ref` params) are rejected in `async fn`
-signatures (E0900) — pass owned `Text` / `Vec`. The entry point is always a
-plain `fn main` that calls `block_on`. Cancellation, scoped lends, channels,
-and the async↔thread bridge are [concurrency.md](concurrency.md).
+`async fn` + `await` exist for I/O-bound work over the platform's reactor
+(kqueue on Darwin, epoll on Linux and Android). Borrow-shaped types (`str`,
+slices, `ref` params) are rejected in `async fn` signatures (E0900) — pass
+owned `Text` / `Vec`. `main` may be `async`; the compiler drives it. From
+other synchronous code, `f.wait()` drives a future to its value and
+`future::wait_or_cancel(f)` is the cancellable form — both consume the
+future. Cancellation, scoped lends, channels, and the async↔thread
+bridge are [concurrency.md](concurrency.md).
 
 ## 7. Callbacks without closures
 

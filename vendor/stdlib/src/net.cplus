@@ -354,7 +354,7 @@ fn set_nonblocking(fd: i32) -> i32 {
 //   < 0  — error (-1 generic).
 //
 // Suspends the calling coroutine via the reactor until data is available;
-// under `block_on`, other queued tasks make progress meanwhile.
+// under a drive (`wait`), other queued tasks make progress meanwhile.
 async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
     loop {
         let n: isize = { netsys::recv_fd(fd, buf, count) };

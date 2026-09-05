@@ -8,7 +8,7 @@
 //   - the `stdlib_reactor_*_v1` C-ABI symbols codegen emits calls to, and
 //   - `pub fn poll_one_event` / `waiter_count`, which executor.cplus uses.
 //
-// so async lowering, executor::block_on, time::sleep and net all work
+// so async lowering, `Future::wait`, time::sleep and net all work
 // unchanged. Only the event-source primitives differ:
 //
 //   kqueue()                     -> epoll_create1(0)

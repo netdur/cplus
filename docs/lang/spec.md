@@ -228,7 +228,7 @@ let_stmt = ( 'let' | 'var' ) pattern ( ':' type )? ( '=' expr )? ';' ;
 if_let_stmt    = 'if'    ( 'let' | 'var' ) pattern '=' expr block ( 'else' block )? ;
 while_let_stmt = 'while' ( 'let' | 'var' ) pattern '=' expr block ;
 guard_let_stmt = 'guard' ( 'let' | 'var' ) pattern '=' expr
-                 'else' ( '|' pattern '|' )? block ';' ;
+                 'else' pattern? block ';' ;
 ```
 
 A local binding is `let` (immutable: no rebind, no field write) or `var`
@@ -577,12 +577,14 @@ Three sugar forms bind patterns outside `match`; all are lowered to
 - **`if let PAT = E { ... } else { ... }`** — refutable pattern required
   (**E0347**).
 - **`while let PAT = E { ... }`** — loops while the pattern matches.
-- **`guard let PAT = E else { ... };`** — the else block MUST diverge
-  (**E0348**); on success the bindings live in the enclosing scope. The
-  `else |COMPLEMENT|` form must cover the scrutinee exhaustively and must
-  not overlap the success pattern. The form lowers to a `let` + `match`
+- **`guard let PAT = E else [COMPLEMENT] { ... };`** — the else block
+  MUST diverge (**E0348**); on success the bindings live in the enclosing
+  scope. The else may name a pattern for the cases `PAT` did not take;
+  omitted, it is `_`. A named complement must cover the scrutinee together
+  with `PAT` and must not overlap it. The form lowers to a `let` + `match`
   pair (§18), so exhaustiveness is reported by the `match` check
-  (**E0340**); an overlapping complement is **E0350**.
+  (**E0340**); an overlapping complement is **E0350**. A pattern never
+  begins with `{`, so one token of lookahead separates the two spellings.
 
 Each form also takes `var` in place of `let`, mirroring plain local
 bindings: `let` bindings are frozen, `var` bindings are mutable. `guard

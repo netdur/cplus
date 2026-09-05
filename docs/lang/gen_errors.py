@@ -10,8 +10,13 @@ errors.md, and the website cannot drift. Edit docs/lang/errors.toml, then run:
 
     python3 docs/lang/gen_errors.py
     python3 docs/lang/gen_errors.py --site-md /path/to/error-codes.md   # override site path
+
+The site page is SKIPPED when the newest version folder names an already-released
+version (a `v<version>` git tag exists): between releases that folder is frozen
+history, and writing the in-progress catalog there would publish unreleased
+content as part of a shipped version. `--site-md` overrides the skip.
 """
-import argparse, sys, tomllib
+import argparse, subprocess, sys, tomllib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -40,6 +45,26 @@ def newest_site_version(root=SITE_DOCS):
         except ValueError:
             continue  # not a version folder
     return max(found)[1] if found else None
+
+def is_released(version, repo=HERE.parent.parent):
+    """True when `v<version>` is a git tag in the compiler repo.
+
+    Site version folders are created at RELEASE, so between two releases the
+    newest folder is the one that already shipped and its page is frozen
+    history. Writing the in-progress catalog there republishes unreleased
+    syntax as though it were part of a tagged version — which happened on
+    2026-09-05, putting v0.0.28 content into the released 0.0.27 page.
+
+    `newest_site_version` cannot see this on its own: the compiler still
+    reports the shipped version during the next cycle, so "newest folder" and
+    "current version" agree right up to the moment they are both wrong.
+    """
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "tag", "--list", f"v{version}"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False  # no git, no claim — write as before
+    return out.stdout.strip() != ""
 
 # Display order of categories (entries within a category sort by id).
 CATEGORY_ORDER = [
@@ -132,11 +157,25 @@ def main():
     print(f"wrote {a.errors_md} ({len(cat)} codes)")
 
     site_md = a.site_md
+    explained = False
     if site_md is None:
         newest = newest_site_version()
-        site_md = newest / "error-codes.md" if newest else None
+        if newest is None:
+            print(f"skip site page: no version folder under {SITE_DOCS}", file=sys.stderr)
+            explained = True
+        elif is_released(newest.name):
+            # Frozen history — refuse it. An explicit --site-md is a deliberate
+            # choice and is always honoured, released version included.
+            print(f"skip site page: {newest.name} is a RELEASED version and its page is "
+                  f"frozen; regenerating would publish unreleased content as part of it.\n"
+                  f"  create the next version's folder under {SITE_DOCS}, or pass "
+                  f"--site-md to target one deliberately.", file=sys.stderr)
+            explained = True
+        else:
+            site_md = newest / "error-codes.md"
     if site_md is None:
-        print(f"skip site page: no version folder under {SITE_DOCS}", file=sys.stderr)
+        if not explained:
+            print(f"skip site page: no version folder under {SITE_DOCS}", file=sys.stderr)
     elif site_md.parent.is_dir():
         site_md.write_text(render(cat, frontmatter=True, maintainer=False,
                                   header=SITE_HEADER))

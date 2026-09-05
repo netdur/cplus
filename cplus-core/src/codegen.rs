@@ -5410,7 +5410,7 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
          }}\n"
     ));
     // v0.0.29 phase 2: FFI-callable destroy — `future::cancel` and the
-    // cancellable executor (`executor::run`) call this to tear down a
+    // cancellable drive (`future::wait_or_cancel`) call this to tear down a
     // suspended frame; the per-suspend cancel blocks make it run the live
     // locals' drops before freeing.
     out.push_str(&format!(
@@ -16618,6 +16618,16 @@ impl<'a> FnState<'a> {
         // on this thread reads freed memory (ASan, 2026-08-22).
         self.body.push_str(&format!("{extract_bb}:\n"));
         self.terminated = false;
+        // A unit future has no payload to read out — `load void` is not IR.
+        // Purge and answer unit, the same shape as the `await` lowering.
+        // Reached by `#[test] async fn t()` since v0.0.31 (its wrapper is
+        // `#block_on::[()](__async_t())`).
+        if matches!(t_ty, Ty::Unit) {
+            self.emit(&format!(
+                "call void @stdlib_reactor_unregister_pending_v1(ptr {hdl})"
+            ));
+            return None;
+        }
         let prom = self.next_tmp();
         self.emit(&format!(
             "{prom} = call ptr @llvm.coro.promise(ptr {hdl}, i32 {t_align}, i1 false)"
@@ -21156,6 +21166,86 @@ mod tests {
     /// `let _ = expr;` is a discard binding: it parses, type-checks, and lowers
     /// (evaluating — and dropping — its initializer). Multiple `let _` in one
     /// scope must not collide (each gets a unique synthesized name).
+    /// v0.0.31: `async fn main` — the entry the compiler drives. Lower splits
+    /// it, so the IR must carry a synchronous `@main` whose body is the
+    /// `#block_on` loop (resume until done) over the coroutine `__async_main`,
+    /// and no coroutine ramp named `main`. Runs lower first, as the driver
+    /// does; `gen_src` alone would stop at E0309.
+    /// Lower → sema (with the monomorphization table, since `Future[T]` is a
+    /// generic the coroutine lowering must find instantiated) → mono → IR.
+    /// The driver's own sequence for an async program.
+    fn gen_lowered_mono(src: &str) -> String {
+        let toks = tokenize(src).expect("lex");
+        let mut prog = parse(toks).expect("parse");
+        let file_path = PathBuf::from("test.cplus");
+        let lower_diags = crate::lower::lower(&mut prog, &file_path, src);
+        assert!(lower_diags.is_empty(), "lower: {lower_diags:#?}");
+        let mut files: std::collections::BTreeMap<String, (PathBuf, String)> =
+            std::collections::BTreeMap::new();
+        files.insert(
+            "test.cplus".to_string(),
+            (file_path.clone(), src.to_string()),
+        );
+        let (diags, mono) = sema::check_multi_with_mono(&prog, file_path, src, files);
+        assert!(diags.is_empty(), "sema: {diags:#?}");
+        let name_of = |ty: &sema::Ty| -> String { ty.name().to_string() };
+        let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
+        generate_with_mono(&post, BuildMode::Debug, true, None, &[], false, &mono)
+    }
+
+    #[test]
+    fn async_main_lowers_to_a_sync_main_driving_the_coroutine() {
+        let ir = gen_lowered_mono(
+            "#[lang(\"future\")] struct Future[T] { opaque handle: *u8 }\n\
+             async fn main() -> i32 { return 42; }\n",
+        );
+        let main_start = ir.find("define i32 @main()").expect("a synchronous @main");
+        let main_body = &ir[main_start..];
+        let main_body = &main_body[..main_body.find("\n}").expect("main closes")];
+        assert!(
+            main_body.contains("@llvm.coro.resume(") && main_body.contains("@llvm.coro.done("),
+            "main should drive the coroutine:\n{main_body}"
+        );
+        assert!(
+            !main_body.contains("@llvm.coro.begin("),
+            "main itself is not a coroutine:\n{main_body}"
+        );
+        assert!(
+            main_body.contains("__async_main"),
+            "main should call the async body:\n{main_body}"
+        );
+        let body_start = ir.find("__async_main(").expect("the async body is defined");
+        let body = &ir[body_start..];
+        let body = &body[..body.find("\n}").expect("body closes")];
+        assert!(
+            body.contains("@llvm.coro.begin("),
+            "the async body is the coroutine ramp:\n{body}"
+        );
+    }
+
+    /// The unit-returning drive `#block_on::[()](f)` — what `#[test] async fn
+    /// t()` desugars to — must not `load void`: the extract path purges the
+    /// frame from the pending queue and produces nothing.
+    #[test]
+    fn unit_block_on_reads_no_promise() {
+        let ir = gen_lowered_mono(
+            "#[lang(\"future\")] struct Future[T] { opaque handle: *u8 }\n\
+             #[test] async fn t() { }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let t_start = ir
+            .find("define internal fastcc void @t()")
+            .or_else(|| ir.find(" @t()"))
+            .expect("the wrapper `t` is defined");
+        let t_body = &ir[t_start..];
+        let t_body = &t_body[..t_body.find("\n}").expect("t closes")];
+        assert!(!ir.contains("load void"), "a unit drive must not load void:\n{ir}");
+        assert!(
+            t_body.contains("@llvm.coro.resume(") && t_body.contains("unregister_pending"),
+            "the wrapper drives and purges:\n{t_body}"
+        );
+    }
+
     #[test]
     fn let_underscore_is_a_discard_binding() {
         let ir = gen_src(

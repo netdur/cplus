@@ -3,6 +3,17 @@
 > Status: `if let` + `guard let` landed. `while let` deferred (blocked on `break`/`continue` not yet being parsed as statements).
 > Numbering: slotted as **slice 4A.5** — interstitial between 4A (multi-file modules) and 4B (`pub` visibility). The work depends only on slice 3I (`match`) and is independent of modules; the slot reflects when the slice landed, not a structural dependency.
 > Decisions locked in during scoping (2026-05-11): single-binding patterns only (E0352 for multi-binding); `while let` deferred; `else |Pat|` complement form supported with non-overlap (E0350) check; exhaustiveness against the full enum delegated to slice-3I match-arm check (E0343) on the synthesized match.
+>
+> **Superseded 2026-09-05 (v0.0.28):** the `else |Pat|` spelling is retired. The
+> else-pattern is now written bare — `else Pat { ... }` — and is optional;
+> omitted it is `_`, which is what the lowering always synthesized. The pipes
+> were the only paired `|` delimiter in the grammar, borrowed from closures C+
+> does not have. Semantics, the `complement` AST field, E0348/E0350/E0351/E0352
+> and the lowering are unchanged; only the surface moved. The old spelling is
+> rejected with a hint. Text below this line records the original 2026-05-11
+> scoping and keeps the retired syntax — read it as history, not as current
+> grammar. **E0349 never existed**: a non-exhaustive else-pattern is reported as
+> E0340 by the exhaustiveness check on the synthesized match.
 
 ---
 

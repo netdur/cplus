@@ -234,13 +234,13 @@ fn main() -> i32 { #println(1, 2); return 0; }
 
 ### E0309 · Wrong `main` signature
 
-`main` is declared with parameters or a return type other than `fn main() -> i32`.
+`main` is declared with parameters or a return type other than `i32`. The entry is `fn main() -> i32` or `async fn main() -> i32`; an async entry is judged as the synchronous wrapper the compiler drives, so `async fn main()` with a unit return fails the same way `fn main()` does.
 
 ```cplus
 fn main() { }
 ```
 
-**Fix.** Declare it as `fn main() -> i32`.
+**Fix.** Declare it as `fn main() -> i32` (or `async fn main() -> i32`; the compiler drives an async entry).
 
 <sub>repro: checked · cplus-core/src/sema.rs:3597 · test cplus-core/src/sema.rs:main_must_return_i32_e0309</sub>
 
@@ -868,7 +868,7 @@ fn main() -> i32 {
 }
 ```
 
-**Fix.** Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths. For a `match`: bind nothing (`E::A(_)`) if you only need to test the discriminant — that form does not consume, so the binding stays matchable. For a `guard let`, reach the complement payload with `else |E::B(x)|` rather than re-matching the scrutinee in the else block.
+**Fix.** Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths. For a `match`: bind nothing (`E::A(_)`) if you only need to test the discriminant — that form does not consume, so the binding stays matchable. For a `guard let`, reach the complement payload with `else E::B(x)` rather than re-matching the scrutinee in the else block.
 
 <sub>repro: checked · cplus-core/src/sema.rs:13097 · test cplus-core/src/sema.rs:phase5_implicit_non_copy_param_consumes_e0335</sub>
 
@@ -1007,13 +1007,13 @@ fn main() -> i32 {
 
 ### E0350 · `guard let` complement overlaps the success pattern
 
-The explicit complement pattern in `else |Pat|` references the same enum variant as the success pattern, so the two overlap.
+The explicit complement pattern in `else Pat` references the same enum variant as the success pattern, so the two overlap.
 
 ```cplus
 enum Maybe { Some(i32), None }
 fn main() -> i32 {
     let m: Maybe = Maybe::Some(7);
-    guard let Maybe::Some(v) = m else |Maybe::Some(_)| { return 0; };
+    guard let Maybe::Some(v) = m else Maybe::Some(_) { return 0; };
     return v;
 }
 ```
@@ -2274,14 +2274,14 @@ An attribute that must be unique appears more than once on the same item.
 
 ### E0358 · Invalid `#[test]` function signature
 
-A `#[test]` function does not have the signature `fn() -> i32` or `fn()` — it takes parameters or returns some other type.
+A `#[test]` function does not have the signature `fn() -> i32` or `fn()` (either may be `async`) — it takes parameters or returns some other type.
 
 ```cplus
 #[test] fn t(n: i32) { return; }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Give the test function the signature `fn() -> i32` or `fn()` (no parameters).
+**Fix.** Give the test function the signature `fn() -> i32` or `fn()` (no parameters); `async` is allowed on either, and the runner drives it.
 
 <sub>repro: checked · cplus-core/src/sema.rs:4628 · test cplus-core/src/sema.rs:test_fn_with_param_rejected_e0358</sub>
 

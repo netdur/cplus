@@ -26,7 +26,7 @@
 //! - E0306: block produces no value but one is required
 //! - E0307: `return` without a value when function returns non-`Unit`
 //! - E0308: wrong number of arguments
-//! - E0309: `main` must have signature `fn main() -> i32`
+//! - E0309: `main` must have signature `fn main() -> i32` (or `async fn main() -> i32`, v0.0.31)
 //! - E0310: float literals not supported in Phase 1
 //! - E0311: non-`i32` integer suffix not supported in Phase 1
 //! - E0312: feature parsed but not yet supported in Phase 1
@@ -7142,10 +7142,13 @@ impl SemaCx<'_> {
         if sig.return_type == Ty::Error {
             return;
         }
+        // v0.0.31: an `async fn main() -> i32` reaches here as the synchronous
+        // wrapper lower desugars it to, so the same rule judges both spellings
+        // and a unit-returning `async fn main()` is E0309 like `fn main()` is.
         if !no_params || sig.return_type != Ty::I32 {
             self.err(
                 "E0309",
-                "`main` must have signature `fn main() -> i32`".to_string(),
+                "`main` must have signature `fn main() -> i32` or `async fn main() -> i32`".to_string(),
                 span,
             );
         }
@@ -8174,10 +8177,13 @@ impl SemaCx<'_> {
         // E0358 — signature.
         let params_ok = f.params.is_empty();
         let return_ok = matches!(sig.return_type, Ty::Unit | Ty::I32);
+        // v0.0.31: a `#[test] async fn` reaches here as the synchronous wrapper
+        // lower desugars it to (the attribute rides with the wrapper), so
+        // the same shapes are allowed with or without `async`.
         if !params_ok || !return_ok {
             self.err(
                 "E0358",
-                "test function must have signature `fn() -> i32` or `fn()`".to_string(),
+                "test function must have signature `fn() -> i32` or `fn()`, with or without `async`".to_string(),
                 attr.span,
             );
         }
@@ -12923,7 +12929,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         // `#coro_promise::[T](hdl: *u8) -> *T` — the address of a completed
         // coroutine's promise slot (its return value), given the coroutine
-        // handle. v0.0.29 phase 2: what lets `executor::run` extract a
+        // handle. v0.0.29 phase 2: what lets `future::wait_or_cancel` extract a
         // driven future's value in surface C+ instead of intrinsic IR. The
         // type argument is required because LLVM's `llvm.coro.promise` takes
         // the promise ALIGNMENT as a compile-time constant — the T fixes it.
@@ -31592,6 +31598,70 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
             codes.contains(&"E0902"),
             "expected E0902 (await of non-Future), got: {codes:?}"
         );
+    }
+
+    // ---- v0.0.31: `async fn main` / `#[test] async fn` ----
+    //
+    // Lower splits an async entry into `__async_<name>` plus a synchronous
+    // wrapper whose body is the `#block_on` drive, so these run lower first
+    // and assert what sema then says about the WRAPPER: `-> i32` is clean, a
+    // unit or wrong return is E0309 exactly as it is for `fn main()`, and a
+    // `#[test] async fn` follows E0358 the same way.
+
+    fn lowered_codes(src: &str) -> Vec<String> {
+        check_src_lowered(src)
+            .into_iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn async_main_returning_i32_typechecks() {
+        let codes = lowered_codes(&format!(
+            "{FUTURE_PRELUDE}async fn inner() -> i32 {{ return 41; }}\n\
+             async fn main() -> i32 {{ return (await inner()) +% 1; }}"
+        ));
+        assert!(codes.is_empty(), "expected clean, got {codes:?}");
+    }
+
+    #[test]
+    fn async_main_with_unit_return_is_e0309() {
+        let codes = lowered_codes(&format!("{FUTURE_PRELUDE}async fn main() {{ }}"));
+        assert!(codes.contains(&"E0309".to_string()), "expected E0309, got {codes:?}");
+    }
+
+    #[test]
+    fn async_main_with_a_parameter_is_e0309() {
+        let codes = lowered_codes(&format!(
+            "{FUTURE_PRELUDE}async fn main(x: i32) -> i32 {{ return x; }}"
+        ));
+        assert!(codes.contains(&"E0309".to_string()), "expected E0309, got {codes:?}");
+    }
+
+    #[test]
+    fn await_in_a_sync_main_is_still_e0901() {
+        // The entry may be async; `await` in a synchronous one is unchanged.
+        let codes = lowered_codes(&format!(
+            "{FUTURE_PRELUDE}async fn inner() -> i32 {{ return 41; }}\n\
+             fn main() -> i32 {{ return await inner(); }}"
+        ));
+        assert!(codes.contains(&"E0901".to_string()), "expected E0901, got {codes:?}");
+    }
+
+    #[test]
+    fn async_test_fns_typecheck_and_a_bad_return_is_e0358() {
+        let ok = lowered_codes(&format!(
+            "{FUTURE_PRELUDE}#[test] async fn t() {{ }}\n\
+             #[test] async fn u() -> i32 {{ return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(ok.is_empty(), "expected clean, got {ok:?}");
+        let bad = lowered_codes(&format!(
+            "{FUTURE_PRELUDE}#[test] async fn t() -> bool {{ return true; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+        assert!(bad.contains(&"E0358".to_string()), "expected E0358, got {bad:?}");
     }
 
     #[test]

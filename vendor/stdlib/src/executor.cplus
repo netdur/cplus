@@ -1,27 +1,21 @@
-// stdlib/executor.cplus — single-threaded driver for `Future[T]`.
+// stdlib/executor.cplus — the thread-local executor's surface: `spawn_local`,
+// `yield_now`, and the async ↔ thread bridge (`join_worker`,
+// `receive_or_cancel`).
 //
-// v0.0.3 Phase 5 Slice 5E.5. `block_on` is the canonical entry point
-// for synchronous code that wants to consume an `async fn`'s result.
-// It loops `Future::poll` (via the compiler's `coro.resume` /
-// `coro.done` intrinsics) until the future produces `Ready(T)`,
-// then returns T.
+// DRIVING a future from synchronous code is NOT here since v0.0.31 — it is a
+// method on the value, `f.wait()` (to completion), or its cancellable twin
+// `future::wait_or_cancel(f)`, both in stdlib/future. `block_on` and `run` were those two as free
+// functions and are gone; an `async fn main` / `#[test] async fn` is driven
+// by the compiler through the same loop.
 //
-// **v0.0.3 scope:** synchronous drive only — the loop spins on the
-// coroutine until completion. No reactor, no I/O suspension. The
-// async-fetch recipe (with kqueue/epoll wake-on-readable) lands
-// post-v0.0.3 when the reactor ships.
-//
-// **No multi-threaded executor.** Single-threaded driver only —
-// matches tokio's `current_thread` runtime semantics and sidesteps
-// the `Send`/`Sync` design that v0.0.4 will tackle.
+// **No multi-threaded executor.** One reactor per thread, single-threaded
+// driver — matches tokio's `current_thread` runtime semantics and sidesteps
+// the `Send`/`Sync` design a work-stealing executor would need.
 
 import "./future" as future;
 import "./time" as time;
-// v0.0.4 Phase 3 Slice 3A.1: pull in the reactor so block_on's
-// reactor-integrated drive loop has its stable-symbol callees
-// (`stdlib_reactor_*_v1`) available at link time. block_on itself
-// is compiler-intrinsic, but it now calls into the reactor's drain /
-// poll routines emitted by reactor.cplus.
+// The reactor's stable-symbol exports (`stdlib_reactor_*_v1`) are what the
+// drive loops and the bridge below call into; importing it keeps them linked.
 import "./reactor" as reactor;
 import "./thread" as thread;
 import "./channel" as channel;
@@ -29,82 +23,10 @@ import "./atomic" as atomic;
 import "./option" as option;
 import "./status" as status;
 
-// Codegen-emitted stable wrappers around the LLVM coroutine intrinsics —
-// the pieces `run`'s surface-C+ drive loop is written out of.
-#[runtime_abi]
-extern fn __cplus_coro_resume(hdl: *u8);
-#[runtime_abi]
-extern fn __cplus_coro_done(hdl: *u8) -> i32;
-#[runtime_abi]
-extern fn __cplus_coro_destroy(hdl: *u8);
-
-// Drive a `Future[T]` to completion and return its produced value.
-// Blocks the calling thread (no other tasks run on it) until the
-// future resolves. Drops the coroutine frame after extracting T.
-//
-// `block_on` is the DRIVE-TO-COMPLETION form: a `JoinHandle::cancel`
-// request against this thread does not stop it (same doctrine as a compute
-// loop that never checks `thread::cancelled()`). A worker that should be
-// stoppable while running async code uses `run` below.
-fn block_on[T](f: future::Future[T]) -> T {
-    return { #block_on::[T](f) };
-}
-
-// v0.0.29 phase 2 — the outcome of a CANCELLABLE drive (`run`).
-enum RunResult[T] {
-    Done(T),
-    Cancelled,
-}
-
-// Drive a `Future[T]` to completion — unless this thread is asked to stop.
-//
-// The same loop as `block_on` (which is intrinsic IR; this is its
-// surface-C+ twin), joined to the phase-1 cancellation protocol: the kevent
-// park is cancellable, and the loop re-checks `thread::cancelled()` between
-// resumes. On cancellation it destroys the task tree it owns — destroying
-// the top-level frame cascades through every await's cancel edge, running
-// the drops of the locals live at each suspend point — then tears down this
-// thread's reactor (closing the kqueue de-registers every waiter and
-// timer) and reports `Cancelled`. Cancellation cannot skip a drop, and
-// `join` on this worker still returns its value — the value just says the
-// work was cut short.
-//
-// Residual (recorded in the cancellation report): a `spawn_local` task this
-// tree does not own is leaked, not destroyed, by the teardown.
-fn run[T: Send](take f: future::Future[T]) -> RunResult[T] {
-    let hdl: *u8 = f.raw_handle();
-    loop {
-        // Async fns run eagerly to their first suspend, so the frame may be
-        // done before the loop ever resumes it — check first (resuming a
-        // done coroutine is UB in LLVM).
-        if { #coro_done(hdl) } != (0 as i32) {
-            let prom: *T = { #coro_promise::[T](hdl) };
-            let v: T = { #take::[T](prom) };
-            // `cancel` CONSUMES the future, and consuming it is what frees the
-            // frame — `Future::drop` purges the pending queue and destroys.
-            // Explicit rather than left to scope exit so the order is on the
-            // page: the value is out of the promise before the frame goes.
-            f.cancel();
-            return RunResult[T]::Done(v);
-        }
-        if thread::cancelled() {
-            // DESTROY BEFORE TEARDOWN, and the order is load-bearing: the
-            // frame's cancel edges unregister awaiters and pending entries,
-            // and `teardown` has already freed those arrays and closed the
-            // kqueue. Consuming `f` here is what keeps the two in this order —
-            // leaving it to scope exit would run them the other way round.
-            f.cancel();
-            reactor::teardown();
-            return RunResult[T]::Cancelled;
-        }
-        { #coro_resume(hdl); }
-        if { #coro_done(hdl) } != (0 as i32) { continue; }
-        let _n: i32 = reactor::drain_pending();
-        if reactor::waiter_count() > (0 as i32) {
-            let _p: i32 = reactor::poll_one_event_cancellable();
-        }
-    }
-}
+// The drive loops — `Future::wait` (intrinsic IR) and `future::wait_or_cancel`
+// (its surface-C+ twin, joined to the cancellation protocol) — live in
+// stdlib/future beside the value they consume. The bridge below is what this
+// module adds on top of them.
 
 // ── the async ↔ thread bridge (v0.0.29 phase 2) ──
 
@@ -204,15 +126,15 @@ async fn receive_or_cancel[T: Send](take ch: channel::Channel[T],
 
 // v0.0.4 Phase 3 Slice 3A.2: yield control back to the executor.
 // Only meaningful inside an `async fn` body — pushes this onto the
-// reactor's pending queue and suspends. On the next block_on
-// iteration, the drain step resumes us; cooperative-multitasking
+// reactor's pending queue and suspends. On the next drive
+// iteration (`wait`, or the compiler-driven entry), the drain step resumes us; cooperative-multitasking
 // primitive for "give other tasks a turn."
 async fn yield_now() {
     { #reactor_yield_now(); }
 }
 
 // v0.0.4 Phase 3 Slice 3A.2: enqueue a future for the executor to
-// drive in addition to the one passed to `block_on`. The spawned
+// drive in addition to the one being waited on. The spawned
 // future runs to completion in the same thread, interleaved with
 // the awaiter. Single-threaded only.
 //
@@ -233,13 +155,37 @@ fn _touch_reactor() -> i32 {
 
 extern fn usleep(us: u32) -> i32;
 
+// v0.0.31: a `#[test]` may be `async`. The compiler splits it into a private
+// async body and a synchronous wrapper whose body is the `#block_on` drive —
+// the same sugar `async fn main` gets — so the runner discovers and runs it
+// like any other test. The awaits below are real timer suspends, so this
+// pins the whole path: desugar → wrapper → drive → reactor → resume.
+async fn _seven_after_a_tick() -> i32 {
+    await _tick();
+    return 7;
+}
+
+#[test]
+async fn an_async_test_is_driven_by_the_runner() {
+    await _tick();
+    let v: i32 = await _seven_after_a_tick();
+    assert v == 7;
+}
+
+#[test]
+async fn an_async_test_may_return_i32() -> i32 {
+    let v: i32 = await _seven_after_a_tick();
+    if v != 7 { return 1; }
+    return 0;
+}
+
 async fn _ready_value() -> i32 {
     return 42;
 }
 
 #[test]
-fn block_on_drives_async_to_completion() {
-    let v: i32 = block_on::[i32](_ready_value());
+fn wait_drives_async_to_completion() {
+    let v: i32 = _ready_value().wait();
     assert v == 42;
 }
 
@@ -311,14 +257,14 @@ async fn _sleepy_with_probe() -> i32 {
 }
 
 fn _run_sleepy(take x: i64) -> i64 {
-    return match run::[i32](_sleepy_with_probe()) {
-        RunResult::Done(v) => { (v as i64) }
-        RunResult::Cancelled => { 77 as i64 }
+    return match future::wait_or_cancel(_sleepy_with_probe()) {
+        future::WaitResult::Done(v) => { (v as i64) }
+        future::WaitResult::Cancelled => { 77 as i64 }
     };
 }
 
 #[test]
-fn run_reports_cancellation_and_runs_the_frames_drops() {
+fn wait_or_cancel_reports_cancellation_and_runs_the_frames_drops() {
     let before: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
     let h: thread::JoinHandle[i64] = thread::spawn_with::[i64, i64](0 as i64, _run_sleepy);
     usleep(20000 as u32);
@@ -350,9 +296,9 @@ async fn _long_nap_value() -> i32 {
 }
 
 fn _run_sleepy_local(take x: i64) -> i64 {
-    return match run::[i32](_sleepy_via_a_named_local()) {
-        RunResult::Done(v) => { (v as i64) }
-        RunResult::Cancelled => { 78 as i64 }
+    return match future::wait_or_cancel(_sleepy_via_a_named_local()) {
+        future::WaitResult::Done(v) => { (v as i64) }
+        future::WaitResult::Cancelled => { 78 as i64 }
     };
 }
 
@@ -374,10 +320,10 @@ async fn _quick_value() -> i32 {
 }
 
 #[test]
-fn run_drives_to_done_when_uncancelled() {
-    match run::[i32](_quick_value()) {
-        RunResult::Done(v) => { assert v == 9; }
-        RunResult::Cancelled => { assert false; }
+fn wait_or_cancel_drives_to_done_when_uncancelled() {
+    match future::wait_or_cancel(_quick_value()) {
+        future::WaitResult::Done(v) => { assert v == 9; }
+        future::WaitResult::Cancelled => { assert false; }
     }
 }
 
@@ -387,10 +333,10 @@ async fn _nap_then_value() -> i32 {
 }
 
 #[test]
-fn run_drives_through_a_real_suspend() {
-    match run::[i32](_nap_then_value()) {
-        RunResult::Done(v) => { assert v == 11; }
-        RunResult::Cancelled => { assert false; }
+fn wait_or_cancel_drives_through_a_real_suspend() {
+    match future::wait_or_cancel(_nap_then_value()) {
+        future::WaitResult::Done(v) => { assert v == 11; }
+        future::WaitResult::Cancelled => { assert false; }
     }
 }
 
@@ -419,7 +365,7 @@ async fn _bridge_join() -> i64 {
 
 #[test]
 fn join_worker_bridges_a_thread_result_into_async() {
-    let v: i64 = block_on::[i64](_bridge_join());
+    let v: i64 = _bridge_join().wait();
     assert v == (42 as i64);
 }
 
@@ -457,7 +403,7 @@ async fn _spawns_then_yields() -> i32 {
 #[test]
 fn a_spawn_local_task_actually_runs() {
     atomic::store_u64(#addr_of(_SPAWNED_RAN), 0 as u64, atomic::Ordering::Release);
-    let v: i32 = block_on::[i32](_spawns_then_yields());
+    let v: i32 = _spawns_then_yields().wait();
     assert v == 1;
     assert atomic::load_u64(#addr_of(_SPAWNED_RAN), atomic::Ordering::Acquire) == (1 as u64);
 }
@@ -542,7 +488,7 @@ async fn _join_with_deadline(ms: f64) -> i64 {
 
 #[test]
 fn a_join_deadline_that_does_not_expire_returns_the_value() {
-    let v: i64 = block_on::[i64](_join_with_deadline(5.0f64));
+    let v: i64 = _join_with_deadline(5.0f64).wait();
     assert v == (42 as i64);
 }
 
@@ -553,7 +499,7 @@ fn an_expired_join_deadline_still_hands_back_the_workers_value() {
     // the value is the full answer — which is exactly the point being pinned:
     // the deadline asks, it does not kill, and it never loses the result.
     let t0: i64 = time::now_millis();
-    let v: i64 = block_on::[i64](_join_with_deadline(0.02f64));
+    let v: i64 = _join_with_deadline(0.02f64).wait();
     let elapsed: i64 = time::now_millis() - t0;
     assert v == (42 as i64);
     // And it really waited for the worker rather than returning at the
@@ -571,7 +517,7 @@ fn an_expired_receive_deadline_answers_cancelled() {
     match channel::new::[i32]() {
         option::Option[channel::Channel[i32]]::Some(ch) => {
             let t0: i64 = time::now_millis();
-            match block_on::[channel::ReceiveResult[i32]](_recv_with_deadline(ch.clone(), 0.05f64)) {
+            match _recv_with_deadline(ch.clone(), 0.05f64).wait() {
                 channel::ReceiveResult[i32]::Cancelled => { }
                 channel::ReceiveResult[i32]::Value(_) => { assert false; }
                 channel::ReceiveResult[i32]::Closed => { assert false; }
@@ -594,7 +540,7 @@ fn a_value_arriving_before_the_deadline_wins() {
         option::Option[channel::Channel[i32]]::Some(ch) => {
             let sender: thread::JoinHandle[i64] =
                 thread::spawn_with::[channel::Channel[i32], i64](ch.clone(), _send_late);
-            match block_on::[channel::ReceiveResult[i32]](_recv_with_deadline(ch.clone(), 5.0f64)) {
+            match _recv_with_deadline(ch.clone(), 5.0f64).wait() {
                 channel::ReceiveResult[i32]::Value(v) => { assert v == 33; }
                 channel::ReceiveResult[i32]::Cancelled => { assert false; }
                 channel::ReceiveResult[i32]::Closed => { assert false; }
@@ -636,7 +582,7 @@ fn receive_or_cancel_gets_a_value_sent_from_a_thread() {
         option::Option[channel::Channel[i32]]::Some(ch) => {
             let sender: thread::JoinHandle[i64] =
                 thread::spawn_with::[channel::Channel[i32], i64](ch.clone(), _send_late);
-            let v: i32 = block_on::[i32](_recv_via_bridge(ch.clone()));
+            let v: i32 = _recv_via_bridge(ch.clone()).wait();
             assert v == 33;
             let _z: i64 = sender.join();
         }
@@ -648,7 +594,7 @@ fn _recv_bridge_worker(take ch: channel::Channel[i32]) -> i64 {
     // block_on deliberately: the CANCELLATION here is observed by the task
     // itself (receive_or_cancel's own `cancelled()` poll), which makes the
     // outcome deterministic — the driver never wins the race.
-    return block_on::[i32](_recv_via_bridge(ch)) as i64;
+    return _recv_via_bridge(ch).wait() as i64;
 }
 
 #[test]
@@ -685,7 +631,7 @@ async fn _await_five_ticks() -> i32 {
 }
 
 #[test]
-fn the_awaiter_table_is_left_empty_by_a_completed_block_on() {
+fn the_awaiter_table_is_left_empty_by_a_completed_wait() {
     // REGRESSION, 2026-08-23, `reactor_linux` / `reactor_windows`: their
     // `register_awaiter` was append-only where Darwin's scans first.
     //
@@ -709,10 +655,10 @@ fn the_awaiter_table_is_left_empty_by_a_completed_block_on() {
     // empty as it was before. `_five_ticks` suspends five times so there are
     // several drive passes to duplicate across; one pass would not show it.
     let before: i32 = reactor::awaiter_count();
-    assert block_on::[i32](_await_five_ticks()) == 5;
+    assert _await_five_ticks().wait() == 5;
     assert reactor::awaiter_count() == before;
     // And again, because the failure needs a SECOND round to become a
     // use-after-free — if round one leaks, round two is where it bites.
-    assert block_on::[i32](_await_five_ticks()) == 5;
+    assert _await_five_ticks().wait() == 5;
     assert reactor::awaiter_count() == before;
 }

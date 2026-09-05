@@ -42,8 +42,9 @@ fn parse_rejects_a_bad_digit() -> i32 {      // the other legal signature
 }
 ```
 
-- The signature is `fn()` or `fn() -> i32`. Anything else — a parameter, a
-  non-`i32` return — is **E0358**.
+- The signature is `fn()` or `fn() -> i32`, with or without `async` — an
+  `async` test is driven by the runner the way `async fn main` is. Anything
+  else — a parameter, a non-`i32` return — is **E0358**.
 - A `fn() -> i32` test **fails on a nonzero return**. A `fn()` test fails
   only by trapping.
 - `assert cond;` is the workhorse: it traps on false, and a trap is a

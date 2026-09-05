@@ -12,20 +12,17 @@
 // on PORT — the e2e harness ([cpc/tests/e2e.rs](../../../../cpc/tests/e2e.rs)
 // `async_method_tcp_round_trip`) sets one up via a sidecar thread.
 //
-// **Concurrency note.** v0.0.4's single-threaded executor drives the
-// *outer* future passed to `block_on` correctly, including its
-// multi-level `await` chains (await foo() where foo's body itself
-// awaits a timer or fd-event). But nested awaits inside
-// `spawn_local`'d futures do NOT make progress — when the awaitee
-// completes, the awaiter's resume isn't scheduled because
-// `block_on` only resumes the outer future on each loop pass. So
-// 1000-task fanout (the original 4E ambition) is blocked on an
-// executor improvement (forward-pointed to Phase 5). This recipe
-// runs *one* async client; concurrent-clients-via-spawn_local lands
-// when the executor learns to re-enqueue awaiters of completed
-// futures.
+// **Concurrency note.** The executor is single-threaded: one reactor
+// per thread drives the outer future and every task `spawn_local`
+// queued on it, and a completed awaitee re-enqueues its awaiter
+// (Slice 4F), so nested awaits inside spawned tasks make progress.
+// This recipe runs *one* async client; `async_yield_demo` is the
+// interleaving one.
+//
+// The entry is an `async fn main` (v0.0.31): the compiler drives it
+// with the same loop `Future::wait` is, so nothing here names
+// the executor.
 
-import "stdlib/executor" as executor;
 import "stdlib/future" as future;
 import "stdlib/net" as net;
 import "stdlib/result" as result;
@@ -73,10 +70,9 @@ async fn fetch_one_byte(port: u16) -> i32 {
     return v as i32;
 }
 
-fn main() -> i32 {
+async fn main() -> i32 {
     let port: u16 = target_port();
-    let f: future::Future[i32] = fetch_one_byte(port);
-    let got: i32 = executor::block_on::[i32](f);
+    let got: i32 = await fetch_one_byte(port);
     { printf(#str_ptr("got=%d\n\0"), got); }
     return got;
 }

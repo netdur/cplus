@@ -17,9 +17,11 @@
 //   - `step_loop[n](label, ticks_done_ptr)` is an async fn that yields
 //     `n` times, bumping a shared counter on each iteration. The
 //     counter ordering reveals the interleaving.
-//   - `main_async()` spawns two `step_loop`s via `spawn_local`, then
-//     awaits its own `step_loop`. block_on drives all three to
-//     completion.
+//   - `drive_three` spawns two `step_loop`s via `spawn_local`, then
+//     awaits its own `step_loop`. The `async fn main` awaits it, and
+//     the compiler drives the whole tree (v0.0.31) with the same loop
+//     `Future::wait` is — every `yield_now` goes through its
+//     drain step.
 //   - The exit code is the final counter value, which equals
 //     `3 * iterations` if all three tasks ran to completion.
 
@@ -58,13 +60,12 @@ async fn drive_three(counter: *i32, ticks: i32) -> i32 {
     return { *counter };
 }
 
-fn main() -> i32 {
+async fn main() -> i32 {
     let counter_buf: *u8 = { malloc(4 as usize) };
     let counter: *i32 = { counter_buf as *i32 };
     { *counter = 0; }
     let ticks: i32 = 4;
-    let f: future::Future[i32] = drive_three(counter, ticks);
-    let total: i32 = executor::block_on::[i32](f);
+    let total: i32 = await drive_three(counter, ticks);
     { free(counter_buf); }
     if total != (3 *% ticks) {
         return 1;

@@ -47,7 +47,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`mutex`](#mutex) | `Mutex[T]`, `MutexGuard[T]` |
 | [`channel`](#channel) | `Channel[T]`, `ReceiveResult[T]` |
 | [`future`](#future) | `Future[T]`, `Poll[T]` |
-| [`executor`](#executor) | `block_on`, `spawn_local` |
+| [`executor`](#executor) | `spawn_local`, `yield_now`, the async↔thread bridge |
 | [`reactor`](#reactor) | event loop registration / poll |
 | [`time`](#time) | async timers |
 | [`marker`](#marker) | `Send` / `Sync` documentation anchor |
@@ -764,8 +764,11 @@ control block in ordinary code.
 ## executor
 
 ```cplus
-fn block_on[T](f: future::Future[T]) -> T
 fn spawn_local[T: Send](take f: future::Future[T])
+// Driving lives on the value (stdlib/future):
+//   fn wait(take this) -> T                      // to completion; a cancel request does not stop it
+//   fn wait_or_cancel[T](take f: Future[T]) -> WaitResult[T]   // free fn: Done(T) | Cancelled
+//   fn cancel(take this)
 ```
 
 Single-threaded driver: poll until complete; optional local spawn.
@@ -789,7 +792,7 @@ fn drain_pending() -> i32
 ```
 
 For external pumps (an event loop driving spawned futures without
-`block_on`), stable C-ABI exports include `stdlib_reactor_kqfd_v1()` — the
+`Future::wait`), stable C-ABI exports include `stdlib_reactor_kqfd_v1()` — the
 kqueue fd, itself pollable, so a run loop can watch it — plus the `_v1`
 forms of drain/poll above. facet's `spawn_ui` is the reference consumer.
 

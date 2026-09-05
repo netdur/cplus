@@ -17,6 +17,21 @@
 // return rewriting lands.
 
 import "./reactor" as reactor;
+import "./thread" as thread;
+
+// DRIVING A FUTURE FROM SYNCHRONOUS CODE lives here, beside the value
+// (v0.0.31): `f.wait()` blocks this thread until the value is out,
+// `wait_or_cancel(f)` does the same but can be stopped by a cancel request
+// against the thread, and `f.cancel()` gives up. All three consume the future
+// (`take`), the way `JoinHandle::join` consumes a handle — the value comes
+// out, then the frame is freed when it drops. The executor is per thread and
+// implicit, so the future is the only handle there is; `executor::block_on`
+// and `executor::run` used to be the first two, elsewhere, and are gone.
+//
+// `await` is the OTHER thing one does with a future, and it is not a method:
+// it suspends the enclosing coroutine and is only legal inside an `async fn`.
+// An `async fn main` / `#[test] async fn` is driven by the compiler through
+// the same loop `wait` is.
 
 // `#[lang("future")]` is how the backend RECOGNIZES an instantiation of this
 // struct as a coroutine future — see the note on `Iterator[T]`; classifying
@@ -71,6 +86,89 @@ impl Future[T] {
     // that "I am giving up on this" reads as a verb at the call site rather
     // than as a binding nobody uses.
     fn cancel(take this) { }
+
+    // Drive to completion from synchronous code and return the value. Blocks
+    // the calling thread — running its reactor, so other tasks queued on this
+    // thread make progress meanwhile — until the frame is done. The loop is
+    // compiler IR (`#block_on`): resume until done, drain the pending queue,
+    // park in kevent while anything waits, then read the promise.
+    //
+    // THE DRIVE-TO-COMPLETION FORM: a cancel request against this thread does
+    // not stop it (same doctrine as a compute loop that never checks
+    // `thread::cancelled()`). A worker that should be stoppable while it
+    // drives async code uses `wait_or_cancel`.
+    //
+    // Consumes the future. The value is read out of the promise first; then
+    // `this` drops on the way out and `drop` frees the frame.
+    fn wait(take this) -> T {
+        return { #block_on::[T](this) };
+    }
+}
+
+// Drive to completion — unless this thread is asked to stop.
+//
+// A FREE FUNCTION, not a method, and the reason is the return type: a
+// `Future[T]` method is instantiated for every `T` a prebuilt package
+// contains, `Future[()]` included (`sleep`, `yield_now`), and a
+// `WaitResult[()]` cannot be built — a unit payload has no value to store.
+// A free generic fn is instantiated only where it is called, which is what
+// `run` was and why it never met the problem. `wait` gets to be a method
+// because the `#block_on` intrinsic already answers unit with nothing.
+//
+// The same loop as `wait` (which is intrinsic IR; this is its surface-C+
+// twin), joined to the phase-1 cancellation protocol: the kevent park is
+// cancellable, and the loop re-checks `thread::cancelled()` between
+// resumes. On cancellation it destroys the frame tree this future owns —
+// destroying the top-level frame cascades through every await's cancel
+// edge, running the drops of the locals live at each suspend point — then
+// tears down this thread's reactor (closing the kqueue de-registers every
+// waiter and timer) and reports `Cancelled`. Cancellation cannot skip a
+// drop, and `join` on the worker still returns its value — the value just
+// says the work was cut short.
+//
+// Residual (recorded in the cancellation report): a `spawn_local` task
+// this tree does not own is leaked, not destroyed, by the teardown.
+fn wait_or_cancel[T](take f: Future[T]) -> WaitResult[T] {
+    let hdl: *u8 = f.raw_handle();
+    loop {
+        // Async fns run eagerly to their first suspend, so the frame may
+        // be done before the loop ever resumes it — check first (resuming
+        // a done coroutine is UB in LLVM).
+        if { #coro_done(hdl) } != (0 as i32) {
+            let prom: *T = { #coro_promise::[T](hdl) };
+            let v: T = { #take::[T](prom) };
+            // Consuming `f` is what frees the frame — `drop` purges the
+            // pending queue and destroys. Explicit rather than left to
+            // scope exit so the order is on the page: the value is out of
+            // the promise before the frame goes.
+            f.cancel();
+            return WaitResult[T]::Done(v);
+        }
+        if thread::cancelled() {
+            // DESTROY BEFORE TEARDOWN, and the order is load-bearing: the
+            // frame's cancel edges unregister awaiters and pending entries,
+            // and `teardown` has already freed those arrays and closed the
+            // kqueue. Consuming `f` here is what keeps the two in this
+            // order — leaving it to scope exit would run them the other
+            // way round.
+            f.cancel();
+            reactor::teardown();
+            return WaitResult[T]::Cancelled;
+        }
+        { #coro_resume(hdl); }
+        if { #coro_done(hdl) } != (0 as i32) { continue; }
+        let _n: i32 = reactor::drain_pending();
+        if reactor::waiter_count() > (0 as i32) {
+            let _p: i32 = reactor::poll_one_event_cancellable();
+        }
+    }
+}
+
+// The outcome of a CANCELLABLE drive (`wait_or_cancel`): the value,
+// or the news that this thread was asked to stop before it arrived.
+enum WaitResult[T] {
+    Done(T),
+    Cancelled,
 }
 
 // The result of polling a `Future[T]`. The executor's poll loop
@@ -80,4 +178,68 @@ impl Future[T] {
 enum Poll[T] {
     Ready(T),
     Pending,
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+//
+// The cancellation half of `wait_or_cancel` — a worker thread asked to stop
+// mid-drive, its drops counted — lives in executor.cplus beside the bridge
+// tests that share its fixtures. These pin the value paths.
+
+async fn _ready_now() -> i32 {
+    return 41;
+}
+
+// A real reactor suspend, as every stdlib wrapper (`time::sleep`, the fd
+// waits) has inside it — so `wait` is seen parking and resuming, not just
+// reading a promise that was already full.
+async fn _after_a_tick() -> i32 {
+    { #reactor_wait_timer(1 as u64); }
+    return 42;
+}
+
+async fn _twice_after_ticks() -> i64 {
+    let a: i32 = await _after_a_tick();
+    let b: i32 = await _after_a_tick();
+    return (a as i64) +% (b as i64);
+}
+
+#[test]
+fn wait_returns_the_value_of_an_already_done_frame() {
+    assert _ready_now().wait() == 41;
+}
+
+#[test]
+fn wait_parks_on_the_reactor_and_resumes() {
+    assert _after_a_tick().wait() == 42;
+    // Nested awaits through the awaiter table, driven from the outside.
+    assert _twice_after_ticks().wait() == (84 as i64);
+}
+
+#[test]
+fn wait_or_cancel_reports_done_when_nobody_asked_to_stop() {
+    match wait_or_cancel(_after_a_tick()) {
+        WaitResult::Done(v) => { assert v == 42; }
+        WaitResult::Cancelled => { assert false; }
+    }
+    match wait_or_cancel(_ready_now()) {
+        WaitResult::Done(v) => { assert v == 41; }
+        WaitResult::Cancelled => { assert false; }
+    }
+}
+
+// A drive leaves nothing behind in this thread's reactor: no waiter, no
+// pending entry, no awaiter — the next drive starts clean.
+//
+// FROM A FRESH REACTOR, because the suite shares one per thread and a
+// `spawn_local` task an earlier test never awaited may still sit in the
+// pending queue — legitimately, until something drives or tears down. The
+// invariant asserted here is about ONE drive, so start from nothing.
+#[test]
+fn a_completed_wait_leaves_the_reactor_empty() {
+    reactor::teardown();
+    assert _twice_after_ticks().wait() == (84 as i64);
+    assert reactor::waiter_count() == (0 as i32);
+    assert reactor::pending_count() == (0 as i32);
+    assert reactor::awaiter_count() == (0 as i32);
 }

@@ -859,16 +859,17 @@ pub enum StmtKind {
     /// `guard let PATTERN = SCRUTINEE else { ELSE };` —
     /// the binding(s) from PATTERN live in the *enclosing* scope after the
     /// statement, on the proven assumption that the else block diverges
-    /// (return / break / continue). With `else |COMPLEMENT|`, the
+    /// (return / break / continue). With `else COMPLEMENT`, the
     /// complement pattern receives the non-matching value and the two
     /// patterns must cover the scrutinee exhaustively. Slice 4A.5.
-    /// Lowering: verifies else divergence (E0348) + complement coverage
-    /// (E0349, E0350), then rewrites to a `let` + `match` pair.
+    /// Lowering: verifies else divergence (E0348) and else-pattern
+    /// non-overlap (E0350), then rewrites to a `let` + `match` pair.
+    /// Coverage falls out of the synthesized match (E0340).
     GuardLet {
         pattern: Pattern,
         scrutinee: Expr,
-        /// `else |Pat|` — present iff the user wrote the complement form.
-        /// When absent the lowering pass synthesizes a `_` arm.
+        /// `else Pat` — present iff the user named the else-pattern. `None`
+        /// is the omitted form, for which the lowering synthesizes a `_` arm.
         complement: Option<Pattern>,
         else_body: Block,
         /// `guard var PAT = E else { ... };` — the enclosing-scope binding

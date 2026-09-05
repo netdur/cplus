@@ -574,7 +574,7 @@ match maybe_thing {                  // still yours to match for real
 ```
 
   `Some(_v)` **binds** — the leading `_` is the privacy convention, not a wildcard — so it consumes like any other name. Use `Some(_)` for the non-consuming form.
-- In a `guard let`, the else block must not re-match the scrutinee (E0335): the payload's destructor has already run by then. Bind the complement instead — `guard let E::A(v) = e else |E::B(x)| { ... }`.
+- In a `guard let`, the else block must not re-match the scrutinee (E0335): the payload's destructor has already run by then. Bind the complement instead — `guard let E::A(v) = e else E::B(x) { ... }`.
 - A container's heap *elements* behind a raw pointer (a `Vec[T]`'s `T`s) are dropped by the container's own `drop` (which walks them via `__cplus_drop_in_place::[T]`), not by auto field-drop. Binding an owning payload from a consumed enum and then *not* moving it out drops it at arm exit (no leak).
 
 ### Raw-pointer accountability (`opaque`)
@@ -625,14 +625,15 @@ fn handle(s: str) -> i32 {
     return v +% 100;
 }
 
-// When the failure payload matters, capture it with the complement form
-// `else |Pat|` — the else block receives the failure value instead of
-// losing it. The two patterns together must cover the enum — the form lowers
-// to a match, so a gap is reported as E0340 (an overlap is E0350).
+// The else may name a pattern before its block, for the cases the success
+// pattern didn't take; omitted it is `_`. Name it when the failure payload
+// matters — the else block then receives the failure value instead of losing
+// it. The two patterns together must cover the enum — the form lowers to a
+// match, so a gap is reported as E0340 (an overlap is E0350).
 enum ReadResult { Ok(i32), Err(i32) }
 
 fn handle_or_report(s: str) -> i32 {
-    guard let ReadResult::Ok(v) = read(s) else |ReadResult::Err(code)| {
+    guard let ReadResult::Ok(v) = read(s) else ReadResult::Err(code) {
         return 0 -% code;
     };
     return v +% 100;
@@ -811,7 +812,7 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `mutex` | pthread-backed, internally refcounted (no separate reference-count wrapper) |
 | `box` / `arc` / `rc` | Owned-on-heap: `Box` one owner, `Arc` atomic-refcount shared, `Rc` non-atomic shared. `Arc`/`Rc` add `downgrade() -> Weak[T]` for cycle-breaking back-pointers |
 | `channel` | typed MPMC message passing |
-| `future` / `executor` / `reactor` / `time` | `async fn`, `await`, the platform reactor (kqueue on Darwin, epoll on Linux/Android); `executor::run` = cancellable drive, `Future::cancel`, `join_worker`/`receive_or_cancel` bridge (§10) |
+| `future` / `executor` / `reactor` / `time` | `async fn`, `await`, the platform reactor (kqueue on Darwin, epoll on Linux/Android); `f.wait()` = drive from sync code, `future::wait_or_cancel(f)` = the cancellable drive, `f.cancel()`; `join_worker`/`receive_or_cancel` bridge (§10) |
 | `iterator` | `gen fn` + adapters: `it.filter(pred)` / `it.prefix(n)` methods, free `iterator::map::[T, U](it, f)`. The name is `prefix`, not `take` (`take` is the ownership keyword) |
 | `cow` | clone-on-write `Text` (`CowStr`) |
 | `hash_set` / `string_set` | `HashSet[T: Copy]` / `StringSet` — plus `is_subset`/`is_superset`/`is_disjoint`/`union_with`/`intersection`/`difference` |
@@ -872,13 +873,25 @@ let h1 = thread::spawn_with::[Range, i64](left,  sum_r);
 let h2 = thread::spawn_with::[Range, i64](right, sum_r);
 let total = h1.join() +% h2.join();
 
-// Async
-import "stdlib/executor" as executor;
+// Async — the compiler drives an async entry; `await` is only ever a suspend.
+import "stdlib/time" as time;
+async fn inner() -> i32 { await time::sleep(10); return 41; }
 async fn outer() -> i32 { return (await inner()) +% 1; }
-fn main() -> i32 { return executor::block_on::[i32](outer()); }
+async fn main() -> i32 { return await outer(); }
 ```
 
 Borrow-shaped params (`str`, `T[]`, `ref x: NonCopy`) are rejected in `async fn` (E0900). Use `Text`, `Vec[T]`.
+
+`main` and `#[test]` fns may be `async` (v0.0.31): the compiler splits each into a private async body and a synchronous entry whose whole body is the drive loop. `await` outside an `async fn` is still E0901, and an `async fn main()` with a unit return is E0309 exactly as `fn main()` is.
+
+Driving a future from other synchronous code (a handler, a worker) is a method on the value: `f.wait() -> T` blocks this thread, running its reactor, until the value is out; `future::wait_or_cancel(f) -> WaitResult[T]` is the cancellable form (a free fn, since `WaitResult[()]` cannot exist); `f.cancel()` gives up. All three consume the future, like `JoinHandle::join`. No executor import, no turbofish:
+
+```cplus
+fn normal() -> i32 {
+    let x: i32 = get_data().wait();
+    return x;
+}
+```
 
 Shared mutable state exists (`mutex`, `atomic`, `arc`), but prefer partition+join. `Mutex[T]` is internally refcounted (no separate wrapper needed) — reach for it directly only when message-passing or partitioning won't do.
 
@@ -913,22 +926,22 @@ let r = h.join();         // still waits; still returns the worker's value
 **Async cancellation (v0.0.29 phase 2).** The same request reaches async code:
 
 ```cplus
-// In a worker that should be stoppable, drive with `run`, not `block_on`:
+// In a worker that should be stoppable, drive with `wait_or_cancel`, not `wait`:
 fn worker(take x: i64) -> i64 {
-    return match executor::run::[i32](serve()) {
-        executor::RunResult::Done(v) => { (v as i64) }
-        executor::RunResult::Cancelled => { 0 - 1 }   // stopped on request
+    return match future::wait_or_cancel(serve()) {
+        future::WaitResult::Done(v) => { (v as i64) }
+        future::WaitResult::Cancelled => { 0 - 1 }   // stopped on request
     };
 }
 ```
 
-- `executor::run[T](take f) -> RunResult[T]` is the cancellable drive: on a
-  cancel request it destroys the suspended frame tree — every `await`'s
-  destroy edge runs the drops of the locals live there, transitively — then
-  tears down the thread's reactor and reports `Cancelled`. Cancellation
-  cannot skip a drop. `block_on` stays the drive-to-completion form: a
-  cancel request does not stop it (same doctrine as a compute loop that
-  never checks `cancelled()`).
+- `future::wait_or_cancel[T](take f) -> WaitResult[T]` is the cancellable
+  drive: on a cancel request it destroys the suspended frame tree — every
+  `await`'s destroy edge runs the drops of the locals live there,
+  transitively — then tears down the thread's reactor and reports
+  `Cancelled`. Cancellation cannot skip a drop. `wait` stays the
+  drive-to-completion form: a cancel request does not stop it (same doctrine
+  as a compute loop that never checks `cancelled()`).
 - **Dropping a future cancels it.** `Future` has a destructor: wherever the
   value goes out of scope the frame is destroyed and every suspend point's
   cancel edge runs, so no drop is skipped. `Future::cancel(take this)` is the
