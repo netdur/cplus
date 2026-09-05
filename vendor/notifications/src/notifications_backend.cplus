@@ -26,6 +26,15 @@
 // banner + sound + list. An application that wants the silent default can stop
 // installing it; there is nothing else useful to be done with that method.
 //
+// THE SECOND THING ANYONE HITS, on macOS, is Focus — and it is not this file's.
+// A Focus mode delivers every app not on its allowed list straight to
+// Notification Centre with no banner, which from the outside is identical to
+// the delegate never answering. usernoted logs the decision
+// (`interruptionSuppression: delay delivery`) and `tools/why_quiet.sh` reads it
+// back. Measured 2026-08-31 against the demo: authorised, accepted, silenced —
+// and so was Slack, in the same hours. `Ok` was the right answer here: the
+// notification WAS delivered.
+//
 // The delegate is also where a TAP will arrive when that tier lands
 // (`didReceiveNotificationResponse:`). It is installed now, with only the
 // presentation method, so the tap work is one `add_method` rather than a new
