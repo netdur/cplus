@@ -1023,6 +1023,17 @@ fn server_name() -> str {
 
 fn forget_client() { CLIENT_NAME = text::new(); return; }
 
+// PUT A CONNECTION'S IDENTITY BACK before its next request is dispatched.
+//
+// `CLIENT_NAME` is documented above as "the connection's own scope", and that
+// held while connections were served strictly one at a time. Once the accept
+// loop keeps several open at once the scope has to be made real: each
+// connection owns its name, and the loop restores it here before handing a
+// request to `handle_request`. The global remains the one place dispatch and
+// the consent policy read it from, so nothing downstream changes.
+fn adopt_client(take name: text::Text) { CLIENT_NAME = name; return; }
+
+
 // The connected client's self-reported name, or "" before `initialize`.
 fn current_client() -> str { return CLIENT_NAME.view(); }
 
@@ -1549,6 +1560,73 @@ extern fn bind(fd: i32, addr: *u8, addrlen: u32) -> i32;
 extern fn connect(fd: i32, addr: *u8, addrlen: u32) -> i32;
 extern fn listen(fd: i32, backlog: i32) -> i32;
 extern fn accept(fd: i32, addr: *u8, addrlen: *u32) -> i32;
+
+// `poll(2)`. Declared here for the same reason `accept` and `socket` are: this
+// file already talks to the kernel directly, and `netsys` has no multiplexer.
+extern fn poll(fds: *u8, nfds: u32, timeout: i32) -> i32;
+
+// `struct pollfd { int fd; short events; short revents; }` — 8 bytes on
+// Darwin and Linux alike, built in a byte buffer for the same reason the
+// `sockaddr_un` and `sockaddr_in` above are: a C+ struct's layout is not
+// promised to match C's, and this one crosses that seam.
+const POLLFD_SIZE: usize = 8 as usize;
+const POLLIN: i16 = 1i16;
+// POLLERR(0x8) | POLLHUP(0x10) | POLLNVAL(0x20) — set by the kernel whatever
+// the caller asked for, and each means this connection has nothing more to say.
+const POLL_DEAD: i16 = 56i16;
+// How long a poll waits before coming back to check for cancellation. Long
+// enough that an idle surface is not a spinning thread; short enough that
+// closing a window does not visibly hang on it.
+const POLL_WAIT_MS: i32 = 200;
+// Connections a door will hold at once. A refusal is a bad answer; a silent
+// wait is a worse one, so the cap exists to be REFUSED at rather than queued
+// behind — see the accept branch.
+const MAX_CONNS: usize = 32 as usize;
+
+fn put_i32_le(p: *u8, at: usize, v: i32) {
+    let u: u32 = v as u32;
+    p[at] = { (u % 256u32) as u8 };
+    p[at +% (1 as usize)] = { ((u / 256u32) % 256u32) as u8 };
+    p[at +% (2 as usize)] = { ((u / 65536u32) % 256u32) as u8 };
+    p[at +% (3 as usize)] = { ((u / 16777216u32) % 256u32) as u8 };
+}
+
+fn put_i16_le(p: *u8, at: usize, v: i16) {
+    let u: u16 = v as u16;
+    p[at] = { (u % 256u16) as u8 };
+    p[at +% (1 as usize)] = { ((u / 256u16) % 256u16) as u8 };
+}
+
+fn get_i16_le(p: *u8, at: usize) -> i16 {
+    let lo: u16 = p[at] as u16;
+    let hi: u16 = p[at +% (1 as usize)] as u16;
+    return { (lo + hi * 256u16) as i16 };
+}
+
+// One entry of the poll set: the fd to watch, and what to watch it for.
+fn pollfd_put(p: *u8, i: usize, fd: i32, events: i16) {
+    let base: usize = i *% POLLFD_SIZE;
+    put_i32_le(p, base, fd);
+    put_i16_le(p, base +% (4 as usize), events);
+    put_i16_le(p, base +% (6 as usize), 0i16);      // revents, cleared for the kernel
+}
+
+fn pollfd_revents(p: *u8, i: usize) -> i16 {
+    return get_i16_le(p, i *% POLLFD_SIZE +% (6 as usize));
+}
+
+// A connection the door is holding open, and the identity that belongs to it.
+//
+// `client` IS THE POINT. `CLIENT_NAME` is a process-global that dispatch and
+// the consent policy read, and its own comment calls it "the connection's own
+// scope" — true only while connections were served strictly one at a time.
+// Holding several at once makes that scope real: each connection owns its
+// name here, and the loop restores it into the global immediately before
+// handing a request to `handle_request`.
+struct McpConn {
+    fd: i32,
+    client: text::Text,
+}
 extern fn read(fd: i32, buf: *u8, count: usize) -> i64;
 extern fn write(fd: i32, buf: *u8, count: usize) -> i64;
 extern fn close(fd: i32) -> i32;
@@ -2142,25 +2220,40 @@ fn serve_fd(
     // the first's self-reported name — and therefore whatever the user decided
     // about the first.
     forget_client();
-    var buf: [u8; 8192] = [0; 8192];
     loop {
-        let len: i64 = read_line(fd, { #addr_of(buf[0]) }, 8192);
-        if len == (- 2) {
-            return 1;                       // cancelled — the caller stops accepting
-        }
-        if len < 0 {
-            break;
-        }
-        let line: str = { #str_from_raw_parts(#addr_of(buf[0]), len as usize) };
-        let resp: text::Text = handle_request(surf, vt, sub, auth::serve(policy), line);
-        // Empty is a NOTIFICATION, which is entitled to no reply — not even a
-        // blank line, which a line-delimited client would read as a message.
-        if resp.count() > 0 {
-            let rs: str = { resp };
-            write_all(fd, #str_ptr(rs), #str_len(rs));
-            let nl: u8 = '\n' as u8;
-            write_all(fd, { #addr_of(nl) }, 1);
-        }
+        let r: i32 = serve_fd_once(surf, vt, sub, policy, fd);
+        if r != 0 { return if r == 1 { 1 } else { 0 }; }
+    }
+}
+
+// ONE REQUEST, so the caller decides when to come back for the next.
+//
+// Split out of the loop above because an accept loop that watches several
+// connections cannot afford to sit inside one of them: whoever is driving has
+// to be free to serve another connection between two of this one's requests.
+// The loop is still here (`serve_fd`), for callers handed a single fd.
+//
+// Answers 0 to keep the connection, 1 when cancelled, 2 when it has ended.
+fn serve_fd_once(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    fd: i32,
+) -> i32 {
+    var buf: [u8; 8192] = [0; 8192];
+    let len: i64 = read_line(fd, { #addr_of(buf[0]) }, 8192);
+    if len == (- 2) { return 1; }           // cancelled
+    if len < 0 { return 2; }                // the peer went away
+    let line: str = { #str_from_raw_parts(#addr_of(buf[0]), len as usize) };
+    let resp: text::Text = handle_request(surf, vt, sub, auth::serve(policy), line);
+    // Empty is a NOTIFICATION, which is entitled to no reply — not even a
+    // blank line, which a line-delimited client would read as a message.
+    if resp.count() > 0 {
+        let rs: str = { resp };
+        write_all(fd, #str_ptr(rs), #str_len(rs));
+        let nl: u8 = '\n' as u8;
+        write_all(fd, { #addr_of(nl) }, 1);
     }
     return 0;
 }
@@ -2241,34 +2334,149 @@ fn accept_loop(
     unlink_on_exit: bool,
     http: bool = false,
 ) -> i32 {
-    loop {
-        if thread::park_begin() {
-            thread::park_end();
-            break;                          // cancelled while about to accept
+    // ONE THREAD, MANY CONNECTIONS.
+    //
+    // This used to accept one connection and serve it to completion before
+    // accepting the next. On the socket that was nearly harmless — a request
+    // is a line in and a line out. On HTTP it was not: an MCP client holds its
+    // connection open for its whole life, so the first one through the door
+    // OWNED the door, and every later caller waited in the listen backlog.
+    // Not refused — waited, silently, forever. Measured: iris spawned an agent,
+    // handed it this address, and the agent blocked in startup because iris's
+    // own tooling was already connected; the message iris had written to its
+    // stdin was never read, and nothing on either side said why.
+    //
+    // POLL RATHER THAN A THREAD PER CONNECTION, deliberately. The verbs under
+    // `handle_request` reach into a live UI tree, and the dispatch was written
+    // — and every test drives it — one caller at a time. Multiplexing keeps
+    // exactly that invariant: several connections are OPEN, one request is in
+    // flight. A thread per connection would have needed a mutex the stdlib
+    // does not expose, and would have put the consent policy under concurrency
+    // it has never seen.
+    var conns: vec::Vec[McpConn] = vec::new::[McpConn]();
+    // One pair of buffers for the whole door, not per connection: only one
+    // request is ever being served, so 72K is a property of the door rather
+    // than of how many clients are attached.
+    let head_buf: *u8 = { malloc(HTTP_MAX_HEAD) };
+    let body_buf: *u8 = { malloc(HTTP_MAX_BODY) };
+    let pfds: *u8 = { malloc((MAX_CONNS +% (1 as usize)) *% POLLFD_SIZE) };
+    if head_buf.is_null() || body_buf.is_null() || pfds.is_null() {
+        { close(fd); }
+        return - 9;
+    }
+    var stop: bool = false;
+    while !stop {
+        pollfd_put(pfds, 0 as usize, fd, POLLIN);
+        var i: usize = 0 as usize;
+        while i < conns.count() {
+            if let option::Option::Some(c) = conns.at_ptr(i) {
+                pollfd_put(pfds, i +% (1 as usize), { (*c).fd }, POLLIN);
+            }
+            i = i +% (1 as usize);
         }
-        let conn: i32 = { accept(fd, 0 as *u8, 0 as *u32) };
+        let n: u32 = { (conns.count() +% (1 as usize)) as u32 };
+
+        // The cancellation check straddles the wait, exactly as it straddled
+        // `accept` before: parked while blocked, awake before anything is
+        // touched.
+        if thread::park_begin() { thread::park_end(); break; }
+        let ready: i32 = { poll(pfds, n, POLL_WAIT_MS) };
         thread::park_end();
-        if conn < 0 {
+        if ready < 0 {
             if netsys::errno() == netsys::eintr() { continue; }
             break;
         }
-        // A CLIENT GOING AWAY MUST NOT KILL THE SERVER. Without this, a
-        // write to a disconnected client raises SIGPIPE, whose default
-        // disposition terminates the process — no crash report, no log, the
-        // whole application gone because an agent pressed ^C on a `nc`.
-        // See netsys::set_nosigpipe and
-        // demo/bugs/02-iris-terminated-without-crash-report.md.
-        let _np: i32 = netsys::set_nosigpipe(conn);
-        // ONE ACCEPT LOOP, two framings. Which door a request came through is
-        // the only difference; everything under `handle_request` is shared.
-        var served: i32 = 0;
-        if http { served = serve_http_fd(surf, vt, sub, policy, conn); }
-        else { served = serve_fd(surf, vt, sub, policy, conn); }
-        { close(conn); }
-        if served == 1 {
-            break;                          // cancelled mid-connection
+        if ready == 0 { continue; }          // nothing to do; go round again
+
+        // HOW MANY THIS ROUND ACTUALLY WATCHED. Taken BEFORE the accept below,
+        // because a connection admitted now has no `revents` in this round's
+        // array — its slot was never written, and reading it hands back
+        // whatever the last round left there. Measured: a fresh connection
+        // inherited the `POLLIN|POLLHUP` of the one that closed before it and
+        // was shut without its request ever being read, which the client saw
+        // as a connection reset. The new one is served on the next poll.
+        let watched: usize = conns.count();
+
+        // A NEW CALLER FIRST, so a client that connects while another is busy
+        // is admitted rather than left in the backlog.
+        if (pollfd_revents(pfds, 0 as usize) & POLLIN) != 0i16 {
+            let conn: i32 = { accept(fd, 0 as *u8, 0 as *u32) };
+            if conn >= 0 {
+                // A CLIENT GOING AWAY MUST NOT KILL THE SERVER. Without this, a
+                // write to a disconnected client raises SIGPIPE, whose default
+                // disposition terminates the process — no crash report, no log,
+                // the whole application gone because an agent pressed ^C on a
+                // `nc`. See netsys::set_nosigpipe and
+                // demo/bugs/02-iris-terminated-without-crash-report.md.
+                let _np: i32 = netsys::set_nosigpipe(conn);
+                if conns.count() >= MAX_CONNS {
+                    // REFUSED, NOT QUEUED. The bug this loop exists to fix is a
+                    // caller waiting forever on a door that never opens; a
+                    // closed connection is an answer it can act on.
+                    { close(conn); }
+                } else {
+                    // A NEW CONNECTION IS A NEW CALLER, and its name starts
+                    // empty — inheriting the previous one's is inheriting
+                    // whatever the user decided about them.
+                    let _a: status::Status = conns.append(
+                        McpConn { fd: conn, client: text::new() });
+                }
+            }
+        }
+
+        // ...then everyone who has something to say. Walked backwards so a
+        // connection can be removed without disturbing the indices still to
+        // come.
+        var k: usize = watched;
+        while k > (0 as usize) {
+            k = k -% (1 as usize);
+            let re: i16 = pollfd_revents(pfds, k +% (1 as usize));
+            if re == 0i16 { continue; }
+            var cfd: i32 = - 1;
+            var name: text::Text = text::new();
+            if let option::Option::Some(c) = conns.at_ptr(k) {
+                cfd = { (*c).fd };
+                name = { (*c).client }.clone();
+            }
+            if cfd < 0 { continue; }
+            // READABLE WINS OVER HUNG UP, and the order matters: a peer that
+            // sent a request and closed its write side reports both at once,
+            // and treating that as "gone" throws the request away unanswered.
+            // Serving it answers first and discovers the end afterwards — the
+            // read returns nothing and `serve_*_once` says so.
+            var done: bool = (re & POLLIN) == 0i16 && (re & POLL_DEAD) != 0i16;
+            var served: i32 = 0;
+            if !done {
+                // THE CONNECTION'S OWN IDENTITY, restored before dispatch and
+                // taken back after: `initialize` writes the global, and that
+                // answer belongs to this connection alone.
+                adopt_client(name);
+                if http {
+                    served = serve_http_once(surf, vt, sub, policy, cfd, head_buf, body_buf);
+                } else {
+                    served = serve_fd_once(surf, vt, sub, policy, cfd);
+                }
+                let after: text::Text = text::from_str(current_client());
+                let _s: status::Status = conns.set(
+                    McpConn { fd: cfd, client: after }, at: k);
+                if served == 1 { stop = true; }
+                if served != 0 { done = true; }
+            }
+            if done {
+                { close(cfd); }
+                let _r: option::Option[McpConn] = conns.remove(at: k);
+            }
         }
     }
+
+    var j: usize = conns.count();
+    while j > (0 as usize) {
+        j = j -% (1 as usize);
+        if let option::Option::Some(c) = conns.at_ptr(j) { { close({ (*c).fd }); } }
+    }
+    { free(pfds); }
+    { free(body_buf); }
+    { free(head_buf); }
     { close(fd); }
     if unlink_on_exit { unlink_bound_socket(); }
     return 0;
@@ -2477,10 +2685,44 @@ fn serve_http_fd(
     // by the threading runtime.
     let body_buf: *u8 = { malloc(HTTP_MAX_BODY) };
     if body_buf.is_null() { return 0; }
-    var head_buf: [u8; 8192] = [0; 8192];
+    // The head buffer is allocated with it, and for the same reason: it is the
+    // caller's so that one connection costs one allocation rather than one per
+    // request, and so that neither sits on a serve worker's 64K stack.
+    let head_buf: *u8 = { malloc(HTTP_MAX_HEAD) };
+    if head_buf.is_null() { { free(body_buf); } return 0; }
     loop {
-        let head: HttpHead = read_http_head(fd, { #addr_of(head_buf[0]) }, HTTP_MAX_HEAD);
-        if !head.ok { break; }
+        let r: i32 = serve_http_once(surf, vt, sub, policy, fd, head_buf, body_buf);
+        if r != 0 {
+            { free(head_buf); }
+            { free(body_buf); }
+            return if r == 1 { 1 } else { 0 };
+        }
+    }
+}
+
+// ONE REQUEST-RESPONSE off an already-open connection, so a caller watching
+// several connections can come back between them.
+//
+// This is the split that matters. An MCP client holds its connection open for
+// its whole life, so a loop that owns the connection owns the DOOR — every
+// other caller waits in the listen backlog behind it, silently, forever. See
+// `serve_fd_once` for the same split on the socket door.
+//
+// Both buffers belong to the caller (see `serve_http_fd`).
+//
+// Answers 0 to keep the connection, 1 when cancelled, 2 when it has ended.
+fn serve_http_once(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    fd: i32,
+    head_buf: *u8,
+    body_buf: *u8,
+) -> i32 {
+    loop {
+        let head: HttpHead = read_http_head(fd, head_buf, HTTP_MAX_HEAD);
+        if !head.ok { return 2; }
 
         if !head.is_post {
             // The endpoint takes JSON-RPC by POST and nothing else. Said as a
@@ -2493,14 +2735,14 @@ fn serve_http_fd(
         if head.content_length > HTTP_MAX_BODY {
             write_http_response(fd, "413 Payload Too Large", "text/plain",
                                 "request body too large\n");
-            break;      // the unread body would desynchronise the next request
+            return 2;   // the unread body would desynchronise the next request
         }
         if head.content_length == 0 {
             write_http_response(fd, "400 Bad Request", "text/plain",
                                 "empty body\n");
             continue;
         }
-        if !read_exact(fd, body_buf, head.content_length) { break; }
+        if !read_exact(fd, body_buf, head.content_length) { return 2; }
 
         let body: str = { #str_from_raw_parts(body_buf, head.content_length) };
         let resp: text::Text = handle_request(surf, vt, sub, auth::serve(policy), body);
@@ -2512,9 +2754,8 @@ fn serve_http_fd(
         } else {
             write_http_response(fd, "200 OK", "application/json", { resp.view() });
         }
+        return 0;                            // one served; the caller comes back
     }
-    { free(body_buf); }
-    return 0;
 }
 
 // ---- TCP transport -----------------------------------------------------------
