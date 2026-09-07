@@ -168,6 +168,76 @@ fn the_shared_band_reaches_the_view() {
     assert view.alpha_value() < 0.3f64;      // untouched: its bit was not set
 }
 
+// ---- the stroke observer must not outlive the node it names -----------------
+//
+// REGRESSION. `observe_stroke_frame` used to hand `observe_frame_change` the
+// `*Node` as its context, and that observation is pinned to the VIEW for the
+// view's whole life ("nothing can stop it earlier"). Views are reused across
+// rebuilds and across recycler rows; nodes are not. Worse, it registered ONCE
+// PER VIEW and returned early ever after, so the pointer taken on the first
+// apply was frozen there. The next `setFrame:` on a reused view called
+// `stroke_resized` with a dead node and `core::view_of` faulted on it — an
+// EXC_BAD_ACCESS out of `recycler::place_row`, on a live IDE.
+//
+// The slot below is the fix made observable: the view names the node it is
+// CURRENTLY drawing, or nothing at all.
+
+fn shaped_border_node(radius: f64) -> core::Node {
+    return ui::bordered(
+        key: "b",
+        stroke: vocab::Brush::solid(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64)),
+        stroke_shape: vocab::Shape::rounded(radius),
+        stroke_width: 1.0f64);
+}
+
+fn stroke_node_of(v: *u8) -> *u8 { return { synth::get_associated(v, controls::stroke_node_key()) }; }
+
+#[test]
+fn a_reused_view_names_the_node_it_is_drawing_now_not_the_first_one() {
+    var a: core::Node = shaped_border_node(8.0f64);
+    let pa: *core::Node = #addr_of(a);
+    let v: *u8 = views::create(0 as *u8, pa);
+    assert v.is_not_null();
+    core::set_view(pa, v, views::view_release);
+    // `apply_bordered` directly, and with the whole word. `views::apply` gates
+    // on the dirty bits, and a freshly created node has already spent them —
+    // going through it would test the gate rather than the fix.
+    controls::apply_bordered(v, pa, paint::all_bits());
+    assert stroke_node_of(v) == (pa as *u8);
+
+    // THE SAME VIEW, A DIFFERENT NODE — a recycled row. Before the fix the
+    // observer stayed pointed at `a` for the life of the view, and this is the
+    // assertion that would have failed.
+    var b: core::Node = shaped_border_node(12.0f64);
+    let pb: *core::Node = #addr_of(b);
+    controls::apply_bordered(v, pb, paint::all_bits());
+    assert stroke_node_of(v) == (pb as *u8);
+    assert stroke_node_of(v) != (pa as *u8);
+}
+
+#[test]
+fn a_view_recycled_onto_an_unbordered_node_names_nothing() {
+    var a: core::Node = shaped_border_node(8.0f64);
+    let pa: *core::Node = #addr_of(a);
+    let v: *u8 = views::create(0 as *u8, pa);
+    assert v.is_not_null();
+    core::set_view(pa, v, views::view_release);
+    controls::apply_bordered(v, pa, paint::all_bits());
+    assert stroke_node_of(v) == (pa as *u8);
+
+    // A cell that carried a shaped card, handed to a row with no border at
+    // all. `apply_bordered` returns early there, so the clear has to happen
+    // BEFORE that return or the stale name outlives the node.
+    var plain: core::Node = empty_keyed_column();
+    let pp: *core::Node = #addr_of(plain);
+    controls::apply_bordered(v, pp, paint::all_bits());
+    assert stroke_node_of(v) == (0 as *u8);
+
+    // And firing the handler in that state — which is all a frame change does
+    // — is safe, because it reads the slot instead of a captured pointer.
+    controls::stroke_resized(v);
+}
+
 #[test]
 fn apply_is_inert_without_a_view_or_a_dirty_word() {
     var n: core::Node = empty_keyed_column();
