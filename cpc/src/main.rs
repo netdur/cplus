@@ -5954,7 +5954,10 @@ fn run_clang(
     // advapi32 is the Credential Manager (`CredWriteW`/`CredReadW`/…), the
     // Windows keychain the `securestore` backend binds; comdlg32 is
     // `GetOpenFileNameW`/`GetSaveFileNameW`, the file dialogs the `filepicker`
-    // backend binds. None is auto-linked, and each is the same import-table-only
+    // backend binds; user32 is `CreateWindowExW`/`LoadIconW`, the hidden window
+    // the `notifications` backend files its tray icon under (a facet app pulls
+    // user32 through win32 anyway — this covers the console-shaped consumer).
+    // None is auto-linked, and each is the same import-table-only
     // cost as ws2_32 for a program that never calls into it.
     if cfg!(windows) {
         cmd.arg("-lws2_32");
@@ -5964,6 +5967,7 @@ fn run_clang(
         cmd.arg("-lwinhttp");
         cmd.arg("-ladvapi32");
         cmd.arg("-lcomdlg32");
+        cmd.arg("-luser32");
         // THE APPLICATION MANIFEST, embedded as an RT_MANIFEST resource.
         //
         // A Windows process gets Common Controls **5.82** by default — the 1995
