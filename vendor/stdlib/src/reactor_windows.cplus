@@ -385,11 +385,29 @@ fn poll_one_event_within(max_wait_ms: i32) -> bool {
     let nt: i32 = { *nt_slot };
     if nw == (0 as i32) {
         if nt == (0 as i32) { return false; }
-        // A timer that has not come due is not an event — and firing it here
-        // would SLEEP to its deadline, which is the one thing a non-blocking
-        // poll may not do.
-        if max_wait_ms == (0 as i32) && !timer_due(state) { return false; }
-        return fire_earliest_timer(state);
+        // A due timer IS the event — fire it (fire_earliest_timer does not
+        // sleep once the deadline has passed).
+        if timer_due(state) { return fire_earliest_timer(state); }
+        // Not yet due. A zero budget may not sleep at all.
+        if max_wait_ms == (0 as i32) { return false; }
+        // BOUND THE NAP BY max_wait_ms, exactly as the WSAPoll path below
+        // bounds its wait. `fire_earliest_timer` would otherwise `Sleep` all
+        // the way to the deadline — and a `wait_or_cancel(sleep(1 hour))` on a
+        // spawned worker registers a timer an hour out with no fd waiter, so
+        // that unbounded sleep is uncancellable (the thread kick does not
+        // reach a `Sleep`) and `JoinHandle::join` hangs for the hour. Napping
+        // at most max_wait_ms lets the drive loop wake to re-check
+        // cancellation; the timer stays registered and no event is reported.
+        let best: i32 = earliest_timer(state);
+        let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
+        let deadlines: *u64 = { *td_slot as *u64 };
+        let best_dl: u64 = { *(deadlines + (best as usize)) };
+        let now: u64 = { GetTickCount64() };
+        var nap: u64 = best_dl -% now;
+        if nap > (max_wait_ms as u64) { nap = max_wait_ms as u64; }
+        { Sleep(nap as u32); }
+        if timer_due(state) { return fire_earliest_timer(state); }
+        return false;
     }
     // Bound the wait by the earliest timer (so timers + I/O share one wait).
     //
