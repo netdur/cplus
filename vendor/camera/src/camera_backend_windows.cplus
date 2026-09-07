@@ -1,0 +1,241 @@
+// camera_backend_windows — the honest Windows answer: no camera on this build.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `camera.cplus` declares 24 stable
+// `_c_*` symbols and something must define them on every platform the package
+// claims. Without a `_windows` sibling the resolver falls back to
+// `camera_backend.cplus` — the Apple half — and stops at `import "objc/runtime"`
+// / `import "avfoundation/..."`, which are not available here.
+//
+// A STUB, AND HONEST ABOUT IT, the same shape `permissions_backend_windows`
+// takes. The real Windows camera path is Media Foundation
+// (`IMFMediaSource` / `MFEnumDeviceSources`), which this pass does not pull in;
+// until it does, every verb answers the code that means "there is no camera
+// here" rather than pretending. `count()` is 0, `has()` is 0, `open()` hands
+// back a null handle, and the facade turns that null into `Unsupported`
+// (`_c_last_error`) — which is DELIBERATELY not `Failed`: "no camera on this
+// build" and "something went wrong" call for opposite responses in a UI, and a
+// Windows build that reported `Failed` would show a retry button where it should
+// show nothing at all.
+//
+// NOTHING HERE OPENS A DEVICE, so no Win32 call is needed and none is made: a
+// stub that enumerates zero cameras has nothing to ask the OS. If a real
+// backend grows here later, the externs it needs are declared inline with
+// `#[link_name]` the way `permissions_backend_windows` declares `ShellExecuteA`.
+//
+// THE CALLBACK VERBS STILL CALL BACK. `_c_capture` and `_c_on_frame` each fire
+// their callback ONCE with the empty/failure variant before returning the
+// failure code, so a caller that fires a capture and awaits its photo — or arms
+// a frame stream and waits for the first frame — cannot hang on a shutter that
+// is never coming. That is the same rule `permissions_backend_windows` follows
+// for `cplus_permissions_request_v1`: the honest answer is still an answer, and
+// a callback that sometimes never fires is the worst shape this seam could have.
+
+import "stdlib/text" as text;
+import "./camera" as cam;
+
+// The request as the facade packs it. Layout must match `camera::_CRequest`;
+// this stub never reads a field, but the seam declares `_c_open(req: *_CRequest)`
+// and the pointer type is kept exact so the signature matches by construction.
+#[repr(C)]
+struct _CRequest {
+    opaque device: *u8,
+    device_len: usize,
+    facing: i32,
+    width: i32,
+    height: i32,
+    frame_rate: i32,
+    pixel: i32,
+    color: i32,
+    hdr: i32,
+    stabilization: i32,
+    depth: i32,
+    high_speed: i32,
+    buffers: i32,
+}
+
+// ---- enumeration: there is nothing to see -----------------------------------
+
+export extern fn _c_count() -> i64 { return 0 as i64; }
+
+export extern fn _c_has(facing: i32) -> i32 { return 0 as i32; }
+
+// The code the facade reads for a null-handle `open`. `Unsupported`, never
+// `Denied` or `Failed` — see the header.
+export extern fn _c_last_error() -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+// Null handle: no device. The facade turns this into `Err(Unsupported)`.
+export extern fn _c_open(req: *_CRequest) -> *u8 { return 0 as *u8; }
+
+// ---- read-back: a session that does not exist will not say ------------------
+
+// "The platform will not say" — `Facing::Unspecified`, the facade's own
+// documented unknown, rather than a guess at `Back`.
+export extern fn _c_actual_facing(h: *u8) -> i32 {
+    return cam::Facing::Unspecified.to_code();
+}
+
+// 0 == "will not say".
+export extern fn _c_frame_rate(h: *u8) -> i32 { return 0 as i32; }
+
+// No session, so 0x0 — `Size::any()` on the facade side.
+export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
+    { (*out_width) = 0 as i32 };
+    { (*out_height) = 0 as i32 };
+}
+
+// 0 == `PixelFormat::Any` — there is no delivery format because there is no
+// delivery.
+export extern fn _c_pixel_format(h: *u8) -> i32 { return 0 as i32; }
+
+// Writes nothing into `into` and reports the honest code. There is no device id
+// to hand back.
+export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+// ---- runtime controls: nothing to control ----------------------------------
+//
+// Each answers `Unsupported`, the facade's code for a control this device
+// cannot do — distinct from `Failed`, so a caller hides the button rather than
+// showing one that errors. On a build with no camera, that is every control.
+
+export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+// 1.0 is "no zoom", the facade's documented value for a closed camera — not 0.
+export extern fn _c_zoom(h: *u8) -> f64 { return 1.0; }
+
+// 1.0 == "no zoom at all".
+export extern fn _c_max_zoom(h: *u8) -> f64 { return 1.0; }
+
+export extern fn _c_set_torch(h: *u8, on: i32) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_has_torch(h: *u8) -> i32 { return 0 as i32; }
+
+export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
+    return cam::Outcome::Unsupported.to_code();
+}
+
+// ---- lifecycle: no-ops, there is nothing to tear down -----------------------
+
+export extern fn _c_close(h: *u8) { return; }
+
+// No preview surface without a session.
+export extern fn _c_preview_create(h: *u8) -> *u8 { return 0 as *u8; }
+
+export extern fn _c_preview_release(v: *u8) { return; }
+
+export extern fn _c_stop_frames(h: *u8) -> i32 {
+    return cam::Outcome::Ok.to_code();
+}
+
+// ---- the callback verbs: answer once, never hang ----------------------------
+//
+// The facade guards a null handle before it ever reaches these, and `_c_open`
+// always hands back null — so through the facade these are unreachable. They are
+// still written to be safe for a direct caller: fire the callback ONCE with the
+// empty/failure variant (an empty photo / an empty frame) so nothing awaiting a
+// result is left waiting, then report the failure code.
+
+export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    if !cb.is_null() {
+        // Null data + zero length is exactly what `camera::_deliver` reads as a
+        // failed capture and passes on as an empty slice.
+        cb(0 as *u8, 0 as usize, ctx);
+    }
+    return cam::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+    if !cb.is_null() {
+        // An empty frame: no luma, 0x0, no native buffer — `Frame::is_empty()`.
+        cb(0 as *u8, 0 as i32, 0 as i32, 0 as i32, 0 as *u8, ctx);
+    }
+    return cam::Outcome::Unsupported.to_code();
+}
+
+// ---- tests -------------------------------------------------------------------
+//
+// Nothing here opens a camera — there is none to open. The point is only that
+// the stub answers "no camera" honestly and that the callback verbs cannot hang
+// a caller.
+
+#[test]
+fn there_are_no_cameras_and_none_facing_either_way() {
+    assert { _c_count() } == (0 as i64);
+    assert { _c_has(cam::Facing::Back.to_code()) } == (0 as i32);
+    assert { _c_has(cam::Facing::Front.to_code()) } == (0 as i32);
+    return;
+}
+
+#[test]
+fn open_hands_back_a_null_handle_and_the_error_is_unsupported() {
+    let h: *u8 = { _c_open(0 as *_CRequest) };
+    assert h.is_null();
+    // `Unsupported`, so the facade shows "no camera here" rather than a retry.
+    assert { _c_last_error() } == cam::Outcome::Unsupported.to_code();
+    assert { _c_last_error() } != cam::Outcome::Failed.to_code();
+    assert { _c_last_error() } != cam::Outcome::Denied.to_code();
+    return;
+}
+
+static _W_PHOTOS: i32 = 0 as i32;
+static _W_PHOTO_LEN: usize = 99 as usize;
+
+fn _w_probe_photo(data: *u8, len: usize, ctx: *u8) {
+    _W_PHOTOS = _W_PHOTOS + (1 as i32);
+    _W_PHOTO_LEN = len;
+    return;
+}
+
+// A capture on a build with no camera still fires the callback once, with an
+// empty photo, so a caller awaiting a shutter is not left waiting forever.
+#[test]
+fn capture_fires_the_callback_once_with_an_empty_photo() {
+    _W_PHOTOS = 0 as i32;
+    _W_PHOTO_LEN = 99 as usize;
+    let rc: i32 = { _c_capture(8 as *u8, _w_probe_photo, 0 as *u8) };
+    assert rc == cam::Outcome::Unsupported.to_code();
+    assert _W_PHOTOS == (1 as i32);
+    assert _W_PHOTO_LEN == (0 as usize);
+    return;
+}
+
+static _W_FRAMES: i32 = 0 as i32;
+static _W_FRAME_W: i32 = 99 as i32;
+
+fn _w_probe_frame(luma: *u8, width: i32, height: i32, stride: i32, native: *u8, ctx: *u8) {
+    _W_FRAMES = _W_FRAMES + (1 as i32);
+    _W_FRAME_W = width;
+    return;
+}
+
+// Arming a frame stream likewise answers once, with an empty frame, so a caller
+// waiting for a first frame cannot hang.
+#[test]
+fn on_frame_fires_the_callback_once_with_an_empty_frame() {
+    _W_FRAMES = 0 as i32;
+    _W_FRAME_W = 99 as i32;
+    let rc: i32 = { _c_on_frame(8 as *u8, _w_probe_frame, 0 as *u8) };
+    assert rc == cam::Outcome::Unsupported.to_code();
+    assert _W_FRAMES == (1 as i32);
+    assert _W_FRAME_W == (0 as i32);
+    return;
+}

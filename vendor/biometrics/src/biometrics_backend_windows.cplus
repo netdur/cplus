@@ -1,0 +1,107 @@
+// biometrics_backend_windows — the honest Windows answer: no biometric prompt
+// on this build.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `biometrics.cplus` declares three
+// stable symbols — `_c_kind`, `_c_available`, `_c_authenticate` — and something
+// must define them on every platform the package claims. Without a `_windows`
+// sibling the build falls back to `biometrics_backend.cplus` — the Apple half —
+// and stops at `import "objc/runtime"` / `localauthentication`, neither of which
+// is available here.
+//
+// KIND IS `None` AND AVAILABLE IS FALSE, honestly. A classic Win32 desktop
+// process reached through the C ABI has no LAContext-shaped object to query, so
+// this build reports no sensor rather than guessing at one. `available()` is
+// the cheap yes/no the facade uses to hide an "unlock" button, and here it is
+// always no.
+//
+// AUTHENTICATE ANSWERS `Unavailable`, THEN STILL CALLS BACK. The facade's
+// `authenticate` returns whether a prompt was raised and delivers the real
+// result on the handler, so a caller `await`s that handler. A backend that
+// returned a code and never fired the callback would hang every such caller —
+// so this stub invokes `on_result` exactly once with `Outcome::Unavailable`
+// ("the hardware is not there, or is disabled by policy"), which is the same
+// code the Apple backend returns when its device cannot evaluate the policy and
+// the value `biometrics.cplus`'s own suite pins for the can't-ask path.
+//
+// ---- the future real backend: Windows Hello ---------------------------------
+//
+// Windows *does* have a biometric prompt — Windows Hello, reached through
+// `Windows.Security.Credentials.UI.UserConsentVerifier` (WinRT), or the lower
+// WebAuthn / `WscGetSecurityProviderHealth` surfaces. All of them need the
+// WinRT/COM apartment and projection this pass does not pull in — the same wall
+// `permissions_backend_windows` names for its WinRT authorization reads. When
+// that projection lands, `_c_kind` becomes Face/Fingerprint from
+// `UserConsentVerifier.CheckAvailabilityAsync`, `_c_available` its `Available`
+// arm, and `_c_authenticate` a `RequestVerificationAsync` whose completion maps
+// onto `Outcome`. Until then this stays an honest STUB.
+
+import "./biometrics" as bio;
+
+// What the device has. No enrolled sensor is reachable from this build, so the
+// answer is `None` — code 0.
+export extern fn _c_kind() -> i32 {
+    return bio::Kind::None.to_code();
+}
+
+// Can a prompt be shown right now? Never, on this build.
+export extern fn _c_available() -> i32 {
+    return 0 as i32;
+}
+
+// Ask. There is nothing to ask with, so report `Unavailable` and — critically —
+// still fire the handler once so a caller waiting on the answer does not hang.
+export extern fn _c_authenticate(reason: *u8, reason_len: usize,
+                                 on_result: fn(bio::Outcome, *u8), ctx: *u8,
+                                 allow_passcode: i32) -> i32 {
+    // The facade already guards a null handler before it reaches here, but a
+    // backend that dereferenced one on a direct call would trap — cheap to
+    // check, and it keeps this seam callable on its own.
+    if on_result.is_null() { return bio::Outcome::Failed.to_code(); }
+    on_result(bio::Outcome::Unavailable, ctx);
+    return bio::Outcome::Unavailable.to_code();
+}
+
+// ---- tests -------------------------------------------------------------------
+// The stub's whole contract: unavailable, no kind, and a callback that always
+// fires with the unavailable outcome so nothing awaiting it hangs.
+
+#[test]
+fn available_is_false_on_this_build() {
+    assert { _c_available() } == (0 as i32);
+}
+
+#[test]
+fn kind_is_none() {
+    assert { _c_kind() } == bio::Kind::None.to_code();
+    assert { _c_kind() } == (0 as i32);
+}
+
+static _CB_SEEN: i32 = 0 as i32;
+static _CB_LAST: i32 = 99 as i32;
+fn _probe(o: bio::Outcome, ctx: *u8) {
+    _CB_SEEN = _CB_SEEN + (1 as i32);
+    _CB_LAST = o.to_code();
+    return;
+}
+
+#[test]
+fn authenticate_fires_the_callback_once_with_unavailable() {
+    _CB_SEEN = 0 as i32;
+    _CB_LAST = 99 as i32;
+    let f: fn(bio::Outcome, *u8) = _probe;
+    let rc: i32 = { _c_authenticate(#str_ptr("unlock"), #str_len("unlock"),
+                                    f, 0 as *u8, 1 as i32) };
+    // Returned code and delivered outcome agree, and the handler ran exactly
+    // once — the property that keeps an awaiting caller from hanging.
+    assert rc == bio::Outcome::Unavailable.to_code();
+    assert _CB_SEEN == (1 as i32);
+    assert _CB_LAST == bio::Outcome::Unavailable.to_code();
+}
+
+#[test]
+fn a_null_handler_is_refused() {
+    let nil: fn(bio::Outcome, *u8) = 0 as fn(bio::Outcome, *u8);
+    assert { _c_authenticate(#str_ptr("unlock"), #str_len("unlock"),
+                             nil, 0 as *u8, 1 as i32) }
+        == bio::Outcome::Failed.to_code();
+}

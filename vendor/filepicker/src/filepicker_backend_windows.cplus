@@ -1,0 +1,64 @@
+// filepicker_backend_windows — the honest stub, for now.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `filepicker.cplus` declares three
+// stable symbols and something must define them on every platform; without a
+// `_windows` sibling the build falls back to `filepicker_backend.cplus` — the
+// AppKit `NSOpenPanel` half — and stops at its Apple imports.
+//
+// `_c_available` answers 0 and `open`/`save` answer `Unsupported`. The seam's
+// contract is that the handler fires only when a panel was actually SHOWN
+// (`Outcome::Ok`); a backend that presents nothing reports it through the return
+// code alone and does NOT invoke the handler — so a caller does not receive an
+// empty `Pick` that reads as a real cancel. That mirrors the AppKit half, which
+// only registers its completion handler once the panel opens.
+//
+// THE REAL WINDOWS PICKER IS `GetOpenFileNameW` / `GetSaveFileNameW` (comdlg32,
+// already on the link line) or the newer `IFileOpenDialog` COM interface — a
+// genuine modal file dialog, unlike the mobile-shaped stubs its siblings need.
+// It is a clear next pass; kept out of this one because a modal dialog cannot be
+// asserted in the test suite (it would block on a window), so it wants a
+// playground probe the way the drag/wheel behaviours do, not a unit test.
+
+import "./filepicker" as fp;
+
+export extern fn _c_available() -> i32 {
+    return 0 as i32;
+}
+
+// `Outcome::Unsupported` is code 1 — this build shows no panel. No handler is
+// invoked (see the header): the return code is the whole answer.
+export extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
+                         types: *u8, types_len: usize) -> i32 {
+    return fp::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_save(suggested: *u8, suggested_len: usize,
+                         on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    return fp::Outcome::Unsupported.to_code();
+}
+
+// ---- tests -------------------------------------------------------------------
+
+static _FP_CALLED: i32 = 0 as i32;
+fn _fp_probe(path: *u8, path_len: usize, ctx: *u8) {
+    _FP_CALLED = _FP_CALLED + (1 as i32);
+    return;
+}
+
+#[test]
+fn no_picker_is_available() {
+    assert { _c_available() } == (0 as i32);
+}
+
+#[test]
+fn open_and_save_report_unsupported_without_firing_the_handler() {
+    _FP_CALLED = 0 as i32;
+    let f: fn(*u8, usize, *u8) = _fp_probe;
+    let o: i32 = { _c_open(f, 0 as *u8, #str_ptr(""), #str_len("")) };
+    let s: i32 = { _c_save(#str_ptr("note.txt"), #str_len("note.txt"), f, 0 as *u8) };
+    assert o == fp::Outcome::Unsupported.to_code();
+    assert s == fp::Outcome::Unsupported.to_code();
+    // A stub that showed nothing must not have called the handler — that would
+    // read to the caller as a real (empty) pick.
+    assert _FP_CALLED == (0 as i32);
+}

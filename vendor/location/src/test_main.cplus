@@ -106,11 +106,19 @@ fn a_request_carries_what_it_was_given() {
 // ---- the platform ----------------------------------------------------------
 
 #[test]
-fn corelocation_is_present_on_this_host() {
-    // e2e through the seam: this reaches the backend, which asks the ObjC
-    // runtime for CLLocationManager. It is the check that would fail if the
-    // facade and backend disagreed about the symbol.
-    assert loc::available();
+fn the_availability_seam_is_reachable_and_deterministic() {
+    // e2e through the seam: `available()` calls `_c_available` in whichever
+    // backend this platform selected — the ObjC one on Apple, the honest stub
+    // on Windows — and the call linking and returning at all is the check that
+    // would fail if the facade and backend disagreed about the symbol.
+    //
+    // Its VALUE is the platform's business: an Apple host with CoreLocation
+    // answers true, the Windows stub answers false. What is asserted here is
+    // that the seam resolves and answers the SAME thing twice rather than
+    // trapping — the platform-specific truth is pinned in each backend's own
+    // tests, not here where it would be a lie on half of them.
+    let a: bool = loc::available();
+    assert a == loc::available();
 }
 
 #[test]

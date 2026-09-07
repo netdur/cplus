@@ -1,0 +1,152 @@
+// location_backend_windows — the honest Windows answer: this build has no fix.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `location.cplus` declares ten
+// stable seam symbols (`_c_*`) and something must define them on every platform
+// the package claims. Without a `_windows` sibling the resolver falls back to
+// `location_backend.cplus` — the Apple half — and stops at `import
+// "objc/runtime"` / `import "corelocation/..."`, neither of which exists here.
+//
+// UNSUPPORTED, NEVER DENIED, mirroring `permissions_backend_windows`. A classic
+// Win32 desktop process has no per-app CoreLocation-style authorization object,
+// and reading the system Location toggle honestly means WinRT
+// (`Windows.Devices.Geolocation`) that this pass does not pull in. So every
+// probe answers "this build cannot", not "the person said no" — the two call
+// for opposite responses, and a Windows build that reported refusals would show
+// a settings button on every screen. A pure stub needs no Win32 call at all.
+//
+// THE ONE-SHOT STILL CALLS BACK. `location::once` documents that its handler
+// runs EXACTLY ONCE either way, and the return value is only whether the
+// request was accepted. A backend that answered `Unsupported` and delivered
+// nothing to the handler would hang every caller that awaits a fix. So `_c_once`
+// invokes the callback once with an INVALID FIX — negative `accuracy_m`, the
+// convention `Fix::is_valid` already documents and the Apple `_imp_did_fail`
+// path already uses for "an object, but not a position".
+
+import "./location" as loc;
+
+// The codes the facade re-reads, kept as named constants so the honest answer
+// is stated once and the tests can name it. `location.cplus` maps each back:
+// permission 5 -> Unsupported, and Outcome 2 -> Unsupported.
+const _PERM_UNSUPPORTED: i32 = 5 as i32;   // perm::State::Unsupported, per the facade
+const _OUTCOME_UNSUPPORTED: i32 = 2 as i32; // Outcome::Unsupported.to_code()
+
+// "An object, but not a position." Negative `accuracy_m` is the sentinel
+// `Fix::is_valid` checks; the other unknowns follow the Apple miss fix so a
+// caller that reads speed/course/altitude sees "unknown" rather than a zero it
+// might trust.
+fn _no_fix() -> loc::Fix {
+    var f: loc::Fix = #zero::[loc::Fix]();
+    f.accuracy_m = -1.0f64;
+    f.altitude_accuracy_m = -1.0f64;
+    f.speed_mps = -1.0f64;
+    f.course_deg = -1.0f64;
+    return f;
+}
+
+// Not yet asked / cannot ask — Unsupported, so the facade never reports a denial
+// this build did not actually receive.
+export extern fn _c_permission() -> i32 {
+    return _PERM_UNSUPPORTED;
+}
+
+// No backend, no hardware exposed on this build.
+export extern fn _c_available() -> i32 {
+    return 0 as i32;
+}
+
+// The system-wide switch is unreadable here; say nothing is on.
+export extern fn _c_enabled() -> i32 {
+    return 0 as i32;
+}
+
+// 0 means "no fix"; the facade turns that into `None` and never reads `into`.
+export extern fn _c_last_known(into: *loc::Fix) -> i32 {
+    return 0 as i32;
+}
+
+// ONE FIX, then done — except there is none. Fire the handler once with an
+// invalid fix so an awaiting caller cannot hang, then report the request was
+// not accepted (`Unsupported`).
+export extern fn _c_once(req: *loc::Request, on_fix: fn(loc::Fix, *u8), ctx: *u8) -> i32 {
+    if on_fix.is_null() { return _OUTCOME_UNSUPPORTED; }
+    on_fix(_no_fix(), ctx);
+    return _OUTCOME_UNSUPPORTED;
+}
+
+// No stream ever starts. Null handle + `Unsupported` in the out-param is the
+// `Err` the facade returns; nothing is left running, so there is no callback
+// path to feed and nothing to hang on.
+export extern fn _c_updates_start(req: *loc::Request, on_fix: fn(loc::Fix, *u8),
+                                  ctx: *u8, out_code: *i32) -> *u8 {
+    if out_code.is_not_null() { { *out_code = _OUTCOME_UNSUPPORTED }; }
+    return 0 as *u8;
+}
+
+// A stream never exists here; these are reached only defensively. Coarse (0) is
+// the lowest tier, and `Unknown` (0) is the honest status.
+export extern fn _c_updates_accuracy(h: *u8) -> i32 {
+    return 0 as i32;
+}
+
+export extern fn _c_updates_status(h: *u8) -> i32 {
+    return 0 as i32;
+}
+
+export extern fn _c_updates_running(h: *u8) -> i32 {
+    return 0 as i32;
+}
+
+export extern fn _c_updates_stop(h: *u8) {
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+
+#[test]
+fn nothing_is_available_and_permission_is_unsupported() {
+    assert { _c_available() } == (0 as i32);
+    assert { _c_enabled() } == (0 as i32);
+    assert { _c_permission() } == _PERM_UNSUPPORTED;
+    // Unsupported is not Denied — the whole point of the honest stub.
+    assert { _c_permission() } != (3 as i32);
+    assert { _c_updates_running(0 as *u8) } == (0 as i32);
+}
+
+#[test]
+fn last_known_reports_no_fix() {
+    var f: loc::Fix = #zero::[loc::Fix]();
+    assert { _c_last_known(#addr_of(f)) } == (0 as i32);
+}
+
+// The callback probe: records that it ran and whether the fix it got was valid.
+static _SEEN: i32 = 0 as i32;
+static _WAS_VALID: bool = true;
+fn _probe(f: loc::Fix, ctx: *u8) {
+    _SEEN = _SEEN + (1 as i32);
+    _WAS_VALID = f.is_valid();
+    return;
+}
+
+#[test]
+fn once_calls_back_exactly_once_with_a_no_fix() {
+    _SEEN = 0 as i32;
+    _WAS_VALID = true;
+    var req: loc::Request = loc::Request::defaults();
+    let cb: fn(loc::Fix, *u8) = _probe;
+    let rc: i32 = { _c_once(#addr_of(req), cb, 0 as *u8) };
+    // The handler ran once, and what it received was an invalid fix.
+    assert _SEEN == (1 as i32);
+    assert !_WAS_VALID;
+    // The return says the request was not accepted on this build.
+    assert rc == _OUTCOME_UNSUPPORTED;
+}
+
+#[test]
+fn updates_never_start_and_report_unsupported() {
+    var req: loc::Request = loc::Request::defaults();
+    var code: i32 = 0 as i32;
+    let cb: fn(loc::Fix, *u8) = _probe;
+    let h: *u8 = { _c_updates_start(#addr_of(req), cb, 0 as *u8, #addr_of(code)) };
+    assert h.is_null();
+    assert code == _OUTCOME_UNSUPPORTED;
+}

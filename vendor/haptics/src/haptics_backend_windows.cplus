@@ -1,0 +1,78 @@
+// haptics_backend_windows — the honest Windows answer: a desktop PC has no tap
+// to give.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `haptics.cplus` declares three
+// stable symbols — `_c_available`, `_c_play`, `_c_prepare` — and something must
+// define them on every platform the package claims. Without a `_windows`
+// sibling the build falls back to `haptics_backend.cplus`, the AppKit half, and
+// stops at `import "objc/runtime"`, which is not available here.
+//
+// A TYPICAL WINDOWS PC HAS NO VIBRATION MOTOR. Phones and Force Touch trackpads
+// have an actuator to buzz; a desktop or a laptop has nowhere for a tap to come
+// out of. So `available` answers false — which the facade documents as common
+// and not an error — and every verb is a no-op rather than a failure, exactly
+// the contract `play` already promises when unavailable.
+//
+// GAME CONTROLLERS ARE THE FUTURE PATH. An Xbox pad has rumble motors reachable
+// through XInput (`XInputSetState`'s `XINPUT_VIBRATION`), but that is a separate
+// DEVICE a person may or may not have plugged in, with its own connected-state
+// and slot enumeration — a heavier, coarser rumble than the `Feel` vocabulary
+// means, and a pass of its own. This backend stays honest about the PC itself
+// and pulls in no Win32.
+
+import "./haptics" as hap;
+
+// No actuator on a desktop PC. FALSE IS THE HONEST ANSWER, and the facade turns
+// it into a hidden "vibrate" setting rather than an error — see `available`'s
+// note that a machine with no motor is the common case, not a fault.
+export extern fn _c_available() -> i32 {
+    return 0 as i32;
+}
+
+// NOTHING TO PLAY, so nothing was accepted. `_c_play` reports whether the
+// platform took the tap, never whether anything was felt; with no motor here it
+// honestly took nothing and returns 0. The facade guarantees this is safe to
+// call anyway, so a UI need not guard it — the tap simply does nothing.
+export extern fn _c_play(feel: i32) -> i32 {
+    return 0 as i32;
+}
+
+// NOTHING TO WARM. `prepare` wakes a Taptic Engine from idle; a PC with no
+// engine has nothing to wake, so this is a no-op rather than an approximation —
+// the facade documents that skipping it costs only latency, and here there is
+// not even that.
+export extern fn _c_prepare(feel: i32) {
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+// Every verb is inert here, and the point of the tests is that calling them does
+// not trap and returns the honest no-op value.
+
+#[test]
+fn available_is_false_on_a_desktop_pc() {
+    // No vibration motor, so the availability query is a flat 0 — the signal the
+    // facade uses to hide a vibrate toggle.
+    assert { _c_available() } == (0 as i32);
+}
+
+#[test]
+fn play_accepts_nothing_and_does_not_trap() {
+    // A play on a device with no haptics does nothing and reports it took
+    // nothing. Walk the whole `Feel` range to prove no code path traps.
+    assert { _c_play(hap::Feel::Selection.to_code()) } == (0 as i32);
+    assert { _c_play(hap::Feel::Light.to_code()) } == (0 as i32);
+    assert { _c_play(hap::Feel::Medium.to_code()) } == (0 as i32);
+    assert { _c_play(hap::Feel::Heavy.to_code()) } == (0 as i32);
+    assert { _c_play(hap::Feel::Success.to_code()) } == (0 as i32);
+    assert { _c_play(hap::Feel::Warning.to_code()) } == (0 as i32);
+    assert { _c_play(hap::Feel::Error.to_code()) } == (0 as i32);
+}
+
+#[test]
+fn prepare_is_an_inert_no_op() {
+    // Nothing to warm, and nothing to assert but that it returns without
+    // trapping on any feel.
+    { _c_prepare(hap::Feel::Light.to_code()) };
+    { _c_prepare(hap::Feel::Success.to_code()) };
+}

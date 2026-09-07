@@ -1,0 +1,90 @@
+// share_backend_windows — the honest Windows answer: there is no share sheet.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `share.cplus` declares four stable
+// symbols (`_c_available`, `_c_text`, `_c_url`, `_c_file`) and something must
+// define them on every platform the package claims; without a `_windows`
+// sibling the build falls back to `share_backend.cplus` — the AppKit half — and
+// stops at `import "objc/runtime"`, which is not available here.
+//
+// EVERY VERB IS `Unsupported`, and that is the whole truth on classic Win32.
+// There is no universal share sheet the way macOS has NSSharingServicePicker or
+// iOS has UIActivityViewController: a plain desktop process has nothing to open.
+// The real future path is WinRT's
+// `Windows.ApplicationModel.DataTransfer.DataTransferManager` —
+// `ShowShareUI()` on a `DataTransferManager` obtained for the app window — which
+// needs a live HWND handed to `IDataTransferManagerInterop::GetForWindow` and a
+// WinRT projection this pass does not pull in. Until that exists, this reports
+// `Unsupported`, never `Failed`: "this build has no share UI" and "the sheet
+// tried and broke" are opposite facts, and a caller deciding whether to show a
+// share button wants the first.
+//
+// NO CLIPBOARD FALLBACK on purpose. Copying the text to the clipboard would be a
+// DIFFERENT verb wearing this one's name — the person asked to hand an item to
+// another app, not to stage it for a paste they never requested — and a `share`
+// that silently did that would be lying about what happened. Better to answer
+// `Unsupported` and let the caller decide.
+
+import "./share" as share;
+
+export extern fn _c_available() -> i32 {
+    // No sheet to show — see the header. `available()` in the facade turns this
+    // into `false`, which is the honest answer for a plain Win32 process.
+    return 0 as i32;
+}
+
+export extern fn _c_text(body: *u8, body_len: usize,
+                         subject: *u8, subject_len: usize) -> i32 {
+    // The `str` halves are rebuilt so the seam is exact, even though there is
+    // nothing to hand them to yet.
+    let _body: str = { #str_from_raw_parts(body, body_len) };
+    let _subject: str = { #str_from_raw_parts(subject, subject_len) };
+    return share::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
+    let _link: str = { #str_from_raw_parts(link, link_len) };
+    return share::Outcome::Unsupported.to_code();
+}
+
+export extern fn _c_file(path: *u8, path_len: usize) -> i32 {
+    let _path: str = { #str_from_raw_parts(path, path_len) };
+    return share::Outcome::Unsupported.to_code();
+}
+
+// ---- tests -------------------------------------------------------------------
+// No launch to assert — there is nothing to open. What matters is that the seam
+// answers `Unsupported` for every verb without trapping, so a caller on Windows
+// degrades cleanly instead of crashing or hanging.
+
+#[test]
+fn availability_is_zero() {
+    // Zero, not merely falsey: the facade compares against `0 as i32`.
+    assert { _c_available() } == (0 as i32);
+}
+
+#[test]
+fn every_verb_is_unsupported_and_never_failed() {
+    // Unsupported (1), the honest "this build cannot share" — distinct from
+    // Failed (3), which would claim a sheet opened and broke.
+    let unsupported: i32 = share::Outcome::Unsupported.to_code();
+    let failed: i32 = share::Outcome::Failed.to_code();
+
+    assert { _c_text(#str_ptr("hello"), #str_len("hello"),
+                     #str_ptr(""), #str_len("")) } == unsupported;
+    assert { _c_url(#str_ptr("https://example.com"),
+                    #str_len("https://example.com")) } == unsupported;
+    assert { _c_file(#str_ptr("C:\\tmp\\x.txt"),
+                     #str_len("C:\\tmp\\x.txt")) } == unsupported;
+
+    assert unsupported != failed;
+}
+
+#[test]
+fn the_facade_maps_the_code_back_to_unsupported() {
+    // End to end through the public verbs: a non-empty item reaches this
+    // backend and comes back as `Outcome::Unsupported`, not `Failed` and not a
+    // silent `Ok`.
+    assert share::text("hello").to_code() == share::Outcome::Unsupported.to_code();
+    assert share::url("https://example.com").to_code() == share::Outcome::Unsupported.to_code();
+    assert share::file("C:\\tmp\\x.txt").to_code() == share::Outcome::Unsupported.to_code();
+}

@@ -1,0 +1,106 @@
+// notifications_backend_windows — the honest Windows answer, which is "cannot".
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `notifications.cplus` declares six
+// stable symbols and something must define them on every platform the package
+// claims to build for; without a `_windows` sibling the build falls back to
+// `notifications_backend.cplus` — the Apple half — and stops at `import
+// "objc/runtime"`, which is not available here. The failure without this file is
+// an undefined symbol in the CONSUMER's build, naming a mangled C+ symbol.
+//
+// WHY NOT WINRT TOAST, and it is parked rather than forgotten. Windows 10+ has a
+// real notification stack in `Windows.UI.Notifications.ToastNotificationManager`
+// — a toast is built from XML, shown, and later removed — and it is the future
+// real backend here, the way the permissions Windows template names its own
+// WinRT. What it needs before it can ship is a registered AppUserModelID (a toast
+// with no AUMID either does not appear or appears unattributed) and a WinRT
+// projection this pass does not pull in. As on Linux, SCHEDULING is the deeper
+// gap: the toast APIs present immediately and a deferred notification would be
+// this package holding a timer and firing on time, which works only while the
+// process lives. So the honest first version answers `Unsupported` rather than
+// shipping half a contract.
+//
+// Parked with the standing backend priority (AppKit first). When it is built,
+// `pending` is answerable — the ids are this package's own record either way.
+
+import "./notifications" as notify;
+import "stdlib/vec" as vec;
+
+export extern fn cplus_notifications_schedule_v1(
+    id_ptr: *u8, id_len: usize,
+    title_ptr: *u8, title_len: usize,
+    body_ptr: *u8, body_len: usize,
+    payload_ptr: *u8, payload_len: usize,
+    channel_ptr: *u8, channel_len: usize,
+    category_ptr: *u8, category_len: usize,
+    sticky: bool,
+    compact: bool,
+    picture_ptr: *u8, picture_len: usize,
+    delay_seconds: f64) -> i32 {
+    return notify::Outcome::Unsupported.to_code();
+}
+
+export extern fn cplus_notifications_cancel_v1(id_ptr: *u8, id_len: usize) -> i32 {
+    return notify::Outcome::Unsupported.to_code();
+}
+
+export extern fn cplus_notifications_publish_categories_v1() { return; }
+
+export extern fn cplus_notifications_cancel_all_v1() -> i32 {
+    return notify::Outcome::Unsupported.to_code();
+}
+
+export extern fn cplus_notifications_clear_shown_v1() -> i32 {
+    return notify::Outcome::Unsupported.to_code();
+}
+
+// `Ok` WITH NOTHING APPENDED, not `Unsupported`: "what is pending" has a true
+// answer here and it is "nothing". `out` is a `*vec::Vec[str]` the backend
+// appends interned ids to; appending none IS the empty answer, so this touches
+// it only to reject a null. Reporting `Unsupported` would make a caller treat an
+// empty list as a failure it has to handle.
+export extern fn cplus_notifications_pending_v1(out: *u8) -> i32 {
+    if out.is_null() { return notify::Outcome::InvalidInput.to_code(); }
+    return notify::Outcome::Ok.to_code();
+}
+
+// ---- tests --------------------------------------------------------------------
+// The platform half only: that this stub answers `Unsupported` for the verbs it
+// cannot honour and reports an empty-but-Ok pending list. The portable `When`
+// arithmetic, guards and code map are exercised next to the facade.
+
+#[test]
+fn schedule_is_unsupported_on_this_stub() {
+    let rc: i32 = { cplus_notifications_schedule_v1(
+        #str_ptr("id"), #str_len("id"),
+        #str_ptr("Title"), #str_len("Title"),
+        #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        false, false,
+        #str_ptr(""), #str_len(""),
+        0.0f64) };
+    assert notify::Outcome::from_code(rc) == notify::Outcome::Unsupported;
+}
+
+#[test]
+fn cancel_and_clear_are_unsupported() {
+    assert notify::Outcome::from_code({ cplus_notifications_cancel_v1(#str_ptr("id"), #str_len("id")) })
+        == notify::Outcome::Unsupported;
+    assert notify::Outcome::from_code({ cplus_notifications_cancel_all_v1() })
+        == notify::Outcome::Unsupported;
+    assert notify::Outcome::from_code({ cplus_notifications_clear_shown_v1() })
+        == notify::Outcome::Unsupported;
+}
+
+#[test]
+fn pending_is_empty_but_ok_and_a_null_out_is_refused() {
+    // "What is pending" is answerable here and the answer is nothing: `Ok` with
+    // nothing appended, never `Unsupported`. A null out-param is the caller's bug.
+    var pending: vec::Vec[str] = vec::new::[str]();
+    let rc: i32 = { cplus_notifications_pending_v1({ #addr_of(pending) as *u8 }) };
+    assert notify::Outcome::from_code(rc) == notify::Outcome::Ok;
+    assert pending.count() == (0 as usize);
+    assert notify::Outcome::from_code({ cplus_notifications_pending_v1(0 as *u8) })
+        == notify::Outcome::InvalidInput;
+}
