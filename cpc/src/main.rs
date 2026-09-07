@@ -6791,8 +6791,9 @@ usage:
                     with no facet backend scaffolds the shared app and says
                     which entry you will have to finish yourself.
 
-writes:  Cplus.toml, src/main*.cplus, .gitignore, SKILL.md,
-         AGENTS.md, .mcp.json
+writes:  Cplus.toml, src/main*.cplus, .gitignore, AGENTS.md, .mcp.json
+         (no SKILL.md — `cpc skill` prints it, version-matched and including
+         every dependency's; `cpc skill --write` if you want the file)
     gui: + src/app.cplus
     ios: + ios/main.m, ios/Info.plist
 android: + android/AndroidManifest.xml
@@ -7745,46 +7746,14 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // This is cpc's section because WHICH SUBCOMMANDS EXIST is a fact about the
     // binary, and a pointer file naming one the toolchain dropped is worse than
     // no pointer file. An IDE appends its own section below; see the marker.
-    let agents_md = format!(
-        "# {proj_name}\n\n\
-         This is a C+ project. C+ is a young language, so **do not write it from\n\
-         memory** — the toolchain answers every question about it, offline and\n\
-         version-matched to this project.\n\n\
-         ## Before you write any C+\n\n\
-         Run `cpc skill`. It prints the language reference, and inside a project\n\
-         it also prints the reference of every dependency that ships one — facet\n\
-         contributes several hundred lines about its retained, non-reactive model\n\
-         and the mistakes that compile anyway. Read it rather than a checked-in\n\
-         copy: a file drifts from the compiler, this cannot.\n\n\
-         `cpc skill --lang-only` is the language alone, if that is all you need.\n\n\
-         ## When the compiler says no\n\n\
-         Run `cpc explain <CODE>` before you guess. Every diagnostic code has a\n\
-         cause, a fix and a worked example behind it — `cpc explain E0613` is\n\
-         faster and more reliable than inferring from the message.\n\n\
-         ## Navigating this code\n\n\
-         **Do not grep for definitions.** C+ has no dynamic dispatch, so every\n\
-         call to a named function resolves and the graph's answer is COMPLETE —\n\
-         which grep's never is:\n\n\
-         ```\n\
-         cpc query definition <symbol>     where is it\n\
-         cpc query references <symbol>     everywhere it is used\n\
-         cpc query callers <symbol>        who calls it\n\
-         cpc query symbols <file>          the outline of a file\n\
-         cpc query scope-at <file:line:col> what you can type right there\n\
-         cpc query complete <file:line:col> ...and what fits after a `.` or `::`\n\
-         ```\n\n\
-         The same graph is available as MCP tools — see `.mcp.json`, which points\n\
-         at `cpc mcp`. Prefer either over reading files to find things. Each\n\
-         `cpc query` rebuilds the whole graph (~seconds on a large project) and\n\
-         throws it away; the MCP server builds once and answers in microseconds,\n\
-         so use it for anything more than a single lookup.\n\n\
-         ## Building\n\n\
-         ```\n\
-         cpc build          compile and link\n\
-         cpc test           run the tests\n\
-         cpc fmt            canonical formatting (no arg = this project)\n\
-         ```\n\n\
-         ## Driving the running app\n\n\
+    // The ACI half is GUI-ONLY. A cli project has no `src/app.cplus`, no facet
+    // dependency and no window on screen, so a page telling an agent to
+    // `describe_ui` a running app is a page about a file that is not there —
+    // and a pointer file naming what the project does not have is worse than no
+    // pointer file, the same rule as naming a subcommand cpc lacks.
+    let aci_md = if gui {
+        format!(
+        "## Driving the running app\n\n\
          This app is an ACI: while it runs it serves MCP, and you can read its\n\
          UI and act on it. `src/app.cplus` is where that is turned on.\n\n\
          **Find it.** The address is derived from the app id and its pid, so a\n\
@@ -7826,7 +7795,55 @@ fn run_init(args: &[OsString]) -> ExitCode {
          - **You may be refused once.** If the app wired `agent_consent`, your\n\
          \x20 first request is refused while a dialog asks the user. The error\n\
          \x20 says whether to retry — `consent pending` means come back,\n\
-         \x20 `consent denied` means the user said no.\n\n\
+         \x20 `consent denied` means the user said no.\n\n"
+        )
+    } else {
+        String::new()
+    };
+
+    let agents_md = format!(
+        "# {proj_name}\n\n\
+         This is a C+ project. C+ is a young language, so **do not write it from\n\
+         memory** — the toolchain answers every question about it, offline and\n\
+         version-matched to this project.\n\n\
+         ## Before you write any C+\n\n\
+         Run `cpc skill`. It prints the language reference, and inside a project\n\
+         it also prints the reference of every dependency that ships one — facet\n\
+         contributes several hundred lines about its retained, non-reactive model\n\
+         and the mistakes that compile anyway.\n\n\
+         There is deliberately no SKILL.md checked in beside this file. A copy\n\
+         drifts from the compiler that wrote it; `cpc skill` cannot, because it\n\
+         IS the compiler answering — and it is the only form that also carries\n\
+         your dependencies' references.\n\n\
+         `cpc skill --lang-only` is the language alone, if that is all you need.\n\n\
+         ## When the compiler says no\n\n\
+         Run `cpc explain <CODE>` before you guess. Every diagnostic code has a\n\
+         cause, a fix and a worked example behind it — `cpc explain E0613` is\n\
+         faster and more reliable than inferring from the message.\n\n\
+         ## Navigating this code\n\n\
+         **Do not grep for definitions.** C+ has no dynamic dispatch, so every\n\
+         call to a named function resolves and the graph's answer is COMPLETE —\n\
+         which grep's never is:\n\n\
+         ```\n\
+         cpc query definition <symbol>     where is it\n\
+         cpc query references <symbol>     everywhere it is used\n\
+         cpc query callers <symbol>        who calls it\n\
+         cpc query symbols <file>          the outline of a file\n\
+         cpc query scope-at <file:line:col> what you can type right there\n\
+         cpc query complete <file:line:col> ...and what fits after a `.` or `::`\n\
+         ```\n\n\
+         The same graph is available as MCP tools — see `.mcp.json`, which points\n\
+         at `cpc mcp`. Prefer either over reading files to find things. Each\n\
+         `cpc query` rebuilds the whole graph (~seconds on a large project) and\n\
+         throws it away; the MCP server builds once and answers in microseconds,\n\
+         so use it for anything more than a single lookup.\n\n\
+         ## Building\n\n\
+         ```\n\
+         cpc build          compile and link\n\
+         cpc test           run the tests\n\
+         cpc fmt            canonical formatting (no arg = this project)\n\
+         ```\n\n\
+         {aci_md}\
          <!-- Sections below this line are written by your IDE and are rewritten\n\
               when it opens the project. Edit above the line, not below it. -->\n"
     );
@@ -7946,8 +7963,14 @@ fn run_init(args: &[OsString]) -> ExitCode {
         }
     }
     files.push((root.join(".gitignore"), gitignore.to_string()));
-    // The agent reference, so the fresh project is immediately LLM-ready.
-    files.push((root.join("SKILL.md"), SKILL_MD.to_string()));
+    // NO CHECKED-IN SKILL.md. It used to be written here, next to an AGENTS.md
+    // telling the agent not to trust a checked-in copy — the file and the advice
+    // beside it contradicted each other, and the file is the half a reader meets
+    // first. `cpc skill` cannot drift because it IS the compiler answering, and
+    // it also prints every dependency's reference, which the copy never did:
+    // what landed here was the language alone, so a facet project got a
+    // scaffolded reference with nothing about facet in it. `cpc skill --write`
+    // still exists for anyone who deliberately wants the file.
     files.push((root.join("AGENTS.md"), agents_md));
     files.push((root.join(".mcp.json"), mcp_json));
     for (path, content) in files {

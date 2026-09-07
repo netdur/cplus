@@ -12748,9 +12748,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 "E1002",
                 "named arguments need one known parameter list and this callee \
                  has none: a fn-pointer value records parameter types without \
-                 their names, and a method name that several types declare with \
-                 the labels in different positions is ambiguous here. Pass these \
-                 arguments positionally"
+                 their names, and a method name is matched before the receiver's \
+                 type is known, so every type declaring that name is a candidate \
+                 here. Supply every parameter (omitting a defaulted one is what \
+                 makes two candidates differ), pass these arguments positionally, \
+                 or give one of the methods a different name"
                     .to_string(),
                 call_span,
             );

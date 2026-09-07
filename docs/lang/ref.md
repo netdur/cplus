@@ -90,6 +90,9 @@ c"hi\n"             // *u8, NUL-terminated, for C
 "x = ${n}"          // interpolation — needs stdlib/text in the build (E0613);
                     // sink positions (io::print/println/eprintln, Text::append) never allocate;
                     // any other position builds an owned Text. No format specifiers.
+                    // An interpolation may NOT contain a string literal: the lexer
+                    // ends the outer literal at the inner quote, so "${f("x")}" is
+                    // E0001 on a `"`. Hoist the call into a local first.
 [1, 2, 3]           // array literal
 [0u8; 64]           // fill literal — memset fast path; count is any const expression
 []                  // only where the expected type is a zero-length array (E0332 elsewhere)
@@ -125,7 +128,7 @@ Cross-thread `static` safety is the developer's responsibility.
 |---|---|---|
 | arithmetic | `+ - * / %` | overflow traps in debug, wraps in release; integer `/ 0` and `% 0` always trap. On floats, `/` and `%` are `fdiv`/`frem` — IEEE, no trap (`%` is C's `fmod`) |
 | shifts | `<< >>` | `>>` arithmetic on signed, logical on unsigned. A **constant** distance at or past the left operand's width is W0007 — `(1 << 40) as u64` is 256, not 2^40 |
-| wrapping | `+% -% *%` | always wrap |
+| wrapping | `+% -% *%` | always wrap; **integer operands only** — on floats it is E0302, which then masks any E0333 beside it |
 | bitwise | `& \| ^ ~ << >>` | `>>` arithmetic on signed, logical on unsigned |
 | comparison | `< <= > >= == !=` | `bool`, no coercion between operand types |
 | logical | `&& \|\| !` | short-circuit |

@@ -3413,15 +3413,21 @@ category = "Compile-time builtins"
 severity = "error"
 repro = "checked"
 lang = "cplus"
-verified = false
+verified = true
 emit_site = "cplus-core/src/sema.rs"
-cause = "Named arguments work: `lower_named_call` reorders them into positional order and splices defaults for every callee whose parameter list it can identify — free functions, methods, and associated functions. This code fires for the two callees that resolve to no single parameter list. A fn-pointer VALUE records parameter types without their names, so there is nothing to match a label against. An ambiguous method name — two types declaring `go` with the labels in different positions — cannot be resolved without the receiver's type (identical signatures are fine: every candidate yields the same order). The callee is the problem, not the feature."
-fix = "Pass these particular arguments positionally. Everywhere else, named arguments and defaults are available as normal."
+cause = "Named arguments work: `lower_named_call` reorders them into positional order and splices defaults for every callee whose parameter list it can identify. This code fires for the callees that resolve to no single parameter list. A fn-pointer VALUE records parameter types without their names, so there is nothing to match a label against. And a method NAME is matched before the receiver's type is known, so every type declaring that name is a candidate: the call is ambiguous whenever more than one candidate accepts it differently. Two candidates that both accept it are deduplicated by comparing the spliced default expressions — and an `Expr` compares its SPAN, so two textually identical defaults written in two impl blocks never compare equal. The practical trigger is therefore narrow and surprising: a call that OMITS a defaulted parameter while a second type declares the same method name, even when the two signatures are identical. Supplying every argument resolves fine, and so do genuinely different signatures where only one candidate can accept the call."
+fix = "Pass these particular arguments positionally, or supply every parameter so no default is spliced. When you own the code, the durable fix is to stop two types sharing one labeled method name: rename one, or give it a label-free signature."
 example = '''
-fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+struct Sig { a: i32 }
+struct Bus { b: i32 }
+impl Sig { fn on(ref this, v: i32, ctx: i32 = 0) -> i32 { return v; } }
+impl Bus { fn on(ref this, v: i32, ctx: i32 = 0) -> i32 { return v; } }
+
 fn main() -> i32 {
-    return add(v: 1);  // -> E1002 on a method/other call form
-}
+    var s: Sig = Sig { a: 1 };
+    let ok: i32 = s.on(v: 5, ctx: 1);  // fine — every parameter supplied
+    return s.on(v: 5);                 // -> E1002: a default is omitted while
+}                                      //    `on` is declared by two types
 '''
 
 [[code]]
