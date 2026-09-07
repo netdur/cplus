@@ -451,35 +451,38 @@ not `fn(…)` — and says so with E0312. Both forms are type-directed: without 
 expected `fn(...)` type on the other side, `Type::f` is E0312 too. A generic
 associated fn has no single address and is E0821.
 
-### 4.4 A LABELED METHOD NAME IS CLAIMED ACROSS EVERY TYPE AT ONCE
+### 4.4 A LABEL NAMES A PARAMETER OF THE RECEIVER'S OWN METHOD
 
-Named arguments are resolved **before** the receiver's type is known. So a
-method name is matched against *every* type that declares it, and if more than
-one arrangement survives, the call is E1002 — reported in files that did not
-change, when a second type somewhere else in the build grew a method with that
-name.
-
-Verified against this compiler, the trigger is narrower and stranger than either
-of the two obvious guesses:
+Two types may declare the same labeled method name. A call resolves against the
+parameter list of the type the receiver actually has, so the two never interfere:
 
 ```cplus
-impl Sig { fn on(ref this, v: i32, ctx: i32 = 0) -> i32 { ... } }
-impl Bus { fn on(ref this, v: i32, ctx: i32 = 0) -> i32 { ... } }
+impl A { fn go(ref this, v: i32, ctx: i32 = 0) -> i32 { ... } }
+impl B { fn go(ref this, ctx: i32, v: i32 = 9) -> i32 { ... } }
 
-s.on(v: 5, ctx: 1);   // ✓ fine — every parameter supplied
-s.on(v: 5);           // ✗ E1002 — one DEFAULT was omitted
+a.go(v: 5, ctx: 3);   // A's order  — 5, 3
+a.go(ctx: 3, v: 5);   // same call, labels written the other way round
+a.go(v: 5);           // A's own default fills ctx — 0, not B's 9
+b.go(ctx: 4);         // on a B receiver `ctx` is the FIRST parameter
+a.go(ctx: 3);         // ✗ error — A's `v` has no default and none was given
 ```
 
-Two types declaring the same name is not itself the problem, and neither is
-different signatures — a call that fits only one candidate resolves fine. **The
-break is a call that omits a defaulted parameter while a second type declares
-the same method name.** So a signature can be safe for months and turn ambiguous
-the day an unrelated type adds a same-named method, breaking only those callers
-who were relying on a default.
+The compiler reaches this in two passes, which matters only when it cannot: the
+lowering pass rewrites a labeled call into a positional one but runs before
+types exist, so it keys candidates by bare method name and settles only what
+every candidate agrees on; anything type-dependent it leaves to sema, which
+knows the receiver and arranges the call from that type's declaration.
 
-Design around it rather than discovering it: **give the twin a different name, or
-a label-free signature.** A verb spelled `reload(then:, then_ctx:)` on two stores
-is the shape that bites; `Web::reload()` never collided with anything.
+**Two callees genuinely have no parameter names, and E1002 says so:**
+
+- a **fn-pointer value** — `fn(i32, i32)` records parameter types, not names,
+  and that holds for a fn-pointer in a struct field too;
+- a **generic receiver** — until `T` is instantiated it is not one type, so no
+  one parameter list belongs to it.
+
+Both take positional arguments. Nothing else needs designing around: sharing a
+labeled verb across types is fine, and `reload(then:, then_ctx:)` on two stores
+no longer breaks either one's callers.
 
 ### 4.5 Generics: bounds, turbofish, and where the args are noise
 

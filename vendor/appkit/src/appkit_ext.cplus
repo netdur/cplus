@@ -1927,14 +1927,48 @@ fn window_perform_zoom(sender: *u8) {
 // is reported via `fittingSize` so facet measures the leaf correctly.
 
 fn wb_observed_key() -> *u8 { return { 28731 as *u8 }; }
+fn wb_spacing_key() -> *u8 { return { 28732 as *u8 }; }
+
+// The gap between buttons, in points. AppKit's own is 14 and that is what this
+// view drew unconditionally until 2026-09-07 — `window_chrome.spacing` was a
+// declared prop that no code read, while the manifest's create-only ledger
+// carried a row saying the window laid the buttons out with it.
+//
+// ZERO MEANS THE PLATFORM DEFAULT, not zero gap. `WindowButtonsProps::new`
+// defaults `spacing` to 0.0, so reading it literally would collapse the
+// traffic lights of every application that never set one. A caller that really
+// wants them touching can say a very small number; nobody wants to say 14 to
+// get what they already had.
+const WB_DEFAULT_SPACING: f64 = 14.0f64;
+
+// Boxed as an NSNumber because associated storage is an object slot — the same
+// shape `paint::ns_number` uses for every other f64 this package hands ObjC.
+fn wb_set_spacing(view: *u8, v: f64) {
+    if view == { 0 as *u8 } { return; }
+    let n: *u8 = { rt::msg_id_f64(rt::get_class(#str_ptr("NSNumber\0")),
+                                  rt::sel(#str_ptr("numberWithDouble:\0")), v) };
+    synth::set_associated(view, wb_spacing_key(), n);
+    wb_layout(view);
+    return;
+}
+
+fn wb_spacing(self_obj: *u8) -> f64 {
+    let n: *u8 = { synth::get_associated(self_obj, wb_spacing_key()) };
+    if n == { 0 as *u8 } { return WB_DEFAULT_SPACING; }
+    let v: f64 = { rt::msg_f64(n, rt::sel(#str_ptr("doubleValue\0"))) };
+    if v <= 0.0f64 { return WB_DEFAULT_SPACING; }
+    return v;
+}
 
 // `-[NSView setFrameOrigin:]` shape reused from rt (msg_void_point). Place the
-// three buttons in `self`: leading inset 4, 14pt between button edges, centered.
+// three buttons in `self`: leading inset 4, `wb_spacing()` between button
+// edges, centered.
 fn wb_layout(self_obj: *u8) {
     let win: *u8 = rt::msg_id(self_obj, rt::sel(#str_ptr("window\0")));
     if win == { 0 as *u8 } { return; }
     let self_h: f64 = { rt::msg_rect(self_obj, rt::sel(#str_ptr("bounds\0"))).h };
     let std_sel: *u8 = rt::sel(#str_ptr("standardWindowButton:\0"));
+    let gap: f64 = wb_spacing(self_obj);
     var x: f64 = 4.0f64;
     var i: i64 = 0 as i64;
     while i < (3 as i64) {
@@ -1949,7 +1983,7 @@ fn wb_layout(self_obj: *u8) {
             }
             let y: f64 = (self_h - bf.h) / 2.0f64;
             rt::msg_void_point(btn, rt::sel(#str_ptr("setFrameOrigin:\0")), rt::Point { x: x, y: y });
-            x = x + bf.w + 14.0f64;
+            x = x + bf.w + gap;
         }
         i = i +% (1 as i64);
     }

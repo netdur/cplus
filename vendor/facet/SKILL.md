@@ -288,14 +288,14 @@ Omit it and callers can never pass a method — **W0824** warns at the declarati
 and prints the line to add. Same for a struct field that stores a handler: store
 the `*u8` beside it.
 
-**A labeled signature is claimed once, across every type.** A named call resolves
-a method NAME to a parameter list *before* the receiver's type is known, so every
-type declaring that name is a candidate. Verified against this compiler, the
-trigger is narrow: a call that **omits a defaulted parameter** while a second
-type declares the same method name is **E1002**, in files that did not change.
-Supplying every argument is fine, and so are different signatures. Give the twin
-a different name, or a label-free signature — that is why `Web::reload()` never
-collided with anything while `reload(then:, then_ctx:)` on two stores does.
+**A label names a parameter of the receiver's own method.** Two types may share
+a labeled method name; each call resolves against the parameter list of the type
+the receiver actually has, so `reload(then:, then_ctx:)` on two stores is fine
+and neither one's callers see the other. **E1002** is left for the two callees
+that genuinely have no parameter names: a fn-pointer value (its type records
+parameter types, not names — a handler field included), and a method reached
+through a generic receiver, which is not one type until it is instantiated.
+Both take positional arguments.
 
 ---
 

@@ -253,9 +253,17 @@ What it would take, named so the next pass does not rediscover it:
   change rather than discovered.
 
 Until then a label on iOS reads and does not copy, and `selectable` is accepted
-and ignored — which is what this section means. **It is not `absent` debt in the
-`verb_coverage` sense**: that gate reads facet_appkit's manifest, and AppKit
-implements this verb.
+and ignored — which is what this section means.
+
+**It now reads as `absent` debt, and that is correct.** `verb_coverage.py` used
+to measure facet_appkit alone, so a verb AppKit implemented was not this
+backend's problem by construction; since 2026-09-07 it takes a backend name and
+reads THAT backend's manifest, and `python3 tools/verb_coverage.py uikit` lists
+`label.selectable` in the debt. The disposition argued above — create-only,
+because it is a create-time class choice a recycling row pool cannot cheaply
+flip — has nowhere to be recorded until this file grows a ```create-only
+ledger block of the kind facet_appkit's MANIFEST carries. Until it does, the
+prose is the argument and the number does not know about it.
 
 ### `symbol` has TWO tiers, and the bundled one is the app's to ship
 

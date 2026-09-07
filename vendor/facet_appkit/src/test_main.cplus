@@ -60,6 +60,7 @@ import "facet/menu_item" as menu_item;
 import "facet/toolbar_item" as toolbar_item;
 import "facet/canvas" as canvas;
 import "facet/window_chrome" as chrome;
+import "facet/text_button" as text_button;
 import "objc/bridge" as bridge;
 import "quartzcore/quartzcore" as quartz;
 import "stdlib/status" as status;
@@ -687,6 +688,90 @@ fn a_labels_transform_is_display_only() {
         option::Option[label::Label]::None => { assert false; }
     }
     views::view_release(v);
+}
+
+// ---- the traffic lights are laid out at the spacing the app stated ---------
+//
+// `window_chrome.spacing` was a declared prop that no code read: `wb_layout`
+// used a hard-coded 14pt gap, and the manifest's create-only ledger carried a
+// row saying the window laid them out with it. Both halves looked like the
+// other half's job.
+//
+// The buttons themselves are the WINDOW's, so a view with no window places
+// nothing — what is assertable here is the stored gap, which is what
+// `wb_layout` reads.
+#[test]
+fn window_buttons_carry_the_spacing_the_application_stated() {
+    var n: core::Node = chrome::window_buttons(spacing: 22.0f64, key: "wbs");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    core::set_view(p, v, views::view_release);
+    views::apply(0 as *u8, p);
+    assert akx::wb_spacing(v) == 22.0f64;
+}
+
+// NEGATIVE, and the one that matters most: `spacing` DEFAULTS to 0.0, so a
+// literal read would collapse the traffic lights of every application that
+// never set one. Zero means the platform default.
+#[test]
+fn window_buttons_left_alone_keep_the_platform_spacing() {
+    var n: core::Node = chrome::window_buttons(key: "wbd");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    core::set_view(p, v, views::view_release);
+    views::apply(0 as *u8, p);
+    assert akx::wb_spacing(v) == 14.0f64;
+}
+
+// ---- a text button's line-break mode reaches its cell ----------------------
+//
+// `apply_button` has gated `button::P_LINE_BREAK` since it was written and
+// `apply_text_button` gated seventeen of its kind's bits and not this one. The
+// values differ per module — label 128, text_button 512, button 2048 — so the
+// button gate could never match a text button's write, while a grep for
+// `P_LINE_BREAK` in this package found two hits and read as coverage.
+//
+// `line_break` is CONSTRUCTION-ONLY on this kind (TextButton has no
+// `set_line_break`), so the create pass is the only path an application has
+// and the only one worth asserting.
+#[test]
+fn a_text_button_carries_its_line_break_mode() {
+    // MIDDLE truncation deliberately. AppKit's own NSButtonCell default is
+    // `ByWordWrapping`, so asserting WordWrap here passes whether or not the
+    // gate exists and proves nothing — measured: with the gate removed this
+    // test still went green. The value has to be one AppKit would not have
+    // chosen on its own.
+    var n: core::Node = text_button::text_button("a very long title", key: "tbw",
+                                                 line_break: vocab::LineBreak::MiddleTruncation);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    match ak::Button::from_raw(v).as_control().cell() {
+        option::Option[ak::Cell]::Some(c) => {
+            assert c.line_break_mode() == ak::LineBreakMode::NSLineBreakByTruncatingMiddle;
+        }
+        option::Option[ak::Cell]::None => { assert false; }
+    }
+    core::set_view(p, v, views::view_release);
+}
+
+// NEGATIVE: the default is truncation, and it must stay truncation rather than
+// inherit whatever AppKit last left on a recycled cell.
+#[test]
+fn a_text_button_defaults_to_tail_truncation() {
+    var n: core::Node = text_button::text_button("a very long title", key: "tbt");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    match ak::Button::from_raw(v).as_control().cell() {
+        option::Option[ak::Cell]::Some(c) => {
+            assert c.line_break_mode() == ak::LineBreakMode::NSLineBreakByTruncatingTail;
+        }
+        option::Option[ak::Cell]::None => { assert false; }
+    }
+    core::set_view(p, v, views::view_release);
 }
 
 #[test]
@@ -4649,6 +4734,43 @@ fn a_recycled_cell_is_re_tagged_with_the_row_it_now_shows() {
 // NEGATIVE: a tree that names no rows tags none. An id nobody chose is worse
 // than no id — the agent surface would carry a name the application cannot
 // predict and did not ask to expose.
+// A `row_id` write reaches the cells that ALREADY EXIST.
+//
+// `tag_tree_row` was correct and `tree::P_ROW_ID` was gated nowhere, so the
+// identifier was applied when a cell was built and a later write reached
+// nothing. The rows kept the old names until an unrelated reload happened to
+// rebuild them — and that identifier is what agent surfaces and the UI tests
+// select rows BY, so a stale one is a selector pointing at the wrong row.
+fn ri_row_id_alt(n: *tree::TreeNode, ctx: *u8) -> text::Text {
+    return text::from_str("alt:${{ (*n).id_of() }}");
+}
+
+#[test]
+fn changing_row_id_re_tags_the_rows_already_built() {
+    backend::install();
+    var t: core::Node = ri_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell.is_not_null();
+    assert cell_identifier(cell).view() == "row:src";
+    // The write, on a clean dirty word so nothing else can cause a reload.
+    core::clear_dirty(tp);
+    match tree::find("ri", within: tp) {
+        option::Option[tree::Tree]::Some(h) => {
+            let _x: tree::Tree = h.set_row_id(ri_row_id_alt);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    views::apply(0 as *u8, tp);
+    let same: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert same.is_not_null();
+    assert cell_identifier(same).view() == "alt:src";
+}
+
 #[test]
 fn a_tree_with_no_row_id_leaves_its_rows_untagged() {
     backend::install();
@@ -9619,6 +9741,15 @@ fn a_form_table_is_inset_and_a_data_table_is_flush() {
     mount::unmount(dp);
 }
 
+static SPLICE_BUILDS: i64 = 0 as i64;
+fn counting_row(i: usize, ctx: *u8) -> flex::Node {
+    SPLICE_BUILDS = SPLICE_BUILDS + (1 as i64);
+    var b: core::Node = box_view::box(color: vocab::Color::rgba(0.3f64, 0.3f64, 0.3f64));
+    b.set_height(flex::StyleLength::points(50.0f64));
+    b.set_width(flex::StyleLength::points(100.0f64));
+    return b;
+}
+
 static ANCHOR_ROWS: i64 = 3 as i64;
 fn anchor_row(i: usize, ctx: *u8) -> flex::Node {
     var b: core::Node = box_view::box(color: vocab::Color::rgba(0.3f64, 0.3f64, 0.3f64));
@@ -9654,6 +9785,140 @@ fn an_updating_collection_can_follow_its_tail() {
     }
     views::apply(0 as *u8, p);
     assert clip_origin_y(v) > 0.0f64;
+    mount::unmount(p);
+}
+
+// ---- a collection answers the SPLICE verbs, not only a count write ---------
+//
+// `insert_rows` / `remove_rows` / `invalidate_row` exist so a recycling view
+// need not rebuild. This collection materialises, so it rebuilds — but it has
+// to rebuild, and before 2026-09-07 it did not: neither `P_SPLICE_ROWS` nor
+// `P_INVALIDATE_ROW` was named anywhere on a collection's path, so the rows
+// never appeared.
+//
+// The fallback is why this went unnoticed. A splice that cannot merge into the
+// pending one calls `_resequence`, which raises `P_COUNT` and DID rebuild — so
+// the awkward call worked and the ordinary append silently did nothing. These
+// tests take the FAST path deliberately: one splice on a clean dirty word.
+
+#[test]
+fn inserting_rows_materialises_them() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "spl");
+    let p: *core::Node = #addr_of(c);
+    match collection::find("spl", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(anchor_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(3 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    assert core::child_count_of(p) == (3 as usize);
+    // The FAST path: a first splice merges into nothing, so `insert_rows`
+    // raises P_SPLICE_ROWS alone and never reaches `_resequence`.
+    core::clear_dirty(p);
+    match collection::find("spl", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let _x: collection::Collection = h.insert_rows(at: 3 as usize, count: 2 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert core::child_count_of(p) == (5 as usize);
+    mount::unmount(p);
+}
+
+#[test]
+fn removing_rows_materialises_the_shorter_sequence() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "spl2");
+    let p: *core::Node = #addr_of(c);
+    match collection::find("spl2", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(anchor_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(5 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    assert core::child_count_of(p) == (5 as usize);
+    core::clear_dirty(p);
+    match collection::find("spl2", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let _x: collection::Collection = h.remove_rows(at: 0 as usize, count: 2 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert core::child_count_of(p) == (3 as usize);
+    mount::unmount(p);
+}
+
+#[test]
+fn an_invalidated_row_is_rebuilt() {
+    // `invalidate_row` changes no count, so a rebuild is the ONLY observable:
+    // the row builder runs again for the sequence.
+    backend::install();
+    SPLICE_BUILDS = 0 as i64;
+    var c: core::Node = collection::collection(key: "inv");
+    let p: *core::Node = #addr_of(c);
+    match collection::find("inv", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(counting_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(3 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    assert SPLICE_BUILDS == (3 as i64);
+    core::clear_dirty(p);
+    match collection::find("inv", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let _x: collection::Collection = h.invalidate_row(at: 1 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert SPLICE_BUILDS == (6 as i64);
+    mount::unmount(p);
+}
+
+#[test]
+fn a_pending_splice_is_forgotten_once_it_is_applied() {
+    // THE NEGATIVE. The rebuild covers the splice, so the pending run has to be
+    // cleared — otherwise the next unrelated write re-applies it and the
+    // sequence grows a second time on a write that said nothing about rows.
+    backend::install();
+    var c: core::Node = collection::collection(key: "spl3");
+    let p: *core::Node = #addr_of(c);
+    match collection::find("spl3", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(anchor_row, ctx: 0 as *u8);
+            let _b: collection::Collection = a.set_count(2 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    core::clear_dirty(p);
+    match collection::find("spl3", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let _x: collection::Collection = h.insert_rows(at: 2 as usize, count: 1 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert core::child_count_of(p) == (3 as usize);
+    // An unrelated write. The count is untouched, so the sequence must not move.
+    core::clear_dirty(p);
+    match collection::find("spl3", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let _x: collection::Collection = h.set_columns(2 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert core::child_count_of(p) == (3 as usize);
     mount::unmount(p);
 }
 

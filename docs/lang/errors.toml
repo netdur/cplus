@@ -3415,19 +3415,15 @@ repro = "checked"
 lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs"
-cause = "Named arguments work: `lower_named_call` reorders them into positional order and splices defaults for every callee whose parameter list it can identify. This code fires for the callees that resolve to no single parameter list. A fn-pointer VALUE records parameter types without their names, so there is nothing to match a label against. And a method NAME is matched before the receiver's type is known, so every type declaring that name is a candidate: the call is ambiguous whenever more than one candidate accepts it differently. Two candidates that both accept it are deduplicated by comparing the spliced default expressions — and an `Expr` compares its SPAN, so two textually identical defaults written in two impl blocks never compare equal. The practical trigger is therefore narrow and surprising: a call that OMITS a defaulted parameter while a second type declares the same method name, even when the two signatures are identical. Supplying every argument resolves fine, and so do genuinely different signatures where only one candidate can accept the call."
-fix = "Pass these particular arguments positionally, or supply every parameter so no default is spliced. When you own the code, the durable fix is to stop two types sharing one labeled method name: rename one, or give it a label-free signature."
+cause = "Named arguments need a callee with named parameters, and this one has none. Two shapes reach here. A fn-pointer VALUE is the common one: its type (`fn(i32, i32)`) records the parameter types and nothing else, so there is no name for a label to match — the same is true of a fn-pointer held in a struct field. The other is a method reached through a GENERIC receiver: until the generic is instantiated the receiver is not one type, so no single parameter list belongs to it. A method name shared by several concrete types is NOT this error: lowering keys candidates by bare name and cannot choose, so it leaves the call to sema, which arranges it from the receiver's own declaration."
+fix = "Pass these arguments positionally. On a generic receiver, that is the only form; a fn-pointer call has no other option either, since the names were never part of the type."
 example = '''
-struct Sig { a: i32 }
-struct Bus { b: i32 }
-impl Sig { fn on(ref this, v: i32, ctx: i32 = 0) -> i32 { return v; } }
-impl Bus { fn on(ref this, v: i32, ctx: i32 = 0) -> i32 { return v; } }
+fn add(a: i32, b: i32) -> i32 { return a +% b; }
 
 fn main() -> i32 {
-    var s: Sig = Sig { a: 1 };
-    let ok: i32 = s.on(v: 5, ctx: 1);  // fine — every parameter supplied
-    return s.on(v: 5);                 // -> E1002: a default is omitted while
-}                                      //    `on` is declared by two types
+    let f: fn(i32, i32) -> i32 = add;
+    return f(a: 1, b: 2);  // -> E1002: `fn(i32, i32)` has parameter types,
+}                          //    not parameter names
 '''
 
 [[code]]

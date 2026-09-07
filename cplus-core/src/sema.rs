@@ -709,6 +709,14 @@ pub struct MonoInfo {
     /// Recorded by sema when it (not lower) spliced omitted trailing
     /// defaults — see `try_splice_method_defaults`. Monomorphize applies it.
     pub default_splices: HashMap<ByteSpan, Vec<Expr>>,
+    /// Call span -> the call's arguments in ARRANGED order, replacing what was
+    /// written: labelled arguments moved into parameter order, omitted
+    /// defaults spliced in. Recorded by sema for a labelled method call that
+    /// lowering left alone because the bare method name matched several types
+    /// — see `try_arrange_named_call`. Monomorphize applies it, so every pass
+    /// from codegen down sees an ordinary positional call, exactly as it does
+    /// for the calls lowering arranges itself.
+    pub named_call_args: HashMap<ByteSpan, Vec<Expr>>,
     /// Slice 7GEN.5c: generic-struct instantiations. Maps
     /// `(generic_name, [concrete_args])` to the synthesized
     /// `StructDef` (cloned out of sema's table so monomorphize can
@@ -1078,7 +1086,9 @@ fn check_with_files_inner(
         fnptr_field_names: None,
         bound_method_refs: HashMap::new(),
         method_defaults: HashMap::new(),
+        method_param_names: HashMap::new(),
         default_splices: HashMap::new(),
+        named_call_args: HashMap::new(),
         bound_ref_arg_spans: std::collections::HashSet::new(),
         scopes: Vec::new(),
         current_return: Ty::Error,
@@ -1456,6 +1466,7 @@ fn check_with_files_inner(
         assoc_method_dispatches: std::mem::take(&mut cx.assoc_method_dispatches),
         bound_method_refs: std::mem::take(&mut cx.bound_method_refs),
         default_splices: std::mem::take(&mut cx.default_splices),
+        named_call_args: std::mem::take(&mut cx.named_call_args),
         struct_instantiations,
         enum_instantiations,
         method_instantiations,
@@ -1579,9 +1590,22 @@ struct SemaCx<'a> {
     /// `check_method_receiver` finishes the job from this table and records
     /// the splice in `default_splices` for monomorphize to apply.
     method_defaults: HashMap<(String, String), Vec<Option<Expr>>>,
+    /// Per-(impl-target, method) parameter NAMES, receiver excluded, in
+    /// declaration order — the labels a call to that method may use. Filled
+    /// for every method with a receiver (unlike `method_defaults`, which only
+    /// records methods that HAVE a default), because arranging a labelled call
+    /// needs the names whether or not anything is defaulted.
+    method_param_names: HashMap<(String, String), Vec<String>>,
     /// 2026-07-16: call span -> default exprs to APPEND to the call's args
     /// (monomorphize applies the rewrite; sema already type-checked them).
     default_splices: HashMap<ByteSpan, Vec<Expr>>,
+    /// Call span -> the call's arguments REPLACED by their arranged order:
+    /// labelled arguments moved into parameter order and omitted defaults
+    /// spliced in. Recorded by `try_arrange_named_call` for the labelled calls
+    /// lowering could not decide without the receiver's type; monomorphize
+    /// applies the rewrite. Distinct from `default_splices`, which only
+    /// appends to a positional call and never reorders.
+    named_call_args: HashMap<ByteSpan, Vec<Expr>>,
     /// 2026-07-06 bound method references: `recv.method` passed where a
     /// fn-pointer is expected. Keyed by the argument expression's span;
     /// monomorphize rewrites the arg to the synthesized bridge fn and
@@ -2319,6 +2343,20 @@ fn layout_of_inner(
         }
         Ty::Error | Ty::Param(_) => None,
     }
+}
+
+/// What [`SemaCx::try_arrange_named_call`] could make of a labelled method call.
+enum NamedCallArrangement {
+    /// The receiver's parameter list matched: the call's arguments in
+    /// parameter order, defaults spliced.
+    Arranged(Vec<Expr>),
+    /// The arguments do not fit that parameter list, and the specific
+    /// mismatch has already been reported.
+    Reported,
+    /// No single parameter list belongs to this receiver — a generic
+    /// receiver, or a method this compiler records no signature for. The
+    /// caller reports E1002.
+    NoParamList,
 }
 
 impl TypeShape for SemaCx<'_> {
@@ -12727,32 +12765,30 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Named arguments are MATCHED IN LOWERING — `lower_named_call` reorders
         // them and splices defaults for every callee whose parameter list it can
         // identify: free functions, methods, and associated functions. A label
-        // that survives to here belongs to a call whose callee resolves to no
-        // single parameter list. Two shapes reach it:
+        // that survives to here belongs to a call whose callee resolved to no
+        // single parameter list THERE, which is not the same as having none.
         //
-        //   a fn-pointer VALUE — `fn(i32, i32)` records parameter types and no
-        //     names, so there is nothing to match labels against.
-        //   an ambiguous method — candidates are keyed by method NAME, so two
-        //     types declaring `go` put the labels in different positions and
-        //     lowering cannot choose without the receiver's type. Identical
-        //     signatures are fine: every candidate yields the same order.
+        // A METHOD is the case that isn't settled yet: lowering keys candidates
+        // by bare method name because it runs before types exist, so two types
+        // declaring `go` leave it unable to choose. The receiver's type decides
+        // it, and `check_method_call` has that type — it arranges the call from
+        // the type-keyed tables and reports E1002 only if even the receiver does
+        // not pin one declaration (a generic receiver, a built-in method). So
+        // methods are deliberately NOT reported here.
         //
-        // The message used to say the feature was unimplemented and matching was
-        // "the next step". That stopped being true when matching landed, and it
-        // sent everyone who reached this line looking for a release that is
-        // never coming. The callee is the problem, not the feature.
+        // What remains here is a callee with no parameter NAMES at all: a
+        // fn-pointer value, whose type records parameter types and nothing else.
         //
         // Checking continues positionally so the rest of the call still types.
-        if arg_labels.iter().any(|l| l.is_some()) {
+        if arg_labels.iter().any(|l| l.is_some())
+            && !matches!(&callee.kind, ExprKind::Field { .. })
+        {
             self.err(
                 "E1002",
-                "named arguments need one known parameter list and this callee \
-                 has none: a fn-pointer value records parameter types without \
-                 their names, and a method name is matched before the receiver's \
-                 type is known, so every type declaring that name is a candidate \
-                 here. Supply every parameter (omitting a defaulted one is what \
-                 makes two candidates differ), pass these arguments positionally, \
-                 or give one of the methods a different name"
+                "named arguments need a callee with named parameters, and this \
+                 one has none: a fn-pointer value's type (`fn(i32, i32)`) records \
+                 the parameter types without their names, so there is nothing for \
+                 a label to match. Pass these arguments positionally"
                     .to_string(),
                 call_span,
             );
@@ -12862,6 +12898,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 self.sink.truncate(sink_mark);
             }
             if takes_fnptr_branch {
+            // A `Field` callee, so the blanket check above deliberately let it
+            // past on the chance it was a method. It isn't — it is a call
+            // through a fn-pointer FIELD, whose type carries no parameter
+            // names, so there is nothing for a label to match after all.
+            if arg_labels.iter().any(|l| l.is_some()) {
+                self.err(
+                    "E1002",
+                    "named arguments need a callee with named parameters, and this \
+                     one has none: the field holds a fn-pointer, whose type records \
+                     the parameter types without their names. Pass these arguments \
+                     positionally"
+                        .to_string(),
+                    call_span,
+                );
+            }
             if let Ty::Struct(id) = &recv_ty {
                 let sdef = &self.structs[id.0 as usize];
                 if let Some((
@@ -12923,7 +12974,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // Slice 7GEN.5e: turbofish + inference on method calls.
                 // check_method_call now accepts type_args; routes to the
                 // generic-method path when sig.generic_params is non-empty.
-                self.check_method_call(receiver, name, type_args, args, call_span)
+                self.check_method_call(receiver, name, type_args, args, arg_labels, call_span)
             }
             ExprKind::Path { segments } => {
                 // Slice 7GEN.5e: turbofish + inference on assoc calls.
@@ -14038,11 +14089,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.subst_ty_deep(&gsig.return_type, &subst)
     }
 
-    /// 2026-07-16: collect every impl method's parameter defaults, keyed by
-    /// (impl target name, method name) — see the `method_defaults` field.
-    /// The impl target name is the AST name: a concrete struct/enum's own
-    /// name, or the generic TEMPLATE name (`Signal` for `impl Signal[T]`) —
-    /// a receiver's instantiation maps back to it via `generic_origin`.
+    /// 2026-07-16: collect every impl method's parameter defaults and NAMES,
+    /// keyed by (impl target name, method name) — see the `method_defaults`
+    /// and `method_param_names` fields. The impl target name is the AST name:
+    /// a concrete struct/enum's own name, or the generic TEMPLATE name
+    /// (`Signal` for `impl Signal[T]`) — a receiver's instantiation maps back
+    /// to it via `generic_origin`.
+    ///
+    /// Both tables are keyed BY TYPE, which is the whole point: lowering keys
+    /// method candidates by bare name because it runs before types exist, and
+    /// these are how sema finishes a call lowering had to leave alone.
     fn collect_method_default_exprs(&mut self, program: &Program) {
         for item in &program.items {
             let ItemKind::Impl(b) = &item.kind else {
@@ -14061,26 +14117,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     self.method_defaults
                         .insert((b.target.name.clone(), m.name.name.clone()), defaults);
                 }
+                self.method_param_names.insert(
+                    (b.target.name.clone(), m.name.name.clone()),
+                    m.params.iter().map(|p| p.name.name.clone()).collect(),
+                );
             }
         }
     }
 
-    /// 2026-07-16: a positional method call arrived with fewer args than
-    /// params (lower couldn't splice — the bare method name is shared by
-    /// several types). The receiver type is known HERE: if every missing
-    /// trailing parameter has a declared default, type-check the defaults
-    /// against the (already-substituted) param types, record the splice for
-    /// monomorphize, and report success. Any other shape returns false and
-    /// the caller's E0308 stands.
-    fn try_splice_method_defaults(
-        &mut self,
-        recv_ty: &Ty,
-        name: &Ident,
-        sig: &MethodSig,
-        n_args: usize,
-        call_span: ByteSpan,
-    ) -> bool {
-        let key_ty: Option<String> = match recv_ty {
+    /// The `(type, method)` table key for a receiver type, or `None` when the
+    /// receiver is not a nominal type this compiler records methods for (a
+    /// generic `Ty::Param`, a raw pointer, a SIMD vector). Shared by every
+    /// lookup into `method_defaults` / `method_param_names` so they cannot
+    /// disagree about what a receiver is called.
+    fn method_table_key(&self, recv_ty: &Ty) -> Option<String> {
+        return match recv_ty {
             Ty::Struct(sid) => {
                 let d = &self.structs[sid.0 as usize];
                 Some(
@@ -14104,7 +14155,24 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             Ty::Str => Some("str".to_string()),
             _ => None,
         };
-        let Some(key_ty) = key_ty else {
+    }
+
+    /// 2026-07-16: a positional method call arrived with fewer args than
+    /// params (lower couldn't splice — the bare method name is shared by
+    /// several types). The receiver type is known HERE: if every missing
+    /// trailing parameter has a declared default, type-check the defaults
+    /// against the (already-substituted) param types, record the splice for
+    /// monomorphize, and report success. Any other shape returns false and
+    /// the caller's E0308 stands.
+    fn try_splice_method_defaults(
+        &mut self,
+        recv_ty: &Ty,
+        name: &Ident,
+        sig: &MethodSig,
+        n_args: usize,
+        call_span: ByteSpan,
+    ) -> bool {
+        let Some(key_ty) = self.method_table_key(recv_ty) else {
             return false;
         };
         let Some(defaults) = self
@@ -14131,6 +14199,62 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         self.default_splices.insert(call_span, spliced);
         return true;
+    }
+
+    /// A labelled method call reached sema, which means lowering could not
+    /// decide it: the bare method name it keys candidates by is declared by
+    /// more than one type, and those candidates arrange the call differently.
+    /// The receiver's type is known HERE, so the choice is not a choice —
+    /// exactly one parameter list belongs to this receiver.
+    ///
+    /// Looks that list up, runs the SAME matcher lowering runs
+    /// (`lower::arrange_named_args`, so labels, duplicates, arity and default
+    /// placement cannot drift between the two routes), records the arranged
+    /// argument list for monomorphize, and hands it back for this call's own
+    /// type-checking. Everything downstream then sees an ordinary positional
+    /// call, which is the invariant lowering exists to provide.
+    fn try_arrange_named_call(
+        &mut self,
+        recv_ty: &Ty,
+        name: &Ident,
+        args: &[Expr],
+        arg_labels: &[Option<Ident>],
+        call_span: ByteSpan,
+    ) -> NamedCallArrangement {
+        let Some(key_ty) = self.method_table_key(recv_ty) else {
+            return NamedCallArrangement::NoParamList;
+        };
+        let key = (key_ty, name.name.clone());
+        let Some(names) = self.method_param_names.get(&key).cloned() else {
+            return NamedCallArrangement::NoParamList;
+        };
+        let defaults = self
+            .method_defaults
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| vec![None; names.len()]);
+        if defaults.len() != names.len() {
+            return NamedCallArrangement::NoParamList; // table drift — let arity report it
+        }
+        let params: Vec<crate::lower::ParamInfo> = names
+            .into_iter()
+            .zip(defaults)
+            .map(|(name, default)| crate::lower::ParamInfo { name, default })
+            .collect();
+        return match crate::lower::arrange_named_args(&params, args, arg_labels, call_span) {
+            Ok(arranged) => {
+                self.named_call_args.insert(call_span, arranged.clone());
+                NamedCallArrangement::Arranged(arranged)
+            }
+            // A concrete mismatch — an unknown label, a duplicate, a missing
+            // required argument. That is the call's actual problem and names
+            // it precisely, so report it instead of falling through to the
+            // "no known parameter list" story, which is no longer true.
+            Err((code, msg, span)) => {
+                self.err(code, msg, span);
+                NamedCallArrangement::Reported
+            }
+        };
     }
 
     /// Shared receiver + arity checks for a resolved method call. The concrete
@@ -14434,6 +14558,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         name: &Ident,
         type_args: &[Type],
         args: &[Expr],
+        arg_labels: &[Option<Ident>],
         call_span: ByteSpan,
     ) -> Ty {
         let recv_ty = self.check_expr(receiver, None);
@@ -14443,6 +14568,46 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return Ty::Error;
         }
+        // Labels that survived lowering: it keys method candidates by bare
+        // name, so a name two types declare left it unable to choose. The
+        // receiver's type is resolved now and picks the one parameter list
+        // that belongs to it. From here down `args` is the ARRANGED list —
+        // parameter order, defaults spliced — so every check below (arity,
+        // per-argument types, moves) runs on the call as it will be emitted.
+        let arranged: Option<Vec<Expr>> = if arg_labels.iter().any(|l| l.is_some()) {
+            match self.try_arrange_named_call(&recv_ty, name, args, arg_labels, call_span) {
+                NamedCallArrangement::Arranged(v) => Some(v),
+                NamedCallArrangement::Reported => {
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                NamedCallArrangement::NoParamList => {
+                    self.err(
+                        "E1002",
+                        format!(
+                            "named arguments need one known parameter list, and \
+                             `{}::{}` is not one declared method here: a method \
+                             reached through a generic receiver is not pinned to a \
+                             single declaration until the generic is instantiated, \
+                             and a built-in method records no parameter names. Pass \
+                             these arguments positionally",
+                            self.ty_display_named(&recv_ty),
+                            name.name
+                        ),
+                        call_span,
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let args: &[Expr] = match &arranged {
+            Some(v) => v.as_slice(),
+            None => args,
+        };
         // v0.0.12 realtime Phase 1 (method-dispatch hole): if the enclosing
         // function is `#[no_alloc]` / `#[no_block]`, the dispatched method must
         // carry the same contract. The receiver type is resolved now, so this
@@ -35831,5 +35996,194 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
              fn main() -> i32 { let f: fn(*u8) = tramp::[Plain]; f(0 as *u8); return 0; }",
         );
         assert!(codes.contains(&"E0502"), "got {:?}", codes);
+    }
+
+    // ---- named arguments on a shared method name ----
+    //
+    // Lowering keys method candidates by BARE NAME (it runs before types
+    // exist), so a name two types declare leaves it unable to choose and it
+    // hands the call here with its labels intact. Sema knows the receiver's
+    // type, and the receiver's type owns exactly one parameter list.
+
+    const TWO_GOS: &str = "struct A { x: i32 }\n\
+                           impl A { fn go(ref this, v: i32, ctx: i32 = 0) -> i32 { return v * 10 + ctx; } }\n\
+                           struct B { y: i32 }\n\
+                           impl B { fn go(ref this, ctx: i32, v: i32 = 9) -> i32 { return ctx * 100 + v; } }\n";
+
+    /// The two `go`s put their labels in DIFFERENT positions and default
+    /// different parameters — the shape lowering cannot decide. Each call is
+    /// arranged from its own receiver's declaration, so both are clean.
+    #[test]
+    fn a_labelled_call_is_arranged_from_the_receivers_parameter_list() {
+        for call in [
+            "a.go(v: 5, ctx: 3)",
+            "a.go(ctx: 3, v: 5)",
+            "a.go(v: 5)",
+            "b.go(v: 7, ctx: 4)",
+            "b.go(ctx: 4)",
+        ] {
+            let src = format!(
+                "{TWO_GOS}fn main() -> i32 {{\n\
+                     var a: A = A {{ x: 1 }};\n\
+                     var b: B = B {{ y: 2 }};\n\
+                     return {call};\n\
+                 }}\n"
+            );
+            let ds = check_src(&src);
+            assert!(
+                codes_of(&ds).is_empty(),
+                "`{call}` must resolve against its own receiver, got {:?}",
+                codes_of(&ds)
+            );
+        }
+    }
+
+    /// `A::go` has no default for `v`, so `a.go(ctx: 3)` is a missing
+    /// argument — reported against A, whose method it is.
+    ///
+    /// It used to COMPILE, to `A::go(3, 9)`: `B::go` was the only candidate
+    /// that accepted the call, so lowering applied B's arrangement to an A
+    /// receiver, binding the label `ctx` to A's parameter `v` and splicing B's
+    /// default `9` into A's `ctx`. The wrong value, silently, from a
+    /// declaration on an unrelated type.
+    #[test]
+    fn a_missing_argument_is_reported_against_the_receivers_own_method() {
+        let src = format!(
+            "{TWO_GOS}fn main() -> i32 {{\n\
+                 var a: A = A {{ x: 1 }};\n\
+                 return a.go(ctx: 3);\n\
+             }}\n"
+        );
+        let ds = check_src(&src);
+        assert!(
+            codes_of(&ds).contains(&"E0308"),
+            "expected the missing-argument error, got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    /// A label the OTHER type declares is not a label here. The candidate list
+    /// is the receiver's alone, so this is an unknown label rather than an
+    /// ambiguity between two declarations.
+    #[test]
+    fn a_label_only_another_type_declares_is_unknown_on_this_receiver() {
+        let src = "struct A { x: i32 }\n\
+                   impl A { fn go(ref this, v: i32, ctx: i32 = 0) -> i32 { return v + ctx; } }\n\
+                   struct B { y: i32 }\n\
+                   impl B { fn go(ref this, name: i32, v: i32 = 9) -> i32 { return name + v; } }\n\
+                   fn main() -> i32 {\n\
+                       var a: A = A { x: 1 };\n\
+                       return a.go(name: 3);\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            codes_of(&ds).contains(&"E1005"),
+            "expected unknown-label, got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    /// A duplicate label is still a duplicate, checked against the receiver's
+    /// parameter list rather than reported as an ambiguity.
+    #[test]
+    fn a_duplicate_label_is_reported_against_the_receiver() {
+        let src = format!(
+            "{TWO_GOS}fn main() -> i32 {{\n\
+                 var a: A = A {{ x: 1 }};\n\
+                 return a.go(v: 5, v: 6);\n\
+             }}\n"
+        );
+        let ds = check_src(&src);
+        assert!(
+            codes_of(&ds).contains(&"E1006"),
+            "expected duplicate-argument, got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    /// NEGATIVE: a fn-pointer VALUE has parameter types and no parameter
+    /// names, so there is nothing for a label to match — no receiver type
+    /// rescues this one, and E1002 is the right answer.
+    #[test]
+    fn a_fn_pointer_value_still_cannot_take_labels() {
+        let src = "fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+                   fn main() -> i32 {\n\
+                       let f: fn(i32, i32) -> i32 = add;\n\
+                       return f(a: 1, b: 2);\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            codes_of(&ds).contains(&"E1002"),
+            "expected E1002 on a fn-pointer callee, got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    /// NEGATIVE: a fn-pointer FIELD is the same story one syntax over. It is a
+    /// `Field` callee, so the method path lets it past — the fn-pointer branch
+    /// has to report it, or it would type positionally in silence.
+    #[test]
+    fn a_fn_pointer_field_still_cannot_take_labels() {
+        let src = "struct S { cb: fn(i32, i32) -> i32 }\n\
+                   fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+                   fn main() -> i32 {\n\
+                       let s: S = S { cb: add };\n\
+                       return s.cb(a: 1, b: 2);\n\
+                   }\n";
+        let ds = check_src(src);
+        assert!(
+            codes_of(&ds).contains(&"E1002"),
+            "expected E1002 on a fn-pointer field callee, got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    /// NEGATIVE: a receiver that is a type PARAMETER is not one type yet, so
+    /// no single parameter list belongs to it. E1002 stands — and says that,
+    /// rather than the old story about method names being matched too early.
+    ///
+    /// `B::go` is what puts the call here at all, and the test is worth little
+    /// without it: with only `A::go` in the program the name has ONE candidate,
+    /// lowering arranges the call itself and never consults a type, so the
+    /// generic receiver costs nothing. It is a second, disagreeing declaration
+    /// that makes the arrangement type-dependent — and a type parameter is
+    /// exactly the receiver that cannot supply one.
+    #[test]
+    fn a_generic_receiver_pins_no_parameter_list() {
+        let src = "interface Go { fn go(ref this, v: i32, ctx: i32) -> i32; }\n\
+                   struct A { x: i32 }\n\
+                   impl A: Go { fn go(ref this, v: i32, ctx: i32) -> i32 { return v + ctx; } }\n\
+                   struct B { y: i32 }\n\
+                   impl B { fn go(ref this, ctx: i32, v: i32 = 9) -> i32 { return ctx * 100 + v; } }\n\
+                   fn call[T: Go](take t: T) -> i32 { var m: T = t; return m.go(v: 1, ctx: 2); }\n\
+                   fn main() -> i32 { return call::[A](A { x: 1 }); }\n";
+        let ds = check_src(src);
+        assert!(
+            codes_of(&ds).contains(&"E1002"),
+            "expected E1002 on a generic receiver, got {:?}",
+            codes_of(&ds)
+        );
+    }
+
+    /// The counterweight to it: one candidate for the name and the generic
+    /// receiver is irrelevant — lowering settles the call without types, so a
+    /// labelled call on a bound method compiles.
+    #[test]
+    fn a_generic_receiver_is_fine_while_the_name_has_one_candidate() {
+        let src = "interface Go { fn go(ref this, v: i32, ctx: i32) -> i32; }\n\
+                   struct A { x: i32 }\n\
+                   impl A: Go { fn go(ref this, v: i32, ctx: i32) -> i32 { return v + ctx; } }\n\
+                   fn call[T: Go](take t: T) -> i32 { var m: T = t; return m.go(v: 1, ctx: 2); }\n\
+                   fn main() -> i32 { return call::[A](A { x: 1 }); }\n";
+        let mut prog = parse(tokenize(src).expect("lex")).expect("parse");
+        // Through the real pipeline: lowering runs first and arranges it.
+        let lowered = crate::lower::lower(&mut prog, &PathBuf::from("test.cplus"), src);
+        assert!(lowered.is_empty(), "lowering: {:?}", codes_of(&lowered));
+        let ds = check(&prog, PathBuf::from("test.cplus"), src);
+        assert!(
+            codes_of(&ds).is_empty(),
+            "a sole candidate needs no receiver type, got {:?}",
+            codes_of(&ds)
+        );
     }
 }

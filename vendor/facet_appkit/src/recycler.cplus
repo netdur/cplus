@@ -2316,6 +2316,33 @@ fn tag_tree_row(ov: *u8, item: *u8, cell: *u8) {
     ak::Accessibility::from_raw(cell).set_accessibility_identifier(id.view());
 }
 
+// `row_id` CHANGED, so every cell already built is carrying a stale identifier.
+//
+// Re-tagging beats reloading here, and the difference is not only cost:
+// `reload_tree_keeping_selection` reads the selected row's identity BEFORE the
+// reload and restores it after, and when `row_id` is the thing that changed
+// those two identities come from different functions — the restore would look
+// for a name that no longer exists and drop the selection. Walking the realised
+// rows changes nothing but the identifier.
+//
+// `makeIfNecessary: NO` for the reason the row-menu lookup gives: building a
+// cell here would be a mount inside an apply pass.
+fn retag_tree_rows(ov: *u8) {
+    let rows: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
+    var row: i64 = 0 as i64;
+    while row < rows {
+        let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
+        if item.is_not_null() {
+            let cell: *u8 = { msg_id_i64_i64_i8(ov,
+                                  rt::sel(#str_ptr("viewAtColumn:row:makeIfNecessary:\0")),
+                                  0 as i64, row, 0 as i8) };
+            if cell.is_not_null() { tag_tree_row(ov, item, cell); }
+        }
+        row = row +% (1 as i64);
+    }
+    return;
+}
+
 fn tree_view_for_item_body(ov: *u8, item: *u8) -> *u8 {
     let p: *tree::TreeProps = props_for(ov);
     if p.is_null() { return 0 as *u8; }
@@ -2735,6 +2762,16 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     if reload {
         reload_tree_keeping_selection(s, ov);
         tree_trace(ov, "apply:after-reload");
+    }
+    // `row_id` was READ and never GATED, which is a create-only prop by
+    // accident rather than by decision: `tag_tree_row` sets the identifier
+    // correctly on a cell it builds, so a write only failed to reach the cells
+    // that already existed. They stayed stale until an unrelated reload, and
+    // that identifier is what agent surfaces and the UI tests select rows BY.
+    //
+    // After any reload above, so a rebuilt cell is not tagged twice.
+    if (dirty & tree::P_ROW_ID) != (0 as u64) && reload == false {
+        retag_tree_rows(ov);
     }
     // After the rows exist, or there is nothing to find the identity among.
     if (dirty & (tree::P_SELECTED | tree::P_ROOT)) != (0 as u64) {

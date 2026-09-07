@@ -27628,3 +27628,101 @@ fn every_generator_emitter_starts_suspended() {
         "0\n1\n1\n1\n7\n2\n2\n2\n3\n"
     );
 }
+
+/// A labelled call on a method name TWO types declare, run end to end.
+///
+/// Lowering keys method candidates by bare name — it runs before types exist —
+/// so a shared name leaves it unable to arrange the call; sema does it from the
+/// receiver's own parameter list and monomorphize applies the result. Every
+/// pass in that chain has to hold for the printed numbers to come out right,
+/// which is why this is an execution test and not an IR one.
+///
+/// `A::go(v, ctx = 0)` and `B::go(ctx, v = 9)` are deliberately incompatible:
+/// the labels sit in different positions and a different parameter carries the
+/// default, so any arrangement made without knowing the receiver's type lands
+/// on the wrong parameter. The last column is the one that used to MISCOMPILE
+/// rather than fail — `a.go(ctx: 3)` bound `ctx` to A's `v` and spliced B's
+/// `9` into A's `ctx`, printing 39 for a call that has no `v` at all. It is a
+/// compile error now, so what runs here is the four that are legal.
+#[test]
+fn named_arguments_resolve_against_the_receivers_own_method() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("named.cplus");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         struct A { x: i32 }\n\
+         impl A { fn go(ref this, v: i32, ctx: i32 = 0) -> i32 { return v * 10 + ctx; } }\n\
+         struct B { y: i32 }\n\
+         impl B { fn go(ref this, ctx: i32, v: i32 = 9) -> i32 { return ctx * 100 + v; } }\n\
+         fn main() -> i32 {\n\
+         var a: A = A { x: 1 };\n\
+         var b: B = B { y: 2 };\n\
+         printf(#str_ptr(\"%d %d %d %d\\n\\0\"),\n\
+         a.go(v: 5, ctx: 3), a.go(ctx: 3, v: 5), a.go(v: 5), b.go(ctx: 4));\n\
+         return 0;\n\
+         }\n",
+    )
+    .expect("write named.cplus");
+    let bin = dir.join("named");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "cpc failed: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run produced binary");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        // 53: v=5, ctx=3 — labels in written order.
+        // 53: the same call with the labels REVERSED; a label names a
+        //     parameter, so the order it is written in cannot matter.
+        // 50: ctx omitted, taking A's OWN default 0 — not B's 9.
+        // 409: on a B receiver the same label `ctx` is the FIRST parameter,
+        //      and the default that fills in is B's `v = 9`.
+        "53 53 50 409\n",
+        "each call must be arranged from its own receiver's parameter list"
+    );
+}
+
+/// The negative half of the pair, and the reason the fix is not only about a
+/// diagnostic: `A::go` has no default for `v`, so `a.go(ctx: 3)` is a missing
+/// argument. It used to COMPILE — `B::go` was the only candidate that accepted
+/// the call, so lowering applied B's arrangement to an A receiver.
+#[test]
+fn a_label_that_only_fits_another_type_is_an_error_not_a_value() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("wrongtype.cplus");
+    std::fs::write(
+        &src,
+        "struct A { x: i32 }\n\
+         impl A { fn go(ref this, v: i32, ctx: i32 = 0) -> i32 { return v * 10 + ctx; } }\n\
+         struct B { y: i32 }\n\
+         impl B { fn go(ref this, ctx: i32, v: i32 = 9) -> i32 { return ctx * 100 + v; } }\n\
+         fn main() -> i32 {\n\
+         var a: A = A { x: 1 };\n\
+         return a.go(ctx: 3);\n\
+         }\n",
+    )
+    .expect("write wrongtype.cplus");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "this call must not compile");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let all = format!("{stderr}{stdout}");
+    assert!(
+        all.contains("E0308") && all.contains("`v`"),
+        "expected a missing-argument error naming A's own parameter, got: {all}"
+    );
+}

@@ -1475,6 +1475,12 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     // holds that state — so there is no second copy to keep in step, and the
     // pressed look a bordered control would draw is absent because the button
     // is borderless either way.
+    // The cell's line-break mode, on THIS kind's bit. `apply_button` has had the
+    // same three lines since it was written, and their presence there is what
+    // made the gap read as covered: a grep for `P_LINE_BREAK` in this package
+    // finds `label::` and `button::` and looks like coverage. The values differ
+    // per module — label 128, text_button 512, button 2048 — so neither of
+    // those gates can ever match a text button's write.
     if (dirty & text_button::P_TOGGLES) != (0 as u64) || dirty == paint::all_bits() {
         if { (*p).toggles } { b.set_button_type(ak::ButtonType::PushOnPushOff); }
         else { b.set_button_type(ak::ButtonType::MomentaryPushIn); }
@@ -4279,8 +4285,26 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
     if p.is_null() { return; }
     let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
+    // `P_SPLICE_ROWS` and `P_INVALIDATE_ROW` REBUILD, like a count write.
+    //
+    // They are the two verbs that exist precisely so a backend does NOT have to
+    // rebuild — `insert_rows` moves `count` itself and raises only its own bit,
+    // so a recycling view can insert rows and keep every height it measured.
+    // This collection materialises every item as an ordinary child (see "The
+    // collection group builds every row" in MANIFEST.md), so there are no
+    // measured heights to keep and no cheaper answer than the rebuild below.
+    //
+    // Gating them here is therefore giving up the optimisation, deliberately.
+    // What is NOT optional is answering them at all: before this, neither bit
+    // was named anywhere on a collection's path, so `insert_rows` updated
+    // `count` in the props and raised a bit nothing read — the rows never
+    // appeared, and the fallback made it worse by hiding the shape. A splice
+    // that cannot merge into the pending one calls `_resequence`, which raises
+    // `P_COUNT` and DID rebuild, so the awkward call worked and the ordinary
+    // append did nothing.
     if (dirty & (collection::P_COUNT | collection::P_ROW | collection::P_GROUP_COUNT
-                 | collection::P_GROUP | collection::P_IS_GROUPED)) != (0 as u64) {
+                 | collection::P_GROUP | collection::P_IS_GROUPED
+                 | collection::P_SPLICE_ROWS | collection::P_INVALIDATE_ROW)) != (0 as u64) {
         let before: f64 = kept_offset(v, { (*iv).scroll_anchor });
         materialise_collection(n);
         // The rows are new objects, so the arrangement has to be re-applied to
@@ -4288,6 +4312,14 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
         // worse than none.
         arrange_columns(n, { (*p).structured_items_view.columns });
         restore_anchor(v, n, { (*iv).scroll_anchor }, before);
+        // The rebuild covers any pending splice or invalidation, so both only
+        // have to be forgotten — the same close-out `apply_recycling_list`
+        // makes after a reload. Leaving them set would re-apply the splice on
+        // the next unrelated write.
+        { (*p).invalidate_lo = -1 as i64 };
+        { (*p).invalidate_hi = -1 as i64 };
+        { (*p).splice_at = -1 as i64 };
+        { (*p).splice_count = 0 as i64 };
     }
     if (dirty & collection::P_COLUMNS) != (0 as u64) {
         arrange_columns(n, { (*p).structured_items_view.columns });
@@ -4818,6 +4850,15 @@ fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
             chrome::ButtonStyle::Native => false,
         };
         compose::apply_hover_reveal(v, on_hover);
+    }
+    // The gap between the three buttons. The comment above is right that the
+    // view places them off AppKit's callbacks and needs nothing here — but the
+    // SPACING it places them at is the application's to state, and until this
+    // gate existed nothing read the prop: `wb_layout` used a hard-coded 14.
+    // Zero keeps meaning the platform default; `wb_spacing` decides that, so
+    // the create pass can pass the field through unconditionally.
+    if (dirty & chrome::P_SPACING) != (0 as u64) || dirty == paint::all_bits() {
+        akx::wb_set_spacing(v, { (*p).spacing });
     }
 }
 

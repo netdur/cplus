@@ -359,6 +359,12 @@ def main():
         return 2
 
     seen = {k: referenced(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
+    # Whole-backend source, for the kind-constant half of the evidence test
+    # below. Comments stripped for the reason `strip_comments` gives.
+    srcs = {k: strip_comments("".join(
+        open(p_).read() for p_ in glob.glob(os.path.join(d, "*.cplus"))
+        if not p_.endswith("test_main.cplus")))
+        for k, d in BACKENDS.items() if os.path.isdir(d)}
     written = {k: field_touches(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
     totals = {k: 0 for k in seen}
     declared = 0
@@ -375,8 +381,20 @@ def main():
         for k in seen:
             named = seen[k].get(module, set())
             # The field-touch fallback needs evidence this backend implements
-            # the KIND — see `field_touches`. One named bit is that evidence.
-            plausible = len(named) > 0
+            # the KIND — see `field_touches`. A named bit is that evidence, and
+            # so is naming the kind CONSTANT.
+            #
+            # THE SECOND HALF WAS MISSING AND IT COST APPKIT 16 BITS. A backend
+            # need not route through `<module>::P_*` at all: facet_appkit
+            # dispatches menu, menu_item, context_menu_item, swipe_item and
+            # toolbar_item on `props::K_MENU_ITEM` and reads the struct fields
+            # directly. Requiring a named bit as the ONLY evidence discarded
+            # every one of those field touches, so five kinds it fully
+            # implements scored zero and vanished from the per-kind table
+            # entirely — the report has a row only where something is answered.
+            # appkit read 337/363 against gtk's 359 largely on that.
+            plausible = len(named) > 0 or re.search(
+                r"\bprops::K_" + module.upper() + r"\b", srcs[k]) is not None
             fields = written[k].get(struct_for(module), set())
             got[k] = {p for p in props
                       if p in named
