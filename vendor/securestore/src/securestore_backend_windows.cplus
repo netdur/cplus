@@ -1,86 +1,286 @@
-// securestore_backend_windows — the honest stub, for now.
+// securestore_backend_windows — the Windows Credential Manager, the OS keychain.
 //
-// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `securestore.cplus` declares five
-// stable symbols and something must define them on every platform the package
-// claims; without a `_windows` sibling the build falls back to
-// `securestore_backend.cplus` — the Keychain half — and stops at its Apple
-// imports.
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS, and it does the real thing rather
+// than stub it: `CredWriteW`/`CredReadW`/`CredDeleteW` over `CRED_TYPE_GENERIC`
+// credentials, which the OS encrypts per-user with DPAPI and stores in the
+// Credential Manager — the direct analogue of the Keychain this package's Apple
+// half uses. advapi32 is on `cpc`'s Windows link line for exactly this.
 //
-// EVERY VERB ANSWERS `Unsupported`, and that is the honest answer rather than a
-// dangerous one: `set` returns `_C_UNSUPPORTED` (not `_C_OK`), so an application
-// that stores a token learns immediately that it was NOT stored, instead of
-// believing a secret is safe and losing it. `contains` is a plain `0`. Nothing
-// is written, so nothing is ever read back — the one thing a secure store must
-// never do is silently claim success.
+// A secret is keyed by a TARGET NAME the OS treats opaquely; this package builds
+// it as `cplus/<service>/<key>` so a per-service `clear` can enumerate with the
+// prefix filter `cplus/<service>/*`. The VALUE crosses as raw bytes — the blob
+// is arbitrary, so a UTF-8 string rides unchanged and comes back byte-for-byte.
 //
-// THE REAL WINDOWS STORE IS THE CREDENTIAL MANAGER — `CredWriteW` / `CredReadW`
-// / `CredDeleteW` over `CRED_TYPE_GENERIC` credentials, which the OS encrypts
-// per-user with DPAPI, keyed on a `service/key` target name. That is the direct
-// analogue of the Keychain this package's Apple half uses, and it is a real,
-// round-trippable backend rather than a stub — a well-scoped next pass, kept out
-// of this one so the package builds first and gains function second.
-
-
 // The wire codes `securestore.cplus` decodes: 0 Ok, -1 NotFound, -2 Denied,
 // -3 Unsupported, -4 Failed. `_c_get` returns i64 (a non-negative byte count on
 // success, one of these negatives on failure); the rest return i32.
+
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
+
+#[link_name = "MultiByteToWideChar"]
+extern fn MultiByteToWideChar(cp: u32, flags: u32, mb: *u8, mblen: i32,
+                              wide: *u16, widelen: i32) -> i32;
+#[link_name = "CredWriteW"]
+extern fn CredWriteW(cred: *u8, flags: u32) -> i32;
+#[link_name = "CredReadW"]
+extern fn CredReadW(target: *u16, ty: u32, flags: u32, pcred_out: **u8) -> i32;
+#[link_name = "CredDeleteW"]
+extern fn CredDeleteW(target: *u16, ty: u32, flags: u32) -> i32;
+#[link_name = "CredEnumerateW"]
+extern fn CredEnumerateW(filter: *u16, flags: u32, count: *u32, arr_out: ***u8) -> i32;
+#[link_name = "CredFree"]
+extern fn CredFree(p: *u8);
+#[link_name = "GetLastError"]
+extern fn GetLastError() -> u32;
+
 fn _c_ok() -> i32 { return 0 as i32; }
-fn _c_unsupported() -> i32 { return 0 -% (3 as i32); }
+fn _c_not_found() -> i32 { return 0 -% (1 as i32); }
+fn _c_denied() -> i32 { return 0 -% (2 as i32); }
+fn _c_failed() -> i32 { return 0 -% (4 as i32); }
+
+fn _cred_generic() -> u32 { return 1 as u32; }              // CRED_TYPE_GENERIC
+fn _persist_local_machine() -> u32 { return 2 as u32; }     // CRED_PERSIST_LOCAL_MACHINE
+fn _error_not_found() -> u32 { return 1168 as u32; }        // ERROR_NOT_FOUND
+fn _error_access_denied() -> u32 { return 5 as u32; }       // ERROR_ACCESS_DENIED
+fn _cp_utf8() -> u32 { return 65001 as u32; }
+
+// CREDENTIALW field offsets (x86-64): Type@4, TargetName@8, CredentialBlobSize@32,
+// CredentialBlob@40, Persist@48, UserName@80. The struct is 88 bytes.
+fn _cred_bytes() -> usize { return 88 as usize; }
+fn _off_type() -> usize { return 4 as usize; }
+fn _off_target() -> usize { return 8 as usize; }
+fn _off_blob_size() -> usize { return 32 as usize; }
+fn _off_blob() -> usize { return 40 as usize; }
+fn _off_persist() -> usize { return 48 as usize; }
+fn _off_username() -> usize { return 80 as usize; }
+
+fn _put_u32(p: *u8, off: usize, v: u32) { { *((p + off) as *u32) = v }; return; }
+fn _put_ptr(p: *u8, off: usize, v: *u8) { { *((p + off) as *u64) = v as u64 }; return; }
+fn _get_u32(p: *u8, off: usize) -> u32 { return { *((p + off) as *u32) }; }
+fn _get_ptr(p: *u8, off: usize) -> *u8 { return { *((p + off) as *u64) } as *u8; }
+
+// UTF-8 → malloc'd, NUL-terminated UTF-16. `0 as *u16` on failure. Caller frees.
+fn _to_wide(s: str) -> *u16 {
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let need: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, cs.as_ptr(),
+                                                  0 -% (1 as i32), 0 as *u16, 0 as i32) };
+            if need <= (0 as i32) { return 0 as *u16; }
+            let buf: *u8 = { malloc((need as usize) *% (2 as usize)) };
+            if buf.is_null() { return 0 as *u16; }
+            let w: *u16 = buf as *u16;
+            let got: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, cs.as_ptr(),
+                                                 0 -% (1 as i32), w, need) };
+            if got <= (0 as i32) { { free(buf) }; return 0 as *u16; }
+            return w;
+        }
+        option::Option[text::CString]::None => { return 0 as *u16; }
+    }
+}
+
+// `cplus/<service>/<key>` — the opaque target name a secret is filed under.
+fn _target(service: str, key: str) -> *u16 {
+    var t: text::Text = text::from_str("cplus/");
+    let _a: status::Status = t.append(service);
+    let _b: status::Status = t.append("/");
+    let _c: status::Status = t.append(key);
+    return _to_wide(t.view());
+}
+
+// `cplus/<service>/*` — the enumerate filter a per-service `clear` walks.
+fn _filter(service: str) -> *u16 {
+    var t: text::Text = text::from_str("cplus/");
+    let _a: status::Status = t.append(service);
+    let _b: status::Status = t.append("/*");
+    return _to_wide(t.view());
+}
 
 export extern fn _c_set(key: *u8, key_len: usize, value: *u8, value_len: usize,
                         service: *u8, service_len: usize) -> i32 {
-    return _c_unsupported();
+    let k: str = { #str_from_raw_parts(key, key_len) };
+    let sv: str = { #str_from_raw_parts(service, service_len) };
+    let tw: *u16 = _target(sv, k);
+    if tw == (0 as *u16) { return _c_failed(); }
+    let uw: *u16 = _to_wide(k);   // UserName — the account field; the key does.
+
+    let cred: *u8 = { malloc(_cred_bytes()) };
+    if cred.is_null() { { free(tw as *u8) }; if uw != (0 as *u16) { { free(uw as *u8) }; } return _c_failed(); }
+    { memset(cred, 0 as i32, _cred_bytes()) };
+    _put_u32(cred, _off_type(), _cred_generic());
+    _put_ptr(cred, _off_target(), tw as *u8);
+    _put_u32(cred, _off_blob_size(), value_len as u32);
+    _put_ptr(cred, _off_blob(), value);
+    _put_u32(cred, _off_persist(), _persist_local_machine());
+    _put_ptr(cred, _off_username(), uw as *u8);
+
+    let ok: i32 = { CredWriteW(cred, 0 as u32) };
+    { free(cred) };
+    { free(tw as *u8) };
+    if uw != (0 as *u16) { { free(uw as *u8) }; }
+    if ok != (0 as i32) { return _c_ok(); }
+    if { GetLastError() } == _error_access_denied() { return _c_denied(); }
+    return _c_failed();
 }
 
 export extern fn _c_get(key: *u8, key_len: usize, service: *u8, service_len: usize,
                         out: *u8, cap: usize) -> i64 {
-    // A NEGATIVE i64 is a status on this seam; a non-negative one would be a
-    // byte count and a claim that `out` now holds a secret. Nothing was stored,
-    // so the only truthful answer is the status.
-    return { _c_unsupported() as i64 };
+    let k: str = { #str_from_raw_parts(key, key_len) };
+    let sv: str = { #str_from_raw_parts(service, service_len) };
+    let tw: *u16 = _target(sv, k);
+    if tw == (0 as *u16) { return { _c_failed() as i64 }; }
+    var pcred: *u8 = 0 as *u8;
+    let ok: i32 = { CredReadW(tw, _cred_generic(), 0 as u32, #addr_of(pcred)) };
+    { free(tw as *u8) };
+    if ok == (0 as i32) {
+        let e: u32 = { GetLastError() };
+        if e == _error_not_found() { return { _c_not_found() as i64 }; }
+        if e == _error_access_denied() { return { _c_denied() as i64 }; }
+        return { _c_failed() as i64 };
+    }
+    let size: u32 = _get_u32(pcred, _off_blob_size());
+    let blob: *u8 = _get_ptr(pcred, _off_blob());
+    // The facade's contract: a value that does not fit `cap` is `_C_FAILED`, not
+    // a short count. `cap` is the contract, not a hint.
+    if (size as usize) > cap {
+        { CredFree(pcred) };
+        return { _c_failed() as i64 };
+    }
+    if size > (0 as u32) && blob.is_not_null() {
+        { memcpy(out, blob, size as usize) };
+    }
+    { CredFree(pcred) };
+    return size as i64;
 }
 
 export extern fn _c_remove(key: *u8, key_len: usize, service: *u8, service_len: usize) -> i32 {
-    return _c_unsupported();
+    let k: str = { #str_from_raw_parts(key, key_len) };
+    let sv: str = { #str_from_raw_parts(service, service_len) };
+    let tw: *u16 = _target(sv, k);
+    if tw == (0 as *u16) { return _c_failed(); }
+    let ok: i32 = { CredDeleteW(tw, _cred_generic(), 0 as u32) };
+    { free(tw as *u8) };
+    if ok != (0 as i32) { return _c_ok(); }
+    let e: u32 = { GetLastError() };
+    if e == _error_not_found() { return _c_not_found(); }
+    if e == _error_access_denied() { return _c_denied(); }
+    return _c_failed();
 }
 
-// 1 present, 0 absent. Nothing is ever stored here, so nothing is present.
 export extern fn _c_contains(key: *u8, key_len: usize, service: *u8, service_len: usize) -> i32 {
-    return 0 as i32;
+    let k: str = { #str_from_raw_parts(key, key_len) };
+    let sv: str = { #str_from_raw_parts(service, service_len) };
+    let tw: *u16 = _target(sv, k);
+    if tw == (0 as *u16) { return 0 as i32; }
+    var pcred: *u8 = 0 as *u8;
+    let ok: i32 = { CredReadW(tw, _cred_generic(), 0 as u32, #addr_of(pcred)) };
+    { free(tw as *u8) };
+    if ok == (0 as i32) { return 0 as i32; }
+    { CredFree(pcred) };
+    return 1 as i32;
 }
 
 export extern fn _c_clear(service: *u8, service_len: usize) -> i32 {
-    // Nothing to clear; report the build has no store rather than a false `Ok`.
-    return _c_unsupported();
+    let sv: str = { #str_from_raw_parts(service, service_len) };
+    let fw: *u16 = _filter(sv);
+    if fw == (0 as *u16) { return _c_failed(); }
+    var count: u32 = 0 as u32;
+    var arr: **u8 = 0 as **u8;
+    let ok: i32 = { CredEnumerateW(fw, 0 as u32, #addr_of(count), #addr_of(arr)) };
+    { free(fw as *u8) };
+    if ok == (0 as i32) {
+        // Nothing under this prefix is not a failure — there was nothing to clear.
+        if { GetLastError() } == _error_not_found() { return _c_ok(); }
+        return _c_failed();
+    }
+    var i: u32 = 0 as u32;
+    while i < count {
+        let entry: *u8 = { *(arr + (i as usize)) };   // PCREDENTIALW
+        if entry.is_not_null() {
+            let tname: *u8 = _get_ptr(entry, _off_target());
+            if tname.is_not_null() {
+                let _d: i32 = { CredDeleteW(tname as *u16, _cred_generic(), 0 as u32) };
+            }
+        }
+        i = i +% (1 as u32);
+    }
+    { CredFree(arr as *u8) };
+    return _c_ok();
 }
 
 // ---- tests -------------------------------------------------------------------
+// Round-trip against the REAL Credential Manager under a self-test service, and
+// clean up after. Every key written is removed, so a failed assertion leaves at
+// most one stray `cplus/cplus-win-selftest/*` entry.
 
-// `securestore.cplus` keeps its `_C_*` wire codes private, so these assert
-// against this file's own honest answers (0 = Ok, -3 = Unsupported) — the codes
-// the facade's `_from_code` turns into `Outcome::Ok` / `Outcome::Unsupported`.
+fn _svc() -> str { return "cplus-win-selftest"; }
 
-#[test]
-fn set_reports_unsupported_rather_than_a_false_ok() {
-    let rc: i32 = { _c_set(#str_ptr("k"), #str_len("k"), #str_ptr("v"), #str_len("v"),
-                           #str_ptr(""), #str_len("")) };
-    assert rc == _c_unsupported();
-    assert rc != _c_ok();
+fn _set(k: str, v: str) -> i32 {
+    return { _c_set(#str_ptr(k), #str_len(k), #str_ptr(v), #str_len(v),
+                    #str_ptr(_svc()), #str_len(_svc())) };
+}
+fn _has(k: str) -> i32 {
+    return { _c_contains(#str_ptr(k), #str_len(k), #str_ptr(_svc()), #str_len(_svc())) };
+}
+fn _del(k: str) -> i32 {
+    return { _c_remove(#str_ptr(k), #str_len(k), #str_ptr(_svc()), #str_len(_svc())) };
 }
 
 #[test]
-fn get_answers_a_negative_status_never_a_byte_count() {
+fn a_secret_round_trips_through_the_credential_manager() {
+    let k: str = "roundtrip-key";
+    let _c0: i32 = _del(k);                 // clean any leftover
+    assert _set(k, "s3cr3t-value") == _c_ok();
+    assert _has(k) == (1 as i32);
+
+    var buf: [u8; 64] = [0u8; 64];
+    let n: i64 = { _c_get(#str_ptr(k), #str_len(k), #str_ptr(_svc()), #str_len(_svc()),
+                          #addr_of(buf) as *u8, 64 as usize) };
+    assert n == (12 as i64);                // "s3cr3t-value" is 12 bytes
+    let got: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
+    assert got == "s3cr3t-value";
+
+    assert _del(k) == _c_ok();
+    assert _has(k) == (0 as i32);
+}
+
+#[test]
+fn get_on_a_missing_key_is_not_found_and_writes_nothing() {
+    let k: str = "definitely-absent-key";
+    let _c0: i32 = _del(k);
     var buf: [u8; 16] = [0u8; 16];
-    let n: i64 = { _c_get(#str_ptr("k"), #str_len("k"), #str_ptr(""), #str_len(""),
+    let n: i64 = { _c_get(#str_ptr(k), #str_len(k), #str_ptr(_svc()), #str_len(_svc()),
                           #addr_of(buf) as *u8, 16 as usize) };
-    // Non-negative would be a claim that `buf` holds a secret; it must not be.
-    assert n < (0 as i64);
-    assert { n as i32 } == _c_unsupported();
+    assert n == { _c_not_found() as i64 };
 }
 
 #[test]
-fn contains_is_false_and_clear_and_remove_do_not_claim_success() {
-    assert { _c_contains(#str_ptr("k"), #str_len("k"), #str_ptr(""), #str_len("")) } == (0 as i32);
-    assert { _c_remove(#str_ptr("k"), #str_len("k"), #str_ptr(""), #str_len("")) } != _c_ok();
-    assert { _c_clear(#str_ptr(""), #str_len("")) } != _c_ok();
+fn a_value_larger_than_cap_is_failed_not_a_short_count() {
+    let k: str = "toobig-key";
+    let _c0: i32 = _del(k);
+    assert _set(k, "0123456789") == _c_ok();     // 10 bytes
+    var small: [u8; 4] = [0u8; 4];
+    let n: i64 = { _c_get(#str_ptr(k), #str_len(k), #str_ptr(_svc()), #str_len(_svc()),
+                          #addr_of(small) as *u8, 4 as usize) };
+    assert n == { _c_failed() as i64 };
+    let _c1: i32 = _del(k);
+}
+
+#[test]
+fn clear_removes_every_key_under_the_service() {
+    let _s1: i32 = _set("clr-a", "1");
+    let _s2: i32 = _set("clr-b", "2");
+    assert _has("clr-a") == (1 as i32);
+    assert _has("clr-b") == (1 as i32);
+    assert { _c_clear(#str_ptr(_svc()), #str_len(_svc())) } == _c_ok();
+    assert _has("clr-a") == (0 as i32);
+    assert _has("clr-b") == (0 as i32);
+    // Clearing an empty service is success, not failure.
+    assert { _c_clear(#str_ptr(_svc()), #str_len(_svc())) } == _c_ok();
 }

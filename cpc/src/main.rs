@@ -5951,13 +5951,19 @@ fn run_clang(
     // rules; bcrypt is CNG, which crypto_sys_windows.cplus binds for SHA-2,
     // HMAC and the system CSPRNG; ntdll is `RtlGetVersion`, the only call that
     // reports the real Windows version; winhttp is the http package's transport.
-    // None is auto-linked, and each is the same import-table-only cost as ws2_32.
+    // advapi32 is the Credential Manager (`CredWriteW`/`CredReadW`/…), the
+    // Windows keychain the `securestore` backend binds; comdlg32 is
+    // `GetOpenFileNameW`/`GetSaveFileNameW`, the file dialogs the `filepicker`
+    // backend binds. None is auto-linked, and each is the same import-table-only
+    // cost as ws2_32 for a program that never calls into it.
     if cfg!(windows) {
         cmd.arg("-lws2_32");
         cmd.arg("-lshell32");
         cmd.arg("-lbcrypt");
         cmd.arg("-lntdll");
         cmd.arg("-lwinhttp");
+        cmd.arg("-ladvapi32");
+        cmd.arg("-lcomdlg32");
         // THE APPLICATION MANIFEST, embedded as an RT_MANIFEST resource.
         //
         // A Windows process gets Common Controls **5.82** by default — the 1995
