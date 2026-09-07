@@ -182,22 +182,10 @@ impl<'a> Printer<'a> {
         } else {
             // Normal same-line spacing.
             let prev = self.prev_kind.as_ref().expect("started but no prev_kind");
-            // `|` is bitwise-or (spaced) EXCEPT the two delimiters of an
-            // `else |Pat|` complement pattern, which hug the pattern. Decide from
-            // the pipe's neighbours: `idx` when the pipe is `curr`, `idx - 1` when
-            // it's `prev` (same-line, so `prev` is the immediately preceding token).
-            // Both delimiters of an `else |Pat|` complement pattern hug the
-            // pattern: `…)|` is tight before the close, `|Pat` tight after the
-            // open. Everything else gets normal context-based spacing.
-            let hugs_pattern = (matches!(tok.kind, TokenKind::Pipe)
-                && matches!(pipe_role(all, idx), PipeRole::PatternClose))
-                || (matches!(prev, TokenKind::Pipe)
-                    && matches!(pipe_role(all, idx - 1), PipeRole::PatternOpen));
-            let space = if hugs_pattern {
-                false
-            } else {
-                needs_space_between_ctx(self.prev_prev_kind.as_ref(), prev, &tok.kind)
-            };
+            // v0.0.28: `|` is always the bitwise-or operator. The retired
+            // `else |Pat|` form was the only place a pipe delimited a pattern
+            // and needed tight spacing; with it gone there is no special case.
+            let space = needs_space_between_ctx(self.prev_prev_kind.as_ref(), prev, &tok.kind);
             if space {
                 self.out.push(' ');
             }
@@ -543,10 +531,8 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
         return false;
     }
 
-    // `|` (Pipe) gets normal binary-op spacing via `is_binary_op` below — it's
-    // the bitwise-or operator. The one exception, the `else |Pat|` complement
-    // pattern, is handled by `pipe_role` at the emit site (the two pattern pipes
-    // are forced tight there), so by the time a Pipe reaches here it is bitwise.
+    // `|` (Pipe) gets normal binary-op spacing via `is_binary_op` below — it is
+    // the bitwise-or operator, and since v0.0.28 that is its only role.
 
     // `:` in `name: T` — no space before, one after.
     if matches!(curr, Colon) {
@@ -628,34 +614,6 @@ fn is_unary_prefix(t: &TokenKind) -> bool {
     false
 }
 
-/// The role a `|` token plays, decided from its non-trivia neighbours. The two
-/// delimiters of an `else |Pat|` complement pattern stay tight against the
-/// pattern; every other `|` is bitwise-or and gets normal binary spacing.
-enum PipeRole {
-    /// Opening delimiter of `else |Pat|` (previous non-trivia token is `else`).
-    PatternOpen,
-    /// Closing delimiter of `else |Pat|` (next non-trivia token is `{`).
-    PatternClose,
-    /// Ordinary bitwise-or (`a | b`, NS_OPTIONS composition).
-    Bitwise,
-}
-
-/// Classify the `|` at `idx`. Opening is detected before closing so a pipe right
-/// after `else` is always treated as the pattern opener.
-fn pipe_role(all: &[Token], idx: usize) -> PipeRole {
-    use TokenKind::*;
-    let is_trivia = |k: &TokenKind| matches!(k, LineComment(_) | BlockComment(_));
-    let prev = all[..idx].iter().rev().map(|t| &t.kind).find(|k| !is_trivia(k));
-    if matches!(prev, Some(Else)) {
-        return PipeRole::PatternOpen;
-    }
-    let next = all[idx + 1..].iter().map(|t| &t.kind).find(|k| !is_trivia(k));
-    if matches!(next, Some(LBrace)) {
-        return PipeRole::PatternClose;
-    }
-    PipeRole::Bitwise
-}
-
 fn is_binary_op(t: &TokenKind) -> bool {
     use TokenKind::*;
     matches!(
@@ -697,9 +655,7 @@ fn is_binary_op(t: &TokenKind) -> bool {
             | In
     )
     // `Pipe` is the bitwise-or operator (`a | b`, NS_OPTIONS composition) and
-    // gets normal binary spacing here. Its other role — the `else |Pat|`
-    // complement-pattern delimiter — is kept tight by `pipe_role` at the emit
-    // site, which overrides the spacing for those two specific pipes.
+    // gets normal binary spacing here — its only role since v0.0.28.
     // Excluded here (handled separately):
     //   `DotDot`, `DotDotEq` — range operators; tight on both sides.
 }
@@ -760,21 +716,31 @@ mod tests {
     }
 
     #[test]
-    fn complement_pattern_pipes_stay_tight() {
-        // The `else |Pat|` complement-pattern delimiters hug the pattern, even
-        // though bitwise `|` is now spaced. `pipe_role` keeps these two tight.
-        let src = "fn f() -> i32 {\n    guard let R::Ok(v) = run() else |R::Err(e)| {\n        return e;\n    }\n    return v;\n}\n";
+    fn guard_else_pattern_formats_without_pipes() {
+        // v0.0.28: the else-pattern is a bare pattern. It gets ordinary
+        // spacing — one space after `else`, one before the block.
+        let src = "fn f() -> i32 {\n    guard let R::Ok(v) = run() else R::Err(e) {\n        return e;\n    }\n    return v;\n}\n";
         let out = fmt(src);
-        assert!(out.contains("else |R::Err(e)| {"), "complement pattern stays tight:\n{out}");
+        assert!(out.contains("else R::Err(e) {"), "else-pattern spacing:\n{out}");
+    }
+
+    #[test]
+    fn bitwise_or_is_always_spaced() {
+        // With the pattern-delimiter role gone, every `|` is bitwise and is
+        // spaced — including one sitting right after `else`.
+        let src = "fn f() -> i32 {\n    let a: i32 = 1|2;\n    if a > 0 {\n        return a;\n    } else {\n        return 1|4;\n    }\n}\n";
+        let out = fmt(src);
+        assert!(out.contains("1 | 2"), "bitwise or spaced:\n{out}");
+        assert!(out.contains("1 | 4"), "bitwise or spaced after else block:\n{out}");
     }
 
     #[test]
     fn pattern_var_forms_keep_spacing() {
         // `guard var` / `if var` / `while var` — the contextual `var` keeps
         // ordinary identifier spacing in the pattern-binding head.
-        let src = "fn f() -> i32 {\n    guard var R::Ok(v) = run() else |R::Err(e)| {\n        return e;\n    }\n    if var R::Ok(w) = run() {\n        w = 1;\n    }\n    while var R::Ok(u) = run() {\n        u = 2;\n    }\n    return v;\n}\n";
+        let src = "fn f() -> i32 {\n    guard var R::Ok(v) = run() else R::Err(e) {\n        return e;\n    }\n    if var R::Ok(w) = run() {\n        w = 1;\n    }\n    while var R::Ok(u) = run() {\n        u = 2;\n    }\n    return v;\n}\n";
         let out = fmt(src);
-        assert!(out.contains("guard var R::Ok(v) = run() else |R::Err(e)| {"), "guard var head:\n{out}");
+        assert!(out.contains("guard var R::Ok(v) = run() else R::Err(e) {"), "guard var head:\n{out}");
         assert!(out.contains("if var R::Ok(w) = run() {"), "if var head:\n{out}");
         assert!(out.contains("while var R::Ok(u) = run() {"), "while var head:\n{out}");
     }

@@ -188,7 +188,8 @@ an interaction the app never asked for and would collide with the context menu.
 
 ## 2. Not yet built — iOS has an answer, this pass did not write it
 
-**Nothing.** Every kind facet describes reaches a UIKit body:
+**One prop** — `label.selectable`, below. Every KIND facet describes still
+reaches a UIKit body:
 
 | Kind | What it is now |
 |---|---|
@@ -200,6 +201,61 @@ an interaction the app never asked for and would collide with the context menu.
 | `canvas` | A `UIView` subclass with `drawRect:`, replaying facet's recorded display list against Core Graphics |
 | `split` | flex geometry plus a drawn divider (the drag is section 1) |
 | `menu`, `toolbar_item` | the menu BAR — iOS has none (section 1) |
+
+### `copy_text` answers weaker here than on AppKit
+
+Not a gap — a difference the portable contract should not hide. `copy_text`
+returns whether the platform took the string; `UIPasteboard.setString:` is
+**void**, because the general pasteboard on iOS is a system service an app
+writes to rather than a board it takes ownership of. There is no clear-then-own
+dance and no failure to report.
+
+So the `bool` says the pasteboard object was there. That is weaker than the
+AppKit answer, and saying so is better than inventing a success value that would
+make the portable contract read stronger on this platform than it is. GTK and
+Android answer weakly for their own reasons; AppKit is the one that can really
+tell you.
+
+`paste_text` is exact: `hasStrings` is checked before `string`, because `string`
+answers an empty value for a board with no string at all — so without the check
+an empty board and a board holding `""` would be the same answer, which is the
+one distinction the `Option` exists to make.
+
+### `label.selectable` — the only prop with no body on this backend
+
+`selectable` says the drawn text may be picked up and copied. AppKit answers it
+with `setSelectable:` on the NSTextField it already built, GTK with
+`gtk_label_set_selectable`, Android with `setTextIsSelectable`. **A UILabel has
+no such property and no selection at all** — on iOS, selectable text is a
+`UITextView`.
+
+So this is the one place where the portable prop needs a different CARRIER
+rather than a different call, and that is why it is here rather than in section
+1: iOS has an answer, and writing it is more than a line.
+
+What it would take, named so the next pass does not rediscover it:
+
+* `create_label` picks the class from the prop, the way `create_text_field`
+  already picks `UISecureTextField` — a `UITextView` with `editable = NO`,
+  `selectable = YES`, `scrollEnabled = NO`, and `textContainerInset` plus
+  `lineFragmentPadding` zeroed, or every selectable label gains ~13pt of
+  padding facet's layout engine did not place.
+* Every branch of `apply_label` then has to answer for both classes.
+  `setAttributedText:` and `setFont:` are common; `numberOfLines`,
+  `lineBreakMode` and `adjustsFontForContentSizeCategory` are UILabel-only and
+  reach a text view through its `textContainer` and its layout manager instead.
+* The measure path (`intrinsicContentSize`) differs, so the vertical-alignment
+  hack in `apply_label_vertical` needs its own answer for the text-view case.
+* It is a CREATE-time class choice, which means `selectable` becomes
+  create-only on this backend alone — a flip after mount would need a reclass,
+  which recycling row pools make expensive. That is a real divergence from the
+  other three, where the prop is live, and it should be stated in the same
+  change rather than discovered.
+
+Until then a label on iOS reads and does not copy, and `selectable` is accepted
+and ignored — which is what this section means. **It is not `absent` debt in the
+`verb_coverage` sense**: that gate reads facet_appkit's manifest, and AppKit
+implements this verb.
 
 ### `symbol` has TWO tiers, and the bundled one is the app's to ship
 
@@ -623,8 +679,8 @@ that states a corner anchor still needs it: a layer puts its anchor point AT
 
 ## 6. The facade, and what the window host does not do
 
-`facet/src/runtime_ios.cplus` is the facade; `window.cplus` here is the host it
-calls. Both are new and both are unrun.
+`facet_runtime/src/runtime_ios.cplus` is the facade; `window.cplus` here is the
+host it calls.
 
 ### `UIApplicationMain` is called with argc 0 and argv NULL
 
@@ -759,11 +815,23 @@ the object `requestGeometryUpdate` takes — carries `interfaceOrientations` and
 nothing else on iOS. An app that wants a fixed size sets `min_*` and `max_*` to
 the same value.
 
-### `nav::push` / `nav::pop` are refused
+### `nav::push` / `nav::pop` are a UINavigationController stack
 
-A pushed screen is a modal presentation on iOS — the same tier `alert`,
-`prompt`, `choose` and `present_window` wait on. They answer `false` rather than
-doing nothing silently, which is what their callers check.
+This section used to say they were refused. They are not, and have not been
+since `window.cplus` grew the stack: `push_screen` pushes a view controller and
+`pop_screen` pops one, so the back button and the swipe-back gesture come with
+the platform rather than being drawn. A pop is reported through
+`didShowViewController` by reading the LIVE stack, which is what makes a swipe
+and a `nav::pop` the same event instead of two paths that must agree.
+
+`nav::push`'s `show:` argument is accepted and ignored here, and that is the
+rule working rather than a gap: `Show::Window` asks for a peer window "where the
+platform has room", and an iPhone has one window, so the room is a stack entry.
+An iPad that opts into multiple scenes is where the two would diverge — see
+WINDOWING.md and plans/nav-windows.md step 7.
+
+`alert`, `prompt`, `choose` and `present_window` are still the modal tier and
+still refused.
 
 ---
 

@@ -1,0 +1,896 @@
+// facet stack — the in-place screen stack. HAND-WRITTEN.
+//
+// ONE BODY, THREE JOBS. This is what `nav::push(show: Show::Screen)` does on a
+// desktop, what EVERY push does on Android, and what a bare `nav::push` falls
+// back to on a phone — where "with whatever room this platform has" comes out
+// as a stack entry because there is no second window to be had. Writing it once
+// here rather than per facade is the point: the alternative was three
+// implementations of a stack that must agree about lifecycle, and Android's
+// simply never being written at all.
+//
+// It is portable because it needs nothing platform-shaped. `mount` already has
+// every primitive:
+//
+//   add_child / remove_child   attach and detach a subtree of a LIVE tree
+//   switch_to                  show one child, park its siblings under
+//                              Display::None — with the whole-subtree walk and
+//                              the grid handling already argued out
+//
+// So a stack is a keyed container (the HOST) whose child 0 is the primary
+// screen and whose later children are pushed screens, with exactly one shown.
+//
+// THE LIFECYCLE REASONS ARE NOT INTERCHANGEABLE, and the enum says why:
+//
+//   push  covers the screen beneath  -> Detach::Inactive  (lost focus, views
+//         still live, EXPLICITLY not a release signal — a screen you are one
+//         gesture away from returning to must not hand back its camera)
+//         and the new screen         -> Attach::Mount     (it just entered the tree)
+//   pop   removes the top            -> Detach::Unmount   (leaving the tree)
+//         and reveals the one below  -> Attach::Active    ("visible again after
+//         being fully gone", which is exactly what a pop is)
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/box" as box;
+import "flex_layout/flex_layout" as flex;
+import "./facet" as core;
+import "./vocabulary" as vocab;
+import "./component" as component;
+import "./mount" as mount;
+import "./screen" as screen;
+import "./application" as app;
+import "./app_events" as app_events;
+
+// ---- the host -----------------------------------------------------------------
+
+// The container the App loop opened its window with. Registered once per
+// primary screen; cleared when that screen goes.
+fn set_host(n: *core::Node) {
+    let s: *app::Application = app::current();
+    { (*s).stack_host = n };
+}
+
+fn host() -> *core::Node {
+    let s: *app::Application = app::current();
+    return { (*s).stack_host };
+}
+
+fn has_host() -> bool { return host().is_not_null(); }
+
+// Wrap a screen's tree so the stack has a node it can address by key and park
+// as a unit. The screen's own root keeps whatever key it chose — an app's
+// `find` must not start depending on a name the stack invented.
+//
+// grow + shrink on the wrapper, or the parked/shown swap would lay the screen
+// out at its content's height and pin everything under it. The same rule the
+// gallery's outlet learned the hard way.
+fn wrap(take tree: core::Node, key: str) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    // A SCREEN FILLS ITS WINDOW, and this is where that becomes true.
+    //
+    // Before the stack existed, a screen's tree WAS the window root and was
+    // laid out at the window's size directly — so whatever it returned filled,
+    // and nothing had to say so. Nesting it under a host made that a real flex
+    // question for the first time, and a tree that sizes to its content
+    // collapses: measured at 141pt in an 808pt window, with the app's own
+    // `.justify(Center)` then centring inside the 141 and everything sitting at
+    // the top.
+    //
+    // The screen does not have to ask for this and must not have to: filling
+    // the window is what being the window's screen MEANS. An app that wants
+    // less says so inside its own tree.
+    var filled: core::Node = tree;
+    filled.set_grow(1.0f64);
+    filled.set_shrink(1.0f64);
+    b.add(filled);
+    var w: core::Node = core::column(b, key: key);
+    w.set_grow(1.0f64);
+    w.set_shrink(1.0f64);
+    return w;
+}
+
+// THE WINDOW ROOT AN APP LOOP OPENS. The primary screen's tree goes in as child
+// 0 under the base key, and pushes land beside it — so a window that never
+// pushes anything pays one container and nothing else.
+//
+// The facade calls this instead of using `sb.build()` directly, then
+// `set_host` on the result once it is mounted.
+fn open_base(take tree: core::Node) -> core::Node {
+    // WHAT THE SCREEN SAID ABOUT BEING A ROOT, CARRIED UP.
+    //
+    // Some properties are read from THE ROOT and nowhere else — the safe area
+    // is, and `facet_appkit/scheduler.cplus:safe_insets` asks exactly one node.
+    // A screen that opts out (`root.set_safe_area(SafeArea::None)`, which iris's
+    // every screen does) was the root until this host existed; now it is a
+    // child, its opt-out is on a node nobody asks, and the window inset it was
+    // avoiding comes back as a border around the app.
+    //
+    // Reported from iris, 2026-09-06: "the window has borders, which should
+    // not". Nothing in facet's own suites could see it — a headless tree has no
+    // window to inset.
+    //
+    // So the host ADOPTS the screen's root-scoped answers rather than replacing
+    // them. A screen must not have to know it is being hosted.
+    var inner: core::Node = tree;
+    let sa: vocab::SafeArea = inner.safe_area();
+    var b: flex::Builder = flex::Builder::new();
+    b.add(wrap(inner, base_key()));
+    var h: core::Node = core::column(b, key: "@screen:stack");
+    h.set_grow(1.0f64);
+    h.set_shrink(1.0f64);
+    h.set_safe_area(sa);
+    return h;
+}
+
+// ---- reads ---------------------------------------------------------------------
+
+// How many screens have been PUSHED. The primary is not one of them, so 0 means
+// "the screen the App loop opened" and `nav::can_pop()` is false there — which
+// is what lets a platform's own back behaviour through at the root.
+fn depth() -> usize {
+    let s: *app::Application = app::current();
+    return { (*s).stack.count() };
+}
+
+// The route on top: the deepest pushed screen, or "" when the primary is
+// showing.
+fn top_route() -> str {
+    let s: *app::Application = app::current();
+    let n: usize = { (*s).stack.count() };
+    if n == (0 as usize) { return ""; }
+    return match { (*s).stack.at_ptr(n -% (1 as usize)) } {
+        option::Option[*app::StackEntry]::Some(e) => { (*e).route.view() },
+        option::Option[*app::StackEntry]::None => "",
+    };
+}
+
+fn top_key() -> str {
+    let s: *app::Application = app::current();
+    let n: usize = { (*s).stack.count() };
+    if n == (0 as usize) { return ""; }
+    return match { (*s).stack.at_ptr(n -% (1 as usize)) } {
+        option::Option[*app::StackEntry]::Some(e) => { (*e).key.view() },
+        option::Option[*app::StackEntry]::None => "",
+    };
+}
+
+// Is `route` anywhere on the stack? `pop_to` asks this BEFORE it moves, which
+// is the whole reason `nav::pop_to` is a hook rather than a loop in nav: nav
+// can only see the top, so it would have to pop to find out — destroying the
+// stack to learn it should not have.
+fn holds_route(route: str) -> bool {
+    let s: *app::Application = app::current();
+    let n: usize = { (*s).stack.count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        let hit: bool = match { (*s).stack.at_ptr(i) } {
+            option::Option[*app::StackEntry]::Some(e) => ({ (*e).route.view() } == route),
+            option::Option[*app::StackEntry]::None => false,
+        };
+        if hit { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// The key the primary screen's wrapper carries, so `pop` has something to
+// `switch_to` when the stack empties.
+fn base_key() -> str { return "@screen:base"; }
+
+// ---- the screen under the top ---------------------------------------------------
+// The one a pop reveals: the entry below the top, or the primary.
+
+fn _below_key() -> text::Text {
+    let s: *app::Application = app::current();
+    let n: usize = { (*s).stack.count() };
+    if n <= (1 as usize) { return text::from_str(base_key()); }
+    return match { (*s).stack.at_ptr(n -% (2 as usize)) } {
+        option::Option[*app::StackEntry]::Some(e) => text::from_str({ (*e).key.view() }),
+        option::Option[*app::StackEntry]::None => text::from_str(base_key()),
+    };
+}
+
+fn _sbp_at(i: usize) -> *u8 {
+    let s: *app::Application = app::current();
+    return match { (*s).stack.at_ptr(i) } {
+        option::Option[*app::StackEntry]::Some(e) => { (*e).sbp },
+        option::Option[*app::StackEntry]::None => 0 as *u8,
+    };
+}
+
+// Tell the screen under the top that it lost focus, or the primary if the stack
+// is empty. The PRIMARY has no ScreenBox here — the App loop owns it — so it is
+// notified by the facade, not by this module.
+fn _notify_covered() {
+    let n: usize = depth();
+    if n == (0 as usize) { return; }
+    let p: *u8 = _sbp_at(n -% (1 as usize));
+    if p.is_null() { return; }
+    { (*(p as *screen::ScreenBox)).on_detach(component::Detach::Inactive) };
+}
+
+// ---- push -----------------------------------------------------------------------
+
+// Show `sb` in place, over whatever is showing now. False when there is no
+// stack host (an entry point that opened a bare tree), when the screen is
+// invalid, or when the tree could not be attached — and nothing has changed in
+// any of those cases.
+fn push(take sb: screen::ScreenBox, route: str, key: str) -> bool {
+    var owned: screen::ScreenBox = sb;
+    let h: *core::Node = host();
+    if h.is_null() { return false; }
+    if !owned.valid() { return false; }
+
+    // The tree first: a screen that cannot build must not have disturbed the
+    // one already showing.
+    var tree: core::Node = owned.build();
+    let wrapper_key: text::Text = text::from_str(key);
+    if !mount::add_child(h, wrap(tree, wrapper_key.view())) { return false; }
+
+    let at: usize = core::child_count_of(h) -% (1 as usize);
+    let added: *core::Node = match core::child_of(h, at) {
+        option::Option[*core::Node]::Some(p) => p,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+    if added.is_null() { return false; }
+
+    let sbp: *u8 = match box::new::[screen::ScreenBox](owned) {
+        option::Option[box::Box[screen::ScreenBox]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[screen::ScreenBox]]::None => 0 as *u8,
+    };
+    if sbp.is_null() {
+        // Give the tree back rather than leaving a screen on screen that
+        // nothing owns.
+        let _gone: option::Option[core::Node] = mount::remove_child(h, at);
+        return false;
+    }
+
+    // COVERED BEFORE SHOWN: the screen beneath learns it lost focus while it is
+    // still the one on screen, which is the order every detach in facet uses.
+    _notify_covered();
+
+    let s: *app::Application = app::current();
+    { (*s).stack.append(app::StackEntry {
+        key: wrapper_key, route: text::from_str(route), sbp: sbp, root: added }) };
+
+    let _shown: bool = mount::switch_to(h, key);
+    { (*(sbp as *screen::ScreenBox)).on_attach(component::Attach::Mount) };
+    // THE APP LIFECYCLE. A pushed screen is still on the stack when the app
+    // goes to background, and a covered screen is told `Inactive` — which is
+    // explicitly NOT a release signal. `Background` is, and it only arrives if
+    // the screen is bound. The box is heap-held until `pop`, so the address is
+    // good for the subscription's whole life.
+    let _bound: status::Status =
+        component::bind_app_lifecycle::[screen::ScreenBox](sbp as *screen::ScreenBox);
+    return true;
+}
+
+// ---- pop ------------------------------------------------------------------------
+
+// Dismiss the top screen and reveal the one under it. False when the stack is
+// empty — the answer each backend turns into its platform's own behaviour.
+fn pop() -> bool {
+    let h: *core::Node = host();
+    if h.is_null() { return false; }
+    let n: usize = depth();
+    if n == (0 as usize) { return false; }
+
+    let s: *app::Application = app::current();
+    let below: text::Text = _below_key();
+
+    // The top's own teardown runs while its views are still alive, which is
+    // what `Detach::Unmount` promises.
+    let top_sbp: *u8 = _sbp_at(n -% (1 as usize));
+    if top_sbp.is_not_null() {
+        // Unbound BEFORE the box can be freed — an app event delivered to a
+        // freed screen is the use-after-free the deferred free exists to avoid,
+        // arriving by another door.
+        let _unbound: status::Status =
+            component::unbind_app_lifecycle::[screen::ScreenBox](top_sbp as *screen::ScreenBox);
+        { (*(top_sbp as *screen::ScreenBox)).on_detach(component::Detach::Unmount) };
+    }
+
+    // Reveal first, then remove: a window showing nothing at all — even for one
+    // frame — is worse than the extra switch, and it is the order `show_route`
+    // already uses on iOS for the same reason.
+    let _shown: bool = mount::switch_to(h, below.view());
+
+    let entry: option::Option[app::StackEntry] = { (*s).stack.remove(at: n -% (1 as usize)) };
+    // Every `screen::Cursor` made before this point is now stale.
+    app::note_screen_removed();
+    match entry {
+        option::Option[app::StackEntry]::Some(e) => {
+            let root: *core::Node = { e.root };
+            var at: usize = 0 as usize;
+            let kids: usize = core::child_count_of(h);
+            var found: bool = false;
+            while at < kids {
+                match core::child_of(h, at) {
+                    option::Option[*core::Node]::Some(c) => {
+                        if c == root { found = true; at = at; break; }
+                    }
+                    option::Option[*core::Node]::None => { }
+                }
+                at = at +% (1 as usize);
+            }
+            if found {
+                // Dropping the subtree is what releases its views, through the
+                // release the renderer paired with them.
+                let _gone: option::Option[core::Node] = mount::remove_child(h, at);
+            }
+            // THE SCREENBOX IS NOT FREED HERE, and the reason is the one the
+            // facades already record for a closed screen: a queued apply may
+            // still be inside this screen's data, and the next screen is
+            // allocated into whatever this frees. The facades defer through
+            // `services::free_when_settled`; this module has no scheduler, so
+            // it hands the pointer back to the caller's teardown instead — see
+            // `pop_and_take`.
+            let _keep: *u8 = { e.sbp };
+        }
+        option::Option[app::StackEntry]::None => { }
+    }
+
+    // And the revealed screen is visible again after being fully gone.
+    let m: usize = depth();
+    if m > (0 as usize) {
+        let p: *u8 = _sbp_at(m -% (1 as usize));
+        if p.is_not_null() {
+            { (*(p as *screen::ScreenBox)).on_attach(component::Attach::Active) };
+        }
+    }
+    return true;
+}
+
+// `pop`, handing back the dismissed screen's box so a caller with a scheduler
+// can free it once nothing is in flight. Null when nothing popped.
+fn pop_and_take() -> *u8 {
+    let n: usize = depth();
+    if n == (0 as usize) { return 0 as *u8; }
+    let p: *u8 = _sbp_at(n -% (1 as usize));
+    if !pop() { return 0 as *u8; }
+    return p;
+}
+
+// Unwind until `route` is on top. NOTHING MOVES when it is not on the stack —
+// the check happens first, which is why this lives here and not in nav.
+fn pop_to(route: str) -> bool {
+    if !holds_route(route) { return false; }
+    var sweeps: usize = 0 as usize;
+    loop {
+        if top_route() == route { return true; }
+        if depth() == (0 as usize) { return false; }
+        sweeps = sweeps +% (1 as usize);
+        if sweeps > (256 as usize) { return false; }
+        if !pop() { return false; }
+    }
+}
+
+// Everything off, back to the primary. A `nav::go` replacing the primary screen
+// takes its whole stack with it.
+fn clear() {
+    var sweeps: usize = 0 as usize;
+    loop {
+        if depth() == (0 as usize) { return; }
+        sweeps = sweeps +% (1 as usize);
+        if sweeps > (256 as usize) { return; }
+        if !pop() { return; }
+    }
+}
+
+// The App loop calls this when its primary screen goes: the stack is that
+// screen's, and the next one starts empty with no host until it registers one.
+fn reset() {
+    clear();
+    set_host(0 as *core::Node);
+}
+
+// ---- replacing the primary ------------------------------------------------------
+
+// `nav::go` shows a DIFFERENT primary screen in the same window. The stack is
+// that screen's, so it goes with it — a route change is not a place you can
+// press back into.
+//
+// The new tree is built by the caller and the OLD one is handed back, so the
+// facade can run its screen's teardown in the right order and free on its own
+// schedule. Returns false when there is no host, and then nothing moved.
+fn replace_base(take tree: core::Node) -> bool {
+    let h: *core::Node = host();
+    if h.is_null() { return false; }
+    // The pushed screens FIRST, each through the ordinary pop so every one gets
+    // its `Detach::Unmount` while its views are still alive.
+    clear();
+    let old: option::Option[core::Node] =
+        mount::replace_child(h, 0 as usize, wrap(tree, base_key()));
+    match old {
+        option::Option[core::Node]::Some(_gone) => { }
+        option::Option[core::Node]::None => { return false; }
+    }
+    // And show it: the base may have been parked under Display::None by a push
+    // that never popped.
+    let _shown: bool = mount::switch_to(h, base_key());
+    return true;
+}
+
+// ---- tests -------------------------------------------------------------------
+
+static ST_BUILDS: i32 = 0;
+static ST_ATTACH_MOUNT: i32 = 0;
+static ST_ATTACH_ACTIVE: i32 = 0;
+static ST_DETACH_INACTIVE: i32 = 0;
+static ST_DETACH_UNMOUNT: i32 = 0;
+static ST_DETACH_BACKGROUND: i32 = 0;
+
+struct Probe { tag: i32 }
+
+impl Probe: component::Component {
+    fn build(ref this) -> core::Node {
+        ST_BUILDS = ST_BUILDS + 1;
+        var b: flex::Builder = flex::Builder::new();
+        return core::column(b, key: "probe:body");
+    }
+}
+
+impl Probe: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) {
+        match why {
+            component::Attach::Mount => { ST_ATTACH_MOUNT = ST_ATTACH_MOUNT + 1; }
+            component::Attach::Active => { ST_ATTACH_ACTIVE = ST_ATTACH_ACTIVE + 1; }
+            _other => { }
+        }
+    }
+    fn on_detach(ref this, why: component::Detach) {
+        match why {
+            component::Detach::Inactive => { ST_DETACH_INACTIVE = ST_DETACH_INACTIVE + 1; }
+            component::Detach::Unmount => { ST_DETACH_UNMOUNT = ST_DETACH_UNMOUNT + 1; }
+            component::Detach::Background => { ST_DETACH_BACKGROUND = ST_DETACH_BACKGROUND + 1; }
+            _other => { }
+        }
+    }
+}
+
+impl Probe: screen::Screen {
+    fn chrome(this) -> screen::Chrome { return screen::Chrome::new(title: "probe"); }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
+        return vec::new::[screen::MenuItem]();
+    }
+}
+
+fn st_box(tag: i32) -> screen::ScreenBox {
+    return screen::screen_box::[Probe](Probe { tag: tag });
+}
+
+// A mounted stack host with a primary screen under it, exactly as an App loop
+// would open one.
+fn st_open() -> core::Node {
+    var inner: flex::Builder = flex::Builder::new();
+    var base: core::Node = core::column(inner, key: "base:body");
+    return open_base(base);
+}
+
+fn st_reset() {
+    app::reset_default_for_tests();
+    ST_BUILDS = 0;
+    ST_ATTACH_MOUNT = 0;
+    ST_ATTACH_ACTIVE = 0;
+    ST_DETACH_INACTIVE = 0;
+    ST_DETACH_UNMOUNT = 0;
+    ST_DETACH_BACKGROUND = 0;
+}
+
+#[test]
+fn st_a_push_reports_depth_and_route() {
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+    assert depth() == (0 as usize);
+    assert top_route() == "";
+    assert push(st_box(1), "details", "details");
+    assert depth() == (1 as usize);
+    assert top_route() == "details";
+    reset();
+    st_reset();
+}
+
+#[test]
+fn st_a_push_fires_attach_mount() {
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+    assert push(st_box(1), "details", "details");
+    assert ST_ATTACH_MOUNT == 1;
+    reset();
+    st_reset();
+}
+
+#[test]
+fn st_covering_a_screen_is_inactive_not_unmount() {
+    // A screen one gesture from returning must NOT be told to release.
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+    assert push(st_box(1), "details", "details");
+    assert push(st_box(2), "edit", "edit");
+    assert ST_DETACH_INACTIVE == 1;
+    assert ST_DETACH_UNMOUNT == 0;
+    reset();
+    st_reset();
+}
+
+#[test]
+fn st_a_pop_unmounts_the_top_and_reactivates_the_one_below() {
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+    assert push(st_box(1), "details", "details");
+    assert push(st_box(2), "edit", "edit");
+    assert pop();
+    assert depth() == (1 as usize);
+    assert top_route() == "details";
+    assert ST_DETACH_UNMOUNT == 1;
+    assert ST_ATTACH_ACTIVE == 1;
+    reset();
+    st_reset();
+}
+
+#[test]
+fn st_an_empty_stack_answers_false() {
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+    assert push(st_box(1), "details", "details");
+    assert pop();
+    assert depth() == (0 as usize);
+    assert top_route() == "";
+    assert pop() == false;
+    reset();
+    st_reset();
+}
+
+#[test]
+fn pop_to_looks_before_it_moves() {
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+
+    assert push(st_box(1), "a", "a");
+    assert push(st_box(2), "b", "b");
+    assert push(st_box(3), "c", "c");
+    assert depth() == (3 as usize);
+
+    // A route that is not on the stack moves NOTHING. The version of this that
+    // lived in nav popped speculatively to find out and destroyed the stack.
+    assert pop_to("nowhere") == false;
+    assert depth() == (3 as usize);
+    assert top_route() == "c";
+
+    assert pop_to("a");
+    assert depth() == (1 as usize);
+    assert top_route() == "a";
+
+    // Already on top: success, nothing moved.
+    assert pop_to("a");
+    assert depth() == (1 as usize);
+    reset();
+    st_reset();
+}
+
+#[test]
+fn two_pushes_of_one_route_are_two_entries() {
+    // The camera case: one route, two arguments, two screens — so `pop_to` by
+    // route finds the OUTER one and the keys stay distinct.
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+
+    assert push(st_box(1), "camera", "camera:front");
+    assert push(st_box(2), "camera", "camera:back");
+    assert depth() == (2 as usize);
+    assert top_key() == "camera:back";
+    assert top_route() == "camera";
+    assert holds_route("camera");
+    assert pop();
+    assert top_key() == "camera:front";
+    reset();
+    st_reset();
+}
+
+#[test]
+fn clear_takes_the_whole_stack_and_reset_drops_the_host() {
+    // A `nav::go` replacing the primary takes its stack with it.
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+    assert push(st_box(1), "a", "a");
+    assert push(st_box(2), "b", "b");
+    clear();
+    assert depth() == (0 as usize);
+    assert ST_DETACH_UNMOUNT == 2;
+    reset();
+    assert has_host() == false;
+    st_reset();
+}
+
+#[test]
+fn a_stack_without_a_host_is_inert() {
+    // Every entry point that opens a bare tree rather than a screen — a plain
+    // mount, `run_component`, a sheet. There is nowhere to push INTO, and the
+    // honest answer is false rather than a screen mounted nowhere.
+    st_reset();
+    assert has_host() == false;
+    assert depth() == (0 as usize);
+    assert push(st_box(1), "a", "a") == false;
+    assert pop() == false;
+    assert pop_to("a") == false;
+    assert top_route() == "";
+    // and no screen was built, so nothing was half-created
+    assert ST_BUILDS == 0;
+    assert ST_ATTACH_MOUNT == 0;
+    st_reset();
+}
+
+#[test]
+fn an_invalid_screen_does_not_disturb_what_is_showing() {
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+    assert push(st_box(1), "a", "a");
+    assert depth() == (1 as usize);
+    // The unknown-route box: valid() is false and nothing happens.
+    assert push(screen::ScreenBox::invalid(), "ghost", "ghost") == false;
+    assert depth() == (1 as usize);
+    assert top_route() == "a";
+    reset();
+    st_reset();
+}
+
+// ---- the screen cursor, over a live stack ----------------------------------------
+// These live here rather than in screen.cplus because only this module can
+// build a stack to address. The cursor itself is screen.cplus's.
+
+#[test]
+fn st_a_pushed_screen_is_found_by_key() {
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+
+    assert push(st_box(1), "camera", "camera:front");
+    assert push(st_box(2), "camera", "camera:back");
+
+    match screen::find("camera:front") {
+        option::Option[screen::Cursor]::Some(c) => {
+            assert c.is_live();
+            assert c.key() == "camera:front";
+            assert c.route() == "camera";
+            assert c.depth() == (0 as usize);
+            assert c.is_top() == false;
+            assert c.root().is_not_null();
+            // The window it is in — an in-place stack lives in ONE window,
+            // which is what makes it in-place.
+            assert c.window_key() == "workspace";
+        }
+        option::Option[screen::Cursor]::None => { assert false; }
+    }
+    match screen::find("camera:back") {
+        option::Option[screen::Cursor]::Some(c) => { assert c.is_top(); }
+        option::Option[screen::Cursor]::None => { assert false; }
+    }
+    // A key nothing carries is None rather than the nearest screen.
+    match screen::find("camera:side") {
+        option::Option[screen::Cursor]::Some(_c) => { assert false; }
+        option::Option[screen::Cursor]::None => { }
+    }
+    assert screen::depth() == (2 as usize);
+    reset();
+    st_reset();
+}
+
+#[test]
+fn st_a_key_names_a_screen_but_a_window_only_where_there_is_one() {
+    // THE TWO-TIER RULE. A drill-down opens no window, so the screen tier
+    // answers and the window tier does not — on any platform. Nothing lies
+    // about the other's tier.
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+
+    assert push(st_box(1), "settings", "settings");
+    // the screen exists
+    match screen::find("settings") {
+        option::Option[screen::Cursor]::Some(_c) => { }
+        option::Option[screen::Cursor]::None => { assert false; }
+    }
+    // and no window was opened for it
+    assert app::has_window("settings") == false;
+    // while the window the whole stack lives in is addressable as itself
+    assert app::has_window("workspace");
+    reset();
+    st_reset();
+}
+
+#[test]
+fn st_a_cursor_to_a_popped_screen_is_inert() {
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+    assert push(st_box(1), "details", "details");
+
+    match screen::find("details") {
+        option::Option[screen::Cursor]::Some(c) => {
+            assert c.is_live();
+            assert pop();
+            // The same cursor, after the screen it names has gone.
+            assert c.is_live() == false;
+            assert c.key() == "";
+            assert c.route() == "";
+            assert c.root() == (0 as *core::Node);
+            assert c.is_top() == false;
+        }
+        option::Option[screen::Cursor]::None => { assert false; }
+    }
+    reset();
+    st_reset();
+}
+
+#[test]
+fn st_top_answers_none_when_the_primary_is_showing() {
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+    // Nothing pushed: the primary is not addressable through the screen tier —
+    // it is the App loop's, not the stack's.
+    match screen::top() {
+        option::Option[screen::Cursor]::Some(_c) => { assert false; }
+        option::Option[screen::Cursor]::None => { }
+    }
+    assert screen::stack().count() == (0 as usize);
+    assert push(st_box(1), "a", "a");
+    match screen::top() {
+        option::Option[screen::Cursor]::Some(c) => { assert c.route() == "a"; }
+        option::Option[screen::Cursor]::None => { assert false; }
+    }
+    assert screen::stack().count() == (1 as usize);
+    reset();
+    st_reset();
+}
+
+// ---- the app lifecycle reaches a screen ------------------------------------------
+
+#[test]
+fn st_a_pushed_screen_hears_the_app_background_and_stops_when_it_goes() {
+    // THE CAMERA CASE, and the gap this closed. A screen shown through a ROUTE
+    // used to get `Mount` and `Unmount` and nothing else — no `Background`, so
+    // a screen holding an exclusive device never learned the app had gone away.
+    // On Android the system revokes the camera within a second of exactly this
+    // event, which component.cplus calls the difference between handing a
+    // device back and having it taken.
+    //
+    // It could not have worked before either: a ScreenBox could carry no reason
+    // but Mount and Unmount until its trampolines started passing one.
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+
+    assert push(st_box(1), "camera", "camera");
+    assert ST_DETACH_BACKGROUND == 0;
+
+    // The backend's own door — what facet_android's `onPause` and AppKit's
+    // hide notification both come through.
+    app_events::fire_plain(app_events::E_BACKGROUND);
+    assert ST_DETACH_BACKGROUND == 1;
+
+    // AND IT STOPS WHEN THE SCREEN DOES. An event delivered to a popped screen
+    // would reach a box the deferred free is about to reclaim, which is the
+    // use-after-free the defer exists to prevent arriving by another door.
+    assert pop();
+    app_events::fire_plain(app_events::E_BACKGROUND);
+    assert ST_DETACH_BACKGROUND == 1;
+
+    reset();
+    st_reset();
+}
+
+#[test]
+fn st_replacing_the_primary_takes_its_whole_stack_with_it() {
+    // `nav::go` shows a different primary in the same window. Anything pushed
+    // over the old one is that screen's, so it goes — a route change is not
+    // somewhere you can press back into.
+    st_reset();
+    var h: core::Node = st_open();
+    let _o: bool = app::open_window(#addr_of(h), key: "workspace");
+    let _m: bool = mount::mount(#addr_of(h));
+    set_host(#addr_of(h));
+
+    assert push(st_box(1), "a", "a");
+    assert push(st_box(2), "b", "b");
+    assert depth() == (2 as usize);
+
+    var inner: flex::Builder = flex::Builder::new();
+    var next: core::Node = core::column(inner, key: "next:body");
+    assert replace_base(next);
+
+    // Both pushed screens were unmounted in order, not dropped silently.
+    assert ST_DETACH_UNMOUNT == 2;
+    assert depth() == (0 as usize);
+    assert top_route() == "";
+    // and the window still has exactly one base child to show
+    assert core::child_count_of(#addr_of(h)) == (1 as usize);
+    reset();
+    st_reset();
+}
+
+#[test]
+fn st_replace_base_without_a_host_moves_nothing() {
+    st_reset();
+    var inner: flex::Builder = flex::Builder::new();
+    var next: core::Node = core::column(inner, key: "next:body");
+    assert replace_base(next) == false;
+    st_reset();
+}
+
+#[test]
+fn the_host_adopts_the_screens_root_scoped_answers() {
+    // A SCREEN MUST NOT HAVE TO KNOW IT IS BEING HOSTED.
+    //
+    // The safe area is read from THE ROOT and nowhere else
+    // (facet_appkit/scheduler.cplus asks exactly one node), so a screen that
+    // opts out was answering as the root until this host existed. Once it is a
+    // child its answer is on a node nobody asks, and the inset it was avoiding
+    // comes back — reported from iris as "the window has borders, which should
+    // not", 2026-09-06.
+    st_reset();
+    var inner: flex::Builder = flex::Builder::new();
+    var screen_root: core::Node = core::column(inner, key: "app:root");
+    screen_root.set_safe_area(vocab::SafeArea::None);
+
+    var host_node: core::Node = open_base(screen_root);
+    // The HOST is what the window will ask, so the host must carry the answer.
+    assert match host_node.safe_area() {
+        vocab::SafeArea::None => true,
+        _other => false,
+    };
+    st_reset();
+}
+
+#[test]
+fn a_screen_that_wants_the_safe_area_still_gets_it() {
+    // The negative half: adopting must not force the opt-out on a screen that
+    // never asked for one. A default screen keeps the default.
+    st_reset();
+    var inner: flex::Builder = flex::Builder::new();
+    var screen_root: core::Node = core::column(inner, key: "app:root");
+    let want: vocab::SafeArea = screen_root.safe_area();
+    var host_node: core::Node = open_base(screen_root);
+    assert host_node.safe_area() == want;
+    assert core::honours_safe_area(#addr_of(host_node));
+    st_reset();
+}

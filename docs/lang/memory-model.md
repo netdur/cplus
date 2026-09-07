@@ -184,7 +184,7 @@ shares through a reference-counted handle.
 - Async futures own their captured state by value; an executor drives them:
 
   ```cplus
-  let result: T = executor::block_on(amain());
+  let result: T = amain().wait();          // consumes the future; the frame is freed after the value is out
   ```
 
 The common thread is the same as everywhere else in C+: ownership is passed by

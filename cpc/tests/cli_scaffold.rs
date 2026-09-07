@@ -672,7 +672,14 @@ fn init_android_serves_the_inspector_without_a_second_call() {
     //    is Android-shaped.
     let app = read(&proj.join("src/app.cplus"));
     assert!(app.contains("agent::enable();"), "{app}");
-    assert!(app.contains("runtime::agent_mcp(\"droid\");"), "{app}");
+    // Through the APP, because the scaffold builds one now. TWO facts, because
+    // the id is no longer written twice: the app is NAMED, and the agent is
+    // armed from it — `agent_mcp()` with no argument takes the app's own name,
+    // which is what `serverInfo.name` then reports. What this asserts is
+    // unchanged in substance: ONE file arms it, and it is the file every
+    // platform builds.
+    assert!(app.contains("runtime::App::new(\"droid\")"), "{app}");
+    assert!(app.contains("app.agent_mcp();"), "{app}");
     // AND NOTHING ELSE. `inspect::arm()` was a third line an app had to
     // remember, and forgetting it answered `-32601 method not found` from
     // three packages away. The serving facade installs the walker now, so
@@ -728,7 +735,8 @@ fn init_three_platforms_serve_the_inspector_from_one_line() {
     // ONE file asks to be served, and it is the one every platform builds.
     // Being served IS being inspectable — all 25 verbs, no second call.
     let app = read(&proj.join("src/app.cplus"));
-    assert!(app.contains("runtime::agent_mcp(\"all3\");"), "{app}");
+    assert!(app.contains("runtime::App::new(\"all3\")"), "{app}");
+    assert!(app.contains("app.agent_mcp();"), "{app}");
     assert!(!app.contains("inspect::arm()"), "the scaffold still arms: {app}");
 
     // ...and no entry does. Three copies of it, reading three channels, is what
@@ -740,4 +748,102 @@ fn init_three_platforms_serve_the_inspector_from_one_line() {
             "{entry} should not arm anything of its own: {body}"
         );
     }
+}
+
+// ---- the scaffold against the interfaces it implements ----
+
+/// The parameter lists `interface Lifecycle` declares, by method name.
+///
+/// Read out of facet's own source rather than restated here: restating is how
+/// the drift this guards against happened in the first place.
+fn lifecycle_signatures() -> Vec<(String, String)> {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../vendor/facet/src/component.cplus"),
+    )
+    .expect("facet/component.cplus — this test reads the interface it checks against");
+    let body = src
+        .split_once("interface Lifecycle {")
+        .expect("interface Lifecycle")
+        .1
+        .split_once('}')
+        .expect("its closing brace")
+        .0;
+    body.lines()
+        .filter_map(|l| {
+            let l = l.trim().strip_prefix("fn ")?;
+            let (name, rest) = l.split_once('(')?;
+            let params = rest.split(')').next()?;
+            Some((name.to_string(), params.to_string()))
+        })
+        .collect()
+}
+
+#[test]
+fn kind_gui_implements_the_lifecycle_interface_facet_actually_declares() {
+    // THE HOLE THIS CLOSES. `kind_gui_scaffolds_a_facet_app_...` asserts on the
+    // TEXT of the generated files and never compiles them, and
+    // `init_manifest_parses_and_builds_front_end` gets only as far as proving
+    // the manifest parses. So when `Lifecycle` grew its `why` reason, the
+    // scaffold kept emitting the old no-argument pair and the whole suite
+    // stayed green — while `cpc init --kind gui --platform macos` followed by
+    // the `cpc build` its own closing message tells you to run failed with two
+    // E0505s. The first command a new user types, broken, with nothing failing.
+    //
+    // Compiling the scaffold here is the obvious check and the wrong one: it
+    // needs the facet packages in the store, so it would pass or fail on
+    // machine state rather than on the code. What actually drifted is a
+    // template string in this binary against an interface in facet's source,
+    // and those two can be compared directly, needing neither a store nor a
+    // network.
+    let dir = tempfile::tempdir().unwrap();
+    assert!(Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "--kind", "gui", "--platform", "macos", "sigcheck"])
+        .status()
+        .unwrap()
+        .success());
+
+    let app = read(&dir.path().join("sigcheck/src/app.cplus"));
+    let sigs = lifecycle_signatures();
+    assert!(
+        !sigs.is_empty(),
+        "read no methods out of interface Lifecycle — the parse above is stale"
+    );
+    for (name, params) in &sigs {
+        // An implementor outside facet writes `component::Attach` where the
+        // interface, being in that module, writes `Attach`. The qualifier is
+        // not the thing being checked, so it comes off both sides.
+        let want = strip_qualifiers(params);
+        let got: Vec<String> = app
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with(&format!("fn {name}(")))
+            .filter_map(|l| l.split_once('(')?.1.split(')').next().map(strip_qualifiers))
+            .collect();
+        assert!(
+            got.iter().any(|g| *g == want),
+            "the scaffolded Lifecycle impl does not match the interface facet \
+             declares.\n  interface wants: fn {name}({want})\n  scaffold has:    {}\n\n\
+             Update the template in cpc/src/main.rs.",
+            if got.is_empty() { "nothing by that name".to_string() } else { got.join(" / ") },
+        );
+    }
+}
+
+/// `ref this, why: component::Attach` -> `ref this, why: Attach`.
+fn strip_qualifiers(params: &str) -> String {
+    params
+        .split(',')
+        .map(|p| {
+            let p = p.trim();
+            match p.rsplit_once("::") {
+                Some((_, tail)) => {
+                    let head = p.split(':').next().unwrap_or("").trim();
+                    format!("{head}: {tail}")
+                }
+                None => p.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

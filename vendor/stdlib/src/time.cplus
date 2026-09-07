@@ -51,10 +51,10 @@ fn now_millis() -> i64 {
 
 // ───────────────────────────── tests ─────────────────────────────
 
-// THE INTRINSIC, not `executor::block_on`, and it is a one-line difference for
+// THE INTRINSIC, not `Future::wait`, and it is a one-line difference for
 // a real reason: `executor` gained a deadline on its bridge helpers and needs
 // `time::now_millis` for it, which made `time -> executor` a cycle (E0404).
-// `executor::block_on` is itself only `return { #block_on::[T](f) };`, so
+// `Future::wait` is itself only `return { #block_on::[T](this) };`, so
 // calling the intrinsic here costs nothing and leaves the dependency pointing
 // one way.
 async fn _sleep_then_value() -> i32 {
@@ -98,6 +98,24 @@ fn sleep_actually_waits_rather_than_merely_completing() {
     let v: i64 = { #block_on::[i64](_nap(120 as u64)) };
     let elapsed: i64 = now_millis() - t0;
     assert v == (1 as i64);
+    assert elapsed >= (100 as i64);
+    assert elapsed < (5000 as i64);
+}
+
+// THE TOP-LEVEL FORM of the floor above: here the frame parked on the timer
+// IS the one being driven, with no `await` between them. Until 2026-09-06 the
+// drive loop resumed the outer frame unconditionally on every pass, and a
+// timer park does not re-check its condition on resume — so this returned in
+// 1 ms (measured against a 200ms sleep) with the timer still armed in the
+// kqueue under a frame address about to be freed. The nested form above never
+// saw it, because an `await` park loops back to a `coro.done` check. Same
+// floor, same generosity. See bugs/a-destroyed-coroutine-frame-stays-
+// registered-with-the-reactor.
+#[test]
+fn a_top_level_sleep_wait_parks_for_the_whole_delay() {
+    let t0: i64 = now_millis();
+    sleep(120 as u64).wait();
+    let elapsed: i64 = now_millis() - t0;
     assert elapsed >= (100 as i64);
     assert elapsed < (5000 as i64);
 }

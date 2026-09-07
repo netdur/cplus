@@ -8,7 +8,6 @@
 // which is worse than teaching them nothing at all.
 
 import "stdlib/vec" as vec;
-import "stdlib/executor" as executor;
 import "stdlib/io" as io;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
@@ -4366,8 +4365,7 @@ fn connecting_in_app_attaches_without_a_transport() {
     let st: *widget::Inspector = #addr_of(p);
 
     assert widget::is_connected(st) == false;
-    let r: status::Status = executor::block_on::[status::Status](
-        widget::connect(st, text::from_str("inapp")));
+    let r: status::Status = widget::connect(st, text::from_str("inapp")).wait();
     assert r == status::Status::Ok;
     // `inapp` is not a CONNECTION — there is nothing to disconnect, and a host
     // asking "am I attached to another process" must not be told yes.
@@ -4388,8 +4386,7 @@ fn an_unreadable_target_is_refused_with_a_reason() {
     widget::on_fault(st, note_fault_cb);
     SEEN_FAULT = text::new();
 
-    let r: status::Status = executor::block_on::[status::Status](
-        widget::connect(st, text::from_str("wat")));
+    let r: status::Status = widget::connect(st, text::from_str("wat")).wait();
     assert r == status::Status::InvalidInput;
     assert SEEN_FAULT.contains("not an address");
     assert widget::is_connected(st) == false;
@@ -4397,8 +4394,7 @@ fn an_unreadable_target_is_refused_with_a_reason() {
     // ...and one nothing is listening at is a different answer, with its own
     // sentence. Both used to be "the tree is empty".
     SEEN_FAULT = text::new();
-    let r2: status::Status = executor::block_on::[status::Status](
-        widget::connect(st, text::from_str("/tmp/nothing-listens-here-at-all.socket")));
+    let r2: status::Status = widget::connect(st, text::from_str("/tmp/nothing-listens-here-at-all.socket")).wait();
     assert r2 == status::Status::OutOfBounds;
     assert SEEN_FAULT.contains("nothing is listening");
 }

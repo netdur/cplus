@@ -24,6 +24,8 @@ import "facet/props" as props;
 import "facet/screen" as screen;
 import "facet/window_chrome" as chrome;
 import "facet/application" as app;
+import "facet/window" as app_window;
+import "facet/services" as services;
 import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
 import "objc/bridge" as bridge;
@@ -32,6 +34,7 @@ import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./views" as views;
+import "./dialogs" as dialogs;
 import "./controls" as controls;
 import "./scheduler" as scheduler;
 import "./geometry" as geometry;
@@ -1199,4 +1202,83 @@ extern fn msg_void_rect_v(recv: *u8, sel: *u8, r: rt::Rect);
 fn activate_window(win: *u8) {
     if win.is_null() { return; }
     { rt::msg_void_id(win, rt::sel(#str_ptr("makeKeyAndOrderFront:\0")), 0 as *u8) };
+}
+
+// ---- the window cursor's host ---------------------------------------------------
+// What `facet/window.cplus` calls when an application says
+// `window::find("inspector").frame()`. Every slot takes the ROOT, which is the
+// identity the rest of this file already uses, and looks the NSWindow up
+// through the app's own record.
+//
+// THE OBSERVERS ARE THE POINT. The runtime facade registered these with a NIL
+// object — `addObserver:selector:name:object:` with nil means EVERY window —
+// and handed the callback only the app's own ctx, so a two-window app could
+// not tell which window had resized. Passing the window as the object is the
+// whole fix, and it is one argument.
+
+fn wh_frame(root: *core::Node) -> vocab::Rect { return dialogs::window_frame_of(root); }
+fn wh_set_frame(root: *core::Node, r: vocab::Rect) { dialogs::set_window_frame_of(root, r); return; }
+fn wh_is_active(root: *core::Node) -> bool { return is_active(root); }
+fn wh_density(root: *core::Node) -> f64 { return density_of(root); }
+fn wh_close(root: *core::Node) { close_window_of(root); return; }
+
+fn wh_title(root: *core::Node) -> text::Text {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return text::new(); }
+    let s: *u8 = { rt::msg_id(w, rt::sel(#str_ptr("title\0"))) };
+    if s.is_null() { return text::new(); }
+    return bridge::to_text(s);
+}
+
+fn wh_set_title(root: *core::Node, t: str) {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return; }
+    { rt::msg_void_id(w, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(t)) };
+    return;
+}
+
+// SCOPED TO THIS WINDOW, which is the difference from the facade's version:
+// passing the window as the notification's OBJECT is the whole fix for
+// `addObserver:...object:nil` meaning every window.
+fn wh_observe(root: *core::Node, name: str, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return services::Cancellable::none(); }
+    let id: u64 = akx::observe_named(name, w, cb, ctx);
+    if id == (0 as u64) { return services::Cancellable::none(); }
+    return services::Cancellable::of(id, akx::cancel_observe);
+}
+
+fn wh_observe_resize(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    return wh_observe(root, "NSWindowDidResizeNotification", cb, ctx);
+}
+fn wh_observe_active(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    return wh_observe(root, "NSWindowDidBecomeKeyNotification", cb, ctx);
+}
+fn wh_observe_inactive(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    return wh_observe(root, "NSWindowDidResignKeyNotification", cb, ctx);
+}
+fn wh_observe_density(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    return wh_observe(root, "NSWindowDidChangeBackingPropertiesNotification", cb, ctx);
+}
+
+// `request_close` is deliberately NOT filled. AppKit's `performClose:` asks the
+// delegate through `windowShouldClose:`, but what facet needs asked is the
+// SCREEN — and `Screen` has no `should_close` yet (plans/nav-windows.md step
+// 5). A null slot makes `request_close` fall through to `close`, which is the
+// honest behaviour until the screen can answer: nothing can refuse, so nothing
+// pretends to.
+fn window_host() -> app_window::WindowHost {
+    var h: app_window::WindowHost = app_window::empty_host();
+    h.frame = wh_frame;
+    h.set_frame = wh_set_frame;
+    h.is_active = wh_is_active;
+    h.density = wh_density;
+    h.title = wh_title;
+    h.set_title = wh_set_title;
+    h.close = wh_close;
+    h.observe_resize = wh_observe_resize;
+    h.observe_active = wh_observe_active;
+    h.observe_inactive = wh_observe_inactive;
+    h.observe_density = wh_observe_density;
+    return h;
 }

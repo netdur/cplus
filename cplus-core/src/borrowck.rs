@@ -6961,10 +6961,14 @@ impl Analyzer<'_> {
             ExprKind::Await(inner) => {
                 self.apply_expr(inner, state);
             }
-            // v0.0.4 Phase 4 Slice 4A: yield's value flows through; the
-            // suspend itself doesn't change Place state.
+            // v0.0.4 Phase 4 Slice 4A: the suspend itself doesn't change Place
+            // state — but the VALUE leaves the frame. A bare non-Copy binding
+            // is moved to the consumer, through the same door as a variant
+            // payload, so a live view borrow of it blocks the yield (E0372)
+            // and the place is `Moved` afterwards (bug 2026-09-06,
+            // yield-does-not-transfer-ownership).
             ExprKind::Yield(inner) => {
-                self.apply_expr(inner, state);
+                self.apply_aggregate_element(inner, state);
             }
             ExprKind::If {
                 cond,

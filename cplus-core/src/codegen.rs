@@ -4414,7 +4414,18 @@ fn scan_moves_in_expr(
         }
         ExprKind::Block(b) => scan_moves_in_block(b, sigs, types, set),
         ExprKind::Await(inner) => scan_moves_in_expr(inner, sigs, types, set),
-        ExprKind::Yield(inner) => scan_moves_in_expr(inner, sigs, types, set),
+        ExprKind::Yield(inner) => {
+            // bug 2026-09-06 (yield-does-not-transfer-ownership): `yield x`
+            // hands `x` to the consumer — the same consuming position as a
+            // variant payload or a `let` init. Pre-register the bare-Ident
+            // source so it gets a Runtime drop flag for `gen_yield_expr`'s
+            // `mark_moved` to flip; with an `Always` disposition the
+            // generator's scope exit freed what the consumer now owned.
+            if let ExprKind::Ident(n) = &inner.kind {
+                set.insert(n.clone());
+            }
+            scan_moves_in_expr(inner, sigs, types, set);
+        }
         ExprKind::If {
             cond,
             then,
@@ -4507,6 +4518,21 @@ fn scan_moves_in_expr(
             }
             for a in args {
                 scan_moves_in_expr(a, sigs, types, set);
+            }
+        }
+        // A MOVE CAN HAPPEN INSIDE AN INTERPOLATION, and this arm is what lets
+        // the scanner see it: `"${consume(a)}"` moves `a` exactly as
+        // `consume(a)` does. Without it the parts were never walked, so `a` was
+        // classified never-moved, got no drop flag, and the emission-time
+        // `mark_moved` had nothing to flip — scope exit then dropped a value
+        // the callee already owned. A silent double free, and only in RELEASE:
+        // `mark_moved`'s `debug_assert!` catches exactly this shape, and a
+        // release compiler skips it.
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let crate::ast::InterpStrPart::Expr(e) = p {
+                    scan_moves_in_expr(e, sigs, types, set);
+                }
             }
         }
         _ => {}
@@ -5076,6 +5102,28 @@ fn coro_end_decl_ir() -> String {
     }
 }
 
+/// Could this IR instruction write memory that a memoized field read
+/// aliases? A `ref` binding is a pointer into memory the caller owns, so
+/// any store through any pointer and any call may change what it points at;
+/// the field-read memo (`field_load_cache`) must not outlive one. Loads,
+/// arithmetic, GEPs, casts and phis are pure. The opcode is the first token,
+/// or the token after ` = ` when the instruction names a result.
+fn ir_instr_may_write_memory(instr: &str) -> bool {
+    let op = if instr.starts_with('%') {
+        match instr.find(" = ") {
+            Some(i) => &instr[i + 3..],
+            None => "",
+        }
+    } else {
+        instr
+    };
+    matches!(
+        op.split_whitespace().next().unwrap_or(""),
+        "store" | "call" | "invoke" | "tail" | "musttail" | "notail" | "atomicrmw" | "cmpxchg"
+            | "fence"
+    )
+}
+
 /// A `call` to `llvm.coro.end` on `%.coro.hdl`, matching the declared form. The
 /// `i1` form binds (and discards) a result SSA value; the `void` form does not.
 fn coro_end_call_ir() -> String {
@@ -5611,7 +5659,7 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
          }}\n"
     ));
     // v0.0.29 phase 2: FFI-callable destroy — `future::cancel` and the
-    // cancellable executor (`executor::run`) call this to tear down a
+    // cancellable drive (`future::wait_or_cancel`) call this to tear down a
     // suspended frame; the per-suspend cancel blocks make it run the live
     // locals' drops before freeing.
     out.push_str(&format!(
@@ -7983,6 +8031,7 @@ fn gen_gen_method(
         next_idx += 1;
     }
 
+    state.emit_gen_initial_suspend();
     let _body_value = state.gen_block_expr(&m.body);
 
     // gen-method body is Unit-typed (it `yield`s values rather than
@@ -8162,6 +8211,7 @@ fn gen_gen_function(
         }
     }
 
+    state.emit_gen_initial_suspend();
     let _body_value = state.gen_block_expr(&f.body);
 
     // Gen fn body is Unit-typed. Fall-off and explicit `return;` both
@@ -8785,6 +8835,7 @@ fn gen_gen_enum_method(
         next_idx += 1;
     }
 
+    state.emit_gen_initial_suspend();
     let _ = state.gen_block_expr(&m.body);
     if !state.terminated {
         state.emit_terminator("br label %.coro.final_suspend");
@@ -10072,6 +10123,20 @@ impl<'a> FnState<'a> {
     fn emit(&mut self, s: &str) {
         if self.terminated {
             return;
+        }
+        // The field-read memo holds values LOADED since the last instruction
+        // that could have written memory. Every earlier invalidation site
+        // (`gen_assign`, the call lowerers) cleared it BEFORE lowering the
+        // operands — and the operands are exactly where the next reads get
+        // cached, so a read of `this.n` made while lowering the right-hand
+        // side of `this.n = this.n + 1` survived the store and was handed to
+        // the next expression in the same block. The exposure was any read
+        // that is not at a statement boundary: an `if` in tail position, a
+        // block's tail value, an argument evaluated after a sibling call.
+        // The store (or call) instruction itself is the only correct place
+        // to draw the line, and this is where every one of them is emitted.
+        if !self.field_load_cache.is_empty() && ir_instr_may_write_memory(s) {
+            self.field_load_cache.clear();
         }
         self.body.push_str("  ");
         self.body.push_str(s);
@@ -12235,15 +12300,29 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{hdl} = extractvalue {iter_llvm} {iter_v}, 0"));
 
         self.push_scope();
+        // The slot is hoisted once; the NAME is bound per trip, inside the
+        // body's scope, so that scope owns what the slot holds (below).
         let var_slot = self.alloca_named(&var.name, elem_ty.clone());
-        self.bind(&var.name, var_slot.clone(), elem_ty.clone());
 
         let head = self.next_block_label();
+        let resume_lbl = self.next_block_label();
         let body_lbl = self.next_block_label();
         let exit = self.next_block_label();
 
         self.emit_terminator(&format!("br label %{head}"));
         self.open_block(&head);
+        // ONE RESUME PER ELEMENT. The generator starts suspended before its
+        // body (`emit_gen_initial_suspend`), so each trip resumes it to run
+        // up to the next `yield` and then reads what that yield left in the
+        // promise — or finds the body finished. The check BEFORE the resume
+        // is for an iterator someone already exhausted through `next()`:
+        // resuming a done coroutine is undefined in LLVM.
+        let done0 = self.next_tmp();
+        self.emit(&format!("{done0} = call i1 @llvm.coro.done(ptr {hdl})"));
+        self.emit_terminator(&format!("br i1 {done0}, label %{exit}, label %{resume_lbl}"));
+
+        self.open_block(&resume_lbl);
+        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
         let done = self.next_tmp();
         self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
         self.emit_terminator(&format!("br i1 {done}, label %{exit}, label %{body_lbl}"));
@@ -12264,12 +12343,21 @@ impl<'a> FnState<'a> {
             "{val} = load {elem_llvm}, ptr {prom_ptr}, align {elem_align}"
         ));
         self.gen_store(&elem_ty, &val, &var_slot);
-        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
 
         // `continue` should jump back to head; `break` to exit.
         self.loop_labels.push((head.clone(), exit.clone()));
         self.loop_scope_depth.push(self.scope_exits.len());
         self.push_scope();
+        // THE BINDING OWNS THE ELEMENT. `yield` disarmed the generator's
+        // drop of it (`gen_yield_expr`), so this is now its only owner: it
+        // drops at the end of every trip — `pop_scope` on the way to the
+        // back-edge, `emit_scope_exits_to` on `break`/`continue` — unless
+        // the body moved it out, in which case the Runtime drop flag the
+        // move scanner allotted is already off. A Copy element registers
+        // nothing. Sema's `owns_value: true` on this binding was a promise
+        // that neither end kept before (bug 2026-09-06).
+        self.bind(&var.name, var_slot.clone(), elem_ty.clone());
+        self.register_value_drop(&var.name, &var_slot, &elem_ty, true);
         for s in &body.stmts {
             if self.terminated {
                 break;
@@ -12293,7 +12381,10 @@ impl<'a> FnState<'a> {
 
         self.open_block(&exit);
         // Destroy the iterator's frame so the malloc'd coroutine state
-        // is freed once iteration completes.
+        // is freed once iteration completes. On an early exit the frame is
+        // suspended at the yield whose value this loop already took — the
+        // generator's own copy was disarmed by that yield — so the cancel
+        // edge drops only what the generator still owns.
         self.emit(&format!("call void @llvm.coro.destroy(ptr {hdl})"));
         self.pop_scope();
     }
@@ -16526,12 +16617,56 @@ impl<'a> FnState<'a> {
     /// EXPR evaluates to a `Future[U]`; drive it to completion via a
     /// resume-loop, then extract the result from the coroutine promise.
     /// Requires `self.coro_promise.is_some()` (sema's E0901 enforces).
+    /// A generator's INITIAL suspend, emitted between the prologue and the
+    /// body: the ramp hands back the handle with the body not yet started,
+    /// and each `next()` (or `for` trip) resumes it to produce ONE element.
+    ///
+    /// Before this a `gen fn` ran eagerly to its first `yield` at the call,
+    /// and `next()` read the promise and then resumed to compute the
+    /// FOLLOWING element — so the generator always ran one element ahead of
+    /// its consumer, and a `break` stranded an element that had already been
+    /// produced (removed from its container, in the case of a drain) inside
+    /// the frame (bug 2026-09-06, yield-does-not-transfer-ownership §2).
+    /// Now nothing runs until it is asked for, and the element in the promise
+    /// is always the one the consumer has just taken.
+    ///
+    /// Same switch shape as `gen_yield_expr`: default → ramp-return, 0 → run
+    /// the body, 1 → destroyed before it ever ran (nothing live to drop, so
+    /// straight to the frame free).
+    fn emit_gen_initial_suspend(&mut self) {
+        let suspend_v = self.next_tmp();
+        let body_bb = self.next_block_label();
+        let ramp_bb = self.next_block_label();
+        self.emit(&format!(
+            "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
+        ));
+        self.emit_terminator(&format!(
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{body_bb} i8 1, label %.coro.cleanup]"
+        ));
+        self.body.push_str(&format!("{ramp_bb}:\n"));
+        self.body.push_str("  br label %.coro.end\n");
+        self.body.push_str(&format!("{body_bb}:\n"));
+        self.terminated = false;
+    }
+
     /// v0.0.4 Phase 4 Slice 4A: lower `yield EXPR` inside a `gen fn`
     /// body. Stash the value in the coroutine promise, then suspend
     /// (non-final). Resume falls through; ramp exits the gen fn.
     fn gen_yield_expr(&mut self, inner_expr: &Expr) -> Option<(String, Ty)> {
         // Evaluate the yielded value.
         let (val, vty) = self.gen_expr(inner_expr).expect("yield value has SSA");
+        // THE VALUE NOW BELONGS TO THE CONSUMER — the `for` binding, or the
+        // `Option` that `next()` builds — which owns it and drops it. Disarm
+        // the source binding's scope-exit drop, exactly as the variant
+        // constructor path does for `Result::Ok(local_vec)`. Without this the
+        // generator freed the buffer at its own scope exit and the consumer
+        // freed it again: a SIGTRAP the moment a yielded value was moved
+        // anywhere (bug 2026-09-06, yield-does-not-transfer-ownership §1).
+        if !is_copy_ty(&vty, self.types) {
+            if let ExprKind::Ident(name) = &inner_expr.kind {
+                self.mark_moved(name);
+            }
+        }
         let vty_llvm = self.lty(&vty);
         let (_size, align) = match static_layout(&vty, self.types) {
             Some((s, a)) => (s, a),
@@ -16782,19 +16917,35 @@ impl<'a> FnState<'a> {
         //
         //   loop:
         //     if done(future_hdl): goto extract
-        //     resume(future_hdl)
-        //     if done(future_hdl): goto extract
-        //     drain pending tasks (spawn_local'd, yield_now'd)
-        //     if waiter_count() > 0: poll_one_event (blocks on kevent)
+        //     drain pending tasks (spawn_local'd, yield_now'd, notified awaiters)
+        //     if waiter_count() > 0:   poll_one_event (blocks on kevent)
+        //     else if pending_count() == 0: resume(future_hdl)   -- last resort
         //     goto loop
         //
-        // Check done BEFORE resume — async fns run their body eagerly
-        // from the call site (no initial_suspend), so the handle may
-        // already be done before block_on ever sees it. Resuming a
-        // done handle is undefined behavior in LLVM coroutines.
+        // THE REACTOR RESUMES; THE DRIVER ONLY STEPS IN WHEN IT HAS NOTHING.
+        // Every suspend point arranges its own wake-up — an `await` registers
+        // an awaiter that `notify_completed` enqueues, a timer or fd park
+        // registers with the kernel, `yield_now` enqueues itself — so the
+        // outer frame is resumed by whoever satisfied it. Until 2026-09-06
+        // this loop ALSO resumed the outer frame unconditionally on every
+        // pass, and a timer or fd park does not re-check its condition on
+        // resume: a top-level `time::sleep(200).wait()` returned in 1 ms,
+        // with its timer still registered in the kqueue under a frame
+        // address that was then freed (bugs/a-destroyed-coroutine-frame-
+        // stays-registered-with-the-reactor). The `await` park survived it
+        // only because it loops back to a `coro.done` check.
+        //
+        // The fallback resume runs only when the reactor holds nothing that
+        // could resume the frame, which no suspend point above leaves
+        // behind — it is there so a shape this loop has not foreseen makes
+        // progress the way it always did rather than parking forever.
+        //
+        // Check done BEFORE anything else — async fns run their body eagerly
+        // from the call site (no initial_suspend), so the handle may already
+        // be done before block_on ever sees it. Resuming a done handle is
+        // undefined behavior in LLVM coroutines.
         let loop_bb = self.next_block_label();
         let extract_bb = self.next_block_label();
-        let resume_bb = self.next_block_label();
         let drive_bb = self.next_block_label();
         self.emit_terminator(&format!("br label %{loop_bb}"));
         self.body.push_str(&format!("{loop_bb}:\n"));
@@ -16802,45 +16953,75 @@ impl<'a> FnState<'a> {
         let pre_done = self.next_tmp();
         self.emit(&format!("{pre_done} = call i1 @llvm.coro.done(ptr {hdl})"));
         self.emit_terminator(&format!(
-            "br i1 {pre_done}, label %{extract_bb}, label %{resume_bb}"
+            "br i1 {pre_done}, label %{extract_bb}, label %{drive_bb}"
         ));
-        self.body.push_str(&format!("{resume_bb}:\n"));
-        self.terminated = false;
-        self.body
-            .push_str(&format!("  call void @llvm.coro.resume(ptr {hdl})\n"));
-        let post_done = self.next_tmp();
-        self.emit(&format!("{post_done} = call i1 @llvm.coro.done(ptr {hdl})"));
-        self.emit_terminator(&format!(
-            "br i1 {post_done}, label %{extract_bb}, label %{drive_bb}"
-        ));
-        // Drive: drain pending queue, then kevent_wait if there are
-        // waiters. Loop back to check done + maybe resume outer.
+        // Drive: drain the pending queue, then block on the kernel if anything
+        // is parked there, else resume the outer frame ourselves if nothing at
+        // all is registered. Loop back to check done.
         self.body.push_str(&format!("{drive_bb}:\n"));
         self.terminated = false;
+        let nw = self.next_tmp();
+        let has_waiters = self.next_tmp();
+        let np = self.next_tmp();
+        let has_pending = self.next_tmp();
+        let poll_val = self.next_tmp();
         self.body
             .push_str("  call i32 @stdlib_reactor_drain_pending_v1()\n");
         self.body
-            .push_str("  %.bo.nw = call i32 @stdlib_reactor_waiter_count_v1()\n");
+            .push_str(&format!("  {nw} = call i32 @stdlib_reactor_waiter_count_v1()\n"));
         self.body
-            .push_str("  %.bo.has_waiters = icmp sgt i32 %.bo.nw, 0\n");
+            .push_str(&format!("  {has_waiters} = icmp sgt i32 {nw}, 0\n"));
         let poll_bb = self.next_block_label();
-        let loop_skip = self.next_block_label();
+        let idle_bb = self.next_block_label();
+        let recheck_bb = self.next_block_label();
+        let resume_bb = self.next_block_label();
+        let still_parked = self.next_tmp();
         self.body.push_str(&format!(
-            "  br i1 %.bo.has_waiters, label %{poll_bb}, label %{loop_skip}\n"
+            "  br i1 {has_waiters}, label %{poll_bb}, label %{idle_bb}\n"
         ));
         self.body.push_str(&format!("{poll_bb}:\n"));
         self.body
-            .push_str("  %.bo.poll = call i32 @stdlib_reactor_poll_one_event_v1()\n");
-        self.body.push_str(&format!("  br label %{loop_skip}\n"));
-        self.body.push_str(&format!("{loop_skip}:\n"));
+            .push_str(&format!("  {poll_val} = call i32 @stdlib_reactor_poll_one_event_v1()\n"));
         self.body.push_str(&format!("  br label %{loop_bb}\n"));
-        // Extract path: read the outer's promise, destroy the frame. The
-        // frame may still sit in the reactor's pending queue (a notified
-        // awaiter this loop then resumed DIRECTLY — block_on always resumes
-        // the outermost each pass) — purge that entry, or the next executor
-        // on this thread reads freed memory (ASan, 2026-08-22).
+        self.body.push_str(&format!("{idle_bb}:\n"));
+        self.body
+            .push_str(&format!("  {np} = call i32 @stdlib_reactor_pending_count_v1()\n"));
+        self.body
+            .push_str(&format!("  {has_pending} = icmp sgt i32 {np}, 0\n"));
+        self.body.push_str(&format!(
+            "  br i1 {has_pending}, label %{loop_bb}, label %{recheck_bb}\n"
+        ));
+        // The drain above may have run THIS frame to completion (it was in
+        // the pending queue as a notified awaiter): a done frame's resume
+        // pointer is null, so the fallback must re-check before it resumes.
+        self.body.push_str(&format!("{recheck_bb}:\n"));
+        self.body.push_str(&format!(
+            "  {still_parked} = call i1 @llvm.coro.done(ptr {hdl})\n"
+        ));
+        self.body.push_str(&format!(
+            "  br i1 {still_parked}, label %{loop_bb}, label %{resume_bb}\n"
+        ));
+        self.body.push_str(&format!("{resume_bb}:\n"));
+        self.body
+            .push_str(&format!("  call void @llvm.coro.resume(ptr {hdl})\n"));
+        self.body.push_str(&format!("  br label %{loop_bb}\n"));
+        // Extract path: read the outer's promise. The frame may still sit in
+        // the reactor's pending queue (notified as an awaiter and then run to
+        // completion by the same drain, or by the fallback resume) — purge
+        // that entry, or the next executor on this thread reads freed memory
+        // (ASan, 2026-08-22).
         self.body.push_str(&format!("{extract_bb}:\n"));
         self.terminated = false;
+        // A unit future has no payload to read out — `load void` is not IR.
+        // Purge and answer unit, the same shape as the `await` lowering.
+        // Reached by `#[test] async fn t()` since v0.0.31 (its wrapper is
+        // `#block_on::[()](__async_t())`).
+        if matches!(t_ty, Ty::Unit) {
+            self.emit(&format!(
+                "call void @stdlib_reactor_unregister_pending_v1(ptr {hdl})"
+            ));
+            return None;
+        }
         let prom = self.next_tmp();
         self.emit(&format!(
             "{prom} = call ptr @llvm.coro.promise(ptr {hdl}, i32 {t_align}, i1 false)"
@@ -16883,12 +17064,20 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
+        // i8 1 = destroyed while parked: drop the locals live here, then free
+        // the frame — the same edge `gen_reactor_wait_write` and the timer
+        // park have. This one went straight to `.coro.cleanup` and leaked
+        // them. The reactor's own entry for this park is purged by
+        // `Future::drop` (`reactor::unregister_waiter`) before the destroy.
+        // The dead `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+        let cancel_bb = self.next_block_label();
         self.emit_terminator(&format!(
-            // i8 1 = destroy (coroutine cancelled mid-suspend) → run cleanup,
-            // never trap. Same fix as gen_yield_expr; see its note. The dead
-            // `{trap_bb}` block below is left unreferenced (valid, DCE'd).
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{cancel_bb}]"
         ));
+        self.body.push_str(&format!("{cancel_bb}:\n"));
+        self.terminated = false;
+        self.emit_coro_cancel_drops();
+        self.emit_terminator("br label %.coro.cleanup");
         // Ramp-return path: yield Pending up to the outer awaiter (or
         // block_on). Falls into the standard `.coro.end` block emitted
         // by gen_async_function's epilogue.
@@ -16963,10 +17152,13 @@ impl<'a> FnState<'a> {
         ));
         // i8 1 = destroy (coroutine cancelled mid-suspend) → per-park cancel
         // block (v0.0.29 phase 2): drop the locals live at this suspend, then
-        // free the frame. Same machinery as gen_yield_expr. The reactor entry
-        // that still names this frame (waiter / timer / pending) is the
-        // executor teardown's job to purge — see `reactor::teardown`. The
-        // dead `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+        // free the frame. Same machinery as gen_yield_expr. The kqueue timer
+        // that still names this frame is purged by `Future::drop`
+        // (`reactor::unregister_waiter`) before the destroy — leaving it to
+        // `reactor::teardown` meant every dropped-while-parked frame stayed
+        // registered under an address malloc would reuse
+        // (bugs/a-destroyed-coroutine-frame-stays-registered-with-the-reactor).
+        // The dead `{trap_bb}` block below is left unreferenced (valid, DCE'd).
         let cancel_bb = self.next_block_label();
         self.emit_terminator(&format!(
             "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{cancel_bb}]"
@@ -19230,18 +19422,29 @@ impl<'a> FnState<'a> {
         } else {
             panic!("`#[lang(\"iterator\")]` instantiation `{name}` is not mangled `Iterator__<U>`");
         };
-        // Reuse the future-name-decoder; the suffix grammar is identical.
-        let synthetic = format!("Future__{suffix}");
-        Some(ty_from_future_name(&synthetic, self.types))
+        // DECODE THE SUFFIX DIRECTLY. This used to wrap it back up as
+        // `Future__{suffix}` and hand that to `ty_from_future_name`, which
+        // splits on the LAST `Future__` — so an element type that is itself a
+        // future (`Vec[Future[T]]`, whose `iter()` instantiates
+        // `Iterator[Future[T]]`) had one level eaten: the element decoded as
+        // `T` instead of `Future[T]`, and `lookup_option_ty` then panicked
+        // hunting an `Option[T]` nothing had instantiated. The suffix is
+        // already the element's own mangled spelling; there is nothing to
+        // re-parse.
+        Some(ty_from_suffix(suffix, self.types))
     }
 
     /// v0.0.4 Phase 4 Slice 4B: emit IR for `it.next()`. Returns
     /// `Option[T]`. Algorithm:
     ///   1. Extract handle from the Iterator aggregate.
-    ///   2. If coro.done(hdl) → return Option::None.
-    ///   3. Else read T from the coroutine promise.
-    ///   4. coro.resume(hdl) to advance for the next call.
-    ///   5. Wrap T in Option::Some and return.
+    ///   2. If coro.done(hdl) → return Option::None (already exhausted).
+    ///   3. coro.resume(hdl): run the body to its next `yield`, or its end.
+    ///   4. If coro.done(hdl) → return Option::None.
+    ///   5. Else read T from the coroutine promise, wrap in Option::Some.
+    /// The resume comes BEFORE the read since bug 2026-09-06
+    /// (yield-does-not-transfer-ownership §2): the generator starts
+    /// suspended ahead of its body and produces one element per `next()`,
+    /// instead of running one element ahead of the consumer.
     fn gen_iter_next_intrinsic(&mut self, rv: &str, rt: &Ty, elem: &Ty) -> (String, Ty) {
         // The Iterator aggregate is `{ ptr }`. Extract the handle.
         let iter_llvm = self.lty(rt);
@@ -19264,11 +19467,20 @@ impl<'a> FnState<'a> {
         // Result slot for the Option[T] aggregate we'll return.
         let result_slot = self.alloca_anon(option_ty.clone());
 
-        let done = self.next_tmp();
-        self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
+        let done0 = self.next_tmp();
+        self.emit(&format!("{done0} = call i1 @llvm.coro.done(ptr {hdl})"));
+        let resume_bb = self.next_block_label();
         let none_bb = self.next_block_label();
         let some_bb = self.next_block_label();
         let join_bb = self.next_block_label();
+        self.emit_terminator(&format!("br i1 {done0}, label %{none_bb}, label %{resume_bb}"));
+
+        // Resume: the body runs to its next `yield` (promise written) or to
+        // its end (done).
+        self.open_block(&resume_bb);
+        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
+        let done = self.next_tmp();
+        self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
         self.emit_terminator(&format!("br i1 {done}, label %{none_bb}, label %{some_bb}"));
 
         // None arm.
@@ -19279,7 +19491,8 @@ impl<'a> FnState<'a> {
         ));
         self.emit_terminator(&format!("br label %{join_bb}"));
 
-        // Some arm: read promise, resume, build Some(v).
+        // Some arm: read the promise, build Some(v). The Option owns the
+        // value from here — the yield disarmed the generator's copy.
         self.open_block(&some_bb);
         let prom_ptr = self.next_tmp();
         self.emit(&format!(
@@ -19289,7 +19502,6 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{val} = load {elem_llvm}, ptr {prom_ptr}, align {elem_align}"
         ));
-        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
         let some_agg = self.build_option_some_aggregate(&option_ty, elem, &val);
         self.emit(&format!(
             "store {option_llvm} {some_agg}, ptr {result_slot}, align {option_align}"
@@ -21380,6 +21592,86 @@ mod tests {
     /// `let _ = expr;` is a discard binding: it parses, type-checks, and lowers
     /// (evaluating — and dropping — its initializer). Multiple `let _` in one
     /// scope must not collide (each gets a unique synthesized name).
+    /// v0.0.31: `async fn main` — the entry the compiler drives. Lower splits
+    /// it, so the IR must carry a synchronous `@main` whose body is the
+    /// `#block_on` loop (resume until done) over the coroutine `__async_main`,
+    /// and no coroutine ramp named `main`. Runs lower first, as the driver
+    /// does; `gen_src` alone would stop at E0309.
+    /// Lower → sema (with the monomorphization table, since `Future[T]` is a
+    /// generic the coroutine lowering must find instantiated) → mono → IR.
+    /// The driver's own sequence for an async program.
+    fn gen_lowered_mono(src: &str) -> String {
+        let toks = tokenize(src).expect("lex");
+        let mut prog = parse(toks).expect("parse");
+        let file_path = PathBuf::from("test.cplus");
+        let lower_diags = crate::lower::lower(&mut prog, &file_path, src);
+        assert!(lower_diags.is_empty(), "lower: {lower_diags:#?}");
+        let mut files: std::collections::BTreeMap<String, (PathBuf, String)> =
+            std::collections::BTreeMap::new();
+        files.insert(
+            "test.cplus".to_string(),
+            (file_path.clone(), src.to_string()),
+        );
+        let (diags, mono) = sema::check_multi_with_mono(&prog, file_path, src, files);
+        assert!(diags.is_empty(), "sema: {diags:#?}");
+        let name_of = |ty: &sema::Ty| -> String { ty.name().to_string() };
+        let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
+        generate_with_mono(&post, BuildMode::Debug, true, None, &[], false, &mono)
+    }
+
+    #[test]
+    fn async_main_lowers_to_a_sync_main_driving_the_coroutine() {
+        let ir = gen_lowered_mono(
+            "#[lang(\"future\")] struct Future[T] { opaque handle: *u8 }\n\
+             async fn main() -> i32 { return 42; }\n",
+        );
+        let main_start = ir.find("define i32 @main()").expect("a synchronous @main");
+        let main_body = &ir[main_start..];
+        let main_body = &main_body[..main_body.find("\n}").expect("main closes")];
+        assert!(
+            main_body.contains("@llvm.coro.resume(") && main_body.contains("@llvm.coro.done("),
+            "main should drive the coroutine:\n{main_body}"
+        );
+        assert!(
+            !main_body.contains("@llvm.coro.begin("),
+            "main itself is not a coroutine:\n{main_body}"
+        );
+        assert!(
+            main_body.contains("__async_main"),
+            "main should call the async body:\n{main_body}"
+        );
+        let body_start = ir.find("__async_main(").expect("the async body is defined");
+        let body = &ir[body_start..];
+        let body = &body[..body.find("\n}").expect("body closes")];
+        assert!(
+            body.contains("@llvm.coro.begin("),
+            "the async body is the coroutine ramp:\n{body}"
+        );
+    }
+
+    /// The unit-returning drive `#block_on::[()](f)` — what `#[test] async fn
+    /// t()` desugars to — must not `load void`: the extract path purges the
+    /// frame from the pending queue and produces nothing.
+    #[test]
+    fn unit_block_on_reads_no_promise() {
+        let ir = gen_lowered_mono(
+            "#[lang(\"future\")] struct Future[T] { opaque handle: *u8 }\n\
+             #[test] async fn t() { }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let t_start = ir
+            .find("define internal fastcc void @t()")
+            .or_else(|| ir.find(" @t()"))
+            .expect("the wrapper `t` is defined");
+        let t_body = &ir[t_start..];
+        let t_body = &t_body[..t_body.find("\n}").expect("t closes")];
+        assert!(!ir.contains("load void"), "a unit drive must not load void:\n{ir}");
+        assert!(
+            t_body.contains("@llvm.coro.resume(") && t_body.contains("unregister_pending"),
+            "the wrapper drives and purges:\n{t_body}"
+        );
+    }
+
     #[test]
     fn let_underscore_is_a_discard_binding() {
         let ir = gen_src(
@@ -22433,6 +22725,73 @@ fn main() -> i32 {\n\
             geps >= 3,
             "expected at least 3 GEPs across the if's three basic blocks; got {geps}. IR:\n{ir}"
         );
+    }
+
+    // bug 2026-09-01 (a-field-write-through-ref-is-invisible-to-the-next-if-
+    // condition): the memo was cleared BEFORE an assignment or call was
+    // lowered, and the operands lowered after that clear were exactly the
+    // reads that got cached — so the read of `this.n` made for the right-hand
+    // side of `this.n = this.n + 1` outlived the store and fed the `if` that
+    // followed in tail position. The memo now clears at the store (or call)
+    // instruction itself, in `emit`.
+    #[test]
+    fn field_read_memo_does_not_survive_a_store_in_the_same_block() {
+        let ir = gen_src(
+            "struct S { n: i32 }\n\
+             impl S {\n\
+                 fn m(ref this) {\n\
+                     this.n = this.n +% 1;\n\
+                     if (this.n % (10 as i32)) == (0 as i32) { return; }\n\
+                 }\n\
+             }\n\
+             fn main() -> i32 { var s: S = S { n: 0 }; s.m(); return 0; }",
+        );
+        // The overflow check on `%` opens a fresh block before the `srem`,
+        // so read the whole function in emission order.
+        let body: String = blocks_of(&ir, "S.m")
+            .iter()
+            .map(|(_, b)| b.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let store_at = body
+            .find("store i32")
+            .expect("the increment stores the field");
+        let srem_at = body.find("srem i32").expect("the `%` in the condition");
+        assert!(store_at < srem_at, "store precedes the condition:\n{body}");
+        // The condition's operand must be a load emitted AFTER the store, not
+        // the SSA name loaded for the right-hand side before it.
+        let reloaded = body[store_at..srem_at].contains("load i32");
+        assert!(
+            reloaded,
+            "the condition reused the pre-store load of `this.n`:\n{body}"
+        );
+    }
+
+    #[test]
+    fn ir_instr_may_write_memory_classifies_opcodes() {
+        for w in [
+            "store i32 %t4, ptr %t1, !tbaa !1",
+            "call void @f(ptr %p)",
+            "%t9 = call i32 @g()",
+            "%t2 = tail call i32 @g()",
+            "invoke void @f() to label %a unwind label %b",
+            "%old = atomicrmw add ptr %p, i32 1 seq_cst",
+            "%r = cmpxchg ptr %p, i32 0, i32 1 seq_cst seq_cst",
+            "fence seq_cst",
+        ] {
+            assert!(ir_instr_may_write_memory(w), "{w}");
+        }
+        for r in [
+            "%t3 = load i32, ptr %t2, !tbaa !1",
+            "%t4 = add i32 %t3, 1",
+            "%t1 = getelementptr inbounds %S, ptr %0, i32 0, i32 0",
+            "%t5 = icmp eq i32 10, 0",
+            "%p = phi ptr [ %a, %bb1 ], [ %b, %bb2 ]",
+            "%c = bitcast ptr %p to ptr",
+            "; a comment",
+        ] {
+            assert!(!ir_instr_may_write_memory(r), "{r}");
+        }
     }
 
     #[test]

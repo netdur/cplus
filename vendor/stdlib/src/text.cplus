@@ -714,6 +714,42 @@ fn intern(s: str) -> str {
 }
 
 // ───────────────────────────── tests ─────────────────────────────
+
+// A MOVE INSIDE AN INTERPOLATION still disarms the source's drop.
+//
+// Silent double-free before 2026-09-06, and only in a RELEASE compiler:
+// codegen's syntactic move-scanner — the pass that decides which bindings get
+// a drop flag at all — had no arm for `InterpStr`, so it never walked the
+// parts. A binding moved only inside one was classified never-moved, got no
+// flag, and the emission-time `mark_moved` had nothing to flip; scope exit then
+// freed a buffer the callee already owned. (`mark_moved`'s `debug_assert!`
+// catches exactly this, which is why a debug compiler would have caught it.)
+//
+// The same move written outside an interpolation always worked, so the failing
+// spelling was the natural one and the working one looked like a pointless
+// extra binding.
+
+fn _consume_text(take t: Text) -> Text {
+    return t;
+}
+
+#[test]
+fn a_move_inside_an_interpolation_disarms_the_sources_drop() {
+    let a: Text = from_str("boom");
+    let s: Text = "got: ${_consume_text(a)}";
+    assert s.equals("got: boom");
+}
+
+// The counterpart: a PLACE part is still owned by its binding and must NOT be
+// freed by the interpolation — the double-free this fix must not introduce.
+#[test]
+fn an_interpolated_place_part_stays_owned_by_its_binding() {
+    let a: Text = from_str("boom");
+    let s: Text = "got: ${a}";
+    assert s.equals("got: boom");
+    assert a.equals("boom");
+}
+
 // Package unit tests for Text. Run standalone (no e2e):
 //     cd vendor/stdlib && cpc test
 

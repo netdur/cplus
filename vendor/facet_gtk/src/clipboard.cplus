@@ -1,0 +1,47 @@
+// facet_gtk clipboard — GDK's clipboard, and only half of it.
+//
+// See facet_appkit/clipboard for the shape and facet_runtime/runtime for why
+// the portable half has it.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "gdk/gdk" as gdk;
+
+// The default display, which owns the clipboard. Neither
+// `gdk_display_get_default` nor `gdk_display_manager_get` is in the generated
+// bindings — both are STATIC entry points with no receiver, which is the shape
+// the generator skips — so the one line is written here.
+#[link_name = "gdk_display_get_default"]
+extern fn gdk_display_get_default() -> *u8;
+
+fn copy_text(s: str) -> bool {
+    let d: *u8 = { gdk_display_get_default() };
+    if d == (0 as *u8) { return false; }
+    let cb: gdk::Clipboard = gdk::Display::from_raw(d).get_clipboard();
+    if cb.raw() == (0 as *u8) { return false; }
+    cb.set_text(s);
+    // `gdk_clipboard_set_text` is void — the toolkit takes the string and
+    // publishes ownership asynchronously, so there is no outcome to report and
+    // this says only that a clipboard was there. Same weaker answer UIKit
+    // gives, for the same reason, and stated rather than invented.
+    return true;
+}
+
+// READING IS ASYNC ON GTK4 AND THERE IS NO SYNCHRONOUS DOOR. GTK3 had
+// `gtk_clipboard_wait_for_text`, which spun a nested main loop internally;
+// GTK4 removed it deliberately, because the clipboard's contents may be owned
+// by ANOTHER PROCESS and reading them is a round trip that can block for as
+// long as that process takes to answer.
+//
+// What is left is `gdk_clipboard_read_text_async` plus its `_finish`, and the
+// generator SKIPPED the async half (`param callback — unmapped type
+// Gio.AsyncReadyCallback`), so even the pieces are not all bound.
+//
+// `None` is therefore the HONEST answer here, not a stub: this backend does not
+// know what is on the clipboard and will not pretend that an empty board and an
+// unreadable one are the same fact. What it would take is written down in
+// MANIFEST.md — an extern for the async call, a callback, and a nested
+// GMainLoop, which is the re-entrancy hazard GTK4 removed the API to avoid.
+fn paste_text() -> option::Option[text::Text] {
+    return option::Option[text::Text]::None;
+}

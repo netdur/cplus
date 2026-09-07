@@ -47,7 +47,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`mutex`](#mutex) | `Mutex[T]`, `MutexGuard[T]` |
 | [`channel`](#channel) | `Channel[T]`, `ReceiveResult[T]` |
 | [`future`](#future) | `Future[T]`, `Poll[T]` |
-| [`executor`](#executor) | `block_on`, `spawn_local` |
+| [`executor`](#executor) | `spawn_local`, `yield_now`, the async↔thread bridge |
 | [`reactor`](#reactor) | event loop registration / poll |
 | [`time`](#time) | async timers |
 | [`marker`](#marker) | `Send` / `Sync` documentation anchor |
@@ -673,6 +673,13 @@ struct Iterator[T] { /* compiler-known shape from gen fn */ }
 Methods include `next`, and combinators such as `filter` / `map` / `prefix`
 (see source). Produced by `gen fn`, not constructed by hand in normal code.
 
+Lazy: calling a `gen fn` runs none of its body; each `next()` (or `for`
+trip) resumes it for exactly one element, so a `break` leaves the rest
+unproduced. `yield x` moves `x` — the consumer's binding owns it and drops
+it, and `for x in it` drops each element at the end of its trip unless the
+body moves it out. `Vec::iter` therefore yields Copy elements only;
+`Vec::drain` is the accessor that moves owned elements out, in order.
+
 ---
 
 ## range
@@ -764,8 +771,11 @@ control block in ordinary code.
 ## executor
 
 ```cplus
-fn block_on[T](f: future::Future[T]) -> T
 fn spawn_local[T: Send](take f: future::Future[T])
+// Driving lives on the value (stdlib/future):
+//   fn wait(take this) -> T                      // to completion; a cancel request does not stop it
+//   fn wait_or_cancel[T](take f: Future[T]) -> WaitResult[T]   // free fn: Done(T) | Cancelled
+//   fn cancel(take this)
 ```
 
 Single-threaded driver: poll until complete; optional local spawn.
@@ -789,7 +799,7 @@ fn drain_pending() -> i32
 ```
 
 For external pumps (an event loop driving spawned futures without
-`block_on`), stable C-ABI exports include `stdlib_reactor_kqfd_v1()` — the
+`Future::wait`), stable C-ABI exports include `stdlib_reactor_kqfd_v1()` — the
 kqueue fd, itself pollable, so a run loop can watch it — plus the `_v1`
 forms of drain/poll above. facet's `spawn_ui` is the reference consumer.
 

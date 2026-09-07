@@ -79,7 +79,7 @@ Cross-module use inside stdlib is normal (`vec` imports `option`, `status`,
 | Module | Role |
 |---|---|
 | `future` | `Future[T]`, `Poll[T]` (compiler shapes) |
-| `executor` | `block_on`, `spawn_local` |
+| `executor` | `spawn_local`, `yield_now`, the async↔thread bridge (the drive is `Future::wait`) |
 | `reactor` | Process-global I/O reactor (kqueue / epoll / Windows via override) |
 | `time` | Async timer helpers on the reactor |
 
@@ -150,7 +150,7 @@ glibc. The calls are POSIX; the constants are not.
 ## Async shape
 
 1. `async fn` produces a `Future[T]` (compiler).
-2. `executor::block_on(fut)` drives it to completion on the current thread.
+2. `fut.wait()` drives it to completion on the current thread (`future::wait_or_cancel(fut)` is the stoppable form); an `async fn main` is driven the same way by the compiler.
 3. I/O waiters register with `reactor` (read/write/timer); the executor
    polls until ready.
 

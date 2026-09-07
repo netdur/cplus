@@ -291,6 +291,33 @@ is worth re-reading with that in mind.
 
 ## 2. Not built yet — the debt
 
+### `paste_text` — GTK4 has no synchronous clipboard read
+
+`copy_text` IS live: `gdk_clipboard_set_text` on the default display's
+clipboard, one call. Reading is the half that cannot be written.
+
+GTK3 had `gtk_clipboard_wait_for_text`, which spun a nested main loop
+internally. **GTK4 removed it deliberately** — the clipboard's contents may be
+owned by another process, so reading them is a round trip that can block for as
+long as that process takes to answer, and a toolkit does not put that on the UI
+thread behind a synchronous call.
+
+What remains is `gdk_clipboard_read_text_async` plus `_finish`, and the
+generator skipped the async half (`param callback — unmapped type
+Gio.AsyncReadyCallback`), so not even the pieces are all bound.
+
+So `paste_text()` answers `None` here, always, and that is the honest answer
+rather than a stub: this backend does not know what is on the clipboard and
+will not report an unreadable board and an empty one as the same fact.
+
+Closing it needs three things, and the third is why it is not done in passing:
+an extern for `gdk_clipboard_read_text_async`, a C-ABI callback to hand it, and
+a nested `GMainLoop` to run until that callback fires — which is exactly the
+re-entrancy hazard GTK4 removed the GTK3 API to avoid. The alternative is to
+make `paste_text` async in the portable facade, which is a decision for
+`facet_runtime` and not for this backend to take on its own.
+
+
 Everything not listed as live above. The large ones, in the order they matter.
 
 READ THESE AS CLAIMS, NOT AS FACTS. Every row here was written from reasoning

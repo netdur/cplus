@@ -145,6 +145,28 @@ text is answered; the colour of it is the dialog's.
 
 ## 2. Not yet built — Android has an answer, this pass did not write it
 
+### The clipboard IS built, and its `copy_text` answers weaker than AppKit's
+
+Noted here rather than in section 1 because the portable contract says
+`copy_text` returns whether the platform took the string, and on Android that
+is not knowable at the call.
+
+`ClipboardManager.setPrimaryClip` is **void**, and since API 29 the platform may
+refuse a write from an app that is not in the foreground — silently, with no
+return value and no exception. So `copy_text` answers that the write was
+ISSUED, not that the board took it. Same weaker answer UIKit and GTK give, for
+the same reason, and stated rather than invented.
+
+`paste_text` has no such caveat: it reads through `coerceToText`, which resolves
+a clip holding a URI or styled markup rather than answering null the way
+`getText` would.
+
+Both go through plain JNI on framework classes — `Context.getSystemService`,
+`ClipData.newPlainText`, `ClipboardManager`, `ClipData$Item` — so **neither
+touches `facet_android.dex`**. A Java edit would have needed
+`tools/build_dex.sh` to change anything at all, and none was necessary.
+
+
 Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
 
@@ -319,12 +341,36 @@ rows has closed: what is left is PROPS on controls that already work.
 
 - **THE SYSTEM BACK IS THE APP'S, through `nav::pop`.** Closing the app was the
   wrong default and it is what this backend did: a demo screen deep in the
-  gallery, and back quit. The press now goes to facet's navigation tier and only
+  gallery, and back quit. The press goes to facet's navigation tier and only
   falls through to the platform when facet says there is nowhere to go back to —
   which at the top level is right, because back from the first screen leaving the
   app IS the Android behaviour. `onBackPressed` rather than an
   OnBackInvokedCallback: the callback API is API 33 and opt-in per manifest, and
   the deprecated override still runs everywhere this backend targets.
+
+  **This section claimed that before it was true, and the gap is worth
+  recording.** The Java override, the JNI door and `facet_android_back` were all
+  built and all correct — and nothing on the C+ side ever registered a
+  `nav::pop` hook, because this platform had no App tier at all
+  (`runtime_android::App::run` refused loudly and `push_screen` / `pop_screen`
+  were no-backend stubs). So `nav::pop()` answered false every time and back
+  always fell through and quit. It read as working on a device only because the
+  gallery hand-registered `nav::set_pop_fn` in its own `on_attach` — the
+  application doing the runtime's job.
+
+  **Verified on a Galaxy Fold SM_F966B, 2026-09-06**, by hand: the edge swipe
+  pops the in-place stack and returns to the first screen, and a second swipe
+  from there leaves the app. By hand because it has to be — `click` through the
+  agent surface skips hit testing and the responder chain deliberately, so it
+  can say a handler fired and nothing at all about whether a gesture reaches it.
+
+  The runtime registers it now. `App::run` sets up and RETURNS here (the
+  Activity owns the loop, which is why `runtime::App` had to become a handle to
+  a runtime-owned instance first), and it wires `close_fn` / `push_fn` /
+  `pop_fn` / `pop_to_fn` / `depth_fn` over the shared in-place screen stack in
+  `facet/stack.cplus` — one body that also serves `nav::push(show:
+  Show::Screen)` on the desktop backends and a bare `push` on a phone. An
+  application needs no hook of its own.
 
 - **A glyph button is ROUND, and its shape is known only after layout.**
   `bordered` DEFAULTS TO TRUE on `icon_button` in facet's contract, so the

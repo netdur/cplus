@@ -311,8 +311,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:3597"
 test = "cplus-core/src/sema.rs:main_must_return_i32_e0309"
-cause = "`main` is declared with parameters or a return type other than `fn main() -> i32`."
-fix = "Declare it as `fn main() -> i32`."
+cause = "`main` is declared with parameters or a return type other than `i32`. The entry is `fn main() -> i32` or `async fn main() -> i32`; an async entry is judged as the synchronous wrapper the compiler drives, so `async fn main()` with a unit return fails the same way `fn main()` does."
+fix = "Declare it as `fn main() -> i32` (or `async fn main() -> i32`; the compiler drives an async entry)."
 example = '''
 fn main() { }
 '''
@@ -713,7 +713,7 @@ verified = true
 emit_site = "cplus-core/src/sema.rs:13097"
 test = "cplus-core/src/sema.rs:phase5_implicit_non_copy_param_consumes_e0335"
 cause = "A non-Copy binding is read after it was moved (into a call, a `take` parameter, or a `let y = x;`). Flow-sensitive: a move only on a branch that `return`s / `break`s does not poison the other path, and it also fires for non-Copy types whose Copy-ness depends on a generic payload. A `match` also moves: matching an owned binding of a Drop-carrying enum consumes it when any arm binds a name, so the binding cannot be read or matched again."
-fix = "Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths. For a `match`: bind nothing (`E::A(_)`) if you only need to test the discriminant — that form does not consume, so the binding stays matchable. For a `guard let`, reach the complement payload with `else |E::B(x)|` rather than re-matching the scrutinee in the else block."
+fix = "Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths. For a `match`: bind nothing (`E::A(_)`) if you only need to test the discriminant — that form does not consume, so the binding stays matchable. For a `guard let`, reach the complement payload with `else E::B(x)` rather than re-matching the scrutinee in the else block."
 example = '''
 struct P { x: i32 }
 impl P { fn drop(ref this) {} }
@@ -946,13 +946,13 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/lower.rs:684"
 test = "cplus-core/src/lower.rs:guard_let_complement_overlap_rejected"
-cause = "The explicit complement pattern in `else |Pat|` references the same enum variant as the success pattern, so the two overlap."
+cause = "The explicit complement pattern in `else Pat` references the same enum variant as the success pattern, so the two overlap."
 fix = "Make the complement pattern cover only the cases the success pattern does not."
 example = '''
 enum Maybe { Some(i32), None }
 fn main() -> i32 {
     let m: Maybe = Maybe::Some(7);
-    guard let Maybe::Some(v) = m else |Maybe::Some(_)| { return 0; };
+    guard let Maybe::Some(v) = m else Maybe::Some(_) { return 0; };
     return v;
 }
 '''
@@ -1089,8 +1089,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:4628"
 test = "cplus-core/src/sema.rs:test_fn_with_param_rejected_e0358"
-cause = "A `#[test]` function does not have the signature `fn() -> i32` or `fn()` — it takes parameters or returns some other type."
-fix = "Give the test function the signature `fn() -> i32` or `fn()` (no parameters)."
+cause = "A `#[test]` function does not have the signature `fn() -> i32` or `fn()` (either may be `async`) — it takes parameters or returns some other type."
+fix = "Give the test function the signature `fn() -> i32` or `fn()` (no parameters); `async` is allowed on either, and the runner drives it."
 example = '''
 #[test] fn t(n: i32) { return; }
 fn main() -> i32 { return 0; }

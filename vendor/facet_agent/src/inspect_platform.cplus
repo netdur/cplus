@@ -399,6 +399,17 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
 // rather than by crashing.
 // The general pasteboard, for the panel's Copy button.
 //
+// AN APPLICATION SHOULD NOT COPY THIS. `facet_runtime/runtime`'s `copy_text`
+// and `paste_text` are the portable verbs, on every backend, and they exist
+// because this function did not used to have one — so every app that wanted to
+// copy a path or an error reached past the portable layer and retyped these
+// twelve lines, usually without the `clearContents`.
+//
+// It stays here rather than forwarding to `facet_appkit/clipboard`: this
+// package depends on `agent_appkit`, not on a facet BACKEND, and every arrow in
+// this tree points down. Buying deduplication with an upward dependency would
+// cost more than the twelve lines.
+//
 // `NSPasteboardTypeString` is a global NSString the linker would have to
 // resolve; its value is the UTI and writing it out is one string instead of an
 // extern and a load. `clearContents` first is not optional — `setString:forType:`

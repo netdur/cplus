@@ -174,6 +174,31 @@ Everything else — imports, `struct` layouts, `const`s, comments — is preserv
 byte for byte, so the header cannot drift from the source it came from.
 "
         }
+        Some(Subcommand::Package) => {
+            "\
+cpc package [--release]
+
+Wrap what `build` produced in the platform's shippable container. Runs the
+build first — there is no useful \"package the stale one\".
+
+macOS: `target/{debug,release}/<Name>.app`, an ordinary bundle —
+`Contents/MacOS/<Name>`, `Contents/Info.plist`, `PkgInfo` — ad-hoc signed,
+because an arm64 binary needs a signature to run and moving one into a
+bundle invalidates the one clang gave it.
+
+`macos/Info.plist` is used when present (`cpc init --platform macos` writes
+one) and a minimal plist is synthesized when it is not. `CFBundleExecutable`
+is filled in to match the binary if the file does not set it: a mismatch
+there makes the bundle refuse to launch and the error names none of it.
+
+NOT a mode of `--release`. That flag is an optimisation level and means the
+same thing on every target; a release binary and a debug bundle are both
+wanted — the second is how you test permissions, which need a bundle.
+
+Android (.apk) and iOS (.ipa) are not implemented. The Android recipe exists
+as examples/facet_gallery_ios/build_android.sh.
+"
+        }
         Some(Subcommand::Build) => {
             "\
 cpc build [-o OUT] [--release] [-g] [--asan|--ubsan|--tsan|--msan]
@@ -759,6 +784,10 @@ fn main() -> ExitCode {
                 subcommand = Some(Subcommand::Build);
                 i += 1;
             }
+            Some("package") if subcommand.is_none() && input.is_none() => {
+                subcommand = Some(Subcommand::Package);
+                i += 1;
+            }
             Some("fmt") if subcommand.is_none() && input.is_none() => {
                 subcommand = Some(Subcommand::Fmt);
                 i += 1;
@@ -954,6 +983,9 @@ fn main() -> ExitCode {
         (Some(Subcommand::Build), _) => {
             build_project(out, diag_mode, build_mode, fp_contract, &sanitizers)
         }
+        (Some(Subcommand::Package), _) => {
+            run_package(out, diag_mode, build_mode, fp_contract, &sanitizers)
+        }
         (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode, fp_contract),
         (Some(Subcommand::PrintLinkArgs), _) => {
             print_link_args(diag_mode, build_mode, &sanitizers)
@@ -990,6 +1022,22 @@ fn main() -> ExitCode {
 #[derive(Debug, Clone, Copy)]
 enum Subcommand {
     Build,
+    /// `cpc package` — the SHIPPABLE artifact, which is not what the compiler
+    /// produces.
+    ///
+    /// `build` emits what the toolchain makes: a binary, an archive, a `.so`.
+    /// `package` wraps that in whatever the platform hands to a person — a
+    /// `.app` on macOS, and one day a `.apk` (the forty lines of
+    /// `build_android.sh` every Android app copies) and an `.ipa`.
+    ///
+    /// NOT a mode of `--release`, deliberately. `--release` is an optimisation
+    /// level and means the same thing on every platform; making it also mean
+    /// "package for this platform" would give one flag two meanings that vary
+    /// by target. Both directions are wanted in practice: a release-optimised
+    /// bare binary for a CLI or a benchmark, and a DEBUG bundle for testing
+    /// permissions — TCC needs the bundle and the developer still wants
+    /// symbols.
+    Package,
     /// `cpc headers` — generate `lib/include/` from `src/` for the package in
     /// the current directory. Concrete modules get their bodies stripped to
     /// declarations; modules declaring generics are copied verbatim, because a
@@ -2626,6 +2674,156 @@ fn warn_orphan_sources(loaded: &[PathBuf], root: &Path, diag_mode: DiagMode) {
     }
 }
 
+/// `cpc package` — wrap what `build` produced in the platform's shippable
+/// container. macOS today; Android and iOS are the obvious next two.
+///
+/// A macOS `.app` is a DIRECTORY, and Xcode's own split is the one followed
+/// here: a bundled app keeps its plist as `Contents/Info.plist`, while a
+/// command-line tool carries it in `__TEXT,__info_plist`. Xcode has a build
+/// setting for exactly that second case (`CREATE_INFOPLIST_SECTION_IN_BINARY`,
+/// on by default for tool targets), which is what `cpc build` does. So the two
+/// modes are Apple's distinction rather than one being a lesser version of the
+/// other.
+fn run_package(
+    out: Option<PathBuf>,
+    diag_mode: DiagMode,
+    build_mode: BuildMode,
+    fp_contract: bool,
+    sanitizers: &[&str],
+) -> ExitCode {
+    if !cfg!(target_os = "macos") {
+        eprintln!("cpc package: only macOS is implemented — it produces a `.app`.");
+        eprintln!("             Android (.apk) and iOS (.ipa) are the next two; the");
+        eprintln!("             Android recipe exists as examples/facet_gallery_ios/build_android.sh.");
+        return ExitCode::FAILURE;
+    }
+    // PACKAGE IMPLIES BUILD. There is no useful "package the stale one", and a
+    // bundle wrapping yesterday's binary is a bug that looks like a build
+    // system being fast.
+    let code = build_project(out, diag_mode, build_mode, fp_contract, sanitizers);
+    if code != ExitCode::SUCCESS {
+        return code;
+    }
+    let m = match manifest::load(&PathBuf::from("Cplus.toml")) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), diag_mode, "");
+            return ExitCode::FAILURE;
+        }
+    };
+    let name = m.package.name.clone();
+    let mode_dir = match build_mode {
+        BuildMode::Release => "release",
+        _ => "debug",
+    };
+    let bin = m.root.join("target").join(mode_dir).join(&name);
+    if !bin.is_file() {
+        eprintln!("cpc package: no binary at {} — is this a library?", bin.display());
+        return ExitCode::FAILURE;
+    }
+    let display = {
+        let mut c = name.chars();
+        match c.next() {
+            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            None => name.clone(),
+        }
+    };
+    let app = m.root.join("target").join(mode_dir).join(format!("{display}.app"));
+    let contents = app.join("Contents");
+    let macos_dir = contents.join("MacOS");
+    let resources = contents.join("Resources");
+    // Rebuilt each time: a stale Resources/ outliving the file that produced it
+    // is the classic bundle bug.
+    let _ = std::fs::remove_dir_all(&app);
+    for d in [&macos_dir, &resources] {
+        if let Err(e) = std::fs::create_dir_all(d) {
+            eprintln!("cpc package: could not create {}: {e}", d.display());
+            return ExitCode::FAILURE;
+        }
+    }
+    let exe = macos_dir.join(&display);
+    if let Err(e) = std::fs::copy(&bin, &exe) {
+        eprintln!("cpc package: could not copy the binary: {e}");
+        return ExitCode::FAILURE;
+    }
+    // `CFBundleExecutable` MUST match the file in Contents/MacOS or the bundle
+    // will not launch, and the error names none of this.
+    let src_plist = m.root.join("macos").join("Info.plist");
+    let plist = if src_plist.is_file() {
+        match std::fs::read_to_string(&src_plist) {
+            Ok(t) => {
+                if t.contains("<key>CFBundleExecutable</key>") {
+                    t
+                } else {
+                    t.replace(
+                        "<dict>",
+                        &format!(
+                            "<dict>\n    <key>CFBundleExecutable</key>\n    <string>{display}</string>"
+                        ),
+                    )
+                }
+            }
+            Err(e) => {
+                eprintln!("cpc package: could not read {}: {e}", src_plist.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        // No macos/Info.plist: synthesize the minimum a bundle needs rather
+        // than refusing. An app that never asks for a permission needs no
+        // usage-description keys, and `cpc init --platform macos` writes a
+        // fuller one anyway.
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+             <plist version=\"1.0\">\n<dict>\n\
+             \x20   <key>CFBundleName</key>\n    <string>{display}</string>\n\
+             \x20   <key>CFBundleExecutable</key>\n    <string>{display}</string>\n\
+             \x20   <key>CFBundleIdentifier</key>\n    <string>dev.cplus.{name}</string>\n\
+             \x20   <key>CFBundlePackageType</key>\n    <string>APPL</string>\n\
+             \x20   <key>CFBundleShortVersionString</key>\n    <string>1.0</string>\n\
+             \x20   <key>CFBundleVersion</key>\n    <string>1</string>\n\
+             \x20   <key>NSHighResolutionCapable</key>\n    <true/>\n\
+             </dict>\n</plist>\n"
+        )
+    };
+    if let Err(e) = std::fs::write(contents.join("Info.plist"), plist) {
+        eprintln!("cpc package: could not write Info.plist: {e}");
+        return ExitCode::FAILURE;
+    }
+    // Legacy, tiny, and still read by some of Launch Services.
+    let _ = std::fs::write(contents.join("PkgInfo"), "APPL????");
+
+    // AD-HOC SIGN, and on Apple Silicon this is not optional: an arm64 binary
+    // must carry SOME signature to run at all. clang already ad-hoc signs what
+    // it links, and MOVING that binary into a bundle invalidates it — so a
+    // bundle that skipped this launched on the machine that built it and was
+    // "damaged" everywhere else.
+    let signed = std::process::Command::new("codesign")
+        .arg("--force")
+        .arg("--sign")
+        .arg("-")
+        .arg(&app)
+        .status();
+    match signed {
+        Ok(st) if st.success() => {}
+        Ok(st) => {
+            eprintln!("cpc package: codesign failed ({st}) — the bundle is built but will not launch");
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("cpc package: could not run codesign: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    println!("ok: {}", app.display());
+    if !src_plist.is_file() {
+        println!("note: no macos/Info.plist — a minimal one was synthesized. A permission");
+        println!("      needs its usage-description key there, or `request` kills the process.");
+    }
+    ExitCode::SUCCESS
+}
+
 fn build_project(
     out: Option<PathBuf>,
     diag_mode: DiagMode,
@@ -2905,6 +3103,36 @@ fn build_project(
         }
         for lib in &ls.libs {
             link_args.push(format!("-l{lib}"));
+        }
+    }
+    // THE APP'S Info.plist, EMBEDDED — and on macOS this is not cosmetic.
+    //
+    // A permission (camera, microphone, location) needs a usage-description key
+    // in the app's Info.plist, and a bare Mach-O binary has no bundle to keep
+    // one in. Without it `permissions::state` keeps answering normally and
+    // `request` KILLS THE PROCESS — asynchronously, after the call has already
+    // returned, so the crash does not name the call that caused it. See
+    // vendor/permissions/README.md.
+    //
+    // `__TEXT,__info_plist` is how a non-bundled binary carries one, and it is
+    // the same mechanism iOS uses for entitlements on a simulator (CLAUDE.md).
+    // Convention over configuration, and the same convention `ios/Info.plist`
+    // already follows: if the file is there, it is used.
+    //
+    // Not gated on `--kind gui`: a CLI that asks for the microphone has exactly
+    // the same problem, and a plist the author wrote is a plist the author
+    // meant.
+    if cfg!(target_os = "macos") {
+        let plist = m.root.join("macos").join("Info.plist");
+        if plist.is_file() {
+            link_args.push("-Xlinker".to_string());
+            link_args.push("-sectcreate".to_string());
+            link_args.push("-Xlinker".to_string());
+            link_args.push("__TEXT".to_string());
+            link_args.push("-Xlinker".to_string());
+            link_args.push("__info_plist".to_string());
+            link_args.push("-Xlinker".to_string());
+            link_args.push(plist.to_string_lossy().to_string());
         }
     }
     // Phase 2 Slice 2C: walk dependencies, validate each vendor package's
@@ -7121,6 +7349,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
 
          import \"./agent_consent\" as agent_consent;\n\
          import \"stdlib/option\" as option;\n\
+         import \"stdlib/status\" as status;\n\
          import \"stdlib/vec\" as vec;\n\n\
          struct Home {{\n    taps: i64,\n}}\n\n\
          impl Home {{\n\
@@ -7159,8 +7388,11 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   }}\n\
          }}\n\n\
          impl Home: component::Lifecycle {{\n\
-         \x20   fn on_attach(ref this) {{ }}\n\
-         \x20   fn on_detach(ref this) {{ }}\n\
+         \x20   // `why` says WHICH attach: Mount is the screen appearing, Active is\n\
+         \x20   // the app coming to the foreground. Detach mirrors it, and Inactive\n\
+         \x20   // is NOT a release signal — see facet/component.\n\
+         \x20   fn on_attach(ref this, why: component::Attach) {{ }}\n\
+         \x20   fn on_detach(ref this, why: component::Detach) {{ }}\n\
          }}\n\n\
          impl Home: screen::Screen {{\n\
          \x20   fn chrome(this) -> screen::Chrome {{\n\
@@ -7174,16 +7406,28 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       return vec::new::[screen::MenuItem]();\n\
          \x20   }}\n\
          }}\n\n\
+         // WHAT A ROUTE REGISTERS: a plain factory, so the registry is one shape\n\
+         // whatever the screens are. It builds a FRESH screen each time the route\n\
+         // is shown — a route is a name, not an instance.\n\
+         fn home_boxed() -> screen::ScreenBox {{\n\
+         \x20   return screen::screen_box::[Home](Home::new());\n\
+         }}\n\n\
          // Every entry — macOS, iOS and Android alike — comes through here.\n\
          //\n\
-         // `run_screen` is the tier ALL THREE backends implement, and it reads\n\
-         // `chrome()` above for the title and size (a phone honours the part of\n\
-         // a Chrome a phone has). There is a larger tier — `runtime::App`, with\n\
-         // `app.screen(\"name\", factory)` and named routes — and it is where to\n\
-         // go when this app grows a second screen. It is NOT the default here\n\
-         // because facet's Android facade does not implement `App::run` yet: it\n\
-         // warns on `adb logcat -s facet` and returns InvalidInput, so an app\n\
-         // built on it launches to a blank Activity.\n\
+         // `runtime::App` is the tier, and all three backends implement it now.\n\
+         // A screen is registered under a NAME and `run` shows one of them, so\n\
+         // the second screen costs one line rather than a rewrite:\n\
+         //\n\
+         //     app.screen(\"settings\", settings::boxed);\n\
+         //     nav::push(\"settings\");            // a window where there is room,\n\
+         //                                        // a stack entry where there is not\n\
+         //     nav::go(\"workspace\");             // REPLACE this screen; no way back\n\
+         //\n\
+         // This used to scaffold `run_screen` — the one-screen tier — because\n\
+         // Android's `App::run` refused and an app built on it came up to a\n\
+         // blank Activity. That was fixed on 2026-09-06 and verified on a\n\
+         // device, so the scaffold starts where an app is going rather than\n\
+         // where it can get stuck.\n\
          fn run() -> i32 {{\n\
          \x20   // DRIVEABLE BY AN AGENT, and by the IDE that launched it. Two\n\
          \x20   // lines, each saying what it does:\n\
@@ -7207,10 +7451,23 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   //\n\
          \x20   // ANYTHING THAT CONNECTS IS ADMITTED. To ask the user first, add\n\
          \x20   // `agent_consent::install();` above — see src/agent_consent.cplus.\n\
-         \x20   agent::enable();\n\
-         \x20   runtime::agent_mcp(\"{proj_name}\");\n\
-         \x20   runtime::run_screen(Home::new());\n\
-         \x20   return 0;\n\
+         \x20   agent::enable();\n\n\
+         \x20   // `let`, not `var`: an App is a HANDLE to an instance the runtime\n\
+         \x20   // owns, so nothing here is mutated — the registration goes to the\n\
+         \x20   // instance, not to this binding. (It is a handle because\n\
+         \x20   // `App::run` RETURNS on Android, where the Activity owns the\n\
+         \x20   // loop: an App the caller owned would be dropped the moment\n\
+         \x20   // `main` unwound.)\n\
+         \x20   let app: runtime::App = runtime::App::new(\"{proj_name}\");\n\
+         \x20   app.screen(\"home\", home_boxed);\n\
+         \x20   // No id: it defaults to the app's own name.\n\
+         \x20   app.agent_mcp();\n\n\
+         \x20   // The route `run` shows first. An unregistered name is refused\n\
+         \x20   // here rather than coming up blank.\n\
+         \x20   match app.run(\"home\") {{\n\
+         \x20       status::Status::Ok => {{ return 0; }}\n\
+         \x20       _other => {{ return 1; }}\n\
+         \x20   }}\n\
          }}\n"
     );
 
@@ -7357,6 +7614,59 @@ fn run_init(args: &[OsString]) -> ExitCode {
             None => proj_name.clone(),
         }
     };
+    // THE macOS Info.plist, and it is not decoration.
+    //
+    // A permission needs a usage-description key in the app's Info.plist, and a
+    // bare Mach-O binary has no bundle to keep one in. Without it
+    // `permissions::state` keeps answering normally and `request` KILLS THE
+    // PROCESS — asynchronously, after the call returned, so the crash does not
+    // name what caused it (vendor/permissions/README.md). A scaffolded app that
+    // asks for the camera would die and the author would have nothing to read.
+    //
+    // `cpc build` embeds this into `__TEXT,__info_plist` whenever the file
+    // exists, which is how a non-bundled binary carries one. Nothing to wire.
+    let macos_plist = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n\
+         <dict>\n\
+         \x20   <key>CFBundleName</key>\n\
+         \x20   <string>{display}</string>\n\
+         \x20   <key>CFBundleDisplayName</key>\n\
+         \x20   <string>{display}</string>\n\
+         \x20   <key>CFBundleIdentifier</key>\n\
+         \x20   <string>dev.cplus.{app_id}</string>\n\
+         \x20   <key>CFBundleShortVersionString</key>\n\
+         \x20   <string>1.0</string>\n\
+         \x20   <key>CFBundleVersion</key>\n\
+         \x20   <string>1</string>\n\
+         \x20   <key>CFBundlePackageType</key>\n\
+         \x20   <string>APPL</string>\n\
+         \x20   <key>NSHighResolutionCapable</key>\n\
+         \x20   <true/>\n\n\
+         \x20   <!-- WHY THIS FILE EXISTS. macOS refuses a permission to an app\n\
+         \x20        that has not said what it wants it FOR, and the refusal is\n\
+         \x20        not a `Denied` you can handle: `permissions::request` kills\n\
+         \x20        the process, asynchronously, after the call has already\n\
+         \x20        returned. The string is shown to the person in the dialog,\n\
+         \x20        so write it for them and not for the compiler.\n\n\
+         \x20        Uncomment what this app actually asks for. Leaving one in\n\
+         \x20        that the app never requests is harmless; leaving one OUT\n\
+         \x20        that it does request is fatal at runtime. -->\n\n\
+         \x20   <!--\n\
+         \x20   <key>NSCameraUsageDescription</key>\n\
+         \x20   <string>{display} uses the camera to …</string>\n\
+         \x20   <key>NSMicrophoneUsageDescription</key>\n\
+         \x20   <string>{display} uses the microphone to …</string>\n\
+         \x20   <key>NSLocationWhenInUseUsageDescription</key>\n\
+         \x20   <string>{display} uses your location to …</string>\n\
+         \x20   <key>NSPhotoLibraryUsageDescription</key>\n\
+         \x20   <string>{display} reads your photo library to …</string>\n\
+         \x20   -->\n\
+         </dict>\n\
+         </plist>\n"
+    );
+
     let ios_plist = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
@@ -7802,6 +8112,17 @@ fn run_init(args: &[OsString]) -> ExitCode {
             }
             files.push((ios_dir.join("main.m"), ios_main_m.clone()));
             files.push((ios_dir.join("Info.plist"), ios_plist.clone()));
+        }
+        // The macOS half of the same problem — see `macos_plist`. Written for
+        // any macOS project, gui or cli: a CLI that asks for the microphone
+        // dies exactly the same way.
+        if platforms.iter().any(|p| p == "macos") {
+            let macos_dir = root.join("macos");
+            if let Err(e) = std::fs::create_dir_all(&macos_dir) {
+                eprintln!("cpc init: could not create {}: {e}", macos_dir.display());
+                return ExitCode::FAILURE;
+            }
+            files.push((macos_dir.join("Info.plist"), macos_plist.clone()));
         }
     } else if platforms.is_empty() {
         files.push((src.join("main.cplus"), desktop_main.to_string()));

@@ -185,14 +185,14 @@ impl Connection {
     fn execute(ref this, sql: str) -> result::Result[i64, Error] {
         let prep: result::Result[Statement, Error] = this.prepare(sql);
         guard let result::Result[Statement, Error]::Ok(st0) = prep
-            else |result::Result[Statement, Error]::Err(e)| {
+            else result::Result[Statement, Error]::Err(e) {
             return result::Result[i64, Error]::Err(e);
         };
         var st: Statement = st0;
         loop {
             let step_r: result::Result[Step, Error] = st.step();
             guard let result::Result[Step, Error]::Ok(s) = step_r
-                else |result::Result[Step, Error]::Err(e)| {
+                else result::Result[Step, Error]::Err(e) {
                 return result::Result[i64, Error]::Err(e);
             };
             // Done ends the loop; Row is ignored for execute().

@@ -6,10 +6,10 @@
 //! 1. Emits the slice-specific diagnostics:
 //!    - E0347: irrefutable `if let` pattern (use plain `let`)
 //!    - E0348: `guard let` else block must diverge (return / break / continue)
-//!    - E0349: `guard let` else complement is not exhaustive with the
-//!      success pattern (only fires when the user wrote an explicit
-//!      `else |Pat|` form — without a complement we synthesize `_`
-//!      which is trivially exhaustive)
+//!    - non-exhaustive `guard let` else-pattern: reported as E0340 by the
+//!      exhaustiveness check on the synthesized match, not by a dedicated
+//!      code. Only reachable when the user named an else-pattern — omitted,
+//!      we synthesize `_`, which is trivially exhaustive.
 //!    - E0350: `guard let` complement overlaps the success pattern
 //!    - E0351: `guard let` requires the success pattern to bind at least
 //!      one value (else it's just an `if let` with side effects)
@@ -75,6 +75,11 @@ pub fn lower_multi(
     // the same reason derive does it here, and with the same consequence:
     // the rest of the compiler sees a hand-written method.
     cx.expand_interface_defaults(prog);
+    // v0.0.31: `async fn main` / `#[test] async fn`. Split each into a
+    // module-private async body plus a synchronous entry that drives it,
+    // before the const and parameter tables are built so the synthesized
+    // functions are ordinary items to everything that follows.
+    cx.desugar_async_entries(prog);
     // v0.0.9 Phase 4: collect consts and validate initializers (both
     // const and static initializers must be literals). Done before the
     // per-item walk so the substitution pass sees a populated table.
@@ -1034,7 +1039,7 @@ impl Lower {
 
     /// `guard let PAT = E else { ELSE };`
     ///   → `let X = match E { PAT => X, _ => { ELSE } };`
-    /// `guard let PAT = E else |COMP| { ELSE };`
+    /// `guard let PAT = E else COMP { ELSE };`
     ///   → `let X = match E { PAT => X, COMP => { ELSE } };`
     /// (where `X` is the single binding extracted from `PAT`.)
     /// `guard var` emits the same rewrite with a `var` head instead of
@@ -1080,7 +1085,7 @@ impl Lower {
         }
         let extracted = bindings.into_iter().next().unwrap();
 
-        // E0349 / E0350: complement (if user wrote `else |Pat|`) must
+        // E0350: the else-pattern (if the user named one) must
         // exhaustively cover the scrutinee together with the success
         // pattern AND must not overlap it. Without a complement we
         // synthesize `_` which is trivially exhaustive and disjoint from
@@ -1264,8 +1269,8 @@ impl Lower {
         // when the lowering pass gets access to a sema context; in the
         // meantime the synthesized match runs through slice-3I
         // exhaustiveness check which will catch missing variants there
-        // (sema's E0343 instead of E0349). Accept E0343 as the surface
-        // error until the dedicated check moves in.
+        // (sema's E0343). Accept E0343 as the surface error; there is no
+        // dedicated guard-let coverage code.
     }
 
     // ---- v0.0.9 Phase 4: const + static literal-only check + const substitution ----
@@ -3886,6 +3891,117 @@ impl Lower {
     }
 }
 
+impl Lower {
+    /// v0.0.31: an entry the compiler drives. `async fn main() -> i32` and
+    /// `#[test] async fn t()` are pure sugar over the one drive loop the
+    /// language has: the async body moves to a module-private
+    /// `__async_<name>`, and a synchronous `<name>` takes its place whose
+    /// whole body is `#block_on::[T](__async_<name>())`. Every pass after
+    /// this one sees two ordinary functions, so `main`'s signature rule
+    /// (E0309) and the test-fn rule (E0358) judge the wrapper exactly as
+    /// they judge a hand-written entry — `async fn main()` with a unit
+    /// return is E0309 for the same reason `fn main()` is.
+    ///
+    /// `await` itself is untouched: it still means suspend, and is still
+    /// only legal inside an `async fn`. Driving a future from other
+    /// synchronous code stays a spelled call (`f.wait()`, `future::wait_or_cancel(f)`),
+    /// which is the form you want to find when a thread stalls.
+    ///
+    /// Only an entry qualifies: a free `async fn` that is `main` or carries
+    /// `#[test]`, with no parameters and no generics. Any other shape is
+    /// left alone so the existing diagnostics name it.
+    fn desugar_async_entries(&mut self, prog: &mut Program) {
+        let mut wrappers: Vec<(usize, Item)> = Vec::new();
+        for (idx, item) in prog.items.iter_mut().enumerate() {
+            let ItemKind::Function(f) = &mut item.kind else {
+                continue;
+            };
+            if !f.is_async || f.is_gen || f.is_extern || f.is_declaration {
+                continue;
+            }
+            let is_test = f.attributes.iter().any(|a| a.path.name == "test");
+            if f.name.name != "main" && !is_test {
+                continue;
+            }
+            if !f.params.is_empty() || !f.generic_params.is_empty() {
+                continue;
+            }
+            let span = f.name.span;
+            let entry_name = f.name.clone();
+            let body_name = format!("__async_{}", entry_name.name);
+            // `#block_on::[T](__async_<name>())` — T spelled from the
+            // declared return, `()` when there is none (the canonical unit
+            // spelling the parser itself produces).
+            let t = f.return_type.clone().unwrap_or(Type {
+                kind: TypeKind::Path("()".to_string()),
+                span,
+            });
+            let call = Expr {
+                kind: ExprKind::Call {
+                    callee: Box::new(Expr {
+                        kind: ExprKind::Ident(body_name.clone()),
+                        span,
+                    }),
+                    args: Vec::new(),
+                    arg_labels: Vec::new(),
+                    type_args: Vec::new(),
+                },
+                span,
+            };
+            let drive = Expr {
+                kind: ExprKind::Intrinsic {
+                    name: "block_on".to_string(),
+                    type_args: vec![t],
+                    args: vec![call],
+                    ret_ty: None,
+                },
+                span,
+            };
+            let stmt = if f.return_type.is_some() {
+                StmtKind::Return(Some(drive))
+            } else {
+                StmtKind::Expr(drive)
+            };
+            let wrapper = Function {
+                name: entry_name,
+                params: Vec::new(),
+                return_type: f.return_type.clone(),
+                body: Block {
+                    stmts: vec![Stmt { kind: stmt, span }],
+                    tail: None,
+                    span: f.body.span,
+                },
+                is_extern: false,
+                is_declaration: false,
+                is_variadic: false,
+                is_pub: f.is_pub,
+                // The attributes ride with the entry: `#[test]` is what the
+                // runner discovers, and a contract on `main` judges the value
+                // the program exits with.
+                attributes: std::mem::take(&mut f.attributes),
+                generic_params: Vec::new(),
+                is_async: false,
+                is_gen: false,
+            };
+            f.name.name = body_name;
+            f.is_pub = false;
+            wrappers.push((
+                idx,
+                Item {
+                    kind: ItemKind::Function(wrapper),
+                    span: item.span,
+                    origin_file: item.origin_file.clone(),
+                },
+            ));
+        }
+        // Each wrapper goes right after its body, back to front so the
+        // recorded indices stay valid.
+        for (idx, it) in wrappers.into_iter().rev() {
+            prog.items.insert(idx + 1, it);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4186,7 +4302,7 @@ fn main() -> i32 { return 0; }\n";
             enum Maybe { Some(i32), None }
             fn main() -> i32 {
                 let m: Maybe = Maybe::Some(7);
-                guard let Maybe::Some(v) = m else |Maybe::Some(_)| { return 0; };
+                guard let Maybe::Some(v) = m else Maybe::Some(_) { return 0; };
                 return v;
             }
         "#;
@@ -5085,5 +5201,125 @@ fn main() -> i32 { return 0; }\n";
             matches!(&callee.kind, ExprKind::Field { name, .. } if name.name == "to_text")
         });
         assert!(has_to_text_call, "nested field should call to_text");
+    }
+
+    // ---- v0.0.31: `async fn main` / `#[test] async fn` desugar ----
+
+    fn fn_named<'a>(prog: &'a Program, name: &str) -> &'a Function {
+        prog.items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) if f.name.name == name => Some(f),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no fn `{name}` in {:#?}", prog.items))
+    }
+
+    /// The body of a wrapper is exactly `#block_on::[T](__async_<name>())`,
+    /// as a `return` when the entry declares a type and a bare statement
+    /// when it doesn't. Returns the spelled `T`.
+    fn drive_type_of<'a>(stmt: &'a Stmt, body_name: &str) -> &'a TypeKind {
+        let drive = match &stmt.kind {
+            StmtKind::Return(Some(e)) => e,
+            StmtKind::Expr(e) => e,
+            other => panic!("wrapper statement is not a drive: {other:?}"),
+        };
+        let ExprKind::Intrinsic {
+            name,
+            type_args,
+            args,
+            ret_ty,
+        } = &drive.kind
+        else {
+            panic!("wrapper body is not an intrinsic: {drive:?}");
+        };
+        assert_eq!(name, "block_on");
+        assert!(ret_ty.is_none());
+        assert_eq!(type_args.len(), 1, "one type arg: {type_args:?}");
+        assert_eq!(args.len(), 1);
+        let ExprKind::Call { callee, args, .. } = &args[0].kind else {
+            panic!("drive operand is not a call: {:?}", args[0]);
+        };
+        assert!(args.is_empty());
+        assert!(
+            matches!(&callee.kind, ExprKind::Ident(n) if n == body_name),
+            "callee should be `{body_name}`: {callee:?}"
+        );
+        &type_args[0].kind
+    }
+
+    #[test]
+    fn async_main_splits_into_a_sync_entry_and_a_private_async_body() {
+        let (prog, diags) = run("async fn main() -> i32 { return 1; }");
+        assert!(diags.is_empty(), "{diags:?}");
+        let main = fn_named(&prog, "main");
+        assert!(!main.is_async, "the entry is synchronous");
+        assert!(main.params.is_empty());
+        assert!(
+            matches!(main.return_type.as_ref().map(|t| &t.kind), Some(TypeKind::Path(p)) if p == "i32")
+        );
+        assert_eq!(main.body.stmts.len(), 1);
+        assert!(main.body.tail.is_none());
+        assert!(matches!(main.body.stmts[0].kind, StmtKind::Return(_)));
+        let t = drive_type_of(&main.body.stmts[0], "__async_main");
+        assert!(matches!(t, TypeKind::Path(p) if p == "i32"));
+        let body = fn_named(&prog, "__async_main");
+        assert!(body.is_async, "the user's body keeps its async");
+        assert!(body.attributes.is_empty());
+        assert!(!body.is_pub);
+        // The wrapper sits right after its body.
+        let names: Vec<&str> = prog
+            .items
+            .iter()
+            .filter_map(|it| match &it.kind {
+                ItemKind::Function(f) => Some(f.name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, vec!["__async_main", "main"]);
+    }
+
+    #[test]
+    fn async_test_fn_keeps_the_attribute_on_the_entry() {
+        let (prog, diags) = run("#[test] async fn t() { }\n#[test] export async fn u() -> i32 { return 0; }");
+        assert!(diags.is_empty(), "{diags:?}");
+        let t = fn_named(&prog, "t");
+        assert!(!t.is_async);
+        assert!(t.attributes.iter().any(|a| a.path.name == "test"));
+        assert!(t.return_type.is_none());
+        assert!(matches!(t.body.stmts[0].kind, StmtKind::Expr(_)), "unit entry: bare drive");
+        let ty = drive_type_of(&t.body.stmts[0], "__async_t");
+        assert!(matches!(ty, TypeKind::Path(p) if p == "()"), "unit spelled `()`: {ty:?}");
+        let body = fn_named(&prog, "__async_t");
+        assert!(body.is_async && body.attributes.is_empty());
+        // `export` follows the entry too; the body is private either way.
+        let u = fn_named(&prog, "u");
+        assert!(u.is_pub && !u.is_async);
+        assert!(!fn_named(&prog, "__async_u").is_pub);
+    }
+
+    #[test]
+    fn async_entries_of_other_shapes_and_plain_async_fns_are_left_alone() {
+        let (prog, _) = run(
+            "async fn main(x: i32) -> i32 { return x; }\n\
+             async fn helper() -> i32 { return 1; }\n\
+             #[test] async fn g[T]() { }",
+        );
+        assert!(fn_named(&prog, "main").is_async, "a main with params is not an entry shape");
+        assert!(fn_named(&prog, "helper").is_async, "a plain async fn is not an entry");
+        assert!(fn_named(&prog, "g").is_async, "a generic test is not an entry shape");
+        assert!(prog.items.iter().all(|it| {
+            !matches!(&it.kind, ItemKind::Function(f) if f.name.name.starts_with("__async_"))
+        }));
+    }
+
+    #[test]
+    fn sync_main_and_sync_tests_are_untouched() {
+        let src = "fn main() -> i32 { return 0; }\n#[test] fn t() { }";
+        let (prog, _) = run(src);
+        let (again, _) = run(src);
+        assert_eq!(prog.items.len(), 2);
+        assert_eq!(prog, again);
+        assert!(!fn_named(&prog, "main").is_async);
     }
 }

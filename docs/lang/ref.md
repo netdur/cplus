@@ -269,9 +269,9 @@ match r {                                    // payload patterns nest, any depth
 }
 if let Maybe[i32]::Some(v) = m { }
 while let option::Option[i64]::Some(v) = it.next() { }
-guard let Read::Ok(v) = r else { return 1; };            // else must diverge
-guard let Read::Ok(v) = r else |Read::Err(c)| { … };     // complement form: else binds the rest;
-                                                         // both patterns together must cover the enum (E0340)
+guard let Read::Ok(v) = r else { return 1; };           // else must diverge; else-pattern is `_`
+guard let Read::Ok(v) = r else Read::Err(c) { … };     // name it to bind the rest; the two
+                                                       // patterns together must cover the enum (E0340)
 ```
 
 A payload position takes `_`, a binding name, or another variant pattern —
@@ -486,7 +486,9 @@ finisher — diagnostics land on your lines.
 
 ```cplus
 async fn fetch() -> i32 { return (await inner()) +% 1; }
-fn main() -> i32 { return executor::block_on::[i32](fetch()); }   // main is never async
+async fn main() -> i32 { return await fetch(); }       // the compiler drives an async entry (v0.0.31)
+let r: i32 = fetch().wait();                           // driving from other sync code; consumes the future
+let w: future::WaitResult[i32] = future::wait_or_cancel(fetch());   // the cancellable drive: Done(v) | Cancelled
 
 let h = thread::spawn_with::[In, Out](data, worker);  // moves data in; h.join() -> Out
 var s: thread::Scope = thread::scope();               // s.lend::[T](local, f) — joined at scope drop

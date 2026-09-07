@@ -52,6 +52,10 @@ if o == notifications::Outcome::NotPermitted {
   says to present it. This package installs one. Without it the code is correct
   and nothing happens, which is the most common "notifications don't work"
   report there is.
+- **On macOS a Focus mode silences your app along with everyone else's.** The
+  notification lands in Notification Centre with no banner, which is the same
+  symptom as a broken one. `tools/why_quiet.sh <bundle-id>` reads macOS's
+  decision back out of the system log before you touch the code.
 - **Android needs one manifest line for action buttons:**
   `<receiver android:name="cplus.facet.FacetNotificationReceiver"
   android:exported="false" />`. Without it buttons quietly do nothing.

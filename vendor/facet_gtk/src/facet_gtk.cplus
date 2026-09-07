@@ -37,6 +37,8 @@ import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/services" as services;
 import "facet/theme" as theme;
+import "facet/window" as app_window;
+import "./dialogs" as dialogs;
 import "facet/application" as app;
 import "gtk4/gtk4" as gtk;
 import "./controls" as controls;
@@ -77,10 +79,17 @@ fn install() {
     // font is already installed system-wide, and it says so once when it is
     // nowhere.
     let _font: bool = controls::register_bundled_font();
+    // WHICH BACKEND IS DRAWING. A `@` fact, so an application cannot overwrite
+    // it — an app that could claim a backend it is not running on would be
+    // lying to an agent about the one thing the agent cannot check itself.
+    app::set_backend_name("facet_gtk");
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
     input::install();
     theme::set_is_dark_fn(window::is_dark);
+    // The window cursor's platform half. The observer slots are left empty on
+    // purpose — see `dialogs::window_host`.
+    app_window::install_host(dialogs::window_host());
     theme::set_theme_changed_fn(theme_changed);
     window::sync_appearance();
     // AND LISTEN FOR THE NEXT ONE. Reading the appearance once at startup is
@@ -98,6 +107,7 @@ fn uninstall() {
     mount::uninstall();
     services::uninstall_scheduler();
     input::uninstall();
+    app_window::uninstall_host();
     theme::set_is_dark_fn(0 as fn() -> bool);
     theme::set_theme_changed_fn(0 as fn());
     INSTALLED = false;

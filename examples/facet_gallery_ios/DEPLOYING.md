@@ -521,7 +521,10 @@ which is the three steps below, and says which of them your setup is missing
 rather than leaving you with a socket that times out:
 
 ```
-iproxy <port> <port> <25-char-UDID>          # brew install libimobiledevice
+iproxy -u <25-char-UDID> <port>:<port>        # brew install libimobiledevice
+# The positional form `iproxy <port> <port> <udid>` is the OLD syntax and now
+# fails with "Invalid listen port specified in argument" — current
+# libimobiledevice takes LOCAL:DEVICE pairs and the udid through -u.
 pymobiledevice3 usbmux forward <port> <port> # or: pip install pymobiledevice3
 tools/mcp_check.py <port>                    # the same script, unchanged
 ```
@@ -557,10 +560,138 @@ The decisive question, if you are ever unsure which app answered: terminate it
 **on the device** and ask again. A socket that keeps answering was never the
 device's.
 
+**And derive the port from a pid you have just read, not one you read earlier.**
+A relaunch — including the one `--console` does — gives a new pid and therefore
+a new port, and the old one is refused rather than answered. usbmuxd says
+`Error connecting to device: Connection refused` in the forwarder's own log,
+while curl reports only `Recv failure: Connection reset by peer`, so the useful
+message is in the log and not in the client. That cost a wrong diagnosis here on
+2026-09-06 (the app looked suspended; it was serving on a different port).
+
 ```
 xcrun devicectl device process terminate --device <identifier> --pid <pid>
 ```
 
+### The whole device sequence, in one block
+
+Verified on a physical iPad, **2026-09-06** — iPad Pro 11-inch (3rd gen),
+iPadOS 26.6.1. Copy this; every line of it is load-bearing and three of them are
+things that were re-derived the hard way twice.
+
+```sh
+cd examples/facet_gallery_ios
+# The CoreDevice id, by PATTERN and not by column: the Name field contains a
+# space ("iPad (4)"), so $3 is the hostname and not the id.
+DEV=$(xcrun devicectl list devices | grep physical \
+      | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' | head -1)
+UDID=$(xcrun xctrace list devices | sed -n 's/.*(\([0-9]\{8\}-[0-9A-F]\{16\}\)).*/\1/p' | head -1)
+
+cpc build --target ios-arm64            # the DEVICE slice, not the simulator one
+cd ios && xcodebuild -project Gallery.xcodeproj -target Gallery \
+     -configuration Debug -destination "platform=iOS,id=$UDID" \
+     -allowProvisioningUpdates build && cd ..
+xcrun devicectl device install app --device $DEV ios/build/Debug-iphoneos/Gallery.app
+
+# LAUNCH FIRST, THEN DERIVE THE PORT. Never the other way round.
+xcrun devicectl device process launch --device $DEV --terminate-existing \
+     dev.cplus.facetgalleryios
+PID=$(xcrun devicectl device info processes --device $DEV \
+      | grep "Gallery.app/Gallery" | awk '{print $1}' | head -1)
+PORT=$(( 9000 + PID % 1000 ))
+
+pkill -f iproxy
+iproxy -u $UDID $PORT:$PORT &          # note: -u, and LOCAL:DEVICE
+curl -s -X POST http://127.0.0.1:$PORT/ -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
+```
+
+A good answer names the app, and that is how you know it is the DEVICE talking:
+
+```json
+{"result":{"serverInfo":{"name":"facet_gallery_ios","version":"0.0.27"}}}
+```
+
+**Three failures and what each one actually is.** They are easy to confuse
+because two of them produce the same message at the client.
+
+| what you see | what it is |
+|---|---|
+| `Recv failure: Connection reset by peer`, and `Error connecting to device: Connection refused` in the FORWARDER's log | nothing is listening on that device port. Either a stale pid (see below) or the app is suspended |
+| launch refused, "profile has not been explicitly trusted" | §6 — trust the certificate on the device. A re-minted profile needs it again |
+| `Invalid listen port specified in argument` | the old `iproxy <port> <port> <udid>` syntax; use `-u UDID LOCAL:DEVICE` |
+
+**The client tells you almost nothing.** `curl` reports a reset; the reason is
+in the forwarder's own log and nowhere else. Always start `iproxy` with its
+output somewhere you can read it.
+
+**A relaunch moves the port.** The port is derived from the pid, so ANY relaunch
+— including the one `--console` performs — gives a new one, and the old port is
+refused. Re-read the pid after every launch. On 2026-09-06 this read as a
+suspended app for several minutes; it was serving perfectly well on a port
+nobody was asking.
+
+**A backgrounded app REFUSES, it does not hang.** The section above says a
+suspended app hangs. Measured here it answered `Connection refused` through
+usbmuxd while `devicectl` still listed the process — the pid being alive is not
+evidence the server is. Relaunching is the reliable fix and costs a port change.
+
+### Seeing what the device is doing
+
+```sh
+xcrun devicectl device capture screenshot --device $DEV --destination /tmp/ipad.png
+```
+
+No developer disk image, no Xcode window. `idevicescreenshot` from
+libimobiledevice needs the DDI mounted and fails with *"Could not start
+screenshotr service: Invalid service"* until it is; `devicectl` does not.
+There is a `capture screen-record` beside it for the same reason.
+
+**Worth taking one even when MCP is answering.** The socket tells you what the
+app believes; the screenshot tells you what the person sees, and the two
+disagree in exactly the cases worth finding. A second window that had mounted
+its tree into the FIRST window's content view read perfectly over MCP and was a
+blank screen — the picture is what said so.
+
+It also answers a question nothing else here does: whether the app is running
+WINDOWED or full-screen on an iPad. The close/minimise/zoom pill in the corner
+is the tell, and it decides what half the window tier even means.
+
+### Driving it: what a click needs
+
+```sh
+P=$PORT
+call(){ curl -s -X POST http://127.0.0.1:$P/ -H 'Content-Type: application/json' \
+        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}"; }
+call describe_ui '{}'
+call hit_test '{"id":"row:button"}'
+call click    '{"id":"row:button"}'
+```
+
+**Click the ROW, not the label inside it** — `row:button`, not `button`. That is
+SKILL §9 trap 7 arriving through the socket: a gesture on something inside a row
+is not the list's selection.
+
+**And check `hidden` first.** A catalog row scrolled out of view reports
+`hidden: true`, and `click` on one answers `{"outcome":"allowed"}` while nothing
+happens — the call was legal, the row was not on screen. `hit_test` is the tool
+that says so before you are confused by it:
+
+```json
+{"outcome":"allowed","supported":true,"reachable":true,"covered":false}
+```
+
+A successful pick is visible in the next `describe_ui`: `g:back` stops being
+hidden, `g:title` changes, `g:catalog` hides, and the node count grows.
+
+> **Status: verified on a DEVICE, 2026-09-06.** iPad Pro 11-inch (3rd gen),
+> iPadOS 26.6.1, over usbmuxd. `initialize`, `tools/list`, `describe_ui`,
+> `describe_tree`, `hit_test` and `click` all answered; a click on `row:button`
+> drove a real navigation (title changed, catalog hid, node count 57 -> 63). The
+> root frame read **1194 x 782** — full landscape width on this iPad, so the
+> 402pt mis-size below did not recur. What this run did NOT exercise: the window
+> cursor (`window::find`) and the in-place screen stack, because the gallery
+> calls neither — it navigates by swapping its own outlet.
+>
 > **Status: verified on the SIMULATOR, 2026-08-30.** iPhone 16 Pro, iOS 18.5,
 > straight to loopback. All 28 checks pass. This run is what caught three things
 > a cross-build cannot: the app was serving on the pid-derived port while every

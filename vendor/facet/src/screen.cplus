@@ -10,6 +10,7 @@ import "stdlib/box" as box;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 import "./component" as component;
+import "./application" as app;
 
 type Node = flex::Node;
 
@@ -365,8 +366,16 @@ interface Screen {
 struct ScreenBox {
     opaque _p: *u8,
     _build: fn(*u8) -> Node,
-    _attach: fn(*u8),
-    _detach: fn(*u8),
+    // THE REASON TRAVELS. These were `fn(*u8)` and the trampolines hard-coded
+    // `Attach::Mount` / `Detach::Unmount`, so a ScreenBox could say those two
+    // things and nothing else — the two-level lifecycle `component::Lifecycle`
+    // defines was unreachable through the one carrier every screen is wrapped
+    // in. A pushed screen covering the one beneath had no way to say so, which
+    // is the whole distinction `Detach::Inactive` exists to draw ("NOT A
+    // RELEASE SIGNAL"). Same shape as the rest of this tier: the notification
+    // was kept and the reason dropped.
+    _attach: fn(*u8, component::Attach),
+    _detach: fn(*u8, component::Detach),
     _chrome: fn(*u8) -> Chrome,
     _menu_items: fn(*u8) -> vec::Vec[MenuItem],
     _drop: fn(*u8),
@@ -396,14 +405,14 @@ fn sb_build_tramp[S: component::Component](p: *u8) -> Node {
     return { (*q).build() };
 }
 
-fn sb_attach_tramp[S: component::Lifecycle](p: *u8) {
+fn sb_attach_tramp[S: component::Lifecycle](p: *u8, why: component::Attach) {
     let q: *S = p as *S;
-    { (*q).on_attach(component::Attach::Mount) };
+    { (*q).on_attach(why) };
 }
 
-fn sb_detach_tramp[S: component::Lifecycle](p: *u8) {
+fn sb_detach_tramp[S: component::Lifecycle](p: *u8, why: component::Detach) {
     let q: *S = p as *S;
-    { (*q).on_detach(component::Detach::Unmount) };
+    { (*q).on_detach(why) };
 }
 
 fn sb_chrome_tramp[S: Screen](p: *u8) -> Chrome {
@@ -428,8 +437,8 @@ impl ScreenBox {
         return ScreenBox {
             _p: 0 as *u8,
             _build: 0 as fn(*u8) -> Node,
-            _attach: 0 as fn(*u8),
-            _detach: 0 as fn(*u8),
+            _attach: 0 as fn(*u8, component::Attach),
+            _detach: 0 as fn(*u8, component::Detach),
             _chrome: 0 as fn(*u8) -> Chrome,
             _menu_items: 0 as fn(*u8) -> vec::Vec[MenuItem],
             _drop: 0 as fn(*u8),
@@ -446,20 +455,6 @@ impl ScreenBox {
         if !this.valid() { return core::column(core::Builder::new()); }
         let f: fn(*u8) -> Node = this._build;
         return f(this._p);
-    }
-
-    fn on_attach(this, why: component::Attach) {
-        if why != component::Attach::Mount { return; }
-        if !this.valid() { return; }
-        let f: fn(*u8) = this._attach;
-        f(this._p);
-    }
-
-    fn on_detach(this, why: component::Detach) {
-        if why != component::Detach::Unmount { return; }
-        if !this.valid() { return; }
-        let f: fn(*u8) = this._detach;
-        f(this._p);
     }
 
     fn chrome(this) -> Chrome {
@@ -782,3 +777,173 @@ fn screen_box_invalid_noops() {
     assert SBT_DETACHES == 0;
     assert SBT_DROPS == 0;
 }
+
+// A SCREENBOX IS A LIFECYCLE, so `component::bind_app_lifecycle` can take one.
+//
+// It could not before, and the consequence was invisible: a screen shown
+// through `App::run` + routes received `Mount` and `Unmount` and NOTHING ELSE —
+// no `Background`, no `Terminate`, no `Active`. `run_component` and `run_screen`
+// bind their own component and always did; the App loop never bound the
+// ScreenBox, because a ScreenBox physically could not carry those reasons (its
+// trampolines hard-coded Mount/Unmount and the rest were filtered out).
+//
+// So a route-based app whose screen held a camera never learned the app had
+// gone to background — on Android, where the system revokes the camera within a
+// second of exactly that event. component.cplus:124 calls that "the difference
+// between handing a device back and having it taken".
+//
+// Every reason reaches the screen now, and the App loop binds.
+impl ScreenBox: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) {
+        if !this.valid() { return; }
+        let f: fn(*u8, component::Attach) = this._attach;
+        if f.is_null() { return; }
+        f(this._p, why);
+    }
+
+    fn on_detach(ref this, why: component::Detach) {
+        if !this.valid() { return; }
+        let f: fn(*u8, component::Detach) = this._detach;
+        if f.is_null() { return; }
+        f(this._p, why);
+    }
+}
+
+// ---- the screen cursor ---------------------------------------------------------
+// The other half of the two-tier model. A WINDOW is the platform container and
+// `window::find` addresses it; a SCREEN is the unit of presentation living in
+// one, and this addresses that.
+//
+// The rule the pair follows, and the reason both exist:
+//
+//     A key always names a screen. It names a window only where the platform
+//     gave that screen a window.
+//
+// `nav::push("settings")` on a phone puts a screen on the stack and opens no
+// window, so `screen::find("settings")` answers and `window::find("settings")`
+// does not. On a Mac both answer. Neither lies about the other's tier.
+//
+// NAMED `Cursor` because `Screen` in this module is the INTERFACE a component
+// adopts. Two different things — one is what an application implements, the
+// other is a handle to one that is currently up.
+
+// Copy, and stale-detectable the same way every other facet cursor is: the node
+// cursors compare `flex::removal_count()`, the window cursor
+// `app::window_removal_count()`, this one `app::screen_removal_count()`.
+struct Cursor {
+    opaque _sbp: *u8,
+    _seen: u64,
+}
+
+impl Cursor {
+    fn _of(sbp: *u8) -> Cursor {
+        return Cursor { _sbp: sbp, _seen: app::screen_removal_count() };
+    }
+
+    // False once any screen has been popped since this cursor was made. A
+    // popped screen's box is freed on a deferred schedule, so "is something at
+    // this address" is not a safe question to ask instead.
+    fn is_live(this) -> bool {
+        if this._seen != app::screen_removal_count() { return false; }
+        return this._index() < app::screen_stack_count();
+    }
+
+    fn _index(this) -> usize {
+        let n: usize = app::screen_stack_count();
+        var i: usize = 0 as usize;
+        while i < n {
+            if app::screen_stack_sbp(i) == this._sbp { return i; }
+            i = i +% (1 as usize);
+        }
+        return n;   // not found — one past the end, which `is_live` reads as gone
+    }
+
+    // The name it was pushed under: the route, or `route:arg` when an argument
+    // was given, or whatever `key:` overrode both with.
+    fn key(this) -> str {
+        if !this.is_live() { return ""; }
+        return app::screen_stack_key(this._index());
+    }
+
+    // The route it came from. Two pushes of one route are two screens with two
+    // keys and this one route.
+    fn route(this) -> str {
+        if !this.is_live() { return ""; }
+        return app::screen_stack_route(this._index());
+    }
+
+    // How deep it sits: 0 is the screen directly over the primary.
+    fn depth(this) -> usize {
+        if !this.is_live() { return 0 as usize; }
+        return this._index();
+    }
+
+    // Is this the one the user is looking at?
+    fn is_top(this) -> bool {
+        if !this.is_live() { return false; }
+        let n: usize = app::screen_stack_count();
+        if n == (0 as usize) { return false; }
+        return this._index() == (n -% (1 as usize));
+    }
+
+    // Its tree, for READING — the same contract `window::Window::root` carries.
+    // Driving another screen's controls through it is the ACI door; reaching
+    // for its component's fields is the thing SKILL §9 trap 8 names.
+    fn root(this) -> *core::Node {
+        if !this.is_live() { return 0 as *core::Node; }
+        return app::screen_stack_root(this._index());
+    }
+
+    // Its chrome, as the screen itself declares it.
+    fn chrome(this) -> Chrome {
+        if !this.is_live() { return Chrome::new(); }
+        return { (*(this._sbp as *ScreenBox)).chrome() };
+    }
+
+    // The window it is in. On a desktop that is the window the primary screen
+    // opened — an in-place stack lives in ONE window, which is what makes it
+    // in-place. None when nothing has named that window.
+    fn window_key(this) -> str {
+        if !this.is_live() { return ""; }
+        return app::window_key_of(app::stack_host_root());
+    }
+}
+
+// THE screen pushed under `key`, or None. Keys are unique per push, so this
+// answers one screen rather than the first of several.
+//
+// The PRIMARY screen is not addressable here: it is the App loop's, not the
+// stack's, and it has no key of its own. `window::primary()` is the handle to
+// what it is showing.
+fn find(key: str) -> option::Option[Cursor] {
+    let n: usize = app::screen_stack_count();
+    var i: usize = 0 as usize;
+    while i < n {
+        if app::screen_stack_key(i) == key {
+            return option::Option[Cursor]::Some(Cursor::_of(app::screen_stack_sbp(i)));
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[Cursor]::None;
+}
+
+// The screen the user is looking at, or None when the primary is showing.
+fn top() -> option::Option[Cursor] {
+    let n: usize = app::screen_stack_count();
+    if n == (0 as usize) { return option::Option[Cursor]::None; }
+    return option::Option[Cursor]::Some(Cursor::_of(app::screen_stack_sbp(n -% (1 as usize))));
+}
+
+// Every pushed screen, bottom to top.
+fn stack() -> vec::Vec[Cursor] {
+    var out: vec::Vec[Cursor] = vec::new::[Cursor]();
+    let n: usize = app::screen_stack_count();
+    var i: usize = 0 as usize;
+    while i < n {
+        out.append(Cursor::_of(app::screen_stack_sbp(i)));
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn depth() -> usize { return app::screen_stack_count(); }

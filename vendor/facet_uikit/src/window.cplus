@@ -29,6 +29,7 @@ import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/application" as app;
+import "facet/window" as app_window;
 import "facet/screen" as screen;
 import "facet/services" as services;
 import "stdlib/vec" as vec;
@@ -375,10 +376,39 @@ fn install_appearance_sentinel(content: *u8) {
     return;
 }
 
+// THE CONTENT VIEW OF **THIS** WINDOW.
+//
+// This used to answer `BASE_VC`'s view whenever there was one — ignoring the
+// `win` it was handed, because for a single-window app the two could not
+// disagree. The moment a second scene existed they did: the new window's tree
+// mounted into the PRIMARY's base controller, so the second window drew nothing
+// and the first one showed the second one's screen. Both symptoms, one line.
+//
+// Found on an iPad simulator, 2026-09-06, the first time two scenes were real.
 fn content_view_of(win: *u8) -> *u8 {
-    if BASE_VC != (0 as *u8) { return { rt::msg_id(BASE_VC, rt::sel(#str_ptr("view\0"))) }; }
+    // The scene that owns this window knows its own base controller.
+    let n: usize = SCENES.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match SCENES.at_ptr(i) {
+            option::Option[*SceneWin]::Some(e) => {
+                if { (*e).window } == win {
+                    let b: *u8 = { (*e).base };
+                    if b != (0 as *u8) { return { rt::msg_id(b, rt::sel(#str_ptr("view\0"))) }; }
+                }
+            }
+            option::Option[*SceneWin]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // No entry (a window built before the list existed, or a bare one): ask the
+    // window itself, which is window-parametric and always right.
     let vc: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("rootViewController\0"))) };
     if vc == (0 as *u8) { return 0 as *u8; }
+    // A navigation controller's own view is the CHROME, not the content — the
+    // base controller inside it is what a tree mounts into.
+    let top: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("topViewController\0"))) };
+    if top != (0 as *u8) { return { rt::msg_id(top, rt::sel(#str_ptr("view\0"))) }; }
     return { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
 }
 
@@ -718,6 +748,125 @@ static DELEGATE_CLASS: *u8 = 0 as *u8;
 static NAV: *u8 = 0 as *u8;
 static BASE_VC: *u8 = 0 as *u8;
 
+// ---- more than one scene ----------------------------------------------------------
+// `WINDOW` / `NAV` / `BASE_VC` above are the PRIMARY scene's, and they stay
+// exactly what they were: the single-window path is untouched, which is what
+// keeps a phone — where there is only ever one scene — from paying for any of
+// this.
+//
+// An iPad that opted into `UIApplicationSupportsMultipleScenes` gets more, and
+// each one needs its own window, its own navigation controller and its own base
+// controller. So a list, keyed by the facet window key the scene was opened
+// for. Entry 0 is the primary and mirrors the statics.
+struct SceneWin {
+    opaque scene: *u8,          // UIWindowScene, 0 until UIKit connects one
+    opaque window: *u8,         // UIWindow
+    opaque nav: *u8,            // UINavigationController
+    opaque base: *u8,           // the base UIViewController, never popped
+    opaque root: *core::Node,   // the facet tree this window shows
+    key: text::Text,
+}
+
+static SCENES: vec::Vec[SceneWin] = #zero::[vec::Vec[SceneWin]]();
+
+// THE ROUTE A PENDING SCENE WAS ASKED FOR. `requestSceneSessionActivation:`
+// carries an NSUserActivity whose type is the route, and `willConnect` reads it
+// back — so this is a fallback for the case UIKit gives us a scene with no
+// activity at all (the app switcher, a state restoration). Main-thread only,
+// like every verb here.
+static PENDING_SCENE_KEY: text::Text = #zero::[text::Text]();
+
+// THE FACADE BUILDS THE ROUTE, not this file. A backend cannot resolve a route
+// — the registry is the runtime's and importing it here would close a cycle —
+// so the facade leaves a builder and this calls it when a scene arrives asking
+// for one. Same fn-ptr seam shape as every other cross-tier hook in facet.
+//
+// Answers the tree to show, or null when the route is unknown; a null makes the
+// scene come up empty rather than crash, which is the honest failure for a
+// window someone asked for by a name nothing answers.
+static SCENE_BUILD_FN: fn(str) -> *core::Node = 0 as fn(str) -> *core::Node;
+
+// AND THE SECOND HALF: "this window's tree is now MOUNTED". A screen's
+// `on_attach` is the moment `mount::find` starts answering, so it cannot be
+// fired by whatever BUILT the tree — the tree is not in a window yet. Every
+// other entry point in facet defers it for exactly this reason (`entry::
+// on_attached` on Android, the launch hook on iOS, after `open_window` on the
+// desktops); a scene needed its own door and did not have one, so the screen's
+// `on_attach` ran against an unmounted tree and every `find` in it answered
+// None.
+static SCENE_ATTACHED_FN: fn(str) = 0 as fn(str);
+
+// AND THE WINDOW GOING AWAY. `sceneDidDisconnect:` is the ONLY notice a UIKit
+// app gets that one of its windows is gone, and it fires whichever way the
+// scene went — the user swiping it away in the switcher, the system reclaiming
+// it, or `requestSceneSessionDestruction:`. The macOS backend has had the
+// equivalent since it existed (`windowWillClose` -> `pushed_closed`, "whichever
+// way it closes"); this one did not, so a window the USER closed stayed in
+// facet's record forever: `window::count()` kept answering 2 for one window,
+// `window::find(k)` kept handing back a cursor to a window that had gone, and
+// the agent kept describing its tree.
+//
+// Reported from a real iPad, 2026-09-06: closed the second window by hand, and
+// MCP still said `windows=2`.
+static SCENE_GONE_FN: fn(str) = 0 as fn(str);
+
+fn set_scene_build_fn(f: fn(str) -> *core::Node) { SCENE_BUILD_FN = f; return; }
+fn set_scene_attached_fn(f: fn(str)) { SCENE_ATTACHED_FN = f; return; }
+fn set_scene_gone_fn(f: fn(str)) { SCENE_GONE_FN = f; return; }
+
+fn scene_count() -> usize { return SCENES.count(); }
+
+// Readers the selftest drives these through — this package has no `#[test]`
+// (macOS cannot link UIKit), so its checks are ordinary functions in
+// selftest.cplus and they need a door.
+fn scene_window_at(at: usize) -> *u8 {
+    return match SCENES.at_ptr(at) {
+        option::Option[*SceneWin]::Some(e) => { (*e).window },
+        option::Option[*SceneWin]::None => 0 as *u8,
+    };
+}
+
+fn scene_of_index(at: usize) -> *u8 {
+    return match SCENES.at_ptr(at) {
+        option::Option[*SceneWin]::Some(e) => { (*e).scene },
+        option::Option[*SceneWin]::None => 0 as *u8,
+    };
+}
+
+// The disconnect path, callable without a real UIScene arriving.
+fn note_scene_gone(scene: *u8) { imp_scene_did_disconnect(0 as *u8, 0 as *u8, scene); return; }
+
+fn scene_index_for_key(key: str) -> usize {
+    let n: usize = SCENES.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match SCENES.at_ptr(i) {
+            option::Option[*SceneWin]::Some(e) => {
+                if { (*e).key.view() } == key { return i; }
+            }
+            option::Option[*SceneWin]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+// The scene showing `root`, or the count when nothing does.
+fn scene_index_for_root(root: *core::Node) -> usize {
+    let n: usize = SCENES.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match SCENES.at_ptr(i) {
+            option::Option[*SceneWin]::Some(e) => {
+                if { (*e).root } == root { return i; }
+            }
+            option::Option[*SceneWin]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
 // A +1 NSString, or null for an empty view.
 //
 // Null rather than an empty string on purpose: `UIScene.title` is
@@ -814,6 +963,43 @@ fn apply_scene_chrome(w: *u8) {
     return;
 }
 
+// ONE WINDOW, BUILT THE WAY THE PRIMARY IS. Extracted so a second scene gets
+// the same shape rather than a lesser one — a bare UIWindow with no navigation
+// controller would be a window `nav::push` could not push onto.
+//
+// Answers the (window, nav, base) triple through the SceneWin it appends, with
+// `scene` still 0: UIKit connects that separately.
+fn build_scene_window(key: str) -> usize {
+    let screen_bounds: rt::Rect = ui::Screen::main_screen().bounds();
+    let win: ui::Window = ui::Window::new_with_frame(screen_bounds);
+    let w: *u8 = { rt::retain(win.raw()) };
+    var nav_c: *u8 = 0 as *u8;
+    var base_c: *u8 = 0 as *u8;
+    let base: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if base != (0 as *u8) {
+        dress_screen(base);
+        let navc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UINavigationController\0")),
+                                     rt::sel(#str_ptr("alloc\0"))) };
+        if navc != (0 as *u8) {
+            let n2: *u8 = { rt::msg_id_id(navc,
+                rt::sel(#str_ptr("initWithRootViewController:\0")), base) };
+            if n2 != (0 as *u8) {
+                nav_c = n2;
+                base_c = base;
+                { rt::msg_void_id(w, rt::sel(#str_ptr("setRootViewController:\0")), n2) };
+                { msg_void_i8_i8(n2, rt::sel(#str_ptr("setNavigationBarHidden:animated:\0")),
+                                 1 as i8, 0 as i8) };
+                install_nav_delegate(n2);
+            }
+        }
+        { rt::release(base) };
+    }
+    let _s: status::Status = SCENES.append(SceneWin {
+        scene: 0 as *u8, window: w, nav: nav_c, base: base_c,
+        root: 0 as *core::Node, key: text::from_str(key) });
+    return SCENES.count() -% (1 as usize);
+}
+
 fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: *u8) -> i8 {
     let screen_bounds: rt::Rect = ui::Screen::main_screen().bounds();
     let win: ui::Window = ui::Window::new_with_frame(screen_bounds);
@@ -855,6 +1041,12 @@ fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: 
         { rt::release(base) };
     }
     WINDOW = w;
+    // ENTRY 0 IS THE PRIMARY, and it mirrors the statics above rather than
+    // replacing them: everything already written against `WINDOW` keeps meaning
+    // the primary, and a phone never grows a second entry.
+    let _s0: status::Status = SCENES.append(SceneWin {
+        scene: 0 as *u8, window: w, nav: NAV, base: BASE_VC,
+        root: 0 as *core::Node, key: text::new() });
     // VISIBLE FIRST, THEN MOUNTED. A window that is not key has no laid-out
     // view, so its safe-area insets read as zero and its bounds are whatever
     // the frame said — both of which the first facet layout depends on.
@@ -1155,9 +1347,281 @@ fn imp_preferred_control_style(self_obj: *u8, cmd: *u8, scene: *u8) -> *u8 {
 // the system treats it as a real window — border, resize grabber, controls —
 // and so `sizeRestrictions` and the rest have somewhere to land. Applying the
 // chrome before this call is what made the earlier attempt inert.
-fn imp_scene_will_connect(self_obj: *u8, cmd: *u8, scene: *u8, session: *u8, options: *u8) {
-    if WINDOW == (0 as *u8) { return; }
+// Has the primary already taken a scene? Entry 0 is the primary and its
+// `scene` is 0 until UIKit connects one.
+fn primary_scene_taken() -> bool {
+    if SCENES.count() == (0 as usize) { return false; }
+    return match SCENES.at_ptr(0 as usize) {
+        option::Option[*SceneWin]::Some(e) => ({ (*e).scene } != (0 as *u8)),
+        option::Option[*SceneWin]::None => false,
+    };
+}
+
+fn mark_primary_scene(scene: *u8) {
+    if SCENES.count() == (0 as usize) { return; }
+    match SCENES.at_ptr(0 as usize) {
+        option::Option[*SceneWin]::Some(e) => { { (*e).scene = scene }; }
+        option::Option[*SceneWin]::None => { }
+    }
+}
+
+// A SECOND (or third) WINDOW. Build one of our own, ask the facade for the tree
+// the key names, mount it, and show it in this scene.
+fn connect_additional_scene(scene: *u8, session: *u8, options: *u8) {
+    let key: text::Text = key_for_session(session, options);
+    let at: usize = build_scene_window(key.view());
+    let w: *u8 = match SCENES.at_ptr(at) {
+        option::Option[*SceneWin]::Some(e) => { (*e).window },
+        option::Option[*SceneWin]::None => 0 as *u8,
+    };
+    if w == (0 as *u8) { return; }
+    match SCENES.at_ptr(at) {
+        option::Option[*SceneWin]::Some(e) => { { (*e).scene = scene }; }
+        option::Option[*SceneWin]::None => { }
+    }
+    { rt::msg_void_id(w, rt::sel(#str_ptr("setWindowScene:\0")), scene) };
+    { rt::msg_void(w, rt::sel(#str_ptr("makeKeyAndVisible\0"))) };
+
+    // NAME THE SESSION, so a scene iPadOS restores on the next cold start can
+    // say what it is for. `key_for_session` has always READ this; nothing wrote
+    // it, which is the whole of bugs/facet_uikit-a-restored-scene-comes-up-as-a
+    // -blank-window.md — a reader built for a value never set, so a restored
+    // window resolved to no route and came up empty.
+    remember_session_key(scene, key.view());
+
+    // THE FACADE RESOLVES THE ROUTE. This file cannot — the registry is the
+    // runtime's.
+    let f: fn(str) -> *core::Node = SCENE_BUILD_FN;
+    var root: *core::Node = 0 as *core::Node;
+    if f.is_not_null() { root = f(key.view()); }
+    // A WINDOW THAT CANNOT BE FILLED IS NOT LEFT ON SCREEN. A key naming a route
+    // this build no longer has — the app shipped an update, or the key was
+    // hand-written — is the case restoration cannot cover, and a blank frame is
+    // the worst possible answer to it.
+    if root.is_null() {
+        let _gone: bool = destroy_session_of(scene);
+        return;
+    }
+    match SCENES.at_ptr(at) {
+        option::Option[*SceneWin]::Some(e) => { { (*e).root = root }; }
+        option::Option[*SceneWin]::None => { }
+    }
+    // NAMED AFTER THE MOUNT, NOT BEFORE. `mount::mount` — which `attach_root`
+    // calls — is what registers a tree as a window of the app, so registering
+    // it here as well recorded the SAME window twice: measured on an iPad,
+    // `windows=3 keys=[panel:one,panel:one]` for one primary and one panel.
+    //
+    // `set_window_key` exists for this and the desktop facades already use it:
+    // the mount opens the window, the facade gives it its name.
+    attach_root(w, root);
+    app::set_window_native(root, w);
+    let _named: bool = app::set_window_key(root, key.view());
+    // NOW the tree is live, so the screen's `on_attach` can find what it was
+    // written to find. Before this the facade fired it inside the builder and
+    // every `mount::find` in an application's `on_attach` answered None.
+    let af: fn(str) = SCENE_ATTACHED_FN;
+    if af.is_not_null() { af(key.view()); }
+    agent_follow(w);
+    return;
+}
+
+// ---- asking for a second window --------------------------------------------------
+
+// `requestSceneSessionActivation:userActivity:options:errorHandler:` — the ONLY
+// way an iOS app opens a window of its own. Session nil means "make a new one";
+// the activity is how the new scene learns what it is for, and its type is the
+// facet window key.
+//
+// False when this app did not opt into multiple scenes, which is a plist
+// decision (`UIApplicationSupportsMultipleScenes`) and not something a running
+// app can change. Answering false is what lets the facade fall back to a stack
+// push — the `Show::Window` rule, "with whatever room this platform has".
+fn activate_scene(key: str) -> bool {
+    if !device::supports_multiple_scenes() { return false; }
+    let appc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIApplication\0")),
+                                 rt::sel(#str_ptr("sharedApplication\0"))) };
+    if appc == (0 as *u8) { return false; }
+    // ALREADY OPEN: DO NOTHING, and answer true because the window the caller
+    // asked for exists. This is the one place iOS and the desktops genuinely
+    // differ, and it took two device runs to believe it.
+    //
+    // The desktop backends ACTIVATE — bring the existing window to the front —
+    // and that is cheap and right there. Here it is not, and the reason is NOT
+    // simply "a full-screen iPad has no beside": the failure was measured on a
+    // WINDOWED iPad, where there is one. Asking UIKit to activate a scene the
+    // app already has moves what the USER is looking at, and an app doing that
+    // to itself on a press is wrong whether or not the windows are side by
+    // side. Both attempts made things worse rather than better:
+    //
+    //   `requestSceneSessionRefresh:` handed the SCENE where the API wants a
+    //   SESSION — wrong selector for the job and wrong object for the selector.
+    //   The app went black on the second press.
+    //
+    //   `requestSceneSessionActivation:` on the already-connected session then
+    //   slid the primary away and left the app with NO foreground scene at all
+    //   — alive, unreachable, and unable to be foregrounded because it had
+    //   nothing to show. Measured on an iPad, 2026-09-06.
+    //
+    // So the honest behaviour for "open a window that is already open" here is
+    // to leave the windows exactly as they are. The caller asked for that
+    // window to exist; it does. Which scene the USER is looking at is the
+    // system's business on this platform, and taking it over is what broke.
+    let at: usize = scene_index_for_key(key);
+    if at < SCENES.count() { return true; }
+
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    if cls == (0 as *u8) { return false; }
+    let act: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if act == (0 as *u8) { return false; }
+    let a2: *u8 = { rt::msg_id_id(act, rt::sel(#str_ptr("initWithActivityType:\0")),
+                                  bridge::nsstring(key)) };
+    if a2 == (0 as *u8) { return false; }
+    // The fallback channel, for a scene UIKit hands us with no activity at all.
+    PENDING_SCENE_KEY = text::from_str(key);
+    { rt::msg_void_id_id_id_id(appc,
+        rt::sel(#str_ptr("requestSceneSessionActivation:userActivity:options:errorHandler:\0")),
+        0 as *u8, a2, 0 as *u8, 0 as *u8) };
+    { rt::release(a2) };
+    return true;
+}
+
+// Close one, which on this platform is destroying its scene session.
+fn destroy_scene(key: str) -> bool {
+    let at: usize = scene_index_for_key(key);
+    if at >= SCENES.count() { return false; }
+    let sc: *u8 = match SCENES.at_ptr(at) {
+        option::Option[*SceneWin]::Some(e) => { (*e).scene },
+        option::Option[*SceneWin]::None => 0 as *u8,
+    };
+    if sc == (0 as *u8) { return false; }
+    let appc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIApplication\0")),
+                                 rt::sel(#str_ptr("sharedApplication\0"))) };
+    if appc == (0 as *u8) { return false; }
+    let sess: *u8 = { rt::msg_id(sc, rt::sel(#str_ptr("session\0"))) };
+    if sess == (0 as *u8) { return false; }
+    { rt::msg_void_id_id_id(appc,
+        rt::sel(#str_ptr("requestSceneSessionDestruction:options:errorHandler:\0")),
+        sess, 0 as *u8, 0 as *u8) };
+    return true;
+}
+
+// Attach the facet window key to the SESSION, which is the thing that survives
+// a launch. The scene does not; the session is what UIKit reconnects.
+fn remember_session_key(scene: *u8, key: str) {
     if scene == (0 as *u8) { return; }
+    if key == "" { return; }
+    let sess: *u8 = { rt::msg_id(scene, rt::sel(#str_ptr("session\0"))) };
+    if sess == (0 as *u8) { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    if cls == (0 as *u8) { return; }
+    let a: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if a == (0 as *u8) { return; }
+    let act: *u8 = { rt::msg_id_id(a, rt::sel(#str_ptr("initWithActivityType:\0")),
+                                   bridge::nsstring(key)) };
+    if act == (0 as *u8) { return; }
+    { rt::msg_void_id(sess, rt::sel(#str_ptr("setStateRestorationActivity:\0")), act) };
+    { rt::release(act) };
+    return;
+}
+
+// Throw a scene away — the fallback for one we cannot fill.
+fn destroy_session_of(scene: *u8) -> bool {
+    if scene == (0 as *u8) { return false; }
+    let appc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIApplication\0")),
+                                 rt::sel(#str_ptr("sharedApplication\0"))) };
+    if appc == (0 as *u8) { return false; }
+    let sess: *u8 = { rt::msg_id(scene, rt::sel(#str_ptr("session\0"))) };
+    if sess == (0 as *u8) { return false; }
+    { rt::msg_void_id_id_id(appc,
+        rt::sel(#str_ptr("requestSceneSessionDestruction:options:errorHandler:\0")),
+        sess, 0 as *u8, 0 as *u8) };
+    return true;
+}
+
+// What key a connecting scene was asked for: its session's activity if it has
+// one, otherwise whatever the request that made it recorded.
+fn key_for_session(session: *u8, options: *u8) -> text::Text {
+    if session != (0 as *u8) {
+        let act: *u8 = { rt::msg_id(session, rt::sel(#str_ptr("stateRestorationActivity\0"))) };
+        if act != (0 as *u8) {
+            let t: *u8 = { rt::msg_id(act, rt::sel(#str_ptr("activityType\0"))) };
+            if t != (0 as *u8) { return bridge::to_text(t); }
+        }
+    }
+    return text::from_str(PENDING_SCENE_KEY.view());
+}
+
+// -[UISceneDelegate sceneDidDisconnect:]
+//
+// The window is gone. Take it out of everything that believes in it, in the
+// order every teardown in facet uses: tell the screen while its views are still
+// alive, then unmount, then drop the records.
+fn imp_scene_did_disconnect(self_obj: *u8, cmd: *u8, scene: *u8) {
+    if scene == (0 as *u8) { return; }
+    let n: usize = SCENES.count();
+    var i: usize = 0 as usize;
+    var at: usize = n;
+    while i < n {
+        match SCENES.at_ptr(i) {
+            option::Option[*SceneWin]::Some(e) => {
+                if { (*e).scene } == scene { at = i; }
+            }
+            option::Option[*SceneWin]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if at >= n { return; }
+    let key: text::Text = match SCENES.at_ptr(at) {
+        option::Option[*SceneWin]::Some(e) => text::from_str({ (*e).key.view() }),
+        option::Option[*SceneWin]::None => text::new(),
+    };
+    let root: *core::Node = match SCENES.at_ptr(at) {
+        option::Option[*SceneWin]::Some(e) => { (*e).root },
+        option::Option[*SceneWin]::None => 0 as *core::Node,
+    };
+    // THE PRIMARY IS NOT REMOVED. Its scene can disconnect and reconnect — the
+    // app being backgrounded and restored — while its window and tree stay
+    // exactly where they were. Only its scene handle is cleared, so the next
+    // `willConnect` adopts rather than building a second window.
+    if at == (0 as usize) {
+        match SCENES.at_ptr(at) {
+            option::Option[*SceneWin]::Some(e) => { { (*e).scene = 0 as *u8 }; }
+            option::Option[*SceneWin]::None => { }
+        }
+        return;
+    }
+    // The facade tears the screen down first — its views are still alive here.
+    let gf: fn(str) = SCENE_GONE_FN;
+    if gf.is_not_null() && key.view() != "" { gf(key.view()); }
+    if root.is_not_null() {
+        mount::unmount(root);
+        app::close_window(root);
+    }
+    let _r: option::Option[SceneWin] = SCENES.remove(at: at);
+    // The agent was describing the window that just went. Point it at the
+    // primary, which is the one still on screen.
+    if SCENES.count() > (0 as usize) {
+        match SCENES.at_ptr(0 as usize) {
+            option::Option[*SceneWin]::Some(e) => { agent_follow({ (*e).window }); }
+            option::Option[*SceneWin]::None => { }
+        }
+    }
+    return;
+}
+
+fn imp_scene_will_connect(self_obj: *u8, cmd: *u8, scene: *u8, session: *u8, options: *u8) {
+    if scene == (0 as *u8) { return; }
+    // A SECOND SCENE IS A SECOND WINDOW, and this is the fork. Entry 0 has no
+    // scene until the first one connects; once it does, anything further is an
+    // additional window and gets built rather than adopted. Adopting again is
+    // what the single-window code did, and it would have MOVED the app's only
+    // window into the new scene instead of making one.
+    if primary_scene_taken() {
+        connect_additional_scene(scene, session, options);
+        return;
+    }
+    if WINDOW == (0 as *u8) { return; }
+    mark_primary_scene(scene);
     { rt::msg_void_id(WINDOW, rt::sel(#str_ptr("setWindowScene:\0")), scene) };
     apply_scene_chrome(WINDOW);
     // AND RE-MEASURE, or the window-buttons reservation is inert.
@@ -1297,6 +1761,11 @@ fn scene_delegate_class() -> *u8 {
     let _g: i8 = synth::add_method_v_2id(cls,
         rt::sel(#str_ptr("windowScene:didUpdateEffectiveGeometry:\0")),
         imp_scene_geometry_changed, #str_ptr("v@:@@\0"));
+    // THE WINDOW GOING AWAY — see `imp_scene_did_disconnect`. Without this a
+    // window the user closed stayed in facet's record for the life of the app.
+    let _d: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("sceneDidDisconnect:\0")),
+        imp_scene_did_disconnect, #str_ptr("v@:@\0"));
     // THE LINK DOORS, on the conformance the class already claims below.
     let _u: i8 = synth::add_method_v_2id(cls,
         rt::sel(#str_ptr("scene:openURLContexts:\0")),
@@ -1514,4 +1983,96 @@ fn app_appearance() -> vocab::Appearance {
 fn window_frame() -> vocab::Rect {
     let b: rt::Rect = ui::Screen::main_screen().bounds();
     return vocab::Rect { x: b.x, y: b.y, width: b.w, height: b.h };
+}
+
+// ---- the window cursor's host ---------------------------------------------------
+// What `facet/window.cplus` calls when an application says
+// `window::find(k).frame()`. Every slot takes the window's ROOT, which is the
+// identity the rest of facet's window tier uses.
+//
+// THIS PLATFORM ANSWERS FEWER SLOTS THAN APPKIT, and that is the honest shape
+// rather than a gap. A phone's window IS the screen: there is nothing to move,
+// nothing to resize, and no second window to be active instead of. What is
+// left unfilled reads the neutral answer in facet/window.cplus, which is what
+// lets the same application code run on both without asking which it is on.
+
+// The screen's bounds. True on a phone; on a windowed iPad it is the window's
+// own bounds, which `scene_of_window` already knows how to reach.
+fn wh_frame(root: *core::Node) -> vocab::Rect {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return window_frame(); }
+    let b: rt::Rect = ui::View::from_raw(w).bounds();
+    return vocab::Rect { x: b.x, y: b.y, width: b.w, height: b.h };
+}
+
+// `set_frame` is NOT filled. `UIWindowSceneGeometryPreferencesIOS` carries
+// `interfaceOrientations` and nothing else on iOS, so a width and height cannot
+// be requested — MANIFEST §6 records it as a cannot rather than a not-yet. An
+// app that wants a fixed size sets `min_*` and `max_*` to the same value
+// through `Chrome`.
+
+// "Active" here is the APP being frontmost, which is the same question a
+// desktop window's key status answers — asked of the application, because a
+// phone has one window and it is either in front or the app is not running.
+fn wh_is_active(root: *core::Node) -> bool { return is_app_active(); }
+
+fn wh_density(root: *core::Node) -> f64 { return geometry::screen_scale(); }
+
+// The scene's title, which is what an iPad shows and a phone ignores. Both
+// halves already go through `apply_scene_chrome`; these are the live reads and
+// writes for a window an app is holding a cursor to.
+fn wh_title(root: *core::Node) -> text::Text {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return text::new(); }
+    let scene: *u8 = device::scene_of_window(w);
+    if scene == (0 as *u8) { return text::new(); }
+    let s: *u8 = { rt::msg_id(scene, rt::sel(#str_ptr("title\0"))) };
+    if s.is_null() { return text::new(); }
+    return bridge::to_text(s);
+}
+
+fn wh_set_title(root: *core::Node, t: str) {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return; }
+    let scene: *u8 = device::scene_of_window(w);
+    if scene == (0 as *u8) { return; }
+    { rt::msg_void_id(scene, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(t)) };
+    return;
+}
+
+// CLOSE IS DESTROYING THE SCENE SESSION, where there is more than one scene to
+// have. On a phone — and on an iPad that never opted in — there is exactly one
+// window and nothing to close it into, so `destroy_scene` answers false and the
+// verb is a no-op rather than a window that vanishes with nothing behind it.
+fn wh_close(root: *core::Node) {
+    let at: usize = scene_index_for_root(root);
+    if at >= SCENES.count() { return; }
+    let key: text::Text = match SCENES.at_ptr(at) {
+        option::Option[*SceneWin]::Some(e) => text::from_str({ (*e).key.view() }),
+        option::Option[*SceneWin]::None => text::new(),
+    };
+    if key.view() == "" { return; }     // the primary has no key and no close
+    let _gone: bool = destroy_scene(key.view());
+    return;
+}
+
+// A window's size changes exactly when the device rotates, and
+// `services::observe_size` over the root is the machinery that already reports
+// it: the root IS the window's content, so watching one is watching the other.
+// Registered per ROOT, which is what makes this cursor-scoped where the
+// facade's version was not.
+fn wh_observe_resize(root: *core::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    return services::observe_size(root, cb, ctx);
+}
+
+fn window_host() -> app_window::WindowHost {
+    var h: app_window::WindowHost = app_window::empty_host();
+    h.frame = wh_frame;
+    h.is_active = wh_is_active;
+    h.density = wh_density;
+    h.title = wh_title;
+    h.set_title = wh_set_title;
+    h.close = wh_close;
+    h.observe_resize = wh_observe_resize;
+    return h;
 }

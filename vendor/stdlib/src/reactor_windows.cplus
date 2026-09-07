@@ -9,7 +9,7 @@
 //   - the `stdlib_reactor_*_v1` C-ABI symbols codegen emits calls to, and
 //   - `pub fn poll_one_event` / `waiter_count`, which executor.cplus uses.
 //
-// so async lowering, executor::block_on, time::sleep and the cooperative
+// so async lowering, `Future::wait`, time::sleep and the cooperative
 // primitives (yield_now / spawn_local / await chains) all work unchanged.
 //
 // **Readiness source: WSAPoll.** Socket/file readiness is wired through

@@ -94,6 +94,59 @@ because if you ever see that symptom in your own code, this is why.
 **Badge is deliberately not among the options.** A package that bumped the badge
 on every notification would be making your counting decision.
 
+## Gotcha: on macOS it is in Notification Centre, but never on screen
+
+The notification arrives — open Notification Centre and it is there — but no
+banner and no sound. Your half of the exchange is green: `schedule` answered
+`Ok`, the permission reads `Granted`, the delegate is installed. The decision
+not to interrupt was made afterwards, inside macOS, and macOS keeps a record of
+it.
+
+**Focus is the first suspect, not the alert style.** A Focus mode delivers
+every application that is not on its allowed list straight to Notification
+Centre, silently, which is indistinguishable from a broken notification. It is
+easy to have one on without knowing: the sign is a small crescent moon in the
+menu bar, and a Focus turned on from an iPhone with *Share Across Devices* is on
+the Mac too. System Settings > Focus shows Do Not Disturb as "On" but has no
+switch for it; it is turned off from Control Center or by clicking that moon. It also
+silences Slack and Mail alongside your app, so "other apps show banners" is
+usually a memory from before the mode was turned on rather than a comparison
+made under it. Measured 2026-08-31 with `examples/notifications_demo`: every
+notification it posted resolved to `interruptionSuppression: delay delivery`
+under an active mode whose allowed-application list was empty, and so did
+every Slack notification in the same hours.
+
+Ask the system rather than guessing:
+
+    vendor/notifications/tools/why_quiet.sh <your-bundle-id> 2h
+
+It reads the unified log and prints the decision usernoted made for each
+notification your bundle posted in the window, then your app's own
+authorization and add calls beside it.
+
+| Line | Meaning |
+|---|---|
+| `suppression=none  reason=disabled` | no Focus; if there was still no banner, look at the alert style |
+| `suppression=delay delivery  reason=mode configuration type` | a Focus mode silenced it; `mode=` names the mode |
+| `Requested authorization [ didGrant: 1 ]`, `Added notification request: [ hasError: 0 ]` | your half worked |
+
+The script is one `log show` predicate on `process == "usernoted"` and
+`eventMessage CONTAINS "Resolved event behavior"`; run it by hand for a
+different window. Two traps if you do: `log` may be a shell builtin in zsh, so
+call `/usr/bin/log`; and `com.apple.ncprefs`, where older write-ups look for
+the per-app settings, is not maintained on macOS 26 — a year stale on a Mac
+that posts notifications daily — so an app's absence from it means nothing.
+
+**Then the alert style.** An app whose style is `None` in System Settings >
+Notifications is also delivered straight to Notification Centre.
+`NSUserNotificationAlertStyle` in Info.plist sets the default (`banner` or
+`alert`); the person's choice in System Settings wins. *What `sticky` buys*
+below says what `alert` does.
+
+Nothing in this package can override either, and it should not: the one
+notification that breaks through Focus is Time Sensitive, which on Apple needs
+an entitlement the package cannot claim on your behalf.
+
 ## Gotcha: a missing channel drops the notification silently (Android)
 
 From API 26 every notification names a channel, and posting to one that was
@@ -212,23 +265,24 @@ setting, and pretending otherwise would have `sticky: false` silently doing
 nothing on macOS.
 
 **If your macOS notifications only appear in Notification Centre and never on
-screen, this is the first thing to check.** An app whose alert style resolves to
-`none` is delivered straight to Notification Centre, which looks exactly like a
-broken notification. `examples/notifications_demo/bundle.sh` sets the key;
-System Settings > Notifications is where a person overrides it, and their choice
-wins.
+screen**, an alert style of `None` is one of two causes, and the less common
+one — *Gotcha: on macOS it is in Notification Centre, but never on screen*
+above starts with Focus and ends with the command that tells you which.
+`examples/notifications_demo/bundle.sh` sets the key; System Settings >
+Notifications is where a person overrides it, and their choice wins.
 
-Code signing matters too: ad-hoc signed apps (`codesign --sign -`, which the
-demo uses) are sometimes blamed for macOS notification oddities, though an
-ad-hoc signature is documented as sufficient for `UNUserNotificationCenter`.
+Code signing is not on that list. The demo is ad-hoc signed (`codesign --sign
+-`), and the system log shows its notifications authorised, accepted and
+delivered under exactly that signature.
 
 **Before blaming the package**, the chain up to macOS is checkable from inside
 the app. `permissions::state(of: NOTIFICATIONS)` after a run-loop turn says
 whether you are authorised; `schedule`'s `Outcome` says whether the request was
 accepted; and the backend's `delegate_installed()` and `presentation_requests()`
-say whether macOS asked the presentation delegate and got an answer. All four
-green with nothing on screen means the decision was macOS's — the app's alert
-style, or Focus.
+say whether macOS asked the presentation delegate and got an answer. All of it
+green with nothing on screen means the decision was macOS's — Focus, or the
+app's alert style — and `tools/why_quiet.sh` reads that decision back out of
+the system log.
 
 On Android it sets `ONGOING_EVENT` and turns auto-cancel off, which are one
 decision: a notification meant to stay should not vanish because somebody tapped
