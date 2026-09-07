@@ -5479,33 +5479,40 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
 ");
         out.push_str("declare i32 @CloseHandle(ptr)
 ");
+        // The closing `}` MUST sit at column 0, and the body must not carry an
+        // indented `}` of its own: `prune.rs::collect_blocks` ends a `define`
+        // block at the first line that is exactly `}`. An indented brace here
+        // once let the join wrapper's block run on and SWALLOW the reactor
+        // state slot and `__cplus_reactor_get_state` that codegen emits right
+        // after — and, the wrapper being uncalled in a test with no thread
+        // join, the pruner then dropped the getter as dead while keeping its
+        // live callers, i.e. undefined-symbol IR. Emit these two the same shape
+        // every other function has: `define` and `}` at column 0.
         out.push_str(&format!(
-            "define internal i32 @{}(ptr %tid, ptr %attr, ptr %start, ptr %arg){} {{
-             entry:
-                 %h = call ptr @CreateThread(ptr null, i64 0, ptr %start, ptr %arg, i32 0, ptr null)
-                 %isnull = icmp eq ptr %h, null
-                 br i1 %isnull, label %fail, label %ok
-             ok:
-                 %hi = ptrtoint ptr %h to i64
-                 store i64 %hi, ptr %tid
-                 ret i32 0
-             fail:
-                 ret i32 1
-             }}
-",
+            "define internal i32 @{}(ptr %tid, ptr %attr, ptr %start, ptr %arg){} {{\n\
+             entry:\n  \
+             %h = call ptr @CreateThread(ptr null, i64 0, ptr %start, ptr %arg, i32 0, ptr null)\n  \
+             %isnull = icmp eq ptr %h, null\n  \
+             br i1 %isnull, label %fail, label %ok\n\
+             ok:\n  \
+             %hi = ptrtoint ptr %h to i64\n  \
+             store i64 %hi, ptr %tid\n  \
+             ret i32 0\n\
+             fail:\n  \
+             ret i32 1\n\
+             }}\n",
             thread_create_sym(),
             fn_attrs
         ));
         // INFINITE is 0xFFFFFFFF, which is -1 read as the i32 DWORD is.
         out.push_str(&format!(
-            "define internal i32 @{}(i64 %tid, ptr %retval){} {{
-             entry:
-                 %h = inttoptr i64 %tid to ptr
-                 %w = call i32 @WaitForSingleObject(ptr %h, i32 -1)
-                 %c = call i32 @CloseHandle(ptr %h)
-                 ret i32 0
-             }}
-",
+            "define internal i32 @{}(i64 %tid, ptr %retval){} {{\n\
+             entry:\n  \
+             %h = inttoptr i64 %tid to ptr\n  \
+             %w = call i32 @WaitForSingleObject(ptr %h, i32 -1)\n  \
+             %c = call i32 @CloseHandle(ptr %h)\n  \
+             ret i32 0\n\
+             }}\n",
             thread_join_sym(),
             fn_attrs
         ));
