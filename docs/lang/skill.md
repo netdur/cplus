@@ -170,7 +170,9 @@ let h = thread::spawn::[i32](worker);
 ## 3. Syntax cheat sheet
 
 ### Primitives
-`i8 i16 i32 i64 isize` · `u8 u16 u32 u64 usize` · `f32 f64` · `bool` · `()` · `str` (16-byte view) · `Text` (heap-owned string) · `*T` (raw ptr) · `fn(...) -> R`
+`i8 i16 i32 i64 isize` · `u8 u16 u32 u64 usize` · `f32 f64` · `bool` · `()` · `str` (16-byte view) · `*T` (raw ptr) · `fn(...) -> R`
+
+The heap-owned string `Text` is **not** a primitive: it is stdlib's, reached by `import "stdlib/text" as text;` and always spelled `text::Text`. Bare `Text` never resolves (E0303).
 
 ### Literals
 ```cplus
@@ -260,7 +262,7 @@ impl Key: Eq {}                                  // fn eq(this, other: Key) -> b
 impl Key: Ord {}                                 // fn cmp(this, other: Key) -> i32
 impl Key: Hash {}                                // fn hash(this) -> u64  (FNV-1a fold)
 impl Key: Clone {}                               // fn clone(this) -> Key
-impl Key: ToText {}                              // fn to_text(this) -> Text ("Key { id: 1, name: a }")
+impl Key: ToText {}                              // fn to_text(this) -> text::Text ("Key { id: 1, name: a }")
 
 var m = hash_map::new::[Key, i32]();             // derived Hash + Eq satisfy K's bounds
 m.insert(Key { id: 1, name: "a" }, 100);
@@ -420,7 +422,7 @@ Prefer the short form in patterns. Restating the type is not just noise: it is t
 
 ```cplus
 let a: str = "hello";                             // literal — always str
-let b: Text = "hello".to_text();                  // copies to heap (or text::from_str("hello"))
+let b: text::Text = "hello".to_text();            // copies to heap (or text::from_str("hello"))
 b.count(); b.is_empty(); b.clone();               // Text methods
 a.count(); a.contains("ell");                     // str methods (import "stdlib/str")
 ```
@@ -433,7 +435,7 @@ A borrowed `Text` **coerces to `str`** at argument, binding, return, and receive
 let s: str = t.clone();          // E0513 — clone's Text is an anonymous temp
 let s: str = "x = ${n}";         // E0513 — so is the interpolation's
 let s: str = mk().view();        // E0513 — same, one accessor deeper
-let owner: Text = t.clone();     // name it, then view it
+let owner: text::Text = t.clone();     // name it, then view it
 let s: str = owner.view();       // fine — `owner` outlives the statement
 
 f("x = ${n}");                   // fine — an ARGUMENT's temp outlives the call
@@ -468,7 +470,7 @@ There is still **no `+` concatenation**: build strings with interpolation (below
 ### String interpolation
 ```cplus
 let n: i32 = 42;
-let s: Text = "answer is ${n}, name is ${name}";   // bound: an owned Text (allocates)
+let s: text::Text = "answer is ${n}, name is ${name}";   // bound: an owned Text (allocates)
 io::println("i = ${n}");                            // sink: writes parts, ZERO heap
 ```
 
@@ -493,13 +495,13 @@ Type aliases (`type Name = ExistingType;`) and tuples (`(a, b)` literal, `(T, U)
 Method receivers mirror it: `this` (read), `ref this` (mutating method, write-back), `take this` (consume). The name is always `this`; `ref`/`take` are the modifier.
 
 ```cplus
-fn read_only(s: Text) -> usize { return s.len(); }   // bare = borrow; caller keeps s
+fn read_only(s: text::Text) -> usize { return s.len(); }   // bare = borrow; caller keeps s
 fn bump(ref n: i32) { n = n +% 1; }                   // writes back into the caller's var
-fn sink(take t: Text) -> usize { return t.len(); }    // consumes t
+fn sink(take t: text::Text) -> usize { return t.len(); }    // consumes t
 
 var k: i32 = 0;
 bump(k);                    // k is now 1 — a write-back call is `bump(k)`, not `bump(&k)`
-let s: Text = "hi".to_text();
+let s: text::Text = "hi".to_text();
 let n = sink(s);            // s consumed; using s again = E0335
 ```
 
@@ -552,7 +554,7 @@ fn main() -> i32 {
 Teardown is recursive and automatic. When a value goes out of scope, the compiler runs any user `drop(ref this)` first, then drops each **owning field** in reverse declaration order — no hand-written per-field drops needed:
 
 ```cplus
-struct Person { name: Text, tags: vec::Vec[Text] }   // no `drop` written
+struct Person { name: text::Text, tags: vec::Vec[text::Text] }   // no `drop` written
 // dropping a Person auto-frees `tags` then `name` — both owning C+ types.
 ```
 
@@ -805,7 +807,7 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `hash_map` | `HashMap[K, V]` (K: Hash + Eq; primitives + str). `new` / `insert` / `get` / `contains_key` |
 | `slice` | checked sub-views over `T[]`: `sub` (→ `Option[T[]]`), `prefix`/`suffix`/`drop_first`/`drop_last`. Free fns (`slice::sub::[T](s, from, to)`) — method form waits on generic slice impls |
 | `flags` | `Flags` option-set over u64 bits: `none`/`of`/`from_bits`, `contains`/`intersects`/`with`/`without`/`toggled`, set algebra. Bit values from `const` masks or repr-enum discriminants (`Mode::Fast as u64`) |
-| `Text` | builtin type (no module needed) |
+| `text` | `Text` — the owned heap string. **Not a builtin and not in scope unqualified:** import `stdlib/text` and spell the type `text::Text` |
 | `fs` | File I/O |
 | `net` | TCP (IPv4, numeric IPs only) |
 | `env` | env vars + argv |
@@ -1153,9 +1155,9 @@ fn unwrap(take this) -> T {
     // free(this.p as *u8);           // ❌ would double-free
 }
 
-// 6. String literal is `str`, not `Text`.
-let a: str    = "hello";
-let b: Text = "hello".to_text();
+// 6. String literal is `str`, not `Text`, and `Text` is always qualified.
+let a: str        = "hello";
+let b: text::Text = "hello".to_text();
 ```
 
 Recurring traps for generated code:
@@ -1178,7 +1180,8 @@ cpc FILE.cplus -o BIN          # single-file, no imports
 cpc check FILE                 # parse + sema only, single-file no-import (does NOT read Cplus.toml)
 cpc check                      # whole-project front-end (reads Cplus.toml + [profile.realtime]); no codegen — CI gate
 cpc --realtime-report[=json]   # whole-project real-time contract digest (profile + per-contract violations)
-cpc fmt FILE                   # format in place
+cpc fmt                        # format this project's src/ in place
+cpc fmt FILE                   # format one file in place
 cpc fmt --check DIR            # CI mode
 cpc test                       # run #[test] + doctests. A doctest fence in a `///`
                                # comment opens ONLY on a line that is exactly three

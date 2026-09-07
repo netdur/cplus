@@ -1142,7 +1142,7 @@ fn caller() {
 
 ### E0371 · Use of a possibly-moved binding
 
-A non-Copy binding is moved on some control-flow branches but not others, then read at a point where it may already be moved (its merged state is MaybePartial).
+A non-Copy binding is moved on some control-flow paths and not others, then read at a point where it may already be moved (its merged state is MaybePartial).
 
 ```cplus
 struct B { x: i32 }
@@ -1159,7 +1159,7 @@ fn caller(c: bool) {
 
 *Reported as E0335 in simple cases; E0371 specifically covers a use of a binding moved on only some control-flow paths.*
 
-**Fix.** Ensure every branch either moves or preserves the binding, or clone it before the branch: `let y_owned = y.clone();`
+**Fix.** Ensure every path either moves or preserves the binding, or clone it before the split: `let y_owned = y.clone();`. Re-initialising counts as preserving: `y = f(y)`, where `f` takes ownership and hands back a new value, leaves `y` live on that path and is not this error.
 
 <sub>repro: source · cplus-core/src/borrowck.rs:2638</sub>
 

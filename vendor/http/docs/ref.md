@@ -2,9 +2,14 @@
 
 ```cplus
 import "http/http" as http;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
 ```
 
-Everything below is in module `http`. macOS and iOS only.
+Everything below is in module `http`. macOS and iOS only. The two stdlib
+imports are what the signatures on this page return — `result::Result` from
+every send, `status::Status` from every setter — so a file that calls them
+needs all three lines, not just the first.
 
 ---
 

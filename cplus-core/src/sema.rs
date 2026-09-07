@@ -2551,10 +2551,33 @@ impl SemaCx<'_> {
             "the built-in `string` type was removed in v0.0.18; use the stdlib \
              owned-string type `Text` instead"
                 .to_string(),
-            "add `import \"stdlib/text\"` and write `Text` (e.g. `Text::new()`, \
-             `Text::with_capacity(n)`)"
+            "add `import \"stdlib/text\" as text;` and write the type qualified, \
+             `text::Text` (e.g. `text::Text::new()`, `text::Text::with_capacity(n)`)"
                 .to_string(),
         ]
+    }
+
+    /// Notes for unknown type names that have one known, specific answer.
+    ///
+    /// `Text` is the one that keeps costing time. It is the owned-string type
+    /// every C+ program reaches for, and it is NOT in scope unqualified:
+    /// importing `stdlib/text` brings in the MODULE, and the type is spelled
+    /// `text::Text`. Without a note here the trail goes cold exactly where the
+    /// user has already done what E0613 told them to — they add the import,
+    /// the E0613 disappears, and a bare E0303 with no help takes its place.
+    fn unknown_type_notes(name: &str) -> Option<Vec<String>> {
+        match name {
+            "string" => Some(Self::text_replacement_notes()),
+            "Text" => Some(vec![
+                "`Text` is not in scope unqualified — it is `stdlib/text`'s type, \
+                 not a builtin"
+                    .to_string(),
+                "add `import \"stdlib/text\" as text;` and write the type as \
+                 `text::Text`"
+                    .to_string(),
+            ]),
+            _ => None,
+        }
     }
 
     /// Like `warn`, but attaches `= help:` / `= note:` lines. A lint that
@@ -12082,7 +12105,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     return Ty::Error;
                 }
                 _ => {
-                    self.err("E0303", format!("unknown type `{}`", name.name), name.span);
+                    match Self::unknown_type_notes(&name.name) {
+                        Some(notes) => self.err_note(
+                            "E0303",
+                            format!("unknown type `{}`", name.name),
+                            name.span,
+                            notes,
+                        ),
+                        None => {
+                            self.err("E0303", format!("unknown type `{}`", name.name), name.span)
+                        }
+                    }
                     for f in fields {
                         let _ = self.check_expr(&f.value, None);
                     }
@@ -14481,7 +14514,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     self.err(
                         "E0613",
                         "`.to_text()` produces an owned string, which requires the \
-                         `Text` type — add `import \"stdlib/text\"`"
+                         `Text` type — add `import \"stdlib/text\" as text;` and \
+                         write the type as `text::Text`"
                             .to_string(),
                         call_span,
                     );
@@ -15133,7 +15167,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 self.err(
                     "E0613",
                     "string interpolation produces an owned string, which requires \
-                     the `Text` type — add `import \"stdlib/text\"`"
+                     the `Text` type — add `import \"stdlib/text\" as text;` and \
+                     write the type as `text::Text`"
                         .to_string(),
                     span,
                 );
@@ -18681,13 +18716,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     self.resolving_aliases.remove(name);
                     return resolved;
                 }
-                if name == "string" {
-                    self.err_note(
-                        "E0303",
-                        format!("unknown type `{name}`"),
-                        t.span,
-                        Self::text_replacement_notes(),
-                    );
+                if let Some(notes) = Self::unknown_type_notes(name) {
+                    self.err_note("E0303", format!("unknown type `{name}`"), t.span, notes);
                 } else {
                     self.err("E0303", format!("unknown type `{name}`"), t.span);
                 }
@@ -25945,6 +25975,67 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
             "fn f(x: i32) -> i32 { let s = \"v=${x}\"; return 0; } fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0613"), "expected E0613, got: {codes:?}");
+    }
+
+    // bugs 003 + 004 (weather_3, 2026-09-07): both halves of the fix have to
+    // be named. `import "stdlib/text"` alone leaves `Text` unresolved, because
+    // the type is spelled `text::Text` — following E0613's advice used to land
+    // the user on a bare E0303 with no help at all, less information than they
+    // started with.
+    #[test]
+    fn e0613_names_the_qualified_spelling_not_just_the_import() {
+        for src in [
+            "fn f() -> i32 { let n: i32 = 1; let s = n.to_text(); return 0; }",
+            "fn f(x: i32) -> i32 { let s = \"v=${x}\"; return 0; } fn main() -> i32 { return 0; }",
+        ] {
+            let d = check_src(src)
+                .into_iter()
+                .find(|d| d.code.0 == "E0613")
+                .expect("expected an E0613");
+            assert!(
+                d.message.contains("text::Text"),
+                "E0613 must name the qualified spelling, got: {}",
+                d.message
+            );
+            assert!(
+                d.message.contains("as text"),
+                "E0613 must name the aliased import, got: {}",
+                d.message
+            );
+        }
+    }
+
+    #[test]
+    fn e0303_on_bare_text_carries_the_qualified_spelling() {
+        // The follow-up error, reached once the user HAS added the import.
+        // Silent before; this is the note that keeps the trail warm.
+        let src = "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+                   fn label() -> NotAText { return 0; }";
+        // Sanity: an unrelated unknown type stays plain, no spurious note.
+        let plain = check_src(src)
+            .into_iter()
+            .find(|d| d.code.0 == "E0303")
+            .expect("expected an E0303");
+        assert!(
+            plain.notes.is_empty(),
+            "an unrelated unknown type must not get Text notes, got: {:?}",
+            plain.notes
+        );
+
+        let d = check_src("fn label() -> Text { return 0; }")
+            .into_iter()
+            .find(|d| d.code.0 == "E0303")
+            .expect("expected an E0303 on bare `Text`");
+        assert!(
+            d.notes.iter().any(|n| n.contains("text::Text")),
+            "E0303 on `Text` must name the qualified spelling, got: {:?}",
+            d.notes
+        );
+        assert!(
+            d.notes.iter().any(|n| n.contains("as text")),
+            "E0303 on `Text` must name the aliased import, got: {:?}",
+            d.notes
+        );
     }
 
     #[test]
@@ -35310,6 +35401,44 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
             "{MOVE_HDR}fn t() -> i32 {{ var i: i32 = 0; while i < 2 {{ let b: B = nb(); let x: B = b; i = i + 1; }} return 0; }}\n\
              fn main() -> i32 {{ return 0; }}"
         ));
+    }
+
+    // bug 002 (weather_3, 2026-09-07): `b = f(b)` — `f` takes ownership and
+    // returns a new value — moves and re-initialises in ONE statement. It was
+    // read as a plain move as soon as it sat in a branch or a loop body, so a
+    // later use of `b` was rejected (E0371) on a binding live on every path.
+    // The move checker's own view of it is pinned here; the join that produced
+    // the false positive is pinned in `borrowck::tests`.
+    #[test]
+    fn self_consuming_reassign_in_a_branch_is_clean() {
+        assert_clean(&format!(
+            "{MOVE_HDR}fn take_b(take b: B) -> B {{ return b; }}\n\
+             fn t(c: bool) -> i32 {{ var b: B = nb(); if c {{ b = take_b(b); }} let y: B = b; return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+    }
+
+    #[test]
+    fn self_consuming_reassign_in_a_loop_is_clean() {
+        assert_clean(&format!(
+            "{MOVE_HDR}fn take_b(take b: B) -> B {{ return b; }}\n\
+             fn t() -> i32 {{ var b: B = nb(); var i: i32 = 0; while i < 2 {{ b = take_b(b); i = i + 1; }} let y: B = b; return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+    }
+
+    #[test]
+    fn move_in_a_loop_without_reinit_is_still_e0335() {
+        // The negative half: consuming the binding each iteration with nothing
+        // put back is a genuine use-after-move on iteration two. The heal for
+        // `b = f(b)` must not reach this.
+        let src = format!(
+            "{MOVE_HDR}fn eat(take b: B) {{ return; }}\n\
+             fn t() -> i32 {{ var b: B = nb(); var i: i32 = 0; while i < 2 {{ eat(b); i = i + 1; }} return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        );
+        let codes = errors(&src);
+        assert!(codes.contains(&"E0335"), "got {:?}", codes);
     }
 
     #[test]

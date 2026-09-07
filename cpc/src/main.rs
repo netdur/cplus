@@ -73,7 +73,8 @@ usage:
                                     instrument the test binary.
                                     `--json` emits one JSON object per test
                                     plus a final summary line.
-  cpc fmt FILE|DIR [...]            format C+ source. By default: rewrites in place.
+  cpc fmt [FILE|DIR ...]            format C+ source. By default: rewrites in place.
+                                    With no path: the current project's `src/` (./Cplus.toml).
                                     flags: --check (no write, exit non-zero on diff)
                                            --emit  (print to stdout, leave file alone)
                                            --stdin (read source from stdin, write to stdout)
@@ -242,7 +243,7 @@ per test plus a final summary line — for tool consumption.
         }
         Some(Subcommand::Fmt) => {
             "\
-cpc fmt FILE|DIR [...]
+cpc fmt [FILE|DIR ...]
 
 Format C+ source. By default rewrites each file in place. Flags:
   --check    don't write; exit 1 if any file would change (CI mode)
@@ -250,7 +251,8 @@ Format C+ source. By default rewrites each file in place. Flags:
   --stdin    read source from stdin, write to stdout, no file arg
 
 Multiple paths accepted; directories are walked recursively for
-`.cplus` files.
+`.cplus` files. With no path, formats the current project's `src/`
+via ./Cplus.toml, the way `cpc build` and `cpc test` operate on it.
 "
         }
         Some(Subcommand::Lsp) => {
@@ -3865,10 +3867,31 @@ fn run_fmt(paths: Vec<PathBuf>, opts: FmtOpts, diag_mode: DiagMode) -> ExitCode 
             }
         }
     } else {
-        if paths.is_empty() {
-            eprintln!("cpc fmt: needs a file or directory argument (or `--stdin`)");
-            return ExitCode::FAILURE;
-        }
+        // No path: behave like `cpc build` / `cpc test` and operate on the
+        // project in the current directory. Three sibling subcommands invoked
+        // the same way from the same place, and only this one refusing, was
+        // the whole of bug 006. Only `src/` is walked — never `.`, which would
+        // descend into `target/` and into the `vendor/` symlink loop.
+        let paths: Vec<PathBuf> = if paths.is_empty() {
+            if !Path::new("Cplus.toml").is_file() {
+                eprintln!(
+                    "cpc fmt: needs a file or directory argument (or `--stdin`).\n\
+                     \x20        Run it from a project root to format that project's `src/`."
+                );
+                return ExitCode::FAILURE;
+            }
+            let src = PathBuf::from("src");
+            if !src.is_dir() {
+                eprintln!(
+                    "cpc fmt: this project has no `src/` directory; name the files or \
+                     directories to format"
+                );
+                return ExitCode::FAILURE;
+            }
+            vec![src]
+        } else {
+            paths
+        };
         let mut files: Vec<PathBuf> = Vec::new();
         for p in &paths {
             collect_cplus_files(p, &mut files);
@@ -7759,7 +7782,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          ```\n\
          cpc build          compile and link\n\
          cpc test           run the tests\n\
-         cpc fmt            canonical formatting\n\
+         cpc fmt            canonical formatting (no arg = this project)\n\
          ```\n\n\
          ## Driving the running app\n\n\
          This app is an ACI: while it runs it serves MCP, and you can read its\n\

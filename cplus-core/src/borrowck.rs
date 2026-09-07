@@ -7036,14 +7036,14 @@ impl Analyzer<'_> {
                 // MaybePartial stays an error because codegen has no drop
                 // flags: `v = mk()` after a *conditional* move can't decide
                 // statically whether to drop the old value.
-                let heal = match &target.kind {
+                let heal_before = match &target.kind {
                     ExprKind::Ident(name) => matches!(
                         state.get(&Place::root(name)),
                         Some(PlaceState::Moved)
                     ),
                     _ => false,
                 };
-                if !heal {
+                if !heal_before {
                     self.apply_expr(target, state);
                 }
                 // v0.0.28: a WRITE into a place someone else is borrowing is
@@ -7067,6 +7067,31 @@ impl Analyzer<'_> {
                 // already rejects (E0372).
                 let borrow_sources = self.classify_borrow_source(value);
                 self.apply_expr(value, state);
+                // v0.0.28: the heal has to be re-tested AFTER the value, because
+                // the value is what performs the move in the self-consuming
+                // form `x = f(x)` — `f` takes ownership and hands back a new
+                // value. Tested only before the walk, `x` is still `Owned` at
+                // that point, so `heal_before` is false and the block exits
+                // with `x` MOVED; merging that with a path that did not run
+                // (an `if` with no `else`, a loop body) yields MaybePartial and
+                // E0371 fires on the next read of a binding that is live on
+                // every path. Straight-line code never hit it (no join to
+                // merge at), and splitting the statement in two made it go
+                // away (the assign then sees a definitely-moved `x`), which is
+                // what made this read as a rule about blocks.
+                //
+                // Healing here stays inside the original constraint: only a
+                // DEFINITELY-moved place heals. A conditionally-moved one is
+                // still MaybePartial and still an error, because codegen has
+                // no drop flags to decide whether the old value needs dropping.
+                let heal = heal_before
+                    || match &target.kind {
+                        ExprKind::Ident(name) => matches!(
+                            state.get(&Place::root(name)),
+                            Some(PlaceState::Moved)
+                        ),
+                        _ => false,
+                    };
                 if heal {
                     if let ExprKind::Ident(name) = &target.kind {
                         state.insert(Place::root(name), PlaceState::Owned);
@@ -7291,9 +7316,9 @@ impl Analyzer<'_> {
                         span,
                         name.to_string(),
                         format!(
-                            "`{name}` is moved on some branches but not others; \
-                             ensure every branch either moves or preserves the binding, \
-                             or clone it before the branch: `let {name}_owned = {name}.clone();`"
+                            "`{name}` is moved on some paths and not others; \
+                             ensure every path either moves or preserves the binding, \
+                             or clone it before the split: `let {name}_owned = {name}.clone();`"
                         ),
                     )),
                     label: None,
@@ -7429,9 +7454,9 @@ impl Analyzer<'_> {
                     span,
                     name.to_string(),
                     format!(
-                        "`{name}` is moved on some branches but not others; \
-                         ensure every branch either moves or preserves the binding, \
-                         or clone it before the branch: `let {name}_owned = {name}.clone();`"
+                        "`{name}` is moved on some paths and not others; \
+                         ensure every path either moves or preserves the binding, \
+                         or clone it before the split: `let {name}_owned = {name}.clone();`"
                     ),
                 )),
                 label: None,
@@ -9354,6 +9379,121 @@ fn caller(c: bool) {
     }
 
     // --- 5BC.2b E0371 emission tests ---
+
+    // ---- v0.0.28: `x = f(x)` re-initialises across a control-flow join ----
+    //
+    // `f` takes ownership and hands back a new value, so the statement moves
+    // AND re-initialises `x` — `x` is live on every path out of the block,
+    // whether that block ran once, many times, or not at all. The heal that
+    // records the re-initialisation used to be tested only BEFORE the value
+    // was walked, and the value is what performs the move, so the branch
+    // exited with `x` moved and the join produced MaybePartial → E0371 on a
+    // binding that was never in doubt.
+    //
+    // Straight-line code (no join to merge at) and a bare block never hit it,
+    // which is what made the shape read as a rule about blocks.
+
+    const REINIT_MOCK: &str = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn mk() -> B { return B { x: 0 }; }
+fn bump(take b: B) -> B { return b; }
+fn eat(take b: B) { return; }
+";
+
+    fn reinit_codes(body: &str) -> Vec<String> {
+        check_src(&format!("{REINIT_MOCK}fn caller(c: bool) {{\n{body}\n  return;\n}}"))
+    }
+
+    #[test]
+    fn reinit_in_an_if_without_else_is_not_possibly_moved() {
+        let codes = reinit_codes(
+            "  var y: B = mk();
+  if c { y = bump(y); }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(codes.is_empty(), "expected a clean program; got {codes:?}");
+    }
+
+    #[test]
+    fn reinit_in_a_loop_body_is_not_possibly_moved() {
+        // The clearest case: one unconditional path through the body, and it
+        // still failed. The old help text ("moved on some branches but not
+        // others") named branches this program does not have.
+        let codes = reinit_codes(
+            "  var y: B = mk();
+  var i: i32 = 0;
+  while i < 3 { y = bump(y); i = i + 1; }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(codes.is_empty(), "expected a clean program; got {codes:?}");
+    }
+
+    #[test]
+    fn reinit_in_both_arms_and_in_a_bare_block_stay_clean() {
+        // These two compiled before the fix; pinned so the new post-value
+        // heal cannot regress them.
+        let both_arms = reinit_codes(
+            "  var y: B = mk();
+  if c { y = bump(y); } else { y = bump(y); }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(both_arms.is_empty(), "both-arms: {both_arms:?}");
+        let bare_block = reinit_codes(
+            "  var y: B = mk();
+  { y = bump(y); }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(bare_block.is_empty(), "bare block: {bare_block:?}");
+    }
+
+    #[test]
+    fn reinit_split_across_two_statements_stays_clean() {
+        // The zero-cost workaround, and the shape whose success proved the
+        // analysis already understood re-initialisation.
+        let codes = reinit_codes(
+            "  var y: B = mk();
+  if c { let t: B = bump(y); y = t; }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(codes.is_empty(), "expected a clean program; got {codes:?}");
+    }
+
+    // ---- the negative half: a conditional move with NO re-initialisation is
+    // still an error. The heal must not swallow these. ----
+
+    #[test]
+    fn conditional_move_without_reinit_is_still_rejected() {
+        let codes = reinit_codes("  var y: B = mk();
+  if c { eat(y); }
+  let z: B = y;
+  eat(z);");
+        assert!(
+            codes.iter().any(|c| c == "E0371" || c == "E0335"),
+            "a conditional move must still be caught; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn one_arm_moving_and_one_reinitialising_is_still_rejected() {
+        // The genuine disagreement the diagnostic is actually for: the `then`
+        // path leaves `y` dead, the `else` path leaves it live.
+        let codes = reinit_codes(
+            "  var y: B = mk();
+  if c { eat(y); } else { y = bump(y); }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(
+            codes.iter().any(|c| c == "E0371" || c == "E0335"),
+            "paths that genuinely disagree must still be caught; got {codes:?}"
+        );
+    }
 
     #[test]
     fn e0371_does_not_fire_on_copy_binding_after_asymmetric_branch() {

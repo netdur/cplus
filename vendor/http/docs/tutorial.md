@@ -18,8 +18,14 @@ manifest, not from a dependency's. Leaving it out is `E0852: first segment
 
 ```cplus
 import "stdlib/result" as result;
+import "stdlib/status" as status;
 import "http/http" as http;
 ```
+
+`stdlib/status` is here because every request *setter* below returns a
+`status::Status`. Omitting it is `E0402: unknown import prefix 'status'` on the
+first `set_header` you write — the same class of mistake as leaving `objc` out
+of the manifest, one layer up.
 
 macOS, iOS and Android, from the same source. The manifest names `http` plus
 one transitive dep per platform you build for — `objc` on Apple (which brings

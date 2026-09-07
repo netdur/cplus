@@ -5171,6 +5171,77 @@ fn fmt_rewrites_in_place() {
     assert_eq!(after, "fn main() -> i32 { return 0; }\n");
 }
 
+/// bug 006 (weather_3, 2026-09-07): with no path, `cpc fmt` formats the
+/// project's `src/` — the way `cpc build` and `cpc test` operate on it from
+/// the same directory. Three sibling subcommands invoked the same way, and
+/// only this one refusing, was the whole report.
+#[test]
+fn fmt_with_no_path_formats_the_project_src() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let f = dir.join("src").join("main.cplus");
+    std::fs::write(&f, "fn  main()->i32{return 0;}\n").unwrap();
+    let status = Command::new(cpc)
+        .arg("fmt")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc fmt");
+    assert!(status.success(), "bare `cpc fmt` in a project must succeed");
+    assert_eq!(
+        std::fs::read_to_string(&f).unwrap(),
+        "fn main() -> i32 { return 0; }\n"
+    );
+}
+
+/// The negative half: outside a project there is nothing to default to, so
+/// the refusal stands — but it names the intent instead of restating grammar.
+#[test]
+fn fmt_with_no_path_outside_a_project_still_refuses() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let out = Command::new(cpc)
+        .arg("fmt")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc fmt");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("project root"),
+        "the refusal should name the likely intent, got: {stderr}"
+    );
+}
+
+/// A project with a manifest but no `src/` is named as such, not walked from
+/// `.` — which would descend into `target/` and the `vendor/` symlink loop.
+#[test]
+fn fmt_with_no_path_and_no_src_says_so() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("fmt")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc fmt");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no `src/` directory"),
+        "expected the missing-src message, got: {stderr}"
+    );
+}
+
 /// `--emit` prints to stdout and leaves the source file unchanged.
 #[test]
 fn fmt_emit_leaves_file_alone() {
