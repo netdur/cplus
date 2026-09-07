@@ -38,6 +38,19 @@
 extern fn _mkdir(path: *u8) -> i32;
 extern fn _stat64(path: *u8, buf: *u8) -> i32;
 
+// THE C-RUNTIME ERRNO, which `_mkdir`/`_stat64`/`unlink` set — and which is a
+// DIFFERENT error channel from Winsock's `WSAGetLastError` that `netsys::errno`
+// returns. On POSIX one thread-local `errno` carries both file and socket
+// failures, so `fs` reading `netsys::errno` was correct there; on Windows the
+// two diverge, and reading the SOCKET error to interpret a `_mkdir` made an
+// already-existing directory (EEXIST=17) look like an unknown failure — so
+// `create_dir_all` reported an error for a tree it had just built. `fs` reads
+// FILE errors, so it reads this. MSVC's `_errno()` returns the errno slot's
+// address; the value uses the same POSIX numbers `fs` already checks (ENOENT 2,
+// EACCES 13, EEXIST 17).
+extern fn _errno() -> *i32;
+fn file_errno() -> i32 { return { *_errno() }; }
+
 extern fn FindFirstFileW(pattern: *u8, data: *u8) -> *u8;
 extern fn FindNextFileW(handle: *u8, data: *u8) -> i32;
 extern fn FindClose(handle: *u8) -> i32;

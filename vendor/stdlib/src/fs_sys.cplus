@@ -18,6 +18,8 @@
 // `fs.cplus` keeps everything else — it is portable POSIX and stays shared.
 
 // `mode_t` is `__uint16_t` on Darwin.
+import "./netsys" as netsys;
+
 extern fn mkdir(path: *u8, mode: u16) -> i32;
 // Darwin arm64 exposes the 64-bit-inode stat as the bare `stat` symbol (on
 // x86_64 it is `stat$INODE64`; this build targets arm64 macOS).
@@ -127,3 +129,10 @@ fn read_fd(fd: i32, buf: *u8, count: usize) -> isize {
 fn write_fd(fd: i32, buf: *u8, count: usize) -> isize {
     return { write(fd, buf, count) };
 }
+
+// The errno `fs` reads for FILE failures. On POSIX one thread-local errno
+// carries file and socket errors alike, so this is `netsys::errno` — the same
+// value `fs` read before, resolved to the platform's errno spelling. Windows
+// splits the two channels; its `fs_sys_windows::file_errno` reads the C-runtime
+// errno instead. See that file for the bug that made the seam necessary.
+fn file_errno() -> i32 { return netsys::errno(); }

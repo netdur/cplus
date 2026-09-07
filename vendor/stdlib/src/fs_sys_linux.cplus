@@ -11,6 +11,8 @@
 // want if it ever comes up.
 
 // Linux `mode_t` is `unsigned int`, not Darwin's `__uint16_t`.
+import "./netsys" as netsys;
+
 extern fn mkdir(path: *u8, mode: u32) -> i32;
 extern fn stat(path: *u8, buf: *u8) -> i32;
 
@@ -140,3 +142,7 @@ fn read_fd(fd: i32, buf: *u8, count: usize) -> isize {
 fn write_fd(fd: i32, buf: *u8, count: usize) -> isize {
     return { write(fd, buf, count) };
 }
+
+// See the Darwin `fs_sys::file_errno`: one POSIX errno serves files and sockets,
+// so `fs`'s file errno is `netsys::errno` here too.
+fn file_errno() -> i32 { return netsys::errno(); }

@@ -12,7 +12,6 @@ import "./status" as status;
 // fd-readiness path. Phase 3 Slice 3D's File::lines is sync but
 // the gen-method machinery needs Iterator[T] in scope.
 import "./net" as net;
-import "./netsys" as netsys;
 import "./iterator" as iterator;
 import "./text" as text;
 // The kernel-ABI half — `open` flag values, `mode_t`'s width, and the byte
@@ -350,16 +349,19 @@ impl File {
 
 // errno as an `IoError`. Only the file-system-relevant codes are named; the
 // rest collapse to `Other`.
-// Reached through `netsys` rather than by declaring `__error()` here.
 //
-// `__error` is DARWIN's name for the thread's errno slot; glibc calls it
-// `__errno_location` and bionic calls it `__errno`. This module has no platform
-// override — it is 888 lines and only one line of it is platform-specific — so
-// declaring the Darwin symbol here put it in the stdlib slice for EVERY target
-// and broke the Android link. `netsys` already has the three spellings behind
-// one name; use it.
+// Reached through `fsys::file_errno` rather than by declaring the errno slot
+// here. `__error` is DARWIN's name for it, glibc calls it `__errno_location`,
+// bionic `__errno`, and MSVC `_errno` — four spellings, and worse than that the
+// Windows one reads a DIFFERENT channel: its C-runtime errno, not Winsock's
+// `WSAGetLastError`. `fs` reads FILE errors, so `fs_sys` per platform picks the
+// right slot — the shared POSIX errno everywhere, the C-runtime errno on
+// Windows. This module has no platform override of its own (declaring `__error`
+// here once put the Darwin symbol in every target's slice and broke the Android
+// link), and reading the socket error on Windows made `create_dir_all` report
+// failure for a directory that already existed (EEXIST unseen).
 fn errno() -> i32 {
-    return netsys::errno();
+    return fsys::file_errno();
 }
 fn errno_as_ioerror() -> result::IoError {
     let e: i32 = errno();
