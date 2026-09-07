@@ -54,6 +54,17 @@ extern fn GetTickCount64() -> u64;
 extern fn WSAPoll(fdarray: *u8, nfds: u32, timeout: i32) -> i32;
 extern fn WSAStartup(version: u16, data: *u8) -> i32;
 
+// POSIX `pipe(2)`, which `future.cplus`'s fd-registration test asks for by that
+// bare name. The Windows CRT provides `close`/`read`/`write` under their POSIX
+// spellings but NOT `pipe` — only `_pipe`, which takes an explicit buffer size
+// and text mode. This wrapper gives the linker the symbol the test names; a
+// 4 KiB binary pipe is more than enough for a test that registers the read fd
+// and never moves a byte through it.
+extern fn _pipe(pfds: *i32, psize: u32, textmode: i32) -> i32;
+export extern fn pipe(fds: *i32) -> i32 {
+    return { _pipe(fds, 4096 as u32, 0 as i32) };
+}
+
 // LLVM coroutine intrinsics — surfaced via stable wrapper symbols emitted
 // by codegen, so stdlib can call them as plain extern fns.
 #[runtime_abi]
@@ -195,6 +206,13 @@ export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
 
 export extern fn stdlib_reactor_waiter_count_v1() -> i32 {
     return waiter_count();
+}
+
+// The async lowering asks how many pending (ready-to-run) tasks the reactor
+// holds; codegen emits this by stable symbol, so the Windows reactor exports it
+// the same as the epoll and kqueue ones.
+export extern fn stdlib_reactor_pending_count_v1() -> i32 {
+    return pending_count();
 }
 
 // The two spellings, one body. Blocking waits up to `_max_wait_ms`; the
@@ -649,6 +667,67 @@ fn reactor_fd() -> i32 {
 // duplicate behind would hand a freed frame to `drain_pending`. `i` only
 // advances on a non-match, because the swap moves an unexamined element into
 // the slot just vacated.
+
+// Drop a parked reader (a socket/file waiter or a timer) by its coroutine
+// handle. `Future::wait` / `wait_or_cancel` call this to tear a suspended frame
+// out of the reactor. The Linux twin has to `epoll_ctl(DEL)` and close a
+// timerfd; here there is neither — WSAPoll rebuilds its pollfd array from these
+// arrays on every call, and a Windows timer is a bare deadline with no fd — so
+// removal is just a swap-remove from the parallel arrays. A handle can sit in
+// only one of the two tables, but both are swept so the door works for either.
+fn unregister_waiter(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let state: *u8 = { #reactor_get_state() };
+    if ptr_is_null(state) { return; }
+
+    // The waiter (fd) table: fds (i32), handles (ptr), evmask (i16) — parallel.
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    let fds: *i32 = { *((state + off_waiter_fds()) as **u8) as *i32 };
+    let whdls: **u8 = { *((state + off_waiter_hdls()) as **u8) as **u8 };
+    let evm: *i16 = { *((state + off_waiter_evmask()) as **u8) as *i16 };
+    var nw: i32 = { *nw_slot };
+    var i: i32 = 0;
+    while i < nw {
+        if { *(whdls + (i as usize)) } == hdl {
+            let last_i: i32 = nw -% (1 as i32);
+            if i != last_i {
+                let lf: i32 = { *(fds + (last_i as usize)) };
+                let lh: *u8 = { *(whdls + (last_i as usize)) };
+                let lm: i16 = { *(evm + (last_i as usize)) };
+                { *(fds + (i as usize)) = lf; }
+                { *(whdls + (i as usize)) = lh; }
+                { *(evm + (i as usize)) = lm; }
+            }
+            nw = last_i;
+        } else {
+            i = i +% (1 as i32);
+        }
+    }
+    { *nw_slot = nw; }
+
+    // The timer table: deadlines (u64), handles (ptr) — parallel, no fd.
+    let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
+    let deadlines: *u64 = { *((state + off_timer_deadlines()) as **u8) as *u64 };
+    let thdls: **u8 = { *((state + off_timer_hdls()) as **u8) as **u8 };
+    var nt: i32 = { *nt_slot };
+    var j: i32 = 0;
+    while j < nt {
+        if { *(thdls + (j as usize)) } == hdl {
+            let last_j: i32 = nt -% (1 as i32);
+            if j != last_j {
+                let ld: u64 = { *(deadlines + (last_j as usize)) };
+                let lh: *u8 = { *(thdls + (last_j as usize)) };
+                { *(deadlines + (j as usize)) = ld; }
+                { *(thdls + (j as usize)) = lh; }
+            }
+            nt = last_j;
+        } else {
+            j = j +% (1 as i32);
+        }
+    }
+    { *nt_slot = nt; }
+    return;
+}
 
 fn unregister_pending(hdl: *u8) {
     let state: *u8 = ensure();

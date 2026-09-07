@@ -219,3 +219,84 @@ fn socket_pair(fds: *i32) -> i32 {
     { *({ ({ #addr(fds) } +% (4 as usize)) as *i32 }) = server };
     return 0 as i32;
 }
+
+// ---- POSIX compat for agent_mcp on Windows -----------------------------------
+//
+// agent_mcp talks to the socket layer directly and declares `poll`, `kill`,
+// `socketpair` and `usleep` as bare libc externs. The Windows CRT and Winsock
+// have none of them under those names, so they are provided here — this file is
+// always compiled on Windows — as thin translations onto WSAPoll, OpenProcess,
+// the loopback `socket_pair` above, and Sleep. Without them agent_mcp does not
+// LINK, and it is a hard dependency of every facet app's agent surface.
+
+extern fn WSAPoll(fdarray: *u8, nfds: u32, timeout: i32) -> i32;
+extern fn Sleep(ms: u32);
+extern fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *u8;
+extern fn CloseHandle(h: *u8) -> i32;
+
+// `poll(2)` over a POSIX pollfd array (8 bytes: fd i32 @0, events i16 @4,
+// revents i16 @6), translated to WSAPoll's WSAPOLLFD (16 bytes: SOCKET @0,
+// events i16 @8, revents i16 @10) and its different event bits, with the POSIX
+// revents written back. Only the read/hangup bits agent_mcp uses are mapped:
+// POSIX POLLIN(0x1) <-> WSA POLLRDNORM(0x100); on the way back WSA POLLHUP(0x2),
+// POLLERR(0x1), POLLNVAL(0x4) become POSIX POLLHUP(0x10)/POLLERR(0x8)/
+// POLLNVAL(0x20) — the POLL_DEAD set agent_mcp watches.
+export extern fn poll(fds: *u8, nfds: u32, timeout: i32) -> i32 {
+    if nfds == (0 as u32) { return { WSAPoll(0 as *u8, 0 as u32, timeout) }; }
+    let n: usize = nfds as usize;
+    let wsa: *u8 = { malloc(n *% (16 as usize)) };
+    if wsa == (0 as *u8) { return 0 - 1; }
+    var i: usize = 0 as usize;
+    while i < n {
+        let pb: usize = i *% (8 as usize);
+        let wb: usize = i *% (16 as usize);
+        let fd: i32 = { *((fds + pb) as *i32) };
+        let ev: i16 = { *((fds + (pb + (4 as usize))) as *i16) };
+        var wev: i16 = 0i16;
+        if (ev & (1i16)) != (0i16) { wev = wev | (0x100 as i16); }   // POLLIN -> POLLRDNORM
+        { *((wsa + wb) as *i64) = fd as i64; }                       // SOCKET, zero-extended
+        { *((wsa + (wb + (8 as usize))) as *i16) = wev; }
+        { *((wsa + (wb + (10 as usize))) as *i16) = 0i16; }
+        i = i +% (1 as usize);
+    }
+    let r: i32 = { WSAPoll(wsa, nfds, timeout) };
+    i = 0 as usize;
+    while i < n {
+        let pb: usize = i *% (8 as usize);
+        let wb: usize = i *% (16 as usize);
+        let wre: i16 = { *((wsa + (wb + (10 as usize))) as *i16) };
+        var pre: i16 = 0i16;
+        if (wre & (0x100 as i16)) != (0i16) { pre = pre | (1i16); }      // POLLRDNORM -> POLLIN
+        if (wre & (0x2 as i16)) != (0i16) { pre = pre | (0x10 as i16); } // POLLHUP
+        if (wre & (0x1 as i16)) != (0i16) { pre = pre | (0x8 as i16); }  // POLLERR
+        if (wre & (0x4 as i16)) != (0i16) { pre = pre | (0x20 as i16); } // POLLNVAL
+        { *((fds + (pb + (6 as usize))) as *i16) = pre; }
+        i = i +% (1 as usize);
+    }
+    { free(wsa) };
+    return r;
+}
+
+// `kill(pid, 0)` is a liveness probe — no signal is delivered. OpenProcess
+// answering with a handle means the pid is a live process; anything else, gone.
+// A real signal has no model here and reports success without acting.
+export extern fn kill(pid: i32, sig: i32) -> i32 {
+    if sig != (0 as i32) { return 0 as i32; }
+    let h: *u8 = { OpenProcess(0x1000 as u32, 0 as i32, pid as u32) };  // PROCESS_QUERY_LIMITED_INFORMATION
+    if h == (0 as *u8) { return 0 - 1; }
+    let _c: i32 = { CloseHandle(h) };
+    return 0 as i32;
+}
+
+// `socketpair` -> the loopback pair above (domain/type/proto ignored: it is
+// always an AF_INET stream pair, which is all agent_mcp asks for).
+export extern fn socketpair(domain: i32, ty: i32, protocol: i32, sv: *i32) -> i32 {
+    let _d: i32 = domain; let _t: i32 = ty; let _p: i32 = protocol;
+    return socket_pair(sv);
+}
+
+// `usleep` -> Sleep, at Sleep's whole-millisecond resolution.
+export extern fn usleep(us: u32) -> i32 {
+    { Sleep(us / (1000 as u32)) };
+    return 0 as i32;
+}

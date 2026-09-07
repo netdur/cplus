@@ -59,6 +59,7 @@ import "facet/nav" as nav;
 import "facet_win32/facet_win32" as backend;
 import "facet_win32/window" as host;
 import "facet_win32/dialogs" as dialogs;
+import "facet_win32/clipboard" as clipboard;
 
 type Node = flex::Node;
 type Builder = flex::Builder;
@@ -333,6 +334,13 @@ fn alert_blocking(title: str, message: str, primary: str, secondary: str = "") -
 
 fn choose_directory() -> option::Option[text::Text] { return dialogs::choose_directory(); }
 fn choose_file() -> option::Option[text::Text] { return dialogs::choose_file(); }
+
+// ---- clipboard ---------------------------------------------------------------
+// The portable half's contract, forwarded to the Win32 board. Both directions
+// are real here — see facet_win32/clipboard for why paste can answer content
+// where GTK's can only answer `None`.
+fn copy_text(s: str) -> bool { return clipboard::copy_text(s); }
+fn paste_text() -> option::Option[text::Text] { return clipboard::paste_text(); }
 
 // ---- secondary windows -------------------------------------------------------
 
@@ -653,9 +661,10 @@ impl App {
         nav::set_close_fn(close_current);
         nav::set_push_fn(push_screen);
         nav::set_pop_fn(pop_screen);
-        // `build_menu` already answers with the default (the app's name plus
-        // Quit) when nothing set one, so an application that never asked for a
-        // menu still gets a working one.
+        // `build_menu` answers with `empty_app_menu` when nothing set one —
+        // Windows has no phantom "App > Quit" bar (see `build_menu` above) — so
+        // an app that never asked for a menu opens with none, and the screen's
+        // own `menu_items()` are what a bar, if any, is built from below.
         //
         // It is NOT installed here. The screen contributes to it — `Screen`
         // requires a `menu_items()` and the contract says they are "merged
@@ -795,7 +804,15 @@ fn presented_closed(ctx: *u8) {
 }
 
 // nav::push: show `route` in a window alongside the primary.
-fn push_screen(route: str, arg: str) -> bool {
+// `nav::push` gained a `key` and a `show` (Screen = drill down in place,
+// Window = a separate window). On Windows every pushed screen is ALREADY its
+// own window — `open_window` below, tracked on `PUSHED` — so both modes land in
+// the same place here, and `show` is not yet acted on. `key` is the window's
+// address for activation; a keyed re-open is a follow-up, so it is accepted and
+// not yet consulted. Widened to match the contract `nav::set_push_fn` states.
+fn push_screen(route: str, key: str, arg: str, show: u32) -> bool {
+    let _k: str = key;
+    let _s: u32 = show;
     let ap: *App = running_app();
     if ap == (0 as *App) { return false; }
     let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
@@ -988,18 +1005,17 @@ fn the_running_app_is_reached_through_the_one_door() {
 }
 
 #[test]
-fn the_default_menu_names_the_app_and_carries_quit() {
+fn an_app_that_declares_no_menu_gets_an_empty_bar() {
+    // The Windows divergence the macOS/Linux facades do not share: NO PHANTOM
+    // MENU BAR. macOS synthesises an "App > Quit" for an app that declared none
+    // because it has a system-wide bar to hang it on; Windows has no such bar,
+    // so manufacturing a lone strip would be clutter (and a white band under a
+    // dark caption). An app that wants a menu declares one; one that does not
+    // gets `empty_app_menu`, and the window's close button plus Alt+F4 are the
+    // platform's quit. See `build_menu` above and the phantom-bar fix.
     var a: App = App::new(name: "iris");
     let m: AppMenu = a.build_menu();
-    assert m.items.count() == (1 as usize);
-    match m.items.at_ptr(0 as usize) {
-        option::Option[*MenuItem]::Some(p) => {
-            assert { (*p).title.equals("Quit") };
-            assert { (*p).menu.equals("iris") };
-            assert { (*p).action } == screen::menu_action_quit();
-        }
-        option::Option[*MenuItem]::None => { assert false; }
-    }
+    assert m.items.count() == (0 as usize);
     return;
 }
 
@@ -1008,7 +1024,7 @@ fn nav_push_and_pop_are_inert_with_no_app_running() {
     // The negative half of the push/pop hooks: no running App means no route
     // registry to adjudicate against, so both report false and change nothing.
     app::release_current();
-    assert push_screen("settings", "") == false;
+    assert push_screen("settings", "", "", nav::show_code(nav::Show::Window)) == false;
     assert pop_screen() == false;
     close_all_pushed();                        // nothing to sweep
     // close_current with no primary window up closes nothing and does not trap.
@@ -1124,17 +1140,23 @@ fn observe_stopped_is_inert_and_says_so_by_answering_nothing() {
 fn rt_noop_observer(ctx: *u8) { return; }
 
 #[test]
-fn an_observer_registered_with_no_window_up_is_inert() {
-    // Every observation here is a `notify::` on a WINDOW, so there is nothing
-    // to connect to before one exists. An inert handle is the honest answer;
-    // a live-looking one that never fires is not.
+fn an_observer_registered_with_no_window_up_is_live() {
+    // The OTHER Windows divergence the facade header names: observations are
+    // APP-WIDE, not per-window. A GTK observation is a `notify::` on a
+    // particular window and cannot connect before one exists (an inert handle);
+    // on Win32 the events are MESSAGES arriving at one WNDPROC and the table
+    // lives in `facet_win32/window`, so registration succeeds with no window up
+    // and the handle is LIVE — it simply fires once a window starts sending.
     app::reset_default_for_tests();
     var a: services::Cancellable = observe_window_active(rt_noop_observer);
-    assert !a.pending();
+    assert a.pending();
+    a.cancel();
     var b: services::Cancellable = observe_window_size(rt_noop_observer);
-    assert !b.pending();
+    assert b.pending();
+    b.cancel();
     var d: services::Cancellable = observe_display_density(rt_noop_observer);
-    assert !d.pending();
+    assert d.pending();
+    d.cancel();
     return;
 }
 
