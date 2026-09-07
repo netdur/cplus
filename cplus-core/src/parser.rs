@@ -2657,7 +2657,20 @@ impl Parser {
             })?)
         };
         let else_body = self.parse_block()?;
-        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        // The terminator is the one thing about this statement people forget,
+        // so the message says WHY rather than just naming the token: `guard
+        // let` is a BINDING — it introduces `PATTERN`'s names into the
+        // enclosing scope, exactly as `let` does — and the `else { … }` is a
+        // clause of that binding, not the statement's body. So it ends the way
+        // every binding ends. (`if`/`while`, whose braces ARE the body, take no
+        // semicolon; that contrast is the whole rule.)
+        let end = self
+            .expect(
+                &TokenKind::Semi,
+                "`;` (a `guard let` is a binding, like `let` — the \
+                 `else { ... }` is part of it, not a body)",
+            )?
+            .span;
         Ok(Stmt {
             kind: StmtKind::GuardLet {
                 pattern,
@@ -4752,6 +4765,23 @@ mod tests {
     /// follow-set was spelled per site as `Ident | Star | Fn`, which left out
     /// the tuple and array type starts — `fn(ref (i32, i32))` parsed `ref` as
     /// the type name and failed with a confusing error.
+    #[test]
+    fn a_missing_guard_semicolon_explains_why_one_is_needed() {
+        // The trailing `;` is the thing people forget about `guard let`, and
+        // the reason is not obvious from the shape: it looks like `if`, whose
+        // braces ARE its body and which takes no terminator. So the message
+        // says which of the two this is rather than only naming the token.
+        let src = "\
+fn pick() -> i32 { return 3; }\n\
+fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
+        let err = parse(tokenize(src).expect("lex")).expect_err("must not parse");
+        let rendered = format!("{err:?}");
+        assert!(
+            rendered.contains("binding"),
+            "the diagnostic must say `guard let` is a binding, got: {rendered}"
+        );
+    }
+
     #[test]
     fn fn_pointer_param_markers_accept_every_type_start() {
         for src in [

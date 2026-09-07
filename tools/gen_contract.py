@@ -2508,6 +2508,45 @@ PICKER_LABEL_FIELDS = [
 ]
 
 
+# A LABEL IS A PICTURE OF TEXT, and until this it could not be anything else.
+#
+# The ledger's Label declares twenty rows about how glyphs are DRAWN — face,
+# weight, size, colour, alignment, transform, decoration, kern, line height,
+# format, runs — and not one about whether they may be PICKED UP. Neither does
+# any platform label class by default: `labelWithString:` hands back a field
+# with `selectable = NO`, a GtkLabel is unselectable until told, a TextView
+# answers `setTextIsSelectable(false)`. So the whole vocabulary agreed, silently
+# and by omission, that a label is a picture.
+#
+# What that costs is a TRANSCRIPT THAT CANNOT BE COPIED. Every bubble of an
+# agent panel is a label; so is an error message, a log line, a stack trace, a
+# licence key, an id in a detail pane. The next thing a person wants to do with
+# any of them is put it somewhere else, and there was nothing for Cmd-C to take.
+#
+# THE DEFAULT IS FALSE, and not out of caution. A selectable field TAKES
+# MOUSE-DOWN, so a label inside a click band would stop passing the click
+# through to the band — the same hole `set_input_transparent` exists to close,
+# punched in every clickable row that contains a label. Opt-in per label is also
+# the honest shape: selectable text is a decision about THAT piece of text.
+#
+# The read-only editor is the workaround this replaces, and it is worse than the
+# gap: a `text_area` is a scroll view wrapping a whole text system, so a
+# hundred-message transcript would carry a hundred of them to buy what one bool
+# withholds — and would trade the label's `style_runs` for an editor's.
+#
+# WHAT IT DOES NOT DO: selection that CROSSES labels. That belongs to one text
+# view, not to a stack of fields, so a drag from the middle of one message into
+# the next needs facet to own the concept. Per-label selection is the honest
+# first step and not the destination.
+SELECTABLE_TEXT = ("label",)
+
+SELECTABLE_TEXT_FIELDS = [
+    ("selectable", "bool", "false",
+     "facet — may the drawn text be picked up and copied? default false, "
+     "because a selectable field eats mouse-down"),
+]
+
+
 def _fields_for(rows):
     """(field lines, init lines) for the prop/owned/event/command rows of one
     struct. Each row carries its own provenance, so the comment is per-field."""
@@ -2629,6 +2668,11 @@ def emit_props(rows_by_control, by_type):
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
         if mod in EDITOR_TIER:
             for f, t, zero, why in EDITOR_TIER_FIELDS:
+                fields.append(f"    {f}: {t},"
+                              + (f"    // {why}\n" if why else "\n"))
+                inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
+        if mod in SELECTABLE_TEXT:
+            for f, t, zero, why in SELECTABLE_TEXT_FIELDS:
                 fields.append(f"    {f}: {t},"
                               + (f"    // {why}\n" if why else "\n"))
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
@@ -2907,6 +2951,8 @@ def ctor_params(row_type, writes, reads, events, owned=()):
         params.append(("selected_index", "i64", "0 as i64"))
         params.append(("on_tab_changed", "fn(*u8, *u8)", "props::no_handler"))
         params.append(("on_tab_changed_ctx", "*u8", "0 as *u8"))
+    if MODULE.get(row_type) in SELECTABLE_TEXT:
+        params.append(("selectable", "bool", "false"))
     # Owned collections are namable at construction too. They were cursor-only,
     # which forced `from(#addr_of(n))` on anyone who wanted a popup WITH its
     # items — three lines and a raw address to say one thing, and an
@@ -2967,7 +3013,8 @@ def emit_control(row_type, merged):
             + (["SELECTED_INDEX"] if mod in TAB_SOURCE else [])
             + (["LABEL", "ITEM_ENABLED"] if mod in PICKER_LABEL else [])
             + (["STYLE_RUNS"] if mod in EDITOR_TIER else [])
-            + (["TOGGLES", "ON", "BORDERED"] if mod in BUTTONS else []))
+            + (["TOGGLES", "ON", "BORDERED"] if mod in BUTTONS else [])
+            + (["SELECTABLE"] if mod in SELECTABLE_TEXT else []))
     for i, b in enumerate(bits):
         o.append(f"const P_{b}: u64 = {1 << i}u64;\n")
     o.append("\n")
@@ -3003,6 +3050,8 @@ def emit_control(row_type, merged):
         o.append("    p.selected_index = selected_index;\n")
         o.append("    p.on_tab_changed = on_tab_changed;\n")
         o.append("    p.on_tab_changed_ctx = on_tab_changed_ctx;\n")
+    if mod in SELECTABLE_TEXT:
+        o.append("    p.selectable = selectable;\n")
     keep = "    var n: core::Node = match" if carries_param(row_type) else "    return match"
     o.append(f"{keep} box::new::[props::{props}](p) {{\n")
     o.append(f"        option::Option[box::Box[props::{props}]]::Some(b) =>\n")
@@ -3359,6 +3408,32 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return false; }}\n")
         o.append("        return { (*p).bordered };\n    }\n")
+
+    # ---- facet's own: text a person can pick up
+    if mod in SELECTABLE_TEXT:
+        o.append("\n    // facet's own word. Every platform label class draws text that\n")
+        o.append("    // cannot be picked up — `labelWithString:` returns a field with\n")
+        o.append("    // `selectable = NO`, a GtkLabel is unselectable until told, a\n")
+        o.append("    // TextView answers false — and the ledger declares twenty rows about\n")
+        o.append("    // how the glyphs are DRAWN and none about taking them. So a\n")
+        o.append("    // transcript, an error, a stack trace or an id was a picture of\n")
+        o.append("    // itself, and Cmd-C had nothing to take.\n")
+        o.append("    //\n")
+        o.append("    // FALSE BY DEFAULT, and that is not caution. A selectable field takes\n")
+        o.append("    // mouse-down, so a label inside a click band stops passing the click\n")
+        o.append("    // through to the band — which is a hole in the target exactly where\n")
+        o.append("    // the eye aims. Turn it on for the text a person reads and copies,\n")
+        o.append("    // not for the label that titles a row they click.\n")
+        o.append(f"    fn set_selectable(this, v: bool) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).selectable = v };\n")
+        o.append("        core::touch(this._p, P_SELECTABLE);\n")
+        o.append("        return this;\n    }\n")
+        o.append(f"\n    fn is_selectable(this) -> bool {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return false; }}\n")
+        o.append("        return { (*p).selectable };\n    }\n")
 
     # ---- facet's own: a row count plus a row builder
     if mod in ROW_SOURCE:

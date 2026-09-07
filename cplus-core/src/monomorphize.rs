@@ -2538,6 +2538,91 @@ struct AliasRewriter<'a> {
     aliases: &'a std::collections::BTreeMap<String, Type>,
 }
 
+impl AliasRewriter<'_> {
+    /// Follow an alias chain to a GENERIC INSTANTIATION target, e.g.
+    /// `type Fetched = result::Result[text::Text, http::Error]`. Returns the
+    /// base name and its type arguments.
+    ///
+    /// `rewrite_alias_ident` handles the other shape — an alias whose target is
+    /// a bare `Path`, the `type Foo = other::Foo` re-export — by renaming the
+    /// ident in place. Neither shape was reachable from expression or pattern
+    /// position before 2026-09-05, which is what made `type X = Enum[..]`
+    /// struct-only in practice: `X::Variant(v)` reached codegen still spelled
+    /// `X`, and codegen's `enum_by_name` lookup missed and panicked
+    /// ("sema validated"), while sema itself had already resolved it through
+    /// `resolve_type`.
+    fn generic_target(&self, name: &str) -> Option<(String, Vec<Type>)> {
+        let mut current = name.to_string();
+        let mut seen = std::collections::BTreeSet::new();
+        while seen.insert(current.clone()) {
+            let target = self.aliases.get(&current)?;
+            match &target.kind {
+                TypeKind::Generic { name, args } => return Some((name.clone(), args.clone())),
+                TypeKind::Path(next) => current = next.clone(),
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// `Alias::Variant` / `Alias::Variant(args)` in expression position, for
+    /// both alias shapes. `method_type_args` carries any call-site turbofish.
+    /// Returns `None` when segment 0 is not an alias, so the caller falls
+    /// through to the generic walk.
+    fn rewrite_variant_path(
+        &mut self,
+        segments: &[Ident],
+        args: &[Expr],
+        method_type_args: &[Type],
+        span: crate::lexer::Span,
+    ) -> Option<Expr> {
+        if segments.len() != 2 {
+            return None;
+        }
+        let args: Vec<Expr> = args.iter().map(|a| walk_expr(a, self)).collect();
+        if let Some((base, type_args)) = self.generic_target(&segments[0].name) {
+            // A generic target cannot be spelled as a single ident, so the node
+            // becomes the one the parser builds for `Enum[T]::Variant(..)`.
+            return Some(Expr {
+                kind: ExprKind::GenericEnumCall {
+                    enum_name: Ident {
+                        name: base,
+                        span: segments[0].span,
+                    },
+                    type_args,
+                    variant: segments[1].clone(),
+                    method_type_args: method_type_args.to_vec(),
+                    args,
+                },
+                span,
+            });
+        }
+        // Path-target alias: renaming segment 0 is enough.
+        let mut head = segments[0].clone();
+        rewrite_alias_ident(&mut head, self.aliases);
+        if head.name == segments[0].name {
+            return None;
+        }
+        let segments = vec![head, segments[1].clone()];
+        let callee = Expr {
+            kind: ExprKind::Path { segments },
+            span,
+        };
+        if args.is_empty() && method_type_args.is_empty() {
+            return Some(callee);
+        }
+        Some(Expr {
+            kind: ExprKind::Call {
+                arg_labels: vec![None; args.len()],
+                callee: Box::new(callee),
+                args,
+                type_args: method_type_args.to_vec(),
+            },
+            span,
+        })
+    }
+}
+
 impl ExprRewriter for AliasRewriter<'_> {
     fn visit_type(&mut self, t: &Type) -> Option<Type> {
         let mut resolved = t.clone();
@@ -2545,7 +2630,59 @@ impl ExprRewriter for AliasRewriter<'_> {
         Some(resolved)
     }
 
+    fn visit_pattern(&mut self, p: &Pattern) -> Option<Pattern> {
+        // `Alias::Variant(x)` as a match pattern. Without this the pattern
+        // keeps the alias name and sema compares it against the scrutinee's
+        // real enum, which is E0341 — the half of this trap that reported
+        // itself honestly instead of panicking.
+        let PatternKind::Variant {
+            enum_name,
+            type_args,
+            variant_name,
+            payload,
+        } = &p.kind
+        else {
+            return None;
+        };
+        if !type_args.is_empty() {
+            return None;
+        }
+        let (base, targs) = self.generic_target(&enum_name.name)?;
+        Some(Pattern {
+            kind: PatternKind::Variant {
+                enum_name: Ident {
+                    name: base,
+                    span: enum_name.span,
+                },
+                type_args: targs,
+                variant_name: variant_name.clone(),
+                payload: payload.clone(),
+            },
+            span: p.span,
+        })
+    }
+
     fn visit_expr(&mut self, e: &Expr) -> Option<Expr> {
+        // `Alias::Variant(..)` — a call whose callee names the enum through an
+        // alias — and its payload-less twin `Alias::Variant`.
+        if let ExprKind::Call {
+            callee,
+            args,
+            type_args,
+            ..
+        } = &e.kind
+        {
+            if let ExprKind::Path { segments } = &callee.kind {
+                if let Some(r) = self.rewrite_variant_path(segments, args, type_args, e.span) {
+                    return Some(r);
+                }
+            }
+        }
+        if let ExprKind::Path { segments } = &e.kind {
+            if let Some(r) = self.rewrite_variant_path(segments, &[], &[], e.span) {
+                return Some(r);
+            }
+        }
         // `Alias { .. }` — a struct literal naming the type through an alias.
         // Every other expression is walked generically.
         let ExprKind::StructLit { name, fields } = &e.kind else {

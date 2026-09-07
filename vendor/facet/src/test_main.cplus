@@ -70,6 +70,8 @@ import "./theme" as theme;
 // facet whose wrong answer is a leak rather than a bug.
 import "./mount" as mount;
 import "./application" as app;
+import "./window" as window;
+import "./stack" as stack;
 import "./bands" as bands;
 // The delegate fan-out: a third-party SDK's share of the app's own callbacks.
 import "./app_events" as app_events;
@@ -4218,5 +4220,56 @@ fn the_frames_settled_seam_calls_its_one_consumer() {
     facet::set_frames_settled_fn(#zero::[fn()]());
     facet::frames_settled();
     assert SETTLED_HITS == (2 as i32);
+    return;
+}
+
+// ---- a label's text can be picked up ----------------------------------------
+
+#[test]
+fn a_label_is_a_picture_of_text_until_it_is_told_otherwise() {
+    // FALSE BY DEFAULT is the load-bearing half. A selectable field takes
+    // mouse-down, so a label that opted itself in would punch a hole in every
+    // click band it sits inside — the Board's card titles, a list row, a chip.
+    // The default is what keeps those rows clickable.
+    var plain: facet::Node = label::label("Save", key: "title");
+    match label::find("title", within: #addr_of(plain)) {
+        option::Option[label::Label]::Some(l) => { assert !l.is_selectable(); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+
+    // Nameable where the label is described, for the text a person reads and
+    // copies: a transcript bubble, a stack trace, an id in a detail pane.
+    var picked: facet::Node = label::label("cpc test", key: "cmd", selectable: true);
+    match label::find("cmd", within: #addr_of(picked)) {
+        option::Option[label::Label]::Some(l) => {
+            assert l.is_selectable();
+            // And sayable later, because a row that wants its click band back
+            // has to be able to ask.
+            let _o: label::Label = l.set_selectable(false);
+            assert !l.is_selectable();
+            let _n: label::Label = l.set_selectable(true);
+            assert l.is_selectable();
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn selecting_a_label_is_its_own_dirty_bit() {
+    // Its own bit, not folded into the text word: the text is unchanged and
+    // re-rendering it would cost a measure pass per flip. A backend gates on
+    // exactly this and touches nothing else.
+    var root: facet::Node = label::label("Save", key: "title");
+    let d: *facet::Data = root.data();
+    { (*d).dirty = 0u64 };
+    match label::find("title", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(l) => {
+            let _s: label::Label = l.set_selectable(true);
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    assert ({ (*d).dirty } & label::P_SELECTABLE) != 0u64;
+    assert ({ (*d).dirty } & label::P_TEXT) == 0u64;
     return;
 }

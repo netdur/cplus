@@ -29,6 +29,7 @@ import "facet/mount" as mount;
 import "facet/screen" as screen;
 import "facet/vocabulary" as vocab;
 import "facet/application" as app;
+import "facet/window" as app_window;
 import "facet/label" as label;
 import "facet/button" as button;
 import "facet/text_field" as text_field;
@@ -498,4 +499,55 @@ fn set_window_frame_of(root: *core::Node, frame: vocab::Rect) {
     if frame.width <= (0.0 as f64) || frame.height <= (0.0 as f64) { return; }
     gtk::Window::from_raw(w).set_default_size(frame.width as i32, frame.height as i32);
     return;
+}
+
+// ---- the window cursor's host ---------------------------------------------------
+// What `facet/window.cplus` calls when an application says
+// `window::find(k).frame()`. It lives in this file and not in `window.cplus`
+// because the frame reads are here and `dialogs` already imports `window` — the
+// arrow only points one way.
+//
+// THE OBSERVER SLOTS ARE DELIBERATELY LEFT EMPTY. `window::observe_active` here
+// watches `notify::is-active` on whatever window was up when it was registered,
+// and the resize observer is a GdkSurface property — neither is scoped to a
+// window the caller names. Filling a per-window slot with a process-wide
+// observation would be exactly the defect the cursor exists to remove, so they
+// answer `Cancellable::none()` until GTK's side is per-window. The facade's
+// `observe_window_size` / `observe_window_active` are unchanged and still work
+// for an app that only has one window.
+
+fn wh_frame(root: *core::Node) -> vocab::Rect { return window_frame_of(root); }
+fn wh_set_frame(root: *core::Node, r: vocab::Rect) { set_window_frame_of(root, r); return; }
+fn wh_is_active(root: *core::Node) -> bool { return window::is_active(root); }
+fn wh_density(root: *core::Node) -> f64 { return window::density_of(root); }
+fn wh_close(root: *core::Node) { window::close_window_of(root); return; }
+
+fn wh_title(root: *core::Node) -> text::Text {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return text::new(); }
+    // `get_title` is Option here — a GtkWindow may genuinely have none — and
+    // the cursor's contract is an empty Text for "no title", not a trap.
+    return match gtk::Window::from_raw(w).get_title() {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::new(),
+    };
+}
+
+fn wh_set_title(root: *core::Node, t: str) {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return; }
+    gtk::Window::from_raw(w).set_title(t);
+    return;
+}
+
+fn window_host() -> app_window::WindowHost {
+    var h: app_window::WindowHost = app_window::empty_host();
+    h.frame = wh_frame;
+    h.set_frame = wh_set_frame;
+    h.is_active = wh_is_active;
+    h.density = wh_density;
+    h.title = wh_title;
+    h.set_title = wh_set_title;
+    h.close = wh_close;
+    return h;
 }

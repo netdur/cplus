@@ -55,15 +55,39 @@ impl std::fmt::Display for HeaderError {
     }
 }
 
-/// Does this module declare anything generic? If so its bodies must ship.
-fn declares_generics(p: &Program) -> bool {
+/// Does this module contain a body a CONSUMER must compile itself? If so the
+/// whole module ships verbatim.
+///
+/// Two kinds qualify, for one underlying reason — neither leaves behind object
+/// code a consumer can link to:
+///
+///   - **Generics.** `Vec[T]` has no code at all until a consumer picks a `T`.
+///
+///   - **Coroutines** (`gen fn` / `async fn`). The ramp and its `.resume` /
+///     `.destroy` halves are emitted with INTERNAL linkage, so they are
+///     invisible outside the object that defined them — `nm` shows
+///     `t _pkg.Type.method`, lowercase. A body-less declaration therefore does
+///     NOT bind to the library's copy: codegen synthesises its own coroutine
+///     from the signature, and with no body that coroutine reaches its final
+///     suspend immediately. The consumer links cleanly and gets an iterator
+///     that yields nothing, or a future that is instantly complete — a silent
+///     wrong answer with no diagnostic anywhere.
+///
+///     Measured 2026-09-06: `vendor/json`'s `Value::items` iterated correctly
+///     inside its own package's tests and zero times in a consumer, because the
+///     two were running different functions of the same name.
+fn bodies_must_ship(p: &Program) -> bool {
     p.items.iter().any(|item| match &item.kind {
-        ItemKind::Function(f) => !f.generic_params.is_empty(),
+        ItemKind::Function(f) => {
+            !f.generic_params.is_empty() || f.is_gen || f.is_async
+        }
         ItemKind::Struct(s) => !s.generic_params.is_empty(),
         ItemKind::Enum(e) => !e.generic_params.is_empty(),
         ItemKind::Impl(b) => {
             !b.target_generic_params.is_empty()
-                || b.methods.iter().any(|m| !m.generic_params.is_empty())
+                || b.methods
+                    .iter()
+                    .any(|m| !m.generic_params.is_empty() || m.is_gen || m.is_async)
         }
         _ => false,
     })
@@ -151,7 +175,7 @@ pub fn generate(src: &str) -> Result<(String, HeaderKind), HeaderError> {
     let toks = tokenize(src).map_err(|e| HeaderError::Lex(format!("{e:?}")))?;
     let program = parse(toks).map_err(|e| HeaderError::Parse(format!("{e:?}")))?;
 
-    if declares_generics(&program) {
+    if bodies_must_ship(&program) {
         return Ok((src.to_string(), HeaderKind::VerbatimGeneric));
     }
 
@@ -231,6 +255,47 @@ mod tests {
     }
 
     // Generics cannot cross a precompiled boundary, so their bodies must ship.
+    #[test]
+    fn a_module_with_a_gen_fn_is_emitted_verbatim() {
+        // A coroutine ramp is emitted with INTERNAL linkage, so a body-less
+        // declaration does not bind to the library's copy — the consumer builds
+        // its own empty coroutine, which completes at once. Before this, a
+        // `gen fn` exported from a package iterated correctly in the package's
+        // own tests and ZERO times in a consumer, silently.
+        let src = "\
+struct C { limit: i32 }\n\
+impl C {\n\
+    gen fn each(this) -> i32 { var i: i32 = 0; while i < this.limit { yield i; i = i +% 1; } }\n\
+}\n";
+        let (out, kind) = hdr(src);
+        assert_eq!(kind, HeaderKind::VerbatimGeneric);
+        assert_eq!(out, src, "a module with a `gen fn` must be copied unchanged");
+        assert!(out.contains("yield i;"), "the coroutine body must survive");
+    }
+
+    #[test]
+    fn a_module_with_an_async_fn_is_emitted_verbatim() {
+        // Same reasoning: an `async fn`'s ramp is internal too, so a declaration
+        // would hand the consumer a future that is instantly complete.
+        let src = "\
+async fn tick() -> i32 { return 7; }\n";
+        let (out, kind) = hdr(src);
+        assert_eq!(kind, HeaderKind::VerbatimGeneric);
+        assert_eq!(out, src, "a module with an `async fn` must be copied unchanged");
+    }
+
+    #[test]
+    fn a_plain_concrete_module_still_gets_its_bodies_stripped() {
+        // The counterpart: nothing here needs a consumer-side body, so the
+        // header stays a declaration and the object code does the work.
+        let src = "fn add(a: i32, b: i32) -> i32 { return a +% b; }\n";
+        let (out, _kind) = hdr(src);
+        assert!(
+            !out.contains("return a +% b;"),
+            "a concrete non-coroutine body must be stripped, got:\n{out}"
+        );
+    }
+
     #[test]
     fn a_generic_module_is_emitted_verbatim() {
         let src = "struct Vec[T] { n: i32 }\nimpl Vec[T] { fn count(this) -> i32 { return this.n; } }";

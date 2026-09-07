@@ -807,6 +807,16 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
     if p == (0 as *props::LabelProps) { return; }
     let l: gtk::Label = gtk::Label::from_raw(v);
+    // PICKING THE TEXT UP. A GtkLabel draws glyphs nothing can take until it
+    // is told otherwise, the same posture `labelWithString:` has on AppKit —
+    // so a transcript, an error or an id was a picture of itself.
+    //
+    // Applied on every write, not only at create: a selectable label takes the
+    // button press, so a row that wants its click band back has to be able to
+    // ask for it.
+    if (dirty & label::P_SELECTABLE) != (0 as u64) {
+        l.set_selectable({ (*p).selectable });
+    }
     // A SPAN CHILD changing raises `core::touch_all` on its host — mount does
     // that because a viewless child cannot say which of the host's own verbs it
     // affected — so a span edit arrives here with every bit set and needs no

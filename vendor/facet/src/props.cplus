@@ -1129,6 +1129,7 @@ struct LabelProps {
     text_transform: vocab::TextTransform,    // Label.TextTransform
     text_format: vocab::TextFormat,    // Label.TextType
     vertical_align: vocab::TextAlign,    // Label.VerticalTextAlignment
+    selectable: bool,    // facet — may the drawn text be picked up and copied? default false, because a selectable field eats mouse-down
 }
 
 impl LabelProps {
@@ -1151,6 +1152,7 @@ impl LabelProps {
             text_transform: vocab::TextTransform::Default,
             text_format: vocab::TextFormat::Text,
             vertical_align: vocab::TextAlign::Center,
+            selectable: false,
         };
     }
 }

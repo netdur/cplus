@@ -215,6 +215,13 @@ export extern fn stdlib_reactor_waiter_count_v1() -> i32 {
     return waiter_count();
 }
 
+// Read by the `#block_on` drive loop (codegen) alongside `waiter_count`: the
+// loop resumes the outer frame itself ONLY when the reactor holds nothing at
+// all that could resume it — see the note on that loop.
+export extern fn stdlib_reactor_pending_count_v1() -> i32 {
+    return pending_count();
+}
+
 export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
     if poll_one_event() {
         return 1 as i32;
@@ -385,6 +392,53 @@ fn drain_pending() -> i32 {
 }
 
 // Push a coroutine handle to the spawn_local queue.
+// The mirror of `register_read` / `register_write` / `register_timer` for a
+// frame that is being DESTROYED rather than resumed: every waiter triple that
+// names `hdl` leaves the table and the epoll set, and a timerfd among them is
+// closed — the same reaping `poll_one_event` does on fire. Called by
+// `Future::drop` before the frame is freed; a frame address is reused by
+// malloc, so an entry that outlives its frame is a resume of freed memory
+// the next time the kernel reports the event
+// (bugs/a-destroyed-coroutine-frame-stays-registered-with-the-reactor).
+fn unregister_waiter(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let state: *u8 = { #reactor_get_state() };
+    if ptr_is_null(state) { return; }
+    let epfd: i32 = { *((state + off_kqfd()) as *i32) };
+    let eb: *u8 = { *((state + off_evbuf()) as **u8) };
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    let fds: *i32 = { *((state + off_waiter_fds()) as **u8) as *i32 };
+    let hdls: **u8 = { *((state + off_waiter_hdls()) as **u8) as **u8 };
+    let flts: *i16 = { *((state + off_waiter_filters()) as **u8) as *i16 };
+    var n: i32 = { *nw_slot };
+    var i: i32 = 0;
+    while i < n {
+        let cur_hdl: *u8 = { *(hdls + (i as usize)) };
+        if cur_hdl == hdl {
+            let fd: i32 = { *(fds + (i as usize)) };
+            let flt: i16 = { *(flts + (i as usize)) };
+            let _d: i32 = { epoll_ctl(epfd, epoll_ctl_del(), fd, eb) };
+            if flt == evfilt_timer() {
+                let _c: i32 = { close(fd) };
+            }
+            // Swap-remove; re-check slot i (it now holds the old last).
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_fd: i32 = { *(fds + (last_i as usize)) };
+                let last_hdl: *u8 = { *(hdls + (last_i as usize)) };
+                let last_flt: i16 = { *(flts + (last_i as usize)) };
+                { *(fds + (i as usize)) = last_fd; }
+                { *(hdls + (i as usize)) = last_hdl; }
+                { *(flts + (i as usize)) = last_flt; }
+            }
+            n = last_i;
+            { *nw_slot = n; }
+        } else {
+            i = i +% (1 as i32);
+        }
+    }
+}
+
 fn enqueue_pending(hdl: *u8) {
     let state: *u8 = ensure();
     let np_slot: *i32 = { (state + off_n_pending()) as *i32 };

@@ -1,0 +1,499 @@
+// facet window — the cursor over one of the app's windows. HAND-WRITTEN.
+//
+// The tier facet described and could not address. `application.cplus` has held
+// a per-window record since the start, and said at length why it is per-window
+// rather than a `CURRENT_WIN` static — and then every reader above it reached
+// its window through `app::newest_window_root()`, which is that static under
+// another name. It answers the SHEET while a sheet is up and the pushed screen
+// while one is pushed, because both are real mounts and therefore real windows
+// of the app. A screen saving its own frame on close saved the sheet's.
+//
+// So a window is addressed the way everything else in facet is addressed: by
+// KEY, through `find`, answering a typed cursor with the verbs on it.
+//
+//     match window::find("camera:front") {
+//         option::Option[window::Window]::Some(w) => {
+//             let f: vocab::Rect = w.frame();
+//             let _c: bool = w.close();
+//         }
+//         option::Option::None => { }
+//     }
+//
+// A key names a window only where the platform gave that screen one — on a
+// phone `nav::push("settings")` is a stack push and there is no settings
+// window, so this answers None. That is the honest answer rather than handing
+// back the one window there is.
+//
+// WHAT THIS IS NOT: a door into another component's fields. `root()` is here so
+// the tree can be READ — the agent surface, tests, and `within:` on the typed
+// finds, which is how one screen drives another's controls the same way an
+// agent does. Reaching past the tree for a component's state is the thing
+// SKILL §9 trap 8 names.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "./facet" as core;
+import "./vocabulary" as vocab;
+import "./application" as app;
+import "./services" as services;
+
+// ---- the platform seam --------------------------------------------------------
+// Same shape as `app::install_agent`: ONE struct, ONE install, so a hook
+// mirrored into one facade and not another cannot happen. Every slot may be
+// null — a backend fills what its toolkit can answer and the readers below
+// give the neutral answer for the rest, which is what lets an app type-check
+// and run on a platform whose window tier is thinner.
+
+// Every slot takes the window's ROOT, not its native handle. That is what the
+// backends' own window functions already take — `window_frame_of(root)`,
+// `density_of(root)`, `is_active(root)` — because a backend looks the native
+// handle up through `app::window_native` anyway. Passing the root keeps one
+// identity for a window across the whole tier instead of two.
+struct WindowHost {
+    frame: fn(*flex::Node) -> vocab::Rect,
+    set_frame: fn(*flex::Node, vocab::Rect),
+    is_active: fn(*flex::Node) -> bool,
+    density: fn(*flex::Node) -> f64,
+    title: fn(*flex::Node) -> text::Text,
+    set_title: fn(*flex::Node, str),
+    close: fn(*flex::Node),
+    // Ask before closing. A backend that has no such question leaves it null
+    // and `request_close` falls back to `close`.
+    request_close: fn(*flex::Node) -> bool,
+    // Each hands back a live handle, or `Cancellable::none()` when it could not
+    // arm. The handle carries its OWN revoke slot, so a backend can use
+    // whatever cancellation the observation actually came from — AppKit's
+    // notification centre and facet's own size observer revoke differently, and
+    // a single `cancel: fn(u64)` slot forced one of them to lie.
+    observe_resize: fn(*flex::Node, fn(*u8), *u8) -> services::Cancellable,
+    observe_active: fn(*flex::Node, fn(*u8), *u8) -> services::Cancellable,
+    observe_inactive: fn(*flex::Node, fn(*u8), *u8) -> services::Cancellable,
+    observe_density: fn(*flex::Node, fn(*u8), *u8) -> services::Cancellable,
+}
+
+static HOST: WindowHost = #zero::[WindowHost]();
+
+fn empty_host() -> WindowHost { return #zero::[WindowHost](); }
+
+// The backend calls this once, at install. `uninstall` hands back an empty one.
+fn install_host(take h: WindowHost) { HOST = h; return; }
+fn uninstall_host() { HOST = #zero::[WindowHost](); return; }
+
+// ---- the cursor ---------------------------------------------------------------
+
+// Copy, like every other facet cursor, and stale-detectable the same way: the
+// node cursors capture `flex::removal_count()`, this captures
+// `app::window_removal_count()`. Conservative — any window closing invalidates
+// every window cursor — and that is deliberate. Comparing the root pointer
+// instead would call a cursor live after its window closed and the next window
+// was allocated at the same address, which is the failure a dashboard holding
+// a camera window's handle would actually hit.
+struct Window {
+    opaque _root: *flex::Node,
+    _seen: u64,
+}
+
+impl Window {
+    fn _of(root: *flex::Node) -> Window {
+        return Window { _root: root, _seen: app::window_removal_count() };
+    }
+
+    // False once any window has closed since this cursor was made. Every verb
+    // below checks it, so a stale cursor is inert rather than a trap — the
+    // dashboard-holds-a-closed-camera-window case.
+    fn is_live(this) -> bool {
+        if this._seen != app::window_removal_count() { return false; }
+        return app::has_window_root(this._root);
+    }
+
+    // The name this window is open under, "" for one nothing named.
+    fn key(this) -> str {
+        if !this.is_live() { return ""; }
+        return app::window_key_of(this._root);
+    }
+
+    // The tree, for READING — see the header. Null for a stale cursor.
+    fn root(this) -> *core::Node {
+        if !this.is_live() { return 0 as *core::Node; }
+        return this._root;
+    }
+
+    // The platform handle, for a backend. 0 when none is recorded.
+    fn native(this) -> *u8 {
+        if !this.is_live() { return 0 as *u8; }
+        return app::window_native(this._root);
+    }
+
+    // ---- platform reads ------------------------------------------------------
+    // Each answers neutrally with no backend, no window, or a stale cursor:
+    // zero rect, not active, density 1.0. Density is 1.0 rather than 0.0 for
+    // the reason the facades already gave — it is the value that keeps size
+    // arithmetic working instead of collapsing everything to nothing.
+
+    fn frame(this) -> vocab::Rect {
+        let f: fn(*flex::Node) -> vocab::Rect = HOST.frame;
+        if f.is_null() { return vocab::Rect::zero(); }
+        if !this.is_live() { return vocab::Rect::zero(); }
+        return f(this._root);
+    }
+
+    fn set_frame(this, r: vocab::Rect) {
+        let f: fn(*flex::Node, vocab::Rect) = HOST.set_frame;
+        if f.is_null() { return; }
+        if !this.is_live() { return; }
+        f(this._root, r);
+    }
+
+    fn is_active(this) -> bool {
+        let f: fn(*flex::Node) -> bool = HOST.is_active;
+        if f.is_null() { return false; }
+        if !this.is_live() { return false; }
+        return f(this._root);
+    }
+
+    fn density(this) -> f64 {
+        let f: fn(*flex::Node) -> f64 = HOST.density;
+        if f.is_null() { return 1.0f64; }
+        if !this.is_live() { return 1.0f64; }
+        return f(this._root);
+    }
+
+    fn title(this) -> text::Text {
+        let f: fn(*flex::Node) -> text::Text = HOST.title;
+        if f.is_null() { return text::new(); }
+        if !this.is_live() { return text::new(); }
+        return f(this._root);
+    }
+
+    fn set_title(this, t: str) {
+        let f: fn(*flex::Node, str) = HOST.set_title;
+        if f.is_null() { return; }
+        if !this.is_live() { return; }
+        f(this._root, t);
+    }
+
+    // ---- verbs ---------------------------------------------------------------
+
+    // Bring it to the front and give it the keyboard. False when there is no
+    // backend seam, no native window, or the cursor is stale.
+    fn activate(this) -> bool {
+        if !this.is_live() { return false; }
+        return app::activate_window(this.key());
+    }
+
+    // Close it, no questions asked. The window's own teardown still runs — on
+    // a route-opened window that is the screen's `on_detach`, which is where a
+    // device release belongs and is the same path the user's close button
+    // takes.
+    fn close(this) -> bool {
+        if !this.is_live() { return false; }
+        let f: fn(*flex::Node) = HOST.close;
+        if f.is_not_null() { f(this._root); return true; }
+        // No backend: the record is still the app's to keep straight, so the
+        // headless answer is to drop the window from the list.
+        return app::close_window_keyed(this.key());
+    }
+
+    // ASK, and honour a refusal. A screen with unsaved work answers false, puts
+    // up its own dialog, and calls `close()` for real when the user says so —
+    // the same shape `App::on_should_quit` already uses for ⌘Q, and for the
+    // same reason: a synchronous question cannot itself run a dialog, because
+    // facet's alerts are callback-based and do not block.
+    //
+    // Falls through to `close` on a backend with no such question, because a
+    // platform that cannot ask has nobody to refuse.
+    fn request_close(this) -> bool {
+        if !this.is_live() { return false; }
+        let f: fn(*flex::Node) -> bool = HOST.request_close;
+        if f.is_null() { return this.close(); }
+        return f(this._root);
+    }
+
+    // ---- observation ---------------------------------------------------------
+    // THE CURSOR IS THE IDENTITY. Every one of these fires for THIS window and
+    // no other, which is the whole defect they replace: the facades registered
+    // for these notifications with a nil object — meaning every window — and
+    // handed the callback only the app's own ctx, so a two-window app could not
+    // tell which window had resized.
+    //
+    // Cancel through the returned handle, including by letting it drop, so hold
+    // it in a field or the observation dies immediately.
+
+    fn on_resize(this, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+        return this._observe(HOST.observe_resize, cb, ctx);
+    }
+
+    fn on_active(this, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+        return this._observe(HOST.observe_active, cb, ctx);
+    }
+
+    fn on_inactive(this, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+        return this._observe(HOST.observe_inactive, cb, ctx);
+    }
+
+    fn on_density(this, cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+        return this._observe(HOST.observe_density, cb, ctx);
+    }
+
+    fn _observe(this, arm: fn(*flex::Node, fn(*u8), *u8) -> services::Cancellable,
+                cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+        if arm.is_null() { return services::Cancellable::none(); }
+        if !this.is_live() { return services::Cancellable::none(); }
+        return arm(this._root, cb, ctx);
+    }
+}
+
+// ---- finding ------------------------------------------------------------------
+
+// THE one window open under `key`, or None. Not "the first of several": a key
+// already open is refused a second time (`app::open_window`), so a live key
+// names exactly one window.
+fn find(key: str) -> option::Option[Window] {
+    let r: *flex::Node = app::window_for_key(key);
+    if r.is_null() { return option::Option[Window]::None; }
+    return option::Option[Window]::Some(Window::_of(r));
+}
+
+// The app's FIRST window — the one a screen means by "my window" when it has
+// not said otherwise. Deliberately not the newest: sheets and pushed screens
+// come and go on top of the primary, and a tier that followed them answered a
+// different window every time one appeared.
+fn primary() -> option::Option[Window] {
+    let r: *flex::Node = app::primary_window_root();
+    if r.is_null() { return option::Option[Window]::None; }
+    return option::Option[Window]::Some(Window::_of(r));
+}
+
+// Every window of the running app, in OPEN order. Unnamed windows are in the
+// list — they are real windows — and simply have no name to answer with.
+fn all() -> vec::Vec[Window] {
+    var out: vec::Vec[Window] = vec::new::[Window]();
+    let n: usize = app::window_count();
+    var i: usize = 0 as usize;
+    while i < n {
+        let r: *flex::Node = app::window_root(i);
+        if r.is_not_null() { out.append(Window::_of(r)); }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// The names, in open order, skipping windows that have none.
+fn keys() -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let n: usize = app::window_count();
+    var i: usize = 0 as usize;
+    while i < n {
+        let r: *flex::Node = app::window_root(i);
+        if r.is_not_null() {
+            let k: str = app::window_key_of(r);
+            if k != "" { out.append(text::from_str(k)); }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn count() -> usize { return app::window_count(); }
+
+// ---- tests ---------------------------------------------------------------------
+
+static WT_CLOSES: i32 = 0;
+static WT_ACTIVATES: i32 = 0;
+static WT_LAST_CLOSED: *u8 = 0 as *u8;
+static WT_REFUSE: bool = false;
+static WT_CANCELLED: u64 = 0 as u64;
+
+fn wt_frame(w: *flex::Node) -> vocab::Rect {
+    return vocab::Rect::of(10.0f64, 20.0f64, 300.0f64, 200.0f64);
+}
+fn wt_is_active(w: *flex::Node) -> bool { return app::window_native(w) == (77 as *u8); }
+fn wt_density(w: *flex::Node) -> f64 { return 2.0f64; }
+// A real backend closes the platform window and then REPORTS it — AppKit's
+// `windowWillClose`, GTK's `close-request` — and that report is what takes the
+// record out of the app's list. The fake does both halves, or `is_live` would
+// keep answering true for a window that has gone.
+fn wt_close(w: *flex::Node) {
+    WT_CLOSES = WT_CLOSES + 1;
+    WT_LAST_CLOSED = app::window_native(w);
+    app::close_window(w);
+    return;
+}
+fn wt_request_close(w: *flex::Node) -> bool {
+    if WT_REFUSE { return false; }
+    wt_close(w);
+    return true;
+}
+fn wt_activate(w: *u8) { WT_ACTIVATES = WT_ACTIVATES + 1; return; }
+fn wt_observe(w: *flex::Node, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    return services::Cancellable::of(42 as u64, wt_cancel);
+}
+fn wt_cancel(id: u64) { WT_CANCELLED = id; return; }
+
+fn wt_install() {
+    var h: WindowHost = empty_host();
+    h.frame = wt_frame;
+    h.is_active = wt_is_active;
+    h.density = wt_density;
+    h.close = wt_close;
+    h.request_close = wt_request_close;
+    h.observe_resize = wt_observe;
+    install_host(h);
+    app::set_activate_fn(wt_activate);
+}
+
+fn wt_clear() {
+    uninstall_host();
+    app::set_activate_fn(0 as fn(*u8));
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn a_window_is_found_by_key_and_answers_the_platform() {
+    wt_clear();
+    wt_install();
+    var cam: flex::Node = flex::box();
+    let _o: bool = app::open_window(#addr_of(cam), key: "camera:front");
+    app::set_window_native(#addr_of(cam), 77 as *u8);
+    match find("camera:front") {
+        option::Option[Window]::Some(w) => {
+            assert w.is_live();
+            assert w.key() == "camera:front";
+            assert w.root() == #addr_of(cam);
+            assert w.native() == (77 as *u8);
+            assert w.frame().width == 300.0f64;
+            assert w.is_active();
+            assert w.density() == 2.0f64;
+        }
+        option::Option[Window]::None => { assert false; }
+    }
+    // A key nothing carries is None, not the only window there is.
+    match find("camera:back") {
+        option::Option[Window]::Some(_w) => { assert false; }
+        option::Option[Window]::None => { }
+    }
+    wt_clear();
+}
+
+#[test]
+fn the_readers_are_neutral_with_no_backend() {
+    // The posture the whole facade tier takes: answer harmlessly rather than
+    // trap. Density is 1.0 and not 0.0 so size arithmetic keeps working.
+    wt_clear();
+    var w0: flex::Node = flex::box();
+    let _o: bool = app::open_window(#addr_of(w0), key: "main");
+    match find("main") {
+        option::Option[Window]::Some(w) => {
+            assert w.frame().width == 0.0f64;
+            assert w.is_active() == false;
+            assert w.density() == 1.0f64;
+            assert w.activate() == false;
+            var c: services::Cancellable = w.on_resize(0 as fn(*u8));
+            assert c.pending() == false;
+        }
+        option::Option[Window]::None => { assert false; }
+    }
+    wt_clear();
+}
+
+#[test]
+fn primary_is_the_first_window_and_a_sheet_does_not_take_it() {
+    // The bug the tier exists to kill, at the cursor level this time.
+    wt_clear();
+    var main_w: flex::Node = flex::box();
+    var sheet: flex::Node = flex::box();
+    let _a: bool = app::open_window(#addr_of(main_w), key: "workspace");
+    let _b: bool = app::open_window(#addr_of(sheet));    // a sheet names nothing
+    match primary() {
+        option::Option[Window]::Some(w) => { assert w.root() == #addr_of(main_w); }
+        option::Option[Window]::None => { assert false; }
+    }
+    assert count() == (2 as usize);
+    // The named ones are the addressable ones.
+    let ks: vec::Vec[text::Text] = keys();
+    assert ks.count() == (1 as usize);
+    wt_clear();
+}
+
+#[test]
+fn a_cursor_to_a_closed_window_is_inert_not_a_trap() {
+    // The dashboard-holds-a-camera-handle case: the user closed it, and every
+    // verb answers neutrally instead of reaching into a freed tree.
+    wt_clear();
+    wt_install();
+    var cam: flex::Node = flex::box();
+    let _o: bool = app::open_window(#addr_of(cam), key: "camera");
+    app::set_window_native(#addr_of(cam), 77 as *u8);
+    match find("camera") {
+        option::Option[Window]::Some(w) => {
+            assert w.is_live();
+            assert w.close();
+            // and now the SAME cursor is stale
+            assert w.is_live() == false;
+            assert w.key() == "";
+            assert w.root() == (0 as *core::Node);
+            assert w.close() == false;
+            assert w.request_close() == false;
+            assert w.activate() == false;
+            assert w.frame().width == 0.0f64;
+        }
+        option::Option[Window]::None => { assert false; }
+    }
+    assert WT_CLOSES == 1;
+    wt_clear();
+}
+
+#[test]
+fn request_close_honours_a_refusal() {
+    // A screen with unsaved work says not yet. Nothing closes, and finishing
+    // is the screen's business — the shape App::on_should_quit already uses.
+    wt_clear();
+    wt_install();
+    WT_CLOSES = 0;
+    WT_REFUSE = true;
+    var doc: flex::Node = flex::box();
+    let _o: bool = app::open_window(#addr_of(doc), key: "doc");
+    app::set_window_native(#addr_of(doc), 88 as *u8);
+    match find("doc") {
+        option::Option[Window]::Some(w) => {
+            assert w.request_close() == false;
+            assert WT_CLOSES == 0;
+            assert w.is_live();           // still up
+            // The screen finished and closes for real.
+            WT_REFUSE = false;
+            assert w.request_close();
+            assert WT_CLOSES == 1;
+        }
+        option::Option[Window]::None => { assert false; }
+    }
+    WT_REFUSE = false;
+    wt_clear();
+}
+
+#[test]
+fn an_observation_is_per_window_and_cancels() {
+    // The defect these replace: the facades registered with a nil object, so
+    // every window's resize fired every handler and the callback carried no
+    // way to tell them apart. Here the cursor IS the identity.
+    wt_clear();
+    wt_install();
+    var a: flex::Node = flex::box();
+    let _o: bool = app::open_window(#addr_of(a), key: "a");
+    app::set_window_native(#addr_of(a), 55 as *u8);
+    match find("a") {
+        option::Option[Window]::Some(w) => {
+            var c: services::Cancellable = w.on_resize(0 as fn(*u8));
+            assert c.pending();
+            c.cancel();
+            assert WT_CANCELLED == (42 as u64);
+            // A slot the backend does not fill answers an inert handle rather
+            // than pretending it armed.
+            var d: services::Cancellable = w.on_inactive(0 as fn(*u8));
+            assert d.pending() == false;
+        }
+        option::Option[Window]::None => { assert false; }
+    }
+    wt_clear();
+}

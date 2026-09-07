@@ -1,0 +1,135 @@
+// facet_android clipboard — ClipboardManager, both directions, through plain
+// JNI.
+//
+// NO DEX AND NO JAVA. Every class here is framework — `Context`,
+// `ClipboardManager`, `ClipData` and its `Item` — so it is all reachable by
+// name and signature through the cached `Env` helpers, exactly as
+// `android_view`'s TextView bindings are. Reaching for `facet_android.dex`
+// would mean editing `java/cplus/facet/*.java` AND running
+// `tools/build_dex.sh`, and a Java edit without that second step changes
+// nothing at all — the dex is checked in and `#include_bytes`'d.
+//
+// See facet_appkit/clipboard for the shape and facet_runtime/runtime for why
+// the portable half has it.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "android_view/runtime" as rt;
+import "jni/jni" as jni;
+import "./env" as e;
+import "./paint" as paint;
+
+// `Context.CLIPBOARD_SERVICE`, whose value is the string "clipboard". A static
+// final String field, so reading it through JNI costs a class lookup and a
+// field read to learn a constant that has not changed since API 1.
+const CLIPBOARD_SERVICE: str = "clipboard";
+
+// What a paste can carry before it is refused rather than truncated. Half a
+// string is a wrong answer that looks like a right one — the posture
+// `string_utf_into` already takes.
+const PASTE_CAP: usize = 65536 as usize;
+
+fn manager(env: rt::Env) -> jni::jobject {
+    let ctx: jni::jobject = e::context();
+    if ctx == (0 as jni::jobject) { return 0 as jni::jobject; }
+    let name: jni::jstring = env.new_string_utf(#str_ptr("clipboard\0"));
+    if name == (0 as jni::jstring) { return 0 as jni::jobject; }
+    let cm: jni::jobject = env.call_object_1(
+        ctx, #str_ptr("android/content/Context\0"), #str_ptr("getSystemService\0"),
+        #str_ptr("(Ljava/lang/String;)Ljava/lang/Object;\0"), rt::arg_object(name));
+    env.delete_local_ref(name);
+    return cm;
+}
+
+fn copy_text(s: str) -> bool {
+    if !e::have_env() { return false; }
+    let env: rt::Env = e::env();
+    let cm: jni::jobject = manager(env);
+    if cm == (0 as jni::jobject) { return false; }
+
+    var buf: [u8; 4096] = #zero::[[u8; 4096]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if !paint::cstr(s, base, 4096 as usize) { return false; }
+    let body: jni::jstring = env.new_string_utf(base);
+    if body == (0 as jni::jstring) { return false; }
+    // The LABEL is what the system UI shows when it describes the clip — the
+    // "copied to clipboard" toast on older versions, the preview chip on newer
+    // ones. It is not the content and must not be it: a label is displayed
+    // where the content may not be.
+    let label: jni::jstring = env.new_string_utf(#str_ptr("text\0"));
+
+    let clip: jni::jobject = env.call_object_static_2(
+        #str_ptr("android/content/ClipData\0"), #str_ptr("newPlainText\0"),
+        #str_ptr("(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;\0"),
+        rt::arg_object(label), rt::arg_object(body));
+    env.delete_local_ref(body);
+    env.delete_local_ref(label);
+    if clip == (0 as jni::jobject) { return false; }
+
+    env.call_void_1(cm, #str_ptr("android/content/ClipboardManager\0"),
+                    #str_ptr("setPrimaryClip\0"),
+                    #str_ptr("(Landroid/content/ClipData;)V\0"), rt::arg_object(clip));
+    env.delete_local_ref(clip);
+    // `setPrimaryClip` is void. Since API 29 the platform may also refuse a
+    // write from a background app silently — so, like UIKit and GTK, this
+    // answers that the write was ISSUED, not that the board took it, and says
+    // so rather than inventing a stronger claim.
+    return true;
+}
+
+fn paste_text() -> option::Option[text::Text] {
+    if !e::have_env() { return option::Option[text::Text]::None; }
+    let env: rt::Env = e::env();
+    let cm: jni::jobject = manager(env);
+    if cm == (0 as jni::jobject) { return option::Option[text::Text]::None; }
+
+    let clip: jni::jobject = env.call_object_0(
+        cm, #str_ptr("android/content/ClipboardManager\0"), #str_ptr("getPrimaryClip\0"),
+        #str_ptr("()Landroid/content/ClipData;\0"));
+    if clip == (0 as jni::jobject) { return option::Option[text::Text]::None; }
+
+    // An EMPTY CLIP IS A REAL STATE, and distinct from no clip: `getItemAt(0)`
+    // on one throws rather than answering null, which crosses the JNI boundary
+    // as a pending exception and takes the next JNI call with it.
+    let n: i32 = env.call_int_1(clip, #str_ptr("android/content/ClipData\0"),
+                                #str_ptr("getItemCount\0"), #str_ptr("()I\0"),
+                                rt::arg_int(0));
+    if n <= (0 as i32) {
+        env.delete_local_ref(clip);
+        return option::Option[text::Text]::None;
+    }
+
+    let item: jni::jobject = env.call_object_1(
+        clip, #str_ptr("android/content/ClipData\0"), #str_ptr("getItemAt\0"),
+        #str_ptr("(I)Landroid/content/ClipData$Item;\0"), rt::arg_int(0));
+    env.delete_local_ref(clip);
+    if item == (0 as jni::jobject) { return option::Option[text::Text]::None; }
+
+    // `coerceToText` RATHER THAN `getText`, and the Context argument is why:
+    // a clip may hold a URI or styled markup instead of a plain string, and
+    // coercion resolves those — loading the URI through the ContentResolver the
+    // Context provides — where `getText` would answer null and lose the clip.
+    let cs: jni::jobject = env.call_object_1(
+        item, #str_ptr("android/content/ClipData$Item\0"), #str_ptr("coerceToText\0"),
+        #str_ptr("(Landroid/content/Context;)Ljava/lang/CharSequence;\0"),
+        rt::arg_object(e::context()));
+    env.delete_local_ref(item);
+    if cs == (0 as jni::jobject) { return option::Option[text::Text]::None; }
+
+    // A CharSequence is not a String — `GetStringUTFChars` on one is undefined
+    // — so it is converted before it is read.
+    let js: jni::jobject = env.call_object_0(cs, #str_ptr("java/lang/Object\0"),
+                                             #str_ptr("toString\0"),
+                                             #str_ptr("()Ljava/lang/String;\0"));
+    env.delete_local_ref(cs);
+    if js == (0 as jni::jobject) { return option::Option[text::Text]::None; }
+
+    var buf: [u8; 65536] = #zero::[[u8; 65536]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    let ok: bool = env.string_utf_into(js as jni::jstring, base, PASTE_CAP);
+    env.delete_local_ref(js);
+    if !ok { return option::Option[text::Text]::None; }
+    let n_bytes: usize = paint::cstr_len(base);
+    return option::Option[text::Text]::Some(
+        text::from_str({ #str_from_raw_parts(base, n_bytes) }));
+}

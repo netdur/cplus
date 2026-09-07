@@ -9332,7 +9332,18 @@ impl SemaCx<'_> {
                     return Ty::Error;
                 }
                 let expected = self.current_gen_yield_ty.clone();
-                let _inner_ty = self.check_expr(inner, expected.clone());
+                let inner_ty = self.check_expr(inner, expected.clone());
+                // `yield x` hands `x` to the consumer — the `for` binding or
+                // the `Option` that `next()` builds owns it from here — so
+                // the source is consumed exactly as a `let` init or a
+                // variant payload consumes it, and a later use is E0335.
+                // Codegen disarms the binding's drop at the same point
+                // (`gen_yield_expr`); sema must agree or the value is owned
+                // twice (bug 2026-09-06, yield-does-not-transfer-ownership).
+                // Yielding a binding declared outside the enclosing loop is
+                // caught by the loop re-check like any other in-loop move.
+                let moved_ty = expected.unwrap_or(inner_ty);
+                self.mark_moved_through_wrappers(inner, &moved_ty);
                 Ty::Unit
             }
             ExprKind::If {
@@ -9345,7 +9356,7 @@ impl SemaCx<'_> {
                 args,
                 type_args,
                 arg_labels,
-            } => self.check_call(callee, args, type_args, arg_labels, e.span),
+            } => self.check_call(callee, args, type_args, arg_labels, e.span, expected),
             ExprKind::FnRef { callee, type_args } => self.check_fn_ref(callee, type_args, e.span),
             ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, e.span),
             ExprKind::Unary { op, operand } => self.check_unary(*op, operand, expected, e.span),
@@ -9665,7 +9676,8 @@ impl SemaCx<'_> {
                 // functions declared `extern fn __cplus_*` in the stdlib. Resolve
                 // the symbol as a normal call.
                 if self.fns.contains_key(&legacy) {
-                    return self.check_named_call(&synth, args, type_args, span);
+                    // An intrinsic dispatch has no expected type threaded to it.
+                    return self.check_named_call(&synth, args, type_args, span, None);
                 }
                 self.err(
                     "E0905",
@@ -11357,6 +11369,24 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         );
                     }
                 }
+            } else {
+                // OWNED scrutinee: the payloads are the match's to move, and
+                // moving a WHOLE one out (`E::A(x) => x`) is exactly right. A
+                // FIELD of one is not: `E::A(i) => i.message` bit-copies an
+                // owned field out of a payload that still drops at the end of
+                // the arm, so the buffer is freed while the returned value
+                // still points at it. That is what E0509 exists to say, and
+                // every other consuming position already asks for it — but an
+                // arm's RESULT is not a consuming site (the consumption happens
+                // outside the arm scope, where the binding is gone), so nothing
+                // asked here and the miscompile was silent.
+                //
+                // `classify_partial_move` peels to the value the body PRODUCES,
+                // so `=> consume(i.message)` is not re-reported here — that
+                // call site classifies it itself.
+                if let Some((span, kind)) = self.classify_partial_move(&arm.body) {
+                    self.emit_partial_move(span, &kind);
+                }
             }
             self.scopes.pop();
             // Capture this arm's post-state for flow merging, then reset
@@ -11509,14 +11539,29 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // args must produce the same EnumId as the scrutinee's.
                 // Generic-base fallback applies *only* when the
                 // pattern has no type args (`Option::Some(v)`).
-                let resolved_pat = if type_args.is_empty() {
-                    None
-                } else {
+                //   (d) `Fetched::Ok` where `type Fetched = Result[T, E]` —
+                //       resolve the alias to its EnumId and compare on that.
+                //       The alias carries its own type args, so it is strict
+                //       like (b) rather than type-directed like (c).
+                //       Monomorphize's `AliasRewriter::visit_pattern` then
+                //       rewrites the pattern head to the base + args, so
+                //       codegen never sees the alias name.
+                let resolved_pat = if !type_args.is_empty() {
                     Some(self.resolve_generic_enum_instantiation(
                         &pat_enum.name,
                         type_args,
                         pat.span,
                     ))
+                } else if !self.enum_by_name.contains_key(&pat_enum.name)
+                    && self.type_aliases.contains_key(&pat_enum.name)
+                {
+                    let temp_ast_ty = crate::ast::Type {
+                        kind: crate::ast::TypeKind::Path(pat_enum.name.clone()),
+                        span: pat_enum.span,
+                    };
+                    Some(self.resolve_type(&temp_ast_ty))
+                } else {
+                    None
                 };
                 let pattern_matches = match &resolved_pat {
                     Some(r) => matches!(r, Ty::Enum(rid) if *rid == enum_id),
@@ -11884,6 +11929,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     args,
                     type_args,
                     span,
+                    // `Type::func()` dispatch: `check_assoc_call` does not carry
+                    // an expected type today, so return-type inference is not
+                    // available on this path (turbofish still works).
+                    None,
                 );
             }
             self.err(
@@ -12640,6 +12689,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         arg_labels: &[Option<Ident>],
         call_span: ByteSpan,
+        expected: Option<Ty>,
     ) -> Ty {
         // Named arguments are MATCHED IN LOWERING — `lower_named_call` reorders
         // them and splices defaults for every callee whose parameter list it can
@@ -12833,7 +12883,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
         }
         match &callee.kind {
-            ExprKind::Ident(_) => self.check_named_call(callee, args, type_args, call_span),
+            ExprKind::Ident(_) => self.check_named_call(callee, args, type_args, call_span, expected),
             ExprKind::Field { receiver, name } => {
                 // Slice 7GEN.5e: turbofish + inference on method calls.
                 // check_method_call now accepts type_args; routes to the
@@ -13107,6 +13157,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         args: &[Expr],
         type_args: &[Type],
         call_span: ByteSpan,
+        expected: Option<Ty>,
     ) -> Ty {
         let ExprKind::Ident(name) = &callee.kind else {
             unreachable!();
@@ -13114,7 +13165,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Slice 7GEN.5a: dispatch generic fns through inference.
         // Slice 7GEN.5b: when type_args are explicit, use them directly.
         if let Some(gsig) = self.fns_generic.get(name).cloned() {
-            return self.check_generic_named_call(name, &gsig, args, type_args, call_span);
+            return self.check_generic_named_call(name, &gsig, args, type_args, call_span, expected);
         }
         // Non-generic fn with turbofish → reject. The user explicitly
         // asked to instantiate something that has no generic params.
@@ -13645,6 +13696,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         args: &[Expr],
         type_args: &[Type],
         call_span: ByteSpan,
+        expected: Option<Ty>,
     ) -> Ty {
         if args.len() != gsig.params.len() {
             self.err(
@@ -13772,6 +13824,43 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             })
             .collect();
+        // A BARE FUNCTION NAME in a fn-pointer parameter position, resolved
+        // from the function's OWN signature rather than from an expected type.
+        //
+        // `thread::spawn_with(url, fetch_blocking)` was a chicken-and-egg:
+        // classifying `fetch_blocking` as a fn-pointer value needs the expected
+        // type, and the expected type is `fn(take I) -> O` whose `I`/`O` are
+        // exactly what this call is trying to infer. So the probe checked the
+        // argument with no expectation, `check_expr` fell through to E0312
+        // ("function used as a value"), and the turbofish was the only spelling
+        // — even though `fetch_blocking`'s declaration already says what `I` and
+        // `O` must be.
+        //
+        // Only the PROBE is short-circuited: nothing is validated here, the
+        // signature is merely read for its shape. Every argument is re-checked
+        // below against the SUBSTITUTED parameter type, which is concrete by
+        // then, so ownership-marker mismatches (`fn(R)` vs `fn(take R)`) are
+        // still reported by the ordinary coercion path.
+        let fnref_arg_tys: Vec<Option<Ty>> = gsig
+            .params
+            .iter()
+            .zip(args.iter())
+            .map(|(p, a)| {
+                if !matches!(p.ty, Ty::FnPtr { .. }) {
+                    return None;
+                }
+                let ExprKind::Ident(fname) = &a.kind else {
+                    return None;
+                };
+                let sig = self.fns.get(fname)?;
+                Some(Ty::FnPtr {
+                    params: sig.params.iter().map(|sp| sp.ty.clone()).collect(),
+                    param_takes: sig.params.iter().map(|sp| sp.move_).collect(),
+                    param_refs: sig.params.iter().map(|sp| sp.mutable).collect(),
+                    return_type: Box::new(sig.return_type.clone()),
+                })
+            })
+            .collect();
         // First pass: check args without an expected type to get their
         // natural type, then unify against the generic param type. Concrete
         // positions carry their expected type instead (above) and skip
@@ -13794,6 +13883,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .get(i)
                         .map(|p| p.ty.clone())
                         .unwrap_or(Ty::Error)
+                } else if let Some(fref) = fnref_arg_tys.get(i).cloned().flatten() {
+                    fref
                 } else {
                     self.check_expr(a, concrete_expected.get(i).cloned().flatten())
                 }
@@ -13827,6 +13918,29 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         if had_err {
             return Ty::Error;
+        }
+        // RETURN-TYPE INFERENCE, the last resort before giving up. Arguments
+        // are the primary source and stay so; when they leave a parameter
+        // unpinned, the type this call's VALUE is required to have can still
+        // determine it — `var q: Vec[i32] = vec::new();` names `T` in the
+        // annotation, and a nullary constructor has nowhere else to say it.
+        // Before this, that line was E0500 with the answer written on it, and
+        // the turbofish was the only spelling (751 of them across vendor).
+        //
+        // Unification is the same one arguments use, so this cannot invent a
+        // binding an argument already made: `subst` entries are only ADDED for
+        // params still missing, and a conflicting return shape simply fails to
+        // unify and falls through to the error below.
+        if let Some(want) = &expected {
+            if gsig.generic_params.iter().any(|gp| !subst.contains_key(gp)) {
+                unify_param_against_concrete(
+                    &gsig.return_type,
+                    want,
+                    &mut subst,
+                    &self.structs,
+                    &self.enums,
+                );
+            }
         }
         // Ensure every declared generic param got bound.
         for gp in &gsig.generic_params {
@@ -19831,7 +19945,26 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 return ty;
             }
         }
-        let Some(&id) = self.enum_by_name.get(&enum_seg.name) else {
+        // A TYPE ALIAS NAMING AN ENUM resolves here the same way
+        // `check_assoc_call` resolves the payload-carrying form: `type Fetched
+        // = result::Result[Text, Error]` makes `Fetched::Ok` legal, so
+        // `Fetched::None`-shaped payload-less variants must be too. Without
+        // this the two halves of one alias disagreed — the call form compiled
+        // and the bare path was "unknown type".
+        let aliased_id = if self.enum_by_name.contains_key(&enum_seg.name) {
+            None
+        } else {
+            let temp_ast_ty = crate::ast::Type {
+                kind: crate::ast::TypeKind::Path(enum_seg.name.clone()),
+                span: enum_seg.span,
+            };
+            match self.resolve_type(&temp_ast_ty) {
+                Ty::Enum(id) => Some(id),
+                _ => None,
+            }
+        };
+        let Some(&id) = aliased_id.as_ref().or_else(|| self.enum_by_name.get(&enum_seg.name))
+        else {
             self.err(
                 "E0303",
                 format!("unknown type `{}`", enum_seg.name),
@@ -28468,6 +28601,213 @@ fn main() -> i32 { let p: P = P { n: 1 };\n\
         );
     }
 
+    // ── `type X = Enum[..]` in expression and pattern position (2026-09-05) ──
+    //
+    // An alias to a GENERIC INSTANTIATION was half-implemented in a way that
+    // failed differently at each of its four use sites: the payload-carrying
+    // constructor `X::Ok(v)` reached codegen still spelled `X` and panicked
+    // there ("sema validated"), the payload-less `X::None` was E0303, and both
+    // pattern forms were E0341 — while the type position `let a: X = ..` had
+    // always worked. So the alias looked usable right up to the first `match`.
+
+    // ── a bare fn name drives inference (2026-09-06) ──
+
+    #[test]
+    fn a_bare_fn_name_infers_a_generic_fn_pointer_parameter() {
+        // `run(work)` was E0312 "function used as a value": classifying `work`
+        // needed the expected type, and the expected type `fn(take I) -> O` was
+        // what the call was trying to infer. `work`'s own declaration already
+        // says what I and O are.
+        let src = "\
+fn run[I, O](take x: I, f: fn(take I) -> O) -> O { return f(x); }\n\
+fn work(take n: i32) -> i32 { return n +% 1; }\n\
+fn main() -> i32 { return run(1, work) - 2; }\n";
+        let errs: Vec<&str> = check_src(src)
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(errs.is_empty(), "expected clean, got {errs:?}");
+    }
+
+    #[test]
+    fn an_fn_name_with_the_wrong_ownership_marker_is_still_rejected() {
+        // The probe reads the signature for its SHAPE only; the authoritative
+        // re-check against the substituted parameter type still runs, so a bare
+        // (borrowing) param in a `fn(take I)` slot must not slip through.
+        let src = "\
+struct R { opaque data: *u8 }\n\
+impl R { fn drop(ref this) { return; } }\n\
+fn run[I, O](take x: I, f: fn(take I) -> O) -> O { return f(x); }\n\
+fn work(r: R) -> i32 { return 0; }\n\
+fn main() -> i32 { return run(R { data: { 0 as *u8 } }, work); }\n";
+        let codes: Vec<&str> = check_src(src).iter().map(|d| d.code.0).collect();
+        assert!(
+            codes.iter().any(|c| *c == "E0302" || *c == "E0312"),
+            "expected a coercion rejection, got {codes:?}"
+        );
+    }
+
+    // ── return-type inference for generic calls (2026-09-06) ──
+
+    #[test]
+    fn a_generic_call_infers_from_the_expected_type() {
+        // `var q: Box2[i32] = make();` names `T` in the annotation, and a
+        // nullary constructor has nowhere else to say it. This was E0500 with
+        // the answer written on the same line.
+        let src = "\
+struct Box2[T] { one: T }\n\
+fn make[T]() -> Box2[T] { return Box2[T] { one: #zero::[T]() }; }\n\
+fn main() -> i32 { let b: Box2[i32] = make(); return b.one; }\n";
+        let errs: Vec<&str> = check_src(src)
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(errs.is_empty(), "expected clean, got {errs:?}");
+    }
+
+    #[test]
+    fn arguments_still_outrank_the_expected_type() {
+        // The expected type is a LAST resort: an argument already pinned
+        // `T = i32`, so the `i64` annotation must be a mismatch, not a
+        // second opinion that silently re-infers the call.
+        let src = "\
+fn ident[T](take x: T) -> T { return x; }\n\
+fn main() -> i32 { let a: i64 = ident(7); return a as i32; }\n";
+        let codes: Vec<&str> = check_src(src).iter().map(|d| d.code.0).collect();
+        assert!(codes.contains(&"E0302"), "expected E0302, got {codes:?}");
+    }
+
+    #[test]
+    fn an_uninferable_call_with_no_expected_type_is_still_e0500() {
+        let src = "\
+struct Box2[T] { one: T }\n\
+fn make[T]() -> Box2[T] { return Box2[T] { one: #zero::[T]() }; }\n\
+fn main() -> i32 { let _b = make(); return 0; }\n";
+        let codes: Vec<&str> = check_src(src).iter().map(|d| d.code.0).collect();
+        assert!(codes.contains(&"E0500"), "expected E0500, got {codes:?}");
+    }
+
+    #[test]
+    fn a_copy_bounded_gen_method_rejects_a_drop_element() {
+        // The mechanism behind `Vec::iter`'s `T: Copy` bound (stdlib, 2026-09-06).
+        // `iter` yields `{ *p }` — a bit-copy of an element the container still
+        // owns — so consuming what it yields gives the value two owners and
+        // frees it twice. That was measured as 2 elements / 4 drops before the
+        // bound was applied; the rule had been in `vec.cplus`'s comments from
+        // the start and simply never enforced.
+        let src = "\
+struct R { opaque data: *u8 }\n\
+impl R { fn drop(ref this) { return; } }\n\
+struct Box2[T] { one: T }\n\
+impl Box2[T: Copy] { gen fn iter(this) -> T { yield this.one; } }\n\
+fn main() -> i32 { let b: Box2[R] = Box2[R] { one: R { data: { 0 as *u8 } } }; for _x in b.iter() { } return 0; }\n";
+        let codes: Vec<&str> = check_src(src).iter().map(|d| d.code.0).collect();
+        assert!(codes.contains(&"E0502"), "expected E0502, got {codes:?}");
+    }
+
+    #[test]
+    fn a_field_moved_out_of_an_owned_match_payload_is_e0509() {
+        // Silent double-free before 2026-09-06: the payload still drops at the
+        // end of the arm, so the moved-out field pointed at a freed buffer. An
+        // arm's RESULT is not a consuming site — the consumption happens
+        // outside the arm scope, where the binding is gone — so nothing ever
+        // classified it.
+        let src = "\
+struct R { opaque data: *u8 }\n\
+impl R { fn drop(ref this) { return; } }\n\
+struct Inner { r: R }\n\
+enum Wrap { One(Inner), Two(i32) }\n\
+fn mkr() -> R { return R { data: { 0 as *u8 } }; }\n\
+fn f(take e: Wrap) -> R { return match e { Wrap::One(i) => { i.r } Wrap::Two(_n) => { mkr() } }; }\n\
+fn main() -> i32 { return 0; }\n";
+        let codes: Vec<&str> = check_src(src).iter().map(|d| d.code.0).collect();
+        assert!(codes.contains(&"E0509"), "expected E0509, got {codes:?}");
+    }
+
+    #[test]
+    fn moving_a_whole_match_payload_out_is_still_allowed() {
+        // The counterpart the fix must not break: a WHOLE payload is the
+        // match's to move; only reaching INTO one is the violation.
+        let src = "\
+struct R { opaque data: *u8 }\n\
+impl R { fn drop(ref this) { return; } }\n\
+enum Wrap { One(R), Two(i32) }\n\
+fn mkr() -> R { return R { data: { 0 as *u8 } }; }\n\
+fn f(take e: Wrap) -> R { return match e { Wrap::One(r) => { r } Wrap::Two(_n) => { mkr() } }; }\n\
+fn main() -> i32 { return 0; }\n";
+        let errs: Vec<&str> = check_src(src)
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(errs.is_empty(), "expected clean, got {errs:?}");
+    }
+
+    #[test]
+    fn enum_alias_constructs_a_payload_variant() {
+        let src = "\
+enum Res[T, E] { Ok(T), Err(E) }\n\
+type Fetched = Res[i32, bool];\n\
+fn main() -> i32 { let f: Fetched = Fetched::Ok(7); return match f { Res::Ok(v) => v, Res::Err(_e) => 0 }; }\n";
+        let errs: Vec<&str> = check_src(src)
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(errs.is_empty(), "expected clean, got {errs:?}");
+    }
+
+    #[test]
+    fn enum_alias_constructs_a_payload_less_variant() {
+        let src = "\
+enum Res[T, E] { Ok(T), Err(E) }\n\
+enum Maybe[T] { Yes(T), No }\n\
+type M = Maybe[i32];\n\
+fn main() -> i32 { let m: M = M::No; return match m { Maybe::Yes(v) => v, Maybe::No => 0 }; }\n";
+        let errs: Vec<&str> = check_src(src)
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(errs.is_empty(), "expected clean, got {errs:?}");
+    }
+
+    #[test]
+    fn enum_alias_is_accepted_as_a_pattern_head() {
+        let src = "\
+enum Res[T, E] { Ok(T), Err(E) }\n\
+type Fetched = Res[i32, bool];\n\
+fn main() -> i32 { let f: Fetched = Res[i32, bool]::Ok(7); return match f { Fetched::Ok(v) => v, Fetched::Err(_e) => 0 }; }\n";
+        let errs: Vec<&str> = check_src(src)
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(errs.is_empty(), "expected clean, got {errs:?}");
+    }
+
+    #[test]
+    fn an_alias_pattern_for_the_wrong_enum_is_still_e0341() {
+        // The acceptance above resolves the alias; it must not make the
+        // pattern head match anything it likes.
+        let src = "\
+enum Res[T, E] { Ok(T), Err(E) }\n\
+enum Maybe[T] { Yes(T), No }\n\
+type M = Maybe[i32];\n\
+fn main() -> i32 { let r: Res[i32, bool] = Res[i32, bool]::Ok(1); return match r { M::Yes(v) => v, M::No => 0 }; }\n";
+        let codes: Vec<&str> = check_src(src).iter().map(|d| d.code.0).collect();
+        assert!(codes.contains(&"E0341"), "expected E0341, got {codes:?}");
+    }
+
+    #[test]
+    fn a_path_head_that_is_no_type_at_all_is_still_e0303() {
+        let src = "fn main() -> i32 { let x: i32 = Nope::Some(1); return x; }\n";
+        let codes: Vec<&str> = check_src(src).iter().map(|d| d.code.0).collect();
+        assert!(codes.contains(&"E0303"), "expected E0303, got {codes:?}");
+    }
+
     #[test]
     fn pattern_mismatch_names_both_instantiations_not_the_mangled_one() {
         // Both sides used to be unreadable: the scrutinee printed its
@@ -34884,6 +35224,59 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
         );
         let codes = errors(&src);
         assert!(codes.contains(&"E0335"), "got {:?}", codes);
+    }
+
+    // bug 2026-09-06 (yield-does-not-transfer-ownership): `yield` is a
+    // consuming position. A Drop struct so the binding is non-Copy.
+    #[test]
+    fn yield_of_owned_binding_then_use_is_e0335() {
+        let ds = check_src(
+            "extern fn free(p: *u8);\n\
+             struct R { p: *u8 }\n\
+             impl R { fn drop(ref this) { { free(this.p); } return; } fn n(this) -> i32 { return 1; } }\n\
+             gen fn g() -> R {\n\
+                 let r: R = R { p: 0 as *u8 };\n\
+                 yield r;\n\
+                 let _k: i32 = r.n();\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        let codes = codes_of(&ds);
+        assert!(codes.contains(&"E0335"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn yield_of_owned_binding_declared_outside_the_loop_is_e0335() {
+        let ds = check_src(
+            "extern fn free(p: *u8);\n\
+             struct R { p: *u8 }\n\
+             impl R { fn drop(ref this) { { free(this.p); } return; } }\n\
+             gen fn g() -> R {\n\
+                 let r: R = R { p: 0 as *u8 };\n\
+                 var i: i32 = 0;\n\
+                 while i < 2 { yield r; i = i + 1; }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        let codes = codes_of(&ds);
+        assert!(codes.contains(&"E0335"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn yield_of_a_fresh_binding_per_trip_is_clean() {
+        let ds = check_src(
+            "extern fn free(p: *u8);\n\
+             struct R { p: *u8 }\n\
+             impl R { fn drop(ref this) { { free(this.p); } return; } }\n\
+             gen fn g() -> R {\n\
+                 var i: i32 = 0;\n\
+                 while i < 2 { let r: R = R { p: 0 as *u8 }; yield r; i = i + 1; }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        let codes = codes_of(&ds);
+        // (E1000 — no stdlib `Iterator` in this harness — is expected noise.)
+        assert!(!codes.contains(&"E0335"), "got {:?}", codes);
     }
 
     #[test]

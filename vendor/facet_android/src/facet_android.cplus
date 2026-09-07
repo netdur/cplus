@@ -13,6 +13,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 import "facet/facet" as core;
 import "facet/mount" as mount;
+import "facet/application" as app;
 import "facet/nav" as nav;
 import "facet/app_events" as ev;
 import "stdlib/text" as text;
@@ -48,6 +49,10 @@ fn install() {
     INSTALLED = true;
     // mount::install also arms M5 (touch -> schedule) and M6 (this thread
     // becomes THE UI thread; every tree write asserts it).
+    // WHICH BACKEND IS DRAWING. A `@` fact, so an application cannot overwrite
+    // it — an app that could claim a backend it is not running on would be
+    // lying to an agent about the one thing the agent cannot check itself.
+    app::set_backend_name("facet_android");
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
     theme::set_is_dark_fn(window::is_dark);

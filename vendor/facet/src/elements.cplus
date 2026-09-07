@@ -187,6 +187,7 @@ fn label(
     text_transform: vocab::TextTransform = vocab::TextTransform::Default,
     text_format: vocab::TextFormat = vocab::TextFormat::Text,
     vertical_align: vocab::TextAlign = vocab::TextAlign::Center,
+    selectable: bool = false,
     take formatted_text: vocab::Spans = vocab::Spans::new(),
 ) -> core::Node {
     return m_label::label(
@@ -207,6 +208,7 @@ fn label(
         text_transform: text_transform,
         text_format: text_format,
         vertical_align: vertical_align,
+        selectable: selectable,
         formatted_text: formatted_text,
     );
 }

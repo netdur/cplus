@@ -198,3 +198,20 @@ fn scene_of_window(w: *u8) -> *u8 {
     if w == (0 as *u8) { return 0 as *u8; }
     return { rt::msg_id(w, rt::sel(#str_ptr("windowScene\0"))) };
 }
+
+// ---- can this app have more than one window? -------------------------------------
+// `UIApplication.supportsMultipleScenes`, which reflects
+// `UIApplicationSceneManifest.UIApplicationSupportsMultipleScenes` in the plist.
+//
+// ASKED OF THE APP, NOT THE DEVICE, and that is the whole point. An iPad can
+// window an app that never opted in, and an app that did opt in still gets one
+// scene at a time on an iPhone. The plist key is fixed for the process, so this
+// answer is stable for the app's life — which is what makes it safe to decide
+// `Show::Window` by, where deciding by current geometry would make a push mean
+// one thing full-screen and another windowed.
+fn supports_multiple_scenes() -> bool {
+    let appc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIApplication\0")),
+                                 rt::sel(#str_ptr("sharedApplication\0"))) };
+    if appc == (0 as *u8) { return false; }
+    return { rt::msg_i8(appc, rt::sel(#str_ptr("supportsMultipleScenes\0"))) } != (0 as i8);
+}

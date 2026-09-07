@@ -76,6 +76,14 @@ impl Future[T] {
             // frame address is reused by malloc, so a stale entry is a
             // use-after-free rather than a leak.
             reactor::unregister_pending(this._handle);
+            // And every KERNEL registration: the timer or fd park this frame
+            // is suspended at, if any. A timer's kqueue ident IS the frame
+            // address, so left behind it resumes freed memory when it fires —
+            // the stdlib suite did exactly that on every run, visible only
+            // under `cpc test --asan`. Purged before the destroy so the
+            // frame's own cancel edges still find the tables intact
+            // (bugs/a-destroyed-coroutine-frame-stays-registered-with-the-reactor).
+            reactor::unregister_waiter(this._handle);
             __cplus_coro_destroy(this._handle);
             this._handle = 0 as *u8;
         }
@@ -155,11 +163,26 @@ fn wait_or_cancel[T](take f: Future[T]) -> WaitResult[T] {
             reactor::teardown();
             return WaitResult[T]::Cancelled;
         }
-        { #coro_resume(hdl); }
-        if { #coro_done(hdl) } != (0 as i32) { continue; }
+        // THE REACTOR RESUMES; THIS LOOP ONLY STEPS IN WHEN IT HAS NOTHING.
+        // Every suspend point arranges its own wake-up (an awaiter entry, a
+        // kernel timer or fd filter, a pending-queue slot), so the frame is
+        // resumed by whoever satisfied it. This loop used to resume the frame
+        // unconditionally on every pass as well, and a timer or fd park does
+        // not re-check its condition on resume: `wait_or_cancel(sleep(200))`
+        // came back at once, timer still armed under an address about to be
+        // freed. Same loop as the `#block_on` intrinsic; the fallback resume
+        // is for a shape neither has foreseen, so it makes progress rather
+        // than parking forever.
         let _n: i32 = reactor::drain_pending();
         if reactor::waiter_count() > (0 as i32) {
             let _p: i32 = reactor::poll_one_event_cancellable();
+        } else if reactor::pending_count() == (0 as i32) {
+            // The drain may have run this very frame to completion (it was
+            // queued as a notified awaiter); a done frame's resume pointer
+            // is null, so re-check before the fallback resume.
+            if { #coro_done(hdl) } == (0 as i32) {
+                { #coro_resume(hdl); }
+            }
         }
     }
 }
@@ -216,6 +239,42 @@ fn wait_parks_on_the_reactor_and_resumes() {
     assert _twice_after_ticks().wait() == (84 as i64);
 }
 
+// A future dropped while parked takes its kernel registration with it.
+//
+// THIS IS THE ASAN SCENARIO from the report, asserted on the table because
+// the crash itself is only visible under `cpc test --asan`: `_after_a_tick`
+// parks on a 1ms timer whose kqueue ident is the frame address. Drop it
+// undriven, and the timer must be gone — not merely uncounted — or the next
+// drive on this thread is handed that address by the kernel and resumes
+// freed memory. From a fresh reactor, for the reason
+// `a_completed_wait_leaves_the_reactor_empty` gives.
+#[test]
+fn a_future_dropped_while_parked_leaves_no_registration_behind() {
+    reactor::teardown();
+    {
+        let _parked: Future[i32] = _after_a_tick();
+    }
+    assert reactor::waiter_count() == (0 as i32);
+    assert reactor::pending_count() == (0 as i32);
+    // The drive that follows polls the kqueue for its own timers; a stale
+    // one-shot from the dropped frame would be delivered here first.
+    assert _twice_after_ticks().wait() == (84 as i64);
+    assert reactor::waiter_count() == (0 as i32);
+}
+
+// A frame parked on a timer is resumed by the TIMER, not by the drive loop.
+// `_after_a_tick` is the top-level frame here, so the drive loop's own
+// resume — which it used to issue on every pass — would have run it to
+// completion before the timer fired, and this drive would have left one
+// armed timer behind. `time.cplus` measures the wall clock for the same
+// shape; this pins the table.
+#[test]
+fn a_wait_on_a_parked_frame_consumes_its_own_timer() {
+    reactor::teardown();
+    assert _after_a_tick().wait() == 42;
+    assert reactor::waiter_count() == (0 as i32);
+}
+
 #[test]
 fn wait_or_cancel_reports_done_when_nobody_asked_to_stop() {
     match wait_or_cancel(_after_a_tick()) {
@@ -242,4 +301,39 @@ fn a_completed_wait_leaves_the_reactor_empty() {
     assert reactor::waiter_count() == (0 as i32);
     assert reactor::pending_count() == (0 as i32);
     assert reactor::awaiter_count() == (0 as i32);
+}
+
+// ---- a dropped frame's fd registration goes with it ----
+
+extern fn pipe(fds: *i32) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// Parks on the read end of a pipe nobody writes to: a registration only the
+// purge can remove.
+async fn _park_on_read(fd: i32) -> i32 {
+    { #reactor_wait_read(fd); }
+    return 1;
+}
+
+// The fd half of `a_future_dropped_while_parked_leaves_no_registration_behind`:
+// the (fd, filter, frame) triple leaves the waiter table AND the kqueue, so a
+// non-blocking poll after the drop has nothing to deliver.
+#[test]
+fn a_future_dropped_while_parked_on_an_fd_leaves_the_waiter_table() {
+    reactor::teardown();
+    let fds: *u8 = { malloc(8 as usize) };
+    let _p: i32 = { pipe(fds as *i32) };
+    let rd: i32 = { *(fds as *i32) };
+    let wr: i32 = { *((fds + (4 as usize)) as *i32) };
+    {
+        let _parked: Future[i32] = _park_on_read(rd);
+        assert reactor::waiter_count() == (1 as i32);
+    }
+    assert reactor::waiter_count() == (0 as i32);
+    assert reactor::poll_one_event_nb() == false;
+    { close(rd); }
+    { close(wr); }
+    { free(fds); }
 }

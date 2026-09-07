@@ -181,6 +181,19 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & label::P_VERTICAL_ALIGN) != (0 as u64) {
         compose::apply_field_vertical_align(v, { (*p).vertical_align });
     }
+    // PICKING THE TEXT UP. `labelWithString:` hands back a field with
+    // `selectable = NO`, so a label was a picture of text — a transcript, an
+    // error, a stack trace and an id all unreadable by Cmd-C. One setter is
+    // the whole of it: NSTextField then does the selection, the copy and the
+    // services menu itself.
+    //
+    // Applied on every write and not only at create, because a selectable
+    // field EATS MOUSE-DOWN: a row that turns it on for one state and off for
+    // another is asking for its click band back, and a create-only read would
+    // never give it back.
+    if (dirty & label::P_SELECTABLE) != (0 as u64) {
+        f.set_selectable({ (*p).selectable });
+    }
     if (dirty & (label::P_MAX_LINES | label::P_LINE_BREAK)) != (0 as u64) {
         let lines: i64 = { (*p).max_lines };
         // 0 = unbounded, which is NSTextField's own spelling too.

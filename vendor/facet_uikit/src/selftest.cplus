@@ -2006,6 +2006,53 @@ fn a_late_end_display_does_not_clear_a_refilled_cell() -> bool {
     return recycler::cell_holds_row(p, cell.raw(), recycler::index_path(7 as i64, 0 as i64)) == false;
 }
 
+
+// ---- more than one window -----------------------------------------------------
+// EVERY ONE OF THESE IS A BUG THAT HAPPENED, on an iPad Pro on 2026-09-06, the
+// first day this backend could have two windows at all. All four read perfectly
+// over the agent socket and were only visible in a screenshot or a device
+// report — which is exactly why they belong here rather than in a suite that
+// cannot open a window.
+
+// `content_view_of(win)` ignored its argument whenever `BASE_VC` was set, so a
+// second window's tree mounted into the PRIMARY's content view: the new window
+// drew nothing and the old one showed the new one's screen. Two symptoms, one
+// line.
+fn content_view_is_the_windows_own_not_the_primarys() -> bool {
+    let a: usize = window::build_scene_window("probe:a");
+    let b: usize = window::build_scene_window("probe:b");
+    if a == b { return false; }
+    let wa: *u8 = window::scene_window_at(a);
+    let wb: *u8 = window::scene_window_at(b);
+    if wa == (0 as *u8) { return false; }
+    if wb == (0 as *u8) { return false; }
+    let ca: *u8 = window::content_view_of(wa);
+    let cb: *u8 = window::content_view_of(wb);
+    if ca == (0 as *u8) { return false; }
+    if cb == (0 as *u8) { return false; }
+    // THE WHOLE CHECK: two windows, two different content views.
+    return ca != cb;
+}
+
+// A window is addressed by the key it was opened under, so `window::find` can
+// answer THE one rather than the first of several.
+fn a_scene_window_is_found_by_its_key() -> bool {
+    let at: usize = window::build_scene_window("probe:keyed");
+    if window::scene_index_for_key("probe:keyed") != at { return false; }
+    // A key nothing carries answers one past the end, never a wrong entry.
+    return window::scene_index_for_key("probe:absent") >= window::scene_count();
+}
+
+// The primary's scene disconnects and reconnects routinely — the app being
+// backgrounded and restored — and its window and tree must survive that. Only
+// an ADDITIONAL window is really gone when its scene goes.
+fn a_disconnecting_primary_keeps_its_window() -> bool {
+    let before: usize = window::scene_count();
+    if before == (0 as usize) { return false; }
+    window::note_scene_gone(window::scene_of_index(0 as usize));
+    return window::scene_count() == before;
+}
+
 fn run_all() -> i32 {
     FAILED = 0 as i32;
     RAN = 0 as i32;
@@ -2112,6 +2159,11 @@ fn run_all() -> i32 {
           a_cancelled_observation_frees_its_registry_slot());
     check("a real notification reaches an app_events subscriber",
           a_real_notification_reaches_an_app_events_subscriber());
+    check("a window's content view is its own, not the primary's",
+          content_view_is_the_windows_own_not_the_primarys());
+    check("a scene window is found by its key", a_scene_window_is_found_by_its_key());
+    check("a disconnecting primary keeps its window",
+          a_disconnecting_primary_keeps_its_window());
     check("focus and visibility answer different kinds",
           becoming_active_is_the_focus_level_not_the_visibility_level());
     check("a url reaches a subscriber as its absolute string",

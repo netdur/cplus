@@ -22,6 +22,8 @@ import "./channel" as channel;
 import "./atomic" as atomic;
 import "./option" as option;
 import "./status" as status;
+import "./vec" as vec;
+import "./result" as result;
 
 // The drive loops — `Future::wait` (intrinsic IR) and `future::wait_or_cancel`
 // (its surface-C+ twin, joined to the cancellation protocol) — live in
@@ -149,6 +151,45 @@ fn spawn_local[T: Send](take f: future::Future[T]) {
 // keeps the import elided-pass happy.
 fn _touch_reactor() -> i32 {
     return reactor::waiter_count();
+}
+
+// ── a Vec whose element is a future OVER AN ENUM (2026-09-05) ──
+//
+// `Vec[T]` instantiates `Vec::iter`, which is a `gen fn` returning
+// `Iterator[T]` — so a `Vec[Future[Result[i32, i32]]]` instantiates
+// `Iterator[Future[Result[i32, i32]]]` whether or not anything calls `iter()`.
+// The iterator-element decoder rebuilt its suffix as `Future__{suffix}` and
+// re-split it on the LAST `Future__`, which ate a level whenever the ELEMENT
+// was itself a future: the element decoded as the inner enum, and
+// `lookup_option_ty` then panicked hunting an `Option` of it that nothing had
+// instantiated. `Vec[Future[i32]]` was fine, which is why this hid — the
+// collapse needs an inner type whose own mangled name carries `Future__`.
+//
+// Fanning out N async calls and awaiting them in order is the shape that meets
+// it, so it is the shape this pins.
+
+async fn _enum_valued(take n: i32) -> result::Result[i32, i32] {
+    { #reactor_wait_timer(1 as u64); }
+    return result::Result[i32, i32]::Ok(n);
+}
+
+#[test]
+async fn a_vec_of_futures_over_an_enum_drives_in_order() {
+    var q = vec::new::[future::Future[result::Result[i32, i32]]]();
+    // Each call runs eagerly to its first suspend, so both are in flight here.
+    let _a = q.append(_enum_valued(1));
+    let _b = q.append(_enum_valued(2));
+    var total: i32 = 0;
+    var seen: i32 = 0;
+    while let option::Option::Some(f) = q.remove(0 as usize) {
+        seen = seen +% 1;
+        match await f {
+            result::Result::Ok(v) => { total = total +% v; }
+            result::Result::Err(_e) => { assert false; }
+        }
+    }
+    assert seen == 2;
+    assert total == 3;
 }
 
 // ───────────────────────────── tests ─────────────────────────────

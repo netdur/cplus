@@ -673,6 +673,13 @@ struct Iterator[T] { /* compiler-known shape from gen fn */ }
 Methods include `next`, and combinators such as `filter` / `map` / `prefix`
 (see source). Produced by `gen fn`, not constructed by hand in normal code.
 
+Lazy: calling a `gen fn` runs none of its body; each `next()` (or `for`
+trip) resumes it for exactly one element, so a `break` leaves the rest
+unproduced. `yield x` moves `x` — the consumer's binding owns it and drops
+it, and `for x in it` drops each element at the end of its trip unless the
+body moves it out. `Vec::iter` therefore yields Copy elements only;
+`Vec::drain` is the accessor that moves owned elements out, in order.
+
 ---
 
 ## range

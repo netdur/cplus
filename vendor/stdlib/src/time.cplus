@@ -109,6 +109,24 @@ fn sleep_actually_waits_rather_than_merely_completing() {
     assert elapsed < (5000 as i64);
 }
 
+// THE TOP-LEVEL FORM of the floor above: here the frame parked on the timer
+// IS the one being driven, with no `await` between them. Until 2026-09-06 the
+// drive loop resumed the outer frame unconditionally on every pass, and a
+// timer park does not re-check its condition on resume — so this returned in
+// 1 ms (measured against a 200ms sleep) with the timer still armed in the
+// kqueue under a frame address about to be freed. The nested form above never
+// saw it, because an `await` park loops back to a `coro.done` check. Same
+// floor, same generosity. See bugs/a-destroyed-coroutine-frame-stays-
+// registered-with-the-reactor.
+#[test]
+fn a_top_level_sleep_wait_parks_for_the_whole_delay() {
+    let t0: i64 = now_millis();
+    sleep(120 as u64).wait();
+    let elapsed: i64 = now_millis() - t0;
+    assert elapsed >= (100 as i64);
+    assert elapsed < (5000 as i64);
+}
+
 #[test]
 fn now_is_a_plausible_epoch_time() {
     // Sanity: the clock reads a value well past 2023-11 (1_700_000_000) and

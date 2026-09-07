@@ -605,6 +605,56 @@ is **parked, not destroyed** — attach/detach only notify (`on_attach`/
 `on_detach`); the views and state survive, so coming back restores scroll
 position and half-typed input for free.
 
+`push` means **show this next, with whatever room the platform has**: a peer
+window on a desktop, a stack entry on a phone. One intent, rendered as each
+platform renders it — so an app that says nothing gets the right shape on both.
+Say `show: nav::Show::Screen` to narrow it to a drill-down in the current
+window, which is the same everywhere.
+
+```cplus
+nav::push("settings");                              // window on desktop, stack on phone
+nav::push("camera", arg: "front");                  // addressable as "camera:front"
+nav::push("step2", show: nav::Show::Screen);        // in place, with a back path
+nav::pop();                                         // the stack only — never closes a window
+```
+
+A pushed window is keyed by its route, or `route:arg` when one was given, so two
+cameras get two addresses without you inventing them. Pushing a key already open
+**activates** it rather than opening a second.
+
+`pop` is the stack and nothing else. A window is closed by name:
+
+```cplus
+match window::find("camera:front") {
+    option::Option[window::Window]::Some(w) => { let _c: bool = w.close(); }
+    option::Option::None => { }
+}
+```
+
+Which is the rule the two tiers follow: **a key always names a screen; it names
+a window only where the platform gave that screen one.** `screen::find` answers
+on a phone where `window::find` does not, and neither lies about the other.
+
+The app itself is a handle to an instance the runtime owns, so it survives
+`main` returning — which is what a platform whose loop belongs to the OS needs.
+It carries the app's own environment: facts about the app, written by C+, by
+facet, and by you.
+
+```cplus
+let a: runtime::App = runtime::app();     // the running app, always answers
+a.env("@platform");                       // "macos" / "ios" / "android" / "linux"
+a.env("@backend");                        // "facet_appkit", "facet_android", ...
+a.set_env("last_project", path);
+a.set_env_flag("licensed", true);
+a.windows();  a.screens();
+```
+
+`@` keys are C+'s and facet's and `set_env` refuses them, so an app cannot claim
+a platform or version it is not running on. There is deliberately **no change
+channel** — if the UI must update when a value changes, that value belongs in a
+`resource`. And it is not `stdlib::env`: one is the OS's environment, the other
+is the app's.
+
 The entry module installs a backend and calls `run`:
 
 ```cplus

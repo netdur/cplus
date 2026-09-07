@@ -197,6 +197,61 @@ impl Value {
         };
     }
 
+    // ---- iteration ----
+
+
+    // Yield each element of an array, in order, as an `Iterator[Value]` — so a
+    // parsed array drives `for … in` and the iterator adapters instead of a
+    // hand-written index loop, which is what every caller was writing.
+    //
+    // EACH YIELDED VALUE IS AN OWNED CLONE, the same contract `item` already
+    // has, and that is what makes this sound: `Vec::iter` yields `{ *p }`, a
+    // bit-copy of an element the vector still owns, which is why it is
+    // restricted to `Copy` elements — consuming what it yields would free the
+    // element twice. Cloning sidesteps that entirely: the loop owns what it
+    // receives and drops it, and the document is untouched. The cost is a deep
+    // copy per element, which is the cost `item` already charges.
+    //
+    // Yields nothing for a non-array, matching `item_count`'s 0 — iterating a
+    // number is an empty loop, not an error.
+    //
+    // The receiver is a BORROW (a bare `this`), so the document must outlive
+    // the loop: bind a parsed value to a local and iterate that, rather than
+    // iterating a temporary.
+    gen fn items(this) -> Value {
+        let n: usize = this.item_count();
+        var i: usize = 0;
+        while i < n {
+            match this.item(i) {
+                option::Option[Value]::Some(v) => { yield v; }
+                option::Option[Value]::None => { return; }
+            }
+            i = i +% (1 as usize);
+        }
+    }
+
+    // Yield each member of an object, in declaration order, as an
+    // `Iterator[Member]` — key and value together, both owned clones. The
+    // object twin of `items`; yields nothing for a non-object.
+    gen fn entries(this) -> Member {
+        let n: usize = this.item_count();
+        var i: usize = 0;
+        while i < n {
+            match this.key(i) {
+                option::Option[text::Text]::Some(k) => {
+                    match this.object_value(i) {
+                        option::Option[Value]::Some(v) => {
+                            yield Member { key: k, value: v };
+                        }
+                        option::Option[Value]::None => { return; }
+                    }
+                }
+                option::Option[text::Text]::None => { return; }
+            }
+            i = i +% (1 as usize);
+        }
+    }
+
     // ---- typed field getters ----
     // `value(key)` -> `as_X()` -> unwrap-or-default, in ONE call. These retire the
     // per-service `jstr` / `jfield` helpers copy-pasted to decode one object field
@@ -967,6 +1022,74 @@ impl Value {
 }
 
 // ---------------- Unit tests (run via `cpc test`) ----------------
+
+// ── iteration over arrays and objects ──
+
+#[test]
+fn items_yields_every_array_element_in_order() {
+    guard let result::Result::Ok(doc) = Value::parse(text::from_str("[10, 20, 30]"))
+    else result::Result::Err(_e) { assert false; return; };
+    var sum: f64 = 0.0;
+    var seen: i32 = 0;
+    for v in doc.items() {
+        seen = seen +% 1;
+        match v.as_number() {
+            option::Option[f64]::Some(n) => { sum = sum + n; }
+            option::Option[f64]::None => { assert false; }
+        }
+    }
+    assert seen == 3;
+    assert sum == 60.0;
+}
+
+// The document is untouched by iteration — each yield is a CLONE, so the array
+// is still fully readable afterwards. That property is what distinguishes
+// `items` from `Vec::iter`'s bit-copy, and why this one needs no `Copy` bound.
+#[test]
+fn items_leaves_the_document_intact() {
+    guard let result::Result::Ok(doc) = Value::parse(text::from_str("[1, 2]"))
+    else result::Result::Err(_e) { assert false; return; };
+    for _v in doc.items() { }
+    assert doc.item_count() == (2 as usize);
+    match doc.item(0) {
+        option::Option[Value]::Some(first) => {
+            match first.as_number() {
+                option::Option[f64]::Some(n) => { assert n == 1.0; }
+                option::Option[f64]::None => { assert false; }
+            }
+        }
+        option::Option[Value]::None => { assert false; }
+    }
+}
+
+#[test]
+fn entries_yields_key_and_value_together() {
+    guard let result::Result::Ok(doc) = Value::parse(text::from_str("{\"a\": 1, \"b\": 2}"))
+    else result::Result::Err(_e) { assert false; return; };
+    var sum: f64 = 0.0;
+    var seen: i32 = 0;
+    for m in doc.entries() {
+        seen = seen +% 1;
+        assert m.key.view().count() == (1 as usize);
+        match m.value.as_number() {
+            option::Option[f64]::Some(n) => { sum = sum + n; }
+            option::Option[f64]::None => { assert false; }
+        }
+    }
+    assert seen == 2;
+    assert sum == 3.0;
+}
+
+// Iterating a scalar is an empty loop, not an error — matching `item_count`'s 0.
+#[test]
+fn iterating_a_non_container_yields_nothing() {
+    guard let result::Result::Ok(doc) = Value::parse(text::from_str("42"))
+    else result::Result::Err(_e) { assert false; return; };
+    var seen: i32 = 0;
+    for _v in doc.items() { seen = seen +% 1; }
+    for _m in doc.entries() { seen = seen +% 1; }
+    assert seen == 0;
+}
 
 fn parse_ok(source: str) -> Value {
     let r: result::Result[Value, ParseError] = Value::parse(source: source);

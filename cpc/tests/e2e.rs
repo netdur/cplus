@@ -27303,3 +27303,257 @@ fn an_async_assoc_fn_is_still_addressable() {
         .expect("run aaf");
     assert_eq!(run.code(), Some(42), "the coroutine must run through the pointer");
 }
+
+// bug 2026-09-01 (a-field-write-through-ref-is-invisible-to-the-next-if-condition):
+// codegen's per-expression field-read memo was cleared BEFORE an assignment or
+// call was lowered, so the reads made while lowering the right-hand side (or
+// the arguments) were cached AFTER the clear and survived the store (or call)
+// instruction. Any read that was not at a statement boundary then saw the old
+// value: an `if` in tail position, a block's tail value, an argument evaluated
+// after a sibling call had written the field. Every shape below fired one
+// step late, silently, and only through a `ref` binding — a plain local was
+// never affected, which is what made it read as a logic slip.
+#[test]
+fn a_field_written_through_ref_is_read_back_by_the_next_expression() {
+    let src = "static FIRED: i32 = 0;\n\
+        struct S { n: i32 }\n\
+        impl S {\n\
+            // (a) the reported shape: store, then an `if` in TAIL position.\n\
+            fn m(ref this) {\n\
+                this.n = this.n +% 1;\n\
+                if (this.n % (10 as i32)) == (0 as i32) { FIRED = FIRED + 1; }\n\
+            }\n\
+            fn bump_by(ref this, k: i32) -> i32 { this.n = this.n +% k; return this.n; }\n\
+        }\n\
+        // (b) free fn with a `ref` param, same shape.\n\
+        fn f(ref s: S) {\n\
+            s.n = s.n +% 1;\n\
+            if (s.n % (10 as i32)) == (0 as i32) { FIRED = FIRED + 1; }\n\
+        }\n\
+        // (c) a block's tail value after a store in the same block.\n\
+        fn tail(ref s: S) -> i32 { return { s.n = s.n +% 1; s.n }; }\n\
+        // (d) an argument read AFTER a sibling call — whose own argument\n\
+        //     cached the field first — has written it.\n\
+        fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+        fn after_call(ref s: S) -> i32 { return add(s.bump_by(s.n), s.n); }\n\
+        fn main() -> i32 {\n\
+            var a: S = S { n: 0 };\n\
+            var i: i32 = 0;\n\
+            while i < 21 { a.m(); i = i + 1; }\n\
+            var b: S = S { n: 0 };\n\
+            i = 0;\n\
+            while i < 21 { f(b); i = i + 1; }\n\
+            var c: S = S { n: 4 };\n\
+            let t: i32 = tail(c);\n\
+            var d: S = S { n: 4 };\n\
+            let ac: i32 = after_call(d);\n\
+            #println(FIRED);\n\
+            #println(t);\n\
+            #println(ac);\n\
+            return 0;\n\
+        }";
+    for release in [false, true] {
+        let (_dir, bin) = compile_program(src, release);
+        let run = Command::new(&bin).output().expect("run");
+        assert!(run.status.success());
+        // (a)+(b): n reaches 10 and 20 once each → 2 + 2. Before the fix each
+        // fired three times (at pre-increment 0, 10, 20).
+        // (c): 4 → 5, and the tail reads 5 (was 4).
+        // (d): bump_by(4) makes n 8 and returns 8; the second `s.n` is 8 → 16
+        //      (was 8 + the cached 4 = 12).
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "4\n5\n16\n",
+            "release={release}"
+        );
+    }
+}
+
+// bug 2026-09-06 (yield-does-not-transfer-ownership-so-consuming-a-loop-binding-
+// double-frees). Two owners of one yielded value: `yield` never disarmed the
+// generator's drop of the binding, and the `for` binding never dropped what it
+// received — reading worked by accident, moving the value out SIGTRAPed. Both
+// ends now agree: `yield` moves, the loop binding owns, and the drop counts are
+// exact. The second half of the report — the generator running one element
+// ahead of its consumer — is the laziness test below.
+#[test]
+fn a_yielded_value_has_exactly_one_owner() {
+    // Single-file mode has no stdlib: declare the two lang shapes a `gen fn`
+    // needs, as the other single-file tests do for `Option`.
+    let src = "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
+        #[lang(\"iterator\")] struct Iterator[T] { opaque _handle: *u8 }\n\
+        static DROPS: i32 = 0;\n\
+        static MADE: i32 = 0;\n\
+        extern fn malloc(n: usize) -> *u8;\n\
+        extern fn free(p: *u8);\n\
+        struct R { p: *u8, id: i32 }\n\
+        impl R {\n\
+            fn make(id: i32) -> R { MADE = MADE + 1; return R { p: { malloc(8 as usize) }, id: id }; }\n\
+            fn drop(ref this) { { free(this.p); } DROPS = DROPS + 1; return; }\n\
+            fn get(this) -> i32 { return this.id; }\n\
+        }\n\
+        gen fn three() -> R {\n\
+            var i: i32 = 0;\n\
+            while i < 3 { let r: R = R::make(i); yield r; i = i + 1; }\n\
+        }\n\
+        fn sink(take r: R) -> i32 { return r.get(); }\n\
+        // (a) read only: the loop binding drops each element itself.\n\
+        fn read_only() -> i32 { var n: i32 = 0; for x in three() { n = n + x.get(); } return n; }\n\
+        // (b) moved into an outer `var`: the outer owns the last one.\n\
+        fn move_out() -> i32 { var kept: R = R::make(99); for x in three() { kept = x; } return kept.get(); }\n\
+        // (c) passed to a `take` param: the callee drops it.\n\
+        fn take_each() -> i32 { var n: i32 = 0; for x in three() { n = n + sink(x); } return n; }\n\
+        // (d) returned from the enclosing fn on the first trip.\n\
+        fn return_first() -> R { for x in three() { return x; } return R::make(-1); }\n\
+        // (e) early exit: what was taken drops, the generator's frame drops nothing twice.\n\
+        fn break_early() -> i32 { var n: i32 = 0; for x in three() { n = n + x.get(); if n >= 1 { break; } } return n; }\n\
+        fn main() -> i32 {\n\
+            #println(read_only());\n\
+            #println(move_out());\n\
+            #println(take_each());\n\
+            let r: R = return_first();\n\
+            #println(r.get());\n\
+            #println(break_early());\n\
+            return 0;\n\
+        }";
+    let (_dir, bin) = compile_program(src, false);
+    let run = Command::new(&bin).output().expect("run");
+    assert!(
+        run.status.success(),
+        "exit {:?}, stderr: {}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    // Values: 0+1+2 = 3; the last moved-out element is 2; take sums to 3; the
+    // first returned is 0; break after the first non-zero sum: 0 then 1 → 1.
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n2\n3\n0\n1\n");
+
+    // The count half: every `R` that was made is dropped exactly once, and
+    // `main`'s own `r` is dropped at its exit like any local.
+    // (A `\`-continued string literal drops the next line's indentation, so
+    // the program text has none.)
+    let src2 = src.replace(
+        "#println(break_early());\nreturn 0;\n",
+        "#println(break_early());\n{ let _z: R = r; }\n#println(MADE); #println(DROPS);\nreturn 0;\n",
+    );
+    assert_ne!(src2, src, "the drop-count variant must differ from the value one");
+    let (_dir2, bin2) = compile_program(&src2, false);
+    let run2 = Command::new(&bin2).output().expect("run");
+    assert!(run2.status.success(), "stderr: {}", String::from_utf8_lossy(&run2.stderr));
+    let out = String::from_utf8_lossy(&run2.stdout);
+    let mut lines = out.lines().rev();
+    let drops = lines.next().unwrap();
+    let made = lines.next().unwrap();
+    // read_only 3, move_out 1+3, take_each 3, return_first 1 (+1 unreached
+    // fallback never made), break_early 2 (the generator made two before the
+    // break and no third — laziness), all dropped: MADE == DROPS.
+    assert_eq!(made, "13", "made: {out}");
+    assert_eq!(drops, made, "every made value dropped exactly once: {out}");
+}
+
+// The report's §2: `next()` read the promise and THEN resumed the generator to
+// compute the following element, so it always ran one element ahead — a drain
+// that removed what it handed out had already removed an element nobody would
+// receive when the loop broke. A generator now starts suspended before its
+// body and runs once per element asked for.
+#[test]
+fn a_generator_produces_only_what_its_consumer_asks_for() {
+    let src = "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
+        #[lang(\"iterator\")] struct Iterator[T] { opaque _handle: *u8 }\n\
+        static PRODUCED: i32 = 0;\n\
+        gen fn counted() -> i32 {\n\
+            var i: i32 = 0;\n\
+            while i < 5 { PRODUCED = PRODUCED +% 1; yield i; i = i +% 1; }\n\
+        }\n\
+        fn main() -> i32 {\n\
+            // Calling the gen fn runs nothing.\n\
+            var it: Iterator[i32] = counted();\n\
+            #println(PRODUCED);\n\
+            var seen: i32 = 0;\n\
+            for _v in counted() { seen = seen +% 1; if seen == 1 { break; } }\n\
+            #println(seen);\n\
+            #println(PRODUCED);\n\
+            // Explicit `next()`: one element per call, and None after the end.\n\
+            var got: i32 = 0;\n\
+            var n: i32 = 0;\n\
+            while n < 7 {\n\
+                match it.next() { Option[i32]::Some(v) => { got = got + v; } Option[i32]::None => { } }\n\
+                n = n + 1;\n\
+            }\n\
+            #println(got);\n\
+            #println(PRODUCED);\n\
+            return 0;\n\
+        }";
+    let (_dir, bin) = compile_program(src, false);
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "stderr: {}", String::from_utf8_lossy(&run.stderr));
+    // 0 produced at the call; the loop saw 1 and the generator made 1 (was 2);
+    // seven next() calls sum 0..5 = 10 and make five more (six total).
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "0\n1\n1\n10\n6\n");
+}
+
+// Negative: a yielded binding is moved, so using it afterwards is E0335 — the
+// same diagnostic a `let` move gives. Compiled clean before, and freed twice.
+#[test]
+fn using_a_binding_after_yielding_it_is_e0335() {
+    assert_compile_fails_with(
+        "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
+         #[lang(\"iterator\")] struct Iterator[T] { opaque _handle: *u8 }\n\
+         extern fn free(p: *u8);\n\
+         struct R { p: *u8 }\n\
+         impl R { fn drop(ref this) { { free(this.p); } return; } fn n(this) -> i32 { return 1; } }\n\
+         gen fn g() -> R {\n\
+             let r: R = R { p: 0 as *u8 };\n\
+             yield r;\n\
+             let _k: i32 = r.n();\n\
+         }\n\
+         fn main() -> i32 { for x in g() { let _k: i32 = x.n(); } return 0; }",
+        "E0335",
+    );
+}
+
+// A generator starts suspended AHEAD of its body, whichever of the three
+// emitters lowers it — free `gen fn`, struct `gen` method, enum `gen` method.
+// The enum one was missed on the first pass of the 2026-09-06 fix and
+// `json::Value::items` lost its first element: the frame had run to its first
+// `yield` at the call, so the consumer's first resume produced the second.
+// (Not a `gen_src` IR test: that harness skips the monomorphizer, so no
+// `Iterator[i32]` exists there.)
+#[test]
+fn every_generator_emitter_starts_suspended() {
+    let src = "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
+        #[lang(\"iterator\")] struct Iterator[T] { opaque _handle: *u8 }\n\
+        static SEEN: i32 = 0;\n\
+        gen fn free_gen() -> i32 { SEEN = SEEN + 1; yield 1; SEEN = SEEN + 1; yield 2; }\n\
+        struct S { n: i32 }\n\
+        impl S { gen fn items(this) -> i32 { SEEN = SEEN + 1; yield this.n; SEEN = SEEN + 1; yield this.n; } }\n\
+        enum E { A(i32), B }\n\
+        impl E { gen fn items(this) -> i32 { SEEN = SEEN + 1; yield 2; SEEN = SEEN + 1; yield 3; } }\n\
+        fn main() -> i32 {\n\
+            // Calling runs nothing; the first element arrives with the body\n\
+            // having run exactly once, and the first one is the FIRST one.\n\
+            var a: Iterator[i32] = free_gen();\n\
+            #println(SEEN);\n\
+            for x in a { #println(x); #println(SEEN); break; }\n\
+            let s: S = S { n: 7 };\n\
+            var b: Iterator[i32] = s.items();\n\
+            #println(SEEN);\n\
+            for x in b { #println(x); #println(SEEN); break; }\n\
+            let e: E = E::B;\n\
+            var c: Iterator[i32] = e.items();\n\
+            #println(SEEN);\n\
+            for x in c { #println(x); #println(SEEN); break; }\n\
+            return 0;\n\
+        }";
+    let (_dir, bin) = compile_program(src, false);
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "stderr: {}", String::from_utf8_lossy(&run.stderr));
+    // Per emitter: SEEN before iterating (unchanged), the first element, SEEN
+    // after one trip (one more). An eager emitter shows SEEN already bumped
+    // before the loop and, with the resume-then-read protocol, the SECOND
+    // element as the first.
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "0\n1\n1\n1\n7\n2\n2\n2\n3\n"
+    );
+}

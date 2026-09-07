@@ -115,6 +115,18 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let env: rt::Env = e::env();
     var tv: w::TextView = w::TextView::from_global(env, v);
 
+    // PICKING THE TEXT UP. A TextView answers `setTextIsSelectable(false)` and
+    // draws glyphs nothing can take — the same posture `labelWithString:` has
+    // on AppKit and a GtkLabel has on GTK, so a transcript, an error or an id
+    // was a picture of itself on every backend at once.
+    //
+    // Applied on every write, not only at create: on Android selectable text
+    // makes the view FOCUSABLE and it consumes the touch, so a row that wants
+    // its tap back has to be able to ask for it.
+    if (dirty & label::P_SELECTABLE) != (0 as u64) {
+        tv.set_text_is_selectable({ (*p).selectable });
+    }
+
     if (dirty & (label::P_TEXT | label::P_TEXT_FORMAT)) != (0 as u64) {
         var buf: [u8; 1024] = #zero::[[u8; 1024]]();
         let base: *u8 = { #addr_of(buf[0]) };

@@ -72,6 +72,7 @@ import "appkit/appkit_ext" as akx;
 import "./input" as input;
 import "./web" as webmod;
 import "./dialogs" as dialogs;
+import "./clipboard" as clipboard;
 import "./recycler" as recycler;import "facet/web" as web_ui;
 import "facet/hybrid_web" as hybrid_ui;
 import "./drawing" as drawing;
@@ -551,6 +552,56 @@ fn a_label_carries_its_text_through_create_and_apply() {
     }
     views::apply(0 as *u8, p);
     assert f.as_control().string_value().view() == "Saved";
+}
+
+#[test]
+fn a_label_is_selectable_only_when_it_says_so() {
+    // THE MEASURED HALF. `labelWithString:` hands back `selectable = NO`, so
+    // every label facet drew was a picture of text and Cmd-C had nothing to
+    // take out of a transcript, an error, a stack trace or an id.
+    //
+    // The negative first, because it is the one that has to keep holding: a
+    // selectable field EATS MOUSE-DOWN, so a label that opted itself in would
+    // stop passing the click through to the band it sits inside.
+    var plain: core::Node = label::label("Board", key: "quiet");
+    let pp: *core::Node = #addr_of(plain);
+    let pv: *u8 = views::create(0 as *u8, pp);
+    assert pv.is_not_null();
+    assert ak::TextField::from_raw(pv).is_selectable() == false;
+    views::view_release(pv);
+
+    // Stated at the label, honoured on the real field — and still a LABEL,
+    // not a text field, which is the other half of the posture.
+    var n: core::Node = label::label("cpc test", key: "cmd", selectable: true);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    let f: ak::TextField = ak::TextField::from_raw(v);
+    assert f.is_selectable() == true;
+    assert f.is_editable() == false;
+
+    // NOT CREATE-ONLY. A row that wants its click band back has to be able to
+    // ask, and a create-only read would never give it back — so the live path
+    // is asserted in both directions through one mounted view.
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match label::find("cmd", within: p) {
+        option::Option[label::Label]::Some(l) => { let _o: label::Label = l.set_selectable(false); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert f.is_selectable() == false;
+    // And the text it draws is untouched by the flip, which is why this is its
+    // own bit rather than a fold into the text word.
+    assert f.as_control().string_value().view() == "cpc test";
+
+    core::clear_dirty(p);
+    match label::find("cmd", within: p) {
+        option::Option[label::Label]::Some(l) => { let _n: label::Label = l.set_selectable(true); }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert f.is_selectable() == true;
 }
 
 #[test]
@@ -13491,4 +13542,57 @@ fn a_real_appkit_notification_reaches_a_subscriber() {
 
     ev::clear_app_events();
     backend::uninstall();
+}
+
+// ---- the clipboard ------------------------------------------------------------
+
+#[test]
+fn the_clipboard_round_trips_a_string_through_the_real_pasteboard() {
+    // THE GENERAL PASTEBOARD, not a named one, because that is the board the
+    // verb means and a test against a private board would prove a different
+    // function. It is shared with the machine — so this reads back only what it
+    // just wrote and never asserts on what was there before.
+    let sentinel: str = "cpc-clipboard-test-📋-café";
+    assert clipboard::copy_text(sentinel);
+    match clipboard::paste_text() {
+        option::Option[text::Text]::Some(got) => { assert got.view() == sentinel; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+
+    // NON-ASCII SURVIVES, which is the reason the sentinel carries an emoji and
+    // an accent: the UTI names UTF-8 and a backend that wrote the wrong type
+    // would still round-trip plain ASCII and lose exactly these.
+    assert clipboard::copy_text("plain");
+    match clipboard::paste_text() {
+        option::Option[text::Text]::Some(got) => { assert got.view() == "plain"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+}
+
+#[test]
+fn copying_an_empty_string_is_not_the_same_as_copying_nothing() {
+    // An empty string is a thing a person can put on the board, and it must
+    // come back as `Some("")` rather than `None` — the Option distinguishes an
+    // empty BOARD from an empty STRING, and folding them would make
+    // `paste_text` unable to say which happened.
+    assert clipboard::copy_text("");
+    match clipboard::paste_text() {
+        option::Option[text::Text]::Some(got) => { assert got.view() == ""; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_write_takes_ownership_so_the_previous_string_is_gone() {
+    // `clearContents` first is not optional — `setString:forType:` on a board
+    // that was not cleared is documented to fail — and the symptom of getting
+    // it wrong is a SECOND write that silently does nothing while the first
+    // string stays readable. Two writes and a read is the only shape that
+    // catches it.
+    assert clipboard::copy_text("first");
+    assert clipboard::copy_text("second");
+    match clipboard::paste_text() {
+        option::Option[text::Text]::Some(got) => { assert got.view() == "second"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
 }

@@ -309,6 +309,13 @@ export extern fn stdlib_reactor_waiter_count_v1() -> i32 {
     return waiter_count();
 }
 
+// Read by the `#block_on` drive loop (codegen) alongside `waiter_count`: the
+// loop resumes the outer frame itself ONLY when the reactor holds nothing at
+// all that could resume it — see the note on that loop.
+export extern fn stdlib_reactor_pending_count_v1() -> i32 {
+    return pending_count();
+}
+
 export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
     if poll_one_event() {
         return 1 as i32;
@@ -750,6 +757,118 @@ fn unregister_pending(hdl: *u8) {
         }
     }
     { *np_slot = n; }
+}
+
+// The mirror of `register_read` / `register_write` / `register_timer` for a
+// frame that is being DESTROYED rather than resumed. Every fd triple that
+// names `hdl` leaves the waiter arrays — and the kqueue, when no other waiter
+// shares its (fd, filter) — and the one-shot timer whose ident is `hdl` is
+// deleted from the kqueue and uncounted.
+//
+// Called by `Future::drop` before the frame is freed. A frame address is
+// reused by malloc, so an entry that outlives its frame is not a leak but a
+// resume of freed memory the next time the kernel reports the event. The
+// timer is the sharp one: its kqueue ident IS the frame address, and nothing
+// in this file could remove it (three tables had an unregister, this one had
+// none) — the stdlib suite itself did exactly this on every run and only
+// AddressSanitizer could see it
+// (bugs/a-destroyed-coroutine-frame-stays-registered-with-the-reactor).
+fn unregister_waiter(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let state: *u8 = { #reactor_get_state() };
+    if ptr_is_null(state) { return; }
+    let kqfd: i32 = { *((state + off_kqfd()) as *i32) };
+    let kb: *u8 = { *((state + off_kevent_buf()) as **u8) };
+    // fd waiters: swap-remove every triple naming `hdl`, re-checking the slot
+    // each time (it now holds the old last).
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    let fds: *i32 = { *((state + off_waiter_fds()) as **u8) as *i32 };
+    let hdls: **u8 = { *((state + off_waiter_hdls()) as **u8) as **u8 };
+    let flts: *i16 = { *((state + off_waiter_filters()) as **u8) as *i16 };
+    var n: i32 = { *nw_slot };
+    var i: i32 = 0;
+    while i < n {
+        let cur_hdl: *u8 = { *(hdls + (i as usize)) };
+        if cur_hdl == hdl {
+            let fd: i32 = { *(fds + (i as usize)) };
+            let flt: i16 = { *(flts + (i as usize)) };
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_fd: i32 = { *(fds + (last_i as usize)) };
+                let last_hdl: *u8 = { *(hdls + (last_i as usize)) };
+                let last_flt: i16 = { *(flts + (last_i as usize)) };
+                { *(fds + (i as usize)) = last_fd; }
+                { *(hdls + (i as usize)) = last_hdl; }
+                { *(flts + (i as usize)) = last_flt; }
+            }
+            n = last_i;
+            { *nw_slot = n; }
+            // The kernel filter is shared by every waiter on this (fd, filter);
+            // it goes only when the last of them has.
+            if !another_waiter_on(fds, flts, n, fd, flt) {
+                let _d: i32 = kevent_delete_fd(kqfd, kb, fd, flt);
+            }
+        } else {
+            i = i +% (1 as i32);
+        }
+    }
+    // The timer, if one is armed. Its ident is the handle, and the kernel's
+    // answer to the delete is the only record of whether it existed: 0 means
+    // it was there (and will now never fire), -1 (ENOENT) that it was not —
+    // already fired and consumed, or never registered.
+    if kevent_delete_timer(kqfd, kb, hdl) == (0 as i32) {
+        let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
+        let nt: i32 = { *nt_slot };
+        { *nt_slot = nt -% (1 as i32); }
+    }
+}
+
+// Is any of the first `n` waiter triples on (`fd`, `filter`)?
+fn another_waiter_on(fds: *i32, flts: *i16, n: i32, fd: i32, filter: i16) -> bool {
+    var j: i32 = 0;
+    while j < n {
+        let cur_fd: i32 = { *(fds + (j as usize)) };
+        if cur_fd == fd {
+            let cur_flt: i16 = { *(flts + (j as usize)) };
+            if cur_flt == filter { return true; }
+        }
+        j = j +% (1 as i32);
+    }
+    return false;
+}
+
+// Submit an EV_DELETE for (`fd`, `filter`). Returns kevent's result: 0 when
+// the filter existed and is gone, -1 when there was nothing to delete.
+fn kevent_delete_fd(kqfd: i32, kb: *u8, fd: i32, filter: i16) -> i32 {
+    let ident_slot: *u64 = { kb as *u64 };
+    { *ident_slot = fd as u64; }
+    return kevent_delete_rest(kqfd, kb, filter);
+}
+
+// Submit an EV_DELETE for the EVFILT_TIMER whose ident is the frame handle
+// (`register_timer` writes the pointer through the same `**u8` view).
+fn kevent_delete_timer(kqfd: i32, kb: *u8, hdl: *u8) -> i32 {
+    let ident_slot: **u8 = { kb as **u8 };
+    { *ident_slot = hdl; }
+    return kevent_delete_rest(kqfd, kb, evfilt_timer());
+}
+
+// The rest of a delete kevent, after the caller wrote ident @0: filter @8,
+// flags @10 = EV_DELETE (0x0002), the remaining fields zero. No eventlist, so
+// a failed delete is reported as -1 (errno ENOENT) rather than as an
+// EV_ERROR event.
+fn kevent_delete_rest(kqfd: i32, kb: *u8, filter: i16) -> i32 {
+    let filter_slot: *i16 = { (kb + (8 as usize)) as *i16 };
+    { *filter_slot = filter; }
+    let flags_slot: *u16 = { (kb + (10 as usize)) as *u16 };
+    { *flags_slot = 0x0002 as u16; }
+    let fflags_slot: *u32 = { (kb + (12 as usize)) as *u32 };
+    { *fflags_slot = 0 as u32; }
+    let data_slot: *i64 = { (kb + (16 as usize)) as *i64 };
+    { *data_slot = 0 as i64; }
+    let udata_slot: **u8 = { (kb + (24 as usize)) as **u8 };
+    { *udata_slot = 0 as *u8; }
+    return { kevent(kqfd, kb, 1 as i32, 0 as *u8, 0 as i32, 0 as *u8) };
 }
 
 // Push a coroutine handle to the spawn_local queue.

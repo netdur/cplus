@@ -232,6 +232,8 @@ assert x > 0;                                 // traps on false
 > for i in 0..3 { let v: i32 = a[i]; /* ... */ }
 > ```
 
+> **`for x in it` OWNS each element.** The binding drops at the end of every trip unless the body moves it out (`kept = x;`, `sink(x)`, `return x;`). A `gen fn` is lazy — calling it runs nothing; each trip (or `it.next()`) resumes it for exactly one element, so a `break` leaves the rest unproduced — and `yield x` MOVES `x` (a later use is E0335). `Vec::iter` yields Copy elements only; `Vec::drain` moves owned ones out in order.
+
 ### Structs + methods + receivers
 ```cplus
 struct Point { x: i32, y: i32 }
@@ -799,7 +801,7 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 |---|---|
 | `io` | `print` / `println` / `eprintln` over printf |
 | `result` / `option` | Generic `Result[T, E]` / `Option[T]` (variants + constructors only — no combinators) |
-| `vec` | `Vec[T]` growable vector (Drop on scope exit) |
+| `vec` | `Vec[T]` growable vector (Drop on scope exit); `iter()` reads (`T: Copy`), `drain()` moves every element out in order, lazily |
 | `hash_map` | `HashMap[K, V]` (K: Hash + Eq; primitives + str). `new` / `insert` / `get` / `contains_key` |
 | `slice` | checked sub-views over `T[]`: `sub` (→ `Option[T[]]`), `prefix`/`suffix`/`drop_first`/`drop_last`. Free fns (`slice::sub::[T](s, from, to)`) — method form waits on generic slice impls |
 | `flags` | `Flags` option-set over u64 bits: `none`/`of`/`from_bits`, `contains`/`intersects`/`with`/`without`/`toggled`, set algebra. Bit values from `const` masks or repr-enum discriminants (`Mode::Fast as u64`) |
@@ -813,7 +815,7 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `box` / `arc` / `rc` | Owned-on-heap: `Box` one owner, `Arc` atomic-refcount shared, `Rc` non-atomic shared. `Arc`/`Rc` add `downgrade() -> Weak[T]` for cycle-breaking back-pointers |
 | `channel` | typed MPMC message passing |
 | `future` / `executor` / `reactor` / `time` | `async fn`, `await`, the platform reactor (kqueue on Darwin, epoll on Linux/Android); `f.wait()` = drive from sync code, `future::wait_or_cancel(f)` = the cancellable drive, `f.cancel()`; `join_worker`/`receive_or_cancel` bridge (§10) |
-| `iterator` | `gen fn` + adapters: `it.filter(pred)` / `it.prefix(n)` methods, free `iterator::map::[T, U](it, f)`. The name is `prefix`, not `take` (`take` is the ownership keyword) |
+| `iterator` | `gen fn` + adapters: `it.filter(pred)` / `it.prefix(n)` methods, free `iterator::map::[T, U](it, f)`. The name is `prefix`, not `take` (`take` is the ownership keyword). Lazy: one element per `next()`; `yield x` moves `x` |
 | `cow` | clone-on-write `Text` (`CowStr`) |
 | `hash_set` / `string_set` | `HashSet[T: Copy]` / `StringSet` — plus `is_subset`/`is_superset`/`is_disjoint`/`union_with`/`intersection`/`difference` |
 | `string_map` | `StringMap[V]` — **owns** its string keys. `HashMap` needs `Copy` keys, so a `Text`-keyed map is this one |
