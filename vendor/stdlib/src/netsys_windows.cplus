@@ -18,11 +18,17 @@ extern fn free(p: *u8);
 
 // Winsock entry points (ws2_32, linked on Windows by the driver).
 extern fn WSAGetLastError() -> i32;
+extern fn WSASetLastError(err: i32);
 extern fn WSAStartup(version: u16, data: *u8) -> i32;
 extern fn recv(s: i32, buf: *u8, len: i32, flags: i32) -> i32;
 extern fn send(s: i32, buf: *u8, len: i32, flags: i32) -> i32;
 extern fn closesocket(s: i32) -> i32;
 extern fn ioctlsocket(s: i32, cmd: i32, argp: *u32) -> i32;
+
+// WSAETIMEDOUT — what a `SO_RCVTIMEO`/`SO_SNDTIMEO` expiry raises on Winsock,
+// where POSIX raises EAGAIN/EWOULDBLOCK. `recv_fd`/`send_fd` translate it to
+// `eagain` below so a caller reads one portable "wait expired" answer.
+fn wsaetimedout() -> i32 { return 10060 as i32; }
 
 // Current thread's last Winsock error (the errno analogue for sockets).
 fn errno() -> i32 {
@@ -87,12 +93,53 @@ fn set_nosigpipe(fd: i32) -> i32 {
 
 fn recv_fd(fd: i32, buf: *u8, count: usize) -> isize {
     let n: i32 = { recv(fd, buf, count as i32, 0 as i32) };
+    // A receive-timeout expiry is EAGAIN everywhere else; make it so here too,
+    // so `netsys::errno() == netsys::eagain()` is the one portable expiry test.
+    if n < (0 as i32) && { WSAGetLastError() } == wsaetimedout() {
+        { WSASetLastError(eagain()); }
+    }
     return n as isize;
 }
 
 fn send_fd(fd: i32, buf: *u8, count: usize) -> isize {
     let n: i32 = { send(fd, buf, count as i32, 0 as i32) };
+    if n < (0 as i32) && { WSAGetLastError() } == wsaetimedout() {
+        { WSASetLastError(eagain()); }
+    }
     return n as isize;
+}
+
+// ---- cooperative cancellation of blocking socket I/O --------------------------
+//
+// Windows has no signal that breaks a thread out of a blocking Winsock call
+// (see thread_sys_windows), so `net.cplus` makes a socket NON-BLOCKING here and
+// then waits for readiness in bounded slices — each slice short enough that the
+// drive loop wakes to re-check `thread::cancelled()`. POSIX keeps its blocking
+// sockets and signal kick; there `make_interruptible` is a no-op and `wait_ready`
+// is never reached.
+
+// Flip the fd non-blocking so a would-block call returns EWOULDBLOCK instead of
+// parking uninterruptibly. Returns 0 on success.
+fn make_interruptible(fd: i32) -> i32 { return set_nonblocking(fd); }
+
+fn pollrdnorm() -> i16 { return 0x0100 as i16; }
+fn pollwrnorm() -> i16 { return 0x0010 as i16; }
+
+// Wait up to `timeout_ms` for `fd` to become readable (or writable, if
+// `for_write`). Returns 1 ready, 0 timed out, -1 error. WSAPOLLFD is 16 bytes:
+// the SOCKET at offset 0 (8 bytes), events at 8 (i16), revents at 10 (i16).
+fn wait_ready(fd: i32, for_write: bool, timeout_ms: i32) -> i32 {
+    let pfd: *u8 = { malloc(16 as usize) };
+    if pfd.is_null() { return 0 - 1; }
+    { *(pfd as *u64) = (fd as u32) as u64; }
+    let ev: i16 = if for_write { pollwrnorm() } else { pollrdnorm() };
+    { *((pfd + (8 as usize)) as *i16) = ev; }
+    { *((pfd + (10 as usize)) as *i16) = 0 as i16; }
+    let r: i32 = { WSAPoll(pfd, 1 as u32, timeout_ms) };
+    { free(pfd); }
+    if r < (0 as i32) { return 0 - 1; }
+    if r == (0 as i32) { return 0 as i32; }
+    return 1 as i32;
 }
 
 fn close_fd(fd: i32) -> i32 {
@@ -174,6 +221,22 @@ fn _read_byte(p: *u8, at: usize) -> u8 {
 }
 
 // 0 on success with both descriptors written, -1 on any failure.
+// SO_LINGER = 0x0080. Set {l_onoff=1, l_linger=0} so `closesocket` sends a RST
+// instead of a graceful FIN: a peer that has closed is then reported to the
+// other end on its very NEXT send (WSAECONNRESET) rather than the first send
+// buffering and only the second failing. A POSIX AF_UNIX `socketpair` reports a
+// departed peer on the first write; this is how the loopback-TCP stand-in gets
+// the same answer for `a_write_to_a_departed_peer_reports...`.
+fn _set_linger_zero(fd: i32) {
+    let opt: *u8 = { malloc(4 as usize) };
+    if opt.is_null() { return; }
+    { opt[0 as usize] = 1 as u8; opt[1 as usize] = 0 as u8;
+      opt[2 as usize] = 0 as u8; opt[3 as usize] = 0 as u8; }
+    let _r: i32 = { setsockopt(fd, sol_socket(), 0x0080 as i32, opt, 4 as i32) };
+    { free(opt); }
+    return;
+}
+
 fn socket_pair(fds: *i32) -> i32 {
     let _s: i32 = startup();
     let listener: i32 = { socket(_af_inet(), _sock_stream(), 0 as i32) };
@@ -214,6 +277,10 @@ fn socket_pair(fds: *i32) -> i32 {
     free(sa);
     let _l: i32 = { closesocket(listener) };
     if server < (0 as i32) { let _a: i32 = { closesocket(client) }; return 0 - 1; }
+
+    // Hard-close both ends so a departed peer is reported on the next send.
+    { _set_linger_zero(client) };
+    { _set_linger_zero(server) };
 
     { *fds = client };
     { *({ ({ #addr(fds) } +% (4 as usize)) as *i32 }) = server };

@@ -136,6 +136,17 @@ fn close_fd(fd: i32) -> i32 {
     return { close(fd) };
 }
 
+// Cooperative-cancellation seam for blocking socket I/O. A POSIX blocking call
+// is broken out of by the signal kick (`thread_sys::interrupt`), so nothing is
+// needed here: `make_interruptible` leaves the fd blocking and `wait_ready` is
+// never reached (a blocking call does not return EAGAIN). Both exist so
+// `net.cplus` can stay platform-neutral; the Windows netsys does the real work.
+fn make_interruptible(fd: i32) -> i32 { let _f: i32 = fd; return 0 as i32; }
+fn wait_ready(fd: i32, for_write: bool, timeout_ms: i32) -> i32 {
+    let _f: i32 = fd; let _w: bool = for_write; let _t: i32 = timeout_ms;
+    return 0 as i32;
+}
+
 // F_GETFL / F_SETFL are 3 / 4 on both macOS and Linux.
 fn f_getfl() -> i32 { return 3 as i32; }
 fn f_setfl() -> i32 { return 4 as i32; }

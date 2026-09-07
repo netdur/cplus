@@ -276,6 +276,14 @@ impl TcpListener {
         // + caller-side parsing). Pass NULL pointers so accept skips it.
         let null_ptr: *u8 = { 0 as *u8 };
         let null_len: *u32 = { 0 as *u32 };
+        // COOPERATIVE CANCELLATION. A cancel `kick` cannot break a thread out of
+        // a blocking Winsock `accept` (thread_sys_windows), so on Windows the
+        // listener is flipped non-blocking and readiness is awaited in bounded
+        // slices — the loop wakes every ~50 ms to re-check `thread::cancelled()`
+        // via `park_begin`. On POSIX `make_interruptible` is a no-op: the socket
+        // stays blocking, the signal kick surfaces as EINTR, and the EAGAIN arm
+        // (hence `wait_ready`) is never reached.
+        let _mi: i32 = netsys::make_interruptible(this._fd);
         loop {
             if thread::park_begin() {
                 { thread::park_end(); }
@@ -284,7 +292,14 @@ impl TcpListener {
             let cfd: i32 = { accept(this._fd, null_ptr, null_len) };
             { thread::park_end(); }
             if cfd < (0 as i32) {
-                if netsys::errno() == netsys::eintr() { continue; }
+                let e: i32 = netsys::errno();
+                if e == netsys::eintr() { continue; }
+                if e == netsys::eagain() {
+                    // No connection pending. Wait a bounded slice for one, then
+                    // loop so cancellation is observed within the slice.
+                    let _r: i32 = netsys::wait_ready(this._fd, false, 50 as i32);
+                    continue;
+                }
                 return result::io_err::[TcpStream](result::IoError::Other);
             }
             // An accepted client that disconnects mid-response must not be
