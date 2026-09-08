@@ -406,6 +406,20 @@ fn g_jpeg_container() -> Guid {
               0xa0 as u8, 0xc0 as u8, 0x17 as u8, 0x58 as u8,
               0x02 as u8, 0x8e as u8, 0x10 as u8, 0x57 as u8);
 }
+// {c6e13370-30ac-11d0-a18c-00a0c9118956} IID_IAMCameraControl
+fn g_iid_camera_control() -> Guid {
+    return mk(0xc6e13370 as u32, 0x30ac as u16, 0x11d0 as u16,
+              0xa1 as u8, 0x8c as u8, 0x00 as u8, 0xa0 as u8,
+              0xc9 as u8, 0x11 as u8, 0x89 as u8, 0x56 as u8);
+}
+// {c6e13360-30ac-11d0-a18c-00a0c9118956} IID_IAMVideoProcAmp — one digit from
+// the interface above, which is exactly why both are pinned by a test.
+fn g_iid_video_proc_amp() -> Guid {
+    return mk(0xc6e13360 as u32, 0x30ac as u16, 0x11d0 as u16,
+              0xa1 as u8, 0x8c as u8, 0x00 as u8, 0xa0 as u8,
+              0xc9 as u8, 0x11 as u8, 0x89 as u8, 0x56 as u8);
+}
+
 // {6fddc324-4e03-4bfe-b185-3d77768dc90c} GUID_WICPixelFormat24bppBGR
 fn g_pf_24bpp_bgr() -> Guid {
     return mk(0x6fddc324 as u32, 0x4e03 as u16, 0x4bfe as u16,
@@ -449,6 +463,12 @@ struct Session {
     on_photo: fn(*u8, usize, *u8),
     opaque photo_ctx: *u8,
     want_photo: bool,
+    // The two device-control interfaces, QueryInterface'd off the media source
+    // at open and released at close. Either may be absent, and a device that
+    // answers one still refuses most of its properties — which is why nothing
+    // below assumes support, it asks.
+    camctl: usize,
+    procamp: usize,
 }
 
 static SESSION: Session = #zero::[Session]();
@@ -538,6 +558,156 @@ fn device_name(dev: *u8) -> text::Text {
     let out: text::Text = text::from_str(view);
     free(buf);
     return out;
+}
+
+// ---- the device controls ------------------------------------------------------------
+//
+// `IAMCameraControl` and `IAMVideoProcAmp` are DirectShow interfaces that a
+// Media Foundation capture source still answers `QueryInterface` for, and they
+// are the only road to exposure, white balance, focus and zoom on this platform.
+// Both derive straight from IUnknown and have the SAME three methods in the same
+// order, which is why one set of helpers drives both: `GetRange` 3, `Set` 4,
+// `Get` 5. Measured, like everything else here.
+//
+// NOTHING BELOW ASSUMES A PROPERTY EXISTS. `GetRange` answering
+// `ERROR_NOT_SUPPORTED` is the normal case — the camera this was written
+// against supports Exposure and WhiteBalance and refuses Pan, Tilt, Roll, Zoom,
+// Iris and Focus — so every verb asks first and reports the device's own answer.
+// That is the difference between a refusal that is true and one that is merely
+// written down.
+
+fn prop_zoom() -> i32 { return 3 as i32; }
+fn prop_exposure() -> i32 { return 4 as i32; }
+fn prop_focus() -> i32 { return 6 as i32; }
+fn prop_white_balance() -> i32 { return 7 as i32; }
+
+// The per-property capability bits, which are also the flag values `Set` takes.
+fn flag_auto() -> i32 { return 1 as i32; }
+fn flag_manual() -> i32 { return 2 as i32; }
+
+// `Mode` as the facade defines it: Auto 0, Once 1, Locked 2.
+fn mode_auto() -> i32 { return 0 as i32; }
+fn mode_once() -> i32 { return 1 as i32; }
+
+fn call_qi(obj: *u8, iid: *u8, out: *u8) -> i32 {
+    let f: fn(*u8, *u8, *u8) -> i32 = { slot(obj, 0 as usize) as fn(*u8, *u8, *u8) -> i32 };
+    return { f(obj, iid, out) };
+}
+
+fn ctl_range(obj: *u8, prop: i32, lo: *i32, hi: *i32, step: *i32,
+             def: *i32, caps: *i32) -> i32 {
+    let f: fn(*u8, i32, *i32, *i32, *i32, *i32, *i32) -> i32 =
+        { slot(obj, 3 as usize) as fn(*u8, i32, *i32, *i32, *i32, *i32, *i32) -> i32 };
+    return { f(obj, prop, lo, hi, step, def, caps) };
+}
+
+fn ctl_set(obj: *u8, prop: i32, value: i32, flags: i32) -> i32 {
+    let f: fn(*u8, i32, i32, i32) -> i32 =
+        { slot(obj, 4 as usize) as fn(*u8, i32, i32, i32) -> i32 };
+    return { f(obj, prop, value, flags) };
+}
+
+fn ctl_get(obj: *u8, prop: i32, value: *i32, flags: *i32) -> i32 {
+    let f: fn(*u8, i32, *i32, *i32) -> i32 =
+        { slot(obj, 5 as usize) as fn(*u8, i32, *i32, *i32) -> i32 };
+    return { f(obj, prop, value, flags) };
+}
+
+// What a property can do, or -1 when the device does not have it. A null
+// interface answers -1 too, so callers need only the one check.
+fn ctl_caps(obj: *u8, prop: i32) -> i32 {
+    if obj == (0 as *u8) { return 0 -% (1 as i32); }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    var step: i32 = 0 as i32;
+    var def: i32 = 0 as i32;
+    var caps: i32 = 0 as i32;
+    if ctl_range(obj, prop, #addr_of(lo), #addr_of(hi), #addr_of(step),
+                 #addr_of(def), #addr_of(caps)) != ok() {
+        return 0 -% (1 as i32);
+    }
+    return caps;
+}
+
+// A property's range, or false when it has none.
+fn ctl_bounds(obj: *u8, prop: i32, out_lo: *i32, out_hi: *i32) -> bool {
+    { *out_lo = 0 as i32 };
+    { *out_hi = 0 as i32 };
+    if obj == (0 as *u8) { return false; }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    var step: i32 = 0 as i32;
+    var def: i32 = 0 as i32;
+    var caps: i32 = 0 as i32;
+    if ctl_range(obj, prop, #addr_of(lo), #addr_of(hi), #addr_of(step),
+                 #addr_of(def), #addr_of(caps)) != ok() { return false; }
+    { *out_lo = lo };
+    { *out_hi = hi };
+    return true;
+}
+
+// Put one property into Auto or Manual, holding whatever value it currently has.
+//
+// `Mode::Locked` means "stop adjusting and hold what is current", which is
+// exactly Manual with the value read back first — the read matters, because
+// Manual with a stale value would jump the image rather than freeze it.
+//
+// `Mode::Once` IS REFUSED. It means "adjust once, then hold", and neither
+// interface has a one-shot: implementing it would be switching to Auto, waiting
+// some invented number of milliseconds, and latching whatever happened to be
+// there. Answering `Locked` to a request for `Once` is the quiet substitution
+// this package exists to avoid, so the honest answer is that it cannot.
+fn apply_mode(obj: *u8, prop: i32, mode: i32) -> i32 {
+    let caps: i32 = ctl_caps(obj, prop);
+    if caps < (0 as i32) { return camera::Outcome::Unsupported.to_code(); }
+    if mode == mode_once() { return camera::Outcome::Unsupported.to_code(); }
+
+    var want: i32 = flag_manual();
+    if mode == mode_auto() { want = flag_auto(); }
+    // A PROPERTY CAN BE MANUAL-ONLY — most of this camera's are — and asking a
+    // manual-only control to adjust itself is not something it can do. `caps`
+    // is a bitmask of the same two flag values `Set` takes.
+    if (caps & want) == (0 as i32) { return camera::Outcome::Unsupported.to_code(); }
+
+    var cur: i32 = 0 as i32;
+    var fl: i32 = 0 as i32;
+    if ctl_get(obj, prop, #addr_of(cur), #addr_of(fl)) != ok() {
+        return camera::Outcome::Failed.to_code();
+    }
+    if ctl_set(obj, prop, cur, want) != ok() {
+        return camera::Outcome::Failed.to_code();
+    }
+    return camera::Outcome::Ok.to_code();
+}
+
+// Ask the media source for both control interfaces. Neither is required: a
+// source that refuses both still streams, and every verb above already answers
+// for a null interface.
+fn bind_controls(source: *u8) {
+    SESSION.camctl = 0 as usize;
+    SESSION.procamp = 0 as usize;
+    if source == (0 as *u8) { return; }
+    var iid_cc: Guid = g_iid_camera_control();
+    var cc: *u8 = 0 as *u8;
+    if call_qi(source, { #addr_of(iid_cc) as *u8 }, { #addr_of(cc) as *u8 }) == ok() {
+        SESSION.camctl = { #addr(cc) };
+    }
+    var iid_amp: Guid = g_iid_video_proc_amp();
+    var amp: *u8 = 0 as *u8;
+    if call_qi(source, { #addr_of(iid_amp) as *u8 }, { #addr_of(amp) as *u8 }) == ok() {
+        SESSION.procamp = { #addr(amp) };
+    }
+    return;
+}
+
+fn release_controls() {
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    let amp: *u8 = { SESSION.procamp as *u8 };
+    if cc != (0 as *u8) { let _a: u32 = call_release(cc); }
+    if amp != (0 as *u8) { let _b: u32 = call_release(amp); }
+    SESSION.camctl = 0 as usize;
+    SESSION.procamp = 0 as usize;
+    return;
 }
 
 // ---- the seam ---------------------------------------------------------------------
@@ -680,7 +850,9 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
     SESSION.name = name;
     SESSION.streaming = false;
     SESSION.stopped = true;
+    SESSION.want_photo = false;
     read_format(reader);
+    bind_controls(source);
 
     release_devices(devices, count);
     return { #addr_of(SESSION) as *u8 };
@@ -1191,6 +1363,8 @@ export extern fn _c_stop_frames(h: *u8) -> i32 {
 export extern fn _c_close(h: *u8) {
     if !is_live(h) { return; }
     stop_pump();
+    // The control interfaces are views onto the source, so they go first.
+    release_controls();
     let reader: *u8 = { SESSION.reader as *u8 };
     let source: *u8 = { SESSION.source as *u8 };
     if reader != (0 as *u8) { let _r: u32 = call_release(reader); }
@@ -1212,22 +1386,88 @@ export extern fn _c_close(h: *u8) {
 // from "it did" — a `set_torch` that reported success and did nothing is
 // exactly the silent failure the whole package is written against.
 
-// ZOOM, TORCH, FOCUS, EXPOSURE, WHITE BALANCE. Media Foundation exposes these
-// through `IAMCameraControl` and `IAMVideoProcAmp` on the capture source, in
-// DEVICE-DEFINED units with per-device ranges that have to be queried before a
-// value means anything — and most webcams implement almost none of them. They
-// are a pass of their own, and refusing is the honest answer until then.
-//
-// A LAPTOP WEBCAM HAS NO TORCH at all, which is why `_c_has_torch` is a flat
-// no rather than a query: there is no lamp on the far side of the lens.
-export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 { return camera::Outcome::Unsupported.to_code(); }
-export extern fn _c_zoom(h: *u8) -> f64 { return 1.0; }
-export extern fn _c_max_zoom(h: *u8) -> f64 { return 1.0; }
+// A LAPTOP WEBCAM HAS NO TORCH, and `_c_has_torch` is a flat no rather than a
+// query because there is nothing on this road to query: neither
+// `IAMCameraControl` nor `IAMVideoProcAmp` has a lamp property. A camera that
+// does have one exposes it through `Windows.Devices.Lights.Lamp` or a
+// KSPROPERTY extended-control set, both of which are a different pipeline.
 export extern fn _c_set_torch(h: *u8, on: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
 export extern fn _c_has_torch(h: *u8) -> i32 { return 0 as i32; }
-export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
-export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
-export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
+
+// FOCUS, EXPOSURE and WHITE BALANCE are modes, and both interfaces express a
+// mode the same way: a per-property flag that is Auto or Manual. So all three
+// are `apply_mode` against a different property on a different interface, and
+// each ASKS the device rather than assuming — `set_focus` refuses on the camera
+// this was written against and would work unchanged on one with a focus motor.
+export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    return apply_mode({ SESSION.camctl as *u8 }, prop_focus(), mode);
+}
+
+export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    return apply_mode({ SESSION.camctl as *u8 }, prop_exposure(), mode);
+}
+
+export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    return apply_mode({ SESSION.procamp as *u8 }, prop_white_balance(), mode);
+}
+
+// ZOOM IS A NUMBER, not a mode, and the number is a focal length. DirectShow
+// specifies the Zoom property in MILLIMETRES, which is what makes a ratio out of
+// it meaningful: the range's maximum over its minimum is the real optical zoom
+// the lens can reach, and `min * factor` is the focal length for a given factor.
+// That is the whole mapping, and it is the only defensible one — a device-unit
+// scale invented here would mean nothing on the next camera.
+//
+// THIS DEVICE HAS NO ZOOM, so what is exercised here is the refusal: all three
+// verbs query and answer 1.0 or `Unsupported` because `GetRange` says the
+// property is not supported, rather than because the answer was written in.
+export extern fn _c_max_zoom(h: *u8) -> f64 {
+    if !is_live(h) { return 1.0; }
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !ctl_bounds(cc, prop_zoom(), #addr_of(lo), #addr_of(hi)) { return 1.0; }
+    if lo <= (0 as i32) { return 1.0; }
+    return (hi as f64) / (lo as f64);
+}
+
+export extern fn _c_zoom(h: *u8) -> f64 {
+    if !is_live(h) { return 1.0; }
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !ctl_bounds(cc, prop_zoom(), #addr_of(lo), #addr_of(hi)) { return 1.0; }
+    if lo <= (0 as i32) { return 1.0; }
+    var cur: i32 = 0 as i32;
+    var fl: i32 = 0 as i32;
+    if ctl_get(cc, prop_zoom(), #addr_of(cur), #addr_of(fl)) != ok() { return 1.0; }
+    return (cur as f64) / (lo as f64);
+}
+
+export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !ctl_bounds(cc, prop_zoom(), #addr_of(lo), #addr_of(hi)) {
+        return camera::Outcome::Unsupported.to_code();
+    }
+    if lo <= (0 as i32) { return camera::Outcome::Unsupported.to_code(); }
+    if factor < 1.0 { return camera::Outcome::Failed.to_code(); }
+    // CLAMPED rather than refused above the maximum: a caller asking for more
+    // zoom than the lens has wants the most it can give, and `zoom()` reports
+    // what it actually got.
+    var want: i32 = ((lo as f64) * factor) as i32;
+    if want > hi { want = hi; }
+    if want < lo { want = lo; }
+    if ctl_set(cc, prop_zoom(), want, flag_manual()) != ok() {
+        return camera::Outcome::Failed.to_code();
+    }
+    return camera::Outcome::Ok.to_code();
+}
 
 // SWITCHING BY FACING NEEDS A FACING, and Windows has none — see
 // `_c_actual_facing`. An application that wants a different camera on this
@@ -1268,6 +1508,15 @@ fn the_guids_carry_the_values_they_are_written_as() {
     assert g_frame_size().a == (0x1652c33d as u32);
     assert g_frame_rate().a == (0xc459a2e8 as u32);
     assert g_subtype().a == (0xf7e34c9a as u32);
+    // WIC's, and the two control interfaces — whose IIDs differ by ONE DIGIT
+    // (…3370 against …3360), so a transcription slip there would silently hand
+    // camera control to the video-proc interface and set the wrong property.
+    assert g_wic_factory().a == (0xcacaf262 as u32);
+    assert g_iid_wic_factory().a == (0xec5ec8a9 as u32);
+    assert g_jpeg_container().a == (0x19e4a5aa as u32);
+    assert g_pf_24bpp_bgr().a == (0x6fddc324 as u32);
+    assert g_iid_camera_control().a == (0xc6e13370 as u32);
+    assert g_iid_video_proc_amp().a == (0xc6e13360 as u32);
     // And the trailing bytes, which are literal rather than byte-swapped.
     assert g_vidcap().d[7] == (0x0f as u8);
     assert g_source_type().d[7] == (0xd3 as u8);
@@ -1410,22 +1659,125 @@ fn frames_arrive_from_a_real_lens() {
 }
 
 #[test]
-fn the_device_controls_refuse_rather_than_lying() {
-    // Every one of these reports `Unsupported`, and NEVER `Ok` — a `set_torch`
-    // that answered success and did nothing is the exact silent failure the
-    // facade's own notes are written against.
+fn the_controls_answer_for_a_closed_camera_without_touching_anything() {
+    // WITH NO SESSION there is no interface to ask, and the answer must still
+    // be a defined one rather than a call through a null vtable.
     let h: *u8 = 0 as *u8;
-    assert { _c_set_zoom(h, 2.0) } == camera::Outcome::Unsupported.to_code();
-    assert { _c_set_torch(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
-    assert { _c_set_focus(h, 0 as i32) } == camera::Outcome::Unsupported.to_code();
-    assert { _c_set_exposure(h, 0 as i32) } == camera::Outcome::Unsupported.to_code();
-    assert { _c_set_white_balance(h, 0 as i32) } == camera::Outcome::Unsupported.to_code();
-    assert { _c_switch_to(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
-    // A laptop lens has no lamp behind it.
-    assert { _c_has_torch(h) } == (0 as i32);
-    // And zoom reads as 1.0 rather than 0, which would read as "no image".
+    assert { _c_set_zoom(h, 2.0) } == camera::Outcome::Failed.to_code();
+    assert { _c_set_focus(h, 0 as i32) } == camera::Outcome::Failed.to_code();
+    assert { _c_set_exposure(h, 0 as i32) } == camera::Outcome::Failed.to_code();
+    assert { _c_set_white_balance(h, 0 as i32) } == camera::Outcome::Failed.to_code();
+    // Zoom reads as 1.0 rather than 0, which would read as "no image".
     assert { _c_zoom(h) } == (1.0);
     assert { _c_max_zoom(h) } == (1.0);
+    // A laptop lens has no lamp behind it, and there is nothing to query.
+    assert { _c_set_torch(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _c_has_torch(h) } == (0 as i32);
+    // Windows has no facing, so switching by one cannot mean anything.
+    assert { _c_switch_to(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+}
+
+#[test]
+fn exposure_and_white_balance_really_change_the_devices_mode() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+
+    // THE POINT OF THIS TEST is that `Ok` is earned. Each mode is set and then
+    // READ BACK off the device, so an `Ok` that did nothing fails here.
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    let amp: *u8 = { SESSION.procamp as *u8 };
+
+    if ctl_caps(cc, prop_exposure()) >= (0 as i32) {
+        let caps: i32 = ctl_caps(cc, prop_exposure());
+        if (caps & flag_manual()) != (0 as i32) {
+            assert { _c_set_exposure(h, 2 as i32) } == camera::Outcome::Ok.to_code();
+            var v: i32 = 0 as i32;
+            var f: i32 = 0 as i32;
+            assert ctl_get(cc, prop_exposure(), #addr_of(v), #addr_of(f)) == ok();
+            assert f == flag_manual();
+        }
+        if (caps & flag_auto()) != (0 as i32) {
+            assert { _c_set_exposure(h, 0 as i32) } == camera::Outcome::Ok.to_code();
+            var v2: i32 = 0 as i32;
+            var f2: i32 = 0 as i32;
+            assert ctl_get(cc, prop_exposure(), #addr_of(v2), #addr_of(f2)) == ok();
+            assert f2 == flag_auto();
+        }
+    }
+
+    if ctl_caps(amp, prop_white_balance()) >= (0 as i32) {
+        let caps: i32 = ctl_caps(amp, prop_white_balance());
+        if (caps & flag_manual()) != (0 as i32) {
+            assert { _c_set_white_balance(h, 2 as i32) } == camera::Outcome::Ok.to_code();
+            var v: i32 = 0 as i32;
+            var f: i32 = 0 as i32;
+            assert ctl_get(amp, prop_white_balance(), #addr_of(v), #addr_of(f)) == ok();
+            assert f == flag_manual();
+        }
+        if (caps & flag_auto()) != (0 as i32) {
+            // And put it back, so a suite run does not leave the camera latched
+            // to whatever the last assertion wanted.
+            assert { _c_set_white_balance(h, 0 as i32) } == camera::Outcome::Ok.to_code();
+            var v2: i32 = 0 as i32;
+            var f2: i32 = 0 as i32;
+            assert ctl_get(amp, prop_white_balance(), #addr_of(v2), #addr_of(f2)) == ok();
+            assert f2 == flag_auto();
+        }
+    }
+
+    { _c_close(h) };
+}
+
+#[test]
+fn a_mode_the_device_does_not_have_is_refused_from_a_real_query() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+
+    // `Once` MEANS "adjust once, then hold", and neither interface has a
+    // one-shot. It is refused for every property, including the two this
+    // device does support — which is what proves the refusal is about the
+    // mode and not about the property being missing.
+    assert { _c_set_exposure(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _c_set_white_balance(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _c_set_focus(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+
+    // And a property the device really lacks refuses because `GetRange` said so.
+    // On a camera WITH a focus motor this same code would answer Ok, which is
+    // the difference between asking and assuming.
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    if ctl_caps(cc, prop_focus()) < (0 as i32) {
+        assert { _c_set_focus(h, 0 as i32) } == camera::Outcome::Unsupported.to_code();
+    }
+    if ctl_caps(cc, prop_zoom()) < (0 as i32) {
+        assert { _c_set_zoom(h, 2.0) } == camera::Outcome::Unsupported.to_code();
+        // No zoom means exactly 1x, both current and maximum.
+        assert { _c_max_zoom(h) } == (1.0);
+        assert { _c_zoom(h) } == (1.0);
+    }
+
+    { _c_close(h) };
+}
+
+#[test]
+fn the_control_interfaces_are_released_with_the_session() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    // A REAL CAPTURE SOURCE ANSWERS AT LEAST ONE of the two, and asserting it
+    // is what keeps the two tests above from passing vacuously: with both
+    // interfaces null every `caps` guard in them is false and nothing is
+    // exercised at all.
+    assert SESSION.camctl != (0 as usize) || SESSION.procamp != (0 as usize);
+    // Whatever was taken is given back, because these are views onto the media
+    // source and outliving it is a use-after-free.
+    { _c_close(h) };
+    assert SESSION.camctl == (0 as usize);
+    assert SESSION.procamp == (0 as usize);
 }
 
 static CAPTURED: i32 = 0 as i32;
