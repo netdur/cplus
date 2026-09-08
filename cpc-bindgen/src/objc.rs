@@ -5522,7 +5522,12 @@ mod tests {
         assert!(out.contains("fn use_buffer(this, buffer: Buffer)"), "typed arg:\n{out}");
         assert!(out.contains("buffer.raw()"), "arg unwrapped via .raw():\n{out}");
         // Foreign type (no local def) stays raw.
-        assert!(out.contains("fn source_u_r_l(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
+        // `source_url`, not `source_u_r_l`: `snake` keeps ACRONYMS WHOLE and has
+        // since it was documented (`compileModelAtURL -> compile_model_at_url`).
+        // This expectation was written against the naive rule and outlived it —
+        // the only red check in the tree, and invisible to
+        // `cargo test -p cplus-core`, which is the suite CLAUDE.md names.
+        assert!(out.contains("fn source_url(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
         // Pointer-to-pointer out-param stays raw.
         assert!(out.contains("error: *u8"), "NSError** out-param stays raw:\n{out}");
     }
