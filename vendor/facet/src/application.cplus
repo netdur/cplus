@@ -586,7 +586,7 @@ fn reset_default_for_tests() {
 
 // ---- windows ----------------------------------------------------------------
 
-// Application.OpenWindow — a ledger row `maui-map-draft.md:1089` DROPPED as
+// Application.OpenWindow — a ledger row `ledger-map-draft.md:1089` DROPPED as
 // "engine internals" and that reality put back by hand. It is the window
 // tier's constructor; see plans/nav-windows.md §1 for why the whole tier's
 // verbs went that way and the reads did not.
@@ -722,7 +722,7 @@ fn close_window_keyed(key: str) -> bool {
     return true;
 }
 
-// Application.ActivateWindow — `maui-map-draft.md:1080`, DROPPED as "engine
+// Application.ActivateWindow — `ledger-map-draft.md:1080`, DROPPED as "engine
 // internals" and then needed. Bring a window to the front and give it the
 // keyboard: opening and closing were the only two things facet could say about
 // a window's life, so a second window could be created and never reached

@@ -55,6 +55,18 @@ ENGINE = "the ledger engine internals, not application vocabulary"
 MODAL = ("facet's dialogs answer on a handler and there is no modal stack to "
          "observe — runtime::alert/choose/prompt are non-blocking sheets, so "
          "nothing is pushed or popped")
+# The ledger's `Toolbar` is NavigationPage/Shell's NAVIGATION BAR — a back
+# button, a bar height, a drawer toggle. That is an iOS and Android idiom, and
+# it is not what facet's window toolbar is: `toolbar_item` NODES the backend
+# lifts out of the tree (facet_appkit/window.cplus:369), with the bar's own
+# look on `Chrome.bar` and the back verb on `nav`.
+#
+# The type was extracted as runtime rather than dropped with the rest of the
+# Shell family, so eleven rows were ADOPTed under default names that describe a
+# tier facet does not have and has not been asked for.
+NAVBAR = ("the ledger's navigation bar — a NavigationPage/Shell idiom. facet's "
+          "window toolbar is toolbar_item nodes, its chrome is Chrome.bar, and "
+          "its back verb is nav::pop")
 
 # ---- value types -> facet types. A scalar/struct the contract can carry. -----
 TYMAP = {
@@ -784,6 +796,23 @@ OVERLAY = {
     ("Application", "ModalPopping"): ("DROP", "", MODAL),
     ("Application", "ModalPopped"): ("DROP", "", MODAL),
     ("Window", "PopCanceled"): ("DROP", "", MODAL),
+    ("Toolbar", "BackButtonEnabled"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BackButtonTitle"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BackButtonVisible"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BarBackground"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BarHeight"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BarTextColor"): ("DROP", "", NAVBAR),
+    ("Toolbar", "DrawerToggleVisible"): ("DROP", "", NAVBAR),
+    ("Toolbar", "DynamicOverflowEnabled"): ("DROP", "", NAVBAR),
+    ("Toolbar", "IconColor"): ("DROP", "", NAVBAR),
+    ("Toolbar", "TitleIcon"): ("DROP", "", NAVBAR),
+    ("Toolbar", "TitleView"): ("DROP", "", NAVBAR),
+    ("Page", "IsBusy"):
+        ("DROP", "", "facet says it as a `spinner` node — a busy state is something "
+                     "in the tree, not a flag on the page"),
+    ("TitleBar", "PassthroughElements"):
+        ("DROP", "", "facet says it the other way round: `.window_drag()` marks what "
+                     "DRAGS the window, so everything unmarked already passes through"),
     ("View", "GestureRecognizers"):
         ("DROP", "", "facet says it as the .gesture() band — not a bound collection"),
     ("VisualElement", "GestureRecognizers"):

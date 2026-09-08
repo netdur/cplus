@@ -154,6 +154,14 @@ ALIASES = {
     # A page's layout changing is `services::observe_size` on the node — the
     # seam every backend fills, not a page-only event.
     ("Page", "LayoutChanged"): "observe_size",
+    # `flow_direction` is on the SHARED BAND (`C_FLOW_DIRECTION`), so every node
+    # has it and a window's is its ROOT's. appkit honours the bit at
+    # `paint.cplus:747`. Nothing window-specific was ever needed.
+    ("Window", "FlowDirection"): ("set_flow_direction", "any"),
+    # facet's accent IS the `primary` role: `Color::accent()` is what an UNSET
+    # `primary` falls back to (theme.cplus:100), so an app states its accent by
+    # theming that role.
+    ("Application", "AccentColor"): ("set_theme", "any"),
     # The app LIFECYCLE band answers these, not the window: facet fires them for
     # the process, and a component binds them with `bind_app_lifecycle`.
     # VISIBILITY, not focus — facet splits the two and these are the visibility
@@ -260,7 +268,7 @@ def main():
         # facet_android's parity floor takes. These are not regressions to
         # guard against; they are a backlog to burn down, and the number only
         # means something if it cannot silently grow.
-        FLOOR = 22
+        FLOOR = 7
         if stale:
             print("\nFAIL: an alias names something that does not exist.", file=sys.stderr)
             return 1
