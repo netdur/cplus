@@ -1224,6 +1224,49 @@ fn runs_are_read_from_a_labels_attributed_text() -> bool {
     };
 }
 
+// ---- a label the user can select and copy ------------------------------------
+//
+// `selectable` was ACCEPTED AND IGNORED: a label on iOS read and did not copy,
+// whatever the application asked for. `UILabel` cannot select at all, so the
+// affordance is a `UITextView` with editing off and selection on — a CREATE-TIME
+// class choice, which is why these check the class the builder picked.
+//
+// The negative matters as much as the positive: a plain label must stay a
+// UILabel, because a text view costs more, eats the touch that would have
+// scrolled the page, and is not what a label is.
+
+fn a_selectable_label_is_a_text_view() -> bool {
+    var n: core::Node = ui::label("pick me", selectable: true);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    if v == (0 as *u8) { return false; }
+    if !controls::label_is_text_view(v) { return false; }
+    // Selectable AND not editable — either alone is the wrong control.
+    let tv: uik::TextView = uik::TextView::from_raw(v);
+    if !tv.is_selectable() { return false; }
+    return tv.is_editable() == false;
+}
+
+fn a_plain_label_stays_a_label() -> bool {
+    var n: core::Node = ui::label("read me");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    if v == (0 as *u8) { return false; }
+    return controls::label_is_text_view(v) == false;
+}
+
+// The text-view flavour still has to LOOK like a label: no scrolling, and none
+// of the padding a text view is born with. A label that inset its own text by
+// 5pt would be measured wrong by flex and read as a layout bug.
+fn a_selectable_label_does_not_scroll_or_pad() -> bool {
+    var n: core::Node = ui::label("pick me", selectable: true);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    if v == (0 as *u8) { return false; }
+    let scrolls: i8 = { rt::msg_i8(v, rt::sel(#str_ptr("isScrollEnabled\0"))) };
+    if scrolls != (0 as i8) { return false; }
+    let tv: uik::TextView = uik::TextView::from_raw(v);
+    let pad: f64 = { tv.text_container().line_fragment_padding() };
+    return pad == 0.0f64;
+}
+
 // ---- the lifecycle band -----------------------------------------------------------
 // THROUGH THE REAL NOTIFICATION CENTRE, and that is the whole point of these.
 //
@@ -2187,6 +2230,10 @@ fn run_all() -> i32 {
     check("byte offsets convert to utf16 units", byte_offsets_convert_to_utf16_units());
     check("runs are read from a label's attributed text",
           runs_are_read_from_a_labels_attributed_text());
+    check("a selectable label is a text view", a_selectable_label_is_a_text_view());
+    check("a plain label stays a label", a_plain_label_stays_a_label());
+    check("a selectable label does not scroll or pad",
+          a_selectable_label_does_not_scroll_or_pad());
     check("a swipe offset round-trips through the association",
           a_swipe_offset_round_trips_through_the_association());
 

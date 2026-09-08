@@ -118,6 +118,7 @@ carousel.animates_scroll        no write of its own; it decides whether a `posit
 ```
 
 ```create-only
+label.selectable                the class is chosen at create (UITextView vs UILabel); a flip after mount needs a reclass this package has no path for
 ```
 
 ### What is left after the ledgers, and what the ledgers REFUSED
@@ -372,18 +373,33 @@ What it would take, named so the next pass does not rediscover it:
   other three, where the prop is live, and it should be stated in the same
   change rather than discovered.
 
-Until then a label on iOS reads and does not copy, and `selectable` is accepted
-and ignored — which is what this section means.
+**BUILT 2026-09-08.** A user can select a label's text and copy it. Everything
+above stands as the reasoning; what follows is what was actually written.
 
-**It now reads as `absent` debt, and that is correct.** `verb_coverage.py` used
-to measure facet_appkit alone, so a verb AppKit implemented was not this
-backend's problem by construction; since 2026-09-07 it takes a backend name and
-reads THAT backend's manifest, and `python3 tools/verb_coverage.py uikit` lists
-`label.selectable` in the debt. The disposition argued above — create-only,
-because it is a create-time class choice a recycling row pool cannot cheaply
-flip — has nowhere to be recorded until this file grows a ```create-only
-ledger block of the kind facet_appkit's MANIFEST carries. Until it does, the
-prose is the argument and the number does not know about it.
+`create_label` picks the class from the prop: `selectable: true` builds a
+`UITextView` with editing off, selection on, scrolling off, and both of the
+paddings a text view is born with set to zero — a label that inset its own text
+by 5pt would be measured wrong by flex and read as a layout bug. A plain label
+is still a `UILabel`, which matters: the text view costs more and eats the touch
+that would have scrolled the page.
+
+One apply body serves both, because `setText:`, `setTextColor:`, `setFont:` and
+`setTextAlignment:` are selectors BOTH classes answer. Exactly two are not —
+`setNumberOfLines:` and `setLineBreakMode:` are UILabel's alone, and a text view
+keeps the same two facts on its text CONTAINER. Those are branched; sending
+them to a text view would be an unrecognised selector rather than a no-op.
+
+Three checks in `selftest.cplus` hold it: the selectable label is a text view
+and is selectable-but-not-editable, a plain label stays a UILabel, and the
+selectable one neither scrolls nor pads.
+
+**It remains CREATE-ONLY, and now legitimately so.** The class is chosen when
+the view is built; a flip after mount would need a reclass, which this package
+has no path for (`views::reclass` exists in facet_appkit for exactly one prop)
+and which recycling row pools make expensive. The difference from before is
+that the prop is now READ — so the `create-only` ledger takes the row, where it
+refused it while nothing in the code touched the field. The prose and the code
+agree now, which is what the ledger was always waiting for.
 
 ### `symbol` has TWO tiers, and the bundled one is the app's to ship
 
