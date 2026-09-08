@@ -302,6 +302,18 @@ fn apply(ctx: *u8, n: *core::Node) {
     if n == (0 as *core::Node) { return; }
     let v: *u8 = core::view_of(n);
     if v == (0 as *u8) { return; }
+    // AN ADOPTED WINDOW IS BOUND HERE, because this is the first verb the walk
+    // calls for it — `create`, where every other node is armed, is skipped for
+    // one that brought its own view. Without the bind the window carries no
+    // node, so hit testing resolves through it to its host, `native()` readers
+    // find nothing, and the shared band's focus verbs never route.
+    //
+    // Guarded on the bind rather than on `dirty`, and placed BEFORE the early
+    // return, because a node that mounts with nothing dirty still has to be
+    // armed exactly once.
+    if is_adopted_window(v) && input::node_of_window(v) == (0 as *core::Node) {
+        input::arm(v, n);
+    }
     let d: u64 = core::dirty_of(n);
     if d == (0 as u64) { return; }
     configure(v, n, d);
@@ -338,8 +350,64 @@ fn insert(ctx: *u8, raw_host: *u8, child: *u8, slot: usize) {
     // one kind whose window and whose child host differ. Every other kind
     // answers itself, so there is still ONE child model below this line.
     let host: *u8 = controls::document_host(raw_host);
+    // AN ADOPTED WINDOW ARRIVES HERE UNPREPARED. `adopt_native` hands facet a
+    // window the application built, and the mount walk skips `create` for it —
+    // so unlike every other child reaching this line it has never been through
+    // the one place that makes a window a facet child.
+    //
+    // Only two things must happen before it can be parented, and both are here
+    // rather than in `apply` because `apply` runs after the whole walk: a
+    // window that is not `WS_CHILD` cannot be a child at all (`SetParent`
+    // "succeeds" and it stays a floating top-level), and the mark has to be on
+    // before the NEXT sibling's insert counts it.
+    if input::node_of_window(child) == (0 as *core::Node) { adopt_window(child); }
     if { u::GetParent(child) } != host { let _p: *u8 = { u::SetParent(child, host) }; }
     place_at_slot(host, child, slot);
+    return;
+}
+
+// Is this a window the application brought rather than one this package made?
+fn is_adopted_window(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    return { u::GetPropA(v, sys::prop_adopted() as *i8) } != (0 as *u8);
+}
+
+// Make an application's window fit to be a facet child.
+//
+// WS_CHILD IS NOT OPTIONAL and its absence is the quiet failure here: a
+// top-level or popup window passed to `SetParent` becomes OWNED rather than
+// contained — it keeps its own frame, floats above everything, and ignores
+// every `SetWindowPos` the layout makes. It looks like a layout bug and is not
+// one. WS_POPUP has to go with it; the two are mutually exclusive and leaving
+// both set is undefined.
+//
+// The style write also clears WS_EX_TOPMOST, which a window created as a
+// stand-alone preview may carry and which would keep it above its own siblings.
+// The two style words an adopted window must end up with, as arithmetic on the
+// two it arrived with. Separated from the window calls because this package's
+// suite makes no windows — see `test_main`'s header — and this is the half that
+// can actually be got wrong.
+fn adopted_style(style: i64) -> i64 {
+    return (style & ~(sys::ws_popup() as i64)) | (sys::ws_child() as i64)
+           | (sys::ws_visible() as i64);
+}
+
+fn adopted_exstyle(ex: i64) -> i64 {
+    return ex & ~(sys::ws_ex_topmost() as i64);
+}
+
+fn adopt_window(v: *u8) {
+    let _r: i32 = { u::SetPropA(v, sys::prop_adopted() as *i8, 1 as *u8) };
+    let style: i64 = { u::GetWindowLongPtrW(v, sys::gwl_style()) };
+    let want: i64 = adopted_style(style);
+    if want != style {
+        let _s: i64 = { u::SetWindowLongPtrW(v, sys::gwl_style(), want) };
+    }
+    let ex: i64 = { u::GetWindowLongPtrW(v, sys::gwl_exstyle()) };
+    let want_ex: i64 = adopted_exstyle(ex);
+    if want_ex != ex {
+        let _e: i64 = { u::SetWindowLongPtrW(v, sys::gwl_exstyle(), want_ex) };
+    }
     return;
 }
 
@@ -362,9 +430,14 @@ fn place_at_slot(host: *u8, child: *u8, slot: usize) {
     // Count facet siblings first (a scroll's document and other package-owned
     // windows carry no node and must not shift the slots).
     var m: usize = 0 as usize;
+    // `is_facet_child` rather than the node alone, because an ADOPTED window
+    // has no node bound until `apply` runs — which is after this whole walk.
+    // Counting only bound nodes made every adopted view invisible to its
+    // siblings' slot arithmetic, so a later `raise` or re-insert put them in
+    // the wrong z-order.
     var cur: *u8 = first_child(host);
     while cur != (0 as *u8) {
-        if cur != child && input::node_of_window(cur) != (0 as *core::Node) {
+        if cur != child && is_facet_child(cur) {
             m = m +% (1 as usize);
         }
         cur = next_sibling(cur);
@@ -383,7 +456,7 @@ fn place_at_slot(host: *u8, child: *u8, slot: usize) {
     var seen: usize = 0 as usize;
     cur = first_child(host);
     while cur != (0 as *u8) {
-        if cur != child && input::node_of_window(cur) != (0 as *core::Node) {
+        if cur != child && is_facet_child(cur) {
             if seen == target {
                 let _r: i32 = { u::SetWindowPos(child, cur, 0 as i32, 0 as i32,
                                                 0 as i32, 0 as i32, flags) };
@@ -396,6 +469,15 @@ fn place_at_slot(host: *u8, child: *u8, slot: usize) {
     let _r: i32 = { u::SetWindowPos(child, sys::hwnd_top(), 0 as i32, 0 as i32,
                                     0 as i32, 0 as i32, flags) };
     return;
+}
+
+// A window that occupies one of facet's slots under its host — either one this
+// package created and bound a node onto, or one the application adopted in.
+// Package-owned windows (a scroll's document, a toolbar strip) are neither and
+// must not shift the slots.
+fn is_facet_child(v: *u8) -> bool {
+    if input::node_of_window(v) != (0 as *core::Node) { return true; }
+    return is_adopted_window(v);
 }
 
 // GW_CHILD 5, GW_HWNDNEXT 2 — the two `GetWindow` relations that walk a

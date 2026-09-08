@@ -121,6 +121,66 @@ fn the_rearm_mask_carries_handlers_as_well_as_gestures() {
     return;
 }
 
+// ---- adopting the application's own window -------------------------------------------
+
+#[test]
+fn an_adopted_window_is_forced_to_be_a_child() {
+    // WS_CHILD IS THE WHOLE THING, and its absence is the quiet failure:
+    // `SetParent` on a top-level or popup window makes it OWNED rather than
+    // contained, so it keeps its own frame, floats above everything and ignores
+    // every `SetWindowPos` the layout makes. That reads as a layout bug and is
+    // not one.
+    //
+    // A window built stand-alone — which is exactly what an application hands
+    // to `adopt_native` — is WS_OVERLAPPEDWINDOW and very often WS_POPUP.
+    let popup: i64 = (sys::ws_popup() as i64) | (sys::ws_visible() as i64);
+    let got: i64 = views::adopted_style(popup);
+    assert (got & (sys::ws_child() as i64)) != (0 as i64);
+    assert (got & (sys::ws_visible() as i64)) != (0 as i64);
+    // WS_POPUP AND WS_CHILD ARE MUTUALLY EXCLUSIVE and leaving both set is
+    // undefined, so the popup bit has to go rather than merely be joined.
+    assert (got & (sys::ws_popup() as i64)) == (0 as i64);
+
+    // Everything else the application chose is KEPT. An adopted view is still
+    // the application's window; this makes it placeable, it does not restyle it.
+    let mine: i64 = 0x00040000 as i64;              // WS_SIZEBOX, picked at random
+    assert (views::adopted_style(mine) & mine) == mine;
+
+    // Already a child, already visible: nothing to change, and the caller skips
+    // the write.
+    let child: i64 = (sys::ws_child() as i64) | (sys::ws_visible() as i64);
+    assert views::adopted_style(child) == child;
+    return;
+}
+
+#[test]
+fn an_adopted_window_stops_being_topmost() {
+    // A window created stand-alone may carry WS_EX_TOPMOST, which would keep it
+    // above its own siblings inside the layout — z-order is the child order
+    // here, and a topmost child is outside it.
+    let top: i64 = (sys::ws_ex_topmost() as i64) | (0x00000020 as i64);
+    let got: i64 = views::adopted_exstyle(top);
+    assert (got & (sys::ws_ex_topmost() as i64)) == (0 as i64);
+    // And the rest is left alone.
+    assert (got & (0x00000020 as i64)) == (0x00000020 as i64);
+    assert views::adopted_exstyle(0 as i64) == (0 as i64);
+    return;
+}
+
+#[test]
+fn a_window_with_no_node_and_no_mark_is_not_a_facet_child() {
+    // The slot count asks this question of every window under a host, and the
+    // answer decides z-order. A scroll's DOCUMENT and this package's toolbar
+    // strip are children of a host and are not facet's — counting them would
+    // shift every sibling's slot by one.
+    //
+    // Null is the only case assertable without a window station; what it pins
+    // is that the predicate answers rather than dereferencing.
+    assert views::is_facet_child(0 as *u8) == false;
+    assert views::is_adopted_window(0 as *u8) == false;
+    return;
+}
+
 // ---- measurement --------------------------------------------------------------------
 
 #[test]

@@ -91,6 +91,7 @@ fn ws_group() -> u32 { return 0x00020000 as u32; }
 fn ws_vscroll() -> u32 { return 0x00200000 as u32; }
 fn ws_hscroll() -> u32 { return 0x00100000 as u32; }
 fn ws_popup() -> u32 { return 0x80000000 as u32; }
+fn ws_ex_topmost() -> u32 { return 0x00000008 as u32; }
 
 // CLIPCHILDREN keeps a parent's paint out of the rectangles its children own,
 // and CLIPSIBLINGS keeps overlapping children from painting over each other.
@@ -325,6 +326,16 @@ fn prop_classic() -> *u8 { return { #str_ptr("facet-win32-classic\0") }; }
 // for why the offset, and why the travel belongs to the window rather than to a
 // static this package could have reached more easily.
 fn prop_swipe() -> *u8 { return { #str_ptr("facet-win32-swipe\0") }; }
+// Set on a window the APPLICATION built and `adopt_native` handed over — one
+// this package never created and must not treat as its own.
+//
+// It exists because of an ORDERING problem rather than for identification. The
+// node is bound in `apply`, which runs after the whole mount walk, but
+// `place_at_slot` counts facet siblings by their bound node WHILE the walk is
+// still inserting — so between insert and apply an adopted window is invisible
+// to its siblings' slot arithmetic. This mark is set at insert, which is early
+// enough for the count to be right.
+fn prop_adopted() -> *u8 { return { #str_ptr("facet-win32-adopted\0") }; }
 
 // ---- this package's own window class -----------------------------------------
 //
