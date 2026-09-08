@@ -156,17 +156,21 @@ command it will not see.
 
 ## Without facet
 
-`terminal/appkit` exposes the same widget with AppKit types for applications
-that mount views themselves. `view()` returns the `NSScrollView` as an
-`ak::View`, `native_handle()` returns a retained raw handle for
-`facet::native`, and `node()` returns a `flex_layout` leaf.
+`terminal/backend` exposes the same widget in the platform's own types for
+applications that mount views themselves. On Apple, `view()` returns the
+`NSScrollView` as an `ak::View`, `native_handle()` returns a retained raw handle
+for `facet::native`, and `node()` returns a `flex_layout` leaf.
 
 ```cplus
-import "terminal/appkit" as terminal_ui;
+import "terminal/backend" as terminal_ui;
 
 let widget: terminal_ui::Widget = ...;
 win.set_content_view(widget.view());
 ```
+
+Naming it means naming the platform, so prefer `terminal/widget` unless you are
+already holding AppKit types. (This module was `terminal/appkit` until
+2026-09-08 — the rename is what let a second platform exist.)
 
 ## The screen on its own
 
