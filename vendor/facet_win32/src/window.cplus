@@ -41,6 +41,7 @@ import "./sys" as sys;
 import "./paint" as paint;
 import "./input" as input;
 import "./geometry" as geometry;
+import "./toolbar" as toolbar;
 import "./controls" as controls;
 import "./observers" as observers;
 import "./menus" as menus;
@@ -708,18 +709,36 @@ fn relayout(slot: usize, width: f64, height: f64) {
     let scale: f64 = sys::dpi_scale(WINDOWS[slot] as *u8);
     let lw: f64 = width / scale;
     let lh: f64 = height / scale;
-    { (*root).calculate_layout(width: lw, height: lh) };
+    // THE TOOLBAR STRIP COMES OFF THE TOP, and only when there is one. A tree
+    // with no `toolbar_item` answers 0 here and every line below is the one it
+    // was before the strip existed — which is the whole of why this is safe to
+    // put in the hot path every window lays out through.
+    let tb: f64 = toolbar::height_for(root);
+    let content_h: f64 = lh - tb;
+    { (*root).calculate_layout(width: lw, height: content_h) };
     { (*root).round_to_pixel(scale) };
-    let rf: flex::Frame = { (*root).frame() };
+    var rf: flex::Frame = { (*root).frame() };
     let rv: *u8 = core::view_of(root);
     if rv != (0 as *u8) {
-        geometry::place(WINDOWS[slot] as *u8, rv, root, 0.0f64, 0.0f64, lw, lh);
+        // The root has its own window, so placing IT below the strip carries
+        // every child with it — they live inside it and are positioned relative
+        // to it.
+        geometry::place(WINDOWS[slot] as *u8, rv, root, 0.0f64, tb, lw, content_h);
+    } else {
+        // NO ROOT WINDOW, so children are placed straight into the frame window
+        // relative to the root's own frame (`cf.top - host_abs.top`). Moving
+        // that frame UP by the strip's height is what pushes every one of them
+        // down by exactly it — there is no view to offset instead.
+        rf.top = rf.top - tb;
     }
     // The ROOT is the one node `reposition_children` never visits, and a
     // screen's own size is the commonest thing to observe.
     observers::note_size(root);
     geometry::reposition_children(root, host_for(slot), rf);
     geometry::trace_tree(root, 0 as usize);
+    // AFTER the layout: the strip is rebuilt from the tree, and the tree is
+    // what the walk above has just finished settling.
+    if tb > (0.0f64) { toolbar::refresh(WINDOWS[slot] as *u8, root, lw); }
     return;
 }
 

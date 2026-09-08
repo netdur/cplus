@@ -492,6 +492,31 @@ paragraphs above set out — a different control with different metrics, focus
 and accessibility role, and a serialisation on every set. If that is ever paid
 it buys this whole row at once.
 
+### `toolbar_item.icon` — the strip is built, the glyph is not
+
+`toolbar_item` is answered: the items are collected from anywhere in the tree,
+ordered by `placement` then `priority` then the order they were described in,
+and laid out as a strip of real BUTTON controls across the top of the client
+area. What is absent is the ICON on a button's face.
+
+A button draws its label in ONE font, and facet's icons are codepoints in a
+bundled symbol family (`Material Symbols Outlined`, found on disk by
+`controls`' font walk) rather than characters in the UI face. So an icon beside
+a label needs two fonts in one control, which on Win32 means `BS_OWNERDRAW` and
+drawing both runs by hand — the same road `text_button` already took, and a
+sizeable one for a strip that also has to keep its buttons alive across a
+relayout.
+
+It is worth stating what a naive fix would cost, because two look tempting and
+both are wrong. Putting the glyph INTO the button's text draws it in the UI font,
+where the codepoint is a missing-glyph box. And `BS_ICON` with an `HICON` wants
+a bitmap per item at the current DPI, which is a second icon cache to invalidate
+on a monitor change — for a control whose text already says what it does.
+
+An item that names only an icon still gets a button and still fires; it draws
+with an empty face rather than collapsing the row, which is the honest shape of
+"the label is missing" rather than "the item is".
+
 ### `label.selectable` is ANSWERED, and it changes the control's CLASS
 
 A `STATIC` cannot select text. There is no style for it, no message for it, and
