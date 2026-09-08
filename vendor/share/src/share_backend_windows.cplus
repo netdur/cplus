@@ -6,17 +6,54 @@
 // sibling the build falls back to `share_backend.cplus` — the AppKit half — and
 // stops at `import "objc/runtime"`, which is not available here.
 //
-// EVERY VERB IS `Unsupported`, and that is the whole truth on classic Win32.
-// There is no universal share sheet the way macOS has NSSharingServicePicker or
-// iOS has UIActivityViewController: a plain desktop process has nothing to open.
-// The real future path is WinRT's
-// `Windows.ApplicationModel.DataTransfer.DataTransferManager` —
-// `ShowShareUI()` on a `DataTransferManager` obtained for the app window — which
-// needs a live HWND handed to `IDataTransferManagerInterop::GetForWindow` and a
-// WinRT projection this pass does not pull in. Until that exists, this reports
-// `Unsupported`, never `Failed`: "this build has no share UI" and "the sheet
-// tried and broke" are opposite facts, and a caller deciding whether to show a
-// share button wants the first.
+// EVERY VERB IS `Unsupported`, and the reason is NOT the one this header used to
+// give. It said a plain desktop process has nothing to open. That is wrong, and
+// it was measured wrong on 2026-09-08: the share flyout OPENS from an ordinary
+// non-packaged Win32 process. What does not work is the half that carries the
+// payload.
+//
+// ---- WHAT WAS MEASURED, so nobody repeats it ---------------------------------
+//
+// The whole sequence answers S_OK and the sheet appears on screen —
+// `ShellExperienceHost` with the window title "Share":
+//
+//   RoGetActivationFactory(
+//       "Windows.ApplicationModel.DataTransfer.DataTransferManager",
+//       IID_IDataTransferManagerInterop {3A3DCD6C-3EAB-43DC-BCDE-45671CE800C8})
+//                                                              -> S_OK
+//   IDataTransferManagerInterop::GetForWindow(hwnd, IID_IDataTransferManager)
+//       slot 3                                                 -> S_OK
+//   IDataTransferManager::add_DataRequested(handler, &token)
+//       slot 6                                                 -> S_OK, real token
+//   IDataTransferManagerInterop::ShowShareUIForWindow(hwnd)
+//       slot 4                                                 -> S_OK
+//
+// And then nothing. `DataRequested` IS NEVER RAISED. The handler is genuinely
+// registered — a file trace from inside its own vtable recorded TWO `AddRef`
+// calls, so WinRT took and held the reference — but `QueryInterface` was never
+// called on it and `Invoke` never ran. The sheet opens with no content to offer
+// and no error anywhere.
+//
+// Ruled out one at a time: a foreground, activated, top-most owner window; an
+// explicit `SetCurrentProcessExplicitAppUserModelID` (S_OK, no change), which is
+// the closest a non-packaged process gets to package identity; a generous
+// message pump (fifteen seconds of `DoEvents` on the STA that registered the
+// handler); and the parameterized IID, which is not implicated because QI is
+// never reached at all. The PIID for
+// `TypedEventHandler<DataTransferManager, DataRequestedEventArgs>` is
+// {EC6F9CC8-46D0-5E0E-B4D2-7D7773AE37A0}, read out of .NET's own projection
+// rather than guessed, and it is written down here so the next attempt does not
+// have to derive it.
+//
+// The remaining suspect is package identity proper — an MSIX or a sparse
+// manifest — which a `cpc build` executable does not have and cannot fake. That
+// is the same wall `notifications` meets on the WinRT toast road.
+//
+// SO THIS STAYS A STUB, deliberately. A backend that opened an empty sheet would
+// be worse than one that refuses: the person would get a share UI, pick a
+// target, and have nothing arrive. `Unsupported`, never `Failed`: "this build
+// has no share UI" and "the sheet tried and broke" are opposite facts, and a
+// caller deciding whether to show a share button wants the first.
 //
 // NO CLIPBOARD FALLBACK on purpose. Copying the text to the clipboard would be a
 // DIFFERENT verb wearing this one's name — the person asked to hand an item to
