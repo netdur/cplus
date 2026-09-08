@@ -10,6 +10,7 @@
 //
 // `Handler.post` would also run "soon" and would be wrong in exactly that way.
 
+import "stdlib/atomic" as atomic;
 import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 import "android_view/widgets" as w;
@@ -113,8 +114,24 @@ fn relayout_current() {
 // asserts every tree write happens on the installing thread. So the hop is the
 // identity, and being honest about that is better than routing through a
 // Handler to look busy.
+// THE MAIN-THREAD HOP, and it has to be a real one.
+//
+// This ran the work INLINE, on whatever thread called it — so a package that
+// used the seam exactly as intended mutated the facet tree from a worker.
+// Measured on a Fold: a camera frame handler calling `run_on_main` took the
+// process down with `signal 5` inside `facet::touch`, the callback sitting in
+// the SAME STACK as the frame it was called from. `env.cplus`'s own header
+// already says the answer for a worker thread is "hop to the main thread
+// (`services::run_on_main`), which is what the scheduler provides" — this is
+// the scheduler finally providing it.
+//
+// QUEUED EVEN ON THE UI THREAD, and that is not an oversight. An apply that
+// runs inside the caller's frame can re-enter a walk already in progress;
+// facet_appkit and facet_uikit both `dispatch_async_f` unconditionally for the
+// same reason, so "run_on_main returns before the work does" is the contract
+// on every backend rather than a per-platform surprise.
 fn run_on_main(work: fn(*u8), ctx: *u8) {
-    if work != (0 as fn(*u8)) { work(ctx); }
+    let _t: u64 = post_in(0.0f64, work, ctx);
     return;
 }
 
@@ -128,25 +145,51 @@ struct Timers { token: [u64; 64], work: [fn(*u8); 64], ctx: [usize; 64] }
 static TIMERS: Timers = #zero::[Timers]();
 
 fn after(seconds: f64, work: fn(*u8), ctx: *u8) -> u64 {
-    if !e::have_env() { return 0 as u64; }
-    if !e::have_host() { return 0 as u64; }
-    let token: u64 = NEXT_TOKEN;
-    NEXT_TOKEN = NEXT_TOKEN +% (1 as u64);
+    return post_in(seconds, work, ctx);
+}
+
+// CLAIMED ATOMICALLY, because `run_on_main` is called from worker threads BY
+// DEFINITION — that is what it is for. A read-then-write scan hands two
+// threads the same slot: one callback is silently dropped and the other fires
+// with the wrong context. Token 0 is the empty marker and also the failure
+// value, so a successful claim is a 0 -> token exchange.
+fn claim_slot(token: u64) -> usize {
     var slot: usize = 0 as usize;
-    var found: bool = false;
     while slot < MAX_TIMERS {
-        if TIMERS.token[slot] == (0 as u64) { found = true; break; }
+        let p: *i64 = { #addr_of(TIMERS.token[slot]) as *i64 };
+        if atomic::compare_exchange_i64(p, 0 as i64, { token as i64 },
+                                        atomic::Ordering::SeqCst) == (0 as i64) {
+            return slot;
+        }
         slot = slot +% (1 as usize);
     }
-    if !found {
-        log::warn(#str_ptr("facet_android: more than 64 pending timers; `after` dropped\0"));
+    return MAX_TIMERS;
+}
+
+// One body for `after` and `run_on_main` — they differ by a delay and nothing
+// else, and two copies of a JNI post is two places to get the env wrong.
+fn post_in(seconds: f64, work: fn(*u8), ctx: *u8) -> u64 {
+    if work == (0 as fn(*u8)) { return 0 as u64; }
+    if !e::have_env() { return 0 as u64; }
+    if !e::have_host() { return 0 as u64; }
+    let token: u64 = { atomic::fetch_add_i64({ #addr_of(NEXT_TOKEN) as *i64 },
+                                             1 as i64, atomic::Ordering::SeqCst) as u64 };
+    let slot: usize = claim_slot(token);
+    if slot >= MAX_TIMERS {
+        log::warn(#str_ptr("facet_android: more than 64 pending posts; one was dropped\0"));
         return 0 as u64;
     }
-    TIMERS.token[slot] = token;
     TIMERS.work[slot] = work;
     TIMERS.ctx[slot] = { #addr(ctx) };
 
-    let env: rt::Env = e::env();
+    // THIS THREAD'S ENV, not the UI thread's — see `env::attached_env`. The
+    // class and the host are both GLOBAL refs, so they are legal here; the env
+    // is the only per-thread thing in the call.
+    let env: rt::Env = e::attached_env();
+    if env.raw().is_null() {
+        TIMERS.token[slot] = 0 as u64;
+        return 0 as u64;
+    }
     let post: jni::jobject = dex::new_with_token(env, dex::post_class(), { token as i64 });
     var host: w::View = paint::wrap(e::host());
     host.post_delayed(post, { (seconds * 1000.0f64) as i64 });
@@ -163,7 +206,10 @@ fn cancel_after(token: u64) {
             // removeCallbacks needs the SAME Runnable object, and holding one
             // global ref per pending timer to enable that costs more than a
             // no-op wake. `fire_after` checks the slot before calling.
-            TIMERS.token[i] = 0 as u64;
+            // ATOMIC, to pair with `claim_slot`'s exchange — this is the
+            // release that lets another thread take the slot.
+            atomic::store_i64({ #addr_of(TIMERS.token[i]) as *i64 }, 0 as i64,
+                              atomic::Ordering::SeqCst);
             return;
         }
         i = i +% (1 as usize);
@@ -178,7 +224,10 @@ fn fire_after(token: i64) {
         if TIMERS.token[i] == t {
             let f: fn(*u8) = TIMERS.work[i];
             let c: *u8 = { TIMERS.ctx[i] as *u8 };
-            TIMERS.token[i] = 0 as u64;
+            // ATOMIC, to pair with `claim_slot`'s exchange — this is the
+            // release that lets another thread take the slot.
+            atomic::store_i64({ #addr_of(TIMERS.token[i]) as *i64 }, 0 as i64,
+                              atomic::Ordering::SeqCst);
             if f != (0 as fn(*u8)) { f(c); }
             return;
         }
