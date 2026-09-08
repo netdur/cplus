@@ -23,8 +23,12 @@ View / InputView / ItemsView / Element / GestureElement) are reported ONCE as
 a shared section rather than duplicated per control — the Phase-2 generator
 does the per-control merge.
 
-Refresh the manifest (netstandard = the portable contract):
-  BASE=https://raw.githubusercontent.com/dotnet/row_type/main/src/Controls/src/Core/PublicAPI/netstandard
+Refresh the manifest (netstandard = the portable contract). The org/repo in
+the URL is the framework the rows are READ from and is not part of facet's
+vocabulary — but it is a real path, so unlike the prose it cannot be scrubbed.
+It was, once: a find/replace turned `dotnet/maui` into `dotnet/row_type` and
+left a 404 for anyone refreshing. Leave this line alone.
+  BASE=https://raw.githubusercontent.com/dotnet/maui/main/src/Controls/src/Core/PublicAPI/netstandard
   curl -s $BASE/PublicAPI.Shipped.txt   -o plans/facet/spec/ledger_PublicAPI.Shipped.txt
   curl -s $BASE/PublicAPI.Unshipped.txt -o plans/facet/spec/ledger_PublicAPI.Unshipped.txt
 

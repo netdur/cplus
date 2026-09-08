@@ -1067,7 +1067,13 @@ def main():
             cur = ty
         out.append(f"| {member} | {band} | **{status}** | {fname or '—'} | {note} |\n")
 
-    path = os.path.join(ROOT, "plans", "facet", "row_type-map-draft.md")
+    # `ledger-map-draft.md`, matching `ledger-spec.json` and
+    # `ledger-spec-report.md`. It was `row_type-map-draft.md` until 2026-09-08:
+    # the find/replace that scrubbed the framework's name out of this pipeline
+    # hit a PATH as well as the prose, so the map landed under a name nothing
+    # else used and the previous `maui-map-draft.md` sat beside it looking
+    # current. A generated file with two names is a generated file with none.
+    path = os.path.join(ROOT, "plans", "facet", "ledger-map-draft.md")
     with open(path, "w") as f:
         f.writelines(out)
     print(f"{len(rs)} rows — " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
