@@ -39,6 +39,11 @@ bordered.stroke_miter_limit     as bordered.stroke_cap
 bordered.stroke_dash_offset     as bordered.stroke_cap
 popup.label                     a Spinner's field IS its selected item; facet's `label` names a second line there is no slot for
 popup.title_color               the prompt is drawn by the platform's own dialog, a view this backend neither builds nor reaches
+menu.text                       there is no menu BAR on Android — an app's commands live in the ActionBar's overflow, which is what `toolbar_item` reaches
+menu.priority                   as menu.text
+menu_item.text                  as menu.text — a menu bar's items have nowhere to be
+menu_item.icon                  as menu.text
+menu_item.is_destructive        as menu.text
 window_chrome.style             an Android app has no title bar and no window controls — there is no chrome to style
 window_chrome.spacing           as window_chrome.style — nothing to space
 collection.group_size           a GridView has no sections — see collection.is_grouped
@@ -48,6 +53,11 @@ collection.on_reorder_completed no drag to complete — see collection.can_reord
 
 ```host-rendered
 span.text                       a run in its label's SpannableString, built by `apply_span_children`
+toolbar_item.text               the title of the ActionBar MenuItem built from it
+toolbar_item.icon               the MenuItem's icon, resolved as a drawable resource name
+toolbar_item.is_destructive     a danger-coloured title span; an Android MenuItem has no destructive style
+toolbar_item.placement          SHOW_AS_ACTION_IF_ROOM for Primary, NEVER for Secondary — Android's word for "on the bar" and "in the overflow"
+toolbar_item.priority           the id AND the order the item is added at, low first
 swipe_item.text                 the title of the Button the swipe strip builds for it
 swipe_item.is_destructive       the Button's background — danger, against the system fill for a plain one
 list.row_height                 a STATED height, read into the RowModel and applied as the row is placed
@@ -71,7 +81,13 @@ list.has_uneven_rows            a ListView asks its adapter for EVERY row's view
 scroll.axis                     a create-time CLASS choice — HorizontalScrollView or ScrollView; `create_scroll` reads it and there is no reclass
 ```
 
+```derived
+carousel.is_scrolling           written BACK by the scroll listener — true when a drag starts, false when the pager settles
+```
+
 ```modifier
+date_picker.minimum_date        no write of its own; it bounds what the DatePickerDialog allows, read as the dialog opens
+date_picker.maximum_date        as date_picker.minimum_date
 stepper.increment               no write of its own — Android's two buttons know nothing about a range, so `fire_step` reads it when a step arrives
 stepper.minimum                 as stepper.increment — the clamp is this side's
 stepper.maximum                 as stepper.increment — the clamp is this side's

@@ -18,6 +18,27 @@ public class FacetActivity extends android.app.Activity {
     private static final String META_LIB = "cplus.facet.lib";
     private static final String DEFAULT_LIB = "app";
 
+    // THE TOOLBAR. Android has no window toolbar and no menu bar; its answer to
+    // "what can this screen do" is the ActionBar, and `toolbar_item` is the
+    // vocabulary that reaches it. The items are read from facet's TREE — the
+    // same shape facet_appkit and facet_uikit use — because a toolbar_item is a
+    // description, not a rectangle.
+    //
+    // `invalidateOptionsMenu` is how a later write lands: Android caches the
+    // menu, so re-reading the tree needs an explicit ask.
+    @Override public boolean onCreateOptionsMenu(android.view.Menu menu) {
+        return nativeBuildMenu(menu);
+    }
+
+    @Override public boolean onOptionsItemSelected(android.view.MenuItem item) {
+        // The item's ORDER is its identity here: `add(group, id, order, title)`
+        // is given the index native chose, so the same integer comes back.
+        return nativeMenuSelected(item.getItemId());
+    }
+
+    private static native boolean nativeBuildMenu(android.view.Menu menu);
+    private static native boolean nativeMenuSelected(int id);
+
     @Override protected void onCreate(android.os.Bundle state) {
         super.onCreate(state);
         System.loadLibrary(libraryName());

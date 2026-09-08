@@ -322,6 +322,42 @@ public final class FacetDraw {
         @Override public void updateMeasureState(android.text.TextPaint p) { p.setLetterSpacing(em); }
     }
 
+    // ONE OPTIONS-MENU ITEM. The id and the order are the same integer — the
+    // index native chose — so `onOptionsItemSelected` hands back something the
+    // native side can resolve by re-walking the tree, rather than holding a map
+    // across a menu Android rebuilds whenever it likes.
+    //
+    // An icon here is a DRAWABLE RESOURCE name, resolved the way every other
+    // source on this backend is: the app's own resources first, then the
+    // `android` package. A name that is neither leaves the item text-only,
+    // which is what an ActionBar item without an icon already is.
+    public static void optionsMenuAdd(android.view.Menu menu, int id, String title,
+                                      String icon, int showAs, int tint, boolean tinted) {
+        CharSequence label = title == null ? "" : title;
+        if (tinted) {
+            android.text.SpannableString s = new android.text.SpannableString(label);
+            s.setSpan(new android.text.style.ForegroundColorSpan(tint), 0, s.length(),
+                      android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            label = s;
+        }
+        android.view.MenuItem it = menu.add(0, id, id, label);
+        it.setShowAsAction(showAs == 1
+            ? android.view.MenuItem.SHOW_AS_ACTION_IF_ROOM
+            : android.view.MenuItem.SHOW_AS_ACTION_NEVER);
+        if (icon != null && icon.length() > 0) {
+            android.content.Context c = menu.getClass() == null ? null : null;
+            // No Context on a Menu, so the resource is looked up on the item's
+            // own resources through the icon setter that takes an id: an app
+            // resource first, then the android package.
+            int rid = 0;
+            try {
+                rid = android.content.res.Resources.getSystem()
+                        .getIdentifier(icon, "drawable", "android");
+            } catch (Throwable ignored) { }
+            if (rid != 0) it.setIcon(rid);
+        }
+    }
+
     // A LINK NEEDS A MOVEMENT METHOD, or a URLSpan draws as a link and does
     // nothing when tapped. Set only when there is one: it makes the view
     // clickable, and a label that quietly took touches would be the input

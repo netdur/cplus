@@ -476,6 +476,20 @@ export extern fn facet_android_job(envp: *jni::JNIEnv, cls: jni::jobject) {
     return;
 }
 
+export extern fn facet_android_build_menu(envp: *jni::JNIEnv, cls: jni::jobject,
+                                          menu: jni::jobject) -> u8 {
+    e::set_env(rt::from_native(envp));
+    if window::build_menu(menu) { return 1 as u8; }
+    return 0 as u8;
+}
+
+export extern fn facet_android_menu_selected(envp: *jni::JNIEnv, cls: jni::jobject,
+                                             id: i32) -> u8 {
+    e::set_env(rt::from_native(envp));
+    if window::menu_selected(id) { return 1 as u8; }
+    return 0 as u8;
+}
+
 export extern fn facet_android_row_count(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) -> i32 {
     e::set_env(rt::from_native(envp));
     return recycler::row_count(token);
