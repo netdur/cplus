@@ -50,6 +50,7 @@ import "facet/page_dots" as page_dots;
 import "facet/bordered" as bordered;
 import "facet/scroll" as scroll;
 import "facet/symbol" as symbol;
+import "facet/window_chrome" as chrome;
 import "facet/icon_button" as icon_button;
 import "stdlib/io" as io;
 import "./paint" as paint;
@@ -1870,6 +1871,225 @@ fn draw_page_dots(v: *u8, n: *core::Node, hdc: *u8) {
 }
 
 fn create_page_dots(n: *core::Node) -> *u8 { return create_panel(n); }
+
+// ---- window buttons ------------------------------------------------------------
+//
+// The minimise / maximise / close group, for an application that draws its own
+// titlebar. DRAWN, for the reason `page_dots` and `bordered` are: Windows has no
+// control that IS this group. The real ones are painted by DefWindowProc into
+// the non-client area, and a window that wants its own bar has taken that area
+// away — so there is nothing left to reuse and the three glyphs are ours.
+//
+// THE ORDER IS THE PLATFORM'S, and it is not a preference: minimise, maximise,
+// close, left to right, hard against the right edge. `ButtonStyle::Native` means
+// exactly that, and a person reaching for the top-right corner to close a window
+// is reaching by muscle memory. `OnHover` draws the same group only while the
+// pointer is inside it, which is the one variation the contract offers.
+//
+// THE ACTIONS GO TO THE TOP-LEVEL WINDOW, not to this panel: `WM_SYSCOMMAND` on
+// the root is what the real buttons send, so the window manager does the work
+// and an app that has replaced its titlebar still minimises the way every other
+// window does. Maximise flips to RESTORE when the window is already maximised —
+// reading the live style rather than remembering, because the user can
+// double-click the bar or hit Win+Up and this button must agree with what
+// actually happened.
+fn create_window_buttons(n: *core::Node) -> *u8 {
+    let v: *u8 = create_panel(n);
+    if v != (0 as *u8) { install_window_buttons(v); }
+    return v;
+}
+
+// Each glyph cell, in LOGICAL points — the backend multiplies by the DPI factor
+// at placement, so these are the same numbers a person reads in the layout.
+// Windows 11's own caption buttons are 46x32 at 100%.
+fn wb_cell_w() -> f64 { return 46.0f64; }
+fn wb_cell_h() -> f64 { return 32.0f64; }
+fn wb_count() -> i32 { return 3 as i32; }
+
+fn wb_props(n: *core::Node) -> *chrome::WindowButtonsProps {
+    return props_of(n, chrome::K_WINDOW_BUTTONS) as *chrome::WindowButtonsProps;
+}
+
+// The gap the group leaves before whatever precedes it. 0 asks for the
+// platform's own metric, which here is no extra gap at all: the real buttons sit
+// flush against the edge and against each other.
+fn wb_spacing(p: *chrome::WindowButtonsProps) -> f64 {
+    if p == (0 as *chrome::WindowButtonsProps) { return 0.0f64; }
+    let s: f64 = { (*p).spacing };
+    if s <= (0.0f64) { return 0.0f64; }
+    return s;
+}
+
+fn wb_on_hover(p: *chrome::WindowButtonsProps) -> bool {
+    if p == (0 as *chrome::WindowButtonsProps) { return false; }
+    return match { (*p).style } {
+        chrome::ButtonStyle::Native => false,
+        chrome::ButtonStyle::OnHover => true,
+    };
+}
+
+// Which of the three cells holds `x`, or -1. Measured from the RIGHT edge so the
+// group stays anchored there however wide the node is.
+fn wb_hit(v: *u8, x: i32) -> i32 {
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return 0 -% (1 as i32); }
+    let cell: i32 = (wb_cell_w() * sys::dpi_scale(v)) as i32;
+    if cell <= (0 as i32) { return 0 -% (1 as i32); }
+    let from_right: i32 = r.right -% x;
+    if from_right < (0 as i32) { return 0 -% (1 as i32); }
+    let idx: i32 = from_right / cell;
+    if idx >= wb_count() { return 0 -% (1 as i32); }
+    // 0 from the right is CLOSE, then maximise, then minimise.
+    return idx;
+}
+
+fn wb_sc_minimize() -> u64 { return 0xF020 as u64; }
+fn wb_sc_maximize() -> u64 { return 0xF030 as u64; }
+fn wb_sc_restore() -> u64 { return 0xF120 as u64; }
+fn wb_sc_close() -> u64 { return 0xF060 as u64; }
+fn wb_wm_syscommand() -> u32 { return 0x0112 as u32; }
+fn wb_ws_maximize() -> i64 { return 16777216 as i64; }   // 0x01000000
+fn wb_ga_root() -> u32 { return 2 as u32; }
+
+fn wb_send(v: *u8, which: i32) {
+    let root: *u8 = { u::GetAncestor(v, wb_ga_root()) };
+    if root == (0 as *u8) { return; }
+    var cmd: u64 = wb_sc_close();
+    if which == (1 as i32) {
+        // MAXIMISE OR RESTORE, read from the LIVE style: the window can have
+        // been maximised by a double-click on the bar or by Win+Up, and a button
+        // that remembered its own last press would then do the wrong thing.
+        let style: i64 = { u::GetWindowLongPtrA(root, sys::gwl_style()) };
+        cmd = if (style & wb_ws_maximize()) != (0 as i64) { wb_sc_restore() } else { wb_sc_maximize() };
+    }
+    if which == (2 as i32) { cmd = wb_sc_minimize(); }
+    let _r: i64 = { u::SendMessageA(root, wb_wm_syscommand(), cmd, 0 as i64) };
+    return;
+}
+
+fn prop_wb_old() -> *u8 { return { #str_ptr("facet-winbuttons-oldproc\0") }; }
+
+fn window_buttons_proc_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, i64) -> i64 = window_buttons_proc;
+    return f as *u8;
+}
+
+fn window_buttons_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    let old: *u8 = { u::GetPropA(hwnd, prop_wb_old() as *i8) };
+    if old == (0 as *u8) { return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+    if msg == sys::wm_lbuttondown() {
+        let which: i32 = wb_hit(hwnd, stepper_lo_word(l));
+        if which >= (0 as i32) {
+            wb_send(hwnd, which);
+            return 0 as i64;
+        }
+    }
+    // WM_MOUSEMOVE / WM_MOUSELEAVE keep an `OnHover` group in step with the
+    // pointer. Repainting unconditionally is cheap for three glyphs and avoids a
+    // hover state this control would otherwise have to store.
+    if msg == (0x0200 as u32) || msg == (0x02A3 as u32) {
+        let _i: i32 = { u::InvalidateRect(hwnd, 0 as *u::tagRECT, 1 as i32) };
+    }
+    if msg == 0x0082 as u32 {
+        let _o: i64 = { u::SetWindowLongPtrA(hwnd, sys::gwlp_wndproc(), old as i64) };
+        let _r: *u8 = { u::RemovePropA(hwnd, prop_wb_old() as *i8) };
+        return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+    }
+    return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+}
+
+fn install_window_buttons(host: *u8) {
+    if host == (0 as *u8) { return; }
+    if { u::GetPropA(host, prop_wb_old() as *i8) } != (0 as *u8) { return; }
+    let old: i64 = { u::SetWindowLongPtrA(host, sys::gwlp_wndproc(), window_buttons_proc_addr() as i64) };
+    if old == (0 as i64) { return; }
+    let _p: i32 = { u::SetPropA(host, prop_wb_old() as *i8, old as *u8) };
+    return;
+}
+
+fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
+    // Both verbs are pixels: a restyle or a new gap is a repaint and nothing
+    // else. Named rather than blanket-repainted so the report can see them.
+    if (dirty & (chrome::P_STYLE | chrome::P_SPACING)) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+// Is the pointer inside this control right now? `OnHover` asks, and asking the
+// cursor beats storing a flag that a missed WM_MOUSELEAVE would strand.
+fn wb_pointer_inside(v: *u8) -> bool {
+    var pt: u::tagPOINT = u::tagPOINT { x: 0 as i32, y: 0 as i32 };
+    if { u::GetCursorPos(#addr_of(pt)) } == (0 as i32) { return false; }
+    let hit: *u8 = { u::WindowFromPoint(pt) };
+    return hit == v;
+}
+
+fn draw_window_buttons(v: *u8, n: *core::Node, hdc: *u8) {
+    let p: *chrome::WindowButtonsProps = wb_props(n);
+    if wb_on_hover(p) {
+        if !wb_pointer_inside(v) { return; }
+    }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    let scale: f64 = sys::dpi_scale(v);
+    let cell: i32 = (wb_cell_w() * scale) as i32;
+    if cell <= (0 as i32) { return; }
+
+    // The glyph colour follows the window text colour so the group reads on both
+    // a light and a dark bar without this control owning a palette.
+    //
+    // A PEN PER PAINT, created and destroyed here: `paint` caches BRUSHES
+    // because a fill happens on every control, and one cached pen for one
+    // control would be a second cache to invalidate when the system colours
+    // change. Three strokes are not worth that.
+    let ink: u32 = { u::GetSysColor(8 as i32) };            // COLOR_WINDOWTEXT
+    var width: i32 = (1.0f64 * scale) as i32;
+    if width < (1 as i32) { width = 1 as i32; }
+    let pen: *u8 = { gdi::CreatePen(0 as i32, width, ink) };   // PS_SOLID
+    if pen == (0 as *u8) { return; }
+    let oldpen: *u8 = { gdi::SelectObject(hdc, pen) };
+
+    let midy: i32 = (r.top +% r.bottom) / (2 as i32);
+    // Glyph box inside each cell: a 10pt square, centred.
+    let g: i32 = (10.0f64 * scale) as i32;
+    var idx: i32 = 0 as i32;
+    while idx < wb_count() {
+        let right: i32 = r.right -% (idx *% cell);
+        let cx: i32 = right -% (cell / (2 as i32));
+        if idx == (0 as i32) {
+            // CLOSE — two strokes.
+            let _a: i32 = { gdi::MoveToEx(hdc, cx -% (g/(2 as i32)), midy -% (g/(2 as i32)), 0 as *gdi::tagPOINT) };
+            let _b: i32 = { gdi::LineTo(hdc, cx +% (g/(2 as i32)), midy +% (g/(2 as i32))) };
+            let _c: i32 = { gdi::MoveToEx(hdc, cx +% (g/(2 as i32)), midy -% (g/(2 as i32)), 0 as *gdi::tagPOINT) };
+            let _d: i32 = { gdi::LineTo(hdc, cx -% (g/(2 as i32)), midy +% (g/(2 as i32))) };
+        }
+        if idx == (1 as i32) {
+            // MAXIMISE — an open square, drawn as four strokes so it stays a
+            // hollow outline whatever brush is selected.
+            let x0: i32 = cx -% (g/(2 as i32));
+            let x1: i32 = cx +% (g/(2 as i32));
+            let y0: i32 = midy -% (g/(2 as i32));
+            let y1: i32 = midy +% (g/(2 as i32));
+            let _a: i32 = { gdi::MoveToEx(hdc, x0, y0, 0 as *gdi::tagPOINT) };
+            let _b: i32 = { gdi::LineTo(hdc, x1, y0) };
+            let _c: i32 = { gdi::LineTo(hdc, x1, y1) };
+            let _d: i32 = { gdi::LineTo(hdc, x0, y1) };
+            let _e: i32 = { gdi::LineTo(hdc, x0, y0) };
+        }
+        if idx == (2 as i32) {
+            // MINIMISE — one stroke.
+            let _a: i32 = { gdi::MoveToEx(hdc, cx -% (g/(2 as i32)), midy, 0 as *gdi::tagPOINT) };
+            let _b: i32 = { gdi::LineTo(hdc, cx +% (g/(2 as i32)), midy) };
+        }
+        idx = idx +% (1 as i32);
+    }
+    if oldpen != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldpen) }; }
+    let _d: i32 = { gdi::DeleteObject(pen) };
+    return;
+}
 
 fn apply_page_dots(v: *u8, n: *core::Node, dirty: u64) {
     // EVERY PROP THIS KIND HAS IS PAINT. There is no control to write to, so
@@ -3863,6 +4083,7 @@ fn paint_node(v: *u8, n: *core::Node, hdc: *u8) {
     paint::paint_band_background(v, n, hdc);
     let kind: u32 = core::kind_of(n);
     if kind == props::K_PAGE_DOTS { draw_page_dots(v, n, hdc); return; }
+    if kind == chrome::K_WINDOW_BUTTONS { draw_window_buttons(v, n, hdc); return; }
     if kind == props::K_BORDERED { draw_bordered(v, n, hdc); return; }
     if kind == props::K_TABS { draw_tab_strip(v, n, hdc); return; }
     if kind == props::K_REFRESHABLE { draw_refreshable(v, n, hdc); return; }
@@ -4539,4 +4760,59 @@ fn a_wrapping_label_gives_up_vertical_centring() {
     { (*p).max_lines = 1 as i64 };
     assert !label_wraps(p);
     return;
+}
+
+// ---- window buttons ------------------------------------------------------------
+
+#[test]
+fn the_window_buttons_are_three_platform_sized_cells() {
+    // Windows' own caption buttons are 46x32 at 100%, and the group is exactly
+    // three of them. The numbers are logical points — the backend scales at
+    // placement — so these are the same values a person reads in a layout.
+    assert wb_count() == (3 as i32);
+    assert wb_cell_w() == (46.0f64);
+    assert wb_cell_h() == (32.0f64);
+}
+
+#[test]
+fn a_system_command_is_chosen_per_cell() {
+    // The three codes are the ones the REAL caption buttons send, and they must
+    // stay distinct: a close that sent SC_MINIMIZE would hide a window the user
+    // asked to be rid of.
+    assert wb_sc_close() != wb_sc_minimize();
+    assert wb_sc_close() != wb_sc_maximize();
+    assert wb_sc_minimize() != wb_sc_maximize();
+    // Restore is its OWN command rather than a second maximise — see `wb_send`,
+    // which picks between them from the live window style.
+    assert wb_sc_restore() != wb_sc_maximize();
+    // WM_SYSCOMMAND, and the WS_MAXIMIZE bit that decides between the two.
+    assert wb_wm_syscommand() == (0x0112 as u32);
+    assert wb_ws_maximize() == (16777216 as i64);
+}
+
+#[test]
+fn spacing_defaults_to_the_platform_metric_and_never_goes_negative() {
+    // 0 asks for the platform's own gap, which for caption buttons is none:
+    // they sit flush against the edge and each other. A negative value would
+    // pull the group off its own right edge, so it reads as 0 too.
+    let none: *chrome::WindowButtonsProps = 0 as *chrome::WindowButtonsProps;
+    assert wb_spacing(none) == (0.0f64);
+}
+
+#[test]
+fn the_style_is_native_unless_a_node_says_otherwise() {
+    // A null props block is the shape a node with no data has, and it must read
+    // as the platform group rather than as the hover variant — a titlebar whose
+    // buttons only appear on hover, chosen by accident, looks broken.
+    let none: *chrome::WindowButtonsProps = 0 as *chrome::WindowButtonsProps;
+    assert wb_on_hover(none) == false;
+}
+
+#[test]
+fn a_hit_outside_the_group_is_not_one_of_the_three() {
+    // `wb_hit` measures from the RIGHT edge so the group stays anchored there
+    // however wide the node is. A null window has no client rect, and answering
+    // a cell for it would send a system command on a stray click.
+    assert wb_hit(0 as *u8, 0 as i32) == (0 -% (1 as i32));
+    assert wb_hit(0 as *u8, 999 as i32) == (0 -% (1 as i32));
 }

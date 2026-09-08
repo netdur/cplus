@@ -67,7 +67,7 @@ FLOORS = {
     "gtk": (FLOOR, HANDLER_FLOOR, SHARED_FLOOR),
     # Where facet_win32 stands today. Raise them as the gap closes — the point
     # of a floor is that it only ever goes up.
-    "win32": (308, 62, 19),
+    "win32": (310, 62, 19),
 }
 
 # Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification

@@ -35,6 +35,7 @@ import "facet/props" as props;
 import "facet/label" as label;
 import "facet/text_button" as text_button;
 import "facet/symbol" as symbol;
+import "facet/window_chrome" as chrome;
 import "./imaging" as imaging;
 import "facet/vocabulary" as vocab;
 import "win32/winuser" as u;
@@ -266,6 +267,9 @@ fn has_intrinsic_size(kind: u32) -> bool {
     // the top of a zero-height box. `fixed_height` and `fills_line` answer for
     // it below.
     if kind == props::K_PAGE_DOTS { return true; }
+    // Three fixed cells with no string — without a measure callback the group
+    // lays out at 0x0 and the glyphs draw outside their own box.
+    if kind == chrome::K_WINDOW_BUTTONS { return true; }
     // A SWITCH AND A GLYPH are both fixed affordances — see `square_side` and
     // `toggle_size`. Neither draws a string the layout could measure, so
     // leaving them out here is the same 0x0 the slider had: the callback is
@@ -299,6 +303,10 @@ fn fills_line(kind: u32) -> bool {
     // A page-dots strip fills the line and centres its dots in it (see
     // `draw_page_dots`), so a stated natural width would left-align them.
     if kind == props::K_PAGE_DOTS { return true; }
+    // THE WINDOW BUTTONS DO NOT FILL THE LINE, deliberately: a titlebar puts
+    // them at its right edge beside a title that takes the rest, and a group
+    // that stretched would push everything else out of the bar. Their width is
+    // the three cells, stated in `measure_view_physical`.
     return false;
 }
 
@@ -429,6 +437,28 @@ fn measure_view_physical(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     if kind == props::K_SPINNER {
         let side: i32 = drawing::spinner_side();
         return flex::Size { width: side as f64, height: side as f64 };
+    }
+    // THE WINDOW BUTTONS ARE THREE FIXED CELLS and must not stretch: a titlebar
+    // puts them at its right edge beside a title that takes the rest, so a group
+    // that filled the line would push everything else out. Windows' own caption
+    // buttons are 46x32 at 100%, which is what `controls` draws into.
+    //
+    // `spacing` is added as a LEADING gap — the contract calls it "extra points
+    // between the buttons and whatever follows", and what follows them in a
+    // right-anchored group is the content to their left.
+    if kind == chrome::K_WINDOW_BUTTONS {
+        // SCALED INTO PHYSICAL, because that is this function's currency — the
+        // wrapper divides the answer back into points and `geometry::place`
+        // multiplies it out again. `wb_cell_w` is stated in POINTS, the way the
+        // rest of the layout is, so returning it raw made the group come out
+        // one DPI factor too small: 110 physical pixels where three 46-point
+        // cells at 125% should be 172. Measured on the probe before this line
+        // existed.
+        let s: f64 = sys::dpi_scale(ctx);
+        let cells: f64 = (controls::wb_count() as f64) * controls::wb_cell_w();
+        let gap: f64 = controls::wb_spacing(controls::wb_props(n));
+        return flex::Size { width: (cells + gap) * s,
+                            height: controls::wb_cell_h() * s };
     }
     let fixed: i32 = fixed_height(kind);
     if fixed > (0 as i32) {

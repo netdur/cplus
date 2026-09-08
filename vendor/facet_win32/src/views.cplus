@@ -122,6 +122,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_STEPPER { return controls::create_stepper(n); }
     if kind == props::K_TABS { return controls::create_tabs(n); }
     if kind == props::K_PAGE_DOTS { return controls::create_page_dots(n); }
+    if kind == window_chrome::K_WINDOW_BUTTONS { return controls::create_window_buttons(n); }
     if kind == props::K_BORDERED { return controls::create_bordered(n); }
     if kind == symbol::K_SYMBOL { return controls::create_symbol(n); }
     if kind == props::K_REFRESHABLE { return controls::create_refreshable(n); }
@@ -163,6 +164,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_STEPPER { controls::apply_stepper(v, n, dirty); return; }
     if kind == props::K_TABS { controls::apply_tabs(v, n, dirty); return; }
     if kind == props::K_PAGE_DOTS { controls::apply_page_dots(v, n, dirty); return; }
+    if kind == window_chrome::K_WINDOW_BUTTONS { controls::apply_window_buttons(v, n, dirty); return; }
     if kind == props::K_BORDERED { controls::apply_bordered(v, n, dirty); return; }
     if kind == symbol::K_SYMBOL { controls::apply_symbol(v, n, dirty); return; }
     if kind == props::K_REFRESHABLE { controls::apply_refreshable(v, n, dirty); return; }
