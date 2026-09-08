@@ -168,6 +168,17 @@ NOT_A_VERB = {
     "C_RESTYLE",       # C_ALL_STATE minus one bit
     "C_COMMANDS",      # the verb group, as a mask
     "C_LAYOUT",        # raised by geometry writes, answered by the layout pass
+    # Raised when a begin_updates/end_updates batch CLOSES, and by then every
+    # bit the batch raised is already on the node — the sync walk applies
+    # those. A backend acting on the flush as well re-applies the same node
+    # twice for one edit. So there is nothing to name, and NO BACKEND NAMES IT:
+    # appkit and uikit each mention it once, in a comment, which this tool
+    # strips by design.
+    #
+    # It was counted as an unanswered VERB until 2026-09-08 and each backend
+    # was expected to argue it away in its own manifest, which facet_gtk duly
+    # did. That is one census bug wearing three copies of the same excuse.
+    "C_FLUSH",
 }
 
 

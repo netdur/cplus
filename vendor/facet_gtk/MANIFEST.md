@@ -40,10 +40,13 @@ like.
 before believing any adjective in this file.
 
 **EVERY DECLARED VERB IS NOW EITHER IMPLEMENTED OR RECORDED — on all three
-axes.** The three shared-band bits the tool counts as unanswered are `C_FLUSH`
-(nothing to do, and no backend names it) and `C_SAFE_AREA` (a GTK window under
-a compositor has no such inset). Both are in §1. `C_HANDLERS` used to be a
-third and was WRONG — see its struck-through row.
+axes.** The one shared-band bit the tool counts as unanswered is `C_SAFE_AREA`
+(a GTK window under a compositor has no such inset), and it is in §1.
+`C_FLUSH` was a second until 2026-09-08, when the row below was accepted as
+right about the wrong thing: it is not a verb any backend answers, so it left
+this file's problem and became `NOT_A_VERB` in `tools/parity.py`. The band is
+20 bits now, not 21. `C_HANDLERS` used to be a third and was WRONG — see its
+struck-through row.
 
 **EVERY DECLARED PROP IS NOW EITHER IMPLEMENTED OR RECORDED,** and the tool
 enforces it rather than the prose claiming it: `parity.py` reads §1 for the
@@ -252,11 +255,20 @@ is worth re-reading with that in mind.
   `gdk_surface_set_opaque_region`, which is a WINDOW-level region and says
   nothing about one widget. Approximating it with a background colour would
   change what is drawn, which is the one thing a hint must not do.
-- **`C_FLUSH` is nothing to do, and NO BACKEND NAMES IT** — not this one, not
-  appkit, not uikit. It is raised when a `begin_updates` / `end_updates` batch
-  closes, and by then every bit the batch raised is already on the node. The
-  sync walk applies those. A backend acting on the flush as well would re-apply
-  the same node twice for one edit.
+- ~~**`C_FLUSH` is nothing to do, and NO BACKEND NAMES IT**~~ — **RIGHT, and
+  therefore no longer this file's row. Moved into the tool 2026-09-08; kept as
+  the record.**
+
+  It is raised when a `begin_updates` / `end_updates` batch closes, and by then
+  every bit the batch raised is already on the node. The sync walk applies
+  those. A backend acting on the flush as well would re-apply the same node
+  twice for one edit.
+
+  The sentence that ended the row — "not this one, not appkit, not uikit" — is
+  what made it the wrong place to say it. A bit NO backend answers is not four
+  backends each owing an excuse; it is a census counting something that is not
+  a verb. `tools/parity.py` now lists it beside `C_LAYOUT` in `NOT_A_VERB`, the
+  shared band is 20 bits, and this package reads 19/20 on `C_SAFE_AREA` alone.
 - ~~**`C_HANDLERS` is free HERE**~~ — **WRONG, and it cost a real bug. Corrected
   2026-08-25; the bit is acted on now and this row is kept as the record.**
 
