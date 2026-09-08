@@ -7,7 +7,26 @@ from an abandoned one.
 
 Status 2026-08-23: **first light.** A label, a button and a container render on
 a Pixel 9 Pro XL emulator (API 36); taps route through facet's handler; state
-survives an Activity recreation. Everything else is section 2.
+survives an Activity recreation.
+
+**Status 2026-09-08: EVERY DECLARED VERB IS IMPLEMENTED OR RECORDED.**
+`python3 tools/verb_coverage.py android --check` passes.
+
+    312 live / 363 declared      88 of 89 handlers wired
+    20 host-rendered   22 decided   6 modifier   1 derived   1 create-only
+     1 by-architecture
+     0 absent   0 gated-but-unread   0 handlers that never fire
+
+That number is the STRICT one: `verb_coverage.py` credits a verb only when the
+dirty bit is GATED and the field is READ. `tools/parity.py` is the looser
+measure this file used to quote — it counts a bit that is merely NAMED — and it
+now reads 347/363, floor raised to match.
+
+Read the ledgers below before trusting any adjective here. A row in them is a
+commitment: the tool refuses a `host-rendered`, `create-only`, `derived` or
+`modifier` claim whose field no body reads, and says LEDGER CONTRADICTED
+instead. That is the only thing stopping another backend's reasoning being
+pasted over a gap in this one.
 
 ---
 
@@ -229,6 +248,11 @@ text is answered; the colour of it is the dialog's.
 
 
 ## 2. Not yet built — Android has an answer, this pass did not write it
+
+**This section is EMPTY of verbs as of 2026-09-08.** What follows is the one
+entry that was never a missing verb — a built thing whose answer is weaker than
+AppKit's — kept because the difference is worth knowing. Everything that used to
+be here is either built or recorded in a ledger above.
 
 ### The clipboard IS built, and its `copy_text` answers weaker than AppKit's
 
