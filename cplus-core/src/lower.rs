@@ -246,7 +246,24 @@ struct Lower {
     /// `Type::function` suffix. A qualified call such as `json::Value::parse`
     /// uses the final two path segments to select this table.
     assoc_params: std::collections::HashMap<String, Vec<Vec<ParamInfo>>>,
+    /// How deep we are inside defaults spliced from other defaults. A default
+    /// is an expression, and lowering the one just spliced is what lets a
+    /// default call a function that has defaults of its own — but a default may
+    /// also name its own function, so the nesting has to be bounded rather than
+    /// trusted. See `MAX_DEFAULT_SPLICE_DEPTH`.
+    default_splice_depth: usize,
 }
+
+/// How many defaults may be spliced out of one another before the compiler
+/// calls it a cycle.
+///
+/// A default is allowed to be a call (`fn open(r: Request = Request::new())`)
+/// and that call is allowed to omit ITS defaults, so one splice can produce
+/// another. `fn f(a: i32 = f())` produces them without end, and a compiler that
+/// hangs is a worse answer than the arity error this replaced — so the nesting
+/// is capped and the cap is an error the author can read. Sixteen is far past
+/// anything a person writes and far short of anything that takes time.
+const MAX_DEFAULT_SPLICE_DEPTH: usize = 16;
 
 impl Lower {
     fn new(
@@ -270,6 +287,7 @@ impl Lower {
             fn_params: std::collections::HashMap::new(),
             method_params: std::collections::HashMap::new(),
             assoc_params: std::collections::HashMap::new(),
+            default_splice_depth: 0,
         }
     }
 
@@ -492,6 +510,7 @@ impl Lower {
         if results.len() == 1 && (sole_candidate || no_candidate_rejected) {
             let (ci, slots) = &results[0];
             Self::apply_slots(&candidates[*ci], args, arg_labels, slots);
+            self.lower_spliced_defaults(args, slots, call_span);
         } else if results.is_empty() && sole_candidate {
             if let Some((code, msg, span)) = first_err {
                 self.err(code, msg, span);
@@ -581,6 +600,58 @@ impl Lower {
             }
         }
         Ok(out)
+    }
+
+    /// A SPLICED DEFAULT IS AN EXPRESSION NOTHING HAS LOWERED YET.
+    ///
+    /// The arguments the caller WROTE are walked by `lower_expr` before this
+    /// pass runs; a default is cloned in afterwards, out of a table, exactly as
+    /// the declaration wrote it. So a default that is itself a call omitting
+    /// its own defaults kept the declaration's arity all the way to sema, which
+    /// reported it against the DECLARATION's span — an error pointing at a line
+    /// the caller never wrote:
+    ///
+    /// ```text
+    /// fn inner(a: i32 = 7) -> i32 { return a; }
+    /// fn outer(x: i32 = inner()) -> i32 { return x; }
+    /// outer()   ->  E0308: function `inner` takes 1 argument(s), got 0
+    /// ```
+    ///
+    /// It looked like a header or slice problem because that is where it was
+    /// found — `camera::open()`, whose default is `Request::new()` and whose
+    /// eleven defaults live on the other side of a generated header. It is
+    /// neither: five lines in one file reproduce it.
+    ///
+    /// So each newly spliced argument is lowered here, which is also what makes
+    /// a labelled call inside a default work (`= f(b: 2)`).
+    fn lower_spliced_defaults(&mut self, args: &mut [Expr], slots: &[ArgSlot], call_span: Span) {
+        let positions: Vec<usize> = slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| matches!(s, ArgSlot::Default))
+            .map(|(i, _)| i)
+            .collect();
+        if positions.is_empty() {
+            return;
+        }
+        if self.default_splice_depth >= MAX_DEFAULT_SPLICE_DEPTH {
+            self.err(
+                "E1009",
+                format!(
+                    "a default value is nested more than {} deep — a default that calls its own function has no end",
+                    MAX_DEFAULT_SPLICE_DEPTH
+                ),
+                call_span,
+            );
+            return;
+        }
+        self.default_splice_depth += 1;
+        for pos in positions {
+            if let Some(a) = args.get_mut(pos) {
+                self.lower_expr(a);
+            }
+        }
+        self.default_splice_depth -= 1;
     }
 
     /// Rebuild `args` from `slots` (each position takes an original arg or the
@@ -5483,6 +5554,136 @@ fn main() -> i32 { return 0; }\n";
                 other => panic!("expected an int literal argument, got {other:?}"),
             })
             .collect();
+    }
+
+    /// The arguments of a free call to `outer` in `main`, where the argument at
+    /// `pos` is itself expected to be a call to `inner`.
+    fn nested_call_args(prog: &Program, outer: &str, inner: &str) -> Vec<u64> {
+        let f = fn_named(prog, "main");
+        let mut found: Option<Vec<u64>> = None;
+        visit_exprs_in_block(&f.body, &mut |e| {
+            if found.is_some() {
+                return;
+            }
+            let ExprKind::Call { callee, args, .. } = &e.kind else {
+                return;
+            };
+            if !matches!(&callee.kind, ExprKind::Ident(n) if n == outer) {
+                return;
+            }
+            let Some(a0) = args.first() else { return };
+            let ExprKind::Call {
+                callee: c2,
+                args: a2,
+                ..
+            } = &a0.kind
+            else {
+                panic!("`{outer}`'s spliced default is not a call: {:?}", a0.kind);
+            };
+            assert!(
+                matches!(&c2.kind, ExprKind::Ident(n) if n == inner),
+                "expected the default to call `{inner}`"
+            );
+            found = Some(int_args(a2));
+        });
+        return found.expect("a call to the outer fn in main");
+    }
+
+    /// A DEFAULT IS AN EXPRESSION, AND NOTHING LOWERED IT.
+    ///
+    /// The arguments a caller WRITES are walked before the splice runs; a
+    /// default is cloned in out of a table afterwards, exactly as the
+    /// declaration wrote it. So `outer()` became `outer(inner())` and that
+    /// `inner()` kept the zero arity — sema then reported E0308 against the
+    /// DECLARATION's span, a line the caller never wrote.
+    ///
+    /// Found through `camera::open()`, whose default is `Request::new()` and
+    /// whose eleven defaults live across a generated header, so it was filed as
+    /// a slice bug. It is not one: these three lines are the whole of it.
+    #[test]
+    fn a_default_that_calls_a_defaulted_fn_gets_its_own_defaults() {
+        let src = "fn inner(a: i32 = 7) -> i32 { return a; }\n\
+                   fn outer(x: i32 = inner()) -> i32 { return x; }\n\
+                   fn main() -> i32 { return outer(); }\n";
+        let (prog, diags) = run(src);
+        assert!(
+            diags.is_empty(),
+            "expected a clean lowering, got {:?}",
+            first_codes(&diags)
+        );
+        assert_eq!(
+            nested_call_args(&prog, "outer", "inner"),
+            vec![7],
+            "the default's own default is spliced too"
+        );
+    }
+
+    /// One level is not the rule — the splice recurses, so a default three
+    /// deep resolves all the way down. Checked because a fix that lowered the
+    /// spliced expression WITHOUT recursing would pass the test above.
+    #[test]
+    fn defaults_splice_through_more_than_one_level() {
+        let src = "fn c(z: i32 = 3) -> i32 { return z; }\n\
+                   fn b(y: i32 = c()) -> i32 { return y; }\n\
+                   fn a(x: i32 = b()) -> i32 { return x; }\n\
+                   fn main() -> i32 { return a(); }\n";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "got {:?}", first_codes(&diags));
+        // a( b( c(3) ) ) — the innermost literal is what proves the recursion.
+        let f = fn_named(&prog, "main");
+        let mut depth3: Option<Vec<u64>> = None;
+        visit_exprs_in_block(&f.body, &mut |e| {
+            if depth3.is_some() {
+                return;
+            }
+            let ExprKind::Call { callee, args, .. } = &e.kind else {
+                return;
+            };
+            if !matches!(&callee.kind, ExprKind::Ident(n) if n == "a") {
+                return;
+            }
+            let ExprKind::Call { args: b_args, .. } = &args[0].kind else {
+                panic!("`a`'s default is not a call");
+            };
+            let ExprKind::Call { args: c_args, .. } = &b_args[0].kind else {
+                panic!("`b`'s default is not a call");
+            };
+            depth3 = Some(int_args(c_args));
+        });
+        assert_eq!(depth3.expect("the a(b(c())) chain"), vec![3]);
+    }
+
+    /// The same walk is what makes a LABELLED call legal inside a default —
+    /// the labels have to be arranged into parameter order like any other call,
+    /// and before this nothing arranged them.
+    #[test]
+    fn a_labelled_call_inside_a_default_is_arranged() {
+        let src = "fn two(p: i32, q: i32 = 0) -> i32 { return p + q; }\n\
+                   fn lab(v: i32 = two(q: 5, p: 2)) -> i32 { return v; }\n\
+                   fn main() -> i32 { return lab(); }\n";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "got {:?}", first_codes(&diags));
+        assert_eq!(
+            nested_call_args(&prog, "lab", "two"),
+            vec![2, 5],
+            "labels inside a default are put in parameter order"
+        );
+    }
+
+    /// A DEFAULT MAY NAME ITS OWN FUNCTION, and then each splice makes another.
+    /// Lowering the spliced expression without a bound turns an arity error
+    /// into a compiler that never finishes, which is the worse failure — so the
+    /// nesting is capped and the cap is a diagnostic.
+    #[test]
+    fn a_self_referential_default_is_refused_rather_than_looping() {
+        let src = "fn f(a: i32 = f()) -> i32 { return a; }\n\
+                   fn main() -> i32 { return f(); }\n";
+        let (_prog, diags) = run(src);
+        assert!(
+            first_codes(&diags).contains(&"E1009"),
+            "expected E1009, got {:?}",
+            first_codes(&diags)
+        );
     }
 
     /// Two types declare the same method with the SAME signature. Whichever

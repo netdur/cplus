@@ -3512,6 +3512,22 @@ extern fn g(x: i32 = 0) -> i32;  // -> E1008 extern parameter cannot have a defa
 '''
 
 [[code]]
+id = "E1009"
+title = "A default value is nested too deep"
+category = "Compile-time builtins"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/lower.rs"
+test = "cplus-core/src/lower.rs:a_self_referential_default_is_refused_rather_than_looping"
+cause = "A default value may itself be a call that omits ITS defaults, so one splice can produce another. A default that names its own function produces them without end, and the compiler caps the nesting at 16 rather than running out of stack."
+fix = "A default value cannot be defined in terms of itself. Give the parameter a value that does not call back into the same function."
+example = '''
+fn f(a: i32 = f()) -> i32 { return a; }  // -> E1009 a default value is nested more than 16 deep
+'''
+
+[[code]]
 id = "E1900"
 title = "Construct is outside the wasm subset"
 category = "Targets and packages"

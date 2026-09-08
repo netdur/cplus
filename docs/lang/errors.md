@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **194 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **151** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **195 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **152** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -2095,6 +2095,18 @@ extern fn g(x: i32 = 0) -> i32;  // -> E1008 extern parameter cannot have a defa
 **Fix.** Remove the default; pass the argument explicitly at every call.
 
 <sub>repro: checked · cplus-core/src/lower.rs</sub>
+
+### E1009 · A default value is nested too deep
+
+A default value may itself be a call that omits ITS defaults, so one splice can produce another. A default that names its own function produces them without end, and the compiler caps the nesting at 16 rather than running out of stack.
+
+```cplus
+fn f(a: i32 = f()) -> i32 { return a; }  // -> E1009 a default value is nested more than 16 deep
+```
+
+**Fix.** A default value cannot be defined in terms of itself. Give the parameter a value that does not call back into the same function.
+
+<sub>repro: checked · cplus-core/src/lower.rs · test cplus-core/src/lower.rs:a_self_referential_default_is_refused_rather_than_looping</sub>
 
 ## Real-time contracts
 
