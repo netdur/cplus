@@ -912,7 +912,6 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
 
     let output: av::CapturePhotoOutput = av::CapturePhotoOutput::new();
     if output.raw().is_null() {
-        rt::release(input.raw());
         rt::release(session);
         return 0 as *u8;
     }
@@ -920,8 +919,6 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
     s.begin_configuration();
     if !s.can_add_input(input.as_capture_input()) {
         s.commit_configuration();
-        rt::release(output.raw());
-        rt::release(input.raw());
         rt::release(session);
         _LAST_ERROR = cam::Outcome::Busy.to_code();
         return 0 as *u8;
@@ -1123,6 +1120,22 @@ export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
 }
 
 
+// A WRAPPER RELEASES ITSELF. `av::CaptureVideoDataOutput`, `CaptureDeviceInput`
+// and `CapturePhotoOutput` are owning handles: `::new` is +1, `from_raw`
+// retains, and `drop` releases. So `rt::release(x.raw())` on one of them is the
+// SECOND release, and the object goes to zero while the session still has it.
+//
+// Seven of those had accumulated, and the shape hid them: five were on error
+// paths nobody takes, and the two on the main path only bite when a session is
+// CLOSED AND RE-OPENED — a single close at app exit over-releases into a
+// process that is exiting anyway. Flipping the lens is the first thing that
+// ever did it twice.
+//
+// Traced with a dyld interposer on objc_retain/objc_release
+// (`bugs/closed/camera-flipping-the-lens-over-releases-the-video-output.md`):
+// the count reached zero inside `_c_close` and the next two releases were ours.
+// `rt::release(session)` and friends nearby are NOT this — those are raw `*u8`
+// handles with no wrapper and no destructor, and they must stay.
 export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
@@ -1158,13 +1171,11 @@ export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), 
         session.begin_configuration();
         if !session.can_add_output(out.as_capture_output()) {
             session.commit_configuration();
-            rt::release(out.raw());
             return cam::Outcome::Busy.to_code();
         }
         session.add_output(out.as_capture_output());
         session.commit_configuration();
         { (*s).video = rt::retain(out.raw()) };
-        rt::release(out.raw());
     }
 
     if { (*s).queue }.is_null() {
@@ -1405,7 +1416,6 @@ export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
             session.add_input(av::CaptureDeviceInput::from_raw(old).as_capture_input());
         }
         session.commit_configuration();
-        rt::release(fresh.raw());
         return cam::Outcome::Busy.to_code();
     }
     session.add_input(fresh.as_capture_input());
@@ -1413,7 +1423,6 @@ export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
 
     if old.is_not_null() { rt::release(old); }
     { (*s).input = rt::retain(fresh.raw()) };
-    rt::release(fresh.raw());
 
     let prev: *u8 = { (*s).device };
     if prev.is_not_null() { rt::release(prev); }
