@@ -75,7 +75,7 @@ $ python3 tools/parity.py win32           # a shim onto the one measurement in f
 363 prop bits declared across facet's kind modules
   gtk       359 / 363    98%
   appkit    354 / 363    97%
-  win32     314 / 363    86%   <-- this package
+  win32     315 / 363    87%   <-- this package
 
  68 declared handlers
   gtk        68 / 68    100%
@@ -84,12 +84,16 @@ $ python3 tools/parity.py win32           # a shim onto the one measurement in f
  21 shared-band bits
   win32      19 / 21     90%   <-- this package
 
-2 unanswered and UNRECORDED: web.user_agent, canvas.redraw.
+1 unanswered and UNRECORDED: canvas.redraw — and it is a false negative.
 ```
 
 That closing line is the number that matters more than the percentage. Every
-kind reads either `n/n` or `decided absent:` — there is no `not yet:` row, and
-the two names on it are the whole outstanding debt.
+kind reads either `n/n` or `decided absent:` — and the one `not yet:` row left
+is wrong. `canvas.redraw` IS answered: `apply_canvas` repaints on any apply and
+never reads `dirty`, so it never names the bit, and the tool counts a prop as
+answered when the backend names its constant. MANIFEST's opening has the
+argument, including the three ways of closing it that are all worse than leaving
+it open.
 
 **The tool itself was wrong until 2026-09-06, in four ways that all flattered
 the number** — among them, kinds a backend answered NOTHING for were left off

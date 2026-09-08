@@ -55,7 +55,7 @@ A third, `cam_facet`, is the adoption probe: a `camera.preview()` node in an
 ordinary facet column, checked with `PrintWindow`.
 
 ```
-363 declared prop bits     314 answered    86%   (gtk 359, appkit 354, uikit 329, android 326)
+363 declared prop bits     315 answered    87%   (gtk 359, appkit 354, uikit 329, android 326)
  68 declared handlers       62 fired       91%   (gtk  68, appkit  68, android  67, uikit  65)
  21 shared-band bits        19 named       90%   (appkit 20, gtk 19, android 19, win32 19, uikit 18)
 ```
@@ -73,9 +73,34 @@ backend answered NOTHING for was left off the report entirely rather than
 counted as zero. Anything quoted from an older commit message is measured on
 the broken tool.
 
-**Two prop bits are unanswered AND unrecorded** — `web.user_agent` and
-`canvas.redraw`. They are the whole outstanding debt against this file's own
-rule, and they are named here so that the rule is not quietly bent.
+**One prop bit reads as unanswered and is NOT absent: `canvas.redraw`.** It is
+the last row this file's own rule has anything to say about, so the argument is
+here rather than in either numbered section — it belongs in neither.
+
+The prop is ANSWERED, unconditionally. `drawing::apply_canvas` invalidates the
+host on **any** apply and never looks at `dirty`, because a canvas is drawn
+entirely by this package: there is no cheaper thing to do on a redraw request
+than repaint, and repainting always is what covers a recycled host coming back
+on-screen whose drawable did not change and would otherwise never be
+re-invalidated.
+
+The tool counts a prop as answered when the backend NAMES its constant, which is
+the right default — it is what caught five `web` verbs spelled as numeric
+literals. It has one false negative, and this is it: code that answers a bit by
+ignoring it has no reason to mention it.
+
+**Three ways to close the gap were considered and all three are worse than the
+gap.** Writing `let _bits = canvas::P_DRAWABLE | canvas::P_REDRAW;` is a dead
+binding whose only purpose is to be found by a grep — gaming the measurement,
+which is the specific thing this package was caught doing before and fixed.
+Making the repaint conditional on those bits is a behaviour change to code that
+is correct, and it risks exactly the recycled-canvas case the unconditional
+repaint exists for. Teaching the tool to accept "answered unconditionally" hands
+every backend a claim it cannot check.
+
+So the number is 315/363 with one known false negative, and `parity.py` will go
+on printing `canvas 1/2 not yet: redraw`. That line is wrong, this paragraph is
+why, and the code is right.
 
 **THE THIRD NUMBER IS OUT OF PROPORTION TO THE FIRST TWO, and that is the
 architecture rather than an accident.** The shared band is answered ONCE, in
