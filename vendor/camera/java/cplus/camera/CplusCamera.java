@@ -329,6 +329,38 @@ public final class CplusCamera {
         return Surface.ROTATION_0;
     }
 
+    // HOW FAR THE SENSOR'S BUFFER IS FROM UPRIGHT, clockwise, for the way the
+    // device is being held right now.
+    //
+    // ONE METHOD FOR TWO ANSWERS, because they are the same number: what a
+    // frame reports through `Frame::rotation()` and what a still writes into
+    // `JPEG_ORIENTATION` are both "turn this image by N degrees to make it
+    // upright". Two copies of a modular formula is how they drift apart.
+    //
+    // Google's own `getJpegOrientation` snippet, with the device angle derived
+    // from the display rotation rather than from an OrientationEventListener:
+    // `Display.getRotation()` reports the rotation of the DRAWING from natural,
+    // so the device's own clockwise angle is its negation.
+    //
+    // Front lenses reverse, because the image is captured through a mirror.
+    // (MIRRORING itself is a separate transform and is not done here — see the
+    // report; a rotation that is right still leaves a front preview flipped.)
+    //
+    // Sanity, against the four readings measured on a Fold, all sensor=90 back:
+    //   ROTATION_0   -> deviceCW 0    -> (90 +   0) % 360 =  90
+    //   ROTATION_90  -> deviceCW 270  -> (90 + 270) % 360 =   0
+    //   ROTATION_180 -> deviceCW 180  -> (90 + 180) % 360 = 270
+    //   ROTATION_270 -> deviceCW 90   -> (90 +  90) % 360 = 180
+    static int uprightDegrees(int sensorDegrees, int displayRotation, boolean front) {
+        int deviceCW = ((4 - (displayRotation & 3)) & 3) * 90;
+        int d = front ? -deviceCW : deviceCW;
+        return ((sensorDegrees + d) % 360 + 360) % 360;
+    }
+
+    private int uprightDegrees() {
+        return uprightDegrees(sensorOrientation, displayRotation(), actualFacing == 1);
+    }
+
     // MAP THE SENSOR-ORIENTED BUFFER ONTO A VIEW THAT HAS ROTATED.
     //
     // camera2 delivers into the SurfaceTexture in the sensor's own
@@ -505,7 +537,8 @@ public final class CplusCamera {
             img = r.acquireLatestImage();
             if (img == null) { return; }
             Image.Plane y = img.getPlanes()[0];
-            nativeFrame(token, y.getBuffer(), img.getWidth(), img.getHeight(), y.getRowStride());
+            nativeFrame(token, y.getBuffer(), img.getWidth(), img.getHeight(),
+                        y.getRowStride(), uprightDegrees());
         } catch (Throwable ignored) {
         } finally {
             // CLOSE IT. An ImageReader holding maxImages stops delivering,
@@ -521,6 +554,11 @@ public final class CplusCamera {
         try {
             CaptureRequest.Builder b = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             b.addTarget(reader.getSurface());
+            // WITHOUT THIS EVERY SAVED PHOTO OPENS SIDEWAYS. camera2 writes no
+            // EXIF rotation of its own; `JPEG_ORIENTATION` is the only place to
+            // say it, and a file that outlives the call has to carry the fact
+            // rather than report it.
+            b.set(CaptureRequest.JPEG_ORIENTATION, uprightDegrees());
             session.capture(b.build(), null, handler);
             return true;
         } catch (Throwable t) {
@@ -565,5 +603,6 @@ public final class CplusCamera {
     // `GetDirectBufferAddress` on the other side. Copying it here would double
     // the per-frame cost for nothing.
     private static native void nativeFrame(long token, java.nio.ByteBuffer luma,
-                                           int width, int height, int rowStride);
+                                           int width, int height, int rowStride,
+                                           int rotation);
 }
