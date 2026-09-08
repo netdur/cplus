@@ -157,8 +157,15 @@ fn attach_window(win: *u8) {
 // line, written to get an agent talking at all — silently the line that hands
 // a card number to whatever connects. Widening is an app supplying its own
 // policy, which is a place a reader can find it.
+// `cap_edit_tree` IS PART OF THE DEFAULT, and this backend was the one that did
+// not say so. `serve_once` below publishes the inspector's verbs — eight of
+// which rewrite the tree — and a grant without this capability refuses all eight
+// on every connection, always. The other four backends carry it; Windows was
+// left behind, so the inspector could read a Win32 app and never write to it,
+// failing as a `-32002` nobody reads. Same silent shape the capability was added
+// to close.
 fn admit(req: auth::Request) -> auth::Grant {
-    return auth::operator();
+    return auth::operator().with(auth::cap_edit_tree());
 }
 
 // THE APP'S OWN POLICY, if it has one.

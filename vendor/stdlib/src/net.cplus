@@ -378,6 +378,29 @@ async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
             return n;
         }
         let e: i32 = netsys::errno();
+        // EINTR IS "ASK AGAIN", NOT A FAILURE, and treating it as one broke
+        // every `run_on_worker` on Windows.
+        //
+        // A PIPE is the case that made it visible. `recv_fd` cannot `recv` an
+        // anonymous pipe and an anonymous pipe cannot be WSAPoll'd, so its
+        // Windows half peeks, and when nothing is ready yet it naps a slice and
+        // reports EINTR — deliberately, so a parked reader wakes to re-check
+        // cancellation. That is the ORDINARY state of a worker pipe: the
+        // coroutine reaches the read before the worker thread has written. This
+        // loop then fell out with -1, `services::run_on_worker` unwrapped a Box
+        // built from the null it never filled, and the process took an access
+        // violation inside `Box::unwrap` — a crash whose stack named neither the
+        // pipe nor the reactor.
+        //
+        // Retrying WITHOUT the reactor wait is the whole of the fix: `recv_fd`
+        // has already slept its slice, and the fd it just reported on may be a
+        // pipe, which `#reactor_wait_read` cannot register on this platform.
+        //
+        // Correct on POSIX for the older reason too — a read interrupted by a
+        // signal has not failed, it has been asked to come back — so this is one
+        // rule on both rather than a Windows branch. The write side has the same
+        // shape and is left alone: `send_fd` has no path that answers EINTR.
+        if e == netsys::eintr() { continue; }
         if e != netsys::eagain() {
             return (0 -% 1) as isize;
         }

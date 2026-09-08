@@ -20,17 +20,22 @@ edition = "2026"
 # this one sees unexposed nodes and writes properties that are not user
 # affordances. See docs/design.md.
 
+# APPLE PACKAGES ARE NOT DECLARED HERE, and the reason is the LINK line rather
+# than the resolver. `objc`, `appkit` and `quartzcore` sat in this block because
+# `facet_agent/inspect_platform` imports them on macOS — but a top-level
+# dependency splices its `[link]` entry on EVERY platform, so a Windows build of
+# this package handed lld-link `-framework AppKit`, `-framework QuartzCore` and
+# `objc.lib` and stopped at "could not open 'AppKit'". Nothing in `src/` imports
+# any of the three (the `inspector/appkit` module the header describes is long
+# gone), so they belong in the per-platform blocks that actually reach them.
 [dependencies]
 stdlib      = "*"
 flex_layout = "*"
 facet       = "*"
 facet_agent = "*"
-objc        = "*"
-appkit      = "*"
 json        = "*"
 agent_mcp   = "*"
 agent_core  = "*"
-quartzcore  = "*"
 
 # The suite imports facet, and on macOS facet's runtime facade imports its
 # backend — which pulls webkit and the agent backends behind it. A transitive
@@ -42,6 +47,11 @@ facet_appkit = "*"
 webkit       = "*"
 agent_appkit = "*"
 agent_inapp  = "*"
+# Moved down from `[dependencies]` — see the note there. Same three packages the
+# macOS build always had; only the platforms that do NOT need them changed.
+objc         = "*"
+appkit       = "*"
+quartzcore   = "*"
 
 # The iOS half. `uikit.cplus` is only ever compiled by a build that imports it —
 # an iOS entry — so these are named for that build rather than for this
@@ -51,6 +61,24 @@ facet_uikit = "*"
 uikit       = "*"
 webkit      = "*"
 agent_uikit = "*"
+agent_inapp = "*"
+# `inspect_platform_ios` is written against the same runtime as its macOS
+# sibling, so the two it shares come down from `[dependencies]` here too.
+objc        = "*"
+quartzcore  = "*"
+
+# The Windows half, and it exists for the reason the macOS block above states
+# rather than for a file of this package's own: `facet_agent/agent` resolves to
+# its Windows facade, whose `inspect_platform_windows.cplus` imports
+# `win32/winuser` for the highlight overlay — and the flat set the resolver
+# checks every import against is taken from the ROOT package's manifest, so a
+# transitive dependency of a dependency is still this file's to name. Without
+# these the build stops at `E0852: first segment win32 is not a declared
+# dependency`, naming an import in a package that does declare it.
+[windows.dependencies]
+facet_win32 = "*"
+win32       = "*"
+agent_win32 = "*"
 agent_inapp = "*"
 
 # The Android half. `serve_android.cplus` is only ever compiled by a build that

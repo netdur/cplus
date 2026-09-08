@@ -48,6 +48,8 @@
 
 import "stdlib/text" as text;
 import "stdlib/netsys" as netsys;
+import "stdlib/platform_sys" as platform_sys;
+import "stdlib/io" as io;
 import "stdlib/fs" as fs;
 import "stdlib/time" as time;
 import "stdlib/vec" as vec;
@@ -67,9 +69,39 @@ import "agent_mcp/inspect_verbs" as verbs;
 // buffer, the same way `agent_mcp` builds the server's.
 extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
 extern fn connect(fd: i32, addr: *u8, addrlen: u32) -> i32;
+// READING AND CLOSING GO THROUGH `netsys`, NOT LIBC — the same rule
+// `agent_mcp` documents at its own extern block, and for the same reason.
+// Winsock exports the BSD names for `socket`, `connect`, `bind` and `listen`,
+// so those are one symbol everywhere; `close` and `read` are not. A Windows
+// SOCKET is not a C-runtime file descriptor, so `_close` on one reaches the
+// invalid-parameter handler, which is `__fastfail` — the process dies with
+// 0xC0000409 and prints nothing at all.
 extern fn read(fd: i32, buf: *u8, count: usize) -> i64;
 extern fn write(fd: i32, buf: *u8, count: usize) -> i64;
 extern fn close(fd: i32) -> i32;
+
+// Does a `sockaddr` on this platform begin with a LENGTH BYTE?
+//
+// BSD and Darwin: `u_char sa_len; u_char sa_family;`. Linux, Android and
+// Windows: a two-byte little-endian family at offset 0 and no length. This file
+// was written for Darwin and spelled the BSD layout unconditionally, which on
+// Windows gives Winsock family 0x0210 = 528 and a `connect` that refuses
+// everything. `agent_mcp` carries the identical predicate beside its own
+// address builders; the fact is duplicated rather than shared because each file
+// already owns its sockaddr bytes, and a cross-package import for three lines
+// would couple a transport to another package's internals.
+fn sockaddr_has_len_byte() -> bool {
+    if #platform() == "windows" { return false; }
+    return !platform_sys::is_linux_abi();
+}
+
+// Is there a Unix-domain socket to connect to on this platform?
+//
+// NO ON WINDOWS: nothing in this tree binds AF_UNIX there — `netsys_windows`
+// says so outright — so `inspector` reaches a Windows app the way it reaches a
+// phone, over a loopback PORT, which `port_of` above already distinguishes and
+// `facet_agent/agent_windows` already serves.
+fn has_uds() -> bool { return #platform() != "windows"; }
 
 // ---- the client --------------------------------------------------------------
 
@@ -339,7 +371,7 @@ fn of_target(target: str) -> Remote {
 fn probe(path: str) -> bool {
     let fd: i32 = connect_to(path);
     if fd < 0 { return false; }
-    { close(fd) };
+    { let _c: i32 = netsys::close_fd(fd); };
     return true;
 }
 
@@ -409,9 +441,17 @@ fn port_of(target: str) -> i32 {
 // that could be pointed at another machine's app is a different feature with a
 // different security story, and nothing here asks for one.
 fn connect_tcp(port: i32) -> i32 {
+    // Winsock before the first socket — a no-op on POSIX, refcounted by the OS.
+    // Nothing else in this process was going to do it: this file talks to the
+    // kernel directly rather than through `netsys`'s own socket calls.
+    let _w: i32 = netsys::startup();
     var addr: [u8; 16] = [0; 16];
-    addr[0] = 16;
-    addr[1] = 2;
+    if sockaddr_has_len_byte() {
+        addr[0] = 16;      // sin_len
+        addr[1] = 2;       // sin_family = AF_INET
+    } else {
+        addr[0] = 2;       // sin_family = AF_INET, low byte
+    }
     addr[2] = { ((port / 256) & 255) as u8 };
     addr[3] = { (port & 255) as u8 };
     addr[4] = 127;
@@ -420,7 +460,7 @@ fn connect_tcp(port: i32) -> i32 {
     if fd < 0 { return - 1; }
     let rc: i32 = { connect(fd, #addr_of(addr[0]), 16) };
     if rc != 0 {
-        { close(fd) };
+        { let _c: i32 = netsys::close_fd(fd); };
         return - 2;
     }
     return fd;
@@ -429,10 +469,19 @@ fn connect_tcp(port: i32) -> i32 {
 fn connect_to(path: str, secs: i64 = CALL_TIMEOUT_SECS) -> i32 {
     let port: i32 = port_of(path);
     if port > 0 { return armed_fd(connect_tcp(port), secs); }
+    // A PATH TARGET ON A PLATFORM WITH NO AF_UNIX cannot be connected to, and
+    // saying so here is better than letting `socket()` fail with a code that
+    // reads as "nothing is listening". A Windows app is reached by PORT — see
+    // `has_uds` — which the branch above already handles.
+    if !has_uds() { return - 1; }
     let plen: usize = #str_len(path);
     if plen > 100 { return - 4; }
     var addr: [u8; 110] = [0; 110];
-    addr[1] = 1; // sun_family = AF_UNIX
+    if sockaddr_has_len_byte() {
+        addr[1] = 1;              // sun_len at [0], sun_family at [1]
+    } else {
+        addr[0] = 1;              // sun_family = AF_UNIX, low byte
+    }
     let pbytes: *u8 = #str_ptr(path);
     var i: usize = 0;
     while i < plen {
@@ -444,7 +493,7 @@ fn connect_to(path: str, secs: i64 = CALL_TIMEOUT_SECS) -> i32 {
     if fd < 0 { return - 1; }
     let rc: i32 = { connect(fd, #addr_of(addr[0]), addrlen) };
     if rc != 0 {
-        { close(fd) };
+        { let _c: i32 = netsys::close_fd(fd); };
         return - 2;
     }
     return armed_fd(fd, secs);
@@ -502,7 +551,7 @@ fn read_reply(fd: i32) -> Reply {
     var tmp: [u8; 8192] = [0; 8192];
     let p: *u8 = #addr_of(tmp) as *u8;
     loop {
-        let n: i64 = { read(fd, p, 8192) };
+        let n: i64 = { netsys::recv_fd(fd, p, 8192) } as i64;
         if n <= 0 {
             if expired_read(n) { return Reply { body: out, expired: true }; }
             break;
@@ -532,7 +581,7 @@ fn read_http_reply(fd: i32) -> Reply {
     var want: i64 = - 1;
     var expired: bool = false;
     loop {
-        let n: i64 = { read(fd, p, 8192) };
+        let n: i64 = { netsys::recv_fd(fd, p, 8192) } as i64;
         if n <= 0 {
             // A body that stopped MID-STREAM is not a body. Saying so beats
             // handing the decoder half an object to fail on, because the
@@ -651,12 +700,12 @@ fn rpc(rp: *Remote, method: str, take params: json::Value) -> option::Option[jso
     }
     let ls: str = line;
     if !send_all(fd, ls) {
-        { close(fd) };
+        { let _c: i32 = netsys::close_fd(fd); };
         set_fault(rp, "the app stopped reading mid-request");
         return option::Option[json::Value]::None;
     }
     let reply: Reply = if is_http { read_http_reply(fd) } else { read_reply(fd) };
-    { close(fd) };
+    { let _c: i32 = netsys::close_fd(fd); };
     // THE SILENT TARGET, and it is its own sentence because it is its own
     // situation: the connection was accepted, so the address is right and
     // something is listening — it just never spoke. On a phone that reads as
@@ -1469,11 +1518,16 @@ extern fn getpid() -> i32;
 // not readable through the raw calls this module already has, and a fixed one
 // collides with whatever else is on the machine.
 fn silent_tcp_listener(port_out: *i32) -> i32 {
+    let _w: i32 = netsys::startup();
     var port: i32 = 39877;
     while port < 39917 {
         var addr: [u8; 16] = [0; 16];
-        addr[0] = 16;
-        addr[1] = 2;
+        if sockaddr_has_len_byte() {
+            addr[0] = 16;
+            addr[1] = 2;
+        } else {
+            addr[0] = 2;
+        }
         addr[2] = { ((port / 256) & 255) as u8 };
         addr[3] = { (port & 255) as u8 };
         addr[4] = 127;
@@ -1484,7 +1538,7 @@ fn silent_tcp_listener(port_out: *i32) -> i32 {
             { (*port_out) = port };
             return fd;
         }
-        { close(fd) };
+        { let _c: i32 = netsys::close_fd(fd); };
         port = port +% 1;
     }
     return - 1;
@@ -1493,10 +1547,15 @@ fn silent_tcp_listener(port_out: *i32) -> i32 {
 // Bind and listen on `path`, and never accept. -1 if the socket could not be
 // made.
 fn silent_listener(path: str) -> i32 {
+    if !has_uds() { return - 1; }
     let plen: usize = #str_len(path);
     if plen > 100 { return - 1; }
     var addr: [u8; 110] = [0; 110];
-    addr[1] = 1; // sun_family = AF_UNIX
+    if sockaddr_has_len_byte() {
+        addr[1] = 1;              // sun_len at [0], sun_family at [1]
+    } else {
+        addr[0] = 1;              // sun_family = AF_UNIX, low byte
+    }
     let pbytes: *u8 = #str_ptr(path);
     var i: usize = 0;
     while i < plen {
@@ -1506,8 +1565,8 @@ fn silent_listener(path: str) -> i32 {
     let addrlen: u32 = ((2 as usize) +% plen +% (1 as usize)) as u32;
     let fd: i32 = { socket(1, 1, 0) };
     if fd < 0 { return - 1; }
-    if { bind(fd, #addr_of(addr[0]), addrlen) } != 0 { { close(fd) }; return - 1; }
-    if { listen(fd, 8) } != 0 { { close(fd) }; return - 1; }
+    if { bind(fd, #addr_of(addr[0]), addrlen) } != 0 { { let _c: i32 = netsys::close_fd(fd); }; return - 1; }
+    if { listen(fd, 8) } != 0 { { let _c: i32 = netsys::close_fd(fd); }; return - 1; }
     return fd;
 }
 
@@ -1524,6 +1583,13 @@ fn silent_listener(path: str) -> i32 {
 // the shipped five, which is what `timeout_secs` is a field for.
 #[test]
 fn a_target_that_accepts_and_never_answers_expires_rather_than_hanging() {
+    // The deadline itself is platform-independent and the TCP test below pins
+    // it everywhere; what cannot be built here is the SILENT PEER, which needs a
+    // Unix socket to listen on. Said out loud rather than passed quietly.
+    if !has_uds() {
+        io::eprintln("inspector: no AF_UNIX on this platform — the silent-UDS peer is skipped.");
+        return;
+    }
     let pid: i32 = { getpid() };
     let path: text::Text = "/tmp/iris-remote-silent-${pid}.sock";
     let _gone: result::Result[bool, result::IoError] = fs::remove_file(path.view());
@@ -1560,7 +1626,7 @@ fn a_target_that_accepts_and_never_answers_expires_rather_than_hanging() {
     assert took >= (900 as i64);
     assert took < (5000 as i64);
 
-    { close(srv) };
+    { let _c: i32 = netsys::close_fd(srv); };
     let _rm: result::Result[bool, result::IoError] = fs::remove_file(path.view());
 }
 
@@ -1601,7 +1667,7 @@ fn a_silent_http_target_expires_the_same_way_the_line_wire_does() {
     assert accepts(target.view());
     assert !reachable(target.view(), 1 as i64);
 
-    { close(srv) };
+    { let _c: i32 = netsys::close_fd(srv); };
 }
 
 // The same target, through the door a host actually uses. `reachable` is what
@@ -1610,6 +1676,10 @@ fn a_silent_http_target_expires_the_same_way_the_line_wire_does() {
 // thread: the probe passed, and the first real verb blocked on the caller.
 #[test]
 fn reaching_a_silent_target_answers_no_rather_than_yes_and_then_freezing() {
+    if !has_uds() {
+        io::eprintln("inspector: no AF_UNIX on this platform — the silent-UDS peer is skipped.");
+        return;
+    }
     let pid: i32 = { getpid() };
     let path: text::Text = "/tmp/iris-remote-silent-reach-${pid}.sock";
     let _gone: result::Result[bool, result::IoError] = fs::remove_file(path.view());
@@ -1624,7 +1694,7 @@ fn reaching_a_silent_target_answers_no_rather_than_yes_and_then_freezing() {
     assert accepts(path.view());
     assert !reachable(path.view(), 1 as i64);
 
-    { close(srv) };
+    { let _c: i32 = netsys::close_fd(srv); };
     let _rm: result::Result[bool, result::IoError] = fs::remove_file(path.view());
 }
 

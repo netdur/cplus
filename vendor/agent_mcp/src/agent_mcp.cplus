@@ -74,6 +74,7 @@ import "stdlib/netsys" as netsys;
 // knows them.
 import "stdlib/fs_sys" as fsys;
 import "stdlib/fs" as fs;
+import "stdlib/env" as env;
 import "stdlib/io" as io;
 import "stdlib/time" as time;
 import "json/json" as json;
@@ -1627,9 +1628,24 @@ struct McpConn {
     fd: i32,
     client: text::Text,
 }
+// READING, WRITING AND CLOSING GO THROUGH `netsys`, NOT THROUGH LIBC.
+//
+// Every other call in this file — `socket`, `bind`, `listen`, `accept`,
+// `connect`, `setsockopt` — is the same symbol on all three platforms, because
+// Winsock exports the BSD names. These three are the exception: on Windows a
+// SOCKET is not a C-runtime file descriptor, so `close`, `read` and `write`
+// reach the MSVC CRT with a handle it has never heard of. `_close` then calls
+// the invalid-parameter handler, which is `__fastfail` — the process dies at
+// once with 0xC0000409 and no diagnostic, which is exactly how this presented:
+// a stack-buffer-overrun exit code from a test that binds a port and closes it.
+//
+// `netsys` already owns that difference (`closesocket`/`recv`/`send` on
+// Windows, a straight passthrough on POSIX), so the seam exists and this file
+// simply has to use it. `write` was already routed — see `write_all`, which
+// went through `send_fd` for Linux's MSG_NOSIGNAL — and the other two were the
+// half that never followed.
 extern fn read(fd: i32, buf: *u8, count: usize) -> i64;
 extern fn write(fd: i32, buf: *u8, count: usize) -> i64;
-extern fn close(fd: i32) -> i32;
 extern fn unlink(path: *u8) -> i32;
 extern fn getpid() -> i32;
 extern fn atexit(f: fn()) -> i32;
@@ -1707,10 +1723,10 @@ fn bind_uds(path: str) -> i32 {
     // `sun_len` is left zero on BSD: the kernel derives the length from the
     // `addrlen` argument and every libc that fills it in is doing so for the
     // benefit of callers that pass the wrong one.
-    if platform_sys::is_linux_abi() {
-        addr[0] = 1;              // sun_family = AF_UNIX, low byte
-    } else {
+    if sockaddr_has_len_byte() {
         addr[1] = 1;              // sun_len at [0], sun_family at [1]
+    } else {
+        addr[0] = 1;              // sun_family = AF_UNIX, low byte
     }
     let pbytes: *u8 = #str_ptr(path);
     var i: usize = 0;
@@ -1741,9 +1757,9 @@ fn bind_uds(path: str) -> i32 {
     let probe: i32 = { socket(1, 1, 0) };
     if probe >= 0 {
         let live: i32 = { connect(probe, #addr_of(addr[0]), addrlen) };
-        { close(probe); }
+        { let _c: i32 = netsys::close_fd(probe); }
         if live == 0 {
-            { close(fd); }
+            { let _c: i32 = netsys::close_fd(fd); }
             return - 5;   // someone is serving here; do not steal it
         }
     }
@@ -1767,7 +1783,7 @@ fn bind_uds(path: str) -> i32 {
     let rc: i32 = { bind(fd, #addr_of(addr[0]), addrlen) };
     let _restored: u32 = { umask(prev_mask & MODE_BITS) };
     if rc != 0 {
-        { close(fd); }
+        { let _c: i32 = netsys::close_fd(fd); }
         return - 2;      // bind is what creates the file; none exists yet
     }
     let _chmod: i32 = { chmod(path_c, SOCK_MODE) };
@@ -1804,6 +1820,72 @@ fn bind_uds(path: str) -> i32 {
 // pid, so it can compute the address — which is why there is no environment
 // variable here and why `FACET_INSPECT` is not read. See plan.md.
 
+// WHERE THE ADDRESSES LIVE. `/tmp` on a POSIX machine; the user's temp
+// directory on Windows, which has no `/tmp` at all.
+//
+// A path spelled `/tmp/...` on Windows is not an error — it resolves against
+// the current drive as `C:\tmp\...`, a directory no clean install has — so it
+// fails by writing nowhere rather than by saying so. That was never only a test
+// problem: `agent_windows.cplus` announces its loopback port through
+// `write_descriptor` and discards the result, so a Windows facet app published
+// its address into a directory that did not exist and NO CLIENT COULD DISCOVER
+// IT. `discover` and `sweep_stale` read the same directory and found nothing
+// for the same reason.
+//
+// `TEMP` then `TMP` — the pair every Windows session sets — and `C:\Windows\Temp`
+// only for a process somehow given neither.
+//
+// The join stays a FORWARD SLASH on both: every Win32 file API accepts one, so
+// one convention spans both platforms and nothing below has to know a separator.
+fn runtime_dir() -> text::Text {
+    if #platform() != "windows" { return text::from_str("/tmp"); }
+    match env::var("TEMP") {
+        option::Option[text::Text]::Some(t) => { return t; }
+        option::Option[text::Text]::None => { }
+    }
+    match env::var("TMP") {
+        option::Option[text::Text]::Some(t) => { return t; }
+        option::Option[text::Text]::None => { }
+    }
+    return text::from_str("C:\\Windows\\Temp");
+}
+
+// Does this platform have a Unix-domain socket this package can bind?
+//
+// NO ON WINDOWS, and that is a fact about this TREE rather than about the OS.
+// Windows 10 1803 added AF_UNIX to Winsock, but nothing here binds it —
+// `netsys_windows.cplus` says so outright and builds its own socket pair over
+// loopback TCP for exactly that reason — and the rest of the path below wants
+// `umask` and `chmod` on a socket inode, which Windows has no model for at all.
+// So `socket(AF_UNIX, ...)` fails there and `bind_uds` answers -1, honestly.
+//
+// `agent_windows.cplus` therefore serves over a LOOPBACK PORT with HTTP framing,
+// which the TCP tests exercise on every platform. The UDS tests consult this and
+// skip rather than assert a bind that cannot happen — a failed `assert` in a
+// dependency traps rather than reporting, so one of them took the whole
+// facet_agent suite down with it and everything ordered after was unreachable.
+fn has_uds() -> bool { return #platform() != "windows"; }
+
+// Does a `sockaddr` on this platform begin with a LENGTH BYTE?
+//
+// BSD and Darwin: `u_char sa_len; u_char sa_family;`. Linux, Android AND
+// WINDOWS: a two-byte little-endian `sa_family_t` at offset 0, no length at all.
+//
+// `platform_sys::is_linux_abi()` was standing in for this question and answers
+// FALSE on Windows, so every address below was built the Darwin way there —
+// `sin_len` 16 in byte 0 and the family in byte 1, which Winsock reads as
+// family 0x0210 = 528. `bind` refused it, `bind_tcp` returned -2, and the agent
+// surface was simply not there. That is the SAME failure, for the same reason,
+// that the Android comment in `bind_tcp` records — a third platform arriving on
+// the wrong side of a two-way question — so the question is asked directly here
+// instead of through a proxy for it.
+//
+// Darwin and Linux keep exactly the answers they had: this is a Windows fix.
+fn sockaddr_has_len_byte() -> bool {
+    if #platform() == "windows" { return false; }
+    return !platform_sys::is_linux_abi();
+}
+
 // Is this a name rather than an address? An id goes INTO a path, so a `/` in
 // one would silently produce a path in a directory nobody meant. Rejected
 // rather than sanitised: the caller passing `/tmp/x.sock` means to name an
@@ -1830,7 +1912,7 @@ fn valid_id(id: str) -> bool {
 // long-lived directory would accumulate dead sockets forever. What makes that
 // safe is the mode — `bind_uds` binds 0600 — not the directory.
 fn uds_path(id: str, pid: i32) -> text::Text {
-    return "/tmp/mcp-${id}-${pid}.socket";
+    return "${runtime_dir()}/mcp-${id}-${pid}.socket";
 }
 
 // ...and where it listens on a platform where a path is unreachable: a phone's
@@ -1880,7 +1962,7 @@ fn loopback_port(pid: i32) -> u16 {
 extern fn kill(pid: i32, sig: i32) -> i32;
 
 fn descriptor_path(id: str, pid: i32) -> text::Text {
-    return "/tmp/mcp-${id}-${pid}.json";
+    return "${runtime_dir()}/mcp-${id}-${pid}.json";
 }
 
 // Is a process with this pid alive? `kill(pid, 0)` performs no signal delivery
@@ -2008,7 +2090,8 @@ fn address_in_descriptor(path: str) -> text::Text {
 fn discover(app_id: str) -> vec::Vec[text::Text] {
     var out: vec::Vec[text::Text] = vec::new::[text::Text]();
     var stamps: vec::Vec[i64] = vec::new::[i64]();
-    let names: vec::Vec[text::Text] = match fs::read_dir("/tmp") {
+    let dir: text::Text = runtime_dir();
+    let names: vec::Vec[text::Text] = match fs::read_dir(dir.view()) {
         option::Option[vec::Vec[text::Text]]::Some(v) => v,
         option::Option[vec::Vec[text::Text]]::None => { return out; }
     };
@@ -2023,7 +2106,7 @@ fn discover(app_id: str) -> vec::Vec[text::Text] {
                 if pid > 0 && pid_is_live(pid) {
                     let who: text::Text = id_in_name(name);
                     if who.view() == app_id {
-                        let full: text::Text = "/tmp/${name}";
+                        let full: text::Text = "${dir}/${name}";
                         var addr: text::Text = full.clone();
                         if text::from_str(name).has_suffix(".json") {
                             addr = address_in_descriptor(full.view());
@@ -2061,7 +2144,8 @@ fn discover(app_id: str) -> vec::Vec[text::Text] {
 
 fn sweep_stale() -> usize {
     var removed: usize = 0;
-    let names: vec::Vec[text::Text] = match fs::read_dir("/tmp") {
+    let dir: text::Text = runtime_dir();
+    let names: vec::Vec[text::Text] = match fs::read_dir(dir.view()) {
         option::Option[vec::Vec[text::Text]]::Some(v) => v,
         option::Option[vec::Vec[text::Text]]::None => { return 0; }
     };
@@ -2074,7 +2158,7 @@ fn sweep_stale() -> usize {
                 // -1 is "not one of ours"; a LIVE pid is someone still serving.
                 if pid > 0 {
                     if !pid_is_live(pid) {
-                        let full: text::Text = "/tmp/${name}";
+                        let full: text::Text = "${dir}/${name}";
                         match fs::remove_file(full.view()) {
                             result::Result[bool, result::IoError]::Ok(_b) => {
                                 removed = removed +% 1;
@@ -2159,7 +2243,7 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
             thread::park_end();
             return - 2;
         }
-        let r: i64 = { read(fd, #addr_of(byte), 1) };
+        let r: i64 = { netsys::recv_fd(fd, #addr_of(byte), 1 as usize) } as i64;
         thread::park_end();
         if r <= 0 {
             if r < 0 {
@@ -2284,7 +2368,7 @@ fn serve_uds(
     }
     let l: i32 = listen_on(fd);
     if l < 0 {
-        { close(fd); }
+        { let _c: i32 = netsys::close_fd(fd); }
         unlink_bound_socket();  // the bound file would otherwise be orphaned here
         return l;
     }
@@ -2361,7 +2445,7 @@ fn accept_loop(
     let body_buf: *u8 = { malloc(HTTP_MAX_BODY) };
     let pfds: *u8 = { malloc((MAX_CONNS +% (1 as usize)) *% POLLFD_SIZE) };
     if head_buf.is_null() || body_buf.is_null() || pfds.is_null() {
-        { close(fd); }
+        { let _c: i32 = netsys::close_fd(fd); }
         return - 9;
     }
     var stop: bool = false;
@@ -2413,7 +2497,7 @@ fn accept_loop(
                     // REFUSED, NOT QUEUED. The bug this loop exists to fix is a
                     // caller waiting forever on a door that never opens; a
                     // closed connection is an answer it can act on.
-                    { close(conn); }
+                    { let _c: i32 = netsys::close_fd(conn); }
                 } else {
                     // A NEW CONNECTION IS A NEW CALLER, and its name starts
                     // empty — inheriting the previous one's is inheriting
@@ -2463,7 +2547,7 @@ fn accept_loop(
                 if served != 0 { done = true; }
             }
             if done {
-                { close(cfd); }
+                { let _c: i32 = netsys::close_fd(cfd); }
                 let _r: option::Option[McpConn] = conns.remove(at: k);
             }
         }
@@ -2472,12 +2556,12 @@ fn accept_loop(
     var j: usize = conns.count();
     while j > (0 as usize) {
         j = j -% (1 as usize);
-        if let option::Option::Some(c) = conns.at_ptr(j) { { close({ (*c).fd }); } }
+        if let option::Option::Some(c) = conns.at_ptr(j) { { let _c: i32 = netsys::close_fd({ (*c).fd }); } }
     }
     { free(pfds); }
     { free(body_buf); }
     { free(head_buf); }
-    { close(fd); }
+    { let _c: i32 = netsys::close_fd(fd); }
     if unlink_on_exit { unlink_bound_socket(); }
     return 0;
 }
@@ -2633,7 +2717,7 @@ fn read_exact(fd: i32, buf: *u8, len: usize) -> bool {
             thread::park_end();
             return false;
         }
-        let r: i64 = { read(fd, buf + got, len -% got) };
+        let r: i64 = { netsys::recv_fd(fd, buf + got, len -% got) } as i64;
         thread::park_end();
         if r <= 0 {
             if r < 0 {
@@ -2788,6 +2872,12 @@ fn put_be16(ref buf: [u8; 16], at: usize, v: u16) {
 // Bind a loopback listener on `port`. Returns the fd, or a negative setup code
 // matching `bind_uds`: -1 socket, -2 bind, -3 listen.
 fn bind_tcp(port: u16) -> i32 {
+    // WINSOCK MUST BE STARTED BEFORE THE FIRST SOCKET, and this package talks to
+    // the kernel directly rather than through `netsys`, so nothing else was
+    // going to do it: `socket()` answered WSANOTINITIALISED and every serve on
+    // Windows failed at the first call. A no-op on POSIX, refcounted by the OS,
+    // and the same thing `netsys_windows::socket_pair` does for itself.
+    let _w: i32 = netsys::startup();
     let fd: i32 = { socket(2, 1, 0) };
     if fd < 0 { return - 1; }
     // SO_REUSEADDR, so a restart does not wait out TIME_WAIT on the same port.
@@ -2818,11 +2908,11 @@ fn bind_tcp(port: u16) -> i32 {
     // So the BSD spelling gives Linux a family of 0x0210 = 528 and `bind`
     // refuses it. The PORT is at offset 2 either way, which is why only these
     // two bytes move.
-    if platform_sys::is_linux_abi() {
-        addr[0] = 2;       // sin_family = AF_INET, low byte
-    } else {
+    if sockaddr_has_len_byte() {
         addr[0] = 16;      // sin_len
         addr[1] = 2;       // sin_family = AF_INET
+    } else {
+        addr[0] = 2;       // sin_family = AF_INET, low byte
     }
     put_be16(addr, 2, port);
     // 127.0.0.1, in network order — which is the same byte order written out.
@@ -2831,11 +2921,11 @@ fn bind_tcp(port: u16) -> i32 {
     addr[6] = 0;
     addr[7] = 1;
     if { bind(fd, { #addr_of(addr[0]) }, 16) } != 0 {
-        { close(fd); }
+        { let _c: i32 = netsys::close_fd(fd); }
         return - 2;
     }
     if { listen(fd, 4) } != 0 {
-        { close(fd); }
+        { let _c: i32 = netsys::close_fd(fd); }
         return - 3;
     }
     return fd;
@@ -2895,8 +2985,13 @@ fn an_address_is_not_a_valid_id() {
 // a launcher holding only the pid can compute them.
 #[test]
 fn the_address_is_a_function_of_the_id_and_the_pid() {
+    // Against the DIRECTORY CONVENTION rather than a literal `/tmp`: what is
+    // under test is that the address is derived from the id and the pid, not
+    // where the convention puts it — and `runtime_dir` is the user's temp
+    // directory on Windows, which has no `/tmp`.
+    let expect: text::Text = "${runtime_dir()}/mcp-demo_1-8161.socket";
     let p: text::Text = uds_path("demo_1", 8161);
-    assert p.view() == "/tmp/mcp-demo_1-8161.socket";
+    assert p.view() == expect.view();
     // Same inputs, same answer — this is what lets both sides derive it.
     let again: text::Text = uds_path("demo_1", 8161);
     assert again.view() == p.view();
@@ -2920,6 +3015,10 @@ fn the_address_is_a_function_of_the_id_and_the_pid() {
 // a change to either the prefix or the cap is caught here.
 #[test]
 fn a_derived_path_binds() {
+    // SKIPPED WHERE THERE IS NO AF_UNIX — see `has_uds`. Said out loud rather
+    // than passed silently: a quiet skip here would read as coverage this
+    // platform does not have.
+    if !has_uds() { io::eprintln("agent_mcp: no AF_UNIX on this platform — the UDS bind is skipped."); return; }
     var id: text::Text = text::new();
     var i: i32 = 0;
     while i < 60 { let _a: status::Status = id.append("x"); i = i +% 1; }
@@ -2928,7 +3027,7 @@ fn a_derived_path_binds() {
     let fd: i32 = bind_uds(path.view());
     assert fd >= 0;
     unlink_bound_socket();
-    { close(fd); }
+    { let _c: i32 = netsys::close_fd(fd); }
 }
 
 // Every setup code says something a developer can act on. Two of these are
@@ -2953,6 +3052,7 @@ fn every_setup_failure_has_a_reason() {
 // worker whose return value nobody is alive to read.
 #[test]
 fn bind_and_listen_are_separable_and_report() {
+    if !has_uds() { io::eprintln("agent_mcp: no AF_UNIX on this platform — the UDS bind is skipped."); return; }
     let path: str = "/tmp/cplus-agent-mcp-split-test.sock";
     let fd: i32 = bind_uds(path);
     assert fd >= 0;
@@ -2965,7 +3065,7 @@ fn bind_and_listen_are_separable_and_report() {
     assert bind_reason(second) == "another process is already serving on that path";
 
     unlink_bound_socket();
-    { close(fd); }
+    { let _c: i32 = netsys::close_fd(fd); }
 }
 
 // ---- the descriptor and the sweep ------------------------------------------------
@@ -3014,7 +3114,15 @@ fn the_descriptor_records_what_was_bound() {
     var i: usize = 0;
     while i < #str_len(path.view()) { cpath[i] = { *(src + i) }; i = i +% 1; }
     assert fsys::stat_path({ #addr_of(cpath[0]) }, { #addr_of(buf[0]) }) == 0;
-    assert (fsys::stat_mode({ #addr_of(buf[0]) }) & MODE_BITS) == SOCK_MODE;
+    // THE MODE IS A POSIX CLAIM, so it is asserted only where it means
+    // something. Windows has no owner/group/other bits — its CRT `chmod` moves
+    // one read-only flag and `stat` reports a mode synthesised from it — so
+    // 0600 is unreachable there by construction, not by a bug. The file itself
+    // is still protected: it lands in the per-user temp directory, which is
+    // what `runtime_dir` answers there.
+    if has_uds() {
+        assert (fsys::stat_mode({ #addr_of(buf[0]) }) & MODE_BITS) == SOCK_MODE;
+    }
 
     // ...and it parses, with the fields a client reads.
     match fs::read_to_string(path.view()) {
@@ -3040,16 +3148,20 @@ fn the_descriptor_records_what_was_bound() {
 // this was written.
 #[test]
 fn the_sweep_takes_the_dead_and_spares_the_living() {
+    // Both in the directory the sweep actually walks — `runtime_dir`, not a
+    // literal `/tmp`, which on Windows is a different place from the one
+    // `sweep_stale` reads and would make this pass by finding nothing.
+    let dir: text::Text = runtime_dir();
     // A leftover from a pid that cannot be running.
-    let dead: str = "/tmp/mcp-sweeptest-2147483646.socket";
-    let _w: result::Result[usize, result::IoError] = fs::write_string(dead, "");
+    let dead: text::Text = "${dir}/mcp-sweeptest-2147483646.socket";
+    let _w: result::Result[usize, result::IoError] = fs::write_string(dead.view(), "");
     // ...and one belonging to this very much alive process.
-    let mine: text::Text = "/tmp/mcp-sweeptest-${current_pid()}.socket";
+    let mine: text::Text = "${dir}/mcp-sweeptest-${current_pid()}.socket";
     let _w2: result::Result[usize, result::IoError] = fs::write_string(mine.view(), "");
 
     let _n: usize = sweep_stale();
 
-    assert fs::exists(dead) == false;
+    assert fs::exists(dead.view()) == false;
     assert fs::exists(mine.view());
 
     let _rm: result::Result[bool, result::IoError] = fs::remove_file(mine.view());
@@ -3154,16 +3266,32 @@ fn http_round_trip(request: str, out: *u8, cap: usize) -> usize {
 
     var sub: events::Subscriber = events::subscriber(events::everything(), 8);
     let _r: i32 = serve_http_fd(#addr_of(FAKE_SURF) as *u8, fake_backend(), sub, allow_all, sv[0]);
-    { close(sv[0]); }
 
+    // HALF-CLOSE, THEN DRAIN, THEN CLOSE — and the order is the whole of it.
+    //
+    // Closing the server end before reading is what this did, and it works on a
+    // POSIX socketpair because a close there is graceful: the bytes already
+    // written stay readable until the peer has drained them. Windows has no
+    // socketpair, so `netsys` builds one out of a loopback TCP connection with
+    // SO_LINGER 0 — a close is an RST, and an RST DISCARDS whatever the peer has
+    // not read yet. The response vanished between being written and being read,
+    // and the test saw a zero-length reply from a server that had answered
+    // correctly.
+    //
+    // `shutdown(SHUT_WR)` sends FIN instead: the response stays deliverable, the
+    // read loop below still sees EOF once it has drained, and the close happens
+    // after there is nothing left to lose. This is the canonical shape on POSIX
+    // too, so it is one behaviour on both rather than a Windows branch.
+    { shutdown(sv[0], 1) };          // SHUT_WR
     var got: usize = 0;
     loop {
         if got >= cap { break; }
-        let n: i64 = { read(sv[1], out + got, cap -% got) };
+        let n: i64 = { netsys::recv_fd(sv[1], out + got, cap -% got) } as i64;
         if n <= 0 { break; }
         got = got +% (n as usize);
     }
-    { close(sv[1]); }
+    { let _c: i32 = netsys::close_fd(sv[0]); }
+    { let _c: i32 = netsys::close_fd(sv[1]); }
     return got;
 }
 
@@ -3288,7 +3416,7 @@ fn a_loopback_listener_binds_and_closes() {
     // take: a fixed number is a test that fails when something else is running.
     let fd: i32 = bind_tcp(0);
     assert fd >= 0;
-    { close(fd); }
+    { let _c: i32 = netsys::close_fd(fd); }
 }
 
 #[test]
@@ -3307,9 +3435,17 @@ fn two_listeners_on_one_port_is_a_bind_error() {
     // A second bind on a port the kernel chose cannot be attempted without
     // reading it back, so this asserts the shape that IS reachable: a
     // privileged port refuses, and the code says which step failed.
-    let b: i32 = bind_tcp(1);
-    assert b == (0 - 2);
-    { close(a); }
+    //
+    // WINDOWS HAS NO PRIVILEGED PORTS. Reserving 1-1023 for root is a Unix
+    // rule with no equivalent in the Windows stack, so an ordinary user binds
+    // port 1 there and the refusal this asserts never comes. What is skipped is
+    // only the failure CODE: that a bind succeeds is covered above and in
+    // `a_loopback_listener_binds_and_closes`, on every platform.
+    if #platform() != "windows" {
+        let b: i32 = bind_tcp(1);
+        assert b == (0 - 2);
+    }
+    { let _c: i32 = netsys::close_fd(a); }
 }
 
 // ---- tests -------------------------------------------------------------------
@@ -4204,6 +4340,7 @@ fn path_exists(path: str) -> bool {
 // with the worker still parked in `accept`.
 #[test]
 fn binding_arms_the_socket_cleanup() {
+    if !has_uds() { io::eprintln("agent_mcp: no AF_UNIX on this platform — the UDS bind is skipped."); return; }
     let path: str = "/tmp/cplus-agent-mcp-teardown-test.sock";
     let fd: i32 = bind_uds(path);
     assert fd >= 0;
@@ -4217,7 +4354,7 @@ fn binding_arms_the_socket_cleanup() {
     unlink_bound_socket();
     assert path_exists(path) == false;
 
-    { close(fd); }
+    { let _c: i32 = netsys::close_fd(fd); }
 }
 
 // The bound socket is 0600, so a path anyone can guess is still a door only its
@@ -4230,6 +4367,9 @@ fn binding_arms_the_socket_cleanup() {
 // with a default umask that is `srwxr-xr-x`.
 #[test]
 fn a_bound_socket_is_not_world_connectable() {
+    // Also meaningless where it cannot bind: 0600 is a POSIX inode mode and
+    // Windows has no model for one on a socket.
+    if !has_uds() { io::eprintln("agent_mcp: no AF_UNIX on this platform — the socket mode check is skipped."); return; }
     let path: str = "/tmp/cplus-agent-mcp-mode-test.sock";
     let fd: i32 = bind_uds(path);
     assert fd >= 0;
@@ -4254,13 +4394,14 @@ fn a_bound_socket_is_not_world_connectable() {
     assert (mode & MODE_BITS) == SOCK_MODE;
 
     unlink_bound_socket();
-    { close(fd); }
+    { let _c: i32 = netsys::close_fd(fd); }
 }
 
 // A path longer than `sun_path` is rejected before any syscall, and rejecting
 // it must not disturb a cleanup already armed for a different socket.
 #[test]
 fn an_over_long_path_is_rejected_without_disarming() {
+    if !has_uds() { io::eprintln("agent_mcp: no AF_UNIX on this platform — the UDS bind is skipped."); return; }
     let good: str = "/tmp/cplus-agent-mcp-armed.sock";
     let fd: i32 = bind_uds(good);
     assert fd >= 0;
@@ -4277,7 +4418,7 @@ fn an_over_long_path_is_rejected_without_disarming() {
     // Still armed for `good`, and teardown still removes it.
     unlink_bound_socket();
     assert path_exists(good) == false;
-    { close(fd); }
+    { let _c: i32 = netsys::close_fd(fd); }
 }
 
 // A socket file left by a process that died without running its exit hook —
@@ -4286,6 +4427,7 @@ fn an_over_long_path_is_rejected_without_disarming() {
 // This is the half of the cleanup `atexit` structurally cannot cover.
 #[test]
 fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
+    if !has_uds() { io::eprintln("agent_mcp: no AF_UNIX on this platform — the UDS bind is skipped."); return; }
     let path: str = "/tmp/cplus-agent-mcp-stale.sock";
     let dead: i32 = bind_uds(path);
     assert dead >= 0;
@@ -4294,7 +4436,7 @@ fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
     // Drop the fd WITHOUT unlinking: exactly the state a killed process leaves,
     // a file on disk with no listener behind it. (No `listen` was called
     // either, so the path was never answering.)
-    { close(dead); }
+    { let _c: i32 = netsys::close_fd(dead); }
     assert path_exists(path);
 
     let fresh: i32 = bind_uds(path);
@@ -4303,7 +4445,7 @@ fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
 
     unlink_bound_socket();
     assert path_exists(path) == false;
-    { close(fresh); }
+    { let _c: i32 = netsys::close_fd(fresh); }
 }
 
 // The other half: a path a LIVE server is answering on must be refused, not
@@ -4315,6 +4457,7 @@ fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
 // hijack in disguise.
 #[test]
 fn a_live_server_keeps_its_socket_against_a_second_bind() {
+    if !has_uds() { io::eprintln("agent_mcp: no AF_UNIX on this platform — the UDS bind is skipped."); return; }
     let path: str = "/tmp/cplus-agent-mcp-live.sock";
     let live: i32 = bind_uds(path);
     assert live >= 0;
@@ -4330,7 +4473,7 @@ fn a_live_server_keeps_its_socket_against_a_second_bind() {
     // still targets the live socket, which is what this process actually owns.
     unlink_bound_socket();
     assert path_exists(path) == false;
-    { close(live); }
+    { let _c: i32 = netsys::close_fd(live); }
 }
 
 #[test]
@@ -4539,8 +4682,8 @@ fn read_line_reports_cancellation_instead_of_parking_forever() {
     usleep(3000);
     h.cancel();
     assert h.join() == 11;
-    { close(fds[0]); }
-    { close(fds[1]); }
+    { let _c: i32 = netsys::close_fd(fds[0]); }
+    { let _c: i32 = netsys::close_fd(fds[1]); }
 }
 
 extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
@@ -4560,14 +4703,14 @@ fn write_all_to_a_departed_client_does_not_kill_the_server() {
     var fds: [i32; 2] = [0, 0];
     assert { socketpair(1, 1, 0, #addr_of(fds[0])) } == 0;
     let _np: i32 = netsys::set_nosigpipe(fds[0]);
-    { close(fds[1]); }                          // the client disconnects
+    { let _c: i32 = netsys::close_fd(fds[1]); }                          // the client disconnects
     var buf: [u8; 16] = [65; 16];
     var i: i32 = 0;
     while i < 4 {
         write_all(fds[0], { #addr_of(buf[0]) }, 16);
         i = i +% 1;
     }
-    { close(fds[0]); }
+    { let _c: i32 = netsys::close_fd(fds[0]); }
     assert true;                                // reached = we survived
 }
 
@@ -4934,16 +5077,17 @@ fn an_id_with_dashes_is_read_back_whole() {
 // its path — a phone's loopback port — is reachable at all.
 #[test]
 fn a_descriptors_address_is_read_out_of_it() {
-    let dir: text::Text = "/tmp/mcp-desc-probe-${current_pid()}.json";
+    let probe: text::Text = "${runtime_dir()}/mcp-desc-probe-${current_pid()}.json";
     let body: str =
         "{\"id\":\"probe\",\"pid\":7,\"transport\":\"http\",\"address\":\"http://127.0.0.1:9123/\",\"protocol\":\"2024-11-05\"}\n";
-    let _w: result::Result[usize, result::IoError] = fs::write_string(dir.view(), body);
-    assert address_in_descriptor(dir.view()).view() == "http://127.0.0.1:9123/";
-    let _r: result::Result[bool, result::IoError] = fs::remove_file(dir.view());
+    let _w: result::Result[usize, result::IoError] = fs::write_string(probe.view(), body);
+    assert address_in_descriptor(probe.view()).view() == "http://127.0.0.1:9123/";
+    let _r: result::Result[bool, result::IoError] = fs::remove_file(probe.view());
 
     // A file that is not one, and a missing one, answer empty rather than
     // half a string.
-    assert address_in_descriptor("/tmp/does-not-exist-at-all.json").view() == "";
+    let absent: text::Text = "${runtime_dir()}/does-not-exist-at-all.json";
+    assert address_in_descriptor(absent.view()).view() == "";
 }
 
 // THIS PROCESS is a live endpoint while it is serving, so `discover` finding it

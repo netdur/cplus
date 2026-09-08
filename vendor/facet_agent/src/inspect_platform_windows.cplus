@@ -17,8 +17,11 @@
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "stdlib/text" as text;
+import "stdlib/option" as option;
 import "stdlib/atomic" as atomic;
+import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
+import "facet/mount" as mount;
 import "facet/services" as services;
 import "facet/platform_sys" as platform_sys;
 import "agent_core/inspect" as insp;
@@ -152,6 +155,110 @@ fn overlay() -> *u8 {
     return h;
 }
 
+// ---- resolving a node to a rectangle -----------------------------------------
+//
+// The same question the AppKit and Android halves answer, and the inspector
+// asks all three through this name: WHERE IS THIS NODE, in the coordinate space
+// of the nearest ancestor that has a window.
+//
+// A node with its own HWND is its own answer. A VIEWLESS node is not a node with
+// no place — it is a node whose place is inside somebody else's window: a span
+// is a run in its label, a menu item a row in its menu. Its flex frame is
+// relative to its parent, so the offsets accumulate up the chain until a backed
+// ancestor is reached.
+//
+// THE RECT IS IN THAT WINDOW'S CLIENT PIXELS, which is the one space both
+// branches can agree on and the space `SetWindowPos` wants after one
+// `ClientToScreen`. It matters because the two branches start in DIFFERENT
+// units: `GetClientRect` answers physical pixels, while flex frames are facet's
+// LOGICAL POINTS — the backend multiplies by the DPI factor at placement — so
+// the accumulated offsets are scaled here before they are handed back. Mixing
+// the two silently puts every highlight in the wrong place on any display that
+// is not at 100%, and only there, which is the kind of bug that reproduces on
+// one machine out of three.
+struct Rect { x: f64, y: f64, w: f64, h: f64 }
+
+// `view` is BORROWED, exactly as the other two halves document: the backend that
+// mounted it owns it, and this struct is a short-lived answer rather than a
+// second owner. It carries no destructor and says so.
+struct Placed {
+    opaque view: *u8,
+    rect: Rect,
+    found: bool,
+}
+
+fn nothing_placed() -> Placed {
+    return Placed {
+        view: 0 as *u8,
+        rect: Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        found: false,
+    };
+}
+
+// Logical points to physical pixels for `v`'s monitor. 1.0 at 96 DPI, 1.25 at
+// 120 — the same factor `facet_win32/sys::dpi_scale` applies at placement,
+// recomputed here rather than depended upon, so this module keeps the two-package
+// dependency set its manifest declares.
+fn scale_of(v: *u8) -> f64 {
+    if v == (0 as *u8) { return 1.0f64; }
+    let d: u32 = { u::GetDpiForWindow(v) };
+    if d == (0 as u32) { return 1.0f64; }
+    return (d as f64) / (96.0f64);
+}
+
+fn place(n: *core::Node) -> Placed {
+    if n == (0 as *core::Node) { return nothing_placed(); }
+
+    let own: *u8 = core::view_of(n);
+    if own != (0 as *u8) {
+        var b: u::tagRECT = #zero::[u::tagRECT]();
+        if { u::GetClientRect(own, #addr_of(b)) } == (0 as i32) { return nothing_placed(); }
+        return Placed {
+            view: own,
+            rect: Rect { x: 0.0f64, y: 0.0f64,
+                         w: (b.right -% b.left) as f64,
+                         h: (b.bottom -% b.top) as f64 },
+            found: true,
+        };
+    }
+
+    let f: flex::Frame = core::frame_of(n);
+    var x: f64 = f.left;
+    var y: f64 = f.top;
+    let w: f64 = f.width;
+    let h: f64 = f.height;
+
+    var cur: *core::Node = n;
+    // Bounded by the tree's own depth; a parent link always goes up.
+    var steps: usize = 0;
+    while steps < (256 as usize) {
+        let p: *core::Node = match mount::parent_of(cur) {
+            option::Option[*core::Node]::Some(q) => q,
+            option::Option::None => 0 as *core::Node,
+        };
+        if p == (0 as *core::Node) { return nothing_placed(); }
+        let pv: *u8 = core::view_of(p);
+        if pv != (0 as *u8) {
+            // NO FLIP TO UNDO. The AppKit half asks `is_flipped` because an
+            // unflipped NSView measures from the bottom edge; every Win32 client
+            // area has its origin at the TOP-LEFT, which is already flex's own,
+            // so the offsets carry across unchanged. Only the units change.
+            let s: f64 = scale_of(pv);
+            return Placed {
+                view: pv,
+                rect: Rect { x: x * s, y: y * s, w: w * s, h: h * s },
+                found: true,
+            };
+        }
+        let pf: flex::Frame = core::frame_of(p);
+        x = x + pf.left;
+        y = y + pf.top;
+        cur = p;
+        steps = steps +% (1 as usize);
+    }
+    return nothing_placed();
+}
+
 fn clear_highlight(_s: *u8) {
     if OVERLAY == (0 as usize) { return; }
     let _h: i32 = { u::ShowWindow(OVERLAY as *u8, sw_hide()) };
@@ -165,19 +272,25 @@ fn highlight(s: *u8, h: insp::Handle) {
     if !h.is_live() { clear_highlight(s); return; }
     let n: *core::Node = tree::node_of(h);
     if n == (0 as *core::Node) { clear_highlight(s); return; }
-    // THE NODE'S OWN WINDOW, in SCREEN coordinates — which is what a popup
-    // wants, and it saves converting through the host. A node drawn by an
-    // ancestor has no window of its own and nothing to frame; that is a fact
-    // about the node rather than a failure, and `native_props` says so in
-    // words.
-    let v: *u8 = core::view_of(n);
-    if v == (0 as *u8) { clear_highlight(s); return; }
-    var r: u::tagRECT = #zero::[u::tagRECT]();
-    if { u::GetWindowRect(v, #addr_of(r)) } == (0 as i32) { clear_highlight(s); return; }
+
+    // THROUGH `place`, which is what makes a VIEWLESS node highlightable here.
+    // This used to read `GetWindowRect` on the node's own window and give up
+    // when there was none — so a span, a menu row, anything its ancestor draws,
+    // could be selected in the inspector and the frame would simply vanish. The
+    // other two backends resolve through the parent chain; this one now does too.
+    let p: Placed = place(n);
+    if !p.found { clear_highlight(s); return; }
+
+    // Client pixels to SCREEN, which is the space a popup is positioned in.
+    var at: u::tagPOINT = #zero::[u::tagPOINT]();
+    at.x = p.rect.x as i32;
+    at.y = p.rect.y as i32;
+    if { u::ClientToScreen(p.view, #addr_of(at)) } == (0 as i32) { clear_highlight(s); return; }
+
     let ov: *u8 = overlay();
     if ov == (0 as *u8) { return; }
-    let _p: i32 = { u::SetWindowPos(ov, hwnd_topmost(), r.left, r.top,
-                                    r.right -% r.left, r.bottom -% r.top,
+    let _p: i32 = { u::SetWindowPos(ov, hwnd_topmost(), at.x, at.y,
+                                    p.rect.w as i32, p.rect.h as i32,
                                     swp_noactivate()) };
     let _s2: i32 = { u::ShowWindow(ov, sw_shownoactivate()) };
     return;
