@@ -205,6 +205,7 @@ fn apply(ctx: *u8, n: *core::Node) {
 }
 
 fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
+    if kind == props::K_BOX { controls::apply_box(v, n, dirty); return; }
     if kind == props::K_LABEL { controls::apply_label(v, n, dirty); return; }
     if kind == props::K_BUTTON { controls::apply_button(v, n, dirty); return; }
     if kind == props::K_CHECKBOX { controls::apply_checkbox(v, n, dirty); return; }

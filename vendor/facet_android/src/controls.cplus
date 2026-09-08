@@ -18,6 +18,7 @@ import "facet/mount" as mount;
 import "facet/label" as label;
 import "facet/button" as button;
 import "facet/checkbox" as checkbox;
+import "facet/box" as box_view;
 import "facet/toggle" as toggle;
 import "facet/radio" as radio;
 import "facet/slider" as slider;
@@ -318,6 +319,42 @@ fn create_container(n: *core::Node) -> *u8 {
 }
 
 fn apply_container(v: *u8, n: *core::Node, dirty: u64) { return; }
+
+// A `box` IS a container, but it carries two props of its own — `color` and
+// `corner_radius` — that are NOT the shared band's background. `apply_container`
+// was a no-op for every container alike, so a `box(color: ...)` drew nothing:
+// the one control whose entire purpose is to be a coloured rectangle.
+//
+// ONE DRAWABLE FOR BOTH, for the reason `paint::apply_decoration` gives:
+// `setBackgroundColor` can express a colour and not a radius, and calling it
+// after building a drawable throws the drawable away. So either bit rebuilds
+// the background whole.
+fn apply_box(v: *u8, n: *core::Node, dirty: u64) {
+    if (dirty & (box_view::P_COLOR | box_view::P_CORNER_RADIUS)) == (0 as u64)
+       && dirty != paint::all_bits() { return; }
+    let p: *props::BoxProps = props_of(n, props::K_BOX) as *props::BoxProps;
+    if p == (0 as *props::BoxProps) { return; }
+    let env: rt::Env = e::env();
+    let c: vocab::Color = { (*p).color };
+    let corners: vocab::Corners = { (*p).corner_radius };
+    let radius: f64 = { corners.top_leading };
+    let has_radius: bool = radius > 0.0f64;
+    // NEITHER DECLARED: leave the shared band's own decoration alone rather
+    // than clearing it. A box that names no colour is a plain container, and
+    // `background_color` on the shared band may still have painted it.
+    if !c.is_set() && !has_radius { return; }
+    var d: w::GradientDrawable = w::GradientDrawable::new_void(env);
+    if c.is_set() { d.set_color_i(paint::argb_of(c)); }
+    if has_radius { d.set_corner_radius({ e::px(radius) as f32 }); }
+    var view: w::View = w::View::from_global(env, env.new_global_ref(v));
+    var drawable: w::Drawable = d.as_drawable();
+    view.set_background(drawable.into_raw());
+    // Clip, or a rounded box is a rounded rectangle with square content on it.
+    view.set_clip_to_outline(has_radius);
+    paint::unwrap_keep(view);
+    let _keep: *u8 = d.into_raw();
+    return;
+}
 
 // ---- the compound buttons: checkbox, toggle, radio ---------------------------
 // CheckBox, Switch and RadioButton are all CompoundButton, so the read half is
@@ -1700,8 +1737,14 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     // can honour is the OPPOSITE claim: a view told it is not opaque must not
     // be skipped. MANIFEST §2 carries the rest.
     if (dirty & image::P_IS_OPAQUE) != (0 as u64) {
+        // READ, not assumed. This gated on the bit and passed a constant
+        // `false`, so the prop was named in the mask and never consulted —
+        // `verb_coverage.py` calls that GATED BUT UNREAD, and it is the shape
+        // where the code looks finished. A view that says it is NOT opaque is
+        // the claim Android can act on; one that says it IS gets the platform's
+        // own answer, read off the drawable, which is where Android keeps it.
         var iv2: w::View = w::View::from_global(env, v);
-        iv2.set_will_not_draw(false);
+        if { (*p).is_opaque } == false { iv2.set_will_not_draw(false); }
         paint::unwrap_keep(iv2);
     }
     return;
@@ -1788,8 +1831,10 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     // the platform may skip drawing what is under it. Android's word is the
     // same one facet uses, one layer down.
     if (dirty & icon_button::P_IS_OPAQUE) != (0 as u64) {
+        // As `image.is_opaque` above: the flag is READ now. It gated the bit
+        // and passed a constant.
         var view: w::View = w::View::from_global(env, v);
-        view.set_will_not_draw(false);
+        if { (*p).is_opaque } == false { view.set_will_not_draw(false); }
         paint::unwrap_keep(view);
     }
     return;

@@ -39,6 +39,8 @@ bordered.stroke_miter_limit     as bordered.stroke_cap
 bordered.stroke_dash_offset     as bordered.stroke_cap
 popup.label                     a Spinner's field IS its selected item; facet's `label` names a second line there is no slot for
 popup.title_color               the prompt is drawn by the platform's own dialog, a view this backend neither builds nor reaches
+window_chrome.style             an Android app has no title bar and no window controls — there is no chrome to style
+window_chrome.spacing           as window_chrome.style — nothing to space
 collection.group_size           a GridView has no sections — see collection.is_grouped
 collection.group_header         a GridView has no sections — a header would have to SPAN a row
 collection.on_reorder_completed no drag to complete — see collection.can_reorder_items
@@ -46,6 +48,9 @@ collection.on_reorder_completed no drag to complete — see collection.can_reord
 
 ```host-rendered
 span.text                       a run in its label's SpannableString, built by `apply_span_children`
+swipe_item.text                 the title of the Button the swipe strip builds for it
+swipe_item.is_destructive       the Button's background — danger, against the system fill for a plain one
+list.row_height                 a STATED height, read into the RowModel and applied as the row is placed
 span.text_color                 a ForegroundColorSpan on the run
 span.font_size                  an AbsoluteSizeSpan on the run
 span.font_weight                a StyleSpan on the run — Android's spans carry bold, not a weight axis
