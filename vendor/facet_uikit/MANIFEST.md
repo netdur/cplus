@@ -33,6 +33,121 @@ now exists and why both are printed together.
 
 ## 1. Decided absent — iOS has no such thing
 
+### The ledgers
+
+The prose in this section is the REASON. These blocks are the INDEX, and they
+exist because prose is not checkable: `tools/verb_coverage.py uikit` reads them
+and separates "decided" from "nobody built it yet", so the debt number means
+something. Until they were written, every verb this backend answers by other
+means counted against it — 50 props read as debt while this file's own opening
+paragraph said the count was fourteen.
+
+Same six blocks facet_appkit carries, and the dispositions are NOT copied from
+it: where the two backends differ, this file follows its own reasoning. `menu`
+and `toolbar_item` are host-rendered objects on macOS; here there is no menu
+bar at all, so `menu` is a cannot.
+
+```cannot-ledger
+window_chrome.style             UIKit draws the control pill itself, over the app's content and outside its hierarchy — see §7
+window_chrome.spacing           as window_chrome.style — the pill is the system's, not the app's to space
+menu.text                       there is no menu bar on iOS
+menu.priority                   there is no menu bar on iOS
+date_picker.character_spacing   UIDatePicker exposes no font surface; it is a system control
+date_picker.font_weight         UIDatePicker exposes no font surface; it is a system control
+date_picker.is_italic           UIDatePicker exposes no font surface; it is a system control
+date_picker.font_scales         UIDatePicker exposes no font surface; it is a system control
+date_picker.font_family         UIDatePicker exposes no font surface; it is a system control
+date_picker.font_size           UIDatePicker exposes no font surface; it is a system control
+time_picker.character_spacing   UIDatePicker exposes no font surface; it is a system control
+time_picker.font_weight         UIDatePicker exposes no font surface; it is a system control
+time_picker.is_italic           UIDatePicker exposes no font surface; it is a system control
+time_picker.font_scales         UIDatePicker exposes no font surface; it is a system control
+time_picker.font_family         UIDatePicker exposes no font surface; it is a system control
+time_picker.font_size           UIDatePicker exposes no font surface; it is a system control
+```
+
+### The host-rendered ledger
+
+A node with no view of its own, whose HOST re-applies it. A `span` is a run in
+its label's attributed string (`append_run`); a menu item is an element of the
+`UIMenu` the provider builds when the menu opens; a swipe item is an action on
+the row. None of them has a view to gate a bit against.
+
+```host-rendered
+span.text                       a run in its label's attributed string
+span.text_color                 a run in its label's attributed string
+span.font_size                  a run in its label's attributed string
+span.font_weight                a run in its label's attributed string
+span.font_family                a run in its label's attributed string
+span.is_italic                  a run in its label's attributed string
+span.line_height                a run in its label's attributed string
+span.character_spacing          a run in its label's attributed string
+span.text_decoration            a run in its label's attributed string
+span.text_transform             a run in its label's attributed string
+menu_item.text                  an element of the UIMenu built when the menu opens
+menu_item.icon                  an element of the UIMenu built when the menu opens
+menu_item.is_destructive        an element of the UIMenu built when the menu opens
+context_menu_item.text          an element of the UIMenu built when the menu opens
+context_menu_item.icon          an element of the UIMenu built when the menu opens
+context_menu_item.is_destructivean element of the UIMenu built when the menu opens
+swipe_item.text                 an action on the row, rebuilt with it
+swipe_item.icon                 an action on the row, rebuilt with it
+swipe_item.is_destructive       an action on the row, rebuilt with it
+```
+
+### The derived, modifier and create-only ledgers
+
+`modifier` and `create-only` are EMPTY, and that is an answer rather than an
+omission — the same way facet_appkit's `cannot-ledger` is empty because it has
+no platform-limit verbs. This backend has no verb that is read once at create
+and no verb that only changes what another write does. Every candidate for
+those two blocks was refused by the tool (see below), which is the difference
+between a bucket that is empty and a bucket nobody filled in.
+
+```derived
+collection.reorder              written back by the drag
+list.reorder                    written back by the drag
+```
+
+```modifier
+```
+
+```create-only
+```
+
+### What is left after the ledgers, and what the ledgers REFUSED
+
+Fourteen props remain absent, and NINE of them are there because the ledger
+would not take them. That is the part worth reading.
+
+The first draft of these blocks copied facet_appkit's dispositions for every
+verb the two backends share — `carousel.scroll_anchor` is a MODIFIER there,
+`label.selectable` is CREATE-ONLY, `context_menu_item.shortcut` is
+HOST-RENDERED. `verb_coverage.py` refused all nine with **LEDGER CONTRADICTED**:
+a create-only or host-rendered claim is only credited when SOME body actually
+reads the field, and in this package nothing does. The disposition was true of
+AppKit and not of here, and copying it would have excused nine real gaps with a
+reason belonging to another backend.
+
+So they are debt, listed by name:
+
+    carousel.animates_scroll        carousel.is_scrolling
+    carousel.scroll_anchor          carousel.remaining_threshold
+    collection.scroll_anchor        collection.remaining_threshold
+    context_menu_item.shortcut      context_menu_item.is_destructive
+    label.selectable
+
+`label.selectable` has a full argument in this file already — a create-time
+class choice a recycling row pool cannot cheaply flip. That argument is sound
+and the row still does not qualify: nothing reads the field even once, so it is
+not create-only, it is unimplemented. The prose and the code have to agree
+before the ledger will.
+
+And `toolbar_item` — five verbs. NOT a cannot: iOS has `UINavigationItem`, and
+this section says so above ("facet's `toolbar_item` is the vocabulary that
+should reach it once the chrome tier is ported").
+
+
 ### Window buttons
 
 **MOVED OUT OF THIS SECTION.** `window_buttons` was listed here as decided
