@@ -28,6 +28,7 @@
 
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/web" as web;
 import "stdlib/text" as text;
 import "win32/winuser" as u;
 import "./sys" as sys;
@@ -623,10 +624,22 @@ fn attach(host: *u8, n: *core::Node) {
 // Apply time. The commands (reload / back / forward / eval) only reach a live
 // core; a source change is stored for the pending case and navigated now if the
 // core is up.
+//
+// THE BITS ARE NAMED, and they used to be numeric literals with the constant in
+// a trailing comment — `(dirty & (32 as u64))  // P_RELOAD`. Every one was
+// right, and every one was a copy of a number that lives in `facet/web.cplus`:
+// renumbering a bit there would leave this file silently applying the wrong verb
+// with a comment still swearing it was the right one, and nothing would fail to
+// compile. `web::P_RELOAD` cannot drift.
+//
+// It also cost the package five props on the parity report, which strips
+// comments before it counts — correctly, so that prose about a gap can never be
+// mistaken for the closing of one. Five verbs that were fully built read as
+// unimplemented for as long as they were spelled as numbers.
 fn apply(host: *u8, n: *core::Node, dirty: u64) {
     if host == (0 as *u8) { return; }
     let core_ptr: *u8 = { u::GetPropA(host, prop_core() as *i8) };
-    if (dirty & (1 as u64)) != (0 as u64) {          // P_SOURCE
+    if (dirty & web::P_SOURCE) != (0 as u64) {
         store_url(host, n);
         if core_ptr != (0 as *u8) {
             let url: *u8 = { u::GetPropA(host, prop_url() as *i8) };
@@ -634,10 +647,10 @@ fn apply(host: *u8, n: *core::Node, dirty: u64) {
         }
     }
     if core_ptr == (0 as *u8) { return; }
-    if (dirty & (32 as u64)) != (0 as u64) { let _r: i32 = call0(core_ptr, idx_reload()); }     // P_RELOAD
-    if (dirty & (8 as u64)) != (0 as u64) { let _b: i32 = call0(core_ptr, idx_go_back()); }     // P_GO_BACK
-    if (dirty & (16 as u64)) != (0 as u64) { let _f: i32 = call0(core_ptr, idx_go_forward()); } // P_GO_FORWARD
-    if (dirty & (4 as u64)) != (0 as u64) {                                                     // P_EVAL
+    if (dirty & web::P_RELOAD) != (0 as u64) { let _r: i32 = call0(core_ptr, idx_reload()); }
+    if (dirty & web::P_GO_BACK) != (0 as u64) { let _b: i32 = call0(core_ptr, idx_go_back()); }
+    if (dirty & web::P_GO_FORWARD) != (0 as u64) { let _f: i32 = call0(core_ptr, idx_go_forward()); }
+    if (dirty & web::P_EVAL) != (0 as u64) {
         let js: *u16 = eval_wide(n);
         if js != (0 as *u16) {
             let noop: *u8 = handler_new(NOOP_VTBL as *u8, 0 as *u8);
