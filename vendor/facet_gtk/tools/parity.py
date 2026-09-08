@@ -58,6 +58,18 @@ HANDLER_FLOOR = 68
 # while the two numbers above read 98% and 100%. See `shared_band`.
 SHARED_FLOOR = 19
 
+# PER BACKEND, because `--check` used to be spelled `totals.get("gtk")` no matter
+# which column was asked for — so `parity.py win32 --check` measured win32 and
+# then gated GTK, and a Windows regression could not fail the check that existed
+# to catch one. The three constants above stay as GTK's for compatibility with
+# anything that imports them; this table is what the gate reads.
+FLOORS = {
+    "gtk": (FLOOR, HANDLER_FLOOR, SHARED_FLOOR),
+    # Where facet_win32 stands today. Raise them as the gap closes — the point
+    # of a floor is that it only ever goes up.
+    "win32": (304, 62, 19),
+}
+
 # Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification
 # queue (M4). A backend neither can nor should wire them, so counting them
 # against one is measuring the wrong thing — facet_appkit "answers" both only
@@ -312,7 +324,10 @@ def handler_parity():
         print(f"\n{FOCUS} does not fire:")
         for s, m in gaps:
             print(f"    {s:24} {' '.join(m)}")
-    return totals.get("gtk", 0)
+    # The FOCUSED backend's count, which is what `--check` gates on. Spelled
+    # "gtk" here regardless of the column asked for, so the handler floor was
+    # always GTK's however the tool was invoked.
+    return totals.get(FOCUS, 0)
 
 
 def field_touches(directory):
@@ -394,6 +409,34 @@ def struct_for(module):
     return "".join(x.title() for x in module.split("_")) + "Props"
 
 
+def kinds_named(directory):
+    """Kind modules this backend DISPATCHES ON, from `props::K_*`.
+
+    THE EVIDENCE THE FIELD-TOUCH FALLBACK WANTED. That fallback needs proof the
+    backend implements a kind before a field name credits it, because field
+    names are not unique across Props structs — and the proof it used was "names
+    at least one P_ bit of that module", which is circular for a kind answered
+    ENTIRELY without dirty bits.
+
+    facet_win32's canvas is exactly that: `paint_canvas` reads `(*p).drawable`
+    and replays it through GDI+, and `apply_canvas` repaints on ANY dirty bit
+    because a canvas is drawn wholly by the backend — so there is no bit to name
+    and nothing to gate on. It scored 0/2 while being complete, and because it
+    scored 0 the fallback that would have seen the field read was switched off
+    by the very absence it was meant to cover.
+
+    `props::K_CANVAS` is the backend saying it knows the kind and dispatches on
+    it. It cannot collide the way a field name can — there is exactly one
+    `K_CANVAS` — so it is strictly better evidence than the bit count, and it is
+    accepted alongside it rather than instead of it.
+    """
+    src = strip_comments("".join(
+        open(p, encoding="utf-8").read()
+        for p in glob.glob(os.path.join(directory, "*.cplus"))
+        if not p.endswith("test_main.cplus")))
+    return {k[2:].lower() for k in re.findall(r"\bprops::(K_[A-Z0-9_]+)\b", src)}
+
+
 def main():
     # WHICH PACKAGE'S PER-KIND TABLE GETS PRINTED. It was gtk and only gtk,
     # which meant the one report that names missing props by name could only be
@@ -412,6 +455,7 @@ def main():
 
     seen = {k: referenced(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
     written = {k: field_touches(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
+    dispatches = {k: kinds_named(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
     totals = {k: 0 for k in seen}
     declared = 0
     rows = []
@@ -427,25 +471,58 @@ def main():
         for k in seen:
             named = seen[k].get(module, set())
             # The field-touch fallback needs evidence this backend implements
-            # the KIND — see `field_touches`. One named bit is that evidence.
-            plausible = len(named) > 0
+            # the KIND — see `field_touches`. A named bit is that evidence, and
+            # so is dispatching on the kind at all (`props::K_CANVAS`), which is
+            # the stronger signal and the one that does not go circular for a
+            # kind answered without dirty bits. See `kinds_named`.
+            plausible = len(named) > 0 or module in dispatches[k]
             fields = written[k].get(struct_for(module), set())
             got[k] = {p for p in props
                       if p in named
                       or (plausible and p[2:].lower() in fields)}
             totals[k] += len(got[k])
-        if got.get(FOCUS):
-            rows.append((module, len(props), len(got[FOCUS]),
-                         sorted(p[2:].lower() for p in set(props) - got[FOCUS])))
+        # EVERY KIND, INCLUDING THE ONES THIS BACKEND ANSWERS NOTHING FOR.
+        #
+        # This used to be `if got.get(FOCUS)`, and the heading still said "where
+        # anything is answered at all" — so a kind the backend had never heard of
+        # did not appear on the report, and its props were never checked against
+        # MANIFEST §1 either. The actionable line at the bottom therefore counted
+        # only the debt inside kinds already begun.
+        #
+        # Measured on win32 when this was changed: the report closed with "1
+        # unanswered and UNRECORDED" while 29 of its 61 missing props sat in
+        # kinds that were absent from the table entirely. The one number a person
+        # reads for "what is left" was wrong by 29, and wrong in the flattering
+        # direction, on the backend the list exists to steer.
+        rows.append((module, len(props), len(got[FOCUS]),
+                     sorted(p[2:].lower() for p in set(props) - got[FOCUS])))
 
     absent = decided_absent(FOCUS)
-    print(f"facet_{FOCUS} — per kind, where anything is answered at all:\n")
+    print(f"facet_{FOCUS} — every kind facet declares:\n")
     unrecorded = []
     for module, n, g, missing in sorted(rows, key=lambda r: -r[2]):
-        open_debt = [m for m in missing if m not in absent]
+        # A WHOLE KIND CAN BE ARGUED AT ONCE, but only a kind with NOTHING built.
+        # §1 makes its case per name, and for a kind nobody implements the name
+        # it argues is the KIND — "Win32 has no hybrid_web" — not each of that
+        # kind's props in turn. Reading only prop names would bury real debt
+        # under an argument already made.
+        #
+        # THE `g == 0` GUARD IS NOT DECORATION. Kind names and prop names share a
+        # namespace: `popup.label` is a prop, and without this guard §1's row for
+        # it marked the whole `label` KIND — 14 props built and one genuinely
+        # undecided — as argued, silencing `label.selectable`, the single open
+        # row on the whole report. A kind with any implementation is by
+        # definition not one this backend decided against.
+        whole_kind_argued = g == 0 and module in absent
+        open_debt = [] if whole_kind_argued else [m for m in missing if m not in absent]
         unrecorded += [f"{module}.{m}" for m in open_debt]
         line = f"  {module:14} {g:>2}/{n:<2}"
-        if open_debt:
+        if g == 0:
+            # NOT STARTED, which is a different state from a kind with gaps and
+            # is the one this report used to omit entirely.
+            line += "   NOT IMPLEMENTED" + ("  (decided absent — MANIFEST §1)"
+                                            if whole_kind_argued else "")
+        elif open_debt:
             line += "   not yet: " + " ".join(open_debt[:8])
             if len(open_debt) > 8:
                 line += f" (+{len(open_debt) - 8})"
@@ -518,27 +595,32 @@ def main():
               f"{len(gaps) - len(open_rows)} argued -> {state}")
         for c in open_rows:
             print(f"             {c}")
-    shared = len(named.get("gtk", []))
+    shared = len(named.get(FOCUS, []))
 
     if "--check" in sys.argv:
-        got = totals.get("gtk", 0)
+        if FOCUS not in FLOORS:
+            print(f"\nno floors recorded for {FOCUS} — add them to FLOORS to gate it.",
+                  file=sys.stderr)
+            return 2
+        p_floor, h_floor, s_floor = FLOORS[FOCUS]
+        got = totals.get(FOCUS, 0)
         bad = False
-        if got < FLOOR:
-            print(f"\nFAIL: gtk answers {got} props, floor is {FLOOR} — a verb was dropped.",
+        if got < p_floor:
+            print(f"\nFAIL: {FOCUS} answers {got} props, floor is {p_floor} — a verb was dropped.",
                   file=sys.stderr)
             bad = True
-        if fired < HANDLER_FLOOR:
-            print(f"FAIL: gtk fires {fired} handlers, floor is {HANDLER_FLOOR}.",
+        if fired < h_floor:
+            print(f"FAIL: {FOCUS} fires {fired} handlers, floor is {h_floor}.",
                   file=sys.stderr)
             bad = True
-        if shared < SHARED_FLOOR:
-            print(f"FAIL: gtk names {shared} shared-band bits, floor is {SHARED_FLOOR}.",
+        if shared < s_floor:
+            print(f"FAIL: {FOCUS} names {shared} shared-band bits, floor is {s_floor}.",
                   file=sys.stderr)
             bad = True
         if bad:
             return 1
-        print(f"\nok: props {got} (floor {FLOOR}), handlers {fired} "
-              f"(floor {HANDLER_FLOOR}), shared {shared} (floor {SHARED_FLOOR})")
+        print(f"\nok: props {got} (floor {p_floor}), handlers {fired} "
+              f"(floor {h_floor}), shared {shared} (floor {s_floor})")
     return 0
 
 
