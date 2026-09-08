@@ -220,6 +220,12 @@ The route is known: a synthesized `UIViewController` subclass for the root
 item's key carried in the command's `propertyList`. That is a new architectural
 seam for one verb, so it is written down here rather than half-built.
 
+Filed in full as
+`bugs/facet_uikit-context_menu_item-shortcut-is-never-applied.md` — the
+symptom, the two dispatch models that do not meet, and why the half-build (a
+menu that advertises ⌘R and ignores it) is the worse answer. That directory is
+gitignored, so this line is how the report is found.
+
 
 ### Window buttons
 
