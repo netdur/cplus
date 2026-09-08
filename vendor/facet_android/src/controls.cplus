@@ -149,8 +149,16 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     // THE RUN LIST WINS OVER THE PLAIN TEXT when there is one, and it is
     // applied after it: `text` and `formatted_text` are two ways to say what a
     // label reads, and the second is the specific one.
-    if (dirty & (label::P_FORMATTED_TEXT | label::P_TEXT)) != (0 as u64) {
-        apply_formatted_text(env, v, { #addr_of((*p).formatted_text) });
+    // SPAN CHILDREN WIN over both the plain string and the value-carried runs,
+    // and they are applied last so they land on top of whichever wrote first.
+    // A label that has them IS them.
+    if (dirty & (label::P_FORMATTED_TEXT | label::P_TEXT)) != (0 as u64)
+       || dirty == paint::all_bits() {
+        if has_span_children(n) {
+            apply_span_children(env, v, n);
+        } else {
+            apply_formatted_text(env, v, { #addr_of((*p).formatted_text) });
+        }
     }
     if (dirty & label::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
@@ -4600,6 +4608,159 @@ fn span_decoration(d: vocab::TextDecoration) -> i32 {
 
 // A LABEL'S FORMATTED TEXT. The runs are concatenated into the string the view
 // gets, and each run's range is where its own text landed in it.
+// ---- span CHILDREN -----------------------------------------------------------
+//
+// A `label` with `span` children IS its children: the plain string is what a
+// label says when it has none, and a backend that drew both would draw the
+// sentence twice. That is the rule facet_appkit and facet_uikit follow, and
+// this backend drew NEITHER — `SpanProps` was read nowhere, so a label built
+// out of styled runs rendered nothing at all.
+//
+// `span` is a non-view kind here (see `views::non_view_kind`), which was right
+// and was the whole answer: nothing occupied a box, and nothing put the text
+// anywhere either.
+//
+// The runs go through the same `spans_begin` / `spans_add` / `spans_commit`
+// bridge `formatted_text` uses. What that bridge carries is a colour, a
+// background, bold, italic, a decoration, a size and a link — so `text`,
+// `text_color`, `font_size`, `font_weight`, `is_italic` and `text_decoration`
+// are answered. `font_family`, `line_height` and `character_spacing` are NOT:
+// Android has a span class for each (`TypefaceSpan`, `LineHeightSpan`,
+// `LetterSpacingSpan`) and none of them is in the dex bridge, which is a Java
+// change and a `build_dex.sh` run rather than a line here. They are recorded
+// in MANIFEST §2 rather than silently dropped.
+// Android has NO per-run case transform — `setAllCaps` is a property of the
+// whole TextView — so a span's `text_transform` is applied to the STRING before
+// it is appended. That is the only per-run answer, and it is the one every
+// backend gives.
+fn span_transformed(s: str, tr: vocab::TextTransform) -> text::Text {
+    return match tr {
+        vocab::TextTransform::Uppercase => text::from_str(s).uppercased(),
+        vocab::TextTransform::Lowercase => text::from_str(s).lowercased(),
+        vocab::TextTransform::Default => text::from_str(s),
+        vocab::TextTransform::None => text::from_str(s),
+    };
+}
+
+fn has_span_children(n: *core::Node) -> bool {
+    let count: usize = core::child_count_of(n);
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SPAN { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn apply_span_children(env: rt::Env, v: *u8, n: *core::Node) {
+    let count: usize = core::child_count_of(n);
+    // THE WHOLE STRING FIRST, for the reason `apply_formatted_text` gives: a
+    // span cannot be set on text that is not there yet.
+    var whole: [u8; 4096] = #zero::[[u8; 4096]]();
+    let base: *u8 = { #addr_of(whole[0]) };
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SPAN {
+                    let sp: *props::SpanProps =
+                        props_of(c, props::K_SPAN) as *props::SpanProps;
+                    if sp != (0 as *props::SpanProps) {
+                        // TRANSFORMED HERE, because Android has no per-run case
+                        // transform — `setAllCaps` is a property of the whole
+                        // TextView. Changing the STRING is the only per-run
+                        // answer, and it is the same one every backend gives.
+                        let shown: text::Text = span_transformed(
+                            { (*sp).text.view() }, { (*sp).text_transform });
+                        append_cstr(base, 4096 as usize, shown.view());
+                    }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    dex::spans_begin(env, { v as jni::jobject }, base);
+    var at: i32 = 0 as i32;
+    i = 0 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SPAN {
+                    let sp: *props::SpanProps =
+                        props_of(c, props::K_SPAN) as *props::SpanProps;
+                    if sp != (0 as *props::SpanProps) {
+                        var tbuf: [u8; 1024] = #zero::[[u8; 1024]]();
+                        let tbase: *u8 = { #addr_of(tbuf[0]) };
+                        let shown: text::Text = span_transformed(
+                            { (*sp).text.view() }, { (*sp).text_transform });
+                        let _t: bool = paint::cstr(shown.view(), tbase,
+                                                   1024 as usize);
+                        let tlen: usize = paint::cstr_len(tbase);
+                        let units: i32 = utf16_len(
+                            { #str_from_raw_parts(tbase, tlen) }, tlen);
+                        let fg: vocab::Color = { (*sp).text_color };
+                        // A SIZE OF ZERO IS "the label's own", not a zero-high
+                        // run — the same reading every other size on this
+                        // backend has.
+                        // `font_scales` decides the UNIT: sp follows the
+                        // user's text-size setting, dp does not. The bridge
+                        // takes pixels, so the choice is made here — which is
+                        // the same split `apply_text_size` makes for a whole
+                        // label.
+                        var size_px: i32 = 0 as i32;
+                        if { (*sp).font_size } > 0.0f64 {
+                            var scale: f64 = e::density();
+                            if { (*sp).font_scales } { scale = e::font_scale(); }
+                            size_px = { ({ (*sp).font_size } * scale) as i32 };
+                        }
+                        var nolink: [u8; 4] = #zero::[[u8; 4]]();
+                        dex::spans_add(env, { v as jni::jobject }, at, units,
+                                       paint::argb_of(fg), fg.is_set(),
+                                       0 as i32, false,
+                                       is_bold_weight({ (*sp).font_weight }),
+                                       { (*sp).is_italic },
+                                       span_decoration({ (*sp).text_decoration }),
+                                       size_px, { #addr_of(nolink[0]) });
+                        // The typography half, through the second entry point.
+                        var fbuf: [u8; 128] = #zero::[[u8; 128]]();
+                        let fbase: *u8 = { #addr_of(fbuf[0]) };
+                        let _f: bool = paint::cstr({ (*sp).font_family.view() },
+                                                   fbase, 128 as usize);
+                        var lh: f32 = 0.0f32;
+                        if { (*sp).line_height } > 0.0f64 {
+                            lh = { e::px({ (*sp).line_height }) as f32 };
+                        }
+                        // Letter spacing is EMs on Android and POINTS in facet,
+                        // so it is divided by the size that run will draw at —
+                        // the label's when the span names none.
+                        var em: f32 = 0.0f32;
+                        if { (*sp).character_spacing } != 0.0f64 {
+                            var basis: f64 = { (*sp).font_size };
+                            if basis <= 0.0f64 { basis = 14.0f64; }
+                            em = { ({ (*sp).character_spacing } / basis) as f32 };
+                        }
+                        dex::spans_add_typography(env, { v as jni::jobject }, at,
+                                                  units, fbase, lh, em, 1 as i32);
+                        at = at +% units;
+                    }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // No links: a `span` carries no url — that is `formatted_text`'s run type,
+    // which has one.
+    dex::spans_commit(env, { v as jni::jobject }, false);
+    return;
+}
+
 fn apply_formatted_text(env: rt::Env, v: *u8, f: *vocab::Spans) {
     let count: usize = { (*f).count() };
     if count == (0 as usize) { return; }

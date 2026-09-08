@@ -44,6 +44,20 @@ collection.group_header         a GridView has no sections — a header would ha
 collection.on_reorder_completed no drag to complete — see collection.can_reorder_items
 ```
 
+```host-rendered
+span.text                       a run in its label's SpannableString, built by `apply_span_children`
+span.text_color                 a ForegroundColorSpan on the run
+span.font_size                  an AbsoluteSizeSpan on the run
+span.font_weight                a StyleSpan on the run — Android's spans carry bold, not a weight axis
+span.is_italic                  a StyleSpan on the run
+span.text_decoration            an underline or strikethrough span on the run
+span.font_family                a TypefaceSpan on the run
+span.line_height                a LineHeightSpan.Standard on the run (API 29+; below it the run keeps the label's)
+span.character_spacing          a MetricAffectingSpan setting letterSpacing — points converted to the EMs Android wants
+span.text_transform             applied to the STRING before it is appended; Android has no per-run case transform
+span.font_scales                decides the UNIT the size resolves in — `env::font_scale()` (scaledDensity) or `env::density()`
+```
+
 ```create-only
 scroll.axis                     a create-time CLASS choice — HorizontalScrollView or ScrollView; `create_scroll` reads it and there is no reclass
 ```

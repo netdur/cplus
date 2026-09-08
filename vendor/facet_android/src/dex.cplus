@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 41352;
+const DEX_LEN: usize = 42196;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -301,7 +301,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 41352] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 42196] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -936,6 +936,34 @@ fn spans_add(env: rt::Env, view: jni::jobject, start: i32, length: i32,
     { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
                                             #addr_of(args[0])) };
     if l != (0 as jni::jstring) { env.delete_local_ref(l); }
+    return;
+}
+
+// The TYPOGRAPHY half of a run — a family, a line height and a letter spacing,
+// each of which is a span class Android has had for years and that this bridge
+// simply never exposed. `span.font_family`, `span.line_height` and
+// `span.character_spacing` were unanswerable from the C+ side until it did.
+//
+// A second entry point rather than four more parameters on `spans_add`: that
+// already takes twelve, and a caller wanting none of these should not have to
+// say so four times.
+fn spans_add_typography(env: rt::Env, view: jni::jobject, start: i32, length: i32,
+                        family: *u8, line_height_px: f32, letter_spacing_em: f32,
+                        transform: i32) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("spansAddTypography\0"),
+        #str_ptr("(Landroid/widget/TextView;IILjava/lang/String;FFI)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var f: jni::jstring = 0 as jni::jstring;
+    if family != (0 as *u8) { f = env.new_string_utf(family); }
+    var args: [jni::JValue; 7] = [
+        jni::arg_object(view), jni::arg_int(start), jni::arg_int(length),
+        jni::arg_object(f), jni::arg_float(line_height_px),
+        jni::arg_float(letter_spacing_em), jni::arg_int(transform)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    if f != (0 as jni::jstring) { env.delete_local_ref(f); }
     return;
 }
 
