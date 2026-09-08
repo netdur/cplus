@@ -2515,6 +2515,85 @@ fn a_disconnecting_primary_keeps_its_window() -> bool {
     return window::scene_count() == before;
 }
 
+// ---- a restored scene, and which session is the primary --------------------------
+//
+// MEASURED on an iPad Pro 13-inch simulator, iOS 26.4, 2026-09-08. Open a
+// second window, background the app, kill it, launch cold:
+//
+//     facet scene willConnect: key=[panel:one] primary_taken=false scenes=1
+//     PROBE late: windows=1 keys=[]
+//
+// iPadOS reconnected the PANEL's session, alone and first, so a fork that told
+// the primary apart by ARRIVAL ORDER read "no primary yet" and handed the
+// panel's scene the primary's window. The panel was gone and the app had one
+// unnamed window. With the fork reading the KEY the same launch answers
+// `windows=2 keys=[panel:one]`.
+//
+// `imp_scene_will_connect` needs a real `UIScene` and nothing here can make
+// one, so what these reach is the RULE it turns on and the record it reads —
+// which is where the defect actually was. The end-to-end half is
+// `playground/ipadwin` and is written up in the closed report.
+
+fn activity_type_of(act: *u8) -> text::Text {
+    if act == (0 as *u8) { return text::new(); }
+    let t: *u8 = { rt::msg_id(act, rt::sel(#str_ptr("activityType\0"))) };
+    if t == (0 as *u8) { return text::new(); }
+    return bridge::to_text(t);
+}
+
+// A pointer that is a real object and is not any scene we know — the stand-in
+// for a `UIScene`, which cannot be constructed.
+fn fake_scene() -> *u8 {
+    return { rt::msg_id(rt::get_class(#str_ptr("NSObject\0")), rt::sel(#str_ptr("new\0"))) };
+}
+
+fn a_session_naming_a_route_is_not_the_primary() -> bool {
+    // The whole dispatch table. Nothing names it but this and the fork.
+    if !window::session_is_primary("") { return false; }
+    if !window::session_is_primary(window::primary_session_key()) { return false; }
+    if window::session_is_primary("panel:one") { return false; }
+    // EXACT MATCH. A route that merely starts with the sentinel is a route —
+    // a prefix test here would silently swallow one.
+    if window::session_is_primary("@primaryish") { return false; }
+    return window::primary_session_key() == "@primary";
+}
+
+fn a_restored_primary_answers_the_sentinel() -> bool {
+    // The primary has no route, so before this it had no name to write on its
+    // session — and an unnamed session is exactly the one that cannot be told
+    // apart on the next launch. Entry 0 is the primary whatever key it carries.
+    let sc: *u8 = fake_scene();
+    if sc == (0 as *u8) { return false; }
+    if window::scene_count() == (0 as usize) { return false; }
+    window::mark_primary_scene(sc);
+    let act: *u8 = window::imp_state_restoration_activity(0 as *u8, 0 as *u8, sc);
+    return activity_type_of(act).view() == "@primary";
+}
+
+fn a_restored_additional_scene_answers_its_own_key() -> bool {
+    let at: usize = window::build_scene_window("probe:restore");
+    if at == (0 as usize) { return false; }
+    let sc: *u8 = fake_scene();
+    if sc == (0 as *u8) { return false; }
+    window::note_scene_connected(at, sc);
+    let act: *u8 = window::imp_state_restoration_activity(0 as *u8, 0 as *u8, sc);
+    return activity_type_of(act).view() == "probe:restore";
+}
+
+fn a_scene_we_do_not_know_is_named_nothing() -> bool {
+    // UIKit asks about every scene it owns, including one whose window this
+    // package never built. Answering an activity for it would name a window
+    // that is not ours.
+    let sc: *u8 = fake_scene();
+    if sc == (0 as *u8) { return false; }
+    if window::imp_state_restoration_activity(0 as *u8, 0 as *u8, sc) != (0 as *u8) {
+        return false;
+    }
+    // And an empty key is not a name: `initWithActivityType:` would take it and
+    // it would read back as "no key" on the next launch.
+    return window::activity_named("") == (0 as *u8);
+}
+
 fn run_all() -> i32 {
     FAILED = 0 as i32;
     RAN = 0 as i32;
@@ -2626,6 +2705,14 @@ fn run_all() -> i32 {
     check("a scene window is found by its key", a_scene_window_is_found_by_its_key());
     check("a disconnecting primary keeps its window",
           a_disconnecting_primary_keeps_its_window());
+    check("a session naming a route is not the primary",
+          a_session_naming_a_route_is_not_the_primary());
+    check("a restored primary answers the sentinel",
+          a_restored_primary_answers_the_sentinel());
+    check("a restored additional scene answers its own key",
+          a_restored_additional_scene_answers_its_own_key());
+    check("a scene we do not know is named nothing",
+          a_scene_we_do_not_know_is_named_nothing());
     check("focus and visibility answer different kinds",
           becoming_active_is_the_focus_level_not_the_visibility_level());
     check("a url reaches a subscriber as its absolute string",

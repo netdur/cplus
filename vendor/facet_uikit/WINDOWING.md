@@ -444,3 +444,62 @@ whose `bar_under_test()` is one line to flip per style. **On a real iPad, drag
 the window's resize grabber while that probe is running** — it reports every two
 seconds, and `win=` and `safe=` moving is the §4 answer nothing on this machine
 could produce.
+
+## 10. Scene identity, and why a restored window came up blank
+
+**A scene session has a NAME now, and the primary's name is `@primary`.**
+Before that the primary was told apart from every other scene by ARRIVAL
+ORDER — `primary_scene_taken()` read `SCENES[0].scene` and the first session to
+connect took the slot — and UIKit never promised that order.
+
+It is wrong on exactly the launch that matters. iPadOS persists scene sessions
+and reconnects them on the next cold start, and it reconnects **the one it is
+about to show**, which after a `nav::push(show: Show::Window)` is the SECOND
+window. Measured, iPad Pro 13-inch simulator, iOS 26.4, 2026-09-08:
+
+    facet scene willConnect: key=[panel:one] primary_taken=false scenes=1
+    PROBE late: windows=1 keys=[]
+
+The panel's session arrived alone and first, the fork read "no primary yet",
+and the panel's scene was handed the primary's window. One unnamed window, the
+panel gone, and the app's own record agreeing with itself the whole time —
+which is why it read fine over MCP.
+
+With the fork reading the key, the same launch answers `windows=2
+keys=[panel:one]`.
+
+Three things this needed, and the first two are each half of it:
+
+* **`stateRestorationActivityForScene:` on the scene delegate.** Setting
+  `session.stateRestorationActivity` at connect time is documented and is not
+  reliable — the write has to still be there whenever UIKit decides to
+  snapshot. Measured twice with identical steps: the key came back once and
+  came back empty once. The delegate method is the hook UIKit pulls at that
+  moment, so the answer is built from `SCENES` rather than remembered.
+* **The primary answers the sentinel.** A primary has no route — `Window.key`
+  is deliberately empty for it — so naming only the additional windows leaves
+  the primary as the one session that cannot be identified. `@` cannot collide
+  with a route.
+* **`session_is_primary(key)` is a named rule, not a branch.**
+  `imp_scene_will_connect` needs a real `UIScene` and no check can make one, so
+  the decision lives where the suite can reach it.
+
+### THE SIMULATOR DOES REPRODUCE THIS — the trick is the background transition
+
+This was filed as device-only. It is not, and the reason it looked that way is
+worth more than the bug: **`xcrun simctl terminate` is a kill**, and a killed
+app never gets the background transition UIKit persists its sessions on. Kill
+it from the foreground and the second session is simply not there next launch,
+so the repro silently degrades into a single-window cold start that always
+passes.
+
+Push it to the background first, with any other app, and it comes back:
+
+    xcrun simctl launch $DEV dev.cplus.ipadwin        # opens the second window
+    xcrun simctl launch $DEV com.apple.Preferences    # background it — LOAD-BEARING
+    xcrun simctl terminate $DEV dev.cplus.ipadwin
+    xcrun simctl launch --console-pty $DEV dev.cplus.ipadwin
+
+`FACET_DEBUG_SCENES=1` prints one line per connection — the key, whether the
+primary is taken, and how many scenes are on the books. It exists because two
+hypotheses about this bug were wrong before anything was measured.

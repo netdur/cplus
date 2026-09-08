@@ -29,6 +29,8 @@ import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/application" as app;
+import "stdlib/io" as io;
+import "stdlib/env" as env;
 import "facet/window" as app_window;
 import "facet/screen" as screen;
 import "facet/services" as services;
@@ -1553,12 +1555,18 @@ fn primary_scene_taken() -> bool {
     };
 }
 
-fn mark_primary_scene(scene: *u8) {
-    if SCENES.count() == (0 as usize) { return; }
-    match SCENES.at_ptr(0 as usize) {
+fn mark_primary_scene(scene: *u8) { note_scene_connected(0 as usize, scene); }
+
+// "This entry now has a scene." The one writer, so `connect_additional_scene`,
+// the primary adoption and the selftest all say it the same way — and the
+// selftest NEEDS to say it, because a real `UIScene` cannot be constructed and
+// several checks below are about what an entry answers once it has one.
+fn note_scene_connected(at: usize, scene: *u8) {
+    match SCENES.at_ptr(at) {
         option::Option[*SceneWin]::Some(e) => { { (*e).scene = scene }; }
         option::Option[*SceneWin]::None => { }
     }
+    return;
 }
 
 // A SECOND (or third) WINDOW. Build one of our own, ask the facade for the tree
@@ -1571,10 +1579,7 @@ fn connect_additional_scene(scene: *u8, session: *u8, options: *u8) {
         option::Option[*SceneWin]::None => 0 as *u8,
     };
     if w == (0 as *u8) { return; }
-    match SCENES.at_ptr(at) {
-        option::Option[*SceneWin]::Some(e) => { { (*e).scene = scene }; }
-        option::Option[*SceneWin]::None => { }
-    }
+    note_scene_connected(at, scene);
     { rt::msg_void_id(w, rt::sel(#str_ptr("setWindowScene:\0")), scene) };
     { rt::msg_void(w, rt::sel(#str_ptr("makeKeyAndVisible\0"))) };
 
@@ -1708,15 +1713,9 @@ fn remember_session_key(scene: *u8, key: str) {
     if key == "" { return; }
     let sess: *u8 = { rt::msg_id(scene, rt::sel(#str_ptr("session\0"))) };
     if sess == (0 as *u8) { return; }
-    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
-    if cls == (0 as *u8) { return; }
-    let a: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
-    if a == (0 as *u8) { return; }
-    let act: *u8 = { rt::msg_id_id(a, rt::sel(#str_ptr("initWithActivityType:\0")),
-                                   bridge::nsstring(key)) };
+    let act: *u8 = activity_named(key);
     if act == (0 as *u8) { return; }
     { rt::msg_void_id(sess, rt::sel(#str_ptr("setStateRestorationActivity:\0")), act) };
-    { rt::release(act) };
     return;
 }
 
@@ -1732,6 +1731,67 @@ fn destroy_session_of(scene: *u8) -> bool {
         rt::sel(#str_ptr("requestSceneSessionDestruction:options:errorHandler:\0")),
         sess, 0 as *u8, 0 as *u8) };
     return true;
+}
+
+// THE PRIMARY'S SESSION HAS A NAME, and this is it.
+//
+// A primary window has no route — `Window.key` is deliberately empty for it —
+// so it had nothing to write on its session, and `willConnect` told the primary
+// apart from the rest by ARRIVAL ORDER (`primary_scene_taken`). That is an
+// order UIKit never promised, and it is wrong on exactly the launch that
+// matters.
+//
+// MEASURED, iPad Pro 13-inch simulator, iOS 26.4, 2026-09-08. Open a second
+// window, terminate, launch cold:
+//
+//     PROBE willConnect: primary_taken=false key=[panel:one] scenes=1
+//     PROBE late: windows=1 keys=[]
+//
+// iPadOS reconnected the PANEL's session — alone, and first — so the fork read
+// "no primary yet" and handed the panel's scene the primary's window. The panel
+// was gone, the app had one unnamed window, and iPadOS held the other session
+// hidden. That is the whole of
+// `bugs/facet_uikit-a-restored-scene-comes-up-as-a-blank-window.md`, and the
+// report's round one (naming the ADDITIONAL sessions) was necessary and not
+// sufficient: the key was read correctly and then ignored.
+//
+// `@` cannot collide with a route. A facet window key is a route name, and
+// nothing in `nav::push` can produce one that starts with it.
+fn primary_session_key() -> str { return "@primary"; }
+
+// THE FORK, as a rule rather than a branch. `imp_scene_will_connect` needs a
+// real `UIScene` and a check cannot make one, so the decision it turns on lives
+// here where a check can reach it — the alternative is a rule that is only ever
+// exercised by hand on a device.
+//
+// A session naming NOTHING is the primary's: that is a first launch, and it is
+// also a session restored from a build that wrote no name, which is the
+// upgrade path. Exact match on the sentinel, so a route that merely starts
+// with it is still a route.
+fn session_is_primary(key: str) -> bool {
+    if key == "" { return true; }
+    return key == primary_session_key();
+}
+
+// One line per scene connection, behind `FACET_DEBUG_SCENES`, because the
+// answer to this bug was a measurement and the next one will be too. The shape
+// is `mount.cplus`'s `FACET_DEBUG_FIND`: read once, so a scene connect costs
+// one branch.
+static SCENE_DBG_ON: bool = false;
+static SCENE_DBG_READ: bool = false;
+
+fn scene_debugging() -> bool {
+    if !SCENE_DBG_READ { SCENE_DBG_READ = true; SCENE_DBG_ON = env::has_var("FACET_DEBUG_SCENES"); }
+    return SCENE_DBG_ON;
+}
+
+fn scene_debug(key: str) {
+    if !scene_debugging() { return; }
+    let taken: bool = primary_scene_taken();
+    let n: usize = SCENES.count();
+    io::eprintln(text::from_str(
+        "facet scene willConnect: key=[${key}] primary_taken=${taken} scenes=${n}"));
+    return;
 }
 
 // What key a connecting scene was asked for: its session's activity if it has
@@ -1805,19 +1865,80 @@ fn imp_scene_did_disconnect(self_obj: *u8, cmd: *u8, scene: *u8) {
     return;
 }
 
+// -[UISceneDelegate stateRestorationActivityForScene:]
+//
+// The name this scene should come back under. Built from SCENES rather than
+// from anything stored on the session, so it is right at whatever moment UIKit
+// asks — including one where nothing of ours has run for a while.
+//
+// The PRIMARY answers the sentinel, which is the half round one of this bug
+// missed: name only the additional windows and the primary is the one session
+// that cannot be told apart on the next launch.
+fn imp_state_restoration_activity(self_obj: *u8, cmd: *u8, scene: *u8) -> *u8 {
+    if scene == (0 as *u8) { return 0 as *u8; }
+    let n: usize = SCENES.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        match SCENES.at_ptr(i) {
+            option::Option[*SceneWin]::Some(e) => {
+                if { (*e).scene } == scene {
+                    let k: str = if i == (0 as usize) { primary_session_key() }
+                                 else { (*e).key.view() };
+                    return activity_named(k);
+                }
+            }
+            option::Option[*SceneWin]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// An autoreleased NSUserActivity whose type is `key`. Autoreleased because it
+// is RETURNED — a +1 handed back through a getter UIKit did not ask to own is
+// a leak per snapshot.
+fn activity_named(key: str) -> *u8 {
+    if key == "" { return 0 as *u8; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let a: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if a == (0 as *u8) { return 0 as *u8; }
+    let act: *u8 = { rt::msg_id_id(a, rt::sel(#str_ptr("initWithActivityType:\0")),
+                                   bridge::nsstring(key)) };
+    if act == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(act, rt::sel(#str_ptr("autorelease\0"))) };
+}
+
 fn imp_scene_will_connect(self_obj: *u8, cmd: *u8, scene: *u8, session: *u8, options: *u8) {
     if scene == (0 as *u8) { return; }
-    // A SECOND SCENE IS A SECOND WINDOW, and this is the fork. Entry 0 has no
-    // scene until the first one connects; once it does, anything further is an
-    // additional window and gets built rather than adopted. Adopting again is
-    // what the single-window code did, and it would have MOVED the app's only
-    // window into the new scene instead of making one.
-    if primary_scene_taken() {
+    var key: text::Text = key_for_session(session, options);
+    let k: str = key.view();
+    scene_debug(k);
+    // A SECOND SCENE IS A SECOND WINDOW, and this is the fork. **IT DISPATCHES
+    // ON THE KEY, NEVER ON ARRIVAL ORDER** — see `primary_session_key` for the
+    // measurement that made the order version wrong.
+    if !session_is_primary(k) {
         connect_additional_scene(scene, session, options);
+        return;
+    }
+    // A session naming the primary, or naming nothing at all — a first launch,
+    // or one restored from a build that wrote no name onto it.
+    if primary_scene_taken() {
+        // TWO SESSIONS BOTH CLAIMING THE PRIMARY. Only reachable across an
+        // upgrade from a build that named neither, and the second one cannot be
+        // identified, so its window cannot be filled. It goes rather than
+        // sitting blank — the same fallback `connect_additional_scene` uses for
+        // a key that resolves to no route.
+        let _gone: bool = destroy_session_of(scene);
         return;
     }
     if WINDOW == (0 as *u8) { return; }
     mark_primary_scene(scene);
+    // NAME THE PRIMARY'S SESSION TOO. This is the half round one missed: the
+    // additional scenes were named and the primary was not, so on the next
+    // cold start the only unnamed session was the one that had to be told
+    // apart from the others.
+    remember_session_key(scene, primary_session_key());
     { rt::msg_void_id(WINDOW, rt::sel(#str_ptr("setWindowScene:\0")), scene) };
     apply_scene_chrome(WINDOW);
     // AND RE-MEASURE, or the window-buttons reservation is inert.
@@ -1962,6 +2083,18 @@ fn scene_delegate_class() -> *u8 {
     let _d: i8 = synth::add_method_v_1id(cls,
         rt::sel(#str_ptr("sceneDidDisconnect:\0")),
         imp_scene_did_disconnect, #str_ptr("v@:@\0"));
+    // WHAT THIS SCENE IS FOR, asked by UIKit WHENEVER IT WANTS TO SAVE.
+    //
+    // `session.stateRestorationActivity` can be set directly and this package
+    // did only that — and it is not reliable: measured twice on the simulator
+    // with the same steps, the key came back once and came back EMPTY once,
+    // because the write has to still be there at whatever moment UIKit decides
+    // to snapshot, and `simctl terminate` is a kill. This method is the hook
+    // UIKit pulls at that moment, so the answer is built fresh from the record
+    // rather than remembered.
+    let _s: i8 = synth::add_method_id_1id(cls,
+        rt::sel(#str_ptr("stateRestorationActivityForScene:\0")),
+        imp_state_restoration_activity, #str_ptr("@@:@\0"));
     // THE LINK DOORS, on the conformance the class already claims below.
     let _u: i8 = synth::add_method_v_2id(cls,
         rt::sel(#str_ptr("scene:openURLContexts:\0")),
