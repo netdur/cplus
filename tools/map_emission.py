@@ -131,6 +131,29 @@ ALIASES = {
     # distinction the ledger's two events do not make.
     ("Page", "Appearing"):    "on_attach",
     ("Page", "Disappearing"): "on_detach",
+    # The TITLEBAR. `Chrome.bar` is the bar's STYLE (Native / Blended / Hidden /
+    # Custom); its CONTENT rides reserved keys, because Chrome is a value struct
+    # copied into every window and a subtree is not a value — window_chrome.cplus
+    # names these two ledger rows outright and answers them.
+    ("Window", "TitleBar"):        ("bar", "Chrome"),
+    ("TitleBar", "LeadingContent"):  "titlebar_leading",
+    ("TitleBar", "TrailingContent"): "titlebar_trailing",
+    # The MENU and TOOLBAR of a page are not properties in facet: a Screen
+    # declares its menu, and toolbar items are NODES the backend lifts out of
+    # the tree (facet_appkit/window.cplus:369 `install_toolbar(win, root)`).
+    ("Page", "MenuBarItems"):     "menu_items",
+    ("Page", "ToolbarItems"):     ("toolbar_item", "any"),
+    ("Toolbar", "ToolbarItems"):  ("toolbar_item", "any"),
+    # The SHARED BAND answers these three; they are not page properties.
+    # `SafeArea` is the vocabulary behind both container-area rows.
+    ("Page", "BackgroundImageSource"): "set_background_image",
+    ("Page", "ContainerArea"):         "set_safe_area",
+    ("Page", "IgnoresContainerArea"):  "set_safe_area",
+    # `App::screen(name, factory)` registers the root screen.
+    ("Application", "MainPage"): "screen",
+    # A page's layout changing is `services::observe_size` on the node — the
+    # seam every backend fills, not a page-only event.
+    ("Page", "LayoutChanged"): "observe_size",
     # The app LIFECYCLE band answers these, not the window: facet fires them for
     # the process, and a component binds them with `bind_app_lifecycle`.
     # VISIBILITY, not focus — facet splits the two and these are the visibility
@@ -158,6 +181,11 @@ TIERS = {
     "Screen":  ["screen.cplus"],
     "runtime": ["window.cplus", "application.cplus", "app_events.cplus",
                 "runtime.cplus", "runtime_macos.cplus"],
+    # For an alias whose target is a CONTROL KIND. `Page.ToolbarItems` is
+    # answered by putting `toolbar_item` nodes in the tree — appkit reads the
+    # toolbar out of the tree at `window.cplus:369` — and that kind lives in a
+    # GENERATED module, which `hand_written()` deliberately excludes.
+    "any": None,
 }
 
 
@@ -183,7 +211,13 @@ def main():
     whole = {os.path.basename(p): open(p).read() for p in hand_written()}
     everything = "\n".join(whole.values())
 
+    generated = "\n".join(open(f).read() for f in glob.glob(os.path.join(FACET, "*.cplus"))
+                          if not f.endswith("test_main.cplus"))
+
     def present(n, tier):
+        if tier == "any":
+            return re.search(r"\b" + re.escape(n) + r"\b",
+                             everything + "\n" + generated) is not None
         files = TIERS.get(tier)
         src = ("\n".join(whole.get(f, "") for f in files) if files else everything)
         return re.search(r"\b" + re.escape(n) + r"\b", src) is not None
@@ -226,7 +260,7 @@ def main():
         # facet_android's parity floor takes. These are not regressions to
         # guard against; they are a backlog to burn down, and the number only
         # means something if it cannot silently grow.
-        FLOOR = 33
+        FLOOR = 22
         if stale:
             print("\nFAIL: an alias names something that does not exist.", file=sys.stderr)
             return 1
