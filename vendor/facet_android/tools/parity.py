@@ -48,7 +48,10 @@ BACKENDS = {
 # below gained its kind-constant half, so field touches on kinds this backend
 # dispatches by `props::K_*` stopped being discarded. A floor that moves for a
 # measurement fix has to say so, or the next reader reads it as progress.
-FLOOR = 326
+# Raised 326 -> 347 on 2026-09-08: spans, the list's adapter tier, the box's own
+# decoration, the ActionBar toolbar and the swipe icon all landed in one pass.
+# This one IS progress, unlike the 319 -> 326 move above it.
+FLOOR = 347
 # Same gate on the READ half. Kept separate because the two surfaces fail
 # differently: a missing prop is a control that ignores you, a missing handler
 # is a control that never answers — and the gap between 45% and 35% here says

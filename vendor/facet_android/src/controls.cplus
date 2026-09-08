@@ -5094,7 +5094,25 @@ fn attach_context_menu(v: *u8, n: *core::Node) {
                     if !paint::cstr({ (*p).menu_item.text.view() }, base, 256 as usize) {
                         { (*base) = 0 as u8 };
                     }
-                    dex::menu_add(env, token, base, { (*p).menu_item.is_destructive });
+                    // ICON AND SHORTCUT were watched by `menu_is_stale` and
+                    // never carried across — the mask named both bits and the
+                    // builder passed neither, which is the shape where the code
+                    // looks finished. `shortcut_key` is the carrier's own field:
+                    // facet stores a shortcut DECOMPOSED, and Android's menu can
+                    // take the key but not the modifiers, so only the key
+                    // crosses. MANIFEST §2 records the half that does not.
+                    var ibuf: [u8; 256] = #zero::[[u8; 256]]();
+                    let ibase: *u8 = { #addr_of(ibuf[0]) };
+                    if !paint::cstr({ (*p).menu_item.icon.view() }, ibase, 256 as usize) {
+                        { (*ibase) = 0 as u8 };
+                    }
+                    var kbuf: [u8; 32] = #zero::[[u8; 32]]();
+                    let kbase: *u8 = { #addr_of(kbuf[0]) };
+                    if !paint::cstr({ (*p).shortcut_key.view() }, kbase, 32 as usize) {
+                        { (*kbase) = 0 as u8 };
+                    }
+                    dex::menu_add(env, token, base, { (*p).menu_item.is_destructive },
+                                  ibase, kbase);
                 }
             }
             option::Option[*core::Node]::None => { }

@@ -59,6 +59,7 @@ toolbar_item.is_destructive     a danger-coloured title span; an Android MenuIte
 toolbar_item.placement          SHOW_AS_ACTION_IF_ROOM for Primary, NEVER for Secondary — Android's word for "on the bar" and "in the overflow"
 toolbar_item.priority           the id AND the order the item is added at, low first
 swipe_item.text                 the title of the Button the swipe strip builds for it
+swipe_item.icon                 a COMPOUND drawable above that title — a swipe action is a Button, so the icon is not an image view of its own
 swipe_item.is_destructive       the Button's background — danger, against the system fill for a plain one
 list.row_height                 a STATED height, read into the RowModel and applied as the row is placed
 span.text_color                 a ForegroundColorSpan on the run
