@@ -171,6 +171,38 @@ destructive style (`UIMenuElement` does, which is why `menus.cplus` says it
 declaratively and this cannot), so the platform's convention is the system red.
 Three checks hold the port.
 
+### The collection's grouping tier — BUILT 2026-09-08
+
+The table has had sections since it was written; the collection returned a flat
+count and no section count at all, so `is_grouped`, `group_count` and
+`group_size` reached it and did nothing. All four now answer, ported from the
+table's imps because a group means the same thing on both:
+
+* `numberOfSectionsInCollectionView:` from `group_count`, `numberOfItemsInSection:`
+  from `group_size`. A carousel is never grouped — its pages are the node's
+  children — so it takes the single-section answer without asking.
+* `row_height_of` through `collectionView:layout:sizeForItemAtIndexPath:`.
+  Without it the flow layout's uniform `itemSize` answered for every row and the
+  callback was never consulted. A stated height of zero is not an answer — the
+  application declined to state one — so the layout's own size stands.
+* `row_kind` keys the reuse identifier, ONE POOL PER KIND. A collection whose
+  rows are not all the same shape recycled a header into a body without it.
+  Registration is idempotent and a collection view REQUIRES it before dequeue
+  (unlike a table, which builds on miss), so a kind's class is registered the
+  first time that kind is asked for.
+* `group_header` on both kinds: `viewForHeaderInSection:` /
+  `heightForHeaderInSection:` for the table, and a registered SUPPLEMENTARY view
+  for the collection — a supplementary view is a different object from a cell
+  and needs its own pool, or the header dequeues nothing. A height of zero hides
+  the header, because UIKit's own grouped-style default would otherwise leave a
+  grey strip above every section.
+
+`row` and `row_height_of` take ONE sequence; sections are a presentation over
+it, so a grouped collection converts the index path to a flat index the same way
+the table does.
+
+**Handler debt is now zero.** 88 of 89 wired, one decided.
+
 ### The one prop still absent: `context_menu_item.shortcut`
 
 Not a cannot, and worth the detail because the reason is a SEAM rather than a
