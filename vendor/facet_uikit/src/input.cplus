@@ -323,6 +323,16 @@ fn fire_primary(n: *core::Node, sender: *u8) {
             let h: fn(*u8, *u8) = { (*ip).on_clicked };
             if h != props::no_handler { h(sender, { (*ip).on_clicked_ctx }); return; }
         }
+        // A TOOLBAR ITEM is not a view — it is a `UIBarButtonItem`, an
+        // NSObject the navigation bar owns — but the node association and this
+        // dispatcher work on any object, so it arrives here like a button.
+        // Its handler lives on the embedded `menu_item` block, because a
+        // toolbar item IS a menu item that happens to be in a bar.
+        if kind == props::K_TOOLBAR_ITEM {
+            let tp: *props::ToolbarItemProps = p as *props::ToolbarItemProps;
+            let h: fn(*u8, *u8) = { (*tp).menu_item.on_clicked };
+            if h != props::no_handler { h(sender, { (*tp).menu_item.on_clicked_ctx }); return; }
+        }
         // A radio arrives here rather than through `read_back` because a
         // UIButton has no value to hand back — pressing it is the whole event,
         // and what it MEANS (this member on, its group off) is the radio body's

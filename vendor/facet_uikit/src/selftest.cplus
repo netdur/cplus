@@ -1224,6 +1224,63 @@ fn runs_are_read_from_a_labels_attributed_text() -> bool {
     };
 }
 
+// ---- the toolbar reaches the navigation bar ----------------------------------
+//
+// iOS has no window toolbar; its answer is the NAVIGATION BAR, and this is the
+// port this file's MANIFEST said should happen "once the chrome tier is
+// ported". `placement` picks the side, `priority` the order within it.
+
+fn tb_items_on(side: str, vc: *u8) -> u64 {
+    let ni: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("navigationItem\0"))) };
+    if ni == (0 as *u8) { return 0 as u64; }
+    let arr: *u8 = { rt::msg_id(ni, rt::sel(#str_ptr(side))) };
+    if arr == (0 as *u8) { return 0 as u64; }
+    return { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) };
+}
+
+fn a_toolbar_item_reaches_the_navigation_bar() -> bool {
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::toolbar_item("Share", placement: vocab::ToolbarPlacement::Primary));
+    b.add(ui::toolbar_item("Back", placement: vocab::ToolbarPlacement::Secondary));
+    var root: core::Node = ui::column(b);
+    window::install_toolbar(vc, #addr_of(root), 0 as *u8);
+    // One each side: Primary is the trailing group, Secondary the leading one.
+    if tb_items_on("rightBarButtonItems\0", vc) != (1 as u64) { return false; }
+    return tb_items_on("leftBarButtonItems\0", vc) == (1 as u64);
+}
+
+// PRIORITY orders within a side, low first — the same order facet_appkit's
+// toolbar uses, so one description reads the same on both.
+fn toolbar_items_sort_by_priority() -> bool {
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::toolbar_item("Second", priority: 2 as i64));
+    b.add(ui::toolbar_item("First", priority: 1 as i64));
+    var root: core::Node = ui::column(b);
+    window::install_toolbar(vc, #addr_of(root), 0 as *u8);
+    let ni: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("navigationItem\0"))) };
+    let arr: *u8 = { rt::msg_id(ni, rt::sel(#str_ptr("rightBarButtonItems\0"))) };
+    if arr == (0 as *u8) { return false; }
+    if { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) } != (2 as u64) { return false; }
+    let first: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    let title: *u8 = { rt::msg_id(first, rt::sel(#str_ptr("title\0"))) };
+    return bridge::to_text(title).view() == "First";
+}
+
+// A tree with no toolbar items puts nothing in the bar — an empty navigation
+// bar is a strip of nothing at the top of every app that never asked for one.
+fn a_tree_with_no_toolbar_items_fills_nothing() -> bool {
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    var root: core::Node = ui::column(core::Builder::new());
+    window::install_toolbar(vc, #addr_of(root), 0 as *u8);
+    if tb_items_on("rightBarButtonItems\0", vc) != (0 as u64) { return false; }
+    return tb_items_on("leftBarButtonItems\0", vc) == (0 as u64);
+}
+
 // ---- a label the user can select and copy ------------------------------------
 //
 // `selectable` was ACCEPTED AND IGNORED: a label on iOS read and did not copy,
@@ -2230,6 +2287,11 @@ fn run_all() -> i32 {
     check("byte offsets convert to utf16 units", byte_offsets_convert_to_utf16_units());
     check("runs are read from a label's attributed text",
           runs_are_read_from_a_labels_attributed_text());
+    check("a toolbar item reaches the navigation bar",
+          a_toolbar_item_reaches_the_navigation_bar());
+    check("toolbar items sort by priority", toolbar_items_sort_by_priority());
+    check("a tree with no toolbar items fills nothing",
+          a_tree_with_no_toolbar_items_fills_nothing());
     check("a selectable label is a text view", a_selectable_label_is_a_text_view());
     check("a plain label stays a label", a_plain_label_stays_a_label());
     check("a selectable label does not scroll or pad",

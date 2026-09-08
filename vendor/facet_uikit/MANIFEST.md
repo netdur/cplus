@@ -94,6 +94,8 @@ context_menu_item.icon          an element of the UIMenu built when the menu ope
 swipe_item.text                 an action on the row, rebuilt with it
 swipe_item.icon                 an action on the row, rebuilt with it
 swipe_item.is_destructive       an action on the row, rebuilt with it
+toolbar_item.text               the title of a UIBarButtonItem the navigation bar owns
+toolbar_item.icon               the image of a UIBarButtonItem the navigation bar owns
 ```
 
 ### The derived, modifier and create-only ledgers
@@ -115,10 +117,15 @@ list.reorder                    written back by the drag
 
 ```modifier
 carousel.animates_scroll        no write of its own; it decides whether a `position` write JUMPS or SLIDES
+carousel.scroll_anchor          no write of its own; it decides what the re-layout does to the viewport
+collection.scroll_anchor        no write of its own; it decides what a reload does to the viewport
 ```
 
 ```create-only
 label.selectable                the class is chosen at create (UITextView vs UILabel); a flip after mount needs a reclass this package has no path for
+toolbar_item.placement          the bar is built when the root attaches; UIBarButtonItems are made once
+toolbar_item.priority           as toolbar_item.placement — and the ORDER is the bar's
+toolbar_item.is_destructive     as toolbar_item.placement — the tint is set as the item is made
 ```
 
 ### What is left after the ledgers, and what the ledgers REFUSED
@@ -149,9 +156,37 @@ and the row still does not qualify: nothing reads the field even once, so it is
 not create-only, it is unimplemented. The prose and the code have to agree
 before the ledger will.
 
-And `toolbar_item` — five verbs. NOT a cannot: iOS has `UINavigationItem`, and
-this section says so above ("facet's `toolbar_item` is the vocabulary that
-should reach it once the chrome tier is ported").
+`toolbar_item` — **BUILT 2026-09-08**, which is the port this section asked for
+("facet's `toolbar_item` is the vocabulary that should reach it once the chrome
+tier is ported"). `install_toolbar` walks the tree at `attach_root`, makes a
+`UIBarButtonItem` per node and hangs them on the root view controller's
+`navigationItem`: `placement` picks the side (Primary trailing, Secondary
+leading, Default follows Primary), `priority` orders within it, low first, so
+one description reads the same here and on AppKit. The bar stays HIDDEN until
+there is something in it — a facet screen draws its own chrome, and an empty
+navigation bar is a strip of nothing at the top of every app that never asked.
+
+`is_destructive` is a TINT here, not an attribute: `UIBarButtonItem` has no
+destructive style (`UIMenuElement` does, which is why `menus.cplus` says it
+declaratively and this cannot), so the platform's convention is the system red.
+Three checks hold the port.
+
+### The one prop still absent: `context_menu_item.shortcut`
+
+Not a cannot, and worth the detail because the reason is a SEAM rather than a
+limit.
+
+A `UIMenuElement` carries no key equivalent. The class that does is
+`UIKeyCommand` — a real `UIMenuElement` subclass, so a menu CAN show and honour
+a shortcut — but its action dispatches through the RESPONDER CHAIN, where this
+package's menu items are built from a block (`_action_invoke`). Displaying the
+shortcut without wiring the chain would put a `⌘R` in a menu that does nothing,
+which is worse than not showing it.
+
+The route is known: a synthesized `UIViewController` subclass for the root
+(today it is a stock `UIViewController`), a `facetKeyCommand:` on it, and the
+item's key carried in the command's `propertyList`. That is a new architectural
+seam for one verb, so it is written down here rather than half-built.
 
 
 ### Window buttons

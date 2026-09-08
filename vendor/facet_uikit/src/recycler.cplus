@@ -1784,6 +1784,48 @@ fn apply_item_size(v: *u8, columns: i64, horizontal: bool,
     return;
 }
 
+// ---- the scroll anchor -------------------------------------------------------
+//
+// `ItemsUpdatingScrollMode`: what happens to the viewport when the SEQUENCE
+// changes under it. It has no write of its own — it is a MODIFIER on the
+// reload — so nothing gated it and nothing read it, and every uikit reload
+// behaved as `KeepItemsInView` whatever the application asked for.
+//
+// A UICollectionView IS a UIScrollView, so the offset is `contentOffset`
+// directly rather than a clip view's bounds the way AppKit reads it. The
+// semantics are ported from facet_appkit so the two agree.
+fn anchor_offset(v: *u8, a: vocab::ScrollAnchor) -> f64 {
+    if v == (0 as *u8) { return 0.0f64; }
+    let keeps: bool = match a {
+        vocab::ScrollAnchor::KeepScrollOffset => true,
+        vocab::ScrollAnchor::KeepItemsInView => false,
+        vocab::ScrollAnchor::KeepLastItemInView => false,
+    };
+    if !keeps { return 0.0f64; }
+    let off: rt::Point = { rt::msg_point(v, rt::sel(#str_ptr("contentOffset\0"))) };
+    return off.y;
+}
+
+fn restore_anchor(v: *u8, a: vocab::ScrollAnchor, before: f64) {
+    match a {
+        // The default, and it is a real answer: UIKit keeps the visible items
+        // where they are on its own.
+        vocab::ScrollAnchor::KeepItemsInView => { }
+        vocab::ScrollAnchor::KeepScrollOffset => {
+            { msg_void_point_i8(v, rt::sel(#str_ptr("setContentOffset:animated:\0")),
+                                rt::Point { x: 0.0f64, y: before }, 0 as i8) };
+        }
+        vocab::ScrollAnchor::KeepLastItemInView => {
+            // NOT animated: this is a correction made in the same pass as the
+            // reload that caused it, and animating it would show the jump the
+            // anchor exists to hide.
+            let count: i64 = cv_item_count(v);
+            if count > (0 as i64) { cv_scroll_to(v, count -% (1 as i64), false); }
+        }
+    }
+    return;
+}
+
 // An index into a carousel that LOOPS. Without `wraps` an out-of-range index is
 // out of range; with it, the sequence has no ends. Ported from facet_appkit's
 // `wrapped` so the two backends agree on what a looping index means.
@@ -1851,12 +1893,17 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
                  | collection::P_ROW)) != (0 as u64) {
         cv_select(v, { (*p).selected_index });
     }
-    if (dirty & collection::P_SPLICE_ROWS) != (0 as u64) {
+    // The anchor is read BEFORE the reload and applied after it — that is what
+    // "keep the scroll offset" means, and it is the only place the prop can be
+    // honoured.
+    let anchor: vocab::ScrollAnchor = { (*p).items_view.scroll_anchor };
+    if (dirty & (collection::P_SPLICE_ROWS | collection::P_COUNT | collection::P_ROW
+                 | collection::P_GROUP | collection::P_GROUP_COUNT
+                 | collection::P_IS_GROUPED
+                 | collection::P_INVALIDATE_ROW)) != (0 as u64) {
+        let before: f64 = anchor_offset(v, anchor);
         { rt::msg_void(v, rt::sel(#str_ptr("reloadData\0"))) };
-    } else if (dirty & (collection::P_COUNT | collection::P_ROW | collection::P_GROUP
-                        | collection::P_GROUP_COUNT | collection::P_IS_GROUPED
-                        | collection::P_INVALIDATE_ROW)) != (0 as u64) {
-        { rt::msg_void(v, rt::sel(#str_ptr("reloadData\0"))) };
+        restore_anchor(v, anchor, before);
     }
     if (dirty & collection::P_SCROLL_TO) != (0 as u64) {
         cv_scroll_to(v, { (*p).items_view.scroll_to_index });
@@ -1867,11 +1914,18 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
 fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CarouselProps = props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
     if p == (0 as *props::CarouselProps) { return; }
+    // A CAROUSEL HAS NO RELOAD — its pages are the node's own children, so the
+    // moment its sequence changes SHAPE is this re-layout rather than a data
+    // reload. That is where the anchor belongs: `KeepScrollOffset` holds the
+    // viewport across a re-size, `KeepLastItemInView` follows the tail.
+    let anchor: vocab::ScrollAnchor = { (*p).items_view.scroll_anchor };
     if (dirty & (carousel::P_COLUMNS | carousel::P_ITEM_SIZING
                  | carousel::P_PEEK_INSETS)) != (0 as u64) {
+        let before: f64 = anchor_offset(v, anchor);
         apply_item_size(v, { (*p).structured_items_view.columns } as i64, true,
                         { (*p).structured_items_view.item_sizing },
                         { (*p).peek_insets });
+        restore_anchor(v, anchor, before);
     }
     if (dirty & carousel::P_BOUNCES) != (0 as u64) {
         ui::ScrollView::from_raw(v).set_bounces({ (*p).bounces });
@@ -1988,6 +2042,9 @@ extern fn msg_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
 extern fn msg_void_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8);
 #[link_name = "objc_msgSend"]
 extern fn msg_void_size(recv: *u8, sel: *u8, s: rt::Size);
+// `void (id, SEL, CGPoint, BOOL)` — setContentOffset:animated:.
+#[link_name = "objc_msgSend"]
+extern fn msg_void_point_i8(recv: *u8, sel: *u8, p: rt::Point, b: i8);
 
 #[link_name = "objc_msgSend"]
 extern fn msg_id_rect_id(recv: *u8, sel: *u8, r: rt::Rect, a: *u8) -> *u8;
