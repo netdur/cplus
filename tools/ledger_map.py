@@ -38,6 +38,23 @@ SPEC = os.path.join(ROOT, "plans", "facet", "spec", "ledger-spec.json")
 MODEL = "the ledger's MVVM model — facet describes UI with components, keys, and fn-ptr handlers"
 LAYOUT = "layout belongs to flex_layout — facet Nodes carry flex modifiers"
 ENGINE = "the ledger engine internals, not application vocabulary"
+# The ledger's modal PAGE STACK, which facet does not have and does not want.
+#
+# `runtime::alert` / `choose` / `prompt` are window-modal SHEETS built as
+# ordinary facet trees: NON-BLOCKING, so the caller returns at once and the
+# answer arrives on `on_answer`. That was a deliberate choice — a modal loop is
+# a dialog an AGENT cannot get past, and a sheet built from facet nodes has a
+# key on every part (`alert:primary`, `choose:opt:0`, `prompt:value`). Nothing
+# is pushed or popped, so there is no push/pop to raise an event for.
+#
+# This map already DROPs `DisplayAlert` and `DisplayPromptAsync` on exactly
+# that reasoning — "no async in the UI; the answer is a handler" — and then
+# ADOPTed the EVENTS of the stack those methods drive: nine rows naming
+# `on_modal_pushed` and friends, which do not exist and by this design should
+# not. One document saying both things about one decision.
+MODAL = ("facet's dialogs answer on a handler and there is no modal stack to "
+         "observe — runtime::alert/choose/prompt are non-blocking sheets, so "
+         "nothing is pushed or popped")
 
 # ---- value types -> facet types. A scalar/struct the contract can carry. -----
 TYMAP = {
@@ -758,6 +775,15 @@ OVERLAY = {
     ("VisualElement", "SafeAreaEdges"):
         ("DROP", "", "facet says it as set_safe_area on the shared band — NOT flex's, "
                      "the window's own insets"),
+    ("Window", "ModalPushing"): ("DROP", "", MODAL),
+    ("Window", "ModalPushed"): ("DROP", "", MODAL),
+    ("Window", "ModalPopping"): ("DROP", "", MODAL),
+    ("Window", "ModalPopped"): ("DROP", "", MODAL),
+    ("Application", "ModalPushing"): ("DROP", "", MODAL),
+    ("Application", "ModalPushed"): ("DROP", "", MODAL),
+    ("Application", "ModalPopping"): ("DROP", "", MODAL),
+    ("Application", "ModalPopped"): ("DROP", "", MODAL),
+    ("Window", "PopCanceled"): ("DROP", "", MODAL),
     ("View", "GestureRecognizers"):
         ("DROP", "", "facet says it as the .gesture() band — not a bound collection"),
     ("VisualElement", "GestureRecognizers"):

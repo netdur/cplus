@@ -45,6 +45,15 @@ import glob
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FACET = os.path.join(ROOT, "vendor", "facet", "src")
+# THE RUNTIME TIER IS TWO PACKAGES, and the first version of this tool searched
+# only the first — which is the same mistake it was written to catch.
+#
+# `facet` is the pure core. The app-facing runtime verbs — the dialogs, the
+# window facade, the lifecycle observers — live in `facet_runtime`, which was
+# split out for exactly that reason. Searching only `vendor/facet/src` reported
+# `present_window`, `alert`, `observe_backgrounding` and a dozen more as never
+# written, while they sit in `runtime.cplus` with a per-platform facade each.
+RUNTIME_PKG = os.path.join(ROOT, "vendor", "facet_runtime", "src")
 MAP = os.path.join(ROOT, "plans", "facet", "ledger-map-draft.md")
 
 # The tier the generator does not own. `ledger_spec.py` calls these the runtime
@@ -65,6 +74,10 @@ def hand_written():
         head = "".join(open(p).readlines()[:8])
         if "GENERATED" not in head:
             out.append(p)
+    # Every file of facet_runtime: none of it is generated, and all of it is
+    # the runtime tier by definition.
+    out += [p for p in sorted(glob.glob(os.path.join(RUNTIME_PKG, "*.cplus")))
+            if not p.endswith("test_main.cplus")]
     return out
 
 
@@ -106,6 +119,18 @@ ALIASES = {
     # say so rather than be excused.
     ("Window", "X"): ("set_frame", "runtime"),
     ("Window", "Y"): ("set_frame", "runtime"),
+    # The THEME family. facet says the app's appearance on the runtime facade
+    # and the system's read on `theme`, so none of the map's four default names
+    # exist and all four capabilities do.
+    ("Application", "UserAppTheme"):         "set_app_appearance",
+    ("Application", "RequestedTheme"):       "app_appearance",
+    ("Application", "PlatformAppTheme"):     "set_is_dark_fn",
+    ("Application", "RequestedThemeChanged"): "set_theme_changed_fn",
+    # A page appearing and disappearing is facet's COMPONENT LIFECYCLE, with
+    # the `Attach` / `Detach` reason that splits focus from visibility — a
+    # distinction the ledger's two events do not make.
+    ("Page", "Appearing"):    "on_attach",
+    ("Page", "Disappearing"): "on_detach",
     # The app LIFECYCLE band answers these, not the window: facet fires them for
     # the process, and a component binds them with `bind_app_lifecycle`.
     # VISIBILITY, not focus — facet splits the two and these are the visibility
@@ -131,7 +156,8 @@ ALIASES = {
 TIERS = {
     "Chrome":  ["screen.cplus"],
     "Screen":  ["screen.cplus"],
-    "runtime": ["window.cplus", "application.cplus", "app_events.cplus"],
+    "runtime": ["window.cplus", "application.cplus", "app_events.cplus",
+                "runtime.cplus", "runtime_macos.cplus"],
 }
 
 
@@ -200,7 +226,7 @@ def main():
         # facet_android's parity floor takes. These are not regressions to
         # guard against; they are a backlog to burn down, and the number only
         # means something if it cannot silently grow.
-        FLOOR = 48
+        FLOOR = 33
         if stale:
             print("\nFAIL: an alias names something that does not exist.", file=sys.stderr)
             return 1
