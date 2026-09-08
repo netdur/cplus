@@ -1481,6 +1481,14 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     // finds `label::` and `button::` and looks like coverage. The values differ
     // per module — label 128, text_button 512, button 2048 — so neither of
     // those gates can ever match a text button's write.
+    if (dirty & text_button::P_LINE_BREAK) != (0 as u64) {
+        match b.as_control().cell() {
+            option::Option[ak::Cell]::Some(c) => {
+                c.set_line_break_mode(paint::ns_line_break({ (*p).line_break }));
+            }
+            option::Option[ak::Cell]::None => { }
+        }
+    }
     if (dirty & text_button::P_TOGGLES) != (0 as u64) || dirty == paint::all_bits() {
         if { (*p).toggles } { b.set_button_type(ak::ButtonType::PushOnPushOff); }
         else { b.set_button_type(ak::ButtonType::MomentaryPushIn); }

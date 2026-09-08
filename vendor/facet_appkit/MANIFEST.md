@@ -162,6 +162,33 @@ unrecorded verb too, which is this file's oldest claim finally enforced.
 ```cannot-ledger
 ```
 
+### The by-architecture ledger
+
+The fourth disposition, added 2026-09-08, and the reason is two rows that fit
+none of the three above. `collection.row_height_of` and `collection.row_kind`
+are not "AppKit cannot" — AppKit can, and `list` uses both. They are not "no
+carrier" — facet declares both fields, correctly. And they are not create-only,
+because nothing reads them even once.
+
+They are verbs whose PURPOSE this backend answers another way. `collection`
+materialises every item as an ordinary child rather than recycling (the reason
+is `CanReorderItems` — see "The collection group builds every row"), so there
+is no cell pool to key by `row_kind` and no unbuilt row to ask the height of.
+The callbacks have nothing to be asked, and wiring them would mean building the
+pool the design deliberately does not have.
+
+Filing these under `cannot` would claim a platform limit that does not exist;
+filing them under `no-carrier` would blame the contract for a choice this
+backend made. Leaving them unfiled counted a deliberate design as debt, which
+is what the gate was failing on. A row here is a commitment of the same kind as
+a `cannot` row: if `collection` ever recycles, these rows stop being true and
+`--check` says so.
+
+```by-architecture
+collection.row_height_of        collection materialises; there is no unbuilt row to ask
+collection.row_kind             collection materialises; there is no cell pool to key
+```
+
 ### The no-carrier ledger
 
 A third disposition, and the one that is NOT this backend's to fix. AppKit can
@@ -352,7 +379,6 @@ debt, the same rule the cannot ledger follows, and the tool counts it as such.
 ```create-only
 list.row_height                 the table's row height is read when its source is built
 tree.row_height                 as list.row_height
-window_chrome.spacing           the traffic lights are laid out once, by the window
 toolbar_item.placement          an NSToolbarItem is built once, when the window opens
 toolbar_item.priority           as toolbar_item.placement — and the ORDER is the bar's
 menu.priority                   an NSMenu is built once, when the window opens

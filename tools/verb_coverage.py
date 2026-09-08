@@ -370,15 +370,29 @@ def report(name, show_list=False):
     hosted = ledger(manifest, "host-rendered")
     no_carrier = ledger(manifest, "no-carrier")
     by_design = ledger(manifest, "create-only")
+    # BY-ARCHITECTURE — the disposition the other six could not say.
+    #
+    # `collection.row_height_of` and `collection.row_kind` are the case that
+    # needed it. They are not "AppKit cannot" (AppKit can), and not "no
+    # carrier" (facet declares both fields perfectly well). They are verbs
+    # whose PURPOSE this backend answers by other means: a materialising
+    # collection has no cell pool to key by `row_kind` and no unbuilt row to
+    # ask the height of, so the callbacks have nothing to be asked. Filing that
+    # under either of the other two claims something false — and leaving it
+    # unfiled counts a deliberate design as debt.
+    by_arch = ledger(manifest, "by-architecture")
     derived = ledger(manifest, "derived")
     modifiers = ledger(manifest, "modifier")
     recorded = dict(decided)
     recorded.update(no_carrier)
+    recorded.update(by_arch)
     live, create_only, absent, ruled_out, unread = buckets(facet, backend, recorded)
     blocked = [e for e in ruled_out if e in no_carrier]
     ruled_out = [e for e in ruled_out if e not in no_carrier]
+    architectural = [e for e in ruled_out if e in by_arch]
+    ruled_out = [e for e in ruled_out if e not in by_arch]
     total = (len(live) + len(create_only) + len(absent) + len(ruled_out)
-             + len(blocked) + len(unread))
+             + len(blocked) + len(architectural) + len(unread))
     print(f"facet_{name} verb coverage — {total} declared prop/command bits")
     print(f"  {len(live):>4}  live         gated on the dirty bit; a later write lands")
     by_host = [e for e in create_only if e in hosted]
@@ -403,17 +417,21 @@ def report(name, show_list=False):
     print(f"  {len(create_only):>4}  create-only  by design, and the manifest says why")
     print(f"  {len(ruled_out):>4}  decided      the manifest's ledger says {display} cannot")
     print(f"  {len(blocked):>4}  no carrier   {display} can; facet declares no thing to apply it to")
+    print(f"  {len(architectural):>4}  by design    this backend answers the verb's purpose another way")
     print(f"  {len(unread):>4}  gated, unread  the mask names the bit and the body never reads the field")
     print(f"  {len(absent):>4}  absent       neither implemented nor decided — the debt")
-    wired, dead, h_ruled = handler_buckets(facet, backend, decided, no_carrier)
+    ruled = dict(decided)
+    ruled.update(by_arch)
+    wired, dead, h_ruled = handler_buckets(facet, backend, ruled, no_carrier)
     print(f"\nfacet_{name} handler coverage — {len(wired) + len(dead) + len(h_ruled)} declared handlers")
     print(f"  {len(wired):>4}  wired        the backend reads the field and calls it")
     print(f"  {len(h_ruled):>4}  decided      the manifest records why it does not fire")
     print(f"  {len(dead):>4}  never fire   neither wired nor decided — the debt")
     stale = [n for n in list(decided) + list(hosted) + list(no_carrier) + list(by_design)
-             + list(derived) + list(modifiers)
+             + list(derived) + list(modifiers) + list(by_arch)
              if n not in set(live + create_only + by_host + by_derivation + by_modification
-                             + blocked + absent + ruled_out + wired + dead + h_ruled)]
+                             + blocked + architectural + absent + ruled_out
+                             + wired + dead + h_ruled)]
     if stale:
         print(f"\nLEDGER NAMES {len(stale)} VERBS THAT DO NOT EXIST: {', '.join(sorted(stale))}")
     # A row that is RECORDED and still measured absent. Different from `stale`,
@@ -428,7 +446,8 @@ def report(name, show_list=False):
     # read the field, so the verb lands in absent correctly; without this line
     # the contradicting row sits in the manifest reading true.
     contradicted = sorted(set(absent) & (set(by_design) | set(hosted)
-                                         | set(derived) | set(modifiers)))
+                                         | set(derived) | set(modifiers)
+                                         | set(by_arch)))
     if contradicted:
         print(f"\n  LEDGER CONTRADICTED — recorded, and the field is never read:")
         for e in contradicted:
@@ -441,6 +460,7 @@ def report(name, show_list=False):
         for bucket, rows in (("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host),
                              ("DERIVED", by_derivation), ("MODIFIER", by_modification),
                              ("NO CARRIER", blocked), ("ABSENT", absent),
+                             ("BY DESIGN", architectural),
                              ("NEVER FIRE", dead), ("DECIDED", ruled_out + h_ruled),
                              ("LIVE", live), ("WIRED", wired)):
             print(f"\n{bucket} ({len(rows)})")
@@ -452,7 +472,7 @@ def report(name, show_list=False):
         "contradicted": contradicted,
         "handlers": len(wired) + len(dead) + len(h_ruled), "wired": len(wired),
         "ledgers": sum(map(len, (decided, hosted, no_carrier, by_design,
-                                 derived, modifiers))),
+                                 derived, modifiers, by_arch))),
         # The dispositions this backend has WRITTEN DOWN, for the cross-check
         # in `main`. A verb here is one somebody argued is not debt.
         "recorded": set(by_host) | set(create_only) | set(by_derivation)

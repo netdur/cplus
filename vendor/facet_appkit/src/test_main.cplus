@@ -697,9 +697,13 @@ fn a_labels_transform_is_display_only() {
 // row saying the window laid them out with it. Both halves looked like the
 // other half's job.
 //
-// The buttons themselves are the WINDOW's, so a view with no window places
-// nothing — what is assertable here is the stored gap, which is what
-// `wb_layout` reads.
+// WHAT THIS CAN AND CANNOT PIN. The buttons are the WINDOW's — `wb_layout`
+// returns immediately when the view has no window — so the suite cannot
+// observe where the three lights actually land, and no assertion here proves
+// the gap was used. What it does pin is the state machine `wb_layout` reads:
+// that the applied prop is stored, and that zero still means 14. The placement
+// itself is the "no hands" case in CLAUDE.md — a probe app under playground/
+// is the only thing that can show it.
 #[test]
 fn window_buttons_carry_the_spacing_the_application_stated() {
     var n: core::Node = chrome::window_buttons(spacing: 22.0f64, key: "wbs");
@@ -4734,19 +4738,23 @@ fn a_recycled_cell_is_re_tagged_with_the_row_it_now_shows() {
 // NEGATIVE: a tree that names no rows tags none. An id nobody chose is worse
 // than no id — the agent surface would carry a name the application cannot
 // predict and did not ask to expose.
-// A `row_id` write reaches the cells that ALREADY EXIST.
+// A `row_id` write has to REACH the rows that already exist.
 //
-// `tag_tree_row` was correct and `tree::P_ROW_ID` was gated nowhere, so the
-// identifier was applied when a cell was built and a later write reached
-// nothing. The rows kept the old names until an unrelated reload happened to
-// rebuild them — and that identifier is what agent surfaces and the UI tests
-// select rows BY, so a stale one is a selector pointing at the wrong row.
+// `tag_tree_row` tags a cell when it is BUILT, and `tree::P_ROW_ID` was gated
+// nowhere — so a later `set_row_id` renamed nothing already on screen, and the
+// rows kept their old identifiers until something unrelated rebuilt them.
+//
+// Asserted as a RELOAD rather than by reading an identifier back, because
+// `recycler::tree_view_for_row` vends a cell through the imp every time it is
+// called: a test that reads through it always sees a freshly built — and
+// therefore correctly tagged — cell, and passes whether or not the bit is
+// gated. Measured: written that way first, it went green with the fix removed.
 fn ri_row_id_alt(n: *tree::TreeNode, ctx: *u8) -> text::Text {
     return text::from_str("alt:${{ (*n).id_of() }}");
 }
 
 #[test]
-fn changing_row_id_re_tags_the_rows_already_built() {
+fn changing_row_id_rebuilds_the_rows_so_they_carry_the_new_name() {
     backend::install();
     var t: core::Node = ri_tree(true);
     let tp: *core::Node = #addr_of(t);
@@ -4754,10 +4762,9 @@ fn changing_row_id_re_tags_the_rows_already_built() {
     core::set_view(tp, v, views::view_release);
     views::apply(0 as *u8, tp);
     recycler::set_column_width(v, 300.0f64);
-    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
-    assert cell.is_not_null();
-    assert cell_identifier(cell).view() == "row:src";
-    // The write, on a clean dirty word so nothing else can cause a reload.
+    assert cell_identifier(recycler::tree_view_for_row(v, 0 as i64)).view() == "row:src";
+
+    recycler::reset_tree_reloads();
     core::clear_dirty(tp);
     match tree::find("ri", within: tp) {
         option::Option[tree::Tree]::Some(h) => {
@@ -4766,9 +4773,27 @@ fn changing_row_id_re_tags_the_rows_already_built() {
         option::Option[tree::Tree]::None => { assert false; }
     }
     views::apply(0 as *u8, tp);
-    let same: *u8 = recycler::tree_view_for_row(v, 0 as i64);
-    assert same.is_not_null();
-    assert cell_identifier(same).view() == "alt:src";
+    assert recycler::tree_reloads() == (1 as i64);
+    assert cell_identifier(recycler::tree_view_for_row(v, 0 as i64)).view() == "alt:src";
+}
+
+// NEGATIVE: an unrelated write must NOT reload. The bit is the reason to
+// rebuild; a reload on every apply would take the selection with it, which is
+// the bug `expanded_by_user` exists to avoid.
+#[test]
+fn a_write_that_is_not_row_id_does_not_rebuild_the_tree() {
+    backend::install();
+    var t: core::Node = ri_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    recycler::reset_tree_reloads();
+    core::clear_dirty(tp);
+    core::set_opacity(tp, 0.5f64);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_reloads() == (0 as i64);
 }
 
 #[test]
