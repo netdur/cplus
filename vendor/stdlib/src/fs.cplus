@@ -441,6 +441,41 @@ fn create_dir_all(path: str) -> result::Result[bool, result::IoError] {
     return result::io_ok::[bool](true);
 }
 
+// Rename `from` to `to`, REPLACING `to` if it already exists.
+//
+// THE ATOMIC REPLACE, which is how a careful program updates a file: write
+// `x.new` in full, then rename it over `x`, so a concurrent reader sees either
+// the whole old file or the whole new one and never a half-written one.
+//
+// It is a verb rather than a bare `rename` extern because the two platforms do
+// not agree on the interesting half: POSIX `rename(2)` replaces, and the MSVC
+// runtime's `rename` REFUSES an existing destination with EEXIST — so the
+// idiom above, spelled with libc, silently fails on Windows every time, which
+// is to say always. `fs_sys` carries the difference (`MoveFileExW` with
+// MOVEFILE_REPLACE_EXISTING there).
+//
+// Both paths must be on the same volume; Windows refuses a cross-volume replace
+// and POSIX answers EXDEV.
+fn rename(from: str, to: str) -> result::Result[bool, result::IoError] {
+    match c_path(from) {
+        option::Option[text::CString]::Some(f) => {
+            match c_path(to) {
+                option::Option[text::CString]::Some(t) => {
+                    let r: i32 = fsys::rename_replacing(f.as_ptr(), t.as_ptr());
+                    if r == (0 as i32) { return result::io_ok::[bool](true); }
+                    return result::io_err::[bool](errno_as_ioerror());
+                }
+                option::Option[text::CString]::None => {
+                    return result::io_err::[bool](result::IoError::InvalidInput);
+                }
+            }
+        }
+        option::Option[text::CString]::None => {
+            return result::io_err::[bool](result::IoError::InvalidInput);
+        }
+    }
+}
+
 // Delete the file at `path`. `Err(NotFound)` if it does not exist.
 fn remove_file(path: str) -> result::Result[bool, result::IoError] {
     match c_path(path) {
@@ -880,4 +915,63 @@ fn read_to_string_missing_file_is_not_found() {
             match e { result::IoError::NotFound => { } _ => { assert false; } }
         }
     }
+}
+
+// ---- rename ------------------------------------------------------------------
+
+#[test]
+fn rename_replaces_an_existing_destination() {
+    // THE WHOLE POINT OF THE VERB. libc's `rename` does this on POSIX and
+    // refuses it on Windows, so a test that only renamed onto a free name would
+    // pass on both while the idiom every careful writer uses stayed broken on
+    // one of them.
+    let dst: str = "/tmp/cplus_stdlib_fs_rename_dst.txt";
+    let src: str = "/tmp/cplus_stdlib_fs_rename_src.txt";
+    let _c0 = remove_file(dst);
+    let _c1 = remove_file(src);
+    let _w0 = write_string(dst, "old");
+    let _w1 = write_string(src, "new");
+    assert exists(dst);
+    assert exists(src);
+
+    match rename(src, dst) {
+        result::Result[bool, result::IoError]::Ok(_b) => { }
+        result::Result[bool, result::IoError]::Err(_e) => { assert false; }
+    }
+    // The source is gone and the destination now holds what the source had.
+    assert exists(src) == false;
+    match read_to_string(dst) {
+        result::Result[text::Text, result::IoError]::Ok(t) => { assert t.view() == "new"; }
+        result::Result[text::Text, result::IoError]::Err(_e) => { assert false; }
+    }
+    let _rm = remove_file(dst);
+}
+
+#[test]
+fn rename_onto_a_free_name_moves_the_file() {
+    let src: str = "/tmp/cplus_stdlib_fs_rename_move_src.txt";
+    let dst: str = "/tmp/cplus_stdlib_fs_rename_move_dst.txt";
+    let _c0 = remove_file(src);
+    let _c1 = remove_file(dst);
+    let _w = write_string(src, "body");
+    match rename(src, dst) {
+        result::Result[bool, result::IoError]::Ok(_b) => { }
+        result::Result[bool, result::IoError]::Err(_e) => { assert false; }
+    }
+    assert exists(src) == false;
+    assert exists(dst);
+    let _rm = remove_file(dst);
+}
+
+#[test]
+fn renaming_something_absent_is_an_error_not_a_silent_success() {
+    let src: str = "/tmp/cplus_stdlib_fs_rename_absent_zzz.txt";
+    let dst: str = "/tmp/cplus_stdlib_fs_rename_absent_dst.txt";
+    let _c0 = remove_file(src);
+    let _c1 = remove_file(dst);
+    match rename(src, dst) {
+        result::Result[bool, result::IoError]::Ok(_b) => { assert false; }
+        result::Result[bool, result::IoError]::Err(_e) => { }
+    }
+    assert exists(dst) == false;
 }

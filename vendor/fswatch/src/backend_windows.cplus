@@ -16,6 +16,36 @@
 // on kqueue it is an `O_EVTONLY` fd, on inotify a watch descriptor, and here it
 // is an index into the table below. Nothing outside this file interprets it.
 //
+// ---- MTIME HERE IS COARSE, AND THAT BOUNDS WHAT THE ENGINE CAN SEE ----------
+//
+// The engine tells one version of a file from another by (inode, size, mtime).
+// Windows stamps `LastWriteTime` from the system clock, which advances about
+// every 13ms — the FILETIME has 100ns UNITS but nothing like 100ns RESOLUTION —
+// so two writes of the same number of bytes inside one tick produce three
+// identical fields and are indistinguishable. Measured on this host, rewriting
+// a 1-byte file with no gap:
+//
+//     before  size=1 mtime=1788879411.288213800
+//     after   size=1 mtime=1788879411.288213800   <- the same, byte for byte
+//     with a 1ms gap: .289201200 -> .302375600    <- one tick apart
+//
+// Darwin and Linux stamp from a high-resolution clock and do not collide, so
+// this is the one place the three backends genuinely differ in what they can
+// report rather than in how they report it.
+//
+// IT IS NOT WORTH PAPERING OVER, and the tempting fix is worse than the gap: a
+// backend that reported a change whenever the OS woke it, without the engine
+// finding one, would emit a Modified for every unrelated write in the same
+// directory. The road to real sub-tick fidelity is to stop discarding the notify
+// records (see below) and tell the engine WHICH path changed, or to read the
+// NTFS USN — `FSCTL_READ_FILE_USN_DATA` gives a number that moves on every
+// change — as a tie-breaker alongside mtime. Both widen the backend contract,
+// which is why neither is done here.
+//
+// In practice a caller is past the tick by construction: `Watcher::run` polls
+// every 50ms. It is a program writing twice in a row with nothing in between
+// that lands inside one.
+
 // ---- EVENTS ARE A WAKEUP, NOT A PAYLOAD -------------------------------------
 //
 // `poll_one` reports only 1/0/-1/-2, never WHAT changed, because the engine
@@ -256,6 +286,13 @@ struct WatchSlots {
     ev: [usize; 256],
     ovl: [usize; 256],
     buf: [usize; 256],
+    // WHICH DIRECTORY THIS SLOT IS ACTUALLY WATCHING, by identity rather than by
+    // path — volume serial plus file index, which is Windows' inode and is what
+    // `\tmp` and `C:\tmp\.` agree on. It exists so a second target under a
+    // directory already being watched can take a passive slot instead of opening
+    // a duplicate handle; see `watch_path`. 0/0 on a passive slot.
+    vol: [u32; 256],
+    ident: [usize; 256],
 }
 
 static SLOTS: WatchSlots = #zero::[WatchSlots]();
@@ -308,7 +345,64 @@ fn _release(idx: usize) {
     SLOTS.ev[idx] = 0 as usize;
     SLOTS.ovl[idx] = 0 as usize;
     SLOTS.buf[idx] = 0 as usize;
+    SLOTS.vol[idx] = 0 as u32;
+    SLOTS.ident[idx] = 0 as usize;
     return;
+}
+
+// ---- which directory a target needs watched ----------------------------------
+
+// The parent of `path`, or "." when it names no directory at all. Both
+// separators are honoured: Win32 accepts `/` everywhere and this package's own
+// tests use it.
+fn _parent_of(path: str) -> text::Text {
+    let n: usize = #str_len(path);
+    let b: *u8 = #str_ptr(path);
+    var cut: isize = (0 as isize) -% (1 as isize);
+    var i: usize = 0 as usize;
+    while i < n {
+        let c: u8 = { *(b + i) };
+        if c == (47 as u8) || c == (92 as u8) { cut = i as isize; }
+        i = i +% (1 as usize);
+    }
+    if cut < (0 as isize) { return text::from_str("."); }
+    // A separator at index 0 means the root itself — `/x.txt`.
+    if cut == (0 as isize) { return text::from_str("/"); }
+    return text::from_str({ #str_from_raw_parts(b, cut as usize) });
+}
+
+// A directory's identity: volume serial (offset 28) plus the 64-bit file index.
+// This is the same pair `metadata` reports as an inode, and it is what lets two
+// spellings of one directory be recognised as one watch.
+struct DirId { vol: u32, idx: usize, ok: bool }
+
+fn _dir_id(h: *u8) -> DirId {
+    let none: DirId = DirId { vol: 0 as u32, idx: 0 as usize, ok: false };
+    let info: *u8 = { malloc(_bhfi_bytes()) };
+    if info == (0 as *u8) { return none; }
+    let rc: i32 = { GetFileInformationByHandle(h, info) };
+    if rc == (0 as i32) { free(info); return none; }
+    let vol: u32 = _read_u32(info, 28 as usize);
+    let hi: u32 = _read_u32(info, _off_index_high());
+    let lo: u32 = _read_u32(info, _off_index_low());
+    free(info);
+    // 1<<32 built arithmetically: an integer literal wraps through i32 first.
+    let shift: usize = (65536 as usize) *% (65536 as usize);
+    return DirId { vol: vol, idx: ((hi as usize) *% shift) +% (lo as usize), ok: true };
+}
+
+// Is some slot in `queue` already watching this directory?
+fn _already_watched(queue: i32, id: DirId) -> bool {
+    if !id.ok { return false; }
+    var i: usize = 0 as usize;
+    while i < MAX_WATCHES {
+        if SLOTS.queue[i] == queue && SLOTS.dir[i] != (0 as usize)
+            && SLOTS.vol[i] == id.vol && SLOTS.ident[i] == id.idx {
+            return true;
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
 }
 
 // Close the QUEUE: every watch still open under it goes with it. The other
@@ -350,36 +444,55 @@ fn watch_path(queue: i32, path: str) -> i32 {
     if slot < (0 as isize) { return (0 as i32) -% (1 as i32); }
     let idx: usize = slot as usize;
 
-    // A FILE TARGET GETS A PASSIVE SLOT, and that is the one place this backend
-    // cannot mirror the others one-for-one. kqueue watches any vnode and
-    // inotify any path, so the engine registers a watch for EVERY snapshot
-    // entry — files included. `ReadDirectoryChangesW` takes only directories,
-    // and opening a file with `FILE_LIST_DIRECTORY` to hand it one fails with
-    // ACCESS_DENIED, which the engine reads as `PermissionDenied` and returns
-    // from `poll` the moment any file appears.
+    // WHICH DIRECTORY THIS TARGET NEEDS WATCHED. `ReadDirectoryChangesW` takes
+    // only directories — opening a file with `FILE_LIST_DIRECTORY` to hand it
+    // one fails with ACCESS_DENIED — while kqueue watches any vnode and inotify
+    // any path, so the engine registers a watch for EVERY snapshot entry, files
+    // included. A file target therefore resolves to its PARENT.
     //
-    // Failing is also the wrong answer, because the notification the engine
-    // wants ALREADY ARRIVES: a change to `dir/a.txt` is reported by the watch on
-    // `dir`, which the engine holds. So a file target is accepted and recorded,
-    // holds no OS resources, and never signals. The bookkeeping above stays
-    // one-handle-per-target and the wakeup comes from the parent.
-    if !_is_directory(path) {
-        SLOTS.queue[idx] = queue;
-        SLOTS.dir[idx] = 0 as usize;
-        SLOTS.ev[idx] = 0 as usize;
-        SLOTS.ovl[idx] = 0 as usize;
-        SLOTS.buf[idx] = 0 as usize;
-        return idx as i32;
-    }
+    // A FILE AS THE WATCH ROOT is why this is not simply a passive slot. That is
+    // what the file branch here used to be, on the reasoning that the wakeup
+    // "ALREADY ARRIVES" from the watch on the containing directory — true for a
+    // file the engine found while walking a directory root, and false for the
+    // one case where the file IS the root: nothing else is watched, so nothing
+    // ever signalled and `Watcher::new("a.txt")` never reported a single change.
+    // Its own test caught it and it read as a package-wide failure.
+    //
+    // The passive slot is still right whenever the parent is ALREADY being
+    // watched, and that is now decided by asking rather than by assuming — a
+    // directory root with a hundred files keeps one handle, because each of
+    // those files resolves to a parent this queue already holds. Without the
+    // check the same hundred files would open a hundred handles on one directory
+    // and exhaust MAX_WATCHES.
+    let is_dir: bool = _is_directory(path);
+    let parent: text::Text = _parent_of(path);
+    let target: str = if is_dir { path } else { parent.view() };
 
-    let wide: *u8 = _widen(path);
+    let wide: *u8 = _widen(target);
     if wide == (0 as *u8) { return (0 as i32) -% (1 as i32); }
     let dir: *u8 = { CreateFileW(wide, _file_list_directory(), _share_all(),
                                  0 as *u8, _open_existing(),
                                  _flag_backup_semantics() | _flag_overlapped(),
                                  0 as *u8) };
     free(wide);
-    if _is_bad_handle(dir) { return (0 as i32) -% (1 as i32); }
+    // A parent that cannot be opened is not fatal for a FILE target: the engine
+    // only needs a wakeup, and refusing here would fail the whole watch over a
+    // directory it never asked to watch. A directory target that cannot be
+    // opened is the caller's own path and does fail.
+    if _is_bad_handle(dir) {
+        if is_dir { return (0 as i32) -% (1 as i32); }
+        SLOTS.queue[idx] = queue;
+        return idx as i32;
+    }
+
+    // Already covered by another slot in this queue: take a passive slot and
+    // give the handle straight back.
+    let id: DirId = _dir_id(dir);
+    if _already_watched(queue, id) {
+        let _c: i32 = { CloseHandle(dir) };
+        SLOTS.queue[idx] = queue;
+        return idx as i32;
+    }
 
     // Manual reset: `poll_one` decides when the event is consumed, and an
     // auto-reset event would be cleared by the zero-timeout wait itself.
@@ -400,6 +513,8 @@ fn watch_path(queue: i32, path: str) -> i32 {
     SLOTS.ev[idx] = { #addr(ev) };
     SLOTS.ovl[idx] = { #addr(ovl) };
     SLOTS.buf[idx] = { #addr(buf) };
+    SLOTS.vol[idx] = id.vol;
+    SLOTS.ident[idx] = id.idx;
 
     if !_arm(idx) { _release(idx); return (0 as i32) -% (1 as i32); }
     return idx as i32;

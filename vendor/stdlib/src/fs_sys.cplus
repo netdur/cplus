@@ -38,6 +38,16 @@ fn make_dir(path: *u8, mode: u32) -> i32 {
     return { mkdir(path, mode as u16) };
 }
 
+// Rename, REPLACING the destination if one is there. That is plain `rename(2)`
+// here and needs no wrapper at all on this side; it exists because the MSVC
+// runtime's `rename` REFUSES an existing destination, which quietly breaks the
+// write-then-rename idiom every careful writer uses. See the Windows sibling.
+extern fn rename(from: *u8, to: *u8) -> i32;
+
+fn rename_replacing(from: *u8, to: *u8) -> i32 {
+    return { rename(from, to) };
+}
+
 // ---- struct stat -------------------------------------------------------------
 //
 // Darwin (arm64, 64-bit-inode): 144 bytes; st_mode a u16 at byte 4,

@@ -8,7 +8,9 @@ import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 
 extern fn rmdir(path: *u8) -> i32;
-extern fn rename(from: *u8, to: *u8) -> i32;
+// `rename` used to be declared here as a libc extern. It is `fs::rename` now —
+// see the atomic-replace note in the file-watch test — so nothing in this file
+// reaches libc for a path operation any more.
 // `nanosleep` is POSIX-only and the MSVC runtime has none, so the sleeps here
 // go through `stdlib/sync_sys` — which already carries this primitive behind a
 // platform split — rather than declaring the syscall directly.
@@ -174,14 +176,35 @@ fn file_watch_detects_content_write_and_atomic_replacement() {
     let _sub: events::SignalSubscription[fswatch::Change] = watcher.on_change(record);
 
     reset_events("");
+    // A TICK BEFORE THE REWRITE, and this is a real platform fact rather than
+    // flakiness insurance. The engine tells one version of a file from another
+    // by (inode, size, mtime); Windows stamps LastWriteTime from the system
+    // clock, which advances about every 13ms, so a rewrite of the same number
+    // of bytes inside one tick is BYTE-FOR-BYTE identical in all three and no
+    // amount of waiting afterwards makes it appear. Measured on this host: with
+    // no gap, before and after read `1788879411.288213800` both times; with
+    // 1ms, they differ. Darwin and Linux stamp from a high-resolution clock and
+    // never collide, which is why this was only ever a Windows failure.
+    //
+    // The watcher's own `run` polls every 50ms, so a real caller is past the
+    // tick by construction; it is a test writing twice in a row that lands
+    // inside one.
+    pause_briefly();
     make_file(root, byte: 2 as u8);
     let _write_count: usize = drain(watcher);
     assert MODIFIED == 1;
 
     reset_events("");
     make_file(temp, byte: 3 as u8);
-    let renamed: i32 = { rename(#str_ptr("/tmp/cplus_fswatch_file.new\0"), #str_ptr("/tmp/cplus_fswatch_file.txt\0")) };
-    assert renamed == 0;
+    // THROUGH `fs::rename`, not libc's. POSIX `rename(2)` replaces an existing
+    // destination and the MSVC runtime's `rename` REFUSES one with EEXIST — so
+    // the atomic-replace this test exists to cover failed on Windows before the
+    // call was even made. `fs::rename` carries that difference (`MoveFileExW`
+    // with MOVEFILE_REPLACE_EXISTING there).
+    match fs::rename(temp, root) {
+        result::Result[bool, result::IoError]::Ok(_b) => { }
+        result::Result[bool, result::IoError]::Err(_e) => { assert false; }
+    }
     let _replace_count: usize = drain(watcher);
     assert MODIFIED == 1;
 
@@ -208,8 +231,10 @@ fn directory_rename_is_paired_by_inode() {
     };
     let _sub: events::SignalSubscription[fswatch::Change] = watcher.on_change(record);
     reset_events("new.txt");
-    let moved: i32 = { rename(#str_ptr("/tmp/cplus_fswatch_rename/old.txt\0"), #str_ptr("/tmp/cplus_fswatch_rename/new.txt\0")) };
-    assert moved == 0;
+    match fs::rename(old_path, new_path) {
+        result::Result[bool, result::IoError]::Ok(_b) => { }
+        result::Result[bool, result::IoError]::Err(_e) => { assert false; }
+    }
     let _count: usize = drain(watcher);
     assert RENAMED == 1;
     assert MATCHED == 1;
