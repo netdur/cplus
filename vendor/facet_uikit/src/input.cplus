@@ -786,6 +786,22 @@ fn superview_of(v: *u8) -> *u8 {
 // asked FIRST because a menu element is never in a view chain, so there is
 // nothing to fall through to.
 fn key_of(sender: *u8) -> text::Text {
+    // A `UIKeyCommand` ANSWERS NO `identifier` — `UICommand` declares none —
+    // and its payload slot is `propertyList`, which is exactly where
+    // `menus.cplus` puts the facet key of a shortcut-bearing menu item. Read
+    // first, so a handler reads its key the same way whether the item was
+    // chosen from the open menu or by pressing the shortcut. Nothing that
+    // reaches here as a view answers this selector.
+    if sender != (0 as *u8) {
+        if synth::class_responds(synth::object_class(sender),
+                                 rt::sel(#str_ptr("propertyList\0"))) != (0 as i8) {
+            let pl: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("propertyList\0"))) };
+            if pl != (0 as *u8) {
+                var t: text::Text = bridge::to_text(pl);
+                if t.view() != "" { return t; }
+            }
+        }
+    }
     if sender != (0 as *u8) {
         if synth::class_responds(synth::object_class(sender),
                                  rt::sel(#str_ptr("identifier\0"))) != (0 as i8) {

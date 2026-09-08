@@ -50,6 +50,7 @@ import "./scheduler" as scheduler;
 import "./device" as device;
 import "./keyboard" as keyboard;
 import "./zoom" as zoom;
+import "./menus" as menus;
 import "facet/theme" as theme;
 
 type Chrome = screen::Chrome;
@@ -2015,6 +2016,12 @@ fn delegate_class() -> *u8 {
     let _b: i8 = synth::add_method_v_1id(cls,
         rt::sel(#str_ptr("applicationSignificantTimeChange:\0")),
         imp_significant_time_change, #str_ptr("v@:@\0"));
+    // THE CONTEXT-MENU SHORTCUT SEAM. `keyCommands` and `facetMenuCommand:`,
+    // and they are here rather than on a view controller because this class is
+    // a `UIResponder` and the LAST link of every responder chain in the
+    // process — one place, covering the primary screen, a pushed screen, a
+    // presented sheet and a second iPad window. menus.cplus has the reasoning.
+    menus::arm_commands(cls);
     { synth::register_class_pair(cls) };
     DELEGATE_CLASS = cls;
     return DELEGATE_CLASS;

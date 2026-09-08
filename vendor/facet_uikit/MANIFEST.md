@@ -8,9 +8,11 @@ an abandoned one.
 Everything in the first list is done. Everything in the second is a debt, and
 each one **warns once on stderr** when it is mounted.
 
-**The second list is empty.** Every kind facet describes has a UIKit body. What
-remains is section 1 — fourteen props across three kinds that UIKit has no
-answer for — and section 3, controls that work but do not look like their name.
+**The second list is empty.** Every kind facet describes has a UIKit body.
+**Prop debt is zero as well, since 2026-09-08** — `context_menu_item.shortcut`
+was the last one and §1 has how it was closed. What remains is section 1 —
+sixteen props across four kinds that UIKit has no answer for, plus one handler —
+and section 3, controls that work but do not look like their name.
 
 **TWO NUMBERS, because a backend has two surfaces.** A prop is a WRITE — the
 application saying something to a control — and a handler is a READ, the
@@ -18,8 +20,8 @@ control saying something back. Both are measured by `tools/parity.py`:
 
 | | appkit | uikit | |
 |---|---|---|---|
-| props | 318 | 305 | 95% |
-| handlers | 66 | 64 | 96% |
+| props | 326 | 311 | 95% |
+| handlers | 66 | 65 | 98% |
 
 The prop number was the only one for a while, and it was misleading in a
 specific way: a `text_button` whose every prop bit was honoured was armed,
@@ -90,6 +92,7 @@ menu_item.icon                  an element of the UIMenu built when the menu ope
 menu_item.is_destructive        an element of the UIMenu built when the menu opens
 context_menu_item.text          an element of the UIMenu built when the menu opens
 context_menu_item.is_destructive  an attribute on the UIAction, set as it is built
+context_menu_item.shortcut      the key equivalent on the UIKeyCommand the menu builds, and a command the app delegate publishes
 context_menu_item.icon          an element of the UIMenu built when the menu opens
 swipe_item.text                 an action on the row, rebuilt with it
 swipe_item.icon                 an action on the row, rebuilt with it
@@ -142,7 +145,7 @@ reads the field, and in this package nothing does. The disposition was true of
 AppKit and not of here, and copying it would have excused nine real gaps with a
 reason belonging to another backend.
 
-So they are debt, listed by name:
+So they were debt, listed by name as they stood:
 
     carousel.animates_scroll        carousel.is_scrolling
     carousel.scroll_anchor          carousel.remaining_threshold
@@ -150,11 +153,18 @@ So they are debt, listed by name:
     context_menu_item.shortcut      context_menu_item.is_destructive
     label.selectable
 
+**All nine are closed.** Each one is now credited by a ledger above, and it is
+credited because a body reads the field — which is the only way that tool hands
+a disposition out. `context_menu_item.shortcut` was the last of them and has its
+own section below. The list stays because the shape it records is the durable
+part: a disposition that is true of AppKit is not evidence about here.
+
 `label.selectable` has a full argument in this file already — a create-time
 class choice a recycling row pool cannot cheaply flip. That argument is sound
-and the row still does not qualify: nothing reads the field even once, so it is
-not create-only, it is unimplemented. The prose and the code have to agree
-before the ledger will.
+and the row did not yet qualify: nothing read the field even once, so it was
+not create-only, it was unimplemented. The prose and the code have to agree
+before the ledger will — and they do now; the class choice is made at create
+and three checks hold it.
 
 `toolbar_item` — **BUILT 2026-09-08**, which is the port this section asked for
 ("facet's `toolbar_item` is the vocabulary that should reach it once the chrome
@@ -203,28 +213,64 @@ the table does.
 
 **Handler debt is now zero.** 88 of 89 wired, one decided.
 
-### The one prop still absent: `context_menu_item.shortcut`
+### The last absent prop: `context_menu_item.shortcut` — BUILT 2026-09-08
 
-Not a cannot, and worth the detail because the reason is a SEAM rather than a
-limit.
+Not a cannot, and worth the detail because the reason it stayed open was a SEAM
+rather than a limit.
 
 A `UIMenuElement` carries no key equivalent. The class that does is
 `UIKeyCommand` — a real `UIMenuElement` subclass, so a menu CAN show and honour
-a shortcut — but its action dispatches through the RESPONDER CHAIN, where this
-package's menu items are built from a block (`_action_invoke`). Displaying the
-shortcut without wiring the chain would put a `⌘R` in a menu that does nothing,
-which is worse than not showing it.
+a shortcut — but it carries no handler block: its action dispatches through the
+RESPONDER CHAIN, where this package's menu items are built from a block
+(`_action_invoke`). Two dispatch models, no element that carries both, and
+displaying the shortcut without wiring the chain would put a `⌘R` in a menu
+that does nothing — worse than not showing it.
 
-The route is known: a synthesized `UIViewController` subclass for the root
-(today it is a stock `UIViewController`), a `facetKeyCommand:` on it, and the
-item's key carried in the command's `propertyList`. That is a new architectural
-seam for one verb, so it is written down here rather than half-built.
+**The chain is answered by `FacetUIKitAppDelegate`, not by a root view
+controller.** The report proposed the controller and it was the wrong end of the
+problem: `window.cplus` makes four stock `UIViewController`s (primary, pushed,
+presented, per-scene base) and each would have to be swapped in step, and a
+pushed screen would still fall outside the one that was. The delegate is already
+synthesized here and is already a `UIResponder`, which makes it the LAST link of
+every chain in the process — one class, no new creation site, and it covers a
+pushed screen, a presented sheet and a second iPad window for free.
 
-Filed in full as
-`bugs/facet_uikit-context_menu_item-shortcut-is-never-applied.md` — the
-symptom, the two dispatch models that do not meet, and why the half-build (a
-menu that advertises ⌘R and ignores it) is the worse answer. That directory is
-gitignored, so this line is how the report is found.
+Two halves, because a shortcut has two lives:
+
+* **In the menu.** `make_action` builds a `UIKeyCommand` for an item that names
+  a shortcut and keeps the block for one that does not — the shortcut is the
+  only thing that decides the class, so an ordinary menu choice still costs no
+  responder.
+* **Out of it.** `keyCommands` on the delegate publishes one command per
+  shortcut in the mounted tree, so ⌘R fires with no menu open. That is the
+  configuration the prop exists for: an iPad with a hardware keyboard.
+
+Both arrive at `facetMenuCommand:`, so there is one path from a key to a
+handler. **Resolution is by KEY, never by a captured pointer** — the item's
+facet key rides in the command's `propertyList` (the slot `UICommand` provides
+for exactly this) and `mount::node` answers it against the LIVE tree, so a
+command UIKit harvested before a rebuild is a no-op rather than a
+use-after-free. An item the application gave no key is matched on the shortcut
+itself, first in document order, so `shortcut:` never becomes a hidden
+requirement for `key:`. `enabled` is read when the key is PRESSED, not when the
+list was built, because UIKit harvests when it pleases.
+
+`input::key_of` gained the other half of that: `UICommand` declares no
+`identifier`, so a handler reading its key off a shortcut item would have got
+nothing. It reads `propertyList` first now, and a handler cannot tell which
+element class it was called from.
+
+**Sixteen checks**, and the ablation is in the commit: every one of them fails
+with its piece of the change removed, and the guard that the sender really is a
+`UIKeyCommand` fails by crashing the runner with
+`-[UIAction propertyList]: unrecognized selector`, which is the bug it prevents.
+
+**WHAT THE CHECKS CANNOT REACH, stated because it is the whole risk.** The test
+runner has no `UIApplicationMain` and therefore no responder chain, so the last
+hop — UIKit asking the chain for `keyCommands` and sending `facetMenuCommand:`
+back down it — is asserted only by its precondition (the delegate is a
+`UIResponder`, which is why it is in the chain at all). Pressing ⌘R on an iPad
+with a keyboard needs hands. `bugs/closed/` has the report.
 
 
 ### Window buttons
