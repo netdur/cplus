@@ -52,6 +52,7 @@ window_chrome.style             UIKit draws the control pill itself, over the ap
 window_chrome.spacing           as window_chrome.style — the pill is the system's, not the app's to space
 menu.text                       there is no menu bar on iOS
 menu.priority                   there is no menu bar on iOS
+split.on_move                   nothing moves the divider, so nothing can report that it moved — see "Dragging a split divider"
 date_picker.character_spacing   UIDatePicker exposes no font surface; it is a system control
 date_picker.font_weight         UIDatePicker exposes no font surface; it is a system control
 date_picker.is_italic           UIDatePicker exposes no font surface; it is a system control
@@ -88,8 +89,8 @@ menu_item.text                  an element of the UIMenu built when the menu ope
 menu_item.icon                  an element of the UIMenu built when the menu opens
 menu_item.is_destructive        an element of the UIMenu built when the menu opens
 context_menu_item.text          an element of the UIMenu built when the menu opens
+context_menu_item.is_destructive  an attribute on the UIAction, set as it is built
 context_menu_item.icon          an element of the UIMenu built when the menu opens
-context_menu_item.is_destructivean element of the UIMenu built when the menu opens
 swipe_item.text                 an action on the row, rebuilt with it
 swipe_item.icon                 an action on the row, rebuilt with it
 swipe_item.is_destructive       an action on the row, rebuilt with it
@@ -105,11 +106,15 @@ those two blocks was refused by the tool (see below), which is the difference
 between a bucket that is empty and a bucket nobody filled in.
 
 ```derived
+carousel.is_scrolling           written BACK by the scroll delegate — willBeginDragging starts it, didEndDecelerating and didEndDragging(false) end it
+carousel.remaining_threshold    read by the willDisplay observer as rows appear, not applied on a write
+collection.remaining_threshold  as carousel.remaining_threshold
 collection.reorder              written back by the drag
 list.reorder                    written back by the drag
 ```
 
 ```modifier
+carousel.animates_scroll        no write of its own; it decides whether a `position` write JUMPS or SLIDES
 ```
 
 ```create-only

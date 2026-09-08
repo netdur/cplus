@@ -171,6 +171,20 @@ def backend_functions(backend_dir):
             bits = {(alias.get(a, a), b) for a, b in BIT_USE.findall(body)}
             structs = {s for _, s in STRUCT_USE.findall(body)}
             kinds = set(re.findall(r"\bK_[A-Z0-9_]+\b", body))
+            # HANDING AN EMBEDDED BLOCK ON. `#addr_of((*p).items_view)` passes
+            # a base block to a helper that does the reading, and the helper
+            # names no kind — so without this the bridge breaks exactly where
+            # the shared bands live.
+            #
+            # Measured: facet_uikit fires `on_remaining_items_threshold_reached`
+            # for BOTH collection and carousel (`imp_cv_will_display` ->
+            # `note_row_shown`), and this tool called both dead, because the
+            # function that names the kind casts to CollectionProps while the
+            # function that reads the handler takes `*ItemsViewProps`. Counting
+            # the block a kind-naming body hands on as bridged by that kind is
+            # the missing half.
+            for blk in re.findall(r"#addr_of\(\(\*\w+\)\.(\w+)\)", body):
+                structs.add("".join(x.title() for x in blk.split("_")) + "Props")
             fields = set()
             for path in FIELD_READ.findall(body):
                 fields.update(path.lstrip(".").split("."))

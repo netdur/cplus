@@ -482,10 +482,66 @@ fn note_row_shown(v: *u8, iv: *props::ItemsViewProps, row: i64, count: i64) {
 // A paging collection view has no "current page" of its own — UIPageControl
 // has one and a UICollectionView does not — so the page IS the offset divided
 // by the width, which is what paging makes true.
+// `is_scrolling` — DERIVED: the backend writes it BACK, the application reads
+// it. UIKit has the two moments AppKit lacks (its comment says a scroll there
+// "simply stops"), so this is the one place the iOS answer is the cleaner one:
+// `willBeginDragging` starts it and `didEndDecelerating` ends it.
+//
+// Written straight into the props, never through the verb — the verb would
+// raise the dirty bit and the next sync would apply a scroll position the user
+// is in the middle of producing. The same rule `carousel_scrolled` follows.
+fn set_scrolling(sv: *u8, on: bool) {
+    let n: *core::Node = input::node_of(sv);
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) != props::K_CAROUSEL { return; }
+    let p: *props::CarouselProps =
+        props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
+    if p == (0 as *props::CarouselProps) { return; }
+    { (*p).is_scrolling = on };
+    return;
+}
+
+fn imp_will_drag(self_obj: *u8, cmd: *u8, sv: *u8) {
+    set_scrolling(sv, true);
+    return;
+}
+
+// BOTH endings, because a scroll has two. A flick decelerates and ends at
+// `didEndDecelerating`; a drag released without velocity never decelerates at
+// all and ends at `didEndDragging:willDecelerate:` with the flag false.
+// Answering only the first leaves `is_scrolling` stuck true for exactly the
+// gesture a person makes when placing a carousel carefully.
+fn imp_end_decel(self_obj: *u8, cmd: *u8, sv: *u8) {
+    set_scrolling(sv, false);
+    return;
+}
+
+// `void (id, SEL, id, BOOL)` — the willDecelerate shape, which synthesis has no
+// helper for. Same local-extern pattern the rest of this file uses.
+#[link_name = "class_addMethod"]
+extern fn add_method_v_id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i8),
+                             types: *u8) -> i8;
+
+fn imp_end_drag(self_obj: *u8, cmd: *u8, sv: *u8, will_decelerate: i8) {
+    if will_decelerate == (0 as i8) { set_scrolling(sv, false); }
+    return;
+}
+
 fn carousel_scrolled(cv: *u8, n: *core::Node) {
     let p: *props::CarouselProps =
         props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
     if p == (0 as *props::CarouselProps) { return; }
+    // THE CONTINUOUS OBSERVER FIRST, and before any early return.
+    //
+    // `observe_scrolled` is `ItemsView.Scrolled` on the embedded block — the
+    // same field a collection carries — and it means "the content moved", not
+    // "the page changed". It was never read here at all: this body reports the
+    // PAGE, and every path out of it below is guarded on the page having
+    // changed, so a carousel that scrolled half a page told the application
+    // nothing. A collection got its observer fixed for the same reason (see
+    // `imp_scrolled` above); the carousel returns before reaching that branch.
+    let sh: fn(*u8, *u8) = { (*p).items_view.observe_scrolled };
+    if sh != props::no_handler { sh(cv, { (*p).items_view.observe_scrolled_ctx }); }
     let b: rt::Rect = { rt::msg_rect(cv, rt::sel(#str_ptr("bounds\0"))) };
     if b.w <= 0.0f64 { return; }
     let off: rt::Point = { rt::msg_point(cv, rt::sel(#str_ptr("contentOffset\0"))) };
@@ -1390,9 +1446,22 @@ fn fill_item_cell(cell: *u8, n: *core::Node, i: usize) {
         return;
     }
     if build == (0 as fn(usize, *u8) -> flex::Node) { return; }
+    // `bind` is the collection's second half of the same callback pair the list
+    // already honours: `row` BUILDS, `bind` fills a recycled one. It was read on
+    // the table path and not here, so an application that split its work the way
+    // facet declares got the build and never the bind — on the kind whose whole
+    // point is recycling.
+    var bind: fn(usize, *flex::Node, *u8) = 0 as fn(usize, *flex::Node, *u8);
+    if k == props::K_COLLECTION {
+        let bp: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+        if bp != (0 as *props::CollectionProps) { bind = { (*bp).bind }; }
+    }
     match box::new::[core::Node](build(i, ctx)) {
         option::Option[box::Box[core::Node]]::Some(b) => {
             let root: *core::Node = b.into_raw() as *core::Node;
+            // `bind` shares `row`'s context — facet gives the pair one, because
+            // they are two halves of one callback.
+            if bind != (0 as fn(usize, *flex::Node, *u8)) { bind(i, root, ctx); }
             // `realise` ANSWERS THE ROOT'S VIEW, AND 0 IS NOT FAILURE.
             //
             // A row built as `ui::row(...)` is an unkeyed pure-layout node and
@@ -1593,6 +1662,15 @@ fn collection_source() -> *u8 {
             let _h: i8 = synth::add_method_v_1id(cls,
                 rt::sel(#str_ptr("scrollViewDidScroll:\0")),
                 imp_scrolled, #str_ptr("v@:@\0"));
+            let _h1: i8 = synth::add_method_v_1id(cls,
+                rt::sel(#str_ptr("scrollViewWillBeginDragging:\0")),
+                imp_will_drag, #str_ptr("v@:@\0"));
+            let _h2: i8 = synth::add_method_v_1id(cls,
+                rt::sel(#str_ptr("scrollViewDidEndDecelerating:\0")),
+                imp_end_decel, #str_ptr("v@:@\0"));
+            let _h3: i8 = add_method_v_id_i8(cls,
+                rt::sel(#str_ptr("scrollViewDidEndDragging:willDecelerate:\0")),
+                imp_end_drag, #str_ptr("v@:@c\0"));
             let _i: i8 = synth::add_method_v_3id(cls,
                 rt::sel(#str_ptr("collectionView:willDisplayCell:forItemAtIndexPath:\0")),
                 imp_cv_will_display, #str_ptr("v@:@@@\0"));
@@ -1654,18 +1732,72 @@ fn create_carousel(n: *core::Node) -> *u8 {
 
 // The item size a flow layout uses. `columns` divides the width; `item_sizing`
 // says whether every item is that size or measures itself.
-fn apply_item_size(v: *u8, columns: i64, horizontal: bool) {
+// The item-sizing band: `columns`, `item_sizing` and `peek_insets` together.
+//
+// IT USED TO TAKE ONLY `columns` while the two apply bodies gated on all three
+// — the mask promised `P_ITEM_SIZING` and `P_PEEK_INSETS` and nothing here read
+// either field. So a carousel's peek did nothing and `MeasureAllItems` was
+// indistinguishable from `MeasureFirstItem`, on code that looked finished.
+// `verb_coverage.py` calls that GATED BUT UNREAD, and it is the same shape as
+// `symbol.icon`, which scored live for the life of its module while
+// `symbol(icons::home)` drew nothing.
+//
+// PEEK is an inset on the CONTENT, not a margin on the item: the page is
+// narrower than the viewport by the peek, so its neighbours show at the edges.
+// That is the same reading facet_appkit gives it (`set_content_insets` there);
+// here the section inset carries it, so the first and last page still come to
+// rest in the middle.
+fn apply_item_size(v: *u8, columns: i64, horizontal: bool,
+                   sizing: vocab::ItemSizing, peek: vocab::Insets) {
     let layout: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("collectionViewLayout\0"))) };
     if layout == (0 as *u8) { return; }
     let b: rt::Rect = ui::View::from_raw(v).bounds();
     if b.w <= 0.0f64 || b.h <= 0.0f64 { return; }
     var cols: f64 = columns as f64;
     if cols < 1.0f64 { cols = 1.0f64; }
-    var w: f64 = b.w / cols;
-    var h: f64 = b.h;
+    // The peek comes off the viewport before the columns divide it, or two
+    // columns with a peek would each lose the whole inset rather than share it.
+    var avail_w: f64 = b.w - { peek.leading } - { peek.trailing };
+    if avail_w < 1.0f64 { avail_w = b.w; }
+    var avail_h: f64 = b.h - { peek.top } - { peek.bottom };
+    if avail_h < 1.0f64 { avail_h = b.h; }
+    var w: f64 = avail_w / cols;
+    var h: f64 = avail_h;
     if !horizontal { h = w; }
-    { msg_void_size(layout, rt::sel(#str_ptr("setItemSize:\0")), rt::Size { w: w, h: h }) };
+    let fl: ui::CollectionViewFlowLayout = ui::CollectionViewFlowLayout::from_raw(layout);
+    // SELF-SIZING is UIKit's answer to "measure every item". A flow layout with
+    // a fixed `itemSize` is uniform by construction, which is exactly
+    // `MeasureFirstItem`; `estimatedItemSize` turns the cells' own constraints
+    // on instead. Setting it back to zero is what turns it off again, so the
+    // two modes are a real switch rather than a one-way door.
+    match sizing {
+        vocab::ItemSizing::MeasureAllItems => {
+            fl.set_estimated_item_size(rt::Size { w: w, h: h });
+        }
+        vocab::ItemSizing::MeasureFirstItem => {
+            fl.set_estimated_item_size(rt::Size { w: 0.0f64, h: 0.0f64 });
+            fl.set_item_size(rt::Size { w: w, h: h });
+        }
+    }
+    fl.set_section_inset(ui::EdgeInsets { top: { peek.top }, left: { peek.leading },
+                                          bottom: { peek.bottom }, right: { peek.trailing } });
     return;
+}
+
+// An index into a carousel that LOOPS. Without `wraps` an out-of-range index is
+// out of range; with it, the sequence has no ends. Ported from facet_appkit's
+// `wrapped` so the two backends agree on what a looping index means.
+//
+// `P_WRAPS` used to gate a bare `reloadData` that never read the flag — the
+// reload did nothing a reload was needed for, and the looping the prop names
+// was not implemented at all.
+fn wrapped(v: *u8, at: i64, wraps: bool) -> i64 {
+    if !wraps { return at; }
+    let count: i64 = cv_item_count(v);
+    if count <= (0 as i64) { return at; }
+    var i: i64 = at % count;
+    if i < (0 as i64) { i = i +% count; }
+    return i;
 }
 
 fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
@@ -1673,7 +1805,9 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
         props_of(n, props::K_COLLECTION) as *props::CollectionProps;
     if p == (0 as *props::CollectionProps) { return; }
     if (dirty & (collection::P_COLUMNS | collection::P_ITEM_SIZING)) != (0 as u64) {
-        apply_item_size(v, { (*p).structured_items_view.columns } as i64, false);
+        apply_item_size(v, { (*p).structured_items_view.columns } as i64, false,
+                        { (*p).structured_items_view.item_sizing },
+                        vocab::Insets::zero());
     }
     if (dirty & collection::P_SELECTION_MODE) != (0 as u64) {
         let sel: *props::SelectableItemsViewProps = { #addr_of((*p).selectable_items_view) };
@@ -1735,7 +1869,9 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::CarouselProps) { return; }
     if (dirty & (carousel::P_COLUMNS | carousel::P_ITEM_SIZING
                  | carousel::P_PEEK_INSETS)) != (0 as u64) {
-        apply_item_size(v, { (*p).structured_items_view.columns } as i64, true);
+        apply_item_size(v, { (*p).structured_items_view.columns } as i64, true,
+                        { (*p).structured_items_view.item_sizing },
+                        { (*p).peek_insets });
     }
     if (dirty & carousel::P_BOUNCES) != (0 as u64) {
         ui::ScrollView::from_raw(v).set_bounces({ (*p).bounces });
@@ -1755,11 +1891,13 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     // of its own — so a change to the page it shows is what this kind reloads
     // for, and the item list is reloaded through the same `scroll_anchor` and
     // `columns` writes above.
-    if (dirty & carousel::P_WRAPS) != (0 as u64) {
-        { rt::msg_void(v, rt::sel(#str_ptr("reloadData\0"))) };
-    }
-    if (dirty & (carousel::P_SCROLL_TO | carousel::P_POSITION)) != (0 as u64) {
-        cv_scroll_to(v, { (*p).position });
+    // `wraps` changes what an INDEX means, so it is applied where an index is
+    // used rather than on its own. The reload that used to sit here read the
+    // flag never and reloaded for nothing.
+    if (dirty & (carousel::P_SCROLL_TO | carousel::P_POSITION
+                 | carousel::P_WRAPS)) != (0 as u64) {
+        cv_scroll_to(v, wrapped(v, { (*p).position }, { (*p).wraps }),
+                     { (*p).animates_scroll });
     }
     return;
 }
@@ -1778,14 +1916,23 @@ fn cv_item_count(v: *u8) -> i64 {
                              0 as i64) };
 }
 
-fn cv_scroll_to(v: *u8, index: i64) {
+// `animated` is `carousel.animates_scroll`, and it used to be a hard-coded 1.
+//
+// The prop is a MODIFIER — it has no write of its own, it decides whether a
+// `position` write JUMPS or SLIDES — so nothing gated it and nothing read it,
+// and a carousel told to move without animating slid anyway. Defaulted true
+// because that is what every caller got before, and it is what a collection
+// (which has no such prop) still wants.
+fn cv_scroll_to(v: *u8, index: i64, animated: bool = true) {
     if index < (0 as i64) { return; }
     if index >= cv_item_count(v) { return; }
     let ip: *u8 = index_path(index, 0 as i64);
     if ip == (0 as *u8) { return; }
+    var flag: i8 = 0 as i8;
+    if animated { flag = 1 as i8; }
     { msg_void_id_i64_i8(v,
         rt::sel(#str_ptr("scrollToItemAtIndexPath:atScrollPosition:animated:\0")),
-        ip, 0 as i64, 1 as i8) };
+        ip, 0 as i64, flag) };
     return;
 }
 

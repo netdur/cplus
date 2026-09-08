@@ -2296,6 +2296,24 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
                 { rt::msg_void(v, sel) };
             }
         }
+        // OPENED / CLOSED, on the change this backend just made and only on
+        // that — the same reading `date_picker` above already uses, and for the
+        // same reason: UIKit presents the menu through the button's own
+        // gesture and reports nothing back, so the moment facet can name is the
+        // moment it asked for.
+        //
+        // THESE FIRED FOR THE PICKERS AND NOT FOR THE POPUP, which is the exact
+        // defect `verb_coverage.py`'s per-struct attribution exists to catch:
+        // a global search for `.on_opened` finds the picker's read and credits
+        // the popup with it, and the report says 89/89 while a popup an
+        // application opens tells it nothing.
+        if { (*p).is_open } {
+            let h: fn(*u8, *u8) = { (*p).on_opened };
+            if h != props::no_handler { h(v, { (*p).on_opened_ctx }); }
+        } else {
+            let h: fn(*u8, *u8) = { (*p).on_closed };
+            if h != props::no_handler { h(v, { (*p).on_closed_ctx }); }
+        }
     }
     // Kerning on the button's own title. Attributed, because UIKit has no
     // plain property for it — the same split every text-bearing control makes.
