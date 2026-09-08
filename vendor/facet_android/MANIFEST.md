@@ -58,6 +58,10 @@ span.text_transform             applied to the STRING before it is appended; And
 span.font_scales                decides the UNIT the size resolves in — `env::font_scale()` (scaledDensity) or `env::density()`
 ```
 
+```by-architecture
+list.has_uneven_rows            a ListView asks its adapter for EVERY row's view and never assumes a height, so the hint is already true of it — there is nothing to switch on
+```
+
 ```create-only
 scroll.axis                     a create-time CLASS choice — HorizontalScrollView or ScrollView; `create_scroll` reads it and there is no reclass
 ```

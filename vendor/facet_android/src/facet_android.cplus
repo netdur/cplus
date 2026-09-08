@@ -481,6 +481,18 @@ export extern fn facet_android_row_count(envp: *jni::JNIEnv, cls: jni::jobject, 
     return recycler::row_count(token);
 }
 
+export extern fn facet_android_view_type_count(envp: *jni::JNIEnv, cls: jni::jobject,
+                                              token: i64) -> i32 {
+    e::set_env(rt::from_native(envp));
+    return recycler::view_type_count(token);
+}
+
+export extern fn facet_android_item_view_type(envp: *jni::JNIEnv, cls: jni::jobject,
+                                              token: i64, position: i32) -> i32 {
+    e::set_env(rt::from_native(envp));
+    return recycler::item_view_type(token, position);
+}
+
 export extern fn facet_android_row_view(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                         position: i32, convert: jni::jobject,
                                         parent: jni::jobject) -> jni::jobject {

@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 42196;
+const DEX_LEN: usize = 42524;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -118,6 +118,13 @@ struct NativeL_I {
     opaque name: *u8,
     opaque signature: *u8,
     fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64) -> i32,
+}
+
+// `int (long, int)` — the view-type question, which takes a position.
+struct NativeLI_I {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32) -> i32,
 }
 
 #[repr(C)]
@@ -226,6 +233,9 @@ extern fn facet_android_raw_message(envp: *jni::JNIEnv, cls: jni::jobject, token
 extern fn facet_android_resource(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                  url: jni::jobject);
 extern fn facet_android_row_count(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) -> i32;
+extern fn facet_android_view_type_count(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) -> i32;
+extern fn facet_android_item_view_type(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                       position: i32) -> i32;
 extern fn facet_android_row_view(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32,
                                  convert: jni::jobject, parent: jni::jobject) -> jni::jobject;
 extern fn facet_android_row_tapped(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32);
@@ -301,7 +311,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 42196] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 42524] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -637,6 +647,22 @@ fn bind_natives(env: rt::Env) {
     }];
     let _r9: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWS as *u8 },
                                                      #addr_of(rows_recs[0]) as *u8, 1) };
+    // The two the recycler needs BEFORE it builds anything: how many pools there
+    // are, and which pool a position belongs to.
+    var vtc_rec: NativeL_I = NativeL_I {
+        name: #str_ptr("nativeViewTypeCount\0"),
+        signature: #str_ptr("(J)I\0"),
+        fn_ptr: facet_android_view_type_count,
+    };
+    let _r9a: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWS as *u8 },
+                                                      #addr_of(vtc_rec) as *u8, 1) };
+    var ivt_rec: NativeLI_I = NativeLI_I {
+        name: #str_ptr("nativeItemViewType\0"),
+        signature: #str_ptr("(JI)I\0"),
+        fn_ptr: facet_android_item_view_type,
+    };
+    let _r9b: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWS as *u8 },
+                                                      #addr_of(ivt_rec) as *u8, 1) };
     var rowview_rec: NativeLIOO_O = NativeLIOO_O {
         name: #str_ptr("nativeRowView\0"),
         signature: #str_ptr("(JILandroid/view/View;Landroid/view/ViewGroup;)Landroid/view/View;\0"),

@@ -28,11 +28,31 @@ public final class FacetRows extends android.widget.BaseAdapter {
         return nativeRowView(token, position, convertView, parent);
     }
 
+    // A ListView recycles by VIEW TYPE — `convertView` is only ever handed back
+    // for a position of the same type — so without these every row went into
+    // one pool and a section header could be handed to a body. `getViewTypeCount`
+    // must be answered BEFORE any row is built and must not change, which is why
+    // the native side caps the application's kinds rather than counting them.
+    @Override public int getViewTypeCount() { return nativeViewTypeCount(token); }
+    @Override public int getItemViewType(int position) {
+        return nativeItemViewType(token, position);
+    }
+
+    // A HEADER IS NOT SELECTABLE. `areAllItemsEnabled` false plus this is what
+    // stops a section title highlighting under a finger and reporting a tap as
+    // a row — type 0 is the header pool.
+    @Override public boolean areAllItemsEnabled() { return false; }
+    @Override public boolean isEnabled(int position) {
+        return nativeItemViewType(token, position) != 0;
+    }
+
     // Called from native when the model changed. ListView re-asks for its count
     // and re-binds what is on screen.
     public void changed() { notifyDataSetChanged(); }
 
     private static native int nativeRowCount(long token);
+    private static native int nativeViewTypeCount(long token);
+    private static native int nativeItemViewType(long token, int position);
     private static native android.view.View nativeRowView(long token, int position,
                                                           android.view.View convertView,
                                                           android.view.ViewGroup parent);
