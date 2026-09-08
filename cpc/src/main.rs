@@ -4129,20 +4129,17 @@ fn run_test(
             // target only). Splice in the package's own [link]
             // contributions so tests resolve against the same symbols
             // a real consumer would.
-            if let Some(ls) = m.link.as_ref() {
-                for fw in &ls.frameworks {
-                    la.push("-framework".to_string());
-                    la.push(fw.clone());
-                }
-                for lib in &ls.libs {
-                    la.push(format!("-l{lib}"));
-                }
-                for obj in &ls.extra_objects {
-                    if !obj.is_file() {
-                        return emit_extra_object_missing(diag_mode, obj, &manifest_path);
-                    }
-                    la.push(obj.to_string_lossy().to_string());
-                }
+            //
+            // THROUGH THE SHARED SPLICE, not a second copy of it. This block
+            // was hand-rolled and had drifted: it pushed `frameworks`, `libs`
+            // and `extra-objects` and silently dropped `search-paths`, so a
+            // package whose own libraries need a `-L` could not run its own
+            // tests while a CONSUMER of it linked fine — `splice_plain_link_args`
+            // has emitted the `-L` and the matching `-rpath` for a DEPENDENCY
+            // all along. `vendor/{cuda,cblas,llama_cpp}` are the packages that
+            // declare one.
+            if let Err(code) = splice_plain_link_args(&mut la, &m, diag_mode, &manifest_path) {
+                return code;
             }
             let entry_src = fs::read_to_string(&entry_path).unwrap_or_default();
             (program, entry_src, mono, la)
