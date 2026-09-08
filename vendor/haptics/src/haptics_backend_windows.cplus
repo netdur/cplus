@@ -1,5 +1,4 @@
-// haptics_backend_windows — the honest Windows answer: a desktop PC has no tap
-// to give.
+// haptics_backend_windows — a game pad's rumble motors, through XInput.
 //
 // THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `haptics.cplus` declares three
 // stable symbols — `_c_available`, `_c_play`, `_c_prepare` — and something must
@@ -7,72 +6,378 @@
 // sibling the build falls back to `haptics_backend.cplus`, the AppKit half, and
 // stops at `import "objc/runtime"`, which is not available here.
 //
-// A TYPICAL WINDOWS PC HAS NO VIBRATION MOTOR. Phones and Force Touch trackpads
-// have an actuator to buzz; a desktop or a laptop has nowhere for a tap to come
-// out of. So `available` answers false — which the facade documents as common
-// and not an error — and every verb is a no-op rather than a failure, exactly
-// the contract `play` already promises when unavailable.
+// A DESKTOP PC HAS NO ACTUATOR. That is why this used to be a flat no-op, and
+// it is still the answer whenever nothing is plugged in — the facade documents
+// `available() == false` as the common case rather than an error. What changed
+// is that a Windows machine very often DOES have one attached: an Xbox pad has
+// two rumble motors, XInput reaches them, and a UI that wants to be felt has
+// somewhere to put a tap.
 //
-// GAME CONTROLLERS ARE THE FUTURE PATH. An Xbox pad has rumble motors reachable
-// through XInput (`XInputSetState`'s `XINPUT_VIBRATION`), but that is a separate
-// DEVICE a person may or may not have plugged in, with its own connected-state
-// and slot enumeration — a heavier, coarser rumble than the `Feel` vocabulary
-// means, and a pass of its own. This backend stays honest about the PC itself
-// and pulls in no Win32.
+// LOADED AT RUNTIME, not linked. `XInput1_4.dll` ships with Windows 8 and
+// later, and older machines have `XInput1_3.dll` or `XInput9_1_0.dll` from the
+// DirectX redistributable, so the name is not one thing. Binding it with
+// `LoadLibrary` rather than an import library means a machine with none of them
+// answers `available() == false` and keeps working, where a link-time
+// dependency would refuse to START the program — the worst possible failure for
+// a package whose whole contract is "safe to call when unavailable". It also
+// keeps every other C+ program off the hook: nothing is added to `cpc`'s
+// Windows link line for a package most programs never touch.
+//
+// THE VOCABULARY DOES NOT SURVIVE INTACT, and pretending otherwise would be the
+// dishonest part. `Feel` names a fingertip event — Apple's Taptic Engine can
+// place a sharp tick under one finger — and a pad has two coarse motors in a
+// case held by two hands. The low-frequency motor is a heavy rumble and the
+// high-frequency one is a lighter buzz, so the impact family maps to intensity
+// and duration and the NOTIFICATION family (`Success`/`Warning`/`Error`), which
+// is a distinct engine on Apple and a rhythm on Android, is approximated by
+// intensity here rather than by a pattern. A pattern would need a scheduler
+// this package does not have and would still not feel like the thing it names.
+//
+// EVERY CONNECTED PAD BUZZES. XInput has four slots and no notion of "the one
+// the person is holding"; a UI tap is not addressed to a player, so the honest
+// reading of "make the device tap" is all of them.
 
 import "./haptics" as hap;
 
-// No actuator on a desktop PC. FALSE IS THE HONEST ANSWER, and the facade turns
-// it into a hidden "vibrate" setting rather than an error — see `available`'s
-// note that a machine with no motor is the common case, not a fault.
+extern fn LoadLibraryA(name: *u8) -> *u8;
+extern fn GetProcAddress(module: *u8, name: *u8) -> *u8;
+extern fn CreateThread(attrs: *u8, stack: usize, start: fn(*u8) -> *u8,
+                       arg: *u8, flags: u32, tid_out: *u32) -> *u8;
+extern fn CloseHandle(h: *u8) -> i32;
+extern fn Sleep(ms: u32);
+extern fn memset(p: *u8, v: i32, n: usize) -> *u8;
+
+// ---- the two entry points ------------------------------------------------------
+//
+// `XInputGetState(DWORD slot, XINPUT_STATE*)` and
+// `XInputSetState(DWORD slot, XINPUT_VIBRATION*)`, both returning a Win32 error
+// code: 0 for success, 1167 (ERROR_DEVICE_NOT_CONNECTED) for an empty slot.
+
+static XI_GET: fn(u32, *u8) -> u32 = #zero::[fn(u32, *u8) -> u32]();
+static XI_SET: fn(u32, *u8) -> u32 = #zero::[fn(u32, *u8) -> u32]();
+static XI_TRIED: bool = false;
+
+fn _slots() -> u32 { return 4 as u32; }
+fn _error_success() -> u32 { return 0 as u32; }
+// XINPUT_STATE is dwPacketNumber(4) + XINPUT_GAMEPAD(12) = 16 bytes.
+fn _state_bytes() -> usize { return 16 as usize; }
+// XINPUT_VIBRATION is two WORDs: left (low frequency) then right (high).
+fn _vibration_bytes() -> usize { return 4 as usize; }
+
+// Bind XInput once. The three names are tried newest first; a machine with none
+// leaves the slots null and every verb below reads that as "no device".
+fn _ensure_loaded() {
+    if XI_TRIED { return; }
+    XI_TRIED = true;
+    var lib: *u8 = { LoadLibraryA({ #str_ptr("XInput1_4.dll\0") }) };
+    if lib == (0 as *u8) { lib = { LoadLibraryA({ #str_ptr("XInput1_3.dll\0") }) }; }
+    if lib == (0 as *u8) { lib = { LoadLibraryA({ #str_ptr("XInput9_1_0.dll\0") }) }; }
+    if lib == (0 as *u8) { return; }
+    let g: *u8 = { GetProcAddress(lib, { #str_ptr("XInputGetState\0") }) };
+    let s: *u8 = { GetProcAddress(lib, { #str_ptr("XInputSetState\0") }) };
+    if g != (0 as *u8) { XI_GET = { g as fn(u32, *u8) -> u32 }; }
+    if s != (0 as *u8) { XI_SET = { s as fn(u32, *u8) -> u32 }; }
+    return;
+}
+
+fn _loaded() -> bool {
+    return XI_GET != (#zero::[fn(u32, *u8) -> u32]())
+        && XI_SET != (#zero::[fn(u32, *u8) -> u32]());
+}
+
+// Is a pad in this slot? A slot is polled rather than remembered: a pad is
+// unplugged mid-run often enough that a cached answer would buzz nothing and
+// report success.
+fn _slot_connected(slot: u32) -> bool {
+    if !_loaded() { return false; }
+    var st: [u8; 16] = [0 as u8; 16];
+    let f: fn(u32, *u8) -> u32 = XI_GET;
+    return { f(slot, { #addr_of(st) as *u8 }) } == _error_success();
+}
+
+// ---- what a `Feel` becomes on two coarse motors ---------------------------------
+//
+// Pure, so the mapping is testable with no hardware attached — which is the only
+// way it CAN be tested on a machine with no pad. The three properties that
+// matter are asserted below: heavier feels are stronger, the impact family
+// climbs in order, and nothing exceeds XInput's range.
+
+// The LOW-frequency motor: the heavy one, felt as a rumble in the palm.
+fn _left_speed(feel: i32) -> u16 {
+    let f: hap::Feel = hap::Feel::from_code(feel);
+    return match f {
+        hap::Feel::Selection => 0 as u16,          // a tick is not a rumble
+        hap::Feel::Light => 0 as u16,
+        hap::Feel::Medium => 16000 as u16,
+        hap::Feel::Heavy => 40000 as u16,
+        hap::Feel::Success => 12000 as u16,
+        hap::Feel::Warning => 22000 as u16,
+        hap::Feel::Error => 46000 as u16,
+    };
+}
+
+// The HIGH-frequency motor: the light one, the closest thing a pad has to a
+// tick, which is why the two lightest feels use it alone.
+fn _right_speed(feel: i32) -> u16 {
+    let f: hap::Feel = hap::Feel::from_code(feel);
+    return match f {
+        hap::Feel::Selection => 9000 as u16,
+        hap::Feel::Light => 16000 as u16,
+        hap::Feel::Medium => 24000 as u16,
+        hap::Feel::Heavy => 30000 as u16,
+        hap::Feel::Success => 26000 as u16,
+        hap::Feel::Warning => 30000 as u16,
+        hap::Feel::Error => 38000 as u16,
+    };
+}
+
+// How long the motors run. Short: these are UI taps, not game effects, and a
+// rumble that outlasts the gesture that caused it reads as a fault in the pad.
+fn _duration_ms(feel: i32) -> u32 {
+    let f: hap::Feel = hap::Feel::from_code(feel);
+    return match f {
+        hap::Feel::Selection => 12 as u32,
+        hap::Feel::Light => 18 as u32,
+        hap::Feel::Medium => 28 as u32,
+        hap::Feel::Heavy => 45 as u32,
+        hap::Feel::Success => 40 as u32,
+        hap::Feel::Warning => 60 as u32,
+        hap::Feel::Error => 90 as u32,
+    };
+}
+
+fn _put_u16(p: *u8, off: usize, v: u16) { { *((p + off) as *u16) = v }; return; }
+
+// Write both motors on every connected slot. `false` when nothing took it.
+fn _set_all(left: u16, right: u16) -> bool {
+    if !_loaded() { return false; }
+    var vib: [u8; 4] = [0 as u8; 4];
+    _put_u16({ #addr_of(vib) as *u8 }, 0 as usize, left);
+    _put_u16({ #addr_of(vib) as *u8 }, 2 as usize, right);
+    let f: fn(u32, *u8) -> u32 = XI_SET;
+    var any: bool = false;
+    var i: u32 = 0 as u32;
+    while i < _slots() {
+        if _slot_connected(i) {
+            if { f(i, { #addr_of(vib) as *u8 }) } == _error_success() { any = true; }
+        }
+        i = i +% (1 as u32);
+    }
+    return any;
+}
+
+// ---- stopping, without cutting the next tap short --------------------------------
+//
+// XInput vibration RUNS UNTIL IT IS CHANGED — there is no duration argument — so
+// every play needs something to turn it off. That something is a detached
+// thread that sleeps and zeroes, the same shape `notifications_backend_windows`
+// uses for a deferred toast, and it needs the same guard for the same reason.
+//
+// A PICKER FIRES `Selection` PER ROW. Without a stamp, the first tap's stopper
+// wakes in the middle of the third tap and silences it, so a fast scroll feels
+// like one buzz and then nothing. Each play takes a stamp; a stopper only
+// zeroes the motors if the stamp is still the current one, and an overtaken
+// stopper walks away.
+
+static HAPTIC_STAMP: u32 = 0 as u32;
+
+fn _stopper(arg: *u8) -> *u8 {
+    let packed: usize = arg as usize;
+    let ms: u32 = (packed -% ((packed / (65536 as usize)) *% (65536 as usize))) as u32;
+    let stamp: u32 = (packed / (65536 as usize)) as u32;
+    { Sleep(ms) };
+    // Overtaken by a later play, which owns the motors now.
+    if HAPTIC_STAMP != stamp { return 0 as *u8; }
+    let _z: bool = _set_all(0 as u16, 0 as u16);
+    return 0 as *u8;
+}
+
+// ---- the seam --------------------------------------------------------------------
+
+// Is there anything to feel? A pad in any of the four slots.
+//
+// POLLED, NOT CACHED: a pad plugged in after launch must start working and one
+// unplugged must stop being claimed. XInput's own poll is cheap enough for a
+// question a UI asks when it draws a settings row.
 export extern fn _c_available() -> i32 {
+    _ensure_loaded();
+    if !_loaded() { return 0 as i32; }
+    var i: u32 = 0 as u32;
+    while i < _slots() {
+        if _slot_connected(i) { return 1 as i32; }
+        i = i +% (1 as u32);
+    }
     return 0 as i32;
 }
 
-// NOTHING TO PLAY, so nothing was accepted. `_c_play` reports whether the
-// platform took the tap, never whether anything was felt; with no motor here it
-// honestly took nothing and returns 0. The facade guarantees this is safe to
-// call anyway, so a UI need not guard it — the tap simply does nothing.
+// Play one. Reports whether a pad ACCEPTED it, never whether anything was felt —
+// the facade's own distinction, and it matters more here than on a phone: a pad
+// can be connected and sitting on a desk.
 export extern fn _c_play(feel: i32) -> i32 {
-    return 0 as i32;
+    _ensure_loaded();
+    if !_loaded() { return 0 as i32; }
+    let left: u16 = _left_speed(feel);
+    let right: u16 = _right_speed(feel);
+    if !_set_all(left, right) { return 0 as i32; }
+
+    HAPTIC_STAMP = HAPTIC_STAMP +% (1 as u32);
+    let stamp: u32 = HAPTIC_STAMP;
+    let ms: u32 = _duration_ms(feel);
+    let packed: usize = ((stamp as usize) *% (65536 as usize)) +% (ms as usize);
+    let start: fn(*u8) -> *u8 = _stopper;
+    let h: *u8 = { CreateThread(0 as *u8, 0 as usize, start, packed as *u8,
+                                0 as u32, 0 as *u32) };
+    if h == (0 as *u8) {
+        // NO STOPPER MEANS A MOTOR THAT NEVER STOPS, which is far worse than a
+        // tap that never happens. Turn it off now and report that nothing was
+        // taken.
+        let _z: bool = _set_all(0 as u16, 0 as u16);
+        return 0 as i32;
+    }
+    let _c: i32 = { CloseHandle(h) };
+    return 1 as i32;
 }
 
-// NOTHING TO WARM. `prepare` wakes a Taptic Engine from idle; a PC with no
-// engine has nothing to wake, so this is a no-op rather than an approximation —
-// the facade documents that skipping it costs only latency, and here there is
-// not even that.
+// WARMING, and there is a real analogue here rather than a no-op.
+//
+// On Apple this wakes an idling Taptic Engine so the first tap is not late. A
+// pad's motors do not idle, but the FIRST call into this backend pays for a
+// `LoadLibrary` and two `GetProcAddress`es, and that is exactly the kind of
+// first-time cost `prepare` exists to move off the gesture. Binding here means
+// the tap that follows is already bound.
 export extern fn _c_prepare(feel: i32) {
+    _ensure_loaded();
     return;
 }
 
 // ---- tests -------------------------------------------------------------------
-// Every verb is inert here, and the point of the tests is that calling them does
-// not trap and returns the honest no-op value.
+//
+// A MACHINE WITH NO PAD IS THE CASE UNDER TEST, and it is the honest one to
+// write for: the suite has to pass on a build server. So the hardware-facing
+// verbs are asserted to answer the no-device contract without trapping, and the
+// part that CAN be checked without hardware — the `Feel` mapping — is pure and
+// checked properly.
 
 #[test]
-fn available_is_false_on_a_desktop_pc() {
-    // No vibration motor, so the availability query is a flat 0 — the signal the
-    // facade uses to hide a vibrate toggle.
-    assert { _c_available() } == (0 as i32);
+fn xinput_binds_on_this_machine() {
+    // ASSERTED RATHER THAN TOLERATED, because it is a fact about Windows and
+    // not about the machine: `XInput9_1_0.dll` has shipped in the OS since
+    // Vista and `XInput1_4.dll` since Windows 8, so at least one of the three
+    // names always resolves. If this ever fails it is real news — the backend
+    // cannot work there at all — rather than a flaky test, and it is the one
+    // assertion that separates "no pad plugged in" from "XInput never loaded",
+    // which every other verb here reports identically as 0.
+    //
+    // Measured on this host: all three DLLs load and both entry points resolve;
+    // all four slots answer 1167 (ERROR_DEVICE_NOT_CONNECTED).
+    _ensure_loaded();
+    assert _loaded();
 }
 
 #[test]
-fn play_accepts_nothing_and_does_not_trap() {
-    // A play on a device with no haptics does nothing and reports it took
-    // nothing. Walk the whole `Feel` range to prove no code path traps.
-    assert { _c_play(hap::Feel::Selection.to_code()) } == (0 as i32);
-    assert { _c_play(hap::Feel::Light.to_code()) } == (0 as i32);
-    assert { _c_play(hap::Feel::Medium.to_code()) } == (0 as i32);
-    assert { _c_play(hap::Feel::Heavy.to_code()) } == (0 as i32);
-    assert { _c_play(hap::Feel::Success.to_code()) } == (0 as i32);
-    assert { _c_play(hap::Feel::Warning.to_code()) } == (0 as i32);
-    assert { _c_play(hap::Feel::Error.to_code()) } == (0 as i32);
+fn availability_is_a_yes_or_no_and_never_traps() {
+    // 0 with nothing plugged in, 1 with a pad. Both are correct; what is
+    // asserted is that the answer is one of them and that binding XInput on a
+    // machine that may not have it does not fault.
+    let a: i32 = { _c_available() };
+    assert a == (0 as i32) || a == (1 as i32);
+    // Idempotent: the second call takes the already-bound path.
+    assert { _c_available() } == a;
 }
 
 #[test]
-fn prepare_is_an_inert_no_op() {
-    // Nothing to warm, and nothing to assert but that it returns without
-    // trapping on any feel.
+fn play_never_traps_on_any_feel_and_reports_what_it_took() {
+    // With no pad this is 0 for every feel — the facade promises `play` is safe
+    // to call when unavailable, so the whole range has to be walked without a
+    // fault whether or not hardware answers.
+    let connected: bool = { _c_available() } == (1 as i32);
+    var f: i32 = 0 as i32;
+    while f <= (6 as i32) {
+        let r: i32 = { _c_play(f) };
+        assert r == (0 as i32) || r == (1 as i32);
+        // Never claims a tap nobody could feel.
+        if !connected { assert r == (0 as i32); }
+        f = f +% (1 as i32);
+    }
+}
+
+#[test]
+fn prepare_binds_without_trapping() {
     { _c_prepare(hap::Feel::Light.to_code()) };
-    { _c_prepare(hap::Feel::Success.to_code()) };
+    { _c_prepare(hap::Feel::Error.to_code()) };
+    // And having prepared, availability still answers the same way.
+    let a: i32 = { _c_available() };
+    assert a == (0 as i32) || a == (1 as i32);
+}
+
+#[test]
+fn the_impact_family_climbs_in_order() {
+    // What a person expects of the four impact feels: heavier means stronger.
+    // Compared on the SUM of the two motors, because the light feels put their
+    // energy in the high-frequency one and the heavy feels in the low.
+    let sel: u32 = (_left_speed(0 as i32) as u32) +% (_right_speed(0 as i32) as u32);
+    let light: u32 = (_left_speed(1 as i32) as u32) +% (_right_speed(1 as i32) as u32);
+    let medium: u32 = (_left_speed(2 as i32) as u32) +% (_right_speed(2 as i32) as u32);
+    let heavy: u32 = (_left_speed(3 as i32) as u32) +% (_right_speed(3 as i32) as u32);
+    assert sel < light;
+    assert light < medium;
+    assert medium < heavy;
+}
+
+#[test]
+fn the_lightest_feels_use_the_high_frequency_motor_alone() {
+    // A tick is not a rumble. Putting `Selection` on the heavy motor is what
+    // makes a picker feel like a broken controller rather than a list.
+    assert _left_speed(hap::Feel::Selection.to_code()) == (0 as u16);
+    assert _left_speed(hap::Feel::Light.to_code()) == (0 as u16);
+    assert _right_speed(hap::Feel::Selection.to_code()) > (0 as u16);
+    assert _right_speed(hap::Feel::Light.to_code()) > (0 as u16);
+}
+
+#[test]
+fn every_duration_is_short_and_ordered_within_its_family() {
+    // These are UI taps. A rumble that outlasts the gesture reads as a fault in
+    // the pad, so nothing here is allowed to grow into a game effect.
+    var f: i32 = 0 as i32;
+    while f <= (6 as i32) {
+        let d: u32 = _duration_ms(f);
+        assert d > (0 as u32);
+        assert d <= (100 as u32);
+        f = f +% (1 as i32);
+    }
+    assert _duration_ms(hap::Feel::Selection.to_code()) < _duration_ms(hap::Feel::Heavy.to_code());
+    assert _duration_ms(hap::Feel::Success.to_code()) < _duration_ms(hap::Feel::Error.to_code());
+}
+
+#[test]
+fn the_notification_family_is_distinguishable_from_the_impacts() {
+    // Approximated by intensity rather than by a pattern — see the header — but
+    // an `Error` must not come out identical to a `Medium` tap, or the two
+    // outcomes a UI most wants to tell apart feel the same.
+    let medium_l: u16 = _left_speed(hap::Feel::Medium.to_code());
+    let error_l: u16 = _left_speed(hap::Feel::Error.to_code());
+    assert error_l > medium_l;
+    assert _duration_ms(hap::Feel::Error.to_code()) > _duration_ms(hap::Feel::Medium.to_code());
+}
+
+#[test]
+fn nothing_exceeds_xinputs_range() {
+    // Both fields are WORDs and XInput takes 0..65535; a value built by
+    // arithmetic that wrapped would come out small and feel like nothing.
+    var f: i32 = 0 as i32;
+    while f <= (6 as i32) {
+        assert (_left_speed(f) as u32) <= (65535 as u32);
+        assert (_right_speed(f) as u32) <= (65535 as u32);
+        f = f +% (1 as i32);
+    }
+}
+
+#[test]
+fn an_unknown_code_is_treated_as_the_lightest_real_feel() {
+    // `Feel::from_code` answers `Light` for anything it does not know, so a
+    // newer facade sending a code this build has never heard of gets a gentle
+    // tap rather than a full-strength one.
+    assert _left_speed(99 as i32) == _left_speed(hap::Feel::Light.to_code());
+    assert _right_speed(99 as i32) == _right_speed(hap::Feel::Light.to_code());
+    assert _duration_ms(99 as i32) == _duration_ms(hap::Feel::Light.to_code());
 }
