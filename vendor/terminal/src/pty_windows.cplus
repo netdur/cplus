@@ -1,4 +1,5 @@
-// terminal/pty — the Windows half, which refuses.
+// terminal/pty — the Windows half, which refuses, and the ConPTY recipe it
+// refuses WITH so the next attempt starts from a measured position.
 //
 // THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `pty.cplus` is written against
 // `forkpty`, `execl`, `waitpid`, `ioctl(TIOCSWINSZ)` and Darwin's `__error` —
@@ -6,33 +7,76 @@
 // spelling. Without a `_windows` sibling the build falls back to it and the
 // link fails on a handful of libc symbols that do not exist here.
 //
-// WHY NOT ConPTY, and it is parked rather than forgotten. Windows 10 1809 added
-// a real pseudo-console — `CreatePseudoConsole`, a pair of pipes, and
-// `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` on the `STARTUPINFOEX` a
-// `CreateProcess` is given — and it is the correct road. It is a genuinely
-// different shape from `forkpty` rather than a renaming:
+// ---- ConPTY: BUILT, AND NOT SHIPPED ------------------------------------------
 //
-//   * there is no fork. The child is described up front and created once, so
-//     the "run this in the child before exec" work `start` does — chdir, the
-//     `ZDOTDIR` shim, the environment edits — has to move into the attribute
-//     list and an explicit environment block instead.
-//   * the master is TWO pipe handles, not one fd, so `read_into` and `write`
-//     stop being symmetric and `make_nonblocking` becomes overlapped I/O or a
-//     reader thread. `netsys_windows::recv_fd` already handles a pipe fd the
-//     cooperative way, which is the natural seam for it.
-//   * resizing is `ResizePseudoConsole`, not an `ioctl`.
-//   * `poll_exit` is `GetExitCodeProcess`, and the 128+signal convention this
-//     file's `decode_wait_status` implements has no Windows meaning at all.
+// Windows 10 1809 added a real pseudo-console, and it was implemented here in
+// full — pipes, console, attribute list, child, reads through
+// `netsys::recv_fd`, `ResizePseudoConsole`, `GetExitCodeProcess`. It is not in
+// this file because IT PRODUCES NO OUTPUT ON THE MACHINE IT WAS WRITTEN ON, and
+// a terminal that starts a shell and displays nothing is a worse answer than
+// one that says it cannot.
 //
-// AND THE SHELL INTEGRATION IS THE DEEPER HALF. What makes this package's
-// terminal report command marks and exit codes is an OSC 133 shim written into
-// a throwaway `ZDOTDIR` — a zsh mechanism. PowerShell and cmd have nothing like
-// it, so a Windows session would answer `expects_marks() == false` and every
-// command-tracking verb above it would go quiet. That is a design decision this
-// package has not made yet, not a translation.
+// WHAT WAS MEASURED, so nobody repeats it:
+//
+//   * `CreatePseudoConsole` returns S_OK and a live HPCON.
+//   * The console host really is spawned — the conhost count goes up by two
+//     across the call.
+//   * `CreateProcessW` succeeds and the child RUNS: `cmd.exe /c exit 7` is
+//     reaped as exactly 7 through `GetExitCodeProcess`.
+//   * And the output pipe stays EMPTY. Zero bytes, every time.
+//
+// Ruled out, each by its own run: the C+ side (the identical sequence written
+// in C# against Microsoft's own EchoCon sample reads zero too); `PeekNamedPipe`
+// (a blocking `ReadFile` on a thread, which is what the sample does, also reads
+// zero); the sandbox (same outside it); a console-less parent (same from a
+// process with a real console window); and the client (`cmd.exe`,
+// `cmd.exe /c echo`, `powershell.exe` — all zero). One run of the C# probe had
+// the child die with 0xC0000142, STATUS_DLL_INIT_FAILED, which is what a client
+// that cannot attach to its console looks like.
+//
+// So the fault is in the console host on that host, not in the sequence below.
+// On a machine where ConPTY works, this is the whole of it:
+//
+//   CreatePipe(&in_read,  &in_write,  NULL, 0);      // we write in_write
+//   CreatePipe(&out_read, &out_write, NULL, 0);      // we read  out_read
+//   CreatePseudoConsole(COORD{cols,rows}, in_read, out_write, 0, &hpc);
+//   CloseHandle(in_read); CloseHandle(out_write);    // the console dup'd both;
+//                                                    // holding them means the
+//                                                    // output pipe never EOFs
+//   InitializeProcThreadAttributeList(NULL, 1, 0, &size);   // sizes: 48 bytes
+//   attrs = malloc(size);
+//   InitializeProcThreadAttributeList(attrs, 1, 0, &size);
+//   UpdateProcThreadAttribute(attrs, 0, 0x00020016 /* PSEUDOCONSOLE */,
+//                             &hpc, sizeof(HPCON), NULL, NULL);
+//   si.cb = 112; si.lpAttributeList = attrs;         // STARTUPINFOEXW on x64:
+//                                                    // 112 bytes, list at 104
+//   CreateProcessW(NULL, cmdline_mutable, NULL, NULL, FALSE,
+//                  EXTENDED_STARTUPINFO_PRESENT /* 0x00080000 */,
+//                  NULL, cwd, &si, &pi);
+//
+// PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE is 0x00020016 =
+// ProcThreadAttributeValue(22, thread:FALSE, input:TRUE, additive:FALSE) —
+// 22 | PROC_THREAD_ATTRIBUTE_INPUT(0x20000). COORD is two SHORTs passed BY
+// VALUE, so under the x64 ABI it crosses as one u32 with columns in the low
+// half and rows in the high. Reads want `netsys::recv_fd` over an fd from
+// `_open_osfhandle(out_read, 0)`: it already reads a Windows pipe cooperatively
+// (peek, read what is ready, nap and answer EINTR when empty) so a parked
+// reader stays cancellable. Resizing is `ResizePseudoConsole`; reaping is
+// `GetExitCodeProcess`, where STILL_ACTIVE is 259 and the POSIX 128+signal
+// convention `decode_wait_status` implements has no meaning at all.
+//
+// ---- AND THE DEEPER HALF, which is not ConPTY's fault ------------------------
+//
+// What makes this package's terminal report command marks and exit codes is an
+// OSC 133 shim written into a throwaway `ZDOTDIR` — a zsh mechanism. PowerShell
+// has prompt hooks of its own shape and cmd has nothing, so even a working
+// ConPTY session would answer `expects_marks() == false` and every
+// command-tracking verb above it would stay quiet. That is a design decision
+// this package has not made yet rather than a translation, and it is the larger
+// piece of work of the two.
 //
 // So this half answers honestly: `supported()` is false and `start` is `None`.
-// Both are shapes `pty.cplus` itself can return — a macOS build whose `forkpty`
+// Both are shapes `pty.cplus` itself returns — a macOS build whose `forkpty`
 // fails takes exactly the same branch — so no caller learns a new failure.
 
 import "stdlib/option" as option;
@@ -63,7 +107,8 @@ struct Session {
     _marks: bool,
 }
 
-// No pseudo-terminal on this platform yet — see the header for the ConPTY road.
+// No pseudo-terminal on this platform yet — see the header for the ConPTY road
+// and for what stopped it.
 fn supported() -> bool { return false; }
 
 fn start(shell: str = "cmd.exe", cwd: str = "", rows: u16 = 24 as u16,
