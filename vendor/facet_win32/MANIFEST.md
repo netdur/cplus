@@ -471,6 +471,27 @@ properly. What is absent is more than one of them.
 (`text_area.on_selection_changed` is the same wall from the other side:
 `EN_SELCHANGE` is a RichEdit notification and a plain `EDIT` never sends it.)
 
+**AND THEREFORE THE WHOLE `span` KIND**, which is the same wall named from
+facet's side rather than from Win32's. A span IS a run — `views::non_view_kind`
+says so outright, alongside a menu item and a toolbar item: it is not a control
+that could be given a window, it is a stretch of its label's string. So every
+per-run verb it declares lands nowhere, and it is one argument rather than
+eleven:
+
+`span.font_family`, `span.font_size`, `span.font_weight`, `span.font_scales`,
+`span.is_italic`, `span.text_decoration`, `span.text_transform`,
+`span.character_spacing`, `span.line_height`, `span.text_color`, `span.text`
+
+The parity report scored these unrecorded — neither built nor argued — for as
+long as this row named only the three `label` and `text_area` verbs above. The
+argument always covered them; the ledger did not say so, and a name that is in
+neither the code nor §1 is the one state that is supposed to raise an alarm.
+
+Building them is `RICHEDIT50W` and nothing less, with the two costs the
+paragraphs above set out — a different control with different metrics, focus
+and accessibility role, and a serialisation on every set. If that is ever paid
+it buys this whole row at once.
+
 ### `popup.text_color`, `popup.text_align`, `popup.title` — owner-draw is not available to a combo box here
 
 These three WERE implemented, with `CBS_OWNERDRAWFIXED`, and the implementation
