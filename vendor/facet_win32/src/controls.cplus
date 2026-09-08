@@ -273,7 +273,63 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) { return; }
 // other way (`set_input_transparent(true)` is opt-IN, for decoration inside a
 // clickable card), so the platform default is the wrong one here and every
 // label states the opposite.
+// A SELECTABLE LABEL IS A DIFFERENT CONTROL, and that is Win32's answer rather
+// than this package's shortcut.
+//
+// A `STATIC` cannot select text. There is no style for it, no message for it,
+// and no notification when a selection changes — the control has no concept of
+// one. What Windows itself uses for selectable text, in its own dialogs and in
+// every About box that lets you copy a version string, is a READ-ONLY EDIT: it
+// carries a caret, a selection, and Ctrl+C, and it is what an application means
+// by `selectable`.
+//
+// SO THE CLASS IS CHOSEN AT CREATION, from the prop, and that is the one
+// narrowing this buys — see MANIFEST §1. A control's class is fixed for its
+// life on Win32; `set_selectable` on a label already mounted as a STATIC cannot
+// turn it into an EDIT, so it changes the model and not the picture until the
+// node is remounted. GTK toggles it live because a GtkLabel has the property;
+// Win32 has two controls.
+//
+// NO BORDER AND NO MARGINS: an EDIT wears a client edge and a 1px internal gutter
+// by default, and a label that suddenly sat in a sunken box with its text
+// shifted would be a visibly different control. `EM_SETMARGINS` with both edges
+// zeroed is what makes the two spellings line up in the same layout.
+fn label_selectable(n: *core::Node) -> bool {
+    let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
+    if p == (0 as *props::LabelProps) { return false; }
+    return { (*p).selectable };
+}
+
+fn prop_label_edit() -> *u8 { return { #str_ptr("facet-label-is-edit\0") }; }
+
+// Is this label's view the EDIT spelling? Asked of the WINDOW rather than of the
+// node, because `apply_label` has to know what it is writing to and the node's
+// prop can have changed since the control was made.
+fn label_is_edit(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    return { u::GetPropA(v, prop_label_edit() as *i8) } != (0 as *u8);
+}
+
+fn em_setmargins() -> u32 { return 0x00D3 as u32; }
+fn ec_leftmargin() -> u64 { return 1 as u64; }
+fn ec_rightmargin() -> u64 { return 2 as u64; }
+
 fn create_label(n: *core::Node) -> *u8 {
+    if label_selectable(n) {
+        // ES_MULTILINE so a wrapping label still wraps; ES_AUTOHSCROLL is left
+        // OFF for the same reason — it would scroll a single line instead.
+        let v: *u8 = make_child(sys::edit_class(), empty_title(),
+                                sys::es_left() | sys::es_multiline()
+                                | sys::es_readonly() | sys::ws_tabstop(),
+                                0 as u32);
+        if v != (0 as *u8) {
+            let _p: i32 = { u::SetPropA(v, prop_label_edit() as *i8, 1 as *u8) };
+            let _m: i64 = { u::SendMessageA(v, em_setmargins(),
+                                            ec_leftmargin() | ec_rightmargin(),
+                                            0 as i64) };
+        }
+        return v;
+    }
     return make_child(sys::static_class(), empty_title(),
                       sys::ss_notify() | sys::ss_left(), 0 as u32);
 }
@@ -292,7 +348,14 @@ fn label_wraps(p: *props::LabelProps) -> bool {
 fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
     if p == (0 as *props::LabelProps) { return; }
-    if (dirty & (label::P_CHARACTER_SPACING | label::P_TEXT
+    // THE STYLE BRANCHES BELOW ARE A STATIC'S, and a selectable label is an
+    // EDIT — see `create_label`. `SS_OWNERDRAW` and `SS_CENTERIMAGE` are not
+    // just inapplicable there, their bit patterns MEAN something else to an
+    // edit control (0x0200 is ES_NOHIDESEL), so writing them would quietly
+    // reconfigure the wrong thing. The text, transform and colour paths below
+    // work on both and are left alone.
+    let is_edit: bool = label_is_edit(v);
+    if !is_edit && (dirty & (label::P_CHARACTER_SPACING | label::P_TEXT
                  | label::P_TEXT_ALIGN | label::P_LINE_BREAK)) != (0 as u64) {
         set_label_drawn(v, sys::ss_left(), label_wants_draw(p));
     }
@@ -325,7 +388,7 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     // paragraph's vertical alignment inside a box sized to its own content is
     // meaningless; a single-line label still centres, which is what the verb is
     // for. §1 records the narrowing.
-    if (dirty & (label::P_VERTICAL_ALIGN | label::P_LINE_BREAK
+    if !is_edit && (dirty & (label::P_VERTICAL_ALIGN | label::P_LINE_BREAK
                  | label::P_MAX_LINES)) != (0 as u64) {
         var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
         let asked: bool = match { (*p).vertical_align } {
@@ -343,7 +406,14 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     // Alignment is a STYLE BIT on a static, not a property — so it is read,
     // masked and written back rather than set. A static whose style changes
     // does not repaint itself, which is why the invalidate is not optional.
-    if (dirty & (label::P_TEXT_ALIGN | label::P_LINE_BREAK | label::P_MAX_LINES))
+    //
+    // A SELECTABLE LABEL IS AN EDIT and skips this for the reason the two
+    // branches above skip theirs: SS_CENTER/SS_RIGHT/SS_LEFTNOWORDWRAP are a
+    // static's alphabet. ES_CENTER and ES_RIGHT happen to share the low two
+    // bits, so alignment would survive by luck — but SS_LEFTNOWORDWRAP (0x000C)
+    // and SS_ENDELLIPSIS (0x4000) do not, and writing them would set
+    // ES_MULTILINE|ES_PASSWORD and a scroll style on the control instead.
+    if !is_edit && (dirty & (label::P_TEXT_ALIGN | label::P_LINE_BREAK | label::P_MAX_LINES))
        != (0 as u64) {
         var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
         style = style & ~(sys::ss_center() | sys::ss_right()
@@ -4815,4 +4885,65 @@ fn a_hit_outside_the_group_is_not_one_of_the_three() {
     // a cell for it would send a system command on a stray click.
     assert wb_hit(0 as *u8, 0 as i32) == (0 -% (1 as i32));
     assert wb_hit(0 as *u8, 999 as i32) == (0 -% (1 as i32));
+}
+
+// ---- a selectable label --------------------------------------------------------
+
+#[test]
+fn a_selectable_label_is_the_edit_spelling_and_a_plain_one_is_not() {
+    // The class is chosen from the prop at CREATION — a STATIC cannot select
+    // text and there is no style that makes it. Both spellings are built here
+    // so the fork itself is pinned rather than assumed.
+    var plain: core::Node = label::label("plain", key: "plain");
+    var sel: core::Node = label::label("selectable", key: "sel", selectable: true);
+    assert label_selectable(#addr_of(sel));
+    assert label_selectable(#addr_of(plain)) == false;
+
+    let pv: *u8 = create_label(#addr_of(plain));
+    let sv: *u8 = create_label(#addr_of(sel));
+    assert pv != (0 as *u8);
+    assert sv != (0 as *u8);
+    // The marker is what `apply_label` reads to know which control it is
+    // writing to — the node's prop can change after the view exists.
+    assert label_is_edit(sv);
+    assert label_is_edit(pv) == false;
+    let _a: i32 = { u::DestroyWindow(pv) };
+    let _b: i32 = { u::DestroyWindow(sv) };
+}
+
+#[test]
+fn the_selectable_label_really_is_a_read_only_edit() {
+    // ES_READONLY is what makes it a LABEL rather than a field: the text can be
+    // selected and copied and not typed over. Read back off the live control,
+    // because the style word is what the OS actually acts on.
+    var sel: core::Node = label::label("copy me", key: "s2", selectable: true);
+    let v: *u8 = create_label(#addr_of(sel));
+    assert v != (0 as *u8);
+    let style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    assert (style & sys::es_readonly()) != (0 as u32);
+    // ES_MULTILINE so a wrapping label still wraps rather than scrolling.
+    assert (style & sys::es_multiline()) != (0 as u32);
+    // And it takes focus, which is what lets a person select with the keyboard.
+    assert (style & sys::ws_tabstop()) != (0 as u32);
+    let _d: i32 = { u::DestroyWindow(v) };
+}
+
+#[test]
+fn a_selectable_label_is_never_given_a_statics_style_bits() {
+    // SS_OWNERDRAW and SS_CENTERIMAGE are a STATIC's, and their bit patterns
+    // mean something else to an EDIT — 0x0200 is ES_NOHIDESEL. `apply_label`
+    // guards both branches on `label_is_edit`; this pins that the guard is the
+    // thing standing between them and the wrong control.
+    var sel: core::Node = label::label("guarded", key: "s3", selectable: true);
+    let v: *u8 = create_label(#addr_of(sel));
+    assert v != (0 as *u8);
+    let before: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    // Every bit the two guarded branches react to, at once.
+    apply_label(v, #addr_of(sel),
+                label::P_CHARACTER_SPACING | label::P_TEXT_ALIGN
+                | label::P_LINE_BREAK | label::P_VERTICAL_ALIGN
+                | label::P_MAX_LINES);
+    let after: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    assert after == before;
+    let _d: i32 = { u::DestroyWindow(v) };
 }

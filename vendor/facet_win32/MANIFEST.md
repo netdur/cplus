@@ -492,6 +492,35 @@ paragraphs above set out — a different control with different metrics, focus
 and accessibility role, and a serialisation on every set. If that is ever paid
 it buys this whole row at once.
 
+### `label.selectable` is ANSWERED, and it changes the control's CLASS
+
+A `STATIC` cannot select text. There is no style for it, no message for it, and
+no notification when a selection changes — the control has no concept of one.
+What Windows itself uses for selectable text, in its own dialogs and in every
+About box that lets you copy a version string, is a READ-ONLY `EDIT`: a caret, a
+selection, and Ctrl+C.
+
+So `selectable` is answered by building the label as an `EDIT`
+(`ES_READONLY | ES_MULTILINE | WS_TABSTOP`, no border, `EM_SETMARGINS` zeroed so
+it lines up where a static would have). The narrowing, and it is the only one:
+
+**THE CLASS IS CHOSEN AT CREATION.** A control's class is fixed for its life on
+Win32, so `set_selectable` on a label already mounted as a `STATIC` changes the
+model and not the picture until the node is remounted. GTK toggles it live
+because a `GtkLabel` has the property; here there are two controls and no way to
+turn one into the other.
+
+The three style branches in `apply_label` are a static's alphabet and are
+guarded on the spelling, which is not fussiness: `SS_LEFTNOWORDWRAP` is 0x000C
+and `SS_CENTERIMAGE` is 0x0200, and on an edit those bits are
+`ES_MULTILINE | ES_PASSWORD` and `ES_NOHIDESEL`. Writing a static's alignment
+onto a selectable label would silently turn it into a password field.
+
+The consequence worth stating: a selectable label does not get the OWNER-DRAWN
+path, so `character_spacing` and the truncation modes are a static's features
+and a selectable label wears the edit's own behaviour instead. An application
+that wants both wants a `text_area` with `editable: false`.
+
 ### `popup.text_color`, `popup.text_align`, `popup.title` — owner-draw is not available to a combo box here
 
 These three WERE implemented, with `CBS_OWNERDRAWFIXED`, and the implementation
