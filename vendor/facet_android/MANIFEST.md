@@ -11,6 +11,51 @@ survives an Activity recreation. Everything else is section 2.
 
 ---
 
+## The ledgers
+
+`tools/verb_coverage.py android` reads the fenced blocks below and separates
+"decided" from "nobody built it yet", so the debt number means something. They
+are written from THIS backend's code, not copied from facet_appkit: a row is
+only here because the field was traced to the line that reads it.
+
+The tool refuses a `create-only`, `host-rendered`, `derived` or `modifier` row
+whose field no body reads — it reports LEDGER CONTRADICTED and the verb stays
+debt. That is deliberate: it is the only thing stopping another backend's
+reasoning being pasted over a gap here.
+
+```cannot-ledger
+collection.is_grouped           a GridView has no sections; a group header would have to SPAN a row, which a grid's fixed column width cannot do
+collection.can_mix_groups       as collection.is_grouped — there are no groups to mix
+collection.can_reorder_items    dragging a row is AndroidX ItemTouchHelper — an .aar with its own dex, and this project ships no Gradle
+collection.reorder              as collection.can_reorder_items
+list.reorder                    as collection.can_reorder_items
+carousel.wraps                  a paging HorizontalScrollView over the node's own children has a first page and a last; wrapping would mean reordering children under the finger
+carousel.scroll_anchor          a carousel has no MODEL to anchor — its pages are built once, by the application, as children
+carousel.item_sizing            nothing to measure: every page is one column wide by construction
+carousel.peek_insets            as carousel.item_sizing — the page IS the viewport here
+bordered.stroke_cap             a GradientDrawable's stroke has a width and a colour and nothing else; the Paint those belong to is reachable only by drawing the border ourselves, which is what `canvas` is for
+bordered.stroke_join            as bordered.stroke_cap
+bordered.stroke_miter_limit     as bordered.stroke_cap
+bordered.stroke_dash_offset     as bordered.stroke_cap
+popup.label                     a Spinner's field IS its selected item; facet's `label` names a second line there is no slot for
+popup.title_color               the prompt is drawn by the platform's own dialog, a view this backend neither builds nor reaches
+collection.group_size           a GridView has no sections — see collection.is_grouped
+collection.group_header         a GridView has no sections — a header would have to SPAN a row
+collection.on_reorder_completed no drag to complete — see collection.can_reorder_items
+```
+
+```create-only
+scroll.axis                     a create-time CLASS choice — HorizontalScrollView or ScrollView; `create_scroll` reads it and there is no reclass
+```
+
+```modifier
+stepper.increment               no write of its own — Android's two buttons know nothing about a range, so `fire_step` reads it when a step arrives
+stepper.minimum                 as stepper.increment — the clamp is this side's
+stepper.maximum                 as stepper.increment — the clamp is this side's
+radio.group                     no write of its own; it decides which siblings `turn_off_group_siblings` switches off when this one is picked
+```
+
+
 ## 1. Decided absent — Android has no such thing
 
 ### `accessibilityIdentifier`
