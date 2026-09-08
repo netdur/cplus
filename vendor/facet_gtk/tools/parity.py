@@ -297,6 +297,12 @@ def fires(source, handler, struct=None, scoped=None):
     return re.search(r"fire_" + stem + r"_handler\b", source) is not None
 
 
+def module_for(struct):
+    """`TimePickerProps` -> `time_picker`, the inverse of `struct_for`."""
+    name = struct[:-5] if struct.endswith("Props") else struct
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
 def handler_parity():
     src = {}
     for k, d in BACKENDS.items():
@@ -320,14 +326,37 @@ def handler_parity():
     gaps = [(s, [h for h in hs if not fires(src[FOCUS], h, s, scoped[FOCUS])])
             for s, hs in sorted(H.items())]
     gaps = [(s, m) for s, m in gaps if m]
+    # THE READ HALF IS CHECKED AGAINST §1 TOO, and it was the last surface that
+    # was not. Props and the shared band both ask "is this gap argued anywhere",
+    # and a handler gap could only ever be printed — so a backend that had
+    # written down exactly why a control cannot report something still read as
+    # having undecided debt, and one that had written nothing read the same.
+    # The two states the ledger exists to separate were identical here.
+    absent = decided_absent(FOCUS)
+    unrecorded = []
     if gaps:
         print(f"\n{FOCUS} does not fire:")
         for s, m in gaps:
-            print(f"    {s:24} {' '.join(m)}")
+            # A whole KIND argued absent takes its handlers with it: a control
+            # this backend does not build cannot report, and §1 makes that case
+            # once under the kind's name rather than once per handler.
+            kind = module_for(s)
+            if kind in absent:
+                print(f"    {s:24} {' '.join(m)}   (kind decided absent — MANIFEST §1)")
+                continue
+            open_rows = [h for h in m if h not in absent]
+            unrecorded += [f"{kind}.{h}" for h in open_rows]
+            if not open_rows:
+                note = "   (decided absent — MANIFEST §1)"
+            elif len(open_rows) < len(m):
+                note = "   (some argued — MANIFEST §1)"
+            else:
+                note = ""
+            print(f"    {s:24} {' '.join(m)}{note}")
     # The FOCUSED backend's count, which is what `--check` gates on. Spelled
     # "gtk" here regardless of the column asked for, so the handler floor was
     # always GTK's however the tool was invoked.
-    return totals.get(FOCUS, 0)
+    return totals.get(FOCUS, 0), unrecorded
 
 
 def field_touches(directory):
@@ -539,7 +568,8 @@ def main():
         mark = "  <-- this package" if k == FOCUS else ""
         print(f"  {k:<8} {totals[k]:>4} / {declared}   {pct:>3}%{mark}")
 
-    fired = handler_parity()
+    fired, handler_debt = handler_parity()
+    unrecorded += handler_debt
 
     declared_c, named = shared_band()
     print(f"\n{len(declared_c)} bits declared on facet's SHARED band\n")
