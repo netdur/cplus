@@ -56,28 +56,45 @@ is a WINDOW, not a view.**
 Origin is top-left with y growing downward — as in flex and facet_gtk, and
 unlike facet_appkit — so there is no flip anywhere in this package.
 
+The same fact is why **adopting a native view takes code here when it takes
+none on AppKit**. `adopt_native` hands facet a view the application built, and
+the mount walk deliberately skips `create` for it — so the window arrives never
+having been through the one place that makes a window a facet child. An NSView
+is an NSView and needs nothing; an HWND that is not `WS_CHILD` becomes *owned*
+rather than contained by `SetParent`, keeps its own frame, floats above
+everything and ignores every `SetWindowPos` the layout makes, which reads as a
+layout bug and is not one. `views::insert` forces the style and `views::apply`
+binds the node, and between those two moments a mark keeps the window visible
+to its siblings' slot arithmetic. `camera`'s live preview is the worked example.
+
 ## Status is a measurement
 
 ```
-$ python3 ../facet_gtk/tools/parity.py win32
+$ python3 tools/parity.py win32           # a shim onto the one measurement in facet_gtk/tools
 
-362 prop bits declared across facet's kind modules
-  gtk       358 / 362    98%
-  appkit    337 / 362    93%
-  win32     300 / 362    82%   <-- this package
+363 prop bits declared across facet's kind modules
+  gtk       359 / 363    98%
+  appkit    354 / 363    97%
+  win32     314 / 363    86%   <-- this package
 
  68 declared handlers
   gtk        68 / 68    100%
-  win32      59 / 68     86%   <-- this package
+  win32      62 / 68     91%   <-- this package
 
  21 shared-band bits
-  win32      15 / 21     71%   <-- this package
+  win32      19 / 21     90%   <-- this package
 
-Nothing unanswered is unrecorded: every gap is either built or argued in MANIFEST §1.
+2 unanswered and UNRECORDED: web.user_agent, canvas.redraw.
 ```
 
 That closing line is the number that matters more than the percentage. Every
-kind reads either `n/n` or `decided absent:` — there is no `not yet:` row.
+kind reads either `n/n` or `decided absent:` — there is no `not yet:` row, and
+the two names on it are the whole outstanding debt.
+
+**The tool itself was wrong until 2026-09-06, in four ways that all flattered
+the number** — among them, kinds a backend answered NOTHING for were left off
+the report entirely. The figures above are after the fix, which is why they are
+not the ones an older commit message quotes.
 
 **The band number went DOWN on 2026-09-01, and that is the point.** It read
 16/21 because `C_OPACITY`, `C_SHADOW` and `C_CLIP` were named in

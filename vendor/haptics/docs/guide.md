@@ -23,15 +23,15 @@ nothing.
 `Feel` names the *moment*. The three platforms describe haptics completely
 differently, and an app should not have to know which it is talking to.
 
-| `Feel` | iOS | macOS | Android |
-|---|---|---|---|
-| `Selection` | `UISelectionFeedbackGenerator` | `Alignment` | 10 ms |
-| `Light` | impact, style 0 | `LevelChange` | 20 ms |
-| `Medium` | impact, style 1 | `LevelChange` | 40 ms |
-| `Heavy` | impact, style 2 | `LevelChange` | 60 ms |
-| `Success` | notification, type 0 | `Generic` | 30 ms |
-| `Warning` | notification, type 1 | `Generic` | 120 ms |
-| `Error` | notification, type 2 | `Generic` | 30 ms |
+| `Feel` | iOS | macOS | Android | Windows (low/high motor, ms) |
+|---|---|---|---|---|
+| `Selection` | `UISelectionFeedbackGenerator` | `Alignment` | 10 ms | 0 / 9000, 12 |
+| `Light` | impact, style 0 | `LevelChange` | 20 ms | 0 / 16000, 18 |
+| `Medium` | impact, style 1 | `LevelChange` | 40 ms | 16000 / 24000, 28 |
+| `Heavy` | impact, style 2 | `LevelChange` | 60 ms | 40000 / 30000, 45 |
+| `Success` | notification, type 0 | `Generic` | 30 ms | 12000 / 26000, 40 |
+| `Warning` | notification, type 1 | `Generic` | 120 ms | 22000 / 30000, 60 |
+| `Error` | notification, type 2 | `Generic` | 30 ms | 46000 / 38000, 90 |
 
 **iOS is the platform the enum was shaped after**, so there the mapping is a
 lookup rather than a judgement.
@@ -47,6 +47,23 @@ ones, not to match any Android convention. Amplitude is left at
 `DEFAULT_AMPLITUDE` rather than inventing a number that means different things
 on different motors.
 
+**Windows has no haptics — it has a GAMEPAD.** There is no equivalent of the
+Taptic Engine, and a desktop has nothing to buzz; the one thing this package can
+reach is XInput rumble, which is a controller in two hands rather than a device
+under one finger. So the honest reading of `Feel` there is intensity plus
+duration across two motors: the LOW-frequency motor is a heavy rumble in the
+palm and the HIGH-frequency one is a lighter buzz, the closest thing a pad has
+to a tick — which is why `Selection` and `Light` use the high motor **alone**
+and set the low one to zero. Durations are short on purpose: these are UI taps,
+not game effects, and a rumble that outlasts the gesture that caused it reads as
+a fault in the pad.
+
+XInput is bound at RUNTIME (`XInput1_4` → `1_3` → `9_1_0`), so a machine without
+it answers `available() == false` and keeps running rather than failing to start
+— and `cpc`'s Windows link line stays clean for every program that never taps.
+With no controller connected, `available()` is false and `play` is a no-op,
+which is the common case on a desktop and not an error.
+
 ## `prepare`, and why the first tap is late
 
 The Taptic Engine idles. A tap played on a cold engine lands late enough to
@@ -54,8 +71,8 @@ feel disconnected from the touch that caused it — Apple's own guidance is to
 warm it when a gesture *begins* and play when it ends.
 
 That is what `prepare` is. It is **not required**: skipping it costs latency on
-the first tap and nothing else. macOS and Android have nothing to warm and do
-nothing.
+the first tap and nothing else. macOS, Android and Windows have nothing to warm
+and do nothing.
 
 The iOS backend keeps **one generator per family alive for the process** rather
 than building one per tap, because the warmth lives in the generator and a

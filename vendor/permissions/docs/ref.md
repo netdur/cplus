@@ -40,15 +40,23 @@ const LOCATION_ALWAYS: str        // "location.always"
 
 Platform coverage:
 
-| Name | macOS | iOS | Android |
-|---|---|---|---|
-| `CAMERA`, `MICROPHONE` | yes | yes | yes |
-| `PHOTOS_READ` | yes | yes, `Limited` possible | yes (API 33 media permission) |
-| `PHOTOS_ADD` | yes | yes | always `Granted` — MediaStore needs no permission |
-| `CONTACTS`, `CALENDAR` | yes | yes | yes |
-| `NOTIFICATIONS` | `Unsupported` — needs a signed bundle | yes, cached read | yes; below API 33 reads a setting, not a grant |
-| `LOCATION_WHEN_IN_USE` | not in this pass | not in this pass | yes; `Limited` when coarse-only |
-| `LOCATION_ALWAYS` | not in this pass | not in this pass | yes; `Denied` until foreground is held |
+| Name | macOS | iOS | Android | Windows |
+|---|---|---|---|---|
+| `CAMERA`, `MICROPHONE` | yes | yes | yes | `Unsupported` |
+| `PHOTOS_READ` | yes | yes, `Limited` possible | yes (API 33 media permission) | `Unsupported` |
+| `PHOTOS_ADD` | yes | yes | always `Granted` — MediaStore needs no permission | `Unsupported` |
+| `CONTACTS`, `CALENDAR` | yes | yes | yes | `Unsupported` |
+| `NOTIFICATIONS` | `Unsupported` — needs a signed bundle | yes, cached read | yes; below API 33 reads a setting, not a grant | **yes** — reads the `ToastEnabled` switch |
+| `LOCATION_WHEN_IN_USE` | not in this pass | not in this pass | yes; `Limited` when coarse-only | `Unsupported` |
+| `LOCATION_ALWAYS` | not in this pass | not in this pass | yes; `Denied` until foreground is held | `Unsupported` |
+
+**Windows answers `Unsupported`, never `Denied`**, for everything but
+notifications. A classic Win32 desktop process has no per-app authorization
+object to read — camera, mic and location are governed by *global* Settings
+toggles — and "the person said no" and "this build cannot ask" call for opposite
+responses. A backend that reported refusals would put a settings button on every
+screen. `open_settings` IS real there, and `NOTIFICATIONS` is real because its
+global switch is readable without WinRT; the guide has both.
 
 ---
 

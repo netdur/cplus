@@ -59,6 +59,30 @@ people who were never asked.
 responses. They are never collapsed — including in the failure paths, where it
 would be tempting.
 
+**Windows is the clearest case of why this matters.** A classic Win32 desktop
+process has no per-app authorization object to read at all: camera, microphone
+and location are governed by GLOBAL Settings toggles, and reading those without
+asking needs WinRT this pass does not pull in. So Windows answers `Unsupported`
+for those domains — never `Denied`. A build that reported refusals would show a
+"go to Settings" button on every screen for a permission that was never actually
+refused.
+
+Two things there are real, and they are not a contradiction:
+
+- **`open_settings`**, which is the difference from the Linux stub. Windows 10+
+  deep-links every privacy domain through the `ms-settings:` URI scheme, so
+  `ShellExecuteA` opens exactly the right pane.
+- **`NOTIFICATIONS`**, because its global toggle is readable without WinRT:
+  `HKCU\...\PushNotifications\ToastEnabled`. A desktop process may notify BY
+  DEFAULT — there is no consent prompt to have missed — so the honest map is
+  `Granted` unless the person flipped that switch, and then **`Blocked`** rather
+  than `Denied`: `request` has no dialog to show, the Settings pane is the only
+  remedy, and `Blocked` is the state whose remedy is `open_settings`.
+
+That last one is load-bearing rather than a nicety. The `notifications` package
+gates on this reply, and a state of `Unsupported` there would have kept every
+caller away from a backend that really works.
+
 ### Where `Limited` comes from
 
 | Platform | Source |
@@ -176,6 +200,12 @@ Three ways, all on Apple's side:
 On Android, `POST_NOTIFICATIONS` is API 33+. Below that the permission does not
 exist and the question is `NotificationManager.areNotificationsEnabled()` — a
 setting rather than a grant, so a refusal there is `Blocked`, not `Denied`.
+
+Windows lands in the same place by the same reasoning: `ToastEnabled` in the
+registry is a setting rather than a grant, so it reads `Granted` by default and
+`Blocked` when switched off, and `request` cannot prompt because there is no
+dialog. It is the ONLY domain this backend answers for real — see the
+`Unsupported` note above for why the others do not.
 
 ## Adding a domain Apple ships and this package does not
 

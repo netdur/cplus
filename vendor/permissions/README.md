@@ -76,6 +76,7 @@ has never heard of (`permissions::state(of: "android.permission.NFC")`).
 |---|---|---|
 | macOS, iOS | full | one file; notifications need a signed bundle, so macOS answers `Unsupported` for it |
 | Android | full, including location | one dialog per batch, a persisted "have asked" bit, an API 33 fork for notifications |
+| Windows | `NOTIFICATIONS` real, everything else `Unsupported`; **`open_settings` is real** | a desktop process has no per-app authorization object to read — see the guide |
 | Linux | `Unsupported` for everything | `xdg-desktop-portal` is parked, and it has no check-without-asking |
 
 ## Tests

@@ -39,20 +39,43 @@ per-frame delays rather than a fixed interval.
 `facet_runtime/runtime_windows.cplus` lands with it, so an application reaches
 this backend the ordinary way rather than by calling the package directly.
 
+**Native view adoption is answered** (2026-09-08). `adopt_native` /
+`adopt_native_with` are things facet declares, this file's rule covers them, and
+they were neither implemented nor argued here — they silently did nothing. They
+need no code on AppKit, because an NSView is an NSView; they need code here
+because an HWND that is not `WS_CHILD` is made *owned* rather than contained by
+`SetParent`, and the mount walk deliberately skips `create` for an adopted node,
+so the window never passes through the place that would have fixed it. See the
+README, and `camera`'s live preview for the worked example.
+
 Two probes under `playground/`, and the division is deliberate:
 `win32_probe` calls the backend directly and proves the SEAM;
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
+A third, `cam_facet`, is the adoption probe: a `camera.preview()` node in an
+ordinary facet column, checked with `PrintWindow`.
 
 ```
-362 declared prop bits     290 answered    80%   (gtk 358, appkit 336, uikit 323, android 321)
- 68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
- 21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
+363 declared prop bits     314 answered    86%   (gtk 359, appkit 354, uikit 329, android 326)
+ 68 declared handlers       62 fired       91%   (gtk  68, appkit  68, android  67, uikit  65)
+ 21 shared-band bits        19 named       90%   (appkit 20, gtk 19, android 19, win32 19, uikit 18)
 ```
-`python3 vendor/facet_gtk/tools/parity.py win32` prints it. Without the
+`python3 vendor/facet_win32/tools/parity.py win32` prints it — a shim onto the
+one measurement in `facet_gtk/tools`, not a fourth drifted copy. Without the
 argument it reports gtk; the per-kind table follows whichever backend is named,
 and every backend's totals are printed either way, so the columns are
 comparable. Run it before believing any adjective
 in this file.
+
+**These are not the numbers this file carried before 2026-09-06, and the
+package did not change that much in between — the TOOL was wrong, in four ways
+that all flattered whichever backend was being measured.** The worst: a kind a
+backend answered NOTHING for was left off the report entirely rather than
+counted as zero. Anything quoted from an older commit message is measured on
+the broken tool.
+
+**Two prop bits are unanswered AND unrecorded** — `web.user_agent` and
+`canvas.redraw`. They are the whole outstanding debt against this file's own
+rule, and they are named here so that the rule is not quietly bent.
 
 **THE THIRD NUMBER IS OUT OF PROPORTION TO THE FIRST TWO, and that is the
 architecture rather than an accident.** The shared band is answered ONCE, in

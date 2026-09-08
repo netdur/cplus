@@ -27,14 +27,28 @@ the test worth running.
 
 ## What each platform does
 
-| | Apple | Android |
-|---|---|---|
-| store | Keychain, `kSecClassGenericPassword` | AES-GCM, key in `AndroidKeyStore` |
-| where the ciphertext lives | the keychain itself | `SharedPreferences`, base64 |
-| key material | never in your process | never in your process |
-| namespace | `kSecAttrService` | the preferences file name |
-| needs a permission | no | no |
-| needs a manifest entry | no | no |
+| | Apple | Android | Windows |
+|---|---|---|---|
+| store | Keychain, `kSecClassGenericPassword` | AES-GCM, key in `AndroidKeyStore` | Credential Manager, `CredWriteW` |
+| where the ciphertext lives | the keychain itself | `SharedPreferences`, base64 | the credential store itself |
+| key material | never in your process | never in your process | never in your process |
+| namespace | `kSecAttrService` | the preferences file name | the target name, `cplus/<service>/<key>` |
+| needs a permission | no | no | no |
+| needs a manifest entry | no | no | no |
+
+**Windows protects a credential with the USER'S LOGON SECRET**, not with a key
+this package holds: a `CRED_TYPE_GENERIC` blob is encrypted under a DPAPI key
+derived from the account. That gives the property the other three have —
+another account on the same machine cannot read it. What it does NOT give is
+protection from code running *as that user*, which is equally true of the
+Keychain without an ACL and of `AndroidKeyStore` without user authentication.
+The section at the top of this guide is the honest statement of that for all
+four.
+
+Credentials are written `CRED_PERSIST_LOCAL_MACHINE`, so they stay on the
+machine that wrote them rather than roaming with the profile — a secret bound
+to one device is the safer default, and roaming is not something a caller can
+currently ask for.
 
 **macOS uses the LEGACY keychain**, not the data-protection one, and that was
 measured rather than chosen. `kSecUseDataProtectionKeychain` answers `-34018`
@@ -136,6 +150,13 @@ The platform round-trips live in probes, run on purpose:
 | macOS | `playground/securestoreprobe` | 19/19, cleans up after itself |
 | Android | `playground/ssprobe` on a device or emulator | 13/13, plus the `run-as` check below |
 | iOS | `vendor/securestore/tools/run_ios_tests.sh` | 18/18 on the simulator, cleans up after itself |
+| Windows | `cpc test` | round-trips through the real Credential Manager and deletes what it wrote |
+
+**Windows is the exception to the rule above**: there is no password prompt to
+be interrupted by — `CredWriteW` and `CredReadW` do not ask — so the suite uses
+the real store rather than avoiding it. It writes under its own service name
+and clears up, and you can see what it left with `cmdkey /list` if a run is
+ever cut short.
 
 The Android probe makes the assertion that matters from outside the process:
 the plaintext appears zero times in `shared_prefs/probe.xml`, and two keys

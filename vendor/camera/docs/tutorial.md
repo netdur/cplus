@@ -25,6 +25,10 @@ On Android, add the permission to your manifest:
 <uses-permission android:name="android.permission.CAMERA"/>
 ```
 
+Windows needs neither, and links nothing extra — Media Foundation and WIC are
+bound at runtime, so an application that imports this package still starts on a
+machine that has no camera stack at all.
+
 ## 2. Ask first
 
 `open` reports `Denied`; it does not prompt. Prompting is asynchronous, and
@@ -55,7 +59,7 @@ import "stdlib/result" as result;
 static SESSION: camera::Camera = #zero::[camera::Camera]();
 
 fn start() {
-    match camera::open(facing: camera::Facing::Back) {
+    match camera::open(camera::Request::new(facing: camera::Facing::Back)) {
         result::Result::Ok(c) => { SESSION = c; }
         result::Result::Err(why) => {
             // Unsupported = no camera here. Denied = ask. Busy = someone else has it.
@@ -65,7 +69,16 @@ fn start() {
 ```
 
 The match arms need no type arguments — `result::Result::Ok(c)` infers them
-from the call.
+from the call. Every field of `Request` defaults, so `camera::open()` takes the
+first camera at whatever format it settles on.
+
+**On Windows, `facing` is ignored** — the platform has no such concept. Name the
+camera you want instead, and a name that matches nothing is refused rather than
+substituted:
+
+```cplus
+camera::open(camera::Request::new(device: "HP Wide Vision HD Camera"))
+```
 
 `Camera` owns the session. When it drops, the session closes and the recording
 indicator goes out — so keep it somewhere that lives as long as the screen, not
@@ -95,7 +108,9 @@ fn got_photo(jpeg: u8[], ctx: *u8) {
     if jpeg.is_empty() { return; }       // the capture failed
     let n: usize = jpeg.count();
     let bytes: *u8 = { #slice_ptr(jpeg) };   // for handing to C
-    // JPEG, on the main thread, freed when this returns. Copy what you keep.
+    // JPEG, freed when this returns. Copy what you keep.
+    // On the main thread on Apple and Android; on Windows, the thread that
+    // called `capture` — see the guide.
 }
 ```
 
@@ -118,9 +133,17 @@ SESSION.close();          // idempotent; `drop` calls it too
 
 ## Running it
 
-`cpc test` in this package proves the portable half and opens nothing. To see
-the camera actually work, `playground/cameraprobe` opens the lens on a Mac,
-takes one photo and writes it to `/tmp/cameraprobe.jpg`.
+`cpc test` in this package proves the portable half. On Apple and Android it
+opens nothing; the Windows backend's tests do open the lens, deliberately, and
+the guide says why.
+
+To see the camera actually work:
+
+| target | probe | what it does |
+|---|---|---|
+| macOS | `playground/cameraprobe` | opens the lens, takes one photo to `/tmp/cameraprobe.jpg` |
+| Windows | `playground/cam_shot` | the same, to `shot.jpg`, through the facade |
+| Windows | `playground/cam_facet` | a live preview inside a real facet tree |
 
 Which targets can prove what is in [guide.md](guide.md) — the short version is
 that **the iOS simulator has no camera at all** and the Android emulator's are

@@ -12,8 +12,13 @@ Behaviour and reasoning are in [guide.md](guide.md).
 |---|---|
 | `Back` | away from the user |
 | `Front` | toward the user |
+| `External` | neither — a USB webcam, a plugged-in camera |
+| `Unspecified` | the platform will not say. Only ever comes OUT of `facing()`; requesting it is the same as `Back` |
 
-A desktop camera that reports no position satisfies both — see the guide.
+A desktop camera that reports no position satisfies both `Back` and `Front` —
+see the guide. **Windows has no concept of facing at all**: every camera answers
+every facing, `facing()` reports `External`, and a particular device is named
+through `Request::device`.
 
 ### `enum Outcome`
 
@@ -51,14 +56,16 @@ fn luma(this) -> u8[]       // the Y plane: stride * height bytes
 fn native(this) -> *u8      // the platform's own buffer, or 0
 ```
 
-**LUMA BY DEFAULT.** Both platforms deliver 4:2:0 planar YUV natively and the Y
-plane has an identical layout on each, so this needs no conversion anywhere. A
-session opened with `pixel: PixelFormat::Bgra32` delivers PACKED frames instead:
-`luma()` is empty and the image is `native()` — on Apple the `CVPixelBufferRef`
-itself. `is_empty()` is false for a packed frame; only a frame with neither a
-plane nor a native buffer is empty. See the guide.
+**LUMA BY DEFAULT.** Every platform delivers YUV natively with the Y plane
+first, so this needs no conversion anywhere. A session opened with
+`pixel: PixelFormat::Bgra32` delivers PACKED frames instead: `luma()` is empty
+and the image is `native()` — on Apple the `CVPixelBufferRef` itself.
+`is_empty()` is false for a packed frame; only a frame with neither a plane nor
+a native buffer is empty. See the guide.
 
-**`stride` is not `width`.** Rows are padded; index with `y * stride + x`.
+**`stride` is not `width`.** Rows are padded, and on Windows a YUY2 device makes
+`stride` exactly `width * 2` because luma sits at every other byte. Index with
+`y * stride + x`.
 
 ## Free functions
 
@@ -75,10 +82,25 @@ fn has(facing: Facing) -> bool
 Whether a camera faces this way. Needs no permission.
 
 ```cplus
-fn open(facing: Facing = Facing::Back) -> result::Result[Camera, Outcome]
+fn open(request: Request = Request::new()) -> result::Result[Camera, Outcome]
 ```
 
-Open a session. Synchronous. Does not prompt — reports `Denied`.
+Open a session. Synchronous. Does not prompt — reports `Denied`. Everything a
+session can be asked for rides on `Request`, whose fields all default:
+
+```cplus
+fn Request::new(device: str = "", facing: Facing = Facing::Back,
+                frames: Size = Size::any(), frame_rate: i32 = 0,
+                pixel: PixelFormat = PixelFormat::Any,
+                color: ColorSpace = ColorSpace::Any,
+                hdr: Wish = Wish::Auto, stabilization: Wish = Wish::Auto,
+                depth: Wish = Wish::Auto, high_speed: Wish = Wish::Auto,
+                buffers: i32 = 0) -> Request
+```
+
+`device` names one camera. A name that matches nothing is REFUSED with
+`Unsupported` rather than falling back to the first — handing back a different
+camera than the one asked for is the lie this package exists to avoid.
 
 ## `Camera`
 
@@ -102,10 +124,14 @@ fn capture(this, on_photo: fn(u8[], *u8), on_photo_ctx: *u8 = 0 as *u8) -> Outco
 
 Request one still. `Ok` means the request was accepted, not that a photo exists.
 
-`on_photo(jpeg, ctx)` runs on the MAIN THREAD. The slice is valid only for the
-duration of the call — copy what you keep. Reach the bytes with `jpeg.count()`
-and `#slice_ptr(jpeg)`. A failed capture calls back with an EMPTY slice rather
-than not calling back.
+`on_photo(jpeg, ctx)` runs on the MAIN THREAD on Apple and Android. **On Windows
+it does not hop**: with no frame stream open it runs on the caller's own thread
+before `capture` returns, and with one open it runs on the reader thread. See
+the guide.
+
+The slice is valid only for the duration of the call — copy what you keep. Reach
+the bytes with `jpeg.count()` and `#slice_ptr(jpeg)`. A failed capture calls back
+with an EMPTY slice rather than not calling back.
 
 The context is LAST, which is the shape that can receive a bound method
 (`capture(on_photo: this.got_photo, on_photo_ctx: #addr_of(this))`); a
@@ -122,6 +148,10 @@ fn stop_frames(this) -> Outcome
 Start and stop live frame delivery. `on_frame` is a STANDING request: the camera
 opens asynchronously, so arming it immediately after `open` is fine and it takes
 effect when the device is ready.
+
+`stop_frames` ends delivery to YOUR handler. On Windows a live `preview()` is a
+second consumer of the same reader, and `stop_frames` will not blank it; `close`
+ends both.
 
 `on_frame(frame, ctx)` runs **on a background thread** — the opposite of
 `capture`, and the single most important thing on this page. It must not touch a
@@ -154,12 +184,23 @@ None on the public surface.
 
 ## Platform notes
 
-| | macOS | iOS | iOS simulator | Android |
-|---|---|---|---|---|
-| `count` / `has` | yes | yes | always 0 / false | yes |
-| `open` | yes | yes | `Unsupported` | yes |
-| `preview` | layer-hosting NSView | UIView, `+layerClass` | — | `TextureView` |
-| `capture` | yes | yes | — | yes |
+| | macOS | iOS | iOS simulator | Android | Windows |
+|---|---|---|---|---|---|
+| `count` / `has` | yes | yes | always 0 / false | yes | yes; `has` ignores facing |
+| `open` | yes | yes | `Unsupported` | yes | yes, by `Request::device` |
+| `preview` | layer-hosting NSView | UIView, `+layerClass` | — | `TextureView` | an adopted HWND |
+| `capture` | yes | yes | — | yes | yes, WIC-encoded |
+| `facing` / `switch_to` | yes | yes | — | yes | **`Unsupported`** |
+| `set_exposure` / `set_white_balance` | yes | yes | — | yes | if the device says so |
+| `set_focus` / `set_zoom` | yes | yes | — | yes | if the device says so — most webcams do not |
+| `set_torch` / `has_torch` | yes | yes | — | yes | **no; there is no lamp property to query** |
+| `Mode::Once` | yes | yes | — | yes | **`Unsupported` — no one-shot exists** |
 
 Requires `NSCameraUsageDescription` in the bundle on Apple and
-`android.permission.CAMERA` in the manifest on Android.
+`android.permission.CAMERA` in the manifest on Android. Windows needs neither a
+manifest entry nor a permission, and links nothing extra: Media Foundation, WIC
+and gdi32 are all bound at runtime.
+
+Every "if the device says so" row is a real query, not a platform assumption —
+the backend calls `GetRange` and reports what the hardware answered, so the same
+code returns `Ok` on a camera that has the control. See the guide.

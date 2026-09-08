@@ -1,6 +1,7 @@
 # fswatch
 
-macOS filesystem watching with typed, owner-thread change events.
+Filesystem watching with typed, owner-thread change events. macOS, Linux and
+Windows.
 
 ```toml
 [dependencies]
@@ -39,7 +40,8 @@ the watcher thread. For a loop you drive yourself, use the low-level
 
 ## Scope
 
-- macOS first, backed by `kqueue` vnode notifications;
+- three backends behind one seam — `kqueue` vnode notifications on macOS,
+  `inotify` on Linux, `ReadDirectoryChangesW` on Windows;
 - individual file or directory roots;
 - shallow immediate-child or recursive nested snapshots;
 - glob ignores with ignored-directory pruning;
@@ -76,7 +78,14 @@ cd vendor/fswatch
 ../../target/debug/cpc test
 ```
 
-The package tests exercise real `kqueue` notifications in temporary paths.
+The package tests exercise the real platform notifications in temporary paths.
 The imported stdlib currently has an unrelated sandbox-sensitive TCP bind test;
 the fswatch-specific tests are listed under `src::fswatch` and
 `src::test_main`.
+
+**One behaviour genuinely differs on Windows**: `LastWriteTime` advances about
+every 13ms, so two writes of the same number of bytes inside one tick are
+indistinguishable to a snapshot differ. macOS and Linux stamp from a
+high-resolution clock and do not collide. `Watcher::run` polls every 50ms, so a
+caller is past the tick by construction — it is a program writing twice with
+nothing in between that lands inside one. The guide has the measurement.

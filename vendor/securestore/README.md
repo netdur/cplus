@@ -1,7 +1,8 @@
 # securestore
 
 Small secrets at rest, under the platform's own key material: the Keychain on
-Apple, an `AndroidKeyStore`-held AES key on Android.
+Apple, an `AndroidKeyStore`-held AES key on Android, the Credential Manager on
+Windows.
 
 ```toml
 [dependencies]

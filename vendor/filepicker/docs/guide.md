@@ -46,10 +46,18 @@ that a picker should not make silently.
 | macOS | `setAllowedFileTypes:`, which takes exactly these strings |
 | Android | mapped to **one** MIME type; anything unrecognised becomes `*/*` |
 | iOS | **ignored** — the picker is opened for `public.item` |
+| Windows | **ignored** — not wired yet; see below |
 
 iOS wants `UTType` objects, and building one from three letters is a guess for
 anything unusual. Filtering wrongly hides a person's own files from them, which
 is worse than not filtering — so the iOS backend does not pretend.
+
+**Windows ignores it for a different reason: it is simply not built yet.** This
+is a gap, not a judgement. `lpstrFilter` on `OPENFILENAMEW` wants a
+double-NUL-terminated pair-list ("Images\0*.png;*.jpg\0\0"), which is a
+straightforward transform of the `types` string onto a working picker — it just
+has not been done. Until it is, the dialog shows every file, which errs the same
+way iOS does: showing too much rather than hiding a person's own files.
 
 ## `save` does not exist on iOS
 

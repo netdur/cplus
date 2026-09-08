@@ -35,9 +35,9 @@ including on cancel.
 
 ## Coverage
 
-| | macOS | iOS | Android |
-|---|---|---|---|
-| `open` | ✅ | ✅ | ✅ |
-| `save` | ✅ | ❌ | ✅ |
-| `types` | ✅ | ignored | one MIME family |
-| real path | ✅ | ✅ | ❌ `content://` |
+| | macOS | iOS | Android | Windows |
+|---|---|---|---|---|
+| `open` | ✅ | ✅ | ✅ | ✅ |
+| `save` | ✅ | ❌ | ✅ | ✅ |
+| `types` | ✅ | ignored | one MIME family | **not wired yet** |
+| real path | ✅ | ✅ | ❌ `content://` | ✅ |

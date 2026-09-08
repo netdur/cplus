@@ -80,6 +80,63 @@ snapshot and registration.
 
 ## Current platform scope
 
-The backend currently describes Darwin ABI layouts and constants. Linux
-`inotify` and Windows `ReadDirectoryChangesW` backends are planned as platform
-overrides; they are not silently emulated with timestamp polling.
+Three backends behind one seam, each a platform override of `backend.cplus`:
+`kqueue` vnode notifications on macOS, `inotify` on Linux, and
+`ReadDirectoryChangesW` on Windows. None is emulated with timestamp polling.
+
+The seam is `queue_open` / `watch_path` / `poll_one`, and it survives the three
+shapes because the handle it carries is only ever an opaque `i32` — an
+`O_EVTONLY` fd on kqueue, a watch descriptor on inotify, a table index on
+Windows. Nothing outside a backend interprets it.
+
+**Windows has no queue**, which is the one place the seam had to be synthesised
+rather than mapped. `ReadDirectoryChangesW` is issued PER DIRECTORY HANDLE and
+its result arrives through an `OVERLAPPED` with an event to wait on, so the
+backend keeps a table of watch slots tagged with a queue id and `poll_one` walks
+the slots asking each event whether it is signalled, with a zero timeout.
+
+Events are a WAKEUP, not a payload, on all three. `poll_one` never reports what
+changed, because the engine above is a snapshot differ that rescans and
+compares. On Windows that means the `FILE_NOTIFY_INFORMATION` records are read
+and discarded — the buffer exists only because the call requires one — and a
+buffer overflow is therefore not a correctness problem: the rescan finds
+everything regardless.
+
+### Windows: mtime is coarse, and that bounds what can be seen
+
+The engine tells one version of a file from another by (inode, size, mtime).
+Windows stamps `LastWriteTime` from the system clock, which advances about every
+13ms — the FILETIME has 100ns UNITS but nothing like 100ns RESOLUTION — so two
+writes of the same size inside one tick produce three identical fields and are
+indistinguishable. Measured, rewriting a 1-byte file with no gap:
+
+```
+before  size=1 mtime=1788879411.288213800
+after   size=1 mtime=1788879411.288213800   <- the same, byte for byte
+with a 1ms gap: .289201200 -> .302375600    <- one tick apart
+```
+
+macOS and Linux stamp from a high-resolution clock and do not collide, so this
+is the one place the three backends differ in what they can *report* rather than
+in how they report it.
+
+It is not papered over, because the tempting fix is worse than the gap: a
+backend that emitted a change whenever the OS woke it, without the engine
+finding one, would report a Modified for every unrelated write in the same
+directory. Real sub-tick fidelity means either keeping the notify records and
+telling the engine WHICH path changed, or reading the NTFS USN
+(`FSCTL_READ_FILE_USN_DATA`, a number that moves on every change) as a
+tie-breaker alongside mtime. Both widen the backend contract, which is why
+neither is done.
+
+In practice a caller is past the tick by construction — `Watcher::run` polls
+every 50ms. It is a program writing twice in a row with nothing in between that
+lands inside one.
+
+### Windows: a file root is watched through its directory
+
+`ReadDirectoryChangesW` takes a DIRECTORY handle, so watching a single file
+means watching its parent and filtering. Several file roots in one directory
+therefore collapse to one registration, deduplicated by directory identity
+(volume serial number plus file index) rather than by path string — two
+different spellings of the same directory are the same watch.

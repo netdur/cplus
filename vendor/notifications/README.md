@@ -80,6 +80,7 @@ if o == notifications::Outcome::NotPermitted {
 | iOS | yes | `UNUserNotificationCenter`; needs a bundle |
 | macOS | yes | same file as iOS; needs a bundle, and the demo shows why |
 | Android | yes | channels, `NotificationManager`; deferred does **not** survive process death |
+| Windows | yes | `Shell_NotifyIconW` balloons — real toasts on Win10/11, no bundle or AUMID needed. Deferred does **not** survive process death. **No action buttons** |
 | Linux | `Unsupported` | parked — the D-Bus spec has no scheduling concept |
 
 **Not here:** push tokens (an entitlement and a provisioning profile on Apple,

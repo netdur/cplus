@@ -1,7 +1,7 @@
 # camera
 
-The device's cameras: enumerate, preview, capture a still. macOS, iOS and
-Android from one import.
+The device's cameras: enumerate, preview, capture a still. macOS, iOS, Android
+and Windows from one import.
 
 ```toml
 [dependencies]
@@ -12,7 +12,7 @@ camera = "*"
 import "camera/camera" as camera;
 import "stdlib/result" as result;
 
-match camera::open(facing: camera::Facing::Back) {
+match camera::open(camera::Request::new(facing: camera::Facing::Back)) {
     result::Result::Ok(cam) => {
         b.add(cam.preview(key: "live").grow(1.0));   // an ordinary facet node
         let _ = cam.capture(on_photo: got_photo);
@@ -22,9 +22,14 @@ match camera::open(facing: camera::Facing::Back) {
 
 fn got_photo(jpeg: u8[], ctx: *u8) {
     if jpeg.is_empty() { return; }        // the capture failed
-    // JPEG bytes, on the main thread, borrowed for this call only.
+    // JPEG bytes, borrowed for this call only. On the main thread everywhere
+    // except Windows — see the guide.
 }
 ```
+
+`Facing` is an Apple and Android idea. **Windows reports no facing at all**, so
+name the camera you want in `Request::device` there and read `Facing::External`
+back from every device.
 
 `Camera` owns the session — when it drops, the device is released and the
 recording light goes out, so keep it somewhere that lives as long as the screen.
@@ -39,5 +44,6 @@ permissions::request(permissions::CAMERA, on_answer, ctx);
 - [guide](docs/guide.md) — what each platform does, and the traps
 - [ref](docs/ref.md) — signatures
 
-Tests: `cd vendor/camera && cpc test`. They open nothing — the platform
-round-trips live in probes, run on purpose. See the guide.
+Tests: `cd vendor/camera && cpc test`. On Apple and Android they open nothing —
+the platform round-trips live in probes, run on purpose. **The Windows suite
+does open the lens**, deliberately and for a reason the guide gives.

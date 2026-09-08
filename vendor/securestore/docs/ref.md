@@ -116,4 +116,5 @@ independent secret sets and one should be clearable without the other.
 | macOS | Keychain, legacy (file) keychain | verified, 19/19 |
 | Android | AES-GCM under an `AndroidKeyStore` key, ciphertext in `SharedPreferences` | verified, 13/13 |
 | iOS | Keychain, data-protection | verified, 18/18 |
-| Linux, Windows | none | every verb answers `Unsupported` |
+| Windows | Credential Manager, `CredWriteW` / `CredReadW` | verified, round-trip tested |
+| Linux | none | every verb answers `Unsupported` |

@@ -40,12 +40,12 @@ would be a lie.
 
 ## Coverage
 
-| | macOS | iOS | Android |
-|---|---|---|---|
-| `open` | ✅ | ✅ | ✅ |
-| `save` | ✅ | ❌ no such picker | ✅ `CREATE_DOCUMENT` |
-| `types` filter | ✅ extensions | ❌ ignored | ✅ one MIME family |
-| `path` is a real path | ✅ | ✅ | ❌ `content://` URI |
+| | macOS | iOS | Android | Windows |
+|---|---|---|---|---|
+| `open` | ✅ | ✅ | ✅ | ✅ `GetOpenFileNameW` |
+| `save` | ✅ | ❌ no such picker | ✅ `CREATE_DOCUMENT` | ✅ `GetSaveFileNameW` |
+| `types` filter | ✅ extensions | ❌ ignored | ✅ one MIME family | ❌ **not wired yet** — every file shown |
+| `path` is a real path | ✅ | ✅ | ❌ `content://` URI | ✅ |
 
 - [tutorial](docs/tutorial.md) · [guide](docs/guide.md) · [ref](docs/ref.md)
 

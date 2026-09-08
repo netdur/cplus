@@ -38,10 +38,13 @@ one. An app should be spelling neither.
 
 ## Coverage
 
-| | macOS | iOS | Android |
-|---|---|---|---|
-| plays | Force Touch trackpad only, 3 patterns | ✅ 1:1 | ✅ durations |
-| `prepare` | no-op | ✅ warms the Taptic Engine | no-op |
+| | macOS | iOS | Android | Windows |
+|---|---|---|---|---|
+| plays | Force Touch trackpad only, 3 patterns | ✅ 1:1 | ✅ durations | ✅ XInput gamepad rumble |
+| `prepare` | no-op | ✅ warms the Taptic Engine | no-op | no-op |
+
+Windows taps a **gamepad**, not the machine — a desktop has nothing to buzz, so
+`available()` is false with no controller connected.
 
 - [tutorial](docs/tutorial.md) · [guide](docs/guide.md) · [ref](docs/ref.md)
 

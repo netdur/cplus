@@ -179,19 +179,41 @@ version, about twenty lines.
 Notifications is the one Apple domain gated on the prompt alone — there is no
 `NSNotificationsUsageDescription` to forget, unlike camera or contacts.
 
+**Windows needs no bundle, and that is the reason this backend uses balloons.**
+`Shell_NotifyIconW` with `NIF_INFO` posts from any process, and on Windows 10
+and 11 the shell renders those as real toasts in the notification centre — the
+same surface a WinRT toast lands on. The WinRT road would give buttons and
+pictures, but it requires an AppUserModelID registered in the registry, which is
+an install-time artifact a `cpc build` executable does not have. That is the
+same shape as the Apple bundle problem, and balloons are the road with no
+install step.
+
+The permission state is read from
+`HKCU\...\PushNotifications\ToastEnabled` — `Granted` when it is absent or 1,
+`Blocked` when it is 0. It is never `Unsupported`, because there is always a
+notification centre here.
+
 ## Buttons, and where they are declared
 
-Both platforms have action buttons and neither declares them the same way, which
-is why this is a verb rather than a field:
+Apple and Android both have action buttons and neither declares them the same
+way, which is why this is a verb rather than a field:
 
-| | Apple | Android |
-|---|---|---|
-| Where declared | a `UNNotificationCategory` set on the centre **up front** | `addAction` per notification |
-| A notification | names the category | carries the actions |
-| Registered late | shows **no buttons, no error** | works fine |
+| | Apple | Android | Windows |
+|---|---|---|---|
+| Where declared | a `UNNotificationCategory` set on the centre **up front** | `addAction` per notification | — |
+| A notification | names the category | carries the actions | — |
+| Registered late | shows **no buttons, no error** | works fine | — |
 
 So register at startup and one call order works on both. That is the single
 ordering rule this package cannot paper over.
+
+**Windows shows no buttons at all**, and the degradation is deliberately the one
+Apple already has for a category registered late: the notification posts, the
+text is right, and the buttons are simply absent. A `Shell_NotifyIconW` balloon
+has nowhere to put them. The road to buttons there is the WinRT toast stack —
+`ToastNotificationManager` and an AppUserModelID registered in the registry —
+which is a different pipeline with a real install-time cost, and it is not
+walked for a feature nothing has asked for yet.
 
 ```cplus
 notifications::register_action("mail", "reply", "Reply");
@@ -257,6 +279,7 @@ version of this guide said macOS had nothing, which was wrong.
 | Android | yes | `sticky: true` — per notification |
 | **macOS** | **yes** | `NSUserNotificationAlertStyle` = `alert` in your Info.plist — **app-wide** |
 | iOS | no | always dismissible; interruption levels and Live Activities answer different questions |
+| Windows | no | a balloon fades on its own; the shell owns the timing |
 
 macOS's is a plist key rather than an API, and it applies to every notification
 your app posts. That asymmetry is why `sticky` stays a one-platform field
@@ -302,7 +325,7 @@ foreground service, and the shade implements that as a directional gesture. So
 notification to truly persist needs a foreground service, which is a different
 feature and not this package's.
 
-## Deferred delivery on Android
+## Deferred delivery on Android and Windows
 
 **A scheduled notification does not survive the process being killed.** This is
 the one place the platforms genuinely differ in what they promise.
@@ -313,12 +336,21 @@ aimed at a `BroadcastReceiver`, and a receiver has to be declared in the *app's*
 `AndroidManifest.xml` and merged into its `classes.dex` — the same arrangement
 `FacetActivity` has, one package further out.
 
-That is not built. A deferred notification here rides facet's own scheduler, so
+That is not built. A deferred notification there rides facet's own scheduler, so
 it fires while the app is running and is lost if the process dies first.
 `schedule` reports `Ok` either way, because the schedule *was* accepted.
 
+**Windows has the same limitation and no way out of it on this road.** A
+deferred notification lives in a table in the process and a thread sleeps until
+its moment, so it fires only while the process lives. Nothing on classic Win32
+will take the problem: the Task Scheduler is an installed artifact, not a call.
+`pending` answers from that table, `cancel` marks the entry dead and the timer's
+wake finds nothing to fire, and a STAMP per entry makes replacement correct —
+scheduling the same id again bumps the stamp, so the superseded timer wakes,
+sees a stamp it does not recognise, and walks away.
+
 If your app needs a reminder that survives a swipe-away, this package does not
-give you one yet.
+give you one yet on either platform.
 
 ## What `pending` actually answers
 
@@ -341,6 +373,13 @@ On Android they happen to be the same call (`NotificationManager.cancelAll`,
 plus this package's own timer list for the first). The facade keeps them apart
 because Apple's centre distinguishes pending from delivered, and collapsing them
 would lose that.
+
+On Windows `clear_shown` exploits a coupling in the useful direction. The shell
+requires balloons to come from a tray icon, and deleting that icon removes its
+notifications from the notification centre — so delete-and-re-add *is* "clear
+what was shown". The tray icon is the cost of the whole approach: the first
+notification adds one, named after the executable and hidden in the overflow by
+default, and an `atexit` hook removes it.
 
 ## Taps, and why a cold one is the hard case
 
