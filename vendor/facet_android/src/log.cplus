@@ -1,3 +1,5 @@
+import "stdlib/io" as io;
+
 // Logging, and why it is not `io::eprintln`.
 //
 // facet_uikit's MANIFEST says every unbuilt kind "warns once on stderr". On
@@ -23,3 +25,58 @@ fn info(text: *u8) {
     return;
 }
 
+
+
+// ---- the door stdlib offers ---------------------------------------------
+//
+// `io::println` and `io::eprintln` write to fd 1 and 2, and on Android those
+// are /dev/null — the same fact this file's header states, applied to the
+// channel every OTHER package prints through. Measured on a Fold 2026-09-09:
+// an app printing every two seconds put nothing in logcat over a whole run,
+// and `android:debuggable="true"` does not change it. So facet_android hands
+// stdlib the platform's channel and every `println` in every package starts
+// arriving.
+//
+// TAG `cplus`, not `facet`: `warn`/`info` above are this BACKEND talking, and
+// an application's own output is a different thing to filter for.
+//
+//     adb logcat -s cplus
+//
+// A STACK BUFFER, not a static one. `__android_log_write` takes a C string and
+// the text arrives as (ptr, len) with no terminator, so it has to be copied —
+// and a shared static would interleave the moment two threads printed at once,
+// which is exactly what a frame handler and the UI thread do. 1KB of stack per
+// call keeps `#[no_alloc]`'s promise: this touches no heap.
+//
+// LONG LINES ARE CHUNKED rather than truncated. A dropped tail is a lie the
+// reader cannot see.
+const _SINK_MAX: usize = 1000 as usize;
+
+fn sink(stream: i32, p: *u8, n: usize) {
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let prio: i32 = if stream == (2 as i32) { prio_error() } else { prio_info() };
+    if n == (0 as usize) {
+        buf[0 as usize] = 0 as u8;
+        let _e: i32 = { android_log_write(prio, #str_ptr("cplus\0"), #addr_of(buf[0])) };
+        return;
+    }
+    var off: usize = 0 as usize;
+    while off < n {
+        var k: usize = n -% off;
+        if k > _SINK_MAX { k = _SINK_MAX; }
+        var i: usize = 0 as usize;
+        while i < k {
+            buf[i] = { *({ p + (off +% i) }) };
+            i = i +% (1 as usize);
+        }
+        buf[k] = 0 as u8;
+        let _w: i32 = { android_log_write(prio, #str_ptr("cplus\0"), #addr_of(buf[0])) };
+        off = off +% k;
+    }
+    return;
+}
+
+fn prio_error() -> i32 { return 6 as i32; }
+
+fn install_sink() { io::set_sink(sink); return; }
+fn uninstall_sink() { io::set_sink(0 as fn(i32, *u8, usize)); return; }

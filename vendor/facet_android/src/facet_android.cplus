@@ -19,6 +19,7 @@ import "facet/app_events" as ev;
 import "stdlib/text" as text;
 import "facet/services" as services;
 import "facet/theme" as theme;
+import "./log" as log;
 import "./views" as views;
 import "./scheduler" as scheduler;
 import "./controls" as controls;
@@ -56,6 +57,10 @@ fn install() {
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
     theme::set_is_dark_fn(window::is_dark);
+    // AND WHERE `println` GOES. stdout and stderr are /dev/null on this
+    // platform, so without this every `io::println` in every package — and
+    // every probe written to be read — prints into nothing. See log.cplus.
+    log::install_sink();
     return;
 }
 
@@ -65,6 +70,7 @@ fn uninstall() {
     mount::uninstall();
     services::uninstall_scheduler();
     theme::set_is_dark_fn(0 as fn() -> bool);
+    log::uninstall_sink();
     INSTALLED = false;
     return;
 }
