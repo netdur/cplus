@@ -1,0 +1,162 @@
+// terminal/backend — the Windows half, which is honest about not having a
+// widget yet.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS, and so the 25 screen-model tests
+// can run here at all. `widget.cplus` is the portable facade and names this
+// module as its backend; without a `_windows` sibling the build falls back to
+// `backend.cplus` — the AppKit half — and stops at `import "objc/runtime"`,
+// which is not available on this platform. That single import is what kept the
+// WHOLE package off Windows, screen model included, and the model is 1700 lines
+// of grid arithmetic that never touches a native view.
+//
+// WHAT IS MISSING IS THE WIDGET, and it is a real piece of work rather than a
+// shim: `backend.cplus` is ~950 lines of NSView subclass, a dispatch read
+// source, attributed-string rendering, a cursor layer, key handling and a focus
+// model. The Win32 shape of it is an owner-drawn window with a GDI text grid,
+// a `WM_TIMER` or a reader thread posting to the UI thread, and the same key
+// mapping `input.cplus` already does for facet's controls — facet_win32-sized,
+// which is why it is not being half-built here.
+//
+// AND THE OTHER HALF IS ALREADY GONE ANYWAY: a widget drives a shell through
+// `pty.cplus`, whose Windows sibling refuses for its own reason (Windows has no
+// `forkpty` — the road is ConPTY, see `pty_windows.cplus`). A terminal WIDGET
+// with nothing to talk to would be a window drawing an empty grid. The two land
+// together or not at all.
+//
+// So `supported()` answers false and `start` answers `None`, which is the same
+// shape `backend.cplus` itself answers when `forkpty` fails — the facade and
+// every caller already handle it, because a macOS build can reach it too.
+//
+// The methods below are still DEFINED rather than omitted: `widget.cplus` calls
+// every one of them through `Widget`, so the type has to carry the whole
+// surface for the facade to compile. They are unreachable — a `Widget` can only
+// be obtained from `start`, and `start` never returns one.
+
+import "./terminal" as terminal;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+// A stand-in for the AppKit widget's state. It holds nothing because nothing
+// can construct it: `start` is the only door and it never opens.
+struct Widget {
+    _unused: i32,
+}
+
+// No Win32 terminal widget yet — see the header. Answered as a VERB rather than
+// as a constant so a future backend flips one line.
+fn supported() -> bool { return false; }
+
+// The AppKit half releases the retained NSView here. There is no view to
+// release, and the facade hands this to `facet::adopt_native` unconditionally,
+// so it has to exist and has to be safe to call.
+fn release_view(view: *u8) { return; }
+
+fn start(
+    shell: str = "/bin/zsh",
+    cwd: str = "",
+    max_scrollback: usize = 1048576 as usize,
+    font_size: f64 = 13.0f64,
+    save_history: bool = false,
+) -> option::Option[Widget] {
+    return option::Option[Widget]::None;
+}
+
+impl Widget {
+    fn native_handle(this) -> *u8 { return 0 as *u8; }
+    fn send(this, bytes: str) { return; }
+    fn focus(this) -> bool { return false; }
+    fn has_focus(this) -> bool { return false; }
+    fn text(this) -> text::Text { return text::new(); }
+    fn is_running(this) -> bool { return false; }
+    fn stop(this) { return; }
+
+    // 0 is the facade's documented "not sent", which is exactly the truth here.
+    fn run(this, command: str) -> u64 { return 0 as u64; }
+    fn interrupt(this) { return; }
+    fn clear(this) { return; }
+
+    fn has_integration(this) -> bool { return false; }
+    fn command_state(this) -> terminal::CommandState { return terminal::CommandState::Idle; }
+    fn command_id(this) -> u64 { return 0 as u64; }
+    fn command_line(this) -> text::Text { return text::new(); }
+
+    // `None` is "still running, or nothing has run" — and nothing has run.
+    fn exit_code(this) -> option::Option[i32] { return option::Option[i32]::None; }
+    fn finished_count(this) -> u64 { return 0 as u64; }
+    fn output(this) -> text::Text { return text::new(); }
+    fn cwd(this) -> text::Text { return text::new(); }
+    fn title(this) -> text::Text { return text::new(); }
+    fn alternate_screen(this) -> bool { return false; }
+
+    // The handler is DROPPED, not stored and never called. There is no session
+    // to end and no shell to exit, so a stored handler would be a promise this
+    // platform cannot keep.
+    fn on_command_end(this, handler: fn(*u8), ctx: *u8 = 0 as *u8) { return; }
+    fn on_exit(this, handler: fn(*u8), ctx: *u8 = 0 as *u8) { return; }
+    fn shell_exit_code(this) -> option::Option[i32] { return option::Option[i32]::None; }
+}
+
+// ---- tests -------------------------------------------------------------------
+// The platform half only, which here is the refusal itself. The screen model is
+// exercised next to the facade, on every platform, which is the whole point of
+// this file existing.
+
+#[test]
+fn the_windows_backend_says_it_has_no_widget() {
+    // NOT a widget that draws nothing: `supported` is false and `start` answers
+    // `None`, so a caller takes the branch it already has for a macOS build
+    // whose `forkpty` failed. A stub that answered `Some` would put an empty
+    // grid on screen and look like a broken terminal rather than an absent one.
+    assert supported() == false;
+    assert match start("cmd.exe") {
+        option::Option[Widget]::Some(_w) => false,
+        option::Option[Widget]::None => true,
+    };
+}
+
+#[test]
+fn every_default_is_the_shape_the_facade_documents() {
+    // A `Widget` is unreachable through `start`, so this builds one directly to
+    // pin the surface `widget.cplus` compiles against — every method it calls
+    // has to exist with the right type, and the answers have to be the ones the
+    // facade's own comments promise for an idle terminal.
+    let w: Widget = Widget { _unused: 0 as i32 };
+    assert w.is_running() == false;
+    assert w.has_focus() == false;
+    assert w.focus() == false;
+    assert w.has_integration() == false;
+    assert w.alternate_screen() == false;
+    // 0 is the documented "not sent" for `run`, and the counters agree with it.
+    assert w.run("echo hi") == (0 as u64);
+    assert w.command_id() == (0 as u64);
+    assert w.finished_count() == (0 as u64);
+    assert w.native_handle() == (0 as *u8);
+    // `None` is "nothing has finished", never `Some(0)` — a caller reading a
+    // zero exit code would believe a command had succeeded.
+    assert match w.exit_code() {
+        option::Option[i32]::Some(_c) => false,
+        option::Option[i32]::None => true,
+    };
+    assert match w.shell_exit_code() {
+        option::Option[i32]::Some(_c) => false,
+        option::Option[i32]::None => true,
+    };
+}
+
+#[test]
+fn the_text_surfaces_are_empty_rather_than_absent() {
+    let w: Widget = Widget { _unused: 0 as i32 };
+    assert { w.text() }.count() == (0 as usize);
+    assert { w.output() }.count() == (0 as usize);
+    assert { w.cwd() }.count() == (0 as usize);
+    assert { w.command_line() }.count() == (0 as usize);
+    assert { w.title() }.count() == (0 as usize);
+}
+
+#[test]
+fn releasing_a_view_this_platform_never_made_is_safe() {
+    // The facade hands this to `facet::adopt_native` unconditionally, so it is
+    // called with whatever a node carries — including the null this backend's
+    // `native_handle` answers.
+    release_view(0 as *u8);
+}

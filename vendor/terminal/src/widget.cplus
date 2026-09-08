@@ -4,8 +4,16 @@
 // keeps the platform session alive; node() returns a portable facet native
 // escape-hatch node. A future backend keeps this surface and replaces only the
 // platform implementation selected underneath it.
+//
+// THAT FUTURE BACKEND IS NOW HOW THIS RESOLVES. The import below said
+// `./appkit`, which named one platform in the one module whose whole job is not
+// to — so there was nowhere for a second implementation to go, and the package
+// did not build off macOS at all. It is `./backend` now, and the resolver picks
+// `backend_windows.cplus` on Windows the same way it picks `pty_windows.cplus`
+// beside `pty.cplus`. The AppKit implementation is unchanged; it is simply
+// spelled as what it is to this file.
 
-import "./appkit" as backend;
+import "./backend" as backend;
 import "./terminal" as terminal;
 import "stdlib/option" as option;
 import "stdlib/text" as text;

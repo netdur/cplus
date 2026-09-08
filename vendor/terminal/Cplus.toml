@@ -3,15 +3,35 @@ name    = "terminal"
 version = "0.0.1"
 edition = "2026"
 
-# Portable terminal-facing API with a macOS implementation today:
-# - terminal/terminal: bounded, ANSI-aware transcript model
-# - terminal/pty:      pseudo-terminal session (Darwin forkpty backend)
-# - terminal/appkit:   live AppKit widget
+# Portable terminal-facing API:
+# - terminal/terminal: bounded, ANSI-aware transcript model — PORTABLE, and the
+#                      bulk of the package
+# - terminal/pty:      pseudo-terminal session (POSIX forkpty; the Windows
+#                      sibling refuses — ConPTY is the road, see the file)
+# - terminal/backend:  the live widget (AppKit today; the Windows sibling
+#                      refuses, and says what building one costs)
+# - terminal/widget:   the facet-facing facade applications use
+#
+# THE APPLE PACKAGES ARE NOT TOP-LEVEL, and that is what kept this package off
+# every other platform. A top-level dependency splices its `[link]` entry on
+# EVERY target, so a Windows build was handed `-framework AppKit` and stopped at
+# the linker even once the imports were sorted out — the same trap
+# `vendor/inspector` was in. Only `backend.cplus` reaches them, and it only
+# compiles on macOS.
 
 [dependencies]
-stdlib     = "*"
+stdlib      = "*"
+flex_layout = "*"
+facet       = "*"
+
+[macos.dependencies]
 objc       = "*"
 appkit     = "*"
 quartzcore = "*"
-flex_layout = "*"
-facet       = "*"
+
+# The resolver validates every import in a build against ONE flat set taken from
+# the consuming manifest, and facet's runtime facade reaches its backend on
+# whatever platform it is built for.
+[windows.dependencies]
+facet_win32 = "*"
+win32       = "*"

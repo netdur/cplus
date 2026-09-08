@@ -34,6 +34,7 @@
 // exec takes the vector directly, it stays async-signal-safe in the child, and
 // the live tests above keep working as the oracle.
 
+import "./terminal" as terminal;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/env" as env;
@@ -528,4 +529,401 @@ impl Session {
     fn drop(ref this) {
         this.close();
     }
+}
+
+// ---- tests -------------------------------------------------------------------
+//
+// THE PSEUDO-TERMINAL'S OWN HALF, moved here from `test_main.cplus`.
+//
+// Every one of these starts a real shell through `forkpty` and reads what it
+// says, so they can only run where that call exists — which is exactly this
+// file, and is why they belong beside it rather than in a test root every
+// platform compiles. Leaving them there is what made the ROOT import `objc` and
+// `appkit`, and a root that does cannot be built anywhere else: the screen
+// model's 25 tests, which need neither, were unreachable off macOS for the sake
+// of the ones below.
+//
+// The Windows sibling (`pty_windows.cplus`) shadows this whole file, tests
+// included, and asserts the refusal it answers instead.
+
+
+extern fn usleep(us: u32) -> i32;
+
+// ---- the pseudo-terminal ----------------------------------------------------
+
+fn read_all(ref sess: Session, ref s: terminal::Screen, tries: i32) {
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var n: i32 = 0 as i32;
+    while n < tries {
+        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+            ReadResult::Data(k) => {
+                s.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) });
+            }
+            ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+            ReadResult::Closed => { break; }
+            ReadResult::Failed => { break; }
+        }
+        n = n +% (1 as i32);
+    }
+}
+
+// Wait for the shell's first prompt mark. A fixed iteration count is NOT good
+// enough: the user's real rc files are sourced before the first prompt (a conda
+// init alone runs into hundreds of milliseconds), so the budget has to be
+// generous and the exit condition has to be the thing being waited for. A fixed
+// count made the first test in this file fail only when later tests were also
+// compiled in, which reads as anything but a timeout.
+fn read_until_prompt(ref sess: Session, ref s: terminal::Screen) {
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var n: i32 = 0 as i32;
+    while n < (2000 as i32) {
+        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+            ReadResult::Data(k) => {
+                s.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) });
+            }
+            ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+            ReadResult::Closed => { break; }
+            ReadResult::Failed => { break; }
+        }
+        if s.has_integration() { break; }
+        n = n +% (1 as i32);
+    }
+}
+
+fn read_until_finished(ref sess: Session, ref s: terminal::Screen, count: u64) {
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var n: i32 = 0 as i32;
+    while n < (2000 as i32) {
+        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+            ReadResult::Data(k) => {
+                s.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) });
+            }
+            ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+            ReadResult::Closed => { break; }
+            ReadResult::Failed => { break; }
+        }
+        if s.finished_count() >= count { break; }
+        n = n +% (1 as i32);
+    }
+}
+
+// This used to assert all three layers at once — the pty, the widget backend
+// and the facade — from the test root, which is one of the things that made the
+// root reach for `objc`. Each layer answers for itself now: the widget's half is
+// in `backend.cplus`, and both Windows siblings assert the opposite.
+#[test]
+fn the_posix_pty_backend_is_present() {
+    assert supported();
+}
+
+#[test]
+fn pty_starts_the_child_in_the_requested_cwd() {
+    // The cwd argument had NO coverage, and it was the broken path: `start`
+    // parked the directory in an Option and matched it twice, so the CString was
+    // moved out and freed before forkpty and the child then chdir'd through a
+    // dangling pointer. A real round trip is the only honest check. Uses /usr
+    // because /tmp is a symlink and getcwd would resolve it to /private/tmp.
+    match start(shell: "/bin/sh", cwd: "/usr") {
+        option::Option[Session]::Some(s) => {
+            var sess: Session = s;
+            let _w: isize = sess.write("pwd\n");
+            var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+            var tries: i32 = 0 as i32;
+            while tries < (400 as i32) {
+                read_all(sess, screen, 1 as i32);
+                if screen.view().contains("/usr") { break; }
+                tries = tries +% (1 as i32);
+            }
+            assert screen.view().contains("/usr");
+        }
+        option::Option[Session]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_live_zsh_reports_command_marks_and_exit_codes() {
+    // The whole command API rests on this: the shell, not the terminal, is what
+    // knows a command started and how it ended.
+    var sess: Session = match start(shell: "/bin/zsh") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    assert screen.has_integration();
+    assert screen.command_state() == terminal::CommandState::Idle;
+
+    // A subshell, so the status is reported without the login shell exiting —
+    // which would take the prompt that carries the report with it.
+    let _w: isize = sess.write("(exit 3)\n");
+    read_until_finished(sess, screen, 1 as u64);
+    assert screen.finished_count() >= (1 as u64);
+    assert screen.exit_code() == (3 as i32);
+    // `$1` rather than zsh's normalised `$2`, so this is what was typed.
+    assert screen.command_line() == "(exit 3)";
+    sess.close();
+}
+
+#[test]
+fn a_live_zsh_reports_its_working_directory() {
+    var sess: Session = match start(shell: "/bin/zsh", cwd: "/usr") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    assert screen.cwd() == "/usr";
+    sess.close();
+}
+
+#[test]
+fn a_live_command_captures_exactly_its_own_output() {
+    // End to end against a real shell: no prompt, no echo of the command, and
+    // none of zsh's partial-line marker.
+    var sess: Session = match start(shell: "/bin/zsh") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("printf 'one\\ntwo\\n'\n");
+    read_until_finished(sess, screen, 1 as u64);
+    let out: text::Text = screen.output();
+    assert out.equals("one\ntwo\n");
+    assert screen.exit_code() == (0 as i32);
+    sess.close();
+}
+
+// Poll until `probe` shows up on the screen, or the budget runs out. Returns
+// what the screen held either way, so a failed assert shows the real thing.
+fn read_until_screen_has(ref sess: Session, ref s: terminal::Screen, probe: str) -> bool {
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var n: i32 = 0 as i32;
+    while n < (2000 as i32) {
+        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+            ReadResult::Data(k) => {
+                s.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) });
+            }
+            ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+            ReadResult::Closed => { break; }
+            ReadResult::Failed => { break; }
+        }
+        if s.view().contains(probe) { return true; }
+        n = n +% (1 as i32);
+    }
+    return false;
+}
+
+#[test]
+fn a_live_clear_actually_empties_the_pane() {
+    // The first half of the bug report. `clear` sends `ESC[H ESC[2J ESC[3J`,
+    // every one of which the old model stripped, so the command scrolled the
+    // screen by one line and changed nothing else.
+    var sess: Session = match start(shell: "/bin/zsh") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+
+    // Enough output to push rows off a 24-row screen and into scrollback, so
+    // that blanking the visible grid is NOT enough to pass this: `clear` has to
+    // drop the history too, which is the `ESC[3J` half.
+    let _w1: isize = sess.write("printf 'BEFORE_CLEAR\\n'; for i in $(seq 1 60); do printf 'filler %d\\n' $i; done\n");
+    assert read_until_screen_has(sess, screen, "filler 60");
+    assert screen.scrollback().contains("BEFORE_CLEAR");
+
+    let _w2: isize = sess.write("clear\n");
+    var n: i32 = 0 as i32;
+    var gone: bool = false;
+    while n < (2000 as i32) {
+        read_all(sess, screen, 1 as i32);
+        if !screen.view().contains("BEFORE_CLEAR") { gone = true; break; }
+        n = n +% (1 as i32);
+    }
+    assert gone;
+    // Scrollback went with it — `ESC[3J` is the half that empties the pane
+    // rather than merely blanking the visible rows.
+    assert screen.scrollback() == "";
+    sess.close();
+}
+
+#[test]
+fn a_live_top_takes_the_alternate_screen_and_gives_it_back() {
+    // The other half of the report. `top` is the demanding case: it takes the
+    // alternate screen, sets a scroll region, and repaints with absolute
+    // addressing — so with no screen to address, every repaint appended and
+    // quitting left the wreckage behind.
+    var sess: Session = match start(shell: "/bin/zsh") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+
+    let _w1: isize = sess.write("printf 'BEFORE_TOP\\n'\n");
+    assert read_until_screen_has(sess, screen, "BEFORE_TOP");
+
+    let _w2: isize = sess.write("top\n");
+    assert read_until_screen_has(sess, screen, "Processes:");
+    assert screen.alternate_screen();
+    // The alternate screen is exactly the screen: what is underneath is parked,
+    // not shown, and repaints overwrite rather than accumulate.
+    assert screen.view().contains("BEFORE_TOP") == false;
+    var lines: usize = (1 as usize) +% screen.view().to_text().count_of("\n");
+    assert lines <= (24 as usize);
+
+    // Let it repaint several times. Appending would show up as growth; a screen
+    // stays the same height.
+    var reps: i32 = 0 as i32;
+    while reps < (60 as i32) {
+        read_all(sess, screen, 1 as i32);
+        reps = reps +% (1 as i32);
+    }
+    assert screen.alternate_screen();
+    var after: usize = (1 as usize) +% screen.view().to_text().count_of("\n");
+    assert after <= (24 as usize);
+
+    let _w3: isize = sess.write("q");
+    var n: i32 = 0 as i32;
+    var back: bool = false;
+    while n < (2000 as i32) {
+        read_all(sess, screen, 1 as i32);
+        if !screen.alternate_screen() { back = true; break; }
+        n = n +% (1 as i32);
+    }
+    assert back;
+    // Quitting hands the screen back with what was underneath intact.
+    assert screen.view().contains("BEFORE_TOP");
+    sess.close();
+}
+
+#[test]
+fn pty_does_not_persist_shell_history_by_default() {
+    // An app's terminal pane must not write the user's GLOBAL history: what is
+    // typed in iris is iris's business, and macOS keeps only SAVEHIST=1000
+    // entries, so a chatty pane evicts the commands the user actually wants.
+    //
+    // Asking the live shell is the only honest check. Exporting HISTFILE looks
+    // like it works and does not: /etc/zshrc reassigns it unconditionally AFTER
+    // our environment is in place.
+    var sess: Session = match start(shell: "/bin/zsh") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("print -r -- \"HF=[$HISTFILE] SH=[$SAVEHIST]\"\n");
+    read_until_finished(sess, screen, 1 as u64);
+    let out: text::Text = screen.output();
+    assert out.equals("HF=[] SH=[0]\n");
+    sess.close();
+}
+
+#[test]
+fn pty_save_history_true_leaves_the_shell_alone() {
+    // The opt-in must actually opt in, or the default is untestable. The trap
+    // here is caused by the shim itself: /etc/zshrc derives HISTFILE from
+    // ZDOTDIR, which is ours, so without the repair this quietly moved the
+    // user's history into a temp directory.
+    var sess: Session = match start(shell: "/bin/zsh", save_history: true) {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("print -r -- \"HF=[$HISTFILE]\"\n");
+    read_until_finished(sess, screen, 1 as u64);
+    let out: text::Text = screen.output();
+    assert out.contains(".zsh_history");
+    assert out.contains("cplus-terminal-rc") == false;
+    assert out.contains("HF=[]") == false;
+    sess.close();
+}
+
+#[test]
+fn pty_history_opt_out_keeps_the_users_shell_intact() {
+    // The opt-out works by pointing ZDOTDIR at generated rc files, so the risk
+    // it carries is the opposite of the bug: a shell that no longer loads the
+    // user's setup. The shim sources the real dotfiles, so anything they export
+    // must still be there — HOME is the one every environment has.
+    var sess: Session = match start(shell: "/bin/zsh") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("print -r -- \"RC=[$HOME] ZD=[$CPLUS_TERM_HOME]\"\n");
+    read_until_finished(sess, screen, 1 as u64);
+    let out: text::Text = screen.output();
+    assert out.contains("RC=[/");                // a real absolute HOME
+    assert out.contains("ZD=[/");                // shim knows the real root
+    assert out.contains("RC=[]") == false;
+    sess.close();
+}
+
+#[test]
+fn opening_a_second_pane_does_not_recurse_the_shim() {
+    // `setenv` is process-wide, so by the second `start()` the live ZDOTDIR is
+    // already the shim. Deriving the shim's source root from the environment
+    // therefore pointed the generated rc files at THEMSELVES, and each one
+    // sourced itself until zsh bailed out with "job table full or recursion
+    // limit exceeded" — leaving a shell with none of the user's setup. Opening a
+    // second terminal pane was the whole repro, which no single-session test
+    // could ever see.
+    var first: Session = match start(shell: "/bin/zsh") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var s1: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(first, s1);
+    let _w1: isize = first.write("print -r -- \"ONE=[$HISTFILE]\"\n");
+    read_until_finished(first, s1, 1 as u64);
+    let o1: text::Text = s1.output();
+    assert o1.contains("ONE=[]");
+    first.close();
+
+    var second: Session = match start(shell: "/bin/zsh") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var s2: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(second, s2);
+    let _w2: isize = second.write("print -r -- \"TWO=[$HISTFILE] HOME=[$HOME]\"\n");
+    read_until_finished(second, s2, 1 as u64);
+    let o2: text::Text = s2.output();
+    assert s2.view().contains("recursion") == false;
+    assert o2.contains("TWO=[]");
+    assert o2.contains("HOME=[/");
+    second.close();
+}
+
+#[test]
+fn the_shell_exit_status_comes_back() {
+    var sess: Session = match start(shell: "/bin/zsh") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new();
+    read_until_prompt(sess, screen);
+    assert !sess.has_exited();
+
+    let _w: isize = sess.write("exit 7\n");
+    var tries: i32 = 0 as i32;
+    while tries < (600 as i32) {
+        read_all(sess, screen, 2 as i32);
+        if sess.has_exited() { break; }
+        tries = tries +% (1 as i32);
+    }
+    assert match sess.poll_exit() {
+        option::Option[i32]::Some(c) => c == (7 as i32),
+        option::Option[i32]::None => false,
+    };
+    // waitpid hands a status over exactly once, so the answer has to survive
+    // teardown reaping it a second time.
+    sess.close();
+    assert match sess.poll_exit() {
+        option::Option[i32]::Some(c) => c == (7 as i32),
+        option::Option[i32]::None => false,
+    };
 }
