@@ -48,6 +48,52 @@ this file's problem and became `NOT_A_VERB` in `tools/parity.py`. The band is
 20 bits now, not 21. `C_HANDLERS` used to be a third and was WRONG — see its
 struck-through row.
 
+### TWO TOOLS, and the claim above is the LOOSER one's
+
+Added 2026-09-08. Everything above is measured by `tools/parity.py`, which
+counts a prop implemented when this package **names its bit**. That is an
+UPPER BOUND and its own docstring says so.
+
+`tools/verb_coverage.py gtk` is the exact measure — it requires the bit
+**gated** AND the field **read** — and it does not agree:
+
+    351  live         gated on the dirty bit; a later write lands
+      5  gated, unread  the mask names the bit and the body never reads it
+      7  absent       neither implemented nor decided
+      2  never fire   a handler neither wired nor decided
+
+**The five GATED BUT UNREAD are the expensive kind**, and they are the reason
+this section exists: the code LOOKS finished. A mask names the bit, the body
+gates on it, and no line ever reads the field. It is the same shape as
+`symbol.icon`, which scored live for the life of the module while
+`symbol(icons::home)` drew nothing.
+
+    carousel.item_sizing
+    carousel.remaining_threshold
+    carousel.scroll_anchor
+    carousel.scroll_to
+    list.has_uneven_rows
+
+The seven ABSENT: `carousel.bounces`, `carousel.is_scrolling`,
+`context_menu_item.is_destructive`, `icon_button.is_opaque`,
+`image.is_opaque`, `search_field.return_key`, `text_field.return_key`. Two of
+them — the `is_opaque` pair — facet_appkit records as dispositions rather than
+debt, so they may be the same answer here.
+
+The two dead handlers: `carousel.on_remaining_items_threshold_reached` and
+`carousel.observe_scrolled`.
+
+**FILED, NOT FIXED, deliberately.** AppKit is the priority backend and a
+non-AppKit defect stays recorded until that changes. What this section buys is
+that they are recorded BY NAME rather than hidden behind a 98% that counts a
+promise as a payment.
+
+Closing them needs the six fenced LEDGER blocks facet_appkit's MANIFEST
+carries — `cannot-ledger`, `no-carrier`, `host-rendered`, `create-only`,
+`derived`, `modifier`, and now `by-architecture`. This file has none, which is
+why `verb_coverage.py` reports every non-live verb here as debt: §1's prose
+says the same things and no tool can read it.
+
 **EVERY DECLARED PROP IS NOW EITHER IMPLEMENTED OR RECORDED,** and the tool
 enforces it rather than the prose claiming it: `parity.py` reads §1 for the
 names it argues about, so an unanswered verb that is not in either place is
