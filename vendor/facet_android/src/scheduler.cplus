@@ -191,7 +191,21 @@ fn post_in(seconds: f64, work: fn(*u8), ctx: *u8) -> u64 {
         return 0 as u64;
     }
     let post: jni::jobject = dex::new_with_token(env, dex::post_class(), { token as i64 });
-    var host: w::View = paint::wrap(e::host());
+    // BUILT WITH **THIS THREAD'S** ENV, not `paint::wrap`'s.
+    //
+    // `paint::wrap` is `View::from_global(e::env(), v)` — the cached MAIN env —
+    // and a `View` carries that env into every call it makes. So attaching an
+    // env here and then handing the call to `paint::wrap` used the main
+    // thread's env from a worker, which is undefined and which CheckJNI aborts
+    // on outright:
+    //
+    //   JNI DETECTED ERROR IN APPLICATION: thread "cplus-camera"
+    //   using JNIEnv* from thread "main"
+    //
+    // Measured on a Fold. `from_global` only stores the pair, and
+    // `unwrap_keep` below stops the wrapper's `drop` from deleting the host's
+    // global ref, so this borrows the host exactly as `paint::wrap` did.
+    var host: w::View = w::View::from_global(env, e::host());
     host.post_delayed(post, { (seconds * 1000.0f64) as i64 });
     paint::unwrap_keep(host);
     env.delete_local_ref(post);
