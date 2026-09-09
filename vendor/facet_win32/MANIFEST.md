@@ -161,6 +161,12 @@ popup.text_align               as popup.title
 popup.item_enabled             a combo box has no per-item enabled state — §1
 carousel.bounces               §1 `carousel.bounces`
 symbol.fill                    `fill` is an axis on the VARIABLE Material Symbols font; the bundled face is the static Outlined instance and GDI has no variable-axis support — that is DirectWrite
+hybrid_web.on_raw_message_received   the whole kind is decided absent — §1 `hybrid_web`
+hybrid_web.on_web_resource_requested as hybrid_web.on_raw_message_received
+hybrid_web.on_web_view_initialized   as hybrid_web.on_raw_message_received
+hybrid_web.on_web_view_initializing  as hybrid_web.on_raw_message_received
+time_picker.on_opened                a SysDateTimePick32 sends no open/close notification; the calendar is a popup the control owns — §1
+time_picker.on_closed                as time_picker.on_opened
 toolbar_item.icon              the strip is built, the glyph is not — §1
 toolbar_item.is_destructive    §1; a sibling swipe item reads the same base field, which is not this control implementing it
 menu_item.is_destructive       a menu item does not own its pixels — §1

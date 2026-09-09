@@ -3451,6 +3451,14 @@ fn show_page(v: *u8, n: *core::Node, p: *props::CarouselProps, at: i64,
     if ph != props::no_handler { ph(v, { (*p).on_position_changed_ctx }); }
     let ih: fn(*u8, *u8) = { (*p).on_current_item_changed };
     if ih != props::no_handler { ih(v, { (*p).on_current_item_changed_ctx }); }
+    // AND THE ITEMS-VIEW OBSERVER, which is a different question again: the two
+    // above say WHICH page, this one says THAT it moved. It lives on the
+    // embedded `ItemsViewProps` rather than on the carousel, which is why it
+    // was missed — `recycler::fire_scrolled` answers it for a list and a
+    // collection and never sees this kind, because a carousel is not a
+    // recycler here. It paged, it knew, and it said nothing.
+    let sh: fn(*u8, *u8) = { (*p).items_view.observe_scrolled };
+    if sh != props::no_handler { sh(v, { (*p).items_view.observe_scrolled_ctx }); }
     fire_carousel_threshold(v, n, p, want, count);
     return;
 }
