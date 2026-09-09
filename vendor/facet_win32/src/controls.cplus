@@ -2216,6 +2216,37 @@ fn draw_bordered(v: *u8, n: *core::Node, hdc: *u8) {
 //
 // The viewport and its document already exist (`create_scroll`); this is the
 // half that makes them move.
+// WHICH AXES THIS NODE ACTUALLY SCROLLS. `axis` is the node's own answer and it
+// OVERRULES the bar props: a scroll declared `Vertical` has no horizontal bar
+// however `horizontal_scroll_bars` is set, because a bar on an axis that does
+// not move is a control that lies about what it will do.
+//
+// THE MASK ALREADY PROMISED THIS AND THE BODY DID NOT READ IT. `P_AXIS` has
+// been in the gate below since the control was written, so setting `axis`
+// marked the node dirty, ran this body, and changed nothing — the defect
+// `verb_coverage.py` calls GATED BUT UNREAD, where the code looks finished.
+// facet_gtk answers it with the same pair of helpers, and they must agree with
+// the document's size for the same reason it records: half the nested-scroll
+// answer is the policy, the other half is having nothing to scroll on the axis
+// that was declined.
+fn scrolls_vertically(p: *props::ScrollProps) -> bool {
+    return match { (*p).axis } {
+        vocab::ScrollAxis::Both => true,
+        vocab::ScrollAxis::Vertical => true,
+        vocab::ScrollAxis::Horizontal => false,
+        vocab::ScrollAxis::Neither => false,
+    };
+}
+
+fn scrolls_horizontally(p: *props::ScrollProps) -> bool {
+    return match { (*p).axis } {
+        vocab::ScrollAxis::Both => true,
+        vocab::ScrollAxis::Horizontal => true,
+        vocab::ScrollAxis::Vertical => false,
+        vocab::ScrollAxis::Neither => false,
+    };
+}
+
 fn apply_scroll_props(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
     if p == (0 as *props::ScrollProps) { return; }
@@ -2223,8 +2254,12 @@ fn apply_scroll_props(v: *u8, n: *core::Node, dirty: u64) {
                  | scroll::P_AXIS)) != (0 as u64) {
         var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
         style = style & ~(sys::ws_vscroll() | sys::ws_hscroll());
-        if bars_shown({ (*p).vertical_scroll_bars }) { style = style | sys::ws_vscroll(); }
-        if bars_shown({ (*p).horizontal_scroll_bars }) { style = style | sys::ws_hscroll(); }
+        if scrolls_vertically(p) && bars_shown({ (*p).vertical_scroll_bars }) {
+            style = style | sys::ws_vscroll();
+        }
+        if scrolls_horizontally(p) && bars_shown({ (*p).horizontal_scroll_bars }) {
+            style = style | sys::ws_hscroll();
+        }
         let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
         // The window was dressed for the appearance at CREATION, when it had
         // no scroll bar; dressed again now that it has one.
@@ -2500,7 +2535,19 @@ fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
             set_window_text(v, { (*p).name }.clone());
         }
     }
-    if (dirty & (symbol::P_SIZE | symbol::P_FONT | symbol::P_FILL)) != (0 as u64) {
+    // `symbol::P_FILL` IS NOT IN THIS GATE, and its absence is the point.
+    //
+    // `fill` is 0 outline .. 1 filled, an axis on the VARIABLE Material Symbols
+    // font. The face bundled here is `Material Symbols Outlined` — a static
+    // instance — and GDI has no variable-font axis support at any entry point;
+    // that is DirectWrite. So there is nothing a repaint could do differently,
+    // and gating on the bit would repaint on every step of a fill animation to
+    // draw the identical glyph.
+    //
+    // It USED TO BE in this gate, which is worse than leaving it out: the mask
+    // promised the verb, `verb_coverage.py` scored it answered, and the code
+    // read finished while `fill` did nothing. Recorded in §0's cannot-ledger.
+    if (dirty & (symbol::P_SIZE | symbol::P_FONT)) != (0 as u64) {
         // The size and family ride the FONT, which `fonts::apply` sets from the
         // same props — this is what asks for it again.
         let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };

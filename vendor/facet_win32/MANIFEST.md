@@ -160,6 +160,7 @@ popup.text_color               as popup.title
 popup.text_align               as popup.title
 popup.item_enabled             a combo box has no per-item enabled state — §1
 carousel.bounces               §1 `carousel.bounces`
+symbol.fill                    `fill` is an axis on the VARIABLE Material Symbols font; the bundled face is the static Outlined instance and GDI has no variable-axis support — that is DirectWrite
 toolbar_item.icon              the strip is built, the glyph is not — §1
 toolbar_item.is_destructive    §1; a sibling swipe item reads the same base field, which is not this control implementing it
 menu_item.is_destructive       a menu item does not own its pixels — §1
