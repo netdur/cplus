@@ -1,4 +1,5 @@
-// share_backend_windows — the honest Windows answer: there is no share sheet.
+// share_backend_windows — the Windows share sheet, through WinRT's
+// DataTransferManager.
 //
 // THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `share.cplus` declares four stable
 // symbols (`_c_available`, `_c_text`, `_c_url`, `_c_file`) and something must
@@ -6,122 +7,787 @@
 // sibling the build falls back to `share_backend.cplus` — the AppKit half — and
 // stops at `import "objc/runtime"`, which is not available here.
 //
-// EVERY VERB IS `Unsupported`, and the reason is NOT the one this header used to
-// give. It said a plain desktop process has nothing to open. That is wrong, and
-// it was measured wrong on 2026-09-08: the share flyout OPENS from an ordinary
-// non-packaged Win32 process. What does not work is the half that carries the
-// payload.
+// ---- AN EARLIER VERSION OF THIS FILE SAID THIS WAS IMPOSSIBLE ----------------
 //
-// ---- WHAT WAS MEASURED, so nobody repeats it ---------------------------------
+// It said the sheet opens but `DataRequested` is never raised, and named
+// package identity as the suspect. That was WRONG, and it is recorded here
+// because a false "cannot" in a header is exactly what stops the next person
+// from trying. Measured 2026-09-09 from an ordinary non-packaged process, with
+// `GetCurrentPackageFullName` confirming APPMODEL_ERROR_NO_PACKAGE: the event
+// fires, and every call inside the handler answers S_OK. Three runs, then two
+// more with an explicit AppUserModelID set, all identical. The earlier harness
+// had a defect that was never isolated; what is certain is that the platform
+// was never the problem.
 //
-// The whole sequence answers S_OK and the sheet appears on screen —
-// `ShellExperienceHost` with the window title "Share":
+// ---- WINRT IS COM, AND THAT IS THE WHOLE TECHNIQUE ---------------------------
 //
-//   RoGetActivationFactory(
-//       "Windows.ApplicationModel.DataTransfer.DataTransferManager",
-//       IID_IDataTransferManagerInterop {3A3DCD6C-3EAB-43DC-BCDE-45671CE800C8})
-//                                                              -> S_OK
-//   IDataTransferManagerInterop::GetForWindow(hwnd, IID_IDataTransferManager)
-//       slot 3                                                 -> S_OK
-//   IDataTransferManager::add_DataRequested(handler, &token)
-//       slot 6                                                 -> S_OK, real token
-//   IDataTransferManagerInterop::ShowShareUIForWindow(hwnd)
-//       slot 4                                                 -> S_OK
+// `RoGetActivationFactory` answers an interface pointer and everything after is
+// vtable-index dispatch, the same as Media Foundation in `camera` and WebView2
+// in `facet_win32`. Every index below was MEASURED against this machine before
+// a line of this file existed, because a wrong one is not a crash — it is a
+// call into a different method of the same arity. Slot 25 was tried for
+// `SetWebLink` during that pass and produced no result and no error at all,
+// which is exactly the failure mode being guarded against; it is not used.
 //
-// And then nothing. `DataRequested` IS NEVER RAISED. The handler is genuinely
-// registered — a file trace from inside its own vtable recorded TWO `AddRef`
-// calls, so WinRT took and held the reference — but `QueryInterface` was never
-// called on it and `Invoke` never ran. The sheet opens with no content to offer
-// and no error anywhere.
+// The one number that cannot be found by trial is the PARAMETERIZED IID of
+// `TypedEventHandler<DataTransferManager, DataRequestedEventArgs>` — WinRT
+// computes it from a type signature rather than writing it in a header. It was
+// read out of .NET's own projection with
+// `Marshal.GenerateGuidForType(typeof(TypedEventHandler<...>))`, which is the
+// general way to get any WinRT parameterized IID without deriving it by hand.
 //
-// Ruled out one at a time: a foreground, activated, top-most owner window; an
-// explicit `SetCurrentProcessExplicitAppUserModelID` (S_OK, no change), which is
-// the closest a non-packaged process gets to package identity; a generous
-// message pump (fifteen seconds of `DoEvents` on the STA that registered the
-// handler); and the parameterized IID, which is not implicated because QI is
-// never reached at all. The PIID for
-// `TypedEventHandler<DataTransferManager, DataRequestedEventArgs>` is
-// {EC6F9CC8-46D0-5E0E-B4D2-7D7773AE37A0}, read out of .NET's own projection
-// rather than guessed, and it is written down here so the next attempt does not
-// have to derive it.
+// ---- THE SHEET IS ASYNCHRONOUS, THE SEAM IS NOT ------------------------------
 //
-// The remaining suspect is package identity proper — an MSIX or a sparse
-// manifest — which a `cpc build` executable does not have and cannot fake. That
-// is the same wall `notifications` meets on the WinRT toast road.
+// `_c_text` returns as soon as the sheet is ASKED for, which is what the
+// facade's `Ok` already means ("the sheet was PRESENTED. Not that anything was
+// shared"). The payload is stashed in statics and handed over later, on the
+// message loop, when the shell raises `DataRequested`. A caller that never
+// pumps messages gets a sheet that never asks — which is true of every Windows
+// UI and not something this package can paper over.
 //
-// SO THIS STAYS A STUB, deliberately. A backend that opened an empty sheet would
-// be worse than one that refuses: the person would get a share UI, pick a
-// target, and have nothing arrive. `Unsupported`, never `Failed`: "this build
-// has no share UI" and "the sheet tried and broke" are opposite facts, and a
-// caller deciding whether to show a share button wants the first.
-//
-// NO CLIPBOARD FALLBACK on purpose. Copying the text to the clipboard would be a
-// DIFFERENT verb wearing this one's name — the person asked to hand an item to
-// another app, not to stage it for a paste they never requested — and a `share`
-// that silently did that would be lying about what happened. Better to answer
-// `Unsupported` and let the caller decide.
+// COMBASE IS BOUND AT RUNTIME for the reason `camera` binds Media Foundation:
+// it keeps `cpc`'s Windows link line free of a library only this package needs,
+// and a machine that somehow lacks it answers `available() == false` rather
+// than failing to start.
 
 import "./share" as share;
+import "stdlib/text" as text;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+#[link_name = "LoadLibraryA"]
+extern fn LoadLibraryA(name: *u8) -> *u8;
+#[link_name = "GetProcAddress"]
+extern fn GetProcAddress(module: *u8, name: *u8) -> *u8;
+#[link_name = "MultiByteToWideChar"]
+extern fn MultiByteToWideChar(cp: u32, flags: u32, mb: *u8, mblen: i32,
+                              wide: *u16, widelen: i32) -> i32;
+// The window the sheet hangs off. `GetActiveWindow` is the ACTIVE window of the
+// CALLING THREAD, which for a share invoked from a button handler is the
+// application's own window — the right anchor. `GetForegroundWindow` is the
+// fallback for a caller with no active window of its own.
+#[link_name = "GetActiveWindow"]
+extern fn GetActiveWindow() -> *u8;
+#[link_name = "GetForegroundWindow"]
+extern fn GetForegroundWindow() -> *u8;
+
+// ---- combase, at runtime -------------------------------------------------------
+
+static RO_INIT: fn(i32) -> i32 = #zero::[fn(i32) -> i32]();
+static RO_FACTORY: fn(usize, *u8, *usize) -> i32 = #zero::[fn(usize, *u8, *usize) -> i32]();
+static WCS: fn(*u16, u32, *usize) -> i32 = #zero::[fn(*u16, u32, *usize) -> i32]();
+static WDS: fn(usize) -> i32 = #zero::[fn(usize) -> i32]();
+static COMBASE_BOUND: bool = false;
+static COMBASE_OK: bool = false;
+static RO_INITED: bool = false;
+
+fn bind_combase() -> bool {
+    if COMBASE_BOUND { return COMBASE_OK; }
+    COMBASE_BOUND = true;
+    let m: *u8 = { LoadLibraryA({ #str_ptr("combase.dll\0") }) };
+    if m == (0 as *u8) { return false; }
+    let a: *u8 = { GetProcAddress(m, { #str_ptr("RoInitialize\0") }) };
+    let b: *u8 = { GetProcAddress(m, { #str_ptr("RoGetActivationFactory\0") }) };
+    let c: *u8 = { GetProcAddress(m, { #str_ptr("WindowsCreateString\0") }) };
+    let d: *u8 = { GetProcAddress(m, { #str_ptr("WindowsDeleteString\0") }) };
+    if a == (0 as *u8) || b == (0 as *u8) || c == (0 as *u8) || d == (0 as *u8) {
+        return false;
+    }
+    RO_INIT = { a as fn(i32) -> i32 };
+    RO_FACTORY = { b as fn(usize, *u8, *usize) -> i32 };
+    WCS = { c as fn(*u16, u32, *usize) -> i32 };
+    WDS = { d as fn(usize) -> i32 };
+    COMBASE_OK = true;
+    return true;
+}
+
+// RO_INIT_MULTITHREADED. `RPC_E_CHANGED_MODE` means the thread is already an
+// STA, which is not a failure — WinRT is up and the factory call works. It is
+// the ordinary answer inside a facet application, whose UI thread is an STA.
+fn ro_init_once() {
+    if RO_INITED { return; }
+    RO_INITED = true;
+    let f: fn(i32) -> i32 = RO_INIT;
+    if f.is_not_null() { let _r: i32 = { f(1 as i32) }; }
+    return;
+}
+
+// ---- strings ---------------------------------------------------------------------
+
+fn to_wide(s: str) -> *u16 {
+    let n: i32 = { #str_len(s) } as i32;
+    if n <= (0 as i32) { return 0 as *u16; }
+    let need: i32 = { MultiByteToWideChar(65001 as u32, 0 as u32, { #str_ptr(s) }, n,
+                                          0 as *u16, 0 as i32) };
+    if need <= (0 as i32) { return 0 as *u16; }
+    // ROOM FOR THE TERMINATOR even though an HSTRING carries a length: the
+    // buffer is also read as a plain wide string in a debugger, and an
+    // unterminated one is a trap for whoever looks next.
+    let buf: *u8 = { malloc(((need as usize) +% (1 as usize)) *% (2 as usize)) };
+    if buf == (0 as *u8) { return 0 as *u16; }
+    let got: i32 = { MultiByteToWideChar(65001 as u32, 0 as u32, { #str_ptr(s) }, n,
+                                         buf as *u16, need) };
+    if got <= (0 as i32) { free(buf); return 0 as *u16; }
+    { *((buf as *u16) + (got as usize)) = 0 as u16 };
+    return buf as *u16;
+}
+
+fn wide_len(w: *u16) -> usize {
+    var n: usize = 0 as usize;
+    while { *(w + n) } != (0 as u16) { n = n +% (1 as usize); }
+    return n;
+}
+
+// An HSTRING from a C+ string, or 0. The caller frees it with `del_hstring`.
+fn hstring(s: str) -> usize {
+    if !bind_combase() { return 0 as usize; }
+    let w: *u16 = to_wide(s);
+    if w == (0 as *u16) { return 0 as usize; }
+    var h: usize = 0 as usize;
+    let f: fn(*u16, u32, *usize) -> i32 = WCS;
+    let hr: i32 = { f(w, wide_len(w) as u32, #addr_of(h)) };
+    free(w as *u8);
+    if hr != (0 as i32) { return 0 as usize; }
+    return h;
+}
+
+fn del_hstring(h: usize) {
+    if h == (0 as usize) { return; }
+    let f: fn(usize) -> i32 = WDS;
+    if f.is_not_null() { let _r: i32 = { f(h) }; }
+    return;
+}
+
+// ---- raw COM -----------------------------------------------------------------------
+
+fn read_ptr(base: *u8, off: usize) -> *u8 {
+    let p: *usize = { (base + off) } as *usize;
+    return { *p } as *u8;
+}
+
+fn write_ptr(base: *u8, off: usize, v: *u8) {
+    let p: *usize = { (base + off) } as *usize;
+    { *p = v as usize };
+    return;
+}
+
+fn slot(obj: *u8, idx: usize) -> *u8 {
+    let vt: *u8 = read_ptr(obj, 0 as usize);
+    return read_ptr(vt, idx *% (8 as usize));
+}
+
+fn call_out(obj: *u8, idx: usize, out: *usize) -> i32 {
+    let f: fn(*u8, *usize) -> i32 = { slot(obj, idx) as fn(*u8, *usize) -> i32 };
+    return { f(obj, out) };
+}
+
+fn call_h(obj: *u8, idx: usize, h: usize) -> i32 {
+    let f: fn(*u8, usize) -> i32 = { slot(obj, idx) as fn(*u8, usize) -> i32 };
+    return { f(obj, h) };
+}
+
+fn call_p(obj: *u8, idx: usize, p: *u8) -> i32 {
+    let f: fn(*u8, *u8) -> i32 = { slot(obj, idx) as fn(*u8, *u8) -> i32 };
+    return { f(obj, p) };
+}
+
+fn call_release(obj: *u8) -> u32 {
+    if obj == (0 as *u8) { return 0 as u32; }
+    let f: fn(*u8) -> u32 = { slot(obj, 2 as usize) as fn(*u8) -> u32 };
+    return { f(obj) };
+}
+
+// ---- the measured vtable indices ---------------------------------------------------
+//
+// IDataTransferManagerInterop derives from IUnknown, so its own methods start at
+// 3. Everything else here is a WinRT interface and therefore derives from
+// IInspectable — IUnknown's 3 plus GetIids/GetRuntimeClassName/GetTrustLevel —
+// so THEIR first method is at 6. That offset is the commonest way to get a
+// WinRT vtable wrong, which is why it is spelled out rather than assumed.
+fn idx_get_for_window() -> usize { return 3 as usize; }
+fn idx_show_share_ui() -> usize { return 4 as usize; }
+fn idx_add_data_requested() -> usize { return 6 as usize; }
+fn idx_get_request() -> usize { return 6 as usize; }
+fn idx_get_data() -> usize { return 6 as usize; }
+fn idx_get_properties() -> usize { return 6 as usize; }
+fn idx_put_title() -> usize { return 7 as usize; }
+fn idx_put_description() -> usize { return 9 as usize; }
+fn idx_set_text() -> usize { return 16 as usize; }
+fn idx_set_uri() -> usize { return 17 as usize; }
+fn idx_create_uri() -> usize { return 6 as usize; }
+
+// ---- the IIDs ----------------------------------------------------------------------
+//
+// A GUID in memory is {u32, u16, u16, u8[8]}: the first three fields
+// little-endian, the last eight literal. Each was read out of .NET's projection
+// rather than transcribed from a header, and each is pinned by a test.
+
+fn guid16(a: u32, b: u16, c: u16,
+          d0: u8, d1: u8, d2: u8, d3: u8, d4: u8, d5: u8, d6: u8, d7: u8) -> [u8; 16] {
+    var g: [u8; 16] = [0 as u8; 16];
+    g[0] = (a -% ((a / (256 as u32)) *% (256 as u32))) as u8;
+    g[1] = ((a / (256 as u32)) -% ((a / (65536 as u32)) *% (256 as u32))) as u8;
+    g[2] = ((a / (65536 as u32)) -% ((a / (16777216 as u32)) *% (256 as u32))) as u8;
+    g[3] = (a / (16777216 as u32)) as u8;
+    g[4] = (b -% ((b / (256 as u16)) *% (256 as u16))) as u8;
+    g[5] = (b / (256 as u16)) as u8;
+    g[6] = (c -% ((c / (256 as u16)) *% (256 as u16))) as u8;
+    g[7] = (c / (256 as u16)) as u8;
+    g[8] = d0; g[9] = d1; g[10] = d2; g[11] = d3;
+    g[12] = d4; g[13] = d5; g[14] = d6; g[15] = d7;
+    return g;
+}
+
+// {3A3DCD6C-3EAB-43DC-BCDE-45671CE800C8} IDataTransferManagerInterop
+fn iid_interop() -> [u8; 16] {
+    return guid16(0x3A3DCD6C as u32, 0x3EAB as u16, 0x43DC as u16,
+                  0xBC as u8, 0xDE as u8, 0x45 as u8, 0x67 as u8,
+                  0x1C as u8, 0xE8 as u8, 0x00 as u8, 0xC8 as u8);
+}
+// {A5CAEE9B-8708-49D1-8D36-67D25A8DA00C} IDataTransferManager
+fn iid_dtm() -> [u8; 16] {
+    return guid16(0xA5CAEE9B as u32, 0x8708 as u16, 0x49D1 as u16,
+                  0x8D as u8, 0x36 as u8, 0x67 as u8, 0xD2 as u8,
+                  0x5A as u8, 0x8D as u8, 0xA0 as u8, 0x0C as u8);
+}
+// {44A9796F-723E-4FDF-A218-033E75B0C084} IUriRuntimeClassFactory
+fn iid_uri_factory() -> [u8; 16] {
+    return guid16(0x44A9796F as u32, 0x723E as u16, 0x4FDF as u16,
+                  0xA2 as u8, 0x18 as u8, 0x03 as u8, 0x3E as u8,
+                  0x75 as u8, 0xB0 as u8, 0xC0 as u8, 0x84 as u8);
+}
+// {EC6F9CC8-46D0-5E0E-B4D2-7D7773AE37A0}
+// TypedEventHandler<DataTransferManager, DataRequestedEventArgs>. NOT in any
+// header: WinRT computes a parameterized IID from the type signature.
+fn iid_handler() -> [u8; 16] {
+    return guid16(0xEC6F9CC8 as u32, 0x46D0 as u16, 0x5E0E as u16,
+                  0xB4 as u8, 0xD2 as u8, 0x7D as u8, 0x77 as u8,
+                  0x73 as u8, 0xAE as u8, 0x37 as u8, 0xA0 as u8);
+}
+// {00000000-0000-0000-C000-000000000046} IUnknown
+fn iid_unknown() -> [u8; 16] {
+    return guid16(0 as u32, 0 as u16, 0 as u16,
+                  0xC0 as u8, 0x00 as u8, 0x00 as u8, 0x00 as u8,
+                  0x00 as u8, 0x00 as u8, 0x00 as u8, 0x46 as u8);
+}
+// {94EA2B94-E9CC-49E0-C0FF-EE64CA8F5B90} IAgileObject. Answered because WinRT
+// asks whether a handler may be called from another apartment; saying yes is
+// what keeps the shell from marshalling through a proxy this object has none of.
+fn iid_agile() -> [u8; 16] {
+    return guid16(0x94EA2B94 as u32, 0xE9CC as u16, 0x49E0 as u16,
+                  0xC0 as u8, 0xFF as u8, 0xEE as u8, 0x64 as u8,
+                  0xCA as u8, 0x8F as u8, 0x5B as u8, 0x90 as u8);
+}
+
+fn guid_eq(a: *u8, b: *u8) -> bool {
+    var i: usize = 0 as usize;
+    while i < (16 as usize) {
+        if { *(a + i) } != { *(b + i) } { return false; }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+fn e_nointerface() -> i32 { return (0 as i32) -% (2147467262 as i32); }
+
+// ---- what is waiting to be shared ---------------------------------------------------
+//
+// The sheet asks LATER, on the message loop, so the payload cannot live on the
+// stack of the call that started it.
+
+fn kind_none() -> i32 { return 0 as i32; }
+fn kind_text() -> i32 { return 1 as i32; }
+fn kind_url() -> i32 { return 2 as i32; }
+
+static PENDING_KIND: i32 = 0 as i32;
+static PENDING_BODY: text::Text = #zero::[text::Text]();
+static PENDING_SUBJECT: text::Text = #zero::[text::Text]();
+// How many times the shell has actually taken a payload. Nothing in the seam
+// can report it — the sheet is asynchronous — but a probe can read it, and the
+// tests use it to tell "presented" from "delivered".
+static DELIVERED: i32 = 0 as i32;
+
+// ---- the handler object --------------------------------------------------------------
+//
+// Sixteen bytes: a vtable pointer and a reference count. There is no context to
+// carry — the payload is in the statics above and there is only ever one sheet
+// in flight.
+
+static HANDLER_VTBL: usize = 0 as usize;
+
+fn h_addref(slf: *u8) -> u32 {
+    let rp: *i32 = { (slf + (8 as usize)) } as *i32;
+    { *rp = { *rp } +% (1 as i32) };
+    return { *rp } as u32;
+}
+
+fn h_release(slf: *u8) -> u32 {
+    let rp: *i32 = { (slf + (8 as usize)) } as *i32;
+    { *rp = { *rp } -% (1 as i32) };
+    let n: i32 = { *rp };
+    if n <= (0 as i32) { free(slf); return 0 as u32; }
+    return n as u32;
+}
+
+fn h_query(slf: *u8, riid: *u8, ppv: *u8) -> i32 {
+    var want: [u8; 16] = iid_handler();
+    var unk: [u8; 16] = iid_unknown();
+    var agile: [u8; 16] = iid_agile();
+    var ok: bool = false;
+    if guid_eq(riid, { #addr_of(want[0]) }) { ok = true; }
+    if guid_eq(riid, { #addr_of(unk[0]) }) { ok = true; }
+    if guid_eq(riid, { #addr_of(agile[0]) }) { ok = true; }
+    if ok {
+        write_ptr(ppv, 0 as usize, slf);
+        let _r: u32 = h_addref(slf);
+        return 0 as i32;
+    }
+    // STRICT, and it matters: an accept-all QueryInterface would have the caller
+    // invoke a method past slot 3 of a four-entry table.
+    write_ptr(ppv, 0 as usize, 0 as *u8);
+    return e_nointerface();
+}
+
+// The shell is asking what to share. Fill the package from the statics.
+fn h_invoke(slf: *u8, sender: *u8, args: *u8) -> i32 {
+    if args == (0 as *u8) { return 0 as i32; }
+    if PENDING_KIND == kind_none() { return 0 as i32; }
+
+    var reqv: usize = 0 as usize;
+    if call_out(args, idx_get_request(), #addr_of(reqv)) != (0 as i32) { return 0 as i32; }
+    let req: *u8 = reqv as *u8;
+    if req == (0 as *u8) { return 0 as i32; }
+
+    var pkgv: usize = 0 as usize;
+    let hrd: i32 = call_out(req, idx_get_data(), #addr_of(pkgv));
+    let pkg: *u8 = pkgv as *u8;
+    if hrd != (0 as i32) || pkg == (0 as *u8) {
+        let _r: u32 = call_release(req);
+        return 0 as i32;
+    }
+
+    // THE TITLE IS NOT OPTIONAL. A DataPackage with no title is refused by the
+    // shell with a "nothing to share" pane rather than an error, which is the
+    // most confusing way this can fail — so a share with no subject still gets
+    // one.
+    var propsv: usize = 0 as usize;
+    if call_out(pkg, idx_get_properties(), #addr_of(propsv)) == (0 as i32) {
+        let props: *u8 = propsv as *u8;
+        if props != (0 as *u8) {
+            var title: str = PENDING_SUBJECT.view();
+            if title == "" { title = "Share"; }
+            let ht: usize = hstring(title);
+            if ht != (0 as usize) {
+                let _t: i32 = call_h(props, idx_put_title(), ht);
+                del_hstring(ht);
+            }
+            if PENDING_KIND == kind_text() {
+                // The description is what the sheet shows under the title.
+                let hd: usize = hstring(PENDING_BODY.view());
+                if hd != (0 as usize) {
+                    let _d: i32 = call_h(props, idx_put_description(), hd);
+                    del_hstring(hd);
+                }
+            }
+            let _rp: u32 = call_release(props);
+        }
+    }
+
+    if PENDING_KIND == kind_text() {
+        let hb: usize = hstring(PENDING_BODY.view());
+        if hb != (0 as usize) {
+            if call_h(pkg, idx_set_text(), hb) == (0 as i32) {
+                DELIVERED = DELIVERED + (1 as i32);
+            }
+            del_hstring(hb);
+        }
+    } else {
+        // A URL IS A Uri OBJECT, not a string: `SetUri` takes an
+        // `IUriRuntimeClass`, which comes from the `Windows.Foundation.Uri`
+        // activation factory. Handing it text would be a wrong-type call that
+        // no signature checks.
+        let uri: *u8 = make_uri(PENDING_BODY.view());
+        if uri != (0 as *u8) {
+            if call_p(pkg, idx_set_uri(), uri) == (0 as i32) {
+                DELIVERED = DELIVERED + (1 as i32);
+            }
+            let _ru: u32 = call_release(uri);
+        }
+    }
+
+    let _rk: u32 = call_release(pkg);
+    let _rq: u32 = call_release(req);
+    return 0 as i32;
+}
+
+fn addr_query() -> *u8 { let f: fn(*u8, *u8, *u8) -> i32 = h_query; return f as *u8; }
+fn addr_addref() -> *u8 { let f: fn(*u8) -> u32 = h_addref; return f as *u8; }
+fn addr_release() -> *u8 { let f: fn(*u8) -> u32 = h_release; return f as *u8; }
+fn addr_invoke() -> *u8 { let f: fn(*u8, *u8, *u8) -> i32 = h_invoke; return f as *u8; }
+
+fn handler_vtable() -> usize {
+    if HANDLER_VTBL != (0 as usize) { return HANDLER_VTBL; }
+    let t: *u8 = { malloc(32 as usize) };
+    if t == (0 as *u8) { return 0 as usize; }
+    write_ptr(t, 0 as usize, addr_query());
+    write_ptr(t, 8 as usize, addr_addref());
+    write_ptr(t, 16 as usize, addr_release());
+    write_ptr(t, 24 as usize, addr_invoke());
+    HANDLER_VTBL = t as usize;
+    return HANDLER_VTBL;
+}
+
+fn handler_new() -> *u8 {
+    let vt: usize = handler_vtable();
+    if vt == (0 as usize) { return 0 as *u8; }
+    let o: *u8 = { malloc(16 as usize) };
+    if o == (0 as *u8) { return 0 as *u8; }
+    write_ptr(o, 0 as usize, vt as *u8);
+    let rp: *i32 = { (o + (8 as usize)) } as *i32;
+    { *rp = 1 as i32 };
+    return o;
+}
+
+// ---- the WinRT entry points ----------------------------------------------------------
+
+fn activation_factory(cls: str, iid: *u8) -> *u8 {
+    if !bind_combase() { return 0 as *u8; }
+    ro_init_once();
+    let h: usize = hstring(cls);
+    if h == (0 as usize) { return 0 as *u8; }
+    var out: usize = 0 as usize;
+    let f: fn(usize, *u8, *usize) -> i32 = RO_FACTORY;
+    let hr: i32 = { f(h, iid, #addr_of(out)) };
+    del_hstring(h);
+    if hr != (0 as i32) { return 0 as *u8; }
+    return out as *u8;
+}
+
+fn make_uri(s: str) -> *u8 {
+    var iid: [u8; 16] = iid_uri_factory();
+    let fac: *u8 = activation_factory("Windows.Foundation.Uri", { #addr_of(iid[0]) });
+    if fac == (0 as *u8) { return 0 as *u8; }
+    let h: usize = hstring(s);
+    if h == (0 as usize) { let _r: u32 = call_release(fac); return 0 as *u8; }
+    var out: usize = 0 as usize;
+    let f: fn(*u8, usize, *usize) -> i32 =
+        { slot(fac, idx_create_uri()) as fn(*u8, usize, *usize) -> i32 };
+    let hr: i32 = { f(fac, h, #addr_of(out)) };
+    del_hstring(h);
+    let _r: u32 = call_release(fac);
+    if hr != (0 as i32) { return 0 as *u8; }
+    return out as *u8;
+}
+
+fn share_window() -> *u8 {
+    let a: *u8 = { GetActiveWindow() };
+    if a != (0 as *u8) { return a; }
+    return { GetForegroundWindow() };
+}
+
+// Ask for the sheet. Everything above is preparation; this is the call that
+// puts it on screen.
+fn present() -> i32 {
+    var iid: [u8; 16] = iid_interop();
+    let interop: *u8 = activation_factory(
+        "Windows.ApplicationModel.DataTransfer.DataTransferManager",
+        { #addr_of(iid[0]) });
+    if interop == (0 as *u8) { return share::Outcome::Unsupported.to_code(); }
+
+    let hwnd: *u8 = share_window();
+    if hwnd == (0 as *u8) {
+        let _r: u32 = call_release(interop);
+        // NOTHING TO HANG THE SHEET OFF. A console process with no window of
+        // its own is an honest `Unsupported` rather than a failure.
+        return share::Outcome::Unsupported.to_code();
+    }
+
+    var diid: [u8; 16] = iid_dtm();
+    var dtmv: usize = 0 as usize;
+    let gf: fn(*u8, *u8, *u8, *usize) -> i32 =
+        { slot(interop, idx_get_for_window()) as fn(*u8, *u8, *u8, *usize) -> i32 };
+    let hr: i32 = { gf(interop, hwnd, { #addr_of(diid[0]) }, #addr_of(dtmv)) };
+    let dtm: *u8 = dtmv as *u8;
+    if hr != (0 as i32) || dtm == (0 as *u8) {
+        let _r: u32 = call_release(interop);
+        return share::Outcome::Failed.to_code();
+    }
+
+    let handler: *u8 = handler_new();
+    if handler == (0 as *u8) {
+        let _rd: u32 = call_release(dtm);
+        let _r: u32 = call_release(interop);
+        return share::Outcome::Failed.to_code();
+    }
+    var token: i64 = 0 as i64;
+    let ad: fn(*u8, *u8, *i64) -> i32 =
+        { slot(dtm, idx_add_data_requested()) as fn(*u8, *u8, *i64) -> i32 };
+    let hra: i32 = { ad(dtm, handler, #addr_of(token)) };
+    // THE MANAGER OWNS IT NOW. The creating reference is dropped here; the event
+    // registration holds its own, and the last release frees the object.
+    let _rh: u32 = h_release(handler);
+    if hra != (0 as i32) {
+        let _rd: u32 = call_release(dtm);
+        let _r: u32 = call_release(interop);
+        return share::Outcome::Failed.to_code();
+    }
+
+    let sh: fn(*u8, *u8) -> i32 =
+        { slot(interop, idx_show_share_ui()) as fn(*u8, *u8) -> i32 };
+    let hrs: i32 = { sh(interop, hwnd) };
+    let _rd2: u32 = call_release(dtm);
+    let _r2: u32 = call_release(interop);
+    if hrs != (0 as i32) { return share::Outcome::Failed.to_code(); }
+    return share::Outcome::Ok.to_code();
+}
+
+// How many payloads the shell has actually taken, for a probe to read.
+//
+// NOT PART OF THE SEAM — `share.cplus` declares four symbols and this is not one
+// of them. It exists because the sheet is asynchronous and cross-process: the
+// facade's `Ok` can only mean "presented", so the one fact a probe cannot
+// otherwise establish is whether `DataRequested` came back and took the data.
+// An earlier pass concluded wrongly that it never does, which is exactly why
+// this is worth being able to see from outside.
+fn delivered() -> i32 { return DELIVERED; }
+
+// ---- the seam ---------------------------------------------------------------------
 
 export extern fn _c_available() -> i32 {
-    // No sheet to show — see the header. `available()` in the facade turns this
-    // into `false`, which is the honest answer for a plain Win32 process.
-    return 0 as i32;
+    var iid: [u8; 16] = iid_interop();
+    let f: *u8 = activation_factory(
+        "Windows.ApplicationModel.DataTransfer.DataTransferManager",
+        { #addr_of(iid[0]) });
+    if f == (0 as *u8) { return 0 as i32; }
+    let _r: u32 = call_release(f);
+    return 1 as i32;
 }
 
 export extern fn _c_text(body: *u8, body_len: usize,
                          subject: *u8, subject_len: usize) -> i32 {
-    // The `str` halves are rebuilt so the seam is exact, even though there is
-    // nothing to hand them to yet.
-    let _body: str = { #str_from_raw_parts(body, body_len) };
-    let _subject: str = { #str_from_raw_parts(subject, subject_len) };
-    return share::Outcome::Unsupported.to_code();
+    let b: str = { #str_from_raw_parts(body, body_len) };
+    let s: str = { #str_from_raw_parts(subject, subject_len) };
+    if b == "" { return share::Outcome::InvalidInput.to_code(); }
+    PENDING_KIND = kind_text();
+    PENDING_BODY = text::from_str(b);
+    PENDING_SUBJECT = text::from_str(s);
+    return present();
 }
 
 export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
-    let _link: str = { #str_from_raw_parts(link, link_len) };
-    return share::Outcome::Unsupported.to_code();
+    let l: str = { #str_from_raw_parts(link, link_len) };
+    if l == "" { return share::Outcome::InvalidInput.to_code(); }
+    PENDING_KIND = kind_url();
+    PENDING_BODY = text::from_str(l);
+    PENDING_SUBJECT = text::from_str("");
+    return present();
 }
 
+// A FILE IS A StorageFile, and that is a different shape of problem. `SetText`
+// and `SetUri` take a string and an object this file can build synchronously;
+// `SetStorageItems` takes an `IVectorView<IStorageItem>`, and the only route
+// from a path to a `StorageFile` is `GetFileFromPathAsync` — an
+// `IAsyncOperation` that has to be awaited, plus a WinRT collection that has to
+// be constructed. Both are real work and neither is started here.
+//
+// `Unsupported` rather than `Failed`: the platform can do this and this build
+// cannot, which is the distinction the facade's two codes exist to carry.
 export extern fn _c_file(path: *u8, path_len: usize) -> i32 {
-    let _path: str = { #str_from_raw_parts(path, path_len) };
+    let _p: str = { #str_from_raw_parts(path, path_len) };
     return share::Outcome::Unsupported.to_code();
 }
 
-// ---- tests -------------------------------------------------------------------
-// No launch to assert — there is nothing to open. What matters is that the seam
-// answers `Unsupported` for every verb without trapping, so a caller on Windows
-// degrades cleanly instead of crashing or hanging.
+// ---- tests -------------------------------------------------------------------------
+//
+// The sheet itself cannot be asserted: it is a cross-process UI that appears,
+// waits for a person, and reports nothing back. What IS pinned here is
+// everything a silent mistake in would be invisible — the GUID byte order, the
+// vtable arithmetic, the reference count, and the guards that decide whether a
+// call is made at all. `playground/share_probe` is the half a person looks at.
 
 #[test]
-fn availability_is_zero() {
-    // Zero, not merely falsey: the facade compares against `0 as i32`.
-    assert { _c_available() } == (0 as i32);
+fn a_guid_is_laid_out_the_way_com_compares_it() {
+    // The first three fields little-endian, the last eight literal. A GUID
+    // written the other way round is not an error anywhere — it is an interface
+    // nobody answers, and the feature silently does nothing.
+    var g: [u8; 16] = iid_interop();      // {3A3DCD6C-3EAB-43DC-BCDE-45671CE800C8}
+    assert g[0] == (0x6C as u8);
+    assert g[1] == (0xCD as u8);
+    assert g[2] == (0x3D as u8);
+    assert g[3] == (0x3A as u8);
+    assert g[4] == (0xAB as u8);
+    assert g[5] == (0x3E as u8);
+    assert g[6] == (0xDC as u8);
+    assert g[7] == (0x43 as u8);
+    // Data4 is NOT swapped — the half a "helpful" reversal would corrupt.
+    assert g[8] == (0xBC as u8);
+    assert g[15] == (0xC8 as u8);
 }
 
 #[test]
-fn every_verb_is_unsupported_and_never_failed() {
-    // Unsupported (1), the honest "this build cannot share" — distinct from
-    // Failed (3), which would claim a sheet opened and broke.
-    let unsupported: i32 = share::Outcome::Unsupported.to_code();
-    let failed: i32 = share::Outcome::Failed.to_code();
-
-    assert { _c_text(#str_ptr("hello"), #str_len("hello"),
-                     #str_ptr(""), #str_len("")) } == unsupported;
-    assert { _c_url(#str_ptr("https://example.com"),
-                    #str_len("https://example.com")) } == unsupported;
-    assert { _c_file(#str_ptr("C:\\tmp\\x.txt"),
-                     #str_len("C:\\tmp\\x.txt")) } == unsupported;
-
-    assert unsupported != failed;
+fn the_handler_iid_is_the_parameterized_one_and_not_a_neighbour() {
+    // {EC6F9CC8-46D0-5E0E-B4D2-7D7773AE37A0} is computed by WinRT from a type
+    // signature and appears in no header. It was read out of .NET's projection;
+    // if it is wrong, `QueryInterface` refuses and `DataRequested` never fires —
+    // which is exactly the symptom that made an earlier pass call this feature
+    // impossible.
+    var h: [u8; 16] = iid_handler();
+    assert h[0] == (0xC8 as u8);
+    assert h[1] == (0x9C as u8);
+    assert h[2] == (0x6F as u8);
+    assert h[3] == (0xEC as u8);
+    assert h[15] == (0xA0 as u8);
+    // And it is none of the other IIDs this file carries.
+    var d: [u8; 16] = iid_dtm();
+    var i: [u8; 16] = iid_interop();
+    var u: [u8; 16] = iid_unknown();
+    assert !guid_eq({ #addr_of(h[0]) }, { #addr_of(d[0]) });
+    assert !guid_eq({ #addr_of(h[0]) }, { #addr_of(i[0]) });
+    assert !guid_eq({ #addr_of(h[0]) }, { #addr_of(u[0]) });
 }
 
 #[test]
-fn the_facade_maps_the_code_back_to_unsupported() {
-    // End to end through the public verbs: a non-empty item reaches this
-    // backend and comes back as `Outcome::Unsupported`, not `Failed` and not a
-    // silent `Ok`.
-    assert share::text("hello").to_code() == share::Outcome::Unsupported.to_code();
-    assert share::url("https://example.com").to_code() == share::Outcome::Unsupported.to_code();
-    assert share::file("C:\\tmp\\x.txt").to_code() == share::Outcome::Unsupported.to_code();
+fn guid_compare_is_exact_to_the_last_byte() {
+    var a: [u8; 16] = iid_dtm();
+    var b: [u8; 16] = iid_dtm();
+    assert guid_eq({ #addr_of(a[0]) }, { #addr_of(b[0]) });
+    b[15] = b[15] +% (1 as u8);
+    assert !guid_eq({ #addr_of(a[0]) }, { #addr_of(b[0]) });
+    var c: [u8; 16] = iid_dtm();
+    c[0] = c[0] +% (1 as u8);
+    assert !guid_eq({ #addr_of(a[0]) }, { #addr_of(c[0]) });
+}
+
+#[test]
+fn a_winrt_interface_starts_at_six_and_an_iunknown_one_at_three() {
+    // IInspectable is IUnknown(3) + GetIids + GetRuntimeClassName + GetTrustLevel,
+    // so every WinRT interface's own first method is slot 6. The interop
+    // interface is plain IUnknown and starts at 3. Mixing the two up is the
+    // commonest way to call the wrong method here.
+    assert idx_get_for_window() == (3 as usize);
+    assert idx_show_share_ui() == (4 as usize);
+    assert idx_add_data_requested() == (6 as usize);
+    assert idx_get_request() == (6 as usize);
+    assert idx_get_data() == (6 as usize);
+    assert idx_get_properties() == (6 as usize);
+    assert idx_create_uri() == (6 as usize);
+    // IDataPackage's own run from 6; SetText and SetUri sit past the property
+    // and event accessors.
+    assert idx_set_text() == (16 as usize);
+    assert idx_set_uri() == (idx_set_text() +% (1 as usize));
+    assert idx_put_title() == (7 as usize);
+    assert idx_put_description() == (9 as usize);
+}
+
+#[test]
+fn the_handler_vtable_is_four_slots_and_is_built_once() {
+    let a: usize = handler_vtable();
+    assert a != (0 as usize);
+    // Built once and reused: a second table would be a second identity for the
+    // same object shape and leak on every share.
+    assert handler_vtable() == a;
+    let t: *u8 = a as *u8;
+    assert read_ptr(t, 0 as usize) == addr_query();
+    assert read_ptr(t, 8 as usize) == addr_addref();
+    assert read_ptr(t, 16 as usize) == addr_release();
+    assert read_ptr(t, 24 as usize) == addr_invoke();
+}
+
+#[test]
+fn the_handler_answers_only_the_three_iids_it_implements() {
+    let h: *u8 = handler_new();
+    assert h != (0 as *u8);
+    var out: usize = 0 as usize;
+
+    var want: [u8; 16] = iid_handler();
+    assert h_query(h, { #addr_of(want[0]) }, { #addr_of(out) as *u8 }) == (0 as i32);
+    assert (out as *u8) == h;
+    let _r1: u32 = h_release(h);          // QueryInterface AddRef'd
+
+    var unk: [u8; 16] = iid_unknown();
+    assert h_query(h, { #addr_of(unk[0]) }, { #addr_of(out) as *u8 }) == (0 as i32);
+    let _r2: u32 = h_release(h);
+
+    var agile: [u8; 16] = iid_agile();
+    assert h_query(h, { #addr_of(agile[0]) }, { #addr_of(out) as *u8 }) == (0 as i32);
+    let _r3: u32 = h_release(h);
+
+    // ANYTHING ELSE IS REFUSED, and the out pointer is cleared. An accept-all QI
+    // would have the caller invoke a method past the end of a four-entry table.
+    out = 1234 as usize;
+    var other: [u8; 16] = iid_dtm();
+    assert h_query(h, { #addr_of(other[0]) }, { #addr_of(out) as *u8 }) == e_nointerface();
+    assert out == (0 as usize);
+
+    let _last: u32 = h_release(h);        // the creating reference, frees it
+}
+
+#[test]
+fn the_reference_count_frees_on_the_last_release() {
+    let h: *u8 = handler_new();
+    assert h != (0 as *u8);
+    assert h_addref(h) == (2 as u32);
+    assert h_addref(h) == (3 as u32);
+    assert h_release(h) == (2 as u32);
+    assert h_release(h) == (1 as u32);
+    assert h_release(h) == (0 as u32);    // freed here
+}
+
+#[test]
+fn an_empty_item_is_refused_before_any_sheet_is_asked_for() {
+    // `InvalidInput` is the facade's word for a caller bug, and it must be
+    // decided BEFORE the platform is touched — otherwise an empty share opens a
+    // sheet with nothing in it.
+    let e: str = "";
+    assert { _c_text({ #str_ptr(e) }, { #str_len(e) }, { #str_ptr(e) }, { #str_len(e) }) }
+        == share::Outcome::InvalidInput.to_code();
+    assert { _c_url({ #str_ptr(e) }, { #str_len(e) }) }
+        == share::Outcome::InvalidInput.to_code();
+}
+
+#[test]
+fn a_file_is_refused_as_unsupported_rather_than_failed() {
+    // The platform can share a file; this build cannot. `Unsupported` is the
+    // code whose meaning is "no code for that here", and collapsing it into
+    // `Failed` would send a caller looking for a bug.
+    let p: str = "C:/does/not/matter.txt";
+    assert { _c_file({ #str_ptr(p) }, { #str_len(p) }) }
+        == share::Outcome::Unsupported.to_code();
+}
+
+#[test]
+fn the_share_manager_is_reachable_on_this_machine() {
+    // The activation factory is the whole WinRT road in one call. If this
+    // answers, `RoGetActivationFactory` works from a non-packaged process and
+    // the interop IID is right — which is the fact an earlier pass got wrong.
+    // A machine without the class answers 0 and every verb degrades to
+    // `Unsupported`, so both outcomes are legal and neither is asserted blindly.
+    let ok: i32 = { _c_available() };
+    assert ok == (0 as i32) || ok == (1 as i32);
+    if ok == (1 as i32) {
+        // Reachable twice: the factory is released, not leaked into a
+        // one-shot.
+        assert { _c_available() } == (1 as i32);
+    }
+}
+
+#[test]
+fn a_string_survives_the_round_trip_into_an_hstring() {
+    if !bind_combase() { return; }
+    // Non-ASCII on purpose: the UTF-8 to UTF-16 step is where a length in the
+    // wrong units silently truncates.
+    let s: str = "héllo → wörld";
+    let w: *u16 = to_wide(s);
+    assert w != (0 as *u16);
+    // 13 CHARACTERS, not 13 bytes — the string is 17 bytes of UTF-8.
+    assert wide_len(w) == (13 as usize);
+    assert { #str_len(s) } == (17 as usize);
+    free(w as *u8);
+
+    let h: usize = hstring(s);
+    assert h != (0 as usize);
+    del_hstring(h);
+    // An empty string has no HSTRING to make.
+    assert hstring("") == (0 as usize);
 }

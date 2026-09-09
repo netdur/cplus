@@ -15,6 +15,11 @@ sh::url("https://example.com/thing");
 sh::file("/path/to/report.pdf");
 ```
 
+macOS, iOS, Android and Windows. On Windows it goes through WinRT's
+`DataTransferManager` reached as plain COM, and it needs **a window and a
+running message loop** — the sheet asks for the payload later, on that loop.
+`file()` is `Unsupported` there and on Android; the guide says why.
+
 ## The return value is "the sheet opened"
 
 Never "the person shared". No platform reports reliably which app was chosen or

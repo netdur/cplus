@@ -55,7 +55,7 @@ instead of "Copy".
 `EXTRA_TEXT`. So `url()` and `text()` are the same call on Android and
 different calls on Apple, which is exactly why the facade keeps them apart.
 
-## Files on Android are `Unsupported`
+## Files on Android and Windows are `Unsupported`
 
 `file://` URIs have thrown `FileUriExposedException` since API 24. A real file
 share needs a `FileProvider` declared in the **app's** manifest with an
@@ -64,6 +64,39 @@ make on the caller's behalf.
 
 So `file()` answers `Unsupported` on Android rather than handing the system a
 URI it will refuse. Said rather than half-done.
+
+## Windows: WinRT reached as plain COM
+
+`DataTransferManager` is a WinRT class, and WinRT is COM once you stop looking
+for a projection: `RoGetActivationFactory` answers an interface pointer and
+every call after it is a vtable index. That is how this backend works — no
+C++/WinRT, no generated projection, nothing on the link line (combase is bound
+with `LoadLibrary` at first use, so a machine without it answers
+`available() == false` rather than failing to start).
+
+Two things about it are worth knowing as a caller.
+
+**It needs a window and a running message loop.** The sheet is anchored to an
+HWND (`IDataTransferManagerInterop::GetForWindow`), and it asks for the payload
+*later*, by raising `DataRequested` on that loop. `share::text` returns as soon
+as the sheet has been asked for — which is all `Ok` ever promised — and the data
+is handed over afterwards. A process with no window, or one that never pumps,
+gets `Unsupported` or a sheet that never asks.
+
+**A title is not optional.** A `DataPackage` with no title makes the shell show
+a "nothing to share" pane rather than an error, which is the most confusing way
+this can fail, so a share with no `subject` still gets one.
+
+### It is not blocked by package identity, and an earlier note said it was
+
+A previous pass measured the sheet opening and `DataRequested` never firing, and
+recorded package identity (MSIX / sparse manifest) as the suspect. That was
+wrong. Measured again from an ordinary non-packaged process — with
+`GetCurrentPackageFullName` confirming `APPMODEL_ERROR_NO_PACKAGE` — the event
+fires and every call inside the handler answers `S_OK`, reproducibly, with and
+without an explicit AppUserModelID. The earlier harness had a defect that was
+never isolated. It is written down because a false "cannot" in a header is
+exactly what stops the next person from trying.
 
 ## Always a chooser
 
