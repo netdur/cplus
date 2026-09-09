@@ -160,6 +160,7 @@ popup.text_color               as popup.title
 popup.text_align               as popup.title
 popup.item_enabled             a combo box has no per-item enabled state — §1
 carousel.bounces               §1 `carousel.bounces`
+bordered.stroke_dash_offset    a dash PHASE is not modelled by GDI: ExtCreatePen takes the run lengths and always starts at the first — DirectWrite/GDI+ have it, gdi32 does not
 symbol.fill                    `fill` is an axis on the VARIABLE Material Symbols font; the bundled face is the static Outlined instance and GDI has no variable-axis support — that is DirectWrite
 hybrid_web.on_raw_message_received   the whole kind is decided absent — §1 `hybrid_web`
 hybrid_web.on_web_resource_requested as hybrid_web.on_raw_message_received

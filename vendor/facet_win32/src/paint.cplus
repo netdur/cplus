@@ -867,6 +867,40 @@ fn uniform_radius(c: vocab::Corners) -> f64 {
 }
 
 #[test]
+fn a_plain_stroke_keeps_the_cheap_pen_and_a_shaped_one_does_not() {
+    // The overwhelming case is a solid border with the default cap and join,
+    // and it must keep `PS_INSIDEFRAME` — the cosmetic pen is the only one that
+    // has it, and losing it draws a 6-point border as 3.
+    assert !wants_geometric(vocab::Dashes::none(), vocab::LineCap::Flat,
+                            vocab::LineJoin::Miter);
+    // Any one of the three stated is enough to need the geometric pen.
+    assert wants_geometric(vocab::Dashes::of(4.0f64, 2.0f64), vocab::LineCap::Flat,
+                           vocab::LineJoin::Miter);
+    assert wants_geometric(vocab::Dashes::none(), vocab::LineCap::Round,
+                           vocab::LineJoin::Miter);
+    assert wants_geometric(vocab::Dashes::none(), vocab::LineCap::Flat,
+                           vocab::LineJoin::Bevel);
+    return;
+}
+
+#[test]
+fn the_cap_and_join_bits_are_fields_not_flags() {
+    // PS_ENDCAP_* and PS_JOIN_* each occupy their own nibble, and ROUND is ZERO
+    // in both — so a wrong mapping does not fail, it silently draws round.
+    assert cap_bits(vocab::LineCap::Round) == (0 as u32);
+    assert cap_bits(vocab::LineCap::Square) == (0x00000100 as u32);
+    assert cap_bits(vocab::LineCap::Flat) == (0x00000200 as u32);
+    assert join_bits(vocab::LineJoin::Round) == (0 as u32);
+    assert join_bits(vocab::LineJoin::Bevel) == (0x00001000 as u32);
+    assert join_bits(vocab::LineJoin::Miter) == (0x00002000 as u32);
+    // The two fields do not collide, which is what lets them be OR'd together.
+    assert (cap_bits(vocab::LineCap::Flat) & join_bits(vocab::LineJoin::Miter))
+        == (0 as u32);
+    assert ps_geometric() == (0x00010000 as u32);
+    return;
+}
+
+#[test]
 fn a_colorref_is_bgr_not_rgb() {
     // Pure red is 0x0000FF in a COLORREF, NOT 0xFF0000. Getting this backwards
     // produces a picture that looks deliberate rather than broken, which is
@@ -1076,6 +1110,131 @@ fn fill_ellipse(hdc: *u8, r: u::tagRECT, b: *u8) {
 // default centres it on the path, so half a wide stroke falls outside the
 // node's own box and is clipped — a 6-point border drawing as 3, with nothing
 // to explain it.
+// ---- a stroke with a shape: dashes, caps and joins ---------------------------
+//
+// `CreatePen` makes a COSMETIC pen, and a cosmetic pen has exactly one dash
+// vocabulary (PS_DASH, PS_DOT...), no cap and no join. `ExtCreatePen` with
+// PS_GEOMETRIC has all three, and that is the only door in GDI to them.
+//
+// THE TRADE IS PS_INSIDEFRAME, and it is why the simple path below is kept
+// rather than replaced. `PS_INSIDEFRAME` (6) keeps the whole pen width INSIDE
+// the rectangle; it belongs to the cosmetic family and `ExtCreatePen` refuses
+// it. So the geometric path insets the rectangle by half the width itself,
+// which is the same pixels by a different route — without it a 6-point border
+// would draw as 3, which is the bug the original comment records.
+//
+// `stroke_dash_offset` HAS NO ANSWER HERE. A dash PHASE is not a thing GDI
+// models: `ExtCreatePen` takes the run lengths and starts at the first one,
+// always. Recorded in §0's cannot-ledger.
+#[link_name = "ExtCreatePen"]
+extern fn ExtCreatePen(style: u32, width: u32, brush: *u8,
+                       style_count: u32, style_array: *u32) -> *u8;
+#[link_name = "SetMiterLimit"]
+extern fn SetMiterLimit(hdc: *u8, limit: f32, old: *f32) -> i32;
+
+fn ps_geometric() -> u32 { return 0x00010000 as u32; }
+fn ps_solid() -> u32 { return 0 as u32; }
+fn ps_userstyle() -> u32 { return 7 as u32; }
+// The cap and join bits, which are a FIELD each rather than flags.
+fn cap_bits(cap: vocab::LineCap) -> u32 {
+    return match cap {
+        vocab::LineCap::Round => 0x00000000 as u32,     // PS_ENDCAP_ROUND
+        vocab::LineCap::Square => 0x00000100 as u32,    // PS_ENDCAP_SQUARE
+        vocab::LineCap::Flat => 0x00000200 as u32,      // PS_ENDCAP_FLAT
+    };
+}
+fn join_bits(join: vocab::LineJoin) -> u32 {
+    return match join {
+        vocab::LineJoin::Round => 0x00000000 as u32,    // PS_JOIN_ROUND
+        vocab::LineJoin::Bevel => 0x00001000 as u32,    // PS_JOIN_BEVEL
+        vocab::LineJoin::Miter => 0x00002000 as u32,    // PS_JOIN_MITER
+    };
+}
+
+// Whether a stroke needs the geometric pen at all. A solid stroke with the
+// default cap and join is the overwhelming case and keeps the cheaper,
+// PS_INSIDEFRAME path.
+fn wants_geometric(dash: vocab::Dashes, cap: vocab::LineCap,
+                   join: vocab::LineJoin) -> bool {
+    if !dash.is_solid() { return true; }
+    let flat: bool = match cap { vocab::LineCap::Flat => true, _ => false };
+    let miter: bool = match join { vocab::LineJoin::Miter => true, _ => false };
+    return !flat || !miter;
+}
+
+fn stroke_rect_shaped(hdc: *u8, r: u::tagRECT, color: u32, width: i32, radius: f64,
+                      dash: vocab::Dashes, cap: vocab::LineCap,
+                      join: vocab::LineJoin, miter_limit: f64) {
+    if width <= (0 as i32) { return; }
+    if !wants_geometric(dash, cap, join) {
+        stroke_rect(hdc, r, color, width, radius);
+        return;
+    }
+    var lb: gdi::tagLOGBRUSH = gdi::tagLOGBRUSH { lbStyle: 0 as u32,      // BS_SOLID
+                                                  lbColor: color,
+                                                  lbHatch: 0 as u64 };
+    var style: u32 = ps_geometric() | cap_bits(cap) | join_bits(join);
+    var runs: [u32; 8] = [0 as u32; 8];
+    var n: u32 = 0 as u32;
+    if dash.is_solid() {
+        style = style | ps_solid();
+    } else {
+        style = style | ps_userstyle();
+        var i: usize = 0 as usize;
+        while i < dash.count && i < (8 as usize) {
+            // A RUN OF ZERO IS REFUSED by ExtCreatePen and takes the whole pen
+            // with it, so a nonsense dash falls back to solid rather than
+            // drawing no border at all.
+            let run: f64 = dash.run(i);
+            if run <= (0.0 as f64) { n = 0 as u32; i = dash.count; }
+            else {
+                { runs[i] = run as u32 };
+                n = n +% (1 as u32);
+                i = i +% (1 as usize);
+            }
+        }
+        if n == (0 as u32) { style = (style & ~ps_userstyle()) | ps_solid(); }
+    }
+    let pen: *u8 = { ExtCreatePen(style, width as u32, { #addr_of(lb) as *u8 },
+                                  n, if n == (0 as u32) { 0 as *u32 }
+                                     else { #addr_of(runs[0]) }) };
+    if pen == (0 as *u8) {
+        // A refused pen must not mean a missing border.
+        stroke_rect(hdc, r, color, width, radius);
+        return;
+    }
+    // MITER LIMIT IS A DC SETTING, not a pen one, and it is restored after.
+    var old_limit: f32 = 0.0f32;
+    var set_limit: bool = false;
+    if miter_limit > (1.0 as f64) {
+        if { SetMiterLimit(hdc, miter_limit as f32, #addr_of(old_limit)) } != (0 as i32) {
+            set_limit = true;
+        }
+    }
+    // PS_INSIDEFRAME is not available on a geometric pen, so the box is inset by
+    // half the width to keep the stroke inside it — see the header.
+    let half: i32 = width / (2 as i32);
+    let inset: u::tagRECT = u::tagRECT { left: r.left +% half, top: r.top +% half,
+                                         right: r.right -% half,
+                                         bottom: r.bottom -% half };
+    let hollow: *u8 = { gdi::GetStockObject(5 as i32) };
+    let old_pen: *u8 = { gdi::SelectObject(hdc, pen) };
+    let old_brush: *u8 = { gdi::SelectObject(hdc, hollow) };
+    if radius > (0.0 as f64) {
+        let d: i32 = (radius * (2.0 as f64)) as i32;
+        let _r: i32 = { gdi::RoundRect(hdc, inset.left, inset.top,
+                                       inset.right, inset.bottom, d, d) };
+    } else {
+        let _r: i32 = { gdi::Rectangle(hdc, inset.left, inset.top,
+                                       inset.right, inset.bottom) };
+    }
+    let _b: *u8 = { gdi::SelectObject(hdc, old_brush) };
+    let _p: *u8 = { gdi::SelectObject(hdc, old_pen) };
+    let _d: i32 = { gdi::DeleteObject(pen) };
+    if set_limit { let _m: i32 = { SetMiterLimit(hdc, old_limit, 0 as *f32) }; }
+    return;
+}
+
 fn stroke_rect(hdc: *u8, r: u::tagRECT, color: u32, width: i32, radius: f64) {
     if width <= (0 as i32) { return; }
     let pen: *u8 = { gdi::CreatePen(6 as i32, width, color) };

@@ -2178,9 +2178,14 @@ fn apply_page_dots(v: *u8, n: *core::Node, dirty: u64) {
 fn create_bordered(n: *core::Node) -> *u8 { return create_panel(n); }
 
 fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
+    // `P_STROKE_DASH_OFFSET` IS NOT HERE. A dash PHASE is not something GDI
+    // models: `ExtCreatePen` takes the run lengths and always starts at the
+    // first one. Gating on it would repaint an identical border on every step
+    // of an offset animation — the same false promise `symbol.fill` was making.
+    // Recorded in §0's cannot-ledger.
     let touched: u64 = bordered::P_STROKE | bordered::P_STROKE_WIDTH
                      | bordered::P_STROKE_SHAPE | bordered::P_STROKE_DASH
-                     | bordered::P_STROKE_DASH_OFFSET | bordered::P_STROKE_CAP
+                     | bordered::P_STROKE_CAP
                      | bordered::P_STROKE_JOIN | bordered::P_STROKE_MITER_LIMIT;
     if (dirty & touched) != (0 as u64) {
         let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
@@ -2207,8 +2212,16 @@ fn draw_bordered(v: *u8, n: *core::Node, hdc: *u8) {
     var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
                                      right: 0 as i32, bottom: 0 as i32 };
     if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
-    paint::stroke_rect(hdc, r, c, w as i32,
-                       paint::uniform_radius({ (*p).stroke_shape.corners }));
+    // THE FIVE STROKE VERBS THE MASK ALREADY PROMISED. `apply_bordered` has
+    // gated on all of them since the control was written and this body read
+    // width, colour and corners only — so a dashed border, a round cap or a
+    // bevelled join marked the node dirty, repainted, and drew the same solid
+    // rectangle. `stroke_rect_shaped` takes the cheap PS_INSIDEFRAME path when
+    // none of them is stated, which is the overwhelming case.
+    paint::stroke_rect_shaped(hdc, r, c, w as i32,
+                              paint::uniform_radius({ (*p).stroke_shape.corners }),
+                              { (*p).stroke_dash }, { (*p).stroke_cap },
+                              { (*p).stroke_join }, { (*p).stroke_miter_limit });
     return;
 }
 
