@@ -111,6 +111,98 @@ them in that order.
 
 ---
 
+---
+
+## 0. The machine-readable ledgers
+
+`tools/verb_coverage.py` is the STRICTER of the two measurements — it separates
+"the mask gates the bit AND a body reads the field" from "the mask promises and
+nothing reads it", which `parity.py` cannot see. It reads dispositions from the
+fenced blocks below rather than from the prose, because grepping prose is what
+produced a wrong number twice on other backends: a section that MENTIONS a verb
+while calling it a gap matched as a commitment that the platform cannot do it.
+
+Every row here is argued at length in §1 — this is the index, not the argument.
+Until these blocks existed, facet_win32 was scored only by the looser tool and
+its real debt had never been printed: 64 verbs read as ABSENT with no way to
+tell a platform wall from an unwritten one.
+
+```cannot-ledger
+span.font_family               a STATIC/EDIT draws ONE run; spans need RICHEDIT50W — §1 "Rich text"
+span.font_size                 as span.font_family
+span.font_weight               as span.font_family
+span.font_scales               as span.font_family
+span.is_italic                 as span.font_family
+span.text_decoration           as span.font_family
+span.text_transform            as span.font_family
+span.character_spacing         as span.font_family
+span.line_height               as span.font_family
+span.text_color                as span.font_family
+span.text                      as span.font_family
+label.formatted_text           there is no attributed string in user32 — §1 "Rich text"
+label.text_format              as label.formatted_text
+text_area.style_runs           as label.formatted_text
+label.line_height              GDI has no line spacing at any entry point; it would take DirectWrite — §1 "PER-CONTROL TYPOGRAPHY"
+search_field.return_key        a hardware Enter key has no label to set — §1 "The MOBILE INPUT verbs"
+text_field.return_key          as search_field.return_key
+search_field.checks_spelling   the suggestion strip is a SOFT keyboard's; a desktop has none — §1 "The MOBILE INPUT verbs"
+text_area.checks_spelling      as search_field.checks_spelling
+text_field.checks_spelling     as search_field.checks_spelling
+search_field.predicts_text     as search_field.checks_spelling
+text_area.predicts_text        as search_field.checks_spelling
+text_field.predicts_text       as search_field.checks_spelling
+hybrid_web.default_file        the whole kind is decided absent — §1 `hybrid_web`
+hybrid_web.hybrid_root         as hybrid_web.default_file
+hybrid_web.send_message        as hybrid_web.default_file
+popup.title                    owner-draw is not available to a combo box here — §1 `popup.text_color`
+popup.title_color              as popup.title
+popup.text_color               as popup.title
+popup.text_align               as popup.title
+popup.item_enabled             a combo box has no per-item enabled state — §1
+carousel.bounces               §1 `carousel.bounces`
+toolbar_item.icon              the strip is built, the glyph is not — §1
+toolbar_item.is_destructive    §1; a sibling swipe item reads the same base field, which is not this control implementing it
+menu_item.is_destructive       a menu item does not own its pixels — §1
+context_menu_item.is_destructive  as menu_item.is_destructive
+date_picker.character_spacing  SetTextCharacterExtra is a DC call and a system control owns its DC — §1 "PER-CONTROL TYPOGRAPHY"
+popup.character_spacing        as date_picker.character_spacing
+search_field.character_spacing as date_picker.character_spacing
+text_area.character_spacing    as date_picker.character_spacing
+text_field.character_spacing   as date_picker.character_spacing
+time_picker.character_spacing  as date_picker.character_spacing
+popup.vertical_align           §1 "`vertical_align` on an EDIT"
+search_field.vertical_align    as popup.vertical_align
+text_area.vertical_align       as popup.vertical_align
+text_field.vertical_align      as popup.vertical_align
+```
+
+```by-architecture
+canvas.redraw                  `apply_canvas` repaints on ANY apply and never reads `dirty`, so the redraw command's purpose is answered without a bit to gate — see the note in §1
+```
+
+```create-only
+canvas.drawable                the recording is re-read on every WM_PAINT; there is no retained view to update
+label.selectable               forks the control to a read-only EDIT at create; changing it needs a new window
+text_button.toggles            selects BS_AUTOCHECKBOX|BS_PUSHLIKE, a window style fixed at CreateWindowEx
+icon_button.is_opaque          decides the background the button is built with
+slider.thumb_image             decides whether the slider is custom-drawn at all
+scroll.cascades_input          read when input transparency is armed
+text_area.auto_size            read by the measure pass rather than by an apply
+carousel.animates_scroll       read when a page change is animated
+carousel.is_swipeable          read when the gesture is armed
+time_picker.is_open            the state is ASKED of the control (DTM_GETMONTHCAL), never cached — §1
+toolbar_item.placement         the strip is rebuilt wholesale when the item list's fingerprint changes
+toolbar_item.priority          as toolbar_item.placement
+toolbar_item.text              as toolbar_item.placement
+tree.selected                  the recycler realises rows; a row is built with its state
+tree.row_id                    as tree.selected
+```
+
+Two verbs are left as DEBT on purpose rather than filed under a disposition
+they do not have: `popup.label`, which nothing argues and nothing reads, and
+`list.reorder`, which the tool scores create-only only because a sibling body
+reaches the same base struct — no code in this package reads it.
+
 ## 1. Decided absent — Win32 has no such thing
 
 ### `opacity` — ANSWERABLE, and a `fade` really fades
