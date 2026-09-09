@@ -2032,7 +2032,23 @@ impl ExprRewriter for MonoRewriter<'_> {
                     }
                     _ => walk_expr(callee, self),
                 };
-                let mut new_args: Vec<Expr> = args.iter().map(|a| walk_expr(a, self)).collect();
+                // Sema-side named-call arrangement: a labelled method call
+                // lowering could not decide without the receiver's type, which
+                // sema resolved and reordered (`try_arrange_named_call`). Its
+                // list REPLACES what was written — arguments in parameter
+                // order, omitted defaults spliced — so everything from here
+                // down sees the ordinary positional call lowering would have
+                // produced had it known the type. `effective` is that list
+                // wherever one was recorded, and the written args otherwise;
+                // both the splice append and the bound-ref rewrite below index
+                // against it, because a ctx slot's "adjacent" is adjacent in
+                // the LOWERED order, not the written one.
+                let effective: &[Expr] = match self.mono.named_call_args.get(&expr.span) {
+                    Some(arranged) => arranged.as_slice(),
+                    None => args,
+                };
+                let mut new_args: Vec<Expr> =
+                    effective.iter().map(|a| walk_expr(a, self)).collect();
                 // 2026-07-16: sema-side default splices — trailing defaulted
                 // args sema resolved when lower could not (the bare method name
                 // is shared across types). Appended BEFORE the bound-ref rewrite
@@ -2047,7 +2063,7 @@ impl ExprRewriter for MonoRewriter<'_> {
                 // `recv.method` in handler position becomes the erased bridge
                 // fn, and the FOLLOWING arg slot (the spliced ctx default —
                 // sema guaranteed it exists) becomes `#addr_of(recv) as *u8`.
-                for (i, a) in args.iter().enumerate() {
+                for (i, a) in effective.iter().enumerate() {
                     if let Some(br) = self.mono.bound_method_refs.get(&a.span) {
                         new_args[i] = Expr {
                             kind: ExprKind::Ident(br.bridge_name.clone()),
@@ -3284,4 +3300,55 @@ mod tests {
 
     #[allow(dead_code)]
     fn _byte_span_used(_s: ByteSpan) {}
+
+    // ---- named-call arrangement reaches the emitted AST ----
+
+    /// Sema arranges a labelled method call it alone can decide (the bare
+    /// method name is shared, so lowering had to defer), and records the
+    /// arranged argument list. This pass is what applies it — without that,
+    /// codegen would emit the call in WRITTEN order and the labels would have
+    /// changed nothing at all.
+    #[test]
+    fn a_sema_arranged_named_call_is_emitted_in_parameter_order() {
+        let prog = run("struct A { x: i32 }\n\
+                        impl A { fn go(ref this, v: i32, ctx: i32 = 0) -> i32 { return v * 10 + ctx; } }\n\
+                        struct B { y: i32 }\n\
+                        impl B { fn go(ref this, ctx: i32, v: i32 = 9) -> i32 { return ctx * 100 + v; } }\n\
+                        fn main() -> i32 {\n\
+                            var a: A = A { x: 1 };\n\
+                            return a.go(ctx: 3, v: 5);\n\
+                        }\n");
+        let main = prog
+            .items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) if f.name.name == "main" => Some(f),
+                _ => None,
+            })
+            .expect("main");
+        let mut args: Option<Vec<u64>> = None;
+        crate::ast::visit_exprs_in_block(&main.body, &mut |e| {
+            if args.is_some() {
+                return;
+            }
+            if let ExprKind::Call { callee, args: a, .. } = &e.kind {
+                if matches!(&callee.kind, ExprKind::Field { name, .. } if name.name == "go") {
+                    args = Some(
+                        a.iter()
+                            .map(|x| match &x.kind {
+                                ExprKind::IntLit(v, _) => *v,
+                                other => panic!("expected int literal, got {other:?}"),
+                            })
+                            .collect(),
+                    );
+                }
+            }
+        });
+        // Written `(ctx: 3, v: 5)`; `A::go` declares `(v, ctx)`.
+        assert_eq!(
+            args.expect("the call to `go`"),
+            vec![5, 3],
+            "the emitted call must be in A's parameter order, not written order"
+        );
+    }
 }

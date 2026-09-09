@@ -113,10 +113,20 @@ fn num_at(s: str, start: usize, width: usize) -> i64 {
     return v;
 }
 
-// Parse an ISO-8601 timestamp. Accepts "YYYY-MM-DD" (time = midnight) and
-// "YYYY-MM-DD" + ('T' | ' ') + "HH:MM:SS" with any trailing fractional / zone
-// suffix ignored (times here are treated as UTC). `None` on a malformed date, an
-// out-of-range field, or a present-but-broken time.
+// Parse an ISO-8601 timestamp. Accepts "YYYY-MM-DD" (time = midnight),
+// "YYYY-MM-DD" + ('T' | ' ') + "HH:MM" (seconds = 0), and the same with a
+// ":SS", with any trailing fractional / zone suffix ignored (times here are
+// treated as UTC). `None` on a malformed date, an out-of-range field, or a
+// present-but-broken time.
+//
+// The SEPARATOR decides whether a time is present, not the total length.
+// Gating the whole time branch on `n >= 19` — which is what this did until
+// v0.0.28 — meant anything shorter kept the zeroed clock fields and still
+// returned `Some`: minute precision ("2026-09-06T14:00", exactly the shape
+// Open-Meteo's hourly block emits) read as midnight, and so did outright
+// garbage ("2026-09-06TZZZZZ"). A wrong answer that looks like a right one,
+// with no error surface to notice it by. Byte 10 is now the decision point:
+// past it, the input must be a real time or it is `None`.
 fn parse_iso8601(s: str) -> option::Option[DateTime] {
     let n: usize = #str_len(s);
     if n < (10 as usize) { return option::Option[DateTime]::None; }
@@ -132,16 +142,27 @@ fn parse_iso8601(s: str) -> option::Option[DateTime] {
     var hh: i64 = 0 as i64;
     var mm: i64 = 0 as i64;
     var ss: i64 = 0 as i64;
-    if n >= (19 as usize) {
+    if n > (10 as usize) {
         let sep: u8 = { *(p + (10 as usize)) };
-        if sep == ('T' as u8) || sep == (' ' as u8) {
-            hh = num_at(s, 11 as usize, 2 as usize);
-            mm = num_at(s, 14 as usize, 2 as usize);
-            ss = num_at(s, 17 as usize, 2 as usize);
-            if hh < (0 as i64) || hh > (23 as i64) { return option::Option[DateTime]::None; }
-            if mm < (0 as i64) || mm > (59 as i64) { return option::Option[DateTime]::None; }
-            if ss < (0 as i64) || ss > (60 as i64) { return option::Option[DateTime]::None; }
+        if sep != ('T' as u8) && sep != (' ' as u8) { return option::Option[DateTime]::None; }
+        // A separator promises at least "HH:MM". Anything shorter is truncated,
+        // not date-only — the date-only reading ended at byte 10.
+        if n < (16 as usize) { return option::Option[DateTime]::None; }
+        if { *(p + (13 as usize)) } != (':' as u8) { return option::Option[DateTime]::None; }
+        hh = num_at(s, 11 as usize, 2 as usize);
+        mm = num_at(s, 14 as usize, 2 as usize);
+        // ":SS" is optional. A non-colon at byte 16 starts a zone or fraction
+        // ("...T14:00Z", "...T14:00+02:00") and ends the time; a colon there
+        // promises two more digits.
+        if n > (16 as usize) {
+            if { *(p + (16 as usize)) } == (':' as u8) {
+                if n < (19 as usize) { return option::Option[DateTime]::None; }
+                ss = num_at(s, 17 as usize, 2 as usize);
+            }
         }
+        if hh < (0 as i64) || hh > (23 as i64) { return option::Option[DateTime]::None; }
+        if mm < (0 as i64) || mm > (59 as i64) { return option::Option[DateTime]::None; }
+        if ss < (0 as i64) || ss > (60 as i64) { return option::Option[DateTime]::None; }
     }
     return option::Option[DateTime]::Some(DateTime { year: y, month: mo, day: d, hour: hh, minute: mm, second: ss });
 }
@@ -243,6 +264,72 @@ fn parse_rejects_garbage_and_out_of_range() {
     match parse_iso8601("not-a-date!") { option::Option[DateTime]::Some(x) => { assert false; } option::Option[DateTime]::None => { } }
     match parse_iso8601("2026-13-01") { option::Option[DateTime]::Some(x) => { assert false; } option::Option[DateTime]::None => { } }
     match parse_iso8601("2026/07/23") { option::Option[DateTime]::Some(x) => { assert false; } option::Option[DateTime]::None => { } }
+}
+
+// Assert a parse yields exactly this clock; `hour == -1` means "expect None".
+fn expect_time(s: str, hour: i64, minute: i64, second: i64) {
+    match parse_iso8601(s) {
+        option::Option[DateTime]::Some(dt) => {
+            assert hour >= (0 as i64);
+            assert dt.hour == hour;
+            assert dt.minute == minute;
+            assert dt.second == second;
+        }
+        option::Option[DateTime]::None => { assert hour < (0 as i64); }
+    }
+    return;
+}
+
+#[test]
+fn parse_accepts_minute_precision() {
+    // ISO 8601 permits minute precision, and it is what Open-Meteo's hourly
+    // block emits. This read as midnight until v0.0.28.
+    expect_time("2026-09-06T14:00", 14 as i64, 0 as i64, 0 as i64);
+    expect_time("2026-09-06T23:59", 23 as i64, 59 as i64, 0 as i64);
+    expect_time("2026-09-06 14:30", 14 as i64, 30 as i64, 0 as i64);
+    // A zone or fraction may follow the minutes with no seconds between.
+    expect_time("2026-09-06T14:00Z", 14 as i64, 0 as i64, 0 as i64);
+    expect_time("2026-09-06T14:00+02:00", 14 as i64, 0 as i64, 0 as i64);
+}
+
+#[test]
+fn parse_still_reads_seconds_and_ignores_suffixes() {
+    expect_time("2026-09-06T14:30:05", 14 as i64, 30 as i64, 5 as i64);
+    expect_time("2026-09-06T14:30:05Z", 14 as i64, 30 as i64, 5 as i64);
+    expect_time("2026-09-06T14:30:05.250Z", 14 as i64, 30 as i64, 5 as i64);
+    expect_time("2026-09-06 14:30:05", 14 as i64, 30 as i64, 5 as i64);
+    expect_time("2026-09-06T23:59:60", 23 as i64, 59 as i64, 60 as i64);  // leap second
+}
+
+#[test]
+fn parse_rejects_a_broken_time_instead_of_reporting_midnight() {
+    // Every one of these returned `Some` at midnight before v0.0.28: the time
+    // branch was gated on total length, so a short or unparseable tail was
+    // never inspected at all.
+    expect_time("2026-09-06TZZZZZ", -1 as i64, 0 as i64, 0 as i64);         // 16, garbage
+    expect_time("2026-09-06ZZZZZZZZZ", -1 as i64, 0 as i64, 0 as i64);      // 19, bad separator
+    expect_time("2026-09-06X14:00:00", -1 as i64, 0 as i64, 0 as i64);      // bad separator
+    expect_time("2026-09-06T", -1 as i64, 0 as i64, 0 as i64);              // separator, no time
+    expect_time("2026-09-06T14", -1 as i64, 0 as i64, 0 as i64);            // hour only
+    expect_time("2026-09-06T1:00", -1 as i64, 0 as i64, 0 as i64);          // one-digit hour
+    expect_time("2026-09-06T14X00", -1 as i64, 0 as i64, 0 as i64);         // no HH:MM colon
+    expect_time("2026-09-06T14:00:0", -1 as i64, 0 as i64, 0 as i64);       // truncated seconds
+    expect_time("2026-09-06T25:00", -1 as i64, 0 as i64, 0 as i64);         // hour out of range
+    expect_time("2026-09-06T14:60", -1 as i64, 0 as i64, 0 as i64);         // minute out of range
+    expect_time("2026-09-06T14:00:61", -1 as i64, 0 as i64, 0 as i64);      // second out of range
+}
+
+#[test]
+fn parse_date_only_is_unchanged_by_the_separator_rule() {
+    // The one case that was already correct, pinned so the new byte-10
+    // decision cannot regress it.
+    expect_time("2026-09-06", 0 as i64, 0 as i64, 0 as i64);
+    match parse_iso8601("2026-09-06") {
+        option::Option[DateTime]::Some(dt) => {
+            assert dt.year == (2026 as i64) && dt.month == (9 as i64) && dt.day == (6 as i64);
+        }
+        option::Option[DateTime]::None => { assert false; }
+    }
 }
 
 #[test]

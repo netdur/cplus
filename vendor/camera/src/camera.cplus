@@ -211,11 +211,72 @@ fn _permitted() -> Outcome {
 // `stride` IS NOT `width`. Rows are padded for alignment, and a caller that
 // walks `width * height` bytes reads a sheared image on most hardware; index
 // with `y * stride + x`.
+// HOW FAR THIS BUFFER IS FROM UPRIGHT, clockwise.
+//
+// **THE PACKAGE REPORTS, IT DOES NOT ROTATE**, and that is the decision this
+// enum exists to record. A sensor is mounted at a fixed angle in the body and
+// delivers in ITS orientation. The PREVIEW is turned by the platform — an
+// `AVCaptureVideoPreviewLayer`'s connection on Apple, a `TextureView` matrix on
+// Android — and the BUFFERS are not, which is why a preview can be upright
+// while every frame behind it is sideways.
+//
+// Rotating them here would cost a full-frame copy thirty times a second on the
+// hot path, and the caller usually wants the fact rather than the copy: a
+// detection model can be handed the angle, and drawing a box back over the
+// preview needs the angle either way. So `Frame::rotation()` is what you would
+// have to turn the buffer by, CLOCKWISE, to make it upright for the way the
+// device is being held right now.
+//
+// A still is the opposite case and is handled the opposite way — see
+// `Camera::capture`. A JPEG outlives the call and has a standard place to
+// record its rotation, so the package writes it and the file comes out upright.
+enum Rotation {
+    None,
+    Cw90,
+    Cw180,
+    Cw270,
+}
+
+impl Rotation {
+    fn degrees(this) -> i32 {
+        return match this {
+            Rotation::None => 0 as i32,
+            Rotation::Cw90 => 90 as i32,
+            Rotation::Cw180 => 180 as i32,
+            Rotation::Cw270 => 270 as i32,
+        };
+    }
+
+    // Anything that is not a quarter turn is `None` rather than a guess: a
+    // backend that cannot say is saying it does not know, and turning an
+    // unknown into 90 degrees would be worse than leaving the buffer alone.
+    fn from_degrees(d: i32) -> Rotation {
+        let n: i32 = ((d % (360 as i32)) + (360 as i32)) % (360 as i32);
+        if n == (90 as i32) { return Rotation::Cw90; }
+        if n == (180 as i32) { return Rotation::Cw180; }
+        if n == (270 as i32) { return Rotation::Cw270; }
+        return Rotation::None;
+    }
+
+    // Does the buffer's width and height swap when this is applied? The one
+    // question every consumer asks next, and the one it is easiest to get
+    // wrong by testing `!= None`.
+    fn swaps_axes(this) -> bool {
+        return match this {
+            Rotation::Cw90 => true,
+            Rotation::Cw270 => true,
+            Rotation::None => false,
+            Rotation::Cw180 => false,
+        };
+    }
+}
+
 struct Frame {
     opaque _luma: *u8,
     _width: i32,
     _height: i32,
     _stride: i32,
+    _rotation: i32,
     opaque _native: *u8,
 }
 
@@ -225,6 +286,11 @@ impl Frame {
 
     // Bytes per row, always >= width. See the note above.
     fn stride(this) -> i32 { return this._stride; }
+
+    // How far this buffer is from upright — see `Rotation`. `width()` and
+    // `height()` describe the BUFFER and are unaffected by it; a consumer that
+    // wants the upright shape asks `rotation().swaps_axes()`.
+    fn rotation(this) -> Rotation { return Rotation::from_degrees(this._rotation); }
 
     // A PACKED FRAME IS NOT EMPTY. A BGRA buffer has no luma plane, so `_luma`
     // is null while `_native` carries the whole image — and this used to read
@@ -997,13 +1063,14 @@ fn _forget_frame(session: *u8) {
 // Reads the handler into a local BEFORE calling it. `stop_frames` and `close`
 // clear the slot from another thread, and a handler read twice could be
 // non-null on the check and null on the call.
-fn _deliver_frame(luma: *u8, width: i32, height: i32, stride: i32, native: *u8, slot: *u8) {
+fn _deliver_frame(luma: *u8, width: i32, height: i32, stride: i32, rotation: i32,
+                  native: *u8, slot: *u8) {
     if slot.is_null() { return; }
     let h: *_Handler = slot as *_Handler;
     let f: fn(Frame, *u8) = { (*h).on_frame };
     if f.is_null() { return; }
     f(Frame { _luma: luma, _width: width, _height: height, _stride: stride,
-              _native: native },
+              _rotation: rotation, _native: native },
       { (*h).frame_ctx });
 }
 
@@ -1054,7 +1121,7 @@ extern fn _c_switch_to(h: *u8, facing: i32) -> i32;
 extern fn _c_preview_create(h: *u8) -> *u8;
 extern fn _c_preview_release(v: *u8);
 extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32;
-extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32;
+extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32;
 extern fn _c_stop_frames(h: *u8) -> i32;
 
 // ---- tests -------------------------------------------------------------------
@@ -1069,6 +1136,43 @@ extern fn _c_stop_frames(h: *u8) -> i32;
 // plans/camera.md §4 for what each target can and cannot prove. The short
 // version: the iOS simulator has no camera at all, and the Android emulator's
 // two cameras are synthetic.
+
+#[test]
+fn a_rotation_round_trips_through_its_degrees() {
+    assert Rotation::None.degrees() == (0 as i32);
+    assert Rotation::Cw90.degrees() == (90 as i32);
+    assert Rotation::Cw180.degrees() == (180 as i32);
+    assert Rotation::Cw270.degrees() == (270 as i32);
+    assert Rotation::from_degrees(90 as i32).degrees() == (90 as i32);
+    assert Rotation::from_degrees(270 as i32).degrees() == (270 as i32);
+}
+
+#[test]
+fn an_angle_that_is_not_a_quarter_turn_is_no_rotation() {
+    // A backend that cannot say is saying it does not know, and turning that
+    // into a quarter turn would be worse than leaving the buffer alone.
+    assert Rotation::from_degrees(45 as i32).degrees() == (0 as i32);
+    assert Rotation::from_degrees(1 as i32).degrees() == (0 as i32);
+}
+
+#[test]
+fn degrees_wrap_rather_than_falling_through() {
+    // 360 and -90 are real answers out of a modular subtraction, and reading
+    // either as "no rotation" would leave a quarter of the cases upright-ish.
+    assert Rotation::from_degrees(360 as i32).degrees() == (0 as i32);
+    assert Rotation::from_degrees(450 as i32).degrees() == (90 as i32);
+    assert Rotation::from_degrees(-90 as i32).degrees() == (270 as i32);
+}
+
+#[test]
+fn only_the_quarter_turns_swap_the_axes() {
+    // The question every consumer asks next, and the one it is easiest to get
+    // wrong by testing `!= None`.
+    assert Rotation::Cw90.swaps_axes();
+    assert Rotation::Cw270.swaps_axes();
+    assert !Rotation::None.swaps_axes();
+    assert !Rotation::Cw180.swaps_axes();
+}
 
 #[test]
 fn every_outcome_has_a_distinct_code() {
@@ -1302,7 +1406,7 @@ fn t_count_frame(f: Frame, ctx: *u8) {
 #[test]
 fn luma_is_sized_by_stride_not_width() {
     var buf: [u8; 32] = #zero::[[u8; 32]]();
-    let f: Frame = Frame { _luma: #addr_of(buf[0]), _width: 3, _height: 4, _stride: 8, _native: 0 as *u8 };
+    let f: Frame = Frame { _luma: #addr_of(buf[0]), _width: 3, _height: 4, _stride: 8, _rotation: 0, _native: 0 as *u8 };
     assert f.width() == 3;
     assert f.height() == 4;
     assert f.stride() == 8;
@@ -1316,7 +1420,7 @@ fn luma_is_sized_by_stride_not_width() {
 // bugs/closed/camera-pixel-format-request-never-reaches-the-capture-output.md.
 #[test]
 fn a_packed_frame_with_only_a_native_buffer_is_not_empty() {
-    let f: Frame = Frame { _luma: 0 as *u8, _width: 640, _height: 480, _stride: 0, _native: 8 as *u8 };
+    let f: Frame = Frame { _luma: 0 as *u8, _width: 640, _height: 480, _stride: 0, _rotation: 0, _native: 8 as *u8 };
     assert !f.is_empty();
     assert f.luma().is_empty();
     assert f.native().is_not_null();
@@ -1354,11 +1458,11 @@ fn a_closed_camera_reports_no_pixel_format() {
 
 #[test]
 fn a_frame_with_no_pixels_is_empty_and_answers_an_empty_slice() {
-    let f: Frame = Frame { _luma: 0 as *u8, _width: 640, _height: 480, _stride: 640, _native: 0 as *u8 };
+    let f: Frame = Frame { _luma: 0 as *u8, _width: 640, _height: 480, _stride: 640, _rotation: 0, _native: 0 as *u8 };
     assert f.is_empty();
     assert f.luma().is_empty();
     var buf: [u8; 4] = #zero::[[u8; 4]]();
-    let z: Frame = Frame { _luma: #addr_of(buf[0]), _width: 0, _height: 0, _stride: 0, _native: 0 as *u8 };
+    let z: Frame = Frame { _luma: #addr_of(buf[0]), _width: 0, _height: 0, _stride: 0, _rotation: 0, _native: 0 as *u8 };
     assert z.is_empty();
     return;
 }
@@ -1375,12 +1479,12 @@ fn frames_and_photos_are_armed_independently() {
     _T_SEEN = 0;
     _T_FRAMES = 0;
     var px: [u8; 16] = #zero::[[u8; 16]]();
-    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0 as *u8, b);
+    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0, 0 as *u8, b);
     assert _T_FRAMES == 1;
 
     // Disarming frames leaves the photo handler alone.
     _forget_frame(8 as *u8);
-    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0 as *u8, b);
+    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0, 0 as *u8, b);
     assert _T_FRAMES == 1;
     _deliver(#addr_of(px[0]), 3 as usize, a);
     assert _T_SEEN == 1;
@@ -1397,7 +1501,7 @@ fn deliver_frame_passes_the_geometry_through() {
     _T_LAST_W = 0;
     _T_LAST_LUMA = 0 as usize;
     var px: [u8; 64] = #zero::[[u8; 64]]();
-    _deliver_frame(#addr_of(px[0]), 6, 4, 16, 0 as *u8, slot);
+    _deliver_frame(#addr_of(px[0]), 6, 4, 16, 0, 0 as *u8, slot);
     assert _T_FRAMES == 1;
     assert _T_LAST_W == 6;
     assert _T_LAST_LUMA == (64 as usize);   // stride 16 * height 4
@@ -1414,7 +1518,7 @@ fn closing_clears_the_frame_handler_too() {
     _forget(8 as *u8);
     _T_FRAMES = 0;
     var px: [u8; 16] = #zero::[[u8; 16]]();
-    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0 as *u8, slot);
+    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0, 0 as *u8, slot);
     assert _T_FRAMES == 0;
     return;
 }
@@ -1423,7 +1527,7 @@ fn closing_clears_the_frame_handler_too() {
 fn deliver_frame_with_no_slot_is_a_noop() {
     _T_FRAMES = 0;
     var px: [u8; 16] = #zero::[[u8; 16]]();
-    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0 as *u8, 0 as *u8);
+    _deliver_frame(#addr_of(px[0]), 4, 4, 4, 0, 0 as *u8, 0 as *u8);
     assert _T_FRAMES == 0;
     return;
 }

@@ -211,6 +211,17 @@ NOT_A_VERB = {
     "C_RESTYLE",       # C_ALL_STATE minus one bit
     "C_COMMANDS",      # the verb group, as a mask
     "C_LAYOUT",        # raised by geometry writes, answered by the layout pass
+    # Raised when a begin_updates/end_updates batch CLOSES, and by then every
+    # bit the batch raised is already on the node — the sync walk applies
+    # those. A backend acting on the flush as well re-applies the same node
+    # twice for one edit. So there is nothing to name, and NO BACKEND NAMES IT:
+    # appkit and uikit each mention it once, in a comment, which this tool
+    # strips by design.
+    #
+    # It was counted as an unanswered VERB until 2026-09-08 and each backend
+    # was expected to argue it away in its own manifest, which facet_gtk duly
+    # did. That is one census bug wearing three copies of the same excuse.
+    "C_FLUSH",
 }
 
 
@@ -438,34 +449,6 @@ def struct_for(module):
     return "".join(x.title() for x in module.split("_")) + "Props"
 
 
-def kinds_named(directory):
-    """Kind modules this backend DISPATCHES ON, from `props::K_*`.
-
-    THE EVIDENCE THE FIELD-TOUCH FALLBACK WANTED. That fallback needs proof the
-    backend implements a kind before a field name credits it, because field
-    names are not unique across Props structs — and the proof it used was "names
-    at least one P_ bit of that module", which is circular for a kind answered
-    ENTIRELY without dirty bits.
-
-    facet_win32's canvas is exactly that: `paint_canvas` reads `(*p).drawable`
-    and replays it through GDI+, and `apply_canvas` repaints on ANY dirty bit
-    because a canvas is drawn wholly by the backend — so there is no bit to name
-    and nothing to gate on. It scored 0/2 while being complete, and because it
-    scored 0 the fallback that would have seen the field read was switched off
-    by the very absence it was meant to cover.
-
-    `props::K_CANVAS` is the backend saying it knows the kind and dispatches on
-    it. It cannot collide the way a field name can — there is exactly one
-    `K_CANVAS` — so it is strictly better evidence than the bit count, and it is
-    accepted alongside it rather than instead of it.
-    """
-    src = strip_comments("".join(
-        open(p, encoding="utf-8").read()
-        for p in glob.glob(os.path.join(directory, "*.cplus"))
-        if not p.endswith("test_main.cplus")))
-    return {k[2:].lower() for k in re.findall(r"\bprops::(K_[A-Z0-9_]+)\b", src)}
-
-
 def main():
     # WHICH PACKAGE'S PER-KIND TABLE GETS PRINTED. It was gtk and only gtk,
     # which meant the one report that names missing props by name could only be
@@ -483,8 +466,16 @@ def main():
         return 2
 
     seen = {k: referenced(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
+    # Whole-backend source, for the kind-constant half of the evidence test
+    # below. Comments stripped for the reason `strip_comments` gives.
+    srcs = {k: strip_comments("".join(
+        # ENCODING IS NOT OPTIONAL ON WINDOWS: a bare `open` there defaults to
+        # cp1252 and dies on the first em-dash in a comment, which is every file
+        # in this repo. Every other read in this tool already says utf-8.
+        open(p_, encoding="utf-8").read() for p_ in glob.glob(os.path.join(d, "*.cplus"))
+        if not p_.endswith("test_main.cplus")))
+        for k, d in BACKENDS.items() if os.path.isdir(d)}
     written = {k: field_touches(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
-    dispatches = {k: kinds_named(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
     totals = {k: 0 for k in seen}
     declared = 0
     rows = []
@@ -501,10 +492,19 @@ def main():
             named = seen[k].get(module, set())
             # The field-touch fallback needs evidence this backend implements
             # the KIND — see `field_touches`. A named bit is that evidence, and
-            # so is dispatching on the kind at all (`props::K_CANVAS`), which is
-            # the stronger signal and the one that does not go circular for a
-            # kind answered without dirty bits. See `kinds_named`.
-            plausible = len(named) > 0 or module in dispatches[k]
+            # so is naming the kind CONSTANT.
+            #
+            # THE SECOND HALF WAS MISSING AND IT COST APPKIT 16 BITS. A backend
+            # need not route through `<module>::P_*` at all: facet_appkit
+            # dispatches menu, menu_item, context_menu_item, swipe_item and
+            # toolbar_item on `props::K_MENU_ITEM` and reads the struct fields
+            # directly. Requiring a named bit as the ONLY evidence discarded
+            # every one of those field touches, so five kinds it fully
+            # implements scored zero and vanished from the per-kind table
+            # entirely — the report has a row only where something is answered.
+            # appkit read 337/363 against gtk's 359 largely on that.
+            plausible = len(named) > 0 or re.search(
+                r"\bprops::K_" + module.upper() + r"\b", srcs[k]) is not None
             fields = written[k].get(struct_for(module), set())
             got[k] = {p for p in props
                       if p in named

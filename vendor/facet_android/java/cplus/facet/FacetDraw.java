@@ -273,6 +273,91 @@ public final class FacetDraw {
         }
     }
 
+    // THE TYPOGRAPHY HALF of a run, kept as its own entry point rather than four
+    // more parameters on `spansAdd` — that already takes twelve, and a caller
+    // wanting none of these should not have to say so four times.
+    //
+    // Each is a span class Android has had for years and that the bridge simply
+    // never exposed, so `span.font_family`, `span.line_height` and
+    // `span.character_spacing` were unanswerable from the C+ side however the
+    // backend was written.
+    public static void spansAddTypography(android.widget.TextView v, int start, int length,
+                                          String family, float lineHeightPx,
+                                          float letterSpacingEm, int transform) {
+        CharSequence t = v.getText();
+        if (!(t instanceof android.text.SpannableStringBuilder)) return;
+        android.text.SpannableStringBuilder b = (android.text.SpannableStringBuilder) t;
+        int end = start + length;
+        if (start < 0 || end > b.length() || start >= end) return;
+        int flag = android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE;
+        if (family != null && family.length() > 0) {
+            b.setSpan(new android.text.style.TypefaceSpan(family), start, end, flag);
+        }
+        // LineHeightSpan.Standard is API 29. Below it a per-run line height has
+        // no span at all, so the run keeps the label's — which is the same
+        // answer as not asking for one.
+        if (lineHeightPx > 0f && android.os.Build.VERSION.SDK_INT >= 29) {
+            b.setSpan(new android.text.style.LineHeightSpan.Standard((int) lineHeightPx),
+                      start, end, flag);
+        }
+        // Letter spacing is in EMs on Android and points in facet; the caller
+        // converts, because it is the side that knows the font size.
+        if (letterSpacingEm != 0f) {
+            b.setSpan(new LetterSpacing(letterSpacingEm), start, end, flag);
+        }
+        // TRANSFORM is not a span — Android has no per-run case transform — so
+        // it is applied to the TEXT before it ever gets here. This parameter
+        // exists so the C+ side has one place to say "I handled it"; a value
+        // other than 0 means the caller already transformed the run.
+        if (transform != 0) { return; }
+    }
+
+    // `setLetterSpacing` is a TextView property, not a span, so a per-run one
+    // has to be written. MetricAffectingSpan is the hook: it runs before the
+    // text is measured, which is what letter spacing changes.
+    static final class LetterSpacing extends android.text.style.MetricAffectingSpan {
+        private final float em;
+        LetterSpacing(float em) { this.em = em; }
+        @Override public void updateDrawState(android.text.TextPaint p) { p.setLetterSpacing(em); }
+        @Override public void updateMeasureState(android.text.TextPaint p) { p.setLetterSpacing(em); }
+    }
+
+    // ONE OPTIONS-MENU ITEM. The id and the order are the same integer — the
+    // index native chose — so `onOptionsItemSelected` hands back something the
+    // native side can resolve by re-walking the tree, rather than holding a map
+    // across a menu Android rebuilds whenever it likes.
+    //
+    // An icon here is a DRAWABLE RESOURCE name, resolved the way every other
+    // source on this backend is: the app's own resources first, then the
+    // `android` package. A name that is neither leaves the item text-only,
+    // which is what an ActionBar item without an icon already is.
+    public static void optionsMenuAdd(android.view.Menu menu, int id, String title,
+                                      String icon, int showAs, int tint, boolean tinted) {
+        CharSequence label = title == null ? "" : title;
+        if (tinted) {
+            android.text.SpannableString s = new android.text.SpannableString(label);
+            s.setSpan(new android.text.style.ForegroundColorSpan(tint), 0, s.length(),
+                      android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            label = s;
+        }
+        android.view.MenuItem it = menu.add(0, id, id, label);
+        it.setShowAsAction(showAs == 1
+            ? android.view.MenuItem.SHOW_AS_ACTION_IF_ROOM
+            : android.view.MenuItem.SHOW_AS_ACTION_NEVER);
+        if (icon != null && icon.length() > 0) {
+            android.content.Context c = menu.getClass() == null ? null : null;
+            // No Context on a Menu, so the resource is looked up on the item's
+            // own resources through the icon setter that takes an id: an app
+            // resource first, then the android package.
+            int rid = 0;
+            try {
+                rid = android.content.res.Resources.getSystem()
+                        .getIdentifier(icon, "drawable", "android");
+            } catch (Throwable ignored) { }
+            if (rid != 0) it.setIcon(rid);
+        }
+    }
+
     // A LINK NEEDS A MOVEMENT METHOD, or a URLSpan draws as a link and does
     // nothing when tapped. Set only when there is one: it makes the view
     // clickable, and a label that quietly took touches would be the input

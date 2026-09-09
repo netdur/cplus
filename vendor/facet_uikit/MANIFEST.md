@@ -8,9 +8,11 @@ an abandoned one.
 Everything in the first list is done. Everything in the second is a debt, and
 each one **warns once on stderr** when it is mounted.
 
-**The second list is empty.** Every kind facet describes has a UIKit body. What
-remains is section 1 — fourteen props across three kinds that UIKit has no
-answer for — and section 3, controls that work but do not look like their name.
+**The second list is empty.** Every kind facet describes has a UIKit body.
+**Prop debt is zero as well, since 2026-09-08** — `context_menu_item.shortcut`
+was the last one and §1 has how it was closed. What remains is section 1 —
+sixteen props across four kinds that UIKit has no answer for, plus one handler —
+and section 3, controls that work but do not look like their name.
 
 **TWO NUMBERS, because a backend has two surfaces.** A prop is a WRITE — the
 application saying something to a control — and a handler is a READ, the
@@ -18,8 +20,8 @@ control saying something back. Both are measured by `tools/parity.py`:
 
 | | appkit | uikit | |
 |---|---|---|---|
-| props | 318 | 305 | 95% |
-| handlers | 66 | 64 | 96% |
+| props | 326 | 311 | 95% |
+| handlers | 66 | 65 | 98% |
 
 The prop number was the only one for a while, and it was misleading in a
 specific way: a `text_button` whose every prop bit was honoured was armed,
@@ -32,6 +34,244 @@ now exists and why both are printed together.
 ---
 
 ## 1. Decided absent — iOS has no such thing
+
+### The ledgers
+
+The prose in this section is the REASON. These blocks are the INDEX, and they
+exist because prose is not checkable: `tools/verb_coverage.py uikit` reads them
+and separates "decided" from "nobody built it yet", so the debt number means
+something. Until they were written, every verb this backend answers by other
+means counted against it — 50 props read as debt while this file's own opening
+paragraph said the count was fourteen.
+
+Same six blocks facet_appkit carries, and the dispositions are NOT copied from
+it: where the two backends differ, this file follows its own reasoning. `menu`
+and `toolbar_item` are host-rendered objects on macOS; here there is no menu
+bar at all, so `menu` is a cannot.
+
+```cannot-ledger
+window_chrome.style             UIKit draws the control pill itself, over the app's content and outside its hierarchy — see §7
+window_chrome.spacing           as window_chrome.style — the pill is the system's, not the app's to space
+menu.text                       there is no menu bar on iOS
+menu.priority                   there is no menu bar on iOS
+split.on_move                   nothing moves the divider, so nothing can report that it moved — see "Dragging a split divider"
+date_picker.character_spacing   UIDatePicker exposes no font surface; it is a system control
+date_picker.font_weight         UIDatePicker exposes no font surface; it is a system control
+date_picker.is_italic           UIDatePicker exposes no font surface; it is a system control
+date_picker.font_scales         UIDatePicker exposes no font surface; it is a system control
+date_picker.font_family         UIDatePicker exposes no font surface; it is a system control
+date_picker.font_size           UIDatePicker exposes no font surface; it is a system control
+time_picker.character_spacing   UIDatePicker exposes no font surface; it is a system control
+time_picker.font_weight         UIDatePicker exposes no font surface; it is a system control
+time_picker.is_italic           UIDatePicker exposes no font surface; it is a system control
+time_picker.font_scales         UIDatePicker exposes no font surface; it is a system control
+time_picker.font_family         UIDatePicker exposes no font surface; it is a system control
+time_picker.font_size           UIDatePicker exposes no font surface; it is a system control
+```
+
+### The host-rendered ledger
+
+A node with no view of its own, whose HOST re-applies it. A `span` is a run in
+its label's attributed string (`append_run`); a menu item is an element of the
+`UIMenu` the provider builds when the menu opens; a swipe item is an action on
+the row. None of them has a view to gate a bit against.
+
+```host-rendered
+span.text                       a run in its label's attributed string
+span.text_color                 a run in its label's attributed string
+span.font_size                  a run in its label's attributed string
+span.font_weight                a run in its label's attributed string
+span.font_family                a run in its label's attributed string
+span.is_italic                  a run in its label's attributed string
+span.line_height                a run in its label's attributed string
+span.character_spacing          a run in its label's attributed string
+span.text_decoration            a run in its label's attributed string
+span.text_transform             a run in its label's attributed string
+menu_item.text                  an element of the UIMenu built when the menu opens
+menu_item.icon                  an element of the UIMenu built when the menu opens
+menu_item.is_destructive        an element of the UIMenu built when the menu opens
+context_menu_item.text          an element of the UIMenu built when the menu opens
+context_menu_item.is_destructive  an attribute on the UIAction, set as it is built
+context_menu_item.shortcut      the key equivalent on the UIKeyCommand the menu builds, and a command the app delegate publishes
+context_menu_item.icon          an element of the UIMenu built when the menu opens
+swipe_item.text                 an action on the row, rebuilt with it
+swipe_item.icon                 an action on the row, rebuilt with it
+swipe_item.is_destructive       an action on the row, rebuilt with it
+toolbar_item.text               the title of a UIBarButtonItem the navigation bar owns
+toolbar_item.icon               the image of a UIBarButtonItem the navigation bar owns
+```
+
+### The derived, modifier and create-only ledgers
+
+`modifier` and `create-only` are EMPTY, and that is an answer rather than an
+omission — the same way facet_appkit's `cannot-ledger` is empty because it has
+no platform-limit verbs. This backend has no verb that is read once at create
+and no verb that only changes what another write does. Every candidate for
+those two blocks was refused by the tool (see below), which is the difference
+between a bucket that is empty and a bucket nobody filled in.
+
+```derived
+carousel.is_scrolling           written BACK by the scroll delegate — willBeginDragging starts it, didEndDecelerating and didEndDragging(false) end it
+carousel.remaining_threshold    read by the willDisplay observer as rows appear, not applied on a write
+collection.remaining_threshold  as carousel.remaining_threshold
+collection.reorder              written back by the drag
+list.reorder                    written back by the drag
+```
+
+```modifier
+carousel.animates_scroll        no write of its own; it decides whether a `position` write JUMPS or SLIDES
+carousel.scroll_anchor          no write of its own; it decides what the re-layout does to the viewport
+collection.scroll_anchor        no write of its own; it decides what a reload does to the viewport
+```
+
+```create-only
+label.selectable                the class is chosen at create (UITextView vs UILabel); a flip after mount needs a reclass this package has no path for
+toolbar_item.placement          the bar is built when the root attaches; UIBarButtonItems are made once
+toolbar_item.priority           as toolbar_item.placement — and the ORDER is the bar's
+toolbar_item.is_destructive     as toolbar_item.placement — the tint is set as the item is made
+```
+
+### What is left after the ledgers, and what the ledgers REFUSED
+
+Fourteen props remain absent, and NINE of them are there because the ledger
+would not take them. That is the part worth reading.
+
+The first draft of these blocks copied facet_appkit's dispositions for every
+verb the two backends share — `carousel.scroll_anchor` is a MODIFIER there,
+`label.selectable` is CREATE-ONLY, `context_menu_item.shortcut` is
+HOST-RENDERED. `verb_coverage.py` refused all nine with **LEDGER CONTRADICTED**:
+a create-only or host-rendered claim is only credited when SOME body actually
+reads the field, and in this package nothing does. The disposition was true of
+AppKit and not of here, and copying it would have excused nine real gaps with a
+reason belonging to another backend.
+
+So they were debt, listed by name as they stood:
+
+    carousel.animates_scroll        carousel.is_scrolling
+    carousel.scroll_anchor          carousel.remaining_threshold
+    collection.scroll_anchor        collection.remaining_threshold
+    context_menu_item.shortcut      context_menu_item.is_destructive
+    label.selectable
+
+**All nine are closed.** Each one is now credited by a ledger above, and it is
+credited because a body reads the field — which is the only way that tool hands
+a disposition out. `context_menu_item.shortcut` was the last of them and has its
+own section below. The list stays because the shape it records is the durable
+part: a disposition that is true of AppKit is not evidence about here.
+
+`label.selectable` has a full argument in this file already — a create-time
+class choice a recycling row pool cannot cheaply flip. That argument is sound
+and the row did not yet qualify: nothing read the field even once, so it was
+not create-only, it was unimplemented. The prose and the code have to agree
+before the ledger will — and they do now; the class choice is made at create
+and three checks hold it.
+
+`toolbar_item` — **BUILT 2026-09-08**, which is the port this section asked for
+("facet's `toolbar_item` is the vocabulary that should reach it once the chrome
+tier is ported"). `install_toolbar` walks the tree at `attach_root`, makes a
+`UIBarButtonItem` per node and hangs them on the root view controller's
+`navigationItem`: `placement` picks the side (Primary trailing, Secondary
+leading, Default follows Primary), `priority` orders within it, low first, so
+one description reads the same here and on AppKit. The bar stays HIDDEN until
+there is something in it — a facet screen draws its own chrome, and an empty
+navigation bar is a strip of nothing at the top of every app that never asked.
+
+`is_destructive` is a TINT here, not an attribute: `UIBarButtonItem` has no
+destructive style (`UIMenuElement` does, which is why `menus.cplus` says it
+declaratively and this cannot), so the platform's convention is the system red.
+Three checks hold the port.
+
+### The collection's grouping tier — BUILT 2026-09-08
+
+The table has had sections since it was written; the collection returned a flat
+count and no section count at all, so `is_grouped`, `group_count` and
+`group_size` reached it and did nothing. All four now answer, ported from the
+table's imps because a group means the same thing on both:
+
+* `numberOfSectionsInCollectionView:` from `group_count`, `numberOfItemsInSection:`
+  from `group_size`. A carousel is never grouped — its pages are the node's
+  children — so it takes the single-section answer without asking.
+* `row_height_of` through `collectionView:layout:sizeForItemAtIndexPath:`.
+  Without it the flow layout's uniform `itemSize` answered for every row and the
+  callback was never consulted. A stated height of zero is not an answer — the
+  application declined to state one — so the layout's own size stands.
+* `row_kind` keys the reuse identifier, ONE POOL PER KIND. A collection whose
+  rows are not all the same shape recycled a header into a body without it.
+  Registration is idempotent and a collection view REQUIRES it before dequeue
+  (unlike a table, which builds on miss), so a kind's class is registered the
+  first time that kind is asked for.
+* `group_header` on both kinds: `viewForHeaderInSection:` /
+  `heightForHeaderInSection:` for the table, and a registered SUPPLEMENTARY view
+  for the collection — a supplementary view is a different object from a cell
+  and needs its own pool, or the header dequeues nothing. A height of zero hides
+  the header, because UIKit's own grouped-style default would otherwise leave a
+  grey strip above every section.
+
+`row` and `row_height_of` take ONE sequence; sections are a presentation over
+it, so a grouped collection converts the index path to a flat index the same way
+the table does.
+
+**Handler debt is now zero.** 88 of 89 wired, one decided.
+
+### The last absent prop: `context_menu_item.shortcut` — BUILT 2026-09-08
+
+Not a cannot, and worth the detail because the reason it stayed open was a SEAM
+rather than a limit.
+
+A `UIMenuElement` carries no key equivalent. The class that does is
+`UIKeyCommand` — a real `UIMenuElement` subclass, so a menu CAN show and honour
+a shortcut — but it carries no handler block: its action dispatches through the
+RESPONDER CHAIN, where this package's menu items are built from a block
+(`_action_invoke`). Two dispatch models, no element that carries both, and
+displaying the shortcut without wiring the chain would put a `⌘R` in a menu
+that does nothing — worse than not showing it.
+
+**The chain is answered by `FacetUIKitAppDelegate`, not by a root view
+controller.** The report proposed the controller and it was the wrong end of the
+problem: `window.cplus` makes four stock `UIViewController`s (primary, pushed,
+presented, per-scene base) and each would have to be swapped in step, and a
+pushed screen would still fall outside the one that was. The delegate is already
+synthesized here and is already a `UIResponder`, which makes it the LAST link of
+every chain in the process — one class, no new creation site, and it covers a
+pushed screen, a presented sheet and a second iPad window for free.
+
+Two halves, because a shortcut has two lives:
+
+* **In the menu.** `make_action` builds a `UIKeyCommand` for an item that names
+  a shortcut and keeps the block for one that does not — the shortcut is the
+  only thing that decides the class, so an ordinary menu choice still costs no
+  responder.
+* **Out of it.** `keyCommands` on the delegate publishes one command per
+  shortcut in the mounted tree, so ⌘R fires with no menu open. That is the
+  configuration the prop exists for: an iPad with a hardware keyboard.
+
+Both arrive at `facetMenuCommand:`, so there is one path from a key to a
+handler. **Resolution is by KEY, never by a captured pointer** — the item's
+facet key rides in the command's `propertyList` (the slot `UICommand` provides
+for exactly this) and `mount::node` answers it against the LIVE tree, so a
+command UIKit harvested before a rebuild is a no-op rather than a
+use-after-free. An item the application gave no key is matched on the shortcut
+itself, first in document order, so `shortcut:` never becomes a hidden
+requirement for `key:`. `enabled` is read when the key is PRESSED, not when the
+list was built, because UIKit harvests when it pleases.
+
+`input::key_of` gained the other half of that: `UICommand` declares no
+`identifier`, so a handler reading its key off a shortcut item would have got
+nothing. It reads `propertyList` first now, and a handler cannot tell which
+element class it was called from.
+
+**Sixteen checks**, and the ablation is in the commit: every one of them fails
+with its piece of the change removed, and the guard that the sender really is a
+`UIKeyCommand` fails by crashing the runner with
+`-[UIAction propertyList]: unrecognized selector`, which is the bug it prevents.
+
+**WHAT THE CHECKS CANNOT REACH, stated because it is the whole risk.** The test
+runner has no `UIApplicationMain` and therefore no responder chain, so the last
+hop — UIKit asking the chain for `keyCommands` and sending `facetMenuCommand:`
+back down it — is asserted only by its precondition (the delegate is a
+`UIResponder`, which is why it is in the chain at all). Pressing ⌘R on an iPad
+with a keyboard needs hands. `bugs/closed/` has the report.
+
 
 ### Window buttons
 
@@ -252,10 +492,33 @@ What it would take, named so the next pass does not rediscover it:
   other three, where the prop is live, and it should be stated in the same
   change rather than discovered.
 
-Until then a label on iOS reads and does not copy, and `selectable` is accepted
-and ignored — which is what this section means. **It is not `absent` debt in the
-`verb_coverage` sense**: that gate reads facet_appkit's manifest, and AppKit
-implements this verb.
+**BUILT 2026-09-08.** A user can select a label's text and copy it. Everything
+above stands as the reasoning; what follows is what was actually written.
+
+`create_label` picks the class from the prop: `selectable: true` builds a
+`UITextView` with editing off, selection on, scrolling off, and both of the
+paddings a text view is born with set to zero — a label that inset its own text
+by 5pt would be measured wrong by flex and read as a layout bug. A plain label
+is still a `UILabel`, which matters: the text view costs more and eats the touch
+that would have scrolled the page.
+
+One apply body serves both, because `setText:`, `setTextColor:`, `setFont:` and
+`setTextAlignment:` are selectors BOTH classes answer. Exactly two are not —
+`setNumberOfLines:` and `setLineBreakMode:` are UILabel's alone, and a text view
+keeps the same two facts on its text CONTAINER. Those are branched; sending
+them to a text view would be an unrecognised selector rather than a no-op.
+
+Three checks in `selftest.cplus` hold it: the selectable label is a text view
+and is selectable-but-not-editable, a plain label stays a UILabel, and the
+selectable one neither scrolls nor pads.
+
+**It remains CREATE-ONLY, and now legitimately so.** The class is chosen when
+the view is built; a flip after mount would need a reclass, which this package
+has no path for (`views::reclass` exists in facet_appkit for exactly one prop)
+and which recycling row pools make expensive. The difference from before is
+that the prop is now READ — so the `create-only` ledger takes the row, where it
+refused it while nothing in the code touched the field. The prose and the code
+agree now, which is what the ledger was always waiting for.
 
 ### `symbol` has TWO tiers, and the bundled one is the app's to ship
 

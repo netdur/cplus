@@ -44,7 +44,14 @@ BACKENDS = {
 # These are LOW and rising, which is the opposite of gtk's — this backend was
 # started on 2026-08-24 and the number is a progress bar rather than a guard
 # against regression. Raise it whenever it moves up; that is the whole ritual.
-FLOOR = 319
+# Raised 319 -> 326 on 2026-09-07 with NO android change: the evidence test
+# below gained its kind-constant half, so field touches on kinds this backend
+# dispatches by `props::K_*` stopped being discarded. A floor that moves for a
+# measurement fix has to say so, or the next reader reads it as progress.
+# Raised 326 -> 347 on 2026-09-08: spans, the list's adapter tier, the box's own
+# decoration, the ActionBar toolbar and the swipe icon all landed in one pass.
+# This one IS progress, unlike the 319 -> 326 move above it.
+FLOOR = 347
 # Same gate on the READ half. Kept separate because the two surfaces fail
 # differently: a missing prop is a control that ignores you, a missing handler
 # is a control that never answers — and the gap between 45% and 35% here says
@@ -166,6 +173,17 @@ NOT_A_VERB = {
     "C_RESTYLE",       # C_ALL_STATE minus one bit
     "C_COMMANDS",      # the verb group, as a mask
     "C_LAYOUT",        # raised by geometry writes, answered by the layout pass
+    # Raised when a begin_updates/end_updates batch CLOSES, and by then every
+    # bit the batch raised is already on the node — the sync walk applies
+    # those. A backend acting on the flush as well re-applies the same node
+    # twice for one edit. So there is nothing to name, and NO BACKEND NAMES IT:
+    # appkit and uikit each mention it once, in a comment, which this tool
+    # strips by design.
+    #
+    # It was counted as an unanswered VERB until 2026-09-08 and each backend
+    # was expected to argue it away in its own manifest, which facet_gtk duly
+    # did. That is one census bug wearing three copies of the same excuse.
+    "C_FLUSH",
 }
 
 
@@ -357,6 +375,12 @@ def main():
         return 2
 
     seen = {k: referenced(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
+    # Whole-backend source, for the kind-constant half of the evidence test
+    # below. Comments stripped for the reason `strip_comments` gives.
+    srcs = {k: strip_comments("".join(
+        open(p_).read() for p_ in glob.glob(os.path.join(d, "*.cplus"))
+        if not p_.endswith("test_main.cplus")))
+        for k, d in BACKENDS.items() if os.path.isdir(d)}
     written = {k: field_touches(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
     totals = {k: 0 for k in seen}
     declared = 0
@@ -373,8 +397,20 @@ def main():
         for k in seen:
             named = seen[k].get(module, set())
             # The field-touch fallback needs evidence this backend implements
-            # the KIND — see `field_touches`. One named bit is that evidence.
-            plausible = len(named) > 0
+            # the KIND — see `field_touches`. A named bit is that evidence, and
+            # so is naming the kind CONSTANT.
+            #
+            # THE SECOND HALF WAS MISSING AND IT COST APPKIT 16 BITS. A backend
+            # need not route through `<module>::P_*` at all: facet_appkit
+            # dispatches menu, menu_item, context_menu_item, swipe_item and
+            # toolbar_item on `props::K_MENU_ITEM` and reads the struct fields
+            # directly. Requiring a named bit as the ONLY evidence discarded
+            # every one of those field touches, so five kinds it fully
+            # implements scored zero and vanished from the per-kind table
+            # entirely — the report has a row only where something is answered.
+            # appkit read 337/363 against gtk's 359 largely on that.
+            plausible = len(named) > 0 or re.search(
+                r"\bprops::K_" + module.upper() + r"\b", srcs[k]) is not None
             fields = written[k].get(struct_for(module), set())
             got[k] = {p for p in props
                       if p in named

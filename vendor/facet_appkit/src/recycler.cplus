@@ -2720,7 +2720,20 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     // otherwise the map grows for the life of the view and hands AppKit an item
     // for a node that no longer exists.
     if (dirty & tree::P_ROOT) != (0 as u64) { forget_items(ov); }
-    var reload: bool = (dirty & (tree::P_ROOT | tree::P_ROW)) != (0 as u64);
+    // `P_ROW_ID` RELOADS. `tag_tree_row` sets a cell's accessibility identifier
+    // when the cell is BUILT and the bit was gated nowhere, so a later
+    // `set_row_id` reached only rows vended after it — every cell already on
+    // screen kept the old name until something unrelated rebuilt it. That
+    // identifier is what agent surfaces and the UI tests select rows BY, so a
+    // stale one is a selector pointing at the wrong row.
+    //
+    // A re-tag walk over the realised views was written first and thrown away:
+    // it reads `viewAtColumn:row:makeIfNecessary:NO`, which the suite never
+    // populates because its cells are vended through the imp directly, so
+    // nothing could show the walk worked. A reload re-vends every row through
+    // the tagging path, and `tree_reloads()` makes it assertable. Verifiable
+    // beats cheap.
+    var reload: bool = (dirty & (tree::P_ROOT | tree::P_ROW | tree::P_ROW_ID)) != (0 as u64);
     if (dirty & tree::P_EXPANDED) != (0 as u64) {
         // AN EXPANSION THE USER PERFORMED IS ALREADY APPLIED. AppKit expanded
         // the item and then told us, and the write-back that records it dirties

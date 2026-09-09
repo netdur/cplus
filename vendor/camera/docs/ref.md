@@ -51,6 +51,7 @@ One video frame, borrowed for the duration of the callback.
 fn width(this) -> i32
 fn height(this) -> i32
 fn stride(this) -> i32      // bytes per row, always >= width
+fn rotation(this) -> Rotation
 fn is_empty(this) -> bool
 fn luma(this) -> u8[]       // the Y plane: stride * height bytes
 fn native(this) -> *u8      // the platform's own buffer, or 0
@@ -66,6 +67,37 @@ a native buffer is empty. See the guide.
 **`stride` is not `width`.** Rows are padded, and on Windows a YUY2 device makes
 `stride` exactly `width * 2` because luma sits at every other byte. Index with
 `y * stride + x`.
+
+**THE PACKAGE REPORTS ORIENTATION, IT DOES NOT ROTATE.** A sensor is mounted at
+a fixed angle in the body and delivers in ITS orientation. The PREVIEW is turned
+by the platform, and the BUFFERS are not — so a preview can be upright while
+every frame behind it is sideways, which is exactly what a detection box drawn
+from frame coordinates lands on. `rotation()` is what you would have to turn the
+buffer by, clockwise, to make it upright for the way the device is being held.
+
+Rotating here would cost a full-frame copy thirty times a second, and a caller
+usually wants the fact rather than the copy: a model can be handed the angle,
+and mapping a result back onto the preview needs the angle either way.
+
+`width()` and `height()` describe the BUFFER and do not change with it. Ask
+`rotation().swaps_axes()` for whether the upright shape is the other way round —
+testing `!= None` is the mistake, because a half turn changes neither axis.
+
+A still is the opposite case and is handled the opposite way: see `capture`.
+
+### `enum Rotation`
+
+```cplus
+None | Cw90 | Cw180 | Cw270
+
+fn degrees(this) -> i32
+fn from_degrees(d: i32) -> Rotation   // anything not a quarter turn is None
+fn swaps_axes(this) -> bool
+```
+
+`None` also means "this backend cannot say" — a camera that does not know which
+way it is pointing hands the buffer over untouched rather than inventing a
+quarter turn.
 
 ## Free functions
 
@@ -139,6 +171,15 @@ context-first handler cannot, and warns W0824/W0825.
 
 At most **four** sessions may have a handler registered at once; a fifth
 `capture` answers `Failed`.
+
+**THE STILL IS ROTATED, WHICH IS THE OPPOSITE OF A FRAME**, and deliberately so.
+A JPEG outlives the call and has a standard place to record its rotation, so the
+package writes it — `JPEG_ORIENTATION` on Android, the photo connection's
+orientation on Apple — and the saved file opens upright. A photo that comes out
+sideways is a defect; a frame that is sideways is a fact the caller can act on.
+
+The orientation is read AT CAPTURE, not at open: the device has usually been
+turned since.
 
 ```cplus
 fn on_frame(this, on_frame: fn(Frame, *u8), on_frame_ctx: *u8 = 0 as *u8) -> Outcome

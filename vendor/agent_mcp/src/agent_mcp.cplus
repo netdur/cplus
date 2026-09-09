@@ -934,12 +934,20 @@ fn armed_verb_count() -> usize {
     return n;
 }
 
+// ONE SURFACE, ONE NUMBER. This used to report "N verbs (C core, E armed)",
+// which described the REGISTRATION mechanism — `core_tools()` against
+// `EXTENSIONS` — as though it were a permission boundary. It is not: a request
+// passes ONE `auth::AuthGate` and `dispatch` then routes it to a core verb or
+// an extension verb with no second check. A reader who saw "armed" reasonably
+// concluded some verbs were optional, or held behind a flag they had to set,
+// or missing from an app that did not depend on the inspector package. All
+// three are false, and the line saying otherwise cost real days.
+//
+// So it says how many verbs are served, and nothing about where they came
+// from. How a verb got registered is this file's business, not a client's.
 fn verb_summary() -> text::Text {
-    let core: usize = core_tools().count();
     let total: usize = armed_verb_count();
-    if total == core { return "${core} verbs (core only)"; }
-    let ext: usize = total -% core;
-    return "${total} verbs (${core} core, ${ext} armed)";
+    return "${total} verbs";
 }
 
 // The row that should answer `method`, or -1. FIRST MATCH WINS in registration
@@ -1426,9 +1434,31 @@ fn route_verb(
                         // The same gate the listing answers to: a node behind a
                         // tier this grant cannot read reports "" there, and
                         // must not become readable by asking a second time.
+                        // THE SAME STRING `describe_ui` CLIPPED, which is the
+                        // whole contract of this verb — "answers the whole
+                        // value" is a promise about the value the listing just
+                        // showed you a piece of.
+                        //
+                        // The two walks disagreed about which field that is. A
+                        // node whose content is a WIDGET's own string carries
+                        // it in `text`; a node whose content is its
+                        // accessibility LABEL carries it in `name`, and the
+                        // exposed listing collapses both into `text` before a
+                        // caller ever sees them. This verb read only the first.
+                        //
+                        // What that did: a list row — the transcript in iris,
+                        // any container whose text is a label rather than a
+                        // control's value — was listed with `text_truncated`
+                        // and a `text_len` of 2327, and answered "" when asked
+                        // for the rest. The listing promised and the verb
+                        // refused, which is worse than either alone: an agent
+                        // that trusts the flag reads nothing and has no way to
+                        // tell that from an empty node.
+                        var body: text::Text = text::from_str({ (*n).text.view() });
+                        if body.is_empty() { body = text::from_str({ (*n).name.view() }); }
                         var m: vec::Vec[json::Member] = vec::new::[json::Member]();
                         m.append(member("id", jstr({ want.view() })));
-                        m.append(member("text", jstr({ (*n).text })));
+                        m.append(member("text", jstr({ body.view() })));
                         m.append(member("readable", jbool({ (*n).readable })));
                         return ok_response(id, json::Value::Object(m));
                     }
@@ -3197,6 +3227,24 @@ fn a_clipped_value_is_still_valid_utf8() {
     return;
 }
 
+// `read_text` must answer the string the LISTING clipped, whichever field it
+// came from. See the fallback in `dispatch`.
+#[test]
+fn read_text_answers_a_row_whose_content_is_its_label() {
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"read_text\",\"params\":{\"id\":\"chat:row:1:agent\"},\"id\":1}");
+    assert r.contains("the whole message a list row carries");
+
+    // And a node that genuinely has nothing still answers nothing — the
+    // fallback must not invent content for an empty node.
+    let e: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"read_text\",\"params\":{\"id\":\"assistant:line\"},\"id\":2}");
+    assert e.contains("\"text\":\"\"");
+    return;
+}
+
 // The listing says WHEN it clipped. A cut string that does not announce itself
 // is a lie an agent acts on — it concludes the field ends mid-sentence.
 #[test]
@@ -3516,6 +3564,15 @@ fn fake_blank_node(id: str, readable: bool) -> backend::UiNode {
     };
 }
 
+// A node whose content is its accessibility LABEL and not a widget's own
+// string — a list row, a container a host made readable. `text` empty, `name`
+// carrying the words. `read_text` used to answer "" for exactly this shape.
+fn fake_labelled_node(id: str, label: str) -> backend::UiNode {
+    var n: backend::UiNode = fake_blank_node(id, true);
+    n.name = text::from_str(label);
+    return n;
+}
+
 fn fake_describe_full(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
     out.append(fake_node("exposed-node"));
@@ -3523,6 +3580,7 @@ fn fake_describe_full(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     out.append(fake_secret_node("payment:card", grant));
     out.append(fake_blank_node("empty-label", true));
     out.append(fake_blank_node("assistant:line", false));
+    out.append(fake_labelled_node("chat:row:1:agent", "the whole message a list row carries"));
     return out;
 }
 
@@ -4887,26 +4945,34 @@ fn not_found_carries_a_hint_pointing_somewhere() {
     assert hit.contains("hint") == false;
 }
 
-// The startup line is a CANARY, so it has to move when arming does.
+// The startup line is a CANARY: it has to move when the number of verbs does,
+// and it must NOT describe how they were registered. One gate admits a client
+// to all of them, so "core" and "armed" are this file's bookkeeping and say
+// nothing a caller can act on — see `verb_summary`.
 #[test]
-fn the_verb_summary_counts_what_is_actually_armed() {
+fn the_verb_summary_counts_every_verb_and_names_no_tiers() {
     disarm_all_extensions();
     let core: usize = core_tools().count();
     assert armed_verb_count() == core;
-    assert verb_summary().contains("core only");
+    assert verb_summary().equals("${core} verbs");
 
     arm_extension(verbs2("probe.one", "probe.two"), ext_probe, ext_describes_two);
     assert armed_verb_count() == core +% (2 as usize);
     let two: text::Text = verb_summary();
-    assert two.contains("2 armed");
-    assert !two.contains("core only");
+    assert two.equals("${core +% (2 as usize)} verbs");
+
+    // NO TIER WORDS, in either state. A reader who saw "armed" concluded some
+    // verbs were optional, behind a flag, or absent without the inspector
+    // package. None of that is true and the wording is what implied it.
+    assert !two.contains("armed");
+    assert !two.contains("core");
 
     // And back down when a namespace goes away — the case that made this
     // exist: an app that quietly lost a namespace still served and still
     // answered, with nothing saying it had.
     disarm_extension("probe.one");
     assert armed_verb_count() == core;
-    assert verb_summary().contains("core only");
+    assert verb_summary().equals("${core} verbs");
 }
 
 // ---- the record of what was done ---------------------------------------------

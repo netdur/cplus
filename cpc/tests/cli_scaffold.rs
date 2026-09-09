@@ -14,7 +14,7 @@ fn skill_prints_the_reference() {
     let out = Command::new(cpc()).arg("skill").output().expect("run cpc skill");
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("SKILL — writing C+ source"), "unexpected skill output");
+    assert!(s.contains("SKILL — writing C+"), "unexpected skill output");
     assert!(s.len() > 1000, "skill reference seems too short");
 }
 
@@ -29,7 +29,7 @@ fn skill_write_creates_file_and_refuses_overwrite() {
     assert!(w.status.success());
     assert!(dest.exists());
     let body = std::fs::read_to_string(&dest).unwrap();
-    assert!(body.contains("SKILL — writing C+ source"));
+    assert!(body.contains("SKILL — writing C+"));
 
     // Second write without --force must fail (no clobber).
     let again = Command::new(cpc())
@@ -85,7 +85,7 @@ fn skill_appends_a_dependencys_own_skill() {
         .expect("run cpc skill");
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("SKILL — writing C+ source"), "language reference must still lead");
+    assert!(s.contains("SKILL — writing C+"), "language reference must still lead");
     assert!(s.contains("# WIDGETS SKILL"), "dependency skill must be appended:\n{s}");
     assert!(
         s.contains("package skill: widgets"),
@@ -106,7 +106,7 @@ fn skill_lang_only_suppresses_package_skills() {
         .expect("run");
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("SKILL — writing C+ source"));
+    assert!(s.contains("SKILL — writing C+"));
     assert!(!s.contains("# WIDGETS SKILL"), "--lang-only must print the language reference alone");
 }
 
@@ -303,6 +303,32 @@ fn kind_gui_scaffolds_a_facet_app_for_a_desktop_only_project() {
 }
 
 #[test]
+fn the_agent_page_carries_the_aci_half_only_for_a_gui_project() {
+    // A cli project has no `src/app.cplus`, no facet dependency and no window,
+    // so the "Driving the running app" half — describe_ui, the consent retry,
+    // the twenty-five verbs — is a page of instructions about a file that is
+    // not there. It used to be written unconditionally: roughly half of a cli
+    // scaffold's AGENTS.md described an app it had not scaffolded. The cli
+    // half of this is asserted in `init_scaffolds_a_named_project`; this is
+    // the complement, so the branch is pinned in both directions.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .args(["init", "--kind", "gui", "--platform", "macos", "withui"])
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let agents = std::fs::read_to_string(dir.path().join("withui/AGENTS.md")).unwrap();
+    assert!(
+        agents.contains("Driving the running app"),
+        "a gui scaffold must carry the agent surface:\n{agents}"
+    );
+    assert!(agents.contains("describe_ui"), "and the verbs that read the tree");
+    // The common half is still there, for both kinds.
+    assert!(agents.contains("cpc skill"), "and still points at the reference");
+}
+
+#[test]
 fn kind_cli_is_refused_for_ios() {
     // iOS has no console: a printing entry is a black rectangle on a phone, so
     // the platform has already answered and the flag has nothing to say.
@@ -434,8 +460,22 @@ fn init_scaffolds_a_named_project() {
     assert!(main.contains("io::println"));
 
     assert!(proj.join(".gitignore").exists());
-    // The fresh project ships the agent reference.
-    assert!(read(&proj.join("SKILL.md")).contains("SKILL — writing C+ source"));
+
+    // The fresh project points at the agent reference, and deliberately does
+    // NOT check a copy of it in: a file drifts from the compiler that wrote it,
+    // and the AGENTS.md beside it says so. `cpc skill` is the reference.
+    let agents = read(&proj.join("AGENTS.md"));
+    assert!(agents.contains("cpc skill"), "AGENTS.md must point at `cpc skill`");
+    assert!(
+        !proj.join("SKILL.md").exists(),
+        "init must not check in a SKILL.md — it drifts; `cpc skill` cannot"
+    );
+    // A cli project has no app.cplus and no window, so it must not be handed
+    // the ACI half of the page.
+    assert!(
+        !agents.contains("describe_ui"),
+        "a cli scaffold must not carry the GUI agent-surface section"
+    );
 }
 
 #[test]

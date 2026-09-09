@@ -77,7 +77,8 @@ usage:
                                     builds and runs only the tests whose name
                                     contains S — a package's driver holds every
                                     dependency's tests as well as its own.
-  cpc fmt FILE|DIR [...]            format C+ source. By default: rewrites in place.
+  cpc fmt [FILE|DIR ...]            format C+ source. By default: rewrites in place.
+                                    With no path: the current project's `src/` (./Cplus.toml).
                                     flags: --check (no write, exit non-zero on diff)
                                            --emit  (print to stdout, leave file alone)
                                            --stdin (read source from stdin, write to stdout)
@@ -252,7 +253,7 @@ error rather than an empty pass.
         }
         Some(Subcommand::Fmt) => {
             "\
-cpc fmt FILE|DIR [...]
+cpc fmt [FILE|DIR ...]
 
 Format C+ source. By default rewrites each file in place. Flags:
   --check    don't write; exit 1 if any file would change (CI mode)
@@ -260,7 +261,8 @@ Format C+ source. By default rewrites each file in place. Flags:
   --stdin    read source from stdin, write to stdout, no file arg
 
 Multiple paths accepted; directories are walked recursively for
-`.cplus` files.
+`.cplus` files. With no path, formats the current project's `src/`
+via ./Cplus.toml, the way `cpc build` and `cpc test` operate on it.
 "
         }
         Some(Subcommand::Lsp) => {
@@ -3912,10 +3914,31 @@ fn run_fmt(paths: Vec<PathBuf>, opts: FmtOpts, diag_mode: DiagMode) -> ExitCode 
             }
         }
     } else {
-        if paths.is_empty() {
-            eprintln!("cpc fmt: needs a file or directory argument (or `--stdin`)");
-            return ExitCode::FAILURE;
-        }
+        // No path: behave like `cpc build` / `cpc test` and operate on the
+        // project in the current directory. Three sibling subcommands invoked
+        // the same way from the same place, and only this one refusing, was
+        // the whole of bug 006. Only `src/` is walked — never `.`, which would
+        // descend into `target/` and into the `vendor/` symlink loop.
+        let paths: Vec<PathBuf> = if paths.is_empty() {
+            if !Path::new("Cplus.toml").is_file() {
+                eprintln!(
+                    "cpc fmt: needs a file or directory argument (or `--stdin`).\n\
+                     \x20        Run it from a project root to format that project's `src/`."
+                );
+                return ExitCode::FAILURE;
+            }
+            let src = PathBuf::from("src");
+            if !src.is_dir() {
+                eprintln!(
+                    "cpc fmt: this project has no `src/` directory; name the files or \
+                     directories to format"
+                );
+                return ExitCode::FAILURE;
+            }
+            vec![src]
+        } else {
+            paths
+        };
         let mut files: Vec<PathBuf> = Vec::new();
         for p in &paths {
             collect_cplus_files(p, &mut files);
@@ -4153,20 +4176,17 @@ fn run_test(
             // target only). Splice in the package's own [link]
             // contributions so tests resolve against the same symbols
             // a real consumer would.
-            if let Some(ls) = m.link.as_ref() {
-                for fw in &ls.frameworks {
-                    la.push("-framework".to_string());
-                    la.push(fw.clone());
-                }
-                for lib in &ls.libs {
-                    la.push(format!("-l{lib}"));
-                }
-                for obj in &ls.extra_objects {
-                    if !obj.is_file() {
-                        return emit_extra_object_missing(diag_mode, obj, &manifest_path);
-                    }
-                    la.push(obj.to_string_lossy().to_string());
-                }
+            //
+            // THROUGH THE SHARED SPLICE, not a second copy of it. This block
+            // was hand-rolled and had drifted: it pushed `frameworks`, `libs`
+            // and `extra-objects` and silently dropped `search-paths`, so a
+            // package whose own libraries need a `-L` could not run its own
+            // tests while a CONSUMER of it linked fine — `splice_plain_link_args`
+            // has emitted the `-L` and the matching `-rpath` for a DEPENDENCY
+            // all along. `vendor/{cuda,cblas,llama_cpp}` are the packages that
+            // declare one.
+            if let Err(code) = splice_plain_link_args(&mut la, &m, diag_mode, &manifest_path) {
+                return code;
             }
             let entry_src = fs::read_to_string(&entry_path).unwrap_or_default();
             (program, entry_src, mono, la)
@@ -6987,8 +7007,9 @@ usage:
                     with no facet backend scaffolds the shared app and says
                     which entry you will have to finish yourself.
 
-writes:  Cplus.toml, src/main*.cplus, .gitignore, SKILL.md,
-         AGENTS.md, .mcp.json
+writes:  Cplus.toml, src/main*.cplus, .gitignore, AGENTS.md, .mcp.json
+         (no SKILL.md — `cpc skill` prints it, version-matched and including
+         every dependency's; `cpc skill --write` if you want the file)
     gui: + src/app.cplus
     ios: + ios/main.m, ios/Info.plist
 android: + android/AndroidManifest.xml
@@ -7941,46 +7962,14 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // This is cpc's section because WHICH SUBCOMMANDS EXIST is a fact about the
     // binary, and a pointer file naming one the toolchain dropped is worse than
     // no pointer file. An IDE appends its own section below; see the marker.
-    let agents_md = format!(
-        "# {proj_name}\n\n\
-         This is a C+ project. C+ is a young language, so **do not write it from\n\
-         memory** — the toolchain answers every question about it, offline and\n\
-         version-matched to this project.\n\n\
-         ## Before you write any C+\n\n\
-         Run `cpc skill`. It prints the language reference, and inside a project\n\
-         it also prints the reference of every dependency that ships one — facet\n\
-         contributes several hundred lines about its retained, non-reactive model\n\
-         and the mistakes that compile anyway. Read it rather than a checked-in\n\
-         copy: a file drifts from the compiler, this cannot.\n\n\
-         `cpc skill --lang-only` is the language alone, if that is all you need.\n\n\
-         ## When the compiler says no\n\n\
-         Run `cpc explain <CODE>` before you guess. Every diagnostic code has a\n\
-         cause, a fix and a worked example behind it — `cpc explain E0613` is\n\
-         faster and more reliable than inferring from the message.\n\n\
-         ## Navigating this code\n\n\
-         **Do not grep for definitions.** C+ has no dynamic dispatch, so every\n\
-         call to a named function resolves and the graph's answer is COMPLETE —\n\
-         which grep's never is:\n\n\
-         ```\n\
-         cpc query definition <symbol>     where is it\n\
-         cpc query references <symbol>     everywhere it is used\n\
-         cpc query callers <symbol>        who calls it\n\
-         cpc query symbols <file>          the outline of a file\n\
-         cpc query scope-at <file:line:col> what you can type right there\n\
-         cpc query complete <file:line:col> ...and what fits after a `.` or `::`\n\
-         ```\n\n\
-         The same graph is available as MCP tools — see `.mcp.json`, which points\n\
-         at `cpc mcp`. Prefer either over reading files to find things. Each\n\
-         `cpc query` rebuilds the whole graph (~seconds on a large project) and\n\
-         throws it away; the MCP server builds once and answers in microseconds,\n\
-         so use it for anything more than a single lookup.\n\n\
-         ## Building\n\n\
-         ```\n\
-         cpc build          compile and link\n\
-         cpc test           run the tests\n\
-         cpc fmt            canonical formatting\n\
-         ```\n\n\
-         ## Driving the running app\n\n\
+    // The ACI half is GUI-ONLY. A cli project has no `src/app.cplus`, no facet
+    // dependency and no window on screen, so a page telling an agent to
+    // `describe_ui` a running app is a page about a file that is not there —
+    // and a pointer file naming what the project does not have is worse than no
+    // pointer file, the same rule as naming a subcommand cpc lacks.
+    let aci_md = if gui {
+        format!(
+        "## Driving the running app\n\n\
          This app is an ACI: while it runs it serves MCP, and you can read its\n\
          UI and act on it. `src/app.cplus` is where that is turned on.\n\n\
          **Find it.** The address is derived from the app id and its pid, so a\n\
@@ -8022,7 +8011,55 @@ fn run_init(args: &[OsString]) -> ExitCode {
          - **You may be refused once.** If the app wired `agent_consent`, your\n\
          \x20 first request is refused while a dialog asks the user. The error\n\
          \x20 says whether to retry — `consent pending` means come back,\n\
-         \x20 `consent denied` means the user said no.\n\n\
+         \x20 `consent denied` means the user said no.\n\n"
+        )
+    } else {
+        String::new()
+    };
+
+    let agents_md = format!(
+        "# {proj_name}\n\n\
+         This is a C+ project. C+ is a young language, so **do not write it from\n\
+         memory** — the toolchain answers every question about it, offline and\n\
+         version-matched to this project.\n\n\
+         ## Before you write any C+\n\n\
+         Run `cpc skill`. It prints the language reference, and inside a project\n\
+         it also prints the reference of every dependency that ships one — facet\n\
+         contributes several hundred lines about its retained, non-reactive model\n\
+         and the mistakes that compile anyway.\n\n\
+         There is deliberately no SKILL.md checked in beside this file. A copy\n\
+         drifts from the compiler that wrote it; `cpc skill` cannot, because it\n\
+         IS the compiler answering — and it is the only form that also carries\n\
+         your dependencies' references.\n\n\
+         `cpc skill --lang-only` is the language alone, if that is all you need.\n\n\
+         ## When the compiler says no\n\n\
+         Run `cpc explain <CODE>` before you guess. Every diagnostic code has a\n\
+         cause, a fix and a worked example behind it — `cpc explain E0613` is\n\
+         faster and more reliable than inferring from the message.\n\n\
+         ## Navigating this code\n\n\
+         **Do not grep for definitions.** C+ has no dynamic dispatch, so every\n\
+         call to a named function resolves and the graph's answer is COMPLETE —\n\
+         which grep's never is:\n\n\
+         ```\n\
+         cpc query definition <symbol>     where is it\n\
+         cpc query references <symbol>     everywhere it is used\n\
+         cpc query callers <symbol>        who calls it\n\
+         cpc query symbols <file>          the outline of a file\n\
+         cpc query scope-at <file:line:col> what you can type right there\n\
+         cpc query complete <file:line:col> ...and what fits after a `.` or `::`\n\
+         ```\n\n\
+         The same graph is available as MCP tools — see `.mcp.json`, which points\n\
+         at `cpc mcp`. Prefer either over reading files to find things. Each\n\
+         `cpc query` rebuilds the whole graph (~seconds on a large project) and\n\
+         throws it away; the MCP server builds once and answers in microseconds,\n\
+         so use it for anything more than a single lookup.\n\n\
+         ## Building\n\n\
+         ```\n\
+         cpc build          compile and link\n\
+         cpc test           run the tests\n\
+         cpc fmt            canonical formatting (no arg = this project)\n\
+         ```\n\n\
+         {aci_md}\
          <!-- Sections below this line are written by your IDE and are rewritten\n\
               when it opens the project. Edit above the line, not below it. -->\n"
     );
@@ -8142,8 +8179,14 @@ fn run_init(args: &[OsString]) -> ExitCode {
         }
     }
     files.push((root.join(".gitignore"), gitignore.to_string()));
-    // The agent reference, so the fresh project is immediately LLM-ready.
-    files.push((root.join("SKILL.md"), SKILL_MD.to_string()));
+    // NO CHECKED-IN SKILL.md. It used to be written here, next to an AGENTS.md
+    // telling the agent not to trust a checked-in copy — the file and the advice
+    // beside it contradicted each other, and the file is the half a reader meets
+    // first. `cpc skill` cannot drift because it IS the compiler answering, and
+    // it also prints every dependency's reference, which the copy never did:
+    // what landed here was the language alone, so a facet project got a
+    // scaffolded reference with nothing about facet in it. `cpc skill --write`
+    // still exists for anyone who deliberately wants the file.
     files.push((root.join("AGENTS.md"), agents_md));
     files.push((root.join(".mcp.json"), mcp_json));
     for (path, content) in files {

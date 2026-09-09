@@ -64,9 +64,17 @@ Four things this has to get right, and simpler versions got each of them wrong:
   plus `shortcut_modifiers`), so a backend implementing the verb never names
   the whole. Looking only for the exact name calls it absent.
 
-  python3 tools/verb_coverage.py            # the summary
-  python3 tools/verb_coverage.py --list     # every verb, by bucket
-  python3 tools/verb_coverage.py --check    # the gate
+  python3 tools/verb_coverage.py                    # appkit, the summary
+  python3 tools/verb_coverage.py gtk --list         # one backend, every verb
+  python3 tools/verb_coverage.py --all              # the comparison table
+  python3 tools/verb_coverage.py --all --check      # the gate, every backend
+
+FOUR BACKENDS, one comparable column. LIVE is read out of the code and means
+the same thing everywhere. The other buckets are read out of the backend's own
+MANIFEST ledgers, and only facet_appkit has written any — so uikit, gtk and
+android report their whole non-live surface as debt, including the verbs
+appkit has already argued are host-rendered or by design. The `argued
+elsewhere` column in the table is how much of each debt figure that is.
 """
 import glob
 import os
@@ -74,6 +82,33 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# The backends this can measure, and the DISPLAY name each bucket label uses.
+# A report that prints "AppKit cannot" while measuring gtk is worse than no
+# report, so the platform's name travels with the directory rather than being
+# baked into the format strings.
+# A TEST ROOT is not an implementation, and appkit's is 13.7k of its 35k lines.
+#
+# MEASURED, so nobody trusts this further than it goes: adding it moved NO
+# backend's number, because the SCOPE rule already blocked the inflation it
+# guards against. A suite builds nodes through the public builders
+# (`menu_item::menu_item("Open")`) and never casts to `*props::MenuItemProps`,
+# so its reads are attributed to no control and count for nothing. The guard
+# stays because a suite that DID cast — a renderer-level test poking a props
+# block directly — would silently credit every verb it touched, and that is a
+# cheap thing to be wrong about.
+#
+# THE LIMIT, because it is not fixable by filename: facet_uikit deliberately
+# keeps its structural tests INSIDE `views.cplus` so the iOS build compiles
+# them (Cplus.toml says so). Those are not separable here.
+TEST_ROOTS = {"test_main.cplus", "selftest.cplus"}
+
+BACKENDS = {
+    "appkit":  ("vendor/facet_appkit",  "AppKit"),
+    "uikit":   ("vendor/facet_uikit",   "UIKit"),
+    "gtk":     ("vendor/facet_gtk",     "GTK"),
+    "android": ("vendor/facet_android", "Android"),
+}
 
 # Modules that declare no control verbs: the tree itself, the seam, the tiers.
 NOT_CONTROLS = {
@@ -124,6 +159,8 @@ def backend_functions(backend_dir):
     """
     out = []
     for f in sorted(glob.glob(os.path.join(backend_dir, "*.cplus"))):
+        if os.path.basename(f) in TEST_ROOTS:
+            continue
         src = open(f).read()
         alias = {}
         for path, name in IMPORT.findall(src):
@@ -134,6 +171,20 @@ def backend_functions(backend_dir):
             bits = {(alias.get(a, a), b) for a, b in BIT_USE.findall(body)}
             structs = {s for _, s in STRUCT_USE.findall(body)}
             kinds = set(re.findall(r"\bK_[A-Z0-9_]+\b", body))
+            # HANDING AN EMBEDDED BLOCK ON. `#addr_of((*p).items_view)` passes
+            # a base block to a helper that does the reading, and the helper
+            # names no kind — so without this the bridge breaks exactly where
+            # the shared bands live.
+            #
+            # Measured: facet_uikit fires `on_remaining_items_threshold_reached`
+            # for BOTH collection and carousel (`imp_cv_will_display` ->
+            # `note_row_shown`), and this tool called both dead, because the
+            # function that names the kind casts to CollectionProps while the
+            # function that reads the handler takes `*ItemsViewProps`. Counting
+            # the block a kind-naming body hands on as bridged by that kind is
+            # the missing half.
+            for blk in re.findall(r"#addr_of\(\(\*\w+\)\.(\w+)\)", body):
+                structs.add("".join(x.title() for x in blk.split("_")) + "Props")
             fields = set()
             for path in FIELD_READ.findall(body):
                 fields.update(path.lstrip(".").split("."))
@@ -316,24 +367,47 @@ def buckets(facet_dir, backend_dir, recorded=()):
     return live, create_only, absent, ruled_out, unread
 
 
-def main():
+def report(name, show_list=False):
+    """Measure one backend. Returns the counts `main` needs to gate on.
+
+    Only the LEDGER buckets come from the manifest; live, gated-unread and
+    absent are read out of the code, so they mean the same thing for a backend
+    that has written no ledgers yet. What such a backend loses is the
+    SEPARATION of its debt: a host-rendered or by-design create-only verb has
+    nowhere to be recorded, so it falls into `absent` with the real gaps.
+    """
+    pkg, display = BACKENDS[name]
     facet = os.path.join(ROOT, "vendor/facet/src")
-    backend = os.path.join(ROOT, "vendor/facet_appkit/src")
-    manifest = os.path.join(ROOT, "vendor/facet_appkit/MANIFEST.md")
+    backend = os.path.join(ROOT, pkg, "src")
+    manifest = os.path.join(ROOT, pkg, "MANIFEST.md")
     decided = ledger(manifest, "cannot-ledger")
     hosted = ledger(manifest, "host-rendered")
     no_carrier = ledger(manifest, "no-carrier")
     by_design = ledger(manifest, "create-only")
+    # BY-ARCHITECTURE — the disposition the other six could not say.
+    #
+    # `collection.row_height_of` and `collection.row_kind` are the case that
+    # needed it. They are not "AppKit cannot" (AppKit can), and not "no
+    # carrier" (facet declares both fields perfectly well). They are verbs
+    # whose PURPOSE this backend answers by other means: a materialising
+    # collection has no cell pool to key by `row_kind` and no unbuilt row to
+    # ask the height of, so the callbacks have nothing to be asked. Filing that
+    # under either of the other two claims something false — and leaving it
+    # unfiled counts a deliberate design as debt.
+    by_arch = ledger(manifest, "by-architecture")
     derived = ledger(manifest, "derived")
     modifiers = ledger(manifest, "modifier")
     recorded = dict(decided)
     recorded.update(no_carrier)
+    recorded.update(by_arch)
     live, create_only, absent, ruled_out, unread = buckets(facet, backend, recorded)
     blocked = [e for e in ruled_out if e in no_carrier]
     ruled_out = [e for e in ruled_out if e not in no_carrier]
+    architectural = [e for e in ruled_out if e in by_arch]
+    ruled_out = [e for e in ruled_out if e not in by_arch]
     total = (len(live) + len(create_only) + len(absent) + len(ruled_out)
-             + len(blocked) + len(unread))
-    print(f"facet_appkit verb coverage — {total} declared prop/command bits")
+             + len(blocked) + len(architectural) + len(unread))
+    print(f"facet_{name} verb coverage — {total} declared prop/command bits")
     print(f"  {len(live):>4}  live         gated on the dirty bit; a later write lands")
     by_host = [e for e in create_only if e in hosted]
     create_only = [e for e in create_only if e not in hosted]
@@ -355,41 +429,136 @@ def main():
     print(f"  {len(by_derivation):>4}  derived      written BACK, or read by an observer")
     print(f"  {len(by_modification):>4}  modifier     no write of its own; it changes another's")
     print(f"  {len(create_only):>4}  create-only  by design, and the manifest says why")
-    print(f"  {len(ruled_out):>4}  decided      the manifest's ledger says AppKit cannot")
-    print(f"  {len(blocked):>4}  no carrier   AppKit can; facet declares no thing to apply it to")
+    print(f"  {len(ruled_out):>4}  decided      the manifest's ledger says {display} cannot")
+    print(f"  {len(blocked):>4}  no carrier   {display} can; facet declares no thing to apply it to")
+    print(f"  {len(architectural):>4}  by design    this backend answers the verb's purpose another way")
     print(f"  {len(unread):>4}  gated, unread  the mask names the bit and the body never reads the field")
     print(f"  {len(absent):>4}  absent       neither implemented nor decided — the debt")
-    wired, dead, h_ruled = handler_buckets(facet, backend, decided, no_carrier)
-    print(f"\nfacet_appkit handler coverage — {len(wired) + len(dead) + len(h_ruled)} declared handlers")
+    ruled = dict(decided)
+    ruled.update(by_arch)
+    wired, dead, h_ruled = handler_buckets(facet, backend, ruled, no_carrier)
+    print(f"\nfacet_{name} handler coverage — {len(wired) + len(dead) + len(h_ruled)} declared handlers")
     print(f"  {len(wired):>4}  wired        the backend reads the field and calls it")
     print(f"  {len(h_ruled):>4}  decided      the manifest records why it does not fire")
     print(f"  {len(dead):>4}  never fire   neither wired nor decided — the debt")
     stale = [n for n in list(decided) + list(hosted) + list(no_carrier) + list(by_design)
-             + list(derived) + list(modifiers)
+             + list(derived) + list(modifiers) + list(by_arch)
              if n not in set(live + create_only + by_host + by_derivation + by_modification
-                             + blocked + absent + ruled_out + wired + dead + h_ruled)]
+                             + blocked + architectural + absent + ruled_out
+                             + wired + dead + h_ruled)]
     if stale:
         print(f"\nLEDGER NAMES {len(stale)} VERBS THAT DO NOT EXIST: {', '.join(sorted(stale))}")
+    # A row that is RECORDED and still measured absent. Different from `stale`,
+    # which catches a row naming nothing real: this one names a real verb and
+    # claims a disposition the code does not support, so it reads as settled
+    # while the verb is ignored.
+    #
+    # `window_chrome.spacing` is why this exists. Its create-only row says "the
+    # traffic lights are laid out once, by the window" — and `wb_layout` in
+    # vendor/appkit/src/appkit_ext.cplus lays them out on a hard-coded 14pt gap
+    # and never reads `spacing` at all. A create-only credit needs SOME body to
+    # read the field, so the verb lands in absent correctly; without this line
+    # the contradicting row sits in the manifest reading true.
+    contradicted = sorted(set(absent) & (set(by_design) | set(hosted)
+                                         | set(derived) | set(modifiers)
+                                         | set(by_arch)))
+    if contradicted:
+        print(f"\n  LEDGER CONTRADICTED — recorded, and the field is never read:")
+        for e in contradicted:
+            print(f"    {e}")
+    if unread:
+        print("\n  gated but unread — the mask promises and the body does not read:")
+        for e in sorted(unread):
+            print(f"    {e}")
+    if show_list:
+        for bucket, rows in (("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host),
+                             ("DERIVED", by_derivation), ("MODIFIER", by_modification),
+                             ("NO CARRIER", blocked), ("ABSENT", absent),
+                             ("BY DESIGN", architectural),
+                             ("NEVER FIRE", dead), ("DECIDED", ruled_out + h_ruled),
+                             ("LIVE", live), ("WIRED", wired)):
+            print(f"\n{bucket} ({len(rows)})")
+            for r in rows:
+                print(f"  {r}")
+    return {
+        "live": len(live), "total": total,
+        "absent": absent, "dead": dead, "stale": stale, "unread": unread,
+        "contradicted": contradicted,
+        "handlers": len(wired) + len(dead) + len(h_ruled), "wired": len(wired),
+        "ledgers": sum(map(len, (decided, hosted, no_carrier, by_design,
+                                 derived, modifiers, by_arch))),
+        # The dispositions this backend has WRITTEN DOWN, for the cross-check
+        # in `main`. A verb here is one somebody argued is not debt.
+        "recorded": set(by_host) | set(create_only) | set(by_derivation)
+                    | set(by_modification),
+    }
+
+
+def main():
+    """One backend by name, or `--all` for the comparison table.
+
+    Defaults to appkit because that is the backend this tool was written
+    against and the only one whose manifest carries ledgers; the other three
+    are measurable on the LIVE number from the day they are asked.
+    """
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    named = [a for a in sys.argv[1:] if not a.startswith("--")]
+    unknown = [a for a in named if a not in BACKENDS]
+    if unknown:
+        print(f"unknown backend: {', '.join(unknown)} "
+              f"(known: {', '.join(BACKENDS)})", file=sys.stderr)
+        return 2
+    names = list(BACKENDS) if "--all" in flags else (named or ["appkit"])
+
+    out = {}
+    for i, name in enumerate(names):
+        if i:
+            print()
+        out[name] = report(name, show_list="--list" in flags)
+
+    if len(names) > 1:
+        # The comparison table. LIVE is the only column that means the same
+        # thing for every backend — the rest depend on ledgers only appkit has
+        # written, so a backend without them reports its whole non-live surface
+        # as debt. `ledgers` is printed to say WHY a debt column is large.
+        # A verb another backend has RECORDED as host-rendered, derived, a
+        # modifier or create-only-by-design is one somebody already argued is
+        # not debt — and those arguments are mostly about facet's model, not
+        # the platform: a `span` has no view of its own anywhere, so every
+        # backend renders it through its label. Counting such a verb as debt
+        # for a backend that has simply written no ledgers overstates the gap,
+        # and that is most of the distance between 5 and 53 below.
+        #
+        # It is a POINTER, not a verdict: the row still has to be argued in
+        # this backend's own manifest before it stops being debt here.
+        elsewhere = set()
+        for name in names:
+            elsewhere |= out[name]["recorded"]
+        print(f"\n{'':<10}{'live':>11}  {'handlers':>9}  {'ledger':>7}"
+              f"{'debt':>7}{'argued elsewhere':>18}")
+        for name in names:
+            r = out[name]
+            pct = r["live"] * 100 // r["total"] if r["total"] else 0
+            debt = len(r["absent"]) + len(r["unread"]) + len(r["dead"])
+            seen_ = len([e for e in r["absent"] if e in elsewhere
+                         and e not in r["recorded"]])
+            print(f"  {name:<8}{r['live']:>5} / {r['total']} {pct:>3}%  "
+                  f"{r['wired']:>4} / {r['handlers']}  {r['ledgers']:>7}"
+                  f"{debt:>7}{seen_:>18}")
+
     # `--check` makes this a GATE rather than a report. The manifest has always
     # claimed that a verb neither implemented nor listed is a bug; this is the
     # line that enforces it, and a ledger row naming nothing real fails too —
     # a stale row reads as a commitment and is not one.
-    if "--check" in sys.argv:
-        if unread:
-            print("\nGATED BUT UNREAD — the mask promises and the body does not read:")
-            for e in sorted(unread):
-                print(f"    {e}")
-        if absent or dead or stale or unread:
-            print("\nFAIL: every declared verb must be implemented or recorded.")
+    if "--check" in flags:
+        bad = [n for n in names
+               if out[n]["absent"] or out[n]["dead"] or out[n]["stale"]
+               or out[n]["unread"] or out[n]["contradicted"]]
+        if bad:
+            print(f"\nFAIL ({', '.join(bad)}): every declared verb must be "
+                  f"implemented or recorded.")
             return 1
         print("\nOK: every declared verb and handler is implemented or recorded.")
-    if "--list" in sys.argv:
-        for name, rows in (("CREATE-ONLY", create_only), ("HOST-RENDERED", by_host), ("DERIVED", by_derivation), ("MODIFIER", by_modification), ("NO CARRIER", blocked), ("ABSENT", absent),
-                           ("NEVER FIRE", dead), ("DECIDED", ruled_out + h_ruled),
-                           ("LIVE", live), ("WIRED", wired)):
-            print(f"\n{name} ({len(rows)})")
-            for r in rows:
-                print(f"  {r}")
     return 0
 
 

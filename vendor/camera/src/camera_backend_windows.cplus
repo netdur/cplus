@@ -451,7 +451,7 @@ struct Session {
     fourcc: u32,
     name: text::Text,
     // The pump: the handler, its context, and the two flags that stop it.
-    on_frame: fn(*u8, i32, i32, i32, *u8, *u8),
+    on_frame: fn(*u8, i32, i32, i32, i32, *u8, *u8),
     opaque frame_ctx: *u8,
     streaming: bool,
     stopped: bool,
@@ -1456,6 +1456,22 @@ fn capture_one_shot(reader: *u8) -> bool {
 // One row of luma. NV12 and YUY2 differ here and the difference is the whole of
 // what a handler needs to walk the plane: NV12's Y plane is one byte per pixel,
 // YUY2 packs Y and chroma together at two bytes per pixel.
+// HOW FAR THE BUFFER WOULD HAVE TO TURN to be upright, clockwise.
+//
+// ALWAYS ZERO HERE, and `Rotation::None` is also the contract's word for "this
+// backend cannot say" — which is the honest reading. A USB or laptop webcam is
+// fixed in a body that does not rotate, so there is no orientation to track:
+// the sensor and the screen turn together or not at all. That is the opposite
+// of a phone, where the body turns under a sensor bolted at one angle, and it
+// is why this is a constant rather than a lookup.
+//
+// Media Foundation CAN carry `MF_MT_VIDEO_ROTATION` on the media type for a
+// source that knows better. It is not read, deliberately: no camera reachable
+// from this machine sets it, so the non-zero branch could not be exercised, and
+// an unexercised branch that silently turns every frame a quarter turn is a
+// worse bug than the gap. Read it when a rotating source exists to test against.
+fn frame_rotation() -> i32 { return 0 as i32; }
+
 fn luma_stride() -> i32 {
     if SESSION.fourcc == fourcc_yuy2() { return SESSION.width *% (2 as i32); }
     return SESSION.width;
@@ -1489,13 +1505,13 @@ fn pump(arg: *u8) -> *u8 {
                     if call_lock(buf, { #addr_of(p) as *u8 },
                                  { #addr_of(maxlen) as *u8 },
                                  { #addr_of(curlen) as *u8 }) == ok() {
-                        let f: fn(*u8, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
+                        let f: fn(*u8, i32, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
                         if f.is_not_null() {
                             // THE BUFFER IS VALID FOR THIS CALL ONLY, which is
                             // the contract `Frame::luma` states — it is unlocked
                             // the moment the handler returns.
                             f(p, SESSION.width, SESSION.height, luma_stride(),
-                              p, SESSION.frame_ctx);
+                              frame_rotation(), p, SESSION.frame_ctx);
                         }
                         // THE PREVIEW IS A SECOND CONSUMER of the same frame,
                         // not a second reader of the device — which is why it
@@ -1545,11 +1561,11 @@ fn start_pump() -> bool {
 
 fn pump_still_wanted() -> bool {
     if SESSION.preview != (0 as usize) { return true; }
-    let f: fn(*u8, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
+    let f: fn(*u8, i32, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
     return f.is_not_null();
 }
 
-export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
     if !is_live(h) { return camera::Outcome::Failed.to_code(); }
     if cb.is_null() { return camera::Outcome::Failed.to_code(); }
     SESSION.on_frame = cb;
@@ -1624,7 +1640,7 @@ export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
 // that killed the pump would blank a view the caller never mentioned.
 export extern fn _c_stop_frames(h: *u8) -> i32 {
     if !is_live(h) { return camera::Outcome::Failed.to_code(); }
-    SESSION.on_frame = #zero::[fn(*u8, i32, i32, i32, *u8, *u8)]();
+    SESSION.on_frame = #zero::[fn(*u8, i32, i32, i32, i32, *u8, *u8)]();
     SESSION.frame_ctx = 0 as *u8;
     if !pump_still_wanted() { stop_pump(); }
     return camera::Outcome::Ok.to_code();
@@ -1636,7 +1652,7 @@ export extern fn _c_close(h: *u8) {
     // window itself belongs to facet's release, not to close, so what happens
     // here is that the pump forgets it.
     SESSION.preview = 0 as usize;
-    SESSION.on_frame = #zero::[fn(*u8, i32, i32, i32, *u8, *u8)]();
+    SESSION.on_frame = #zero::[fn(*u8, i32, i32, i32, i32, *u8, *u8)]();
     stop_pump();
     // The control interfaces are views onto the source, so they go first.
     release_controls();
@@ -1958,7 +1974,8 @@ static FRAMES: i32 = 0 as i32;
 static FRAME_W: i32 = 0 as i32;
 static FRAME_BYTES: u8 = 0 as u8;
 
-fn count_frame(luma: *u8, w: i32, h: i32, stride: i32, native: *u8, ctx: *u8) {
+fn count_frame(luma: *u8, w: i32, h: i32, stride: i32, rotation: i32,
+                native: *u8, ctx: *u8) {
     FRAMES = FRAMES + (1 as i32);
     FRAME_W = w;
     if luma.is_not_null() && w > (0 as i32) { FRAME_BYTES = { *luma }; }
@@ -1973,7 +1990,7 @@ fn frames_arrive_from_a_real_lens() {
     assert h != (0 as *u8);
     FRAMES = 0 as i32;
     FRAME_W = 0 as i32;
-    let cb: fn(*u8, i32, i32, i32, *u8, *u8) = count_frame;
+    let cb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
     assert { _c_on_frame(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
 
     // A camera takes a moment to start; 30fps means a frame every 33ms, so this
@@ -2150,7 +2167,7 @@ fn stopping_frames_does_not_blank_a_live_preview() {
     let v: *u8 = { _c_preview_create(h) };
     assert v != (0 as *u8);
 
-    let cb: fn(*u8, i32, i32, i32, *u8, *u8) = count_frame;
+    let cb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
     FRAMES = 0 as i32;
     assert { _c_on_frame(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
     var waited: i32 = 0 as i32;
@@ -2164,7 +2181,7 @@ fn stopping_frames_does_not_blank_a_live_preview() {
     // must NOT kill the reader, or it blanks a view the caller never mentioned.
     assert { _c_stop_frames(h) } == camera::Outcome::Ok.to_code();
     assert SESSION.streaming;
-    let f: fn(*u8, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
+    let f: fn(*u8, i32, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
     assert f.is_null();
 
     // And the preview really is still being fed: the published buffer keeps
@@ -2391,7 +2408,7 @@ fn a_capture_asked_for_mid_stream_rides_the_next_frame() {
     let h: *u8 = { _c_open(#addr_of(req)) };
     assert h != (0 as *u8);
     FRAMES = 0 as i32;
-    let fcb: fn(*u8, i32, i32, i32, *u8, *u8) = count_frame;
+    let fcb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
     assert { _c_on_frame(h, fcb, 0 as *u8) } == camera::Outcome::Ok.to_code();
     var waited: i32 = 0 as i32;
     while FRAMES == (0 as i32) && waited < (5000 as i32) {
@@ -2433,7 +2450,7 @@ fn stopping_settles_a_capture_that_would_never_arrive() {
     // Ask while streaming, then stop before a frame can carry it. The handler
     // is still owed a call, and gets one with an empty slice rather than being
     // dropped on the floor.
-    let fcb: fn(*u8, i32, i32, i32, *u8, *u8) = count_frame;
+    let fcb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
     assert { _c_on_frame(h, fcb, 0 as *u8) } == camera::Outcome::Ok.to_code();
     CAPTURED = 0 as i32;
     SESSION.on_photo = note_capture;

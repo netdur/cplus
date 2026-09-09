@@ -25,7 +25,7 @@ import "facet/app_events" as ev;
 import "./camera" as cam;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const _DEX_LEN: usize = 13280;
+const _DEX_LEN: usize = 13672;
 
 static _LOADER: usize = 0;
 static _C_CAMERA: usize = 0;
@@ -37,10 +37,10 @@ static _C_CAMERA: usize = 0;
 const _MAX_PHOTO: usize = 4194304 as usize;
 
 #[repr(C)]
-struct _NativeLOIII {
+struct _NativeLOIIII {
     opaque name: *u8,
     opaque signature: *u8,
-    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, jni::jobject, i32, i32, i32),
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, jni::jobject, i32, i32, i32, i32),
 }
 
 #[repr(C)]
@@ -76,7 +76,7 @@ struct _Session {
     opaque obj: jni::jobject,     // CplusCamera, global ref
     cb: fn(*u8, usize, *u8),
     opaque ctx: *u8,
-    frame_cb: fn(*u8, i32, i32, i32, *u8, *u8),
+    frame_cb: fn(*u8, i32, i32, i32, i32, *u8, *u8),
     opaque frame_ctx: *u8,
 }
 
@@ -137,7 +137,7 @@ fn _ensure_loaded(env: rt::Env) -> bool {
     // pending NoClassDefFoundError rather than leaving it for the next call.
     env.clear_exception();
 
-    let dex: *[u8; 13280] = #include_bytes("../camera.dex");
+    let dex: *[u8; 13672] = #include_bytes("../camera.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, _DEX_LEN as i64)
     };
@@ -190,9 +190,12 @@ fn _bind_natives(env: rt::Env) {
     };
     let _r: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { _C_CAMERA as *u8 },
                                                     #addr_of(rec) as *u8, 1) };
-    var frec: _NativeLOIII = _NativeLOIII {
+    // THE SIGNATURE IS A STRING AND NOTHING CHECKS IT AGAINST THE FUNCTION.
+    // A trailing `I` missing here does not fail to register — it registers a
+    // method Java never calls, and the frame handler silently never fires.
+    var frec: _NativeLOIIII = _NativeLOIIII {
         name: #str_ptr("nativeFrame\0"),
-        signature: #str_ptr("(JLjava/nio/ByteBuffer;III)V\0"),
+        signature: #str_ptr("(JLjava/nio/ByteBuffer;IIII)V\0"),
         fn_ptr: _camera_android_frame,
     };
     let _rf: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { _C_CAMERA as *u8 },
@@ -246,17 +249,23 @@ fn _camera_android_photo(envp: *jni::JNIEnv, self_: jni::jobject,
 // Image and is recycled the moment `deliverFrame` closes it, which is why the
 // handler contract says the slice is valid for the call only.
 fn _camera_android_frame(envp: *jni::JNIEnv, self_: jni::jobject, token: i64,
-                         luma: jni::jobject, width: i32, height: i32, stride: i32) {
+                         luma: jni::jobject, width: i32, height: i32, stride: i32,
+                         rotation: i32) {
     if token == (0 as i64) { return; }
     let s: *_Session = { token as *_Session };
-    let f: fn(*u8, i32, i32, i32, *u8, *u8) = { (*s).frame_cb };
+    let f: fn(*u8, i32, i32, i32, i32, *u8, *u8) = { (*s).frame_cb };
     if f.is_null() { return; }
     if luma == (0 as jni::jobject) { return; }
     let base: *u8 = { (*(*envp)).GetDirectBufferAddress(envp, luma) };
     if base.is_null() { return; }
     // 0 for the native slot: a camera2 frame is a `java.nio.ByteBuffer`
     // over one plane, not a single native object worth handing back.
-    f(base, width, height, stride, 0 as *u8, { (*s).frame_ctx });
+    // THE ROTATION COMES FROM JAVA, which is where the inputs are: the
+    // display's rotation is a property of the view's own display (a foldable
+    // has two) and the sensor angle is a per-lens characteristic. Sending three
+    // ints up per frame and computing here would put a second copy of
+    // `uprightDegrees` on this side of the seam.
+    f(base, width, height, stride, rotation, 0 as *u8, { (*s).frame_ctx });
 }
 
 #[link_name = "malloc"]
@@ -324,7 +333,7 @@ export extern fn _c_open(req: *_CRequest) -> *u8 {
         obj: 0 as jni::jobject,
         cb: 0 as fn(*u8, usize, *u8),
         ctx: 0 as *u8,
-        frame_cb: 0 as fn(*u8, i32, i32, i32, *u8, *u8),
+        frame_cb: 0 as fn(*u8, i32, i32, i32, i32, *u8, *u8),
         frame_ctx: 0 as *u8,
     };
     var raw: *u8 = 0 as *u8;
@@ -411,7 +420,7 @@ export extern fn _c_close(h: *u8) {
     { (*s).obj = 0 as jni::jobject };
     { (*s).cb = 0 as fn(*u8, usize, *u8) };
     { (*s).ctx = 0 as *u8 };
-    { (*s).frame_cb = 0 as fn(*u8, i32, i32, i32, *u8, *u8) };
+    { (*s).frame_cb = 0 as fn(*u8, i32, i32, i32, i32, *u8, *u8) };
     { (*s).frame_ctx = 0 as *u8 };
     box::from_raw::[_Session](h);
 }
@@ -479,7 +488,7 @@ export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
 }
 
 
-export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
     let obj: jni::jobject = { (*s).obj };
@@ -500,7 +509,7 @@ export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, *u8, *u8), ctx: 
 export extern fn _c_stop_frames(h: *u8) -> i32 {
     if h.is_null() { return cam::Outcome::Failed.to_code(); }
     let s: *_Session = h as *_Session;
-    { (*s).frame_cb = 0 as fn(*u8, i32, i32, i32, *u8, *u8) };
+    { (*s).frame_cb = 0 as fn(*u8, i32, i32, i32, i32, *u8, *u8) };
     let obj: jni::jobject = { (*s).obj };
     if obj == (0 as jni::jobject) { return cam::Outcome::Ok.to_code(); }
     let env: rt::Env = _env();

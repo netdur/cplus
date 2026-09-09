@@ -7,9 +7,113 @@ from an abandoned one.
 
 Status 2026-08-23: **first light.** A label, a button and a container render on
 a Pixel 9 Pro XL emulator (API 36); taps route through facet's handler; state
-survives an Activity recreation. Everything else is section 2.
+survives an Activity recreation.
+
+**Status 2026-09-08: EVERY DECLARED VERB IS IMPLEMENTED OR RECORDED.**
+`python3 tools/verb_coverage.py android --check` passes.
+
+    312 live / 363 declared      88 of 89 handlers wired
+    20 host-rendered   22 decided   6 modifier   1 derived   1 create-only
+     1 by-architecture
+     0 absent   0 gated-but-unread   0 handlers that never fire
+
+That number is the STRICT one: `verb_coverage.py` credits a verb only when the
+dirty bit is GATED and the field is READ. `tools/parity.py` is the looser
+measure this file used to quote — it counts a bit that is merely NAMED — and it
+now reads 347/363, floor raised to match.
+
+Read the ledgers below before trusting any adjective here. A row in them is a
+commitment: the tool refuses a `host-rendered`, `create-only`, `derived` or
+`modifier` claim whose field no body reads, and says LEDGER CONTRADICTED
+instead. That is the only thing stopping another backend's reasoning being
+pasted over a gap in this one.
 
 ---
+
+## The ledgers
+
+`tools/verb_coverage.py android` reads the fenced blocks below and separates
+"decided" from "nobody built it yet", so the debt number means something. They
+are written from THIS backend's code, not copied from facet_appkit: a row is
+only here because the field was traced to the line that reads it.
+
+The tool refuses a `create-only`, `host-rendered`, `derived` or `modifier` row
+whose field no body reads — it reports LEDGER CONTRADICTED and the verb stays
+debt. That is deliberate: it is the only thing stopping another backend's
+reasoning being pasted over a gap here.
+
+```cannot-ledger
+collection.is_grouped           a GridView has no sections; a group header would have to SPAN a row, which a grid's fixed column width cannot do
+collection.can_mix_groups       as collection.is_grouped — there are no groups to mix
+collection.can_reorder_items    dragging a row is AndroidX ItemTouchHelper — an .aar with its own dex, and this project ships no Gradle
+collection.reorder              as collection.can_reorder_items
+list.reorder                    as collection.can_reorder_items
+carousel.wraps                  a paging HorizontalScrollView over the node's own children has a first page and a last; wrapping would mean reordering children under the finger
+carousel.scroll_anchor          a carousel has no MODEL to anchor — its pages are built once, by the application, as children
+carousel.item_sizing            nothing to measure: every page is one column wide by construction
+carousel.peek_insets            as carousel.item_sizing — the page IS the viewport here
+bordered.stroke_cap             a GradientDrawable's stroke has a width and a colour and nothing else; the Paint those belong to is reachable only by drawing the border ourselves, which is what `canvas` is for
+bordered.stroke_join            as bordered.stroke_cap
+bordered.stroke_miter_limit     as bordered.stroke_cap
+bordered.stroke_dash_offset     as bordered.stroke_cap
+popup.label                     a Spinner's field IS its selected item; facet's `label` names a second line there is no slot for
+popup.title_color               the prompt is drawn by the platform's own dialog, a view this backend neither builds nor reaches
+menu.text                       there is no menu BAR on Android — an app's commands live in the ActionBar's overflow, which is what `toolbar_item` reaches
+menu.priority                   as menu.text
+menu_item.text                  as menu.text — a menu bar's items have nowhere to be
+menu_item.icon                  as menu.text
+menu_item.is_destructive        as menu.text
+window_chrome.style             an Android app has no title bar and no window controls — there is no chrome to style
+window_chrome.spacing           as window_chrome.style — nothing to space
+collection.group_size           a GridView has no sections — see collection.is_grouped
+collection.group_header         a GridView has no sections — a header would have to SPAN a row
+collection.on_reorder_completed no drag to complete — see collection.can_reorder_items
+```
+
+```host-rendered
+span.text                       a run in its label's SpannableString, built by `apply_span_children`
+toolbar_item.text               the title of the ActionBar MenuItem built from it
+toolbar_item.icon               the MenuItem's icon, resolved as a drawable resource name
+toolbar_item.is_destructive     a danger-coloured title span; an Android MenuItem has no destructive style
+toolbar_item.placement          SHOW_AS_ACTION_IF_ROOM for Primary, NEVER for Secondary — Android's word for "on the bar" and "in the overflow"
+toolbar_item.priority           the id AND the order the item is added at, low first
+swipe_item.text                 the title of the Button the swipe strip builds for it
+swipe_item.icon                 a COMPOUND drawable above that title — a swipe action is a Button, so the icon is not an image view of its own
+swipe_item.is_destructive       the Button's background — danger, against the system fill for a plain one
+list.row_height                 a STATED height, read into the RowModel and applied as the row is placed
+span.text_color                 a ForegroundColorSpan on the run
+span.font_size                  an AbsoluteSizeSpan on the run
+span.font_weight                a StyleSpan on the run — Android's spans carry bold, not a weight axis
+span.is_italic                  a StyleSpan on the run
+span.text_decoration            an underline or strikethrough span on the run
+span.font_family                a TypefaceSpan on the run
+span.line_height                a LineHeightSpan.Standard on the run (API 29+; below it the run keeps the label's)
+span.character_spacing          a MetricAffectingSpan setting letterSpacing — points converted to the EMs Android wants
+span.text_transform             applied to the STRING before it is appended; Android has no per-run case transform
+span.font_scales                decides the UNIT the size resolves in — `env::font_scale()` (scaledDensity) or `env::density()`
+```
+
+```by-architecture
+list.has_uneven_rows            a ListView asks its adapter for EVERY row's view and never assumes a height, so the hint is already true of it — there is nothing to switch on
+```
+
+```create-only
+scroll.axis                     a create-time CLASS choice — HorizontalScrollView or ScrollView; `create_scroll` reads it and there is no reclass
+```
+
+```derived
+carousel.is_scrolling           written BACK by the scroll listener — true when a drag starts, false when the pager settles
+```
+
+```modifier
+date_picker.minimum_date        no write of its own; it bounds what the DatePickerDialog allows, read as the dialog opens
+date_picker.maximum_date        as date_picker.minimum_date
+stepper.increment               no write of its own — Android's two buttons know nothing about a range, so `fire_step` reads it when a step arrives
+stepper.minimum                 as stepper.increment — the clamp is this side's
+stepper.maximum                 as stepper.increment — the clamp is this side's
+radio.group                     no write of its own; it decides which siblings `turn_off_group_siblings` switches off when this one is picked
+```
+
 
 ## 1. Decided absent — Android has no such thing
 
@@ -145,6 +249,11 @@ text is answered; the colour of it is the dialog's.
 
 ## 2. Not yet built — Android has an answer, this pass did not write it
 
+**This section is EMPTY of verbs as of 2026-09-08.** What follows is the one
+entry that was never a missing verb — a built thing whose answer is weaker than
+AppKit's — kept because the difference is worth knowing. Everything that used to
+be here is either built or recorded in a ledger above.
+
 ### The clipboard IS built, and its `copy_text` answers weaker than AppKit's
 
 Noted here rather than in section 1 because the portable contract says
@@ -169,6 +278,19 @@ touches `facet_android.dex`**. A Java edit would have needed
 
 Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
+
+**TWO TAGS, because the backend talking and the application talking are
+different things to filter for.** An app's stdout and stderr are `/dev/null` on
+this platform, so `io::println` would reach nobody; stdlib offers a sink and
+this backend installs one in `install()`, routing to liblog:
+
+    adb logcat -s facet     this backend's own warnings
+    adb logcat -s cplus     the application's `println` / `eprintln`
+
+Measured 2026-09-09: before the sink an app printing every two seconds put ZERO
+lines in logcat over a whole run, and `android:debuggable="true"` does not
+change that — it turns CheckJNI on, which is a different and also valuable
+thing, but it does not redirect the streams.
 
 **The debt is a NUMBER, and it is measured rather than estimated:**
 

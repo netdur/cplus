@@ -147,7 +147,64 @@ fn zero_rect() -> rt::Rect {
 // UILabel, which IS a label class — where AppKit has to put an NSTextField into
 // a label posture. `numberOfLines` 0 means unbounded, which is facet's `0` too.
 
+// A LABEL THE USER CAN SELECT AND COPY IS A DIFFERENT CLASS.
+//
+// `UILabel` cannot select — no amount of configuring gets a selection out of
+// it. The affordance a person expects (drag across the words, get a Copy
+// menu) is `UITextView` with `editable` off and `selectable` on, stripped of
+// the padding and the scrolling that make a text view look like a text view.
+//
+// So `selectable` is a CREATE-TIME CLASS CHOICE here. Everything else in
+// `apply_label` is written with messages both classes answer —
+// `setAttributedText:`, `setFont:`, `setTextColor:`, `setTextAlignment:` — so
+// the two flavours share one apply body; only `numberOfLines` differs, and it
+// is guarded.
+//
+// It was ACCEPTED AND IGNORED before this: a label on iOS read and did not
+// copy, whatever the application asked for.
+fn label_wants_selection(n: *core::Node) -> bool {
+    let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
+    if p == (0 as *props::LabelProps) { return false; }
+    return { (*p).selectable };
+}
+
+// LOCAL, not `geometry::is_kind_of` — geometry imports this file, so reaching
+// back the other way is a cycle. Three lines is cheaper than the seam.
+fn label_is_text_view(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(v, rt::sel(#str_ptr("isKindOfClass:\0")),
+                           rt::get_class(#str_ptr("UITextView\0"))) } != (0 as i8);
+}
+
+fn create_selectable_label() -> *u8 {
+    // `UITextView` has no frame-only constructor in the bindings (its designated
+    // init takes a text container), so the plain `initWithFrame:` is sent
+    // directly — the same shape the other hand-built views in this package use.
+    let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UITextView\0")),
+                                    rt::sel(#str_ptr("alloc\0"))) };
+    let inited: *u8 = { rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")),
+                                        zero_rect()) };
+    if inited == (0 as *u8) { return 0 as *u8; }
+    let tv: ui::TextView = ui::TextView::from_raw(inited);
+    tv.set_editable(false);
+    tv.set_selectable(true);
+    // A text view SCROLLS and is PADDED by default; a label does neither. Both
+    // have to go or the text sits inset from the box flex measured for it and
+    // the whole thing scrolls under a finger that meant to scroll the page.
+    // `UITextView` IS a `UIScrollView`, but the binding puts `scrollEnabled` on
+    // the parent and does not re-expose it, so the message goes direct.
+    { rt::msg_void_i8(inited, rt::sel(#str_ptr("setScrollEnabled:\0")), 0 as i8) };
+    tv.set_text_container_inset(ui::EdgeInsets { top: 0.0f64, left: 0.0f64,
+                                                 bottom: 0.0f64, right: 0.0f64 });
+    { tv.text_container().set_line_fragment_padding(0.0f64) };
+    // And a text view draws its own white; a label is transparent.
+    { rt::msg_void_id(inited, rt::sel(#str_ptr("setBackgroundColor:\0")),
+                      ui::Color::clear_color().raw()) };
+    return inited;
+}
+
 fn create_label(n: *core::Node) -> *u8 {
+    if label_wants_selection(n) { return create_selectable_label(); }
     let l: ui::Label = ui::Label::new_with_frame(zero_rect());
     l.set_number_of_lines(0 as i64);
     // NO `setTextColor:` HERE, and it is not an omission — see the label-colour
@@ -238,8 +295,21 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
         l.set_text_alignment(text_align_of({ (*p).text_align }));
     }
     if (dirty & (label::P_MAX_LINES | label::P_LINE_BREAK)) != (0 as u64) {
-        l.set_number_of_lines({ (*p).max_lines });
-        l.set_line_break_mode(line_break_of({ (*p).line_break }));
+        // THE ONLY TWO MESSAGES THE SELECTABLE FLAVOUR DOES NOT ANSWER.
+        // Everything above — setText:, setTextColor:, setFont:,
+        // setTextAlignment: — is a selector both classes have, which is why one
+        // apply body serves both. These two are UILabel's alone; a UITextView
+        // keeps the same facts on its text CONTAINER, and sending them to it
+        // would be an unrecognised selector rather than a no-op.
+        if label_is_text_view(v) {
+            let tv: ui::TextView = ui::TextView::from_raw(v);
+            let tc: ui::NSTextContainer = tv.text_container();
+            tc.set_maximum_number_of_lines({ (*p).max_lines } as u64);
+            tc.set_line_break_mode(line_break_of({ (*p).line_break }));
+        } else {
+            l.set_number_of_lines({ (*p).max_lines });
+            l.set_line_break_mode(line_break_of({ (*p).line_break }));
+        }
     }
     // The VERTICAL half. A UILabel centres its text in whatever rect it is
     // given and has no vertical alignment — so the alignment is expressed by
@@ -2295,6 +2365,24 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
             if { msg_i8_sel(v, rt::sel(#str_ptr("respondsToSelector:\0")), sel) } != (0 as i8) {
                 { rt::msg_void(v, sel) };
             }
+        }
+        // OPENED / CLOSED, on the change this backend just made and only on
+        // that — the same reading `date_picker` above already uses, and for the
+        // same reason: UIKit presents the menu through the button's own
+        // gesture and reports nothing back, so the moment facet can name is the
+        // moment it asked for.
+        //
+        // THESE FIRED FOR THE PICKERS AND NOT FOR THE POPUP, which is the exact
+        // defect `verb_coverage.py`'s per-struct attribution exists to catch:
+        // a global search for `.on_opened` finds the picker's read and credits
+        // the popup with it, and the report says 89/89 while a popup an
+        // application opens tells it nothing.
+        if { (*p).is_open } {
+            let h: fn(*u8, *u8) = { (*p).on_opened };
+            if h != props::no_handler { h(v, { (*p).on_opened_ctx }); }
+        } else {
+            let h: fn(*u8, *u8) = { (*p).on_closed };
+            if h != props::no_handler { h(v, { (*p).on_closed_ctx }); }
         }
     }
     // Kerning on the button's own title. Attributed, because UIKit has no

@@ -34,13 +34,18 @@ public final class FacetMenu implements android.view.View.OnLongClickListener,
     public static void begin(long token) {
         LABELS.put(token, new java.util.ArrayList<String>());
         DESTRUCTIVE.put(token, new java.util.ArrayList<Boolean>());
+        ICONS.put(token, new java.util.ArrayList<String>());
+        SHORTCUTS.put(token, new java.util.ArrayList<String>());
     }
 
-    public static void add(long token, String label, boolean destructive) {
+    public static void add(long token, String label, boolean destructive,
+                           String icon, String shortcut) {
         java.util.ArrayList<String> l = LABELS.get(token);
         if (l == null) return;
         l.add(label);
         DESTRUCTIVE.get(token).add(Boolean.valueOf(destructive));
+        ICONS.get(token).add(icon == null ? "" : icon);
+        SHORTCUTS.get(token).add(shortcut == null ? "" : shortcut);
     }
 
     // The parent's view is the anchor AND the trigger. Long-clickable is set
@@ -71,7 +76,31 @@ public final class FacetMenu implements android.view.View.OnLongClickListener,
             // GROUP 0, ID = the index, ORDER = the index: the id is what comes
             // back on a click and the order is what keeps the list in the order
             // facet declared it.
-            menu.getMenu().add(0, i, i, title);
+            android.view.MenuItem mi = menu.getMenu().add(0, i, i, title);
+            // AN ICON IN A POPUP MENU IS OPT-IN. `PopupMenu` hides icons unless
+            // the menu is told to show them, and the setter is API 26 — below
+            // it the item is text-only, which is what it was before.
+            java.util.ArrayList<String> icons = ICONS.get(token);
+            if (icons != null && i < icons.size() && icons.get(i).length() > 0) {
+                int rid = 0;
+                try {
+                    rid = android.content.res.Resources.getSystem()
+                            .getIdentifier(icons.get(i), "drawable", "android");
+                } catch (Throwable ignored) { }
+                if (rid != 0) {
+                    mi.setIcon(rid);
+                    if (android.os.Build.VERSION.SDK_INT >= 26) {
+                        menu.setForceShowIcon(true);
+                    }
+                }
+            }
+            // A SHORTCUT is a single character plus modifiers on Android, and
+            // only the ALPHABETIC one shows in a menu. facet says the key as a
+            // string, so the first character is the one Android can carry.
+            java.util.ArrayList<String> keys = SHORTCUTS.get(token);
+            if (keys != null && i < keys.size() && keys.get(i).length() > 0) {
+                mi.setAlphabeticShortcut(Character.toLowerCase(keys.get(i).charAt(0)));
+            }
         }
         menu.setOnMenuItemClickListener(this);
         menu.show();
@@ -82,6 +111,11 @@ public final class FacetMenu implements android.view.View.OnLongClickListener,
         nativeMenuItem(token, item.getItemId());
         return true;
     }
+
+    private static final java.util.HashMap<Long, java.util.ArrayList<String>> ICONS =
+        new java.util.HashMap<Long, java.util.ArrayList<String>>();
+    private static final java.util.HashMap<Long, java.util.ArrayList<String>> SHORTCUTS =
+        new java.util.HashMap<Long, java.util.ArrayList<String>>();
 
     private static native void nativeMenuItem(long token, int index);
 }

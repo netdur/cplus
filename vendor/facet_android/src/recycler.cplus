@@ -220,6 +220,65 @@ fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
     return;
 }
 
+// ---- SECTIONS, flattened ------------------------------------------------------
+//
+// A ListView has one flat run of positions and no notion of a section, so a
+// grouped list is presented by putting the HEADERS INTO the run: group 0's
+// header, its rows, group 1's header, its rows. That is what "a ListView can
+// carry a header row like any other" means, and until 2026-09-08 this backend
+// said it in MANIFEST §1 and did not do it — `P_IS_GROUPED` gated a
+// `rows_changed` that read no field, and `group_size` / `group_header` were
+// never called.
+//
+// `row` and `row_height_of` take ONE sequence; the sections are a presentation
+// over it. So a flat position converts to a DATA index (skipping the headers
+// above it) or answers "this is a header for group g".
+const HEADER_ROW: i64 = -1;
+
+fn group_rows(m: RowModel, g: usize) -> i64 {
+    if m.group_size == props::no_group_size { return 0 as i64; }
+    return { m.group_size(g, m.group_size_ctx) as i64 };
+}
+
+// Total positions the adapter presents: every row, plus one per group.
+fn presented_count(m: RowModel) -> i64 {
+    if !m.grouped { return m.count; }
+    let groups: i64 = m.group_count;
+    if groups <= (0 as i64) { return m.count; }
+    var total: i64 = groups;
+    var g: i64 = 0 as i64;
+    while g < groups {
+        total = total +% group_rows(m, g as usize);
+        g = g +% (1 as i64);
+    }
+    return total;
+}
+
+// The group a flat position belongs to, and whether it IS that group's header.
+// Answers `HEADER_ROW` in `data` for a header.
+struct RowAt { group: i64, data: i64 }
+
+fn section_at(m: RowModel, position: i64) -> RowAt {
+    if !m.grouped || m.group_count <= (0 as i64) {
+        return RowAt { group: 0 as i64, data: position };
+    }
+    var at: i64 = position;
+    var flat: i64 = 0 as i64;
+    var g: i64 = 0 as i64;
+    while g < m.group_count {
+        if at == (0 as i64) { return RowAt { group: g, data: HEADER_ROW }; }
+        at = at -% (1 as i64);
+        let rows: i64 = group_rows(m, g as usize);
+        if at < rows { return RowAt { group: g, data: flat +% at }; }
+        at = at -% rows;
+        flat = flat +% rows;
+        g = g +% (1 as i64);
+    }
+    // Past the end: answer the last data index rather than a header, so a
+    // caller that asks one row too many gets a row rather than a section title.
+    return RowAt { group: m.group_count -% (1 as i64), data: flat };
+}
+
 // ---- the adapter's two questions ---------------------------------------------
 
 // ONE ADAPTER, TWO MODELS. The token is the node, and the node's kind says
@@ -228,7 +287,41 @@ fn row_count(token: i64) -> i32 {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return 0 as i32; }
     if core::kind_of(n) == tree::K_TREE { return tree_row_count(n); }
-    return { model_of(n).count as i32 };
+    return { presented_count(model_of(n)) as i32 };
+}
+
+// ---- the adapter's OTHER two questions ---------------------------------------
+//
+// A ListView recycles by VIEW TYPE: `convertView` is only ever handed back for
+// a position of the same type. Without these, every row went into one pool and
+// a header could be handed to a body — which is exactly what `row_kind` exists
+// to prevent, and it had no effect at all.
+//
+// TYPE 0 IS THE HEADER, and the application's kinds start at 1. `row_kind` is a
+// usize with no stated ceiling, and `getViewTypeCount` must be a CONSTANT the
+// adapter answers before any row is built — so the kinds are taken modulo the
+// cap. Two kinds that collide share a pool, which costs a rebuild on reuse and
+// never a wrong view: `bind` and the builder both run against the row's own
+// index, not the pool's.
+const ROW_KIND_CAP: i64 = 8;
+
+fn view_type_count(token: i64) -> i32 {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return 1 as i32; }
+    if core::kind_of(n) == tree::K_TREE { return 1 as i32; }
+    return { (ROW_KIND_CAP +% (1 as i64)) as i32 };
+}
+
+fn item_view_type(token: i64, position: i32) -> i32 {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return 0 as i32; }
+    if core::kind_of(n) == tree::K_TREE { return 0 as i32; }
+    let m: RowModel = model_of(n);
+    let at: RowAt = section_at(m, { position as i64 });
+    if at.data == HEADER_ROW { return 0 as i32; }
+    if m.kind_of == props::no_row_kind { return 1 as i32; }
+    let k: i64 = { m.kind_of(at.data as usize, m.kind_ctx) as i64 };
+    return { ((k % ROW_KIND_CAP) +% (1 as i64)) as i32 };
 }
 
 fn row_tapped(token: i64, position: i32) {
@@ -282,6 +375,24 @@ struct RowModel {
     // A STATED height, or 0 for "ask the content". A collection has none —
     // its cells are sized by the column count — so it answers zero.
     height: f64,
+    // A stated height PER ROW, answered without building it. Beats `height`
+    // when both are given, because it is the more specific answer.
+    height_of: fn(usize, *u8) -> f64,
+    opaque height_of_ctx: *u8,
+    // Which POOL a row recycles in. A ListView recycles by view type, so a
+    // sequence whose rows are not all the same shape needs this or a header is
+    // handed back as a body.
+    kind_of: fn(usize, *u8) -> usize,
+    opaque kind_ctx: *u8,
+    // The GROUP band. `grouped` is the switch; the other three describe the
+    // sections. A `collection` is a GridView here and cannot carry a header —
+    // see MANIFEST §1 — so it answers `grouped: false` whatever its props say.
+    grouped: bool,
+    group_count: i64,
+    group_size: fn(usize, *u8) -> usize,
+    opaque group_size_ctx: *u8,
+    group_header: fn(usize, *u8) -> flex::Node,
+    opaque group_header_ctx: *u8,
 }
 
 impl RowModel {
@@ -292,6 +403,16 @@ impl RowModel {
             row_ctx: 0 as *u8,
             bind: props::no_bind,
             height: 0.0f64,
+            height_of: props::no_row_height_of,
+            height_of_ctx: 0 as *u8,
+            kind_of: props::no_row_kind,
+            kind_ctx: 0 as *u8,
+            grouped: false,
+            group_count: 0 as i64,
+            group_size: props::no_group_size,
+            group_size_ctx: 0 as *u8,
+            group_header: props::no_group_header,
+            group_header_ctx: 0 as *u8,
         };
     }
     fn is_none(this) -> bool { return this.row == (0 as fn(usize, *u8) -> flex::Node); }
@@ -310,13 +431,37 @@ fn model_of(n: *core::Node) -> RowModel {
         var h: f64 = 0.0f64;
         if { (*p).row_height } > (0 as i64) { h = { { (*p).row_height } as f64 }; }
         return RowModel { count: { (*p).count }, row: { (*p).row },
-                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind }, height: h };
+                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind }, height: h,
+                          height_of: { (*p).row_height_of },
+                          height_of_ctx: { (*p).row_height_of_ctx },
+                          kind_of: { (*p).row_kind },
+                          kind_ctx: { (*p).row_kind_ctx },
+                          grouped: { (*p).is_grouped },
+                          group_count: { (*p).group_count },
+                          group_size: { (*p).group_size },
+                          group_size_ctx: { (*p).group_size_ctx },
+                          group_header: { (*p).group_header },
+                          group_header_ctx: { (*p).group_header_ctx } };
     }
     if kind == props::K_COLLECTION {
         let p: *props::CollectionProps = collection_props(n);
         if p == (0 as *props::CollectionProps) { return RowModel::none(); }
+        // NOT GROUPED whatever the props say: a GridView is one flat run of
+        // cells and a header would have to SPAN a row, which a grid's fixed
+        // column width cannot do. MANIFEST §1 records that; this is where the
+        // record becomes behaviour.
         return RowModel { count: { (*p).count }, row: { (*p).row },
-                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind }, height: 0.0f64 };
+                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind }, height: 0.0f64,
+                          height_of: { (*p).row_height_of },
+                          height_of_ctx: { (*p).row_height_of_ctx },
+                          kind_of: { (*p).row_kind },
+                          kind_ctx: { (*p).row_kind_ctx },
+                          grouped: false,
+                          group_count: 0 as i64,
+                          group_size: props::no_group_size,
+                          group_size_ctx: 0 as *u8,
+                          group_header: props::no_group_header,
+                          group_header_ctx: 0 as *u8 };
     }
     return RowModel::none();
 }
@@ -361,6 +506,36 @@ fn set_cell_node(env: rt::Env, cell: jni::jobject, n: *core::Node) {
 }
 
 // The row ListView asked for, in a cell it may have handed back.
+// A GROUP'S HEADER, built the way a row is and recycled in its own pool (view
+// type 0). It is not a row: `row` builds bodies and `group_header` builds these,
+// and handing one to the other is what `getItemViewType` exists to prevent.
+fn header_view(env: rt::Env, n: *core::Node, m: RowModel, group: i64,
+               convert: jni::jobject) -> jni::jobject {
+    if m.group_header == props::no_group_header {
+        // A grouped list with no header builder still needs SOMETHING at the
+        // position — the count reserved one. An empty cell is the honest
+        // answer and takes no height.
+        return new_cell(env, convert);
+    }
+    let width: f64 = cell_width(env, n, core::view_of(n));
+    if convert != (0 as jni::jobject) {
+        let existing: *core::Node = cell_node(env, convert);
+        if existing != (0 as *core::Node) { mount::unrealise(existing); }
+    }
+    let cell: jni::jobject = new_cell(env, convert);
+    if cell == (0 as jni::jobject) { return 0 as jni::jobject; }
+    match box::new::[core::Node]({ m.group_header(group as usize, m.group_header_ctx) }) {
+        option::Option[box::Box[core::Node]]::Some(b) => {
+            let root: *core::Node = b.into_raw() as *core::Node;
+            let _v: *u8 = mount::realise(root);
+            set_cell_node(env, cell, root);
+            place_row(env, cell, root, width, 0.0f64);
+        }
+        option::Option[box::Box[core::Node]]::None => { }
+    }
+    return cell;
+}
+
 fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobject) -> jni::jobject {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return 0 as jni::jobject; }
@@ -368,7 +543,13 @@ fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobje
     let m: RowModel = model_of(n);
     if m.is_none() { return 0 as jni::jobject; }
     let env: rt::Env = e::env();
-    let row: usize = { position as usize };
+    // A GROUPED list presents headers in the same run as its rows, so the flat
+    // position has to be resolved before anything else uses it.
+    let at: RowAt = section_at(m, { position as i64 });
+    if at.data == HEADER_ROW {
+        return header_view(env, n, m, at.group, convert);
+    }
+    let row: usize = { at.data as usize };
 
     // The width a row gets is the LIST'S, which is the frame flex gave the
     // list node — not the parent's measured width, which is zero before the
@@ -469,6 +650,14 @@ fn cell_width(env: rt::Env, n: *core::Node, v: *u8) -> f64 {
 // FIRST one's size — so the height is taken from the cell already on screen at
 // index 0, which the grid built before any of these and measured for us.
 fn row_height(env: rt::Env, n: *core::Node, m: RowModel, row: usize) -> f64 {
+    // `row_height_of` BEATS a stated `row_height`, because it is the more
+    // specific answer to the same question — and neither builds the row.
+    // A zero or negative answer is the application declining to state one for
+    // this row, not a zero-high row.
+    if m.height_of != props::no_row_height_of {
+        let h: f64 = { m.height_of(row, m.height_of_ctx) };
+        if h > 0.0f64 { return h; }
+    }
     if core::kind_of(n) != props::K_COLLECTION { return m.height; }
     if row == (0 as usize) { return m.height; }
     let p: *props::CollectionProps = collection_props(n);
@@ -627,7 +816,13 @@ fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
     let env: rt::Env = e::env();
     // THE INDEX IS THE MODEL as far as the adapter is concerned, so anything
     // that changes which rows are visible rebuilds it before telling ListView.
-    let moved: u64 = tree::P_ROOT | tree::P_EXPANDED | tree::P_ROW;
+    // `P_ROW_ID` and `P_ROW_HEIGHT` belong here for the same reason as the
+    // three above: both are read while a row is BUILT, so a write after the
+    // mount reaches only rows vended afterwards. Re-vending is what makes them
+    // land — and for `row_id` that matters more than a look, because the
+    // identifier is what an agent surface selects a row BY.
+    let moved: u64 = tree::P_ROOT | tree::P_EXPANDED | tree::P_ROW
+                   | tree::P_ROW_ID | tree::P_ROW_HEIGHT;
     if (dirty & moved) != (0 as u64) {
         reindex_tree(n, v);
         let a: jni::jobject = adapter_of(env, v);
@@ -742,6 +937,33 @@ fn toggle(p: *tree::TreeProps, n: *core::Node, node: *tree::TreeNode) {
 // A tree's row, through the same cell cycle as a list's: realise once, bind on
 // reuse. The item stands where a list's index stands, which is the only
 // difference the contract makes between them.
+// THE ROW'S OWN NAME, written into the identity slot — `setTag`, which is what
+// this backend uses for a key because Android has no accessibilityIdentifier
+// (MANIFEST §1). Deliberately not contentDescription: that is what a screen
+// reader reads aloud, and an address is not a description.
+//
+// `row_identity` existed, read `tree.row_id` correctly, and WAS NEVER CALLED —
+// a dead function, so the prop was accepted and dropped. The identifier is what
+// an agent surface selects a row BY, so a tree's rows were unaddressable.
+//
+// A RECYCLED CELL IS RE-TAGGED, which is the whole reason this is here and not
+// at build time: the cell that showed row 3 shows row 9 next, and a name written
+// once points at the wrong row for the rest of the scroll.
+fn tag_row_identity(env: rt::Env, cell: jni::jobject, n: *core::Node, position: i32) {
+    if cell == (0 as jni::jobject) { return; }
+    let id: text::Text = row_identity(n, position);
+    if id.view() == "" { return; }
+    var buf: [u8; 160] = #zero::[[u8; 160]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if !paint::cstr(id.view(), base, 160 as usize) { return; }
+    let js: jni::jstring = env.new_string_utf(base);
+    var cv: w::View = w::View::from_global(env, env.new_global_ref({ cell as *u8 }));
+    cv.set_tag_object(js);
+    paint::unwrap_keep(cv);
+    env.delete_local_ref(js);
+    return;
+}
+
 fn tree_row_view(n: *core::Node, position: i32, convert: jni::jobject) -> jni::jobject {
     let p: *tree::TreeProps = tree_props(n);
     if p == (0 as *tree::TreeProps) { return 0 as jni::jobject; }
@@ -767,6 +989,7 @@ fn tree_row_view(n: *core::Node, position: i32, convert: jni::jobject) -> jni::j
             mount::sync_from(existing);
             indent(existing, depth);
             place_row(env, convert, existing, width, tree_fixed_height(p));
+            tag_row_identity(env, convert, n, position);
             return convert;
         }
         if existing != (0 as *core::Node) { mount::unrealise(existing); }
@@ -786,6 +1009,7 @@ fn tree_row_view(n: *core::Node, position: i32, convert: jni::jobject) -> jni::j
         }
         option::Option[box::Box[core::Node]]::None => { }
     }
+    tag_row_identity(env, cell, n, position);
     return cell;
 }
 

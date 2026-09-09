@@ -203,9 +203,10 @@ parentless popup into a real child, flex gives it a frame, and the pump's frames
 land in it. Checked with `PrintWindow` and `PW_RENDERFULLCONTENT` rather than a
 screen grab — a screen capture samples whatever is in front of the window.
 
-**iOS has been compiled and never run.** The preview there takes the
-`+layerClass` branch, which macOS never executes, so it has had no exercise at
-all.
+**iOS has run on an iPad Pro M1** and the `+layerClass` branch macOS never
+executes is where both of the two device-only defects were — an unregistered
+metaclass that crashed on the first `setSession:`, and a preview that never
+rotated. Neither was reachable from a Mac or from the simulator.
 
 **The iOS simulator enumerates zero capture devices**, always. The package
 answers `Unsupported` there. That is not a bug to work around and a test that
@@ -216,6 +217,24 @@ expects a device on the simulator fails for the wrong reason forever.
 open, session configuration and frame delivery are all real code paths worth
 running there. Image content, orientation against a real sensor, focus and
 torch are not.
+
+**ORIENTATION IS THE LEAST VERIFIABLE THING HERE, and the split is worth
+knowing before trusting a reading.** Three separate claims:
+
+* *The preview turns with the device.* MEASURED — iPad Pro M1 and a Galaxy Fold,
+  both screens, all four rotations.
+* *`Frame::rotation()` is the right number.* NOT measured on either platform.
+  The Android arithmetic is Google's own documented formula over inputs the Java
+  side already reads; the Apple side asks the connection what it delivers and
+  takes a difference, so it is right without knowing how any sensor is mounted —
+  but ONE BIT is unchecked on both, which way round the landscape pair turns.
+  `camera_backend.cplus` names it and its check pins the shape rather than the
+  claim, so a device run either confirms it or swaps two lines.
+* *A saved photo opens upright.* NOT measured on either platform.
+
+A macOS run cannot settle any of the last two: displays do not rotate, and
+`isVideoOrientationSupported` is NO for a built-in webcam, so every path here
+short-circuits to "no rotation" and passes.
 
 ## Gotcha: a bare binary never prompts, and a bundle does
 
@@ -337,6 +356,17 @@ nothing, and there is no way to suppress it from this side.
 
 `on_frame` streams; `capture` takes one still. They differ in three ways that
 are all deliberate.
+
+**A FRAME IS SIDEWAYS AND SAYS SO.** The preview is turned by the platform and
+the buffers are not, so `Frame::rotation()` is the angle between them — turn the
+buffer by that much, clockwise, to make it upright for the way the device is
+being held. It is a REPORT, not a transform: rotating every frame would cost a
+full-frame copy at 30Hz, and a detection model can be handed the angle instead.
+Ask `rotation().swaps_axes()` rather than `!= None` when what you want is
+whether width and height trade places.
+
+A saved photo is the other way round — the package writes the rotation into the
+file, so a still opens upright with nothing asked of the caller.
 
 **Luma by default.** `Frame::luma()` is the Y plane — one byte per pixel,
 `stride` bytes per row. Apple delivers `420YpCbCr8BiPlanar`, Android
