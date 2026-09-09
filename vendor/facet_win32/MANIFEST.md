@@ -2039,12 +2039,68 @@ quietly.
 Both are fixed (`IccEx`, `#[repr(C)]`) and both are worth knowing generally:
 a C+ binding that reuses a C tag name is a call that goes somewhere else.
 
+### Settled — the manifest is a default, not a knob
+
+Decided 2026-09-09. It stays embedded in every Windows executable, and the
+opt-in `[link] manifest = "..."` alternative is struck rather than left standing
+as a live option.
+
+Theming is the weak half of the argument: a console program creates no controls
+and loses nothing either way, and blurry text on a scaled display is ugly but
+recoverable. **`activeCodePage` is the half that settles it.** `vendor/win32`
+chose the `*A` entry points throughout, and an `*A` call takes the process ANSI
+codepage — CP1252 on a Western install. That package is correct only because
+this manifest declares the codepage to be UTF-8. Opt-in would not leave a
+program that skipped it merely looking dated; it would silently mistranslate
+every `str` byte above 0x7F on its way into Win32, which is what `â€"` in a
+window title was.
+
+A flag guarding something the rest of the package already assumes is not a
+choice. It is a trap with a default.
+
+### Why macOS is the same mechanism and not the same policy
+
+`__TEXT,__info_plist` and `RT_MANIFEST` are the same trick, and `run_clang` says
+so. The POLICY differs, and the difference is the part worth carrying forward:
+
+    macOS, iOS    macos/Info.plist, ios/Info.plist — the AUTHOR's file, used
+                  when present (`if plist.is_file()`).
+    Windows       cpc's own, embedded unconditionally.
+
+That asymmetry is right, because the two files carry different things. A plist
+carries the author's INTENT — which permissions this app asks for, in prose the
+user will read. This manifest carries the package's own PRECONDITIONS, which
+the author neither chose nor should have to know about.
+
 ### What is still open
 
-Whether embedding this manifest in EVERY Windows C+ executable is the right
-default, or whether it should be an opt-in `[link] manifest = "..."` key. The
-argument for the default is that a console program is unaffected — it creates no
-controls to theme — and the DPI half is not cosmetic: without a declaration the
-process is DPI-unaware, Windows scales its windows as a bitmap on a scaled
-display, and `GetDpiForWindow` answers 96 everywhere so `fonts::height_for`
-computes the wrong pixel height.
+There is no way to supply your own. `MANIFEST` in `embed_windows_manifest` is a
+`const` with no path parameter, so an author needing one element the default
+omits — `requestedExecutionLevel`, `longPathAware`, a COM registration — cannot
+add it without patching the compiler. macOS and iOS both accept a file; Windows
+accepts nothing.
+
+The shape that closes it is `windows/app.manifest`, beside `macos/Info.plist`
+and `ios/Info.plist`, under the same "if the file is there it is used" rule.
+The real question is whether a supplied file REPLACES the default or MERGES
+into it. Replacing is honest, and hands the preconditions above back to an
+author who has no reason to know they exist. Merging is what the author
+actually means — and is precisely what lld-link could not do without libxml2,
+so `cpc` would have to perform the merge itself.
+
+This blocks no build. It blocks the author who needs one element the default
+does not carry.
+
+### The question this leaves for the next backend
+
+Each platform asks it once: **who authors the per-executable metadata the
+platform reads — is it the author's intent, or the package's precondition?**
+Answer that first and the mechanism follows.
+
+Linux splits differently again, and the GTK work will meet it. ELF has no
+section the desktop environment reads, so the counterpart is not embedded in
+the binary at all: it is a `.desktop` file installed beside it, whose name the
+shell matches against the application id the toolkit reports, for the window's
+name and icon. Today `cpc` writes no `.desktop` file and `facet_gtk` calls
+plain `gtk_init`, setting no application id — so both halves are UNBUILT rather
+than decided, and neither should be settled by accident.
