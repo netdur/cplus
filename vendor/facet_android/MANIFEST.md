@@ -279,6 +279,19 @@ touches `facet_android.dex`**. A Java edit would have needed
 Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
 
+**TWO TAGS, because the backend talking and the application talking are
+different things to filter for.** An app's stdout and stderr are `/dev/null` on
+this platform, so `io::println` would reach nobody; stdlib offers a sink and
+this backend installs one in `install()`, routing to liblog:
+
+    adb logcat -s facet     this backend's own warnings
+    adb logcat -s cplus     the application's `println` / `eprintln`
+
+Measured 2026-09-09: before the sink an app printing every two seconds put ZERO
+lines in logcat over a whole run, and `android:debuggable="true"` does not
+change that — it turns CheckJNI on, which is a different and also valuable
+thing, but it does not redirect the streams.
+
 **The debt is a NUMBER, and it is measured rather than estimated:**
 
     python3 vendor/facet_android/tools/parity.py            # from the repo root

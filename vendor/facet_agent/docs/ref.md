@@ -56,7 +56,9 @@ derivable by anything that knows the id and the pid:
 | iOS, Android | `agent_mcp::loopback_port(pid)` → `http://127.0.0.1:<port>/` |
 
 `loopback_port(pid)` is `9000 + pid % 1000`. Both are reported on stderr at
-startup (logcat on Android) and written to `/tmp/mcp-<id>-<pid>.json`.
+startup — on Android that is `adb logcat -s cplus`, where stdlib's sink puts
+it, since the process's own stderr goes to `/dev/null` there — and written to
+`/tmp/mcp-<id>-<pid>.json`.
 
 An id containing `/` is refused — see `agent_mcp::valid_id`.
 
