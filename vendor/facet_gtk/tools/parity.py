@@ -68,14 +68,24 @@ FLOORS = {
     # Where facet_win32 stands today. Raise them as the gap closes — the point
     # of a floor is that it only ever goes up.
     #
-    # 315 -> 314 ON 2026-09-09, AND THE DROP IS THE POINT. `symbol.fill` was in
-    # `apply_symbol`'s dirty mask and no body ever read the field, so this tool
-    # — which counts a NAMED bit as answered — scored a verb that did nothing.
-    # Taking the bit out is what made the number honest, and the same thing
-    # happened to the shared band on 2026-09-01 for the same reason. A floor
-    # only goes up while the measurement means the same thing; when a lie is
-    # removed from the numerator it has to come down, and be said out loud.
-    "win32": (314, 62, 19),
+    # 315 -> 309 ON 2026-09-09, AND THE DROP IS THE POINT. This tool counts a
+    # NAMED bit as answered; the stricter `tools/verb_coverage.py` separates
+    # "the mask gates it AND a body reads the field" from "the mask promises and
+    # nothing reads it". Clearing that second bucket to zero meant withdrawing
+    # six bits that were promises the code did not keep:
+    #
+    #   symbol.fill                       a variable-font axis; the bundled face
+    #                                     is static and GDI has no axis support
+    #   bordered.stroke_dash_offset       GDI models no dash PHASE
+    #   carousel/collection.item_sizing   an optimisation hint, not a different
+    #                                     result — every item is measured anyway
+    #   menu_item/context_menu_item.icon  buildable and NOT BUILT; see §2
+    #
+    # Four are recorded decisions and two are now visible debt, which is the
+    # honest shape. The shared band went down on 2026-09-01 for exactly this
+    # reason. A floor only rises while the measurement means the same thing;
+    # when a lie leaves the numerator it has to come down, and be said out loud.
+    "win32": (309, 62, 19),
 }
 
 # Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification

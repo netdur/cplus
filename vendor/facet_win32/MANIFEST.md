@@ -185,6 +185,8 @@ text_field.vertical_align      as popup.vertical_align
 ```
 
 ```by-architecture
+carousel.item_sizing           chooses between measuring every item and measuring the first — an optimisation, not a different result; this backend measures every item always, which is correct under both values
+collection.item_sizing         as carousel.item_sizing
 canvas.redraw                  `apply_canvas` repaints on ANY apply and never reads `dirty`, so the redraw command's purpose is answered without a bit to gate — see the note in §1
 ```
 
@@ -1510,6 +1512,23 @@ drew the identical glyph each time. The stricter tool calls that GATED BUT
 UNREAD; the bit is out of the mask now.
 
 ## 2. Not built yet — Win32 has it, this package has not reached it
+
+### `menu_item.icon` and `context_menu_item.icon` — buildable, not built
+
+A Win32 menu carries a picture: `MIIM_BITMAP` with an `hbmpItem` on
+`MENUITEMINFO`. So this is not a wall and does not belong in §1.
+
+What it needs is facet's icon SOURCE turned into an HBITMAP. For a file-backed
+icon that is `imaging`'s decoder, which this package already has; for the glyph
+tier it means drawing the codepoint into a DIB section at the menu's own metrics
+(`GetSystemMetrics(SM_CXMENUCHECK)`), in the menu text colour, with the
+alpha-aware blit a themed menu needs. None of that is written.
+
+**The bits came OUT of `menu_bits` on 2026-09-09.** They were named there, so a
+change to an icon rebuilt the menu and drew no icon — the mask promising a verb
+the code did not do. That is the same state `symbol.fill` was in, and the
+withdrawal makes the debt visible instead of counting it as answered.
+
 
 This is DEBT, not decision. Every row here is reachable with what user32,
 gdi32 and comctl32 already offer.

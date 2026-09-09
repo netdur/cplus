@@ -514,18 +514,65 @@ fn holds_a_menu(n: *core::Node) -> bool {
 // THE OLD BAR IS DESTROYED. `SetMenu` does not free what it replaces, and a
 // menu rebuilt on every model change would leak an HMENU and everything under
 // it each time.
+// A MENU'S OWN PRIORITY, or zero. Higher leads, which is what the word means
+// and what `toolbar_item.priority` already does in this package.
+fn menu_priority(n: *core::Node) -> i64 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as i64; }
+    if { (*d).kind } != props::K_MENU { return 0 as i64; }
+    let p: *props::MenuProps = { (*d).props } as *props::MenuProps;
+    if p == (0 as *props::MenuProps) { return 0 as i64; }
+    return { (*p).priority };
+}
+
 fn build_bar(win: *u8, root: *core::Node) {
     if win == (0 as *u8) { return; }
     if root == (0 as *core::Node) { return; }
     reset_commands();
     let bar: *u8 = { u::CreateMenu() };
     if bar == (0 as *u8) { return; }
-    var i: usize = 0 as usize;
     let count: usize = core::child_count_of(root);
-    while i < count {
-        match core::child_of(root, i) {
-            option::Option[*core::Node]::Some(c) => {
-                if core::kind_of(c) == props::K_MENU {
+
+    // ORDERED BY PRIORITY, TREE ORDER BREAKING TIES. `menu.priority` was in
+    // `menu_bits` — so changing one rebuilt the bar — and nothing read it, so
+    // the bar came back in the same order it went out. Higher leads.
+    //
+    // A SELECTION RATHER THAN A SORT, and stable by construction: each pass
+    // takes the highest priority not yet placed, and among equals the lowest
+    // index. Menu bars are a handful of entries, so the cost is nothing and
+    // there is no comparator to get subtly wrong.
+    var placed: [bool; 32] = [false; 32];
+    var done: usize = 0 as usize;
+    let cap: usize = if count < (32 as usize) { count } else { 32 as usize };
+    while done < cap {
+        var best: usize = cap;
+        var best_pri: i64 = 0 as i64;
+        var k: usize = 0 as usize;
+        while k < cap {
+            if !placed[k] {
+                match core::child_of(root, k) {
+                    option::Option[*core::Node]::Some(c) => {
+                        if core::kind_of(c) == props::K_MENU {
+                            let pri: i64 = menu_priority(c);
+                            if best == cap || pri > best_pri {
+                                best = k;
+                                best_pri = pri;
+                            }
+                        } else { placed[k] = true; done = done +% (1 as usize); }
+                    }
+                    option::Option[*core::Node]::None => {
+                        placed[k] = true; done = done +% (1 as usize);
+                    }
+                }
+            }
+            k = k +% (1 as usize);
+        }
+        if best == cap { done = cap; }
+        else {
+            placed[best] = true;
+            done = done +% (1 as usize);
+            match core::child_of(root, best) {
+                option::Option[*core::Node]::Some(c) => {
                     let sub: *u8 = { u::CreatePopupMenu() };
                     if sub != (0 as *u8) {
                         fill_from_children(sub, c);
@@ -533,10 +580,9 @@ fn build_bar(win: *u8, root: *core::Node) {
                                     { #addr(sub) } as u32, item_text(c));
                     }
                 }
+                option::Option[*core::Node]::None => { }
             }
-            option::Option[*core::Node]::None => { }
         }
-        i = i +% (1 as usize);
     }
     let old: *u8 = { u::GetMenu(win) };
     let _s: i32 = { u::SetMenu(win, bar) };
@@ -696,8 +742,17 @@ fn has_context_menu(n: *core::Node) -> bool {
 // the host — which is why what this tests for is the bits a MENU carries, on a
 // node that holds one.
 fn menu_bits() -> u64 {
+    // `P_ICON` IS NOT NAMED FOR EITHER ITEM KIND, and that is a withdrawal
+    // rather than a decision. A Win32 menu CAN carry a picture — `MIIM_BITMAP`
+    // with an `hbmpItem` — so this is buildable; what it needs is facet's icon
+    // source rendered to an HBITMAP, which for the glyph tier means drawing the
+    // codepoint into a DIB at the menu's own metrics. That is not written.
+    //
+    // Until it is, naming the bit only promised a rebuild that draws no icon.
+    // The tool calls that GATED BUT UNREAD, and it is the state `symbol.fill`
+    // was in: the code reads finished. Left as visible debt in §2 instead.
     return fmenu::P_TEXT | fmenu::P_PRIORITY | fmenu_item::P_TEXT
-         | fmenu_item::P_ICON | fctx_item::P_TEXT | fctx_item::P_ICON
+         | fctx_item::P_TEXT
          // A shortcut is part of the item's STRING here — see `with_shortcut` —
          // so changing one is a rebuild exactly as changing the text is.
          | fctx_item::P_SHORTCUT;

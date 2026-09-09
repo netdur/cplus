@@ -3375,8 +3375,14 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         };
         show_page(v, n, p, want, false);
     }
-    if (dirty & (carousel::P_COLUMNS | carousel::P_PEEK_INSETS
-                 | carousel::P_ITEM_SIZING)) != (0 as u64) {
+    // `P_ITEM_SIZING` IS NOT HERE. It chooses between measuring every item and
+    // measuring the first and reusing it — an OPTIMISATION, not a different
+    // result: an application setting `MeasureFirstItem` is promising that
+    // measuring all is unnecessary, not asking for different pixels. This
+    // backend measures every item always, which is correct under both values,
+    // so gating on the bit would re-size the pages to identical numbers.
+    // Recorded in §0 as by-architecture.
+    if (dirty & (carousel::P_COLUMNS | carousel::P_PEEK_INSETS)) != (0 as u64) {
         size_pages(v, n, p);
     }
     // A CHANGED THRESHOLD IS RE-EVALUATED AGAINST THE CURRENT PAGE. An

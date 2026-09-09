@@ -232,6 +232,11 @@ struct SeqSource {
     row_kind: fn(usize, *u8) -> usize,
     row_kind_ctx: usize,
     row_height: i64,
+    // `has_uneven_rows` is the SWITCH ON THE STATED HEIGHT, not a hint: a list
+    // that says its rows differ must not have one number imposed on all of
+    // them. `table` has read this since it was written (`apply_table`); the
+    // list's own copy was gated and ignored.
+    uneven: bool,
     selection_mode: vocab::SelectionMode,
     selected_index: i64,
     on_item_selected: fn(*u8, *u8),
@@ -276,7 +281,7 @@ fn no_source() -> SeqSource {
         live: false, count: 0 as i64, row: props::no_row, row_ctx: 0 as usize,
         bind: props::no_bind, row_height_of: props::no_row_height_of,
         row_height_of_ctx: 0 as usize, row_kind: props::no_row_kind,
-        row_kind_ctx: 0 as usize, row_height: 0 as i64,
+        row_kind_ctx: 0 as usize, row_height: 0 as i64, uneven: false,
         selection_mode: vocab::SelectionMode::None,
         selected_index: (0 as i64) -% (1 as i64),
         on_item_selected: props::no_handler, on_item_selected_ctx: 0 as usize,
@@ -312,6 +317,7 @@ fn source_of(n: *core::Node) -> SeqSource {
             row_kind: { (*p).row_kind },
             row_kind_ctx: { #addr((*p).row_kind_ctx) },
             row_height: { (*p).row_height },
+            uneven: { (*p).has_uneven_rows },
             selection_mode: { (*p).selection_mode },
             selected_index: { (*p).selected_index },
             on_item_selected: { (*p).on_item_selected },
@@ -379,6 +385,9 @@ fn source_of(n: *core::Node) -> SeqSource {
             // stated row height, so there is no single number to impose and the
             // measured default applies.
             row_height: 0 as i64,
+            // A COLLECTION HAS NO SUCH FIELD. It states no row height either,
+            // so there is nothing for the switch to guard.
+            uneven: false,
             selection_mode: { (*p).selectable_items_view.selection_mode },
             selected_index: { (*p).selected_index },
             on_item_selected: { (*p).selectable_items_view.on_selection_changed },
@@ -439,8 +448,12 @@ fn height_of_data_row(p: *SeqSource, i: usize) -> f64 {
         // needs the row to be 70, not 56, or the two lines overflow it.
         if h > (0.0 as f64) { return h * row_scale(); }
     }
+    // UNEVEN ROWS OVERRULE A STATED HEIGHT. A list that declares its rows
+    // differ has asked to be measured, and imposing one number on all of them
+    // is the clipping bug the flag exists to prevent. `apply_table` reads its
+    // own copy the same way.
     let stated: i64 = { (*p).row_height };
-    if stated > (0 as i64) { return (stated as f64) * row_scale(); }
+    if stated > (0 as i64) && !{ (*p).uneven } { return (stated as f64) * row_scale(); }
     return default_row_height();
 }
 
@@ -1575,7 +1588,7 @@ fn collection_model_bits() -> u64 {
     return fcollection::P_COUNT | fcollection::P_ROW
          | fcollection::P_INVALIDATE_ROW | fcollection::P_SPLICE_ROWS
          | fcollection::P_IS_GROUPED | fcollection::P_GROUP_COUNT
-         | fcollection::P_GROUP | fcollection::P_ITEM_SIZING
+         | fcollection::P_GROUP
          // COLUMNS CHANGE WHICH LINE EVERY ITEM IS ON, so the offsets are
          // stale in the same way a new group count makes them stale — this is
          // a map rebuild and not a re-place.
