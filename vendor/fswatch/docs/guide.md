@@ -102,13 +102,13 @@ and discarded — the buffer exists only because the call requires one — and a
 buffer overflow is therefore not a correctness problem: the rescan finds
 everything regardless.
 
-### Windows: mtime is coarse, and that bounds what can be seen
+### Windows: mtime is coarse, so a fourth field breaks the tie
 
 The engine tells one version of a file from another by (inode, size, mtime).
 Windows stamps `LastWriteTime` from the system clock, which advances about every
 13ms — the FILETIME has 100ns UNITS but nothing like 100ns RESOLUTION — so two
-writes of the same size inside one tick produce three identical fields and are
-indistinguishable. Measured, rewriting a 1-byte file with no gap:
+writes of the same size inside one tick produce three identical fields. Measured,
+rewriting a 1-byte file with no gap:
 
 ```
 before  size=1 mtime=1788879411.288213800
@@ -116,22 +116,32 @@ after   size=1 mtime=1788879411.288213800   <- the same, byte for byte
 with a 1ms gap: .289201200 -> .302375600    <- one tick apart
 ```
 
+That is not "reported late". It is **invisible, permanently**: mtime is stamped
+at write time, so no amount of waiting makes the second write appear.
+
 macOS and Linux stamp from a high-resolution clock and do not collide, so this
-is the one place the three backends differ in what they can *report* rather than
-in how they report it.
+is the one place the three platforms differ in what they can *report*.
 
-It is not papered over, because the tempting fix is worse than the gap: a
-backend that emitted a change whenever the OS woke it, without the engine
-finding one, would report a Modified for every unrelated write in the same
-directory. Real sub-tick fidelity means either keeping the notify records and
-telling the engine WHICH path changed, or reading the NTFS USN
-(`FSCTL_READ_FILE_USN_DATA`, a number that moves on every change) as a
-tie-breaker alongside mtime. Both widen the backend contract, which is why
-neither is done.
+**`Metadata` therefore carries a fourth field, `version`**, and the Windows
+backend fills it from the NTFS USN — a per-file counter that moves on every
+change, read with `FSCTL_READ_FILE_USN_DATA`. macOS and Linux answer a constant
+`0`, which compares equal every time and so changes nothing for them.
 
-In practice a caller is past the tick by construction — `Watcher::run` polls
-every 50ms. It is a program writing twice in a row with nothing in between that
-lands inside one.
+It costs one `DeviceIoControl` and no extra file open: `metadata` already opens
+a handle for `GetFileInformationByHandle`, and the ioctl needs no more access
+than the `FILE_READ_ATTRIBUTES` that open already asks for.
+
+**Zero is the answer on any refusal, and that is the whole error policy.** A
+non-NTFS volume (FAT32, exFAT, a network share) answers `ERROR_INVALID_FUNCTION`
+and a volume whose journal is off answers zeroes. Both come back as `0`, which
+restores exactly the old mtime-only behaviour rather than reporting spurious
+changes — a watcher that cried wolf on a USB stick would be worse than one that
+keeps the 13ms blind spot there.
+
+The regression test is `rapid_same_size_rewrites_are_each_reported`: ten
+same-length rewrites, each followed by a poll, all ten seen. It fails without
+the tie-breaker, which was confirmed by neutering `_usn_of` and watching it go
+red.
 
 ### Windows: a file root is watched through its directory
 

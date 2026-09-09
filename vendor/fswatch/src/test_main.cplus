@@ -372,3 +372,51 @@ fn main() -> i32 {
     io::println("fswatch: run `cpc test`");
     return 0;
 }
+
+#[test]
+fn rapid_same_size_rewrites_are_each_reported() {
+    // THE REGRESSION TEST FOR THE 13ms BLIND SPOT. The engine tells one version
+    // of a file from the next by (inode, size, mtime), and on Windows
+    // `LastWriteTime` advances about every 13ms — so two writes of the SAME SIZE
+    // inside one tick leave all three fields byte-identical and the second write
+    // is invisible. Not late: invisible, permanently, because mtime is stamped at
+    // write time and no amount of waiting changes it afterwards.
+    //
+    // Ten rewrites, each the same length and each followed by a poll. Every one
+    // must be seen. Without a tie-breaker the ones that land inside a tick with
+    // their predecessor report nothing at all, and this count comes up short.
+    //
+    // It passes on Darwin and Linux for the other reason: both stamp mtime from
+    // a high-resolution clock, so the collision never happens there and the
+    // version field they supply is a constant 0 that changes nothing.
+    let root: str = "/tmp/cplus_fswatch_rapid";
+    let target: str = "/tmp/cplus_fswatch_rapid/same.bin";
+    let _r0 = fs::remove_file(target);
+    let _d0: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_rapid\0")) };
+    let _mk = fs::create_dir_all(root);
+    make_file(target, 64 as u8);
+
+    var options: fswatch::Options = fswatch::Options::new();
+    var watcher: fswatch::Watcher = match fswatch::Watcher::new(root, options) {
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Ok(w) => w,
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    let _sub: events::SignalSubscription[fswatch::Change] = watcher.on_change(record);
+
+    reset_events("same.bin");
+    var i: i64 = 0;
+    while i < 10 {
+        // A DIFFERENT BYTE, THE SAME LENGTH — the content genuinely changes, so
+        // a watcher that missed it would be wrong rather than merely imprecise.
+        make_file(target, ((65 as i64) + i) as u8);
+        let _n: usize = drain(watcher);
+        i = i + 1;
+    }
+
+    assert MODIFIED == 10;
+    assert MATCHED == 10;
+
+    let _r1 = fs::remove_file(target);
+    let _d1: i32 = { rmdir(#str_ptr("/tmp/cplus_fswatch_rapid\0")) };
+    return;
+}

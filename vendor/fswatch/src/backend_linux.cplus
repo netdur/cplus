@@ -73,6 +73,10 @@ struct Metadata {
     mtime_sec: i64,
     mtime_nsec: i64,
     mode: u16,
+    // See `backend.cplus` for what this is. Zero here: Linux stamps mtime from a
+    // high-resolution clock, so two writes inside one tick do not collide and
+    // there is no tie for a counter to break.
+    version: u64,
 }
 
 enum MetadataResult {
@@ -128,6 +132,8 @@ fn metadata(path: str) -> MetadataResult {
                 mtime_nsec: { *((base + (96 as usize)) as *i64) },
                 size: { *((base + (48 as usize)) as *i64) },
                 mode: mode,
+                // Nanosecond mtime, no collisions, nothing to break a tie with.
+                version: 0 as u64,
             });
         }
         option::Option[text::CString]::None => { return MetadataResult::InvalidPath; }

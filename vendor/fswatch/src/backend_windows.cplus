@@ -16,7 +16,7 @@
 // on kqueue it is an `O_EVTONLY` fd, on inotify a watch descriptor, and here it
 // is an index into the table below. Nothing outside this file interprets it.
 //
-// ---- MTIME HERE IS COARSE, AND THAT BOUNDS WHAT THE ENGINE CAN SEE ----------
+// ---- MTIME HERE IS COARSE, AND THE USN IS WHY THAT NO LONGER BOUNDS US ------
 //
 // The engine tells one version of a file from another by (inode, size, mtime).
 // Windows stamps `LastWriteTime` from the system clock, which advances about
@@ -30,21 +30,31 @@
 //     with a 1ms gap: .289201200 -> .302375600    <- one tick apart
 //
 // Darwin and Linux stamp from a high-resolution clock and do not collide, so
-// this is the one place the three backends genuinely differ in what they can
-// report rather than in how they report it.
+// this is the one place the three backends genuinely differ in what the
+// PLATFORM can report.
 //
-// IT IS NOT WORTH PAPERING OVER, and the tempting fix is worse than the gap: a
-// backend that reported a change whenever the OS woke it, without the engine
-// finding one, would emit a Modified for every unrelated write in the same
-// directory. The road to real sub-tick fidelity is to stop discarding the notify
-// records (see below) and tell the engine WHICH path changed, or to read the
-// NTFS USN — `FSCTL_READ_FILE_USN_DATA` gives a number that moves on every
-// change — as a tie-breaker alongside mtime. Both widen the backend contract,
-// which is why neither is done here.
+// SO `Metadata` CARRIES A FOURTH FIELD, `version`, and this backend fills it
+// from the NTFS USN — a per-file counter that moves on every change. See
+// `_usn_of`. Darwin and Linux answer a constant 0, which compares equal every
+// time and so changes nothing for them.
 //
-// In practice a caller is past the tick by construction: `Watcher::run` polls
-// every 50ms. It is a program writing twice in a row with nothing in between
-// that lands inside one.
+// AN EARLIER VERSION OF THIS HEADER SAID THE FIX WAS NOT WORTH IT, on the
+// grounds that it would widen the backend contract. That was wrong twice over
+// and is worth recording, because both errors are the kind that stop a cheap
+// fix from being attempted. It does not touch the seam at all —
+// `queue_open`/`watch_path`/`poll_one` are untouched; `metadata` is already a
+// per-platform function and the differ already reads only what it returns. And
+// it costs no extra file open: `metadata` opens a handle for
+// `GetFileInformationByHandle` anyway, so the USN is one `DeviceIoControl` on a
+// handle that is already in hand.
+//
+// The other road — keeping the `FILE_NOTIFY_INFORMATION` records and telling
+// the engine WHICH path changed — WOULD widen the seam, and is still not taken.
+// It is also no longer needed for this.
+//
+// In practice a caller was usually past the tick by construction anyway:
+// `Watcher::run` polls every 50ms. It is a program writing twice in a row with
+// nothing in between that lands inside one — and that is now seen too.
 
 // ---- EVENTS ARE A WAKEUP, NOT A PAYLOAD -------------------------------------
 //
@@ -69,8 +79,36 @@
 // it detects renames. A backend that returned 0 for every inode would make
 // every deletion look like a rename of the first candidate.
 
+// ---- THE USN, which is what makes a same-tick rewrite visible ----------------
+//
+// The limitation above is real and this is the fix for it. NTFS keeps a per-file
+// Update Sequence Number that moves on EVERY change, and `_usn_of` reads it on
+// the handle `metadata` has already opened — so it costs one `DeviceIoControl`
+// and no extra open. Measured on this host against the exact failure: two
+// same-size writes back to back left `LastWriteTime` byte-identical
+// (134334427044088330 both times) while the USN moved 22844915344 ->
+// 22844915608. The first is why the engine missed the second write; the second
+// is why it no longer does.
+//
+// `FSCTL_READ_FILE_USN_DATA` NEEDS NO MORE ACCESS than the
+// `FILE_READ_ATTRIBUTES` this file already asks for, which was the thing worth
+// checking before building any of it — a fix that needed a read handle would
+// have failed on every file another process holds exclusively.
+//
+// ZERO ON ANY REFUSAL, and that is the whole error policy. A non-NTFS volume
+// (FAT32, exFAT, a network share) answers ERROR_INVALID_FUNCTION, and a volume
+// whose journal is off answers zeroes. Both come back as 0, which compares
+// equal every time and so restores exactly the old mtime-only behaviour rather
+// than reporting spurious changes. A watcher that cried wolf on a USB stick
+// would be worse than one that keeps the 13ms blind spot there.
+
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+// The tests below write real files on a real volume — see their header for why
+// nothing else would exercise a property of NTFS.
+import "stdlib/fs" as fs;
+import "stdlib/vec" as vec;
+import "stdlib/result" as result;
 
 extern fn CreateFileW(path: *u8, access: u32, share: u32, sa: *u8,
                       disposition: u32, flags: u32, template: *u8) -> *u8;
@@ -85,6 +123,8 @@ extern fn ReadDirectoryChangesW(dir: *u8, buf: *u8, len: u32, subtree: i32,
                                 completion: *u8) -> i32;
 extern fn GetOverlappedResult(h: *u8, ovl: *u8, transferred: *u32, wait: i32) -> i32;
 extern fn CancelIo(h: *u8) -> i32;
+extern fn DeviceIoControl(h: *u8, code: u32, in_buf: *u8, in_len: u32,
+                          out_buf: *u8, out_len: u32, returned: *u32, ovl: *u8) -> i32;
 extern fn MultiByteToWideChar(codepage: u32, flags: u32, mb: *u8, mb_len: i32,
                               wide: *u8, wide_len: i32) -> i32;
 extern fn malloc(n: usize) -> *u8;
@@ -160,6 +200,9 @@ struct Metadata {
     mtime_sec: i64,
     mtime_nsec: i64,
     mode: u16,
+    // THE FIELD THIS BACKEND EXISTS TO FILL. See `backend.cplus` for the
+    // contract; `_usn_of` below for what goes in it and when it cannot.
+    version: u64,
 }
 
 enum MetadataResult {
@@ -203,6 +246,41 @@ fn _filetime_at(info: *u8, at: usize) -> u64 {
     return ((hi as u64) *% (4294967296 as u64)) +% (lo as u64);
 }
 
+// FSCTL_READ_FILE_USN_DATA. The control code is
+// CTL_CODE(FILE_DEVICE_FILE_SYSTEM(9), 58, METHOD_NEITHER(3), FILE_ANY_ACCESS(0))
+// = (9 << 16) | (58 << 2) | 3 = 0x900EB, folded here rather than written as a
+// bare number so it can be checked against the macro.
+fn _fsctl_read_file_usn_data() -> u32 {
+    return ((9 as u32) *% (65536 as u32)) +% ((58 as u32) *% (4 as u32)) +% (3 as u32);
+}
+
+// USN_RECORD_V2 puts the number at offset 24: RecordLength(4) MajorVersion(2)
+// MinorVersion(2) FileReferenceNumber(8) ParentFileReferenceNumber(8), then Usn.
+fn _off_usn() -> usize { return 24 as usize; }
+fn _usn_record_bytes() -> usize { return 320 as usize; }
+
+// The file's change counter on an already-open handle, or 0 when this volume
+// has none. Never fails outward: 0 is a legal answer meaning "no tie-breaker".
+fn _usn_of(h: *u8) -> u64 {
+    let buf: *u8 = { malloc(_usn_record_bytes()) };
+    if buf == (0 as *u8) { return 0 as u64; }
+    { memset(buf, 0 as i32, _usn_record_bytes()) };
+    var returned: u32 = 0 as u32;
+    let ok: i32 = { DeviceIoControl(h, _fsctl_read_file_usn_data(), 0 as *u8, 0 as u32,
+                                    buf, _usn_record_bytes() as u32,
+                                    #addr_of(returned), 0 as *u8) };
+    // A SHORT ANSWER IS AS BAD AS A REFUSAL. The record is variable-length and a
+    // reply that stopped before the Usn field would leave this reading zeroed
+    // buffer as though it were a real number — which is harmless (0 disables the
+    // tie-break) but only because the buffer was cleared first.
+    if ok == (0 as i32) { free(buf); return 0 as u64; }
+    if (returned as usize) < (_off_usn() +% (8 as usize)) { free(buf); return 0 as u64; }
+    let lo: u32 = _read_u32(buf, _off_usn());
+    let hi: u32 = _read_u32(buf, _off_usn() +% (4 as usize));
+    free(buf);
+    return ((hi as u64) *% (4294967296 as u64)) +% (lo as u64);
+}
+
 fn metadata(path: str) -> MetadataResult {
     let wide: *u8 = _widen(path);
     if wide == (0 as *u8) { return MetadataResult::InvalidPath; }
@@ -228,6 +306,9 @@ fn metadata(path: str) -> MetadataResult {
     let info: *u8 = { malloc(_bhfi_bytes()) };
     if info == (0 as *u8) { let _c: i32 = { CloseHandle(h) }; return MetadataResult::Failed; }
     let ok: i32 = { GetFileInformationByHandle(h, info) };
+    // WHILE THE HANDLE IS STILL OPEN. This is the whole cost of the tie-break:
+    // one ioctl on a handle that had to be opened anyway, and no second open.
+    let version: u64 = _usn_of(h);
     let _c: i32 = { CloseHandle(h) };
     if ok == (0 as i32) { free(info); return MetadataResult::Failed; }
 
@@ -269,6 +350,7 @@ fn metadata(path: str) -> MetadataResult {
         mtime_sec: msec,
         mtime_nsec: mnsec,
         mode: mode,
+        version: version,
     });
 }
 
@@ -553,4 +635,105 @@ fn poll_one(queue: i32) -> i32 {
         i = i +% (1 as usize);
     }
     return 0 as i32;
+}
+
+// ---- tests ---------------------------------------------------------------------
+//
+// AGAINST THE REAL FILESYSTEM AND THE REAL VOLUME, because the whole point of
+// the USN is a property of NTFS that no fake can stand in for. A machine whose
+// scratch volume has no journal takes the `version == 0` branch of every test
+// below and still exercises the code path — which is the case that must degrade
+// to the old mtime-only behaviour rather than break.
+
+fn _t_write(path: str, byte: u8, count: usize) {
+    match fs::create(path) {
+        result::Result[fs::File, result::IoError]::Ok(f) => {
+            var file: fs::File = f;
+            var bytes: vec::Vec[u8] = vec::new::[u8]();
+            var i: usize = 0 as usize;
+            while i < count { let _a = bytes.append(byte); i = i +% (1 as usize); }
+            let _w = file.write_all(bytes);
+            file.close();
+        }
+        result::Result[fs::File, result::IoError]::Err(_e) => { assert false; }
+    }
+    return;
+}
+
+fn _t_meta(path: str) -> Metadata {
+    match metadata(path) {
+        MetadataResult::Found(m) => { return m; }
+        MetadataResult::Missing => { assert false; }
+        MetadataResult::PermissionDenied => { assert false; }
+        MetadataResult::InvalidPath => { assert false; }
+        MetadataResult::Failed => { assert false; }
+    }
+    return Metadata { kind: NodeKind::Other, inode: 0 as u64, size: 0 as i64,
+                      mtime_sec: 0 as i64, mtime_nsec: 0 as i64, mode: 0 as u16,
+                      version: 0 as u64 };
+}
+
+#[test]
+fn the_usn_moves_on_a_rewrite_the_clock_cannot_see() {
+    // THE BUG THIS FIELD EXISTS FOR, reproduced. `LastWriteTime` advances about
+    // every 13ms, so two writes of the same size inside one tick leave size and
+    // mtime byte-identical and the snapshot differ sees no change at all.
+    //
+    // What is asserted is the INVARIANT, not the collision: the USN must move on
+    // every rewrite. That makes the test independent of whether this particular
+    // run happens to straddle a tick boundary — which is a race, and racing it
+    // would make the suite flaky for no extra coverage.
+    let path: str = "/tmp/cplus_fswatch_usn/f.bin";
+    let _mk = fs::create_dir_all("/tmp/cplus_fswatch_usn");
+    let _r0 = fs::remove_file(path);
+
+    _t_write(path, 65 as u8, 4 as usize);
+    let a: Metadata = _t_meta(path);
+    _t_write(path, 66 as u8, 4 as usize);
+    let b: Metadata = _t_meta(path);
+
+    // Same file, same length — the two facts that make mtime the only signal.
+    assert a.inode == b.inode;
+    assert a.size == b.size;
+
+    if a.version == (0 as u64) {
+        // No journal on this volume. The field is then a constant that changes
+        // nothing, which is exactly the documented fallback — and the OLD
+        // behaviour is all that is left, so there is nothing more to assert.
+        assert b.version == (0 as u64);
+    } else {
+        // The number that survives a tick collision.
+        assert b.version != a.version;
+        // And it only ever goes forward, which is what makes it usable as a
+        // version at all rather than merely as a hash.
+        assert b.version > a.version;
+    }
+
+    let _r1 = fs::remove_file(path);
+    return;
+}
+
+#[test]
+fn a_handle_with_no_usn_answers_zero_rather_than_failing() {
+    // THE ERROR POLICY IS THE WHOLE SAFETY. A non-NTFS volume answers
+    // ERROR_INVALID_FUNCTION and a disabled journal answers zeroes; both have to
+    // come back as 0, because 0 compares equal every time and so restores the
+    // old mtime-only behaviour. Anything else would report a change on every
+    // poll for every file on a USB stick.
+    assert _usn_of(0 as *u8) == (0 as u64);
+    let invalid: *u8 = ((0 as usize) -% (1 as usize)) as *u8;   // INVALID_HANDLE_VALUE
+    assert _usn_of(invalid) == (0 as u64);
+    return;
+}
+
+#[test]
+fn the_usn_control_code_is_the_one_the_macro_folds_to() {
+    // CTL_CODE(FILE_DEVICE_FILE_SYSTEM 9, 58, METHOD_NEITHER 3, FILE_ANY_ACCESS 0).
+    // A wrong code is not a crash — it is a DIFFERENT filesystem control, which
+    // is why it is folded from its parts here and pinned against the literal.
+    assert _fsctl_read_file_usn_data() == (0x900EB as u32);
+    // USN_RECORD_V2 puts the number after two u32-sized version words and two
+    // 64-bit file references.
+    assert _off_usn() == (24 as usize);
+    return;
 }

@@ -54,6 +54,20 @@ struct Metadata {
     mtime_sec: i64,
     mtime_nsec: i64,
     mode: u16,
+    // A CHANGE COUNTER, when the platform has one. The engine tells one version
+    // of a file from another by (inode, size, mtime), and that is only as good
+    // as the clock behind the mtime: Windows stamps `LastWriteTime` from a clock
+    // that advances about every 13ms, so two writes of the same size inside one
+    // tick are indistinguishable. NTFS keeps a per-file USN that moves on every
+    // change, and it settles exactly those ties.
+    //
+    // ZERO MEANS "NO SUCH NUMBER HERE", which is the answer on Darwin and Linux
+    // — both stamp mtime from a high-resolution clock and do not collide, so
+    // there is nothing to break the tie ON. It is also the answer on a Windows
+    // volume that is not NTFS or whose journal is off. A constant zero compares
+    // equal every time and so changes nothing, which is what makes it the safe
+    // default rather than a special case the differ has to know about.
+    version: u64,
 }
 
 enum MetadataResult {
@@ -98,6 +112,9 @@ fn metadata(path: str) -> MetadataResult {
                 mtime_nsec: { *((base + (56 as usize)) as *i64) },
                 size: { *((base + (96 as usize)) as *i64) },
                 mode: mode,
+                // Darwin's mtime is nanosecond-resolution and does not collide,
+                // so there is no tie for a counter to break.
+                version: 0 as u64,
             });
         }
         option::Option[text::CString]::None => { return MetadataResult::InvalidPath; }

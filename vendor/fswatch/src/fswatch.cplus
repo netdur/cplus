@@ -188,6 +188,11 @@ struct Entry {
     mtime_nsec: i64,
     mode: u16,
     is_directory: bool,
+    // The platform's own change counter, 0 where there is none. It joins
+    // (inode, size, mtime) as a fourth way to tell one version of a file from
+    // the next, and it is the only one that survives two same-size writes
+    // inside a single clock tick — see `backend::Metadata::version`.
+    version: u64,
 }
 
 enum ScanResult {
@@ -239,6 +244,7 @@ fn entry_from(relative_path: str, meta: backend::Metadata) -> Entry {
         mtime_nsec: meta.mtime_nsec,
         mode: meta.mode,
         is_directory: meta.kind == backend::NodeKind::Directory,
+        version: meta.version,
     };
 }
 
@@ -594,7 +600,7 @@ impl Watcher {
                     if same != (0 as *Entry) {
                         if !(*oldp).is_directory &&
                            ((*oldp).inode != (*same).inode || (*oldp).size != (*same).size || (*oldp).mtime_sec != (*same).mtime_sec ||
-                            (*oldp).mtime_nsec != (*same).mtime_nsec) {
+                            (*oldp).mtime_nsec != (*same).mtime_nsec || (*oldp).version != (*same).version) {
                             this.emit_one(ChangeKind::Modified, (*same).relative_path, "", false);
                             emitted = emitted +% (1 as usize);
                         } else if (*oldp).mode != (*same).mode {
