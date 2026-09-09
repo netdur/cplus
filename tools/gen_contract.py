@@ -355,7 +355,7 @@ def read_enums():
     blob = ""
     for p in MANIFESTS:
         if os.path.exists(p):
-            blob += open(p).read()
+            blob += open(p, encoding="utf-8").read()
     out = {}
     # Enums whose facet shape deliberately DIVERGES from the ledger members —
     # the hand list is the contract, the manifest is only provenance.
@@ -443,7 +443,7 @@ def param_types():
     """
     global _PARAM_TYPES
     if _PARAM_TYPES is None:
-        with open(ledger_map.SPEC) as f:
+        with open(ledger_map.SPEC, encoding="utf-8") as f:
             spec = json.load(f)
         _PARAM_TYPES = {t for t, v in spec.items()
                         if PARAM_MEMBER in (v.get("writes") or {})}
@@ -4281,7 +4281,7 @@ def check_node_band():
     ships rather than a list that claims to describe it.
     """
     problems = []
-    facet_src = open(os.path.join(SRC, "facet.cplus")).read()
+    facet_src = open(os.path.join(SRC, "facet.cplus"), encoding="utf-8").read()
     flex_src = open(os.path.join(ROOT, "vendor", "flex_layout", "src",
                                  "flex_layout.cplus")).read()
 
@@ -4313,7 +4313,7 @@ def spec_methods():
     """`type -> {method -> {params, returns}}` from the spec, loaded once."""
     global _SPEC_METHODS
     if _SPEC_METHODS is None:
-        with open(ledger_map.SPEC) as f:
+        with open(ledger_map.SPEC, encoding="utf-8") as f:
             spec = json.load(f)
         _SPEC_METHODS = {t: (v.get("methods") or {}) for t, v in spec.items()}
     return _SPEC_METHODS

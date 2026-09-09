@@ -1041,7 +1041,7 @@ DROP_TYPES = {_bare(k): v for k, v in DROP_TYPES.items()}
 
 
 def rows():
-    spec = json.load(open(SPEC))
+    spec = json.load(open(SPEC, encoding="utf-8"))
     out, undecided = [], []
     for ty, bands in spec.items():
         for declared in ("writes", "reads", "events", "methods"):

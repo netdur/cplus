@@ -108,6 +108,7 @@ BACKENDS = {
     "uikit":   ("vendor/facet_uikit",   "UIKit"),
     "gtk":     ("vendor/facet_gtk",     "GTK"),
     "android": ("vendor/facet_android", "Android"),
+    "win32":   ("vendor/facet_win32",   "Win32"),
 }
 
 # Modules that declare no control verbs: the tree itself, the seam, the tiers.
@@ -129,14 +130,14 @@ FIELD_READ = re.compile(r"\(\*[^;{}]*?\)((?:\.\w+)+)")
 
 def facet_modules(facet_dir):
     """module -> (props struct name, {bit: field})."""
-    shared = open(os.path.join(facet_dir, "props.cplus")).read()
+    shared = open(os.path.join(facet_dir, "props.cplus"), encoding="utf-8").read()
     shared_structs = set(re.findall(r"^struct (\w+Props)", shared, re.M))
     mods = {}
     for f in sorted(glob.glob(os.path.join(facet_dir, "*.cplus"))):
         mod = os.path.basename(f)[:-6]
         if mod in NOT_CONTROLS:
             continue
-        src = open(f).read()
+        src = open(f, encoding="utf-8").read()
         bits = {b: b[2:].lower() for b in re.findall(r"^const ([PC]_[A-Z0-9_]+): u64", src, re.M)}
         if not bits:
             continue
@@ -161,7 +162,7 @@ def backend_functions(backend_dir):
     for f in sorted(glob.glob(os.path.join(backend_dir, "*.cplus"))):
         if os.path.basename(f) in TEST_ROOTS:
             continue
-        src = open(f).read()
+        src = open(f, encoding="utf-8").read()
         alias = {}
         for path, name in IMPORT.findall(src):
             alias[name] = path.split("/")[-1]
@@ -202,7 +203,7 @@ def ledger(manifest, tag):
     """
     if not os.path.exists(manifest):
         return {}
-    block = re.search(r"^```" + tag + r"\n(.*?)^```", open(manifest).read(), re.M | re.S)
+    block = re.search(r"^```" + tag + r"\n(.*?)^```", open(manifest, encoding="utf-8").read(), re.M | re.S)
     if not block:
         return {}
     rows = {}
@@ -218,7 +219,7 @@ def ledger(manifest, tag):
 def struct_bodies(facet_dir):
     out = {}
     for f in glob.glob(os.path.join(facet_dir, "*.cplus")):
-        out.update(re.findall(r"^struct (\w+Props) \{(.*?)\n\}", open(f).read(), re.M | re.S))
+        out.update(re.findall(r"^struct (\w+Props) \{(.*?)\n\}", open(f, encoding="utf-8").read(), re.M | re.S))
     return out
 
 

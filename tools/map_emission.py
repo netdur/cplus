@@ -71,7 +71,7 @@ def hand_written():
     for p in sorted(glob.glob(os.path.join(FACET, "*.cplus"))):
         if p.endswith("test_main.cplus"):
             continue
-        head = "".join(open(p).readlines()[:8])
+        head = "".join(open(p, encoding="utf-8").readlines()[:8])
         if "GENERATED" not in head:
             out.append(p)
     # Every file of facet_runtime: none of it is generated, and all of it is
@@ -200,7 +200,7 @@ TIERS = {
 def rows():
     """(type, member, band, names, tier) for every ADOPT row on the runtime tier."""
     out, cur = [], None
-    for line in open(MAP):
+    for line in open(MAP, encoding="utf-8"):
         m = re.match(r"^## (\w+)\s*$", line)
         if m:
             cur = m.group(1)
@@ -216,10 +216,10 @@ def rows():
 
 
 def main():
-    whole = {os.path.basename(p): open(p).read() for p in hand_written()}
+    whole = {os.path.basename(p): open(p, encoding="utf-8").read() for p in hand_written()}
     everything = "\n".join(whole.values())
 
-    generated = "\n".join(open(f).read() for f in glob.glob(os.path.join(FACET, "*.cplus"))
+    generated = "\n".join(open(f, encoding="utf-8").read() for f in glob.glob(os.path.join(FACET, "*.cplus"))
                           if not f.endswith("test_main.cplus"))
 
     def present(n, tier):

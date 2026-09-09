@@ -402,7 +402,7 @@ def parse(paths):
     events = defaultdict(dict)    # type -> event -> args type ("" = plain)
     methods = defaultdict(dict)   # type -> name -> (params, ret)
     for path in paths:
-        for raw in open(path):
+        for raw in open(path, encoding="utf-8"):
             line = MODS.sub("", raw.strip())
             m = GETTER.match(line)
             if m:
@@ -461,7 +461,7 @@ def check_handler_closure(paths):
     seen = set()
     for path in paths:
         seen |= set(re.findall(r"(?<![A-Za-z])I([A-Z][A-Za-z]*)Handler\b",
-                               open(path).read()))
+                               open(path, encoding="utf-8").read()))
     unclassified = sorted(t for t in seen if classify(t) is None)
     if unclassified:
         print("UNDECIDED RENDERABLE TYPES — the ledger has a handler for each of\n"
