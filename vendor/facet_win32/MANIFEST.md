@@ -1479,6 +1479,29 @@ The rule that follows: name a verb in §1 only where the sentence is a decision
 ABOUT THAT VERB across this backend. When a kind is the exception, describe it
 without backticks.
 
+### `symbol.fill` — the bundled face is a static instance
+
+`fill` is 0 outline .. 1 filled, and on the platforms that honour it that is an
+AXIS on the variable Material Symbols font, interpolated between the two.
+
+Two things have to be true to answer it and neither is. The face bundled here
+is `Material Symbols Outlined` — one static instance cut from that variable
+font, with no axis left to move. And GDI has no variable-font support at any
+entry point: `CreateFontA` takes a `LOGFONT`, which has no axis table, and
+there is no call anywhere in gdi32 that sets one. DirectWrite is what carries
+axes on Windows.
+
+Shipping the variable font instead would not help while the renderer is GDI,
+and shipping a second static `Filled` face would answer only fill == 1 — the
+values between, which are the ones an animation passes through, would still
+have nowhere to go.
+
+**It was in the dirty mask until 2026-09-09 and that was worse than absent.**
+`apply_symbol` gated on `symbol::P_FILL` and its body never read the field, so
+the verb scored as answered, repainted on every step of a fill animation, and
+drew the identical glyph each time. The stricter tool calls that GATED BUT
+UNREAD; the bit is out of the mask now.
+
 ## 2. Not built yet — Win32 has it, this package has not reached it
 
 This is DEBT, not decision. Every row here is reachable with what user32,

@@ -67,7 +67,15 @@ FLOORS = {
     "gtk": (FLOOR, HANDLER_FLOOR, SHARED_FLOOR),
     # Where facet_win32 stands today. Raise them as the gap closes — the point
     # of a floor is that it only ever goes up.
-    "win32": (315, 62, 19),
+    #
+    # 315 -> 314 ON 2026-09-09, AND THE DROP IS THE POINT. `symbol.fill` was in
+    # `apply_symbol`'s dirty mask and no body ever read the field, so this tool
+    # — which counts a NAMED bit as answered — scored a verb that did nothing.
+    # Taking the bit out is what made the number honest, and the same thing
+    # happened to the shared band on 2026-09-01 for the same reason. A floor
+    # only goes up while the measurement means the same thing; when a lie is
+    # removed from the numerator it has to come down, and be said out loud.
+    "win32": (314, 62, 19),
 }
 
 # Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification

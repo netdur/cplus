@@ -65,6 +65,10 @@ import "./sys" as sys;
 
 struct FontSpec {
     size: f64,
+    // Whether this text follows the OS text-size setting. Not part of the cache
+    // key: it is folded into the HEIGHT before the cache is consulted, and the
+    // cache already keys on that.
+    scales: bool,
     weight: vocab::FontWeight,
     italic: bool,
     // UNDERLINE AND STRIKETHROUGH ARE THE FONT'S, not the control's. Win32 has no
@@ -79,7 +83,8 @@ struct FontSpec {
 
 fn no_font() -> FontSpec {
     return FontSpec {
-        size: 0.0f64, weight: vocab::FontWeight::Default, italic: false,
+        size: 0.0f64,
+        scales: true, weight: vocab::FontWeight::Default, italic: false,
         underline: false, strike: false,
         family: text::from_str(""), stated: false,
     };
@@ -103,22 +108,25 @@ fn spec_of(n: *core::Node) -> FontSpec {
         // font rather than the control — see `FontSpec`.
         return stated_spec({ (*q).font_size }, { (*q).font_weight },
                            { (*q).is_italic }, { (*q).font_family }.clone(),
-                           { (*q).text_decoration });
+                           { (*q).text_decoration }, { (*q).font_scales });
     }
     if kind == props::K_BUTTON {
         let q: *props::ButtonProps = p as *props::ButtonProps;
         return stated_spec({ (*q).font_size }, { (*q).font_weight },
-                           { (*q).is_italic }, { (*q).font_family }.clone());
+                           { (*q).is_italic }, { (*q).font_family }.clone(),
+                           vocab::TextDecoration::None, { (*q).font_scales });
     }
     if kind == props::K_RADIO {
         let q: *props::RadioProps = p as *props::RadioProps;
         return stated_spec({ (*q).font_size }, { (*q).font_weight },
-                           { (*q).is_italic }, { (*q).font_family }.clone());
+                           { (*q).is_italic }, { (*q).font_family }.clone(),
+                           vocab::TextDecoration::None, { (*q).font_scales });
     }
     if kind == props::K_POPUP {
         let q: *props::PopupProps = p as *props::PopupProps;
         return stated_spec({ (*q).font_size }, { (*q).font_weight },
-                           { (*q).is_italic }, { (*q).font_family }.clone());
+                           { (*q).is_italic }, { (*q).font_family }.clone(),
+                           vocab::TextDecoration::None, { (*q).font_scales });
     }
     // BOTH PICKERS CARRY A FULL TYPOGRAPHY SURFACE and a DATETIMEPICK32 wears
     // whatever font it is given, so this is the same read as a button's — it
@@ -127,12 +135,14 @@ fn spec_of(n: *core::Node) -> FontSpec {
     if kind == props::K_DATE_PICKER {
         let q: *props::DatePickerProps = p as *props::DatePickerProps;
         return stated_spec({ (*q).font_size }, { (*q).font_weight },
-                           { (*q).is_italic }, { (*q).font_family }.clone());
+                           { (*q).is_italic }, { (*q).font_family }.clone(),
+                           vocab::TextDecoration::None, { (*q).font_scales });
     }
     if kind == props::K_TIME_PICKER {
         let q: *props::TimePickerProps = p as *props::TimePickerProps;
         return stated_spec({ (*q).font_size }, { (*q).font_weight },
-                           { (*q).is_italic }, { (*q).font_family }.clone());
+                           { (*q).is_italic }, { (*q).font_family }.clone(),
+                           vocab::TextDecoration::None, { (*q).font_scales });
     }
     // AN ICON BUTTON'S SOURCE IS A GLYPH WHEN IT LOOKS LIKE ONE. `source` is a
     // file path on gtk and android and an SF Symbol name on appkit; here it is
@@ -170,7 +180,7 @@ fn spec_of(n: *core::Node) -> FontSpec {
         // label's does.
         return stated_spec({ (*q).font_size }, { (*q).font_weight },
                            { (*q).is_italic }, { (*q).font_family }.clone(),
-                           { (*q).text_decoration });
+                           { (*q).text_decoration }, { (*q).font_scales });
     }
     // The three INPUT kinds carry their font on the embedded `InputViewProps`
     // rather than restating it, so the read is one level down.
@@ -213,16 +223,21 @@ fn is_private_use_glyph(s: str) -> bool {
     }
 }
 
+// THREE KINDS THROUGH ONE READ. `text_field`, `text_area` and `search_field`
+// all carry their typography on the embedded `InputViewProps`, `font_scales`
+// included, so honouring it here honours it for all three.
 fn input_spec(iv: *props::InputViewProps) -> FontSpec {
     return stated_spec({ (*iv).font_size }, { (*iv).font_weight },
-                       { (*iv).is_italic }, { (*iv).font_family }.clone());
+                       { (*iv).is_italic }, { (*iv).font_family }.clone(),
+                       vocab::TextDecoration::None, { (*iv).font_scales });
 }
 
 fn stated_spec(size: f64, weight: vocab::FontWeight, italic: bool,
                take family: text::Text,
-               decoration: vocab::TextDecoration = vocab::TextDecoration::None) -> FontSpec {
+               decoration: vocab::TextDecoration = vocab::TextDecoration::None,
+               scales: bool = true) -> FontSpec {
     var f: FontSpec = FontSpec {
-        size: size, weight: weight, italic: italic,
+        size: size, scales: scales, weight: weight, italic: italic,
         underline: false, strike: false,
         family: family, stated: false,
     };
@@ -279,12 +294,86 @@ fn win_weight(w: vocab::FontWeight) -> i32 {
 // 9 point is the Segoe UI default every stock Windows theme uses.
 fn default_point_size() -> f64 { return 9.0f64; }
 
+// ---- font_scales: the accessibility text size ---------------------------------
+//
+// `font_scales` is facet's "does this text follow the OS text-size setting",
+// and it defaults to TRUE on every kind that has it. Windows keeps that setting
+// as a percentage in `HKCU\Software\Microsoft\Accessibility\TextScaleFactor`,
+// the value behind Settings > Accessibility > Text size.
+//
+// THE VALUE IS ABSENT AT 100%, which is the default and is why it must not be
+// treated as an error: Windows only writes it once the slider has been moved.
+// A missing key, a wrong type, or a nonsense number all mean 100.
+//
+// READ ONCE. It is a per-user setting that changes rarely, and a registry read
+// on every apply would buy nothing — fonts are cached by the height this
+// produces. The cost is that a change mid-session is not picked up: honouring
+// that needs WM_SETTINGCHANGE plumbing this package does not have, and it is
+// recorded here rather than pretended away.
+//
+// DPI IS A DIFFERENT AXIS and both apply. DPI is how many pixels a point is on
+// this monitor; the text scale is how much bigger the person asked all text to
+// be. A 9pt font at 150% DPI and 125% text scale is 9 * 1.25 points, then
+// converted at 144 DPI.
+#[link_name = "RegGetValueW"]
+extern fn RegGetValueW(key: usize, sub: *u16, value: *u16, flags: u32,
+                       ty: *u32, data: *u8, cb: *u32) -> i32;
+
+static SCALE_PERCENT: i32 = 0 as i32;
+
+fn text_scale_percent() -> i32 {
+    if SCALE_PERCENT != (0 as i32) { return SCALE_PERCENT; }
+    SCALE_PERCENT = 100 as i32;
+    var sub: [u16; 40] = #zero::[[u16; 40]]();
+    let subs: str = "Software\\Microsoft\\Accessibility";
+    var i: usize = 0 as usize;
+    while i < { #str_len(subs) } && i < (39 as usize) {
+        { sub[i] = { *({ #str_ptr(subs) } + i) } as u16 };
+        i = i +% (1 as usize);
+    }
+    var name: [u16; 20] = #zero::[[u16; 20]]();
+    let ns: str = "TextScaleFactor";
+    var j: usize = 0 as usize;
+    while j < { #str_len(ns) } && j < (19 as usize) {
+        { name[j] = { *({ #str_ptr(ns) } + j) } as u16 };
+        j = j +% (1 as usize);
+    }
+    var data: u32 = 0 as u32;
+    var cb: u32 = 4 as u32;
+    // HKEY_CURRENT_USER, RRF_RT_REG_DWORD.
+    let rc: i32 = { RegGetValueW(0x80000001 as usize, { #addr_of(sub[0]) as *u16 },
+                                 { #addr_of(name[0]) as *u16 }, 0x00000018 as u32,
+                                 0 as *u32, { #addr_of(data) as *u8 },
+                                 #addr_of(cb)) };
+    if rc != (0 as i32) { return SCALE_PERCENT; }
+    let pct: i32 = data as i32;
+    // Windows documents 100..225; anything outside that is not a scale this
+    // package will act on, and clamping beats trusting a stray value that would
+    // make every font in the process enormous or invisible.
+    if pct < (100 as i32) || pct > (500 as i32) { return SCALE_PERCENT; }
+    SCALE_PERCENT = pct;
+    return SCALE_PERCENT;
+}
+
+// The point size after the person's text-size preference. Pure, and separated
+// from the registry on purpose: the machine this was written on sits at 100%,
+// where scaling is the identity and proves nothing, so the arithmetic is tested
+// by handing it percentages directly.
+fn scaled_points(points: f64, scales: bool, percent: i32) -> f64 {
+    if !scales { return points; }
+    if percent <= (100 as i32) { return points; }
+    return points * (percent as f64) / (100.0 as f64);
+}
+
 // Points -> the negative character height `CreateFontA` wants, at the window's
 // own DPI. Per-monitor: a window dragged to a 150% display gets a bigger font
 // on the next apply, because `GetDpiForWindow` answers about THAT monitor.
-fn height_for(v: *u8, points: f64) -> i32 {
+fn height_for(v: *u8, points: f64, scales: bool = true) -> i32 {
     var pt: f64 = points;
     if pt <= (0.0 as f64) { pt = default_point_size(); }
+    // AFTER the default is resolved: an unstated size follows the text-size
+    // setting too, which is what a person moving that slider expects.
+    pt = scaled_points(pt, scales, text_scale_percent());
     var dpi: u32 = { u::GetDpiForWindow(v) };
     if dpi == (0 as u32) { dpi = 96 as u32; }
     let px: f64 = pt * (dpi as f64) / (72.0 as f64);
@@ -323,7 +412,7 @@ fn family_key(s: str) -> usize {
 }
 
 fn font_for(v: *u8, spec: FontSpec) -> *u8 {
-    let h: i32 = height_for(v, spec.size);
+    let h: i32 = height_for(v, spec.size, spec.scales);
     let w: i32 = win_weight(spec.weight);
     let fam: usize = family_key(spec.family.view());
     var i: usize = 0 as usize;
@@ -499,6 +588,55 @@ fn apply(v: *u8, n: *core::Node) {
     // because the control is already on screen wearing the old one.
     let _r: i64 = { u::SendMessageA(v, sys::wm_setfont(), { #addr(f) } as u64,
                                     1 as i64) };
+    return;
+}
+
+#[test]
+fn font_scales_follows_the_text_size_setting_and_only_when_asked() {
+    // THE MACHINE THIS RUNS ON SITS AT 100%, where scaling is the identity and
+    // proves nothing — so the arithmetic is driven with percentages directly
+    // rather than by moving the person's accessibility slider, which is not
+    // this suite's to touch.
+    //
+    // 100 and below is the identity even when asked: Windows does not go under
+    // 100, and a stray smaller value must not shrink every font in the process.
+    assert scaled_points(9.0f64, true, 100 as i32) == (9.0f64);
+    assert scaled_points(9.0f64, true, 50 as i32) == (9.0f64);
+    // The plain cases.
+    assert scaled_points(8.0f64, true, 125 as i32) == (10.0f64);
+    assert scaled_points(9.0f64, true, 200 as i32) == (18.0f64);
+    // OPTED OUT IS EXACT, at any percentage. `font_scales: false` is an
+    // application saying this text is a diagram label or a fixed-metric cell,
+    // and honouring the setting there would break the layout it was sized for.
+    assert scaled_points(9.0f64, false, 200 as i32) == (9.0f64);
+    assert scaled_points(9.0f64, false, 125 as i32) == (9.0f64);
+    return;
+}
+
+#[test]
+fn the_text_scale_is_a_percentage_and_never_zero() {
+    // Read from the registry, where the value is ABSENT at 100% — Windows only
+    // writes it once the slider has moved. A missing key must read as 100, not
+    // as zero, or every font in the process would collapse to nothing.
+    let pct: i32 = text_scale_percent();
+    assert pct >= (100 as i32);
+    assert pct <= (500 as i32);
+    // Cached: the second read is the first, which is what keeps a registry hit
+    // off every apply.
+    assert text_scale_percent() == pct;
+    return;
+}
+
+#[test]
+fn an_unstated_size_scales_too() {
+    // A node that never named a size still gets the default 9pt, and a person
+    // who asked for bigger text means that one as well — so the scale is
+    // applied AFTER the default is resolved, not instead of it.
+    assert height_for(0 as *u8, 0.0f64, true)
+        == height_for(0 as *u8, default_point_size(), true);
+    // And opting out of scaling does not change the unstated size either.
+    assert height_for(0 as *u8, 0.0f64, false)
+        == height_for(0 as *u8, default_point_size(), false);
     return;
 }
 
