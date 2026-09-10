@@ -552,9 +552,9 @@ fn main() -> i32 { let a = { x: 1 }; return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_inferred_struct_lit · test cplus-core/src/sema.rs:inferred_struct_lit_uninferable_e0364</sub>
 
-### E0385 · Duplicate `impl str`
+### E0385 · Duplicate `impl` on a builtin
 
-The builtin `str` view takes its method set from exactly one `impl str { ... }` block program-wide — stdlib's `src/str.cplus`. A second block, in any file or package, is a conflict.
+A primitive takes its method set from exactly one `impl` block program-wide — `str` from stdlib's `src/str.cplus`, the float widths from `src/math.cplus`. A primitive has no declaring file of its own, so the first block in the build IS its inherent method set; a second, in any file or package, is a conflict. Named types are different: they have an owning module, so extensions there are additive and import-gated.
 
 ```cplus
 impl str { fn a(this) -> usize { return #str_len(this); } }
@@ -562,13 +562,13 @@ impl str { fn b(this) -> usize { return #str_len(this); } }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Remove the extra block. To add operations over `str`, write free functions taking a `str` parameter, or convert with `to_text()` and use `Text`.
+**Fix.** Remove the extra block. To add operations over a builtin, write free functions taking it as a parameter — the blessed block is stdlib's, and its names are claimed build-wide.
 
-<sub>repro: checked · cplus-core/src/sema.rs:collect_str_impl_methods · test cplus-core/src/sema.rs:impl_str_duplicate_block_e0385</sub>
+<sub>repro: checked · cplus-core/src/sema.rs:collect_builtin_impl_methods · test cplus-core/src/sema.rs:impl_str_duplicate_block_e0385</sub>
 
-### E0386 · Unsupported member in `impl str`
+### E0386 · Unsupported member in a builtin `impl`
 
-A method in the blessed `impl str` block has a shape the builtin does not support: generic parameters, `gen`/`async`, an associated fn (no receiver), a `ref this`/`take this` receiver (`str` is a Copy view — the receiver is always plain `this`), an interface conformance block, or a redeclaration of the compiler-provided `to_text`/`hash`/`eq`.
+A method in a primitive `impl` block (`str`, `bool`, any integer or float width) has a shape the builtin does not support: generic parameters, `gen`/`async`, an associated fn (no receiver), a `ref this`/`take this` receiver (every primitive is Copy — the receiver is always plain `this`), an interface conformance block, or a redeclaration of a compiler-provided name (`to_text`/`hash`/`eq` on `str`; `drop` on any).
 
 ```cplus
 impl str { fn m(ref this) -> usize { return #str_len(this); } }
@@ -577,7 +577,7 @@ fn main() -> i32 { return 0; }
 
 **Fix.** Declare the method as a plain `fn name(this, ...)`; keep generics, interface impls, and the compiler-provided names off the block.
 
-<sub>repro: checked · cplus-core/src/sema.rs:collect_str_impl_methods · test cplus-core/src/sema.rs:impl_str_bad_members_e0386</sub>
+<sub>repro: checked · cplus-core/src/sema.rs:collect_builtin_impl_methods · test cplus-core/src/sema.rs:impl_str_bad_members_e0386</sub>
 
 ### E0387 · Generic impl away from its template
 

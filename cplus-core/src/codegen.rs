@@ -1588,17 +1588,17 @@ fn generate_inner(
                             &tramps, is_lib,
                         );
                     }
-                } else if b.target.name == "str" {
-                    // STRM (v0.0.27): the blessed `impl str` block — methods
-                    // emit as plain fns `str.<name>` with the receiver as
-                    // first param (`{ ptr, i64 }` by value).
+                } else if let Some(bt) = crate::sema::builtin_impl_target(&b.target.name) {
+                    // v0.0.28: a blessed `impl <builtin>` block — methods emit
+                    // as plain fns `<builtin>.<name>` with the receiver as the
+                    // first param, by value (every builtin here is Copy).
                     for m in &b.methods {
                         if !m.generic_params.is_empty() {
                             continue;
                         }
-                        gen_str_method(
-                            &mut out, m, &sigs, &types, &str_lits, mode, test_mode, &md, &tramps,
-                            is_lib,
+                        gen_builtin_method(
+                            &mut out, bt, m, &sigs, &types, &str_lits, mode, test_mode, &md,
+                            &tramps, is_lib,
                         );
                     }
                 }
@@ -2284,7 +2284,9 @@ struct TypeTable {
     /// stdlib str module. The builtin `str` has no StructInfo — its
     /// methods are ordinary fns `str.<name>` with a by-value
     /// `{ ptr, i64 }` receiver first.
-    str_methods: HashMap<String, MethodInfo>,
+    /// v0.0.28: keyed by (builtin type name, method name). See sema's
+    /// `builtin_impl_target` — the same set, routed the same way.
+    builtin_methods: HashMap<(String, String), MethodInfo>,
 }
 
 impl crate::sema::TypeShape for TypeTable {
@@ -2805,12 +2807,14 @@ fn collect_types(
         // struct param resolution below. No fields exist, so no
         // trivial_inline. Guarded on name-table misses so a pathological
         // user type named `str` keeps its own path.
-        if b.target.name == "str"
-            && !t.struct_by_name.contains_key("str")
-            && !t.enum_by_name.contains_key("str")
+        if let Some(bt) = crate::sema::builtin_impl_target(&b.target.name)
+            .filter(|bt| !t.struct_by_name.contains_key(*bt) && !t.enum_by_name.contains_key(*bt))
         {
             for m in &b.methods {
-                if t.str_methods.contains_key(&m.name.name) || !m.generic_params.is_empty() {
+                if t.builtin_methods
+                    .contains_key(&(bt.to_string(), m.name.name.clone()))
+                    || !m.generic_params.is_empty()
+                {
                     continue;
                 }
                 let params: Vec<ParamAbi> =
@@ -2819,8 +2823,8 @@ fn collect_types(
                     Some(ty) => ty_from(ty, &t),
                     None => Ty::Unit,
                 };
-                t.str_methods.insert(
-                    m.name.name.clone(),
+                t.builtin_methods.insert(
+                    (bt.to_string(), m.name.name.clone()),
                     MethodInfo {
                         receiver: m.receiver,
                         params,
@@ -9543,8 +9547,9 @@ fn gen_method(
 /// intentionally skipped: it only annotates pointer-passed `ref`/`take`
 /// params, and the blessed set has none — if one ever appears, mirror
 /// `gen_method`'s metadata block.
-fn gen_str_method(
+fn gen_builtin_method(
     out: &mut String,
+    bt: &str,
     m: &Method,
     sigs: &HashMap<String, FnSig>,
     types: &TypeTable,
@@ -9555,14 +9560,17 @@ fn gen_str_method(
     tramps: &ThreadTrampolines,
     is_lib: bool,
 ) {
-    let Some(sig) = types.str_methods.get(&m.name.name) else {
+    let Some(sig) = types
+        .builtin_methods
+        .get(&(bt.to_string(), m.name.name.clone()))
+    else {
         // Not in the table: rejected at collection or shadowed. Nothing to emit.
         return;
     };
     let sig = sig.clone();
-    let mangled = mangle("str", &m.name.name);
+    let mangled = mangle(bt, &m.name.name);
     let return_ty = sig.return_type.clone();
-    let recv_ty = Ty::Str;
+    let recv_ty = crate::sema::builtin_impl_ty(bt).expect("builtin target implies a Ty");
 
     let lib_public = lib_public_name(is_lib, &m.name.name);
     let cc_prefix = if !m.is_pub && md.is_fastcc(&mangled) {
@@ -17685,14 +17693,14 @@ impl<'a> FnState<'a> {
         // Mirrors the struct tail below: same arg passing, same sret rule
         // for non-Copy aggregate returns, same fastcc def/call symmetry via
         // the shared pre-pass set.
-        if matches!(recv_ty, Ty::Str) {
+        if let Some(bt) = crate::sema::builtin_name_of_ty(&recv_ty) {
             let info = self
                 .types
-                .str_methods
-                .get(&name.name)
+                .builtin_methods
+                .get(&(bt.to_string(), name.name.clone()))
                 .expect("sema validated")
                 .clone();
-            let mangled = mangle("str", &name.name);
+            let mangled = mangle(bt, &name.name);
             let recv_val = self.next_tmp();
             self.gen_load(&recv_val, &recv_ty, &recv_ptr);
             let mut arg_parts: Vec<String> = vec![format!("{} {recv_val}", self.lty(&recv_ty))];

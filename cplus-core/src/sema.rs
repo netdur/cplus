@@ -180,6 +180,93 @@ pub enum Ty {
     Error, // sentinel for recovery; matches anything
 }
 
+/// v0.0.28: the builtin types that admit an `impl` block.
+///
+/// A builtin has no `StructDef` and therefore no nominal type id — which is
+/// exactly what the extension-visibility, `_`-privacy and impl-bound gates
+/// key on (see `GateOwner::NoNominal`). Their method sets live name-keyed in
+/// `builtin_methods` instead, and blessing is uniqueness-only, like
+/// `#[lang("string")]`: the first block in the build wins the type, a second
+/// anywhere is E0385.
+///
+/// `str` was the first of these (STRM, v0.0.27); v0.0.28 generalized the
+/// mechanism and opened it to every primitive. The receiver type is what
+/// disambiguates a shared method name, which is how one `sqrt` serves both
+/// float widths where principle 6 would otherwise force `sqrt_f32` /
+/// `sqrt_f64` free functions.
+///
+/// `Unit` is excluded — it has no values to call a method on. Nominal
+/// integer aliases (`Ty::Distinct`) are excluded too: they are NAMED types
+/// and already take an ordinary extension `impl`, which is import-gated and
+/// therefore the better mechanism. Raw pointers are excluded because `*T`
+/// is not one type.
+pub(crate) fn builtin_impl_target(name: &str) -> Option<&'static str> {
+    match name {
+        "str" => Some("str"),
+        "bool" => Some("bool"),
+        "i8" => Some("i8"),
+        "i16" => Some("i16"),
+        "i32" => Some("i32"),
+        "i64" => Some("i64"),
+        "isize" => Some("isize"),
+        "u8" => Some("u8"),
+        "u16" => Some("u16"),
+        "u32" => Some("u32"),
+        "u64" => Some("u64"),
+        "usize" => Some("usize"),
+        "f16" => Some("f16"),
+        "f32" => Some("f32"),
+        "f64" => Some("f64"),
+        _ => None,
+    }
+}
+
+/// The `Ty` a builtin impl target denotes.
+pub(crate) fn builtin_impl_ty(name: &str) -> Option<Ty> {
+    match name {
+        "str" => Some(Ty::Str),
+        "bool" => Some(Ty::Bool),
+        "i8" => Some(Ty::I8),
+        "i16" => Some(Ty::I16),
+        "i32" => Some(Ty::I32),
+        "i64" => Some(Ty::I64),
+        "isize" => Some(Ty::Isize),
+        "u8" => Some(Ty::U8),
+        "u16" => Some(Ty::U16),
+        "u32" => Some(Ty::U32),
+        "u64" => Some(Ty::U64),
+        "usize" => Some(Ty::Usize),
+        "f16" => Some(Ty::F16),
+        "f32" => Some(Ty::F32),
+        "f64" => Some(Ty::F64),
+        _ => None,
+    }
+}
+
+/// The builtin impl target a receiver type denotes, if any. The inverse of
+/// `builtin_impl_ty`, used to route a method call on a builtin receiver.
+pub(crate) fn builtin_name_of_ty(t: &Ty) -> Option<&'static str> {
+    match t {
+        Ty::Str => Some("str"),
+        Ty::Bool => Some("bool"),
+        Ty::I8 => Some("i8"),
+        Ty::I16 => Some("i16"),
+        Ty::I32 => Some("i32"),
+        Ty::I64 => Some("i64"),
+        Ty::Isize => Some("isize"),
+        Ty::U8 => Some("u8"),
+        Ty::U16 => Some("u16"),
+        Ty::U32 => Some("u32"),
+        Ty::U64 => Some("u64"),
+        Ty::Usize => Some("usize"),
+        Ty::F16 => Some("f16"),
+        Ty::F32 => Some("f32"),
+        Ty::F64 => Some("f64"),
+        _ => None,
+    }
+}
+
+
 impl Ty {
     /// Human-readable type name. For enums and structs we render a generic
     /// kind name; SemaCx has the actual table if higher-fidelity names are
@@ -1073,8 +1160,8 @@ fn check_with_files_inner(
         struct_by_name: HashMap::new(),
         designated_string_struct: None,
         lang: LangItems::default(),
-        builtin_str_methods: HashMap::new(),
-        str_impl_origin: None,
+        builtin_methods: HashMap::new(),
+        builtin_impl_origin: HashMap::new(),
         ext_origins: HashMap::new(),
         method_origins: HashMap::new(),
         ext_conflicts: std::collections::HashSet::new(),
@@ -1530,11 +1617,13 @@ struct SemaCx<'a> {
     /// Empty when the build doesn't include the stdlib str module — then
     /// `s.count()` stays E0324 (with an import note), mirroring how
     /// `to_text()` is gated on the `#[lang("string")]` struct.
-    builtin_str_methods: HashMap<String, MethodSig>,
+    /// Keyed by (builtin type name, method name) — see `builtin_impl_target`.
+    builtin_methods: HashMap<(String, String), MethodSig>,
     /// Origin file of the first `impl str` block collected. Like the
     /// `#[lang("string")]` designation, blessing is uniqueness-only:
     /// a second `impl str` anywhere is E0385, naming this file.
-    str_impl_origin: Option<Option<String>>,
+    /// Origin file of the first `impl <builtin>` block per builtin type.
+    builtin_impl_origin: HashMap<String, Option<String>>,
     /// EXT.2: for every method contributed by an extension (an `impl` in a
     /// module other than the one declaring the type), which module wrote it.
     /// Methods declared beside their type are absent — they come with the
@@ -4938,12 +5027,13 @@ impl SemaCx<'_> {
                     self.collect_enum_impl_methods(enum_id, b, ext, item.origin_file.clone());
                     continue;
                 }
-                // STRM (v0.0.27): the builtin string view gets its method set
-                // from a single `impl str { ... }` block (stdlib/src/str.cplus).
-                // Only reached when no user struct/enum shadows the name, so a
-                // pathological single-file `struct str` keeps today's behavior.
-                if b.target.name == "str" {
-                    self.collect_str_impl_methods(item.origin_file.clone(), b);
+                // v0.0.28: a builtin type gets its method set from a single
+                // `impl <builtin> { ... }` block — `str` from stdlib/src/str.cplus,
+                // the float widths from stdlib/src/math.cplus. Only reached when
+                // no user struct/enum shadows the name, so a pathological
+                // single-file `struct str` keeps today's behavior.
+                if let Some(bt) = builtin_impl_target(&b.target.name) {
+                    self.collect_builtin_impl_methods(bt, item.origin_file.clone(), b);
                     continue;
                 }
                 self.err(
@@ -5230,7 +5320,7 @@ impl SemaCx<'_> {
         }
     }
 
-    /// STRM (v0.0.27): collect the single blessed `impl str { ... }` block
+    /// v0.0.28: collect the single blessed `impl <builtin> { ... }` block
     /// into `builtin_str_methods`. Mirrors the struct arm of
     /// `collect_methods`, restricted to the v1 shape: every method takes the
     /// receiver by value (`this` — `str` is a Copy view, so `ref`/`take` buy
@@ -5239,37 +5329,44 @@ impl SemaCx<'_> {
     /// `eq` (or `drop` — a Copy view cannot be Drop). Blessing is
     /// uniqueness-only, exactly like `#[lang("string")]`: the first block
     /// wins; a second block anywhere is E0385.
-    fn collect_str_impl_methods(&mut self, origin: Option<String>, b: &crate::ast::ImplBlock) {
+    fn collect_builtin_impl_methods(
+        &mut self,
+        bt: &'static str,
+        origin: Option<String>,
+        b: &crate::ast::ImplBlock,
+    ) {
         if b.interface_name.is_some() {
             self.err(
                 "E0386",
-                "`impl str: Interface` is not supported — the builtin `str` only \
-                 takes the inherent method block"
-                    .to_string(),
+                format!(
+                    "`impl {bt}: Interface` is not supported — the builtin `{bt}` only \
+                     takes the inherent method block"
+                ),
                 b.target.span,
             );
             return;
         }
-        if let Some(prev) = &self.str_impl_origin {
+        if let Some(prev) = self.builtin_impl_origin.get(bt) {
             let where_ = prev.clone().unwrap_or_else(|| "another file".to_string());
             self.err(
                 "E0385",
                 format!(
-                    "duplicate `impl str` — the `str` method set is already declared \
+                    "duplicate `impl {bt}` — the `{bt}` method set is already declared \
                      in `{where_}`; there can be only one block"
                 ),
                 b.target.span,
             );
             return;
         }
-        self.str_impl_origin = Some(origin);
-        self.self_type_stack.push(Ty::Str);
+        self.builtin_impl_origin.insert(bt.to_string(), origin);
+        self.self_type_stack
+            .push(builtin_impl_ty(bt).expect("builtin_impl_target implies a Ty"));
         for m in &b.methods {
             if !m.generic_params.is_empty() {
                 self.err(
                     "E0386",
                     format!(
-                        "method `{}` in `impl str` declares generic parameters — \
+                        "method `{}` in `impl {bt}` declares generic parameters — \
                          builtin methods are concrete",
                         m.name.name
                     ),
@@ -5281,7 +5378,7 @@ impl SemaCx<'_> {
                 self.err(
                     "E0386",
                     format!(
-                        "method `{}` in `impl str` is `{}` — builtin methods are plain fns",
+                        "method `{}` in `impl {bt}` is `{}` — builtin methods are plain fns",
                         m.name.name,
                         if m.is_gen { "gen" } else { "async" }
                     ),
@@ -5295,8 +5392,8 @@ impl SemaCx<'_> {
                     self.err(
                         "E0386",
                         format!(
-                            "method `{}` in `impl str` takes `ref this`/`take this` — \
-                             `str` is a Copy view; the receiver is always plain `this`",
+                            "method `{}` in `impl {bt}` takes `ref this`/`take this` — \
+                             `{bt}` is a Copy builtin; the receiver is always plain `this`",
                             m.name.name
                         ),
                         m.name.span,
@@ -5307,8 +5404,8 @@ impl SemaCx<'_> {
                     self.err(
                         "E0386",
                         format!(
-                            "`{}` in `impl str` has no receiver — associated fns are not \
-                             supported on the builtin `str`",
+                            "`{}` in `impl {bt}` has no receiver — associated fns are not \
+                             supported on the builtin `{bt}`",
                             m.name.name
                         ),
                         m.name.span,
@@ -5316,21 +5413,29 @@ impl SemaCx<'_> {
                     continue;
                 }
             }
-            if matches!(m.name.name.as_str(), "to_text" | "hash" | "eq" | "drop") {
+            let reserved: &[&str] = if bt == "str" {
+                &["to_text", "hash", "eq", "drop"]
+            } else {
+                &["drop"]
+            };
+            if reserved.contains(&m.name.name.as_str()) {
                 self.err(
                     "E0386",
                     format!(
-                        "method `{}` in `impl str` redeclares a compiler-provided method",
+                        "method `{}` in `impl {bt}` redeclares a compiler-provided method",
                         m.name.name
                     ),
                     m.name.span,
                 );
                 continue;
             }
-            if self.builtin_str_methods.contains_key(&m.name.name) {
+            if self
+                .builtin_methods
+                .contains_key(&(bt.to_string(), m.name.name.clone()))
+            {
                 self.err(
                     "E0326",
-                    format!("duplicate method `{}` in impl `str`", m.name.name),
+                    format!("duplicate method `{}` in impl `{bt}`", m.name.name),
                     m.name.span,
                 );
                 continue;
@@ -5351,10 +5456,10 @@ impl SemaCx<'_> {
             };
             if let Some(note) = deprecation_note(&m.attributes) {
                 self.deprecated
-                    .insert(format!("str.{}", m.name.name), note);
+                    .insert(format!("{bt}.{}", m.name.name), note);
             }
-            self.builtin_str_methods.insert(
-                m.name.name.clone(),
+            self.builtin_methods.insert(
+                (bt.to_string(), m.name.name.clone()),
                 MethodSig {
                     receiver: m.receiver,
                     params,
@@ -6216,10 +6321,10 @@ impl SemaCx<'_> {
                 }
                 continue;
             }
-            // STRM (v0.0.27): bodies of the blessed `impl str` block.
-            if b.target.name == "str" {
+            // v0.0.28: bodies of a blessed `impl <builtin>` block.
+            if let Some(bt) = builtin_impl_target(&b.target.name) {
                 for m in &b.methods {
-                    self.check_str_method(m);
+                    self.check_builtin_method(bt, m);
                 }
                 continue;
             }
@@ -6606,14 +6711,19 @@ impl SemaCx<'_> {
     /// collection, so none of that state-threading applies — the gen/async
     /// flags are still explicitly cleared (and restored) so a previous
     /// body's state cannot leak in.
-    fn check_str_method(&mut self, m: &Method) {
+    fn check_builtin_method(&mut self, bt: &'static str, m: &Method) {
         if m.is_declaration {
             return;
         }
-        let Some(sig) = self.builtin_str_methods.get(&m.name.name).cloned() else {
+        let Some(sig) = self
+            .builtin_methods
+            .get(&(bt.to_string(), m.name.name.clone()))
+            .cloned()
+        else {
             return;
         };
-        self.self_type_stack.push(Ty::Str);
+        self.self_type_stack
+            .push(builtin_impl_ty(bt).expect("builtin target implies a Ty"));
         self.current_return = sig.return_type.clone();
         let prev_gen = self.current_fn_is_gen;
         let prev_gen_ty = self.current_gen_yield_ty.clone();
@@ -6627,7 +6737,7 @@ impl SemaCx<'_> {
             self.scopes.last_mut().unwrap().insert(
                 "self".to_string(),
                 LocalInfo {
-                    ty: Ty::Str,
+                    ty: builtin_impl_ty(bt).expect("builtin target implies a Ty"),
                     mutable,
                     moved: false,
                     moved_at: None,
@@ -14864,17 +14974,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // the nominal paths. A miss is E0324 with targeted guidance —
         // `len`/`length` habit, missing stdlib import, or a Text-only
         // (allocating) method name.
-        if matches!(recv_ty, Ty::Str) {
-            if let Some(sig) = self.builtin_str_methods.get(&name.name).cloned() {
+        if let Some(bt) = builtin_name_of_ty(&recv_ty) {
+            if let Some(sig) = self
+                .builtin_methods
+                .get(&(bt.to_string(), name.name.clone()))
+                .cloned()
+            {
                 // issue-05: `str` is a builtin with no nominal owner — see
                 // `GateOwner::NoNominal`. Stated, not skipped.
                 if let Err(ty) =
-                    self.run_method_gates(GateOwner::NoNominal, "str", name, args, call_span)
+                    self.run_method_gates(GateOwner::NoNominal, bt, name, args, call_span)
                 {
                     return ty;
                 }
                 if !self.check_method_receiver(
-                    receiver, &Ty::Str, name, &sig, args, call_span, "str",
+                    receiver, &recv_ty, name, &sig, args, call_span, bt,
                 ) {
                     return Ty::Error;
                 }
@@ -14884,16 +14998,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     &HashMap::new(),
                     type_args,
                     args,
-                    "str",
+                    bt,
                     call_span,
                 );
             }
             let mut notes: Vec<String> = Vec::new();
-            if matches!(name.name.as_str(), "len" | "length" | "size")
-                && self.builtin_str_methods.contains_key("count")
+            if bt != "str" {
+                if !self.builtin_impl_origin.contains_key(bt) {
+                    notes.push(format!(
+                        "the `{bt}` method set is declared by stdlib — add \
+                         `import \"stdlib/math\" as _;` (any file in the build suffices)"
+                    ));
+                }
+            } else if matches!(name.name.as_str(), "len" | "length" | "size")
+                && self
+                    .builtin_methods
+                    .contains_key(&("str".to_string(), "count".to_string()))
             {
                 notes.push("`str` spells it `count()`".to_string());
-            } else if self.builtin_str_methods.is_empty() {
+            } else if !self.builtin_impl_origin.contains_key("str") {
                 notes.push(
                     "the `str` method set is declared by stdlib — add \
                      `import \"stdlib/str\" as _;` (any file in the build suffices)"
@@ -15010,7 +15133,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // the view lives). An inherent `Text` method always wins —
             // this arm only runs on a miss.
             if self.designated_string_struct == Some(id) {
-                if let Some(sig) = self.builtin_str_methods.get(&name.name).cloned() {
+                if let Some(sig) = self
+                    .builtin_methods
+                    .get(&("str".to_string(), name.name.clone()))
+                    .cloned()
+                {
                     self.text_to_str_coercion_table.insert(receiver.span);
                     if let Err(ty) =
                         self.run_method_gates(GateOwner::NoNominal, "str", name, args, call_span)
@@ -27746,6 +27873,179 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         );
         let n = codes.iter().filter(|c| **c == "E0386").count();
         assert_eq!(n, 5, "five E0386 rejections expected; got {codes:?}");
+    }
+
+    // ── v0.0.28: the same blessing, generalized to the float widths ─────
+
+    #[test]
+    fn impl_f32_methods_resolve_and_check_clean() {
+        assert_clean(
+            "impl f32 {\n\
+                 fn double(this) -> f32 { return this * 2.0f32; }\n\
+                 fn lerp(this, b: f32, t: f32) -> f32 { return this + (b - this) * t; }\n\
+             }\n\
+             fn main() -> i32 {\n\
+                 let a: f32 = 1.5f32;\n\
+                 let d: f32 = a.double();\n\
+                 let l: f32 = a.lerp(3.5f32, 0.5f32);\n\
+                 if d > l { return 1; }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn impl_f32_and_f64_are_separate_types() {
+        // The same method name on each width is not a duplicate: the
+        // receiver type disambiguates, which is the whole reason a blessed
+        // block beats width-suffixed free functions under principle 6.
+        assert_clean(
+            "impl f32 { fn two(this) -> f32 { return this * 2.0f32; } }\n\
+             impl f64 { fn two(this) -> f64 { return this * 2.0f64; } }\n\
+             fn main() -> i32 {\n\
+                 let a: f32 = 1.0f32;\n\
+                 let b: f64 = 1.0f64;\n\
+                 if a.two() > 0.0f32 && b.two() > 0.0f64 { return 0; }\n\
+                 return 1;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn impl_f32_duplicate_block_e0385() {
+        let codes = errors(
+            "impl f32 { fn a(this) -> f32 { return this; } }\n\
+             impl f32 { fn b(this) -> f32 { return this; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0385"),
+            "second `impl f32` must be E0385; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn impl_f32_bad_members_e0386() {
+        // Same shape rules as `impl str`: no generics, no `ref`/`take`
+        // receiver, no associated fns.
+        let codes = errors(
+            "impl f32 {\n\
+                 fn g[T](this) -> f32 { return this; }\n\
+                 fn m(ref this) -> f32 { return this; }\n\
+                 fn t(take this) -> f32 { return this; }\n\
+                 fn assoc() -> i32 { return 0; }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        let n = codes.iter().filter(|c| **c == "E0386").count();
+        assert_eq!(n, 4, "four E0386 rejections expected; got {codes:?}");
+    }
+
+    #[test]
+    fn impl_f32_interface_block_e0386() {
+        let codes = errors(
+            "interface Shape { fn area(this) -> i32; }\n\
+             impl f32: Shape { fn area(this) -> i32 { return 0; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0386"),
+            "`impl f32: Interface` must be E0386; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn impl_f32_dup_method_within_block_e0326() {
+        let codes = errors(
+            "impl f32 { fn a(this) -> f32 { return this; } fn a(this) -> f32 { return this; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0326"),
+            "duplicate method in `impl f32` must be E0326; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn f32_method_miss_is_e0324_without_a_block() {
+        // No blessed block in this program: a float method call is E0324,
+        // and the primitive's own operators are untouched.
+        let codes = errors(
+            "fn main() -> i32 { let a: f32 = 1.0f32; let _b: f32 = a.sqrt(); return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0324"),
+            "f32 method with no block must be E0324; got {codes:?}"
+        );
+        assert_clean("fn main() -> i32 { let a: f32 = 1.0f32; let _b: f32 = a * 2.0f32; return 0; }");
+    }
+
+    #[test]
+    fn every_primitive_width_takes_a_blessed_impl() {
+        // v0.0.28 opened the mechanism to every primitive. One block each,
+        // all in one program: distinct types, so no name collides.
+        assert_clean(
+            "impl i8    { fn w(this) -> i32 { return this as i32; } }\n\
+             impl i16   { fn w(this) -> i32 { return this as i32; } }\n\
+             impl i32   { fn w(this) -> i32 { return this; } }\n\
+             impl i64   { fn w(this) -> i32 { return this as i32; } }\n\
+             impl isize { fn w(this) -> i32 { return this as i32; } }\n\
+             impl u8    { fn w(this) -> i32 { return this as i32; } }\n\
+             impl u16   { fn w(this) -> i32 { return this as i32; } }\n\
+             impl u32   { fn w(this) -> i32 { return this as i32; } }\n\
+             impl u64   { fn w(this) -> i32 { return this as i32; } }\n\
+             impl usize { fn w(this) -> i32 { return this as i32; } }\n\
+             impl f16   { fn w(this) -> i32 { return this as i32; } }\n\
+             impl f32   { fn w(this) -> i32 { return this as i32; } }\n\
+             impl f64   { fn w(this) -> i32 { return this as i32; } }\n\
+             impl bool  { fn w(this) -> i32 { if this { return 1; } return 0; } }\n\
+             fn main() -> i32 {\n\
+                 let a: i32 = 1;\n\
+                 let b: u8 = 2u8;\n\
+                 let c: f64 = 3.0f64;\n\
+                 let d: f16 = 4.0f32 as f16;\n\
+                 return a.w() + b.w() + c.w() + d.w() + true.w();\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn a_shared_method_name_across_widths_is_not_a_duplicate() {
+        // The receiver disambiguates, which is the whole reason a blessed
+        // block beats width-suffixed free functions under principle 6.
+        assert_clean(
+            "impl i32 { fn twice(this) -> i32 { return this *% 2; } }\n\
+             impl u8  { fn twice(this) -> u8 { return this *% 2u8; } }\n\
+             impl f32 { fn twice(this) -> f32 { return this * 2.0f32; } }\n\
+             fn main() -> i32 { let a: i32 = 2; return a.twice() - 4; }",
+        );
+    }
+
+    #[test]
+    fn impl_on_an_unknown_type_is_still_e0325() {
+        // Widening the blessed set did not turn E0325 off: a name that is
+        // neither a declared type nor a primitive is still an unknown target.
+        let codes = errors(
+            "impl NotAType { fn a(this) -> i32 { return 0; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0325"),
+            "`impl NotAType` must stay E0325; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn duplicate_block_on_an_integer_width_is_e0385() {
+        let codes = errors(
+            "impl u32 { fn a(this) -> u32 { return this; } }\n\
+             impl u32 { fn b(this) -> u32 { return this; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0385"),
+            "second `impl u32` must be E0385; got {codes:?}"
+        );
     }
 
     #[test]

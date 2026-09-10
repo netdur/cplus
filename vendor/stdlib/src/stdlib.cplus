@@ -47,3 +47,4 @@ import "./crypto" as crypto;
 import "./netsys" as netsys;
 import "./net" as net;
 import "./platform" as platform;
+import "./math" as math;
