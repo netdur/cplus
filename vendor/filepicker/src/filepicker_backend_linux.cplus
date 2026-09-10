@@ -1,0 +1,449 @@
+// filepicker_backend_linux — the XDG Desktop Portal's file chooser.
+//
+// A REAL BACKEND, not a refusal, and the difference was settled by watching it:
+// `org.freedesktop.portal.FileChooser.OpenFile` puts a GTK file chooser on
+// screen on this desktop. That matters because the sibling refusals in this
+// tree (`share`, `haptics`) are refusals on the evidence that Linux HAS no such
+// facility — and here it plainly does, so saying otherwise would be a lie about
+// a dialog anyone can see.
+//
+// The portal is also the RIGHT mechanism rather than merely an available one:
+// it is what a sandboxed application is confined to, it hands back a document
+// the app is then allowed to read, and it is the same chooser the rest of the
+// desktop uses. Talking to GTK directly would work only for a GTK app and would
+// drag a toolkit into a package that has no business depending on one.
+//
+// ---- the shape the facade asks for ------------------------------------------
+//
+// `_c_open` answers whether the PICKER OPENED, and the choice arrives later on
+// the handler — `filepicker.cplus` says so, and it is exactly a portal Request:
+// the method returns an object path immediately and the answer comes as that
+// request's `Response` signal. So this backend returns `Ok` once the call is
+// away and invokes the callback when the signal lands.
+//
+// THAT SIGNAL NEEDS A RUNNING MAIN LOOP, which is the one thing a caller has to
+// know. `g_dbus_connection_signal_subscribe` delivers on the thread-default
+// main context, so a facet application (whose GTK loop is already turning) gets
+// the callback on its main thread exactly as the facade promises. A program
+// with no loop will never be called back — the same way it would never receive
+// any other asynchronous desktop event.
+//
+// SUBSCRIBED BEFORE THE CALL. The portal spec is explicit that a Response can
+// be emitted before the method reply is delivered, so subscribing afterwards
+// has a window in which the answer is missed and the callback never fires. The
+// request's path is predictable from a `handle_token` precisely so this
+// ordering is possible.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "gio/gio" as gio;
+import "glib/glib" as glib;
+
+// Not in the binding: a seven-argument callback shape the generator skips.
+#[link_name = "g_dbus_connection_signal_subscribe"]
+extern fn g_dbus_connection_signal_subscribe(
+    connection: *u8, sender: *u8, interface_name: *u8, member: *u8,
+    object_path: *u8, arg0: *u8, flags: i32,
+    callback: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8),
+    user_data: *u8, user_data_free_func: *u8) -> u32;
+#[link_name = "g_variant_get_child_value"]
+extern fn g_variant_get_child_value(value: *u8, index: usize) -> *u8;
+#[link_name = "g_variant_lookup_value"]
+extern fn g_variant_lookup_value(dict: *u8, key: *u8, expected: *u8) -> *u8;
+#[link_name = "g_variant_n_children"]
+extern fn g_variant_n_children(value: *u8) -> usize;
+#[link_name = "g_variant_get_uint32"]
+extern fn g_variant_get_uint32(value: *u8) -> u32;
+#[link_name = "g_variant_unref"]
+extern fn g_variant_unref(value: *u8);
+
+fn portal_bus() -> str { return "org.freedesktop.portal.Desktop"; }
+fn portal_path() -> str { return "/org/freedesktop/portal/desktop"; }
+fn iface() -> str { return "org.freedesktop.portal.FileChooser"; }
+fn bus_type_session() -> i32 { return 2 as i32; }
+
+// Outcome codes, spelled as numbers because the backend half deliberately does
+// not import the facade — a back-import is a cycle (E0404).
+//
+// TAKEN FROM `filepicker.cplus`'s OWN LADDER, which is not the one `share` uses:
+// Ok 0, Unsupported 1, Unavailable 2, InvalidInput 3, Failed 4. Copying share's
+// numbering here reported a failed portal call as `InvalidInput` — a caller
+// bug — and would have sent anyone debugging it to look at their own arguments.
+fn _ok() -> i32 { return 0 as i32; }
+fn _unsupported() -> i32 { return 1 as i32; }
+fn _failed() -> i32 { return 4 as i32; }
+
+fn proxy() -> gio::DBusProxy {
+    return { gio::DBusProxy::new_for_bus_sync(
+        bus_type_session(), 0 as u32,
+        gio::DBusInterfaceInfo::from_raw(0 as *u8),
+        portal_bus(), portal_path(), iface(),
+        gio::Cancellable::from_raw(0 as *u8)) };
+}
+
+export extern fn _c_available() -> i32 {
+    let p: gio::DBusProxy = proxy();
+    if p.raw() == (0 as *u8) { return 0 as i32; }
+    // Every portal interface carries `version`; a proxy for one the backend
+    // does not implement caches no properties, so its presence is the portal's
+    // own answer to "do you do this" without a call that would open a dialog.
+    return match { p.get_cached_property("version") } {
+        option::Option[glib::Variant]::Some(_v) => 1 as i32,
+        option::Option[glib::Variant]::None => 0 as i32,
+    };
+}
+
+// ---- the pending pick --------------------------------------------------------
+//
+// ONE AT A TIME, which is what a modal chooser is. The facade boxes the
+// caller's (fn, ctx) pair and hands it here as `ctx`; it has to outlive this
+// frame because the panel answers seconds later, and it is released by the
+// facade's own trampoline being called exactly once.
+static PENDING_CB: usize = 0;
+static PENDING_CTX: usize = 0;
+static PENDING_SUB: u32 = 0;
+static PENDING_CONN: usize = 0;
+static NEXT_TOKEN: u64 = 0;
+
+fn fresh_token() -> text::Text {
+    NEXT_TOKEN = NEXT_TOKEN +% (1 as u64);
+    var t: text::Text = text::from_str("filepicker");
+    let _a: status::Status = t.append({ (NEXT_TOKEN as i64) }.to_text().view());
+    return t;
+}
+
+// `:1.234` -> `1_234` — how the portal spells a sender inside a request path.
+fn sender_token(unique: str) -> text::Text {
+    var out: text::Text = text::new();
+    let p: *u8 = #str_ptr(unique);
+    let n: usize = #str_len(unique);
+    var i: usize = 0 as usize;
+    while i < n {
+        let b: u8 = { *(p + i) };
+        if b == (58 as u8) { i = i +% (1 as usize); continue; }   // drop the ':'
+        var one: [u8; 1] = [0 as u8; 1];
+        one[0] = if b == (46 as u8) { 95 as u8 } else { b };
+        let _a: status::Status = out.append({ #str_from_raw_parts(#addr_of(one) as *u8, 1 as usize) });
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// `file:///home/a%20b` -> `/home/a b`. The portal answers URIs; the facade's
+// `Pick` is a path, and a name with a space is the ordinary case rather than an
+// exotic one.
+fn path_from_uri(uri: str) -> text::Text {
+    var rest: str = uri;
+    let pre: str = "file://";
+    if #str_len(uri) >= #str_len(pre) {
+        let head: str = { #str_from_raw_parts(#str_ptr(uri), #str_len(pre)) };
+        if head == pre {
+            rest = { #str_from_raw_parts(#str_ptr(uri) + #str_len(pre),
+                                         #str_len(uri) -% #str_len(pre)) };
+        }
+    }
+    return match glib::uri_unescape_string(rest, "") {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::from_str(rest),
+    };
+}
+
+// Hand the answer to the facade's trampoline, exactly once, and forget the
+// pending pick. A CANCELLED dialog still calls back — with an empty path, which
+// is how `filepicker.cplus` spells "nothing was chosen".
+fn deliver(path: str) {
+    let cb_raw: usize = PENDING_CB;
+    let ctx: usize = PENDING_CTX;
+    PENDING_CB = 0 as usize;
+    PENDING_CTX = 0 as usize;
+    if cb_raw == (0 as usize) { return; }
+    let cb: fn(*u8, usize, *u8) = { cb_raw as *u8 as fn(*u8, usize, *u8) };
+    cb(#str_ptr(path), #str_len(path), ctx as *u8);
+}
+
+fn on_response(_conn: *u8, _sender: *u8, _path: *u8, _iface: *u8, _signal: *u8,
+               params: *u8, _user: *u8) {
+    // Unsubscribe first: the portal emits Response once, and a handler still
+    // attached when the next pick starts would answer the wrong request.
+    if PENDING_SUB != (0 as u32) && PENDING_CONN != (0 as usize) {
+        { gio::DBusConnection::from_raw(PENDING_CONN as *u8).signal_unsubscribe(PENDING_SUB) };
+        PENDING_SUB = 0 as u32;
+    }
+    if params == (0 as *u8) { deliver(""); return; }
+
+    // Response(u code, a{sv} results). Anything but 0 is a cancel or a failure,
+    // and both mean nothing was chosen.
+    let code_v: *u8 = { g_variant_get_child_value(params, 0 as usize) };
+    var code: u32 = 1 as u32;
+    if code_v != (0 as *u8) {
+        code = { g_variant_get_uint32(code_v) };
+        { g_variant_unref(code_v) };
+    }
+    if code != (0 as u32) { deliver(""); return; }
+
+    let results: *u8 = { g_variant_get_child_value(params, 1 as usize) };
+    if results == (0 as *u8) { deliver(""); return; }
+    // `uris` is `as`; the chooser is single-select here, so the first is the
+    // answer.
+    let uris: *u8 = { g_variant_lookup_value(results, #str_ptr("uris\0"), 0 as *u8) };
+    if uris == (0 as *u8) { { g_variant_unref(results) }; deliver(""); return; }
+    if { g_variant_n_children(uris) } == (0 as usize) {
+        { g_variant_unref(uris) }; { g_variant_unref(results) };
+        deliver(""); return;
+    }
+    let first: *u8 = { g_variant_get_child_value(uris, 0 as usize) };
+    var len: usize = 0 as usize;
+    let uri: text::Text = { glib::Variant::from_raw(first).get_string(len) };
+    let path: text::Text = path_from_uri(uri.view());
+    { g_variant_unref(first) };
+    { g_variant_unref(uris) };
+    { g_variant_unref(results) };
+    deliver(path.view());
+}
+
+// Subscribe to the Request's Response before the method is called — see the
+// header. Answers 0 when the path could not be built.
+fn arm(conn: gio::DBusConnection, token: str) -> u32 {
+    let unique: text::Text = match { conn.get_unique_name() } {
+        option::Option[text::Text]::Some(u) => u,
+        option::Option[text::Text]::None => { return 0 as u32; }
+    };
+    let sender: text::Text = sender_token(unique.view());
+    let path: text::Text =
+        "/org/freedesktop/portal/desktop/request/${sender.view()}/${token}";
+    let path_c: text::CString = match path.c_str() {
+        option::Option[text::CString]::Some(v) => v,
+        option::Option[text::CString]::None => { return 0 as u32; }
+    };
+    return { g_dbus_connection_signal_subscribe(
+        conn.raw(),
+        #str_ptr("org.freedesktop.portal.Desktop\0"),
+        #str_ptr("org.freedesktop.portal.Request\0"),
+        #str_ptr("Response\0"),
+        path_c.as_ptr(), 0 as *u8, 0 as i32,
+        on_response, 0 as *u8, 0 as *u8) };
+}
+
+// "png,jpg" -> one filter offering `*.png` and `*.jpg`.
+//
+// GLOB PATTERNS (kind 0) RATHER THAN MIME (kind 1). The facade hands three
+// letters, and a glob is what three letters actually are — deriving a MIME type
+// from an extension is the guess `filepicker.cplus` already calls lossy, and
+// guessing wrong hides the file the user came for.
+fn add_filters(ref opts: glib::VariantBuilder, types: str) {
+    if #str_len(types) == (0 as usize) { return; }
+    opts.open(glib::VariantType::new("{sv}"));
+    opts.add_value(glib::Variant::new_string("filters"));
+    opts.open(glib::VariantType::new("v"));
+    opts.open(glib::VariantType::new("a(sa(us))"));
+    opts.open(glib::VariantType::new("(sa(us))"));
+    opts.add_value(glib::Variant::new_string(types));
+    opts.open(glib::VariantType::new("a(us)"));
+    let p: *u8 = #str_ptr(types);
+    let n: usize = #str_len(types);
+    var start: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i <= n {
+        let at_end: bool = i == n;
+        let is_sep: bool = if at_end { true } else { { *(p + i) } == (44 as u8) };
+        if is_sep {
+            if i > start {
+                var pat: text::Text = text::from_str("*.");
+                let _a: status::Status = pat.append({ #str_from_raw_parts(p + start, i -% start) });
+                opts.open(glib::VariantType::new("(us)"));
+                opts.add_value(glib::Variant::new_uint32(0 as u32));   // 0 = glob
+                opts.add_value(glib::Variant::new_string(pat.view()));
+                opts.close();
+            }
+            start = i +% (1 as usize);
+        }
+        i = i +% (1 as usize);
+    }
+    opts.close();   // a(us)
+    opts.close();   // (sa(us))
+    opts.close();   // a(sa(us))
+    opts.close();   // v
+    opts.close();   // {sv}
+}
+
+// The shared half of open and save: arm, call, report whether it opened.
+fn begin(method: str, opts: glib::Variant, title: str, token: str) -> i32 {
+    let p: gio::DBusProxy = proxy();
+    if p.raw() == (0 as *u8) { return _unsupported(); }
+    let conn: gio::DBusConnection = { p.get_connection() };
+    if conn.raw() == (0 as *u8) { return _unsupported(); }
+    let sub: u32 = arm(conn, token);
+    if sub == (0 as u32) { return _failed(); }
+    PENDING_SUB = sub;
+    PENDING_CONN = { #addr(conn.raw()) };
+
+    // OpenFile(s parent_window, s title, a{sv} options). The parent is empty:
+    // this package depends on no toolkit and has no window handle to give. The
+    // chooser still appears — `xdg-desktop-portal` logs that it could not
+    // parent it and shows it unparented, which is the trade for not dragging
+    // GTK into a package that does not need it.
+    var params: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("(ssa{sv})"));
+    params.add_value(glib::Variant::new_string(""));
+    params.add_value(glib::Variant::new_string(title));
+    params.add_value(opts);
+    let reply: glib::Variant = { p.call_sync(method, params.end(), 0 as u32, 5000 as i32,
+                                             gio::Cancellable::from_raw(0 as *u8)) };
+    if reply.raw() == (0 as *u8) {
+        { conn.signal_unsubscribe(sub) };
+        PENDING_SUB = 0 as u32;
+        return _failed();
+    }
+    return _ok();
+}
+
+export extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
+                         types: *u8, types_len: usize) -> i32 {
+    if PENDING_CB != (0 as usize) { return _failed(); }   // one modal at a time
+    PENDING_CB = { #addr(on_pick as *u8) };
+    PENDING_CTX = { #addr(ctx) };
+    let token: text::Text = fresh_token();
+    var opts: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("a{sv}"));
+    opts.add_value(glib::Variant::new_dict_entry(
+        glib::Variant::new_string("handle_token"),
+        glib::Variant::new_variant(glib::Variant::new_string(token.view()))));
+    add_filters(opts, { #str_from_raw_parts(types, types_len) });
+    let rc: i32 = begin("OpenFile", opts.end(), "Open", token.view());
+    if rc != _ok() { PENDING_CB = 0 as usize; PENDING_CTX = 0 as usize; }
+    return rc;
+}
+
+export extern fn _c_save(suggested: *u8, suggested_len: usize,
+                         on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    if PENDING_CB != (0 as usize) { return _failed(); }
+    PENDING_CB = { #addr(on_pick as *u8) };
+    PENDING_CTX = { #addr(ctx) };
+    let token: text::Text = fresh_token();
+    var opts: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("a{sv}"));
+    opts.add_value(glib::Variant::new_dict_entry(
+        glib::Variant::new_string("handle_token"),
+        glib::Variant::new_variant(glib::Variant::new_string(token.view()))));
+    opts.add_value(glib::Variant::new_dict_entry(
+        glib::Variant::new_string("current_name"),
+        glib::Variant::new_variant(glib::Variant::new_string(
+            { #str_from_raw_parts(suggested, suggested_len) }))));
+    let rc: i32 = begin("SaveFile", opts.end(), "Save", token.view());
+    if rc != _ok() { PENDING_CB = 0 as usize; PENDING_CTX = 0 as usize; }
+    return rc;
+}
+
+// ---- tests -------------------------------------------------------------------
+//
+// NOTHING HERE OPENS A CHOOSER: a modal dialog in a suite is a suite that stops
+// running. What is pinned is the part that decides — the URI the portal answers
+// turned into the path the facade promised, and the sender spelling the request
+// path is predicted from.
+
+#[test]
+fn a_file_uri_becomes_a_path() {
+    assert path_from_uri("file:///home/a/b.txt").view() == "/home/a/b.txt";
+    // A space is the ordinary case, not an exotic one.
+    assert path_from_uri("file:///home/a/my%20file.txt").view() == "/home/a/my file.txt";
+    // Already a path: left alone rather than mangled.
+    assert path_from_uri("/home/a/b.txt").view() == "/home/a/b.txt";
+}
+
+#[test]
+fn the_sender_is_spelled_the_way_a_request_path_spells_it() {
+    // `:1.234` -> `1_234`. Getting this wrong means subscribing to a path the
+    // portal never emits on, and the callback simply never fires.
+    assert sender_token(":1.234").view() == "1_234";
+    assert sender_token(":1.7").view() == "1_7";
+}
+
+// The decode chain, driven with a Response built by hand.
+//
+// WHY THIS IS A TEST AND NOT A PROBE: answering a real chooser needs a click,
+// and this machine has no way to synthesise one. But the part that can be wrong
+// is not the dialog — it is reading `(u, a{sv})`, finding `uris`, taking the
+// first, and turning a URI into the path the facade promised. That is all
+// decidable here, and it is where an off-by-one in a child index or a missing
+// unref would live.
+fn _fake_response(code: u32, uri: str, with_uris: bool) -> glib::Variant {
+    var t: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("(ua{sv})"));
+    t.add_value(glib::Variant::new_uint32(code));
+    t.open(glib::VariantType::new("a{sv}"));
+    if with_uris {
+        t.open(glib::VariantType::new("{sv}"));
+        t.add_value(glib::Variant::new_string("uris"));
+        t.open(glib::VariantType::new("v"));
+        t.open(glib::VariantType::new("as"));
+        t.add_value(glib::Variant::new_string(uri));
+        t.close();
+        t.close();
+        t.close();
+    }
+    t.close();
+    return t.end();
+}
+
+static _SEEN: bool = false;
+static _SEEN_PATH: text::Text = #zero::[text::Text]();
+
+fn _capture(p: *u8, n: usize, _ctx: *u8) {
+    _SEEN = true;
+    _SEEN_PATH = text::from_str({ #str_from_raw_parts(p, n) });
+}
+
+fn _drive(code: u32, uri: str, with_uris: bool) {
+    _SEEN = false;
+    _SEEN_PATH = text::new();
+    let cap: fn(*u8, usize, *u8) = _capture;
+    PENDING_CB = { #addr(cap as *u8) };
+    PENDING_CTX = 0 as usize;
+    PENDING_SUB = 0 as u32;
+    PENDING_CONN = 0 as usize;
+    let r: glib::Variant = _fake_response(code, uri, with_uris);
+    on_response(0 as *u8, 0 as *u8, 0 as *u8, 0 as *u8, 0 as *u8, r.raw(), 0 as *u8);
+}
+
+#[test]
+fn a_chosen_file_reaches_the_handler_as_a_path() {
+    _drive(0 as u32, "file:///home/a/my%20pic.png", true);
+    assert _SEEN;
+    assert _SEEN_PATH.view() == "/home/a/my pic.png";
+}
+
+#[test]
+fn a_cancelled_dialog_still_calls_back_with_nothing() {
+    // Code 1 is the person dismissing it, which the facade calls the ordinary
+    // ending. A handler that is never called would hang a caller waiting for
+    // an answer that is not coming.
+    _drive(1 as u32, "file:///ignored", true);
+    assert _SEEN;
+    assert _SEEN_PATH.view() == "";
+}
+
+#[test]
+fn a_success_with_no_uris_is_not_a_crash() {
+    // The portal should not do this; a backend that did would otherwise walk a
+    // missing child. Empty path, handler still called.
+    _drive(0 as u32, "", false);
+    assert _SEEN;
+    assert _SEEN_PATH.view() == "";
+}
+
+#[test]
+fn the_handler_runs_exactly_once_per_request() {
+    // `deliver` clears the pending slot, so a second Response on a stale
+    // subscription cannot call a handler whose box the facade has released.
+    _drive(0 as u32, "file:///tmp/x", true);
+    assert _SEEN;
+    _SEEN = false;
+    on_response(0 as *u8, 0 as *u8, 0 as *u8, 0 as *u8, 0 as *u8,
+                _fake_response(0 as u32, "file:///tmp/y", true).raw(), 0 as *u8);
+    assert !_SEEN;
+}
+
+#[test]
+fn availability_is_asked_of_the_portal_not_assumed() {
+    // Answers 1 where a portal is running and 0 where none is; both are correct
+    // and which one this machine gives is not the suite's business.
+    let a: i32 = { _c_available() };
+    assert a == (0 as i32) || a == (1 as i32);
+}

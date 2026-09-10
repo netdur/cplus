@@ -13,6 +13,15 @@ edition = "2026"
 [dependencies]
 stdlib = "*"
 
+# The XDG Desktop Portal over D-Bus, which `gio` already binds — so this adds no
+# dependency a Linux desktop application was not already carrying.
+[linux.dependencies]
+gio         = "*"
+glib        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gmodule     = "*"
+
 [macos.dependencies]
 objc       = "*"
 appkit     = "*"
