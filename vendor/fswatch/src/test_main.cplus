@@ -190,6 +190,49 @@ fn file_watch_detects_content_write_and_atomic_replacement() {
     return;
 }
 
+// THE FALLBACK MUST NOT DOUBLE-REPORT. A write the snapshot CAN see is
+// reported by the differ, and the kernel's event for the same write must add
+// nothing — otherwise every ordinary edit on a coarse-timestamp filesystem
+// arrives twice. The guard is that the fallback only runs when the diff came
+// back empty; this pins it with a write the diff cannot miss (the length
+// changes), against the sibling test above where it cannot see it at all.
+#[test]
+fn a_visible_write_is_reported_once_and_not_also_by_the_kernel_event() {
+    let root: str = "/tmp/cplus_fswatch_once.txt";
+    let _r0 = fs::remove_file(root);
+    make_file(root, byte: 1 as u8);
+
+    var options: fswatch::Options = fswatch::Options::new();
+    var watcher: fswatch::Watcher = match fswatch::Watcher::new(root, options) {
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Ok(w) => w,
+        result::Result[fswatch::Watcher, fswatch::WatchError]::Err(_e) => { assert false; return; }
+    };
+    let _sub: events::SignalSubscription[fswatch::Change] = watcher.on_change(record);
+
+    reset_events("");
+    // Two bytes where there was one: a size change, which the differ sees
+    // whatever the clock's granularity is.
+    match fs::create(root) {
+        result::Result[fs::File, result::IoError]::Ok(f) => {
+            var file: fs::File = f;
+            var bytes: vec::Vec[u8] = vec::new::[u8]();
+            let _a = bytes.append(7 as u8);
+            let _b = bytes.append(8 as u8);
+            let _w = file.write_all(bytes);
+            file.close();
+        }
+        result::Result[fs::File, result::IoError]::Err(_e) => { assert false; }
+    }
+    let _n: usize = drain(watcher);
+    assert MODIFIED == 1;
+    assert CREATED == 0;
+    assert REMOVED == 0;
+    assert RENAMED == 0;
+
+    let _rr = fs::remove_file(root);
+    return;
+}
+
 #[test]
 fn directory_rename_is_paired_by_inode() {
     let root: str = "/tmp/cplus_fswatch_rename";

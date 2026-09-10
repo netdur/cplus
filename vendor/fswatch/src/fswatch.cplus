@@ -357,15 +357,22 @@ struct WatchTarget {
     inode: u64,
 }
 
+// THE QUEUE IS CARRIED, not looked up. A watch handle is meaningless without
+// the queue that minted it on Linux — inotify's watch descriptors are scoped
+// to their instance — and `drop` has nothing but the handle to work from. One
+// extra integer per watched directory is cheaper than a registry, and it makes
+// the pairing impossible to get wrong: the number that created the watch is
+// the number that releases it.
 struct WatchHandle {
     path: text::Text,
     inode: u64,
+    queue: i32,
     fd: i32,
 }
 
 impl WatchHandle {
     fn drop(ref this) {
-        backend::fd_close(this.fd);
+        backend::unwatch(this.queue, this.fd);
         this.fd = (0 as i32) -% (1 as i32);
         return;
     }
@@ -430,6 +437,49 @@ fn desired_targets(root: str, snapshot: vec::Vec[Entry]) -> result::Result[vec::
         i = i +% (1 as usize);
     }
     return result::ok::[vec::Vec[WatchTarget], WatchError](targets);
+}
+
+// Has this handle already been reported earlier in the same batch? Linear over
+// a list that holds one entry per event in one `read`, which is tens at most.
+fn handle_seen_before(handles: vec::Vec[i32], upto: usize, fd: i32) -> bool {
+    var i: usize = 0 as usize;
+    while i < upto {
+        match handles.at_ptr(i) {
+            option::Option[*i32]::Some(p) => { if { *p } == fd { return true; } }
+            option::Option[*i32]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// `absolute` expressed relative to `root`, or None when it is not under it —
+// which the PARENT directory registration always is, and it is watched for
+// exactly the events (create, remove, rename) that are about the root itself.
+fn relative_under(root: str, absolute: str) -> option::Option[text::Text] {
+    let rn: usize = #str_len(root);
+    let an: usize = #str_len(absolute);
+    if an == rn {
+        if absolute == root { return option::some(text::from_str("")); }
+        return option::Option[text::Text]::None;
+    }
+    if an < rn { return option::Option[text::Text]::None; }
+    var i: usize = 0 as usize;
+    while i < rn {
+        if byte_at(absolute, i) != byte_at(root, i) { return option::Option[text::Text]::None; }
+        i = i +% (1 as usize);
+    }
+    // The boundary has to be a separator, or `/tmp/ab` would read as `b`
+    // relative to `/tmp/a`.
+    var start: usize = rn;
+    if root == "/" {
+        start = 1 as usize;
+    } else {
+        if byte_at(absolute, rn) != (47 as u8) { return option::Option[text::Text]::None; }
+        start = rn +% (1 as usize);
+    }
+    let view: str = { #str_from_raw_parts(#str_ptr(absolute) + start, an -% start) };
+    return option::some(text::from_str(view));
 }
 
 // Watcher --------------------------------------------------------------------
@@ -543,10 +593,11 @@ impl Watcher {
                         let added: status::Status = this._handles.append(WatchHandle {
                             path: (*p).path.clone(),
                             inode: (*p).inode,
+                            queue: this._queue,
                             fd: fd,
                         });
                         if added != status::Status::Ok {
-                            backend::fd_close(fd);
+                            backend::unwatch(this._queue, fd);
                             return result::err::[bool, WatchError](WatchError::OutOfMemory);
                         }
                     }
@@ -631,15 +682,80 @@ impl Watcher {
         return emitted;
     }
 
-    // Drain all currently queued kqueue notifications, rescan once, emit the
+    // A CHANGE THE SNAPSHOT CANNOT SEE, named by the kernel instead.
+    //
+    // The differ decides "modified" from inode, size and mtime, and there is a
+    // case where all three are unchanged and the file really did change: two
+    // writes of the same length inside one filesystem timestamp granule. Linux
+    // stamps mtime from a COARSE clock — ext4 on the machine this was written
+    // on resolves about a millisecond, so 840 writes in 50ms produced 51
+    // distinct mtimes — which makes the window wide there and narrow but real
+    // on Darwin.
+    //
+    // The kernel told us anyway: every event names the registration it came
+    // from. So when the rescan's diff comes back EMPTY, each watched FILE that
+    // fired is reported as modified. The guard is the whole design — with any
+    // visible difference the diff is authoritative and this never runs, so a
+    // directory watch firing for a child that the diff already reported as
+    // Created cannot also produce a spurious Modified for the directory.
+    //
+    // Directories are skipped outright: a directory's own event is always about
+    // something INSIDE it, which is the diff's job and not this fallback's.
+    fn emit_unseen(ref this, handles: vec::Vec[i32]) -> usize {
+        var emitted: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        while i < handles.count() {
+            var fd: i32 = (0 as i32) -% (1 as i32);
+            match handles.at_ptr(i) {
+                option::Option[*i32]::Some(p) => { fd = { *p }; }
+                option::Option[*i32]::None => { }
+            }
+            i = i +% (1 as usize);
+            if fd < (0 as i32) { continue; }
+            // The same handle appears once per event in a batch; reporting a
+            // file twice for one poll would be worse than the miss this fixes.
+            if handle_seen_before(handles, i -% (1 as usize), fd) { continue; }
+
+            var j: usize = 0 as usize;
+            while j < this._handles.count() {
+                match this._handles.at_ptr(j) {
+                    option::Option[*WatchHandle]::Some(h) => {
+                        if { (*h).fd } == fd {
+                            let full: text::Text = (*h).path.clone();
+                            match backend::metadata(full) {
+                                backend::MetadataResult::Found(meta) => {
+                                    if meta.kind != backend::NodeKind::Directory {
+                                        match relative_under(this._root, full) {
+                                            option::Option[text::Text]::Some(rel) => {
+                                                this.emit_one(ChangeKind::Modified, rel, "", false);
+                                                emitted = emitted +% (1 as usize);
+                                            }
+                                            option::Option[text::Text]::None => { }
+                                        }
+                                    }
+                                }
+                                _ => { }
+                            }
+                        }
+                    }
+                    option::Option[*WatchHandle]::None => { }
+                }
+                j = j +% (1 as usize);
+            }
+        }
+        return emitted;
+    }
+
+    // Drain all currently queued notifications, rescan once, emit the
     // normalized diff, and return the number of callbacks/events produced.
     fn poll(ref this) -> result::Result[usize, WatchError] {
         if this._polling { return result::err::[usize, WatchError](WatchError::Busy); }
         this._polling = true;
         var saw_event: bool = false;
         var overflow: bool = false;
+        var fired: vec::Vec[i32] = vec::new::[i32]();
         loop {
-            let state: i32 = backend::poll_one(this._queue);
+            let state: i32 = backend::poll_events(this._queue, fired);
             if state == (1 as i32) { saw_event = true; }
             else if state == (0 as i32) { break; }
             else if state == ((0 as i32) -% (2 as i32)) { overflow = true; saw_event = true; }
@@ -661,6 +777,12 @@ impl Watcher {
             }
         };
         var count: usize = this.apply_snapshot(next);
+        // Only when the diff saw nothing, and never alongside an overflow —
+        // there the rescan is already the answer and every handle in the queue
+        // is suspect.
+        if count == (0 as usize) && !overflow {
+            count = count +% this.emit_unseen(fired);
+        }
         match this.reconcile_handles() {
             result::Result[bool, WatchError]::Ok(_ok) => { }
             result::Result[bool, WatchError]::Err(e) => {
@@ -707,6 +829,60 @@ impl Watcher {
 }
 
 // Tests ----------------------------------------------------------------------
+
+// `relative_under` is the map from a watch registration's absolute path back to
+// the relative path an event carries, and the boundary check is the whole
+// difficulty: a prefix match alone makes `/tmp/ab` a child of `/tmp/a`.
+#[test]
+fn relative_under_requires_a_separator_at_the_boundary() {
+    match relative_under("/tmp/a", "/tmp/a/b.txt") {
+        option::Option[text::Text]::Some(r) => { assert r.view() == "b.txt"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    // The root itself is the empty relative path, which is what a file root's
+    // own entry carries in every snapshot.
+    match relative_under("/tmp/a", "/tmp/a") {
+        option::Option[text::Text]::Some(r) => { assert r.view() == ""; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    // A sibling that merely shares a prefix is NOT under the root.
+    match relative_under("/tmp/a", "/tmp/ab") {
+        option::Option[text::Text]::Some(_r) => { assert false; }
+        option::Option[text::Text]::None => { }
+    }
+    // Neither is the parent — which is always one of the registrations, so this
+    // is the case that decides whether the fallback can report nonsense.
+    match relative_under("/tmp/a", "/tmp") {
+        option::Option[text::Text]::Some(_r) => { assert false; }
+        option::Option[text::Text]::None => { }
+    }
+    match relative_under("/tmp/a", "/other/a/b") {
+        option::Option[text::Text]::Some(_r) => { assert false; }
+        option::Option[text::Text]::None => { }
+    }
+    // A root of "/" has no separator to skip past.
+    match relative_under("/", "/etc") {
+        option::Option[text::Text]::Some(r) => { assert r.view() == "etc"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    return;
+}
+
+// One `read` returns a whole batch, and a file that was written twice appears
+// twice in it. Reporting it twice for one poll would be worse than the miss the
+// fallback exists to fix.
+#[test]
+fn a_handle_repeated_in_one_batch_is_reported_once() {
+    var handles: vec::Vec[i32] = vec::new::[i32]();
+    let _a: status::Status = handles.append(7 as i32);
+    let _b: status::Status = handles.append(9 as i32);
+    let _c: status::Status = handles.append(7 as i32);
+    assert !handle_seen_before(handles, 0 as usize, 7 as i32);
+    assert !handle_seen_before(handles, 1 as usize, 9 as i32);
+    // The second 7, at index 2, has one before it.
+    assert handle_seen_before(handles, 2 as usize, 7 as i32);
+    return;
+}
 
 #[test]
 fn glob_basename_and_recursive_patterns() {
