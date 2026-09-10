@@ -38,6 +38,11 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
+// `hold_ui` below writes the handoff slot with a release store; without this
+// the module named `atomic::` and did not import it, so facet_runtime did not
+// compile on Linux at all.
+import "stdlib/atomic" as atomic;
+import "stdlib/thread" as thread;
 import "stdlib/box" as box;
 import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
@@ -1101,6 +1106,37 @@ static CLOSE_PROBE_CB: fn(*u8) = #zero::[fn(*u8)]();
 fn close_probe_timer(s: f64, cb: fn(*u8), ctx: *u8) -> u64 {
     CLOSE_PROBE_CB = cb;
     return 31 as u64;
+}
+
+// Release the hold from another thread, after long enough that a teardown which
+// did NOT wait would already have returned. Copied from the macOS sibling with
+// the test that uses it.
+fn release_after_a_moment(take p: *u64) -> i32 {
+    var i: i64 = 0 as i64;
+    var acc: i32 = 0;
+    while i < (60000000 as i64) { acc = acc + (1 as i32); i = i +% (1 as i64); }
+    atomic::store_u64(p, 0 as u64, atomic::Ordering::Release);
+    return acc;
+}
+
+// A job that stays in `run` until told to stop, so "is a worker still in it"
+// has a knowable answer at the moment teardown is asked. Copied from the macOS
+// sibling, which is where the tests below came from — they arrived here without
+// it, so this file did not compile at all.
+struct HeldService {
+    hold: u64,
+    ran: i32,
+}
+
+impl HeldService: services::Job {
+    fn run(ref this) {
+        let p: *u64 = { #addr_of(this.hold) };
+        while atomic::load_u64(p, atomic::Ordering::Acquire) != (0 as u64) {
+            services::sched_yield_once();
+        }
+        this.ran = this.ran + 1;
+    }
+    fn apply(ref this) { return; }
 }
 
 #[test]
