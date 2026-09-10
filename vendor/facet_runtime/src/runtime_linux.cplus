@@ -1101,16 +1101,30 @@ fn observe_stopped_is_inert_and_says_so_by_answering_nothing() {
 fn rt_noop_observer(ctx: *u8) { return; }
 
 #[test]
-fn an_observer_registered_with_no_window_up_is_inert() {
-    // Every observation here is a `notify::` on a WINDOW, so there is nothing
-    // to connect to before one exists. An inert handle is the honest answer;
-    // a live-looking one that never fires is not.
+fn an_observer_registered_with_no_window_up_is_pending_not_refused() {
+    // Every observation here is a `notify::` on a WINDOW, and BEFORE THE WINDOW
+    // OPENS IS WHERE AN APPLICATION NATURALLY REGISTERS — beside every other
+    // service it wires in setup. So the backend CLAIMS A SLOT and arms it when
+    // the first window opens, rather than handing back an inert handle that
+    // silently drops the registration. The same line works on AppKit, where
+    // NSNotificationCenter is process-wide and never had the question.
+    //
+    // This test used to assert the opposite and was pinning the bug.
     app::reset_default_for_tests();
     var a: services::Cancellable = observe_window_active(rt_noop_observer);
-    assert !a.pending();
+    assert a.pending();
     var b: services::Cancellable = observe_window_size(rt_noop_observer);
-    assert !b.pending();
+    assert b.pending();
     var d: services::Cancellable = observe_display_density(rt_noop_observer);
+    assert d.pending();
+    // A PENDING SLOT IS CANCELLABLE, and that is the half that matters: a
+    // caller that lets a registration go must not have it arm itself on the
+    // next window the application opens.
+    a.cancel();
+    b.cancel();
+    d.cancel();
+    assert !a.pending();
+    assert !b.pending();
     assert !d.pending();
     return;
 }
