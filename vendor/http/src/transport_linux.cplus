@@ -4,22 +4,44 @@
 // WHY IT EXISTS AT ALL, given that saying "no" is all it does: without it,
 // `import "./transport"` on Linux resolves to the BASE — which is Foundation —
 // and a Linux build ends on a page of undefined Objective-C symbols naming a
-// framework the developer never asked for. That is the same failure mode
-// `inspector/appkit_ios.cplus` was written for, and the same fix.
+// framework the developer never asked for.
 //
 // It also keeps Android honest. The resolver falls back from `android` to
 // `_linux` when there is no `_android` sibling, and prefers `_android` when
 // there is — so this file is what an Android build would get if
 // `transport_android.cplus` were ever deleted, rather than Foundation.
 //
-// WHAT A REAL PORT WOULD BE. libcurl's easy interface: `curl_easy_init`,
-// `curl_easy_setopt` for the method, headers and body, a write callback that
-// appends to a `vec::Vec[u8]`, then a blocking `curl_easy_perform`. It is the
-// platform's own client in the same sense NSURLSession and HttpURLConnection
-// are — TLS, DNS, redirects and proxy all belong to it — and it is the one
-// every Linux program already links. The reason it is not here is that nothing
-// in this repo builds for Linux yet (`feedback_backend_priority_appkit_first`),
-// not that it is hard.
+// ---- what a real port is, and what actually blocks it ------------------------
+//
+// libcurl's easy interface: `curl_easy_init`, `curl_easy_setopt` for the
+// method, headers and body, a write callback that appends to a `vec::Vec[u8]`,
+// then a blocking `curl_easy_perform`. It is the platform's own client in the
+// same sense NSURLSession and WinHTTP are — TLS, DNS, redirects and proxy all
+// belong to it — and it is the one every Linux program already links.
+//
+// THE OLD REASON GIVEN HERE WAS "nothing in this repo builds for Linux yet",
+// AND THAT IS NO LONGER TRUE. The real blocker is narrower and worth writing
+// down, because it is one missing manifest feature rather than a page of work:
+//
+//   libcurl HAS TO BE LINKED, not `dlopen`ed. `curl_easy_setopt` and
+//   `curl_easy_getinfo` are VARIADIC, and a variadic function called through a
+//   non-variadic function pointer is not merely untidy — on AAPCS64 the
+//   variadic arguments go on the STACK while a fixed prototype puts them in
+//   registers, so the callee reads garbage. It happens to work on x86-64,
+//   where both go in the same registers, which is the worst possible outcome:
+//   it would pass every test on this machine and corrupt every option on an
+//   ARM server. `dlsym` is what `securestore`'s Linux half uses, and it is
+//   sound there precisely because every libsecret entry point it calls is
+//   fixed-arity.
+//
+//   Linking needs `[linux.link]`, and `[<platform>.link]` is RESERVED BUT NOT
+//   IMPLEMENTED — `manifest.rs` says so in as many words ("a future
+//   `[<platform>.link]` arrives as a feature, not a silently-ignored key").
+//   The only link table there is applies to every target, so putting
+//   `-lcurl` in it would hand it to the macOS and Windows link lines too.
+//
+// So the port is one manifest feature and about two hundred lines, in that
+// order. Doing it in the other order is what this file is refusing to do.
 
 import "stdlib/text" as text;
 import "./http" as http;
@@ -28,9 +50,45 @@ import "./http" as http;
 // against `http::ERROR_*` still sees a platform code here.
 const ERROR_NOT_BUILT: i64 = 0 - 3001;
 
-export extern fn http_transport_perform_v1(req: *http::Request, out: *http::Exchange) {
-    { (*out).ok = false };
-    { (*out).error_code = ERROR_NOT_BUILT };
-    { (*out).error_message = text::from_str(
-        "http: no transport is built for Linux (see vendor/http/src/transport_linux.cplus - libcurl is the port)") };
+// THE SEAM MOVED AND THIS FILE DID NOT. It used to write through a single
+// `*http::Exchange` out-parameter; `http.cplus` now hands three — `ok` picks
+// which of the other two is the answer — and the type this file named no
+// longer exists. Nothing caught it because no build compiled this file: the
+// package was macOS-only, so a refusal for a platform nobody built rotted
+// exactly as long as the platform was unreachable.
+export extern fn http_transport_perform_v1(req: *http::Request, ok: *bool,
+                                           response: *http::Response,
+                                           error: *http::Error) {
+    let _r: *http::Request = req;
+    let _resp: *http::Response = response;
+    { (*ok) = false };
+    { (*error) = http::Error {
+        code: ERROR_NOT_BUILT,
+        message: text::from_str(
+            "http: no transport is built for Linux (see vendor/http/src/transport_linux.cplus - libcurl is the port, and it needs [linux.link])"),
+    } };
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+
+#[test]
+fn the_linux_transport_refuses_with_a_platform_code_and_no_response() {
+    var okd: bool = true;
+    var resp: http::Response = http::Response::empty();
+    var err: http::Error = http::Error { code: 0 as i64, message: text::new() };
+    var req: http::Request = http::Request::new("https://example.com");
+    { http_transport_perform_v1(#addr_of(req), #addr_of(okd), #addr_of(resp), #addr_of(err)) };
+    assert !okd;
+    assert err.code == ERROR_NOT_BUILT;
+    // NEGATIVE, which `http.cplus` reserves for the platform's own numbering —
+    // a caller comparing against the positive `ERROR_*` constants must not
+    // match this one by accident.
+    assert err.code < (0 as i64);
+    // The message NAMES THE FILE, so the next person to hit it lands here
+    // rather than searching for a code.
+    assert err.message.view().contains("transport_linux.cplus");
+    // And the response is left exactly as `send` gave it.
+    assert resp.status == (0 as i32);
+    assert resp.body.count() == (0 as usize);
 }
