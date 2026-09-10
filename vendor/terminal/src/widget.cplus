@@ -24,7 +24,14 @@ fn state_done() -> terminal::CommandState { return terminal::CommandState::Done;
 fn supported() -> bool { return backend::supported(); }
 
 fn start(
-    shell: str = "/bin/zsh",
+    // "" IS THE PLATFORM'S OWN SHELL, resolved by `pty::start` — /bin/zsh on
+    // macOS, /bin/bash on Linux. It used to be the literal "/bin/zsh", which is
+    // correct on exactly one platform: on a Linux box with no zsh installed
+    // `execl` failed, the child `_exit(127)`ed, and the pseudo-terminal master
+    // reported HANGUP before the first read. A pane that opens and dies is the
+    // hardest shape of this bug to read, because everything up to the exec
+    // succeeded.
+    shell: str = "",
     cwd: str = "",
     max_scrollback: usize = 1048576 as usize,
     font_size: f64 = 13.0f64,

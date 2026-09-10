@@ -1,0 +1,453 @@
+// terminal/test_platform_linux — the Linux half of `test_platform.cplus`.
+//
+// ---- what can be asserted here, and what cannot -------------------------------
+//
+// NOTHING IN THIS FILE MAKES A WIDGET, and that is this repo's standing rule
+// rather than a shortcut: `gtk_init` needs a display, and a suite that only
+// runs where someone is logged in is a suite that stops running.
+// `facet_gtk/test_main.cplus` states it in the same words and for the same
+// reason.
+//
+// So the AppKit half's ten tests do not have ten counterparts. Theirs drive an
+// NSTextView, read back its attributed string and post window notifications —
+// every one of them needs the toolkit to be UP, which on macOS it is inside a
+// test process and on GTK it is not.
+//
+// WHAT IS PINNED INSTEAD is everything `gtk.cplus` DECIDES, which is where its
+// bugs actually live: the keysym table, the UTF-8 encoder, the byte-to-character
+// conversion that puts the cursor on the right cell, and the colour formatter.
+// Those are pure functions of their inputs, they are the arithmetic a wrong
+// answer hides in, and none of them needs a window.
+//
+// THE OTHER HALF IS `playground/term_probe`, and it is an APP on purpose —
+// whether the block cursor follows focus, whether typing reaches the shell,
+// whether a resize reflows the program: none of that is assertable by a process
+// with no hands. Run it on a display and look.
+
+import "./terminal" as terminal;
+import "./pty" as pty;
+import "./gtk" as backend;
+import "./widget" as terminal_widget;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+extern fn usleep(us: u32) -> i32;
+
+#[test]
+fn the_platform_widget_is_present() {
+    assert pty::supported();
+    assert backend::supported();
+    assert terminal_widget::supported();
+}
+
+// ---- the keysym table --------------------------------------------------------
+
+#[test]
+fn the_keys_a_tty_expects_are_the_ones_sent() {
+    // RETURN IS CR, not LF. A tty's line discipline turns the carriage return
+    // into whatever the program asked for; sending "\n" bypasses that and a
+    // shell reading a raw line never sees its command accepted.
+    assert backend::sequence_for(0xff0d as u32) == "\r";
+    assert backend::sequence_for(0xff8d as u32) == "\r";   // the keypad's
+    // BACKSPACE IS DEL (0x7f), which is what every terminal has sent since the
+    // VT220 and what `stty erase` is set to. Sending 0x08 gets a shell that
+    // prints ^H instead of erasing.
+    assert backend::sequence_for(0xff08 as u32) == "\x7f";
+    assert backend::sequence_for(0xff09 as u32) == "\t";
+    assert backend::sequence_for(0xff1b as u32) == "\x1b";
+    return;
+}
+
+#[test]
+fn the_arrows_are_the_cursor_keys_xterm_promises() {
+    // TERM=xterm-256color is what `pty::start` exports, so these are the
+    // sequences the program on the other end has been told to expect. A/B/C/D
+    // is up/down/right/LEFT — the order is not alphabetical and getting it
+    // wrong swaps two keys that look fine until someone edits a command line.
+    assert backend::sequence_for(0xff52 as u32) == "\x1b[A";   // Up
+    assert backend::sequence_for(0xff54 as u32) == "\x1b[B";   // Down
+    assert backend::sequence_for(0xff53 as u32) == "\x1b[C";   // Right
+    assert backend::sequence_for(0xff51 as u32) == "\x1b[D";   // Left
+    assert backend::sequence_for(0xff50 as u32) == "\x1b[H";   // Home
+    assert backend::sequence_for(0xff57 as u32) == "\x1b[F";   // End
+    assert backend::sequence_for(0xff55 as u32) == "\x1b[5~";  // Page_Up
+    assert backend::sequence_for(0xff56 as u32) == "\x1b[6~";  // Page_Down
+    assert backend::sequence_for(0xffff as u32) == "\x1b[3~";  // Delete
+    return;
+}
+
+#[test]
+fn the_function_keys_split_between_two_encodings() {
+    // F1-F4 are SS3 (`ESC O P`) and F5 up are CSI with a number. That is not a
+    // tidy scheme and it is what xterm does, so it is what a program decoding
+    // them expects; unifying them would break F1 in every curses application.
+    assert backend::sequence_for(0xffbe as u32) == "\x1bOP";
+    assert backend::sequence_for(0xffc1 as u32) == "\x1bOS";
+    assert backend::sequence_for(0xffc2 as u32) == "\x1b[15~";
+    // There is NO `ESC[16~`. The numbers skip, and a table that counted upward
+    // from 15 would put every key from F6 on one off.
+    assert backend::sequence_for(0xffc3 as u32) == "\x1b[17~";
+    assert backend::sequence_for(0xffc9 as u32) == "\x1b[24~";
+    return;
+}
+
+#[test]
+fn a_key_with_no_sequence_says_so_rather_than_sending_something() {
+    // An ordinary letter has no ESCAPE sequence — it goes through
+    // `gdk_keyval_to_unicode` instead — and a modifier has nothing to send at
+    // all. Both answer "", which is what makes the key path fall through to
+    // the Unicode branch rather than write a stray byte down the pty.
+    assert backend::sequence_for(0x61 as u32) == "";          // a
+    assert backend::sequence_for(0xffe1 as u32) == "";         // Shift_L
+    assert backend::sequence_for(0 as u32) == "";
+    return;
+}
+
+// ---- the UTF-8 encoder -------------------------------------------------------
+
+fn encoded(cp: u32) -> text::Text {
+    var buf: [u8; 4] = [0 as u8; 4];
+    let n: usize = backend::encode_utf8(cp, #addr_of(buf) as *u8);
+    return text::from_str({ #str_from_raw_parts(#addr_of(buf) as *u8, n) });
+}
+
+#[test]
+fn a_typed_scalar_reaches_the_pty_as_utf8() {
+    // One byte, two, three and four — the boundary of each range, because the
+    // shift counts are where an encoder goes wrong and every one of these
+    // reads as a plausible character until it is compared.
+    assert encoded(0x41 as u32).view() == "A";
+    assert encoded(0x7f as u32).count() == (1 as usize);
+    assert encoded(0xe9 as u32).view() == "é";        // U+00E9, two bytes
+    assert encoded(0x20ac as u32).view() == "€";      // U+20AC, three
+    assert encoded(0x1f600 as u32).count() == (4 as usize);  // U+1F600, four
+    assert encoded(0x1f600 as u32).view() == "😀";
+    return;
+}
+
+// ---- the cursor's cell -------------------------------------------------------
+
+#[test]
+fn the_cursor_offset_is_characters_where_the_screen_counts_bytes() {
+    // A GtkTextBuffer offset is in CHARACTERS; the screen's cursor is a BYTE
+    // index into the same string. On an all-ASCII line the two agree, which is
+    // exactly why this is worth a test — the disagreement only appears once a
+    // line has held a non-ASCII glyph, and then the block sits a few cells off
+    // and nothing else looks wrong.
+    assert backend::char_offset_of("hello", 5 as usize) == (5 as i32);
+    assert backend::char_offset_of("hello", 0 as usize) == (0 as i32);
+    // "é" is two bytes and one character, so a byte index past it is 1.
+    assert backend::char_offset_of("é!", 2 as usize) == (1 as i32);
+    assert backend::char_offset_of("é!", 3 as usize) == (2 as i32);
+    // Four bytes, one character.
+    assert backend::char_offset_of("😀x", 4 as usize) == (1 as i32);
+    // CLAMPED. The screen pads a cell under the cursor for display, and the
+    // arithmetic must not walk off the end of the string it was given.
+    assert backend::char_offset_of("ab", 99 as usize) == (2 as i32);
+    return;
+}
+
+// ---- the colour the cursor inverts -------------------------------------------
+
+#[test]
+fn a_channel_becomes_two_hex_digits_and_is_clamped() {
+    // The cursor's block is the widget's own foreground, which arrives as four
+    // floats and has to reach CSS as `#rrggbb`. GdkRGBA is not documented as
+    // clamped — a theme using a wide-gamut colour can hand back a channel above
+    // 1.0 — and an unclamped conversion would wrap through the byte and paint
+    // the cursor a colour nothing asked for.
+    assert backend::hex2(0.0f32).view() == "00";
+    assert backend::hex2(1.0f32).view() == "ff";
+    assert backend::hex2(2.0f32).view() == "ff";
+    assert backend::hex2((0.0f32) - (1.0f32)).view() == "00";
+    // Two digits ALWAYS, including the ones that need a leading zero — `#f0f`
+    // is a different colour from `#0f000f` and CSS would accept either.
+    assert backend::hex2(0.02f32).view() == "05";
+    assert backend::hex2(0.5f32).view() == "7f";
+    return;
+}
+
+
+// ---- the live shell ----------------------------------------------------------
+//
+// The AppKit half starts `/bin/zsh` and asks it about `$HISTFILE`. Here the
+// shell is bash, the integration is an `--rcfile` rather than a ZDOTDIR, and
+// the printing builtin is `printf` rather than zsh's `print -r --`. What is
+// being checked is the same in every case: the SHELL is what knows a command
+// started, how it ended and where it is.
+//
+// These need a real shell and a real fork. They need no display, which is what
+// separates them from the widget tests above.
+
+// Wait for the shell's first prompt mark. A fixed iteration count is NOT good
+// enough: the user's real `~/.bashrc` is sourced before the first prompt, and
+// the exit condition has to be the thing being waited for rather than a guess
+// at how long it takes.
+fn read_until_prompt(ref sess: pty::Session, ref s: terminal::Screen) {
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var n: i32 = 0 as i32;
+    while n < (2000 as i32) {
+        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+            pty::ReadResult::Data(k) => {
+                s.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) });
+            }
+            pty::ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+            pty::ReadResult::Closed => { break; }
+            pty::ReadResult::Failed => { break; }
+        }
+        if s.has_integration() { break; }
+        n = n +% (1 as i32);
+    }
+    return;
+}
+
+fn read_until_finished(ref sess: pty::Session, ref s: terminal::Screen, count: u64) {
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var n: i32 = 0 as i32;
+    while n < (2000 as i32) {
+        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+            pty::ReadResult::Data(k) => {
+                s.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) });
+            }
+            pty::ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+            pty::ReadResult::Closed => { break; }
+            pty::ReadResult::Failed => { break; }
+        }
+        if s.finished_count() >= count { break; }
+        n = n +% (1 as i32);
+    }
+    return;
+}
+
+fn read_until_screen_has(ref sess: pty::Session, ref s: terminal::Screen, probe: str) -> bool {
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var n: i32 = 0 as i32;
+    while n < (2000 as i32) {
+        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+            pty::ReadResult::Data(k) => {
+                s.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) });
+            }
+            pty::ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+            pty::ReadResult::Closed => { break; }
+            pty::ReadResult::Failed => { break; }
+        }
+        if text::from_str(s.view()).contains(probe) { return true; }
+        n = n +% (1 as i32);
+    }
+    return false;
+}
+
+// The platform's own shell, which is what `pty::start` resolves "" to. Named
+// through the empty string rather than written out, so a distribution that
+// moves bash does not need this file edited.
+#[test]
+fn a_live_bash_reports_command_marks_and_exit_codes() {
+    // The whole command API rests on this: the shell, not the terminal, is what
+    // knows a command started and how it ended. On bash that is a DEBUG trap
+    // and a PROMPT_COMMAND where zsh has preexec/precmd — `ptysys_linux` says
+    // why the latch in the trap is not optional.
+    var sess: pty::Session = match pty::start() {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    assert screen.has_integration();
+    assert screen.command_state() == terminal::CommandState::Idle;
+
+    // A CHILD SHELL rather than a bare subshell. `exit 3` on its own would take
+    // the pane's own shell with it, and `(exit 3)` — which is what the zsh half
+    // uses — gets no mark here at all: bash's DEBUG trap does not fire for a
+    // bare subshell. `ptysys_linux::marks_rc` records that narrowing in full.
+    let _w: isize = sess.write("sh -c 'exit 3'\n");
+    read_until_finished(sess, screen, 1 as u64);
+    assert screen.finished_count() >= (1 as u64);
+    assert screen.exit_code() == (3 as i32);
+    assert text::from_str(screen.command_line()).contains("exit 3");
+    // And the line is what was TYPED, not what bash normalised it to.
+    assert text::from_str(screen.command_line()).contains("sh -c");
+    sess.close();
+    return;
+}
+
+#[test]
+fn a_live_bash_reports_its_working_directory() {
+    var sess: pty::Session = match pty::start(cwd: "/usr") {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    // OSC 7, emitted by the same prompt command that emits the marks.
+    assert screen.cwd() == "/usr";
+    sess.close();
+    return;
+}
+
+#[test]
+fn a_live_command_captures_exactly_its_own_output() {
+    var sess: pty::Session = match pty::start() {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("printf 'alpha\\nbeta\\n'\n");
+    read_until_finished(sess, screen, 1 as u64);
+    let out: text::Text = screen.output();
+    // The command's OWN output, and not the prompt that follows it or the
+    // echoed command line that precedes it — which is the whole reason the
+    // ledger brackets the region rather than diffing the screen.
+    assert out.equals("alpha\nbeta\n");
+    sess.close();
+    return;
+}
+
+#[test]
+fn a_live_clear_actually_empties_the_pane() {
+    var sess: pty::Session = match pty::start() {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("printf 'visible-marker\\n'\n");
+    read_until_finished(sess, screen, 1 as u64);
+    assert text::from_str(screen.view()).contains("visible-marker");
+    // NOTHING GOES DOWN THE PTY: the shell is not asked to print anything and
+    // is not interrupted, so this is not `clear` arriving one command late.
+    screen.clear();
+    assert text::from_str(screen.view()).contains("visible-marker") == false;
+    sess.close();
+    return;
+}
+
+#[test]
+fn a_live_program_takes_the_alternate_screen_and_gives_it_back() {
+    // A full-screen program switches to the alternate buffer and the pane has
+    // to know — a caller that offers "run a build" needs to disable it while
+    // something owns the screen. `tput smcup`/`rmcup` is the same pair of
+    // escapes `top` sends, without needing `top` to be installed.
+    var sess: pty::Session = match pty::start() {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    assert screen.alternate_screen() == false;
+    let _w: isize = sess.write("printf '\\033[?1049h'; printf 'ALT-UP\\n'\n");
+    let _seen: bool = read_until_screen_has(sess, screen, "ALT-UP");
+    assert screen.alternate_screen();
+    let _w2: isize = sess.write("printf '\\033[?1049l'; printf 'BACK-DOWN\\n'\n");
+    let _seen2: bool = read_until_screen_has(sess, screen, "BACK-DOWN");
+    assert screen.alternate_screen() == false;
+    sess.close();
+    return;
+}
+
+#[test]
+fn pty_does_not_persist_shell_history_by_default() {
+    // An app's terminal pane must not write the user's GLOBAL history: what is
+    // typed in an app's pane is the app's business, and finding it later in
+    // `history` in a real terminal is a surprise.
+    //
+    // Asking the LIVE SHELL is the only honest check — an rc file that was
+    // written but never sourced looks identical from outside.
+    var sess: pty::Session = match pty::start() {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("printf 'HF=[%s] HFS=[%s]\\n' \"$HISTFILE\" \"$HISTFILESIZE\"\n");
+    read_until_finished(sess, screen, 1 as u64);
+    let out: text::Text = screen.output();
+    assert out.equals("HF=[] HFS=[0]\n");
+    sess.close();
+    return;
+}
+
+#[test]
+fn pty_save_history_true_leaves_the_shell_alone() {
+    // The opt-in must actually opt in, or the default is untestable.
+    var sess: pty::Session = match pty::start(save_history: true) {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("printf 'HF=[%s]\\n' \"$HISTFILE\"\n");
+    read_until_finished(sess, screen, 1 as u64);
+    let out: text::Text = screen.output();
+    // NOT the shim's directory and not empty: the user's own history file,
+    // wherever their rc put it. The failure this guards against is the pane
+    // quietly moving history into a temp directory.
+    assert out.contains("HF=[") ;
+    assert out.contains("HF=[]") == false;
+    assert out.contains("cplus-terminal-rc") == false;
+    sess.close();
+    return;
+}
+
+#[test]
+fn opening_a_second_pane_keeps_both_integrations() {
+    // `setenv` is process-wide and the rc file is rewritten on every `start`,
+    // so a second pane is where a self-referential shim would show up. The zsh
+    // half of this test records the recursion that actually happened there; the
+    // bash rc sources `$HOME/.bashrc` by an absolute path and cannot name
+    // itself, so what is pinned here is that the second pane is still
+    // integrated rather than silently plain.
+    var first: pty::Session = match pty::start() {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var s1: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(first, s1);
+    assert s1.has_integration();
+    first.close();
+
+    var second: pty::Session = match pty::start() {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var s2: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(second, s2);
+    assert s2.has_integration();
+    assert text::from_str(s2.view()).contains("recursion") == false;
+    second.close();
+    return;
+}
+
+#[test]
+fn the_shell_exit_status_comes_back() {
+    var sess: pty::Session = match pty::start() {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("exit 7\n");
+    // Drain until the master hangs up, which is what the shell exiting looks
+    // like from here.
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var n: i32 = 0 as i32;
+    while n < (2000 as i32) {
+        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
+            pty::ReadResult::Data(k) => {
+                screen.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) });
+            }
+            pty::ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
+            pty::ReadResult::Closed => { break; }
+            pty::ReadResult::Failed => { break; }
+        }
+        n = n +% (1 as i32);
+    }
+    // waitpid hands a status over exactly once, so the answer has to survive
+    // teardown reaping it a second time.
+    sess.close();
+    assert match sess.poll_exit() {
+        option::Option[i32]::Some(c) => c == (7 as i32),
+        option::Option[i32]::None => false,
+    };
+    return;
+}

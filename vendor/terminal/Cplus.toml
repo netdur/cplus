@@ -3,15 +3,45 @@ name    = "terminal"
 version = "0.0.1"
 edition = "2026"
 
-# Portable terminal-facing API with a macOS implementation today:
+# Portable terminal-facing API with two live backends:
 # - terminal/terminal: bounded, ANSI-aware transcript model
-# - terminal/pty:      pseudo-terminal session (Darwin forkpty backend)
-# - terminal/appkit:   live AppKit widget
+# - terminal/pty:      pseudo-terminal session, over `ptysys{,_linux}` for the
+#                      four libc numbers and the shell-integration story
+# - terminal/appkit:   live AppKit widget (macOS)
+# - terminal/gtk:      live GTK 4 widget (Linux) — `terminal/appkit` forwards
+#                      here through `appkit_linux.cplus`
+# - terminal/widget:   the facet-facing surface applications use
 
 [dependencies]
-stdlib     = "*"
+stdlib      = "*"
+flex_layout = "*"
+facet       = "*"
+
+# objc / appkit / quartzcore are the macOS BACKEND's own dependencies and cannot
+# sit in the unconditional block above: a `[link] frameworks` entry reaches the
+# linker for every target that declares the package, so a Linux build got
+# `-framework Foundation` and GNU ld answered "-f may not be used without
+# -shared" — an error naming nothing this package wrote.
+[macos.dependencies]
 objc       = "*"
 appkit     = "*"
 quartzcore = "*"
-flex_layout = "*"
-facet       = "*"
+
+# The GTK stack under `gtk.cplus`, restated in full: C+ vendor dependencies are
+# FLAT, so the closure the build touches has to be declared here rather than
+# inherited from gtk4's own manifest.
+[linux.dependencies]
+gtk4        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gio         = "*"
+glib        = "*"
+cairo       = "*"
+gdk         = "*"
+gdkpixbuf   = "*"
+graphene    = "*"
+gsk         = "*"
+harfbuzz    = "*"
+pango       = "*"
+pangocairo  = "*"
+gmodule     = "*"

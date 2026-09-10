@@ -1,0 +1,325 @@
+// terminal/ptysys — the Darwin half of everything `pty.cplus` cannot state
+// portably: four libc numbers, the shell that comes with the platform, and the
+// whole shell-integration story.
+//
+// `ptysys_linux.cplus` is the sibling the resolver picks on Linux, and the
+// split is the one `stdlib/netsys` already uses for the same reason: the
+// mechanism above is identical on both and only the VALUES and the SHELL's own
+// idiom differ. Read the Linux file beside this one — it says what bash needs
+// that zsh does not, and the two `Integration` structs are declared field for
+// field alike on purpose.
+//
+// WHY THE SHELL STORY LIVES HERE AND NOT IN `pty.cplus`. It looks portable and
+// is not: ZDOTDIR is a zsh mechanism, `add-zsh-hook` is a zsh function, and the
+// `/etc/zshrc` repair below is a fact about macOS's own configuration. bash has
+// none of those and needs `--rcfile`, which changes the ARGV — so the exec is
+// here too rather than in the caller.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/env" as env;
+import "stdlib/fs" as fs;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+
+extern fn setenv(name: *u8, value: *u8, overwrite: i32) -> i32;
+extern fn unsetenv(name: *u8) -> i32;
+extern fn execl(path: *u8, arg0: *u8, ...) -> i32;
+extern fn __error() -> *i32;
+
+// ---- the four numbers --------------------------------------------------------
+
+fn errno_value() -> i32 { return { *{ __error() } }; }
+
+// Darwin `O_NONBLOCK` from <sys/fcntl.h>.
+fn o_nonblock() -> i32 { return 4 as i32; }
+
+// Darwin `EAGAIN`, which is also `EWOULDBLOCK`.
+fn eagain() -> i32 { return 35 as i32; }
+
+// `EIO` — what a Darwin PTY reports once its peer has closed. The same value
+// everywhere POSIX, and named here so the read path asks one module rather than
+// two.
+fn eio() -> i32 { return 5 as i32; }
+
+// Darwin `TIOCSWINSZ` from <sys/ttycom.h>.
+fn tiocswinsz() -> u64 { return 0x80087467 as u64; }
+
+// What the platform gives a user who has chosen nothing. macOS has shipped zsh
+// as the login shell since Catalina.
+fn default_shell() -> str { return "/bin/zsh"; }
+
+// ---- the integration ---------------------------------------------------------
+
+// What `install_integration` did, and everything `start` needs to know about it.
+// DECLARED IDENTICALLY IN BOTH SYS FILES — `pty.cplus` names the fields and must
+// not care which one it compiled against.
+//
+//   rc          a path the exec may need. Empty when the platform installs
+//               itself through the ENVIRONMENT alone, which is this one: zsh
+//               finds our files because ZDOTDIR points at them.
+//   use_rcfile  whether `exec_shell` should pass `rc` on the command line.
+//   marks       whether THIS shell will report OSC 133. Answered from the
+//               installation rather than from having seen a mark, because
+//               `Widget::run` must choose before the first prompt exists.
+struct Integration {
+    rc: text::Text,
+    use_rcfile: bool,
+    marks: bool,
+}
+
+fn no_integration() -> Integration {
+    return Integration { rc: text::new(), use_rcfile: false, marks: false };
+}
+
+// ---- shell integration ------------------------------------------------------
+// Two separate things are installed into the shell, and they share one
+// mechanism — a generated ZDOTDIR whose rc files source the user's real ones —
+// so they are built together.
+//
+// COMMAND MARKS. A terminal cannot tell where one command ends and the next
+// begins, and it certainly cannot know an exit code: what arrives on the wire is
+// output, with nothing in it to say which command produced it or how that
+// command fared. The SHELL knows both. `preexec` fires when a line is accepted
+// and `precmd` fires before the next prompt, so each emits an OSC 133 mark and
+// `terminal/terminal` turns the pair into the command ledger that
+// `Widget::run` reports through. The marks are the same vocabulary iTerm2 and
+// VS Code use, so a shell already configured for one of those is undisturbed.
+//
+// SHELL HISTORY. An embedded terminal must not write the user's GLOBAL shell
+// history. What is typed in an app's pane is the app's business; finding it
+// later in `history` in a real terminal is a surprise, and it evicts the entries
+// the user actually wants (macOS keeps SAVEHIST=1000).
+//
+// Exporting `HISTFILE` does NOT work for zsh on macOS. `/etc/zshrc` contains
+//
+//     HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history
+//
+// unconditionally, and it runs after our environment is in place, so the export
+// is overwritten every time (measured). What that line DOES honour is `ZDOTDIR`
+// — which is the lever: point it at a directory of ours whose rc files source
+// the user's real ones and then turn history off. The user's shell is set up
+// exactly as usual; only the history disposition changes. This is the same
+// mechanism VS Code uses to inject its shell integration.
+//
+// `HISTFILE=/dev/null` is still exported for the shells where it DOES work
+// (bash, ksh), so a non-zsh shell is covered without a second mechanism.
+
+// `setenv` mutates the whole PROCESS environment, and it is not undone when
+// `start` returns. So a pane opened with history off would silently disable
+// history for every pane opened after it, whatever THEY asked for — the
+// setting would be "whichever terminal opened first" rather than the argument.
+// Capture the user's real ZDOTDIR once, before we have overwritten it, and put
+// it back whenever a caller opts into history.
+// A byte buffer rather than a Text: a `static` initializer has to be a literal,
+// and the value has to outlive every `start` call. NUL-terminated so it can be
+// handed straight back to `setenv`.
+static ZDOTDIR_CAPTURED: bool = false;
+static ZDOTDIR_WAS_SET: bool = false;
+static ZDOTDIR_ORIGINAL: [u8; 1024] = [0 as u8; 1024];
+
+fn capture_original_zdotdir() {
+    if ZDOTDIR_CAPTURED { return; }
+    ZDOTDIR_CAPTURED = true;
+    match env::var("ZDOTDIR") {
+        option::Option[text::Text]::Some(z) => {
+            let v: str = z.view();
+            let n: usize = #str_len(v);
+            if n < (1023 as usize) {
+                let p: *u8 = #str_ptr(v);
+                var i: usize = 0 as usize;
+                while i < n {
+                    ZDOTDIR_ORIGINAL[i] = { *(p + i) };
+                    i = i +% (1 as usize);
+                }
+                ZDOTDIR_ORIGINAL[n] = 0 as u8;
+                ZDOTDIR_WAS_SET = true;
+            }
+        }
+        option::Option[text::Text]::None => {}
+    }
+    return;
+}
+
+// The shell half of the command API.
+//
+// zsh hands `preexec` the line as typed (`$1`), a single-line size-limited form
+// (`$2`), and the fully expanded text (`$3`). `$1` is the one worth reporting —
+// it is what the user actually typed, where `$2` normalises punctuation and
+// spacing (`(exit 3)` comes back as `( exit 3; )`). The catch is that a newline
+// inside an OSC payload terminates the sequence early and sprays the remainder
+// of the command across the screen, so a multi-line `$1` falls back to `$2`,
+// which has the newlines already collapsed. The `case` test costs no fork, and
+// `$'\n'` is brace-free where a substitution would not be.
+//
+// `__cplus_ran` is what keeps the FIRST prompt from reporting a command that
+// never ran: precmd fires before the first prompt too, and a bare `D;0` there
+// reads downstream as "the last command succeeded" on a pane nobody has typed
+// into yet.
+//
+// `local __cplus_st=$?` has to be precmd's first line, or the shell's own
+// bookkeeping has already overwritten the status we came for.
+//
+// No `${...}` anywhere below, deliberately: that is C+ string interpolation and
+// would be eaten before zsh ever saw it. `$1`, `$?`, `$PWD` and `$(...)` are all
+// safe; braces are not.
+fn marks_rc() -> text::Text {
+    var t: text::Text = text::new();
+    let _a: status::Status = t.append("\n# Command marks for terminal/pty. OSC 133, as iTerm2 and VS Code use.\n");
+    let _b: status::Status = t.append("if [ -z \"$CPLUS_TERM_MARKS\" ]; then\n");
+    let _c: status::Status = t.append("  CPLUS_TERM_MARKS=1\n");
+    let _d: status::Status = t.append("  __cplus_preexec() {\n");
+    let _e: status::Status = t.append("    __cplus_ran=1\n");
+    let _e2: status::Status = t.append("    __cplus_c=$1\n");
+    let _e3: status::Status = t.append("    case $__cplus_c in\n");
+    let _e4: status::Status = t.append("      *$'\\n'*) __cplus_c=$2 ;;\n");
+    let _e5: status::Status = t.append("    esac\n");
+    let _f: status::Status = t.append("    printf '\\033]133;C;%s\\007' \"$__cplus_c\"\n");
+    let _g: status::Status = t.append("  }\n");
+    let _h: status::Status = t.append("  __cplus_precmd() {\n");
+    let _i: status::Status = t.append("    local __cplus_st=$?\n");
+    let _j: status::Status = t.append("    if [ -n \"$__cplus_ran\" ]; then\n");
+    let _k: status::Status = t.append("      unset __cplus_ran\n");
+    let _l: status::Status = t.append("      printf '\\033]133;D;%d\\007' $__cplus_st\n");
+    let _m: status::Status = t.append("    fi\n");
+    let _n: status::Status = t.append("    printf '\\033]7;file://%s%s\\007' \"$HOST\" \"$PWD\"\n");
+    let _o: status::Status = t.append("    printf '\\033]133;A\\007'\n");
+    let _p: status::Status = t.append("  }\n");
+    let _q: status::Status = t.append("  autoload -Uz add-zsh-hook 2>/dev/null\n");
+    let _r: status::Status = t.append("  if whence add-zsh-hook >/dev/null 2>&1; then\n");
+    let _s: status::Status = t.append("    add-zsh-hook preexec __cplus_preexec\n");
+    let _t: status::Status = t.append("    add-zsh-hook precmd __cplus_precmd\n");
+    let _u: status::Status = t.append("  else\n");
+    let _v: status::Status = t.append("    preexec_functions+=(__cplus_preexec)\n");
+    let _w: status::Status = t.append("    precmd_functions+=(__cplus_precmd)\n");
+    let _x: status::Status = t.append("  fi\n");
+    let _y: status::Status = t.append("fi\n");
+    return t;
+}
+
+fn shim_rc(dir: str, name: str, extra: str) -> bool {
+    // `ZDOTDIR` is restored around the source so the user's rc sees the value it
+    // expects, then put back so zsh keeps finding OUR files for the later
+    // startup stages (.zshrc, .zlogin). Resetting it permanently here would make
+    // zsh load the user's `.zshrc` directly and skip the shim that disables
+    // history — the whole point of the exercise.
+    // The `$ZDOTDIR != $__cplus_zd` guard makes self-sourcing impossible: if the
+    // root ever resolved to this directory the file would source itself forever.
+    // `$CPLUS_TERM_HOME` is exported unconditionally by the caller, so the shell
+    // side needs no `${VAR:-default}` — which is just as well, since `${...}` is
+    // C+ string interpolation and would be eaten before zsh ever saw it.
+    let body: text::Text = "# Generated by terminal/pty. Rewritten on every start(); do not edit.\n__cplus_zd=\"$ZDOTDIR\"\nZDOTDIR=\"$CPLUS_TERM_HOME\"\n[ \"$ZDOTDIR\" != \"$__cplus_zd\" ] && [ -r \"$ZDOTDIR/${name}\" ] && . \"$ZDOTDIR/${name}\"\nZDOTDIR=\"$__cplus_zd\"\nunset __cplus_zd\n${extra}\n";
+    let path: text::Text = "${dir}/${name}";
+    return match fs::write_string(path.view(), body.view()) {
+        result::Result[usize, result::IoError]::Ok(_) => true,
+        result::Result[usize, result::IoError]::Err(_) => false,
+    };
+}
+
+// Build the shim ZDOTDIR, or None if anything about it fails — in which case
+// `start` runs the shell unmodified rather than half-configured. A terminal that
+// works and writes history beats one that does not open.
+//
+// The two history dispositions get SEPARATE directories. They used to share one
+// that was rewritten on every `start`, which is fine until an app opens a pane
+// of each kind: the second rewrite changes what the first pane's shell would
+// read on any later startup stage, and the setting silently becomes "whichever
+// pane started last" rather than the argument each caller passed.
+fn integration_zdotdir(kill_history: bool) -> option::Option[text::Text] {
+    capture_original_zdotdir();
+    let home: text::Text = match env::var("HOME") {
+        option::Option[text::Text]::Some(h) => h,
+        option::Option[text::Text]::None => { return option::Option[text::Text]::None; }
+    };
+    var base: text::Text = match env::var("TMPDIR") {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::from_str("/tmp/"),
+    };
+    if base.has_suffix("/") == false { let _s: status::Status = base.append("/"); }
+    let flavour: str = if kill_history { "nohist" } else { "hist" };
+    let dir: text::Text = "${base}cplus-terminal-rc-${flavour}";
+    match fs::create_dir_all(dir.view()) {
+        result::Result[bool, result::IoError]::Ok(_) => {}
+        result::Result[bool, result::IoError]::Err(_) => { return option::Option[text::Text]::None; }
+    }
+    // The source root is the user's ORIGINAL ZDOTDIR — the captured one, never
+    // `env::var` here. By the second `start()` the live ZDOTDIR is already OUR
+    // shim, so reading it would point the shims at themselves and each rc file
+    // would source itself until zsh gave up ("job table full or recursion limit
+    // exceeded"), leaving a shell with none of the user's setup. Opening a
+    // second terminal pane is all it took.
+    if ZDOTDIR_WAS_SET {
+        let _h: i32 = { setenv(#str_ptr("CPLUS_TERM_HOME\0"), #addr_of(ZDOTDIR_ORIGINAL[0]), 1 as i32) };
+    } else {
+        // `view()` is a ptr+len, NOT NUL-terminated — setenv would read past the
+        // end. c_str() is the terminated form.
+        let home_c: text::CString = match home.c_str() {
+            option::Option[text::CString]::Some(v) => v,
+            option::Option[text::CString]::None => { return option::Option[text::Text]::None; }
+        };
+        let _h: i32 = { setenv(#str_ptr("CPLUS_TERM_HOME\0"), home_c.as_ptr(), 1 as i32) };
+    }
+
+    // `unset HISTFILE` runs after /etc/zshrc has set it AND after the user's rc
+    // has had its say, so it is the last word. SAVEHIST=0 covers a shell that
+    // re-derives HISTFILE later. In-memory history still works for the session,
+    // so the up-arrow behaves; nothing reaches disk.
+    //
+    // With history KEPT there is still a repair to make, and it is caused by the
+    // shim itself: /etc/zshrc sets HISTFILE to `$ZDOTDIR/.zsh_history`
+    // unconditionally, and ZDOTDIR is ours, so leaving it alone would quietly
+    // move the user's history into a temp directory. The test is exact — it
+    // fires only on the value /etc/zshrc produces — so a user who sets their own
+    // HISTFILE keeps it.
+    var extra: text::Text = text::new();
+    if kill_history {
+        let _k: status::Status = extra.append("\n# The embedded terminal does not persist history (terminal/pty save_history).\nunset HISTFILE\nSAVEHIST=0\n");
+    } else {
+        let _k: status::Status = extra.append("\n# Undo the HISTFILE that /etc/zshrc derived from our shim ZDOTDIR.\nif [ \"$HISTFILE\" = \"$ZDOTDIR/.zsh_history\" ]; then HISTFILE=\"$CPLUS_TERM_HOME/.zsh_history\"; fi\n");
+    }
+    let marks: text::Text = marks_rc();
+    let _m: status::Status = extra.append(marks.view());
+
+    if shim_rc(dir.view(), ".zshenv", "") == false { return option::Option[text::Text]::None; }
+    if shim_rc(dir.view(), ".zprofile", "") == false { return option::Option[text::Text]::None; }
+    if shim_rc(dir.view(), ".zshrc", extra.view()) == false { return option::Option[text::Text]::None; }
+    if shim_rc(dir.view(), ".zlogin", extra.view()) == false { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(dir);
+}
+
+
+// The one door `pty.cplus` calls. `shell` decides whether the ZDOTDIR shim is
+// worth building at all: it is a zsh mechanism, so a bash pane on macOS gets no
+// marks and says so, which is the case `Widget::run`'s bracketing path handles.
+fn install_integration(shell: str, kill_history: bool) -> Integration {
+    return match integration_zdotdir(kill_history) {
+        option::Option[text::Text]::Some(dir) => {
+            let dir_c: text::CString = match dir.c_str() {
+                option::Option[text::CString]::Some(v) => v,
+                option::Option[text::CString]::None => { return no_integration(); }
+            };
+            let _zd: i32 = { setenv(#str_ptr("ZDOTDIR\0"), dir_c.as_ptr(), 1 as i32) };
+            Integration {
+                rc: text::new(),
+                use_rcfile: false,
+                marks: text::from_str(shell).has_suffix("zsh"),
+            }
+        }
+        // Could not build the shim: run the shell unmodified rather than
+        // half-configured. The pane still works; it just cannot report exit
+        // codes, which `Screen::has_integration` reports as false.
+        option::Option[text::Text]::None => no_integration(),
+    };
+}
+
+// The child side of the fork, and it never returns on success. ONLY
+// ASYNC-SIGNAL-SAFE CALLS ARE LEGAL HERE — `execl` is one, and everything the
+// argv needs was allocated in the parent before the fork.
+//
+// `-l` because a pane is a login shell on macOS: that is what reads
+// `/etc/zprofile` and gives the pane the same PATH the user's own Terminal has.
+// The rc parameters are unused on this platform and are in the signature so the
+// two sys files present one shape.
+fn exec_shell(shell_c: *u8, _rc_c: *u8, _use_rcfile: bool) -> i32 {
+    return { execl(shell_c, shell_c, #str_ptr("-l\0"), 0 as *u8) };
+}

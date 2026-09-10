@@ -1,0 +1,940 @@
+// terminal/gtk — live GTK 4 terminal widget.
+//
+// The GTK twin of `appkit.cplus`, and the twinning is the point: `terminal.cplus`
+// owns the screen model, the ANSI parser and the command ledger, and
+// `pty.cplus` owns the session — so a second toolkit costs one view, one render,
+// one key path and one read source. Read `appkit.cplus` first; every decision
+// that is about the TERMINAL rather than about the toolkit is argued there and
+// is not repeated.
+//
+// A Widget owns a GtkScrolledWindow/GtkTextView pair and a real PTY session. A
+// GLib fd watch drains the master on the main context, feeds the portable
+// Screen and updates the view. A GtkEventControllerKey forwards keys to the
+// PTY. The node it answers plugs into facet's `adopt_native`.
+//
+// ---- three places GTK is not AppKit ------------------------------------------
+//
+// THE READ SOURCE. libdispatch has a read source per fd; GLib has
+// `g_unix_fd_add_full`, which attaches an fd watch to the default main context
+// and hands back a source id. Same shape, and the same guarantee that matters —
+// the callback runs on the thread that owns the main loop, which is the thread
+// the widget was built on.
+//
+// THE CURSOR IS A TAG, NOT AN ATTRIBUTE RANGE. `paint_cursor`'s whole warning
+// on the AppKit side is about NSTextView adopting the cursor's attribute as its
+// TYPING attribute and painting the next render with it. GtkTextTag has no such
+// hazard: a tag is applied to a range and `set_text` drops every tag with the
+// text it replaces. What survives is the SHAPE decision — a filled block when
+// focused, a thick underline when not — which is about legibility rather than
+// about either toolkit, so it is the same here.
+//
+// THERE IS NO size-allocate SIGNAL IN GTK 4. AppKit observes the scroll view's
+// frame change to resize the pseudo-terminal. GTK 4 dropped `size-allocate` on
+// GtkWidget and offers no property to notify on — but a GtkScrolledWindow's
+// ADJUSTMENTS know: `page-size` is the visible extent and `changed` fires when
+// it moves. That is the same fact `facet_gtk`'s recycler learns its width from.
+//
+// And the trap that comes with it, which `facet_gtk/HANDOFF` pays for in full:
+// an adjustment's bounds are set DURING allocation, so acting on `changed`
+// re-enters the allocation that is running. The resize is deferred to an idle.
+
+import "./pty" as pty;
+import "./terminal" as terminal;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "gtk4/gtk4" as gtk;
+import "gdk/gdk" as gdk;
+import "pango/pango" as pango;
+import "gobject/runtime" as g;
+import "flex_layout/flex_layout" as flex;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// ---- what the binding does not carry -----------------------------------------
+//
+// `g_unix_fd_add_full` is GLib's, not GTK's, and the generator skips it: its
+// callback takes a GIOCondition the GIR presents as a bitfield parameter. Hand
+// bound here, which is what `facet_gtk/recycler` does for `gtk_string_list_splice`
+// and for the same reason.
+#[link_name = "g_unix_fd_add_full"]
+extern fn g_unix_fd_add_full(priority: i32, fd: i32, condition: i32,
+                             f: fn(i32, i32, *u8) -> i32, data: *u8, notify: *u8) -> u32;
+#[link_name = "g_source_remove"]
+extern fn g_source_remove(tag: u32) -> i32;
+#[link_name = "g_idle_add"]
+extern fn g_idle_add(f: fn(*u8) -> i32, data: *u8) -> u32;
+
+// The text iterators are CALLER-ALLOCATED — a `GtkTextIter*` the callee fills,
+// which the generator deliberately refuses to bind (a caller-allocated record
+// out-param bound as an 8-byte slot corrupts the stack, and the generator's
+// `is_foldable_out` says so). So the storage is ours: `ITER_BYTES` below.
+#[link_name = "gtk_text_buffer_get_iter_at_offset"]
+extern fn gtk_text_buffer_get_iter_at_offset(buffer: *u8, iter: *u8, char_offset: i32);
+#[link_name = "gtk_text_buffer_get_start_iter"]
+extern fn gtk_text_buffer_get_start_iter(buffer: *u8, iter: *u8);
+#[link_name = "gtk_text_buffer_get_end_iter"]
+extern fn gtk_text_buffer_get_end_iter(buffer: *u8, iter: *u8);
+
+// `g_object_set` is variadic, and declared so: a fixed-arity alias would put
+// the value in a register the callee never reads. That is the same defect
+// `pty.cplus` records for `fcntl` and `ioctl`.
+#[link_name = "g_object_set"]
+extern fn g_object_set(obj: *u8, ...);
+
+// The resolved foreground of a styled widget, as four floats. GTK 4.10's
+// answer, and the only way to make the cursor's inversion follow the theme
+// rather than pick two colours and hope.
+#[link_name = "gtk_widget_get_color"]
+extern fn gtk_widget_get_color(widget: *u8, rgba: *u8);
+
+#[link_name = "pango_font_description_from_string"]
+extern fn pango_font_description_from_string(s: *u8) -> *u8;
+#[link_name = "pango_font_description_free"]
+extern fn pango_font_description_free(d: *u8);
+
+// A keyval's Unicode scalar, or 0 for a key that has none (an arrow, a
+// function key). GDK's own answer, so this file does not carry a keysym table.
+#[link_name = "gdk_keyval_to_unicode"]
+extern fn gdk_keyval_to_unicode(keyval: u32) -> u32;
+
+// `GtkTextIter` is 80 bytes on a 64-bit target (three pointers, nine ints, two
+// more pointers, three more ints, one pointer — padded). Over-allocating a
+// caller buffer costs nothing and is the safe side of a struct whose layout is
+// documented as opaque.
+fn iter_bytes() -> usize { return 128 as usize; }
+
+// A handler slot. A null fn pointer is not a value C+ hands out, so "nobody is
+// listening" is a flag beside the pointer rather than a comparison against one.
+fn no_handler(_ctx: *u8) { return; }
+
+struct TerminalContext {
+    session: pty::Session,
+    screen: terminal::Screen,
+    opaque text_view: *u8,     // borrowed from Widget._scroll's child
+    opaque scroll_view: *u8,   // borrowed from Widget._scroll
+    opaque cursor_block: *u8,  // owned by the buffer's tag table
+    opaque cursor_under: *u8,
+    source: u32,               // the fd watch, removed at cancel
+    resize_pending: bool,
+    cell_width: f64,
+    cell_height: f64,
+    cancel_requested: bool,
+    cancel_finished: bool,
+    dispose_requested: bool,
+    // Command completions already delivered. The read handler compares this
+    // against the ledger to fire the callback once per command rather than once
+    // per chunk of output that happens to contain the mark.
+    delivered: u64,
+    on_command_end: fn(*u8),
+    opaque on_command_end_ctx: *u8,
+    has_command_handler: bool,
+    on_exit: fn(*u8),
+    opaque on_exit_ctx: *u8,
+    has_exit_handler: bool,
+    exit_delivered: bool,
+}
+
+struct Widget {
+    _scroll: gtk::ScrolledWindow,
+    opaque _ctx: *TerminalContext,
+}
+
+fn supported() -> bool { return true; }
+
+// The context is hung on the TEXT VIEW, which is what every handler is given.
+// `g_object_set_data` is GObject's associated-object, and clearing it is what
+// makes every handler safe at once when the memory goes away.
+fn context_key() -> *u8 { return #str_ptr("cplus-terminal-ctx\0"); }
+
+fn ctx_of(widget: *u8) -> *TerminalContext {
+    if widget == (0 as *u8) { return 0 as *TerminalContext; }
+    return { g::get_data(widget, context_key()) as *TerminalContext };
+}
+
+// ---- rendering ---------------------------------------------------------------
+
+// The widget's own resolved foreground, as `#rrggbb`. The cursor inverts it, so
+// a light theme gets a dark block on light text and a dark theme the reverse,
+// without this file naming a single colour.
+fn hex2(v: f32) -> text::Text {
+    var n: i64 = (v * (255.0f32)) as i64;
+    if n < (0 as i64) { n = 0 as i64; }
+    if n > (255 as i64) { n = 255 as i64; }
+    let digits: str = "0123456789abcdef";
+    var out: text::Text = text::new();
+    let hi: usize = (n / (16 as i64)) as usize;
+    let lo: usize = (n % (16 as i64)) as usize;
+    let _a: status::Status = out.append({ #str_from_raw_parts(#str_ptr(digits) + hi, 1 as usize) });
+    let _b: status::Status = out.append({ #str_from_raw_parts(#str_ptr(digits) + lo, 1 as usize) });
+    return out;
+}
+
+fn widget_color_hex(widget: *u8) -> text::Text {
+    // GdkRGBA is four floats, in order, and caller-allocated.
+    var rgba: [f32; 4] = [0.0f32; 4];
+    { gtk_widget_get_color(widget, #addr_of(rgba) as *u8) };
+    var out: text::Text = text::from_str("#");
+    let r: text::Text = hex2(rgba[0]);
+    let gg: text::Text = hex2(rgba[1]);
+    let b: text::Text = hex2(rgba[2]);
+    let _r: status::Status = out.append(r.view());
+    let _g: status::Status = out.append(gg.view());
+    let _b: status::Status = out.append(b.view());
+    return out;
+}
+
+// An ENUM property is an int through the varargs, not a string. `underline` is
+// a PangoUnderline, and handing it a `char*` made GObject report the pointer's
+// low bits as the enum value: "((PangoUnderline) 1485702560) is invalid". A
+// property's TYPE decides the vararg's type, and there is no diagnostic until
+// the value is nonsense.
+fn tag_set_enum(tag: *u8, prop: *u8, value: i32) {
+    { g_object_set(tag, prop, value, 0 as *u8) };
+    return;
+}
+
+fn tag_set_string(tag: *u8, prop: *u8, value: str) {
+    let v: text::Text = text::from_str(value);
+    match v.c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            { g_object_set(tag, prop, cs.as_ptr(), 0 as *u8) };
+        }
+        option::Option[text::CString]::None => { }
+    }
+    return;
+}
+
+fn render(c: *TerminalContext) {
+    if c == (0 as *TerminalContext) || { (*c).text_view } == (0 as *u8) { return; }
+    let tv: gtk::TextView = gtk::TextView::from_raw({ (*c).text_view });
+    let buffer: gtk::TextBuffer = tv.get_buffer();
+
+    // The cursor needs a cell to sit on. The screen drops the blanks a shell
+    // leaves under it (that is what makes `\b space \b` read as an erase), so
+    // pad them back for display only — otherwise the block would have nothing
+    // to occupy at the end of a line, which is where it spends most of its time.
+    let cursor: usize = { (*c).screen.cursor() };
+    var display: text::Text = text::from_str({ (*c).screen.view() });
+    while display.count() <= cursor {
+        let _pad: status::Status = display.append(" ");
+    }
+    // -1 for the length: the text is NUL-terminated by `str_to_cstring` inside
+    // the binding, and letting GTK measure it is one fewer count to get wrong.
+    // Every tag applied to the old text goes with it, which is why the cursor
+    // is re-applied below rather than cleared first.
+    buffer.set_text(display.view(), (0 as i32) -% (1 as i32));
+
+    // A GtkTextBuffer offset is in CHARACTERS, not bytes — the screen's cursor
+    // is a byte index into the same string, so it is converted by counting the
+    // non-continuation bytes before it. Getting this wrong puts the block a few
+    // cells off on any line that has ever held a non-ASCII glyph.
+    let chars: i32 = char_offset_of(display.view(), cursor);
+    let total: i32 = buffer.get_char_count();
+    var at: i32 = chars;
+    if at > total { at = total; }
+    if total == (0 as i32) { return; }
+    if at >= total { at = total -% (1 as i32); }
+
+    var it_a: [u8; 128] = [0 as u8; 128];
+    var it_b: [u8; 128] = [0 as u8; 128];
+    { gtk_text_buffer_get_iter_at_offset(buffer.raw(), #addr_of(it_a) as *u8, at) };
+    { gtk_text_buffer_get_iter_at_offset(buffer.raw(), #addr_of(it_b) as *u8, at +% (1 as i32)) };
+    let start: gtk::TextIter = gtk::TextIter::from_raw({ #addr_of(it_a) as *u8 });
+    let end: gtk::TextIter = gtk::TextIter::from_raw({ #addr_of(it_b) as *u8 });
+
+    // A program that hid the cursor (`ESC[?25l` — every full-screen TUI does it
+    // while repainting) gets no block drawn. Painting one anyway would leave a
+    // block parked wherever the program last left the cursor, which in a TUI is
+    // wherever its last write happened to end rather than anywhere meaningful.
+    if { (*c).screen.cursor_visible() } {
+        let fg: text::Text = widget_color_hex({ (*c).text_view });
+        if { gtk::Widget::from_raw({ (*c).text_view }).has_focus() } {
+            // FOCUSED: the cell in reverse video — a solid block, the way a
+            // terminal draws it, meaning "type and it lands here".
+            tag_set_string({ (*c).cursor_block }, #str_ptr("background\0"), fg.view());
+            buffer.apply_tag(gtk::TextTag::from_raw({ (*c).cursor_block }), start, end);
+        } else {
+            // UNFOCUSED: a thick underline under the same cell. The two states
+            // differ in SHAPE, not shade — dimming the block would encode focus
+            // as a colour difference alone, which is unreadable to anyone who
+            // cannot separate close colours and washes out on a light theme.
+            buffer.apply_tag(gtk::TextTag::from_raw({ (*c).cursor_under }), start, end);
+        }
+    }
+
+    // The caret sits on the cell with nothing selected: the block is drawn by
+    // the tag, and a copy with no selection copies nothing, as it should.
+    buffer.place_cursor(start);
+    let _v: bool = tv.scroll_to_iter(start, 0.0f64, false, 0.0f64, 0.0f64);
+    return;
+}
+
+// Bytes before `byte_index`, counted as CHARACTERS. Every byte of a multi-byte
+// UTF-8 sequence after the first is a continuation byte, so the characters are
+// the bytes that are not.
+fn char_offset_of(s: str, byte_index: usize) -> i32 {
+    let p: *u8 = #str_ptr(s);
+    let n: usize = #str_len(s);
+    var limit: usize = byte_index;
+    if limit > n { limit = n; }
+    var i: usize = 0 as usize;
+    var chars: i32 = 0 as i32;
+    while i < limit {
+        if !terminal::is_utf8_continuation({ *(p + i) }) { chars = chars +% (1 as i32); }
+        i = i +% (1 as usize);
+    }
+    return chars;
+}
+
+// ---- lifetime ----------------------------------------------------------------
+
+// Freeing the context also CLEARS the association that points at it. Every
+// handler below reaches the context by looking it up through the view, so
+// clearing it here is what makes them all safe at once — and it happens in the
+// one place that knows the memory is going away.
+fn destroy_context(c: *TerminalContext) {
+    if c == (0 as *TerminalContext) { return; }
+    // Read the view BEFORE dropping — the field is gone after drop_in_place.
+    let tv: *u8 = { (*c).text_view };
+    if tv != (0 as *u8) { g::set_data(tv, context_key(), 0 as *u8); }
+    { #drop_in_place::[TerminalContext](c); }
+    { free(c as *u8); }
+    return;
+}
+
+fn request_cancel(c: *TerminalContext) {
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    { (*c).cancel_requested = true; }
+    // The watch is removed HERE and not from inside its own callback: returning
+    // G_SOURCE_REMOVE from the callback would also destroy it, and the two
+    // paths would then be a double removal of one id — which GLib reports as a
+    // warning naming a source that no longer exists.
+    if { (*c).source } != (0 as u32) {
+        let _r: i32 = { g_source_remove({ (*c).source }) };
+        { (*c).source = 0 as u32; }
+    }
+    { (*c).session.close(); }
+    { (*c).cancel_finished = true; }
+    if { (*c).dispose_requested } { destroy_context(c); }
+    return;
+}
+
+// ---- draining ----------------------------------------------------------------
+
+// Answers the screen owes the program — a device-attributes or cursor-position
+// query — written straight back to the pseudo-terminal. A program that asks and
+// never hears back simply waits, so this is not optional politeness.
+fn flush_replies(c: *TerminalContext) {
+    if !{ (*c).screen.has_reply() } { return; }
+    let answer: text::Text = text::from_str({ (*c).screen.reply() });
+    { (*c).screen.clear_reply(); }
+    let _w: isize = { (*c).session.write(answer.view()) };
+    return;
+}
+
+// Fire the caller's callbacks for anything that happened during this drain.
+// Counted rather than edge-triggered: one read can carry several commands'
+// worth of marks, and a handler that ran once per chunk would miss some and
+// repeat others.
+fn deliver_events(c: *TerminalContext) {
+    let finished: u64 = { (*c).screen.finished_count() };
+    if finished > { (*c).delivered } {
+        { (*c).delivered = finished; }
+        if { (*c).has_command_handler } {
+            let f: fn(*u8) = { (*c).on_command_end };
+            let a: *u8 = { (*c).on_command_end_ctx };
+            f(a);
+        }
+    }
+    if { (*c).cancel_requested } && !{ (*c).exit_delivered } {
+        { (*c).exit_delivered = true; }
+        if { (*c).has_exit_handler } {
+            let f: fn(*u8) = { (*c).on_exit };
+            let a: *u8 = { (*c).on_exit_ctx };
+            f(a);
+        }
+    }
+    return;
+}
+
+// The fd watch. Answers G_SOURCE_CONTINUE while the session is live — the
+// source is removed by `request_cancel` rather than by this returning REMOVE,
+// so there is one owner of the id.
+fn read_ready(_fd: i32, _condition: i32, user: *u8) -> i32 {
+    let c: *TerminalContext = { user as *TerminalContext };
+    if c == (0 as *TerminalContext) { return 0 as i32; }
+    if { (*c).cancel_requested } { return 0 as i32; }
+    var buf: [u8; 8192] = [0 as u8; 8192];
+    var changed: bool = false;
+    loop {
+        match { (*c).session.read_into(#addr_of(buf) as *u8, 8192 as usize) } {
+            pty::ReadResult::Data(n) => {
+                let chunk: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n) };
+                { (*c).screen.feed(chunk); }
+                changed = true;
+            }
+            pty::ReadResult::WouldBlock => { break; }
+            pty::ReadResult::Closed => {
+                { (*c).screen.finish(); }
+                changed = true;
+                if changed { render(c); }
+                deliver_events(c);
+                request_cancel(c);
+                // The source is already gone; saying so twice is the double
+                // removal `request_cancel` warns about.
+                return 0 as i32;
+            }
+            pty::ReadResult::Failed => {
+                request_cancel(c);
+                return 0 as i32;
+            }
+        }
+    }
+    if changed { flush_replies(c); }
+    if changed { render(c); }
+    deliver_events(c);
+    // G_SOURCE_CONTINUE.
+    return 1 as i32;
+}
+
+fn send(c: *TerminalContext, bytes: str) {
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    let _written: isize = { (*c).session.write(bytes) };
+    return;
+}
+
+// ---- resize ------------------------------------------------------------------
+
+// The pseudo-terminal's size in CELLS, from the viewport's own extent. Deferred
+// through an idle by `adjustment_changed` — see this file's header for why
+// touching the buffer from inside an allocation is the one thing not to do.
+fn resize_now(user: *u8) -> i32 {
+    let c: *TerminalContext = { user as *TerminalContext };
+    if c == (0 as *TerminalContext) { return 0 as i32; }
+    { (*c).resize_pending = false; }
+    if { (*c).cancel_requested } { return 0 as i32; }
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::from_raw({ (*c).scroll_view });
+    let w: f64 = { sw.get_hadjustment().get_page_size() };
+    let h: f64 = { sw.get_vadjustment().get_page_size() };
+    if w <= (0.0f64) || h <= (0.0f64) { return 0 as i32; }
+    var cols: u16 = (w / { (*c).cell_width }) as u16;
+    var rows: u16 = (h / { (*c).cell_height }) as u16;
+    if cols < (2 as u16) { cols = 2 as u16; }
+    if rows < (1 as u16) { rows = 1 as u16; }
+    let _ok: bool = { (*c).session.resize(rows, cols) };
+    // The MODEL has to move with the pseudo-terminal, or the program is drawing
+    // to a screen of one size while we lay it out at another: every absolute
+    // cursor address lands on the wrong cell and a full-screen program renders
+    // as diagonal wreckage. This is the whole reason the screen has a size.
+    { (*c).screen.resize(rows, cols); }
+    render(c);
+    // G_SOURCE_REMOVE — one idle per change, not a repeating timer.
+    return 0 as i32;
+}
+
+// COALESCED. Both adjustments fire for one resize and each fires more than
+// once as the allocation settles; a `ioctl` and a full re-render per edge is
+// work the shell can see (a program redrawing on every SIGWINCH).
+fn adjustment_changed(_instance: *u8, user: *u8) {
+    let c: *TerminalContext = { user as *TerminalContext };
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    if { (*c).resize_pending } { return; }
+    { (*c).resize_pending = true; }
+    let _t: u32 = { g_idle_add(resize_now, c as *u8) };
+    return;
+}
+
+// ---- keys --------------------------------------------------------------------
+//
+// Keys go to the PTY, not through facet's `on_key`, for the reasons
+// `appkit.cplus` sets out at length: the codes are the toolkit's own, the
+// copy/paste branch is not key handling at all, and the widget wants the real
+// focus chain. The table below is GDK keysyms where that file's is Darwin
+// virtual key codes — the same decision, spelled in the other toolkit.
+
+fn mod_shift() -> u32 { return 1 as u32; }
+fn mod_control() -> u32 { return 4 as u32; }
+fn mod_alt() -> u32 { return 8 as u32; }
+
+// The escape sequence a key with no Unicode of its own stands for, or "" for a
+// key this terminal does not send. xterm's vocabulary, which is what
+// `TERM=xterm-256color` promises the program on the other end.
+fn sequence_for(keyval: u32) -> str {
+    if keyval == (0xff0d as u32) { return "\r"; }        // Return
+    if keyval == (0xff8d as u32) { return "\r"; }        // KP_Enter
+    if keyval == (0xff08 as u32) { return "\x7f"; }      // BackSpace -> DEL, as a tty does
+    if keyval == (0xff09 as u32) { return "\t"; }        // Tab
+    if keyval == (0xff1b as u32) { return "\x1b"; }      // Escape
+    if keyval == (0xff52 as u32) { return "\x1b[A"; }    // Up
+    if keyval == (0xff54 as u32) { return "\x1b[B"; }    // Down
+    if keyval == (0xff53 as u32) { return "\x1b[C"; }    // Right
+    if keyval == (0xff51 as u32) { return "\x1b[D"; }    // Left
+    if keyval == (0xff50 as u32) { return "\x1b[H"; }    // Home
+    if keyval == (0xff57 as u32) { return "\x1b[F"; }    // End
+    if keyval == (0xff55 as u32) { return "\x1b[5~"; }   // Page_Up
+    if keyval == (0xff56 as u32) { return "\x1b[6~"; }   // Page_Down
+    if keyval == (0xff63 as u32) { return "\x1b[2~"; }   // Insert
+    if keyval == (0xffff as u32) { return "\x1b[3~"; }   // Delete
+    if keyval == (0xffbe as u32) { return "\x1bOP"; }    // F1
+    if keyval == (0xffbf as u32) { return "\x1bOQ"; }    // F2
+    if keyval == (0xffc0 as u32) { return "\x1bOR"; }    // F3
+    if keyval == (0xffc1 as u32) { return "\x1bOS"; }    // F4
+    if keyval == (0xffc2 as u32) { return "\x1b[15~"; }  // F5
+    if keyval == (0xffc3 as u32) { return "\x1b[17~"; }  // F6
+    if keyval == (0xffc4 as u32) { return "\x1b[18~"; }  // F7
+    if keyval == (0xffc5 as u32) { return "\x1b[19~"; }  // F8
+    if keyval == (0xffc6 as u32) { return "\x1b[20~"; }  // F9
+    if keyval == (0xffc7 as u32) { return "\x1b[21~"; }  // F10
+    if keyval == (0xffc8 as u32) { return "\x1b[23~"; }  // F11
+    if keyval == (0xffc9 as u32) { return "\x1b[24~"; }  // F12
+    return "";
+}
+
+// One scalar as UTF-8, into a caller's buffer. Returns the byte count.
+fn encode_utf8(cp: u32, out: *u8) -> usize {
+    if cp < (0x80 as u32) {
+        { *out = cp as u8 };
+        return 1 as usize;
+    }
+    if cp < (0x800 as u32) {
+        { *out = ((0xc0 as u32) | (cp >> (6 as u32))) as u8 };
+        { *(out + (1 as usize)) = ((0x80 as u32) | (cp & (0x3f as u32))) as u8 };
+        return 2 as usize;
+    }
+    if cp < (0x10000 as u32) {
+        { *out = ((0xe0 as u32) | (cp >> (12 as u32))) as u8 };
+        { *(out + (1 as usize)) = ((0x80 as u32) | ((cp >> (6 as u32)) & (0x3f as u32))) as u8 };
+        { *(out + (2 as usize)) = ((0x80 as u32) | (cp & (0x3f as u32))) as u8 };
+        return 3 as usize;
+    }
+    { *out = ((0xf0 as u32) | (cp >> (18 as u32))) as u8 };
+    { *(out + (1 as usize)) = ((0x80 as u32) | ((cp >> (12 as u32)) & (0x3f as u32))) as u8 };
+    { *(out + (2 as usize)) = ((0x80 as u32) | ((cp >> (6 as u32)) & (0x3f as u32))) as u8 };
+    { *(out + (3 as usize)) = ((0x80 as u32) | (cp & (0x3f as u32))) as u8 };
+    return 4 as usize;
+}
+
+fn key_pressed(_controller: *u8, keyval: u32, _keycode: u32, state: u32, user: *u8) -> i32 {
+    let c: *TerminalContext = ctx_of(user);
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return 0 as i32; }
+    let ctrl: bool = (state & mod_control()) != (0 as u32);
+    let shift: bool = (state & mod_shift()) != (0 as u32);
+    let alt: bool = (state & mod_alt()) != (0 as u32);
+
+    // COPY IS CTRL+SHIFT+C, not Ctrl+C — which a terminal owes to the program
+    // as an interrupt. Every terminal emulator on this platform makes the same
+    // trade, and it is why the shifted pair exists at all.
+    if ctrl && shift {
+        if keyval == (0x43 as u32) || keyval == (0x63 as u32) {   // C / c
+            let tv: gtk::TextView = gtk::TextView::from_raw(user);
+            let clip: gdk::Clipboard = { gtk::Widget::from_raw(user).get_clipboard() };
+            { tv.get_buffer().copy_clipboard(clip) };
+            return 1 as i32;
+        }
+        // Paste is NOT handled here and is deliberately left to fall through:
+        // GDK's clipboard read is asynchronous, and the answer arrives in a
+        // callback that would have to outlive a widget the user may already
+        // have closed. Recorded rather than half-built — the middle-click
+        // primary-selection paste GTK gives every text view still works.
+    }
+
+    // A control character is the letter's ordinal, which is what a tty means by
+    // ^C. Asked of the keyval rather than of the Unicode, because GDK reports
+    // the unshifted letter and that is the one the ordinal is derived from.
+    if ctrl && !shift {
+        if keyval >= (0x61 as u32) && keyval <= (0x7a as u32) {
+            var one: [u8; 1] = [0 as u8; 1];
+            one[0] = (keyval -% (0x61 as u32) +% (1 as u32)) as u8;
+            send(c, { #str_from_raw_parts(#addr_of(one) as *u8, 1 as usize) });
+            return 1 as i32;
+        }
+    }
+
+    let seq: str = sequence_for(keyval);
+    if seq != "" {
+        // ALT PREFIXES WITH ESC, which is how a tty has always spelled Meta.
+        if alt { send(c, "\x1b"); }
+        send(c, seq);
+        return 1 as i32;
+    }
+
+    let cp: u32 = { gdk_keyval_to_unicode(keyval) };
+    if cp == (0 as u32) { return 0 as i32; }
+    var bytes: [u8; 4] = [0 as u8; 4];
+    let n: usize = encode_utf8(cp, #addr_of(bytes) as *u8);
+    if alt { send(c, "\x1b"); }
+    send(c, { #str_from_raw_parts(#addr_of(bytes) as *u8, n) });
+    return 1 as i32;
+}
+
+// The cursor's SHAPE depends on focus, so a focus change is a re-render. GTK
+// states focus as a widget property, which is one `notify::` rather than the
+// pair of window notifications AppKit needs.
+fn focus_changed(instance: *u8, _pspec: *u8, _user: *u8) {
+    let c: *TerminalContext = ctx_of(instance);
+    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    render(c);
+    return;
+}
+
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_notify(instance: *u8, detailed_signal: *u8,
+                      handler: fn(*u8, *u8, *u8),
+                      data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+// ---- construction ------------------------------------------------------------
+
+// A monospace cell, measured rather than assumed. Pango answers in 1024ths of a
+// point, which `facet_gtk/paint` names as `pango_scale` — the same number, and
+// the reason a font size of 13 is 13312 to this API.
+fn cell_metrics(tv: gtk::TextView, font_size: f64, ref width: f64, ref height: f64) {
+    width = font_size * (0.6f64);
+    height = font_size * (1.2f64);
+    var spec: text::Text = text::from_str("monospace ");
+    let _a: status::Status = spec.append({ (font_size as i64) }.to_text().view());
+    let desc: *u8 = match spec.c_str() {
+        option::Option[text::CString]::Some(cs) => { pango_font_description_from_string(cs.as_ptr()) }
+        option::Option[text::CString]::None => 0 as *u8,
+    };
+    if desc == (0 as *u8) { return; }
+    // A NULL language is "the default", which is what C passes here. The
+    // binding takes wrappers by value and hands their raw pointers on, so a
+    // null wrapper IS a null argument.
+    let metrics: pango::FontMetrics =
+        { tv.get_ltr_context().get_metrics(pango::FontDescription::from_raw(desc),
+                                           pango::Language::from_raw(0 as *u8)) };
+    let scale: f64 = 1024.0f64;
+    let w: i32 = { metrics.get_approximate_char_width() };
+    let asc: i32 = { metrics.get_ascent() };
+    let desc_px: i32 = { metrics.get_descent() };
+    if w > (0 as i32) { width = (w as f64) / scale; }
+    if (asc +% desc_px) > (0 as i32) { height = ((asc +% desc_px) as f64) / scale; }
+    { metrics.unref() };
+    { pango_font_description_free(desc) };
+    return;
+}
+
+fn start(
+    shell: str = "",
+    cwd: str = "",
+    max_scrollback: usize = 1048576 as usize,
+    font_size: f64 = 13.0f64,
+    save_history: bool = false,
+) -> option::Option[Widget] {
+    var session: pty::Session = match pty::start(shell, cwd: cwd, save_history: save_history) {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { return option::Option[Widget]::None; }
+    };
+
+    let scroll: gtk::ScrolledWindow = gtk::ScrolledWindow::new();
+    // NEVER horizontally: a terminal wraps at its own column count, and a
+    // horizontal scrollbar would mean the pseudo-terminal and the view disagree
+    // about how wide a line is.
+    scroll.set_policy(gtk::policy_type_never(), gtk::policy_type_automatic());
+
+    let tv: gtk::TextView = gtk::TextView::new();
+    let tvw: gtk::Widget = gtk::Widget::from_raw(tv.raw());
+    tv.set_editable(false);
+    // OUR cursor, not GTK's: the model owns the position and draws it as a
+    // block through a tag, and a second caret would be a second answer.
+    tv.set_cursor_visible(false);
+    tv.set_monospace(true);
+    tv.set_wrap_mode(gtk::wrap_mode_char());
+    tv.set_left_margin(8 as i32);
+    tv.set_right_margin(8 as i32);
+    tv.set_top_margin(6 as i32);
+    tv.set_bottom_margin(6 as i32);
+    // FOCUSABLE, because a non-editable GtkTextView is not by default and a
+    // terminal that cannot take the keyboard is a log viewer.
+    tvw.set_focusable(true);
+    tvw.set_hexpand(true);
+    tvw.set_vexpand(true);
+    scroll.set_child(tvw);
+
+    let provider: gtk::CssProvider = gtk::CssProvider::new();
+    var css: text::Text = text::from_str("textview { font-family: monospace; font-size: ");
+    let _cs: status::Status = css.append({ (font_size as i64) }.to_text().view());
+    let _cs2: status::Status = css.append("pt; }");
+    provider.load_from_string(css.view());
+    tvw.get_style_context().add_provider(gtk::StyleProvider::from_raw(provider.raw()), 600 as u32);
+
+    // The two cursor shapes, made once and applied per render. A tag lives in
+    // the buffer's TAG TABLE, which outlives any one `set_text`, so the tags
+    // survive the text they were applied to being replaced.
+    let buffer: gtk::TextBuffer = tv.get_buffer();
+    let table: gtk::TextTagTable = buffer.get_tag_table();
+    let block: gtk::TextTag = gtk::TextTag::new("cplus-cursor-block");
+    let under: gtk::TextTag = gtk::TextTag::new("cplus-cursor-under");
+    // The block's foreground is the view's BACKGROUND, so the glyph under it
+    // stays readable; its background is written per render from the resolved
+    // theme colour.
+    // PANGO_UNDERLINE_DOUBLE = 2 — thick enough to read as a cursor rather
+    // than as a spelling error.
+    tag_set_enum(under.raw(), #str_ptr("underline\0"), 2 as i32);
+    let _ta: bool = table.add(block);
+    let _tb: bool = table.add(under);
+
+    let c: *TerminalContext = { malloc(#size_of::[TerminalContext]()) as *TerminalContext };
+    if c == (0 as *TerminalContext) {
+        session.close();
+        return option::Option[Widget]::None;
+    }
+    var cw: f64 = 0.0f64;
+    var ch: f64 = 0.0f64;
+    cell_metrics(tv, font_size, cw, ch);
+    { *c = TerminalContext {
+        session: session,
+        screen: terminal::new(max_scrollback: max_scrollback),
+        text_view: tv.raw(),
+        scroll_view: scroll.raw(),
+        cursor_block: block.raw(),
+        cursor_under: under.raw(),
+        source: 0 as u32,
+        resize_pending: false,
+        cell_width: cw,
+        cell_height: ch,
+        cancel_requested: false,
+        cancel_finished: false,
+        dispose_requested: false,
+        delivered: 0 as u64,
+        on_command_end: no_handler,
+        on_command_end_ctx: 0 as *u8,
+        has_command_handler: false,
+        on_exit: no_handler,
+        on_exit_ctx: 0 as *u8,
+        has_exit_handler: false,
+        exit_delivered: false,
+    }; }
+    g::set_data(tv.raw(), context_key(), c as *u8);
+
+    // G_IO_IN | G_IO_HUP | G_IO_ERR: the hangup and the error matter as much as
+    // the data, because a shell that exits is a read of zero and this is where
+    // that is noticed.
+    let cond: i32 = (1 as i32) | (8 as i32) | (16 as i32);
+    let src: u32 = { g_unix_fd_add_full(0 as i32, { (*c).session.master_fd() }, cond,
+                                        read_ready, c as *u8, 0 as *u8) };
+    if src == (0 as u32) {
+        g::set_data(tv.raw(), context_key(), 0 as *u8);
+        { (*c).session.close(); }
+        destroy_context(c);
+        return option::Option[Widget]::None;
+    }
+    { (*c).source = src; }
+
+    let keys: gtk::EventControllerKey = gtk::EventControllerKey::new();
+    // THE TEXT VIEW IS THE USER DATA, never the raw context: the controller is
+    // owned by the widget, which outlives the context, so a raw pointer here is
+    // a dangling read waiting for the next keystroke. Looking the context up
+    // through the view is what `destroy_context` clearing the association makes
+    // safe.
+    let _k: u64 = keys.connect_key_pressed(key_pressed, tv.raw());
+    tvw.add_controller(gtk::EventController::from_raw(keys.raw()));
+
+    let _f: u64 = { sigc_notify(tv.raw(), #str_ptr("notify::has-focus\0"), focus_changed,
+                                0 as *u8, 0 as *u8, 0 as i32) };
+    let _ha: u64 = { scroll.get_hadjustment().connect_changed(adjustment_changed, c as *u8) };
+    let _va: u64 = { scroll.get_vadjustment().connect_changed(adjustment_changed, c as *u8) };
+    return option::Option[Widget]::Some(Widget { _scroll: scroll, _ctx: c });
+}
+
+fn release_view(p: *u8) { g::object_unref(p); return; }
+
+impl Widget {
+    // Owned GTK widget handle. The Widget must stay alive while the terminal
+    // should remain interactive.
+    fn view(this) -> gtk::Widget { return gtk::Widget::from_raw(this._scroll.raw()); }
+
+    // Referenced raw handle for facet's `adopt_native`, which owns the ref and
+    // gives it back through `release_view`. `ref_sink` rather than `ref`: a
+    // freshly built GtkWidget carries a FLOATING reference, and taking a plain
+    // ref on top of one leaks the widget for the life of the process.
+    fn native_handle(this) -> *u8 { return g::object_ref_sink(this._scroll.raw()); }
+
+    // A fixed flex leaf. Size it with width/height/grow like any @ui widget.
+    fn node(this) -> flex::Node {
+        var n: flex::Node = flex::Node::new();
+        n.attach(g::object_ref_sink(this._scroll.raw()), release_view);
+        return n;
+    }
+
+    fn send(this, bytes: str) { send(this._ctx, bytes); return; }
+
+    // Put the keyboard IN the terminal. Typing is the primary way to use a
+    // terminal, so an app must be able to say where the caret is rather than
+    // inherit whatever the focus chain picked. Call it AFTER the widget is
+    // mounted: false means it is not on screen yet.
+    fn focus(this) -> bool {
+        if this._ctx == (0 as *TerminalContext) { return false; }
+        let tv: *u8 = { (*this._ctx).text_view };
+        if tv == (0 as *u8) { return false; }
+        return { gtk::Widget::from_raw(tv).grab_focus() };
+    }
+
+    fn has_focus(this) -> bool {
+        if this._ctx == (0 as *TerminalContext) { return false; }
+        let tv: *u8 = { (*this._ctx).text_view };
+        if tv == (0 as *u8) { return false; }
+        return { gtk::Widget::from_raw(tv).has_focus() };
+    }
+
+    fn text(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.view() });
+    }
+
+    fn is_running(this) -> bool {
+        return this._ctx != (0 as *TerminalContext) && !{ (*this._ctx).cancel_requested };
+    }
+
+    // ---- driving commands ---------------------------------------------------
+
+    // Run `command` and let the ledger report how it ends. Returns the id the
+    // command will be given, or 0 if it was not sent — a stopped session, or one
+    // that is still busy with the previous command. `appkit.cplus` argues both
+    // the refusal and the `expects_marks` half at length; this is that code.
+    fn run(this, command: str) -> u64 {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return 0 as u64; }
+        if { (*c).screen.command_state() } == terminal::CommandState::Running { return 0 as u64; }
+        let next: u64 = { (*c).screen.command_id() } +% (1 as u64);
+        if { (*c).screen.has_integration() } || { (*c).session.expects_marks() } {
+            send(c, command);
+            send(c, "\r");
+        } else {
+            send(c, "printf '\\033]133;C\\007'\r");
+            send(c, command);
+            send(c, "\r");
+            send(c, "printf '\\033]133;D;%d\\007' \"$?\"\r");
+        }
+        return next;
+    }
+
+    fn interrupt(this) { send(this._ctx, "\x03"); return; }
+
+    // Empty the pane — the visible screen AND the scrollback. NOTHING GOES DOWN
+    // THE PTY, which is the whole difference between this and running `clear`.
+    fn clear(this) {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) { return; }
+        { (*c).screen.clear(); }
+        render(c);
+        return;
+    }
+
+    fn has_integration(this) -> bool {
+        if this._ctx == (0 as *TerminalContext) { return false; }
+        return { (*this._ctx).screen.has_integration() };
+    }
+
+    fn command_state(this) -> terminal::CommandState {
+        if this._ctx == (0 as *TerminalContext) { return terminal::CommandState::Idle; }
+        return { (*this._ctx).screen.command_state() };
+    }
+
+    fn command_id(this) -> u64 {
+        if this._ctx == (0 as *TerminalContext) { return 0 as u64; }
+        return { (*this._ctx).screen.command_id() };
+    }
+
+    fn command_line(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.command_line() });
+    }
+
+    fn exit_code(this) -> option::Option[i32] {
+        if this._ctx == (0 as *TerminalContext) { return option::Option[i32]::None; }
+        if { (*this._ctx).screen.command_state() } == terminal::CommandState::Running {
+            return option::Option[i32]::None;
+        }
+        let code: i32 = { (*this._ctx).screen.exit_code() };
+        if code < (0 as i32) { return option::Option[i32]::None; }
+        return option::Option[i32]::Some(code);
+    }
+
+    fn finished_count(this) -> u64 {
+        if this._ctx == (0 as *TerminalContext) { return 0 as u64; }
+        return { (*this._ctx).screen.finished_count() };
+    }
+
+    fn output(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return { (*this._ctx).screen.output() };
+    }
+
+    fn cwd(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.cwd() });
+    }
+
+    fn title(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.title() });
+    }
+
+    fn alternate_screen(this) -> bool {
+        if this._ctx == (0 as *TerminalContext) { return false; }
+        return { (*this._ctx).screen.alternate_screen() };
+    }
+
+    fn on_command_end(this, handler: fn(*u8), ctx: *u8) {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) { return; }
+        { (*c).on_command_end = handler; }
+        { (*c).on_command_end_ctx = ctx; }
+        { (*c).has_command_handler = true; }
+        return;
+    }
+
+    fn on_exit(this, handler: fn(*u8), ctx: *u8) {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) { return; }
+        { (*c).on_exit = handler; }
+        { (*c).on_exit_ctx = ctx; }
+        { (*c).has_exit_handler = true; }
+        return;
+    }
+
+    fn shell_exit_code(this) -> option::Option[i32] {
+        if this._ctx == (0 as *TerminalContext) { return option::Option[i32]::None; }
+        return { (*this._ctx).session.poll_exit() };
+    }
+
+    fn stop(this) { request_cancel(this._ctx); return; }
+
+    fn drop(ref this) {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) { return; }
+        // Cleared here too, not only in `destroy_context`: a dropped widget must
+        // stop responding at once rather than when the source finishes.
+        g::set_data({ (*c).text_view }, context_key(), 0 as *u8);
+        { (*c).dispose_requested = true; }
+        if { (*c).cancel_finished } {
+            destroy_context(c);
+        } else {
+            request_cancel(c);
+        }
+        this._ctx = 0 as *TerminalContext;
+        return;
+    }
+}
+
+// ---- test seams -------------------------------------------------------------
+// The lifetime hazard this file inherits from its AppKit twin is only
+// observable from outside if a test can see the text view, ask what the
+// association currently points at, and force teardown.
+fn text_view_of(w: Widget) -> *u8 { return { (*w._ctx).text_view }; }
+
+fn context_of(tv: *u8) -> *u8 {
+    if tv == (0 as *u8) { return 0 as *u8; }
+    return { g::get_data(tv, context_key()) };
+}
+
+fn force_destroy(ref w: Widget) {
+    let c: *TerminalContext = w._ctx;
+    if c == (0 as *TerminalContext) { return; }
+    destroy_context(c);
+    w._ctx = 0 as *TerminalContext;
+    return;
+}
