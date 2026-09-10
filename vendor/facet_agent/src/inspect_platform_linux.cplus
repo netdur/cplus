@@ -151,18 +151,62 @@ fn ensure_provider(widget: *u8) -> bool {
 
 // ---- finding the widget --------------------------------------------------------------
 //
-// A node's own view when it has one, else the nearest ancestor that does —
-// which is the widget that actually draws it. `found_own` is what separates the
-// two for `native_props`, so the difference is reported rather than smoothed.
-struct Found {
+// `place` is the shape all three other halves have and the suite calls by name:
+// a node's own view when it has one, else the nearest ancestor that does — the
+// widget that actually draws it — with the node's rectangle inside that
+// widget's coordinate space.
+//
+// THE RECTANGLE IS CARRIED EVEN THOUGH THE HIGHLIGHT DOES NOT USE IT. The
+// inspector reads it, and a future highlight that can place itself precisely
+// would need exactly this; computing it here keeps the answer identical across
+// the four backends and keeps `found` meaning the same thing everywhere.
+//
+// NO DPI FACTOR TO APPLY, unlike the Win32 sibling. GTK 4 lays out in logical
+// pixels and the compositor scales the surface, so flex's own units already are
+// the widget's — there is nothing to convert.
+struct Rect { x: f64, y: f64, w: f64, h: f64 }
+
+// `view` is BORROWED, exactly as the other halves document: the backend that
+// mounted it owns it, and this struct is a short-lived answer rather than a
+// second owner.
+struct Placed {
     opaque view: *u8,
+    rect: Rect,
+    found: bool,
+    // Whether the view is the node's OWN. `native_props` reports the
+    // difference rather than smoothing it — see the header.
     own: bool,
 }
 
-fn widget_of(n: *core::Node) -> Found {
-    if n == (0 as *core::Node) { return Found { view: 0 as *u8, own: false }; }
+fn nothing_placed() -> Placed {
+    return Placed {
+        view: 0 as *u8,
+        rect: Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        found: false,
+        own: false,
+    };
+}
+
+fn place(n: *core::Node) -> Placed {
+    if n == (0 as *core::Node) { return nothing_placed(); }
+
     let own: *u8 = core::view_of(n);
-    if own != (0 as *u8) { return Found { view: own, own: true }; }
+    if own != (0 as *u8) {
+        let f0: flex::Frame = core::frame_of(n);
+        return Placed {
+            view: own,
+            rect: Rect { x: 0.0f64, y: 0.0f64, w: f0.width, h: f0.height },
+            found: true,
+            own: true,
+        };
+    }
+
+    let f: flex::Frame = core::frame_of(n);
+    var x: f64 = f.left;
+    var y: f64 = f.top;
+    let w: f64 = f.width;
+    let h: f64 = f.height;
+
     var cur: *core::Node = n;
     // Bounded by the tree's own depth; a parent link always goes up.
     var steps: usize = 0 as usize;
@@ -171,13 +215,23 @@ fn widget_of(n: *core::Node) -> Found {
             option::Option[*core::Node]::Some(q) => q,
             option::Option::None => 0 as *core::Node,
         };
-        if p == (0 as *core::Node) { return Found { view: 0 as *u8, own: false }; }
+        if p == (0 as *core::Node) { return nothing_placed(); }
         let pv: *u8 = core::view_of(p);
-        if pv != (0 as *u8) { return Found { view: pv, own: false }; }
+        if pv != (0 as *u8) {
+            return Placed {
+                view: pv,
+                rect: Rect { x: x, y: y, w: w, h: h },
+                found: true,
+                own: false,
+            };
+        }
+        let pf: flex::Frame = core::frame_of(p);
+        x = x + pf.left;
+        y = y + pf.top;
         cur = p;
         steps = steps +% (1 as usize);
     }
-    return Found { view: 0 as *u8, own: false };
+    return nothing_placed();
 }
 
 fn clear_highlight(_s: *u8) {
@@ -195,8 +249,8 @@ fn highlight(s: *u8, h: insp::Handle) {
     if !h.is_live() { clear_highlight(s); return; }
     let n: *core::Node = tree::node_of(h);
     if n == (0 as *core::Node) { clear_highlight(s); return; }
-    let f: Found = widget_of(n);
-    if f.view == (0 as *u8) { clear_highlight(s); return; }
+    let f: Placed = place(n);
+    if !f.found { clear_highlight(s); return; }
     clear_highlight(s);
     if !ensure_provider(f.view) { return; }
     let w: gtk::Widget = gtk::Widget::from_raw(f.view);
@@ -213,8 +267,8 @@ fn highlight(s: *u8, h: insp::Handle) {
 // and a node with no widget at all was drawn by an ancestor.
 fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
-    let f: Found = widget_of(n);
-    if !f.own {
+    let f: Placed = place(n);
+    if !f.found || !f.own {
         // Not an absence of information — a fact about the node, and the one
         // that explains why the highlight sits on something bigger. The Windows
         // and Android siblings say this in the same words, deliberately.
@@ -320,7 +374,8 @@ fn the_frame_is_an_outline_because_a_border_would_move_the_layout() {
 
 #[test]
 fn a_node_that_is_not_there_resolves_to_no_widget() {
-    let f: Found = widget_of(0 as *core::Node);
+    let f: Placed = place(0 as *core::Node);
+    assert !f.found;
     assert f.view == (0 as *u8);
     assert !f.own;
 }
