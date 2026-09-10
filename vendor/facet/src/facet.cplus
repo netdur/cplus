@@ -1283,6 +1283,78 @@ fn set_agent(n: *Node, v: vocab::Agent) {
     touch(n, props::C_AGENT);
 }
 
+// ---- what an agent may READ out of a secure field ----------------------------
+//
+// A SECURE FIELD READS BACK MASKED. `secure: true` is the application declaring
+// that these contents must not be shown — the platform will not even draw them —
+// and an agent surface that answered the plaintext was doing what the control
+// exists to prevent. The inspector's `inspect(node, "text")` returned the
+// password; the curated `describe_ui` carried it as the node's text.
+//
+// MASKED, NOT REFUSED, and not blanked. This is `<input type=password>`: the
+// value comes back as bullets, the field stays WRITABLE, and nothing else about
+// the node changes. The three alternatives are all worse for an agent that has
+// no eyes:
+//
+//   plaintext   the defect
+//   refused     costs the node its structure and its affordance — an agent that
+//               cannot see a password box cannot fill one in
+//   ""          "this field is empty, go and fill it in" — a lie in the shape of
+//               a fact, which is exactly what `UiNode.text` warns about
+//
+// A mask says the true thing: there is a value here, you may not read it, and
+// you may still write it.
+//
+// THE MASK KEEPS THE CHARACTER COUNT, deliberately, because this surface is
+// what a USER sees and a user sees one bullet per character. That does publish
+// the length of the secret, which is a real if small leak; it is the same thing
+// the screen publishes, and an agent that must decide whether a field is empty,
+// half-typed or full has nothing else to go on. Fixed-width would hide the
+// length and make "is this filled in?" unanswerable.
+//
+// The backends already recognise the PLATFORM's own secure class — AppKit's
+// NSSecureTextField, UIKit's `isSecureTextEntry`, GTK's visibility flag — which
+// covers a native view facet did not create. It never covered a facet field
+// declared `secure: true`, because that declaration lives here and stopped here.
+//
+// ASKED AT THE POINT OF THE READ rather than stamped when the node is built, so
+// `set_secure(true)` called later lands in the same place and there is no order
+// of calls that leaves a field readable.
+fn _is_secure_entry(d: *Data) -> bool {
+    if d.is_null() { return false; }
+    if { (*d).kind } != props::K_TEXT_FIELD { return false; }
+    let p: *props::TextFieldProps = { (*d).props } as *props::TextFieldProps;
+    if p == (0 as *props::TextFieldProps) { return false; }
+    return { (*p).is_secure };
+}
+
+// The character an agent sees instead of a secret. ASCII `*` rather than the
+// U+2022 bullet the screen actually draws: this string is read back through
+// JSON, logs and a model's context, and one byte that cannot be confused with
+// anything is worth more here than typographic fidelity to a glyph no agent
+// renders.
+fn agent_mask_char() -> str { return "*"; }
+
+// Is this node one whose text an agent must not read? Public because the two
+// agent surfaces and every backend ask it, and there must be exactly one answer.
+fn is_secure_entry(n: *Node) -> bool {
+    if n.is_null() { return false; }
+    return _is_secure_entry({ (*n).data() });
+}
+
+// The text an AGENT may see for this node, given the text the node actually
+// holds. Plain nodes answer their own text unchanged; a secure entry answers one
+// mask character per character.
+//
+// TAKES THE ACTUAL TEXT rather than reading it, because each control stores its
+// text in its own props and this file does not know 42 layouts. Every caller has
+// already read the value when it gets here — the point is that it must not be
+// the value that leaves.
+fn agent_text(n: *Node, actual: str) -> text::Text {
+    if !is_secure_entry(n) { return text::from_str(actual); }
+    return text::repeating(agent_mask_char(), actual.char_count());
+}
+
 fn agent(n: *Node) -> vocab::Agent {
     if n.is_null() { return vocab::Agent::Open; }
     let d: *Data = { (*n).data() };
@@ -2346,3 +2418,4 @@ fn touch_all_re_reads_every_fact_and_issues_no_verb() {
     assert (props::C_COMMANDS & props::C_ALL_STATE) == (0 as u64);
     assert (props::C_COMMANDS | props::C_ALL_STATE) == 18446744073709551615u64;
 }
+

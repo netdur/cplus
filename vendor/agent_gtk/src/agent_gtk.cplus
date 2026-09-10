@@ -265,7 +265,17 @@ fn node_text(widget: *u8, role: identity::Role) -> text::Text {
     }
     if identity::role_eq(role, identity::Role::Input) {
         if is_a(widget, #str_ptr("GtkEditable\0")) {
-            return convert::cstr_to_text({ gtk_editable_get_text(widget) });
+            let v: text::Text = convert::cstr_to_text({ gtk_editable_get_text(widget) });
+            // A SECURE FIELD READS BACK MASKED — one door, every agent-facing
+            // read of this node's content. Unless the app pinned a policy, in
+            // which case it has said what it means and the tier gate governs;
+            // the mask is for the field nobody declared, which is the one that
+            // was leaking. A GtkEntry with visibility off is exactly what the
+            // screen is already showing as dots.
+            if is_secure_by_class(widget) && !has_explicit_policy(widget) {
+                return mask_of(v);
+            }
+            return v;
         }
         return text::from_str("");
     }
@@ -1224,8 +1234,17 @@ fn get_agent_policy(widget: *u8) -> u32 {
 // the log. AppKit's side records finding exactly that: a card number arriving
 // in the curated describe as the node's NAME.
 //
-// So an unpinned password field is PRIVATE by default. An explicit pin still
-// wins, because an application that deliberately marked one open has said so.
+// So an unpinned password field READS BACK MASKED. An explicit pin still wins,
+// because an application that deliberately marked one open has said so.
+//
+// IT WAS `policy_private()` UNTIL 2026-09-09, and the tier was the wrong tool.
+// It did keep the secret in — and cost the field its WRITE, because
+// `act_caps_for_tier` makes a private node need `cap_act_private`, which no
+// ordinary grant carries: an agent could not fill in a password box at all, and
+// a blanked `text` told it the box was empty into the bargain. The two questions
+// are on separate axes now — the SECURE CLASS masks the value, the TIER gates
+// the node and is the app's to declare. `<input type=password>`. The AppKit
+// backend carries the same rule and the reasoning in full.
 #[link_name = "gtk_entry_get_visibility"]
 extern fn gtk_entry_get_visibility(e: *u8) -> i32;
 
@@ -1234,12 +1253,22 @@ fn is_secure_by_class(widget: *u8) -> bool {
     return { gtk_entry_get_visibility(widget) } == (0 as i32);
 }
 
+fn has_explicit_policy(widget: *u8) -> bool {
+    if is_null(widget) { return false; }
+    return { #addr(g_object_get_data(widget, policy_key())) } != (0 as usize);
+}
+
 fn effective_policy(widget: *u8) -> u32 {
     if is_null(widget) { return identity::policy_none(); }
     let raw: usize = { #addr(g_object_get_data(widget, policy_key())) };
     if raw != (0 as usize) { return (raw -% (1 as usize)) as u32; }
-    if is_secure_by_class(widget) { return identity::policy_private(); }
     return identity::policy_none();
+}
+
+// One mask character per character of the secret. ASCII `*`, matching
+// `facet::agent_mask_char` and every other backend.
+fn mask_of(actual: text::Text) -> text::Text {
+    return text::repeating("*", { actual.view() }.char_count());
 }
 
 // ---- the snapshot has to be TAKEN AGAIN, and on the right thread ---------------

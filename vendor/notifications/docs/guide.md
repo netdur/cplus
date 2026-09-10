@@ -167,14 +167,31 @@ its own field when actions land.
 
 ## Gotcha: you need a bundle on Apple
 
-`UNUserNotificationCenter` refuses a process with no bundle identifier, and it
-refuses by **raising** — `+currentNotificationCenter` throws rather than
-returning nil, and an unhandled ObjC exception aborts. That killed this
-package's own test runner with SIGABRT until the backend grew a guard.
+`UNUserNotificationCenter` refuses a process with no bundle, and it refuses by
+**raising** — `+currentNotificationCenter` throws rather than returning nil, and
+an unhandled ObjC exception aborts. That killed this package's own test runner
+with SIGABRT until the backend grew a guard.
 
-A bare `cpc build` binary now answers `Unsupported` honestly. To actually post
-one you need a `.app`: `examples/notifications_demo/bundle.sh` is the smallest
+A `@try` is not an option, which is worth knowing before you reach for one: the
+raise happens inside a `dispatch_once` block, and libdispatch terminates on any
+exception crossing it. A `@try/@catch` directly around the call never runs its
+handler and the process still dies. The guard has to be asked *before* the call.
+
+A bare `cpc build` binary answers `Unsupported` honestly. To actually post one
+you need a `.app`: `examples/notifications_demo/bundle.sh` is the smallest
 version, about twenty lines.
+
+**An embedded `macos/Info.plist` is not a bundle.** `cpc build` embeds that file
+into `__TEXT,__info_plist` when it exists, which gives a bare binary a bundle
+*identifier* — and no bundle *proxy*, which is the thing the framework actually
+consults. Until 2026-09-09 the guard asked for the identifier, so adding that
+one file to a working project turned this honest `Unsupported` into SIGABRT,
+inside `permissions::state`, before anything in this package was reached. The
+guard now asks whether `[[NSBundle mainBundle] bundleURL]` names a real `.app`;
+`objc/bundle` carries the four rows it was measured against, and
+`vendor/permissions/tools/run_embedded_plist_probe.sh` builds a project both
+ways and checks they agree. Add the plist freely for the usage-description keys
+camera, microphone and location need — it just will not buy you a notification.
 
 Notifications is the one Apple domain gated on the prompt alone — there is no
 `NSNotificationsUsageDescription` to forget, unlike camera or contacts.

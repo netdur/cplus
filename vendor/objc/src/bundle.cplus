@@ -1,0 +1,181 @@
+// bundle — does this process have a bundle PROXY? The question a bundle-scoped
+// framework asks before it will speak to you, and the one a caller must ask
+// first because the framework's answer to a process that has none is a RAISE.
+//
+// ---------------------------------------------------------------------------
+// WHY THIS IS NOT `bundleIdentifier != nil` — it was, and it stopped being
+// ---------------------------------------------------------------------------
+//
+// `+[UNUserNotificationCenter currentNotificationCenter]` does not return nil
+// for a bundle-less process. It raises NSInternalInconsistencyException
+// ("bundleProxyForCurrentProcess is nil"), and `respondsToSelector:` does not
+// save you — the selector is there, it is the process that is wrong.
+//
+// `vendor/notifications` and `vendor/permissions` both guarded it by asking
+// whether `[[NSBundle mainBundle] bundleIdentifier]` was non-nil, which was a
+// correct proxy for "this process has a bundle proxy" right up until
+// `cpc build` learned to embed `macos/Info.plist` into `__TEXT,__info_plist`.
+// An embedded plist gives a BARE binary a bundle identifier and does NOT give
+// it a bundle proxy, so the old guard said yes on exactly the processes it was
+// written to stop: adding one FILE to a working project turned a guarded
+// `Unsupported` into SIGABRT.
+//
+// MEASURED 2026-09-09, one ObjC probe built four ways:
+//
+//     row                          bundleIdentifier   ext=="app"   centre
+//     bare, no section             nil                0            RAISE
+//     bare + __TEXT,__info_plist   dev.cplus.probe    0            RAISE
+//     a real Probe.app             dev.cplus.probe    1            OK
+//     a .app with no CFBundleID    nil                1            RAISE
+//
+// So BOTH halves are load-bearing and neither alone is the question: rows 2 and
+// 4 are the ones that fail a single check, in opposite directions. `bundleURL`
+// is the value the exception itself prints when it fails, and the `.app`
+// extension is the public stand-in for `bundleProxyForCurrentProcess`, which is
+// private.
+//
+// A `@try` IS NOT A SUBSTITUTE, and this was measured too rather than assumed.
+// The raise happens inside a `dispatch_once` block, and libdispatch's
+// `_dispatch_client_callout` terminates on any exception crossing it — a
+// `@try/@catch` directly around the call never runs its handler and the process
+// still dies with exit 134. There is no belt available here; the predicate is
+// the whole of the fix.
+//
+// This lives in `objc` rather than in either caller because the two callers
+// have already drifted apart once on exactly this predicate: `notifications`
+// grew the bundle guard first and `permissions` did not, and the abort that
+// followed is quoted in `permissions_backend._instance_of` to this day.
+
+import "./runtime" as rt;
+import "./bridge" as bridge;
+
+// NSOrderedSame, the answer `caseInsensitiveCompare:` gives for a match.
+fn _ordered_same() -> i64 { return 0 as i64; }
+
+// `[NSBundle mainBundle]`, or null where Foundation is not loaded at all.
+fn main_bundle() -> *u8 {
+    let cls: *u8 = { rt::get_class(#str_ptr("NSBundle\0")) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(cls, rt::sel(#str_ptr("mainBundle\0"))) };
+}
+
+// Does this process have a bundle identifier? Half the question — true for a
+// bare binary carrying an embedded `__TEXT,__info_plist`, which has no bundle.
+fn has_bundle_id() -> bool {
+    let main: *u8 = main_bundle();
+    if main == (0 as *u8) { return false; }
+    return { rt::msg_id(main, rt::sel(#str_ptr("bundleIdentifier\0"))) }.is_not_null();
+}
+
+// Does this file URL name a bundle directory? The other half, extracted so the
+// discriminator can be tested against URLs a test can build — the process
+// running the test has no bundle, so it cannot be tested any other way.
+//
+// `.app` ONLY, deliberately. An `.appex` also has a bundle proxy, but C+ cannot
+// build an app extension today, so the row is unreachable and untested; leaving
+// it out costs a refusal that nothing can currently hit, and putting it in would
+// be a guess. Add it beside a measurement, not before one.
+fn url_is_bundle(url: *u8) -> bool {
+    if url == (0 as *u8) { return false; }
+    let ext: *u8 = { rt::msg_id(url, rt::sel(#str_ptr("pathExtension\0"))) };
+    if ext == (0 as *u8) { return false; }
+    let sel: *u8 = { rt::sel(#str_ptr("caseInsensitiveCompare:\0")) };
+    return { rt::msg_i64_id(ext, sel, bridge::nsstring("app")) } == _ordered_same();
+}
+
+// THE ANSWER IS CACHED because a process cannot acquire a bundle while it runs,
+// and the callers ask on a hot path — `permissions::state` may be read every
+// frame, and each miss would build an autoreleased NSURL and NSString on a
+// thread that may have no pool. Two threads racing here compute the same value
+// from the same immutable process state, so the race is benign.
+static PROXY_KNOWN: bool = false;
+static PROXY: bool = false;
+
+// True only for a process a bundle-scoped framework will actually serve: a real
+// `.app` on disk WITH an identifier. False for every bare `cpc build` output,
+// with or without an embedded plist.
+fn has_bundle_proxy() -> bool {
+    if PROXY_KNOWN { return PROXY; }
+    PROXY = _compute_bundle_proxy();
+    PROXY_KNOWN = true;
+    return PROXY;
+}
+
+fn _compute_bundle_proxy() -> bool {
+    // A nil identifier is still a definite no — row 4 above.
+    if !has_bundle_id() { return false; }
+    let main: *u8 = main_bundle();
+    if main == (0 as *u8) { return false; }
+    return url_is_bundle({ rt::msg_id(main, rt::sel(#str_ptr("bundleURL\0"))) });
+}
+
+// ====================================================================
+// Tests
+// ====================================================================
+//
+// WHAT A TEST HERE CANNOT BE, said plainly: the crash. `cpc test` links a bare
+// binary and `run_test` does not embed `macos/Info.plist` (only `build_project`
+// does), so the process running these tests is always row 1 and can never be
+// made into row 2 from the inside. That is why the discriminator is factored
+// out as `url_is_bundle`: the four rows differ only in their bundleURL, and a
+// URL is something a test CAN build. The crash itself is asserted end-to-end by
+// `vendor/permissions/tools/run_embedded_plist_probe.sh`, which builds a
+// project twice and runs both.
+
+fn _file_url(path: str) -> *u8 {
+    let cls: *u8 = { rt::get_class(#str_ptr("NSURL\0")) };
+    let sel: *u8 = { rt::sel(#str_ptr("fileURLWithPath:\0")) };
+    return { rt::msg_id_id(cls, sel, bridge::nsstring(path)) };
+}
+
+#[test]
+fn a_dot_app_url_is_a_bundle_and_a_plain_directory_is_not() {
+    // THE WHOLE FIX IN ONE ASSERTION. The second URL is what a bare binary
+    // carrying an embedded plist reports — the directory it happens to sit in —
+    // and answering true for it is the bug this file exists to close.
+    assert url_is_bundle(_file_url("/Applications/Probe.app"));
+    assert !url_is_bundle(_file_url("/Users/someone/project/target/debug/"));
+    assert !url_is_bundle(_file_url("/Users/someone/project/target/debug/probe"));
+}
+
+#[test]
+fn the_extension_test_is_case_insensitive() {
+    // A bundle's name on disk is whatever its author typed, and the filesystem
+    // under it is usually case-insensitive. `.APP` is still a bundle.
+    assert url_is_bundle(_file_url("/Applications/Probe.APP"));
+}
+
+#[test]
+fn an_appex_is_refused_deliberately_rather_than_guessed() {
+    // An app extension DOES have a bundle proxy, so this is a false refusal —
+    // and it is the right one until C+ can build an `.appex` and the row can be
+    // measured. A refusal costs `Unsupported`; a guess costs SIGABRT.
+    assert !url_is_bundle(_file_url("/Applications/Probe.app/PlugIns/Ext.appex"));
+}
+
+#[test]
+fn nothing_is_not_a_bundle() {
+    // `bundleURL` is non-nil in practice, but the predicate is the thing that
+    // stands between a caller and a raise — it does not get to assume.
+    assert !url_is_bundle(0 as *u8);
+    assert !url_is_bundle(_file_url(""));
+}
+
+#[test]
+fn this_process_has_no_bundle_proxy_and_the_answer_is_stable() {
+    // The test runner is a bare `cpc test` binary: row 1. If this ever fails,
+    // the harness grew a bundle and every "degrades to Unsupported" test in
+    // `notifications` and `permissions` is testing a different world.
+    assert !has_bundle_proxy();
+    assert !has_bundle_id();
+    // Cached, and the cache must answer the same thing the computation does.
+    assert has_bundle_proxy() == _compute_bundle_proxy();
+}
+
+#[test]
+fn a_proxy_always_implies_an_identifier() {
+    // True in BOTH worlds, so it says something wherever it runs: row 4 (a
+    // `.app` with no CFBundleIdentifier) raises too, which is why the predicate
+    // is an AND and not just the URL test.
+    if has_bundle_proxy() { assert has_bundle_id(); }
+}

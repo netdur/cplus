@@ -98,7 +98,17 @@ fn text_of(n: *core::Node) -> text::Text {
         return { (*p).text.clone() };
     }
     let iv: *props::InputViewProps = controls::input_view_of(n);
-    if iv != (0 as *props::InputViewProps) { return { (*iv).text.clone() }; }
+    if iv != (0 as *props::InputViewProps) {
+        // A SECURE FIELD READS BACK MASKED. This fall-through is what reaches a
+        // text field, and it reached a PASSWORD field just the same: the value
+        // went into `set_content_name` and out to the model as the node's name.
+        // Android renders the field masked (`apply_input_flags`) and this read
+        // went behind the rendering to the value itself.
+        //
+        // `<input type=password>` semantics, and `core` owns the rule so this
+        // backend cannot drift from the inspector's answer.
+        return core::agent_text(n, { (*iv).text.view() });
+    }
     return text::new();
 }
 

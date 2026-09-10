@@ -46,6 +46,7 @@ import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
+import "objc/bundle" as bundle;
 import "./permissions" as perm;
 
 #[link_name = "dlopen"]
@@ -442,8 +443,8 @@ fn _notify_refresh(d: *_Domain) {
 fn _instance_of(d: *_Domain) -> *u8 {
     let cls: *u8 = _class_of(d);
     if cls == (0 as *u8) { return 0 as *u8; }
-    // NO BUNDLE IDENTIFIER, NO SHARED INSTANCE — and `_responds` does not save
-    // you, which is the trap.
+    // NO BUNDLE PROXY, NO SHARED INSTANCE — and `_responds` does not save you,
+    // which is the trap.
     //
     // `+currentNotificationCenter` is present on the class and RAISES when the
     // process has no bundle: "bundleProxyForCurrentProcess is nil". An
@@ -455,8 +456,16 @@ fn _instance_of(d: *_Domain) -> *u8 {
     // notifications test called `schedule` with a valid id and title, which is
     // the first call anywhere that reaches `state(of: NOTIFICATIONS)` from a
     // bundle-less process. Every earlier test stopped at a guard before it.
+    //
+    // AND IT DRIFTED A SECOND TIME, in the other direction: both copies asked
+    // `bundleIdentifier != nil`, which stopped meaning "has a bundle" the day
+    // `cpc build` learned to embed `macos/Info.plist` into `__TEXT,__info_plist`
+    // — an embedded plist gives a bare binary an identifier and no bundle
+    // proxy. This file was the one that aborted, because `state` is what an app
+    // calls first. The predicate now lives once, in `objc/bundle`, with the
+    // four rows it was measured against.
     if { (*d).instance_sel_c } != "" {
-        if !_has_bundle_id() { return 0 as *u8; }
+        if !bundle::has_bundle_proxy() { return 0 as *u8; }
         let sel: *u8 = { rt::sel(#str_ptr({ (*d).instance_sel_c })) };
         if !_responds(cls, sel) { return 0 as *u8; }
         return { rt::msg_id(cls, sel) };
@@ -591,6 +600,22 @@ fn _plist_key_of(name: str) -> str {
 // ---- tests -------------------------------------------------------------------
 // These run on the HOST, which for this package's `cpc test` is macOS — so the
 // status reads below are REAL reads against the real frameworks, not fakes.
+
+#[test]
+fn no_bundle_proxy_means_no_shared_instance() {
+    // THE GUARD, TIED TO THE PREDICATE. `NOTIFICATIONS` is the one domain whose
+    // instance comes from a class method that RAISES for a process with no
+    // bundle, so it is the only row where `_instance_of` may not simply send.
+    //
+    // Deleting the guard aborts the suite rather than failing this assertion —
+    // `+currentNotificationCenter` throws — which is how it was found the first
+    // time, and how the `macos/Info.plist` regression was found the second.
+    let d: *_Domain = _find(perm::NOTIFICATIONS);
+    assert d.is_not_null();
+    if !bundle::has_bundle_proxy() {
+        assert _instance_of(d) == (0 as *u8);
+    }
+}
 
 #[test]
 fn every_builtin_domain_resolves_to_a_row() {
@@ -1086,17 +1111,6 @@ fn _fire(d: *_Domain, cls: *u8, token: u64) -> bool {
     var blk2: _Block = _make_block({ h as *u8 }, token);
     { _msg_void_i64_id(store, sel, { (*d).arg_int }, { #addr_of(blk2) as *u8 }) };
     return true;
-}
-
-// Does this process have a bundle identifier? False for a bare binary, which
-// is every `cpc build` output not wrapped in a .app.
-fn _has_bundle_id() -> bool {
-    let cls: *u8 = { rt::get_class(#str_ptr("NSBundle\0")) };
-    if cls == (0 as *u8) { return false; }
-    let main: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("mainBundle\0"))) };
-    if main == (0 as *u8) { return false; }
-    let bid: *u8 = { rt::msg_id(main, rt::sel(#str_ptr("bundleIdentifier\0"))) };
-    return bid.is_not_null();
 }
 
 fn _responds(obj: *u8, sel: *u8) -> bool {

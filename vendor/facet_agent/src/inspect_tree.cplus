@@ -600,8 +600,19 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
             };
         }
         if kind == props::K_TEXT_FIELD {
+            // A SECURE FIELD READS BACK MASKED, and this is the read that used
+            // to hand out the password. `secure: true` is the application
+            // saying these contents must not be shown — the platform will not
+            // even draw them — and answering the plaintext here did the one
+            // thing the control exists to prevent.
+            //
+            // MASKED, NOT REFUSED: `<input type=password>` semantics. The node
+            // keeps its structure and its affordance, `set` on it still works,
+            // and an agent filling in a login form is unaffected. `core` owns
+            // the rule so this surface and the curated one cannot disagree.
             return match text_field::find(k, within: root) {
-                option::Option[text_field::TextField]::Some(t) => owned(t.text()),
+                option::Option[text_field::TextField]::Some(t) =>
+                    owned(core::agent_text(n, t.text()).view()),
                 option::Option::None => option::Option[insp::Value]::None,
             };
         }

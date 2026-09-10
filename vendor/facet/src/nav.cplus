@@ -241,6 +241,15 @@ fn quit() {
 fn push(route: str, key: str = "", arg: str = "",
         take params: Params = params_new(),
         show: Show = Show::Window) -> bool {
+    // AN EMPTY ROUTE IS REFUSED HERE, before any backend sees it. There is no
+    // factory to find under "", so this could only ever answer false — but the
+    // reason it is refused HERE is that `key_for("", "", "")` is the one input
+    // that yields an EMPTY KEY, and a key is a window's name all the way down
+    // to the platform. iPadOS builds an `NSUserActivity` from it, and
+    // `-[NSUserActivity initWithActivityType:]` RAISES on an empty type — an
+    // ObjC exception, which is an abort, from a bad argument to a facade verb.
+    // Refusing at the top keeps every backend's answer the same.
+    if route == "" { return false; }
     let s: *app::Application = app::current();
     let f: fn(str, str, str, u32) -> bool = { (*s).nav.push_fn };
     if f.is_null() { return false; }
@@ -793,6 +802,33 @@ fn an_explicit_key_is_not_recoverable_and_that_is_the_point() {
     assert k.view() == "the-one";
     assert route_of_key(k.view()) == "the-one";
     assert arg_of_key(k.view()) == "";
+}
+
+#[test]
+fn an_empty_route_is_refused_and_never_names_a_window() {
+    // THE WRITE SIDE of the pair above, which was pinned only on the read side.
+    // `key_for` synthesises the key from the route when the caller gave none,
+    // so an empty route is the one input that yields an EMPTY key — and a key
+    // travels to the platform as a window's name. On iPadOS it becomes an
+    // `NSUserActivity` type, and `-[NSUserActivity initWithActivityType:]`
+    // RAISES on an empty string, which aborts the app. Measured 2026-09-08:
+    // `FacetUIKitTests` died in `-[UAUserActivity initWithTypeIdentifier:...]`.
+    assert key_for("", "", "").view() == "";
+    reset();
+    NAVT_PUSHES = 0;
+    set_push_fn(navt_push);
+    // Refused ABOVE the hook: the count is the proof, because it means no
+    // backend was ever handed the empty key. A hook that merely answered false
+    // would leave the count at 1 and the platform call already made.
+    assert push("") == false;
+    assert NAVT_PUSHES == 0;
+    // Not the machinery being cold — the same hook accepts a named route.
+    assert push("settings") == true;
+    assert NAVT_PUSHES == 1;
+    // An explicit key cannot smuggle an empty route past it either.
+    assert push("", key: "settings") == false;
+    assert NAVT_PUSHES == 1;
+    clear_hooks();
 }
 
 #[test]

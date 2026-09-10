@@ -1963,11 +1963,21 @@ fn the_approved_grant_autofills_the_card_and_still_not_the_cvc() {
 }
 
 #[test]
-fn a_secure_field_defaults_to_private_with_no_declaration_at_all() {
-    // The one a developer should not have to ask for. An NSSecureTextField the
-    // app never annotated is Private — not Protected, because the platform is
-    // saying these contents are not to be shown, and Protected would mean
-    // "there is a grant that opens this".
+fn a_secure_field_defaults_to_masked_and_stays_writable() {
+    // The one a developer should not have to ask for, and the shape of the
+    // answer is `<input type=password>`: the value reads back as stars and the
+    // field can still be typed into.
+    //
+    // THIS REPLACED A `tier_private()` DEFAULT (2026-09-09). Landing an
+    // undeclared NSSecureTextField on a tier did keep the secret in — and cost
+    // the field its WRITE, because `act_caps_for_tier` makes a private node need
+    // `cap_act_private`, which no ordinary grant carries. So an agent could not
+    // fill in a password box at all, and a blanked `text` told it the box was
+    // empty into the bargain. Masking keeps the plaintext in without taking the
+    // one thing an agent legitimately does with a password field.
+    //
+    // The two questions are on separate axes now: the SECURE CLASS masks the
+    // value, the TIER gates the node and is the app's to declare.
     let win = fixture_window(400.0, 200.0);
     let content = content_of(win);
     let pw: *u8 = rt::alloc_init(#str_ptr("NSSecureTextField\0"));
@@ -1978,14 +1988,29 @@ fn a_secure_field_defaults_to_private_with_no_declaration_at_all() {
     var root: core::Node = mirror(content_of(win).raw());
     mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
-    match node_named(s.describe(auth::protected_operator()), "pw") {
+    let ordinary: auth::Grant = auth::operator();
+    match node_named(s.describe(ordinary), "pw") {
         option::Option[*agent::AppKitNode]::Some(n) => {
-            assert { (*n).tier } == identity::tier_private();
-            assert !{ (*n).readable };
-            assert { (*n).text.view() } == "";
-            // Not even the name: the walk's fallback would have made the
-            // password this node's name, which is how it leaked.
+            assert { (*n).tier } == identity::tier_open();
+            assert { (*n).text.view() } == "*******";
+            assert { (*n).text.view() } != "hunter2";
+            // NOT AS A NAME EITHER. The walk's fallback is what made the
+            // password this node's name, which is how it leaked the first time;
+            // a row of stars is not a name, so the fallback stays silent.
             assert { (*n).name.view() } == "";
+            assert { (*n).actionable };
+        }
+        option::Option::None => { assert false; }
+    };
+    // STILL WRITABLE, by an ordinary grant, and the write reaches the real
+    // widget — read back through the truthful reader, not the agent-facing one.
+    assert surface::outcome_eq(s.set_text(ordinary, "pw", "s3cret", 0),
+                               surface::Outcome::Allowed);
+    assert agent::native_string_of(pw).view() == "s3cret";
+    // And the agent still cannot see what it just typed.
+    match node_named(s.describe(ordinary), "pw") {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).text.view() } == "******";
         }
         option::Option::None => { assert false; }
     };

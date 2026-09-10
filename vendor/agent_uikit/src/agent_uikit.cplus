@@ -290,9 +290,41 @@ fn is_secure_by_class(view: *u8) -> bool {
     return { rt::msg_i8(view, rt::sel(#str_ptr("isSecureTextEntry\0"))) } != (0 as i8);
 }
 
+fn has_explicit_policy(view: *u8) -> bool {
+    if is_null(view) { return false; }
+    return !is_null({ rt::get_associated_object(view, identity::policy_key()) });
+}
+
+// The policy that actually applies to a view: the explicit pin, and nothing
+// else.
+//
+// TWO THINGS CHANGED HERE 2026-09-09, and both were defects rather than
+// choices. This used to read
+//
+//     if is_secure_by_class(view) { return identity::tier_protected(); }
+//     return get_agent_policy(view);
+//
+// which is wrong twice over. It landed a secure field on PROTECTED where the
+// AppKit reference landed it on private — protected means "there is a grant
+// that opens this", which is the opposite of what a password field says. And
+// the order made the inference beat the DECLARATION: an app that explicitly
+// pinned `private` on a secure field had it talked back down to protected,
+// because the class test ran first and returned. A floor implemented as a
+// ceiling.
+//
+// Neither survives, because the tier is no longer how a secure field is
+// protected at all: the SECURE CLASS masks the value (see `node_text`) and the
+// TIER gates the node and is the app's to declare. `<input type=password>` —
+// masked on the way out, still writable. See the AppKit backend, which carries
+// the same rule and the reasoning in full.
 fn effective_policy(view: *u8) -> u32 {
-    if is_secure_by_class(view) { return identity::tier_protected(); }
     return get_agent_policy(view);
+}
+
+// One mask character per character of the secret. ASCII `*`, matching
+// `facet::agent_mask_char` and every other backend.
+fn mask_of(actual: text::Text) -> text::Text {
+    return text::repeating("*", { actual.view() }.char_count());
 }
 
 fn get_declared_role(view: *u8) -> option::Option[identity::Role] {
@@ -351,6 +383,15 @@ fn resolve_role(view: *u8) -> identity::Role {
 // `text` is the getter for a UILabel, a UITextField AND a UITextView, which is
 // the one place UIKit is tidier than AppKit — there is no `stringValue` /
 // `string` split and no scroll-view indirection to see through.
+// The widget's own content as a NAME, when there is no developer label. Empty
+// for a masked field: a row of stars is not a name, and naming a node after its
+// own mask looks like information and is not. The mask belongs in `text`, where
+// a reader knows to expect a value.
+fn node_content_name(view: *u8, role: identity::Role) -> text::Text {
+    if is_secure_by_class(view) && !has_explicit_policy(view) { return text::new(); }
+    return node_text(view, role);
+}
+
 fn node_text(view: *u8, role: identity::Role) -> text::Text {
     if identity::role_eq(role, identity::Role::Button) {
         // A UIButton's title is per-state; state 0 is Normal, which is the one
@@ -369,7 +410,21 @@ fn node_text(view: *u8, role: identity::Role) -> text::Text {
         || identity::role_eq(role, identity::Role::Input) {
         if responds_to(view, #str_ptr("text\0")) {
             let s: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("text\0"))) };
-            if !is_null(s) { return bridge::to_text(s); }
+            if !is_null(s) {
+                // A SECURE FIELD READS BACK MASKED — one door, every
+                // agent-facing read of this node's content. Unless the app
+                // pinned a policy, in which case it has said what it means and
+                // the tier gate governs; the mask is for the field nobody
+                // declared, which is the one that was leaking.
+                //
+                // `native_text_of` is the truthful read, for the backend's own
+                // arithmetic (see `place_caret`, which converts byte offsets to
+                // UTF-16 units and would count the MASK otherwise).
+                if is_secure_by_class(view) && !has_explicit_policy(view) {
+                    return mask_of(bridge::to_text(s));
+                }
+                return bridge::to_text(s);
+            }
         }
         return text::new();
     }
@@ -449,7 +504,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8,
     if { label.is_empty() } == false {
         reg.set_name(reg_node, { label.view() });
     } else if !reg.is_sensitive(reg_node) {
-        let own: text::Text = node_text(view, role);
+        let own: text::Text = node_content_name(view, role);
         if { own.is_empty() } == false { reg.set_content_name(reg_node, { own.view() }); }
     }
     // The intent DESCRIPTION rides the hint channel — `accessibilityHint` here,
@@ -507,7 +562,7 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             if { label.is_empty() } == false {
                 reg.set_name(me, { label.view() });
             } else if !reg.is_sensitive(me) {
-                let own: text::Text = node_text(view, role);
+                let own: text::Text = node_content_name(view, role);
                 if { own.is_empty() } == false { reg.set_content_name(me, { own.view() }); }
             }
             let ds: text::Text = view_a11y_string(view, "accessibilityHint\0");
@@ -1163,9 +1218,20 @@ fn byte_offset_of(s: str, unit: u64) -> u64 {
     return total as u64;
 }
 
+// What the control actually holds. NOT for an agent — `node_text` is the
+// agent-facing read and masks a secure field. This one exists for the backend's
+// own arithmetic, where counting a mask instead of the value puts the caret in
+// the wrong place.
+fn native_text_of(v: *u8) -> text::Text {
+    if !responds_to(v, #str_ptr("text\0")) { return text::new(); }
+    let s: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("text\0"))) };
+    if is_null(s) { return text::new(); }
+    return bridge::to_text(s);
+}
+
 fn place_caret(v: *u8, at: u64, length: u64) -> bool {
     if !responds_to(v, #str_ptr("beginningOfDocument\0")) { return false; }
-    let owned: text::Text = node_text(v, identity::Role::Input);
+    let owned: text::Text = native_text_of(v);
     let src: str = { owned.view() };
     let start_u: u64 = utf16_of_byte(src, at);
     let end_u: u64 = utf16_of_byte(src, at +% length);

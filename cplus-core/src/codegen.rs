@@ -1588,17 +1588,17 @@ fn generate_inner(
                             &tramps, is_lib,
                         );
                     }
-                } else if b.target.name == "str" {
-                    // STRM (v0.0.27): the blessed `impl str` block — methods
-                    // emit as plain fns `str.<name>` with the receiver as
-                    // first param (`{ ptr, i64 }` by value).
+                } else if let Some(bt) = crate::sema::builtin_impl_target(&b.target.name) {
+                    // v0.0.28: a blessed `impl <builtin>` block — methods emit
+                    // as plain fns `<builtin>.<name>` with the receiver as the
+                    // first param, by value (every builtin here is Copy).
                     for m in &b.methods {
                         if !m.generic_params.is_empty() {
                             continue;
                         }
-                        gen_str_method(
-                            &mut out, m, &sigs, &types, &str_lits, mode, test_mode, &md, &tramps,
-                            is_lib,
+                        gen_builtin_method(
+                            &mut out, bt, m, &sigs, &types, &str_lits, mode, test_mode, &md,
+                            &tramps, is_lib,
                         );
                     }
                 }
@@ -2284,7 +2284,9 @@ struct TypeTable {
     /// stdlib str module. The builtin `str` has no StructInfo — its
     /// methods are ordinary fns `str.<name>` with a by-value
     /// `{ ptr, i64 }` receiver first.
-    str_methods: HashMap<String, MethodInfo>,
+    /// v0.0.28: keyed by (builtin type name, method name). See sema's
+    /// `builtin_impl_target` — the same set, routed the same way.
+    builtin_methods: HashMap<(String, String), MethodInfo>,
 }
 
 impl crate::sema::TypeShape for TypeTable {
@@ -2457,6 +2459,9 @@ struct MethodInfo {
     /// the method's own symbol — the behaviour it had before the bridge
     /// existed. See [`emit_fnptr_bridge`].
     is_coroutine: bool,
+    /// v0.0.28: `#[intrinsic("llvm.sqrt")]` — codegen replaces a call to
+    /// this method with the named LLVM intrinsic. See attrs.rs.
+    intrinsic: Option<String>,
 }
 
 /// v0.0.8 bench-gap fix D: classify a method's body for cpc-side
@@ -2470,6 +2475,48 @@ enum TrivialInline {
     /// receiver, zero params, single-`return this.field` body. Inlines
     /// to `gep inbounds %S, ptr <recv>, i32 0, i32 <field_idx>` + load.
     GetField(String),
+    /// v0.0.28: `fn f(this) -> T { return <libm>(this); }` — a one-argument
+    /// libm wrapper. Inlines to `call T @llvm.<op>.<suffix>(T recv)`.
+    ///
+    /// This exists because a prebuilt package ships DECLARATIONS, not bodies
+    /// (`cpc headers`), so a cross-package method call can never be inlined
+    /// away: `x.sqrt()` was costing a `bl` through a symbol stub plus the
+    /// vector register save/restore around it, to reach a body whose real
+    /// work is one `fsqrt`. Substituting the intrinsic at the call site
+    /// removes the call AND libm's errno contract, which is what forces the
+    /// `fcmp`/`b.vs` NaN branch that survives even when the call is inlined.
+    /// The same treatment the SIMD lane methods have always had.
+    MathUnary(&'static str),
+}
+
+/// The `#[intrinsic("...")]` string, interned to the same &'static set the
+/// body detector uses so both paths produce one variant.
+fn libm_intrinsic_static(name: &str) -> Option<&'static str> {
+    const OPS: &[&str] = &[
+        "llvm.sqrt", "llvm.fabs", "llvm.floor", "llvm.ceil", "llvm.trunc", "llvm.round",
+        "llvm.sin", "llvm.cos", "llvm.exp", "llvm.log", "llvm.log2", "llvm.log10",
+    ];
+    OPS.iter().find(|o| **o == name).copied()
+}
+
+/// libm one-argument functions with an exact LLVM intrinsic. Both widths map
+/// to the same intrinsic base name; codegen appends the type suffix.
+fn libm_unary_intrinsic(name: &str) -> Option<&'static str> {
+    match name {
+        "sqrtf" | "sqrt" => Some("llvm.sqrt"),
+        "fabsf" | "fabs" => Some("llvm.fabs"),
+        "floorf" | "floor" => Some("llvm.floor"),
+        "ceilf" | "ceil" => Some("llvm.ceil"),
+        "truncf" | "trunc" => Some("llvm.trunc"),
+        "roundf" | "round" => Some("llvm.round"),
+        "sinf" | "sin" => Some("llvm.sin"),
+        "cosf" | "cos" => Some("llvm.cos"),
+        "expf" | "exp" => Some("llvm.exp"),
+        "logf" | "log" => Some("llvm.log"),
+        "log2f" | "log2" => Some("llvm.log2"),
+        "log10f" | "log10" => Some("llvm.log10"),
+        _ => None,
+    }
 }
 
 /// v0.0.8 fix D: detect the trivial-getter pattern. Returns
@@ -2492,6 +2539,20 @@ fn detect_trivial_inline(m: &Method) -> Option<TrivialInline> {
     let StmtKind::Return(Some(ret_expr)) = &m.body.stmts[0].kind else {
         return None;
     };
+    // `return <libm>(this);` — a one-argument libm wrapper.
+    if let ExprKind::Call { callee, args, .. } = &ret_expr.kind {
+        if args.len() == 1 {
+            if let ExprKind::Ident(fname) = &callee.kind {
+                if let Some(op) = libm_unary_intrinsic(fname) {
+                    if let ExprKind::Ident(a0) = &args[0].kind {
+                        if a0 == "self" {
+                            return Some(TrivialInline::MathUnary(op));
+                        }
+                    }
+                }
+            }
+        }
+    }
     let ExprKind::Field { receiver, name } = &ret_expr.kind else {
         return None;
     };
@@ -2795,6 +2856,7 @@ fn collect_types(
                         return_type,
                         trivial_inline,
                         is_coroutine: m.is_gen || m.is_async,
+                        intrinsic: None,
                     },
                 );
             }
@@ -2805,12 +2867,14 @@ fn collect_types(
         // struct param resolution below. No fields exist, so no
         // trivial_inline. Guarded on name-table misses so a pathological
         // user type named `str` keeps its own path.
-        if b.target.name == "str"
-            && !t.struct_by_name.contains_key("str")
-            && !t.enum_by_name.contains_key("str")
+        if let Some(bt) = crate::sema::builtin_impl_target(&b.target.name)
+            .filter(|bt| !t.struct_by_name.contains_key(*bt) && !t.enum_by_name.contains_key(*bt))
         {
             for m in &b.methods {
-                if t.str_methods.contains_key(&m.name.name) || !m.generic_params.is_empty() {
+                if t.builtin_methods
+                    .contains_key(&(bt.to_string(), m.name.name.clone()))
+                    || !m.generic_params.is_empty()
+                {
                     continue;
                 }
                 let params: Vec<ParamAbi> =
@@ -2819,14 +2883,18 @@ fn collect_types(
                     Some(ty) => ty_from(ty, &t),
                     None => Ty::Unit,
                 };
-                t.str_methods.insert(
-                    m.name.name.clone(),
+                t.builtin_methods.insert(
+                    (bt.to_string(), m.name.name.clone()),
                     MethodInfo {
                         receiver: m.receiver,
                         params,
                         return_type,
-                        trivial_inline: None,
+                        trivial_inline: crate::attrs::intrinsic_name(&m.attributes)
+                            .and_then(|n| libm_intrinsic_static(&n))
+                            .map(TrivialInline::MathUnary)
+                            .or_else(|| detect_trivial_inline(m)),
                         is_coroutine: false,
+                        intrinsic: None,
                     },
                 );
             }
@@ -2879,6 +2947,7 @@ fn collect_types(
                     return_type,
                     trivial_inline,
                     is_coroutine: m.is_gen || m.is_async,
+                        intrinsic: None,
                 },
             );
             // Mirror sema's Drop detection so codegen knows which bindings
@@ -5355,6 +5424,15 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
     // v0.0.6 Slice 1B: SIMD intrinsic declarations. First cut covers
     // the f32x4 width; other widths land alongside their type names.
     out.push_str("declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)\n");
+    // v0.0.28: the SCALAR widths, for TrivialInline::MathUnary — the same
+    // intrinsics the lane methods use, one lane wide.
+    for op in [
+        "sqrt", "fabs", "floor", "ceil", "trunc", "round", "sin", "cos", "exp", "log", "log2",
+        "log10",
+    ] {
+        out.push_str(&format!("declare float @llvm.{op}.f32(float)\n"));
+        out.push_str(&format!("declare double @llvm.{op}.f64(double)\n"));
+    }
     out.push_str("declare <4 x float> @llvm.sqrt.v4f32(<4 x float>)\n");
     out.push_str(
         "declare <2 x double> @llvm.fma.v2f64(<2 x double>, <2 x double>, <2 x double>)\n",
@@ -9602,8 +9680,9 @@ fn gen_method(
 /// intentionally skipped: it only annotates pointer-passed `ref`/`take`
 /// params, and the blessed set has none — if one ever appears, mirror
 /// `gen_method`'s metadata block.
-fn gen_str_method(
+fn gen_builtin_method(
     out: &mut String,
+    bt: &str,
     m: &Method,
     sigs: &HashMap<String, FnSig>,
     types: &TypeTable,
@@ -9614,14 +9693,17 @@ fn gen_str_method(
     tramps: &ThreadTrampolines,
     is_lib: bool,
 ) {
-    let Some(sig) = types.str_methods.get(&m.name.name) else {
+    let Some(sig) = types
+        .builtin_methods
+        .get(&(bt.to_string(), m.name.name.clone()))
+    else {
         // Not in the table: rejected at collection or shadowed. Nothing to emit.
         return;
     };
     let sig = sig.clone();
-    let mangled = mangle("str", &m.name.name);
+    let mangled = mangle(bt, &m.name.name);
     let return_ty = sig.return_type.clone();
-    let recv_ty = Ty::Str;
+    let recv_ty = crate::sema::builtin_impl_ty(bt).expect("builtin target implies a Ty");
 
     let lib_public = lib_public_name(is_lib, &m.name.name);
     let cc_prefix = if !m.is_pub && md.is_fastcc(&mangled) {
@@ -17908,16 +17990,33 @@ impl<'a> FnState<'a> {
         // Mirrors the struct tail below: same arg passing, same sret rule
         // for non-Copy aggregate returns, same fastcc def/call symmetry via
         // the shared pre-pass set.
-        if matches!(recv_ty, Ty::Str) {
+        if let Some(bt) = crate::sema::builtin_name_of_ty(&recv_ty) {
             let info = self
                 .types
-                .str_methods
-                .get(&name.name)
+                .builtin_methods
+                .get(&(bt.to_string(), name.name.clone()))
                 .expect("sema validated")
                 .clone();
-            let mangled = mangle("str", &name.name);
             let recv_val = self.next_tmp();
             self.gen_load(&recv_val, &recv_ty, &recv_ptr);
+            // v0.0.28: a libm wrapper folds to its LLVM intrinsic here rather
+            // than becoming a cross-package call. See `TrivialInline::MathUnary`.
+            if let Some(TrivialInline::MathUnary(op)) = &info.trivial_inline {
+                let lty = self.lty(&recv_ty).to_string();
+                let suffix = match recv_ty {
+                    Ty::F32 => "f32",
+                    Ty::F64 => "f64",
+                    _ => "",
+                };
+                if !suffix.is_empty() {
+                    let t = self.next_tmp();
+                    self.emit(&format!(
+                        "{t} = call {lty} @{op}.{suffix}({lty} {recv_val})"
+                    ));
+                    return Some((t, info.return_type.clone()));
+                }
+            }
+            let mangled = mangle(bt, &name.name);
             let mut arg_parts: Vec<String> = vec![format!("{} {recv_val}", self.lty(&recv_ty))];
             for (a, ps) in args.iter().zip(info.params.iter()) {
                 let (pty, move_flag, restrict_flag) = (&ps.ty, ps.mode.is_take(), ps.restrict);

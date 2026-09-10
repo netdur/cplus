@@ -4273,3 +4273,147 @@ fn selecting_a_label_is_its_own_dirty_bit() {
     assert ({ (*d).dirty } & label::P_TEXT) == 0u64;
     return;
 }
+
+// ---- a secure field reads back masked, and stays writable --------------------
+//
+// `secure: true` is the application declaring these contents must not be shown —
+// the platform will not even draw them — and an agent surface that answered the
+// plaintext was doing exactly what the control exists to prevent. The
+// inspector's `inspect(node, "text")` returned the password; the curated
+// `describe_ui` carried it as the node's text.
+//
+// The shape of the answer is `<input type=password>`: masked on the way out,
+// writable as before. Refusing the node would cost an agent the ability to FILL
+// IN a password, which is the one thing it legitimately does with one.
+
+#[test]
+fn a_secure_field_reads_back_masked() {
+    var b: facet::Builder = facet::Builder::new();
+    b.add(text_field::text_field("hunter2", key: "pw", secure: true));
+    var root: facet::Node = facet::column(b);
+
+    match facet::find_in(#addr_of(root), "pw") {
+        option::Option[*facet::Node]::Some(n) => {
+            // What the application still sees. facet's own read is unchanged —
+            // masking is what leaves through an AGENT, not what the app stores.
+            match text_field::find("pw", within: #addr_of(root)) {
+                option::Option[text_field::TextField]::Some(x) => {
+                    assert x.text() == "hunter2";
+                }
+                option::Option[text_field::TextField]::None => { assert false; }
+            }
+            // What an agent sees.
+            let seen: text::Text = facet::agent_text(n, "hunter2");
+            assert seen.view() == "*******";
+            assert seen.view() != "hunter2";
+            assert facet::is_secure_entry(n);
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_secure_field_is_still_writable() {
+    // THE HALF THAT MAKES THIS A MASK AND NOT A LOCK. An agent filling in a
+    // password manager's value must still land, and the value it wrote must be
+    // the real one as far as the application is concerned.
+    var b: facet::Builder = facet::Builder::new();
+    b.add(text_field::text_field("", key: "pw", secure: true));
+    var root: facet::Node = facet::column(b);
+
+    match text_field::find("pw", within: #addr_of(root)) {
+        option::Option[text_field::TextField]::Some(x) => {
+            let _h: text_field::TextField = x.set_text("s3cret");
+            assert x.text() == "s3cret";
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    match facet::find_in(#addr_of(root), "pw") {
+        option::Option[*facet::Node]::Some(n) => {
+            assert facet::agent_text(n, "s3cret").view() == "******";
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_plain_field_is_not_masked() {
+    // The other half, and what keeps the rule from becoming "text fields are
+    // secret": an ordinary field is ordinary, and reading a search box or a name
+    // field is the whole point of the agent surface.
+    var b: facet::Builder = facet::Builder::new();
+    b.add(text_field::text_field("kittens", key: "q"));
+    var root: facet::Node = facet::column(b);
+
+    match facet::find_in(#addr_of(root), "q") {
+        option::Option[*facet::Node]::Some(n) => {
+            assert !facet::is_secure_entry(n);
+            assert facet::agent_text(n, "kittens").view() == "kittens";
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn an_empty_secure_field_masks_to_nothing() {
+    // "Is this filled in?" must stay answerable — it is the question an agent
+    // driving a login form actually has. A fixed-width mask would answer it
+    // wrongly for an empty field, which is the failure mode `UiNode.text` warns
+    // about from the other direction.
+    var b: facet::Builder = facet::Builder::new();
+    b.add(text_field::text_field("", key: "pw", secure: true));
+    var root: facet::Node = facet::column(b);
+
+    match facet::find_in(#addr_of(root), "pw") {
+        option::Option[*facet::Node]::Some(n) => {
+            assert facet::agent_text(n, "").view() == "";
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn the_mask_counts_characters_not_bytes() {
+    // A passphrase is not ASCII. Masking by BYTE length would publish the
+    // encoded size — more stars than characters — which leaks more than the
+    // screen does and reads as a longer secret than was typed.
+    var b: facet::Builder = facet::Builder::new();
+    b.add(text_field::text_field("", key: "pw", secure: true));
+    var root: facet::Node = facet::column(b);
+
+    match facet::find_in(#addr_of(root), "pw") {
+        option::Option[*facet::Node]::Some(n) => {
+            // Six characters, eight bytes — the two accented ones cost two each.
+            let pass: str = "caféés";
+            assert pass.count() == (8 as usize);
+            assert pass.char_count() == (6 as usize);
+            assert facet::agent_text(n, pass).view() == "******";
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn turning_secure_on_after_the_fact_still_masks() {
+    // A field made secure later — a "show password" toggle flipping back, a form
+    // that decides its kind after a first render — must land in the same place.
+    // Asked at the point of the READ rather than stamped at construction, so no
+    // order of calls leaves a field readable.
+    var b: facet::Builder = facet::Builder::new();
+    b.add(text_field::text_field("hunter2", key: "pw2"));
+    var root: facet::Node = facet::column(b);
+
+    match facet::find_in(#addr_of(root), "pw2") {
+        option::Option[*facet::Node]::Some(n) => {
+            assert facet::agent_text(n, "hunter2").view() == "hunter2";
+            match text_field::find("pw2", within: #addr_of(root)) {
+                option::Option[text_field::TextField]::Some(x) => {
+                    let _h: text_field::TextField = x.set_secure(true);
+                }
+                option::Option[text_field::TextField]::None => { assert false; }
+            }
+            assert facet::agent_text(n, "hunter2").view() == "*******";
+        }
+        option::Option[*facet::Node]::None => { assert false; }
+    }
+}

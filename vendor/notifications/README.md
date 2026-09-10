@@ -102,7 +102,7 @@ vendor/notifications/tools/run_ios_tests.sh         # 9 checks, iOS simulator
 
 The host suite covers the arithmetic, the guards and the record. It cannot
 reach the framework: `cpc test` builds a bare binary, and
-`UNUserNotificationCenter` refuses a process with no bundle identifier — so the
+`UNUserNotificationCenter` refuses a process with no `.app` bundle — so the
 iOS runner is a bundled app, which is the only configuration where the centre
 exists. `examples/notifications_demo` is the macOS one, and it is where a person
 sees a notification actually arrive.

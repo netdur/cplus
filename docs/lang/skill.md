@@ -982,12 +982,23 @@ Before implementing anything below the level of your actual task, check here.
 `net` (TCP, numeric IPv4) · `env` · `process` (spawn/capture/signal) · `pty` ·
 `thread` · `atomic` · `mutex` · `channel` (typed MPMC) · `box` / `arc` / `rc`
 (+ `Weak` via `downgrade`) · `future` / `executor` / `reactor` / `time` ·
-`iterator` (`gen fn` + `filter`/`prefix`/`map`) · `date` (ISO-8601 parse and
+`iterator` (`gen fn` + `filter`/`prefix`/`map`) · `math` (scalar float
+methods and constants — `x.sqrt()`, `PI_F32`) · `date` (ISO-8601 parse and
 format) · `base64` · `crypto` (sha256/512, hmac, random_bytes, constant-time
 `equals`) · `uuid` · `bundle` (files beside the binary) · `platform` (runtime
 target facts as matchable enums) · `range` · `marker`.
 
-Three of those carry a trap worth stating. **`Vec::iter` yields Copy elements
+Four of those carry a trap worth stating. **`math` is methods on the float
+widths, not free functions** — `x.sqrt()`, not `math::sqrt(x)`. Every
+primitive (`str`, `bool`, each integer and float width) takes ONE `impl`
+block program-wide; the receiver disambiguates, so one `sqrt` serves both
+float widths where principle 6 would otherwise force `sqrt_f32`/`sqrt_f64`.
+Two consequences. A second block on the same primitive is E0385 wherever it
+lives, so those names are claimed build-wide — which is why the blessed
+blocks belong to stdlib. And they are visible EVERYWHERE in a build that
+includes the module, not only in files importing it: a primitive has no
+nominal type id, so the extension import-gate has nothing to key on. Extend a
+NAMED type instead when you can — that path is import-gated. **`Vec::iter` yields Copy elements
 only** — to move owned ones out use `Vec::drain`, which drains in order, lazily.
 **`HashMap` needs Copy keys**, so a `Text`-keyed map is `string_map`, which owns
 its keys. And **`Vec` has no `clone`**: combined with E0509 (§3.4) that means a

@@ -99,6 +99,17 @@ pub fn deprecation_note(attrs: &[Attribute]) -> Option<Option<String>> {
     }))
 }
 
+/// `Some(base)` iff `attrs` carries `#[intrinsic("...")]`. The string is the
+/// LLVM intrinsic's base name (`llvm.sqrt`); codegen appends the width suffix,
+/// so one spelling serves f32 and f64.
+pub fn intrinsic_name(attrs: &[Attribute]) -> Option<String> {
+    let a = attrs.iter().find(|a| a.path.name == "intrinsic")?;
+    a.args.iter().find_map(|g| match g {
+        AttrArg::Str(s, _) => Some(s.clone()),
+        _ => None,
+    })
+}
+
 /// True iff `attrs` carries `#[test]`.
 ///
 /// One predicate, three consumers: [`discover_tests`] (which functions the
@@ -331,6 +342,23 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
     //
     // Surface shape only here (one string arg, from the known set); the
     // designation and the lowering live in sema.
+    // v0.0.28: `#[intrinsic("llvm.sqrt")]` on a builtin method whose body is
+    // a one-argument libm wrapper. Codegen folds the CALL SITE to the named
+    // LLVM intrinsic instead of emitting a call.
+    //
+    // It has to be an attribute rather than body inspection: a prebuilt
+    // package ships DECLARATIONS, not bodies (`cpc headers`), so a consumer
+    // never sees `return sqrtf(this);` and cannot detect the shape. Attributes
+    // do survive into the header, which is the whole reason this works across
+    // a package boundary — and a cross-package call is exactly the cost being
+    // removed. Folding also drops libm's errno contract, so the `fcmp`/`b.vs`
+    // NaN branch goes with it.
+    AttrSpec {
+        name: "intrinsic",
+        args: ArgsSpec::ExactlyOneStr,
+        targets: TARGET_METHOD,
+        allow_duplicate: false,
+    },
     AttrSpec {
         name: "lang",
         args: ArgsSpec::ExactlyOneStr,

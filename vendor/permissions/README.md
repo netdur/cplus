@@ -86,7 +86,14 @@ discovery root:
 
 ```sh
 cd vendor/permissions && cpc test          # 183 checks, macOS host
+tools/run_embedded_plist_probe.sh          # 2 rows, one build each
 ```
+
+The probe covers what a `#[test]` cannot: `cpc test` links a bare binary and
+never embeds `macos/Info.plist`, so the row where an embedded plist gave this
+package a bundle identifier without a bundle — and turned a guarded refusal into
+SIGABRT — takes a real `cpc build` to reach. It builds one project twice and
+checks both runs survive and both still answer `Unsupported`.
 
 `tests/` holds the iOS runner — a package rather than flat files, because the
 checks need UIKit and a bundle, so they have to be an app. It is driven by

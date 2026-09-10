@@ -1,0 +1,313 @@
+// stdlib/math.cplus — the method set of the builtin float widths `f32` and
+// `f64`, plus the constants that go with them.
+//
+// `f32` and `f64` are compiler builtins with no declaring file of their own,
+// so the compiler admits exactly ONE `impl f32` / `impl f64` block
+// program-wide — these ones. A second block anywhere is E0385, and the
+// shapes a builtin method may take are checked as E0386 (plain `this`
+// receiver only, no generics, no `gen`/`async`, no associated fns). This is
+// the same blessing `str` has had since v0.0.27.
+//
+// WHY METHODS AND NOT FREE FUNCTIONS. Principle 6 gives one name one
+// signature, so a module of free functions would have to spell the width in
+// every name — `sqrt_f32`, `sqrt_f64` — the way `atomic` does for its
+// integer widths. As methods the receiver disambiguates, one name serves
+// both, and `x.sqrt()` reads the same as the SIMD lane method
+// `f32x4::splat(x).sqrt()` that the compiler has always had. Matching that
+// spelling is the point.
+//
+// VISIBILITY. A builtin has no nominal type id, which is what the extension
+// import-gate keys on (`GateOwner::NoNominal`), so these methods are visible
+// EVERYWHERE in a build that includes this module — not only in files that
+// import it. One `import "stdlib/math" as _;` anywhere is enough, and there
+// is no way to scope them more tightly. That is the reason the blessed set
+// is small and lives in stdlib rather than being open to any package: every
+// name added here is claimed build-wide.
+//
+// Everything below is a thin call into libm. C+ has no scalar math of its
+// own, and before this module the only scalar math in the whole tree was
+// `vendor/simd/src/vec3.cplus` and `vec4.cplus` each declaring their own
+// `extern fn sqrtf` by hand.
+
+// The twelve operations with an exact LLVM intrinsic carry
+// `#[intrinsic("...")]`: codegen folds the CALL SITE to the intrinsic rather
+// than emitting a cross-package call into this archive. The body stays as the
+// definition of record and as the fallback for any backend without it.
+//
+// libm. An extern and a method may share a name — different namespaces — so
+// these keep their C spellings. That matters beyond tidiness: codegen folds
+// `return <libm>(this);` to the matching LLVM intrinsic at the CALL SITE
+// (`TrivialInline::MathUnary`), which is what stops a one-instruction sqrt
+// costing a cross-package call. The fold is keyed on these names.
+extern fn sqrtf(x: f32) -> f32;
+extern fn fabsf(x: f32) -> f32;
+extern fn floorf(x: f32) -> f32;
+extern fn ceilf(x: f32) -> f32;
+extern fn roundf(x: f32) -> f32;
+extern fn truncf(x: f32) -> f32;
+extern fn sinf(x: f32) -> f32;
+extern fn cosf(x: f32) -> f32;
+extern fn tanf(x: f32) -> f32;
+extern fn asinf(x: f32) -> f32;
+extern fn acosf(x: f32) -> f32;
+extern fn atanf(x: f32) -> f32;
+extern fn atan2f(y: f32, x: f32) -> f32;
+extern fn expf(x: f32) -> f32;
+extern fn logf(x: f32) -> f32;
+extern fn log2f(x: f32) -> f32;
+extern fn log10f(x: f32) -> f32;
+extern fn powf(x: f32, y: f32) -> f32;
+extern fn hypotf(x: f32, y: f32) -> f32;
+extern fn fmodf(x: f32, y: f32) -> f32;
+extern fn copysignf(x: f32, y: f32) -> f32;
+extern fn fminf(a: f32, b: f32) -> f32;
+extern fn fmaxf(a: f32, b: f32) -> f32;
+
+extern fn sqrt(x: f64) -> f64;
+extern fn fabs(x: f64) -> f64;
+extern fn floor(x: f64) -> f64;
+extern fn ceil(x: f64) -> f64;
+extern fn round(x: f64) -> f64;
+extern fn trunc(x: f64) -> f64;
+extern fn sin(x: f64) -> f64;
+extern fn cos(x: f64) -> f64;
+extern fn tan(x: f64) -> f64;
+extern fn asin(x: f64) -> f64;
+extern fn acos(x: f64) -> f64;
+extern fn atan(x: f64) -> f64;
+extern fn atan2(y: f64, x: f64) -> f64;
+extern fn exp(x: f64) -> f64;
+extern fn log(x: f64) -> f64;
+extern fn log2(x: f64) -> f64;
+extern fn log10(x: f64) -> f64;
+extern fn pow(x: f64, y: f64) -> f64;
+extern fn hypot(x: f64, y: f64) -> f64;
+extern fn fmod(x: f64, y: f64) -> f64;
+extern fn copysign(x: f64, y: f64) -> f64;
+extern fn fmin(a: f64, b: f64) -> f64;
+extern fn fmax(a: f64, b: f64) -> f64;
+
+// ---------------------------------------------------------------------------
+// Constants
+//
+// Spelled out to full f64 precision and narrowed by the literal parser, so
+// the f32 forms are the correctly-rounded nearest float rather than whatever
+// a hand-typed digit string lands on. Writing these by hand is a real source
+// of cross-port drift: two ports of the same program picked
+// `3.14159274f32` and `3.14159265358979323846f32` independently, and they
+// agree only by luck.
+// ---------------------------------------------------------------------------
+
+const PI_F32: f32       = 3.14159265358979323846f32;
+const TAU_F32: f32      = 6.28318530717958647692f32;
+const E_F32: f32        = 2.71828182845904523536f32;
+const SQRT_2_F32: f32   = 1.41421356237309504880f32;
+const LN_2_F32: f32     = 0.69314718055994530942f32;
+const LN_10_F32: f32    = 2.30258509299404568402f32;
+
+const PI_F64: f64       = 3.14159265358979323846f64;
+const TAU_F64: f64      = 6.28318530717958647692f64;
+const E_F64: f64        = 2.71828182845904523536f64;
+const SQRT_2_F64: f64   = 1.41421356237309504880f64;
+const LN_2_F64: f64     = 0.69314718055994530942f64;
+const LN_10_F64: f64    = 2.30258509299404568402f64;
+
+// ---------------------------------------------------------------------------
+// f32
+// ---------------------------------------------------------------------------
+
+impl f32 {
+    #[intrinsic("llvm.sqrt")]
+    fn sqrt(this) -> f32 { return sqrtf(this); }
+    #[intrinsic("llvm.fabs")]
+    fn abs(this) -> f32 { return fabsf(this); }
+    #[intrinsic("llvm.floor")]
+    fn floor(this) -> f32 { return floorf(this); }
+    #[intrinsic("llvm.ceil")]
+    fn ceil(this) -> f32 { return ceilf(this); }
+    #[intrinsic("llvm.round")]
+    fn round(this) -> f32 { return roundf(this); }
+    #[intrinsic("llvm.trunc")]
+    fn trunc(this) -> f32 { return truncf(this); }
+
+    #[intrinsic("llvm.sin")]
+    fn sin(this) -> f32 { return sinf(this); }
+    #[intrinsic("llvm.cos")]
+    fn cos(this) -> f32 { return cosf(this); }
+    fn tan(this) -> f32 { return tanf(this); }
+    fn asin(this) -> f32 { return asinf(this); }
+    fn acos(this) -> f32 { return acosf(this); }
+    fn atan(this) -> f32 { return atanf(this); }
+    fn atan2(this, x: f32) -> f32 { return atan2f(this, x); }
+
+    #[intrinsic("llvm.exp")]
+    fn exp(this) -> f32 { return expf(this); }
+    #[intrinsic("llvm.log")]
+    fn ln(this) -> f32 { return logf(this); }
+    #[intrinsic("llvm.log2")]
+    fn log2(this) -> f32 { return log2f(this); }
+    #[intrinsic("llvm.log10")]
+    fn log10(this) -> f32 { return log10f(this); }
+    fn powf(this, y: f32) -> f32 { return powf(this, y); }
+    fn hypot(this, y: f32) -> f32 { return hypotf(this, y); }
+    fn rem(this, y: f32) -> f32 { return fmodf(this, y); }
+    fn copysign(this, y: f32) -> f32 { return copysignf(this, y); }
+
+    // NaN-aware, matching the SIMD lane methods and C's fminf/fmaxf: a NaN
+    // operand loses. Not the same as `if a < b { a } else { b }`, which
+    // returns the second operand when the first is NaN.
+    fn min(this, b: f32) -> f32 { return fminf(this, b); }
+    fn max(this, b: f32) -> f32 { return fmaxf(this, b); }
+    fn clamp(this, lo: f32, hi: f32) -> f32 { return fminf(fmaxf(this, lo), hi); }
+
+    fn to_radians(this) -> f32 { return this * (PI_F32 / 180.0f32); }
+    fn to_degrees(this) -> f32 { return this * (180.0f32 / PI_F32); }
+
+    // x != x is the standard NaN test and needs no libm call.
+    fn is_nan(this) -> bool { return this != this; }
+}
+
+// ---------------------------------------------------------------------------
+// f64
+// ---------------------------------------------------------------------------
+
+impl f64 {
+    #[intrinsic("llvm.sqrt")]
+    fn sqrt(this) -> f64 { return sqrt(this); }
+    #[intrinsic("llvm.fabs")]
+    fn abs(this) -> f64 { return fabs(this); }
+    #[intrinsic("llvm.floor")]
+    fn floor(this) -> f64 { return floor(this); }
+    #[intrinsic("llvm.ceil")]
+    fn ceil(this) -> f64 { return ceil(this); }
+    #[intrinsic("llvm.round")]
+    fn round(this) -> f64 { return round(this); }
+    #[intrinsic("llvm.trunc")]
+    fn trunc(this) -> f64 { return trunc(this); }
+
+    #[intrinsic("llvm.sin")]
+    fn sin(this) -> f64 { return sin(this); }
+    #[intrinsic("llvm.cos")]
+    fn cos(this) -> f64 { return cos(this); }
+    fn tan(this) -> f64 { return tan(this); }
+    fn asin(this) -> f64 { return asin(this); }
+    fn acos(this) -> f64 { return acos(this); }
+    fn atan(this) -> f64 { return atan(this); }
+    fn atan2(this, x: f64) -> f64 { return atan2(this, x); }
+
+    #[intrinsic("llvm.exp")]
+    fn exp(this) -> f64 { return exp(this); }
+    #[intrinsic("llvm.log")]
+    fn ln(this) -> f64 { return log(this); }
+    #[intrinsic("llvm.log2")]
+    fn log2(this) -> f64 { return log2(this); }
+    #[intrinsic("llvm.log10")]
+    fn log10(this) -> f64 { return log10(this); }
+    fn powf(this, y: f64) -> f64 { return pow(this, y); }
+    fn hypot(this, y: f64) -> f64 { return hypot(this, y); }
+    fn rem(this, y: f64) -> f64 { return fmod(this, y); }
+    fn copysign(this, y: f64) -> f64 { return copysign(this, y); }
+
+    fn min(this, b: f64) -> f64 { return fmin(this, b); }
+    fn max(this, b: f64) -> f64 { return fmax(this, b); }
+    fn clamp(this, lo: f64, hi: f64) -> f64 { return fmin(fmax(this, lo), hi); }
+
+    fn to_radians(this) -> f64 { return this * (PI_F64 / 180.0f64); }
+    fn to_degrees(this) -> f64 { return this * (180.0f64 / PI_F64); }
+
+    fn is_nan(this) -> bool { return this != this; }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+fn _close_f32(a: f32, b: f32) -> bool { return fabsf(a - b) < 0.0001f32; }
+fn _close_f64(a: f64, b: f64) -> bool { return fabs(a - b) < 0.000000001f64; }
+
+#[test]
+fn f32_roots_and_powers() {
+    assert(_close_f32((4.0f32).sqrt(), 2.0f32));
+    assert(_close_f32((2.0f32).powf(10.0f32), 1024.0f32));
+    assert(_close_f32((3.0f32).hypot(4.0f32), 5.0f32));
+    assert(_close_f32((8.0f32).log2(), 3.0f32));
+    assert(_close_f32((1000.0f32).log10(), 3.0f32));
+    assert(_close_f32(E_F32.ln(), 1.0f32));
+    assert(_close_f32((0.0f32).exp(), 1.0f32));
+}
+
+#[test]
+fn f32_rounding_family_splits_at_the_half() {
+    assert(_close_f32((2.7f32).floor(), 2.0f32));
+    assert(_close_f32((2.2f32).ceil(), 3.0f32));
+    assert(_close_f32((2.5f32).round(), 3.0f32));
+    assert(_close_f32((2.9f32).trunc(), 2.0f32));
+    // trunc and floor differ on negatives — the reason both exist.
+    assert(_close_f32((0.0f32 - 2.9f32).trunc(), 0.0f32 - 2.0f32));
+    assert(_close_f32((0.0f32 - 2.9f32).floor(), 0.0f32 - 3.0f32));
+}
+
+#[test]
+fn f32_trig_round_trips() {
+    assert(_close_f32((0.0f32).sin(), 0.0f32));
+    assert(_close_f32((0.0f32).cos(), 1.0f32));
+    assert(_close_f32((1.0f32).asin().sin(), 1.0f32));
+    assert(_close_f32((1.0f32).atan(), PI_F32 / 4.0f32));
+    assert(_close_f32((1.0f32).atan2(1.0f32), PI_F32 / 4.0f32));
+    assert(_close_f32((180.0f32).to_radians(), PI_F32));
+    assert(_close_f32(PI_F32.to_degrees(), 180.0f32));
+}
+
+#[test]
+fn f32_sign_and_bounds() {
+    assert(_close_f32((0.0f32 - 2.5f32).abs(), 2.5f32));
+    assert(_close_f32((2.5f32).copysign(0.0f32 - 1.0f32), 0.0f32 - 2.5f32));
+    assert(_close_f32((5.0f32).clamp(0.0f32, 3.0f32), 3.0f32));
+    assert(_close_f32((0.0f32 - 5.0f32).clamp(0.0f32, 3.0f32), 0.0f32));
+    assert(_close_f32((1.0f32).clamp(0.0f32, 3.0f32), 1.0f32));
+    assert(_close_f32((7.0f32).rem(4.0f32), 3.0f32));
+}
+
+// min/max are the NUMBER-PREFERRING forms: a NaN operand loses, matching
+// C's fminf and the SIMD lane methods. `if a < b { a } else { b }` would
+// return the second operand instead, and the difference is exactly where a
+// port silently diverges.
+#[test]
+fn f32_min_max_prefer_the_number_over_nan() {
+    let nan: f32 = (0.0f32 - 1.0f32).sqrt();
+    assert(nan.is_nan());
+    assert(!(1.0f32).is_nan());
+    assert(_close_f32((1.0f32).min(2.0f32), 1.0f32));
+    assert(_close_f32((1.0f32).max(2.0f32), 2.0f32));
+    assert(_close_f32(nan.min(2.0f32), 2.0f32));
+    assert(_close_f32(nan.max(2.0f32), 2.0f32));
+    assert(_close_f32((2.0f32).min(nan), 2.0f32));
+}
+
+#[test]
+fn f64_carries_the_same_surface_at_double_width() {
+    assert(_close_f64((9.0f64).sqrt(), 3.0f64));
+    assert(_close_f64((2.0f64).powf(10.0f64), 1024.0f64));
+    assert(_close_f64((3.0f64).hypot(4.0f64), 5.0f64));
+    assert(_close_f64((0.0f64 - 2.5f64).abs(), 2.5f64));
+    assert(_close_f64((2.5f64).round(), 3.0f64));
+    assert(_close_f64((180.0f64).to_radians(), PI_F64));
+    assert(_close_f64(E_F64.ln(), 1.0f64));
+    let nan: f64 = (0.0f64 - 1.0f64).sqrt();
+    assert(nan.is_nan());
+    assert(_close_f64(nan.min(2.0f64), 2.0f64));
+}
+
+// The constants are narrowed from full f64 digit strings by the literal
+// parser, so f32 gets the correctly-rounded nearest float. Hand-typed
+// constants are a real source of cross-port drift.
+#[test]
+fn constants_agree_across_widths() {
+    assert(_close_f32(PI_F32, 3.14159274f32));
+    assert(_close_f32(TAU_F32, PI_F32 * 2.0f32));
+    assert(_close_f32(SQRT_2_F32, (2.0f32).sqrt()));
+    assert(_close_f64(TAU_F64, PI_F64 * 2.0f64));
+    assert(_close_f64(SQRT_2_F64, (2.0f64).sqrt()));
+    assert(_close_f64(LN_2_F64, (2.0f64).ln()));
+    assert(_close_f64(LN_10_F64, (10.0f64).ln()));
+}

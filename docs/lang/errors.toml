@@ -1431,16 +1431,16 @@ note = "Not reachable through the driver as of v0.0.26, for the same reason as E
 
 [[code]]
 id = "E0385"
-title = "Duplicate `impl str`"
+title = "Duplicate `impl` on a builtin"
 category = "Names, types, and items"
 severity = "error"
 repro = "checked"
 lang = "cplus"
 verified = true
-emit_site = "cplus-core/src/sema.rs:collect_str_impl_methods"
+emit_site = "cplus-core/src/sema.rs:collect_builtin_impl_methods"
 test = "cplus-core/src/sema.rs:impl_str_duplicate_block_e0385"
-cause = "The builtin `str` view takes its method set from exactly one `impl str { ... }` block program-wide — stdlib's `src/str.cplus`. A second block, in any file or package, is a conflict."
-fix = "Remove the extra block. To add operations over `str`, write free functions taking a `str` parameter, or convert with `to_text()` and use `Text`."
+cause = "A primitive takes its method set from exactly one `impl` block program-wide — `str` from stdlib's `src/str.cplus`, the float widths from `src/math.cplus`. A primitive has no declaring file of its own, so the first block in the build IS its inherent method set; a second, in any file or package, is a conflict. Named types are different: they have an owning module, so extensions there are additive and import-gated."
+fix = "Remove the extra block. To add operations over a builtin, write free functions taking it as a parameter — the blessed block is stdlib's, and its names are claimed build-wide."
 example = '''
 impl str { fn a(this) -> usize { return #str_len(this); } }
 impl str { fn b(this) -> usize { return #str_len(this); } }
@@ -1449,15 +1449,15 @@ fn main() -> i32 { return 0; }
 
 [[code]]
 id = "E0386"
-title = "Unsupported member in `impl str`"
+title = "Unsupported member in a builtin `impl`"
 category = "Names, types, and items"
 severity = "error"
 repro = "checked"
 lang = "cplus"
 verified = true
-emit_site = "cplus-core/src/sema.rs:collect_str_impl_methods"
+emit_site = "cplus-core/src/sema.rs:collect_builtin_impl_methods"
 test = "cplus-core/src/sema.rs:impl_str_bad_members_e0386"
-cause = "A method in the blessed `impl str` block has a shape the builtin does not support: generic parameters, `gen`/`async`, an associated fn (no receiver), a `ref this`/`take this` receiver (`str` is a Copy view — the receiver is always plain `this`), an interface conformance block, or a redeclaration of the compiler-provided `to_text`/`hash`/`eq`."
+cause = "A method in a primitive `impl` block (`str`, `bool`, any integer or float width) has a shape the builtin does not support: generic parameters, `gen`/`async`, an associated fn (no receiver), a `ref this`/`take this` receiver (every primitive is Copy — the receiver is always plain `this`), an interface conformance block, or a redeclaration of a compiler-provided name (`to_text`/`hash`/`eq` on `str`; `drop` on any)."
 fix = "Declare the method as a plain `fn name(this, ...)`; keep generics, interface impls, and the compiler-provided names off the block."
 example = '''
 impl str { fn m(ref this) -> usize { return #str_len(this); } }

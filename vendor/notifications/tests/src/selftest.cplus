@@ -3,7 +3,7 @@
 // The host suite covers the `When` arithmetic, the guards, the `Outcome` map
 // and the pending record. What it CANNOT cover is the framework: `cpc test`
 // builds a bare binary, `UNUserNotificationCenter` refuses a process with no
-// bundle identifier, and every seam verb correctly answers `Unsupported`
+// `.app` bundle, and every seam verb correctly answers `Unsupported`
 // there. This runner is a bundled app, which is the only configuration where
 // the centre exists — so these are the checks that only mean something here.
 //
@@ -102,7 +102,11 @@ fn a_malformed_notification_is_refused_before_the_permission_is_read() -> bool {
 fn pending_answers_and_appends() -> bool {
     var out: vec::Vec[str] = vec::new::[str]();
     let _a: status::Status = out.append("sentinel");
-    if notify::pending({ #addr_of(out) as *vec::Vec[str] }) != notify::Outcome::Ok {
+    // `pending` takes `ref out` — a MODE, not a pointer. This runner passed a
+    // raw `*Vec[str]` until 2026-09-09 and had stopped compiling at the
+    // signature change, which nothing noticed because `cpc test` does not build
+    // it: only `tools/run_ios_tests.sh` does, and it needs a simulator.
+    if notify::pending(out) != notify::Outcome::Ok {
         return false;
     }
     // The caller's own entry survives: this package appends to a Vec it does

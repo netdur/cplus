@@ -496,25 +496,25 @@ fn the_outline_mirrors_the_placed_nodes_own_matrix() {
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 40.0f64, h: 20.0f64 });
     v.set_wants_layer(true);
     let nl: qc::Layer = v.layer();
-    var m: qc::Transform3D = iplatform::identity_transform();
+    var m: qc::Transform3D = identity_transform();
     m.m11 = 2.0f64;
     m.m22 = 2.0f64;
     nl.set_transform(m);
 
     // The node IS what was placed: its matrix reaches the outline.
-    iplatform::mirror_transform(overlay, v.raw(), v.raw());
+    mirror_transform(overlay, v.raw(), v.raw());
     assert approx({ overlay.transform().m11 }, 2.0f64);
 
     // A VIEWLESS node was placed against an ANCESTOR's view. That ancestor's
     // matrix is not this node's, and a span inside a scaled label is already
     // drawn scaled by the label — mirroring here would scale it twice.
     let overlay2: qc::Layer = qc::Layer::new();
-    iplatform::mirror_transform(overlay2, 0 as *u8, v.raw());
+    mirror_transform(overlay2, 0 as *u8, v.raw());
     assert approx({ overlay2.transform().m11 }, 1.0f64);
 
     let overlay3: qc::Layer = qc::Layer::new();
     let other: ak::View = ak::View::new(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
-    iplatform::mirror_transform(overlay3, v.raw(), other.raw());
+    mirror_transform(overlay3, v.raw(), other.raw());
     assert approx({ overlay3.transform().m11 }, 1.0f64);
 }

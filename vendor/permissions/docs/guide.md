@@ -194,8 +194,22 @@ Three ways, all on Apple's side:
    answer the last refresh, and a completed `request` writes the answer in
    directly. `Unknown` is the right first answer — `can_prompt` is true for it,
    so your first move is to ask, which is what you would have done anyway.
-3. **macOS needs a signed bundle.** `UNUserNotificationCenter` errors out for a
-   bare binary, so macOS answers `Unsupported`.
+3. **macOS needs a real `.app`.** `UNUserNotificationCenter` does not error out
+   for a bare binary — it **raises**, and an unhandled ObjC exception aborts, so
+   the guard has to be asked before the call rather than caught after it. (A
+   `@try` cannot catch this one: the raise happens inside a `dispatch_once`
+   block and libdispatch terminates on any exception crossing it.) The guard
+   answers `Unsupported`.
+
+   **An embedded `macos/Info.plist` does not count as a bundle**, and this cost
+   a real crash. `cpc build` embeds that file into `__TEXT,__info_plist` when it
+   exists, which gives a bare binary a bundle *identifier* and no bundle
+   *proxy*; the guard asked for the identifier until 2026-09-09, so adding that
+   one file turned `state(of: NOTIFICATIONS)` into SIGABRT. It now asks whether
+   `[[NSBundle mainBundle] bundleURL]` names a real `.app` — `objc/bundle` has
+   the four measured rows, and `tools/run_embedded_plist_probe.sh` builds a
+   project with and without the plist and checks both survive and agree. Adding
+   the plist for the usage-description keys below is safe and is what it is for.
 
 On Android, `POST_NOTIFICATIONS` is API 33+. Below that the permission does not
 exist and the question is `NotificationManager.areNotificationsEnabled()` — a

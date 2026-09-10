@@ -75,6 +75,47 @@ fn obj_option(p: *u8) -> option::Option[*u8] // nil → None
 
 ---
 
+## `bundle`
+
+```cplus
+fn main_bundle() -> *u8                      // [NSBundle mainBundle], or null
+fn has_bundle_id() -> bool                   // bundleIdentifier != nil
+fn url_is_bundle(url: *u8) -> bool           // does this file URL name a .app?
+fn has_bundle_proxy() -> bool                // both, cached — ASK THIS ONE
+```
+
+`has_bundle_proxy` is the question to ask before touching any bundle-scoped
+framework. `+[UNUserNotificationCenter currentNotificationCenter]` **raises**
+for a process that has no bundle proxy, `respondsToSelector:` does not save you
+(the selector is there — it is the process that is wrong), and a `@try` cannot
+catch it either: the raise happens inside a `dispatch_once` block and libdispatch
+terminates on any exception crossing it.
+
+It is **not** `bundleIdentifier != nil`, which is the trap this module exists to
+close. Measured 2026-09-09, one probe built four ways:
+
+| process | `bundleIdentifier` | `url_is_bundle` | centre |
+|---|---|---|---|
+| bare, no section | nil | false | **raise** |
+| bare + `__TEXT,__info_plist` | set | false | **raise** |
+| a real `.app` | set | true | ok |
+| a `.app` with no `CFBundleIdentifier` | nil | true | **raise** |
+
+Rows 2 and 4 are why the predicate is an **and**: `cpc build` embeds a project's
+`macos/Info.plist` into `__TEXT,__info_plist`, which gives a bare binary an
+identifier and no bundle. `bundleURL` is the value the exception itself prints,
+and the `.app` extension is the public stand-in for the private
+`bundleProxyForCurrentProcess`. `.appex` is deliberately refused — it has a
+proxy, but C+ cannot build one, so the row is untested.
+
+The answer is cached: a process cannot acquire a bundle while it runs, and the
+callers ask on a hot path. `url_is_bundle` is separate so the discriminator is
+testable — the test process is always row 1.
+
+Callers: `permissions`, `notifications`.
+
+---
+
 ## `synthesis`
 
 ```cplus
@@ -108,7 +149,9 @@ Type encodings (`types: *u8`) are the ObjC runtime encoding strings for
 type Range = runtime::Range
 ```
 
-Imports `runtime` and `bridge` for package graph / tests.
+Imports every submodule — `runtime`, `bridge`, `bundle`, `synthesis` — for the
+package graph and for test discovery: `cpc test` walks from the package entry,
+so a module nothing imports is a module whose tests never run.
 
 ---
 
@@ -120,4 +163,4 @@ Imports `runtime` and `bridge` for package graph / tests.
 | Platform | Apple (arm64 macOS focus) |
 | Dependencies | `stdlib` |
 | Link | Foundation framework, libobjc |
-| Tests | `cpc test` (bridge string round-trips, etc.) |
+| Tests | `cpc test` (bridge string round-trips, bundle predicate rows, etc.) |

@@ -108,6 +108,21 @@ fn close_fd(fd: i32) -> i32 {
     return { close(fd) };
 }
 
+// Cooperative-cancellation seam for blocking socket I/O — see the macOS netsys
+// note. A POSIX blocking call is broken by the signal kick, so this is a no-op
+// and `wait_ready` is never reached; the Windows netsys does the work.
+//
+// THIS FILE WAS MISSING BOTH, and every other netsys had them, so nothing that
+// reached `stdlib/net` compiled for android at all: E0405 out of the generated
+// `net.cplus` header, naming a function that is plainly there in three of the
+// four variants. Found 2026-09-09 while type-checking an unrelated change to
+// `agent_android`; the platform variant had simply drifted.
+fn make_interruptible(fd: i32) -> i32 { let _f: i32 = fd; return 0 as i32; }
+fn wait_ready(fd: i32, for_write: bool, timeout_ms: i32) -> i32 {
+    let _f: i32 = fd; let _w: bool = for_write; let _t: i32 = timeout_ms;
+    return 0 as i32;
+}
+
 // F_GETFL / F_SETFL are 3 / 4 on both macOS and Linux.
 fn f_getfl() -> i32 { return 3 as i32; }
 fn f_setfl() -> i32 { return 4 as i32; }

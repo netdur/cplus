@@ -3,8 +3,15 @@
 // Framework bindings (naturallanguage, appkit, ...) import the submodules
 // directly (`import "objc/runtime"`, `import "objc/bridge"`); this facade is the
 // package entry and re-exports the common value types.
+//
+// EVERY SUBMODULE IS NAMED HERE even when nothing re-exports from it, because
+// the package entry is what `cpc test` walks: a module no import reaches is a
+// module whose tests do not run. `bundle` was written with six tests and none of
+// them ran until this line existed.
 
 import "./runtime" as runtime;
 import "./bridge" as bridge;
+import "./bundle" as bundle;
+import "./synthesis" as synthesis;
 
 type Range = runtime::Range;

@@ -16,6 +16,21 @@ import "./netsys" as netsys;
 extern fn mkdir(path: *u8, mode: u32) -> i32;
 extern fn stat(path: *u8, buf: *u8) -> i32;
 
+// Rename, REPLACING the destination if one is there — plain `rename(2)` on
+// Linux and bionic alike, exactly as on Darwin. It exists as a named wrapper
+// because the MSVC runtime's `rename` REFUSES an existing destination; see
+// `fs_sys.cplus` and the Windows sibling for the whole story.
+//
+// MISSING FROM THIS FILE until 2026-09-09, so `stdlib/fs` did not compile for
+// linux or android at all (E0405 from `fs.cplus`, naming a function plainly
+// present in the Darwin and Windows variants). The platform variant had
+// drifted, the same way `netsys_android` had lost `make_interruptible`.
+extern fn rename(from: *u8, to: *u8) -> i32;
+
+fn rename_replacing(from: *u8, to: *u8) -> i32 {
+    return { rename(from, to) };
+}
+
 // O_WRONLY = 0x1, O_CREAT = 0x40, O_TRUNC = 0x200 -> 0x241.
 fn create_flags() -> i32 { return 577 as i32; }
 
