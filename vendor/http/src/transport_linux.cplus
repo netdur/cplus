@@ -1,94 +1,585 @@
-// transport — the Linux half. NOT BUILT, and this file exists so that says so
-// at the right moment.
+// transport — the Linux half, over libcurl.
 //
-// WHY IT EXISTS AT ALL, given that saying "no" is all it does: without it,
-// `import "./transport"` on Linux resolves to the BASE — which is Foundation —
-// and a Linux build ends on a page of undefined Objective-C symbols naming a
-// framework the developer never asked for.
+// libcurl is the platform's own client in exactly the sense this package's
+// header means: TLS, certificate validation, DNS, redirects, proxy discovery,
+// compression and the protocol itself belong to it, and it is serviced by the
+// distribution rather than by this repo. NOTHING HERE IMPLEMENTS HTTP.
 //
-// It also keeps Android honest. The resolver falls back from `android` to
-// `_linux` when there is no `_android` sibling, and prefers `_android` when
-// there is — so this file is what an Android build would get if
-// `transport_android.cplus` were ever deleted, rather than Foundation.
+// ---- LINKED, and it has to be ------------------------------------------------
 //
-// ---- what a real port is, and what actually blocks it ------------------------
+// `curl_easy_setopt` and `curl_easy_getinfo` are VARIADIC. A variadic function
+// reached through a fixed-arity function pointer is not merely untidy: on
+// AAPCS64 the variadic arguments go on the STACK while a fixed prototype puts
+// them in registers, so the callee reads whatever was there. It happens to work
+// on x86-64, where both go in the same registers — which is the worst outcome
+// available, because it would pass every test on an Intel machine and corrupt
+// every option on an ARM server. So `dlopen` is not on the table here the way
+// it is for `securestore`, whose every libsecret entry point is fixed-arity.
 //
-// libcurl's easy interface: `curl_easy_init`, `curl_easy_setopt` for the
-// method, headers and body, a write callback that appends to a `vec::Vec[u8]`,
-// then a blocking `curl_easy_perform`. It is the platform's own client in the
-// same sense NSURLSession and WinHTTP are — TLS, DNS, redirects and proxy all
-// belong to it — and it is the one every Linux program already links.
+// That is why this file was a refusal until 2026-09-10: linking needed
+// `[linux.link]`, and `[<platform>.link]` was reserved and unimplemented. The
+// only link table there was applies to EVERY target, so `-lcurl` in it would
+// have been handed to the macOS and Windows link lines too.
 //
-// THE OLD REASON GIVEN HERE WAS "nothing in this repo builds for Linux yet",
-// AND THAT IS NO LONGER TRUE. The real blocker is narrower and worth writing
-// down, because it is one missing manifest feature rather than a page of work:
+// ---- IT IS SYNCHRONOUS, WHICH IS WHY THIS FILE IS SHORT ----------------------
 //
-//   libcurl HAS TO BE LINKED, not `dlopen`ed. `curl_easy_setopt` and
-//   `curl_easy_getinfo` are VARIADIC, and a variadic function called through a
-//   non-variadic function pointer is not merely untidy — on AAPCS64 the
-//   variadic arguments go on the STACK while a fixed prototype puts them in
-//   registers, so the callee reads garbage. It happens to work on x86-64,
-//   where both go in the same registers, which is the worst possible outcome:
-//   it would pass every test on this machine and corrupt every option on an
-//   ARM server. `dlsym` is what `securestore`'s Linux half uses, and it is
-//   sound there precisely because every libsecret entry point it calls is
-//   fixed-arity.
+// `curl_easy_perform` blocks until the exchange is done. So there is no
+// completion handler, no semaphore and no escaping block — the three things
+// that make the Foundation transport the size it is. `send`'s contract
+// (blocking, call it off-main) is satisfied by construction, exactly as the
+// WinHTTP half satisfies it.
 //
-//   Linking needs `[linux.link]`, and `[<platform>.link]` is RESERVED BUT NOT
-//   IMPLEMENTED — `manifest.rs` says so in as many words ("a future
-//   `[<platform>.link]` arrives as a feature, not a silently-ignored key").
-//   The only link table there is applies to every target, so putting
-//   `-lcurl` in it would hand it to the macOS and Windows link lines too.
+// ---- ERROR CODES ARE NEGATED CURLcodes ---------------------------------------
 //
-// So the port is one manifest feature and about two hundred lines, in that
-// order. Doing it in the other order is what this file is refusing to do.
+// `http.cplus` specifies NEGATIVE codes for "the platform's own numbering" and
+// positive for the package's own `ERROR_*`. A CURLcode is a small positive
+// integer, so it is negated on the way out: a connect failure is -7, a TLS
+// handshake failure -35, a timeout -28. A caller compares against the `ERROR_*`
+// constants and treats the rest as opaque, which is what the header asks of it.
 
 import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
 import "./http" as http;
 
-// The same negative space the other transports use, so a caller comparing
-// against `http::ERROR_*` still sees a platform code here.
-const ERROR_NOT_BUILT: i64 = 0 - 3001;
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+extern fn strlen(p: *u8) -> usize;
 
-// THE SEAM MOVED AND THIS FILE DID NOT. It used to write through a single
-// `*http::Exchange` out-parameter; `http.cplus` now hands three — `ok` picks
-// which of the other two is the answer — and the type this file named no
-// longer exists. Nothing caught it because no build compiled this file: the
-// package was macOS-only, so a refusal for a platform nobody built rotted
-// exactly as long as the platform was unreachable.
+#[link_name = "curl_global_init"]
+extern fn curl_global_init(flags: i64) -> i32;
+#[link_name = "curl_easy_init"]
+extern fn curl_easy_init() -> *u8;
+// VARIADIC, and declared as such — see the header. C+ carries `...` through to
+// the C prototype, which is the only spelling that is right on both ABIs.
+#[link_name = "curl_easy_setopt"]
+extern fn curl_easy_setopt(handle: *u8, option: i32, ...) -> i32;
+#[link_name = "curl_easy_getinfo"]
+extern fn curl_easy_getinfo(handle: *u8, info: i32, ...) -> i32;
+#[link_name = "curl_easy_perform"]
+extern fn curl_easy_perform(handle: *u8) -> i32;
+#[link_name = "curl_easy_cleanup"]
+extern fn curl_easy_cleanup(handle: *u8);
+#[link_name = "curl_easy_strerror"]
+extern fn curl_easy_strerror(code: i32) -> *u8;
+#[link_name = "curl_slist_append"]
+extern fn curl_slist_append(list: *u8, s: *u8) -> *u8;
+#[link_name = "curl_slist_free_all"]
+extern fn curl_slist_free_all(list: *u8);
+
+// ---- option numbers, each with its arithmetic --------------------------------
+//
+// `curl.h` builds an option id from a TYPE BASE and an ordinal: LONG is 0,
+// OBJECTPOINT 10000, FUNCTIONPOINT 20000. The base is what tells libcurl how to
+// read the variadic argument, so a pointer passed under a LONG id is read as an
+// integer — which is why each one below carries its sum rather than a literal.
+fn _opt_url() -> i32 { return 10000 +% 2; }
+fn _opt_writefunction() -> i32 { return 20000 +% 11; }
+fn _opt_writedata() -> i32 { return 10000 +% 1; }
+fn _opt_headerfunction() -> i32 { return 20000 +% 79; }
+fn _opt_headerdata() -> i32 { return 10000 +% 29; }
+fn _opt_customrequest() -> i32 { return 10000 +% 36; }
+// COPYPOSTFIELDS, not POSTFIELDS: the plain one does NOT copy and libcurl reads
+// the buffer during `perform`, so a body owned by this frame would be a
+// dangling read the moment anything reallocated.
+fn _opt_copypostfields() -> i32 { return 10000 +% 165; }
+fn _opt_postfieldsize() -> i32 { return 0 +% 60; }
+fn _opt_httpheader() -> i32 { return 10000 +% 23; }
+fn _opt_timeout_ms() -> i32 { return 0 +% 155; }
+fn _opt_followlocation() -> i32 { return 0 +% 52; }
+fn _opt_nobody() -> i32 { return 0 +% 44; }
+fn _opt_accept_encoding() -> i32 { return 10000 +% 102; }
+fn _opt_useragent() -> i32 { return 10000 +% 18; }
+// CURLINFO_LONG is 0x200000; RESPONSE_CODE is its second member.
+fn _info_response_code() -> i32 { return 0x200000 +% 2; }
+// CURL_GLOBAL_SSL | CURL_GLOBAL_WIN32.
+fn _global_default() -> i64 { return 3 as i64; }
+
+// The platform's own code, negated per `http.cplus`'s sign convention. CURLE_OK
+// is 0 and would collide with "no error", so a failure that somehow reports OK
+// becomes -1 rather than 0.
+fn _platform_code(rc: i32) -> i64 {
+    if rc == (0 as i32) { return (0 as i64) -% (1 as i64); }
+    return (0 as i64) -% { rc as i64 };
+}
+
+fn _fail(code: i64, message: str) -> result::Result[http::Response, http::Error] {
+    return result::Result[http::Response, http::Error]::Err(http::Error {
+        code: code,
+        message: text::from_str(message),
+    });
+}
+
+fn _fail_text(code: i64, take message: text::Text) -> result::Result[http::Response, http::Error] {
+    return result::Result[http::Response, http::Error]::Err(http::Error {
+        code: code,
+        message: message,
+    });
+}
+
+fn _cstr_view(p: *u8) -> str {
+    if p == (0 as *u8) { return ""; }
+    return { #str_from_raw_parts(p, { strlen(p) }) };
+}
+
+// ---- the growable buffer the callbacks append to ------------------------------
+//
+// A `vec::Vec[u8]` would be the natural thing and is not reachable from here:
+// these two functions are called BY C, once per chunk, and what they get is the
+// `void *` handed to `CURLOPT_WRITEDATA`. So the accumulator is a plain
+// malloc'd triple and the Vec is built from it once, at the end.
+
+struct Buf {
+    opaque data: *u8,
+    len: usize,
+    cap: usize,
+}
+
+fn buf_new() -> *Buf {
+    let b: *Buf = { malloc(#size_of::[Buf]()) as *Buf };
+    if b == (0 as *Buf) { return 0 as *Buf; }
+    { (*b).data = 0 as *u8 };
+    { (*b).len = 0 as usize };
+    { (*b).cap = 0 as usize };
+    return b;
+}
+
+fn buf_free(b: *Buf) {
+    if b == (0 as *Buf) { return; }
+    let d: *u8 = { (*b).data };
+    if d != (0 as *u8) { { free(d) }; }
+    { free(b as *u8) };
+}
+
+// DOUBLING, from a page. A response arrives in chunks libcurl chooses and a
+// growth of exactly what each chunk needs makes a megabyte body a few thousand
+// reallocs; doubling makes it twenty.
+fn buf_append(b: *Buf, p: *u8, n: usize) -> bool {
+    if b == (0 as *Buf) { return false; }
+    if n == (0 as usize) { return true; }
+    let need: usize = { (*b).len } +% n;
+    if need > { (*b).cap } {
+        var next: usize = if { (*b).cap } == (0 as usize) { 4096 as usize } else { (*b).cap };
+        while next < need { next = next *% (2 as usize); }
+        let grown: *u8 = { realloc({ (*b).data }, next) };
+        if grown == (0 as *u8) { return false; }
+        { (*b).data = grown };
+        { (*b).cap = next };
+    }
+    { memcpy({ (*b).data } + { (*b).len }, p, n) };
+    { (*b).len = need };
+    return true;
+}
+
+fn buf_view(b: *Buf) -> str {
+    if b == (0 as *Buf) { return ""; }
+    if { (*b).data } == (0 as *u8) { return ""; }
+    return { #str_from_raw_parts({ (*b).data }, { (*b).len }) };
+}
+
+// `size_t cb(char *ptr, size_t size, size_t nmemb, void *userdata)` — the shape
+// libcurl calls. RETURNING ANYTHING BUT size*nmemb ABORTS THE TRANSFER, which
+// is exactly what should happen when the append fails: a truncated body handed
+// back as a success is the failure this package spends its `Error` type to
+// prevent.
+fn _sink(ptr: *u8, size: usize, nmemb: usize, user: *u8) -> usize {
+    let n: usize = size *% nmemb;
+    if !buf_append({ user as *Buf }, ptr, n) { return 0 as usize; }
+    return n;
+}
+
+// ---- headers --------------------------------------------------------------------
+
+fn _byte_at(s: str, i: usize) -> u8 {
+    return { *({ ({ #addr(#str_ptr(s)) } +% i) as *u8 }) };
+}
+
+fn _slice(s: str, from: usize, to: usize) -> str {
+    return { #str_from_raw_parts({ ({ #addr(#str_ptr(s)) } +% from) as *u8 }, to -% from) };
+}
+
+// The raw header block into fields. Same shape as the WinHTTP half's, and the
+// same two rules: THE FIRST LINE IS THE STATUS LINE and carries no colon, and a
+// line with no colon at all is dropped rather than guessed at.
+//
+// libcurl hands the header callback one line at a time INCLUDING its CRLF, and
+// hands the status line and the blank terminator too — so the block this parses
+// is the same text WinHttpQueryHeaders returns, and the parser is the same.
+//
+// A REDIRECT CHAIN EMITS SEVERAL BLOCKS. `CURLOPT_FOLLOWLOCATION` is on, so a
+// 301 followed by a 200 produces two status lines; the second block's fields
+// are the ones that describe the response the caller gets, and a later
+// `Set-Cookie` or `Content-Type` must not be shadowed by the redirect's. So the
+// parse RESTARTS at every status line rather than accumulating across them.
+fn _parse_headers(block: str) -> vec::Vec[http::Header] {
+    var out: vec::Vec[http::Header] = vec::new::[http::Header]();
+    let n: usize = #str_len(block);
+    var start: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i <= n {
+        let at_end: bool = i == n;
+        var is_break: bool = at_end;
+        if !at_end { is_break = _byte_at(block, i) == (10 as u8); }   // '\n'
+        if is_break {
+            var stop: usize = i;
+            if stop > start {
+                if _byte_at(block, stop -% (1 as usize)) == (13 as u8) {   // '\r'
+                    stop = stop -% (1 as usize);
+                }
+            }
+            if stop > start {
+                let line: str = _slice(block, start, stop);
+                var colon: usize = 0 as usize;
+                var has_colon: bool = false;
+                var j: usize = 0 as usize;
+                while j < #str_len(line) {
+                    if _byte_at(line, j) == (58 as u8) { colon = j; has_colon = true; break; }
+                    j = j +% (1 as usize);
+                }
+                if has_colon {
+                    var vstart: usize = colon +% (1 as usize);
+                    while vstart < #str_len(line) {
+                        if _byte_at(line, vstart) != (32 as u8) { break; }
+                        vstart = vstart +% (1 as usize);
+                    }
+                    let _a: status::Status = out.append(http::Header {
+                        name: text::from_str(_slice(line, 0 as usize, colon)),
+                        value: text::from_str(_slice(line, vstart, #str_len(line))),
+                    });
+                } else {
+                    // A status line. Everything before it belonged to a hop
+                    // that is not the answer.
+                    out.remove_all();
+                }
+            }
+            start = i +% (1 as usize);
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// ---- the exchange ----------------------------------------------------------------
+
+static _GLOBAL_READY: bool = false;
+
+// `curl_easy_init` initialises the library implicitly and the manual says that
+// is NOT thread-safe. Doing it once here is the documented fix, and a process
+// that never sends a request never pays for it.
+fn _ensure_global() {
+    if _GLOBAL_READY { return; }
+    _GLOBAL_READY = true;
+    let _rc: i32 = { curl_global_init(_global_default()) };
+}
+
+fn _cstring_of(s: str) -> option::Option[text::CString] {
+    return text::from_str(s).c_str();
+}
+
+fn _perform(req: *http::Request) -> result::Result[http::Response, http::Error] {
+    _ensure_global();
+    let url: text::Text = { (*req).url.clone() };
+    if url.count() == (0 as usize) {
+        return _fail(http::ERROR_INVALID_URL, "http: the URL is empty");
+    }
+    let url_c: text::CString = match _cstring_of(url.view()) {
+        option::Option[text::CString]::Some(v) => v,
+        option::Option[text::CString]::None => {
+            return _fail(http::ERROR_INVALID_URL, "http: the URL is not a usable C string");
+        }
+    };
+
+    let h: *u8 = { curl_easy_init() };
+    if h == (0 as *u8) {
+        return _fail(_platform_code(0 as i32), "http: libcurl would not make a handle");
+    }
+
+    let body: *Buf = buf_new();
+    let head: *Buf = buf_new();
+    if body == (0 as *Buf) || head == (0 as *Buf) {
+        buf_free(body); buf_free(head); { curl_easy_cleanup(h) };
+        return _fail(http::ERROR_TASK_REFUSED, "http: out of memory");
+    }
+
+    // Bound to a `fn`-typed local before it can be passed: a function name is
+    // not a value until it is (E0312).
+    let sink: fn(*u8, usize, usize, *u8) -> usize = _sink;
+    let _u: i32 = { curl_easy_setopt(h, _opt_url(), url_c.as_ptr()) };
+    let _wf: i32 = { curl_easy_setopt(h, _opt_writefunction(), sink) };
+    let _wd: i32 = { curl_easy_setopt(h, _opt_writedata(), body as *u8) };
+    let _hf: i32 = { curl_easy_setopt(h, _opt_headerfunction(), sink) };
+    let _hd: i32 = { curl_easy_setopt(h, _opt_headerdata(), head as *u8) };
+    // FOLLOWED, because Foundation and WinHTTP both follow by default and a
+    // package whose answer depended on the platform would not be one API.
+    let _fl: i32 = { curl_easy_setopt(h, _opt_followlocation(), 1 as i64) };
+    // An empty string means "every encoding this build can decode" — so a
+    // gzipped response arrives decoded, as it does on the other two.
+    let _ae: i32 = { curl_easy_setopt(h, _opt_accept_encoding(), #str_ptr("\0")) };
+    let _ua: i32 = { curl_easy_setopt(h, _opt_useragent(), #str_ptr("cplus-http/1\0")) };
+
+    // The facade's timeout is seconds as a float; libcurl's is whole
+    // milliseconds. Zero or less means "no limit", which is libcurl's own
+    // default and what the facade's own doc calls the platform default.
+    let secs: f64 = { (*req).timeout_seconds };
+    if secs > (0.0 as f64) {
+        let ms: i64 = { (secs * (1000.0 as f64)) as i64 };
+        let _t: i32 = { curl_easy_setopt(h, _opt_timeout_ms(), ms) };
+    }
+
+    // HEAD is a FLAG, not a custom verb: `CURLOPT_NOBODY` is what makes libcurl
+    // send HEAD and, more importantly, stop waiting for a body that is not
+    // coming. Spelling it as a custom request instead hangs until the timeout.
+    let method: http::Method = { (*req).method };
+    if method == http::Method::Head {
+        let _nb: i32 = { curl_easy_setopt(h, _opt_nobody(), 1 as i64) };
+    } else if method != http::Method::Get {
+        let verb: text::CString = match _cstring_of(http::method_name(method)) {
+            option::Option[text::CString]::Some(v) => v,
+            option::Option[text::CString]::None => {
+                buf_free(body); buf_free(head); { curl_easy_cleanup(h) };
+                return _fail(http::ERROR_TASK_REFUSED, "http: could not name the method");
+            }
+        };
+        let _cr: i32 = { curl_easy_setopt(h, _opt_customrequest(), verb.as_ptr()) };
+    }
+
+    // SIZE FIRST, then the bytes. `COPYPOSTFIELDS` reads the length libcurl
+    // already has when it copies, so setting it afterwards copies the wrong
+    // amount — and a body with a NUL in it (a protobuf, an image) would be
+    // truncated at the NUL if the size were never set at all.
+    let blen: usize = { (*req).body.count() };
+    if blen > (0 as usize) {
+        let _ps: i32 = { curl_easy_setopt(h, _opt_postfieldsize(), { blen as i64 }) };
+        let _pf: i32 = { curl_easy_setopt(h, _opt_copypostfields(),
+                                          #slice_ptr({ (*req).body.as_slice() })) };
+    }
+
+    // Request headers, as a curl_slist of `Name: value`.
+    var list: *u8 = 0 as *u8;
+    var hi: usize = 0 as usize;
+    while hi < { (*req).headers.count() } {
+        match { (*req).headers.at_ptr(hi) } {
+            option::Option[*http::Header]::Some(hp) => {
+                var line: text::Text = { (*hp).name.clone() };
+                let _c1: status::Status = line.append(": ");
+                let _c2: status::Status = line.append({ (*hp).value.view() });
+                match line.c_str() {
+                    option::Option[text::CString]::Some(cs) => {
+                        list = { curl_slist_append(list, cs.as_ptr()) };
+                    }
+                    option::Option[text::CString]::None => { }
+                }
+            }
+            option::Option[*http::Header]::None => { }
+        }
+        hi = hi +% (1 as usize);
+    }
+    if list != (0 as *u8) {
+        let _hh: i32 = { curl_easy_setopt(h, _opt_httpheader(), list) };
+    }
+
+    let rc: i32 = { curl_easy_perform(h) };
+    if rc != (0 as i32) {
+        let why: text::Text = text::from_str(_cstr_view({ curl_easy_strerror(rc) }));
+        var msg: text::Text = text::from_str("http: ");
+        let _m: status::Status = msg.append(why.view());
+        if list != (0 as *u8) { { curl_slist_free_all(list) }; }
+        buf_free(body); buf_free(head); { curl_easy_cleanup(h) };
+        return _fail_text(_platform_code(rc), msg);
+    }
+
+    var status_code: i64 = 0 as i64;
+    let _gi: i32 = { curl_easy_getinfo(h, _info_response_code(), #addr_of(status_code)) };
+
+    var out_body: vec::Vec[u8] = vec::new::[u8]();
+    if { (*body).len } > (0 as usize) {
+        let _ab: status::Status = out_body.append_slice(
+            { #slice_from_raw_parts({ (*body).data }, { (*body).len }) });
+    }
+    let out_headers: vec::Vec[http::Header] = _parse_headers(buf_view(head));
+
+    if list != (0 as *u8) { { curl_slist_free_all(list) }; }
+    buf_free(body); buf_free(head); { curl_easy_cleanup(h) };
+
+    // A NON-2xx IS A RESPONSE. The server answered, and 404 is an answer —
+    // `http.cplus` reserves `Error` for the exchanges that never produced one.
+    return result::Result[http::Response, http::Error]::Ok(
+        http::Response::from_parts({ status_code as i32 }, out_headers, out_body));
+}
+
 export extern fn http_transport_perform_v1(req: *http::Request, ok: *bool,
                                            response: *http::Response,
                                            error: *http::Error) {
-    let _r: *http::Request = req;
-    let _resp: *http::Response = response;
-    { (*ok) = false };
-    { (*error) = http::Error {
-        code: ERROR_NOT_BUILT,
-        message: text::from_str(
-            "http: no transport is built for Linux (see vendor/http/src/transport_linux.cplus - libcurl is the port, and it needs [linux.link])"),
-    } };
+    match _perform(req) {
+        result::Result[http::Response, http::Error]::Ok(r) => {
+            { (*response) = r };
+            { (*ok) = true };
+        }
+        result::Result[http::Response, http::Error]::Err(e) => {
+            { (*error) = e };
+            { (*ok) = false };
+        }
+    }
     return;
 }
 
 // ---- tests -------------------------------------------------------------------
+//
+// The parts that are this file's own logic and not libcurl's. The exchange
+// itself is covered by the `net_` tests next to the facade, which run on every
+// platform that has a transport built — and this platform now has one.
+
+fn _hdr_at(v: vec::Vec[http::Header], i: usize) -> text::Text {
+    return match v.at_ptr(i) {
+        option::Option[*http::Header]::Some(h) => { (*h).name.clone() },
+        option::Option[*http::Header]::None => text::new(),
+    };
+}
+
+fn _val_at(v: vec::Vec[http::Header], i: usize) -> text::Text {
+    return match v.at_ptr(i) {
+        option::Option[*http::Header]::Some(h) => { (*h).value.clone() },
+        option::Option[*http::Header]::None => text::new(),
+    };
+}
 
 #[test]
-fn the_linux_transport_refuses_with_a_platform_code_and_no_response() {
-    var okd: bool = true;
-    var resp: http::Response = http::Response::empty();
-    var err: http::Error = http::Error { code: 0 as i64, message: text::new() };
-    var req: http::Request = http::Request::new("https://example.com");
-    { http_transport_perform_v1(#addr_of(req), #addr_of(okd), #addr_of(resp), #addr_of(err)) };
-    assert !okd;
-    assert err.code == ERROR_NOT_BUILT;
-    // NEGATIVE, which `http.cplus` reserves for the platform's own numbering —
-    // a caller comparing against the positive `ERROR_*` constants must not
-    // match this one by accident.
-    assert err.code < (0 as i64);
-    // The message NAMES THE FILE, so the next person to hit it lands here
-    // rather than searching for a code.
-    assert err.message.view().contains("transport_linux.cplus");
-    // And the response is left exactly as `send` gave it.
-    assert resp.status == (0 as i32);
-    assert resp.body.count() == (0 as usize);
+fn the_status_line_is_not_a_header() {
+    let block: str = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 12\r\n\r\n";
+    let h: vec::Vec[http::Header] = _parse_headers(block);
+    assert h.count() == (2 as usize);
+    assert _hdr_at(h, 0 as usize).view() == "Content-Type";
+    assert _val_at(h, 0 as usize).view() == "text/html";
+    assert _hdr_at(h, 1 as usize).view() == "Content-Length";
+    assert _val_at(h, 1 as usize).view() == "12";
+}
+
+#[test]
+fn a_redirect_chains_earlier_fields_do_not_survive_it() {
+    // FOLLOWLOCATION IS ON, so libcurl hands the header callback every hop.
+    // The fields that describe the response the caller gets are the LAST
+    // block's — a `Content-Type: text/html` from the 301 shadowing the 200's
+    // `application/json` is the bug this rule exists for, and it would look
+    // like the server sending the wrong type.
+    let block: str = "HTTP/1.1 301 Moved\r\nLocation: /next\r\nContent-Type: text/html\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n";
+    let h: vec::Vec[http::Header] = _parse_headers(block);
+    assert h.count() == (1 as usize);
+    assert _hdr_at(h, 0 as usize).view() == "Content-Type";
+    assert _val_at(h, 0 as usize).view() == "application/json";
+}
+
+#[test]
+fn a_value_keeps_its_own_colons_and_loses_only_the_leading_space() {
+    // A Date carries two colons and a URL carries one after the scheme; a
+    // parser that split on the last colon, or trimmed the whole value, would
+    // corrupt both.
+    let block: str = "HTTP/1.1 200 OK\r\nLocation: https://example.com:8443/a\r\nDate: Mon, 01 Jan 2035 10:20:30 GMT\r\n\r\n";
+    let h: vec::Vec[http::Header] = _parse_headers(block);
+    assert h.count() == (2 as usize);
+    assert _val_at(h, 0 as usize).view() == "https://example.com:8443/a";
+    assert _val_at(h, 1 as usize).view() == "Mon, 01 Jan 2035 10:20:30 GMT";
+}
+
+#[test]
+fn a_line_with_no_colon_is_dropped_rather_than_guessed_at() {
+    let block: str = "HTTP/1.1 200 OK\r\nnonsense\r\nX-Real: 1\r\n\r\n";
+    let h: vec::Vec[http::Header] = _parse_headers(block);
+    // `nonsense` has no colon, so it restarts the block the way a status line
+    // does — and `X-Real` is what survives. Either way it is never a field with
+    // an empty name.
+    assert h.count() == (1 as usize);
+    assert _hdr_at(h, 0 as usize).view() == "X-Real";
+}
+
+#[test]
+fn an_empty_header_block_is_no_fields_rather_than_a_fault() {
+    assert _parse_headers("").count() == (0 as usize);
+    assert _parse_headers("\r\n").count() == (0 as usize);
+}
+
+#[test]
+fn the_buffer_grows_by_doubling_and_keeps_every_byte() {
+    let b: *Buf = buf_new();
+    assert b != (0 as *Buf);
+    assert buf_view(b) == "";
+    // Two appends that cross the first page, so the realloc path runs and the
+    // OLD bytes have to survive it — losing them is a body that is quietly
+    // missing its head.
+    var chunk: [u8; 3000] = [0u8; 3000];
+    let p: *u8 = { #addr_of(chunk) as *u8 };
+    var i: usize = 0 as usize;
+    while i < (3000 as usize) { { *(p + i) = 65 as u8 }; i = i +% (1 as usize); }
+    assert buf_append(b, p, 3000 as usize);
+    assert { (*b).len } == (3000 as usize);
+    assert buf_append(b, p, 3000 as usize);
+    assert { (*b).len } == (6000 as usize);
+    assert { (*b).cap } >= (6000 as usize);
+    // Every byte is still an 'A', including the ones that moved.
+    let view: str = buf_view(b);
+    assert #str_len(view) == (6000 as usize);
+    assert _byte_at(view, 0 as usize) == (65 as u8);
+    assert _byte_at(view, 2999 as usize) == (65 as u8);
+    assert _byte_at(view, 5999 as usize) == (65 as u8);
+    buf_free(b);
+}
+
+#[test]
+fn a_sink_that_cannot_take_the_bytes_aborts_the_transfer() {
+    // libcurl treats a short return as "stop", which is what should happen:
+    // a truncated body handed back as a success is the failure this package
+    // spends its Error type to prevent.
+    let b: *Buf = buf_new();
+    assert _sink(#str_ptr("abc"), 1 as usize, 3 as usize, b as *u8) == (3 as usize);
+    assert buf_view(b) == "abc";
+    // A null accumulator is the out-of-memory shape, and it reports zero.
+    assert _sink(#str_ptr("abc"), 1 as usize, 3 as usize, 0 as *u8) == (0 as usize);
+    buf_free(b);
+}
+
+#[test]
+fn an_option_id_is_its_type_base_plus_its_ordinal() {
+    // The base is what tells libcurl how to READ the variadic argument, so a
+    // pointer passed under a LONG id is read as an integer. Recomputed here so
+    // a typo fails the suite rather than the request.
+    assert _opt_url() == (10002 as i32);              // OBJECTPOINT + 2
+    assert _opt_writefunction() == (20011 as i32);    // FUNCTIONPOINT + 11
+    assert _opt_writedata() == (10001 as i32);        // OBJECTPOINT + 1
+    assert _opt_headerfunction() == (20079 as i32);   // FUNCTIONPOINT + 79
+    assert _opt_copypostfields() == (10165 as i32);   // OBJECTPOINT + 165
+    assert _opt_postfieldsize() == (60 as i32);       // LONG + 60
+    assert _opt_timeout_ms() == (155 as i32);         // LONG + 155
+    assert _opt_nobody() == (44 as i32);              // LONG + 44
+    assert _info_response_code() == (2097154 as i32); // CURLINFO_LONG + 2
+}
+
+#[test]
+fn a_curl_code_crosses_the_seam_negative() {
+    // `http.cplus` reserves NEGATIVE for the platform's own numbering and
+    // positive for its own ERROR_* constants, so a caller comparing against
+    // those must never match a CURLcode by accident.
+    assert _platform_code(7 as i32) == ((0 as i64) -% (7 as i64));    // COULDNT_CONNECT
+    assert _platform_code(28 as i32) == ((0 as i64) -% (28 as i64));  // OPERATION_TIMEDOUT
+    // CURLE_OK is 0 and would collide with "no error at all".
+    assert _platform_code(0 as i32) == ((0 as i64) -% (1 as i64));
+    assert _platform_code(35 as i32) < (0 as i64);
+}
+
+#[test]
+fn the_transport_is_built_on_this_platform() {
+    // The counterpart of the refusal this file used to be. A port nothing
+    // listens on fails in microseconds without leaving the machine — and it
+    // fails with a CURLcode, not with the -3001 that meant "no transport is
+    // built for Linux". `send` reaching a real client is what makes the `net_`
+    // tests next to the facade run at all.
+    match http::send(http::Request::new("http://127.0.0.1:1/")) {
+        result::Result[http::Response, http::Error]::Ok(_r) => { assert false; }
+        result::Result[http::Response, http::Error]::Err(e) => {
+            assert e.code != ((0 as i64) -% (3001 as i64));
+            assert e.code < (0 as i64);
+        }
+    };
 }
