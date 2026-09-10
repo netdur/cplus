@@ -33100,6 +33100,101 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
             .collect()
     }
 
+    // ---- named arguments across two types declaring the same method ----
+
+    #[test]
+    fn two_types_with_the_identical_labelled_method_are_not_ambiguous() {
+        // `lower_named_call` dedupes candidate arrangements so that two types
+        // declaring the same method do not look like two different calls. The
+        // dedup compared the SPLICED DEFAULT EXPRESSIONS with `==` — and `Expr`
+        // carries its `Span`, which derives `PartialEq`. So `8` written on one
+        // line and `8` written on another were structurally UNEQUAL, every
+        // identical pair counted as two arrangements, and the call died on
+        // E1002 telling the caller their labels were "in different positions"
+        // when they were in the very same ones.
+        //
+        // `vendor/static-arena` — two arenas, one
+        // `alloc_bytes(count, aligned_to:, zeroed:)` apiece — could not compile
+        // on ANY platform, and the message pointed away from the cause.
+        // `check_call`'s own comment states the invariant this pins: "Identical
+        // signatures are fine: every candidate yields the same order."
+        let errs = lowered_errors(
+            "struct A { n: i32 }
+             struct B { n: i32 }
+             impl A { fn take(this, count: i32, step: i32 = 8) -> i32 { return count + step; } }
+             impl B { fn take(this, count: i32, step: i32 = 8) -> i32 { return count - step; } }
+             fn main() -> i32 {
+                 let a: A = A { n: 0 };
+                 let b: B = B { n: 0 };
+                 return a.take(1, step: 2) + b.take(3, step: 4);
+             }",
+        );
+        assert!(errs.is_empty(), "identical signatures must resolve, got {errs:?}");
+    }
+
+    #[test]
+    fn an_omitted_default_resolves_across_identical_signatures_too() {
+        // The same dedup decides whether an OMITTED argument can take its
+        // default: both candidates splice the same value into the same slot, so
+        // there is one arrangement, not two.
+        let errs = lowered_errors(
+            "struct A { n: i32 }
+             struct B { n: i32 }
+             impl A { fn go(this, x: i32, flag: bool = false) -> i32 { return x; } }
+             impl B { fn go(this, x: i32, flag: bool = false) -> i32 { return x; } }
+             fn main() -> i32 {
+                 let a: A = A { n: 0 };
+                 return a.go(1);
+             }",
+        );
+        assert!(errs.is_empty(), "omitted default must resolve, got {errs:?}");
+    }
+
+    #[test]
+    fn two_types_whose_defaults_differ_stay_ambiguous() {
+        // The guard the dedup exists for, and it must survive the fix: when the
+        // two candidates would splice DIFFERENT values into the same slot,
+        // choosing either one silently is the bug (the first candidate's
+        // `false` landing in the other type's `*u8` slot). So the arrangements
+        // must still be counted as two, and the call reported rather than
+        // guessed at.
+        //
+        // `tail` differs between the two types and is OMITTED by the call, so
+        // it is the slot a default is spliced into.
+        let omitted = lowered_errors(
+            "struct A { n: i32 }
+             struct B { n: i32 }
+             impl A { fn go(this, x: i32, tail: i32 = 1, extra: i32 = 9) -> i32 { return x + tail + extra; } }
+             impl B { fn go(this, x: i32, tail: i32 = 2, extra: i32 = 9) -> i32 { return x - tail - extra; } }
+             fn main() -> i32 {
+                 let a: A = A { n: 0 };
+                 return a.go(1, extra: 5);
+             }",
+        );
+        assert!(
+            omitted.iter().any(|c| c == "E1002"),
+            "differing defaults must NOT be silently deduped, got {omitted:?}"
+        );
+    }
+
+    #[test]
+    fn a_label_that_supplies_the_differing_default_resolves() {
+        // The contrast that shows the guard is about the SPLICE and not about
+        // the method name: the same two types, but the differing parameter is
+        // given explicitly, so no default is spliced and both candidates agree.
+        let errs = lowered_errors(
+            "struct A { n: i32 }
+             struct B { n: i32 }
+             impl A { fn go(this, x: i32, tail: i32 = 1, extra: i32 = 9) -> i32 { return x + tail + extra; } }
+             impl B { fn go(this, x: i32, tail: i32 = 2, extra: i32 = 9) -> i32 { return x - tail - extra; } }
+             fn main() -> i32 {
+                 let a: A = A { n: 0 };
+                 return a.go(1, tail: 5);
+             }",
+        );
+        assert!(errs.is_empty(), "an explicit label needs no default, got {errs:?}");
+    }
+
     // ---- contracts: #[requires] ----
 
     #[test]

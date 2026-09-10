@@ -350,13 +350,34 @@ impl Lower {
                 })
                 .collect()
         };
+        // Compared with `same_default`, NOT with `==`. `Expr` carries its
+        // `Span` and `Span` derives `PartialEq`, so two defaults that are the
+        // same value written on different lines are structurally UNEQUAL — and
+        // this comparison is the whole of what decides whether two candidates
+        // are "the same arrangement". Two types declaring the identical method
+        // therefore looked like two different arrangements, `results.len()`
+        // came back 2, and every named call to that method died on sema's
+        // E1002 telling the caller their labels were "in different positions"
+        // when they were in the same ones. `vendor/static-arena` — two arenas,
+        // one `alloc_bytes(count, aligned_to:, zeroed:)` apiece — could not
+        // compile at all, on any platform, and the message pointed away from
+        // the cause. `check_call`'s own comment states the invariant this
+        // restores: "Identical signatures are fine: every candidate yields the
+        // same order."
+        let sigs_agree = |a: &[Option<Expr>], b: &[Option<Expr>]| -> bool {
+            a.len() == b.len()
+                && a.iter().zip(b.iter()).all(|(x, y)| match (x, y) {
+                    (None, None) => true,
+                    (Some(p), Some(q)) => Self::same_default(p, q),
+                    _ => false,
+                })
+        };
         for (ci, params) in candidates.iter().enumerate() {
             match Self::match_call(params, args, arg_labels, call_span) {
                 Ok(slots) => {
-                    if !results
-                        .iter()
-                        .any(|(pci, s)| *s == slots && splice_sig(*pci, s) == splice_sig(ci, &slots))
-                    {
+                    if !results.iter().any(|(pci, s)| {
+                        *s == slots && sigs_agree(&splice_sig(*pci, s), &splice_sig(ci, &slots))
+                    }) {
                         results.push((ci, slots));
                     }
                 }
@@ -378,6 +399,96 @@ impl Lower {
             arg_labels.clear();
         }
         // results.len() > 1: ambiguous without types — leave labels for sema E1002.
+    }
+
+    /// Do two parameter defaults denote the SAME VALUE, ignoring where each was
+    /// written? The question `lower_named_call`'s dedup actually needs, and the one
+    /// `==` cannot answer: `Expr` carries a `Span` at every level of the tree, so
+    /// `8` on line 89 and `8` on line 150 are not `==`.
+    ///
+    /// It covers the shapes a default takes — a literal, an enum path, a cast of
+    /// one, a unary minus, a constructor call — and ANYTHING ELSE ANSWERS `false`.
+    /// That fallback is deliberate and it is the safe direction: `false` means "two
+    /// distinct arrangements", which is exactly what the span-sensitive comparison
+    /// used to say about everything, so an unrecognised shape keeps today's
+    /// behaviour (an E1002 the caller can work around positionally) rather than
+    /// risking the failure the dedup exists to prevent — splicing one candidate's
+    /// default into another candidate's slot. `Sig::on(v, ctx = 0, once = false)`
+    /// against `Bus::on(name, v, ctx = 0)` still disagrees at the shared position,
+    /// because `false` and `0` are different kinds.
+    ///
+    /// Deliberately NOT a general span-blind `Expr` equality. `ast::walk_expr` could
+    /// build one for `Expr` and `Type` exhaustively, but `Ident` carries a span too
+    /// and the walkers hand those through untouched — so a `Path` comparison would
+    /// still be span-sensitive and the general-looking helper would quietly be a
+    /// partial one. This is the partial one, and says so.
+    fn same_default(a: &Expr, b: &Expr) -> bool {
+        match (&a.kind, &b.kind) {
+            // `8`, `1.0f64`, `false`, `""` — the common case by a wide margin.
+            // The literal's suffix is part of the value: `0` and `0u8` splice
+            // differently.
+            (ExprKind::IntLit(x, sx), ExprKind::IntLit(y, sy)) => x == y && sx == sy,
+            (ExprKind::FloatLit(x, sx), ExprKind::FloatLit(y, sy)) => x == y && sx == sy,
+            (ExprKind::BoolLit(x), ExprKind::BoolLit(y)) => x == y,
+            (ExprKind::StrLit(x), ExprKind::StrLit(y)) => x == y,
+            (ExprKind::CStrLit(x), ExprKind::CStrLit(y)) => x == y,
+            // A bare name, and a qualified one — `vocab::Easing::SinInOut` is the
+            // single most common default in this tree. Compared by NAME only: the
+            // spans on the segments are what this whole helper exists to ignore.
+            (ExprKind::Ident(x), ExprKind::Ident(y)) => x == y,
+            (ExprKind::Path { segments: x }, ExprKind::Path { segments: y }) => {
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.name == q.name)
+            }
+            // `0 as *u8`, `-1 as i32`. The TARGET TYPE is compared by its rendered
+            // form rather than by `==`, for the same reason as everything else here
+            // — `Type` carries a span.
+            (
+                ExprKind::Cast { expr: x, ty: tx },
+                ExprKind::Cast { expr: y, ty: ty_ },
+            ) => Self::same_default(x, y) && format!("{:?}", tx.kind) == format!("{:?}", ty_.kind),
+            (
+                ExprKind::Unary { op: ox, operand: x },
+                ExprKind::Unary { op: oy, operand: y },
+            ) => ox == oy && Self::same_default(x, y),
+            (
+                ExprKind::Binary { op: ox, lhs: lx, rhs: rx },
+                ExprKind::Binary { op: oy, lhs: ly, rhs: ry },
+            ) => ox == oy && Self::same_default(lx, ly) && Self::same_default(rx, ry),
+            // `vocab::Duration::animation()`, `text::new()`. Labels and turbofish
+            // are compared too: a default is only the same value if the call that
+            // produces it is the same call.
+            (
+                ExprKind::Call {
+                    callee: cx,
+                    args: ax,
+                    arg_labels: lx,
+                    type_args: tx,
+                },
+                ExprKind::Call {
+                    callee: cy,
+                    args: ay,
+                    arg_labels: ly,
+                    type_args: ty_,
+                },
+            ) => {
+                Self::same_default(cx, cy)
+                    && ax.len() == ay.len()
+                    && ax.iter().zip(ay.iter()).all(|(p, q)| Self::same_default(p, q))
+                    && lx.len() == ly.len()
+                    && lx.iter().zip(ly.iter()).all(|(p, q)| match (p, q) {
+                        (None, None) => true,
+                        (Some(m), Some(n)) => m.name == n.name,
+                        _ => false,
+                    })
+                    && tx.len() == ty_.len()
+                    && tx
+                        .iter()
+                        .zip(ty_.iter())
+                        .all(|(p, q)| format!("{:?}", p.kind) == format!("{:?}", q.kind))
+            }
+            // Everything else: not recognised, so not provably the same value.
+            _ => false,
+        }
     }
 
     /// Match a call's `args`/`labels` against one parameter list. Returns, per
