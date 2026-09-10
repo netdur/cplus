@@ -1,0 +1,81 @@
+// share_backend_linux — the honest Linux answer, which is "there is no sheet".
+//
+// THIS FILE EXISTS SO A LINUX BUILD LINKS. `share.cplus` declares four stable
+// symbols and something has to define them on every platform the package claims
+// to build for; without it the resolver falls through to the AppKit backend and
+// the failure is `objc/runtime is not available on platform linux`.
+//
+// WHY `Unsupported` RATHER THAN A PORTAL CALL, and this is the part worth
+// reading before someone "fixes" it.
+//
+// There is no system share sheet on a Linux desktop. GNOME and KDE ship no
+// equivalent of `NSSharingServicePicker` or `ACTION_SEND` — no service that
+// enumerates the applications willing to RECEIVE an item and lets the user pick
+// one. The thing that looks like the answer is
+// `org.freedesktop.portal.OpenURI`, and it is a DIFFERENT VERB.
+//
+//   share   — hand this item to some other application the user chooses
+//   OpenURI — open this thing in whatever the system considers its handler
+//
+// Wiring `url` to OpenURI would launch the user's BROWSER on the link. That is
+// not sharing it; it is following it. The caller asked for a way to send a link
+// to somebody and would silently get a browser tab, which is the kind of wrong
+// that looks like it works — the sheet never appeared, so nobody sees a bug,
+// and the link goes nowhere. `share::file` is worse: OpenFile would open the
+// document in an editor rather than offer it to anyone.
+//
+// `Email` (`ComposeEmail`) is a real portal and a real answer for exactly one
+// destination. Routing every share into a mail composer is a product decision
+// about the whole package, not a Linux implementation detail, so it is not
+// taken here on this file's own authority.
+//
+// So: `available()` answers false, an application asks first and hides its
+// share button, and nothing claims to have presented a sheet that never
+// existed. `permissions_backend_linux.cplus` states the same shape for the same
+// reason.
+//
+// INPUT VALIDATION IS THE FACADE'S. `share.cplus` rejects an empty body, link
+// or path with `InvalidInput` before it ever reaches a backend, so everything
+// arriving here is well-formed and the only honest answer left is that there is
+// nowhere to send it.
+
+// Outcome::Unsupported. Spelled as the number the facade decodes, because the
+// backend half deliberately does not import `share.cplus` — the facade imports
+// nothing back, and a cycle is rejected (E0404).
+fn _unsupported() -> i32 { return 1 as i32; }
+
+export extern fn _c_available() -> i32 {
+    return 0 as i32;
+}
+
+export extern fn _c_text(body: *u8, body_len: usize,
+                         subject: *u8, subject_len: usize) -> i32 {
+    return _unsupported();
+}
+
+export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
+    return _unsupported();
+}
+
+export extern fn _c_file(path: *u8, path_len: usize) -> i32 {
+    return _unsupported();
+}
+
+#[test]
+fn there_is_no_sheet_and_nothing_pretends_otherwise() {
+    assert { _c_available() } == (0 as i32);
+    let t: str = "hello";
+    let u: str = "https://example.invalid";
+    let f: str = "/tmp/nothing";
+    assert { _c_text(#str_ptr(t), #str_len(t), #str_ptr(""), 0 as usize) } == _unsupported();
+    assert { _c_url(#str_ptr(u), #str_len(u)) } == _unsupported();
+    assert { _c_file(#str_ptr(f), #str_len(f)) } == _unsupported();
+}
+
+#[test]
+fn unsupported_is_not_ok_and_not_failed() {
+    // The distinction the facade's enum exists for: `Ok` would claim a sheet
+    // appeared, and `Failed` would suggest retrying might help. Neither is true.
+    assert _unsupported() != (0 as i32);   // Ok
+    assert _unsupported() != (3 as i32);   // Failed
+}
