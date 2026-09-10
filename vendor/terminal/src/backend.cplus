@@ -585,9 +585,7 @@ fn resize_pty(ctx: *u8) {
 }
 
 fn start(
-    // "" is the platform's own shell, resolved by `pty::start`. See
-    // `widget.cplus` for why this is not the literal it used to be.
-    shell: str = "",
+    shell: str = "/bin/zsh",
     cwd: str = "",
     max_scrollback: usize = 1048576 as usize,
     font_size: f64 = 13.0f64,

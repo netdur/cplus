@@ -33819,29 +33819,41 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
     }
 
     #[test]
-    fn two_types_whose_defaults_differ_stay_ambiguous() {
-        // The guard the dedup exists for, and it must survive the fix: when the
-        // two candidates would splice DIFFERENT values into the same slot,
-        // choosing either one silently is the bug (the first candidate's
-        // `false` landing in the other type's `*u8` slot). So the arrangements
-        // must still be counted as two, and the call reported rather than
-        // guessed at.
-        //
+    fn two_types_whose_defaults_differ_each_get_their_own() {
         // `tail` differs between the two types and is OMITTED by the call, so
-        // it is the slot a default is spliced into.
-        let omitted = lowered_errors(
+        // it is the slot a default is spliced into — the case where picking the
+        // wrong candidate is a WRONG VALUE rather than a compile error.
+        //
+        // Lowering cannot decide it: candidates are keyed by bare method name
+        // and it has no types. It leaves the labels alone, and SEMA resolves it
+        // — it knows the receiver's type, looks up the one parameter list that
+        // belongs to it, and calls `arrange_named_args`. So the call compiles
+        // and each receiver gets ITS OWN default.
+        //
+        // This test used to assert E1002 here, from a version that reported the
+        // ambiguity instead of resolving it. Reporting was the weaker answer:
+        // the information to decide was available one pass later, and the error
+        // made a correct program unwritable.
+        //
+        // VERIFIED BY RUNNING IT, since a diagnostic test cannot see a value:
+        // with `A::go = x + tail + extra` and `B::go = x - tail - extra`,
+        // `a.go(1, extra: 5)` is 7 (A's `tail = 1`) and `b.go(1, extra: 5)` is
+        // -6 (B's `tail = 2`). Splicing the first candidate's default into the
+        // second's slot would give -9.
+        let errs = lowered_errors(
             "struct A { n: i32 }
              struct B { n: i32 }
              impl A { fn go(this, x: i32, tail: i32 = 1, extra: i32 = 9) -> i32 { return x + tail + extra; } }
              impl B { fn go(this, x: i32, tail: i32 = 2, extra: i32 = 9) -> i32 { return x - tail - extra; } }
              fn main() -> i32 {
                  let a: A = A { n: 0 };
-                 return a.go(1, extra: 5);
+                 let b: B = B { n: 0 };
+                 return a.go(1, extra: 5) + b.go(1, extra: 5);
              }",
         );
         assert!(
-            omitted.iter().any(|c| c == "E1002"),
-            "differing defaults must NOT be silently deduped, got {omitted:?}"
+            errs.is_empty(),
+            "the receiver's type decides which default is spliced, got {errs:?}"
         );
     }
 
