@@ -1,31 +1,8 @@
-/* ===========================================================================
- * rt — Shirley "Ray Tracing in One Weekend" tracer, C reference.
- *
- * This is a 1:1 transliteration of examples/ray_tracer/cplus/src/main.cplus,
- * which is the reference implementation here rather than the other way round.
- * Same scene, same xorshift32 stream, same recursion, same by-value Hit and
- * Scattered structs — the point of the comparison is that the three ports do
- * identical arithmetic in identical order, so any difference in the numbers
- * is the language and its toolchain.
- *
- * Single-threaded and no acceleration structure, deliberately: 10 spheres
- * tested linearly. A BVH would make the tracer faster and the comparison
- * worse, because most of the runtime would move into one hand-tuned data
- * structure rather than into the language's ordinary code.
- *
- * Determinism note: one shared RNG state consumed in a fixed sequential
- * order. That is what makes a byte-identical image possible at all, and it
- * is also why this cannot be threaded without changing the output.
- * ===========================================================================
- */
-
 #include <fcntl.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
-
-/* --- vec3 -------------------------------------------------------------- */
 
 typedef struct { float x, y, z; } V3;
 
@@ -46,8 +23,6 @@ static inline V3 reflect(V3 v, V3 n) {
     return sub(v, scale(n, 2.0f * d));
 }
 
-/* --- xorshift32 -------------------------------------------------------- */
-
 static inline uint32_t rng_next(uint32_t *restrict state) {
     uint32_t x = state[0];
     x = x ^ (x << 13);
@@ -65,7 +40,7 @@ static inline V3 rand_in_unit_sphere(uint32_t *restrict state) {
     V3 p = V(0.0f, 0.0f, 0.0f);
     int done = 0;
     while (!done) {
-        /* Three draws per attempt, x then y then z. */
+
         float px = 2.0f * randf(state) - 1.0f;
         float py = 2.0f * randf(state) - 1.0f;
         float pz = 2.0f * randf(state) - 1.0f;
@@ -79,14 +54,12 @@ static inline V3 rand_unit_vector(uint32_t *restrict state) {
     return norm(rand_in_unit_sphere(state));
 }
 
-/* --- scene ------------------------------------------------------------- */
-
 typedef struct {
     V3 center;
     float radius;
-    int32_t mat;      /* 0 lambertian, 1 metal, 2 dielectric */
+    int32_t mat;
     V3 albedo;
-    float extra;      /* metal: fuzz.  dielectric: index of refraction. */
+    float extra;
 } Sphere;
 
 static void fill_scene(Sphere *restrict s) {
@@ -104,8 +77,6 @@ static void fill_scene(Sphere *restrict s) {
 
 typedef struct { V3 origin, dir; } Ray;
 
-/* By-value Hit with a `valid` flag rather than an out-pointer: SROA splits
- * it into registers, and it keeps the three ports structurally identical. */
 typedef struct {
     int valid;
     float t;
@@ -124,7 +95,7 @@ static Hit sphere_hit(const Sphere *restrict scene, int32_t idx, Ray r,
                       float t_min, float t_max) {
     Sphere s = scene[idx];
     V3 oc = sub(r.origin, s.center);
-    /* The ray direction is NOT normalized here, so `a` is carried through. */
+
     float a = len2(r.dir);
     float half_b = dot(oc, r.dir);
     float c = len2(oc) - s.radius * s.radius;
@@ -196,7 +167,7 @@ static Scattered scatter(const Sphere *restrict scene, uint32_t *restrict state,
         Scattered out = {1, s.albedo, {rec.p, dir}};
         return out;
     }
-    /* Dielectric. */
+
     float ratio = rec.front_face == 1 ? (1.0f / s.extra) : s.extra;
     V3 unit_dir = norm(r_in.dir);
     float cos_theta = 0.0f - dot(unit_dir, rec.normal);
@@ -217,7 +188,6 @@ static Scattered scatter(const Sphere *restrict scene, uint32_t *restrict state,
     return out;
 }
 
-/* Recursive, matching the reference. */
 static V3 ray_color(const Sphere *restrict scene, int32_t n_spheres,
                     uint32_t *restrict state, Ray r, int32_t depth) {
     if (depth <= 0) return V(0.0f, 0.0f, 0.0f);
@@ -234,8 +204,6 @@ static V3 ray_color(const Sphere *restrict scene, int32_t n_spheres,
     float t = 0.5f * (ud.y + 1.0f);
     return add(scale(V(1.0f,1.0f,1.0f), 1.0f - t), scale(V(0.5f,0.7f,1.0f), t));
 }
-
-/* --- camera ------------------------------------------------------------ */
 
 typedef struct { V3 origin, ll, hor, ver; } Camera;
 
@@ -267,8 +235,6 @@ static inline float clampf(float x, float lo, float hi) {
     if (x > hi) return hi;
     return x;
 }
-
-/* --- main -------------------------------------------------------------- */
 
 int main(void) {
     const int32_t width = 800, height = 450, samples = 32, max_depth = 15;

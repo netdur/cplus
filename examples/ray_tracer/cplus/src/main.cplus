@@ -1,22 +1,10 @@
-// Shirley RTIOW raytracer in C+ — "by-value" variant.
-// Same as `cplus/` (1:1 with C: free functions, i32 material tag, restrict)
-// EXCEPT sphere_hit / world_hit / scatter return by value (`Hit` with a
-// `valid: bool` flag, no `*Hit` out-pointer, no scratch pools).
-// Isolates the perf cost of the by-value return pattern from all the other
-// idiomatic changes in `cplus-idiom/`.
+import "stdlib/math" as _;
+import "stdlib/fs" as fs;
+import "stdlib/vec" as vec;
+import "stdlib/result" as result;
 
-extern fn sqrtf(x: f32) -> f32;
-extern fn tanf(x: f32) -> f32;
-extern fn fabsf(x: f32) -> f32;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
-extern fn open(path: *u8, flags: i32, ...) -> i32;
-extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
-extern fn close(fd: i32) -> i32;
-
-fn f_sqrt(x: f32) -> f32 { return sqrtf(x); }
-fn f_tan(x: f32) -> f32 { return tanf(x); }
-fn f_abs(x: f32) -> f32 { return fabsf(x); }
 
 struct V3 { x: f32, y: f32, z: f32 }
 
@@ -28,7 +16,7 @@ fn scale(a: V3, s: f32) -> V3 { return V3 { x: a.x * s, y: a.y * s, z: a.z * s }
 fn neg(a: V3) -> V3 { return V3 { x: 0.0f32 - a.x, y: 0.0f32 - a.y, z: 0.0f32 - a.z }; }
 fn dot(a: V3, b: V3) -> f32 { return a.x * b.x + a.y * b.y + a.z * b.z; }
 fn len2(a: V3) -> f32 { return a.x*a.x + a.y*a.y + a.z*a.z; }
-fn norm(a: V3) -> V3 { let l: f32 = f_sqrt(len2(a)); return scale(a, 1.0f32 / l); }
+fn norm(a: V3) -> V3 { let l: f32 = (len2(a)).sqrt(); return scale(a, 1.0f32 / l); }
 fn cross(a: V3, b: V3) -> V3 {
     return V3 {
         x: a.y*b.z - a.z*b.y,
@@ -96,8 +84,6 @@ fn fill_scene(restrict scene: *Sphere) {
 
 struct Ray { origin: V3, dir: V3 }
 
-// "by-value" Hit: includes a `valid` flag. Caller reads `.valid` to know
-// whether to use the rest. SROA should split the struct into registers.
 struct Hit {
     valid: bool,
     t: f32,
@@ -120,7 +106,7 @@ fn sphere_hit(restrict scene: *Sphere, idx: i32, r: Ray, t_min: f32, t_max: f32)
     let c: f32 = len2(oc) - s.radius * s.radius;
     let disc: f32 = half_b * half_b - a * c;
     if disc < 0.0f32 { return miss(); }
-    let sd: f32 = f_sqrt(disc);
+    let sd: f32 = (disc).sqrt();
     var root: f32 = (0.0f32 - half_b - sd) / a;
     if root <= t_min || root >= t_max {
         root = (0.0f32 - half_b + sd) / a;
@@ -129,7 +115,7 @@ fn sphere_hit(restrict scene: *Sphere, idx: i32, r: Ray, t_min: f32, t_max: f32)
     let p: V3 = add(r.origin, scale(r.dir, root));
     let outward: V3 = scale(sub(p, s.center), 1.0f32 / s.radius);
     let ff: i32 = if dot(r.dir, outward) < 0.0f32 { 1 } else { 0 };
-    // workaround for v0.0.14 codegen panic: split let-X = if-else-method-call
+
     var n: V3 = outward;
     if ff == 0 { n = neg(outward); }
     return Hit { valid: true, t: root, p: p, normal: n, front_face: ff, sphere_idx: idx };
@@ -157,7 +143,6 @@ fn schlick(cosv: f32, ref_idx: f32) -> f32 {
     return r0 + (1.0f32 - r0) * om*om*om*om*om;
 }
 
-// By-value scatter result.
 struct Scattered { valid: bool, atten: V3, scattered: Ray }
 
 fn absorbed() -> Scattered {
@@ -172,9 +157,9 @@ fn scatter(restrict scene: *Sphere, restrict state: *u32, r_in: Ray, rec: Hit) -
     let s: Sphere = scene[rec.sphere_idx as usize];
     if s.mat == 0 {
         var dir: V3 = add(rec.normal, rand_unit_vector(state));
-        if f_abs(dir.x) < 1e-8f32 {
-            if f_abs(dir.y) < 1e-8f32 {
-                if f_abs(dir.z) < 1e-8f32 {
+        if (dir.x).abs() < 1e-8f32 {
+            if (dir.y).abs() < 1e-8f32 {
+                if (dir.z).abs() < 1e-8f32 {
                     dir = rec.normal;
                 }
             }
@@ -188,12 +173,12 @@ fn scatter(restrict scene: *Sphere, restrict state: *u32, r_in: Ray, rec: Hit) -
         if d <= 0.0f32 { return absorbed(); }
         return Scattered { valid: true, atten: s.albedo, scattered: Ray { origin: rec.p, dir: dir } };
     }
-    // Dielectric.
+
     let ratio: f32 = if rec.front_face == 1 { 1.0f32 / s.extra } else { s.extra };
     let unit_dir: V3 = norm(r_in.dir);
     var cos_theta: f32 = 0.0f32 - dot(unit_dir, rec.normal);
     if cos_theta > 1.0f32 { cos_theta = 1.0f32; }
-    let sin_theta: f32 = f_sqrt(1.0f32 - cos_theta*cos_theta);
+    let sin_theta: f32 = (1.0f32 - cos_theta*cos_theta).sqrt();
     let cannot: bool = (ratio * sin_theta) > 1.0f32;
     var dir: V3 = V(0.0f32, 0.0f32, 0.0f32);
     if cannot || schlick(cos_theta, ratio) > randf(state) {
@@ -202,15 +187,13 @@ fn scatter(restrict scene: *Sphere, restrict state: *u32, r_in: Ray, rec: Hit) -
         let r_perp: V3 = scale(add(unit_dir, scale(rec.normal, cos_theta)), ratio);
         var k: f32 = 1.0f32 - len2(r_perp);
         if k < 0.0f32 { k = 0.0f32; }
-        let r_para: V3 = scale(rec.normal, 0.0f32 - f_sqrt(k));
+        let r_para: V3 = scale(rec.normal, 0.0f32 - (k).sqrt());
         dir = add(r_perp, r_para);
     }
     return Scattered { valid: true, atten: V(1.0f32, 1.0f32, 1.0f32),
                        scattered: Ray { origin: rec.p, dir: dir } };
 }
 
-// By-value ray_color. No scratch pools — returns Hit / Scattered by value
-// and lets SROA flatten them.
 fn ray_color(
     restrict scene: *Sphere, n_spheres: i32, restrict state: *u32,
     r: Ray, depth: i32,
@@ -234,7 +217,7 @@ struct Camera { origin: V3, ll: V3, hor: V3, ver: V3 }
 
 fn cam_init(restrict c: *Camera, look_from: V3, look_at: V3, vup: V3, vfov_deg: f32, aspect: f32) {
     let theta: f32 = vfov_deg * 3.14159265358979323846f32 / 180.0f32;
-    let h: f32 = f_tan(theta * 0.5f32);
+    let h: f32 = (theta * 0.5f32).tan();
     let vh: f32 = 2.0f32 * h;
     let vw: f32 = aspect * vh;
     let w: V3 = norm(sub(look_from, look_at));
@@ -285,8 +268,6 @@ fn main() -> i32 {
         V(0.0f32, 1.0f32, 0.0f32),
         20.0f32, aspect);
 
-    // No scratch pools — by-value variant returns Hit/Scattered through ABI.
-
     let pixel_bytes: usize = (width as usize) * (height as usize) * (3 as usize);
     let pixels: *u8 = malloc(pixel_bytes);
 
@@ -304,9 +285,9 @@ fn main() -> i32 {
                 col = add(col, ray_color(scene, n_spheres, rng, cam_ray(cam, u, v), max_depth));
                 sIdx = sIdx + 1;
             }
-            let r: f32 = clampf(f_sqrt(col.x * inv_samples), 0.0f32, 0.999f32);
-            let g: f32 = clampf(f_sqrt(col.y * inv_samples), 0.0f32, 0.999f32);
-            let b: f32 = clampf(f_sqrt(col.z * inv_samples), 0.0f32, 0.999f32);
+            let r: f32 = clampf((col.x * inv_samples).sqrt(), 0.0f32, 0.999f32);
+            let g: f32 = clampf((col.y * inv_samples).sqrt(), 0.0f32, 0.999f32);
+            let b: f32 = clampf((col.z * inv_samples).sqrt(), 0.0f32, 0.999f32);
             let row_off: usize = ((height - 1 - j) as usize) * (width as usize) * (3 as usize);
             let px_off: usize = row_off + (i as usize) * (3 as usize);
             pixels[px_off + (0 as usize)] = (256.0f32 * r) as u8;
@@ -317,27 +298,20 @@ fn main() -> i32 {
         j = j - 1;
     }
 
-    let flags: i32 = (1 as i32)| (0x200 as i32)| (0x400 as i32);
-    let mode: i32 = 0o644 as i32;
-    let path: str = "out.ppm";
-    let fd: i32 = open(#str_ptr(path), flags, mode);
-    if fd < 0 {
-        free(pixels); free(scene as *u8); free(rng as *u8); free(cam as *u8);
-        return 2;
+    var body: vec::Vec[u8] = vec::new::[u8]();
+    body.extend_from_raw(pixels, pixel_bytes);
+    match fs::create("out.ppm") {
+        result::Result[fs::File, result::IoError]::Ok(f) => {
+            var file: fs::File = f;
+            file.write_str("P6\n800 450\n255\n");
+            file.write_all(body);
+            file.close();
+        }
+        result::Result[fs::File, result::IoError]::Err(_) => {
+            free(pixels); free(scene as *u8); free(rng as *u8); free(cam as *u8);
+            return 2;
+        }
     }
-
-    let header: str = "P6\n800 450\n255\n";
-    let _h: isize = write(fd, #str_ptr(header), #str_len(header));
-
-    var written: usize = 0 as usize;
-    while written < pixel_bytes {
-        let remaining: usize = pixel_bytes -% written;
-        let q: *u8 = pixels + written;
-        let w: isize = write(fd, q, remaining);
-        if w <= (0 as isize) { break; }
-        written = written +% (w as usize);
-    }
-    close(fd);
 
     free(pixels);
     free(scene as *u8);

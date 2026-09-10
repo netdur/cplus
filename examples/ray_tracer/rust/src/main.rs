@@ -1,24 +1,4 @@
-// ===========================================================================
-// rt — Shirley "Ray Tracing in One Weekend" tracer, Rust port.
-//
-// A 1:1 transliteration of examples/ray_tracer/cplus/src/main.cplus, which is
-// the reference here. Same scene, same xorshift32 stream, same recursion,
-// same by-value Hit and Scattered structs, so the three ports do identical
-// arithmetic in identical order.
-//
-// Rust never contracts `a*b+c` into an FMA, so this build corresponds to the
-// other two ports' contraction-off setting and matches their hash for free.
-// There is no way to ask rustc for the contracted form, which is why the
-// comparison table reports both settings for C and C+ and only one here.
-//
-// Single-threaded with one shared RNG consumed in a fixed order — that is
-// what makes a byte-identical image possible, and also why threading it
-// would change the output.
-// ===========================================================================
-
 use std::io::Write;
-
-// --- vec3 ------------------------------------------------------------------
 
 #[derive(Clone, Copy, Default)]
 struct V3 { x: f32, y: f32, z: f32 }
@@ -48,8 +28,6 @@ fn cross(a: V3, b: V3) -> V3 {
 #[inline(always)]
 fn reflect(vv: V3, n: V3) -> V3 { let d = dot(vv, n); sub(vv, scale(n, 2.0 * d)) }
 
-// --- xorshift32 ------------------------------------------------------------
-
 #[inline(always)]
 fn rng_next(state: &mut u32) -> u32 {
     let mut x = *state;
@@ -68,7 +46,7 @@ fn randf(state: &mut u32) -> f32 {
 #[inline(always)]
 fn rand_in_unit_sphere(state: &mut u32) -> V3 {
     loop {
-        // Three draws per attempt, x then y then z.
+
         let px = 2.0 * randf(state) - 1.0;
         let py = 2.0 * randf(state) - 1.0;
         let pz = 2.0 * randf(state) - 1.0;
@@ -80,15 +58,13 @@ fn rand_in_unit_sphere(state: &mut u32) -> V3 {
 #[inline(always)]
 fn rand_unit_vector(state: &mut u32) -> V3 { norm(rand_in_unit_sphere(state)) }
 
-// --- scene -----------------------------------------------------------------
-
 #[derive(Clone, Copy, Default)]
 struct Sphere {
     center: V3,
     radius: f32,
-    mat: i32,        // 0 lambertian, 1 metal, 2 dielectric
+    mat: i32,
     albedo: V3,
-    extra: f32,      // metal: fuzz.  dielectric: index of refraction.
+    extra: f32,
 }
 
 fn fill_scene() -> [Sphere; 10] {
@@ -110,8 +86,6 @@ fn fill_scene() -> [Sphere; 10] {
 #[derive(Clone, Copy, Default)]
 struct Ray { origin: V3, dir: V3 }
 
-/// By-value Hit with a `valid` flag rather than an out-pointer, matching the
-/// reference: SROA splits it into registers.
 #[derive(Clone, Copy, Default)]
 struct Hit {
     valid: bool,
@@ -128,7 +102,7 @@ fn miss() -> Hit { Hit::default() }
 fn sphere_hit(scene: &[Sphere; 10], idx: i32, r: Ray, t_min: f32, t_max: f32) -> Hit {
     let s = scene[idx as usize];
     let oc = sub(r.origin, s.center);
-    // The ray direction is NOT normalized here, so `a` is carried through.
+
     let a = len2(r.dir);
     let half_b = dot(oc, r.dir);
     let c = len2(oc) - s.radius * s.radius;
@@ -195,7 +169,7 @@ fn scatter(scene: &[Sphere; 10], state: &mut u32, r_in: Ray, rec: Hit) -> Scatte
         if d <= 0.0 { return absorbed(); }
         return Scattered { valid: true, atten: s.albedo, scattered: Ray { origin: rec.p, dir } };
     }
-    // Dielectric.
+
     let ratio = if rec.front_face == 1 { 1.0 / s.extra } else { s.extra };
     let unit_dir = norm(r_in.dir);
     let mut cos_theta = 0.0 - dot(unit_dir, rec.normal);
@@ -215,7 +189,6 @@ fn scatter(scene: &[Sphere; 10], state: &mut u32, r_in: Ray, rec: Hit) -> Scatte
     Scattered { valid: true, atten: v(1.0, 1.0, 1.0), scattered: Ray { origin: rec.p, dir } }
 }
 
-/// Recursive, matching the reference.
 fn ray_color(scene: &[Sphere; 10], n_spheres: i32, state: &mut u32, r: Ray, depth: i32) -> V3 {
     if depth <= 0 { return v(0.0, 0.0, 0.0); }
     let rec = world_hit(scene, n_spheres, r, 0.001, 1e30);
@@ -231,8 +204,6 @@ fn ray_color(scene: &[Sphere; 10], n_spheres: i32, state: &mut u32, r: Ray, dept
     let t = 0.5 * (ud.y + 1.0);
     add(scale(v(1.0, 1.0, 1.0), 1.0 - t), scale(v(0.5, 0.7, 1.0), t))
 }
-
-// --- camera ----------------------------------------------------------------
 
 #[derive(Clone, Copy, Default)]
 struct Camera { origin: V3, ll: V3, hor: V3, ver: V3 }
@@ -266,8 +237,6 @@ fn clampf(x: f32, lo: f32, hi: f32) -> f32 {
     if x > hi { return hi; }
     x
 }
-
-// --- main ------------------------------------------------------------------
 
 fn main() {
     let (width, height, samples, max_depth) = (800i32, 450i32, 32i32, 15i32);

@@ -29,9 +29,16 @@
 // `vendor/simd/src/vec3.cplus` and `vec4.cplus` each declaring their own
 // `extern fn sqrtf` by hand.
 
-// libm. The C+ name is the symbol unless `#[link_name]` says otherwise; the
-// f64 entries are renamed because their C symbols collide with the method
-// names declared below.
+// The twelve operations with an exact LLVM intrinsic carry
+// `#[intrinsic("...")]`: codegen folds the CALL SITE to the intrinsic rather
+// than emitting a cross-package call into this archive. The body stays as the
+// definition of record and as the fallback for any backend without it.
+//
+// libm. An extern and a method may share a name — different namespaces — so
+// these keep their C spellings. That matters beyond tidiness: codegen folds
+// `return <libm>(this);` to the matching LLVM intrinsic at the CALL SITE
+// (`TrivialInline::MathUnary`), which is what stops a one-instruction sqrt
+// costing a cross-package call. The fold is keyed on these names.
 extern fn sqrtf(x: f32) -> f32;
 extern fn fabsf(x: f32) -> f32;
 extern fn floorf(x: f32) -> f32;
@@ -56,29 +63,29 @@ extern fn copysignf(x: f32, y: f32) -> f32;
 extern fn fminf(a: f32, b: f32) -> f32;
 extern fn fmaxf(a: f32, b: f32) -> f32;
 
-#[link_name = "sqrt"]     extern fn _sqrt_d(x: f64) -> f64;
-#[link_name = "fabs"]     extern fn _fabs_d(x: f64) -> f64;
-#[link_name = "floor"]    extern fn _floor_d(x: f64) -> f64;
-#[link_name = "ceil"]     extern fn _ceil_d(x: f64) -> f64;
-#[link_name = "round"]    extern fn _round_d(x: f64) -> f64;
-#[link_name = "trunc"]    extern fn _trunc_d(x: f64) -> f64;
-#[link_name = "sin"]      extern fn _sin_d(x: f64) -> f64;
-#[link_name = "cos"]      extern fn _cos_d(x: f64) -> f64;
-#[link_name = "tan"]      extern fn _tan_d(x: f64) -> f64;
-#[link_name = "asin"]     extern fn _asin_d(x: f64) -> f64;
-#[link_name = "acos"]     extern fn _acos_d(x: f64) -> f64;
-#[link_name = "atan"]     extern fn _atan_d(x: f64) -> f64;
-#[link_name = "atan2"]    extern fn _atan2_d(y: f64, x: f64) -> f64;
-#[link_name = "exp"]      extern fn _exp_d(x: f64) -> f64;
-#[link_name = "log"]      extern fn _log_d(x: f64) -> f64;
-#[link_name = "log2"]     extern fn _log2_d(x: f64) -> f64;
-#[link_name = "log10"]    extern fn _log10_d(x: f64) -> f64;
-#[link_name = "pow"]      extern fn _pow_d(x: f64, y: f64) -> f64;
-#[link_name = "hypot"]    extern fn _hypot_d(x: f64, y: f64) -> f64;
-#[link_name = "fmod"]     extern fn _fmod_d(x: f64, y: f64) -> f64;
-#[link_name = "copysign"] extern fn _copysign_d(x: f64, y: f64) -> f64;
-#[link_name = "fmin"]     extern fn _fmin_d(a: f64, b: f64) -> f64;
-#[link_name = "fmax"]     extern fn _fmax_d(a: f64, b: f64) -> f64;
+extern fn sqrt(x: f64) -> f64;
+extern fn fabs(x: f64) -> f64;
+extern fn floor(x: f64) -> f64;
+extern fn ceil(x: f64) -> f64;
+extern fn round(x: f64) -> f64;
+extern fn trunc(x: f64) -> f64;
+extern fn sin(x: f64) -> f64;
+extern fn cos(x: f64) -> f64;
+extern fn tan(x: f64) -> f64;
+extern fn asin(x: f64) -> f64;
+extern fn acos(x: f64) -> f64;
+extern fn atan(x: f64) -> f64;
+extern fn atan2(y: f64, x: f64) -> f64;
+extern fn exp(x: f64) -> f64;
+extern fn log(x: f64) -> f64;
+extern fn log2(x: f64) -> f64;
+extern fn log10(x: f64) -> f64;
+extern fn pow(x: f64, y: f64) -> f64;
+extern fn hypot(x: f64, y: f64) -> f64;
+extern fn fmod(x: f64, y: f64) -> f64;
+extern fn copysign(x: f64, y: f64) -> f64;
+extern fn fmin(a: f64, b: f64) -> f64;
+extern fn fmax(a: f64, b: f64) -> f64;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -110,14 +117,22 @@ const LN_10_F64: f64    = 2.30258509299404568402f64;
 // ---------------------------------------------------------------------------
 
 impl f32 {
+    #[intrinsic("llvm.sqrt")]
     fn sqrt(this) -> f32 { return sqrtf(this); }
+    #[intrinsic("llvm.fabs")]
     fn abs(this) -> f32 { return fabsf(this); }
+    #[intrinsic("llvm.floor")]
     fn floor(this) -> f32 { return floorf(this); }
+    #[intrinsic("llvm.ceil")]
     fn ceil(this) -> f32 { return ceilf(this); }
+    #[intrinsic("llvm.round")]
     fn round(this) -> f32 { return roundf(this); }
+    #[intrinsic("llvm.trunc")]
     fn trunc(this) -> f32 { return truncf(this); }
 
+    #[intrinsic("llvm.sin")]
     fn sin(this) -> f32 { return sinf(this); }
+    #[intrinsic("llvm.cos")]
     fn cos(this) -> f32 { return cosf(this); }
     fn tan(this) -> f32 { return tanf(this); }
     fn asin(this) -> f32 { return asinf(this); }
@@ -125,9 +140,13 @@ impl f32 {
     fn atan(this) -> f32 { return atanf(this); }
     fn atan2(this, x: f32) -> f32 { return atan2f(this, x); }
 
+    #[intrinsic("llvm.exp")]
     fn exp(this) -> f32 { return expf(this); }
+    #[intrinsic("llvm.log")]
     fn ln(this) -> f32 { return logf(this); }
+    #[intrinsic("llvm.log2")]
     fn log2(this) -> f32 { return log2f(this); }
+    #[intrinsic("llvm.log10")]
     fn log10(this) -> f32 { return log10f(this); }
     fn powf(this, y: f32) -> f32 { return powf(this, y); }
     fn hypot(this, y: f32) -> f32 { return hypotf(this, y); }
@@ -153,33 +172,45 @@ impl f32 {
 // ---------------------------------------------------------------------------
 
 impl f64 {
-    fn sqrt(this) -> f64 { return _sqrt_d(this); }
-    fn abs(this) -> f64 { return _fabs_d(this); }
-    fn floor(this) -> f64 { return _floor_d(this); }
-    fn ceil(this) -> f64 { return _ceil_d(this); }
-    fn round(this) -> f64 { return _round_d(this); }
-    fn trunc(this) -> f64 { return _trunc_d(this); }
+    #[intrinsic("llvm.sqrt")]
+    fn sqrt(this) -> f64 { return sqrt(this); }
+    #[intrinsic("llvm.fabs")]
+    fn abs(this) -> f64 { return fabs(this); }
+    #[intrinsic("llvm.floor")]
+    fn floor(this) -> f64 { return floor(this); }
+    #[intrinsic("llvm.ceil")]
+    fn ceil(this) -> f64 { return ceil(this); }
+    #[intrinsic("llvm.round")]
+    fn round(this) -> f64 { return round(this); }
+    #[intrinsic("llvm.trunc")]
+    fn trunc(this) -> f64 { return trunc(this); }
 
-    fn sin(this) -> f64 { return _sin_d(this); }
-    fn cos(this) -> f64 { return _cos_d(this); }
-    fn tan(this) -> f64 { return _tan_d(this); }
-    fn asin(this) -> f64 { return _asin_d(this); }
-    fn acos(this) -> f64 { return _acos_d(this); }
-    fn atan(this) -> f64 { return _atan_d(this); }
-    fn atan2(this, x: f64) -> f64 { return _atan2_d(this, x); }
+    #[intrinsic("llvm.sin")]
+    fn sin(this) -> f64 { return sin(this); }
+    #[intrinsic("llvm.cos")]
+    fn cos(this) -> f64 { return cos(this); }
+    fn tan(this) -> f64 { return tan(this); }
+    fn asin(this) -> f64 { return asin(this); }
+    fn acos(this) -> f64 { return acos(this); }
+    fn atan(this) -> f64 { return atan(this); }
+    fn atan2(this, x: f64) -> f64 { return atan2(this, x); }
 
-    fn exp(this) -> f64 { return _exp_d(this); }
-    fn ln(this) -> f64 { return _log_d(this); }
-    fn log2(this) -> f64 { return _log2_d(this); }
-    fn log10(this) -> f64 { return _log10_d(this); }
-    fn powf(this, y: f64) -> f64 { return _pow_d(this, y); }
-    fn hypot(this, y: f64) -> f64 { return _hypot_d(this, y); }
-    fn rem(this, y: f64) -> f64 { return _fmod_d(this, y); }
-    fn copysign(this, y: f64) -> f64 { return _copysign_d(this, y); }
+    #[intrinsic("llvm.exp")]
+    fn exp(this) -> f64 { return exp(this); }
+    #[intrinsic("llvm.log")]
+    fn ln(this) -> f64 { return log(this); }
+    #[intrinsic("llvm.log2")]
+    fn log2(this) -> f64 { return log2(this); }
+    #[intrinsic("llvm.log10")]
+    fn log10(this) -> f64 { return log10(this); }
+    fn powf(this, y: f64) -> f64 { return pow(this, y); }
+    fn hypot(this, y: f64) -> f64 { return hypot(this, y); }
+    fn rem(this, y: f64) -> f64 { return fmod(this, y); }
+    fn copysign(this, y: f64) -> f64 { return copysign(this, y); }
 
-    fn min(this, b: f64) -> f64 { return _fmin_d(this, b); }
-    fn max(this, b: f64) -> f64 { return _fmax_d(this, b); }
-    fn clamp(this, lo: f64, hi: f64) -> f64 { return _fmin_d(_fmax_d(this, lo), hi); }
+    fn min(this, b: f64) -> f64 { return fmin(this, b); }
+    fn max(this, b: f64) -> f64 { return fmax(this, b); }
+    fn clamp(this, lo: f64, hi: f64) -> f64 { return fmin(fmax(this, lo), hi); }
 
     fn to_radians(this) -> f64 { return this * (PI_F64 / 180.0f64); }
     fn to_degrees(this) -> f64 { return this * (180.0f64 / PI_F64); }
@@ -192,7 +223,7 @@ impl f64 {
 // ---------------------------------------------------------------------------
 
 fn _close_f32(a: f32, b: f32) -> bool { return fabsf(a - b) < 0.0001f32; }
-fn _close_f64(a: f64, b: f64) -> bool { return _fabs_d(a - b) < 0.000000001f64; }
+fn _close_f64(a: f64, b: f64) -> bool { return fabs(a - b) < 0.000000001f64; }
 
 #[test]
 fn f32_roots_and_powers() {
