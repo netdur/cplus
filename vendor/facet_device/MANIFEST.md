@@ -20,6 +20,7 @@ a video stream is a lifetime.
 | `status(Notifications)` | `Granted` when the interface is offered | `Unavailable` |
 | `request(Camera)` | `AccessCamera` + the Request handshake, bounded | `Unavailable` |
 | `request(Microphone)` | `Granted` — there is no gate to pass | `Unavailable` |
+| `request(Location)` | `CreateSession` + `Start` + the Request handshake | `Unavailable` |
 | `request(Notifications)` | `Granted` — there is no gate to pass | `Unavailable` |
 | `camera::list()` | V4L2 `VIDIOC_QUERYCAP` over `/dev/video*` | empty |
 | `camera::count()` | the same, counted | 0 |
@@ -80,10 +81,16 @@ nodes — see §3.
   settings screen needs, and it answers the question `permissions` cannot: the
   gate says who MAY, this says what is plugged in.
 
-- **`request(Location)` is a SESSION, not a request.** `CreateSession` then
-  `Start`, with positions arriving as `LocationUpdated` signals — a different
-  lifetime from a one-shot consent, and it belongs with the capability that
-  consumes the stream rather than with the gate. `status` still answers.
+- **Location's STREAM.** The gate is built (below); what is absent is following
+  `LocationUpdated(o, a{sv})` for as long as a session lives. THAT is the part
+  with a different lifetime — a position feed is not a question with an answer —
+  and it belongs with the capability rather than with the gate.
+
+  This row previously said the whole of location "is a SESSION, not a request …
+  belongs with the capability rather than the gate", and that was wrong: the
+  session is one extra call and the consent is the very same Request handshake
+  the camera uses. Corrected by reading the interface instead of reasoning about
+  it.
 - **macOS / iOS / Android have no backend.** They land on the neutral base and
   say so through `supported()`. Each is real work with its own story
   (`AVCaptureDevice` + `CLLocationManager`, `UNUserNotificationCenter`,
@@ -91,6 +98,26 @@ nodes — see §3.
 - **No capability is actually opened.** This tier gates; it does not stream.
 
 ## 3. Works, but does not look like its name
+
+- **`request(Location)` opens a session and closes it again.** `CreateSession`
+  answers a session path DIRECTLY — not a Request, which is worth stating
+  because several other portal interfaces spell `CreateSession` the other way —
+  and `Start(session, parent, options)` is the call that asks. So the gate is
+  the camera's handshake with one call in front of it.
+
+  The session is closed once the answer is in, because this module has no reader
+  for it: the stream is not built, so a session left open is a resource nobody
+  holds, leaked once per call. The portal records the user's decision in its
+  permission store (the `Lookup` it performs before asking is against exactly
+  that), so closing does not normally discard a grant; if a backend chose not to
+  persist one, the user is asked again when positions are first read, which is
+  correct for an "allow once" answer rather than a bug.
+
+- **A failed call answers `Undetermined`, not `Unavailable`.** The portal
+  answered the proxy, so the service is plainly there; a method erroring or
+  timing out means nothing was SETTLED. `Unavailable` is reserved for the portal
+  not being reachable at all — using it for a slow call would tell an
+  application to stop offering a feature because one round trip was late.
 
 - **`request` CAN answer `Undetermined`.** It is bounded — two minutes — and a
   timeout is reported as `Undetermined` rather than `Denied`, because nobody

@@ -408,12 +408,7 @@ fn request(c: Capability, parent: str = "") -> Permission {
     match c {
         Capability::Camera => { return ask_camera(parent); }
         Capability::Microphone => { return Permission::Granted; }
-        // NOT BUILT, and stated rather than guessed: `Location` is a SESSION,
-        // not a request — `CreateSession` then `Start`, with positions arriving
-        // as `LocationUpdated` signals. That is a different lifetime from a
-        // one-shot consent and belongs with the capability that consumes the
-        // stream rather than with the gate. MANIFEST §2.
-        Capability::Location => { return Permission::Undetermined; }
+        Capability::Location => { return ask_location(parent); }
         Capability::Notifications => { return Permission::Granted; }
     }
 }
@@ -440,9 +435,119 @@ fn ask_camera(parent: str) -> Permission {
     let reply: glib::Variant = { p.call_sync("AccessCamera", params.end(), 0 as u32,
                                              5000 as i32,
                                              gio::Cancellable::from_raw(0 as *u8)) };
+    // A CALL THAT FAILED IS NOT `Unavailable`. The portal answered the proxy,
+    // so the service is plainly there; the method erroring or timing out means
+    // nothing was SETTLED, which is `Undetermined` — and asking again is fair.
+    // `Unavailable` is reserved for the portal not being there at all, and
+    // using it here would tell an application to stop offering a feature
+    // because one call was slow.
     if reply.raw() == (0 as *u8) {
         { conn.signal_unsubscribe(sub) };
-        return Permission::Unavailable;
+        return Permission::Undetermined;
     }
     return await_response(conn, sub);
+}
+
+// `org.freedesktop.portal.Session.Close()` on the session's own object path —
+// the interface lives there, not on the portal's. Fire and forget: the answer
+// is already in hand and a session that could not be closed is the portal's to
+// reap.
+fn close_session(conn: gio::DBusConnection, session: str) {
+    if session == "" { return; }
+    let _r: glib::Variant = { conn.call_sync(
+        portal_bus(), session, "org.freedesktop.portal.Session", "Close",
+        glib::Variant::from_raw(0 as *u8),
+        glib::VariantType::from_raw(0 as *u8),
+        0 as u32, 2000 as i32,
+        gio::Cancellable::from_raw(0 as *u8)) };
+    return;
+}
+
+// The object path out of a `(o)` reply. The portal answers a tuple, and the
+// path is its first child.
+fn first_object_path(reply: glib::Variant) -> text::Text {
+    if reply.raw() == (0 as *u8) { return text::new(); }
+    let child: *u8 = { g_variant_get_child_value(reply.raw(), 0 as usize) };
+    if child == (0 as *u8) { return text::new(); }
+    var len: usize = 0 as usize;
+    let out: text::Text = { glib::Variant::from_raw(child).get_string(len) };
+    { g_variant_unref(child) };
+    return out;
+}
+
+// LOCATION IS TWO CALLS, AND ONLY THE SECOND ONE ASKS.
+//
+// `CreateSession(a{sv})` answers a SESSION path directly — not a Request, which
+// is worth stating because several other portal interfaces spell CreateSession
+// the other way and return a Request whose Response carries the handle.
+// Introspection is the authority here and it says `-> o`.
+//
+// `Start(o session, s parent_window, a{sv})` is the one that answers a REQUEST,
+// and that is where consent happens — so the gate is the SAME handshake the
+// camera uses, with one extra call in front of it. This was written up as
+// "a session, not a request … belongs with the capability rather than the gate"
+// and that was wrong: the session is one call, and the consent is exactly the
+// machinery already here.
+//
+// WHAT DOES belong with the capability is the STREAM. Positions arrive as
+// `LocationUpdated(o, a{sv})` signals against the session for as long as it
+// lives, and following them is a lifetime rather than a question — that half is
+// still absent, and it is what MANIFEST §2 should have said all along.
+//
+// THE SESSION IS CLOSED AGAIN, and that is a deliberate choice rather than
+// tidiness. This module has no reader for it — the `LocationUpdated` stream is
+// not built — so a session left open is a resource nobody holds, leaked once
+// per call. A future streaming capability creates its own.
+//
+// What that costs is stated rather than hidden: the portal records the user's
+// decision in its permission store (the `Lookup` it performs before asking is
+// against exactly that), so closing this session does not normally discard a
+// grant. If a backend chose not to persist one, the user is asked again the
+// first time positions are actually read — which is correct behaviour for an
+// "allow once" answer rather than a bug.
+fn ask_location(parent: str) -> Permission {
+    let p: gio::DBusProxy = portal("org.freedesktop.portal.Location");
+    if !have(p) { return Permission::Unavailable; }
+    let conn: gio::DBusConnection = { p.get_connection() };
+    if conn.raw() == (0 as *u8) { return Permission::Unavailable; }
+
+    // The session's own token. It plays the same role for the session path that
+    // `handle_token` plays for a request's.
+    let session_token: text::Text = fresh_token();
+    var sopts: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("a{sv}"));
+    sopts.add_value(glib::Variant::new_dict_entry(
+        glib::Variant::new_string("session_handle_token"),
+        glib::Variant::new_variant(glib::Variant::new_string(session_token.view()))));
+    var screate: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("(a{sv})"));
+    screate.add_value(sopts.end());
+    let screply: glib::Variant = { p.call_sync("CreateSession", screate.end(), 0 as u32,
+                                               5000 as i32,
+                                               gio::Cancellable::from_raw(0 as *u8)) };
+    // Same rule as above: the portal is there, so a CreateSession that errored
+    // or timed out leaves the question open rather than closing it.
+    if screply.raw() == (0 as *u8) { return Permission::Undetermined; }
+    let session: text::Text = first_object_path(screply);
+    if session.count() == (0 as usize) { return Permission::Undetermined; }
+
+    // Now the part that asks.
+    let token: text::Text = fresh_token();
+    let sub: u32 = arm_response(conn, token.view());
+    if sub == (0 as u32) { return Permission::Unavailable; }
+
+    var params: glib::VariantBuilder =
+        glib::VariantBuilder::new(glib::VariantType::new("(osa{sv})"));
+    params.add_value(glib::Variant::new_object_path(session.view()));
+    params.add_value(glib::Variant::new_string(parent));
+    params.add_value(request_options(token.view(), parent));
+    let reply: glib::Variant = { p.call_sync("Start", params.end(), 0 as u32,
+                                             5000 as i32,
+                                             gio::Cancellable::from_raw(0 as *u8)) };
+    if reply.raw() == (0 as *u8) {
+        { conn.signal_unsubscribe(sub) };
+        close_session(conn, session.view());
+        return Permission::Undetermined;
+    }
+    let answer: Permission = await_response(conn, sub);
+    close_session(conn, session.view());
+    return answer;
 }
