@@ -1,0 +1,411 @@
+// gtk — the same one thing facet's tree cannot answer, on a Linux desktop.
+//
+// This file is the GTK 4 twin of `appkit.cplus`, and it exists for the reason
+// that file's own header gives: everything else in this package is portable —
+// the walker reads facet's mounted tree and the setters go through facet's own
+// verbs — so a third platform costs one overlay, one native-props reader, one
+// main-thread hop and one serve entry. Read `appkit.cplus` first; the reasoning
+// for the borrowed `view` pointer and for the viewless-node walk is written out
+// there and is identical here.
+//
+// It is named `serve_linux` and not `gtk` on purpose: `serve.cplus`'s platform
+// override is what picks it, exactly as `serve_ios.cplus` is picked on iOS, and
+// `appkit_linux.cplus` forwards `inspector/appkit` here the way
+// `appkit_ios.cplus` forwards to the UIKit half. Three platforms, one shape.
+//
+// ---- the overlay is a WIDGET, and that is the difference ----------------------
+//
+// AppKit hangs a CALayer because a layer is not a view: it does not lay out, is
+// not hit-tested, and nothing walking `subviews` will see it. GTK 4 has no such
+// thing to borrow — a GskRenderNode is built during snapshot and cannot be
+// parked in the tree, and there is no sublayer list on a GtkWidget.
+//
+// So the overlay is an ordinary GtkWidget, and the three properties are bought
+// back one at a time rather than by construction:
+//
+//   * IT DOES NOT LAY OUT, because its host is a GtkFixed. That is already how
+//     facet_gtk places every node — the layout engine is flex, and the Fixed is
+//     the host that takes computed frames — so a child put at an explicit
+//     position disturbs nothing.
+//   * IT IS NOT HIT-TESTED, because `set_can_target(false)` takes it out of
+//     picking. Without this line the highlight would eat the clicks of the very
+//     control it is drawn over, which is the failure that would get blamed on
+//     the inspected app.
+//   * IT IS NOT IN FACET'S TREE, because it carries no node.
+//     `facet_gtk/views::place_at_slot` counts only children that carry one — a
+//     rule that package already needed for the split's own divider — so an
+//     extra child does not shift the slot of anything after it.
+//
+// A GtkFixed also does not CLIP, which is what makes it usable as the overlay's
+// host: a highlight on a node at the edge of its container is drawn whole.
+//
+// It is put into the nearest GtkFixed AT OR ABOVE the node's own widget rather
+// than into the window's top-level one. That is deliberate and it is not the
+// same choice AppKit made: hanging it on the content view means a highlight
+// over a scrolled row stays put while the row moves away. The nearest Fixed
+// scrolls WITH the content, so the highlight tracks the thing it names.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/env" as env;
+import "stdlib/atomic" as atomic;
+import "flex_layout/flex_layout" as flex;
+import "gtk4/gtk4" as gtk;
+import "gobject/runtime" as g;
+import "gobject/bridge" as convert;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/application" as runtime;
+import "facet_agent/agent" as agent;
+import "./inspector" as insp;
+import "./tree" as tree;
+import "./mcp" as mcp;
+
+// ---- the hop to the UI thread --------------------------------------------------
+//
+// `mount::install` records the thread it ran on and `core::touch` asserts on
+// it, so a write arriving from the socket server's worker ABORTS — deliberately,
+// because a worker writing the tree is a data race that otherwise surfaces as a
+// distant, unattributable crash. Same reason as both Apple halves; GLib is
+// where the shape differs.
+//
+// GTK 4 IS NOT THREAD-SAFE AND HAS NO LOCK TO TAKE. The supported way to touch
+// a widget from another thread is to not, and to hand the work to the main
+// context instead — which is exactly what `agent_gtk` does for its own walk,
+// and this is that, for the inspector's.
+//
+// `g_main_context_invoke` is the GLib shape of `dispatch_sync_f` with one
+// half missing: it queues an idle source and RETURNS. The RPC cannot answer
+// until the work is done, so the caller waits on a flag the work sets.
+//
+// THE WAIT IS A YIELDING SPIN rather than a condition variable: the main loop
+// is running by construction (something is talking to a live app), the work is
+// one tree read or one property write, and a mutex/condvar pair across the C
+// boundary is more machinery than the wait is worth. It is BOUNDED for the
+// reason `agent_gtk`'s is — a main loop that never turns must not hang the
+// serve thread.
+#[link_name = "sched_yield"]
+extern fn sched_yield() -> i32;
+#[link_name = "g_main_context_invoke"]
+extern fn g_main_context_invoke(ctx: *u8, f: fn(*u8) -> i32, data: *u8);
+
+// One at a time, and that is a property of the caller rather than a hope: the
+// serve loop is single-threaded and answers one request before reading the
+// next, so a second marshal cannot be in flight.
+static HOP_WORK: usize = 0;
+static HOP_CTX: usize = 0;
+static HOP_DONE: i32 = 0;
+
+fn hop_on_main(user: *u8) -> i32 {
+    let f: fn(*u8) = HOP_WORK as fn(*u8);
+    if f.is_not_null() { f(HOP_CTX as *u8); }
+    atomic::store_i32(#addr_of(HOP_DONE), 1 as i32, atomic::Ordering::Release);
+    // G_SOURCE_REMOVE.
+    return 0 as i32;
+}
+
+fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
+    if !work.is_not_null() { return; }
+    // ALREADY THERE — an in-process caller, a panel, a test — and the answer is
+    // to call through. It is not merely an optimisation: before `App::run` the
+    // main thread does not yet own the default context, so an idle source
+    // queued here would never run and the bounded wait would time out into
+    // silence. `core::on_ui_thread` is facet's own answer to the same question
+    // `core::touch` asserts on, so the two cannot drift.
+    if core::on_ui_thread() { work(ctx); return; }
+
+    HOP_WORK = { #addr(work as *u8) };
+    HOP_CTX = { #addr(ctx) };
+    atomic::store_i32(#addr_of(HOP_DONE), 0 as i32, atomic::Ordering::Release);
+    { g_main_context_invoke(0 as *u8, hop_on_main, 0 as *u8) };
+    var spins: i64 = 0 as i64;
+    while spins < (200000 as i64) {
+        if atomic::load_i32(#addr_of(HOP_DONE), atomic::Ordering::Acquire) != (0 as i32) {
+            return;
+        }
+        // The main thread is what has to run for this to finish, so burning the
+        // scheduler slice keeps it waiting.
+        let _y: i32 = { sched_yield() };
+        spins = spins +% (1 as i64);
+    }
+    return;
+}
+
+// ---- the overlay -------------------------------------------------------------
+
+// A colour pair rather than one: a fill alone disappears over busy content and
+// an edge alone is invisible on a one-pixel control. The same two values the
+// Apple halves use, spelled in CSS.
+fn overlay_css() -> str {
+    return ".facet-inspector-highlight { background-color: rgba(33,120,255,0.22); border: 1px solid rgba(33,120,255,0.95); border-radius: 2px; }";
+}
+
+// Made once and kept: the widget is parked out of the tree when nothing is
+// highlighted rather than destroyed, so the provider and the class survive with
+// it and a highlight costs a move rather than a construction.
+static OVERLAY: *u8 = 0 as *u8;
+
+fn overlay_widget() -> gtk::Widget {
+    if OVERLAY != (0 as *u8) { return gtk::Widget::from_raw(OVERLAY); }
+    let b: gtk::Box = gtk::Box::new(gtk::orientation_horizontal(), 0 as i32);
+    let w: gtk::Widget = gtk::Widget::from_raw(b.raw());
+    w.add_css_class("facet-inspector-highlight");
+    // OUT OF PICKING. Without it the highlight eats the clicks of the control
+    // it is drawn over.
+    w.set_can_target(false);
+    let pr: gtk::CssProvider = gtk::CssProvider::new();
+    pr.load_from_string(overlay_css());
+    w.get_style_context().add_provider(gtk::StyleProvider::from_raw(pr.raw()), 600 as u32);
+    // A GtkBox with no children has a natural size of zero, and a GtkFixed
+    // gives a child exactly its natural size. The rect arrives as a request.
+    w.set_size_request(0 as i32, 0 as i32);
+    OVERLAY = g::object_ref(w.raw());
+    return w;
+}
+
+// ---- resolving a node to a rectangle -----------------------------------------
+
+// The x/y/w/h the Apple halves get from `rt::Rect`. This package's platform
+// modules agree on the FIELD NAMES rather than on a type, which is what lets
+// `test_main` read `Placed` without knowing which one it compiled against.
+struct Rect { x: f64, y: f64, w: f64, h: f64 }
+
+// `view` is BORROWED — facet_gtk mounted it and releases it through the node's
+// `view_release`. This struct is a short-lived answer, not a second owner, so
+// it carries no destructor and says so.
+struct Placed {
+    opaque view: *u8,
+    rect: Rect,
+    found: bool,
+}
+
+fn place(n: *core::Node) -> Placed {
+    let none: Placed = Placed {
+        view: 0 as *u8,
+        rect: Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        found: false,
+    };
+    if n == (0 as *core::Node) { return none; }
+
+    let own: *u8 = core::view_of(n);
+    if own != (0 as *u8) {
+        // The widget's OWN size, asked of GTK rather than taken from the frame:
+        // between a facet write and the next allocation the two disagree, and
+        // the highlight must name what is on screen.
+        let wv: gtk::Widget = gtk::Widget::from_raw(own);
+        return Placed {
+            view: own,
+            rect: Rect { x: 0.0f64, y: 0.0f64,
+                         w: { wv.get_width() } as f64, h: { wv.get_height() } as f64 },
+            found: true,
+        };
+    }
+
+    // A viewless node is not a node without a place — it is a node drawn inside
+    // someone else's widget, so its flex offsets accumulate up to the nearest
+    // backed ancestor and the answer is a rect in THAT widget.
+    let f: flex::Frame = core::frame_of(n);
+    var x: f64 = f.left;
+    var y: f64 = f.top;
+    let w: f64 = f.width;
+    let h: f64 = f.height;
+
+    var cur: *core::Node = n;
+    // Bounded by the tree's own depth; a parent link always goes up.
+    var steps: usize = 0 as usize;
+    while steps < (256 as usize) {
+        let p: *core::Node = match mount::parent_of(cur) {
+            option::Option[*core::Node]::Some(q) => q,
+            option::Option[*core::Node]::None => 0 as *core::Node,
+        };
+        if p == (0 as *core::Node) { return none; }
+        let pv: *u8 = core::view_of(p);
+        if pv != (0 as *u8) {
+            // NO FLIP BRANCH. AppKit asks `isFlipped` because a view can put
+            // its origin at either corner; every GtkWidget's origin is its
+            // top-left, which is flex's own convention, so the accumulated
+            // offset IS the widget-space rect.
+            return Placed {
+                view: pv,
+                rect: Rect { x: x, y: y, w: w, h: h },
+                found: true,
+            };
+        }
+        let pf: flex::Frame = core::frame_of(p);
+        x = x + pf.left;
+        y = y + pf.top;
+        cur = p;
+        steps = steps +% (1 as usize);
+    }
+    return none;
+}
+
+// ---- highlight ---------------------------------------------------------------
+
+// The nearest GtkFixed at or above `v`. facet_gtk hosts every placed child in
+// one, so this terminates at the window's own content Fixed at the latest —
+// and a walk that finds none is a widget this package did not mount, which is
+// the honest "nowhere to draw" answer rather than a guess at a container that
+// would lay the overlay out.
+fn fixed_host_for(v: *u8) -> *u8 {
+    var cur: *u8 = v;
+    var steps: usize = 0 as usize;
+    while steps < (256 as usize) {
+        if cur == (0 as *u8) { return 0 as *u8; }
+        if g::is_a(cur, #str_ptr("GtkFixed\0")) { return cur; }
+        cur = match { gtk::Widget::from_raw(cur).get_parent() } {
+            option::Option[gtk::Widget]::Some(p) => p.raw(),
+            option::Option[gtk::Widget]::None => 0 as *u8,
+        };
+        steps = steps +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+fn clear_highlight(_s: *u8) {
+    if OVERLAY == (0 as *u8) { return; }
+    let w: gtk::Widget = gtk::Widget::from_raw(OVERLAY);
+    // PARKED, NOT DESTROYED: the widget outlives one highlight and the next is
+    // a `put` rather than a construction. `gtk_fixed_remove` unparents it and
+    // the ref this module holds is what keeps it alive between the two.
+    match { w.get_parent() } {
+        option::Option[gtk::Widget]::Some(p) => {
+            if g::is_a(p.raw(), #str_ptr("GtkFixed\0")) {
+                { gtk::Fixed::from_raw(p.raw()).remove(w) };
+            }
+        }
+        option::Option[gtk::Widget]::None => { }
+    }
+    return;
+}
+
+fn highlight(s: *u8, h: insp::Handle) {
+    clear_highlight(s);
+    if !h.is_live() { return; }
+    let p: Placed = place(h.node);
+    if !p.found { return; }
+
+    let host: *u8 = fixed_host_for(p.view);
+    if host == (0 as *u8) { return; }
+
+    // Into the host Fixed's space. `translate_coordinates` carries the whole
+    // chain — every intermediate container's own offset — so this is one call
+    // rather than a second accumulation this module would have to get right
+    // twice. It answers false when the two widgets share no root, which is a
+    // node whose widget has been unparented since the handle was minted.
+    let target: gtk::Widget = gtk::Widget::from_raw(p.view);
+    var hx: f64 = 0.0f64;
+    var hy: f64 = 0.0f64;
+    if !target.translate_coordinates(gtk::Widget::from_raw(host), p.rect.x, p.rect.y,
+                                     hx, hy) { return; }
+
+    let w: gtk::Widget = overlay_widget();
+    // The size is a REQUEST, not a placement: a GtkFixed hands a child its
+    // natural size, and an empty box's natural size is zero.
+    w.set_size_request(p.rect.w as i32, p.rect.h as i32);
+    { gtk::Fixed::from_raw(host).put(w, hx, hy) };
+    return;
+}
+
+// ---- native rows -------------------------------------------------------------
+
+// What the platform owns, for the third panel. Read-only by construction: a
+// native class name is not something an inspector can set, and saying so with
+// no editor is clearer than an editor that refuses.
+fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
+    var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) {
+        // Not an absence of information — a fact about the node, and the one
+        // that explains why it has no widget of its own.
+        let _a: status::Status = out.append(insp::Prop::read_only(
+            "native_class", insp::Value::Str(text::from_str("(drawn by an ancestor)"))));
+        return out;
+    }
+
+    // GObject's own answer to `-class`, and it is the RUNTIME type: a facet
+    // `button` is a GtkButton here whatever this package's comments say.
+    let name: text::Text = convert::cstr_to_text({ g::instance_type_name(v) });
+    let _b: status::Status = out.append(insp::Prop::read_only(
+        "native_class", insp::Value::Str(name)));
+
+    let view: gtk::Widget = gtk::Widget::from_raw(v);
+    // GTK states the positive and AppKit the negative. The panel's row is the
+    // negative on every platform, so the inversion happens here rather than in
+    // three readers of the same row.
+    let _c: status::Status = out.append(insp::Prop::read_only(
+        "native_hidden", insp::Value::Bool(!{ view.get_visible() })));
+
+    // The frame in the PARENT's space, which is what `NSView.frame` means. GTK
+    // has no one call for it in 4: the size is the widget's own and the origin
+    // is a translation into the parent, so it is assembled from the two.
+    var fx: f64 = 0.0f64;
+    var fy: f64 = 0.0f64;
+    match { view.get_parent() } {
+        option::Option[gtk::Widget]::Some(pw) => {
+            let _t: bool = view.translate_coordinates(pw, 0.0f64, 0.0f64, fx, fy);
+        }
+        option::Option[gtk::Widget]::None => { }
+    }
+    var geom: text::Text = text::from_str("");
+    let _d: status::Status = geom.append({ (fx as i64) }.to_text().view());
+    let _e: status::Status = geom.append(", ");
+    let _f2: status::Status = geom.append({ (fy as i64) }.to_text().view());
+    let _g2: status::Status = geom.append(", ");
+    let _h: status::Status = geom.append({ ({ view.get_width() } as i64) }.to_text().view());
+    let _i: status::Status = geom.append(", ");
+    let _j: status::Status = geom.append({ ({ view.get_height() } as i64) }.to_text().view());
+    let _k: status::Status = out.append(insp::Prop::read_only(
+        "native_frame", insp::Value::Str(geom)));
+
+    // GTK asks the widget itself, where AppKit asks the window whose one first
+    // responder it is. Same question, and this is the phrasing this toolkit
+    // ships — `has_focus`, not `is_focus`: the first is the real keyboard
+    // focus and the second is only the focus WITHIN a toplevel.
+    let _l: status::Status = out.append(insp::Prop::read_only(
+        "first_responder", insp::Value::Bool({ view.has_focus() })));
+    return out;
+}
+
+// ---- installation ------------------------------------------------------------
+
+// Hand the portable side its platform. Until this is called the inspector still
+// works — it just cannot highlight, and says so through the no-ops rather than
+// by crashing.
+fn install() {
+    tree::install_platform(highlight, clear_highlight);
+    tree::set_native_fn(native_props);
+    // Installed here and not in `mcp` so that module stays portable: the hop is
+    // GLib, and a build with no platform shim keeps `mcp`'s direct call, which
+    // is right for headless and for an in-process caller.
+    mcp::set_marshal(run_on_main_sync);
+    return;
+}
+
+// Serve the inspector IF the environment asks — the one line an application
+// adds to be inspectable by the tool that launched it. `FACET_INSPECT` names a
+// SOCKET PATH here, as on macOS and unlike iOS: a Linux desktop has a shared
+// filesystem and no sandbox in the way, so there is nothing for the TCP story
+// the phone tells to solve. `facet_agent/agent_linux` binds the same path.
+//
+// Everything it does is the explicit wiring the probe app spells out by hand:
+// the platform half (overlay + the synchronous main-thread hop a socket request
+// needs), the armed namespace, and the serving thread. Arming stays a
+// deliberate act — linking this package in still exposes nothing; only the
+// launcher that set the variable gets a listener.
+fn serve_if_asked() {
+    let path: text::Text = match env::var("FACET_INSPECT") {
+        option::Option[text::Text]::Some(p) => p,
+        option::Option[text::Text]::None => { return; }
+    };
+    if path.is_empty() { return; }
+    install();
+    mcp::arm(tree::local_backend());
+    // `serve_once` is installed by `enable`; without it the dispatch below is a
+    // null fn-pointer check that quietly serves nothing.
+    agent::enable();
+    runtime::agent_serve_once(path.view());
+    return;
+}

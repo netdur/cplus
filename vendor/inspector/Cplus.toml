@@ -8,6 +8,8 @@ edition = "2026"
 # - inspector/inspector: the neutral surface (Handle, Value, Prop, Backend vtable)
 # - inspector/tree:      the facet-tree walker and the typed get/set dispatch
 # - inspector/appkit:    highlight overlay and native rows (macOS)
+# - inspector/serve_linux: the same two on GTK 4, plus the GLib main-thread hop
+#                        — `inspector/appkit` forwards here on Linux
 # - inspector/uikit:     the same two, on iOS — and `serve_if_asked` there takes
 #                        a PORT, because a Unix socket inside the app sandbox is
 #                        unreachable from the machine running the IDE
@@ -22,12 +24,9 @@ stdlib      = "*"
 flex_layout = "*"
 facet       = "*"
 facet_agent = "*"
-objc        = "*"
-appkit      = "*"
 json        = "*"
 agent_mcp   = "*"
 agent_core  = "*"
-quartzcore  = "*"
 
 # The suite imports facet, and on macOS facet's runtime facade imports its
 # backend — which pulls webkit and the agent backends behind it. A transitive
@@ -35,15 +34,51 @@ quartzcore  = "*"
 # without these four the suite does not build at all. Same list the probe
 # under `examples/inspector_probe` declares, and for the same reason.
 [macos.dependencies]
+# objc / appkit / quartzcore are the macOS half's OWN dependencies and used to
+# sit in the unconditional block above. They cannot: a `[link] frameworks` entry
+# reaches the linker for every target that declares the package, so a Linux
+# build got `-framework Foundation` and GNU ld answered "-f may not be used
+# without -shared" — an error naming nothing this package wrote.
+objc         = "*"
+appkit       = "*"
+quartzcore   = "*"
 facet_appkit = "*"
 webkit       = "*"
 agent_appkit = "*"
 agent_inapp  = "*"
 
+# The LINUX/GTK half, and the same reason as the macOS block above: the suite
+# imports facet, `facet_agent/agent` resolves to `agent_linux.cplus` on Linux,
+# and that names `agent_gtk`. A transitive platform dependency is resolved
+# against the ROOT package's manifest, so without this block the suite does not
+# build at all — it failed with E0852 pointing at facet_agent's own include.
+# The GTK stack under facet_gtk is restated here for the same flat-vendor
+# reason the gallery restates it.
+[linux.dependencies]
+facet_gtk   = "*"
+agent_gtk   = "*"
+agent_inapp = "*"
+gtk4        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gio         = "*"
+glib        = "*"
+cairo       = "*"
+gdk         = "*"
+gdkpixbuf   = "*"
+graphene    = "*"
+gsk         = "*"
+harfbuzz    = "*"
+pango       = "*"
+pangocairo  = "*"
+gmodule     = "*"
+
 # The iOS half. `uikit.cplus` is only ever compiled by a build that imports it —
 # an iOS entry — so these are named for that build rather than for this
 # package's own, which is macOS and never reaches the file.
 [ios.dependencies]
+objc        = "*"
+quartzcore  = "*"
 facet_uikit = "*"
 uikit       = "*"
 webkit      = "*"
