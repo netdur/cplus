@@ -32,6 +32,26 @@ facet       = "*"
 flex_layout = "*"
 permissions = "*"
 
+# The preview surface is a GtkWidget, which is what facet's mount walk adopts
+# and what facet_gtk's own `insert` places — see `_c_preview_create`. A Linux
+# facet application is already carrying all of this; a headless one that only
+# wants `count()` pays a link line it does not call into.
+[linux.dependencies]
+gtk4        = "*"
+gdk         = "*"
+gsk         = "*"
+graphene    = "*"
+cairo       = "*"
+gdkpixbuf   = "*"
+pango       = "*"
+pangocairo  = "*"
+harfbuzz    = "*"
+gio         = "*"
+glib        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gmodule     = "*"
+
 [macos.dependencies]
 objc         = "*"
 avfoundation = "*"

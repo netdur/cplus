@@ -64,6 +64,9 @@
 
 import "stdlib/text" as text;
 import "./camera" as camera;
+import "gtk4/gtk4" as gtk;
+import "gdk/gdk" as gdk;
+import "glib/glib" as glib;
 
 // The request as the facade packs it. Layout must match `_CRequest`, which is
 // module-private there — so it is mirrored rather than imported, and the
@@ -101,6 +104,34 @@ extern fn snprintf(buf: *u8, n: usize, fmt: *u8, a: i32) -> i32;
 extern fn errno_location() -> *i32;
 extern fn pthread_create(thread: *u8, attr: *u8, start: fn(*u8) -> *u8, arg: *u8) -> i32;
 extern fn pthread_join(thread: u64, retval: *u8) -> i32;
+
+// ---- the preview's door into GTK ------------------------------------------------
+//
+// Declared here rather than taken from the binding: `g_idle_add` and
+// `g_bytes_new` both take shapes the generator skips (a callback, and a
+// pointer-plus-length it cannot name an owner for).
+#[link_name = "g_idle_add"]
+extern fn g_idle_add(f: fn(*u8) -> i32, data: *u8) -> u32;
+#[link_name = "g_bytes_new"]
+extern fn g_bytes_new(data: *u8, size: usize) -> *u8;
+#[link_name = "g_bytes_unref"]
+extern fn g_bytes_unref(bytes: *u8);
+#[link_name = "g_object_ref_sink"]
+extern fn g_object_ref_sink(obj: *u8) -> *u8;
+#[link_name = "g_object_ref"]
+extern fn g_object_ref(obj: *u8) -> *u8;
+#[link_name = "g_object_unref"]
+extern fn g_object_unref(obj: *u8);
+#[link_name = "gtk_picture_set_paintable"]
+extern fn gtk_picture_set_paintable(picture: *u8, paintable: *u8);
+#[link_name = "gtk_picture_get_paintable"]
+extern fn gtk_picture_get_paintable(picture: *u8) -> *u8;
+#[link_name = "gdk_paintable_get_intrinsic_width"]
+extern fn gdk_paintable_get_intrinsic_width(paintable: *u8) -> i32;
+#[link_name = "gdk_paintable_get_intrinsic_height"]
+extern fn gdk_paintable_get_intrinsic_height(paintable: *u8) -> i32;
+#[link_name = "gtk_init_check"]
+extern fn gtk_init_check() -> i32;
 
 // ---- the wire codes ------------------------------------------------------------
 //
@@ -311,6 +342,14 @@ struct Session {
     opaque frame_ctx: *u8,
     opaque luma: *u8,          // deinterleave scratch, width*height
     luma_cap: usize,
+    // ---- the preview ---------------------------------------------------------
+    opaque preview: *u8,       // GtkPicture, ref_sink'd; 0 when none was asked for
+    opaque rgb: *u8,           // YUYV->RGB scratch, width*height*3
+    rgb_cap: usize,
+    // ONE FRAME IN FLIGHT. The pump runs at thirty frames a second and the
+    // main loop may be slower; queueing every one would grow without bound and
+    // paint moments that have passed. Cleared by the idle that consumed it.
+    preview_pending: bool,
 }
 
 fn live(h: *u8) -> *Session {
@@ -518,6 +557,134 @@ fn extract_luma(s: *Session, src: *u8, src_len: usize) -> bool {
     return true;
 }
 
+// ---- the preview ------------------------------------------------------------------
+//
+// A `GtkPicture` whose paintable is replaced with a fresh `GdkMemoryTexture`
+// once per frame. That is the shortest honest path from a V4L2 buffer to the
+// screen: no cairo, no drawing callback, and the compositor does the scaling.
+//
+// THE CONVERSION RUNS ON THE PUMP THREAD and the upload runs on the MAIN one,
+// which is not a preference — GTK is not thread-safe and `g_idle_add` is the
+// documented way across. What crosses is a `GBytes`, which is immutable and
+// refcounted and therefore the one shape that is safe to hand over.
+//
+// YUYV IS NOT RGB, and the difference is a colour matrix rather than a
+// reordering. V4L2's YUYV is BT.601 LIMITED range — luma 16..235, chroma
+// 16..240 — so the integer form below is the standard one, with the 298/409/
+// 516 coefficients and the -16/-128 offsets. Skipping the offsets (treating it
+// as full range) is the usual mistake and it shows as a washed-out picture
+// with grey blacks, which looks like a camera problem rather than a maths one.
+
+fn clamp_u8(v: i32) -> u8 {
+    if v < (0 as i32) { return 0 as u8; }
+    if v > (255 as i32) { return 255 as u8; }
+    return v as u8;
+}
+
+// One YUYV macropixel is two image pixels sharing a chroma pair: Y0 U Y1 V.
+fn yuyv_to_rgb(dst: *u8, src: *u8, width: i32, height: i32) {
+    let pairs: usize = { ((width *% height) / (2 as i32)) as usize };
+    var i: usize = 0 as usize;
+    while i < pairs {
+        let s: usize = i *% (4 as usize);
+        let y0: i32 = { { *(src + s) } as i32 } -% (16 as i32);
+        let u: i32 = { { *(src + (s +% (1 as usize))) } as i32 } -% (128 as i32);
+        let y1: i32 = { { *(src + (s +% (2 as usize))) } as i32 } -% (16 as i32);
+        let v: i32 = { { *(src + (s +% (3 as usize))) } as i32 } -% (128 as i32);
+
+        let rv: i32 = (409 as i32) *% v;
+        let gu: i32 = (100 as i32) *% u;
+        let gv: i32 = (208 as i32) *% v;
+        let bu: i32 = (516 as i32) *% u;
+
+        let c0: i32 = (298 as i32) *% y0;
+        let c1: i32 = (298 as i32) *% y1;
+        let d: usize = i *% (6 as usize);
+        { *(dst + d) = clamp_u8((c0 +% rv +% (128 as i32)) >> (8 as i32)) };
+        { *(dst + (d +% (1 as usize))) = clamp_u8((c0 -% gu -% gv +% (128 as i32)) >> (8 as i32)) };
+        { *(dst + (d +% (2 as usize))) = clamp_u8((c0 +% bu +% (128 as i32)) >> (8 as i32)) };
+        { *(dst + (d +% (3 as usize))) = clamp_u8((c1 +% rv +% (128 as i32)) >> (8 as i32)) };
+        { *(dst + (d +% (4 as usize))) = clamp_u8((c1 -% gu -% gv +% (128 as i32)) >> (8 as i32)) };
+        { *(dst + (d +% (5 as usize))) = clamp_u8((c1 +% bu +% (128 as i32)) >> (8 as i32)) };
+        i = i +% (1 as usize);
+    }
+}
+
+// What crosses the thread boundary: the picture to paint into, the bytes to
+// paint, and the session to clear the in-flight flag on. Malloc'd by the pump,
+// freed by the idle, exactly once.
+struct Upload {
+    opaque picture: *u8,
+    opaque bytes: *u8,
+    opaque owner: *Session,
+    width: i32,
+    height: i32,
+}
+
+// ON THE MAIN THREAD. Everything here touches GTK and nothing here touches the
+// V4L2 session except the one bool it clears.
+fn paint_upload(data: *u8) -> i32 {
+    let up: *Upload = { data as *Upload };
+    if up == (0 as *Upload) { return 0 as i32; }
+    let picture: *u8 = { (*up).picture };
+    let bytes: *u8 = { (*up).bytes };
+    let owner: *Session = { (*up).owner };
+    let w: i32 = { (*up).width };
+    let h: i32 = { (*up).height };
+    { free(up as *u8) };
+
+    if bytes != (0 as *u8) && picture != (0 as *u8) {
+        // Stride is the ROW LENGTH IN BYTES, three per pixel — not the width.
+        let tex: gdk::MemoryTexture = gdk::MemoryTexture::new(
+            w, h, gdk::memory_format_r8g8b8(), glib::Bytes::from_raw(bytes),
+            { (w *% (3 as i32)) as usize });
+        if tex.raw() != (0 as *u8) {
+            { gtk_picture_set_paintable(picture, tex.raw()) };
+            // The picture holds its own reference now; this one was ours.
+            { g_object_unref(tex.raw()) };
+        }
+    }
+    if bytes != (0 as *u8) { { g_bytes_unref(bytes) }; }
+    if picture != (0 as *u8) { { g_object_unref(picture) }; }
+    if owner != (0 as *Session) { { (*owner).preview_pending = false }; }
+    // G_SOURCE_REMOVE — one idle per frame.
+    return 0 as i32;
+}
+
+// Called from the pump thread with a dequeued YUYV buffer.
+fn offer_to_preview(s: *Session, src: *u8, src_len: usize) {
+    let picture: *u8 = { (*s).preview };
+    if picture == (0 as *u8) { return; }
+    if { (*s).preview_pending } { return; }
+    let w: i32 = { (*s).width };
+    let h: i32 = { (*s).height };
+    let need: usize = { (w *% h) as usize } *% (3 as usize);
+    if need == (0 as usize) { return; }
+    if src_len < ({ (w *% h) as usize } *% (2 as usize)) { return; }
+    if { (*s).rgb } == (0 as *u8) || { (*s).rgb_cap } < need {
+        let old: *u8 = { (*s).rgb };
+        if old != (0 as *u8) { { free(old) }; }
+        let m: *u8 = { malloc(need) };
+        if m == (0 as *u8) { { (*s).rgb = 0 as *u8 }; { (*s).rgb_cap = 0 as usize }; return; }
+        { (*s).rgb = m };
+        { (*s).rgb_cap = need };
+    }
+    yuyv_to_rgb({ (*s).rgb }, src, w, h);
+    // `g_bytes_new` COPIES, which is what makes the scratch reusable: the next
+    // frame may overwrite it before the idle runs.
+    let bytes: *u8 = { g_bytes_new({ (*s).rgb }, need) };
+    if bytes == (0 as *u8) { return; }
+    let up: *Upload = { malloc(#size_of::[Upload]()) as *Upload };
+    if up == (0 as *Upload) { { g_bytes_unref(bytes) }; return; }
+    { (*up).picture = { g_object_ref(picture) } };
+    { (*up).bytes = bytes };
+    { (*up).owner = s };
+    { (*up).width = w };
+    { (*up).height = h };
+    { (*s).preview_pending = true };
+    let _id: u32 = { g_idle_add(paint_upload, up as *u8) };
+}
+
 fn pump(arg: *u8) -> *u8 {
     let s: *Session = { arg as *Session };
     if s == (0 as *Session) { return 0 as *u8; }
@@ -527,6 +694,10 @@ fn pump(arg: *u8) -> *u8 {
         // promptly, long enough that an idle camera is not a spin loop.
         let idx: i32 = dequeue(s, 200 as i32, bytes);
         if idx < (0 as i32) { continue; }
+        // THE PREVIEW FIRST, from the raw YUYV — the luma plane has already
+        // thrown the colour away, and a grey preview would be a worse picture
+        // than the camera is producing.
+        offer_to_preview(s, buf_ptr(s, idx), bytes);
         if extract_luma(s, buf_ptr(s, idx), bytes) {
             let cb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = { (*s).on_frame };
             if !cb.is_null() {
@@ -880,26 +1051,51 @@ export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
     return _unsupported();
 }
 
-// NO PREVIEW WIDGET. `preview()` wants a native view for facet to adopt, and on
-// this platform that is a GtkWidget with a GdkTexture uploaded per frame.
+// The preview surface: a `GtkPicture` this session repaints once per frame.
 //
-// It is refused here rather than built for two reasons, and neither is effort.
-// The first is that the upload path belongs to the toolkit backend, not to a
-// capture package: building it here would put the whole of GTK on the
-// dependency list of a program that wants `count()` on a headless box. The
-// second is that it would not render anyway — facet's mount walk creates an
-// adopted native through `native_create`, and `facet_gtk` has no code that
-// places one, so the node would be built and dropped.
+// A NATIVE VIEW IS EXACTLY WHAT FACET ASKED FOR. `camera.cplus`'s `preview()`
+// hands this to `core::adopt_native_with`, facet's mount walk calls it at mount
+// and passes what comes back to the backend's own `insert` — which on GTK puts
+// any `GtkWidget` into the host `GtkFixed`. Nothing toolkit-specific is needed
+// on facet_gtk's side, which is why this is a widget and not a refusal.
 //
-// A caller that wants pixels on screen today has them: `on_frame` delivers the
-// luma plane and the application draws it wherever it likes.
+// CALLED AT EVERY MOUNT, and a node may be mounted more than once, so the
+// picture is created once and handed out at +1 each time. `release_view` drops
+// the caller's reference; the session keeps its own until `_c_close`.
+//
+// STARTING THE PUMP IS THE POINT. An application that only wants to SEE the
+// camera never calls `on_frame`, so mounting the preview is what puts the
+// stream on screen.
 export extern fn _c_preview_create(h: *u8) -> *u8 {
-    let _s: *u8 = h;
-    return 0 as *u8;
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return 0 as *u8; }
+    // No display, no widget — and `gtk_init_check` answers that without the
+    // abort `gtk_init` would take the whole process down with.
+    if { gtk_init_check() } == (0 as i32) { return 0 as *u8; }
+    // An MJPG session has no frame this can paint; the still path owns that
+    // format and nothing here decodes JPEG.
+    if { (*s).stream_fourcc } != fourcc_yuyv() { return 0 as *u8; }
+
+    if { (*s).preview } == (0 as *u8) {
+        let pic: gtk::Picture = gtk::Picture::new();
+        if pic.raw() == (0 as *u8) { return 0 as *u8; }
+        // A FRESH WIDGET CARRIES A FLOATING REFERENCE, which the first
+        // container to take it would consume. This one is handed to facet
+        // rather than parented here, so without the sink it would belong to
+        // nobody and die on the first unref.
+        { (*s).preview = { g_object_ref_sink(pic.raw()) } };
+        // The camera's frame is whatever the driver agreed to and the box is
+        // whatever flex gives it; letting the picture shrink is what keeps a
+        // 640x480 stream from forcing a 640-wide pane.
+        { pic.set_can_shrink(true) };
+    }
+    let _started: bool = ensure_pump(s);
+    return { g_object_ref({ (*s).preview }) };
 }
 
 export extern fn _c_preview_release(v: *u8) {
-    let _v: *u8 = v;
+    if v == (0 as *u8) { return; }
+    { g_object_unref(v) };
 }
 
 // One still, as JPEG, by re-negotiating MJPG around the shot — see the header.
@@ -968,6 +1164,23 @@ export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
     return code;
 }
 
+// One pump serves both readers — a frame handler and a preview — because there
+// is one camera and one stream to read it from. Idempotent: a second caller
+// gets the running one.
+fn ensure_pump(s: *Session) -> bool {
+    if { (*s).running } { return true; }
+    if !{ (*s).streaming } { return false; }
+    { (*s).pumping = true };
+    var tid: u64 = 0 as u64;
+    if { pthread_create({ #addr_of(tid) as *u8 }, 0 as *u8, pump, s as *u8) } != (0 as i32) {
+        { (*s).pumping = false };
+        return false;
+    }
+    { (*s).tid = tid };
+    { (*s).running = true };
+    return true;
+}
+
 export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
@@ -975,24 +1188,22 @@ export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), 
     // An MJPG session has no luma to hand over and nothing here decodes JPEG.
     if { (*s).stream_fourcc } != fourcc_yuyv() { return _unsupported(); }
     if !{ (*s).streaming } { return _failed(); }
-    if { (*s).running } { return _ok(); }
     { (*s).on_frame = cb };
     { (*s).frame_ctx = ctx };
-    { (*s).pumping = true };
-    var tid: u64 = 0 as u64;
-    if { pthread_create({ #addr_of(tid) as *u8 }, 0 as *u8, pump, s as *u8) } != (0 as i32) {
-        { (*s).pumping = false };
-        return _failed();
-    }
-    { (*s).tid = tid };
-    { (*s).running = true };
+    if !ensure_pump(s) { return _failed(); }
     return _ok();
 }
 
+// STOPS THE HANDLER, not necessarily the camera. A preview mounted in the same
+// session is a second reader of the same stream and the facade's `stop_frames`
+// says nothing about it — tearing the pump down here would blank a preview the
+// caller never asked to stop. With no preview this is exactly what it was.
 export extern fn _c_stop_frames(h: *u8) -> i32 {
     let s: *Session = live(h);
     if s == (0 as *Session) { return _failed(); }
-    stop_pump(s);
+    { (*s).on_frame = 0 as fn(*u8, i32, i32, i32, i32, *u8, *u8) };
+    { (*s).frame_ctx = 0 as *u8 };
+    if { (*s).preview } == (0 as *u8) { stop_pump(s); }
     return _ok();
 }
 
@@ -1198,7 +1409,127 @@ fn the_controls_answer_unsupported_rather_than_failed_when_absent() {
     assert { _c_max_zoom(h) } >= (1.0 as f64);
     // No facing to switch to on this platform, and never a silent no-op.
     assert { _c_switch_to(h, 0 as i32) } == _unsupported();
-    // The preview is refused, not broken — see the note above `_c_preview_create`.
-    assert { _c_preview_create(h) } == (0 as *u8);
+    { _c_close(h) };
+}
+
+fn gtk_here() -> bool { return { gtk_init_check() } != (0 as i32); }
+
+#[test]
+fn a_preview_is_a_real_widget_and_the_same_one_at_every_mount() {
+    if !a_camera_is_here() { return; }
+    if !gtk_here() { return; }
+    let h: *u8 = open_default();
+    assert h != (0 as *u8);
+    let v1: *u8 = { _c_preview_create(h) };
+    assert v1 != (0 as *u8);
+    // A NODE MAY BE MOUNTED MORE THAN ONCE and `preview()` is a recipe facet
+    // runs at every mount. The widget is the session's, handed out again — a
+    // second picture would leave the first one painting into nothing.
+    let v2: *u8 = { _c_preview_create(h) };
+    assert v2 == v1;
+    // Mounting the preview is what puts the stream on screen: an application
+    // that only wants to SEE the camera never calls `on_frame`.
+    assert { _c_updates_running_probe(h) };
+    // Each handout is +1 and `release_view` drops one; the session keeps its
+    // own until close, so releasing both leaves the widget alive.
+    { _c_preview_release(v1) };
+    { _c_preview_release(v2) };
+    { _c_close(h) };
+}
+
+// The pump flag, which is private state the seam does not expose.
+fn _c_updates_running_probe(h: *u8) -> bool {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return false; }
+    return { (*s).running };
+}
+
+#[test]
+fn yuyv_becomes_bt601_limited_range_rgb() {
+    // FOUR MACROPIXELS, eight image pixels, one row — chosen so a full-range
+    // conversion (the usual mistake) fails every one of them.
+    var src: [u8; 16] = [0u8; 16];
+    let p: *u8 = { #addr_of(src) as *u8 };
+    // Black is Y=16, not Y=0: limited range starts at 16 and full range would
+    // read this as a dark grey.
+    { *(p + (0 as usize)) = 16 as u8 };  { *(p + (1 as usize)) = 128 as u8 };
+    { *(p + (2 as usize)) = 16 as u8 };  { *(p + (3 as usize)) = 128 as u8 };
+    // White is Y=235, not 255 — full range would clip long before here.
+    { *(p + (4 as usize)) = 235 as u8 }; { *(p + (5 as usize)) = 128 as u8 };
+    { *(p + (6 as usize)) = 235 as u8 }; { *(p + (7 as usize)) = 128 as u8 };
+    // BT.601 red and blue.
+    { *(p + (8 as usize)) = 81 as u8 };  { *(p + (9 as usize)) = 90 as u8 };
+    { *(p + (10 as usize)) = 81 as u8 }; { *(p + (11 as usize)) = 240 as u8 };
+    { *(p + (12 as usize)) = 41 as u8 }; { *(p + (13 as usize)) = 240 as u8 };
+    { *(p + (14 as usize)) = 41 as u8 }; { *(p + (15 as usize)) = 110 as u8 };
+
+    var out: [u8; 24] = [0u8; 24];
+    let d: *u8 = { #addr_of(out) as *u8 };
+    yuyv_to_rgb(d, p, 8 as i32, 1 as i32);
+
+    // Black.
+    assert { *(d + (0 as usize)) } == (0 as u8);
+    assert { *(d + (1 as usize)) } == (0 as u8);
+    assert { *(d + (2 as usize)) } == (0 as u8);
+    // White.
+    assert { *(d + (6 as usize)) } == (255 as u8);
+    assert { *(d + (7 as usize)) } == (255 as u8);
+    assert { *(d + (8 as usize)) } == (255 as u8);
+    // Red: the red channel saturates and the other two floor.
+    assert { *(d + (12 as usize)) } == (255 as u8);
+    assert { *(d + (13 as usize)) } < (16 as u8);
+    assert { *(d + (14 as usize)) } < (16 as u8);
+    // Blue.
+    assert { *(d + (18 as usize)) } < (16 as u8);
+    assert { *(d + (20 as usize)) } == (255 as u8);
+}
+
+#[test]
+fn a_clamp_never_leaves_the_byte_range() {
+    // The three arms, because a wrap here is a pixel that reads as its own
+    // opposite — a blown highlight coming back black.
+    assert clamp_u8(0 -% (400 as i32)) == (0 as u8);
+    assert clamp_u8(999 as i32) == (255 as u8);
+    assert clamp_u8(128 as i32) == (128 as u8);
+}
+
+#[test]
+fn a_frame_reaches_the_widget_through_the_main_loop() {
+    if !a_camera_is_here() { return; }
+    if !gtk_here() { return; }
+    // THE WHOLE CHAIN, and the only test that covers the hop: a V4L2 buffer is
+    // dequeued on the pump thread, converted there, handed over as a `GBytes`,
+    // and turned into a `GdkMemoryTexture` on the MAIN thread by the idle —
+    // because GTK is not thread-safe and the conversion is the only part that
+    // may happen off it. Driving the default context by hand is what a mounted
+    // application's own loop does.
+    let h: *u8 = open_default();
+    assert h != (0 as *u8);
+    var w: i32 = 0 as i32;
+    var ht: i32 = 0 as i32;
+    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    let v: *u8 = { _c_preview_create(h) };
+    assert v != (0 as *u8);
+    // Nothing painted yet — the picture is empty until a frame arrives.
+    assert { gtk_picture_get_paintable(v) } == (0 as *u8);
+
+    let ctxt: glib::MainContext = glib::main_context_default();
+    var spins: i32 = 0 as i32;
+    var painted: *u8 = 0 as *u8;
+    while spins < (200 as i32) {
+        while { ctxt.iteration(false) } { }
+        painted = { gtk_picture_get_paintable(v) };
+        if painted != (0 as *u8) { break; }
+        let _u: i32 = { usleep(20000 as u32) };
+        spins = spins +% (1 as i32);
+    }
+    assert painted != (0 as *u8);
+    // AND IT IS THE CAMERA'S FRAME, at the size the driver agreed to — a
+    // texture built from a wrong stride comes out with the wrong geometry
+    // rather than failing, which is the mistake worth catching here.
+    assert { gdk_paintable_get_intrinsic_width(painted) } == w;
+    assert { gdk_paintable_get_intrinsic_height(painted) } == ht;
+
+    { _c_preview_release(v) };
     { _c_close(h) };
 }
