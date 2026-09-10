@@ -200,6 +200,19 @@ fn read_caps_for_tier(t: u32) -> u32 {
     return auth::cap_read();
 }
 
+// WRITING INTO A SECURE FIELD IS ORDINARY, and that is a decision rather than
+// an omission — do not "fix" it.
+//
+// A password field is `tier_open` unless the app said otherwise (its secrecy
+// rides the MASK, not the tier — see `facet::agent_text`), so filling one in
+// costs plain `cap_act`, the bit every operator grant carries. That is the
+// point: a password manager and a finance agent have to be able to type into
+// the app, and they must be able to do it with the DEFAULT grant, out of the
+// box, with nothing declared. Reading is the half that is guarded; writing is
+// the half that has to work.
+//
+// An app that wants a particular field harder to write says so by declaring a
+// tier on it, and then these bits apply.
 fn act_caps_for_tier(t: u32) -> u32 {
     if t == tier_protected() { return auth::cap_act() | auth::cap_act_protected(); }
     if t == tier_private() { return auth::cap_act() | auth::cap_act_private(); }

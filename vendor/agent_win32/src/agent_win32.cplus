@@ -234,11 +234,49 @@ fn class_name_text(hwnd: *u8) -> text::Text {
     return t;
 }
 
+// EM_GETPASSWORDCHAR. The mask character an EDIT is currently using, or 0 for
+// one that is not masking.
+fn em_getpasswordchar() -> u32 { return 0x00D2 as u32; }
+
+// The character an agent sees instead of a secret. Matches `facet::agent_mask`:
+// ASCII `*`, one per character, because this string is read back through JSON
+// and a model's context rather than drawn.
+fn agent_mask_char() -> str { return "*"; }
+
+// IS THIS EDIT MASKING? And it must be asked this way rather than by reading
+// ES_PASSWORD out of the window style.
+//
+// ES_PASSWORD IS NOT THE ANSWER ON THIS BACKEND. The control reads that style
+// once, at create, and facet_win32 therefore turns masking on at RUNTIME with
+// `EM_SETPASSWORDCHAR` — so a facet field with `secure: true` has the mask and
+// NOT the style bit, and a style test would answer no on exactly the field it
+// exists to catch. `EM_GETPASSWORDCHAR` is the reading of the same switch, and
+// it also answers yes for an adopted native EDIT created with ES_PASSWORD,
+// which sets a default mask character. One question, both origins.
+fn is_secure_edit(hwnd: *u8) -> bool {
+    return { SendMessageA(hwnd, em_getpasswordchar(), 0 as u64, 0 as i64) } != (0 as i64);
+}
+
 // The live caption / content (button label, edit text, static text, window
 // title). GetWindowTextA covers them all; empty for controls without text.
+//
+// A MASKING EDIT READS BACK MASKED. `GetWindowTextA` hands back the real
+// characters of a password EDIT — the masking is what the control DRAWS, not
+// what it stores — so this read was the plaintext, and it goes straight into
+// `UiNode.text` and the registry name.
+//
+// Masked rather than refused, matching `facet::agent_text`: the node keeps its
+// structure and stays writable, which is what an agent filling in a login form
+// needs. `<input type=password>`.
 fn node_text(hwnd: *u8) -> text::Text {
     let len: i32 = { GetWindowTextLengthA(hwnd) };
     if len <= (0 as i32) { return text::from_str(""); }
+    if is_secure_edit(hwnd) {
+        // GetWindowTextLengthA is a BYTE count and these are ANSI windows, so
+        // for this control one byte is one character and the secret itself is
+        // never pulled into a buffer at all.
+        return text::repeating(agent_mask_char(), len as usize);
+    }
     let buf: *u8 = { malloc((len +% (1 as i32)) as usize) };
     { GetWindowTextA(hwnd, buf, len +% (1 as i32)); }
     let v: str = { #str_from_raw_parts(buf, len as usize) };

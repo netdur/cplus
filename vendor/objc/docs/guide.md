@@ -11,6 +11,7 @@ Tutorial: [tutorial.md](tutorial.md). Catalog: [ref.md](ref.md).
 |---|---|
 | `objc/runtime` | msgSend zoo, get_class/sel, retain/release, Range/Rect/Point/Size, blocks isa |
 | `objc/bridge` | `str`/`Text` ↔ NSString, Text arrays, nil → Option |
+| `objc/bundle` | does this process have a bundle **proxy**? Ask before any bundle-scoped framework |
 | `objc/synthesis` | allocateClassPair, addMethod IMPs, associated objects |
 | `objc/objc` | package facade (`Range` re-export); bindings usually import submodules |
 
@@ -102,6 +103,15 @@ Documented for **arm64 macOS**; x86_64 is not a support target for this stack.
   pointers into freed `Text` after mutation/realloc.
 - **Synthesis names** must be unique process-wide (`objc_allocateClassPair`).
 - **Associated ASSIGN** does not retain the context — you keep it alive.
+- **A framework that wants a bundle raises, it does not return nil.**
+  `+[UNUserNotificationCenter currentNotificationCenter]` throws
+  `NSInternalInconsistencyException` for a process with no bundle proxy, and
+  `respondsToSelector:` says yes because the selector *is* there. Ask
+  `bundle::has_bundle_proxy()` first — and note that a `@try` is not a fallback
+  here, because the raise crosses a `dispatch_once` and libdispatch terminates
+  on it. The predicate is not `bundleIdentifier != nil`: an embedded
+  `macos/Info.plist` gives a bare binary an identifier and no bundle. See
+  [ref.md](ref.md#bundle) for the four measured rows.
 - App code should prefer **typed framework packages** over raw `msg_*` soup.
 
 ## Consumers

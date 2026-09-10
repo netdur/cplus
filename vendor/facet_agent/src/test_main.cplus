@@ -14,6 +14,8 @@ import "agent_core/inspect" as ainsp;
 import "facet/facet" as fcore;
 import "facet/elements" as fui;
 import "facet/application" as fapp;
+import "facet/text_field" as ftf;
+import "flex_layout/flex_layout" as flex;
 
 import "agent_core/auth" as aauth;
 import "stdlib/text" as text;
@@ -215,4 +217,66 @@ fn no_doc_here_teaches_the_retired_second_call() {
     // merely silent.
     assert doc_has(ref_md, "agent_mcp/inspect");
     assert doc_has(tut, "25 verbs");
+}
+
+// ---- the inspector must not answer a password ---------------------------------
+//
+// `inspect(node, "text")` on a `secure: true` field returned the plaintext. The
+// tier gate in `agent_mcp/inspect` is keyed on `agent_tier` and does not fire at
+// tier 0, which is what an undeclared field is — so there was nothing between an
+// agent and the value.
+//
+// The answer is `<input type=password>`: masked out, still writable. `facet`
+// owns the rule (`core::agent_text`) so this surface and the curated
+// `describe_ui` cannot drift apart.
+//
+// NO NATIVE WINDOW IS NEEDED. `application::open_window` registers a root with
+// `native: 0`, and `get_control` resolves through `window_root(index)` — so the
+// whole read path is reachable headlessly, which is why this test can live here
+// rather than under playground/.
+
+#[test]
+fn the_inspector_answers_stars_for_a_secure_field_and_the_value_for_a_plain_one() {
+    var b: fcore::Builder = fcore::Builder::new();
+    b.add(ftf::text_field("hunter2", key: "pw", secure: true));
+    b.add(ftf::text_field("kittens", key: "q"));
+    var root: fcore::Node = fcore::column(b);
+    assert fapp::open_window(#addr_of(root) as *flex::Node);
+    let w: usize = fapp::window_count() -% (1 as usize);
+
+    match fcore::find_in(#addr_of(root), "pw") {
+        option::Option[*fcore::Node]::Some(n) => {
+            match itree::get(ainsp::Handle::of(n as *u8, w), "text") {
+                option::Option[ainsp::Value]::Some(v) => {
+                    match v {
+                        ainsp::Value::Str(t) => {
+                            assert { t.view() } == "*******";
+                            assert { t.view() } != "hunter2";
+                        }
+                        _ => { assert false; }
+                    }
+                }
+                option::Option[ainsp::Value]::None => { assert false; }
+            }
+        }
+        option::Option[*fcore::Node]::None => { assert false; }
+    }
+
+    // THE OTHER HALF. An ordinary field is ordinary — a rule that masked every
+    // text field would take the inspector's whole reason to exist with it.
+    match fcore::find_in(#addr_of(root), "q") {
+        option::Option[*fcore::Node]::Some(n) => {
+            match itree::get(ainsp::Handle::of(n as *u8, w), "text") {
+                option::Option[ainsp::Value]::Some(v) => {
+                    match v {
+                        ainsp::Value::Str(t) => { assert { t.view() } == "kittens"; }
+                        _ => { assert false; }
+                    }
+                }
+                option::Option[ainsp::Value]::None => { assert false; }
+            }
+        }
+        option::Option[*fcore::Node]::None => { assert false; }
+    }
+    fapp::close_window(#addr_of(root) as *flex::Node);
 }

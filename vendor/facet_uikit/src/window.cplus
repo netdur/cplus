@@ -1638,6 +1638,14 @@ fn connect_additional_scene(scene: *u8, session: *u8, options: *u8) {
 // app can change. Answering false is what lets the facade fall back to a stack
 // push — the `Show::Window` rule, "with whatever room this platform has".
 fn activate_scene(key: str) -> bool {
+    // THE SAME GUARD `activity_named` CARRIES, and it belongs on both. This
+    // function builds its own `NSUserActivity` a few lines down rather than
+    // going through that one, so the guard there did not cover this path —
+    // `-[NSUserActivity initWithActivityType:]` raises on an empty type, and a
+    // raise here is an abort. `nav::push` refuses an empty route now, which
+    // closes the reachable route; this closes the entry point itself, because a
+    // backend verb should not abort on any argument it is handed.
+    if key == "" { return false; }
     if !device::supports_multiple_scenes() { return false; }
     let appc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIApplication\0")),
                                  rt::sel(#str_ptr("sharedApplication\0"))) };

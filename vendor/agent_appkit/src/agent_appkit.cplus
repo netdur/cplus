@@ -324,14 +324,49 @@ fn is_secure_by_class(view: *u8) -> bool {
     return false;
 }
 
-// The policy that actually applies to a view: the explicit pin when there is
-// one, else the platform's own signal.
+// The policy that actually applies to a view: the explicit pin, and nothing
+// else.
+//
+// A SECURE FIELD NO LONGER LANDS ON A TIER HERE, and that is a deliberate
+// reversal of what this function used to do (2026-09-09). It used to answer
+// `policy_private()` for an NSSecureTextField the app never annotated, which
+// did keep the secret in — and cost the field its WRITE. `act_caps_for_tier`
+// makes a private node need `cap_act_private`, so an ordinary agent could not
+// fill in a password box at all, and a blanked `text` told it the field was
+// empty into the bargain.
+//
+// The rule is `<input type=password>` instead, and the two halves are now on
+// separate axes: the SECURE CLASS masks the value (see `node_text`), and the
+// TIER gates the node (declared by the app, for any node, secure or not). An
+// agent completing a login sees `*******`, can type into it, and cannot read
+// it. That is a better answer than a locked node for the case this actually
+// serves, and it does not weaken the one that matters: the plaintext still
+// never leaves.
+// The widget's own content as a NAME, when there is no developer label. Empty
+// for a masked field: a row of stars is not a name, and naming a node after its
+// own mask tells an agent nothing while looking like it told it something. The
+// node keeps its id, its role and its `text` — the mask belongs there, where a
+// reader knows to expect a value.
+fn node_content_name(view: *u8, role: identity::Role) -> text::Text {
+    if is_secure_by_class(view) && !has_explicit_policy(view) { return text::new(); }
+    return node_text(view, role);
+}
+
+fn has_explicit_policy(view: *u8) -> bool {
+    if is_null(view) { return false; }
+    return !is_null(rt::get_associated_object(view, identity::policy_key()));
+}
+
 fn effective_policy(view: *u8) -> u32 {
     if is_null(view) { return identity::policy_none(); }
-    let pinned: *u8 = rt::get_associated_object(view, identity::policy_key());
-    if !is_null(pinned) { return identity::unpack_policy(pinned); }
-    if is_secure_by_class(view) { return identity::policy_private(); }
-    return identity::policy_none();
+    return identity::unpack_policy(rt::get_associated_object(view, identity::policy_key()));
+}
+
+// One mask character per character of the secret. ASCII `*` — see
+// `facet::agent_mask_char`; this string is read back through JSON and a model's
+// context rather than drawn, so typographic fidelity to a bullet buys nothing.
+fn mask_of(actual: text::Text) -> text::Text {
+    return text::repeating("*", { actual.view() }.char_count());
 }
 
 // Record the declared affordance. `drive` defaults from the role when you only
@@ -733,6 +768,25 @@ fn node_text(view: *u8, role: identity::Role) -> text::Text {
         return text::from_str("");
     }
     if identity::role_eq(role, identity::Role::Text) || identity::role_eq(role, identity::Role::Input) {
+        // A SECURE FIELD READS BACK MASKED, and this is the single door: every
+        // agent-facing read of a node's content comes through here — both
+        // describes and both name fallbacks — so one check covers every way the
+        // secret used to leave. `native_string_of` stays truthful for the
+        // backend's own plumbing (caret offsets, and a test proving a write
+        // landed); this function is what an AGENT is told.
+        //
+        // UNLESS THE APP DECLARED A POLICY, which is the same precedence this
+        // backend has always used: an explicit statement beats an inference, in
+        // both directions. A field the app pinned `protected` is one it means an
+        // approved grant to autofill and verify, and the tier gate governs it;
+        // the mask is what happens when nobody said anything, which is the case
+        // that was leaking.
+        //
+        // Asked on the OUTER view, before `text_target` unwraps anything: the
+        // NSSecureTextField is the thing that carries the declaration.
+        if is_secure_by_class(view) && !has_explicit_policy(view) {
+            return mask_of(native_string_of(text_target(view)));
+        }
         // Same door as the write: a text area answers through its scroll view,
         // and the text is one level down.
         let view: *u8 = text_target(view);
@@ -1049,7 +1103,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
         // anyway — that guard is the one a future backend cannot get around —
         // but a secret that was never pulled out of the widget is a secret
         // that was never in a buffer to begin with.
-        let own: text::Text = node_text(view, role);
+        let own: text::Text = node_content_name(view, role);
         if own.is_empty() == false { reg.set_content_name(reg_node, { own.view() }); }
     }
     // The intent DESCRIPTION rides the accessibility help/hint channel
@@ -1145,7 +1199,7 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             if label.is_empty() == false {
                 reg.set_name(me, { label.view() });
             } else if !reg.is_sensitive(me) {
-                let own: text::Text = node_text(view, resolve_role(view));
+                let own: text::Text = node_content_name(view, resolve_role(view));
                 if own.is_empty() == false { reg.set_content_name(me, { own.view() }); }
             }
             let ds: text::Text = view_a11y_string(view, "accessibilityHelp\0");

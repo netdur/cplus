@@ -3124,6 +3124,17 @@ fn build_project(
     // Not gated on `--kind gui`: a CLI that asks for the microphone has exactly
     // the same problem, and a plist the author wrote is a plist the author
     // meant.
+    //
+    // WHAT IT IS NOT is a bundle, and that distinction cost a crash. An
+    // embedded plist gives this binary a bundle IDENTIFIER and no bundle
+    // PROXY, so a framework that is scoped to a real `.app` — UserNotifications
+    // is the one — still refuses it, and refuses by RAISING. Any guard written
+    // as `[[NSBundle mainBundle] bundleIdentifier] != nil` becomes wrong the
+    // moment this section exists: `vendor/permissions` and
+    // `vendor/notifications` both had one, and adding this file to a working
+    // project turned their guarded `Unsupported` into SIGABRT. The predicate
+    // that replaced it is `vendor/objc/src/bundle.cplus`, which carries the
+    // four rows it was measured against.
     if cfg!(target_os = "macos") {
         let plist = m.root.join("macos").join("Info.plist");
         if plist.is_file() {

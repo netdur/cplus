@@ -17,7 +17,7 @@ import "notifications/notifications" as notifications;
 | Title | required; an empty one is refused |
 | Permission | read before every `schedule`; `Granted` and `Limited` allow, everything else answers `NotPermitted` |
 | Return | every verb answers `Outcome`; there are no callbacks |
-| Bundle | on Apple, a process with no bundle identifier has no notification centre and every verb answers `Unsupported` |
+| Bundle | on Apple, a process with no `.app` bundle has no notification centre and every verb answers `Unsupported`. An embedded `macos/Info.plist` gives an identifier, not a bundle — see the guide |
 
 ---
 
