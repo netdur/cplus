@@ -235,6 +235,161 @@ fn marks_rc() -> text::Text {
     return t;
 }
 
+// ---- the same marks, for bash ----------------------------------------------------
+//
+// ZDOTDIR IS A ZSH MECHANISM, so the shim above reaches exactly one shell — and
+// on Linux the shell a pane opens is overwhelmingly bash. A pane with no marks
+// falls back to `Widget::run` bracketing each command with printfs of its own,
+// which works and is visibly worse: the two printf lines are echoed where the
+// user can see them.
+//
+// Bash has the same two hook points under different names. `preexec` is the
+// DEBUG trap, which fires before each command with the command in
+// `$BASH_COMMAND`; `precmd` is `PROMPT_COMMAND`, which runs before each prompt.
+//
+// ---- the busy flag, which is the whole difficulty --------------------------------
+//
+// The DEBUG trap fires for EVERY top-level command, and `PROMPT_COMMAND`'s own
+// entries are top-level commands — so a naive trap emits a `133;C` for the
+// prompt hook itself, once per prompt, and the ledger counts a command the user
+// never ran. It also fires once per element of a pipeline, so `a | b | c` would
+// open three commands.
+//
+// One flag closes both. `__cplus_busy` is set when a command starts and stays
+// set until the prompt hook is completely finished, so every DEBUG in between —
+// the rest of the pipeline, the prompt's own entries — is swallowed. It starts
+// SET, because the very first DEBUG a shell ever fires is for the prompt hook
+// and there is no command before it to have set it.
+//
+// ---- what bash cannot see, measured ----------------------------------------------
+//
+// A BARE TOP-LEVEL SUBSHELL FIRES NO DEBUG TRAP AT ALL. `(exit 3)` runs and the
+// trap never fires; `sh -c 'exit 3'` fires normally. So a pane whose user types
+// a parenthesised command gets no marks for it, and `Widget::run` falls back to
+// waiting rather than reporting an end.
+//
+// `set -T` (functrace) DOES make the trap reach inside the subshell — and does
+// not help, which is why it is not used here: the trap then runs in the
+// SUBSHELL, so the `__cplus_ran` it sets dies with it and the prompt hook in the
+// parent still sees no command to close. It would buy a `C` mark and lose the
+// matching `D`, which is worse than neither. It also fires the trap inside every
+// function the user calls, changing shell semantics a pane has no business
+// changing.
+//
+// The alternative — emitting `D` on every prompt rather than only after a
+// command — trades a missed subshell for a PHANTOM command every time someone
+// presses Enter on an empty line, which is the more common keystroke by far.
+//
+// THE PROMPT HOOK IS TWO FUNCTIONS for one reason: `$?` has to be read before
+// anything else runs, and the flag has to be cleared after everything else has.
+// The user's own `PROMPT_COMMAND` sits between them, so their entries neither
+// destroy the exit code nor leak a mark.
+//
+// No `${...}` anywhere below, for the reason `marks_rc` gives: that is C+ string
+// interpolation and would be eaten before bash ever saw it.
+fn marks_rc_bash() -> text::Text {
+    var t: text::Text = text::new();
+    let _a: status::Status = t.append("\n# Command marks for terminal/pty. OSC 133, as iTerm2 and VS Code use.\n");
+    let _b: status::Status = t.append("if [ -z \"$CPLUS_TERM_MARKS\" ]; then\n");
+    let _c: status::Status = t.append("  CPLUS_TERM_MARKS=1\n");
+    let _d: status::Status = t.append("  __cplus_busy=1\n");
+    let _e: status::Status = t.append("  __cplus_preexec() {\n");
+    // OUR OWN HOOKS ARE NOT COMMANDS. The DEBUG for `__cplus_precmd` fires
+    // before the function runs, so the busy flag it sets is not up yet — and
+    // without this the pane reports a command called `__cplus_precmd` once per
+    // prompt, giving the ledger an id `Widget::run` never promised.
+    let _e2: status::Status = t.append("    case $1 in __cplus_*) return ;; esac\n");
+    let _f: status::Status = t.append("    if [ \"$__cplus_busy\" = 1 ]; then return; fi\n");
+    let _g: status::Status = t.append("    __cplus_busy=1\n");
+    let _h: status::Status = t.append("    __cplus_ran=1\n");
+    let _i: status::Status = t.append("    printf '\\033]133;C;%s\\007' \"$1\"\n");
+    let _j: status::Status = t.append("  }\n");
+    let _k: status::Status = t.append("  __cplus_precmd() {\n");
+    let _l: status::Status = t.append("    __cplus_st=$?\n");
+    let _m: status::Status = t.append("    __cplus_busy=1\n");
+    let _n: status::Status = t.append("    if [ -n \"$__cplus_ran\" ]; then\n");
+    let _o: status::Status = t.append("      unset __cplus_ran\n");
+    let _p: status::Status = t.append("      printf '\\033]133;D;%d\\007' $__cplus_st\n");
+    let _q: status::Status = t.append("    fi\n");
+    let _r: status::Status = t.append("    printf '\\033]7;file://%s%s\\007' \"$HOSTNAME\" \"$PWD\"\n");
+    let _s: status::Status = t.append("    printf '\\033]133;A\\007'\n");
+    let _t: status::Status = t.append("  }\n");
+    let _u: status::Status = t.append("  __cplus_prompt_done() { __cplus_busy=0; }\n");
+    let _v: status::Status = t.append("  trap '__cplus_preexec \"$BASH_COMMAND\"' DEBUG\n");
+    // BRANCHED, not interpolated with a `:+` default: an empty PROMPT_COMMAND
+    // spliced between two semicolons is `__cplus_precmd; ; __cplus_prompt_done`,
+    // which bash rejects with a syntax error at EVERY prompt — and the marks
+    // never arrive. `${...}` is not available here either; it is C+ string
+    // interpolation and would be eaten before bash saw it.
+    let _w: status::Status = t.append("  if [ -n \"$PROMPT_COMMAND\" ]; then\n");
+    let _x: status::Status = t.append("    PROMPT_COMMAND=\"__cplus_precmd; $PROMPT_COMMAND; __cplus_prompt_done\"\n");
+    let _x2: status::Status = t.append("  else\n");
+    let _x3: status::Status = t.append("    PROMPT_COMMAND=\"__cplus_precmd; __cplus_prompt_done\"\n");
+    let _x4: status::Status = t.append("  fi\n");
+    let _y: status::Status = t.append("fi\n");
+    return t;
+}
+
+// The one rc file a bash pane is started with.
+//
+// `--rcfile` IS AN INTERACTIVE-NON-LOGIN MECHANISM, which is why a bash pane is
+// started as `-i` rather than `-l`. That is also the more faithful shape: on
+// Linux an ordinary terminal emulator opens an interactive non-login shell and
+// the file the user expects to run is `~/.bashrc`. A login shell would read
+// `~/.bash_profile` and ignore `--rcfile` entirely, so there would be nowhere to
+// put the hooks.
+//
+// THE USER'S RC IS SOURCED FIRST and the hooks go on after it, for the same
+// reason the zsh shim appends: an rc that assigns `PROMPT_COMMAND` outright —
+// which many do — would drop ours if we went first.
+fn integration_bashrc(kill_history: bool) -> option::Option[text::Text] {
+    let home: text::Text = match env::var("HOME") {
+        option::Option[text::Text]::Some(h) => h,
+        option::Option[text::Text]::None => { return option::Option[text::Text]::None; }
+    };
+    var base: text::Text = match env::var("TMPDIR") {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::from_str("/tmp/"),
+    };
+    if base.has_suffix("/") == false { let _s: status::Status = base.append("/"); }
+    let flavour: str = if kill_history { "nohist" } else { "hist" };
+    let dir: text::Text = "${base}cplus-terminal-bash-${flavour}";
+    match fs::create_dir_all(dir.view()) {
+        result::Result[bool, result::IoError]::Ok(_) => {}
+        result::Result[bool, result::IoError]::Err(_) => { return option::Option[text::Text]::None; }
+    }
+    let home_c: text::CString = match home.c_str() {
+        option::Option[text::CString]::Some(v) => v,
+        option::Option[text::CString]::None => { return option::Option[text::Text]::None; }
+    };
+    let _h: i32 = { setenv(#str_ptr("CPLUS_TERM_HOME\0"), home_c.as_ptr(), 1 as i32) };
+
+    var body: text::Text = text::new();
+    let _a: status::Status = body.append("# Generated by cplus terminal/pty. Sources the user's own rc, then adds\n");
+    let _b: status::Status = body.append("# OSC 133 command marks. Safe to delete; it is rewritten on every start.\n");
+    let _c: status::Status = body.append("if [ -r \"$CPLUS_TERM_HOME/.bashrc\" ]; then . \"$CPLUS_TERM_HOME/.bashrc\"; fi\n");
+    if kill_history {
+        // AFTER the user's rc, so it is the last word — the same ordering the
+        // zsh shim needs against /etc/zshrc.
+        let _d: status::Status = body.append("\n# The embedded terminal does not persist history (terminal/pty save_history).\nunset HISTFILE\nHISTFILESIZE=0\n");
+    }
+    let marks: text::Text = marks_rc_bash();
+    let _e: status::Status = body.append(marks.view());
+
+    let path: text::Text = "${dir.view()}/bashrc";
+    return match fs::write_string(path.view(), body.view()) {
+        result::Result[usize, result::IoError]::Ok(_) => option::Option[text::Text]::Some(path),
+        result::Result[usize, result::IoError]::Err(_) => option::Option[text::Text]::None,
+    };
+}
+
+// Is this shell one the bash shim fits? `bash` and `sh` where `sh` IS bash are
+// the common cases; a real dash has no DEBUG trap and no PROMPT_COMMAND, so it
+// is left to the bracketing path rather than handed hooks it will error on.
+fn is_bash(shell: str) -> bool {
+    return text::from_str(shell).has_suffix("bash");
+}
+
 fn shim_rc(dir: str, name: str, extra: str) -> bool {
     // `ZDOTDIR` is restored around the source so the user's rc sees the value it
     // expects, then put back so zsh keeps finding OUR files for the later
@@ -388,6 +543,33 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
     // zsh only: ZDOTDIR is a zsh mechanism, so a bash pane genuinely has no
     // marks, which is the case the bracketing path handles correctly.
     var marks: bool = false;
+    // BASH GETS ITS OWN SHIM, through `--rcfile` rather than ZDOTDIR — see
+    // `integration_bashrc`. Held in a plain local for the same reason `cwd_c`
+    // is: the pointer has to be valid across forkpty and until the child execs.
+    var rcfile: text::Text = text::new();
+    var rcfile_c: text::CString = match text::new().c_str() {
+        option::Option[text::CString]::Some(v) => v,
+        option::Option[text::CString]::None => { return option::Option[Session]::None; }
+    };
+    var use_rcfile: bool = false;
+    if is_bash(shell) {
+        match integration_bashrc(save_history == false) {
+            option::Option[text::Text]::Some(p) => {
+                rcfile = p;
+                match rcfile.c_str() {
+                    option::Option[text::CString]::Some(v) => {
+                        rcfile_c = v;
+                        use_rcfile = true;
+                        marks = true;
+                    }
+                    option::Option[text::CString]::None => {}
+                }
+            }
+            // Could not write the shim: run the shell unmodified rather than
+            // half-configured, exactly as the zsh path does.
+            option::Option[text::Text]::None => {}
+        }
+    }
     match integration_zdotdir(save_history == false) {
         option::Option[text::Text]::Some(dir) => {
             let dir_c: text::CString = match dir.c_str() {
@@ -395,13 +577,17 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
                 option::Option[text::CString]::None => { return option::Option[Session]::None; }
             };
             let _zd: i32 = { setenv(#str_ptr("ZDOTDIR\0"), dir_c.as_ptr(), 1 as i32) };
-            marks = shell_text.has_suffix("zsh");
+            if shell_text.has_suffix("zsh") { marks = true; }
         }
         // Could not build the shim: run the shell unmodified rather than
         // half-configured. The pane still works; it just cannot report exit
         // codes, which `Screen::has_integration` reports as false.
         option::Option[text::Text]::None => {}
     }
+
+    // Taken in the PARENT, like `cwd_ptr`: valid across forkpty because the
+    // child gets a copy of this address space and execs before any drop runs.
+    let rcfile_ptr: *u8 = rcfile_c.as_ptr();
 
     var master: i32 = -1 as i32;
     var ws: WinSize = WinSize { rows: rows, cols: cols, xpixel: 0 as u16, ypixel: 0 as u16 };
@@ -412,7 +598,17 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
         if cwd != "" {
             let _cd: i32 = { chdir(cwd_ptr) };
         }
-        let _exec: i32 = { execl(shell_c.as_ptr(), shell_c.as_ptr(), #str_ptr("-l\0"), 0 as *u8) };
+        // `--rcfile` NEEDS `-i` AND NOT `-l`: bash reads an rcfile only for an
+        // interactive non-login shell, and a login shell would read
+        // `~/.bash_profile` and ignore it — leaving nowhere to put the hooks.
+        // It is also the shape an ordinary Linux terminal emulator opens.
+        if use_rcfile {
+            let _e2: i32 = { execl(shell_c.as_ptr(), shell_c.as_ptr(),
+                                   #str_ptr("--rcfile\0"), rcfile_ptr,
+                                   #str_ptr("-i\0"), 0 as *u8) };
+        } else {
+            let _exec: i32 = { execl(shell_c.as_ptr(), shell_c.as_ptr(), #str_ptr("-l\0"), 0 as *u8) };
+        }
         { _exit(127 as i32); }
     }
 
@@ -963,4 +1159,174 @@ fn the_shell_exit_status_comes_back() {
         option::Option[i32]::Some(c) => c == (7 as i32),
         option::Option[i32]::None => false,
     };
+}
+
+// ---- the bash half, which runs where zsh is not installed ---------------------------
+//
+// THE POINT OF THESE. The ten tests above need zsh and skip without it — this
+// machine has bash and no zsh — so the shell-integration path had no coverage
+// on Linux at all. Bash is also the shell a Linux pane actually opens.
+
+fn bash_here() -> bool {
+    return { access(#str_ptr("/bin/bash\0"), 0 as i32) } == (0 as i32);
+}
+
+#[test]
+fn a_live_bash_reports_command_marks_and_exit_codes() {
+    if !bash_here() { return; }
+    var sess: Session = match start(shell: "/bin/bash") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    // ANSWERED FROM THE INSTALLATION, not from having seen a mark — the first
+    // command of a pane is routinely sent before the first prompt is drawn.
+    assert sess.expects_marks();
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    assert screen.has_integration();
+    assert screen.command_state() == terminal::CommandState::Idle;
+
+    // A CHILD SHELL, not a `( ... )` subshell: the status has to be reported
+    // without the login shell exiting, and bash's DEBUG trap fires for
+    // `sh -c` while a bare parenthesised command fires nothing at all. That
+    // difference is measured and written down above `marks_rc_bash`.
+    let _w: isize = sess.write("sh -c 'exit 3'\n");
+    read_until_finished(sess, screen, 1 as u64);
+    assert screen.finished_count() >= (1 as u64);
+    assert screen.exit_code() == (3 as i32);
+    assert screen.command_line() == "sh -c 'exit 3'";
+    sess.close();
+}
+
+#[test]
+fn a_bare_subshell_is_invisible_to_bashs_debug_trap() {
+    if !bash_here() { return; }
+    // NOT A BUG IN THE SHIM, and worth pinning so nobody "fixes" it with
+    // `set -T`: bash fires no DEBUG trap for a top-level `( ... )`, so the pane
+    // reports no command for it. The shell still runs it — only the mark is
+    // missing.
+    var sess: Session = match start(shell: "/bin/bash") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("(printf 'RAN\\n')\n");
+    var n: i32 = 0 as i32;
+    while n < (400 as i32) {
+        read_all(sess, screen, 1 as i32);
+        if screen.view().contains("RAN") { break; }
+        n = n +% (1 as i32);
+    }
+    // It ran...
+    assert screen.view().contains("RAN");
+    // ...and no command was opened or closed for it. The prompt hook must not
+    // have invented one either, which is what the `__cplus_*` filter is for.
+    assert screen.finished_count() == (0 as u64);
+    sess.close();
+}
+
+#[test]
+fn a_live_bash_reports_its_working_directory() {
+    if !bash_here() { return; }
+    var sess: Session = match start(shell: "/bin/bash", cwd: "/usr") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 80 as u16);
+    read_until_prompt(sess, screen);
+    assert screen.cwd() == "/usr";
+    sess.close();
+}
+
+#[test]
+fn a_live_bash_command_captures_exactly_its_own_output() {
+    if !bash_here() { return; }
+    var sess: Session = match start(shell: "/bin/bash") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("printf 'one\\ntwo\\n'\n");
+    read_until_finished(sess, screen, 1 as u64);
+    let out: text::Text = screen.output();
+    assert out.equals("one\ntwo\n");
+    assert screen.exit_code() == (0 as i32);
+    sess.close();
+}
+
+#[test]
+fn the_prompt_hook_does_not_open_a_command_of_its_own() {
+    if !bash_here() { return; }
+    // THE BUSY FLAG, and the bug it closes. The DEBUG trap fires for every
+    // top-level command, and `PROMPT_COMMAND`'s own entries are top-level
+    // commands — so a naive trap counts one extra command per prompt, and the
+    // ledger's ids run ahead of the ones `Widget::run` promised.
+    var sess: Session = match start(shell: "/bin/bash") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _a: isize = sess.write("true\n");
+    read_until_finished(sess, screen, 1 as u64);
+    let _b: isize = sess.write("true\n");
+    read_until_finished(sess, screen, 2 as u64);
+    // EXACTLY TWO. Two prompts have been drawn since the first command, so a
+    // trap that marked its own prompt hook would report four.
+    assert screen.finished_count() == (2 as u64);
+    sess.close();
+}
+
+#[test]
+fn a_pipeline_is_one_command_and_not_three() {
+    if !bash_here() { return; }
+    // The other half of the busy flag: the DEBUG trap fires once per ELEMENT of
+    // a pipeline, so `a | b | c` would open three commands and close one.
+    var sess: Session = match start(shell: "/bin/bash") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("printf 'a\\nb\\n' | sort | head -1\n");
+    read_until_finished(sess, screen, 1 as u64);
+    assert screen.finished_count() == (1 as u64);
+    assert screen.exit_code() == (0 as i32);
+    sess.close();
+}
+
+#[test]
+fn bash_history_is_not_persisted_by_default() {
+    if !bash_here() { return; }
+    // The same promise the zsh pane makes: an app pane must not write the
+    // user's global shell history.
+    var sess: Session = match start(shell: "/bin/bash") {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("printf 'HIST=[%s]\\n' \"$HISTFILE\"\n");
+    read_until_finished(sess, screen, 1 as u64);
+    assert screen.output().contains("HIST=[]");
+    sess.close();
+}
+
+#[test]
+fn bash_save_history_true_leaves_the_shell_alone() {
+    if !bash_here() { return; }
+    var sess: Session = match start(shell: "/bin/bash", save_history: true) {
+        option::Option[Session]::Some(s) => s,
+        option::Option[Session]::None => { assert false; return; }
+    };
+    var screen: terminal::Screen = terminal::new(rows: 24 as u16, cols: 200 as u16);
+    read_until_prompt(sess, screen);
+    let _w: isize = sess.write("printf 'HIST=[%s]\\n' \"$HISTFILE\"\n");
+    read_until_finished(sess, screen, 1 as u64);
+    // The user's own history file, whatever bash derived it as — the pane did
+    // not touch it.
+    assert !screen.output().contains("HIST=[]");
+    sess.close();
 }
