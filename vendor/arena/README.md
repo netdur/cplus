@@ -15,7 +15,7 @@ let p: *u8 = a.alloc_bytes(64usize);
 let n: *i32 = a.alloc::[i32](42);
 ```
 
-Fixed-size, no-malloc sibling: **`static-arena`**.
+Fixed-size, no-malloc sibling: **`static_arena`**.
 
 ## Docs
 

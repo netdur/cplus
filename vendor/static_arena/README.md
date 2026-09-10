@@ -1,15 +1,15 @@
-# static-arena
+# static_arena
 
 Fixed-size bump allocator in the struct itself — **no malloc**. Stack or
 `static` storage; `Option` on overflow.
 
 ```toml
 [dependencies]
-static-arena = "*"
+static_arena = "*"
 ```
 
 ```cplus
-import "static-arena/static-arena" as sa;
+import "static_arena/static_arena" as sa;
 
 var a: sa::StaticArena16K = sa::StaticArena16K::new();
 guard let option::Option[*u8]::Some(p) = a.alloc_bytes(64usize) else {
@@ -27,8 +27,8 @@ Growing heap sibling: **`arena`**.
 
 ## Tests
 
-Unit tests live in `src/static-arena.cplus`.
+Unit tests live in `src/static_arena.cplus`.
 
 ```
-cd vendor/static-arena && cpc test
+cd vendor/static_arena && cpc test
 ```
