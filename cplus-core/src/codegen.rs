@@ -21461,8 +21461,15 @@ mod tests {
             .unwrap_or_else(|| panic!("no call to @inner:\n{ir}"));
         // The premise: this build really does pass the struct indirectly.
         // Without that the test would pass for the wrong reason.
+        //
+        // TWO SPELLINGS OF INDIRECT. AArch64 hands over a bare `ptr %a2`;
+        // x86-64 SysV puts a 72-byte aggregate in the MEMORY class and LLVM
+        // writes that as `ptr byval(%Color) align 8 %a2`. Both are a pointer
+        // into the caller's frame, which is the whole hazard this test is
+        // about — checking only for `ptr %` failed the premise on x86-64 and
+        // took the test with it.
         assert!(
-            call.contains("ptr %"),
+            call.contains("ptr %") || call.contains("ptr byval("),
             "expected an indirect (pointer) argument, got `{call}`"
         );
         assert!(
@@ -28651,9 +28658,20 @@ fn main() -> i32 {\n\
             !ir.contains("call %Size @objc_msgSend"),
             "struct return must not be by-value across objc_msgSend; IR:\n{ir}"
         );
+        // THE SYMBOL IS THE ARCH'S, not one name with two ABIs. An indirect
+        // struct return goes through `objc_msgSend_stret` on x86-64, where the
+        // sret pointer is a real first argument the runtime has to forward;
+        // arm64 passes it in x8 and has no `_stret` variant at all, so the
+        // ordinary `objc_msgSend` carries it. Asserting the arm64 spelling on
+        // an x86-64 host failed a codegen that was correct.
+        let sret_call = if active_target().arch == TargetArch::X86_64 {
+            "call void @objc_msgSend_stret("
+        } else {
+            "call void @objc_msgSend("
+        };
         let call_idx = ir
-            .find("call void @objc_msgSend(")
-            .unwrap_or_else(|| panic!("expected void sret msgSend call; IR:\n{ir}"));
+            .find(sret_call)
+            .unwrap_or_else(|| panic!("expected {sret_call} in IR:\n{ir}"));
         let call_line = &ir[call_idx..call_idx + ir[call_idx..].find('\n').unwrap()];
         assert!(
             call_line.contains("sret(%Size)"),
@@ -28682,9 +28700,20 @@ fn main() -> i32 {\n\
             !ir.contains("call %Pt @objc_msgSend"),
             "small struct return must coerce, not pass by value; IR:\n{ir}"
         );
+        // TWO ABIS, TWO COERCIONS, and both are "in FP registers, not sret".
+        // AArch64 calls a 2xf64 struct an HFA and coerces it to `[2 x double]`;
+        // x86-64 SysV classifies both eightbytes SSE and returns them in
+        // xmm0/xmm1, which LLVM spells `{ double, double }`. The assertion is
+        // that it coerced at all — pinning arm64's spelling failed a correct
+        // x86-64 codegen.
+        let coerced = if active_target().arch == TargetArch::X86_64 {
+            "call { double, double } @objc_msgSend("
+        } else {
+            "call [2 x double] @objc_msgSend("
+        };
         assert!(
-            ir.contains("call [2 x double] @objc_msgSend("),
-            "2xf64 HFA return must coerce to [2 x double]; IR:\n{ir}"
+            ir.contains(coerced),
+            "a 2xf64 return must coerce to {coerced}; IR:\n{ir}"
         );
     }
 
