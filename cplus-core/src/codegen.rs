@@ -3099,6 +3099,55 @@ fn ty_carries_view_rec(ty: &Ty, t: &TypeTable, visiting: &mut Vec<(bool, u32)>) 
 /// branch — `effective_move` (below) rewrites it to `move_`, so it is value-passed
 /// like an explicit `take x: T`. `take x: T` stays value-passed (the value is the
 /// transfer; the caller's drop flag flip suppresses the caller-side drop).
+/// Past this many bytes an aggregate stops being something a target can keep in
+/// registers and becomes a memcpy — and a first-class LLVM aggregate load or
+/// store of one is expanded ELEMENT BY ELEMENT by SelectionDAG.
+///
+/// WHAT THAT COSTS, measured: `vendor/static-arena` is a bump allocator whose
+/// whole point is a 16K or 64K buffer INSIDE the struct, and its by-value
+/// methods (`capacity(this)`, `used(this)`, `new() -> Self`) put
+/// `{[16384 x i8], i64}` in a `%T %0` parameter. clang never finished. Not
+/// slowly — `cpc build` of that package had no time limit at which it
+/// succeeded, and the same IR handed to `clang -c` directly spins past two
+/// minutes on 2253 lines. The package could not be built or tested at all.
+///
+/// 128 IS THE BOUND AND IT IS DELIBERATELY GENEROUS. The reason the by-value
+/// path exists is the one written above `self_by_ptr`: pointer-passing a
+/// 12-byte `V3` forces alloca/store/load at every call site and blocks SROA and
+/// the SLP vectorizer from seeing field-parallel arithmetic. Everything that
+/// argument is about — a vector, a colour, a rect, a 72-byte parameter block —
+/// is far below this, and nothing above it was ever going to be scalarized. The
+/// C ABI would have sent all of it indirectly at 16 bytes anyway, so no
+/// correctness rests on the window; only the optimiser's view does.
+const MAX_BY_VALUE_AGGREGATE: u64 = 128;
+
+fn aggregate_too_big_for_registers(ty: &Ty, types: &TypeTable) -> bool {
+    match static_layout(ty, types) {
+        Some((size, _align)) => size > MAX_BY_VALUE_AGGREGATE,
+        None => false,
+    }
+}
+
+/// Does a method receiver cross by POINTER rather than by value?
+///
+/// ONE PLACE, because it was six. The same expression was written out at every
+/// definition, declaration and call-site emitter, and the call site has to agree
+/// with the definition or the callee reads its receiver out of the wrong place —
+/// a mismatch with no diagnostic. A helper is what keeps the seventh copy from
+/// being written differently.
+fn receiver_passes_by_ptr(struct_ty: &Ty, rcv: Receiver, types: &TypeTable) -> bool {
+    // `ref this` / `take this` stay pointer-passed on every type: the language
+    // treats a mutation through `ref this` as a write-through to the caller's
+    // place.
+    if !matches!(rcv, Receiver::Read) {
+        return true;
+    }
+    if !is_copy_ty(struct_ty, types) {
+        return true;
+    }
+    aggregate_too_big_for_registers(struct_ty, types)
+}
+
 fn param_passes_by_ptr(p: &ParamAbi, t: &TypeTable) -> bool {
     let ty = &p.ty;
     if p.mode.is_take() {
@@ -3115,7 +3164,9 @@ fn param_passes_by_ptr(p: &ParamAbi, t: &TypeTable) -> bool {
     }
     // A bare `x: T` is a read-only (shared) borrow: pointer-passed for non-Copy
     // aggregates (the borrow ABI), value-passed (a plain copy) for Copy types.
-    matches!(ty, Ty::Struct(_)) && !is_copy_ty(ty, t)
+    // A Copy struct is value-passed, EXCEPT when it is too big for that to be a
+    // copy rather than an element-wise expansion — see MAX_BY_VALUE_AGGREGATE.
+    matches!(ty, Ty::Struct(_)) && (!is_copy_ty(ty, t) || aggregate_too_big_for_registers(ty, t))
 }
 
 /// v0.0.12: the v0.0.10 "non-Copy moves by default" rule, wired through to
@@ -3863,6 +3914,14 @@ fn return_passes_by_sret_widened(ty: &Ty, types: &TypeTable) -> bool {
         // constructs the only value there is and hands it over, and a `return
         // f;` moves out of a local whose drop is already suppressed.
         if !def.is_copy && !def.is_lang_future {
+            return true;
+        }
+        // A COPY STRUCT TOO BIG TO RETURN IN REGISTERS goes through sret for
+        // the same reason a receiver that size goes through a pointer: the
+        // first-class aggregate return is expanded element by element. A
+        // future is `{ ptr }` and is nowhere near this, so the ramp emitters'
+        // hand-written signatures are untouched.
+        if aggregate_too_big_for_registers(ty, types) {
             return true;
         }
     }
@@ -7684,7 +7743,7 @@ fn gen_async_method(
         // v0.0.8 fix A: same Copy+Read by-value rule as `gen_method` so
         // the call-site lowering in `gen_method_call` (which doesn't
         // distinguish async/gen/sync) matches this signature.
-        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = receiver_passes_by_ptr(&struct_ty, rcv, types);
         let attrs = param_attrs(&recv_sig, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
@@ -7764,7 +7823,7 @@ fn gen_async_method(
     let mut next_idx: u32 = 0;
     if let Some(rcv) = sig.receiver {
         let self_by_ptr =
-            !is_copy_ty(&Ty::Struct(struct_id), types) || !matches!(rcv, Receiver::Read);
+            receiver_passes_by_ptr(&Ty::Struct(struct_id), rcv, types);
         if self_by_ptr {
             let recv_name = format!("%{}", next_idx);
             state.bind("self", recv_name, Ty::Struct(struct_id));
@@ -7931,7 +7990,7 @@ fn gen_gen_method(
         // v0.0.8 fix A: same Copy+Read by-value rule as `gen_method` so
         // the call-site lowering in `gen_method_call` (which doesn't
         // distinguish gen/sync) matches this signature.
-        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = receiver_passes_by_ptr(&struct_ty, rcv, types);
         let attrs = param_attrs(&recv_sig, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
@@ -8003,7 +8062,7 @@ fn gen_gen_method(
     // `this.x` keeps its place shape.
     if let Some(rcv) = sig.receiver {
         let self_by_ptr =
-            !is_copy_ty(&Ty::Struct(struct_id), types) || !matches!(rcv, Receiver::Read);
+            receiver_passes_by_ptr(&Ty::Struct(struct_id), rcv, types);
         if self_by_ptr {
             let recv_name = format!("%{}", next_idx);
             state.bind("self", recv_name, Ty::Struct(struct_id));
@@ -9322,7 +9381,7 @@ fn gen_method(
         // mutations through `ref this` as write-through to the caller's
         // place (see `phase7_generic_typed_impl_mut_self_runs` e2e test:
         // `b.set(42); b.get()` must observe the write).
-        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = receiver_passes_by_ptr(&struct_ty, rcv, types);
         let attrs = param_attrs(&recv_sig, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
@@ -9395,7 +9454,7 @@ fn gen_method(
     // non-receiver param path below. Must match the signature decision
     // above.
     if let Some(rcv) = sig.receiver {
-        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = receiver_passes_by_ptr(&struct_ty, rcv, types);
         if self_by_ptr {
             let recv_name = format!("%{}", next_idx);
             state.bind("self", recv_name.clone(), struct_ty.clone());
@@ -9973,6 +10032,9 @@ struct FnState<'a> {
     /// ever under-claim — which is always sound, where over-claiming is the
     /// misaligned access itself.
     ptr_align: std::collections::HashMap<String, u64>,
+    /// Where a big aggregate's bytes live, for the temporaries `gen_load`
+    /// refused to materialise. See `gen_load` for what breaks without it.
+    big_aggregate_src: std::collections::HashMap<String, (String, u64)>,
     /// v0.0.28: temporaries `gen_place` handed back in place of a bitfield's
     /// (nonexistent) address, mapped to the field they are a copy of.
     ///
@@ -10034,6 +10096,7 @@ impl<'a> FnState<'a> {
             coro_promise: None,
             field_load_cache: std::collections::HashMap::new(),
             ptr_align: std::collections::HashMap::new(),
+            big_aggregate_src: std::collections::HashMap::new(),
             bitfield_slots: std::collections::HashMap::new(),
             ensures: Vec::new(),
         }
@@ -10127,9 +10190,44 @@ impl<'a> FnState<'a> {
 
     // ---- block / instruction emission ----
 
+    /// `store %T %v, ptr %dst` where `%v` is a big aggregate `gen_load`
+    /// declined to materialise → the `memcpy` that store always meant.
+    /// `None` for anything else, including a store of a value this pass does
+    /// not know.
+    fn rewrite_big_aggregate_store(&mut self, s: &str) -> Option<String> {
+        let line = s.trim_start();
+        let rest = line.strip_prefix("store ")?;
+        // "<ty> <val>, ptr <dst>[, ...]" — the value is the token before the
+        // first comma, the destination the one after ", ptr ".
+        let (head, tail) = rest.split_once(", ptr ")?;
+        let val = head.rsplit_once(' ')?.1;
+        let (src, size) = self.big_aggregate_src.get(val)?.clone();
+        let dst = tail
+            .split(|c| c == ',' || c == ' ')
+            .next()
+            .filter(|d| !d.is_empty())?;
+        let us = usize_llvm_ty();
+        let cpy = self.next_tmp();
+        Some(format!(
+            "{cpy} = call ptr @memcpy(ptr {dst}, ptr {src}, {us} {size})"
+        ))
+    }
+
     fn emit(&mut self, s: &str) {
         if self.terminated {
             return;
+        }
+        // THE LAST DOOR for a big aggregate, and it is here rather than in
+        // `gen_store` because a store is written out by half a dozen lowerers
+        // and only some of them go through that helper. Every instruction goes
+        // through `emit`, so the rewrite cannot be missed by the next one
+        // somebody adds — and being missed means silent corruption, not a
+        // diagnostic. See `gen_load`.
+        if !self.big_aggregate_src.is_empty() {
+            if let Some(rewritten) = self.rewrite_big_aggregate_store(s) {
+                self.emit(&rewritten);
+                return;
+            }
         }
         // The field-read memo holds values LOADED since the last instruction
         // that could have written memory. Every earlier invalidation site
@@ -10270,7 +10368,38 @@ impl<'a> FnState<'a> {
     /// Sphere mixed-field hot loop) don't alias. Aggregate types get
     /// no tag — `tbaa_tag_for` returns `None` for those and LLVM
     /// falls back to may-alias-anything, the conservative default.
+    /// A BIG AGGREGATE NEVER BECOMES AN SSA VALUE, and this is not an
+    /// optimisation — it is a miscompile that has to be avoided.
+    ///
+    /// clang 19.1.1 at -O0, handed `%v = load %T, ptr %src` where `%T` is
+    /// `{ [65536 x i8], i64 }`, lowers the load to sixty-five thousand
+    /// `movb N(%rsp), %cl` — every byte into the SAME register, each
+    /// overwriting the last, and the paired `store` then writes nothing that
+    /// came from the source. The copy is silently DROPPED. That is not slow
+    /// code, it is wrong code: `vendor/static-arena`'s `let a =
+    /// StaticArena64K::new()` produced an arena whose `_used` field was a
+    /// leftover stack address, and six of its tests failed with values in the
+    /// hundreds of millions. It also explains the build time — sixty-five
+    /// thousand dead instructions per copy is why `cpc build` of that package
+    /// never finished.
+    ///
+    /// So the load is not emitted. Where the bytes live is recorded instead,
+    /// and `gen_store` turns the pair back into a `memcpy`.
+    ///
+    /// IF THE VALUE IS USED ANY OTHER WAY the build fails loudly with LLVM's
+    /// "use of undefined value", which is the deliberate half of this trade:
+    /// after `MAX_BY_VALUE_AGGREGATE`, an aggregate this size is never a
+    /// parameter and never a return, so a store is the only consumer left —
+    /// and a new one would announce itself at build time rather than corrupt
+    /// memory at run time.
     fn gen_load(&mut self, tmp: &str, ty: &Ty, ptr: &str) {
+        if aggregate_too_big_for_registers(ty, self.types) {
+            if let Some((size, _align)) = static_layout(ty, self.types) {
+                self.big_aggregate_src
+                    .insert(tmp.to_string(), (ptr.to_string(), size));
+                return;
+            }
+        }
         let lty = self.lty(ty);
         let al = self.reduced_align(ty, ptr);
         match self.md.tbaa_tag_for(ty, self.types) {
@@ -10301,6 +10430,17 @@ impl<'a> FnState<'a> {
     /// v0.0.7 Slice 1.2: emit a `store` instruction with the right
     /// TBAA tag for `ty`. Mirror of `gen_load`.
     fn gen_store(&mut self, ty: &Ty, val: &str, ptr: &str) {
+        // The other half of `gen_load`'s refusal: a value it declined to
+        // materialise is copied as bytes, which is what the load/store pair
+        // meant in the first place.
+        if let Some((src, size)) = self.big_aggregate_src.get(val).cloned() {
+            let us = usize_llvm_ty();
+            let cpy = self.next_tmp();
+            self.emit(&format!(
+                "{cpy} = call ptr @memcpy(ptr {ptr}, ptr {src}, {us} {size})"
+            ));
+            return;
+        }
         let lty = self.lty(ty);
         let al = self.reduced_align(ty, ptr);
         match self.md.tbaa_tag_for(ty, self.types) {
@@ -17975,7 +18115,7 @@ impl<'a> FnState<'a> {
         // Copy types so writes propagate to the caller's place.
         // v0.0.8 fix B (finish): on the pointer-passed receiver, mirror
         // the callee's receiver attrs at the call site.
-        let recv_by_value = is_copy_ty(&recv_ty, self.types) && matches!(rcv, Receiver::Read);
+        let recv_by_value = !receiver_passes_by_ptr(&recv_ty, rcv, self.types);
         let recv_arg = if recv_by_value {
             let v = self.next_tmp();
             self.gen_load(&v, &recv_ty, &recv_ptr);
