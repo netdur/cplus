@@ -6,8 +6,8 @@ the numbers compare is the language and its toolchain.
 
 | | |
 |---|---|
-| [`cplus/`](cplus/src/main.cplus) | C+ — the reference the other two follow |
-| [`c/`](c/src/main.c) | C11, libc + libm |
+| [`cplus/`](cplus/src/main.cplus) | C+ — the reference the other two follow. Uses `stdlib/math` and `stdlib/fs` |
+| [`c/`](c/src/main.c) | C11, libc + libm directly |
 | [`rust/`](rust/src/main.rs) | Rust 1.93, std only, no crates |
 
 ## The workload
@@ -36,9 +36,9 @@ RSS via `/usr/bin/time -l`.
 
 | port | render | build | binary | peak RSS |
 |---|---:|---:|---:|---:|
-| **C+** (cpc 0.0.27, `--release`) | **0.950 s** | 159 ms | 32.9 KB | 2.34 MB |
-| **C** (Apple clang 21, `-O3`) | 0.990 s | 126 ms | 32.9 KB | 2.33 MB |
-| **Rust** (rustc 1.93, `opt-level=3` + LTO) | 1.150 s | 2323 ms | 345.2 KB | 2.47 MB |
+| **C+** (cpc 0.0.27, `--release`) | **0.930 s** | 217 ms | 33.7 KB | 3.41 MB |
+| **C** (Apple clang 21, `-O3`) | 0.970 s | 112 ms | 32.9 KB | 2.33 MB |
+| **Rust** (rustc 1.93, `opt-level=3` + LTO) | 1.120 s | 2157 ms | 345.2 KB | 2.45 MB |
 
 C+ is fastest, by 4% over C. Rust cannot reach that row at all, for a reason
 that is about reproducibility rather than speed — see below.
@@ -51,22 +51,22 @@ leave it on and each produces its own image:
 
 | config | render | FMA instrs | image md5 |
 |---|---:|---:|---|
-| C+ `--fp-contract=on` (default) | **0.950 s** | 159 | `f642a7fa…` |
-| C `-ffp-contract=on` (default) | 0.990 s | 30 | `8c515a11…` |
-| C+ `--fp-contract=off` | 1.130 s | 0 | `7730fff3…` |
-| Rust (no knob — never contracts) | 1.150 s | 0 | `7730fff3…` |
-| C `-ffp-contract=off` | 1.170 s | 0 | `7730fff3…` |
+| C+ `--fp-contract=on` (default) | **0.930 s** | 165 | `f642a7fa…` |
+| C `-ffp-contract=on` (default) | 0.970 s | 30 | `8c515a11…` |
+| C+ `--fp-contract=off` | 1.100 s | 0 | `7730fff3…` |
+| Rust (no knob — never contracts) | 1.120 s | 0 | `7730fff3…` |
+| C `-ffp-contract=off` | 1.140 s | 0 | `7730fff3…` |
 
 So the honest like-for-like comparison is the bottom three, where the output
-is identical: **C+ 1.130 s, Rust 1.150 s, C 1.170 s** — a 3% spread, which is
+is identical: **C+ 1.100 s, Rust 1.120 s, C 1.140 s** — a 3% spread, which is
 inside the run-to-run noise. On this program the three languages are the same
 speed.
 
 Two things that table settles:
 
-- **Contraction costs about 19%**, in both C (1.18x) and C+ (1.19x). That is
+- **Contraction costs about 18%**, in both C (1.18x) and C+ (1.18x). That is
   the price of a reproducible image, not a property of either language.
-- **cpc contracts far more aggressively than clang** — 159 fused instructions
+- **cpc contracts far more aggressively than clang** — 165 fused instructions
   against 30 — which is where its 4% lead at the default setting comes from.
   Rust has no way to ask for it, so it has one row instead of two.
 
@@ -106,3 +106,10 @@ Then `md5 -q out.ppm` in each should give `7730fff3105ebbe75e7d00d1099aef85`.
   what keeps the three ports structurally comparable.
 - **`ray_color` is recursive**, not an iterative bounce loop.
 - The image is written bottom-up: row `j` lands at `(height-1-j)`.
+- **Do not hardcode `open` flags.** The C+ port originally opened its output
+  with `1 | 0x200 | 0x400` — the Darwin spellings of
+  `O_WRONLY|O_CREAT|O_TRUNC`. On Linux those same bits mean
+  `O_WRONLY|O_TRUNC|O_APPEND`, so the program compiled everywhere and wrote
+  the wrong thing off macOS. It now uses `stdlib/fs`, which spells the intent
+  rather than the bits; C uses `<fcntl.h>` and Rust `std::fs` for the same
+  reason.
