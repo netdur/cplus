@@ -30,14 +30,30 @@
 // libsecret does all of that, and `secret_password_*_sync` runs its own loop
 // for the prompt. So this file is thin on purpose.
 //
-// IT IS OPENED AT RUNTIME rather than linked. `[<platform>.link]` is reserved
-// in the manifest but not implemented (`manifest.rs`: "a future
-// `[<platform>.link]` arrives as a feature"), so the only way to name a library
-// is `[link]`, which is not platform-scoped — adding `-lsecret-1` there would
-// put it on the macOS and Windows link lines too, where it does not exist. So:
-// `dlopen`, the same instrument `facet_gtk/web` uses for WebKitGTK, and for the
-// same reason it uses it there — a machine without the library gets an honest
-// `Unsupported` instead of a binary that will not start.
+// IT IS OPENED AT RUNTIME rather than linked, and the reason is now the SECOND
+// one rather than the first.
+//
+// It used to be the first: `[<platform>.link]` was reserved and unimplemented,
+// so the only way to name a library was `[link]`, which is not platform-scoped
+// — `-lsecret-1` there would have gone on the macOS and Windows link lines too.
+// That key exists now (`vendor/http` links libcurl through it), so linking is
+// available and this still does not take it.
+//
+// WHAT DECIDES IT IS WHAT HAPPENS ON A MACHINE WITHOUT THE LIBRARY. Linking
+// needs `libsecret-1.so`, which ships in `libsecret-1-dev` and is absent from
+// an ordinary desktop; and a linked binary that cannot resolve its libraries
+// does not start AT ALL. For a package whose contract already includes "there
+// is no secure storage here", that would be a catastrophic way to say it — an
+// application that merely IMPORTS securestore would die on a machine that
+// simply has no keyring. `dlopen` answers `Unsupported` and keeps running.
+// `facet_gtk/web` makes the same call for WebKitGTK, and the Windows camera
+// backend for Media Foundation.
+//
+// It is sound here for a reason that does NOT hold for libcurl: every libsecret
+// entry point below is FIXED-ARITY. `curl_easy_setopt` is variadic, and a
+// variadic function reached through a fixed prototype puts its arguments in the
+// wrong place on AAPCS64 — which is why that package links and this one does
+// not.
 //
 // `dlsym` on libsecret's handle also reaches its dependencies, which is where
 // the four glib entry points below come from. No glib dependency is added to
