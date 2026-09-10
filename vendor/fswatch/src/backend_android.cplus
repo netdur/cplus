@@ -51,14 +51,10 @@ extern fn inotify_add_watch(fd: i32, path: *u8, mask: u32) -> i32;
 extern fn inotify_rm_watch(fd: i32, wd: i32) -> i32;
 
 // Bionic publishes the thread's errno slot as `__errno`; glibc calls it
-// `__errno_location`. This file is the DESKTOP-LINUX one and follows glibc;
-// `backend_android.cplus` beside it is the same file with the bionic spelling,
-// which is exactly the split `stdlib/netsys_android.cplus` makes for this one
-// symbol. Android reaches that sibling because the resolver prefers `_android`
-// over its `_linux` fallback.
-//
-// The note this replaces said "a desktop-Linux port changes this line". It did.
-#[link_name = "__errno_location"]
+// `__errno_location`. THIS FILE IS THE ANDROID ONE and follows bionic;
+// `backend_linux.cplus` beside it is the same file with glibc's spelling. That
+// one symbol is the only reason both exist.
+#[link_name = "__errno"]
 extern fn errno_location() -> *i32;
 
 // ---- the types, identical to the kqueue backend's ---------------------------
