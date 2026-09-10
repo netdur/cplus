@@ -10032,9 +10032,10 @@ struct FnState<'a> {
     /// ever under-claim — which is always sound, where over-claiming is the
     /// misaligned access itself.
     ptr_align: std::collections::HashMap<String, u64>,
-    /// Where a big aggregate's bytes live, for the temporaries `gen_load`
-    /// refused to materialise. See `gen_load` for what breaks without it.
-    big_aggregate_src: std::collections::HashMap<String, (String, u64)>,
+    /// The most recent big-aggregate load, and where in `body` it sits:
+    /// (temp, source pointer, size, offset before the load, offset after it).
+    /// See `gen_load`.
+    pending_big_load: Option<(String, String, u64, usize, usize)>,
     /// v0.0.28: temporaries `gen_place` handed back in place of a bitfield's
     /// (nonexistent) address, mapped to the field they are a copy of.
     ///
@@ -10096,7 +10097,7 @@ impl<'a> FnState<'a> {
             coro_promise: None,
             field_load_cache: std::collections::HashMap::new(),
             ptr_align: std::collections::HashMap::new(),
-            big_aggregate_src: std::collections::HashMap::new(),
+            pending_big_load: None,
             bitfield_slots: std::collections::HashMap::new(),
             ensures: Vec::new(),
         }
@@ -10190,22 +10191,33 @@ impl<'a> FnState<'a> {
 
     // ---- block / instruction emission ----
 
-    /// `store %T %v, ptr %dst` where `%v` is a big aggregate `gen_load`
-    /// declined to materialise → the `memcpy` that store always meant.
-    /// `None` for anything else, including a store of a value this pass does
-    /// not know.
+    /// `store %T %v, ptr %dst` immediately after `%v = load %T, ptr %src` →
+    /// the `memcpy` that pair always meant, with the dead load removed.
+    /// `None` for anything else — see `gen_load` for why adjacency is the
+    /// condition rather than a lookup by name.
     fn rewrite_big_aggregate_store(&mut self, s: &str) -> Option<String> {
+        let (tmp, src, size, before, after) = self.pending_big_load.clone()?;
+        // Anything emitted since the load breaks the argument: `src` could
+        // have been written, or the value could have been consumed.
+        if self.body.len() != after {
+            self.pending_big_load = None;
+            return None;
+        }
         let line = s.trim_start();
         let rest = line.strip_prefix("store ")?;
         // "<ty> <val>, ptr <dst>[, ...]" — the value is the token before the
         // first comma, the destination the one after ", ptr ".
         let (head, tail) = rest.split_once(", ptr ")?;
-        let val = head.rsplit_once(' ')?.1;
-        let (src, size) = self.big_aggregate_src.get(val)?.clone();
+        if head.rsplit_once(' ')?.1 != tmp {
+            return None;
+        }
         let dst = tail
             .split(|c| c == ',' || c == ' ')
             .next()
-            .filter(|d| !d.is_empty())?;
+            .filter(|d| !d.is_empty())?
+            .to_string();
+        self.body.truncate(before);
+        self.pending_big_load = None;
         let us = usize_llvm_ty();
         let cpy = self.next_tmp();
         Some(format!(
@@ -10223,7 +10235,7 @@ impl<'a> FnState<'a> {
         // through `emit`, so the rewrite cannot be missed by the next one
         // somebody adds — and being missed means silent corruption, not a
         // diagnostic. See `gen_load`.
-        if !self.big_aggregate_src.is_empty() {
+        if self.pending_big_load.is_some() {
             if let Some(rewritten) = self.rewrite_big_aggregate_store(s) {
                 self.emit(&rewritten);
                 return;
@@ -10368,43 +10380,48 @@ impl<'a> FnState<'a> {
     /// Sphere mixed-field hot loop) don't alias. Aggregate types get
     /// no tag — `tbaa_tag_for` returns `None` for those and LLVM
     /// falls back to may-alias-anything, the conservative default.
-    /// A BIG AGGREGATE NEVER BECOMES AN SSA VALUE, and this is not an
-    /// optimisation — it is a miscompile that has to be avoided.
+    /// A BIG AGGREGATE COPY IS A MEMCPY, and this is not an optimisation — it
+    /// is a miscompile that has to be avoided.
     ///
     /// clang 19.1.1 at -O0, handed `%v = load %T, ptr %src` where `%T` is
     /// `{ [65536 x i8], i64 }`, lowers the load to sixty-five thousand
     /// `movb N(%rsp), %cl` — every byte into the SAME register, each
-    /// overwriting the last, and the paired `store` then writes nothing that
-    /// came from the source. The copy is silently DROPPED. That is not slow
-    /// code, it is wrong code: `vendor/static-arena`'s `let a =
-    /// StaticArena64K::new()` produced an arena whose `_used` field was a
-    /// leftover stack address, and six of its tests failed with values in the
-    /// hundreds of millions. It also explains the build time — sixty-five
-    /// thousand dead instructions per copy is why `cpc build` of that package
-    /// never finished.
+    /// overwriting the last — and the paired `store` then writes nothing that
+    /// came from the source. The copy is silently DROPPED.
+    /// `vendor/static-arena`'s `let a = StaticArena64K::new()` produced an
+    /// arena whose `_used` field was a leftover stack address, and six of its
+    /// tests failed with values in the hundreds of millions. It is also why
+    /// `cpc build` of that package never finished: sixty-five thousand dead
+    /// instructions per copy.
     ///
-    /// So the load is not emitted. Where the bytes live is recorded instead,
-    /// and `gen_store` turns the pair back into a `memcpy`.
+    /// So a big load is REMEMBERED as well as emitted, and `emit` folds it
+    /// into a `memcpy` when the very next instruction is the store that
+    /// consumes it — which is the shape of every copy: `let a = f()`,
+    /// `return x`, a struct assignment.
     ///
-    /// IF THE VALUE IS USED ANY OTHER WAY the build fails loudly with LLVM's
-    /// "use of undefined value", which is the deliberate half of this trade:
-    /// after `MAX_BY_VALUE_AGGREGATE`, an aggregate this size is never a
-    /// parameter and never a return, so a store is the only consumer left —
-    /// and a new one would announce itself at build time rather than corrupt
-    /// memory at run time.
+    /// ADJACENCY IS THE WHOLE SAFETY ARGUMENT, and it is why this is not a
+    /// map keyed by temp. `memcpy(dst, src)` is only the same thing as
+    /// load-then-store while nothing has written through `src` in between,
+    /// and while nothing ELSE has consumed the loaded value — a `take`
+    /// parameter of a 1656-byte `flex_layout::Node` is passed by value and
+    /// reads exactly such a temp. If anything at all intervenes the pair is
+    /// left alone: correct, and merely slow.
     fn gen_load(&mut self, tmp: &str, ty: &Ty, ptr: &str) {
-        if aggregate_too_big_for_registers(ty, self.types) {
-            if let Some((size, _align)) = static_layout(ty, self.types) {
-                self.big_aggregate_src
-                    .insert(tmp.to_string(), (ptr.to_string(), size));
-                return;
-            }
-        }
         let lty = self.lty(ty);
         let al = self.reduced_align(ty, ptr);
+        let big = aggregate_too_big_for_registers(ty, self.types);
+        let before = self.body.len();
         match self.md.tbaa_tag_for(ty, self.types) {
             Some(id) => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}{al}, !tbaa !{id}")),
             None => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}{al}")),
+        }
+        self.pending_big_load = None;
+        if big {
+            if let Some((size, _align)) = static_layout(ty, self.types) {
+                let after = self.body.len();
+                self.pending_big_load =
+                    Some((tmp.to_string(), ptr.to_string(), size, before, after));
+            }
         }
     }
 
@@ -10430,17 +10447,6 @@ impl<'a> FnState<'a> {
     /// v0.0.7 Slice 1.2: emit a `store` instruction with the right
     /// TBAA tag for `ty`. Mirror of `gen_load`.
     fn gen_store(&mut self, ty: &Ty, val: &str, ptr: &str) {
-        // The other half of `gen_load`'s refusal: a value it declined to
-        // materialise is copied as bytes, which is what the load/store pair
-        // meant in the first place.
-        if let Some((src, size)) = self.big_aggregate_src.get(val).cloned() {
-            let us = usize_llvm_ty();
-            let cpy = self.next_tmp();
-            self.emit(&format!(
-                "{cpy} = call ptr @memcpy(ptr {ptr}, ptr {src}, {us} {size})"
-            ));
-            return;
-        }
         let lty = self.lty(ty);
         let al = self.reduced_align(ty, ptr);
         match self.md.tbaa_tag_for(ty, self.types) {
