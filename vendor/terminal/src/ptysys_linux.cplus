@@ -1,0 +1,35 @@
+// terminal/ptysys — the Linux half. See `ptysys.cplus` for what each of these
+// is and what reading the other system's value does.
+
+#[link_name = "__errno_location"]
+extern fn errno_slot() -> *i32;
+
+fn errno_now() -> i32 { return { *{ errno_slot() } }; }
+
+// <asm-generic/errno-base.h>
+fn eagain() -> i32 { return 11 as i32; }
+fn eio() -> i32 { return 5 as i32; }
+// <asm-generic/fcntl.h>: O_NONBLOCK is 00004000 octal.
+fn o_nonblock() -> i32 { return 0x800 as i32; }
+// <asm-generic/ioctls.h>: TIOCGWINSZ 0x5413, TIOCSWINSZ 0x5414.
+fn tiocswinsz() -> u64 { return 0x5414 as u64; }
+
+#[test]
+fn the_linux_numbers_are_the_linux_numbers() {
+    // Spelled from their octal and hex definitions rather than copied, because
+    // a transcription error here is a terminal that hangs on its first read
+    // and nothing in the failure names this file.
+    assert eagain() == (11 as i32);
+    assert o_nonblock() == ((4 as i32) *% (512 as i32));   // 04000 octal
+    assert tiocswinsz() == (21524 as u64);                 // 0x5414
+}
+
+#[test]
+fn errno_is_readable_and_per_thread() {
+    // The accessor exists and hands back a writable slot. Reading it proves the
+    // symbol linked, which is the failure mode the Darwin name has here.
+    let slot: *i32 = { errno_slot() };
+    assert slot != (0 as *i32);
+    { *slot = 0 as i32 };
+    assert errno_now() == (0 as i32);
+}

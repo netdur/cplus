@@ -1,0 +1,43 @@
+// terminal/ptysys — the handful of libc numbers that are NOT the same on two
+// POSIX systems.
+//
+// `pty.cplus` is otherwise portable: forkpty, execl, read, write, waitpid and
+// the whole shell-integration apparatus are the same call on Darwin and on
+// Linux. Four things are not, and every one of them fails SILENTLY rather than
+// loudly, which is why they are gathered here instead of being spelled inline:
+//
+//   `errno`        is a macro over a per-thread accessor with a different name
+//                  on each system (`__error` / `__errno_location`). The wrong
+//                  one does not compile — the only honest failure of the four.
+//   `EAGAIN`       is 35 on Darwin and 11 on Linux. Read the wrong one and a
+//                  would-block is reported as `Failed`, so the pump stops on
+//                  the first idle moment and the terminal goes dead.
+//   `O_NONBLOCK`   is 0x0004 on Darwin and 0x0800 on Linux. `F_SETFL` ignores
+//                  bits it does not recognise, so the wrong value is accepted,
+//                  changes nothing, and the master fd stays BLOCKING — which
+//                  hangs the UI thread on the first read.
+//   `TIOCSWINSZ`   is 0x80087467 on Darwin and 0x5414 on Linux; the wrong one
+//                  is an unknown ioctl and the shell never learns the size.
+//
+// This file is the Darwin half; `ptysys_linux.cplus` is the other. The `_sys`
+// seam is the shape stdlib already uses for exactly this (`fs_sys`, `netsys`,
+// `time_sys`), and it costs one import rather than a second copy of a
+// nine-hundred-line file.
+
+#[link_name = "__error"]
+extern fn errno_slot() -> *i32;
+
+fn errno_now() -> i32 { return { *{ errno_slot() } }; }
+
+fn eagain() -> i32 { return 35 as i32; }
+fn eio() -> i32 { return 5 as i32; }
+fn o_nonblock() -> i32 { return 4 as i32; }
+// From <sys/ttycom.h>.
+fn tiocswinsz() -> u64 { return 0x80087467 as u64; }
+
+#[test]
+fn the_darwin_numbers_are_the_darwin_numbers() {
+    assert eagain() == (35 as i32);
+    assert o_nonblock() == (4 as i32);
+    assert tiocswinsz() == (0x80087467 as u64);
+}
