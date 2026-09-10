@@ -1,0 +1,106 @@
+// biometrics_backend_linux — Linux has the service; this build does not use it.
+//
+// THIS FILE EXISTS SO A LINUX BUILD LINKS. `biometrics.cplus` declares three
+// stable symbols and something has to define them on every platform the package
+// claims to build for; without it the resolver falls through to the
+// LocalAuthentication backend and the failure is `objc/runtime is not available
+// on platform linux`.
+//
+// ---- this is a refusal, and NOT the same refusal as haptics ------------------
+//
+// `haptics_backend_linux` refuses because the facility does not exist. This one
+// refuses although it DOES: `net.reactivated.Fprint` (fprintd) is a real system
+// service with a real D-Bus API — `Manager.GetDevices`, then per device
+// `Claim`, `ListEnrolledFingers`, `VerifyStart`, a `VerifyStatus` signal,
+// `VerifyStop`, `Release`. It is the Linux answer and it is written down here
+// rather than discovered again.
+//
+// TWO REASONS IT IS NOT BUILT, and the second is the one that decided it.
+//
+// The verify flow is stateful and asynchronous — claim the device, start, wait
+// for a signal that may say `verify-match`, `verify-no-match`, `verify-retry-*`
+// or `verify-disconnected`, stop, release — and a claim that is not released
+// locks the reader for every other application on the machine. That is code
+// which has to be right the first time.
+//
+// AND IT CANNOT BE TESTED HERE. `Manager.GetDevices` on this machine answers
+// `ao 0` — zero devices. So every line of a verify implementation would be
+// written blind against hardware nobody could run it on, and the first person
+// with a reader would be its first tester. Shipping that as though it worked is
+// worse than saying it does not.
+//
+// ---- what the three answers mean --------------------------------------------
+//
+// `Kind::None` and `available() == false` together, deliberately. Reporting
+// `Fingerprint` because fprintd is installed would be true about the MACHINE
+// and false about this build — an application would offer a "Sign in with
+// fingerprint" button that can never succeed. The pair an application actually
+// branches on has to describe what it can DO.
+//
+// `Unavailable`, never `Unsupported` or `NotEnrolled`. The vocabulary separates
+// them for a reason: `NotEnrolled` invites "set up a fingerprint in Settings",
+// which would send someone to enrol a print this build will never read.
+
+import "./biometrics" as bio;
+
+// Kind::None
+export extern fn _c_kind() -> i32 {
+    return 0 as i32;
+}
+
+export extern fn _c_available() -> i32 {
+    return 0 as i32;
+}
+
+// THE HANDLER STILL RUNS. A caller that waits for the result before showing a
+// screen would hang forever otherwise, and the facade's contract is that the
+// outcome arrives on the handler. It is called before this returns, which is
+// allowed — the facade promises the main thread, not a later turn.
+export extern fn _c_authenticate(reason: *u8, reason_len: usize,
+                                 on_result: fn(bio::Outcome, *u8), ctx: *u8,
+                                 allow_passcode: i32) -> i32 {
+    if !on_result.is_null() { on_result(bio::Outcome::Unavailable, ctx); }
+    return bio::Outcome::Unavailable.to_code();
+}
+
+// ---- tests -------------------------------------------------------------------
+
+static _CALLED: i32 = 0;
+static _GOT: i32 = 0;
+
+fn _sink(o: bio::Outcome, _ctx: *u8) {
+    _CALLED = _CALLED + 1;
+    _GOT = o.to_code();
+}
+
+#[test]
+fn the_pair_an_app_branches_on_describes_what_this_build_can_do() {
+    // Not "is there a reader on this machine" — `Kind::Fingerprint` here would
+    // put a sign-in button on screen that can never succeed.
+    assert { _c_kind() } == bio::Kind::None.to_code();
+    assert { _c_available() } == (0 as i32);
+}
+
+#[test]
+fn authenticating_answers_unavailable_and_still_calls_the_handler() {
+    _CALLED = 0;
+    _GOT = 0 -% 1;
+    let cb: fn(bio::Outcome, *u8) = _sink;
+    let r: str = "unlock the vault";
+    let rc: i32 = { _c_authenticate(#str_ptr(r), #str_len(r), cb, 0 as *u8, 1 as i32) };
+    // A caller that waits for the handler must not hang.
+    assert _CALLED == (1 as i32);
+    assert _GOT == bio::Outcome::Unavailable.to_code();
+    assert rc == bio::Outcome::Unavailable.to_code();
+}
+
+#[test]
+fn unavailable_is_not_notenrolled_and_not_rejected() {
+    // `NotEnrolled` would invite "set up a fingerprint in Settings" — enrolling
+    // a print this build will never read. `Rejected` would say a real finger
+    // was refused.
+    let u: i32 = bio::Outcome::Unavailable.to_code();
+    assert u != bio::Outcome::NotEnrolled.to_code();
+    assert u != bio::Outcome::Rejected.to_code();
+    assert u != bio::Outcome::Ok.to_code();
+}
