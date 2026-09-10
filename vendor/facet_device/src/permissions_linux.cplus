@@ -1,0 +1,405 @@
+// facet_device/permissions_linux — the XDG Desktop Portal half.
+//
+// Read `permissions.cplus` first: it declares the seam and the four answers,
+// and this file answers the same three verbs. The enums are declared here as
+// well, field for field — the resolver SHADOWS the base file rather than
+// extending it, which is the same rule `fswatch/backend_linux.cplus` follows.
+//
+// ---- there is no permission bit on a Linux desktop ----------------------------
+//
+// That is the fact the whole file is shaped around, and it is easy to get
+// wrong. A plain X11 process can open `/dev/video0` with no ceremony at all;
+// there is nothing to ask and nobody to ask it. So a naive backend here would
+// answer `Granted` to everything, which is true of the syscall and false of
+// the user's intent.
+//
+// The XDG DESKTOP PORTAL is the thing that does have an answer:
+// `org.freedesktop.portal.Desktop` on the session bus, which is what a
+// sandboxed application (Flatpak, Snap) is confined to and what a desktop
+// application can use anyway to get the same consent dialog the rest of the
+// system uses. `xdg-desktop-portal` with a `gnome` or `gtk` backend is
+// standard on every current desktop. Where it is not running, this backend
+// says `Unavailable` — not `Granted` — because the honest statement is "this
+// machine has no way to ask", and an application that wanted consent should
+// hear that rather than a yes nobody gave.
+//
+// ---- STATUS NEVER PROMPTS, and the portal makes that awkward ------------------
+//
+// The portal deliberately does NOT expose an app's stored decision: there is a
+// `PermissionStore`, but it is `org.freedesktop.impl.portal.*` — the backend's
+// own interface, not one applications are meant to read, precisely so an app
+// cannot silently probe what the user has allowed. So the most this can
+// truthfully say without prompting is `Undetermined`: the service is there, the
+// device is there, and only `request` can turn that into a yes or a no.
+//
+// Answering `Undetermined` where another platform would answer `Granted` is
+// therefore correct rather than lossy, and it is exactly why `Undetermined`
+// exists in the enum. An app that treats it as denial is the bug.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "gio/gio" as gio;
+import "glib/glib" as glib;
+
+// `g_dbus_connection_signal_subscribe` is not in the binding — its callback
+// takes seven arguments and the generator skips that shape. Hand-bound here,
+// which is what `facet_gtk/recycler.cplus` does for `gtk_string_list_splice`
+// and for the same reason.
+#[link_name = "g_dbus_connection_signal_subscribe"]
+extern fn g_dbus_connection_signal_subscribe(
+    connection: *u8, sender: *u8, interface_name: *u8, member: *u8,
+    object_path: *u8, arg0: *u8, flags: i32,
+    callback: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8),
+    user_data: *u8, user_data_free_func: *u8) -> u32;
+
+// The response payload is `(u, a{sv})`; only the code is read, and
+// `g_variant_get_child_value` is the one call that reaches it without a format
+// string the generator could bind.
+#[link_name = "g_variant_get_child_value"]
+extern fn g_variant_get_child_value(value: *u8, index: usize) -> *u8;
+#[link_name = "g_variant_get_uint32"]
+extern fn g_variant_get_uint32(value: *u8) -> u32;
+#[link_name = "g_variant_unref"]
+extern fn g_variant_unref(value: *u8);
+#[link_name = "g_timeout_add"]
+extern fn g_timeout_add(interval: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
+#[link_name = "g_source_remove"]
+extern fn g_source_remove(tag: u32) -> i32;
+
+enum Capability {
+    Camera,
+    Microphone,
+    Location,
+    Notifications,
+}
+
+enum Permission {
+    Granted,
+    Denied,
+    Undetermined,
+    Unavailable,
+}
+
+fn name_of(c: Capability) -> str {
+    match c {
+        Capability::Camera => { return "camera"; }
+        Capability::Microphone => { return "microphone"; }
+        Capability::Location => { return "location"; }
+        Capability::Notifications => { return "notifications"; }
+    }
+}
+
+// ---- reaching the portal -----------------------------------------------------
+
+fn portal_bus() -> str { return "org.freedesktop.portal.Desktop"; }
+fn portal_path() -> str { return "/org/freedesktop/portal/desktop"; }
+
+// G_BUS_TYPE_SESSION. The portal is a per-user service; there is nothing for
+// this on the system bus.
+fn bus_type_session() -> i32 { return 2 as i32; }
+
+// A proxy onto one portal interface, or a null one when the portal is not
+// running. NOT cached: a portal that was restarted between two calls would
+// leave a cached proxy pointing at a name that no longer resolves, and the
+// cost here is one round trip on a call an application makes rarely.
+fn portal(iface: str) -> gio::DBusProxy {
+    return { gio::DBusProxy::new_for_bus_sync(
+        bus_type_session(),
+        0 as u32,
+        gio::DBusInterfaceInfo::from_raw(0 as *u8),
+        portal_bus(), portal_path(), iface,
+        gio::Cancellable::from_raw(0 as *u8)) };
+}
+
+fn have(p: gio::DBusProxy) -> bool { return p.raw() != (0 as *u8); }
+
+// Is this interface actually offered? Every portal interface carries a
+// `version` property, and a proxy for an interface the backend does not
+// implement caches no properties at all — so the presence of `version` is the
+// portal's own answer to "do you do this", without a method call that might
+// prompt.
+fn interface_present(iface: str) -> bool {
+    let p: gio::DBusProxy = portal(iface);
+    if !have(p) { return false; }
+    return match { p.get_cached_property("version") } {
+        option::Option[glib::Variant]::Some(_v) => true,
+        option::Option[glib::Variant]::None => false,
+    };
+}
+
+fn camera_is_present() -> bool {
+    let p: gio::DBusProxy = portal("org.freedesktop.portal.Camera");
+    if !have(p) { return false; }
+    return match { p.get_cached_property("IsCameraPresent") } {
+        option::Option[glib::Variant]::Some(v) => { v.get_boolean() }
+        option::Option[glib::Variant]::None => false,
+    };
+}
+
+fn supported() -> bool {
+    return have(portal("org.freedesktop.portal.Camera"));
+}
+
+// ---- status ------------------------------------------------------------------
+
+fn status(c: Capability) -> Permission {
+    match c {
+        Capability::Camera => {
+            // A machine with no camera is `Unavailable` and not `Denied`: no
+            // amount of asking produces one, and the UI should say so rather
+            // than offer a button that cannot work.
+            if !camera_is_present() { return Permission::Unavailable; }
+            return Permission::Undetermined;
+        }
+        Capability::Microphone => {
+            // The portal routes a microphone through `Device.AccessDevice`,
+            // which has no presence property — so "is there a microphone" is
+            // not a question this can answer without asking, and the interface
+            // being offered is as far as it goes.
+            if !interface_present("org.freedesktop.portal.Device") {
+                return Permission::Unavailable;
+            }
+            return Permission::Undetermined;
+        }
+        Capability::Location => {
+            if !interface_present("org.freedesktop.portal.Location") {
+                return Permission::Unavailable;
+            }
+            return Permission::Undetermined;
+        }
+        Capability::Notifications => {
+            // NO GATE, and that is the portal's design rather than an omission
+            // here: `org.freedesktop.portal.Notification` has an
+            // `AddNotification` method and no request flow, because the desktop
+            // shows the notification and the user disables it there. So the
+            // honest answer is `Granted` when the interface is offered — not
+            // `Undetermined`, which would send an application looking for a
+            // prompt that does not exist.
+            if !interface_present("org.freedesktop.portal.Notification") {
+                return Permission::Unavailable;
+            }
+            return Permission::Granted;
+        }
+    }
+}
+
+// ---- request -----------------------------------------------------------------
+//
+// A portal method that needs consent does not answer; it hands back the object
+// path of a REQUEST, and the answer arrives later as that request's `Response`
+// signal. So `request` is: subscribe, call, run a nested main loop until the
+// signal lands, unsubscribe.
+//
+// THE SUBSCRIPTION HAPPENS BEFORE THE CALL, and that ordering is the portal
+// spec's own instruction rather than caution. The response can be emitted
+// before the method reply is delivered, so an implementation that waits for
+// the returned path and subscribes afterwards has a window in which it misses
+// the answer and then blocks forever. The path is predictable — the caller
+// chooses a `handle_token` and the request lands at
+// `/org/freedesktop/portal/desktop/request/<SENDER>/<TOKEN>` with the sender's
+// unique name stripped of its leading colon and its dots turned into
+// underscores — which is exactly why the spec has a token at all.
+//
+// The nested main loop is the same instrument `facet_gtk/dialogs` uses to make
+// GTK's async-only file chooser answer a verb that returns a path: the rest of
+// the application keeps drawing while the user decides.
+
+static WAIT_LOOP: usize = 0;
+static WAIT_CODE: u32 = 0;
+static WAIT_DONE: bool = false;
+// The bounding timer's source id, or 0 once it is gone. A GLib source that
+// answers G_SOURCE_REMOVE has ALREADY been destroyed, so removing it again is
+// "Source ID 1 was not found when attempting to remove it" — a critical, once
+// per timed-out request. The id is cleared by whoever destroys it, and only a
+// non-zero one is removed.
+static WAIT_TIMER: u32 = 0;
+
+// HOW LONG A CONSENT PROMPT MAY TAKE. Generous, because the number it bounds is
+// a human reading a dialog — but bounded, because the alternative is a hang and
+// a hang is what this actually did.
+//
+// MEASURED, not hypothesised: on the GNOME session this was written against,
+// `AccessCamera` returns its Request path immediately and NO `Response` is ever
+// emitted. `xdg-desktop-portal` logs "Failed to associate portal window with
+// parent window" and the consent dialog never appears — with a `parent_window`
+// and without one. So an unbounded wait froze the caller outright, and it froze
+// it on a machine where nothing was wrong with this code.
+//
+// A timeout answers `Undetermined` rather than `Denied`, and the distinction is
+// the point: nobody refused, nobody was even asked, so the next ask is fair.
+fn consent_timeout_ms() -> u32 { return 120000 as u32; }
+
+fn give_up(_user: *u8) -> i32 {
+    // Returning G_SOURCE_REMOVE below destroys this source, so the caller must
+    // not remove it again.
+    WAIT_TIMER = 0 as u32;
+    WAIT_DONE = true;
+    // 2 is the portal's own "ended some other way", which is exactly what this
+    // is — so the answer flows through the same branch.
+    WAIT_CODE = 2 as u32;
+    if WAIT_LOOP != (0 as usize) {
+        { glib::MainLoop::from_raw(WAIT_LOOP as *u8).quit() };
+    }
+    // G_SOURCE_REMOVE.
+    return 0 as i32;
+}
+
+// Response(u response, a{sv} results). 0 = success, 1 = the user cancelled,
+// 2 = ended some other way.
+fn on_response(_conn: *u8, _sender: *u8, _path: *u8, _iface: *u8, _signal: *u8,
+               params: *u8, _user: *u8) {
+    if params != (0 as *u8) {
+        let code_v: *u8 = { g_variant_get_child_value(params, 0 as usize) };
+        if code_v != (0 as *u8) {
+            WAIT_CODE = { g_variant_get_uint32(code_v) };
+            { g_variant_unref(code_v) };
+        }
+    }
+    WAIT_DONE = true;
+    if WAIT_LOOP != (0 as usize) {
+        { glib::MainLoop::from_raw(WAIT_LOOP as *u8).quit() };
+    }
+    return;
+}
+
+// `:1.234` -> `1_234`, which is how the portal spells a sender inside a
+// request's object path.
+fn sender_token(unique: str) -> text::Text {
+    var out: text::Text = text::new();
+    let p: *u8 = #str_ptr(unique);
+    let n: usize = #str_len(unique);
+    var i: usize = 0 as usize;
+    while i < n {
+        let b: u8 = { *(p + i) };
+        // Skip the leading ':' only; a colon cannot appear elsewhere in a
+        // unique name.
+        if b == (58 as u8) {
+            i = i +% (1 as usize);
+            continue;
+        }
+        if b == (46 as u8) { append_byte(out, 95 as u8); } else { append_byte(out, b); }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn append_byte(ref t: text::Text, b: u8) {
+    var one: [u8; 1] = [0 as u8; 1];
+    one[0] = b;
+    let _a: status::Status = t.append({ #str_from_raw_parts(#addr_of(one) as *u8, 1 as usize) });
+    return;
+}
+
+fn request(c: Capability, parent: str = "") -> Permission {
+    // Nothing to ask for, or nothing to ask.
+    let known: Permission = status(c);
+    match known {
+        Permission::Unavailable => { return Permission::Unavailable; }
+        Permission::Granted => { return Permission::Granted; }
+        Permission::Denied => { return Permission::Denied; }
+        Permission::Undetermined => { }
+    }
+    match c {
+        Capability::Camera => { return ask_camera(parent); }
+        // NOT BUILT, and stated rather than guessed. `Device.AccessDevice`
+        // takes a process id and a device list and is one Request like the
+        // camera's, so it is the same shape and a small piece of work;
+        // `Location` is NOT — it is a session (`CreateSession` then `Start`,
+        // with updates arriving as signals), which is a different lifetime and
+        // belongs with the capability that consumes it rather than with the
+        // gate. Both are MANIFEST §2 rows.
+        Capability::Microphone => { return Permission::Undetermined; }
+        Capability::Location => { return Permission::Undetermined; }
+        Capability::Notifications => { return Permission::Granted; }
+    }
+}
+
+// `parent` is the portal's own spelling of "the window this dialog belongs to"
+// — `x11:<hex xid>` or `wayland:<handle>`. It is a PARAMETER rather than
+// something this module discovers because `facet_device` does not depend on a
+// UI backend: that boundary is the whole reason the tier is its own package,
+// and a permissions module that imported facet_gtk to find a window would give
+// it back.
+fn ask_camera(parent: str) -> Permission {
+    let p: gio::DBusProxy = portal("org.freedesktop.portal.Camera");
+    if !have(p) { return Permission::Unavailable; }
+    let conn: gio::DBusConnection = { p.get_connection() };
+    if conn.raw() == (0 as *u8) { return Permission::Unavailable; }
+    let unique: text::Text = match { conn.get_unique_name() } {
+        option::Option[text::Text]::Some(u) => u,
+        option::Option[text::Text]::None => { return Permission::Unavailable; }
+    };
+
+    let token: text::Text = text::from_str("facet_device0");
+    let sender: text::Text = sender_token(unique.view());
+    let path: text::Text =
+        "/org/freedesktop/portal/desktop/request/${sender.view()}/${token.view()}";
+
+    WAIT_DONE = false;
+    WAIT_CODE = 2 as u32;
+    let loop_: glib::MainLoop = glib::MainLoop::new(glib::main_context_default(), false);
+    WAIT_LOOP = { #addr(loop_.raw()) };
+
+    let path_c: text::CString = match path.c_str() {
+        option::Option[text::CString]::Some(v) => v,
+        option::Option[text::CString]::None => { return Permission::Unavailable; }
+    };
+    // SUBSCRIBED FIRST — see the section comment: the response can beat the
+    // method reply, and a later subscription blocks forever.
+    let sub: u32 = { g_dbus_connection_signal_subscribe(
+        conn.raw(),
+        #str_ptr("org.freedesktop.portal.Desktop\0"),
+        #str_ptr("org.freedesktop.portal.Request\0"),
+        #str_ptr("Response\0"),
+        path_c.as_ptr(),
+        0 as *u8, 0 as i32,
+        on_response, 0 as *u8, 0 as *u8) };
+
+    // `AccessCamera(a{sv} options)`. The token is the only option that matters:
+    // it is what makes the request's path predictable above.
+    var b: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("a{sv}"));
+    b.add_value(glib::Variant::new_dict_entry(
+        glib::Variant::new_string("handle_token"),
+        glib::Variant::new_variant(glib::Variant::new_string(token.view()))));
+    // WITHOUT THIS THE DIALOG HAS NOWHERE TO GO. GNOME's backend parents its
+    // consent window to the caller's, and an absent or foreign handle makes it
+    // log "Failed to associate portal window with parent window" and show
+    // nothing at all — which reads from here as a request that never answers.
+    if parent != "" {
+        b.add_value(glib::Variant::new_dict_entry(
+            glib::Variant::new_string("parent_window"),
+            glib::Variant::new_variant(glib::Variant::new_string(parent))));
+    }
+    let opts: glib::Variant = b.end();
+    var params: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("(a{sv})"));
+    params.add_value(opts);
+    let reply: glib::Variant = { p.call_sync("AccessCamera", params.end(), 0 as u32,
+                                             5000 as i32,
+                                             gio::Cancellable::from_raw(0 as *u8)) };
+    if reply.raw() == (0 as *u8) {
+        { conn.signal_unsubscribe(sub) };
+        WAIT_LOOP = 0 as usize;
+        return Permission::Unavailable;
+    }
+
+    // The answer may already have arrived while `call_sync` was turning the
+    // loop; running one that has nothing left to deliver would hang.
+    if !WAIT_DONE {
+        WAIT_TIMER = { g_timeout_add(consent_timeout_ms(), give_up, 0 as *u8) };
+        { loop_.run() };
+    }
+    // Still armed only when the answer beat it.
+    if WAIT_TIMER != (0 as u32) {
+        let _r: i32 = { g_source_remove(WAIT_TIMER) };
+        WAIT_TIMER = 0 as u32;
+    }
+    { conn.signal_unsubscribe(sub) };
+    WAIT_LOOP = 0 as usize;
+
+    if WAIT_CODE == (0 as u32) { return Permission::Granted; }
+    if WAIT_CODE == (1 as u32) { return Permission::Denied; }
+    // 2 is "ended some other way" — the portal closed the request without the
+    // user deciding, so nothing has been settled and the next ask is fair.
+    return Permission::Undetermined;
+}
