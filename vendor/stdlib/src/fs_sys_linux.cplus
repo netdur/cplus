@@ -26,6 +26,18 @@ fn make_dir(path: *u8, mode: u32) -> i32 {
     return { mkdir(path, mode) };
 }
 
+// Rename, REPLACING the destination if one is there. Plain `rename(2)` here, as
+// on Darwin: POSIX already specifies that an existing destination is replaced
+// ATOMICALLY, which is the property the write-then-rename idiom depends on. The
+// wrapper exists for the MSVC runtime, whose `rename` REFUSES an existing
+// destination — see `fs_sys_windows.cplus`, which has to reach for
+// `MoveFileExW`.
+extern fn rename(from: *u8, to: *u8) -> i32;
+
+fn rename_replacing(from: *u8, to: *u8) -> i32 {
+    return { rename(from, to) };
+}
+
 // ---- struct stat -------------------------------------------------------------
 //
 // x86_64/aarch64 Linux: 144 bytes — the same SIZE as Darwin's and a completely
