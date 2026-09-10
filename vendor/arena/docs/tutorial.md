@@ -52,4 +52,4 @@ a.reset();   // free all chunks; arena reusable
 - Check **null** from `alloc_bytes` / `alloc` (or use `alloc_bytes_opt` / `alloc_str`).
 - Pointers and `str` views are valid only until **`reset`** or Drop.
 - `alloc[T]` is for **Copy** `T` only — no per-slot Drop on free.
-- Prefer **`static-arena`** when the budget is fixed and heap is forbidden.
+- Prefer **`static_arena`** when the budget is fixed and heap is forbidden.

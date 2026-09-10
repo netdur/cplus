@@ -115,4 +115,4 @@ Calls `reset`.
 | Module path | `arena/arena` |
 | Dependencies | `stdlib` (`option`) |
 | Tests | `cpc test` (`src/arena.cplus`) |
-| Sibling | `static-arena` — fixed in-struct buffer |
+| Sibling | `static_arena` — fixed in-struct buffer |

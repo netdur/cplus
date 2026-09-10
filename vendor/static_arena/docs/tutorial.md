@@ -7,12 +7,12 @@ signatures in [ref.md](ref.md).
 
 ```toml
 [dependencies]
-static-arena = "*"
+static_arena = "*"
 stdlib = "*"
 ```
 
 ```cplus
-import "static-arena/static-arena" as sa;
+import "static_arena/static_arena" as sa;
 import "stdlib/option" as option;
 ```
 
