@@ -58,8 +58,26 @@ fn status_never_answers_granted_for_a_gated_capability() {
     let cam: perms::Permission = perms::status(perms::Capability::Camera);
     assert cam != perms::Permission::Granted;
     assert cam != perms::Permission::Denied;
-    let mic: perms::Permission = perms::status(perms::Capability::Microphone);
-    assert mic != perms::Permission::Granted;
+    return;
+}
+
+#[test]
+fn a_microphone_has_no_runtime_gate_on_this_platform() {
+    // MEASURED, and it is the one answer in this backend that a reading of the
+    // portal documentation gets wrong. `org.freedesktop.portal.Device` looks
+    // like the microphone's portal; calling `AccessDevice` answers
+    // `org.freedesktop.portal.Error.NotAllowed — "This call is not available
+    // inside the sandbox"`, because that interface is for a HOST granting a
+    // device to another process rather than for an application asking on its
+    // own behalf.
+    //
+    // There is no app-facing audio-input consent on a Linux desktop, so the
+    // honest answer is `Granted` — the same shape as notifications, and a real
+    // divergence from macOS/iOS where a microphone prompts.
+    if !perms::supported() { return; }
+    assert perms::status(perms::Capability::Microphone) == perms::Permission::Granted;
+    // And asking adds nothing, so it must not block or prompt.
+    assert perms::request(perms::Capability::Microphone) == perms::Permission::Granted;
     return;
 }
 
@@ -73,6 +91,11 @@ fn a_capability_with_no_gate_is_granted_rather_than_undetermined() {
     if !perms::supported() { return; }
     let n: perms::Permission = perms::status(perms::Capability::Notifications);
     assert n == perms::Permission::Granted || n == perms::Permission::Unavailable;
+    // Asking for something with no gate must answer at once rather than open a
+    // Request nobody will ever respond to.
+    if n == perms::Permission::Granted {
+        assert perms::request(perms::Capability::Notifications) == perms::Permission::Granted;
+    }
     return;
 }
 

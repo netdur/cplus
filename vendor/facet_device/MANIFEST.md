@@ -12,14 +12,15 @@ camera, reading a microphone, streaming a location — none of those are here.
 |---|---|---|
 | `supported()` | true when `org.freedesktop.portal.Desktop` answers | false |
 | `status(Camera)` | `Unavailable` with no camera, else `Undetermined` | `Unavailable` |
-| `status(Microphone)` | `Unavailable` with no `Device` portal, else `Undetermined` | `Unavailable` |
+| `status(Microphone)` | `Granted` — the platform has no runtime gate | `Unavailable` |
 | `status(Location)` | `Unavailable` with no `Location` portal, else `Undetermined` | `Unavailable` |
 | `status(Notifications)` | `Granted` when the interface is offered | `Unavailable` |
 | `request(Camera)` | `AccessCamera` + the Request handshake, bounded | `Unavailable` |
+| `request(Microphone)` | `Granted` — there is no gate to pass | `Unavailable` |
 | `request(Notifications)` | `Granted` — there is no gate to pass | `Unavailable` |
 
 Measured on the session this was written against: the service is present, camera
-/ microphone / location all answer `Undetermined`, notifications `Granted`.
+and location answer `Undetermined`, microphone and notifications `Granted`.
 
 ## 1. Decided absent — the platform has no such thing
 
@@ -36,6 +37,28 @@ Measured on the session this was written against: the service is present, camera
   SYSCALL would do would answer `Granted` to everything, which is true of the
   syscall and false of the user's intent. Where no portal is running this
   answers `Unavailable` — "this machine has no way to ask" — never `Granted`.
+- **A MICROPHONE HAS NO RUNTIME GATE, and the portal that looks like one is
+  not one.** `org.freedesktop.portal.Device` has `AccessDevice(pid, devices,
+  options)` and reads exactly like the microphone's consent call. It is not.
+  Calling it answers
+
+      org.freedesktop.portal.Error.NotAllowed
+      "This call is not available inside the sandbox"
+
+  because that interface exists for a HOST to grant a device to some OTHER
+  process, not for an application to ask on its own behalf. There is no
+  app-facing audio-input consent on a Linux desktop at all: a sandboxed app is
+  given the audio socket at install time, and an ordinary one opens PipeWire.
+
+  So the answer is `Granted`. This is a REAL DIVERGENCE from macOS and iOS,
+  where a microphone is gated at runtime and `request` shows a prompt — an
+  application that wants to behave the same everywhere should still call
+  `request` and honour what it gets, which is what makes the divergence
+  harmless.
+
+  Found by calling it. A reading of the portal documentation gets this wrong,
+  which is why the suite pins it.
+
 - **Notifications have no request flow.** `org.freedesktop.portal.Notification`
   has `AddNotification` and nothing to consent to; the desktop shows the
   notification and the user turns it off there. `Granted` is the honest answer
@@ -44,9 +67,6 @@ Measured on the session this was written against: the service is present, camera
 
 ## 2. Not built yet — the debt
 
-- **`request(Microphone)`.** `Device.AccessDevice(pid, ["microphone"], opts)` is
-  one Request, the same shape as the camera's, so this is a small piece of work
-  and not a design question. It answers `Undetermined` today.
 - **`request(Location)` is a SESSION, not a request.** `CreateSession` then
   `Start`, with positions arriving as `LocationUpdated` signals — a different
   lifetime from a one-shot consent, and it belongs with the capability that
