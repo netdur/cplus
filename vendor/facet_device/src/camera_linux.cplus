@@ -1,0 +1,134 @@
+// facet_device/camera_linux — V4L2 enumeration.
+//
+// Read `camera.cplus` first: it declares the seam and this answers the same
+// three verbs. `Camera` is declared here as well, field for field — the
+// resolver SHADOWS the base rather than extending it, the same rule
+// `fswatch/backend_linux.cplus` follows.
+//
+// ---- /dev/video* IS NOT A LIST OF CAMERAS -------------------------------------
+//
+// That is the whole difficulty, and a naive scan gets it wrong on the first
+// machine it meets. This one has `/dev/video0` AND `/dev/video1`, both from the
+// same `uvcvideo` driver and both reporting the same card name — but only
+// video0 captures video. video1 is a METADATA node, which UVC cameras expose
+// alongside the capture node to carry per-frame metadata. Listing both gives a
+// picker two identical entries, one of which produces no picture.
+//
+// `VIDIOC_QUERYCAP` is what tells them apart, and reading the RIGHT FIELD of
+// its answer is the second half of the trap. The struct has two capability
+// words:
+//
+//   * `capabilities` — what the DRIVER as a whole can do, across every node it
+//     owns. Both nodes here report 0x84a00001, which has the capture bit set,
+//     because the driver does capture — on one of its nodes.
+//   * `device_caps`  — what THIS node can do. video0 reports 0x04200001
+//     (capture), video1 reports 0x04a00000 (no capture).
+//
+// So a filter on `capabilities` accepts the metadata node. `device_caps` is
+// only meaningful when the driver says it filled it in, which it announces with
+// `V4L2_CAP_DEVICE_CAPS` in `capabilities` — and a driver too old to set that
+// bit only has the one word to offer. Both cases are handled below; measured
+// values above.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "stdlib/option" as option;
+
+extern fn open(path: *u8, flags: i32, ...) -> i32;
+extern fn close(fd: i32) -> i32;
+// VARIADIC IN LIBC, and declared so. A fixed-arity alias puts the argument in a
+// register the callee never reads — the same defect `terminal/pty` records for
+// `fcntl` and `ioctl`, which is where this warning is written out in full.
+extern fn ioctl(fd: i32, request: u64, ...) -> i32;
+
+struct Camera {
+    id: text::Text,
+    name: text::Text,
+}
+
+fn supported() -> bool { return true; }
+
+// `_IOR('V', 0, struct v4l2_capability)`, which is
+// `(2 << 30) | (sizeof << 16) | ('V' << 8) | 0` with sizeof == 104. Written as
+// the arithmetic rather than the constant so the derivation is checkable, and
+// because an integer literal wraps through i32 before `as` — 0x80685600 does
+// not survive that.
+fn vidioc_querycap() -> u64 {
+    let dir: u64 = (2 as u64) << (30 as u64);
+    let size: u64 = (104 as u64) << (16 as u64);
+    let ty: u64 = (0x56 as u64) << (8 as u64);
+    return dir | size | ty;
+}
+
+fn cap_video_capture() -> u32 { return 0x1 as u32; }
+// V4L2_CAP_DEVICE_CAPS — "I filled in `device_caps`".
+fn cap_device_caps() -> u32 { return 0x80000000 as u32; }
+
+fn o_rdonly() -> i32 { return 0 as i32; }
+fn o_nonblock() -> i32 { return 0x800 as i32; }
+
+// How far to look. The kernel hands out `/dev/videoN` from 0 and a machine with
+// more than sixty-four capture nodes is not one this needs to serve.
+fn max_nodes() -> i32 { return 64 as i32; }
+
+// A NUL-terminated field out of the fixed-width byte array V4L2 uses for
+// strings. `card` is 32 bytes and a name that fills it exactly carries no
+// terminator, so the length is bounded by the field rather than found by
+// scanning — `strlen` here would read into `bus_info`.
+fn field_text(buf: *u8, offset: usize, width: usize) -> text::Text {
+    var n: usize = 0 as usize;
+    while n < width {
+        if { *(buf + offset + n) } == (0 as u8) { break; }
+        n = n +% (1 as usize);
+    }
+    return text::from_str({ #str_from_raw_parts(buf + offset, n) });
+}
+
+fn list() -> vec::Vec[Camera] {
+    var out: vec::Vec[Camera] = vec::new::[Camera]();
+    var i: i32 = 0 as i32;
+    while i < max_nodes() {
+        var path: text::Text = text::from_str("/dev/video");
+        let _a: status::Status = path.append({ (i as i64) }.to_text().view());
+        i = i +% (1 as i32);
+
+        let path_c: text::CString = match path.c_str() {
+            option::Option[text::CString]::Some(v) => v,
+            option::Option[text::CString]::None => { continue; }
+        };
+        // O_NONBLOCK so a node that would block on open — a camera already in
+        // use by something else — is still enumerable. Enumeration must not
+        // hang on someone else's video call.
+        let fd: i32 = { open(path_c.as_ptr(), o_rdonly() | o_nonblock(), 0 as i32) };
+        if fd < (0 as i32) { continue; }
+
+        var raw: [u8; 104] = [0 as u8; 104];
+        let base: *u8 = { #addr_of(raw) as *u8 };
+        let rc: i32 = { ioctl(fd, vidioc_querycap(), base) };
+        let _c: i32 = { close(fd) };
+        if rc != (0 as i32) { continue; }
+
+        // capabilities at 84, device_caps at 88 — after driver[16], card[32],
+        // bus_info[32] and version.
+        let caps: u32 = { *((base + (84 as usize)) as *u32) };
+        let dev_caps: u32 = { *((base + (88 as usize)) as *u32) };
+        // The per-node word when the driver says it filled it in, the driver
+        // word otherwise. See the header: filtering on the driver word accepts
+        // this machine's metadata node.
+        var effective: u32 = caps;
+        if (caps & cap_device_caps()) != (0 as u32) { effective = dev_caps; }
+        if (effective & cap_video_capture()) == (0 as u32) { continue; }
+
+        let _b: status::Status = out.append(Camera {
+            id: path.clone(),
+            name: field_text(base, 16 as usize, 32 as usize),
+        });
+    }
+    return out;
+}
+
+fn count() -> usize {
+    let cams: vec::Vec[Camera] = list();
+    return cams.count();
+}

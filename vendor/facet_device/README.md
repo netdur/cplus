@@ -19,5 +19,11 @@ bound expires. Four answers, not two: `Undetermined` is not `Denied` (nobody has
 been asked) and `Unavailable` is not `Denied` either (there is nothing to ask,
 or nothing to ask with).
 
-Linux is the XDG Desktop Portal over D-Bus. `MANIFEST.md` is the honest status —
+```cplus
+import "facet_device/camera" as camera;
+for c in camera::list() { /* c.id to open with, c.name to show */ }
+```
+
+Linux is the XDG Desktop Portal over D-Bus for the gate, and V4L2 for the
+device list. `MANIFEST.md` is the honest status —
 what is live, what is a stated debt, and what the platform genuinely cannot do.

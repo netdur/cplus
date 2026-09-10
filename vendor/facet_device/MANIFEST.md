@@ -3,8 +3,11 @@
 What this tier answers, what it deliberately does not, and what the platform
 would not let it. Read this before trusting an adjective about the package.
 
-`permissions` is ONE SLICE: the gate every device capability shares. Opening a
-camera, reading a microphone, streaming a location — none of those are here.
+Two modules. `permissions` is the gate every device capability shares; `camera`
+ENUMERATES capture devices. Neither opens anything: streaming a camera, reading
+a microphone, following a location are all absent, and each is its own piece of
+work with a very different shape — a device list is a question with an answer,
+a video stream is a lifetime.
 
 ## What is live
 
@@ -18,9 +21,13 @@ camera, reading a microphone, streaming a location — none of those are here.
 | `request(Camera)` | `AccessCamera` + the Request handshake, bounded | `Unavailable` |
 | `request(Microphone)` | `Granted` — there is no gate to pass | `Unavailable` |
 | `request(Notifications)` | `Granted` — there is no gate to pass | `Unavailable` |
+| `camera::list()` | V4L2 `VIDIOC_QUERYCAP` over `/dev/video*` | empty |
+| `camera::count()` | the same, counted | 0 |
 
 Measured on the session this was written against: the service is present, camera
-and location answer `Undetermined`, microphone and notifications `Granted`.
+and location answer `Undetermined`, microphone and notifications `Granted`, and
+`camera::list()` finds one device where the machine exposes two `/dev/video`
+nodes — see §3.
 
 ## 1. Decided absent — the platform has no such thing
 
@@ -67,6 +74,12 @@ and location answer `Undetermined`, microphone and notifications `Granted`.
 
 ## 2. Not built yet — the debt
 
+- **No camera is OPENED.** `camera` answers which devices exist; delivering a
+  frame is a streaming stack (PipeWire, or V4L2 buffer queues) and is the larger
+  half by a wide margin. The enumeration is useful on its own — it is what a
+  settings screen needs, and it answers the question `permissions` cannot: the
+  gate says who MAY, this says what is plugged in.
+
 - **`request(Location)` is a SESSION, not a request.** `CreateSession` then
   `Start`, with positions arriving as `LocationUpdated` signals — a different
   lifetime from a one-shot consent, and it belongs with the capability that
@@ -98,3 +111,17 @@ and location answer `Undetermined`, microphone and notifications `Granted`.
   this module discovers because `facet_device` depends on no UI backend: that
   boundary is why the tier is its own package, and a permissions module that
   imported facet_gtk to find a window would give it back.
+
+- **`/dev/video*` IS NOT A LIST OF CAMERAS, and the difference is measured.**
+  This machine exposes `/dev/video0` and `/dev/video1`, both from `uvcvideo`,
+  both reporting the same card name — and only video0 captures. video1 is the
+  UVC METADATA node. A scan of the device paths reports two identical cameras,
+  one of which produces no picture.
+
+  `VIDIOC_QUERYCAP` separates them, and reading the right field of its answer is
+  the second half: `capabilities` describes the DRIVER across all its nodes
+  (0x84a00001 here — capture set, on both nodes), while `device_caps` describes
+  THIS node (0x04200001 on video0, 0x04a00000 on video1). Filtering on the
+  driver word accepts the metadata node. `device_caps` is only meaningful when
+  the driver sets `V4L2_CAP_DEVICE_CAPS`, and a driver too old to set it has
+  only the one word — both cases are handled.
