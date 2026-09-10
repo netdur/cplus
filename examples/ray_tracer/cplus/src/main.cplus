@@ -1,0 +1,347 @@
+// Shirley RTIOW raytracer in C+ — "by-value" variant.
+// Same as `cplus/` (1:1 with C: free functions, i32 material tag, restrict)
+// EXCEPT sphere_hit / world_hit / scatter return by value (`Hit` with a
+// `valid: bool` flag, no `*Hit` out-pointer, no scratch pools).
+// Isolates the perf cost of the by-value return pattern from all the other
+// idiomatic changes in `cplus-idiom/`.
+
+extern fn sqrtf(x: f32) -> f32;
+extern fn tanf(x: f32) -> f32;
+extern fn fabsf(x: f32) -> f32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn open(path: *u8, flags: i32, ...) -> i32;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
+
+fn f_sqrt(x: f32) -> f32 { return sqrtf(x); }
+fn f_tan(x: f32) -> f32 { return tanf(x); }
+fn f_abs(x: f32) -> f32 { return fabsf(x); }
+
+struct V3 { x: f32, y: f32, z: f32 }
+
+fn V(x: f32, y: f32, z: f32) -> V3 { return V3 { x: x, y: y, z: z }; }
+fn add(a: V3, b: V3) -> V3 { return V3 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }; }
+fn sub(a: V3, b: V3) -> V3 { return V3 { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }
+fn vmul(a: V3, b: V3) -> V3 { return V3 { x: a.x * b.x, y: a.y * b.y, z: a.z * b.z }; }
+fn scale(a: V3, s: f32) -> V3 { return V3 { x: a.x * s, y: a.y * s, z: a.z * s }; }
+fn neg(a: V3) -> V3 { return V3 { x: 0.0f32 - a.x, y: 0.0f32 - a.y, z: 0.0f32 - a.z }; }
+fn dot(a: V3, b: V3) -> f32 { return a.x * b.x + a.y * b.y + a.z * b.z; }
+fn len2(a: V3) -> f32 { return a.x*a.x + a.y*a.y + a.z*a.z; }
+fn norm(a: V3) -> V3 { let l: f32 = f_sqrt(len2(a)); return scale(a, 1.0f32 / l); }
+fn cross(a: V3, b: V3) -> V3 {
+    return V3 {
+        x: a.y*b.z - a.z*b.y,
+        y: a.z*b.x - a.x*b.z,
+        z: a.x*b.y - a.y*b.x,
+    };
+}
+fn reflect(v: V3, n: V3) -> V3 {
+    let d: f32 = dot(v, n);
+    let s2: V3 = scale(n, 2.0f32 * d);
+    return sub(v, s2);
+}
+
+fn rng_next(restrict state: *u32) -> u32 {
+    var x: u32 = state[0];
+    x = x ^ (x << 13);
+    x = x ^ (x >> 17);
+    x = x ^ (x << 5);
+    state[0] = x;
+    return x;
+}
+
+fn randf(restrict state: *u32) -> f32 {
+    return ((rng_next(state) >> 8) as f32) * (1.0f32 / 16777216.0f32);
+}
+
+fn rand_in_unit_sphere(restrict state: *u32) -> V3 {
+    var p: V3 = V(0.0f32, 0.0f32, 0.0f32);
+    var done: bool = false;
+    while !done {
+        p = V(
+            2.0f32 * randf(state) - 1.0f32,
+            2.0f32 * randf(state) - 1.0f32,
+            2.0f32 * randf(state) - 1.0f32,
+        );
+        if len2(p) < 1.0f32 { done = true; }
+    }
+    return p;
+}
+
+fn rand_unit_vector(restrict state: *u32) -> V3 { return norm(rand_in_unit_sphere(state)); }
+
+#[repr(C)]
+struct Sphere {
+    center: V3,
+    radius: f32,
+    mat: i32,
+    albedo: V3,
+    extra: f32,
+}
+
+fn fill_scene(restrict scene: *Sphere) {
+    scene[0] = Sphere { center: V( 0.0f32,-1000.0f32, 0.0f32), radius:1000.0f32, mat: 0, albedo: V(0.5f32,0.5f32,0.5f32), extra: 0.0f32 };
+        scene[1] = Sphere { center: V( 0.0f32,   1.0f32, 0.0f32), radius:   1.0f32, mat: 2, albedo: V(1.0f32,1.0f32,1.0f32), extra: 1.5f32 };
+        scene[2] = Sphere { center: V(-4.0f32,   1.0f32, 0.0f32), radius:   1.0f32, mat: 0, albedo: V(0.4f32,0.2f32,0.1f32), extra: 0.0f32 };
+        scene[3] = Sphere { center: V( 4.0f32,   1.0f32, 0.0f32), radius:   1.0f32, mat: 1, albedo: V(0.7f32,0.6f32,0.5f32), extra: 0.0f32 };
+        scene[4] = Sphere { center: V(-2.0f32,   0.3f32, 1.5f32), radius:   0.3f32, mat: 0, albedo: V(0.8f32,0.3f32,0.3f32), extra: 0.0f32 };
+        scene[5] = Sphere { center: V( 2.0f32,   0.3f32, 1.5f32), radius:   0.3f32, mat: 1, albedo: V(0.8f32,0.8f32,0.8f32), extra: 0.3f32 };
+        scene[6] = Sphere { center: V(-1.0f32,   0.3f32,-1.5f32), radius:   0.3f32, mat: 2, albedo: V(1.0f32,1.0f32,1.0f32), extra: 1.5f32 };
+        scene[7] = Sphere { center: V( 1.0f32,   0.3f32,-1.5f32), radius:   0.3f32, mat: 0, albedo: V(0.1f32,0.2f32,0.5f32), extra: 0.0f32 };
+        scene[8] = Sphere { center: V( 0.0f32,   0.3f32, 2.5f32), radius:   0.3f32, mat: 1, albedo: V(0.6f32,0.8f32,0.2f32), extra: 0.0f32 };
+        scene[9] = Sphere { center: V( 0.0f32,   0.3f32,-2.5f32), radius:   0.3f32, mat: 0, albedo: V(0.9f32,0.7f32,0.2f32), extra: 0.0f32 };
+    return;
+}
+
+struct Ray { origin: V3, dir: V3 }
+
+// "by-value" Hit: includes a `valid` flag. Caller reads `.valid` to know
+// whether to use the rest. SROA should split the struct into registers.
+struct Hit {
+    valid: bool,
+    t: f32,
+    p: V3,
+    normal: V3,
+    front_face: i32,
+    sphere_idx: i32,
+}
+
+fn miss() -> Hit {
+    return Hit { valid: false, t: 0.0f32, p: V3 { x: 0.0f32, y: 0.0f32, z: 0.0f32 },
+                 normal: V3 { x: 0.0f32, y: 0.0f32, z: 0.0f32 }, front_face: 0, sphere_idx: 0 };
+}
+
+fn sphere_hit(restrict scene: *Sphere, idx: i32, r: Ray, t_min: f32, t_max: f32) -> Hit {
+    let s: Sphere = scene[idx as usize];
+    let oc: V3 = sub(r.origin, s.center);
+    let a: f32 = len2(r.dir);
+    let half_b: f32 = dot(oc, r.dir);
+    let c: f32 = len2(oc) - s.radius * s.radius;
+    let disc: f32 = half_b * half_b - a * c;
+    if disc < 0.0f32 { return miss(); }
+    let sd: f32 = f_sqrt(disc);
+    var root: f32 = (0.0f32 - half_b - sd) / a;
+    if root <= t_min || root >= t_max {
+        root = (0.0f32 - half_b + sd) / a;
+        if root <= t_min || root >= t_max { return miss(); }
+    }
+    let p: V3 = add(r.origin, scale(r.dir, root));
+    let outward: V3 = scale(sub(p, s.center), 1.0f32 / s.radius);
+    let ff: i32 = if dot(r.dir, outward) < 0.0f32 { 1 } else { 0 };
+    // workaround for v0.0.14 codegen panic: split let-X = if-else-method-call
+    var n: V3 = outward;
+    if ff == 0 { n = neg(outward); }
+    return Hit { valid: true, t: root, p: p, normal: n, front_face: ff, sphere_idx: idx };
+}
+
+fn world_hit(restrict scene: *Sphere, n_spheres: i32, r: Ray, t_min: f32, t_max: f32) -> Hit {
+    var best: Hit = miss();
+    var closest: f32 = t_max;
+    var i: i32 = 0;
+    while i < n_spheres {
+        let h: Hit = sphere_hit(scene, i, r, t_min, closest);
+        if h.valid {
+            closest = h.t;
+            best = h;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn schlick(cosv: f32, ref_idx: f32) -> f32 {
+    var r0: f32 = (1.0f32 - ref_idx) / (1.0f32 + ref_idx);
+    r0 = r0 * r0;
+    let om: f32 = 1.0f32 - cosv;
+    return r0 + (1.0f32 - r0) * om*om*om*om*om;
+}
+
+// By-value scatter result.
+struct Scattered { valid: bool, atten: V3, scattered: Ray }
+
+fn absorbed() -> Scattered {
+    return Scattered {
+        valid: false,
+        atten: V(0.0f32, 0.0f32, 0.0f32),
+        scattered: Ray { origin: V(0.0f32, 0.0f32, 0.0f32), dir: V(0.0f32, 0.0f32, 0.0f32) },
+    };
+}
+
+fn scatter(restrict scene: *Sphere, restrict state: *u32, r_in: Ray, rec: Hit) -> Scattered {
+    let s: Sphere = scene[rec.sphere_idx as usize];
+    if s.mat == 0 {
+        var dir: V3 = add(rec.normal, rand_unit_vector(state));
+        if f_abs(dir.x) < 1e-8f32 {
+            if f_abs(dir.y) < 1e-8f32 {
+                if f_abs(dir.z) < 1e-8f32 {
+                    dir = rec.normal;
+                }
+            }
+        }
+        return Scattered { valid: true, atten: s.albedo, scattered: Ray { origin: rec.p, dir: dir } };
+    }
+    if s.mat == 1 {
+        let refl: V3 = reflect(norm(r_in.dir), rec.normal);
+        let dir: V3 = add(refl, scale(rand_in_unit_sphere(state), s.extra));
+        let d: f32 = dot(dir, rec.normal);
+        if d <= 0.0f32 { return absorbed(); }
+        return Scattered { valid: true, atten: s.albedo, scattered: Ray { origin: rec.p, dir: dir } };
+    }
+    // Dielectric.
+    let ratio: f32 = if rec.front_face == 1 { 1.0f32 / s.extra } else { s.extra };
+    let unit_dir: V3 = norm(r_in.dir);
+    var cos_theta: f32 = 0.0f32 - dot(unit_dir, rec.normal);
+    if cos_theta > 1.0f32 { cos_theta = 1.0f32; }
+    let sin_theta: f32 = f_sqrt(1.0f32 - cos_theta*cos_theta);
+    let cannot: bool = (ratio * sin_theta) > 1.0f32;
+    var dir: V3 = V(0.0f32, 0.0f32, 0.0f32);
+    if cannot || schlick(cos_theta, ratio) > randf(state) {
+        dir = reflect(unit_dir, rec.normal);
+    } else {
+        let r_perp: V3 = scale(add(unit_dir, scale(rec.normal, cos_theta)), ratio);
+        var k: f32 = 1.0f32 - len2(r_perp);
+        if k < 0.0f32 { k = 0.0f32; }
+        let r_para: V3 = scale(rec.normal, 0.0f32 - f_sqrt(k));
+        dir = add(r_perp, r_para);
+    }
+    return Scattered { valid: true, atten: V(1.0f32, 1.0f32, 1.0f32),
+                       scattered: Ray { origin: rec.p, dir: dir } };
+}
+
+// By-value ray_color. No scratch pools — returns Hit / Scattered by value
+// and lets SROA flatten them.
+fn ray_color(
+    restrict scene: *Sphere, n_spheres: i32, restrict state: *u32,
+    r: Ray, depth: i32,
+) -> V3 {
+    if depth <= 0 { return V(0.0f32, 0.0f32, 0.0f32); }
+    let rec: Hit = world_hit(scene, n_spheres, r, 0.001f32, 1e30f32);
+    if rec.valid {
+        let sc: Scattered = scatter(scene, state, r, rec);
+        if sc.valid {
+            let c: V3 = ray_color(scene, n_spheres, state, sc.scattered, depth - 1);
+            return vmul(sc.atten, c);
+        }
+        return V(0.0f32, 0.0f32, 0.0f32);
+    }
+    let ud: V3 = norm(r.dir);
+    let t: f32 = 0.5f32 * (ud.y + 1.0f32);
+    return add(scale(V(1.0f32,1.0f32,1.0f32), 1.0f32 - t), scale(V(0.5f32,0.7f32,1.0f32), t));
+}
+
+struct Camera { origin: V3, ll: V3, hor: V3, ver: V3 }
+
+fn cam_init(restrict c: *Camera, look_from: V3, look_at: V3, vup: V3, vfov_deg: f32, aspect: f32) {
+    let theta: f32 = vfov_deg * 3.14159265358979323846f32 / 180.0f32;
+    let h: f32 = f_tan(theta * 0.5f32);
+    let vh: f32 = 2.0f32 * h;
+    let vw: f32 = aspect * vh;
+    let w: V3 = norm(sub(look_from, look_at));
+    let u: V3 = norm(cross(vup, w));
+    let v: V3 = cross(w, u);
+    c[0] = Camera {
+            origin: look_from,
+            hor: scale(u, vw),
+            ver: scale(v, vh),
+            ll: sub(sub(sub(look_from, scale(scale(u, vw), 0.5f32)), scale(scale(v, vh), 0.5f32)), w),
+        };
+    return;
+}
+
+fn cam_ray(restrict c: *Camera, s: f32, t: f32) -> Ray {
+    let origin: V3 = c[0].origin;
+    let ll: V3     = c[0].ll;
+    let hor: V3    = c[0].hor;
+    let ver: V3    = c[0].ver;
+    return Ray { origin: origin, dir: sub(add(add(ll, scale(hor, s)), scale(ver, t)), origin) };
+}
+
+fn clampf(x: f32, lo: f32, hi: f32) -> f32 {
+    if x < lo { return lo; }
+    if x > hi { return hi; }
+    return x;
+}
+
+fn main() -> i32 {
+    let width: i32 = 800;
+    let height: i32 = 450;
+    let samples: i32 = 32;
+    let max_depth: i32 = 15;
+    let n_spheres: i32 = 10;
+
+    let scene: *Sphere = malloc((n_spheres as usize) * #size_of::[Sphere]()) as *Sphere;
+    fill_scene(scene);
+
+    let rng: *u32 = malloc(4 as usize) as *u32;
+    rng[0] = 0x12345678 as u32;
+
+    let aspect: f32 = (width as f32) / (height as f32);
+
+    let cam: *Camera = malloc(#size_of::[Camera]()) as *Camera;
+    cam_init(cam,
+        V(13.0f32, 2.0f32, 3.0f32),
+        V(0.0f32, 0.0f32, 0.0f32),
+        V(0.0f32, 1.0f32, 0.0f32),
+        20.0f32, aspect);
+
+    // No scratch pools — by-value variant returns Hit/Scattered through ABI.
+
+    let pixel_bytes: usize = (width as usize) * (height as usize) * (3 as usize);
+    let pixels: *u8 = malloc(pixel_bytes);
+
+    let inv_samples: f32 = 1.0f32 / (samples as f32);
+
+    var j: i32 = height - 1;
+    while j >= 0 {
+        var i: i32 = 0;
+        while i < width {
+            var col: V3 = V(0.0f32, 0.0f32, 0.0f32);
+            var sIdx: i32 = 0;
+            while sIdx < samples {
+                let u: f32 = ((i as f32) + randf(rng)) / ((width - 1) as f32);
+                let v: f32 = ((j as f32) + randf(rng)) / ((height - 1) as f32);
+                col = add(col, ray_color(scene, n_spheres, rng, cam_ray(cam, u, v), max_depth));
+                sIdx = sIdx + 1;
+            }
+            let r: f32 = clampf(f_sqrt(col.x * inv_samples), 0.0f32, 0.999f32);
+            let g: f32 = clampf(f_sqrt(col.y * inv_samples), 0.0f32, 0.999f32);
+            let b: f32 = clampf(f_sqrt(col.z * inv_samples), 0.0f32, 0.999f32);
+            let row_off: usize = ((height - 1 - j) as usize) * (width as usize) * (3 as usize);
+            let px_off: usize = row_off + (i as usize) * (3 as usize);
+            pixels[px_off + (0 as usize)] = (256.0f32 * r) as u8;
+                pixels[px_off + (1 as usize)] = (256.0f32 * g) as u8;
+                pixels[px_off + (2 as usize)] = (256.0f32 * b) as u8;
+            i = i + 1;
+        }
+        j = j - 1;
+    }
+
+    let flags: i32 = (1 as i32)| (0x200 as i32)| (0x400 as i32);
+    let mode: i32 = 0o644 as i32;
+    let path: str = "out.ppm";
+    let fd: i32 = open(#str_ptr(path), flags, mode);
+    if fd < 0 {
+        free(pixels); free(scene as *u8); free(rng as *u8); free(cam as *u8);
+        return 2;
+    }
+
+    let header: str = "P6\n800 450\n255\n";
+    let _h: isize = write(fd, #str_ptr(header), #str_len(header));
+
+    var written: usize = 0 as usize;
+    while written < pixel_bytes {
+        let remaining: usize = pixel_bytes -% written;
+        let q: *u8 = pixels + written;
+        let w: isize = write(fd, q, remaining);
+        if w <= (0 as isize) { break; }
+        written = written +% (w as usize);
+    }
+    close(fd);
+
+    free(pixels);
+    free(scene as *u8);
+    free(rng as *u8);
+    free(cam as *u8);
+    return 0;
+}

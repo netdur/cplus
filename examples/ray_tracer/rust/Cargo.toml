@@ -1,0 +1,18 @@
+# Standalone: the repo root is the cplus-core workspace, and this example is
+# not a member of it.
+[workspace]
+
+[package]
+name    = "rt"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies, deliberately. The C port is libc + libm; a crate-heavy
+# build would be measuring those crates, not the language.
+[dependencies]
+
+[profile.release]
+opt-level     = 3
+lto           = "fat"
+codegen-units = 1
+panic         = "abort"

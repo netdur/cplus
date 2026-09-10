@@ -1,0 +1,8 @@
+[package]
+name    = "cplus"
+version = "0.0.1"
+edition = "2026"
+
+# No [[bin]]: a package with an entry is an app. src/main.cplus is the
+# default entry, so nothing needs to be said here.
+[dependencies]
