@@ -1,0 +1,1204 @@
+// camera_backend_linux — a real capture device, through V4L2.
+//
+// THIS FILE EXISTS SO A LINUX BUILD LINKS. `camera.cplus` declares twenty-four
+// stable symbols and something must define them on every platform the package
+// claims; without a `_linux` sibling the build falls back to
+// `camera_backend.cplus`, the AVFoundation half, and stops at
+// `import "objc/runtime"`.
+//
+// WHAT IS REAL HERE: enumerating capture devices, opening one, negotiating a
+// format, reporting the one it settled on, streaming luma frames off a pump
+// thread, taking a still as JPEG, and the four runtime controls the hardware
+// actually exposes. What is not is written down at the bottom, verb by verb,
+// with the reason each one refuses rather than pretending.
+//
+// ---- V4L2 is ioctl numbers, and every one below is derived, not remembered --
+//
+// `_IOC(dir, type, nr, size) = (dir << 30) | (size << 16) | (type << 8) | nr`,
+// with type `'V'` = 0x56 and size the `sizeof` of the struct the call takes. So
+// `VIDIOC_QUERYCAP` is `_IOR('V', 0, struct v4l2_capability)` with
+// `sizeof(v4l2_capability) == 104`: `(2<<30) | (104<<16) | (0x56<<8) | 0` =
+// 0x80685600. Each constant below carries its arithmetic for the same reason
+// the Windows half writes down its vtable indices — a wrong number is not a
+// compile error and not a crash, it is a call into a DIFFERENT ioctl.
+//
+// The struct OFFSETS are the other half of that and are just as load-bearing.
+// They are spelled as named functions rather than magic numbers so a reader can
+// check one against `videodev2.h` without counting.
+//
+// ---- device_caps, NOT capabilities ------------------------------------------
+//
+// A UVC webcam presents TWO nodes: `/dev/video0` is the image and `/dev/video1`
+// is its metadata stream. Both answer `VIDIOC_QUERYCAP`, and both report the
+// same `capabilities` word — because that field describes the whole PHYSICAL
+// DEVICE, not the node you opened. `device_caps` is the per-node one. Reading
+// `capabilities` counts this machine's one camera as two, and then opens the
+// metadata node and streams nothing.
+//
+// ---- one format at a time, which is why capture blinks ----------------------
+//
+// A V4L2 device holds ONE negotiated format while it streams, and the two verbs
+// this package offers want different ones: `on_frame` promises a luma plane,
+// which YUYV gives for the cost of dropping every other byte, and `capture`
+// promises JPEG, which the camera will produce itself as MJPG but which nothing
+// here could encode from YUYV.
+//
+// So the session streams YUYV and `_c_capture` switches: stop the pump, stream
+// off, re-negotiate MJPG, take one frame, and put everything back. The visible
+// cost is that a still interrupts a live preview for a moment, which is honest
+// and is what the comment above `_c_capture` says. A device with no MJPG
+// answers `Unsupported` for stills; a device with no YUYV streams MJPG and
+// answers `Unsupported` for frames.
+//
+// ---- the pump is a thread ---------------------------------------------------
+//
+// `VIDIOC_DQBUF` blocks until a frame is ready, so `_c_on_frame` starts a
+// thread that dequeues in a loop and calls the handler from there — which is
+// the contract `camera.cplus` states for `on_frame` and the same one both other
+// backends have. `poll` with a timeout rather than a bare blocking dequeue, so
+// the loop notices `stop_frames` within a frame time instead of hanging on a
+// camera that has stopped producing.
+//
+// Nothing is unmapped under the thread: every teardown clears the flag, joins,
+// and only then releases the buffers.
+
+import "stdlib/text" as text;
+import "./camera" as camera;
+
+// The request as the facade packs it. Layout must match `_CRequest`, which is
+// module-private there — so it is mirrored rather than imported, and the
+// pointer type in the seam signature matches by construction.
+#[repr(C)]
+struct _CRequest {
+    opaque device: *u8,
+    device_len: usize,
+    facing: i32,
+    width: i32,
+    height: i32,
+    frame_rate: i32,
+    pixel: i32,
+    color: i32,
+    hdr: i32,
+    stabilization: i32,
+    depth: i32,
+    high_speed: i32,
+    buffers: i32,
+}
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, v: i32, n: usize) -> *u8;
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+extern fn open(path: *u8, flags: i32) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn ioctl(fd: i32, request: u64, arg: *u8) -> i32;
+extern fn mmap(addr: *u8, length: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *u8;
+extern fn munmap(addr: *u8, length: usize) -> i32;
+extern fn poll(fds: *u8, nfds: u64, timeout_ms: i32) -> i32;
+extern fn usleep(us: u32) -> i32;
+extern fn snprintf(buf: *u8, n: usize, fmt: *u8, a: i32) -> i32;
+#[link_name = "__errno_location"]
+extern fn errno_location() -> *i32;
+extern fn pthread_create(thread: *u8, attr: *u8, start: fn(*u8) -> *u8, arg: *u8) -> i32;
+extern fn pthread_join(thread: u64, retval: *u8) -> i32;
+
+// ---- the wire codes ------------------------------------------------------------
+//
+// `camera.cplus`'s own ladder: 0 Ok, 1 Denied, 2 Unsupported, 3 Busy, 4 Failed.
+fn _ok() -> i32 { return 0 as i32; }
+fn _denied() -> i32 { return 1 as i32; }
+fn _unsupported() -> i32 { return 2 as i32; }
+fn _busy() -> i32 { return 3 as i32; }
+fn _failed() -> i32 { return 4 as i32; }
+
+// `Facing::External` — see `_c_actual_facing`.
+fn _facing_external() -> i32 { return 2 as i32; }
+fn _facing_unspecified() -> i32 { return 3 as i32; }
+// `PixelFormat`
+fn _pix_any() -> i32 { return 0 as i32; }
+fn _pix_luma8() -> i32 { return 1 as i32; }
+// `Mode`
+fn _mode_auto() -> i32 { return 0 as i32; }
+fn _mode_once() -> i32 { return 1 as i32; }
+fn _mode_locked() -> i32 { return 2 as i32; }
+
+// ---- ioctl numbers, each with its arithmetic -----------------------------------
+
+fn VIDIOC_QUERYCAP() -> u64 { return 0x80685600 as u64; }        // _IOR ('V',  0, 104)
+fn VIDIOC_ENUM_FMT() -> u64 { return 0xc0405602 as u64; }        // _IOWR('V',  2,  64)
+fn VIDIOC_G_FMT() -> u64 { return 0xc0d05604 as u64; }           // _IOWR('V',  4, 208)
+fn VIDIOC_S_FMT() -> u64 { return 0xc0d05605 as u64; }           // _IOWR('V',  5, 208)
+fn VIDIOC_REQBUFS() -> u64 { return 0xc0145608 as u64; }         // _IOWR('V',  8,  20)
+fn VIDIOC_QUERYBUF() -> u64 { return 0xc0585609 as u64; }        // _IOWR('V',  9,  88)
+fn VIDIOC_QBUF() -> u64 { return 0xc058560f as u64; }            // _IOWR('V', 15,  88)
+fn VIDIOC_DQBUF() -> u64 { return 0xc0585611 as u64; }           // _IOWR('V', 17,  88)
+fn VIDIOC_STREAMON() -> u64 { return 0x40045612 as u64; }        // _IOW ('V', 18,   4)
+fn VIDIOC_STREAMOFF() -> u64 { return 0x40045613 as u64; }       // _IOW ('V', 19,   4)
+fn VIDIOC_G_PARM() -> u64 { return 0xc0cc5615 as u64; }          // _IOWR('V', 21, 204)
+fn VIDIOC_S_PARM() -> u64 { return 0xc0cc5616 as u64; }          // _IOWR('V', 22, 204)
+fn VIDIOC_G_CTRL() -> u64 { return 0xc008561b as u64; }          // _IOWR('V', 27,   8)
+fn VIDIOC_S_CTRL() -> u64 { return 0xc008561c as u64; }          // _IOWR('V', 28,   8)
+fn VIDIOC_QUERYCTRL() -> u64 { return 0xc0445624 as u64; }       // _IOWR('V', 36,  68)
+
+// ---- struct sizes and offsets --------------------------------------------------
+
+fn cap_bytes() -> usize { return 104 as usize; }
+fn cap_off_card() -> usize { return 16 as usize; }               // char card[32]
+fn cap_off_device_caps() -> usize { return 88 as usize; }
+
+fn fmt_bytes() -> usize { return 208 as usize; }
+// `type` at 0, then the union at 8 (the union is 8-aligned; a v4l2_pix_format
+// starts there).
+fn fmt_off_width() -> usize { return 8 as usize; }
+fn fmt_off_height() -> usize { return 12 as usize; }
+fn fmt_off_pixelformat() -> usize { return 16 as usize; }
+fn fmt_off_field() -> usize { return 20 as usize; }
+fn fmt_off_bytesperline() -> usize { return 24 as usize; }
+fn fmt_off_sizeimage() -> usize { return 28 as usize; }
+
+fn fmtdesc_bytes() -> usize { return 64 as usize; }
+fn fmtdesc_off_pixelformat() -> usize { return 44 as usize; }
+
+fn reqbufs_bytes() -> usize { return 20 as usize; }
+
+fn vbuf_bytes() -> usize { return 88 as usize; }
+fn vbuf_off_index() -> usize { return 0 as usize; }
+fn vbuf_off_bytesused() -> usize { return 8 as usize; }
+fn vbuf_off_memory() -> usize { return 60 as usize; }
+fn vbuf_off_m_offset() -> usize { return 64 as usize; }          // union m, first word
+fn vbuf_off_length() -> usize { return 72 as usize; }
+
+fn parm_bytes() -> usize { return 204 as usize; }
+fn parm_off_timeperframe_num() -> usize { return 12 as usize; }
+fn parm_off_timeperframe_den() -> usize { return 16 as usize; }
+
+fn ctrl_bytes() -> usize { return 8 as usize; }
+fn queryctrl_bytes() -> usize { return 68 as usize; }
+fn queryctrl_off_min() -> usize { return 40 as usize; }
+fn queryctrl_off_max() -> usize { return 44 as usize; }
+fn queryctrl_off_flags() -> usize { return 60 as usize; }
+// V4L2_CTRL_FLAG_DISABLED — the control is listed and cannot be used.
+fn ctrl_flag_disabled() -> u32 { return 1 as u32; }
+
+fn buf_type_video_capture() -> u32 { return 1 as u32; }
+fn memory_mmap() -> u32 { return 1 as u32; }
+fn cap_video_capture() -> u32 { return 1 as u32; }
+fn cap_streaming() -> u32 { return 0x04000000 as u32; }
+
+// FourCCs, little-endian packed: 'Y'|'U'<<8|'Y'<<16|'V'<<24 and 'M','J','P','G'.
+fn fourcc_yuyv() -> u32 { return 0x56595559 as u32; }
+fn fourcc_mjpg() -> u32 { return 0x47504a4d as u32; }
+
+// V4L2 control ids. USER class base 0x00980900, CAMERA class 0x009a0900,
+// FLASH class 0x009c0900.
+fn cid_auto_white_balance() -> u32 { return 0x0098090c as u32; }
+fn cid_exposure_auto() -> u32 { return 0x009a0901 as u32; }
+fn cid_focus_auto() -> u32 { return 0x009a090c as u32; }
+fn cid_zoom_absolute() -> u32 { return 0x009a090d as u32; }
+fn cid_flash_led_mode() -> u32 { return 0x009c0901 as u32; }
+
+fn o_rdwr() -> i32 { return 2 as i32; }
+fn o_cloexec() -> i32 { return 0x80000 as i32; }
+fn prot_read_write() -> i32 { return 3 as i32; }
+fn map_shared() -> i32 { return 1 as i32; }
+fn pollin() -> i16 { return 1 as i16; }
+
+// ---- little accessors over a byte buffer ----------------------------------------
+
+fn put_u32(p: *u8, off: usize, v: u32) { { *((p + off) as *u32) = v }; }
+fn get_u32(p: *u8, off: usize) -> u32 { return { *((p + off) as *u32) }; }
+fn put_i32(p: *u8, off: usize, v: i32) { { *((p + off) as *i32) = v }; }
+fn get_i32(p: *u8, off: usize) -> i32 { return { *((p + off) as *i32) }; }
+
+// EINTR is not a failure, it is a signal arriving mid-call; every ioctl in this
+// file goes through here so none of them has to remember that.
+fn xioctl(fd: i32, req: u64, arg: *u8) -> i32 {
+    var tries: i32 = 0 as i32;
+    while tries < (8 as i32) {
+        let r: i32 = { ioctl(fd, req, arg) };
+        if r >= (0 as i32) { return r; }
+        let e: i32 = { *{ errno_location() } };
+        if e != (4 as i32) { return r; }        // EINTR = 4
+        tries = tries +% (1 as i32);
+    }
+    return 0 -% (1 as i32);
+}
+
+static LAST_ERROR: i32 = 0 as i32;
+
+// ---- enumerating -----------------------------------------------------------------
+
+// `/dev/videoN` for N in 0..63 — the range the kernel allocates from. Written
+// into `into`, which must hold at least 20 bytes.
+fn device_path(into: *u8, n: i32) {
+    let _w: i32 = { snprintf(into, 20 as usize, #str_ptr("/dev/video%d\0"), n) };
+}
+
+// Is this node a capture node we can stream from? See the header on device_caps.
+fn node_is_capture(fd: i32) -> bool {
+    var cap: [u8; 104] = [0u8; 104];
+    let p: *u8 = { #addr_of(cap) as *u8 };
+    if xioctl(fd, VIDIOC_QUERYCAP(), p) < (0 as i32) { return false; }
+    let dc: u32 = get_u32(p, cap_off_device_caps());
+    if (dc & cap_video_capture()) == (0 as u32) { return false; }
+    if (dc & cap_streaming()) == (0 as u32) { return false; }
+    return true;
+}
+
+// Open node `n` when it is a streamable capture node, else -1. `EBUSY` is
+// reported through `LAST_ERROR` so `_c_open` can answer `Busy` rather than
+// pretending the camera is not there.
+fn open_capture_node(n: i32) -> i32 {
+    var path: [u8; 24] = [0u8; 24];
+    let pp: *u8 = { #addr_of(path) as *u8 };
+    device_path(pp, n);
+    let fd: i32 = { open(pp, o_rdwr() | o_cloexec()) };
+    if fd < (0 as i32) { return 0 -% (1 as i32); }
+    if !node_is_capture(fd) { let _c: i32 = { close(fd) }; return 0 -% (1 as i32); }
+    return fd;
+}
+
+fn count_devices() -> i64 {
+    var n: i32 = 0 as i32;
+    var found: i64 = 0 as i64;
+    while n < (64 as i32) {
+        let fd: i32 = open_capture_node(n);
+        if fd >= (0 as i32) {
+            found = found +% (1 as i64);
+            let _c: i32 = { close(fd) };
+        }
+        n = n +% (1 as i32);
+    }
+    return found;
+}
+
+// Does the device offer this FourCC at all? Asked before a format is set,
+// because `VIDIOC_S_FMT` does not fail on an unsupported format — it SUCCEEDS
+// with a different one, which is how a request for MJPG silently becomes YUYV
+// and a "JPEG" still turns out to be raw pixels.
+fn device_offers(fd: i32, fourcc: u32) -> bool {
+    var i: u32 = 0 as u32;
+    while i < (32 as u32) {
+        var d: [u8; 64] = [0u8; 64];
+        let p: *u8 = { #addr_of(d) as *u8 };
+        put_u32(p, 0 as usize, i);
+        put_u32(p, 4 as usize, buf_type_video_capture());
+        if xioctl(fd, VIDIOC_ENUM_FMT(), p) < (0 as i32) { return false; }
+        if get_u32(p, fmtdesc_off_pixelformat()) == fourcc { return true; }
+        i = i +% (1 as u32);
+    }
+    return false;
+}
+
+// ---- a session --------------------------------------------------------------------
+
+struct Session {
+    fd: i32,
+    opaque path: *u8,          // malloc'd C string, also what `_c_device` answers
+    width: i32,
+    height: i32,
+    stride: i32,               // of the LUMA plane handed to a frame handler
+    fourcc: u32,               // what is negotiated right now
+    stream_fourcc: u32,        // what the session streams when not capturing
+    frame_rate: i32,
+    nbuf: i32,
+    opaque bufs: *u8,          // nbuf * 16: mapped pointer, then mapped length
+    streaming: bool,
+    pumping: bool,             // the pump should keep going
+    running: bool,             // the pump thread is alive
+    tid: u64,
+    on_frame: fn(*u8, i32, i32, i32, i32, *u8, *u8),
+    opaque frame_ctx: *u8,
+    opaque luma: *u8,          // deinterleave scratch, width*height
+    luma_cap: usize,
+}
+
+fn live(h: *u8) -> *Session {
+    if h == (0 as *u8) { return 0 as *Session; }
+    let s: *Session = { h as *Session };
+    if { (*s).fd } < (0 as i32) { return 0 as *Session; }
+    return s;
+}
+
+fn buf_ptr(s: *Session, i: i32) -> *u8 {
+    let base: *u8 = { (*s).bufs };
+    if base == (0 as *u8) { return 0 as *u8; }
+    return { *((base + ({ i as usize } *% (16 as usize))) as *u64) } as *u8;
+}
+
+fn buf_len(s: *Session, i: i32) -> usize {
+    let base: *u8 = { (*s).bufs };
+    if base == (0 as *u8) { return 0 as usize; }
+    return { *((base + (({ i as usize } *% (16 as usize)) +% (8 as usize))) as *u64) } as usize;
+}
+
+// ---- format, buffers, streaming ----------------------------------------------------
+
+// Negotiate `fourcc` at the requested size. THE DRIVER IS ALLOWED TO ANSWER
+// SOMETHING ELSE and does: it writes back what it will actually give, which is
+// why the session's width/height/stride are read out of the struct afterwards
+// rather than remembered from the request.
+fn set_format(s: *Session, fourcc: u32, want_w: i32, want_h: i32) -> bool {
+    var f: [u8; 208] = [0u8; 208];
+    let p: *u8 = { #addr_of(f) as *u8 };
+    put_u32(p, 0 as usize, buf_type_video_capture());
+    put_i32(p, fmt_off_width(), if want_w > (0 as i32) { want_w } else { 640 as i32 });
+    put_i32(p, fmt_off_height(), if want_h > (0 as i32) { want_h } else { 480 as i32 });
+    put_u32(p, fmt_off_pixelformat(), fourcc);
+    put_u32(p, fmt_off_field(), 1 as u32);            // V4L2_FIELD_NONE
+    if xioctl({ (*s).fd }, VIDIOC_S_FMT(), p) < (0 as i32) { return false; }
+    if get_u32(p, fmt_off_pixelformat()) != fourcc { return false; }
+    { (*s).fourcc = fourcc };
+    { (*s).width = get_i32(p, fmt_off_width()) };
+    { (*s).height = get_i32(p, fmt_off_height()) };
+    // The luma plane this package hands out is one byte per pixel and packed:
+    // `bytesperline` describes the YUYV buffer, not the plane extracted from it.
+    { (*s).stride = { (*s).width } };
+    return true;
+}
+
+fn read_frame_rate(s: *Session) {
+    var pm: [u8; 204] = [0u8; 204];
+    let p: *u8 = { #addr_of(pm) as *u8 };
+    put_u32(p, 0 as usize, buf_type_video_capture());
+    if xioctl({ (*s).fd }, VIDIOC_G_PARM(), p) < (0 as i32) { { (*s).frame_rate = 0 as i32 }; return; }
+    let num: u32 = get_u32(p, parm_off_timeperframe_num());
+    let den: u32 = get_u32(p, parm_off_timeperframe_den());
+    if num == (0 as u32) { { (*s).frame_rate = 0 as i32 }; return; }
+    { (*s).frame_rate = { (den / num) as i32 } };
+}
+
+// Ask for `frame_rate` frames a second. ADVISORY: the driver clamps to what the
+// sensor can do at the negotiated size, and `read_frame_rate` afterwards is
+// what the session reports.
+fn set_frame_rate(s: *Session, fps: i32) {
+    if fps <= (0 as i32) { return; }
+    var pm: [u8; 204] = [0u8; 204];
+    let p: *u8 = { #addr_of(pm) as *u8 };
+    put_u32(p, 0 as usize, buf_type_video_capture());
+    put_u32(p, parm_off_timeperframe_num(), 1 as u32);
+    put_u32(p, parm_off_timeperframe_den(), { fps as u32 });
+    let _r: i32 = xioctl({ (*s).fd }, VIDIOC_S_PARM(), p);
+}
+
+fn release_buffers(s: *Session) {
+    let base: *u8 = { (*s).bufs };
+    if base != (0 as *u8) {
+        var i: i32 = 0 as i32;
+        while i < { (*s).nbuf } {
+            let bp: *u8 = buf_ptr(s, i);
+            let bl: usize = buf_len(s, i);
+            if bp != (0 as *u8) && bl > (0 as usize) { let _u: i32 = { munmap(bp, bl) }; }
+            i = i +% (1 as i32);
+        }
+        { free(base) };
+        { (*s).bufs = 0 as *u8 };
+    }
+    { (*s).nbuf = 0 as i32 };
+    // COUNT ZERO IS THE DOCUMENTED RELEASE. Without it the driver keeps the
+    // old allocation and the next REQBUFS on a different format answers EBUSY.
+    var rb: [u8; 20] = [0u8; 20];
+    let p: *u8 = { #addr_of(rb) as *u8 };
+    put_u32(p, 0 as usize, 0 as u32);
+    put_u32(p, 4 as usize, buf_type_video_capture());
+    put_u32(p, 8 as usize, memory_mmap());
+    let _r: i32 = xioctl({ (*s).fd }, VIDIOC_REQBUFS(), p);
+}
+
+fn alloc_buffers(s: *Session, want: i32) -> bool {
+    var n: i32 = if want > (0 as i32) { want } else { 4 as i32 };
+    if n > (16 as i32) { n = 16 as i32; }
+    var rb: [u8; 20] = [0u8; 20];
+    let rp: *u8 = { #addr_of(rb) as *u8 };
+    put_i32(rp, 0 as usize, n);
+    put_u32(rp, 4 as usize, buf_type_video_capture());
+    put_u32(rp, 8 as usize, memory_mmap());
+    if xioctl({ (*s).fd }, VIDIOC_REQBUFS(), rp) < (0 as i32) { return false; }
+    let got: i32 = get_i32(rp, 0 as usize);
+    if got < (2 as i32) { return false; }
+
+    let table: *u8 = { malloc({ got as usize } *% (16 as usize)) };
+    if table == (0 as *u8) { return false; }
+    { memset(table, 0 as i32, { got as usize } *% (16 as usize)) };
+    { (*s).bufs = table };
+    { (*s).nbuf = got };
+
+    var i: i32 = 0 as i32;
+    while i < got {
+        var vb: [u8; 88] = [0u8; 88];
+        let bp: *u8 = { #addr_of(vb) as *u8 };
+        put_u32(bp, 4 as usize, buf_type_video_capture());
+        put_u32(bp, vbuf_off_memory(), memory_mmap());
+        put_i32(bp, vbuf_off_index(), i);
+        if xioctl({ (*s).fd }, VIDIOC_QUERYBUF(), bp) < (0 as i32) { return false; }
+        let len: usize = { get_u32(bp, vbuf_off_length()) as usize };
+        let off: i64 = { get_u32(bp, vbuf_off_m_offset()) as i64 };
+        let m: *u8 = { mmap(0 as *u8, len, prot_read_write(), map_shared(), { (*s).fd }, off) };
+        // mmap answers -1, not null, and -1 cast to a pointer is not null — so
+        // the check is against the value the kernel actually returns.
+        if { m as u64 } == (0xffffffffffffffff as u64) { return false; }
+        { *((table + ({ i as usize } *% (16 as usize))) as *u64) = m as u64 };
+        { *((table + (({ i as usize } *% (16 as usize)) +% (8 as usize))) as *u64) = len as u64 };
+        i = i +% (1 as i32);
+    }
+    return true;
+}
+
+fn queue_buffer(s: *Session, i: i32) -> bool {
+    var vb: [u8; 88] = [0u8; 88];
+    let bp: *u8 = { #addr_of(vb) as *u8 };
+    put_u32(bp, 4 as usize, buf_type_video_capture());
+    put_u32(bp, vbuf_off_memory(), memory_mmap());
+    put_i32(bp, vbuf_off_index(), i);
+    return xioctl({ (*s).fd }, VIDIOC_QBUF(), bp) >= (0 as i32);
+}
+
+fn stream_on(s: *Session) -> bool {
+    var i: i32 = 0 as i32;
+    while i < { (*s).nbuf } {
+        if !queue_buffer(s, i) { return false; }
+        i = i +% (1 as i32);
+    }
+    var t: i32 = { buf_type_video_capture() as i32 };
+    if xioctl({ (*s).fd }, VIDIOC_STREAMON(), { #addr_of(t) as *u8 }) < (0 as i32) { return false; }
+    { (*s).streaming = true };
+    return true;
+}
+
+fn stream_off(s: *Session) {
+    if !{ (*s).streaming } { return; }
+    var t: i32 = { buf_type_video_capture() as i32 };
+    let _r: i32 = xioctl({ (*s).fd }, VIDIOC_STREAMOFF(), { #addr_of(t) as *u8 });
+    { (*s).streaming = false };
+}
+
+// Wait for a frame and dequeue it. Answers the buffer index, or -1 on timeout
+// or error; `out_bytes` gets what the driver says it wrote.
+fn dequeue(s: *Session, timeout_ms: i32, ref out_bytes: usize) -> i32 {
+    out_bytes = 0 as usize;
+    var pfd: [u8; 8] = [0u8; 8];
+    let pp: *u8 = { #addr_of(pfd) as *u8 };
+    put_i32(pp, 0 as usize, { (*s).fd });
+    { *((pp + (4 as usize)) as *i16) = pollin() };
+    let r: i32 = { poll(pp, 1 as u64, timeout_ms) };
+    if r <= (0 as i32) { return 0 -% (1 as i32); }
+    var vb: [u8; 88] = [0u8; 88];
+    let bp: *u8 = { #addr_of(vb) as *u8 };
+    put_u32(bp, 4 as usize, buf_type_video_capture());
+    put_u32(bp, vbuf_off_memory(), memory_mmap());
+    if xioctl({ (*s).fd }, VIDIOC_DQBUF(), bp) < (0 as i32) { return 0 -% (1 as i32); }
+    out_bytes = { get_u32(bp, vbuf_off_bytesused()) as usize };
+    return get_i32(bp, vbuf_off_index());
+}
+
+// ---- the frame pump ----------------------------------------------------------------
+
+// YUYV is Y U Y V Y U Y V: the luma is every EVEN byte. Dropping the chroma is
+// the whole conversion, and it is why `on_frame` costs nothing on this platform.
+fn extract_luma(s: *Session, src: *u8, src_len: usize) -> bool {
+    let w: usize = { { (*s).width } as usize };
+    let h: usize = { { (*s).height } as usize };
+    let need: usize = w *% h;
+    if need == (0 as usize) { return false; }
+    if src_len < (need *% (2 as usize)) { return false; }
+    if { (*s).luma } == (0 as *u8) || { (*s).luma_cap } < need {
+        let old: *u8 = { (*s).luma };
+        if old != (0 as *u8) { { free(old) }; }
+        let m: *u8 = { malloc(need) };
+        if m == (0 as *u8) { { (*s).luma = 0 as *u8 }; { (*s).luma_cap = 0 as usize }; return false; }
+        { (*s).luma = m };
+        { (*s).luma_cap = need };
+    }
+    let dst: *u8 = { (*s).luma };
+    var i: usize = 0 as usize;
+    while i < need {
+        { *(dst + i) = { *(src + (i *% (2 as usize))) } };
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+fn pump(arg: *u8) -> *u8 {
+    let s: *Session = { arg as *Session };
+    if s == (0 as *Session) { return 0 as *u8; }
+    while { (*s).pumping } {
+        var bytes: usize = 0 as usize;
+        // A FRAME TIME AND A BIT. Short enough that `stop_frames` is noticed
+        // promptly, long enough that an idle camera is not a spin loop.
+        let idx: i32 = dequeue(s, 200 as i32, bytes);
+        if idx < (0 as i32) { continue; }
+        if extract_luma(s, buf_ptr(s, idx), bytes) {
+            let cb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = { (*s).on_frame };
+            if !cb.is_null() {
+                cb({ (*s).luma }, { (*s).width }, { (*s).height }, { (*s).stride },
+                   0 as i32, 0 as *u8, { (*s).frame_ctx });
+            }
+        }
+        // BACK IN THE QUEUE EITHER WAY. A buffer the loop keeps is a buffer the
+        // driver runs out of, and four frames later the camera stops.
+        let _q: bool = queue_buffer(s, idx);
+    }
+    { (*s).running = false };
+    return 0 as *u8;
+}
+
+fn stop_pump(s: *Session) {
+    if !{ (*s).running } { { (*s).pumping = false }; return; }
+    { (*s).pumping = false };
+    let _j: i32 = { pthread_join({ (*s).tid }, 0 as *u8) };
+    { (*s).running = false };
+    { (*s).tid = 0 as u64 };
+}
+
+// ---- controls ------------------------------------------------------------------------
+
+// Is the control there and usable? A driver lists controls it does not
+// implement with `V4L2_CTRL_FLAG_DISABLED`, so presence alone is not an answer.
+fn control_range(fd: i32, id: u32, ref lo: i32, ref hi: i32) -> bool {
+    lo = 0 as i32;
+    hi = 0 as i32;
+    var q: [u8; 68] = [0u8; 68];
+    let p: *u8 = { #addr_of(q) as *u8 };
+    put_u32(p, 0 as usize, id);
+    if xioctl(fd, VIDIOC_QUERYCTRL(), p) < (0 as i32) { return false; }
+    if (get_u32(p, queryctrl_off_flags()) & ctrl_flag_disabled()) != (0 as u32) { return false; }
+    lo = get_i32(p, queryctrl_off_min());
+    hi = get_i32(p, queryctrl_off_max());
+    return true;
+}
+
+fn set_control(fd: i32, id: u32, value: i32) -> bool {
+    var c: [u8; 8] = [0u8; 8];
+    let p: *u8 = { #addr_of(c) as *u8 };
+    put_u32(p, 0 as usize, id);
+    put_i32(p, 4 as usize, value);
+    return xioctl(fd, VIDIOC_S_CTRL(), p) >= (0 as i32);
+}
+
+fn get_control(fd: i32, id: u32, ref out: i32) -> bool {
+    out = 0 as i32;
+    var c: [u8; 8] = [0u8; 8];
+    let p: *u8 = { #addr_of(c) as *u8 };
+    put_u32(p, 0 as usize, id);
+    if xioctl(fd, VIDIOC_G_CTRL(), p) < (0 as i32) { return false; }
+    out = get_i32(p, 4 as usize);
+    return true;
+}
+
+// ---- the seam ---------------------------------------------------------------------------
+
+export extern fn _c_count() -> i64 {
+    return count_devices();
+}
+
+// FACING IS IGNORED, exactly as the Windows half ignores it and for the reason
+// `camera.cplus` itself gives: V4L2 has no concept of which way a camera points.
+// Answering "no front camera" on a laptop whose only lens faces the user would
+// be a worse lie than answering "there is a camera" and reporting `External`
+// from `facing()`, which is what a caller reads to find out.
+export extern fn _c_has(facing: i32) -> i32 {
+    let _f: i32 = facing;
+    if count_devices() > (0 as i64) { return 1 as i32; }
+    return 0 as i32;
+}
+
+export extern fn _c_open(req: *_CRequest) -> *u8 {
+    LAST_ERROR = _ok();
+    if req == (0 as *_CRequest) { LAST_ERROR = _failed(); return 0 as *u8; }
+
+    // A named device wins; otherwise the first streamable capture node.
+    var fd: i32 = 0 -% (1 as i32);
+    var path: [u8; 24] = [0u8; 24];
+    let pp: *u8 = { #addr_of(path) as *u8 };
+    let dlen: usize = { (*req).device_len };
+    if dlen > (0 as usize) && dlen < (23 as usize) {
+        { memcpy(pp, { (*req).device }, dlen) };
+        { *(pp + dlen) = 0 as u8 };
+        fd = { open(pp, o_rdwr() | o_cloexec()) };
+        if fd >= (0 as i32) && !node_is_capture(fd) {
+            let _c: i32 = { close(fd) };
+            fd = 0 -% (1 as i32);
+        }
+    } else {
+        var n: i32 = 0 as i32;
+        while n < (64 as i32) {
+            fd = open_capture_node(n);
+            if fd >= (0 as i32) { device_path(pp, n); break; }
+            n = n +% (1 as i32);
+        }
+    }
+    if fd < (0 as i32) {
+        // EBUSY means a camera is here and someone else has it — the one V4L2
+        // error worth telling apart, because the answer is "try again", not
+        // "this machine has no camera".
+        let e: i32 = { *{ errno_location() } };
+        LAST_ERROR = if e == (16 as i32) { _busy() } else { _unsupported() };
+        return 0 as *u8;
+    }
+
+    let s: *Session = { malloc(#size_of::[Session]()) as *Session };
+    if s == (0 as *Session) { let _c: i32 = { close(fd) }; LAST_ERROR = _failed(); return 0 as *u8; }
+    { memset(s as *u8, 0 as i32, #size_of::[Session]()) };
+    { (*s).fd = fd };
+    { (*s).path = 0 as *u8 };
+    // Keep the path: `_c_device` answers it and it is the only stable name a
+    // caller can pass back through `Request::device`.
+    var i: usize = 0 as usize;
+    while { *(pp + i) } != (0 as u8) { i = i +% (1 as usize); }
+    let keep: *u8 = { malloc(i +% (1 as usize)) };
+    if keep != (0 as *u8) {
+        { memcpy(keep, pp, i +% (1 as usize)) };
+        { (*s).path = keep };
+    }
+
+    // YUYV FOR THE SESSION, so `on_frame` works — see the header. MJPG only
+    // when the device has no YUYV at all, and then stills work and frames do not.
+    var chose: bool = false;
+    if { (*req).pixel } != _pix_luma8() && !device_offers(fd, fourcc_yuyv()) {
+        chose = set_format(s, fourcc_mjpg(), { (*req).width }, { (*req).height });
+    }
+    if !chose && device_offers(fd, fourcc_yuyv()) {
+        chose = set_format(s, fourcc_yuyv(), { (*req).width }, { (*req).height });
+    }
+    if !chose && device_offers(fd, fourcc_mjpg()) {
+        chose = set_format(s, fourcc_mjpg(), { (*req).width }, { (*req).height });
+    }
+    if !chose {
+        let _c: i32 = { close(fd) };
+        if keep != (0 as *u8) { { free(keep) }; }
+        { free(s as *u8) };
+        LAST_ERROR = _unsupported();
+        return 0 as *u8;
+    }
+    { (*s).stream_fourcc = { (*s).fourcc } };
+    set_frame_rate(s, { (*req).frame_rate });
+    read_frame_rate(s);
+
+    if !alloc_buffers(s, { (*req).buffers }) {
+        release_buffers(s);
+        let _c: i32 = { close(fd) };
+        if keep != (0 as *u8) { { free(keep) }; }
+        { free(s as *u8) };
+        LAST_ERROR = _failed();
+        return 0 as *u8;
+    }
+    if !stream_on(s) {
+        release_buffers(s);
+        let _c: i32 = { close(fd) };
+        if keep != (0 as *u8) { { free(keep) }; }
+        { free(s as *u8) };
+        LAST_ERROR = _failed();
+        return 0 as *u8;
+    }
+    return s as *u8;
+}
+
+// EXTERNAL, and never a guess — the same answer and the same reason as the
+// Windows half. V4L2 does not report which way a camera points.
+export extern fn _c_actual_facing(h: *u8) -> i32 {
+    if live(h) == (0 as *Session) { return _facing_unspecified(); }
+    return _facing_external();
+}
+
+export extern fn _c_frame_rate(h: *u8) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return 0 as i32; }
+    return { (*s).frame_rate };
+}
+
+export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
+    let s: *Session = live(h);
+    if out_width != (0 as *i32) { { (*out_width) = if s == (0 as *Session) { 0 as i32 } else { (*s).width } }; }
+    if out_height != (0 as *i32) { { (*out_height) = if s == (0 as *Session) { 0 as i32 } else { (*s).height } }; }
+}
+
+// LUMA8 WHEN THE SESSION STREAMS YUYV, `Any` when it streams MJPG — because the
+// facade's rule is that this reports what a frame handler will actually see,
+// and an MJPG session hands a handler nothing at all.
+export extern fn _c_pixel_format(h: *u8) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return _pix_any(); }
+    if { (*s).stream_fourcc } == fourcc_yuyv() { return _pix_luma8(); }
+    return _pix_any();
+}
+
+export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) || into == (0 as *text::Text) { return 0 as i32; }
+    let p: *u8 = { (*s).path };
+    if p == (0 as *u8) { return 0 as i32; }
+    var n: usize = 0 as usize;
+    while { *(p + n) } != (0 as u8) { n = n +% (1 as usize); }
+    { (*into) = text::from_str({ #str_from_raw_parts(p, n) }) };
+    return 1 as i32;
+}
+
+// ZOOM_ABSOLUTE, in the driver's own units. `factor` is mapped across the
+// control's range, because V4L2's numbers are steps of an optical or digital
+// zoom with no defined relationship to a magnification — the facade already
+// says the scale is not portable.
+export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return _failed(); }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !control_range({ (*s).fd }, cid_zoom_absolute(), lo, hi) { return _unsupported(); }
+    if hi <= lo { return _unsupported(); }
+    let maxf: f64 = { (hi -% lo) as f64 };
+    var f: f64 = factor - (1.0 as f64);
+    if f < (0.0 as f64) { f = 0.0 as f64; }
+    if f > maxf { f = maxf; }
+    if !set_control({ (*s).fd }, cid_zoom_absolute(), lo +% ({ f as i32 })) { return _failed(); }
+    return _ok();
+}
+
+export extern fn _c_zoom(h: *u8) -> f64 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return 1.0 as f64; }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !control_range({ (*s).fd }, cid_zoom_absolute(), lo, hi) { return 1.0 as f64; }
+    var v: i32 = 0 as i32;
+    if !get_control({ (*s).fd }, cid_zoom_absolute(), v) { return 1.0 as f64; }
+    return (1.0 as f64) + { (v -% lo) as f64 };
+}
+
+export extern fn _c_max_zoom(h: *u8) -> f64 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return 1.0 as f64; }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !control_range({ (*s).fd }, cid_zoom_absolute(), lo, hi) { return 1.0 as f64; }
+    if hi <= lo { return 1.0 as f64; }
+    return (1.0 as f64) + { (hi -% lo) as f64 };
+}
+
+// FLASH_LED_MODE = 2 is TORCH, 0 is off. Almost no webcam has it; the ones that
+// refuse say so through `_c_has_torch` rather than through a failed call.
+export extern fn _c_set_torch(h: *u8, on: i32) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return _failed(); }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !control_range({ (*s).fd }, cid_flash_led_mode(), lo, hi) { return _unsupported(); }
+    let want: i32 = if on != (0 as i32) { 2 as i32 } else { 0 as i32 };
+    if want > hi { return _unsupported(); }
+    if !set_control({ (*s).fd }, cid_flash_led_mode(), want) { return _failed(); }
+    return _ok();
+}
+
+export extern fn _c_has_torch(h: *u8) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return 0 as i32; }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !control_range({ (*s).fd }, cid_flash_led_mode(), lo, hi) { return 0 as i32; }
+    // TORCH is mode 2; a driver whose range stops at 1 has a flash and no torch.
+    if hi < (2 as i32) { return 0 as i32; }
+    return 1 as i32;
+}
+
+// FOCUS_AUTO is a BOOLEAN — continuous or held. `Once` has no counterpart:
+// V4L2 has no one-shot autofocus trigger in the user API, and firing auto and
+// then clearing it after a guessed delay would be a race dressed as a feature.
+export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return _failed(); }
+    if mode == _mode_once() { return _unsupported(); }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !control_range({ (*s).fd }, cid_focus_auto(), lo, hi) { return _unsupported(); }
+    let want: i32 = if mode == _mode_auto() { 1 as i32 } else { 0 as i32 };
+    if !set_control({ (*s).fd }, cid_focus_auto(), want) { return _failed(); }
+    return _ok();
+}
+
+// EXPOSURE_AUTO IS A MENU, AND ITS RANGE LIES. The four values are 0 AUTO,
+// 1 MANUAL, 2 SHUTTER_PRIORITY, 3 APERTURE_PRIORITY, and `VIDIOC_QUERYCTRL`
+// answers min 0 max 3 on hardware that implements only two of them: `uvcvideo`
+// takes 1 and 3 and returns EINVAL for 0 and 2. So a webcam whose menu says it
+// spans AUTO..APERTURE_PRIORITY rejects the very value named AUTO.
+//
+// Measured on this machine's HP Wide Vision: `S_CTRL(EXPOSURE_AUTO, 0)` fails,
+// `S_CTRL(EXPOSURE_AUTO, 3)` succeeds. Both are "the device decides the
+// exposure", so `Auto` tries the strict one and falls back to the one every
+// UVC camera actually implements, and `Locked` does the same for MANUAL.
+// Reading the range and trusting it would report `Failed` on every laptop.
+export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return _failed(); }
+    if mode == _mode_once() { return _unsupported(); }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !control_range({ (*s).fd }, cid_exposure_auto(), lo, hi) { return _unsupported(); }
+    let first: i32 = if mode == _mode_auto() { 0 as i32 } else { 1 as i32 };
+    let then: i32 = if mode == _mode_auto() { 3 as i32 } else { 2 as i32 };
+    if set_control({ (*s).fd }, cid_exposure_auto(), first) { return _ok(); }
+    if set_control({ (*s).fd }, cid_exposure_auto(), then) { return _ok(); }
+    // The control is there and takes neither spelling of what was asked, which
+    // is a device that cannot do it rather than a call that went wrong.
+    return _unsupported();
+}
+
+// AUTO_WHITE_BALANCE is a boolean: 1 continuous, 0 held at whatever is current
+// — which is exactly `Mode::Locked`.
+export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return _failed(); }
+    if mode == _mode_once() { return _unsupported(); }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !control_range({ (*s).fd }, cid_auto_white_balance(), lo, hi) { return _unsupported(); }
+    let want: i32 = if mode == _mode_auto() { 1 as i32 } else { 0 as i32 };
+    if !set_control({ (*s).fd }, cid_auto_white_balance(), want) { return _failed(); }
+    return _ok();
+}
+
+export extern fn _c_last_error() -> i32 { return LAST_ERROR; }
+
+export extern fn _c_close(h: *u8) {
+    if h == (0 as *u8) { return; }
+    let s: *Session = { h as *Session };
+    stop_pump(s);
+    stream_off(s);
+    release_buffers(s);
+    let l: *u8 = { (*s).luma };
+    if l != (0 as *u8) { { (*s).luma = 0 as *u8 }; { free(l) }; }
+    let p: *u8 = { (*s).path };
+    if p != (0 as *u8) { { (*s).path = 0 as *u8 }; { free(p) }; }
+    if { (*s).fd } >= (0 as i32) { let _c: i32 = { close({ (*s).fd }) }; }
+    { (*s).fd = 0 -% (1 as i32) };
+    { free(h) };
+}
+
+// NO FACING TO SWITCH TO. V4L2 addresses cameras by path and reports no
+// position, so there is no honest way to answer "give me the other one" — a
+// caller that wants a different device opens one with `Request::device`.
+export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 {
+    let _f: i32 = facing;
+    if live(h) == (0 as *Session) { return _failed(); }
+    return _unsupported();
+}
+
+// NO PREVIEW WIDGET. `preview()` wants a native view for facet to adopt, and on
+// this platform that is a GtkWidget with a GdkTexture uploaded per frame.
+//
+// It is refused here rather than built for two reasons, and neither is effort.
+// The first is that the upload path belongs to the toolkit backend, not to a
+// capture package: building it here would put the whole of GTK on the
+// dependency list of a program that wants `count()` on a headless box. The
+// second is that it would not render anyway — facet's mount walk creates an
+// adopted native through `native_create`, and `facet_gtk` has no code that
+// places one, so the node would be built and dropped.
+//
+// A caller that wants pixels on screen today has them: `on_frame` delivers the
+// luma plane and the application draws it wherever it likes.
+export extern fn _c_preview_create(h: *u8) -> *u8 {
+    let _s: *u8 = h;
+    return 0 as *u8;
+}
+
+export extern fn _c_preview_release(v: *u8) {
+    let _v: *u8 = v;
+}
+
+// One still, as JPEG, by re-negotiating MJPG around the shot — see the header.
+//
+// THE HANDLER RUNS BEFORE THIS RETURNS, on the caller's own thread. The facade
+// promises the main thread and says `Ok` means "accepted, not taken"; both hold
+// — this is simply the strictest way to keep the first promise, since there is
+// no capture queue on this platform to be asynchronous about.
+export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return _failed(); }
+    if cb.is_null() { return _failed(); }
+    if !device_offers({ (*s).fd }, fourcc_mjpg()) { return _unsupported(); }
+
+    let was_pumping: bool = { (*s).running };
+    let want_w: i32 = { (*s).width };
+    let want_h: i32 = { (*s).height };
+    stop_pump(s);
+    stream_off(s);
+    release_buffers(s);
+
+    var code: i32 = _failed();
+    if set_format(s, fourcc_mjpg(), want_w, want_h) && alloc_buffers(s, 4 as i32)
+        && stream_on(s) {
+        // THE FIRST FRAMES ARE NOT THE PICTURE. A UVC camera re-negotiated into
+        // MJPG needs a few to settle its exposure, and handing back the first
+        // one gives a dark or half-converged image. Five, then whichever
+        // arrived last.
+        var taken: i32 = 0 as i32;
+        var last_idx: i32 = 0 -% (1 as i32);
+        var last_len: usize = 0 as usize;
+        while taken < (5 as i32) {
+            var n: usize = 0 as usize;
+            let idx: i32 = dequeue(s, 500 as i32, n);
+            if idx < (0 as i32) { break; }
+            if last_idx >= (0 as i32) { let _q: bool = queue_buffer(s, last_idx); }
+            last_idx = idx;
+            last_len = n;
+            taken = taken +% (1 as i32);
+        }
+        if last_idx >= (0 as i32) && last_len > (0 as usize) {
+            cb(buf_ptr(s, last_idx), last_len, ctx);
+            let _q: bool = queue_buffer(s, last_idx);
+            code = _ok();
+        }
+    }
+
+    stream_off(s);
+    release_buffers(s);
+    // BACK TO WHAT THE SESSION WAS. A failure to restore leaves the handle
+    // alive but not streaming, which `_c_on_frame` will then refuse — better
+    // than a session that silently reports YUYV and delivers JPEG.
+    if set_format(s, { (*s).stream_fourcc }, want_w, want_h) && alloc_buffers(s, 4 as i32) {
+        let _on: bool = stream_on(s);
+    }
+    if was_pumping && { (*s).streaming } {
+        { (*s).pumping = true };
+        var tid: u64 = 0 as u64;
+        if { pthread_create({ #addr_of(tid) as *u8 }, 0 as *u8, pump, s as *u8) } == (0 as i32) {
+            { (*s).tid = tid };
+            { (*s).running = true };
+        } else {
+            { (*s).pumping = false };
+        }
+    }
+    return code;
+}
+
+export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return _failed(); }
+    if cb.is_null() { return _failed(); }
+    // An MJPG session has no luma to hand over and nothing here decodes JPEG.
+    if { (*s).stream_fourcc } != fourcc_yuyv() { return _unsupported(); }
+    if !{ (*s).streaming } { return _failed(); }
+    if { (*s).running } { return _ok(); }
+    { (*s).on_frame = cb };
+    { (*s).frame_ctx = ctx };
+    { (*s).pumping = true };
+    var tid: u64 = 0 as u64;
+    if { pthread_create({ #addr_of(tid) as *u8 }, 0 as *u8, pump, s as *u8) } != (0 as i32) {
+        { (*s).pumping = false };
+        return _failed();
+    }
+    { (*s).tid = tid };
+    { (*s).running = true };
+    return _ok();
+}
+
+export extern fn _c_stop_frames(h: *u8) -> i32 {
+    let s: *Session = live(h);
+    if s == (0 as *Session) { return _failed(); }
+    stop_pump(s);
+    return _ok();
+}
+
+// ---- tests --------------------------------------------------------------------------
+//
+// AGAINST THE REAL DEVICE, and skipped when there is none — a build machine
+// with no lens is the ordinary case and `count() == 0` is a correct answer, not
+// a failing one. What is asserted is everything that would be wrong if an ioctl
+// number or a struct offset were: a size the driver agreed to, a luma frame of
+// the size it promised, and a still that really is a JPEG.
+
+static SEEN_FRAMES: i32 = 0 as i32;
+static SEEN_W: i32 = 0 as i32;
+static SEEN_H: i32 = 0 as i32;
+static SEEN_STRIDE: i32 = 0 as i32;
+static SEEN_NONZERO: bool = false;
+
+fn t_frame(luma: *u8, w: i32, h: i32, stride: i32, _rot: i32, _native: *u8, _ctx: *u8) {
+    SEEN_FRAMES = SEEN_FRAMES +% (1 as i32);
+    SEEN_W = w;
+    SEEN_H = h;
+    SEEN_STRIDE = stride;
+    // A plane of zeros would pass every size assertion and be nothing at all;
+    // a lens cap makes it dark, not empty, so any non-zero byte is the check.
+    if luma != (0 as *u8) {
+        var i: usize = 0 as usize;
+        let n: usize = { (w *% h) as usize };
+        while i < n {
+            if { *(luma + i) } != (0 as u8) { SEEN_NONZERO = true; break; }
+            i = i +% (64 as usize);
+        }
+    }
+}
+
+static SHOT_LEN: usize = 0 as usize;
+static SHOT_SOI: bool = false;
+
+fn t_photo(data: *u8, len: usize, _ctx: *u8) {
+    SHOT_LEN = len;
+    if data != (0 as *u8) && len > (4 as usize) {
+        // FFD8 is a JPEG's start-of-image. The facade promises JPEG; this is
+        // the one assertion that catches a format switch that silently did not
+        // happen and handed back raw YUYV instead.
+        SHOT_SOI = { *(data + (0 as usize)) } == (255 as u8)
+            && { *(data + (1 as usize)) } == (216 as u8);
+    }
+}
+
+fn a_camera_is_here() -> bool { return { _c_count() } > (0 as i64); }
+
+fn open_default() -> *u8 {
+    var req: _CRequest = #zero::[_CRequest]();
+    req.width = 640 as i32;
+    req.height = 480 as i32;
+    req.frame_rate = 30 as i32;
+    req.pixel = _pix_luma8();
+    req.buffers = 4 as i32;
+    return { _c_open(#addr_of(req)) };
+}
+
+#[test]
+fn the_ioctl_numbers_are_what_the_macro_computes() {
+    // _IOC(dir, 'V', nr, size) = (dir << 30) | (size << 16) | (0x56 << 8) | nr.
+    // Recomputed here so a typo in a constant fails the suite rather than the
+    // camera. `2` is _IOC_READ, `3` is read|write, `1` is write.
+    let v: u64 = 0x56 as u64;
+    assert VIDIOC_QUERYCAP() == (((2 as u64) *% (1073741824 as u64))
+        | ((104 as u64) *% (65536 as u64)) | (v *% (256 as u64)) | (0 as u64));
+    assert VIDIOC_S_FMT() == (((3 as u64) *% (1073741824 as u64))
+        | ((208 as u64) *% (65536 as u64)) | (v *% (256 as u64)) | (5 as u64));
+    assert VIDIOC_DQBUF() == (((3 as u64) *% (1073741824 as u64))
+        | ((88 as u64) *% (65536 as u64)) | (v *% (256 as u64)) | (17 as u64));
+    assert VIDIOC_STREAMON() == (((1 as u64) *% (1073741824 as u64))
+        | ((4 as u64) *% (65536 as u64)) | (v *% (256 as u64)) | (18 as u64));
+    assert VIDIOC_QUERYCTRL() == (((3 as u64) *% (1073741824 as u64))
+        | ((68 as u64) *% (65536 as u64)) | (v *% (256 as u64)) | (36 as u64));
+}
+
+#[test]
+fn the_fourccs_are_the_four_letters_packed_little_endian() {
+    // 'Y' 89, 'U' 85, 'V' 86, 'M' 77, 'J' 74, 'P' 80, 'G' 71.
+    let yuyv: u32 = (89 as u32) | ((85 as u32) *% (256 as u32))
+        | ((89 as u32) *% (65536 as u32)) | ((86 as u32) *% (16777216 as u32));
+    let mjpg: u32 = (77 as u32) | ((74 as u32) *% (256 as u32))
+        | ((80 as u32) *% (65536 as u32)) | ((71 as u32) *% (16777216 as u32));
+    assert fourcc_yuyv() == yuyv;
+    assert fourcc_mjpg() == mjpg;
+}
+
+#[test]
+fn a_closed_handle_answers_everywhere_rather_than_faulting() {
+    assert { _c_actual_facing(0 as *u8) } == _facing_unspecified();
+    assert { _c_frame_rate(0 as *u8) } == (0 as i32);
+    assert { _c_pixel_format(0 as *u8) } == _pix_any();
+    assert { _c_zoom(0 as *u8) } == (1.0 as f64);
+    assert { _c_max_zoom(0 as *u8) } == (1.0 as f64);
+    assert { _c_has_torch(0 as *u8) } == (0 as i32);
+    assert { _c_switch_to(0 as *u8, 1 as i32) } == _failed();
+    assert { _c_stop_frames(0 as *u8) } == _failed();
+    var w: i32 = 7 as i32;
+    var h: i32 = 7 as i32;
+    { _c_frame_size(0 as *u8, #addr_of(w), #addr_of(h)) };
+    assert w == (0 as i32);
+    assert h == (0 as i32);
+    { _c_close(0 as *u8) };
+}
+
+#[test]
+fn a_session_reports_the_format_the_driver_agreed_to() {
+    if !a_camera_is_here() { return; }
+    let h: *u8 = open_default();
+    assert h != (0 as *u8);
+    var w: i32 = 0 as i32;
+    var ht: i32 = 0 as i32;
+    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    assert w > (0 as i32);
+    assert ht > (0 as i32);
+    // Requested 640x480 and this driver offers it; a driver that answered
+    // something else would still pass, which is the point — the size reported
+    // is read back from the struct, never echoed from the request.
+    assert { _c_pixel_format(h) } == _pix_luma8();
+    assert { _c_actual_facing(h) } == _facing_external();
+    var name: text::Text = text::new();
+    assert { _c_device(h, #addr_of(name)) } == (1 as i32);
+    assert name.view() != "";
+    { _c_close(h) };
+}
+
+#[test]
+fn frames_arrive_with_the_promised_geometry() {
+    if !a_camera_is_here() { return; }
+    SEEN_FRAMES = 0 as i32;
+    SEEN_NONZERO = false;
+    let h: *u8 = open_default();
+    assert h != (0 as *u8);
+    var w: i32 = 0 as i32;
+    var ht: i32 = 0 as i32;
+    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    assert { _c_on_frame(h, t_frame, 0 as *u8) } == _ok();
+    // A second start is not an error and must not spawn a second pump.
+    assert { _c_on_frame(h, t_frame, 0 as *u8) } == _ok();
+    var spins: i32 = 0 as i32;
+    while SEEN_FRAMES < (3 as i32) && spins < (60 as i32) {
+        let _u: i32 = { usleep(100000 as u32) };
+        spins = spins +% (1 as i32);
+    }
+    assert { _c_stop_frames(h) } == _ok();
+    assert SEEN_FRAMES >= (3 as i32);
+    assert SEEN_W == w;
+    assert SEEN_H == ht;
+    // PACKED, one byte per pixel — the whole reason `stride` is the width here
+    // and not the YUYV `bytesperline`, which is twice it.
+    assert SEEN_STRIDE == w;
+    assert SEEN_NONZERO;
+    { _c_close(h) };
+}
+
+#[test]
+fn a_still_really_is_a_jpeg_and_the_session_survives_it() {
+    if !a_camera_is_here() { return; }
+    SHOT_LEN = 0 as usize;
+    SHOT_SOI = false;
+    SEEN_FRAMES = 0 as i32;
+    let h: *u8 = open_default();
+    assert h != (0 as *u8);
+    assert { _c_on_frame(h, t_frame, 0 as *u8) } == _ok();
+    var spins: i32 = 0 as i32;
+    while SEEN_FRAMES < (2 as i32) && spins < (60 as i32) {
+        let _u: i32 = { usleep(100000 as u32) };
+        spins = spins +% (1 as i32);
+    }
+    let before: i32 = SEEN_FRAMES;
+    assert { _c_capture(h, t_photo, 0 as *u8) } == _ok();
+    assert SHOT_LEN > (1000 as usize);
+    assert SHOT_SOI;
+    // THE PUMP COMES BACK. A capture that left the session dark would be a
+    // preview that dies the first time someone takes a picture.
+    spins = 0 as i32;
+    while SEEN_FRAMES <= before && spins < (60 as i32) {
+        let _u: i32 = { usleep(100000 as u32) };
+        spins = spins +% (1 as i32);
+    }
+    assert SEEN_FRAMES > before;
+    assert { _c_stop_frames(h) } == _ok();
+    { _c_close(h) };
+}
+
+#[test]
+fn the_controls_answer_unsupported_rather_than_failed_when_absent() {
+    if !a_camera_is_here() { return; }
+    let h: *u8 = open_default();
+    assert h != (0 as *u8);
+    // Whatever this hardware has, none of these may report `Failed`: a caller
+    // hides a control on `Unsupported` and shows an error on `Failed`.
+    assert { _c_set_white_balance(h, _mode_auto()) } != _failed();
+    assert { _c_set_exposure(h, _mode_auto()) } != _failed();
+    assert { _c_set_focus(h, _mode_auto()) } != _failed();
+    assert { _c_set_torch(h, 0 as i32) } != _failed();
+    // `Once` has no V4L2 counterpart and says so on every device.
+    assert { _c_set_focus(h, _mode_once()) } == _unsupported();
+    assert { _c_set_exposure(h, _mode_once()) } == _unsupported();
+    assert { _c_set_white_balance(h, _mode_once()) } == _unsupported();
+    assert { _c_max_zoom(h) } >= (1.0 as f64);
+    // No facing to switch to on this platform, and never a silent no-op.
+    assert { _c_switch_to(h, 0 as i32) } == _unsupported();
+    // The preview is refused, not broken — see the note above `_c_preview_create`.
+    assert { _c_preview_create(h) } == (0 as *u8);
+    { _c_close(h) };
+}
