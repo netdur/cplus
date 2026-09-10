@@ -1,0 +1,41 @@
+// facet/platform_sys.cplus — the POSIX half of the two primitives facet calls
+// for ITSELF, split out so every other module in this package stays genuinely
+// platform-free.
+//
+// `platform_sys_windows.cplus` shadows this file on Windows through the
+// resolver's `_windows` override — the same split `stdlib/platform_sys.cplus`
+// uses, and for the same reason: the QUESTIONS are portable, the calls are not.
+//
+// Two facts live here and nothing else:
+//
+//   `ui_thread_id()`  M6's thread identity. `mount::install` records the
+//                     installing thread and `core::touch` asserts every write
+//                     is on it, because a worker writing the tree is a data
+//                     race that otherwise surfaces as a distant,
+//                     unattributable crash.
+//   `yield_once()`    the spin in `services`' job table and `wait_for_jobs`.
+//                     A teardown step, not a poll loop — it gives a worker its
+//                     turn rather than burning the core.
+//
+// WHY A FILE AND NOT `#platform()`. A `#platform()` comparison still COMPILES
+// both branches (sema.rs says so out loud: "`if #platform() == ...` still
+// compile, so a branch cannot hide"), so the `pthread_self` extern would still
+// be emitted and still have to resolve. It does not on Windows, and the whole
+// package failed to link on two symbols across three call sites. The override
+// is by FILE, which is the only thing that actually removes a declaration.
+//
+// The identity is opaque and is only ever COMPARED — never printed, never
+// used as an index — so `u64` is a carrier here rather than a claim about
+// what a thread id is on any platform.
+
+// Darwin and Linux both give a `pthread_t` that fits a word; the value is
+// compared against itself and nothing more.
+#[link_name = "pthread_self"]
+extern fn pthread_self_raw() -> u64;
+
+#[link_name = "sched_yield"]
+extern fn sched_yield_raw() -> i32;
+
+fn ui_thread_id() -> u64 { return { pthread_self_raw() }; }
+
+fn yield_once() { let _r: i32 = { sched_yield_raw() }; return; }

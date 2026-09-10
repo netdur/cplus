@@ -43,15 +43,13 @@ static THEME_CHANGED_FN: fn() = #zero::[fn()]();
 
 fn set_theme_changed_fn(f: fn()) {
     THEME_CHANGED_FN = f;
-    return;
 }
 
 fn set_theme(take t: Theme) {
     let s: *app::Application = app::current();
     { (*s).theme = t };
     let f: fn() = THEME_CHANGED_FN;
-    if f != (0 as fn()) { f(); }
-    return;
+    if f.is_not_null() { f(); }
 }
 
 fn theme() -> Theme {
@@ -147,7 +145,7 @@ fn set_is_dark_fn(f: fn() -> bool) { IS_DARK_FN = f; return; }
 
 fn is_dark() -> bool {
     let f: fn() -> bool = IS_DARK_FN;
-    if f == (0 as fn() -> bool) { return false; }
+    if f.is_null() { return false; }
     return f();
 }
 
@@ -162,7 +160,6 @@ fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0 as *u8) {
     let s: *app::Application = app::current();
     { (*s).appearance_cb = handler };
     { (*s).appearance_ctx = ctx };
-    return;
 }
 
 // Backend entry: a system light/dark flip arrived.
@@ -183,11 +180,10 @@ fn on_appearance_change(handler: fn(*u8), ctx: *u8 = 0 as *u8) {
 fn notify_appearance_changed() {
     let s: *app::Application = app::current();
     let repaint: fn() = THEME_CHANGED_FN;
-    if repaint != (0 as fn()) { repaint(); }
+    if repaint.is_not_null() { repaint(); }
     let f: fn(*u8) = { (*s).appearance_cb };
-    if f == (0 as fn(*u8)) { return; }
+    if f.is_null() { return; }
     f({ (*s).appearance_ctx });
-    return;
 }
 
 

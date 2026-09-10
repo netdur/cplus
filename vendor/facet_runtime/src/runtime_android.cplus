@@ -1,0 +1,829 @@
+// facet runtime facade — ANDROID. HAND-WRITTEN.
+//
+// A THIRD FACADE SHAPE, and the reason this file is not a copy of either
+// neighbour:
+//
+//   | platform | enters              | returns                  |
+//   |----------|---------------------|--------------------------|
+//   | macOS    | its own run loop    | on quit                  |
+//   | iOS      | UIApplicationMain   | never                    |
+//   | Android  | nothing             | IMMEDIATELY, with a View |
+//
+// `onCreate` calls into C+, takes a View back, and returns. There is no loop to
+// enter and nothing to block on — the Activity's own looper was already running
+// before this library was loaded. So `run_component` BUILDS AND STORES, and
+// `facet_android::entry` hands the stored tree to the Activity when the app's
+// entry returns.
+//
+// Which is what lets an app's source be the same source: the iOS gallery calls
+// `run_component` and never learns that on Android it came back.
+//
+// Everything below the three entry points is the neutral base's surface, so app
+// code type-checks on this target. What Android has an answer for is answered;
+// what it does not is loud, not silent, and listed in
+// vendor/facet_android/MANIFEST.md §2 rather than pretended away.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "stdlib/io" as io;
+import "stdlib/box" as box;
+import "facet_android/log" as log;
+import "facet_android/paint" as paint;
+import "facet_android/clipboard" as clipboard;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/vocabulary" as vocab;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/services" as services;
+import "facet/application" as app;
+import "facet/screen" as screen_mod;
+import "facet/window" as window;
+import "facet/mount" as mount;
+import "facet/nav" as nav;
+import "facet/stack" as stack;
+import "facet_android/facet_android" as backend;
+import "facet_android/entry" as entry;
+import "facet_android/window" as host;
+import "facet_android/scheduler" as sched;
+
+type Node = flex::Node;
+type Builder = flex::Builder;
+type AppMenu = screen::AppMenu;
+type MenuItem = screen::MenuItem;
+type Chrome = screen::Chrome;
+type ScreenBox = screen::ScreenBox;
+
+// One loud line per entry point Android has no answer for YET. The base file's
+// version says "no backend for this platform", which would be a lie here —
+// there is one, and this is a gap in it.
+//
+// `eprintln` reaches nobody on Android (stderr goes to /dev/null), so this goes
+// through the same liblog channel the backend's own warnings use: `adb logcat
+// -s facet`.
+fn no_backend(entry: str) {
+    var buf: [u8; 192] = #zero::[[u8; 192]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    let msg: text::Text = text::from_str("runtime: ").appending(entry).appending(" is not built on Android yet - MANIFEST.md section 2");
+    if paint::cstr({ msg.view() }, base, 192 as usize) { log::warn(base); }
+}
+
+interface Window {
+    fn root(ref this) -> Node;
+    fn title(this) -> str;
+    fn width(this) -> f64;
+    fn height(this) -> f64;
+    fn bar(this) -> screen::Bar;
+    fn is_maximizable(this) -> bool;
+    fn is_minimizable(this) -> bool;
+    fn max_width(this) -> f64;
+    fn max_height(this) -> f64;
+    fn min_width(this) -> f64;
+    fn min_height(this) -> f64;
+    fn wants_pinch_zoom(this) -> bool;
+    fn min_zoom(this) -> f64;
+    fn max_zoom(this) -> f64;
+    fn has_app_menu(this) -> bool;
+    fn app_menu(ref this) -> AppMenu;
+    fn should_close_callback(this) -> fn(*u8) -> bool;
+    fn will_close_callback(this) -> fn(*u8);
+    fn lifecycle_context(this) -> *u8;
+}
+
+// `should_close`, `will_close` and `component_context` were required of every
+// implementor and called by nothing — `run` uses the `_callback` pair, which
+// is what a backend can actually store on a window. Three methods every
+// hand-written Window had to write and none of them ran. Removed rather than
+// wired: a redundant requirement is a tax, and the callback pair is the one
+// with a consumer.
+
+// Menu-token re-exports, so a facade import serves an app's menu block whole.
+fn app_menu(title: str) -> AppMenu { return screen::app_menu(title); }
+fn menu_action_none() -> u32 { return screen::menu_action_none(); }
+fn menu_action_quit() -> u32 { return screen::menu_action_quit(); }
+fn menu_action_close_window() -> u32 { return screen::menu_action_close_window(); }
+fn menu_action_undo() -> u32 { return screen::menu_action_undo(); }
+fn menu_action_redo() -> u32 { return screen::menu_action_redo(); }
+fn menu_action_cut() -> u32 { return screen::menu_action_cut(); }
+fn menu_action_copy() -> u32 { return screen::menu_action_copy(); }
+fn menu_action_paste() -> u32 { return screen::menu_action_paste(); }
+fn menu_action_select_all() -> u32 { return screen::menu_action_select_all(); }
+fn menu_action_find() -> u32 { return screen::menu_action_find(); }
+fn menu_action_find_next() -> u32 { return screen::menu_action_find_next(); }
+fn menu_action_find_previous() -> u32 { return screen::menu_action_find_previous(); }
+fn menu_action_find_replace() -> u32 { return screen::menu_action_find_replace(); }
+fn null_enabled_fn() -> fn(*u8) -> bool { return screen::null_enabled_fn(); }
+fn null_title_fn() -> fn(*u8) -> text::Text { return screen::null_title_fn(); }
+
+// A window-shaped app. There are no windows here — an Activity has one screen —
+// so the Chrome is read for its ROOT and the rest of it recorded as ignored.
+// ---- the agent surface, for every host ---------------------------------------
+//
+// WHICH HOST AN APP IS ON IS NOT A REASON FOR ITS AGENT SURFACE TO DIFFER, and
+// it used to be the whole reason: `agent_mcp` was a method on `App`, so the
+// three blocking hosts — `run`, `run_component`, `run_screen` — had no way to
+// ask for one at all. A scaffolded app is on `run_screen` (AGENTS.md prescribes
+// it, because facet's Android facade does not implement `App::run`), so the
+// generated shape was exactly the shape that could not serve. See plan.md.
+//
+// ONE STORAGE, at process scope, because that is what the thing being described
+// actually is: one address, one accept loop, latched once by
+// `facet_agent::serve_once`. `App::agent_mcp` writes here too.
+//
+// Setting it is not enough on its own — the app still calls
+// `facet_agent::enable()` to fill the serving seam, exactly as the `App` tier
+// has always required.
+static AGENT_ID: text::Text = #zero::[text::Text]();
+
+// Serve the agent surface under the name `id`. Call before the host, on any
+// tier. AN ID, NOT AN ADDRESS: see the macOS facade for why, and
+// `agent_mcp::uds_path` / `agent_mcp::loopback_port` for the conventions.
+fn agent_mcp(id: str) {
+    AGENT_ID = text::from_str(id);
+}
+
+// The name this process serves under, or "" if the app never asked.
+fn agent_id() -> str { return AGENT_ID.view(); }
+
+// Start the worker if an address was named. Called by every host, BEFORE the
+// first window, so an agent that connects immediately waits on an empty surface
+// for a moment rather than being refused by a socket that does not exist yet.
+// `serve_once` latches, so a host that later opens more windows is a no-op
+// after the first.
+fn serve_agent_if_asked() {
+    let id: str = AGENT_ID.view();
+    if id != "" { app::agent_serve_once(id); }
+}
+
+fn run[W: Window](take window: W) {
+    backend::install();
+    serve_agent_if_asked();
+    var owned_window: W = window;
+    // BOXED, because the tree's handlers were bound against THIS instance in
+    // `build(ref this)` and the caller's frame is about to unwind. On iOS the
+    // frame never unwinds and on macOS the loop holds it; Android has neither.
+    match box::new::[W](owned_window) {
+        option::Option[box::Box[W]]::Some(bx) => {
+            let held: *W = { bx.into_raw() as *W };
+            if { (*held).wants_pinch_zoom() } {
+                host::set_zoom({ (*held).min_zoom() }, { (*held).max_zoom() });
+            }
+            var root: Node = { (*held).root() };
+            entry::set_root(root);
+        }
+        option::Option[box::Box[W]]::None => { no_backend("run (out of memory)"); }
+    }
+}
+
+fn run_component[C: component::Component + component::Lifecycle](
+    take component_v: C,
+    title: str = "facet",
+    width: f64 = 480.0f64,
+    height: f64 = 360.0f64,
+    // The zoom trio, forwarded like the other three. `run_component` built a
+    // Chrome naming only title/width/height, so content magnification was
+    // unreachable from the simple entry on BOTH platforms however well the
+    // backend implemented it — an app had to adopt `screen::Screen` to ask for a
+    // feature that has nothing to do with screens.
+    zoomable: bool = false,
+    min_zoom: f64 = 1.0f64,
+    max_zoom: f64 = 4.0f64,
+    take menu: AppMenu = screen::empty_app_menu(),
+) -> C {
+    backend::install();
+    serve_agent_if_asked();
+    var owned_menu: AppMenu = menu;
+    // An Activity has no menu bar. Recorded rather than dropped silently: an
+    // app that passes one has said something this platform cannot honour.
+    if { owned_menu.items.count() } > (0 as usize) { no_backend("an app menu"); }
+    // PINCH-TO-MAGNIFY, which the Android backend does have: the tree is
+    // wrapped in one host that scales and translates it, exactly as the iOS
+    // backend hands it to a UIScrollView's zoom. Left with `entry` rather than
+    // acted on here, because the wrapper needs an Activity and there is not one
+    // until the Activity calls in.
+    if zoomable { host::set_zoom(min_zoom, max_zoom); }
+    return hold_and_build::[C](component_v);
+}
+
+// A monomorphised call into the component's own `on_attach`, handed to the
+// backend as a plain fn-pointer plus an address. The address is stable because
+// the instance is boxed and never freed.
+fn attach_trampoline[C: component::Component + component::Lifecycle](ctx: *u8) {
+    let p: *C = ctx as *C;
+    { (*p).on_attach(component::Attach::Mount) };
+}
+
+fn attach_trampoline_screen[S: component::Component + component::Lifecycle + screen::Screen](ctx: *u8) {
+    let p: *S = ctx as *S;
+    { (*p).on_attach(component::Attach::Mount) };
+}
+
+// The half `run_component` and `run_screen` share: box the component so its
+// address outlives this frame, build the tree from the BOXED instance, and hand
+// the tree to the entry point.
+//
+// RETURNS A ZEROED C, and the signature is why. Every facade returns the
+// component — on macOS after the loop, on iOS unreachably — and an application
+// that discards it (both galleries do) drops what it is given. The real
+// instance has been moved into the box and must not be dropped with it, so what
+// comes back is an empty shell: stdlib's drops tolerate a zeroed value, which
+// this was checked against before the shape was chosen.
+//
+// An app that BINDS the return value gets a hollow component. Nothing does, and
+// on iOS the value never arrives at all, so the shape is already understood as
+// unusable rather than merely unused.
+fn hold_and_build[C: component::Component + component::Lifecycle](take c: C) -> C {
+    var owned: C = c;
+    match box::new::[C](owned) {
+        option::Option[box::Box[C]]::Some(bx) => {
+            let held: *C = { bx.into_raw() as *C };
+            var root: Node = { (*held).build() };
+            entry::set_root(root);
+            // `on_attach` CANNOT fire here: the tree is not mounted until the
+            // Activity takes the View, which happens after this returns. A
+            // component that calls `mount::find` in `on_attach` would get None
+            // and come up with its shell and no content.
+            entry::on_attached(attach_trampoline::[C], { #addr(held) as *u8 });
+            // THE APP LIFECYCLE, and on Android this is the one that matters
+            // most: the Activity is PAUSED and RESUMED many times over a run
+            // while the tree stays attached the whole time, and the system
+            // revokes exclusive devices — the camera above all — on the way
+            // out. `held` is boxed and never freed, so the subscription is
+            // good for the life of the process and there is nothing to unbind.
+            let _bound: status::Status = component::bind_app_lifecycle::[C](held);
+        }
+        option::Option[box::Box[C]]::None => { no_backend("run_component (out of memory)"); }
+    }
+    return #zero::[C]();
+}
+
+fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
+    take screen_v: S,
+    take menu: AppMenu = screen::empty_app_menu(),
+) -> S {
+    backend::install();
+    serve_agent_if_asked();
+    var owned_menu: AppMenu = menu;
+    if { owned_menu.items.count() } > (0 as usize) { no_backend("an app menu"); }
+    // The Chrome's title, size and window buttons describe a desktop window.
+    // A phone has one screen and the system draws its own bar, so the REST of
+    // the Chrome is read and dropped — deliberately, and said once.
+    no_backend("screen chrome (title, size, window buttons)");
+    return hold_and_build_screen::[S](screen_v);
+}
+
+fn hold_and_build_screen[S: component::Component + component::Lifecycle + screen::Screen](take s: S) -> S {
+    var owned: S = s;
+    match box::new::[S](owned) {
+        option::Option[box::Box[S]]::Some(bx) => {
+            let held: *S = { bx.into_raw() as *S };
+            // The ONE part of the Chrome a phone can honour, read before the
+            // build so it is set by the time the Activity asks for a view.
+            let c: screen::Chrome = { (*held).chrome() };
+            if { c.zoomable } { host::set_zoom({ c.min_zoom }, { c.max_zoom }); }
+            var root: Node = { (*held).build() };
+            entry::set_root(root);
+            entry::on_attached(attach_trampoline_screen::[S], { #addr(held) as *u8 });
+        }
+        option::Option[box::Box[S]]::None => { no_backend("run_screen (out of memory)"); }
+    }
+    return #zero::[S]();
+}
+
+// ---- the window/app tier the macOS facade grew, mirrored here ---------------
+//
+// This file's own promise: "The base keeps the facade's full surface so app
+// code type-checks on every target." It had stopped being true — Stage 4 added
+// ten verbs to runtime_macos and none of them here, so an application using
+// `display_density` or `observe_stopped` compiled on a Mac and nowhere else.
+// That is the opposite of what a portable base is for.
+//
+// Each is the no-backend posture the rest of this file uses: say so once, and
+// answer something harmless.
+
+// ANSWERED. `DisplayMetrics.density` — the one platform constant a backend
+// should never re-derive, which is the lesson rung 0 recorded about MeasureSpec.
+fn display_density() -> f64 {
+    return host::density();
+}
+
+fn observe_display_density(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_display_density");
+    return services::Cancellable::none();
+}
+
+fn is_window_active() -> bool {
+    no_backend("is_window_active");
+    return false;
+}
+
+fn observe_window_size(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_window_size");
+    return services::Cancellable::none();
+}
+
+fn observe_backgrounding(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_backgrounding");
+    return services::Cancellable::none();
+}
+
+fn observe_resumed(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_resumed");
+    return services::Cancellable::none();
+}
+
+fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    no_backend("observe_stopped");
+    return services::Cancellable::none();
+}
+
+fn set_app_appearance(a: vocab::Appearance) {
+    no_backend("set_app_appearance");
+}
+
+// ANSWERED. `Configuration.uiMode & UI_MODE_NIGHT_MASK`, which is the same read
+// `theme::set_is_dark_fn` was given at install.
+fn app_appearance() -> vocab::Appearance {
+    if host::is_dark() { return vocab::Appearance::Dark; }
+    return vocab::Appearance::Light;
+}
+
+// `alert` DIVERGED, which is worse than being missing: the base was blocking
+// and returned the chosen index, the macOS facade is non-blocking with an
+// `on_answer` callback. Either spelling failed to compile on the other target.
+//
+// The macOS shape is the one that is right — a modal loop is what the sheet
+// rewrite existed to get rid of, so an agent can answer a dialog — so the base
+// takes it, and the blocking form keeps its own name on both.
+fn alert(title: str, message: str, primary: str, secondary: str = "",
+         on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+         on_answer_ctx: *u8 = 0 as *u8) {
+    no_backend("alert");
+    return;
+}
+
+fn alert_blocking(title: str, message: str, primary: str, secondary: str = "") -> i32 {
+    no_backend("alert_blocking");
+    return -1;
+}
+
+fn choose_directory() -> option::Option[text::Text] {
+    no_backend("choose_directory");
+    return option::Option[text::Text]::None;
+}
+
+fn choose_file() -> option::Option[text::Text] {
+    no_backend("choose_file");
+    return option::Option[text::Text]::None;
+}
+
+// The clipboard IS here, unlike the file picker above: ClipboardManager is
+// framework and reachable through plain JNI, so this forwards like any other
+// service. See facet_android/clipboard.
+fn copy_text(s: str) -> bool { return clipboard::copy_text(s); }
+fn paste_text() -> option::Option[text::Text] { return clipboard::paste_text(); }
+
+fn present_window(take root: Node, title: str, width: f64, height: f64) {
+    no_backend("present_window");
+}
+
+fn window_close(sender: *u8) { return; }
+fn window_minimize(sender: *u8) { return; }
+fn window_zoom(sender: *u8) { return; }
+
+// Window focus/blur (parity with the macOS facade): inert handles here.
+fn observe_window_active(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    return services::Cancellable::none();
+}
+fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
+    return services::Cancellable::none();
+}
+
+// Window geometry: nothing is up, so reads are zero and writes are no-ops.
+fn window_frame() -> vocab::Rect {
+    return vocab::Rect::zero();
+}
+fn set_window_frame(frame: vocab::Rect) { return; }
+
+// ---- App (parity surface; run() refuses loudly) -----------------------------
+
+fn app_hook_noop(ctx: *u8) { return; }
+
+// AN APP IS AN INSTANCE, AND THIS IS A HANDLE TO ONE. The runtime owns the
+// instance (`app::new_instance`); the caller owns a name for it. Every other
+// facet tier already works this way — `Label`, `Button`, `window::Window`,
+// `screen::Cursor` — and App was the last one where the caller held the thing
+// itself.
+//
+// That is not a tidy-up. `App::run` on Android sets up and RETURNS, because the
+// Activity owns the loop — so an App the caller owned was dropped the moment
+// `main` unwound, leaving `app::make_current` and the route registry pointing
+// at freed memory. It is why Android had no App tier at all.
+//
+// The state lives in `app::Application`, which is where application.cplus says
+// app-scoped state goes. It used to be declared FIVE times, once per facade.
+struct App {
+    opaque _p: *app::Application,
+}
+
+impl App {
+    fn new(name: str = "facet") -> App {
+        let p: *app::Application = app::new_instance(name);
+        { (*p).on_launch_fn = app_hook_noop };
+        { (*p).on_quit_fn = app_hook_noop };
+        return App { _p: p };
+    }
+
+    fn name(this) -> str { return app::instance_name(this._p); }
+
+    fn menu(this, build: fn() -> AppMenu) { { (*this._p).menu_fn = build as *u8 }; return; }
+
+    fn screen(this, name: str, factory: fn() -> screen::ScreenBox) {
+        app::add_route(this._p, name, factory as *u8);
+    }
+
+    fn agent_mcp(this, id: str = "") {
+        if id == "" { agent_mcp(this.name()); return; }
+        agent_mcp(id);
+    }
+
+    fn on_launch(this, f: fn(*u8), ctx: *u8 = 0 as *u8) {
+        { (*this._p).on_launch_fn = f };
+        { (*this._p).hook_ctx = ctx };
+    }
+
+    fn on_quit(this, f: fn(*u8)) { { (*this._p).on_quit_fn = f }; return; }
+
+
+    // ---- the app's environment ------------------------------------------------
+    // Facts about THIS app, living for its life. Not `stdlib::env` — that is the
+    // OS's — and deliberately without a change channel: if the UI must update
+    // when a value changes, it belongs in a `resource`.
+    //
+    // `@` keys are C+'s and facet's (`@platform`, `@arch`, `@target`,
+    // `@app.name`, `@backend`), and `set_env` refuses them so an application
+    // cannot tell an agent it is something it is not.
+    fn env(this, key: str) -> str { return app::env_in(this._p, key); }
+    fn set_env(this, key: str, value: str) -> bool {
+        return app::set_env_in(this._p, key, value);
+    }
+    fn env_flag(this, key: str) -> bool { return app::env_flag_in(this._p, key); }
+    fn set_env_flag(this, key: str, on: bool) -> bool {
+        return app::set_env_flag_in(this._p, key, on);
+    }
+    fn has_env(this, key: str) -> bool { return app::has_env_in(this._p, key); }
+    fn clear_env(this, key: str) -> bool { return app::clear_env_in(this._p, key); }
+    fn env_keys(this) -> vec::Vec[text::Text] { return app::env_keys_in(this._p); }
+
+    // ---- what the app is showing ----------------------------------------------
+    // Sugar over the window and screen tiers, and worth having: the app is the
+    // thing a caller already has in hand.
+    fn windows(this) -> vec::Vec[window::Window] { return window::all(); }
+    fn window_keys(this) -> vec::Vec[text::Text] { return window::keys(); }
+    fn screens(this) -> vec::Vec[screen_mod::Cursor] { return screen_mod::stack(); }
+    fn is_running(this) -> bool { return app::has_current(); }
+
+    // The one place that knows both sides of the *u8 the record stores.
+    fn route_factory(this, route: str) -> fn() -> screen::ScreenBox {
+        return app::route_factory(this._p, route) as fn() -> screen::ScreenBox;
+    }
+
+    // SHOW `initial` AND RETURN. This is the one facade where `run` does not
+    // block, and it is the Activity's fault in the ordinary sense: the loop is
+    // Android's, not ours. `run` sets the app up, hands the tree to the entry
+    // point and returns — the Activity calls in afterwards and drives.
+    //
+    // Which is exactly why `App` had to become a handle first. A `run` that
+    // returns while the app is still alive cannot hold state in the caller's
+    // frame; the instance is the runtime's and outlives `main`.
+    //
+    // `app::make_current` is NOT released here. The app runs for the life of
+    // the process and there is no moment after the loop to release it in.
+    fn run(this, initial: str, arg: str = "") -> status::Status {
+        // The contract every real facade follows: the app's record IS
+        // Application.Current while its loop runs, and stops being it
+        // after — a second app started later begins from its own clean
+        // record. The host back-pointer makes this the ONE door: the
+        // app-context readers below derive the App from it.
+        app::make_current(this._p);
+        nav::reset(arg);
+        nav::set_close_fn(close_current);
+        nav::set_push_fn(push_screen);
+        nav::set_pop_fn(pop_screen);
+        nav::set_pop_to_fn(stack::pop_to);
+        nav::set_depth_fn(stack::depth);
+        serve_agent_if_asked();
+        let launch: fn(*u8) = { (*this._p).on_launch_fn };
+        if launch.is_not_null() { launch({ (*this._p).hook_ctx }); }
+
+        // The route resolves NOW — a bad name should fail before the process is
+        // handed to the Activity — and the screen is built here too, because
+        // `entry::set_root` is what the Activity asks for a view.
+        let f: fn() -> screen::ScreenBox = this.route_factory(initial);
+        if f.is_null() {
+            nav::clear_hooks();
+            app::release_current();
+            return status::Status::InvalidInput;
+        }
+        var sb: screen::ScreenBox = f();
+        if !sb.valid() {
+            nav::clear_hooks();
+            app::release_current();
+            return status::Status::InvalidInput;
+        }
+        // The Chrome's title, size and window buttons describe a desktop
+        // window. Read and dropped, deliberately and once — same as run_screen.
+        no_backend("screen chrome (title, size, window buttons)");
+        if !show_primary(sb) {
+            nav::clear_hooks();
+            app::release_current();
+            return status::Status::InvalidInput;
+        }
+        // DOES NOT ENTER A LOOP. The Activity owns it.
+        return status::Status::Ok;
+    }
+}
+
+// ---- the primary screen ----------------------------------------------------------
+// Boxed, because `run` returns and the Activity calls in later — there is no
+// frame here to keep a screen in. The box lives on the app record rather than a
+// module static, which is what the statics rule forbids for app-scoped state.
+
+fn show_primary(take sb: screen::ScreenBox) -> bool {
+    var owned: screen::ScreenBox = sb;
+    var root: Node = stack::open_base(owned.build());
+    // `entry::set_root` BOXES and keeps the first tree it is given — an Activity
+    // recreation re-mounts the same one, which is what makes a rotation keep
+    // the screen the person was on.
+    entry::set_root(root);
+    let host_node: *core::Node = entry::root();
+    if host_node.is_null() { return false; }
+    stack::set_host(host_node);
+
+    let sbp: *u8 = match box::new::[screen::ScreenBox](owned) {
+        option::Option[box::Box[screen::ScreenBox]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[screen::ScreenBox]]::None => 0 as *u8,
+    };
+    if sbp.is_null() { return false; }
+    app::set_primary_screen(sbp);
+    // `on_attach` CANNOT fire yet: the tree is not mounted until the Activity
+    // takes the View, which happens after this returns. A screen calling
+    // `mount::find` in `on_attach` would get None and come up empty.
+    entry::on_attached(primary_attached, sbp);
+    let _bound: status::Status =
+        component::bind_app_lifecycle::[screen::ScreenBox](sbp as *screen::ScreenBox);
+    return true;
+}
+
+fn primary_attached(ctx: *u8) {
+    if ctx.is_null() { return; }
+    { (*(ctx as *screen::ScreenBox)).on_attach(component::Attach::Mount) };
+}
+
+// ---- app context ------------------------------------------------------------
+// Everything derives from the ONE door: `app::current()` answers the running
+// Application record, whose `host` points back at the embedding App. No
+// second static.
+
+// THE RUNNING APP, as a handle. One app runs at a time, so `app::current()` is
+// the whole answer — the handle is that pointer wearing the App type.
+//
+// `runtime::app()` always answers: the running app, or the process default.
+fn app() -> App {
+    return App { _p: app::current() };
+}
+
+fn app_running() -> bool { return app::has_current(); }
+
+fn app_name() -> str {
+    if !app::has_current() { return ""; }
+    return app::instance_name(app::current());
+}
+
+fn has_screen(route: str) -> bool {
+    if !app::has_current() { return false; }
+    return app::route_factory(app::current(), route).is_not_null();
+}
+
+fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
+    if !app::has_current() { return false; }
+    if has_screen(route) { return false; }
+    app::add_route(app::current(), route, factory as *u8);
+    return true;
+}
+
+// ---- the dialog and navigation tier, mirrored here --------------------------
+//
+// Same drift as the window/app tier above, and found the same way: an app
+// called `runtime::prompt`, which both real facades carry, and the base did
+// not — so the code compiled on a Mac and on iOS and failed to TYPE-CHECK
+// anywhere else. That is precisely the failure this file's header promises to
+// prevent, so a member reaching a facade without reaching here is a bug in the
+// base, not a feature of the facade.
+//
+// Sweeping for the rest of it (`^fn` in each facade against `^fn` here) turned
+// up eight, not one. They are all below, in two kinds:
+//
+//   * BACKEND ENTRY POINTS — `prompt`, `choose`, `close_current`,
+//     `push_screen`, `pop_screen`. Something has to be on screen for these to
+//     mean anything, so they take the no-backend posture: say so once, answer
+//     harmlessly.
+//   * PURE ADAPTERS — `chrome_of_window`, `default_should_close`,
+//     `default_will_close`. These touch no toolkit; they read an interface the
+//     app implements, or are the trivial default of a callback pair. A
+//     loud-failing copy would be WRONG, not merely absent: it would fail on a
+//     platform where the answer is knowable. They are the real thing here,
+//     identical to both facades.
+
+// A one-field naming sheet — the shape behind "New Folder", "Add Column".
+fn prompt(title: str, message: str, placeholder: str = "", primary: str = "OK",
+          secondary: str = "Cancel",
+          on_typed: fn(str, *u8) = 0 as fn(str, *u8),
+          on_typed_ctx: *u8 = 0 as *u8,
+          on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+          on_answer_ctx: *u8 = 0 as *u8,
+          initial: str = "") {
+    no_backend("prompt");
+    return;
+}
+
+// `options` is TAKEN on both facades, so it is taken here too — a base that
+// borrowed where the real one consumes would move the compile error rather
+// than remove it.
+fn choose(title: str, message: str, take options: vec::Vec[text::Text],
+          on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+          on_answer_ctx: *u8 = 0 as *u8) {
+    var owned: vec::Vec[text::Text] = options;
+    no_backend("choose");
+    return;
+}
+
+// nav::go / nav::quit while the Activity is up.
+fn close_current() {
+    let taken: u32 = nav::take();
+    if taken == nav::intent_go() {
+        let _ok: bool = show_route(nav::target());
+        return;
+    }
+    if taken == nav::intent_quit() {
+        // An Android app does not exit itself. Back from the first screen
+        // leaves it, and the system decides when the process goes — an app
+        // that called `exit()` would look to the user like a crash. Reported
+        // and refused rather than honoured badly, the same posture iOS takes.
+        no_backend("nav::quit");
+    }
+}
+
+// Replace the primary screen in place: the Activity's view stays, its content
+// changes. Everything pushed over the old screen goes with it.
+fn show_route(route: str) -> bool {
+    if !app::has_current() { return false; }
+    let f: fn() -> screen::ScreenBox =
+        app::route_factory(app::current(), route) as fn() -> screen::ScreenBox;
+    if f.is_null() { return false; }
+    var sb: screen::ScreenBox = f();
+    if !sb.valid() { return false; }
+    // BUILD BEFORE TEARING DOWN: a screen that cannot build must leave the one
+    // on screen exactly where it is.
+    var tree: Node = sb.build();
+    if !stack::replace_base(tree) { return false; }
+
+    // The outgoing primary, in the order every teardown in facet uses.
+    let old: *u8 = app::primary_screen();
+    if old.is_not_null() {
+        let _unbound: status::Status =
+            component::unbind_app_lifecycle::[screen::ScreenBox](old as *screen::ScreenBox);
+        { (*(old as *screen::ScreenBox)).on_detach(component::Detach::Unmount) };
+        // NOT FREED, for the reason every facade records: a queued apply may
+        // still be inside this screen's data and the next screen is allocated
+        // into whatever this frees. One screen per navigation, deliberately.
+    }
+
+    let sbp: *u8 = match box::new::[screen::ScreenBox](sb) {
+        option::Option[box::Box[screen::ScreenBox]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[screen::ScreenBox]]::None => 0 as *u8,
+    };
+    if sbp.is_null() { return false; }
+    app::set_primary_screen(sbp);
+    let _bound: status::Status =
+        component::bind_app_lifecycle::[screen::ScreenBox](sbp as *screen::ScreenBox);
+    { (*(sbp as *screen::ScreenBox)).on_attach(component::Attach::Mount) };
+    return true;
+}
+
+// nav::push. A phone has ONE window, so both shapes are a stack push — that is
+// the `Show` rule working rather than a degradation: `Show::Window` asks for
+// whatever room the platform has, and here the room is a stack entry.
+fn push_screen(route: str, key: str, arg: str, show: u32) -> bool {
+    if !app::has_current() { return false; }
+    let _shape: u32 = show;
+    let f: fn() -> screen::ScreenBox =
+        app::route_factory(app::current(), route) as fn() -> screen::ScreenBox;
+    if f.is_null() { return false; }
+    nav::adopt_push_args(arg);   // after the lookup: a failed push leaves them alone
+    var sb: screen::ScreenBox = f();
+    if !sb.valid() { return false; }
+    if !stack::push(sb, route, key) { return false; }
+    nav::set_top_route(route);
+    return true;
+}
+
+// nav::pop, and THE SYSTEM BACK BUTTON — `facet_android_back` calls
+// `nav::pop()` and falls through to `super.onBackPressed()` when it answers
+// false. That door has existed since the backend did; nothing on this platform
+// ever registered a hook behind it, so back always quit the app from a demo
+// screen. This is the hook.
+fn pop_screen() -> bool {
+    let p: *u8 = stack::pop_and_take();
+    if p.is_null() { return false; }
+    nav::set_top_route(stack::top_route());
+    // No scheduler settle here, so the box is kept rather than freed — the same
+    // choice iOS makes for the same reason.
+    let _kept: *u8 = p;
+    return true;
+}
+
+// Reads the app's own `Window` implementation. No toolkit is involved, so this
+// answers for real on every target.
+fn chrome_of_window[W: Window](ref w: W) -> Chrome {
+    return screen::Chrome::new(
+        title: w.title(),
+        width: w.width(),
+        height: w.height(),
+        min_width: w.min_width(),
+        min_height: w.min_height(),
+        bar: w.bar(),
+        maximizable: w.is_maximizable(),
+        minimizable: w.is_minimizable(),
+        max_width: w.max_width(),
+        max_height: w.max_height(),
+        zoomable: w.wants_pinch_zoom(),
+        min_zoom: w.min_zoom(),
+        max_zoom: w.max_zoom(),
+    );
+}
+
+// The default halves of the close-callback pair: allow the close, do nothing
+// on the way out.
+fn default_should_close(ctx: *u8) -> bool { return true; }
+fn default_will_close(ctx: *u8) { return; }
+
+// ---- tests ------------------------------------------------------------------
+
+fn rt_screen_factory() -> screen::ScreenBox { return screen::ScreenBox::invalid(); }
+
+#[test]
+fn app_routes_register_and_resolve() {
+    var a: App = App::new(name: "probe");
+    assert a.name() == "probe";
+    a.screen("workspace", rt_screen_factory);
+    a.screen("settings", rt_screen_factory);
+    assert a.route_factory("workspace") != (0 as fn() -> screen::ScreenBox);
+    assert a.route_factory("nowhere") == (0 as fn() -> screen::ScreenBox);
+}
+
+#[test]
+fn app_context_is_inert_without_a_running_app() {
+    // The no-backend posture: nothing running, every reader answers neutrally.
+    app::release_current();
+    assert app_running() == false;
+    assert app_name() == "";
+    assert has_screen("workspace") == false;
+    assert register_screen("workspace", rt_screen_factory) == false;
+}
+
+#[test]
+fn app_run_refuses_a_route_it_cannot_resolve() {
+    // `run` is REAL on this platform now — it sets the app up, hands the tree
+    // to the entry point and returns, because the Activity owns the loop. What
+    // it still refuses is a route nothing registered: the app cannot come up
+    // with no screen, and failing here is failing before the process is handed
+    // to Android rather than showing an empty Activity.
+    var a: App = App::new();
+    let s: status::Status = a.run("main");
+    assert s == status::Status::InvalidInput;
+    // and it left nothing armed behind it
+    assert app_running() == false;
+}
+
+#[test]
+fn the_dialog_and_nav_tier_is_present_and_inert() {
+    // The dialogs still take the no-backend posture — there is no Activity in a
+    // headless run to present one into. The NAV tier is real now and answers
+    // false for the honest reason: no app is running, so there is no route
+    // registry to resolve against and no stack to pop.
+    prompt("Rename", "New name", placeholder: "name", initial: "old.txt");
+    choose("Pick", "one", vec::Vec[text::Text]::new());
+    close_current();
+    assert push_screen("workspace", "workspace", "", nav::show_code(nav::Show::Window)) == false;
+    // THE BACK BUTTON'S ANSWER. `facet_android_back` turns this false into
+    // `super.onBackPressed()`, which is what makes back from the first screen
+    // leave the app — the Android behaviour, and the right one at the root.
+    assert pop_screen() == false;
+    assert nav::pop() == false;
+    // The pure adapters answer for real, with no backend anywhere.
+    assert default_should_close(0 as *u8) == true;
+    default_will_close(0 as *u8);
+}

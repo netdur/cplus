@@ -1,0 +1,33 @@
+[package]
+name    = "share"
+version = "0.0.1"
+edition = "2026"
+
+# share — hand something to the rest of the system.
+#
+# The platform's own sheet, never a list this package draws: which apps appear,
+# in what order, and what they are allowed to do with the item is the system's
+# business and changes without notice.
+
+[dependencies]
+stdlib = "*"
+
+[macos.dependencies]
+objc       = "*"
+appkit     = "*"
+quartzcore = "*"
+webkit     = "*"
+
+[ios.dependencies]
+objc       = "*"
+uikit      = "*"
+quartzcore = "*"
+webkit     = "*"
+
+[android.dependencies]
+jni           = "*"
+android_view  = "*"
+facet         = "*"
+facet_android = "*"
+flex_layout   = "*"
+events        = "*"

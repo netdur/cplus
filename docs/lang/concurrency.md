@@ -87,6 +87,17 @@ are outstanding. The join is in `Scope`'s `drop`, which is what makes the
 lifetime sound: the borrow cannot outlive the scope, so the worker cannot
 outlive the data.
 
+**A scope is a cancellation boundary.** Cancel the thread that owns one while
+its workers are still running and the drop still joins — the parent blocks
+until every worker finishes on its own, in the middle of a teardown that asked
+to be quick. The cancel token is per-thread, so a cancelled parent does not
+reach a worker it lent data to, and nothing tries to make it: the borrow's
+soundness rests entirely on that join, and a cancellation that could race it
+would trade a hang for a use-after-free on lent data. `lend` is a commitment to
+wait. A worker that must be stoppable takes its own `JoinHandle` through
+`spawn` / `spawn_with` and polls `thread::cancelled()` — it just cannot borrow
+a parent local while doing so.
+
 Two workers cannot lend the *same* local: the second `lend` is **E0381**,
 "cannot borrow `a` exclusively while it is borrowed by `s`". That is
 aliasing XOR mutability arriving at the thread boundary. Lending two
@@ -118,34 +129,56 @@ once and the last one out drops the buffer.
 ## 5. `async fn` and the executor
 
 ```cplus
-import "stdlib/executor" as executor;
-
 async fn fetch(take url: text::Text) -> i32 { return (await get(url)) +% 1; }
 
-fn main() -> i32 { return executor::block_on::[i32](fetch(u)); }
+async fn main() -> i32 { return await fetch(u); }   // the compiler drives the entry
 ```
 
 The rules that shape every async signature you will write:
 
-- **`main` is never `async`.** The entry point is a plain `fn main` that
-  calls a drive function. There is no hidden runtime to install.
+- **`main` may be `async`, and so may a `#[test]` fn** (v0.0.31). The
+  compiler splits the entry into a private async body and a synchronous
+  wrapper whose whole body is the drive loop — the same loop `Future::wait`
+  is, so this is sugar and nothing more. There is no
+  hidden runtime to install: the reactor is created on the first suspend.
+  An `async fn main()` with a unit return is E0309 exactly as `fn main()`
+  is. `await` outside an `async fn` remains E0901: the entry may be async,
+  but the keyword still means suspend, never block.
 - **Borrow-shaped parameters are rejected: E0900.** No `str`, no `T[]`, no
   `ref x: NonCopy` in an `async fn` signature. A coroutine frame outlives
   the call that created it, so a borrow in it has no owner to point at.
   Pass `Text` and `Vec[T]` — owned, moved in.
-- **A `Future` must be consumed.** `await`, `block_on`, `run`, or
-  `cancel` — a future that is merely dropped leaks its frame.
+- **A `Future` cleans up however it ends.** `await`, `block_on`, `run` and
+  `cancel` all consume one; a future that is merely dropped destroys its
+  frame through its destructor, running the cancel edges as `cancel` would.
+  There is nothing you have to remember to do.
 - **32-bit targets have no async: E0867.**
 - Each thread gets its own reactor, created on first use (kqueue on
   Darwin, epoll on Linux and Android).
 
-Three ways to drive:
+Three ways to drive a future from synchronous code — a handler, a worker,
+anything that is not the entry:
 
 | Call | Behavior |
 |---|---|
-| `executor::block_on[T](f) -> T` | drive to completion; a cancel request does not stop it |
-| `executor::run[T](take f) -> RunResult[T]` | drive **cancellably**: `Done(T)` or `Cancelled` |
+| `f.wait() -> T` | drive to completion; a cancel request does not stop it |
+| `future::wait_or_cancel(take f) -> WaitResult[T]` | drive **cancellably**: `Done(T)` or `Cancelled` |
 | `executor::spawn_local[T](take f)` | hand the future to this thread's executor and return |
+
+```cplus
+fn normal() -> i32 {
+    let x: i32 = get_data().wait();   // blocks this thread, running its reactor, until the value is out
+    return x;
+}
+```
+
+`wait` and `wait_or_cancel` consume the future (`take`), the way
+`JoinHandle::join` consumes a handle: the value comes out, then the frame is
+freed. The executor is per thread and implicit, so the future is the only
+handle you hold — which is why the drive is on it and names no executor.
+`wait_or_cancel` is a free function rather than a method because its
+`WaitResult[T]` cannot be built for `T = ()`, and a method would be
+instantiated for `Future[()]` in every prebuilt package.
 
 ## 6. Cancellation
 
@@ -171,15 +204,26 @@ let r = h.join();           // still waits, still returns the worker's value
   (buffered data still wins), `TcpStream::read_to_end` / `write_all` /
   `TcpListener::accept` → `IoError::Cancelled`, mutators →
   `Status::Cancelled`.
-- `executor::run` destroys the suspended frame tree on a cancel request:
-  every `await`'s destroy edge runs the drops of the locals live at that
-  suspension point, transitively. Cancellation cannot skip a drop.
-- `Future::cancel(take this)` is the explicit drop-to-cancel for a future
-  you have decided not to drive.
-- The async↔thread bridge: `executor::join_worker[O](take h)` awaits a
-  spawned thread's result without blocking the executor, and
-  `executor::receive_or_cancel[T](take ch)` is an async channel receive
-  that surfaces `Cancelled`. Both poll on the reactor's timer.
+- `future::wait_or_cancel` destroys the suspended frame tree on a cancel
+  request: every `await`'s destroy edge runs the drops of the locals live at
+  that suspension point, transitively. Cancellation cannot skip a drop.
+- **Dropping a future cancels it.** `Future` has a destructor: the frame is
+  destroyed and every suspend point's cancel edge runs, wherever the value
+  goes out of scope. `Future::cancel(take this)` is the same thing said as a
+  verb, for when "I am giving up on this" should read at the call site.
+- The async↔thread bridge: `executor::join_worker[O](take h, timeout: f64 = 0)`
+  awaits a spawned thread's result without blocking the executor, and
+  `executor::receive_or_cancel[T](take ch, timeout: f64 = 0)` is an async
+  channel receive that surfaces `Cancelled`. Both poll on the reactor's timer.
+  `timeout` is in seconds and anything `<= 0` means no deadline.
+
+  An expiry answers with the vocabulary each already has: `receive_or_cancel`
+  returns `Cancelled`, and `join_worker` **requests cancellation and still
+  joins** — a cancelled worker's `join` returns its value, so the deadline is
+  on the asking rather than a kill, and a worker that ignores the request is
+  still waited for. Buffered data beats an expiry the same way it beats a
+  cancellation. The clock is `time::now_millis`, so a system clock stepped
+  backwards defers an expiry rather than firing it early.
 - `thread::cancelled()` works inside `async fn` bodies — the token belongs
   to the thread, not to the coroutine.
 - **Cancellation does not cross a process boundary.** A PTY child or a
@@ -266,10 +310,11 @@ indexed over `0..n`.
   caused it.** E0502 names the type; the raw pointer inside it is what
   flipped the marker. Vouch with `impl T: Send {}` only when you have
   actually reasoned about it.
-- **`block_on` ignores a cancel request.** If a worker must be stoppable,
-  drive with `run` and handle `RunResult::Cancelled`.
-- **A dropped `Future` leaks.** The frame is heap-allocated and only the
-  four consuming paths free it.
+- **`wait` ignores a cancel request.** If a worker must be stoppable, drive
+  with `future::wait_or_cancel(f)` and handle `WaitResult::Cancelled`.
+- **Dropping a `Future` cancels it** (v0.0.30). A future you set aside and
+  never await is destroyed at scope exit, drops and all — bind it if it
+  must outlive the statement that made it.
 - **`join` consumes the handle; `cancel` does not.** Cancel first, join
   second, in that order.
 - **Two `lend`s of the same local do not compile**, and that is the feature

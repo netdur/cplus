@@ -1,0 +1,143 @@
+// notify — one named-notification observation, cancellable.
+//
+// WHY IT IS HERE AND NOT IN `uikit`. `vendor/uikit/src/uikit.cplus` is
+// bindgen output and there is no `uikit_ext.cplus` to hold a hand-written
+// survivor, so the AppKit arrangement — `appkit_ext.cplus` carrying
+// `observe_named` next to the generated binding — has no counterpart on this
+// side. It lives in the backend instead, and the shape is deliberately the
+// same one so the two can be read against each other:
+//
+//     appkit_ext::observe_named(name, object, handler, ctx) -> u64
+//     notify::observe_named(name, object, handler, ctx)     -> u64
+//     ...::cancel_observe(id)
+//
+// WHY IT EXISTS AT ALL. Two callers wanted it in the same change:
+// `runtime_ios`'s five lifecycle verbs, which are the iOS half of what
+// `runtime_macos` already does through `akx::observe_named`, and
+// `app_events_uikit`, which is the SDK fan-out. Both were previously wired to
+// app-delegate methods UIKit does not send to a scene-based app — see
+// `bugs/ios-lifecycle-verbs-never-fire-under-scenes.md`. Notifications are the
+// road that does not care about scene adoption, which is the whole point.
+//
+// THE OBSERVER IS A +1 THE REGISTRY OWNS. A notification centre holds its
+// observers UNRETAINED, so a target that is merely allocated and forgotten is
+// a dangling pointer the centre will message. The registry below holds the
+// retain and `cancel_observe` releases it, which is the same discipline
+// `appkit_ext`'s `after` and `observe_frame` record.
+
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/vec" as vec;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+
+// Distinct from `drawing.cplus` (29000) and `web.cplus` (29022): an associated
+// key is an ADDRESS, and two families sharing one would read each other's
+// values off the same object.
+fn obs_handler_key() -> *u8 { return { 29040 as *u8 }; }
+fn obs_ctx_key() -> *u8 { return { 29041 as *u8 }; }
+
+fn obs_sel() -> *u8 { return rt::sel(#str_ptr("cplusNotificationFired:\0")); }
+
+fn obs_imp(self_obj: *u8, cmd: *u8, notif: *u8) {
+    let f: fn(*u8) = { synth::get_associated(self_obj, obs_handler_key()) as fn(*u8) };
+    if f == (0 as fn(*u8)) { return; }
+    let ctx: *u8 = synth::get_associated(self_obj, obs_ctx_key());
+    f(ctx);
+    return;
+}
+
+static OBS_CLASS: *u8 = 0 as *u8;
+
+fn obs_class() -> *u8 {
+    if OBS_CLASS != (0 as *u8) { return OBS_CLASS; }
+    let name: *u8 = #str_ptr("FacetUIKitNotificationObserver\0");
+    let existing: *u8 = rt::get_class(name);
+    if existing != (0 as *u8) { OBS_CLASS = existing; return OBS_CLASS; }
+    let base: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    if base == (0 as *u8) { return 0 as *u8; }
+    let cls: *u8 = { synth::allocate_class_pair(base, name, 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_v_1id(cls, obs_sel(), obs_imp, #str_ptr("v@:@\0"));
+    { synth::register_class_pair(cls) };
+    OBS_CLASS = cls;
+    return OBS_CLASS;
+}
+
+struct Obs {
+    _id: u64,
+    opaque _target: *u8,   // +1, released on cancel
+}
+
+static OBS: vec::Vec[Obs] = #zero::[vec::Vec[Obs]]();
+static NEXT_OBS_ID: u64 = 1 as u64;
+
+fn notification_center() -> *u8 {
+    return { rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")),
+                        rt::sel(#str_ptr("defaultCenter\0"))) };
+}
+
+// Observe `name` from `object` (null = any sender). `handler(ctx)` fires on the
+// posting thread — which for every UIApplication notification is the main
+// thread, and callers that are not sure hop themselves.
+//
+// Returns the id to cancel with, or 0 if the observer could not be made. Zero
+// is a real answer rather than an abort: `Cancellable::of(0, ...)` is inert,
+// so a caller that ignores the failure gets a dead observation and not a crash.
+fn observe_named(name: str, object: *u8, handler: fn(*u8), ctx: *u8) -> u64 {
+    if handler == (0 as fn(*u8)) { return 0 as u64; }
+    let cls: *u8 = obs_class();
+    if cls == (0 as *u8) { return 0 as u64; }
+    let t: *u8 = { synth::alloc_init_class(cls) };
+    if t == (0 as *u8) { return 0 as u64; }
+    synth::set_associated(t, obs_handler_key(), { handler as *u8 });
+    synth::set_associated(t, obs_ctx_key(), ctx);
+    let c: *u8 = notification_center();
+    if c == (0 as *u8) { rt::release(t); return 0 as u64; }
+    { rt::msg_void_id_id_id_id(c, rt::sel(#str_ptr("addObserver:selector:name:object:\0")),
+                               t, obs_sel(), bridge::nsstring(name), object) };
+    let id: u64 = NEXT_OBS_ID;
+    NEXT_OBS_ID = NEXT_OBS_ID +% (1 as u64);
+    let reg: *vec::Vec[Obs] = { #addr_of(OBS) };
+    let _s: status::Status = (*reg).append(Obs { _id: id, _target: t });
+    return id;
+}
+
+// Take the target out of the registry, or null if the id is not there.
+fn obs_take(id: u64) -> *u8 {
+    let reg: *vec::Vec[Obs] = { #addr_of(OBS) };
+    let n: usize = { (*reg).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        match (*reg).at_ptr(i) {
+            option::Option[*Obs]::Some(ep) => {
+                if { (*ep)._id } == id {
+                    let t: *u8 = { (*ep)._target };
+                    let _g: option::Option[Obs] = (*reg).swap_remove(i);
+                    return t;
+                }
+            }
+            option::Option[*Obs]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// Stop an observation. A no-op for an id that was already cancelled — what
+// lets `Cancellable.cancel()` be idempotent and safe from a drop.
+fn cancel_observe(id: u64) {
+    if id == (0 as u64) { return; }
+    let t: *u8 = obs_take(id);
+    if t == (0 as *u8) { return; }
+    let c: *u8 = notification_center();
+    if c != (0 as *u8) {
+        { rt::msg_void_id(c, rt::sel(#str_ptr("removeObserver:\0")), t) };
+    }
+    rt::release(t);
+    return;
+}
+
+// How many observations are live — for tests and leak checks.
+fn pending_count() -> usize { return { OBS.count() }; }

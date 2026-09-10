@@ -1,0 +1,159 @@
+// filepicker_backend_windows — the real Win32 file dialogs.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS, and it opens an actual dialog:
+// `GetOpenFileNameW` / `GetSaveFileNameW` (comdlg32, on `cpc`'s Windows link
+// line). Unlike its mobile siblings this is a genuine desktop feature, so it is
+// implemented rather than stubbed.
+//
+// THE DIALOG IS MODAL. macOS's `NSOpenPanel` completes asynchronously, so its
+// `_c_open` returns `Ok` immediately and the handler fires later; the Win32
+// common dialog runs its own modal loop and does NOT return until the person
+// chooses or cancels. So here the handler fires BEFORE `_c_open` returns, on the
+// calling thread — the same "runs before the verb returns when no async wait is
+// needed" shape `permissions::request` documents. The `Outcome` and the handler
+// still mean exactly what the facade says: `Ok` = a panel was shown, an empty
+// `Pick` = cancelled.
+//
+// TYPE FILTERS are not wired in this pass — the dialog shows all files. Adding
+// them means turning the facade's `types` string into comdlg32's
+// double-NUL-terminated filter form, a refinement on top of a working picker.
+//
+// UNIT-UNTESTABLE BY NATURE: a modal dialog blocks on a window, so only
+// `_c_available` is asserted here; the dialogs themselves have a hand-run probe
+// under `playground/filepicker_probe`, the way drag/wheel behaviours do.
+
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "./filepicker" as fp;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
+
+#[link_name = "MultiByteToWideChar"]
+extern fn MultiByteToWideChar(cp: u32, flags: u32, mb: *u8, mblen: i32,
+                              wide: *u16, widelen: i32) -> i32;
+#[link_name = "WideCharToMultiByte"]
+extern fn WideCharToMultiByte(cp: u32, flags: u32, wide: *u16, widelen: i32,
+                              out: *u8, outlen: i32, def: *u8, used: *i32) -> i32;
+#[link_name = "GetOpenFileNameW"]
+extern fn GetOpenFileNameW(ofn: *u8) -> i32;
+#[link_name = "GetSaveFileNameW"]
+extern fn GetSaveFileNameW(ofn: *u8) -> i32;
+#[link_name = "CommDlgExtendedError"]
+extern fn CommDlgExtendedError() -> u32;
+
+fn _cp_utf8() -> u32 { return 65001 as u32; }
+
+// OPENFILENAMEW is 152 bytes on x86-64. The fields this backend sets:
+// lStructSize@0, lpstrFile@48, nMaxFile@56, Flags@96.
+fn _ofn_bytes() -> usize { return 152 as usize; }
+fn _off_struct_size() -> usize { return 0 as usize; }
+fn _off_file() -> usize { return 48 as usize; }
+fn _off_max_file() -> usize { return 56 as usize; }
+fn _off_flags() -> usize { return 96 as usize; }
+
+// OFN_NOCHANGEDIR(0x8) | OFN_PATHMUSTEXIST(0x800) | OFN_EXPLORER(0x80000), plus
+// OFN_FILEMUSTEXIST(0x1000) for open, OFN_OVERWRITEPROMPT(0x2) for save.
+fn _flags_open() -> u32 { return (0x8 as u32) + (0x800 as u32) + (0x1000 as u32) + (0x80000 as u32); }
+fn _flags_save() -> u32 { return (0x8 as u32) + (0x800 as u32) + (0x2 as u32) + (0x80000 as u32); }
+
+fn _put_u32(p: *u8, off: usize, v: u32) { { *((p + off) as *u32) = v }; return; }
+fn _put_ptr(p: *u8, off: usize, v: *u8) { { *((p + off) as *u64) = v as u64 }; return; }
+
+fn _file_wchars() -> usize { return 4096 as usize; }
+
+// UTF-16 (NUL-terminated) → owned UTF-8 Text.
+fn _from_wide(w: *u16) -> text::Text {
+    if w == (0 as *u16) { return text::new(); }
+    let need: i32 = { WideCharToMultiByte(_cp_utf8(), 0 as u32, w, 0 -% (1 as i32),
+                                          0 as *u8, 0 as i32, 0 as *u8, 0 as *i32) };
+    if need <= (0 as i32) { return text::new(); }
+    let buf: *u8 = { malloc(need as usize) };
+    if buf.is_null() { return text::new(); }
+    let got: i32 = { WideCharToMultiByte(_cp_utf8(), 0 as u32, w, 0 -% (1 as i32),
+                                         buf, need, 0 as *u8, 0 as *i32) };
+    var out: text::Text = text::new();
+    if got > (0 as i32) {
+        // `got` counts the NUL terminator; a `str` must not.
+        out = text::from_str({ #str_from_raw_parts(buf, (got -% (1 as i32)) as usize) });
+    }
+    { free(buf) };
+    return out;
+}
+
+// Copy a UTF-8 `str` into `dst` (a wide buffer of `cap` wchars), NUL-terminated.
+fn _fill_wide(dst: *u16, cap: usize, s: str) {
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let _n: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, cs.as_ptr(),
+                                                0 -% (1 as i32), dst, cap as i32) };
+        }
+        option::Option[text::CString]::None => { }
+    }
+    return;
+}
+
+// The shared body. `saving` picks the dialog and its flags; `suggested` pre-fills
+// the name field on a save.
+fn _run(on_pick: fn(*u8, usize, *u8), ctx: *u8, saving: bool, suggested: str) -> i32 {
+    let filebuf: *u8 = { malloc(_file_wchars() *% (2 as usize)) };
+    if filebuf.is_null() { return fp::Outcome::Failed.to_code(); }
+    { memset(filebuf, 0 as i32, _file_wchars() *% (2 as usize)) };
+    if saving && #str_len(suggested) > (0 as usize) {
+        _fill_wide(filebuf as *u16, _file_wchars(), suggested);
+    }
+
+    let ofn: *u8 = { malloc(_ofn_bytes()) };
+    if ofn.is_null() { { free(filebuf) }; return fp::Outcome::Failed.to_code(); }
+    { memset(ofn, 0 as i32, _ofn_bytes()) };
+    _put_u32(ofn, _off_struct_size(), _ofn_bytes() as u32);
+    _put_ptr(ofn, _off_file(), filebuf);
+    _put_u32(ofn, _off_max_file(), _file_wchars() as u32);
+    _put_u32(ofn, _off_flags(), if saving { _flags_save() } else { _flags_open() });
+
+    let r: i32 = if saving { GetSaveFileNameW(ofn) } else { GetOpenFileNameW(ofn) };
+    { free(ofn) };
+
+    if r != (0 as i32) {
+        let picked: text::Text = _from_wide(filebuf as *u16);
+        let sv: str = picked.view();
+        if on_pick.is_not_null() { on_pick({ #str_ptr(sv) }, { #str_len(sv) }, ctx); }
+        { free(filebuf) };
+        return fp::Outcome::Ok.to_code();
+    }
+    { free(filebuf) };
+    // 0 with no extended error is a plain cancel: the panel WAS shown, so fire
+    // the handler with an empty pick and report Ok. A non-zero extended error
+    // means the dialog could not be presented.
+    if { CommDlgExtendedError() } == (0 as u32) {
+        if on_pick.is_not_null() { on_pick(0 as *u8, 0 as usize, ctx); }
+        return fp::Outcome::Ok.to_code();
+    }
+    return fp::Outcome::Failed.to_code();
+}
+
+export extern fn _c_available() -> i32 {
+    return 1 as i32;
+}
+
+export extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
+                         types: *u8, types_len: usize) -> i32 {
+    return _run(on_pick, ctx, false, "");
+}
+
+export extern fn _c_save(suggested: *u8, suggested_len: usize,
+                         on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    let name: str = { #str_from_raw_parts(suggested, suggested_len) };
+    return _run(on_pick, ctx, true, name);
+}
+
+// ---- tests -------------------------------------------------------------------
+// Only availability is unit-testable — `_c_open`/`_c_save` show a MODAL dialog
+// that would block the suite on a window. The dialogs are exercised by
+// `playground/filepicker_probe`, run by hand.
+
+#[test]
+fn a_file_dialog_is_available_on_windows() {
+    assert { _c_available() } == (1 as i32);
+}

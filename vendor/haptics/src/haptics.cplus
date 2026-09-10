@@ -1,0 +1,94 @@
+// The small physical taps a UI makes.
+//
+// One verb and a vocabulary. The vocabulary is the interesting part: the three
+// platforms describe haptics completely differently — Apple has two families
+// (impact and notification) plus a selection tick, Android has a duration and
+// an amplitude — and an app should not have to know which it is talking to.
+//
+// So `Feel` names the INTENT and each backend picks the closest thing it has.
+
+import "stdlib/option" as option;
+
+// What the tap MEANS, not what it feels like.
+//
+// Named for the moment rather than the sensation, because "medium impact" is
+// an Apple word and "50ms at amplitude 128" is an Android one, and an app
+// should be spelling neither. A `Selection` tick is what a picker does as it
+// passes a value; `Success` is what a completed purchase does.
+enum Feel {
+    // A value passed under the finger. The lightest thing there is, and the
+    // one meant to be repeated — a picker fires it per row.
+    Selection,
+    // Something small landed: a toggle, a button that latches.
+    Light,
+    // A thing happened that the person asked for.
+    Medium,
+    // A heavier landing — a card snapping into place, a drag committing.
+    Heavy,
+    // An outcome, not an impact. These three are a different family on Apple
+    // and the same vibration with different timing on Android.
+    Success,
+    Warning,
+    Error,
+}
+
+impl Feel {
+    fn to_code(this) -> i32 {
+        match this {
+            Feel::Selection => { return 0; }
+            Feel::Light => { return 1; }
+            Feel::Medium => { return 2; }
+            Feel::Heavy => { return 3; }
+            Feel::Success => { return 4; }
+            Feel::Warning => { return 5; }
+            Feel::Error => { return 6; }
+        }
+    }
+
+    fn from_code(c: i32) -> Feel {
+        if c == 0 { return Feel::Selection; }
+        if c == 2 { return Feel::Medium; }
+        if c == 3 { return Feel::Heavy; }
+        if c == 4 { return Feel::Success; }
+        if c == 5 { return Feel::Warning; }
+        if c == 6 { return Feel::Error; }
+        return Feel::Light;
+    }
+}
+
+// Can this device play one at all?
+//
+// FALSE IS COMMON AND NOT AN ERROR: a Mac without a Force Touch trackpad, an
+// Android device with no vibrator, a simulator. An app should call `play`
+// regardless — it is a no-op — and use this only to hide a "vibrate" setting
+// that would do nothing.
+fn available() -> bool {
+    return { _c_available() } != (0 as i32);
+}
+
+// Play one. Returns whether the platform ACCEPTED it, never whether anything
+// was felt — see the note on this package.
+//
+// SAFE TO CALL WHEN UNAVAILABLE, and safe to call often. The backends do
+// nothing rather than failing, because a UI that has to guard every tap reads
+// worse than one that asks and is ignored.
+fn play(feel: Feel = Feel::Light) -> bool {
+    return { _c_play(feel.to_code()) } != (0 as i32);
+}
+
+// PREPARE THE HARDWARE, milliseconds before it is needed.
+//
+// The Taptic Engine idles, and the first tap after an idle period is late by
+// enough to feel disconnected from the touch that caused it. Apple's fix is to
+// warm it when a gesture BEGINS and play when it ends; this is that call, and
+// on platforms with nothing to warm it does nothing.
+//
+// Not required. Skipping it costs latency on the first tap and nothing else.
+fn prepare(feel: Feel = Feel::Light) {
+    { _c_prepare(feel.to_code()) };
+    return;
+}
+
+extern fn _c_available() -> i32;
+extern fn _c_play(feel: i32) -> i32;
+extern fn _c_prepare(feel: i32);

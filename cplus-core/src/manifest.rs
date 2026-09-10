@@ -79,6 +79,14 @@ pub struct Manifest {
     /// resolution time (MVP). Empty for vendor packages and standalone
     /// programs.
     pub dependencies: Vec<Dependency>,
+    /// `[android.maven]` — third-party Maven/AAR coordinates, keyed
+    /// `group:artifact` -> exact version. `cpc pm install` resolves the POM
+    /// closure and materializes it into the local Maven repo
+    /// (`~/.cplus/m2`); `cpc pm maven classpath` hands the jars to `d8`.
+    /// The compiler itself links no Java, so it VALIDATES these and passes
+    /// them on — the APK assembly step is still the build script's
+    /// (`plans/aar.md`, `plans/third-party-sdks.md` §3).
+    pub maven: std::collections::BTreeMap<String, String>,
     /// Directory containing the manifest file. All bin `path` entries are
     /// resolved relative to this directory.
     pub root: PathBuf,
@@ -406,6 +414,16 @@ pub enum ManifestError {
         entry: String,
         message: String,
     },
+    /// (E0877): an `[<platform>.maven]` entry that is not a
+    /// `"group:artifact" = "version"` pin, or the table on a platform with
+    /// no Maven ecosystem. Maven coordinates are exact pins with no
+    /// wildcard and no range — there is no version solver here, on purpose.
+    InvalidMavenCoordinate {
+        path: PathBuf,
+        platform: String,
+        key: String,
+        message: String,
+    },
     /// (E0869): one dependency name declared in more than one place with
     /// incompatible meaning — in `[dependencies]` (all platforms) AND a
     /// `[<platform>.dependencies]` section, or in two platform sections
@@ -448,6 +466,16 @@ impl fmt::Display for ManifestError {
                     path.display()
                 )
             }
+            ManifestError::InvalidMavenCoordinate {
+                path,
+                platform,
+                key,
+                message,
+            } => write!(
+                f,
+                "manifest {}: invalid `[{platform}.maven]` entry `{key}`: {message}",
+                path.display()
+            ),
             ManifestError::UnsupportedEdition { path, found } => {
                 write!(
                     f,
@@ -519,6 +547,7 @@ impl ManifestError {
             | ManifestError::InvalidDependencyName { path, .. }
             | ManifestError::EnvExpansion { path, .. }
             | ManifestError::ConflictingDependency { path, .. }
+            | ManifestError::InvalidMavenCoordinate { path, .. }
             | ManifestError::TargetPathEscapes { path, .. } => path.clone(),
         };
         let primary = SourceSpan {
@@ -581,6 +610,15 @@ impl ManifestError {
             ManifestError::EnvExpansion { entry, message, .. } => (
                 "E0865",
                 format!("cannot expand `{entry}` in `[link]`: {message}"),
+            ),
+            ManifestError::InvalidMavenCoordinate {
+                platform,
+                key,
+                message,
+                ..
+            } => (
+                "E0877",
+                format!("invalid `[{platform}.maven]` entry `{key}`: {message}"),
             ),
             ManifestError::ConflictingDependency { name, message, .. } => (
                 "E0869",
@@ -692,6 +730,10 @@ struct RawPlatformSection {
     entry: Option<String>,
     #[serde(default)]
     dependencies: std::collections::BTreeMap<String, String>,
+    /// `[android.maven]` — `"group:artifact" = "version"`. Android only;
+    /// anywhere else is E0877.
+    #[serde(default)]
+    maven: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1043,8 +1085,43 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
     ];
     let mut platform_entries: std::collections::BTreeMap<String, PathBuf> =
         std::collections::BTreeMap::new();
+    let mut maven: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     for (platform, section) in sections {
         let Some(section) = section else { continue };
+        // `[<platform>.maven]` — third-party AAR coordinates (`plans/aar.md`).
+        // Validated here rather than ignored: the compiler links no Java, but
+        // it is the one thing that reads every manifest, and a coordinate
+        // that is silently dropped is a class missing at runtime on a device.
+        for (key, version) in &section.maven {
+            let bad = |message: String| ManifestError::InvalidMavenCoordinate {
+                path: manifest_path.to_path_buf(),
+                platform: platform.to_string(),
+                key: key.clone(),
+                message,
+            };
+            if platform != "android" {
+                return Err(bad(
+                    "Maven is an Android-only ecosystem — the table belongs in `[android.maven]`"
+                        .to_string(),
+                ));
+            }
+            let mut parts = key.split(':');
+            let group = parts.next().unwrap_or("");
+            let artifact = parts.next().unwrap_or("");
+            if parts.next().is_some() || group.trim().is_empty() || artifact.trim().is_empty() {
+                return Err(bad(
+                    "expected `\"group:artifact\" = \"version\"` (the version is the value, not part of the key)"
+                        .to_string(),
+                ));
+            }
+            if version.trim().is_empty() || version.contains('*') {
+                return Err(bad(format!(
+                    "`{version}` is not an exact version — Maven coordinates are exact pins, there is no solver"
+                )));
+            }
+            maven.insert(key.clone(), version.clone());
+        }
         if let Some(p) = &section.entry {
             let joined = root.join(p);
             if target_path_escapes(&root, &joined) {
@@ -1146,6 +1223,7 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         lib,
         link,
         dependencies,
+        maven,
         root,
         build,
         realtime_profile,

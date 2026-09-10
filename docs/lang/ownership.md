@@ -120,7 +120,7 @@ The rules that follow from auto-drop:
   match for real after, is the two-step idiom.
 - **In `guard let`, the else block can't re-match the scrutinee** — its
   destructor already ran. Capture the complement instead:
-  `guard let E::Ok(v) = e else |E::Err(x)| { … };`
+  `guard let E::Ok(v) = e else E::Err(x) { … };`
 - **`take this` does not disarm exit-drop.** A consuming method returns the
   payload and lets scope exit free the shell; calling `free` yourself
   double-frees.

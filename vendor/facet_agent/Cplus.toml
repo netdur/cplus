@@ -56,3 +56,19 @@ agent_uikit = "*"
 objc        = "*"
 uikit       = "*"
 quartzcore  = "*"
+
+# The Android overlay. agent_android walks facet's own node tree rather than a
+# native view hierarchy — see its manifest.
+[android.dependencies]
+agent_android = "*"
+facet_android = "*"
+android_view  = "*"
+jni           = "*"
+
+[windows.dependencies]
+agent_win32 = "*"
+# The toolkit itself, for `inspect_platform_windows`'s overlay — the same
+# reason `[macos.dependencies]` names `appkit` and `[linux.dependencies]` names
+# `gtk4`. The highlight is a layered popup and there is no way to place one
+# without user32.
+win32       = "*"

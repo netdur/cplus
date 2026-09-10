@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::Command;
 
 #[test]
@@ -805,7 +805,7 @@ fn rematching_a_consumed_binding_rejected_e0335() {
 /// The vendor/sqlite shape. `guard let` desugars to a binding match, so its
 /// else block cannot re-match the same local to reach the complement payload —
 /// the payload's destructor has already run by the time the else body starts.
-/// Use the `else |Pat|` complement binding instead (pinned to still work by
+/// Name the else-pattern instead (pinned to still work by
 /// `guard_let_complement_binding_reaches_the_payload`).
 #[test]
 fn guard_let_else_cannot_rematch_the_scrutinee() {
@@ -826,9 +826,9 @@ fn guard_let_else_cannot_rematch_the_scrutinee() {
     );
 }
 
-/// The sanctioned replacement for the rejected re-match above: `else |Pat|`
-/// binds the complement payload directly, so it is still live in the else
-/// block and drops exactly once.
+/// The sanctioned replacement for the rejected re-match above: a named
+/// else-pattern binds the complement payload directly, so it is still live in
+/// the else block and drops exactly once.
 #[test]
 fn guard_let_complement_binding_reaches_the_payload() {
     let out = compile_and_run_src(
@@ -840,7 +840,7 @@ fn guard_let_complement_binding_reaches_the_payload() {
          fn mkb() -> E { return E::B(R { data: { 0 as *u8 } }); }\n\
          fn probe() -> i32 {\n\
            let e: E = mkb();\n\
-           guard let E::A(v) = e else |E::B(bad)| {\n\
+           guard let E::A(v) = e else E::B(bad) {\n\
              let _held: R = bad;\n\
              return 7;\n\
            };\n\
@@ -3667,7 +3667,7 @@ fn generic_call_in_interpolation_monomorphizes() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -3721,7 +3721,7 @@ fn interp_call_text_parts_freed_place_parts_not() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -3809,7 +3809,7 @@ fn interp_in_print_sink_position_never_allocates() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -3896,7 +3896,7 @@ fn text_append_interp_appends_in_place() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -4006,7 +4006,7 @@ fn no_alloc_admits_sink_interpolation_only() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -4248,7 +4248,7 @@ fn guard_var_binding_is_mutable() {
          \x20   return c;\n\
          }\n\
          fn sad() -> i32 {\n\
-         \x20   guard var R::Ok(c) = get(false) else |R::Err(e)| { return e; };\n\
+         \x20   guard var R::Ok(c) = get(false) else R::Err(e) { return e; };\n\
          \x20   c = c +% 1;\n\
          \x20   return c;\n\
          }\n\
@@ -4328,7 +4328,7 @@ fn let_pattern_bindings_stay_immutable() {
             "guard_var_complement",
             "enum M { S(i32), N(i32) }\n\
              fn main() -> i32 {\n\
-             \x20   guard var M::S(v) = M::S(1) else |M::N(e)| { e = e +% 1; return e; };\n\
+             \x20   guard var M::S(v) = M::S(1) else M::N(e) { e = e +% 1; return e; };\n\
              \x20   return v;\n\
              }\n",
         ),
@@ -5171,6 +5171,77 @@ fn fmt_rewrites_in_place() {
     assert_eq!(after, "fn main() -> i32 { return 0; }\n");
 }
 
+/// bug 006 (weather_3, 2026-09-07): with no path, `cpc fmt` formats the
+/// project's `src/` — the way `cpc build` and `cpc test` operate on it from
+/// the same directory. Three sibling subcommands invoked the same way, and
+/// only this one refusing, was the whole report.
+#[test]
+fn fmt_with_no_path_formats_the_project_src() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let f = dir.join("src").join("main.cplus");
+    std::fs::write(&f, "fn  main()->i32{return 0;}\n").unwrap();
+    let status = Command::new(cpc)
+        .arg("fmt")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc fmt");
+    assert!(status.success(), "bare `cpc fmt` in a project must succeed");
+    assert_eq!(
+        std::fs::read_to_string(&f).unwrap(),
+        "fn main() -> i32 { return 0; }\n"
+    );
+}
+
+/// The negative half: outside a project there is nothing to default to, so
+/// the refusal stands — but it names the intent instead of restating grammar.
+#[test]
+fn fmt_with_no_path_outside_a_project_still_refuses() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let out = Command::new(cpc)
+        .arg("fmt")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc fmt");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("project root"),
+        "the refusal should name the likely intent, got: {stderr}"
+    );
+}
+
+/// A project with a manifest but no `src/` is named as such, not walked from
+/// `.` — which would descend into `target/` and the `vendor/` symlink loop.
+#[test]
+fn fmt_with_no_path_and_no_src_says_so() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("fmt")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc fmt");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no `src/` directory"),
+        "expected the missing-src message, got: {stderr}"
+    );
+}
+
 /// `--emit` prints to stdout and leaves the source file unchanged.
 #[test]
 fn fmt_emit_leaves_file_alone() {
@@ -5699,6 +5770,64 @@ fn cpc_test_runs_passing_tests() {
     assert!(stdout.contains("2 passed; 0 failed"));
 }
 
+// `--filter` keeps the tests whose display name contains the substring, and
+// drops the rest BEFORE codegen — so the run is shorter and the build with it.
+// The reason it exists: a package's driver carries every dependency's tests as
+// well as its own, and one hanging test in a dependency otherwise makes every
+// test ordered after it unreachable.
+#[test]
+fn cpc_test_filter_runs_only_the_matching_tests() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "#[test]\nfn alpha_one() { assert true; }\n\
+         #[test]\nfn alpha_two() { assert true; }\n\
+         #[test]\nfn beta_one() { assert false; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .arg("--filter")
+        .arg("alpha")
+        .output()
+        .expect("invoke cpc");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // The failing test is not merely unreported — it never ran, which is what
+    // makes a filter usable against a suite with a hang in it.
+    assert!(
+        out.status.success(),
+        "expected the filtered run to pass, stdout: {stdout}"
+    );
+    assert!(stdout.contains("running 2 of 3 tests"), "got: {stdout}");
+    assert!(stdout.contains("test alpha_one ... ok"), "got: {stdout}");
+    assert!(stdout.contains("test alpha_two ... ok"), "got: {stdout}");
+    assert!(!stdout.contains("beta_one"), "got: {stdout}");
+    assert!(stdout.contains("2 passed; 0 failed"), "got: {stdout}");
+}
+
+// A filter matching nothing FAILS rather than reporting an empty pass: it is a
+// question about tests the caller believes exist, and "0 passed; 0 failed" to a
+// typo reads as "they all pass".
+#[test]
+fn cpc_test_filter_matching_nothing_is_an_error() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, "#[test]\nfn alpha_one() { assert true; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .arg("--filter=nothing_is_called_this")
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "expected failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("matched none of the 1 tests"), "got: {stderr}");
+}
+
 #[test]
 fn cpc_test_reports_failing_test() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -5759,6 +5888,238 @@ fn cpc_test_json_output() {
     assert_eq!(v1["result"], "fail");
     assert_eq!(v2["passed"], 1);
     assert_eq!(v2["failed"], 1);
+}
+
+// ---- v0.0.31: `async fn main` / `#[test] async fn` — the compiler drives the entry ----
+
+/// The entry shape settled on 2026-09-04: `main` may be `async`, and the
+/// compiler drives it with the one loop the language has — lower splits it
+/// into a private async body plus a synchronous `main` whose whole body is
+/// the `#block_on` drive, exactly what `executor::block_on(main_async())`
+/// spelled by hand. This is the whole program a user writes; it must build,
+/// park on a real reactor timer, and exit with the awaited value.
+#[test]
+fn async_main_is_driven_to_completion() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"amain\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/time\" as time;\n\
+         async fn inner() -> i32 { await time::sleep(10); return 41; }\n\
+         async fn outer() -> i32 { return (await inner()) +% 1; }\n\
+         async fn main() -> i32 { return await outer(); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "async main must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/amain"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(42), "main's awaited value is the exit code");
+}
+
+/// The entry is judged as the synchronous wrapper it desugars to, so a
+/// unit-returning `async fn main()` is E0309 for the same reason `fn main()`
+/// is. And `await` in a synchronous `main` is still E0901: the entry may be
+/// async, the keyword did not grow a blocking meaning.
+#[test]
+fn async_main_shape_errors_are_the_sync_ones() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let cases: [(&str, &str); 2] = [
+        (
+            "import \"stdlib/time\" as time;\n\
+             async fn main() { await time::sleep(1); }\n",
+            "E0309",
+        ),
+        (
+            "import \"stdlib/time\" as time;\n\
+             async fn inner() -> i32 { await time::sleep(1); return 1; }\n\
+             fn main() -> i32 { return await inner(); }\n",
+            "E0901",
+        ),
+    ];
+    for (src, code) in cases {
+        let dir = tempdir();
+        std::fs::write(
+            dir.join("Cplus.toml"),
+            "[package]\nname = \"amainbad\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::os::unix::fs::symlink(
+            format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+            dir.join("vendor"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("src/main.cplus"), src).unwrap();
+        let out = Command::new(cpc)
+            .arg("build")
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc build");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "must be rejected:\n{src}");
+        assert!(stderr.contains(code), "expected {code} for:\n{src}\ngot: {stderr}");
+    }
+}
+
+/// Driving a future from a SYNCHRONOUS fn is a method on the value
+/// (v0.0.31): `f.wait()` blocks this thread, running its reactor, until the
+/// value is out, and consumes the future the way `JoinHandle::join` consumes
+/// a handle. No executor import, no turbofish. This is the program that
+/// settled the shape; it parks on a real timer.
+#[test]
+fn future_wait_drives_from_a_sync_fn() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fwait\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/time\" as time;\n\
+         import \"stdlib/text\" as text;\n\
+         async fn get_data() -> i32 { await time::sleep(5); return 41; }\n\
+         async fn get_name() -> text::Text { await time::sleep(5); let t: text::Text = \"abc\"; return t; }\n\
+         fn normal() -> i32 {\n\
+             let x: i32 = get_data().wait();\n\
+             let n: text::Text = get_name().wait();\n\
+             return x +% (n.count() as i32);\n\
+         }\n\
+         fn main() -> i32 { return normal(); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "wait() must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/fwait"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(44), "41 + count(\"abc\")");
+}
+
+/// `wait` takes the future (`take this`), so a second use is the ordinary
+/// use-after-move error — the frame has one owner and one drive.
+#[test]
+fn future_wait_consumes_the_future() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fwait2\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/future\" as future;\n\
+         async fn get_data() -> i32 { return 41; }\n\
+         fn main() -> i32 {\n\
+             let f: future::Future[i32] = get_data();\n\
+             let a: i32 = f.wait();\n\
+             let b: i32 = f.wait();\n\
+             return a +% b;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a second wait must be rejected");
+    assert!(stderr.contains("E0335"), "expected use-after-move, got: {stderr}");
+}
+
+/// `#[test] async fn` is discovered and driven by `cpc test` the same way:
+/// the attribute rides with the synchronous wrapper the runner sees. Both
+/// allowed test shapes, unit and `-> i32`, each parking on a real timer.
+#[test]
+fn cpc_test_drives_async_test_fns() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"atest\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/time\" as time;\n\
+         fn main() -> i32 { return 0; }\n\
+         async fn seven() -> i32 { await time::sleep(1); return 7; }\n\
+         #[test]\n\
+         async fn awaits_a_timer() { let v: i32 = await seven(); assert v == 7; }\n\
+         #[test]\n\
+         async fn returns_i32() -> i32 { let v: i32 = await seven(); if v != 7 { return 1; } return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc test");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "async tests must pass, stderr: {}\nstdout: {stdout}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    // Package mode qualifies test names by module path and runs the
+    // dependency's own tests alongside, so match the tail of each name and
+    // the absence of any failure rather than a count.
+    assert!(stdout.contains("::awaits_a_timer ... ok"), "got: {stdout}");
+    assert!(stdout.contains("::returns_i32 ... ok"), "got: {stdout}");
+    assert!(!stdout.contains("FAILED"), "got: {stdout}");
+    assert!(stdout.contains("; 0 failed"), "got: {stdout}");
 }
 
 #[test]
@@ -6698,7 +7059,7 @@ fn nll_view_borrow_ends_at_last_use() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -7932,7 +8293,7 @@ fn str_view_cannot_outlive_owner() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -7982,7 +8343,7 @@ fn str_builtin_methods_compile_and_run() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8041,7 +8402,7 @@ fn slice_array_count_and_to_f64_run() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8098,7 +8459,7 @@ fn discard_import_alias_underscore() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8144,7 +8505,7 @@ fn str_builtin_methods_negative_paths() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8218,7 +8579,7 @@ fn generic_vec_slice_view_invalidation_rejected() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8521,7 +8882,7 @@ fn str_view_coercion_and_free_fn_ties() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -18906,12 +19267,23 @@ fn const_static_emits_expected_globals() {
         .expect("invoke cpc");
     assert!(out.status.success(), "exited {:?}", out.status);
     let ir = String::from_utf8_lossy(&out.stdout);
+    // What this pins is the ROUTING — a `static` becomes a `global` (.data),
+    // never a `constant`. The LINKAGE in between is a platform decision and not
+    // what this test is about: on Windows a name-public static is emitted
+    // `weak_odr` with a comdat, because a strong definition beside the same
+    // static's copy in a package archive is a COFF `duplicate symbol`. So the
+    // match tolerates a linkage keyword and still fails if `global` becomes
+    // `constant`.
+    let emits_global = |name: &str, ty_val: &str| -> bool {
+        ir.contains(&format!("@{name} = {ty_val}"))
+            || ir.contains(&format!("@{name} = weak_odr {ty_val}"))
+    };
     assert!(
-        ir.contains("@IMMUTABLE_OFFSET = global i32 50"),
+        emits_global("IMMUTABLE_OFFSET", "global i32 50"),
         "expected static emitted as global; ir was:\n{ir}"
     );
     assert!(
-        ir.contains("@COUNTER = global i32 5"),
+        emits_global("COUNTER", "global i32 5"),
         "expected mutable-static global; ir was:\n{ir}"
     );
     // Const items never become globals — verify ADD_CONST is absent.
@@ -23111,6 +23483,39 @@ fn nm_prog() -> &'static str {
     }
 }
 
+/// Link a directory into a test's temp package. Every call site points a fresh
+/// package's `vendor/` at the repo's own, so the test compiles against the real
+/// stdlib sources rather than a transcribed copy of them.
+///
+/// The two platforms spell this differently, and Windows splits it further by
+/// target kind: `symlink_dir` is the one that works on a directory, and
+/// `symlink_file` would produce a link the resolver cannot walk. The Windows
+/// call also needs `SeCreateSymbolicLinkPrivilege`, which Developer Mode grants
+/// and a default account does not — hence the note on the error, because
+/// "Access is denied. (os error 5)" surfacing from a test that never mentions
+/// symlinks is a long afternoon.
+#[cfg(unix)]
+fn symlink_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(src, dst)
+}
+
+#[cfg(windows)]
+fn symlink_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(src.as_ref(), dst.as_ref()).map_err(|e| {
+        std::io::Error::new(
+            e.kind(),
+            format!(
+                "symlink_dir({} -> {}): {e}\n\
+                 note: Windows needs SeCreateSymbolicLinkPrivilege for this — \
+                 enable Developer Mode (Settings > System > For developers), \
+                 or run the test elevated.",
+                src.as_ref().display(),
+                dst.as_ref().display()
+            ),
+        )
+    })
+}
+
 /// The shared pure-C+ builder package for the DSL.2 e2e tests: `Item`
 /// carries a value and a weight, `leaf(v)` constructs one, `boost(by)`
 /// is a method modifier, and `Builder::finish` returns an `Item` so
@@ -24121,7 +24526,7 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24195,7 +24600,7 @@ fn blessed_capabilities_agree_between_bounds_dispatch_and_impls() {
     let dir = tempdir();
     std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"blessed\"\n\n[dependencies]\nstdlib = \"*\"\n").unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24546,7 +24951,7 @@ fn str_literal_coerces_to_text_in_every_owning_position() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24661,7 +25066,7 @@ fn user_generic_named_iterator_is_not_a_coroutine() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24733,7 +25138,7 @@ fn async_and_gen_fns_pointer_pass_ref_params() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24811,7 +25216,7 @@ fn empty_text_coerces_to_valid_str_view() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24865,7 +25270,7 @@ fn borrow_error_names_the_offending_module() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -26394,7 +26799,7 @@ fn a_user_type_named_like_a_lang_item_does_not_shadow_it() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -26564,7 +26969,7 @@ fn thread_cancel_unparks_a_blocking_read_end_to_end() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -26631,7 +27036,7 @@ fn thread_cancel_unparks_a_blocking_read_end_to_end() {
 }
 
 /// v0.0.29 phase 2, end to end through codegen: cancelling a thread that
-/// drives async work with `executor::run` destroys the suspended frame tree
+/// drives async work with `future::wait_or_cancel` destroys the suspended frame tree
 /// through the awaits' cancel edges — running the drops of locals live
 /// across the await — unregisters the reactor entries, tears down the
 /// thread's reactor, and reports `Cancelled`; `join` still returns.
@@ -26647,7 +27052,7 @@ fn run_cancel_destroys_the_frame_tree_and_runs_drops_end_to_end() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -26655,7 +27060,7 @@ fn run_cancel_destroys_the_frame_tree_and_runs_drops_end_to_end() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/io\" as io;\n\
-         import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/future\" as future;\n\
          import \"stdlib/thread\" as thread;\n\
          import \"stdlib/atomic\" as atomic;\n\
          \n\
@@ -26683,9 +27088,9 @@ fn run_cancel_destroys_the_frame_tree_and_runs_drops_end_to_end() {
          }\n\
          \n\
          fn worker(take x: i64) -> i64 {\n\
-             return match executor::run::[i32](sleepy()) {\n\
-                 executor::RunResult::Done(v) => { (v as i64) }\n\
-                 executor::RunResult::Cancelled => { 77 as i64 }\n\
+             return match future::wait_or_cancel(sleepy()) {\n\
+                 future::WaitResult::Done(v) => { (v as i64) }\n\
+                 future::WaitResult::Cancelled => { 77 as i64 }\n\
              };\n\
          }\n\
          \n\
@@ -26824,5 +27229,606 @@ fn build_hides_dependency_warnings_but_never_dependency_errors() {
     assert!(
         broken.contains("dep.cplus") && broken.contains("E0302"),
         "a dependency's ERROR must never be suppressed:\n{broken}"
+    );
+}
+
+/// A PREBUILT PACKAGE'S `async fn` MUST BE THE ARCHIVE'S, not an empty copy the
+/// consumer synthesized from the header.
+///
+/// bugs/closed/time-sleep-does-not-sleep.md. A prebuilt package declares its
+/// async fns body-less in `lib/include/<mod>.cplus` (`async fn f() -> i32 ;`).
+/// Codegen routed on `is_async` BEFORE the body-less-declaration guard, so it
+/// emitted a coroutine RAMP for the declaration: malloc a frame, run the
+/// final-suspend epilogue, mark DONE, return. The linker then had two
+/// `_pkg.src.mod.f` symbols and bound the consumer's call to its own empty one,
+/// so `await` completed immediately with an unwritten promise.
+///
+/// `await time::sleep(3000)` returned in under a millisecond, in a process that
+/// lived 0.3 seconds; all four of `stdlib/net`'s async I/O verbs were disarmed
+/// the same way.
+///
+/// THIS TEST LIVES HERE AND NOT IN THE PACKAGE'S OWN SUITE, which is the whole
+/// reason it went unseen for so long: a package's suite compiles its own
+/// modules from SOURCE, so the declaration path never runs and no assertion
+/// inside `stdlib` — however good — can fail against this. Only a CONSUMER of
+/// the archive sees it.
+///
+/// The value is the assertion rather than a duration: an empty coroutine leaves
+/// the promise unwritten, so reading 41 back proves the archive's body ran.
+#[test]
+fn a_prebuilt_packages_async_fn_runs_the_archives_body() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+
+    // The dependency: prebuilt (the default), with one async fn and one
+    // ordinary fn so a failure separates "async is broken" from "the whole
+    // package is unreachable".
+    std::fs::create_dir_all(dir.join("vendor/asynclib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/asynclib/Cplus.toml"),
+        "[package]\nname = \"asynclib\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/asynclib/src/engine.cplus"),
+        "import \"stdlib/future\" as _;\n\
+         async fn answer() -> i32 { return 41; }\n\
+         fn plain_answer() -> i32 { return 41; }\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"asyncuser\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [dependencies]\nstdlib = \"*\"\nasynclib = \"*\"\n",
+    )
+    .unwrap();
+    // stdlib comes from the repo; `asynclib` is the one written above, so the
+    // symlink must not shadow it — copy stdlib in beside it instead.
+    let repo_vendor = format!("{}/../vendor", env!("CARGO_MANIFEST_DIR"));
+    symlink_dir(
+        format!("{repo_vendor}/stdlib"),
+        dir.join("vendor/stdlib"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"asynclib/engine\" as engine;\n\
+         \n\
+         fn main() -> i32 {\n\
+             io::println(\"plain ${engine::plain_answer()}\");\n\
+             let v: i32 = engine::answer().wait();\n\
+             io::println(\"async ${v}\");\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "a consumer of a prebuilt async fn must LINK — an `internal` definition \
+         in the archive is the other half of this bug:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    let run = Command::new(dir.join("target/debug/asyncuser"))
+        .output()
+        .expect("run the consumer");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("plain 41"), "ordinary fn: {stdout}");
+    assert!(
+        stdout.contains("async 41"),
+        "the archive's async body must run; an empty synthesized copy leaves \
+         the promise unwritten: {stdout}"
+    );
+}
+
+/// gaps/an-associated-fn-as-a-callback-mangles-a-large-struct-argument:
+/// `Type::f` passed where a `fn(T)` is expected used to hand out the METHOD's
+/// own symbol. A method is emitted with `METHOD_ABI` (Copy aggregates raw) and
+/// usually `fastcc`, while a call through a fn-pointer uses the platform C ABI
+/// — the two agree at or under 16 bytes and disagree above it, so every
+/// argument larger than that was read from the wrong address, silently. The
+/// return side split the same way. `Type::f` now points at a C-ABI bridge.
+///
+/// Every row here FAILED before the fix except the two 16-byte ones (which go
+/// in registers either way) and the 4xf64 one (an AAPCS64 HFA, four FP
+/// registers on both conventions). The 24-byte RETURN row is a case the
+/// original report did not name.
+#[test]
+fn assoc_fn_as_fn_pointer_matches_the_c_abi() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"afp\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "struct S16 { a: i64, b: i64 }\n\
+         struct S24 { a: i64, b: i64, c: i64 }\n\
+         struct S32 { a: i64, b: i64, c: i64, d: i64 }\n\
+         struct F4 { a: f64, b: f64, c: f64, d: f64 }\n\
+         static OUT: i64 = 0;\n\
+         struct H {}\n\
+         impl H {\n\
+           fn p16(k: S16) { OUT = k.a +% k.b; return; }\n\
+           fn p24(k: S24) { OUT = k.a +% k.b +% k.c; return; }\n\
+           fn p32(k: S32) { OUT = k.a +% k.b +% k.c +% k.d; return; }\n\
+           fn pfp(k: F4) { OUT = (k.a + k.b + k.c + k.d) as i64; return; }\n\
+           fn pmix(x: i64, k: S24, y: i64) { OUT = x +% k.a +% k.b +% k.c +% y; return; }\n\
+           fn r16(n: i64) -> S16 { return S16 { a: n, b: n +% (1 as i64) }; }\n\
+           fn r24(n: i64) -> S24 { return S24 { a: n, b: n +% (1 as i64), c: n +% (2 as i64) }; }\n\
+           fn wr(ref o: S24) { o.a = 7 as i64; return; }\n\
+         }\n\
+         fn v16(f: fn(S16)) -> i64 { f(S16 { a: 1 as i64, b: 2 as i64 }); return OUT; }\n\
+         fn v24(f: fn(S24)) -> i64 { f(S24 { a: 1 as i64, b: 2 as i64, c: 3 as i64 }); return OUT; }\n\
+         fn v32(f: fn(S32)) -> i64 { f(S32 { a: 1 as i64, b: 2 as i64, c: 3 as i64, d: 4 as i64 }); return OUT; }\n\
+         fn vfp(f: fn(F4)) -> i64 { f(F4 { a: 1.5f64, b: 2.5f64, c: 3.0f64, d: 4.0f64 }); return OUT; }\n\
+         fn vmix(f: fn(i64, S24, i64)) -> i64 { f(10 as i64, S24 { a: 1 as i64, b: 2 as i64, c: 3 as i64 }, 20 as i64); return OUT; }\n\
+         fn vr16(f: fn(i64) -> S16) -> i64 { let v: S16 = f(5 as i64); return v.a +% v.b; }\n\
+         fn vr24(f: fn(i64) -> S24) -> i64 { let v: S24 = f(5 as i64); return v.a +% v.b +% v.c; }\n\
+         fn vwr(f: fn(ref S24)) -> i64 { var s: S24 = S24 { a: 0 as i64, b: 0 as i64, c: 0 as i64 }; f(s); return s.a; }\n\
+         fn main() -> i32 {\n\
+           var bad: i32 = 0;\n\
+           if v16(H::p16) != (3 as i64) { bad = bad +% 1; }\n\
+           if v24(H::p24) != (6 as i64) { bad = bad +% 2; }\n\
+           if v32(H::p32) != (10 as i64) { bad = bad +% 4; }\n\
+           if vfp(H::pfp) != (11 as i64) { bad = bad +% 8; }\n\
+           if vmix(H::pmix) != (36 as i64) { bad = bad +% 16; }\n\
+           if vr16(H::r16) != (11 as i64) { bad = bad +% 32; }\n\
+           if vr24(H::r24) != (18 as i64) { bad = bad +% 64; }\n\
+           if vwr(H::wr) != (7 as i64) { bad = bad +% 128; }\n\
+           return bad;\n\
+         }\n",
+    )
+    .unwrap();
+
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(st.success(), "assoc-fn fn-pointer build failed");
+    let run = Command::new(dir.join("target/debug/afp"))
+        .status()
+        .expect("run afp");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "every `Type::f` fn-pointer call must read its argument and return \
+         its value through the C ABI (nonzero = the bitmask of failing rows)"
+    );
+
+    // --release: the same ABI decision at -O3, where the wrong one used to
+    // survive as a plausible-looking value rather than a crash.
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build --release");
+    assert!(st.success(), "assoc-fn fn-pointer --release build failed");
+    let run = Command::new(dir.join("target/release/afp"))
+        .status()
+        .expect("run afp release");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "the `Type::f` fn-pointer ABI must hold at -O3 too"
+    );
+}
+
+/// The bridge in `assoc_fn_as_fn_pointer_matches_the_c_abi` is emitted only for
+/// PLAIN associated fns. An `async fn` / `gen fn` is emitted by a different
+/// pair of coroutine emitters whose signatures the bridge does not mirror, so
+/// `Type::f` on one keeps handing out the method's own symbol. Pinned here
+/// because the two sides that decide this — `gen_path` and `assoc_fn_path` in
+/// `collect_address_taken_fns` — live in different functions, and a
+/// disagreement is `use of undefined value @S.m.fnptr` at clang, in whatever
+/// program happens to hold an async method's address.
+#[test]
+fn an_async_assoc_fn_is_still_addressable() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"aaf\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    // THROUGH THE HELPER, which is why it exists: a bare `std::os::unix` call
+    // does not merely fail on Windows, it does not COMPILE there — and one of
+    // them in a 27,000-line file takes the whole `e2e` target down, so no test
+    // in it can run on that host at all.
+    symlink_dir(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/future\" as future;\n\
+         struct S8 { a: i64 }\n\
+         struct H {}\n\
+         impl H { async fn go(k: S8) -> i64 { return k.a +% (1 as i64); } }\n\
+         fn via(f: fn(S8) -> future::Future[i64]) -> i64 {\n\
+             let fut: future::Future[i64] = f(S8 { a: 41 as i64 });\n\
+             return #block_on::[i64](fut);\n\
+         }\n\
+         fn main() -> i32 { return via(H::go) as i32; }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(
+        st.success(),
+        "an async associated fn taken as a fn-pointer must still link"
+    );
+    let run = Command::new(dir.join("target/debug/aaf"))
+        .status()
+        .expect("run aaf");
+    assert_eq!(run.code(), Some(42), "the coroutine must run through the pointer");
+}
+
+// bug 2026-09-01 (a-field-write-through-ref-is-invisible-to-the-next-if-condition):
+// codegen's per-expression field-read memo was cleared BEFORE an assignment or
+// call was lowered, so the reads made while lowering the right-hand side (or
+// the arguments) were cached AFTER the clear and survived the store (or call)
+// instruction. Any read that was not at a statement boundary then saw the old
+// value: an `if` in tail position, a block's tail value, an argument evaluated
+// after a sibling call had written the field. Every shape below fired one
+// step late, silently, and only through a `ref` binding — a plain local was
+// never affected, which is what made it read as a logic slip.
+#[test]
+fn a_field_written_through_ref_is_read_back_by_the_next_expression() {
+    let src = "static FIRED: i32 = 0;\n\
+        struct S { n: i32 }\n\
+        impl S {\n\
+            // (a) the reported shape: store, then an `if` in TAIL position.\n\
+            fn m(ref this) {\n\
+                this.n = this.n +% 1;\n\
+                if (this.n % (10 as i32)) == (0 as i32) { FIRED = FIRED + 1; }\n\
+            }\n\
+            fn bump_by(ref this, k: i32) -> i32 { this.n = this.n +% k; return this.n; }\n\
+        }\n\
+        // (b) free fn with a `ref` param, same shape.\n\
+        fn f(ref s: S) {\n\
+            s.n = s.n +% 1;\n\
+            if (s.n % (10 as i32)) == (0 as i32) { FIRED = FIRED + 1; }\n\
+        }\n\
+        // (c) a block's tail value after a store in the same block.\n\
+        fn tail(ref s: S) -> i32 { return { s.n = s.n +% 1; s.n }; }\n\
+        // (d) an argument read AFTER a sibling call — whose own argument\n\
+        //     cached the field first — has written it.\n\
+        fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+        fn after_call(ref s: S) -> i32 { return add(s.bump_by(s.n), s.n); }\n\
+        fn main() -> i32 {\n\
+            var a: S = S { n: 0 };\n\
+            var i: i32 = 0;\n\
+            while i < 21 { a.m(); i = i + 1; }\n\
+            var b: S = S { n: 0 };\n\
+            i = 0;\n\
+            while i < 21 { f(b); i = i + 1; }\n\
+            var c: S = S { n: 4 };\n\
+            let t: i32 = tail(c);\n\
+            var d: S = S { n: 4 };\n\
+            let ac: i32 = after_call(d);\n\
+            #println(FIRED);\n\
+            #println(t);\n\
+            #println(ac);\n\
+            return 0;\n\
+        }";
+    for release in [false, true] {
+        let (_dir, bin) = compile_program(src, release);
+        let run = Command::new(&bin).output().expect("run");
+        assert!(run.status.success());
+        // (a)+(b): n reaches 10 and 20 once each → 2 + 2. Before the fix each
+        // fired three times (at pre-increment 0, 10, 20).
+        // (c): 4 → 5, and the tail reads 5 (was 4).
+        // (d): bump_by(4) makes n 8 and returns 8; the second `s.n` is 8 → 16
+        //      (was 8 + the cached 4 = 12).
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "4\n5\n16\n",
+            "release={release}"
+        );
+    }
+}
+
+// bug 2026-09-06 (yield-does-not-transfer-ownership-so-consuming-a-loop-binding-
+// double-frees). Two owners of one yielded value: `yield` never disarmed the
+// generator's drop of the binding, and the `for` binding never dropped what it
+// received — reading worked by accident, moving the value out SIGTRAPed. Both
+// ends now agree: `yield` moves, the loop binding owns, and the drop counts are
+// exact. The second half of the report — the generator running one element
+// ahead of its consumer — is the laziness test below.
+#[test]
+fn a_yielded_value_has_exactly_one_owner() {
+    // Single-file mode has no stdlib: declare the two lang shapes a `gen fn`
+    // needs, as the other single-file tests do for `Option`.
+    let src = "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
+        #[lang(\"iterator\")] struct Iterator[T] { opaque _handle: *u8 }\n\
+        static DROPS: i32 = 0;\n\
+        static MADE: i32 = 0;\n\
+        extern fn malloc(n: usize) -> *u8;\n\
+        extern fn free(p: *u8);\n\
+        struct R { p: *u8, id: i32 }\n\
+        impl R {\n\
+            fn make(id: i32) -> R { MADE = MADE + 1; return R { p: { malloc(8 as usize) }, id: id }; }\n\
+            fn drop(ref this) { { free(this.p); } DROPS = DROPS + 1; return; }\n\
+            fn get(this) -> i32 { return this.id; }\n\
+        }\n\
+        gen fn three() -> R {\n\
+            var i: i32 = 0;\n\
+            while i < 3 { let r: R = R::make(i); yield r; i = i + 1; }\n\
+        }\n\
+        fn sink(take r: R) -> i32 { return r.get(); }\n\
+        // (a) read only: the loop binding drops each element itself.\n\
+        fn read_only() -> i32 { var n: i32 = 0; for x in three() { n = n + x.get(); } return n; }\n\
+        // (b) moved into an outer `var`: the outer owns the last one.\n\
+        fn move_out() -> i32 { var kept: R = R::make(99); for x in three() { kept = x; } return kept.get(); }\n\
+        // (c) passed to a `take` param: the callee drops it.\n\
+        fn take_each() -> i32 { var n: i32 = 0; for x in three() { n = n + sink(x); } return n; }\n\
+        // (d) returned from the enclosing fn on the first trip.\n\
+        fn return_first() -> R { for x in three() { return x; } return R::make(-1); }\n\
+        // (e) early exit: what was taken drops, the generator's frame drops nothing twice.\n\
+        fn break_early() -> i32 { var n: i32 = 0; for x in three() { n = n + x.get(); if n >= 1 { break; } } return n; }\n\
+        fn main() -> i32 {\n\
+            #println(read_only());\n\
+            #println(move_out());\n\
+            #println(take_each());\n\
+            let r: R = return_first();\n\
+            #println(r.get());\n\
+            #println(break_early());\n\
+            return 0;\n\
+        }";
+    let (_dir, bin) = compile_program(src, false);
+    let run = Command::new(&bin).output().expect("run");
+    assert!(
+        run.status.success(),
+        "exit {:?}, stderr: {}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    // Values: 0+1+2 = 3; the last moved-out element is 2; take sums to 3; the
+    // first returned is 0; break after the first non-zero sum: 0 then 1 → 1.
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n2\n3\n0\n1\n");
+
+    // The count half: every `R` that was made is dropped exactly once, and
+    // `main`'s own `r` is dropped at its exit like any local.
+    // (A `\`-continued string literal drops the next line's indentation, so
+    // the program text has none.)
+    let src2 = src.replace(
+        "#println(break_early());\nreturn 0;\n",
+        "#println(break_early());\n{ let _z: R = r; }\n#println(MADE); #println(DROPS);\nreturn 0;\n",
+    );
+    assert_ne!(src2, src, "the drop-count variant must differ from the value one");
+    let (_dir2, bin2) = compile_program(&src2, false);
+    let run2 = Command::new(&bin2).output().expect("run");
+    assert!(run2.status.success(), "stderr: {}", String::from_utf8_lossy(&run2.stderr));
+    let out = String::from_utf8_lossy(&run2.stdout);
+    let mut lines = out.lines().rev();
+    let drops = lines.next().unwrap();
+    let made = lines.next().unwrap();
+    // read_only 3, move_out 1+3, take_each 3, return_first 1 (+1 unreached
+    // fallback never made), break_early 2 (the generator made two before the
+    // break and no third — laziness), all dropped: MADE == DROPS.
+    assert_eq!(made, "13", "made: {out}");
+    assert_eq!(drops, made, "every made value dropped exactly once: {out}");
+}
+
+// The report's §2: `next()` read the promise and THEN resumed the generator to
+// compute the following element, so it always ran one element ahead — a drain
+// that removed what it handed out had already removed an element nobody would
+// receive when the loop broke. A generator now starts suspended before its
+// body and runs once per element asked for.
+#[test]
+fn a_generator_produces_only_what_its_consumer_asks_for() {
+    let src = "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
+        #[lang(\"iterator\")] struct Iterator[T] { opaque _handle: *u8 }\n\
+        static PRODUCED: i32 = 0;\n\
+        gen fn counted() -> i32 {\n\
+            var i: i32 = 0;\n\
+            while i < 5 { PRODUCED = PRODUCED +% 1; yield i; i = i +% 1; }\n\
+        }\n\
+        fn main() -> i32 {\n\
+            // Calling the gen fn runs nothing.\n\
+            var it: Iterator[i32] = counted();\n\
+            #println(PRODUCED);\n\
+            var seen: i32 = 0;\n\
+            for _v in counted() { seen = seen +% 1; if seen == 1 { break; } }\n\
+            #println(seen);\n\
+            #println(PRODUCED);\n\
+            // Explicit `next()`: one element per call, and None after the end.\n\
+            var got: i32 = 0;\n\
+            var n: i32 = 0;\n\
+            while n < 7 {\n\
+                match it.next() { Option[i32]::Some(v) => { got = got + v; } Option[i32]::None => { } }\n\
+                n = n + 1;\n\
+            }\n\
+            #println(got);\n\
+            #println(PRODUCED);\n\
+            return 0;\n\
+        }";
+    let (_dir, bin) = compile_program(src, false);
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "stderr: {}", String::from_utf8_lossy(&run.stderr));
+    // 0 produced at the call; the loop saw 1 and the generator made 1 (was 2);
+    // seven next() calls sum 0..5 = 10 and make five more (six total).
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "0\n1\n1\n10\n6\n");
+}
+
+// Negative: a yielded binding is moved, so using it afterwards is E0335 — the
+// same diagnostic a `let` move gives. Compiled clean before, and freed twice.
+#[test]
+fn using_a_binding_after_yielding_it_is_e0335() {
+    assert_compile_fails_with(
+        "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
+         #[lang(\"iterator\")] struct Iterator[T] { opaque _handle: *u8 }\n\
+         extern fn free(p: *u8);\n\
+         struct R { p: *u8 }\n\
+         impl R { fn drop(ref this) { { free(this.p); } return; } fn n(this) -> i32 { return 1; } }\n\
+         gen fn g() -> R {\n\
+             let r: R = R { p: 0 as *u8 };\n\
+             yield r;\n\
+             let _k: i32 = r.n();\n\
+         }\n\
+         fn main() -> i32 { for x in g() { let _k: i32 = x.n(); } return 0; }",
+        "E0335",
+    );
+}
+
+// A generator starts suspended AHEAD of its body, whichever of the three
+// emitters lowers it — free `gen fn`, struct `gen` method, enum `gen` method.
+// The enum one was missed on the first pass of the 2026-09-06 fix and
+// `json::Value::items` lost its first element: the frame had run to its first
+// `yield` at the call, so the consumer's first resume produced the second.
+// (Not a `gen_src` IR test: that harness skips the monomorphizer, so no
+// `Iterator[i32]` exists there.)
+#[test]
+fn every_generator_emitter_starts_suspended() {
+    let src = "#[lang(\"option\")] enum Option[T] { Some(T), None }\n\
+        #[lang(\"iterator\")] struct Iterator[T] { opaque _handle: *u8 }\n\
+        static SEEN: i32 = 0;\n\
+        gen fn free_gen() -> i32 { SEEN = SEEN + 1; yield 1; SEEN = SEEN + 1; yield 2; }\n\
+        struct S { n: i32 }\n\
+        impl S { gen fn items(this) -> i32 { SEEN = SEEN + 1; yield this.n; SEEN = SEEN + 1; yield this.n; } }\n\
+        enum E { A(i32), B }\n\
+        impl E { gen fn items(this) -> i32 { SEEN = SEEN + 1; yield 2; SEEN = SEEN + 1; yield 3; } }\n\
+        fn main() -> i32 {\n\
+            // Calling runs nothing; the first element arrives with the body\n\
+            // having run exactly once, and the first one is the FIRST one.\n\
+            var a: Iterator[i32] = free_gen();\n\
+            #println(SEEN);\n\
+            for x in a { #println(x); #println(SEEN); break; }\n\
+            let s: S = S { n: 7 };\n\
+            var b: Iterator[i32] = s.items();\n\
+            #println(SEEN);\n\
+            for x in b { #println(x); #println(SEEN); break; }\n\
+            let e: E = E::B;\n\
+            var c: Iterator[i32] = e.items();\n\
+            #println(SEEN);\n\
+            for x in c { #println(x); #println(SEEN); break; }\n\
+            return 0;\n\
+        }";
+    let (_dir, bin) = compile_program(src, false);
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "stderr: {}", String::from_utf8_lossy(&run.stderr));
+    // Per emitter: SEEN before iterating (unchanged), the first element, SEEN
+    // after one trip (one more). An eager emitter shows SEEN already bumped
+    // before the loop and, with the resume-then-read protocol, the SECOND
+    // element as the first.
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "0\n1\n1\n1\n7\n2\n2\n2\n3\n"
+    );
+}
+
+/// A labelled call on a method name TWO types declare, run end to end.
+///
+/// Lowering keys method candidates by bare name — it runs before types exist —
+/// so a shared name leaves it unable to arrange the call; sema does it from the
+/// receiver's own parameter list and monomorphize applies the result. Every
+/// pass in that chain has to hold for the printed numbers to come out right,
+/// which is why this is an execution test and not an IR one.
+///
+/// `A::go(v, ctx = 0)` and `B::go(ctx, v = 9)` are deliberately incompatible:
+/// the labels sit in different positions and a different parameter carries the
+/// default, so any arrangement made without knowing the receiver's type lands
+/// on the wrong parameter. The last column is the one that used to MISCOMPILE
+/// rather than fail — `a.go(ctx: 3)` bound `ctx` to A's `v` and spliced B's
+/// `9` into A's `ctx`, printing 39 for a call that has no `v` at all. It is a
+/// compile error now, so what runs here is the four that are legal.
+#[test]
+fn named_arguments_resolve_against_the_receivers_own_method() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("named.cplus");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         struct A { x: i32 }\n\
+         impl A { fn go(ref this, v: i32, ctx: i32 = 0) -> i32 { return v * 10 + ctx; } }\n\
+         struct B { y: i32 }\n\
+         impl B { fn go(ref this, ctx: i32, v: i32 = 9) -> i32 { return ctx * 100 + v; } }\n\
+         fn main() -> i32 {\n\
+         var a: A = A { x: 1 };\n\
+         var b: B = B { y: 2 };\n\
+         printf(#str_ptr(\"%d %d %d %d\\n\\0\"),\n\
+         a.go(v: 5, ctx: 3), a.go(ctx: 3, v: 5), a.go(v: 5), b.go(ctx: 4));\n\
+         return 0;\n\
+         }\n",
+    )
+    .expect("write named.cplus");
+    let bin = dir.join("named");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "cpc failed: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run produced binary");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        // 53: v=5, ctx=3 — labels in written order.
+        // 53: the same call with the labels REVERSED; a label names a
+        //     parameter, so the order it is written in cannot matter.
+        // 50: ctx omitted, taking A's OWN default 0 — not B's 9.
+        // 409: on a B receiver the same label `ctx` is the FIRST parameter,
+        //      and the default that fills in is B's `v = 9`.
+        "53 53 50 409\n",
+        "each call must be arranged from its own receiver's parameter list"
+    );
+}
+
+/// The negative half of the pair, and the reason the fix is not only about a
+/// diagnostic: `A::go` has no default for `v`, so `a.go(ctx: 3)` is a missing
+/// argument. It used to COMPILE — `B::go` was the only candidate that accepted
+/// the call, so lowering applied B's arrangement to an A receiver.
+#[test]
+fn a_label_that_only_fits_another_type_is_an_error_not_a_value() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("wrongtype.cplus");
+    std::fs::write(
+        &src,
+        "struct A { x: i32 }\n\
+         impl A { fn go(ref this, v: i32, ctx: i32 = 0) -> i32 { return v * 10 + ctx; } }\n\
+         struct B { y: i32 }\n\
+         impl B { fn go(ref this, ctx: i32, v: i32 = 9) -> i32 { return ctx * 100 + v; } }\n\
+         fn main() -> i32 {\n\
+         var a: A = A { x: 1 };\n\
+         return a.go(ctx: 3);\n\
+         }\n",
+    )
+    .expect("write wrongtype.cplus");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "this call must not compile");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let all = format!("{stderr}{stdout}");
+    assert!(
+        all.contains("E0308") && all.contains("`v`"),
+        "expected a missing-argument error naming A's own parameter, got: {all}"
     );
 }

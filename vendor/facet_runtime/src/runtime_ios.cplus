@@ -50,11 +50,15 @@ import "facet/component" as component;
 import "facet/screen" as screen;
 import "facet/services" as services;
 import "facet/application" as app;
+import "facet/screen" as screen_mod;
+import "facet/window" as window;
 import "facet/mount" as mount;
 import "facet/nav" as nav;
 import "facet_uikit/facet_uikit" as backend;
 import "facet_uikit/window" as host;
+import "facet_uikit/notify" as notify;
 import "facet_uikit/dialogs" as dialogs;
+import "facet_uikit/clipboard" as clipboard;
 
 type Node = flex::Node;
 type Builder = flex::Builder;
@@ -70,13 +74,11 @@ type ScreenBox = screen::ScreenBox;
 fn not_on_ios(entry: str) {
     io::eprintln(text::from_str("facet(ios): ").appending(entry)
         .appending(" has no iOS equivalent — see vendor/facet_uikit/MANIFEST.md. It is a no-op here.").view());
-    return;
 }
 
 fn not_yet(entry: str) {
     io::eprintln(text::from_str("facet(ios): ").appending(entry)
         .appending(" is not built in facet_uikit yet — see its MANIFEST.md. It is a no-op here.").view());
-    return;
 }
 
 // The window an application describes by hand. Identical to runtime.cplus's
@@ -165,8 +167,47 @@ fn hold_root(take root: Node) -> *core::Node {
     };
 }
 
+// ---- the agent surface, for every host ---------------------------------------
+//
+// WHICH HOST AN APP IS ON IS NOT A REASON FOR ITS AGENT SURFACE TO DIFFER, and
+// it used to be the whole reason: `agent_mcp` was a method on `App`, so the
+// three blocking hosts — `run`, `run_component`, `run_screen` — had no way to
+// ask for one at all. A scaffolded app is on `run_screen` (AGENTS.md prescribes
+// it, because facet's Android facade does not implement `App::run`), so the
+// generated shape was exactly the shape that could not serve. See plan.md.
+//
+// ONE STORAGE, at process scope, because that is what the thing being described
+// actually is: one address, one accept loop, latched once by
+// `facet_agent::serve_once`. `App::agent_mcp` writes here too.
+//
+// Setting it is not enough on its own — the app still calls
+// `facet_agent::enable()` to fill the serving seam, exactly as the `App` tier
+// has always required.
+static AGENT_ID: text::Text = #zero::[text::Text]();
+
+// Serve the agent surface under the name `id`. Call before the host, on any
+// tier. AN ID, NOT AN ADDRESS: see the macOS facade for why, and
+// `agent_mcp::uds_path` / `agent_mcp::loopback_port` for the conventions.
+fn agent_mcp(id: str) {
+    AGENT_ID = text::from_str(id);
+}
+
+// The name this process serves under, or "" if the app never asked.
+fn agent_id() -> str { return AGENT_ID.view(); }
+
+// Start the worker if an address was named. Called by every host, BEFORE the
+// first window, so an agent that connects immediately waits on an empty surface
+// for a moment rather than being refused by a socket that does not exist yet.
+// `serve_once` latches, so a host that later opens more windows is a no-op
+// after the first.
+fn serve_agent_if_asked() {
+    let id: str = AGENT_ID.view();
+    if id != "" { app::agent_serve_once(id); }
+}
+
 fn run[W: Window](take window: W) {
     backend::install();
+    serve_agent_if_asked();
     host::set_popped(pushed_gone);
     var owned_window: W = window;
     var root: Node = owned_window.root();
@@ -183,7 +224,6 @@ fn run[W: Window](take window: W) {
     // unwinds — which is what makes taking their addresses safe here, exactly
     // as the macOS facade relies on its own blocking loop.
     host::run_loop();
-    return;
 }
 
 fn default_should_close(ctx: *u8) -> bool { return true; }
@@ -203,8 +243,7 @@ fn default_will_close(ctx: *u8) { return; }
 // frame that owns it never unwinds.
 fn attach_trampoline[C: component::Component + component::Lifecycle](ctx: *u8) {
     let p: *C = ctx as *C;
-    { (*p).on_attach() };
-    return;
+    { (*p).on_attach(component::Attach::Mount) };
 }
 
 // A component that owns its own lifetime.
@@ -229,6 +268,7 @@ fn run_component[C: component::Component + component::Lifecycle](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> C {
     backend::install();
+    serve_agent_if_asked();
     host::set_popped(pushed_gone);
     var owned_menu: AppMenu = menu;
     host::install_app_menu(#addr_of(owned_menu));
@@ -240,6 +280,11 @@ fn run_component[C: component::Component + component::Lifecycle](
                                            max_zoom: max_zoom));
     nav::set_close_fn(close_current);
     host::set_launched(attach_trampoline::[C], #addr_of(owned) as *u8);
+    // THE APP LIFECYCLE. No matching unbind, and that is not an oversight:
+    // `run_loop` below never returns, so this frame is immortal and `owned`
+    // outlives every event that could reach it. The desktop hosts, whose loop
+    // DOES return, unbind before the frame unwinds.
+    let _bound: status::Status = component::bind_app_lifecycle::[C](#addr_of(owned));
     host::run_loop();   // does not return
     // Unreachable in a running app, and `owned` is returned rather than
     // rebuilt so the SHAPE matches the macOS facade exactly — an application
@@ -253,6 +298,7 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> S {
     backend::install();
+    serve_agent_if_asked();
     host::set_popped(pushed_gone);
     var owned: S = screen_v;
     var owned_menu: AppMenu = menu;
@@ -263,6 +309,11 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     let _w: *u8 = host::open_window(#addr_of(root), c);
     nav::set_close_fn(close_current);
     host::set_launched(attach_trampoline::[S], #addr_of(owned) as *u8);
+    // THE APP LIFECYCLE. No matching unbind, and that is not an oversight:
+    // `run_loop` below never returns, so this frame is immortal and `owned`
+    // outlives every event that could reach it. The desktop hosts, whose loop
+    // DOES return, unbind before the frame unwinds.
+    let _bound: status::Status = component::bind_app_lifecycle::[S](#addr_of(owned));
     host::run_loop();   // does not return
     return owned;
 }
@@ -338,6 +389,12 @@ fn choose_file() -> option::Option[text::Text] {
     return option::Option[text::Text]::None;
 }
 
+// THE CLIPBOARD IS NOT ONE OF THE ABSENT ONES. A phone has no file picker of
+// this shape and it very much has a pasteboard, so these forward like any
+// other service rather than answering `not_on_ios`.
+fn copy_text(s: str) -> bool { return clipboard::copy_text(s); }
+fn paste_text() -> option::Option[text::Text] { return clipboard::paste_text(); }
+
 // ---- secondary windows -----------------------------------------------------------
 // There are none. A phone has one window; a second "window" on iOS is a
 // presented view controller, which is the modal tier above and is not built.
@@ -352,10 +409,9 @@ fn present_window(take root: Node, title: str, width: f64, height: f64) {
         option::Option[box::Box[Node]]::Some(b) => { b.into_raw() } as *core::Node,
         option::Option[box::Box[Node]]::None => 0 as *core::Node,
     };
-    if tp == (0 as *core::Node) { return; }
+    if tp.is_null() { return; }
     if !mount::mount(tp) { return; }
     let _ok: bool = host::present_screen(tp, title, 0 as *u8);
-    return;
 }
 
 // An application may not close, minimise or zoom its own window. Apple rejects
@@ -392,20 +448,35 @@ fn is_window_active() -> bool {
 // is watching the window.
 fn observe_window_size(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
     let root: *core::Node = app::window_root(0 as usize);
-    if root == (0 as *core::Node) { return services::Cancellable::none(); }
+    if root.is_null() { return services::Cancellable::none(); }
     return services::observe_size(root, cb, ctx);
 }
 
 // Backgrounding / resumed / stopped. THE ONE PLACE THIS PLATFORM IS RICHER:
 // these three are real, frequent, user-visible moments on a phone, where on a
-// desktop they are hide, unhide and terminate. They are the app delegate's
-// notifications and are not wired yet.
+// desktop they are hide, unhide and terminate.
+//
+// NOTIFICATIONS, NOT THE APP DELEGATE, and that is a correction rather than a
+// preference. These five verbs used to ride `applicationDidEnterBackground:`
+// and its three siblings through a backend-local `observe_lifecycle`, and UIKit
+// does not send any of those four to an app that has adopted UIScene — which
+// every app scaffolded by `cpc new` has. They fired for nobody. The
+// `UIApplication*Notification` names carry neither the "not called" note nor
+// the iOS 26 deprecation the delegate methods do, and they post regardless of
+// scene adoption. See `bugs/closed/ios-lifecycle-verbs-never-fire-under-scenes.md`.
+//
+// This is now structurally the same file as `runtime_macos.cplus`, which
+// answers the same five verbs through `akx::observe_named`.
 fn observe_backgrounding(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_BACKGROUND, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationDidEnterBackgroundNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 fn observe_resumed(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_FOREGROUND, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationWillEnterForegroundNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 // `stopped` is TERMINATION, and on iOS it is the one lifecycle edge that is not
@@ -414,8 +485,17 @@ fn observe_resumed(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
 // because it does arrive when the app is quit while foregrounded, and
 // MANIFEST.md records that an app which needs to save state should save it on
 // BACKGROUNDING instead.
+//
+// Worth knowing while reading the report above: `applicationWillTerminate:` is
+// the ONE of the delegate's lifecycle methods that carries neither the
+// "not called under scenes" note nor a deprecation, so this verb was probably
+// the only one of the five that ever worked. It moves to the notification
+// anyway — five verbs on one mechanism beats four on one and a survivor on
+// another.
 fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_TERMINATE, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationWillTerminateNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 // "Window active" on iOS is the APPLICATION being frontmost and interactive,
@@ -423,11 +503,15 @@ fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
 // a desktop asks of a window, asked of the app, exactly as `is_window_active`
 // already answers it.
 fn observe_window_active(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_ACTIVE, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationDidBecomeActiveNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    return host::observe_lifecycle(host::PHASE_INACTIVE, cb, ctx);
+    let id: u64 = notify::observe_named("UIApplicationWillResignActiveNotification",
+                                        0 as *u8, cb, ctx);
+    return services::Cancellable::of(id, notify::cancel_observe);
 }
 
 // An explicit light/dark choice overriding the system's:
@@ -435,7 +519,6 @@ fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancel
 // meaning and one of the few window-level properties iOS does have.
 fn set_app_appearance(a: vocab::Appearance) {
     host::set_app_appearance(a);
-    return;
 }
 
 fn app_appearance() -> vocab::Appearance {
@@ -456,75 +539,90 @@ fn set_window_frame(frame: vocab::Rect) { not_on_ios("set_window_frame"); return
 // navigation swaps the screen inside the one window rather than cycling
 // windows.
 
-struct AppRoute {
-    name: text::Text,
-    factory: fn() -> screen::ScreenBox,
-}
-
 fn app_hook_noop(ctx: *u8) { return; }
 
+// AN APP IS AN INSTANCE, AND THIS IS A HANDLE TO ONE. The runtime owns the
+// instance (`app::new_instance`); the caller owns a name for it. Every other
+// facet tier already works this way — `Label`, `Button`, `window::Window`,
+// `screen::Cursor` — and App was the last one where the caller held the thing
+// itself.
+//
+// That is not a tidy-up. `App::run` on Android sets up and RETURNS, because the
+// Activity owns the loop — so an App the caller owned was dropped the moment
+// `main` unwound, leaving `app::make_current` and the route registry pointing
+// at freed memory. It is why Android had no App tier at all.
+//
+// The state lives in `app::Application`, which is where application.cplus says
+// app-scoped state goes. It used to be declared FIVE times, once per facade.
 struct App {
-    application: app::Application,
-    name_text: text::Text,
-    menu_fn: fn() -> AppMenu,
-    on_launch_fn: fn(*u8),
-    on_quit_fn: fn(*u8),
-    opaque hook_ctx: *u8,
-    agent_path: text::Text,
-    routes: vec::Vec[AppRoute],
+    opaque _p: *app::Application,
 }
 
 impl App {
     fn new(name: str = "facet") -> App {
-        return App {
-            application: app::Application::new(),
-            name_text: text::from_str(name),
-            menu_fn: 0 as fn() -> AppMenu,
-            on_launch_fn: app_hook_noop,
-            on_quit_fn: app_hook_noop,
-            hook_ctx: 0 as *u8,
-            agent_path: text::new(),
-            routes: vec::new::[AppRoute](),
-        };
+        let p: *app::Application = app::new_instance(name);
+        { (*p).on_launch_fn = app_hook_noop };
+        { (*p).on_quit_fn = app_hook_noop };
+        return App { _p: p };
     }
 
-    fn name(this) -> str { return this.name_text.view(); }
+    fn name(this) -> str { return app::instance_name(this._p); }
 
-    fn menu(ref this, build: fn() -> AppMenu) { this.menu_fn = build; return; }
+    fn menu(this, build: fn() -> AppMenu) { { (*this._p).menu_fn = build as *u8 }; return; }
 
-    fn screen(ref this, name: str, factory: fn() -> screen::ScreenBox) {
-        this.routes.append(AppRoute { name: text::from_str(name), factory: factory });
-        return;
+    fn screen(this, name: str, factory: fn() -> screen::ScreenBox) {
+        app::add_route(this._p, name, factory as *u8);
     }
 
-    fn agent_mcp(ref this, path: str) { this.agent_path = text::from_str(path); return; }
-
-    fn on_launch(ref this, f: fn(*u8), ctx: *u8 = 0 as *u8) {
-        this.on_launch_fn = f;
-        this.hook_ctx = ctx;
-        return;
+    fn agent_mcp(this, id: str = "") {
+        if id == "" { agent_mcp(this.name()); return; }
+        agent_mcp(id);
     }
 
-    fn on_quit(ref this, f: fn(*u8)) { this.on_quit_fn = f; return; }
+    fn on_launch(this, f: fn(*u8), ctx: *u8 = 0 as *u8) {
+        { (*this._p).on_launch_fn = f };
+        { (*this._p).hook_ctx = ctx };
+    }
 
+    fn on_quit(this, f: fn(*u8)) { { (*this._p).on_quit_fn = f }; return; }
+
+
+    // ---- the app's environment ------------------------------------------------
+    // Facts about THIS app, living for its life. Not `stdlib::env` — that is the
+    // OS's — and deliberately without a change channel: if the UI must update
+    // when a value changes, it belongs in a `resource`.
+    //
+    // `@` keys are C+'s and facet's (`@platform`, `@arch`, `@target`,
+    // `@app.name`, `@backend`), and `set_env` refuses them so an application
+    // cannot tell an agent it is something it is not.
+    fn env(this, key: str) -> str { return app::env_in(this._p, key); }
+    fn set_env(this, key: str, value: str) -> bool {
+        return app::set_env_in(this._p, key, value);
+    }
+    fn env_flag(this, key: str) -> bool { return app::env_flag_in(this._p, key); }
+    fn set_env_flag(this, key: str, on: bool) -> bool {
+        return app::set_env_flag_in(this._p, key, on);
+    }
+    fn has_env(this, key: str) -> bool { return app::has_env_in(this._p, key); }
+    fn clear_env(this, key: str) -> bool { return app::clear_env_in(this._p, key); }
+    fn env_keys(this) -> vec::Vec[text::Text] { return app::env_keys_in(this._p); }
+
+    // ---- what the app is showing ----------------------------------------------
+    // Sugar over the window and screen tiers, and worth having: the app is the
+    // thing a caller already has in hand.
+    fn windows(this) -> vec::Vec[window::Window] { return window::all(); }
+    fn window_keys(this) -> vec::Vec[text::Text] { return window::keys(); }
+    fn screens(this) -> vec::Vec[screen_mod::Cursor] { return screen_mod::stack(); }
+    fn is_running(this) -> bool { return app::has_current(); }
+
+    // The one place that knows both sides of the *u8 the record stores.
     fn route_factory(this, route: str) -> fn() -> screen::ScreenBox {
-        var i: usize = 0 as usize;
-        let n: usize = this.routes.count();
-        while i < n {
-            match this.routes.at_ptr(i) {
-                option::Option[*AppRoute]::Some(rp) => {
-                    if { (*rp).name.view() } == route { return { (*rp).factory }; }
-                }
-                option::Option[*AppRoute]::None => { }
-            }
-            i = i +% (1 as usize);
-        }
-        return 0 as fn() -> screen::ScreenBox;
+        return app::route_factory(this._p, route) as fn() -> screen::ScreenBox;
     }
 
     fn build_menu(this) -> AppMenu {
-        let f: fn() -> AppMenu = this.menu_fn;
-        if f != (0 as fn() -> AppMenu) { return f(); }
+        let f: fn() -> AppMenu = { (*this._p).menu_fn } as fn() -> AppMenu;
+        if f.is_not_null() { return f(); }
         var m: AppMenu = screen::app_menu(this.name());
         m.add_item(this.name(), "Quit", "q", screen::menu_action_quit());
         return m;
@@ -538,27 +636,32 @@ impl App {
     // there is no moment between "the app is running" and "the process is
     // gone". An app that needs to persist state uses `observe_backgrounding`,
     // which is the hook the platform actually gives for it.
-    fn run(ref this, initial: str, arg: str = "") -> status::Status {
+    fn run(this, initial: str, arg: str = "") -> status::Status {
         backend::install();
     host::set_popped(pushed_gone);
-        this.application.host = #addr_of(this) as *u8;
-        app::make_current(#addr_of(this.application));
+        app::make_current(this._p);
         nav::reset(arg);
         nav::set_close_fn(close_current);
         nav::set_push_fn(push_screen);
         nav::set_pop_fn(pop_screen);
-        CURRENT_APP = #addr_of(this) as *u8;
-        let sock: str = this.agent_path.view();
-        if sock != "" { app::agent_serve_once(sock); }
-        let launch: fn(*u8) = this.on_launch_fn;
-        launch(this.hook_ctx);
+        // The stack IS the platform's here, so its depth is a real answer and
+        // a back button can ask it. `pop_to` waits for the shared stack (step
+        // 2) — this host's entries carry no route to look for.
+        nav::set_depth_fn(stack_depth);
+        // The backend's door into the route registry, for a scene it is asked
+        // to connect. See `scene_build`.
+        host::set_scene_build_fn(scene_build);
+        host::set_scene_attached_fn(scene_attached);
+        host::set_scene_gone_fn(scene_gone);
+        serve_agent_if_asked();
+        let launch: fn(*u8) = { (*this._p).on_launch_fn };
+        if launch.is_not_null() { launch({ (*this._p).hook_ctx }); }
         // The route resolves NOW — a bad route name should fail before the
         // process is handed to UIKit — but the screen is shown at LAUNCH, for
         // the same reason `on_attach` is fired there.
         if { (*(#addr_of(this) as *App)).route_factory(initial) } == (0 as fn() -> screen::ScreenBox) {
             nav::clear_hooks();
             app::release_current();
-            this.application.host = 0 as *u8;
             return status::Status::InvalidInput;
         }
         PENDING_ROUTE = text::from_str(initial);
@@ -574,31 +677,35 @@ impl App {
 // next; here the loop is UIKit's and cannot be re-entered, so the swap happens
 // inside the nav hook itself.
 
-static CURRENT_APP: *u8 = 0 as *u8;
+// NO `CURRENT_APP` STATIC. It used to hold `#addr_of(this)` from inside `run`,
+// which was the address of a by-value parameter and survived only because
+// `run_loop()` never returns on this platform — correct by accident, and the
+// kind of thing that stops being correct the moment anything else calls `run`.
+// `app::current()` is the one door now, and the App handle is that pointer
+// wearing the App type.
 static CURRENT_SB: *u8 = 0 as *u8;
 static PENDING_ROUTE: text::Text = #zero::[text::Text]();
 
 // The launch hook for an App: show the initial screen once the window exists.
 fn show_pending(ctx: *u8) {
     let _ok: bool = show_route(PENDING_ROUTE.view());
-    return;
 }
 
 fn show_route(route: str) -> bool {
-    if CURRENT_APP == (0 as *u8) { return false; }
-    let ap: *App = CURRENT_APP as *App;
-    let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
-    if f == (0 as fn() -> screen::ScreenBox) { return false; }
+    if !app::has_current() { return false; }
+    let f: fn() -> screen::ScreenBox =
+        app::route_factory(app::current(), route) as fn() -> screen::ScreenBox;
+    if f.is_null() { return false; }
     var sb: screen::ScreenBox = f();
     if !sb.valid() { return false; }
     // The app's menu plus THIS screen's contribution — built for parity with
     // the macOS facade, and installed into a backend that has no menu bar.
-    var bar: AppMenu = { (*ap).build_menu() };
+    var bar: AppMenu = App { _p: app::current() }.build_menu();
     bar.extend(sb.menu_items());
     host::install_app_menu(#addr_of(bar));
     let c: Chrome = sb.chrome();
     let p: *core::Node = hold_root(sb.build());
-    if p == (0 as *core::Node) { return false; }
+    if p.is_null() { return false; }
     // Tear the previous screen down only once the new one is built: a failed
     // build would otherwise leave the window showing nothing at all.
     drop_current_screen();
@@ -613,7 +720,15 @@ fn show_route(route: str) -> bool {
         option::Option[box::Box[screen::ScreenBox]]::Some(b) => {
             let sp: *screen::ScreenBox = b.into_raw() as *screen::ScreenBox;
             CURRENT_SB = sp as *u8;
-            { (*sp).on_attach() };
+            { (*sp).on_attach(component::Attach::Mount) };
+            // THE APP LIFECYCLE. `run_component` and `run_screen` bind their own
+            // component; the App loop never bound the ScreenBox, so a screen
+            // shown through a ROUTE never learned the app had backgrounded — and
+            // on this platform that is where an exclusive device has to be given
+            // back. The box is heap-held and never freed, so the address is good
+            // for the life of the subscription.
+            let _bound: status::Status =
+                component::bind_app_lifecycle::[screen::ScreenBox](sp);
         }
         option::Option[box::Box[screen::ScreenBox]]::None => { }
     }
@@ -621,9 +736,11 @@ fn show_route(route: str) -> bool {
 }
 
 fn drop_current_screen() {
-    if CURRENT_SB == (0 as *u8) { return; }
+    if CURRENT_SB.is_null() { return; }
     let sp: *screen::ScreenBox = CURRENT_SB as *screen::ScreenBox;
-    { (*sp).on_detach() };
+    let _unbound: status::Status =
+        component::unbind_app_lifecycle::[screen::ScreenBox](sp);
+    { (*sp).on_detach(component::Detach::Unmount) };
     CURRENT_SB = 0 as *u8;
     // The ScreenBox and the tree it built are deliberately NOT freed. A worker
     // may still be inside the screen's data, and the macOS facade settles the
@@ -632,7 +749,6 @@ fn drop_current_screen() {
     // per navigation rather than free something a queued apply still holds.
     // MANIFEST.md records it: the fix is a settle that runs ON the loop, not
     // after it.
-    return;
 }
 
 // nav::go / nav::quit while a loop runs.
@@ -648,12 +764,143 @@ fn close_current() {
         // reported and refused rather than honoured badly.
         not_on_ios("nav::quit");
     }
-    return;
 }
 
 // Pushed screens are a modal presentation on iOS — the tier `alert` and
 // `present_window` also wait on. Refused rather than silently doing nothing:
 // `nav::push` answers false, which is what its callers check.
+// ---- a second window, on an iPad that opted in ----------------------------------
+// The `Show::Window` half of the rule on this platform. An iPhone has one
+// window and `activate_scene` answers false there, so the push falls through to
+// the stack — which is the rule working ("with whatever room this platform
+// has"), not a degradation. An iPad whose plist says
+// `UIApplicationSupportsMultipleScenes` gets a real second window.
+
+// What the pending scene is for. UIKit connects a scene asynchronously, so the
+// route it was asked for has to survive the gap; the KEY rides in the
+// NSUserActivity and this carries the rest. One at a time, main-thread only.
+static PENDING_ROUTE_FOR_SCENE: text::Text = #zero::[text::Text]();
+static PENDING_ARG_FOR_SCENE: text::Text = #zero::[text::Text]();
+
+// THE BACKEND'S DOOR INTO THE ROUTE REGISTRY. facet_uikit cannot resolve a
+// route — the registry is the runtime's — so it calls this when a scene
+// connects asking for one. Answers the tree to show, or null for a route
+// nothing answers, which gives an empty window rather than a crash.
+fn scene_build(key: str) -> *core::Node {
+    if !app::has_current() { return 0 as *core::Node; }
+    // A LIVE PUSH knows its own route and argument. A RESTORED scene does not —
+    // the process is new — so the key is all there is, and the key is
+    // `route` or `route:arg` by construction (nav::key_for). Splitting it back
+    // is what lets a window iPadOS restored come back with its screen in it.
+    //
+    // A key that came from an explicit `key:` override cannot be split, so it
+    // resolves to no route and the backend throws the scene away rather than
+    // showing a blank one. That is the honest limit of restoring from a name.
+    var route: str = PENDING_ROUTE_FOR_SCENE.view();
+    var arg: str = PENDING_ARG_FOR_SCENE.view();
+    if route == "" {
+        // A RESTORED scene: the key is all there is. `nav::route_of_key` is the
+        // inverse of the `nav::key_for` that wrote it, and the pair is pinned by
+        // a round-trip test — including an argument that itself contains a colon
+        // (`open:file:///tmp/a`), which a split written here got right by luck.
+        route = nav::route_of_key(key);
+        arg = nav::arg_of_key(key);
+    }
+    if route == "" { return 0 as *core::Node; }
+    let f: fn() -> screen::ScreenBox =
+        app::route_factory(app::current(), route) as fn() -> screen::ScreenBox;
+    if f.is_null() { return 0 as *core::Node; }
+    nav::adopt_push_args(arg);
+    var sb: screen::ScreenBox = f();
+    if !sb.valid() { return 0 as *core::Node; }
+    let tp: *core::Node = match box::new::[Node](sb.build()) {
+        option::Option[box::Box[Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[Node]]::None => 0 as *core::Node,
+    };
+    if tp.is_null() { return 0 as *core::Node; }
+    let sbp: *u8 = match box::new::[screen::ScreenBox](sb) {
+        option::Option[box::Box[screen::ScreenBox]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[screen::ScreenBox]]::None => 0 as *u8,
+    };
+    if sbp.is_null() { return 0 as *core::Node; }
+    // The window's own screen gets the same lifecycle every other one does.
+    let _bound: status::Status =
+        component::bind_app_lifecycle::[screen::ScreenBox](sbp as *screen::ScreenBox);
+    // `on_attach` IS NOT FIRED HERE. The tree is not in a window yet — this
+    // function only builds it — so a screen calling `mount::find` would get
+    // None. `scene_attached` below is the seam, and the backend calls it once
+    // the tree is mounted.
+    PENDING_SCENE_SB = sbp;
+    return tp;
+}
+
+static PENDING_SCENE_SB: *u8 = 0 as *u8;
+
+// The backend, when this window has GONE — the user closed it, the system
+// reclaimed it, or `destroy_scene` asked. Fires the screen's teardown the way
+// every other window close in facet does.
+//
+// The box is NOT freed, for the reason every facade records: a queued apply may
+// still be inside this screen's data and the next screen is allocated into
+// whatever this frees.
+fn scene_gone(key: str) {
+    let sbp: *u8 = scene_screen_take(key);
+    if sbp.is_null() { return; }
+    let _unbound: status::Status =
+        component::unbind_app_lifecycle::[screen::ScreenBox](sbp as *screen::ScreenBox);
+    { (*(sbp as *screen::ScreenBox)).on_detach(component::Detach::Unmount) };
+}
+
+// One entry per open scene screen, so a close can find the box its window was
+// showing. Small and fixed-shape: an app has a handful of windows, not a
+// thousand.
+static SCENE_KEYS: vec::Vec[text::Text] = #zero::[vec::Vec[text::Text]]();
+static SCENE_SBS: vec::Vec[usize] = #zero::[vec::Vec[usize]]();
+
+fn scene_screen_put(key: str, sbp: *u8) {
+    let _a: status::Status = SCENE_KEYS.append(text::from_str(key));
+    let _b: status::Status = SCENE_SBS.append({ #addr(sbp) });
+}
+
+fn scene_screen_take(key: str) -> *u8 {
+    let n: usize = SCENE_KEYS.count();
+    var i: usize = 0 as usize;
+    while i < n {
+        let hit: bool = match SCENE_KEYS.at_ptr(i) {
+            option::Option[*text::Text]::Some(k) => ({ (*k).view() } == key),
+            option::Option[*text::Text]::None => false,
+        };
+        if hit {
+            let p: usize = match SCENE_SBS.at_ptr(i) {
+                option::Option[*usize]::Some(v) => { (*v) },
+                option::Option[*usize]::None => 0 as usize,
+            };
+            let _k: option::Option[text::Text] = SCENE_KEYS.remove(at: i);
+            let _v: option::Option[usize] = SCENE_SBS.remove(at: i);
+            return p as *u8;
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// The backend, once this window's tree is live.
+fn scene_attached(key: str) {
+    let sbp: *u8 = PENDING_SCENE_SB;
+    PENDING_SCENE_SB = 0 as *u8;
+    if sbp.is_null() { return; }
+    scene_screen_put(key, sbp);
+    { (*(sbp as *screen::ScreenBox)).on_attach(component::Attach::Mount) };
+}
+
+// Ask for a window. False when this app cannot have a second one, which is what
+// makes the caller fall back to the stack.
+fn open_scene(route: str, key: str, arg: str) -> bool {
+    PENDING_ROUTE_FOR_SCENE = text::from_str(route);
+    PENDING_ARG_FOR_SCENE = text::from_str(arg);
+    return host::activate_scene(key);
+}
+
 // A PUSHED SCREEN IS A VIEW CONTROLLER ON THE STACK, which is the iOS shape of
 // what macOS does with a second window. The back button and the swipe-back
 // gesture come with the stack rather than being drawn here.
@@ -661,12 +908,30 @@ fn close_current() {
 // The tree and the ScreenBox both outlive this frame, so both go to the heap;
 // the box is what the host hands back when the screen goes, whichever way it
 // went.
-fn push_screen(route: str, arg: str) -> bool {
-    if CURRENT_APP == (0 as *u8) { return false; }
-    let ap: *App = CURRENT_APP as *App;
-    let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
-    if f == (0 as fn() -> screen::ScreenBox) { return false; }
-    nav::set_arg(arg);   // after the lookup: a failed push leaves arg alone
+fn push_screen(route: str, key: str, arg: str, show: u32) -> bool {
+    if !app::has_current() { return false; }
+    // BOTH SHAPES ARE THE SAME THING HERE, and that is the rule working rather
+    // than a degradation. `Show::Window` means "with whatever room this
+    // platform has"; an iPhone has one window, so the room is a stack entry.
+    // An iPad that opted into multiple scenes is where the two diverge, and
+    // that is plans/nav-windows.md step 7.
+    //
+    // `key` is deliberately NOT used to name a window. A pushed screen here
+    // lives inside the SAME UIWindow, so naming it would make
+    // `window::find("settings")` answer on a phone — and the contract is that a
+    // key names a window only where the platform gave that screen one. It names
+    // the SCREEN, which is the tier that always exists.
+    // A PEER WINDOW WHERE THERE IS ROOM. On an iPad that opted into multiple
+    // scenes this is a real second window; everywhere else `open_scene` answers
+    // false and the push becomes a stack entry, which is the same intent
+    // rendered the way this platform can render it.
+    if show == nav::show_code(nav::Show::Window) {
+        if open_scene(route, key, arg) { return true; }
+    }
+    let f: fn() -> screen::ScreenBox =
+        app::route_factory(app::current(), route) as fn() -> screen::ScreenBox;
+    if f.is_null() { return false; }
+    nav::adopt_push_args(arg);   // after the lookup: a failed push leaves them alone
     var sb: screen::ScreenBox = f();
     if !sb.valid() { return false; }
     let c: Chrome = sb.chrome();
@@ -674,15 +939,17 @@ fn push_screen(route: str, arg: str) -> bool {
         option::Option[box::Box[Node]]::Some(b) => { b.into_raw() } as *core::Node,
         option::Option[box::Box[Node]]::None => 0 as *core::Node,
     };
-    if tp == (0 as *core::Node) { return false; }
+    if tp.is_null() { return false; }
     if !mount::mount(tp) { return false; }
     let sbp: *u8 = match box::new::[screen::ScreenBox](sb) {
         option::Option[box::Box[screen::ScreenBox]]::Some(b) => b.into_raw(),
         option::Option[box::Box[screen::ScreenBox]]::None => 0 as *u8,
     };
-    if sbp == (0 as *u8) { return false; }
+    if sbp.is_null() { return false; }
     if !host::push_screen(tp, c.title(), sbp) { return false; }
-    { (*(sbp as *screen::ScreenBox)).on_attach() };
+    { (*(sbp as *screen::ScreenBox)).on_attach(component::Attach::Mount) };
+    let _bound: status::Status =
+        component::bind_app_lifecycle::[screen::ScreenBox](sbp as *screen::ScreenBox);
     return true;
 }
 
@@ -690,46 +957,52 @@ fn push_screen(route: str, arg: str) -> bool {
 // button, or the swipe-back gesture. The host cannot tell those apart and does
 // not try: it reports what is no longer on the stack.
 fn pushed_gone(box_: *u8) {
-    if box_ == (0 as *u8) { return; }
-    { (*(box_ as *screen::ScreenBox)).on_detach() };
+    if box_.is_null() { return; }
+    let _unbound: status::Status =
+        component::unbind_app_lifecycle::[screen::ScreenBox](box_ as *screen::ScreenBox);
+    { (*(box_ as *screen::ScreenBox)).on_detach(component::Detach::Unmount) };
     // The ScreenBox and its tree are deliberately NOT freed, for the reason
     // `drop_current_screen` gives: there is no moment on this platform where
     // the loop has returned and the job queue is settled, so freeing something
     // a queued apply still holds would be worse than leaking it.
-    return;
 }
 
 fn pop_screen() -> bool {
     return host::pop_screen();
 }
 
-// ---- app context ------------------------------------------------------------
-
-fn running_app() -> *App {
-    if !app::has_current() { return 0 as *App; }
-    let a: *app::Application = app::current();
-    return { (*a).host } as *App;
+// How deep the nav stack is — 0 at the root screen, which is what makes
+// `nav::can_pop()` false there and lets the platform's own back behaviour
+// through.
+fn stack_depth() -> usize {
+    return host::pushed_count();
 }
 
-fn app_running() -> bool { return running_app() != (0 as *App); }
+// ---- app context ------------------------------------------------------------
+
+// THE RUNNING APP, as a handle. One app runs at a time, so `app::current()` is
+// the whole answer — the handle is that pointer wearing the App type.
+//
+// `runtime::app()` always answers: the running app, or the process default.
+fn app() -> App {
+    return App { _p: app::current() };
+}
+
+fn app_running() -> bool { return app::has_current(); }
 
 fn app_name() -> str {
-    let ap: *App = running_app();
-    if ap == (0 as *App) { return ""; }
-    return { (*ap).name() };
+    if !app::has_current() { return ""; }
+    return app::instance_name(app::current());
 }
 
 fn has_screen(route: str) -> bool {
-    let ap: *App = running_app();
-    if ap == (0 as *App) { return false; }
-    let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
-    return f != (0 as fn() -> screen::ScreenBox);
+    if !app::has_current() { return false; }
+    return app::route_factory(app::current(), route).is_not_null();
 }
 
 fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
-    let ap: *App = running_app();
-    if ap == (0 as *App) { return false; }
+    if !app::has_current() { return false; }
     if has_screen(route) { return false; }
-    { (*ap).screen(route, factory) };
+    app::add_route(app::current(), route, factory as *u8);
     return true;
 }

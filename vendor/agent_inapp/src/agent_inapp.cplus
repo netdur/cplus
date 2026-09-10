@@ -76,7 +76,7 @@ fn open_with_grant(surf: *u8, vt: backend::Backend, grant: auth::Grant) -> Sessi
         surf: surf,
         vt: vt,
         grant: grant,
-        sub: events::subscriber(events::everything(), 64 as usize),
+        sub: events::subscriber(events::everything(), 64),
     };
 }
 
@@ -96,7 +96,7 @@ impl Session {
         return (this.vt.click)(this.surf, this.grant, id);
     }
 
-    fn set_text(this, id: str, value: str, base_version: u64 = 0 as u64) -> surface::Outcome {
+    fn set_text(this, id: str, value: str, base_version: u64 = 0) -> surface::Outcome {
         return (this.vt.set_text)(this.surf, this.grant, id, value, base_version);
     }
 

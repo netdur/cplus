@@ -28,6 +28,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/application" as app;
+import "facet/app_events" as ev;
 import "facet/tree" as tree;
 import "facet/vocabulary" as vocab;
 import "facet/elements" as ui;
@@ -39,6 +40,8 @@ import "./views" as views;
 import "./recycler" as recycler;
 import "./input" as input;
 import "./keys" as keys;
+import "./notify" as notify;
+import "./app_events_uikit" as app_events_uikit;
 import "./window" as window;
 import "./device" as device;
 import "./keyboard" as keyboard;
@@ -220,6 +223,368 @@ fn attaching_a_menu_puts_an_interaction_on_the_view() -> bool {
     // And the same view answers a configuration, which is what the table's
     // delegate asks for on behalf of a row.
     return menus::configuration_in_subtree(v) != (0 as *u8);
+}
+
+// ---- the context-menu shortcut --------------------------------------------------
+//
+// `context_menu_item.shortcut` was ACCEPTED AND DROPPED for the life of this
+// package: `shortcut_key` and `shortcut_modifiers` were read nowhere, so a menu
+// that described ⌘R showed a title and nothing else, and the key did nothing on
+// an iPad with a hardware keyboard — the one configuration the prop exists for.
+//
+// WHAT THESE CAN AND CANNOT REACH, because that line matters more here than
+// usual. This runner has no `UIApplicationMain` and therefore NO RESPONDER
+// CHAIN, so the last hop — UIKit asking the chain for `keyCommands` and sending
+// `facetMenuCommand:` back down it — is the one thing no assertion here
+// touches. Everything on either side of it is checked: the element UIKit is
+// handed, the class that answers, that the class is a `UIResponder` (which is
+// the whole reason it is IN the chain), and what happens when the selector
+// arrives. The remaining gap needs hands and a keyboard, and MANIFEST.md says so.
+
+static SHORTCUT_FIRED: i32 = 0 as i32;
+
+fn note_shortcut_fired(sender: *u8, ctx: *u8) {
+    SHORTCUT_FIRED = SHORTCUT_FIRED + (1 as i32);
+    return;
+}
+
+static OTHER_SHORTCUT_FIRED: i32 = 0 as i32;
+
+fn note_other_shortcut_fired(sender: *u8, ctx: *u8) {
+    OTHER_SHORTCUT_FIRED = OTHER_SHORTCUT_FIRED + (1 as i32);
+    return;
+}
+
+// One menu, both shapes: an item that names ⌘R and one that names nothing. The
+// interesting assertions are all about the DIFFERENCE between them.
+fn ctx_menu_with_shortcut() -> core::Node {
+    var menu: core::Node = ui::context_menu(key: "sel:sc");
+    let mp: *core::Node = #addr_of(menu);
+    let _r: bool = mount::add_child(mp, ui::context_menu_item(
+        "Rename", key: "sel:sc:rename",
+        shortcut: vocab::Shortcut::of("r", vocab::KeyModifiers::Cmd),
+        on_clicked: note_shortcut_fired));
+    let _d: bool = mount::add_child(mp, ui::context_menu_item("Delete", key: "sel:sc:delete"));
+    return menu;
+}
+
+fn is_kind(obj: *u8, class_name: *u8) -> bool {
+    if obj == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")),
+                           rt::get_class(class_name)) } != (0 as i8);
+}
+
+// The nth element of the inline group `build_menu` wraps a run of items in.
+// UIKit has no separator element, so every item sits one level down.
+fn menu_element_at(menu_node: *core::Node, at: u64) -> *u8 {
+    let m: *u8 = menus::build_menu(menu_node);
+    if m == (0 as *u8) { return 0 as *u8; }
+    let kids: *u8 = { rt::msg_id(m, rt::sel(#str_ptr("children\0"))) };
+    if kids == (0 as *u8) { return 0 as *u8; }
+    let g0: *u8 = { rt::msg_id_u64(kids, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    if g0 == (0 as *u8) { return 0 as *u8; }
+    let inner: *u8 = { rt::msg_id(g0, rt::sel(#str_ptr("children\0"))) };
+    if inner == (0 as *u8) { return 0 as *u8; }
+    if { rt::msg_u64(inner, rt::sel(#str_ptr("count\0"))) } <= at { return 0 as *u8; }
+    return { rt::msg_id_u64(inner, rt::sel(#str_ptr("objectAtIndex:\0")), at) };
+}
+
+fn delegate_instance() -> *u8 {
+    let cls: *u8 = window::delegate_class();
+    if cls == (0 as *u8) { return 0 as *u8; }
+    return synth::alloc_init_class(cls);
+}
+
+fn probe_host() -> uik::View {
+    return uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+}
+
+// A TABLE IS THE KIND OF THING THAT IS WRONG SILENTLY, and this one is written
+// twice — `keys.cplus` reads the same flags in the other direction. An integer
+// literal wraps through i32 before `as`, so the numbers are checked rather than
+// trusted.
+fn facet_modifiers_map_onto_uikit_flags() -> bool {
+    if menus::ui_modifier_mask(vocab::KeyModifiers::Cmd) != (1048576 as u64) { return false; }
+    if menus::ui_modifier_mask(vocab::KeyModifiers::Shift) != (131072 as u64) { return false; }
+    if menus::ui_modifier_mask(vocab::KeyModifiers::Ctrl) != (262144 as u64) { return false; }
+    if menus::ui_modifier_mask(vocab::KeyModifiers::Alt) != (524288 as u64) { return false; }
+    if menus::ui_modifier_mask(vocab::KeyModifiers::None) != (0 as u64) { return false; }
+    // No Windows key on iOS either; Command is what a cross-platform
+    // description means by "the platform's own modifier".
+    return menus::ui_modifier_mask(vocab::KeyModifiers::Windows) == (1048576 as u64);
+}
+
+fn a_shortcut_item_is_a_key_command() -> bool {
+    // A `UIMenuElement` carries no key equivalent and a `UIAction` is one.
+    // `UIKeyCommand` is the single subclass that can draw the key.
+    var menu: core::Node = ctx_menu_with_shortcut();
+    return is_kind(menu_element_at(#addr_of(menu), 0 as u64), #str_ptr("UIKeyCommand\0"));
+}
+
+fn an_item_without_a_shortcut_stays_an_action() -> bool {
+    // The half that keeps the change honest: making EVERY item a key command
+    // would pass the check above and would push every ordinary menu choice
+    // through the responder chain for nothing.
+    var menu: core::Node = ctx_menu_with_shortcut();
+    let e: *u8 = menu_element_at(#addr_of(menu), 1 as u64);
+    if e == (0 as *u8) { return false; }
+    if is_kind(e, #str_ptr("UIKeyCommand\0")) { return false; }
+    return is_kind(e, #str_ptr("UIAction\0"));
+}
+
+fn the_key_equivalent_reaches_the_element() -> bool {
+    var menu: core::Node = ctx_menu_with_shortcut();
+    let e: *u8 = menu_element_at(#addr_of(menu), 0 as u64);
+    if e == (0 as *u8) { return false; }
+    let inp: *u8 = { rt::msg_id(e, rt::sel(#str_ptr("input\0"))) };
+    if inp == (0 as *u8) { return false; }
+    if bridge::to_text(inp).view() != "r" { return false; }
+    return { rt::msg_u64(e, rt::sel(#str_ptr("modifierFlags\0"))) } == (1048576 as u64);
+}
+
+fn a_command_answers_its_key_like_an_action() -> bool {
+    // `UICommand` DECLARES NO `identifier`, so the slot `input::key_of` reads
+    // off a UIAction does not exist on a key command — the key rides
+    // `propertyList` instead, and a handler must not be able to tell which
+    // element it was called from.
+    var menu: core::Node = ctx_menu_with_shortcut();
+    let e: *u8 = menu_element_at(#addr_of(menu), 0 as u64);
+    if e == (0 as *u8) { return false; }
+    return { input::key_of(e).view() } == "sel:sc:rename";
+}
+
+fn the_app_delegate_answers_the_shortcut_seam() -> bool {
+    let cls: *u8 = window::delegate_class();
+    if cls == (0 as *u8) { return false; }
+    if synth::class_responds(cls, rt::sel(#str_ptr("keyCommands\0"))) == (0 as i8) {
+        return false;
+    }
+    return synth::class_responds(cls, rt::sel(#str_ptr("facetMenuCommand:\0"))) != (0 as i8);
+}
+
+fn the_app_delegate_is_a_responder() -> bool {
+    // The precondition the whole seam rests on, and the one an assertion can
+    // actually reach: UIKit asks only a `UIResponder` for `keyCommands`, and
+    // the delegate is the last link of every chain in the process only because
+    // it is one. Rebased on NSObject it would still compile, still answer here,
+    // and silently publish nothing.
+    return is_kind(delegate_instance(), #str_ptr("UIResponder\0"));
+}
+
+fn key_commands_publishes_one_per_shortcut() -> bool {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ctx_menu_with_shortcut());
+    var root: core::Node = ui::row(b, key: "sel:sc:host");
+    let host: uik::View = probe_host();
+    mount_tree(#addr_of(root), host.raw());
+    let d: *u8 = delegate_instance();
+    if d == (0 as *u8) { return false; }
+    let arr: *u8 = { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) };
+    if arr == (0 as *u8) { return false; }
+    // ONE, not two: the second item names no shortcut and must not appear.
+    return { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) } == (1 as u64);
+}
+
+fn a_tree_with_no_shortcut_publishes_nothing() -> bool {
+    // NIL, not an empty array — nil is what `keyCommands` answers by default,
+    // and an empty array handed back on every chain walk of every key press is
+    // work with no answer in it.
+    //
+    // ITS OWN POSITIVE CONTROL, because `UIResponder.keyCommands` ALSO answers
+    // nil: without one, this check passes just as well against a delegate that
+    // never got the method at all, which is the exact defect it exists to catch.
+    let d: *u8 = delegate_instance();
+    if d == (0 as *u8) { return false; }
+    var wb: flex::Builder = flex::Builder::new();
+    wb.add(ctx_menu_with_shortcut());
+    var with_one: core::Node = ui::row(wb, key: "sel:sc:host");
+    let h1: uik::View = probe_host();
+    mount_tree(#addr_of(with_one), h1.raw());
+    if { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) } == (0 as *u8) { return false; }
+
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ctx_menu_node());
+    var root: core::Node = ui::row(b, key: "sel:sc:none");
+    let host: uik::View = probe_host();
+    mount_tree(#addr_of(root), host.raw());
+    return { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) } == (0 as *u8);
+}
+
+fn two_items_naming_one_shortcut_publish_one_command() -> bool {
+    // Two items claiming ⌘R is the APPLICATION's ambiguity, and it has to
+    // resolve the same way twice. First in document order wins — the rule
+    // `find` uses for a duplicate key — rather than UIKit picking one per press.
+    var menu: core::Node = ui::context_menu(key: "sel:dup");
+    let mp: *core::Node = #addr_of(menu);
+    let _a: bool = mount::add_child(mp, ui::context_menu_item(
+        "First", key: "sel:dup:a",
+        shortcut: vocab::Shortcut::of("r", vocab::KeyModifiers::Cmd)));
+    let _b: bool = mount::add_child(mp, ui::context_menu_item(
+        "Second", key: "sel:dup:b",
+        shortcut: vocab::Shortcut::of("r", vocab::KeyModifiers::Cmd)));
+    var bb: flex::Builder = flex::Builder::new();
+    bb.add(menu);
+    var root: core::Node = ui::row(bb, key: "sel:dup:host");
+    let host: uik::View = probe_host();
+    mount_tree(#addr_of(root), host.raw());
+    let d: *u8 = delegate_instance();
+    if d == (0 as *u8) { return false; }
+    let arr: *u8 = { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) };
+    if arr == (0 as *u8) { return false; }
+    if { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) } != (1 as u64) { return false; }
+    let c0: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    return { input::key_of(c0).view() } == "sel:dup:a";
+}
+
+fn the_shortcut_reaches_the_items_handler() -> bool {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ctx_menu_with_shortcut());
+    var root: core::Node = ui::row(b, key: "sel:sc:host");
+    let host: uik::View = probe_host();
+    mount_tree(#addr_of(root), host.raw());
+    let d: *u8 = delegate_instance();
+    if d == (0 as *u8) { return false; }
+    let arr: *u8 = { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) };
+    if arr == (0 as *u8) { return false; }
+    let c0: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    SHORTCUT_FIRED = 0 as i32;
+    { rt::msg_void_id(d, rt::sel(#str_ptr("facetMenuCommand:\0")), c0) };
+    return SHORTCUT_FIRED == (1 as i32);
+}
+
+fn an_item_with_no_key_is_found_by_its_shortcut() -> bool {
+    // `shortcut:` MUST NOT BECOME A HIDDEN REQUIREMENT FOR `key:`. An item
+    // with no key still describes itself; the shortcut is then its identity,
+    // and the resolution falls back to matching it.
+    var menu: core::Node = ui::context_menu(key: "sel:nokey");
+    let _i: bool = mount::add_child(#addr_of(menu), ui::context_menu_item(
+        "Duplicate",
+        shortcut: vocab::Shortcut::of("d", vocab::KeyModifiers::Cmd),
+        on_clicked: note_shortcut_fired));
+    var b: flex::Builder = flex::Builder::new();
+    b.add(menu);
+    var root: core::Node = ui::row(b, key: "sel:nokey:host");
+    let host: uik::View = probe_host();
+    mount_tree(#addr_of(root), host.raw());
+    let d: *u8 = delegate_instance();
+    if d == (0 as *u8) { return false; }
+    let arr: *u8 = { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) };
+    if arr == (0 as *u8) { return false; }
+    let c0: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    SHORTCUT_FIRED = 0 as i32;
+    { rt::msg_void_id(d, rt::sel(#str_ptr("facetMenuCommand:\0")), c0) };
+    return SHORTCUT_FIRED == (1 as i32);
+}
+
+fn a_disabled_item_does_not_fire_its_shortcut() -> bool {
+    // `enabled` is read WHEN THE KEY IS PRESSED, not when the list was built:
+    // UIKit harvests `keyCommands` when it pleases and a published command can
+    // outlive the state that was true when it was made.
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ctx_menu_with_shortcut());
+    var root: core::Node = ui::row(b, key: "sel:sc:host");
+    let host: uik::View = probe_host();
+    mount_tree(#addr_of(root), host.raw());
+    let d: *u8 = delegate_instance();
+    if d == (0 as *u8) { return false; }
+    let arr: *u8 = { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) };
+    if arr == (0 as *u8) { return false; }
+    let c0: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    let item: *core::Node = mount::node("sel:sc:rename");
+    if item == (0 as *core::Node) { return false; }
+    // THE POSITIVE CONTROL FIRST. "It did not fire" is what a seam that fires
+    // for nobody says too, so the same command has to land while the item is
+    // enabled before its silence afterwards means anything.
+    SHORTCUT_FIRED = 0 as i32;
+    { rt::msg_void_id(d, rt::sel(#str_ptr("facetMenuCommand:\0")), c0) };
+    if SHORTCUT_FIRED != (1 as i32) { return false; }
+    core::set_enabled(item, false);
+    { rt::msg_void_id(d, rt::sel(#str_ptr("facetMenuCommand:\0")), c0) };
+    return SHORTCUT_FIRED == (1 as i32);
+}
+
+fn a_command_whose_tree_is_gone_fires_nothing() -> bool {
+    // THE REASON RESOLUTION IS BY KEY RATHER THAN BY A CAPTURED POINTER. A
+    // command UIKit harvested before a rebuild is handed back after it; a
+    // pointer taken at build time would be freed memory by then, and this
+    // press would be a use-after-free instead of a no-op.
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ctx_menu_with_shortcut());
+    var root: core::Node = ui::row(b, key: "sel:sc:host");
+    let host: uik::View = probe_host();
+    mount_tree(#addr_of(root), host.raw());
+    let d: *u8 = delegate_instance();
+    if d == (0 as *u8) { return false; }
+    let arr: *u8 = { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) };
+    if arr == (0 as *u8) { return false; }
+    let c0: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    // The same command lands while the tree is mounted, so the silence after
+    // it is unmounted is the resolution refusing rather than nothing working.
+    SHORTCUT_FIRED = 0 as i32;
+    { rt::msg_void_id(d, rt::sel(#str_ptr("facetMenuCommand:\0")), c0) };
+    if SHORTCUT_FIRED != (1 as i32) { return false; }
+    app::reset_default_for_tests();
+    { rt::msg_void_id(d, rt::sel(#str_ptr("facetMenuCommand:\0")), c0) };
+    return SHORTCUT_FIRED == (1 as i32);
+}
+
+fn the_key_in_the_property_list_decides_which_item() -> bool {
+    // WHY THE COMMAND CARRIES A KEY AT ALL: a shortcut is not an identity. Two
+    // items can name ⌘R, and a command built for the second one has to reach
+    // the second one — matching on the shortcut would answer the first, which
+    // is the first thing document order would hand back.
+    var menu: core::Node = ui::context_menu(key: "sel:pl");
+    let mp: *core::Node = #addr_of(menu);
+    let _a: bool = mount::add_child(mp, ui::context_menu_item(
+        "First", key: "sel:pl:a",
+        shortcut: vocab::Shortcut::of("r", vocab::KeyModifiers::Cmd),
+        on_clicked: note_shortcut_fired));
+    let _b: bool = mount::add_child(mp, ui::context_menu_item(
+        "Second", key: "sel:pl:b",
+        shortcut: vocab::Shortcut::of("r", vocab::KeyModifiers::Cmd),
+        on_clicked: note_other_shortcut_fired));
+    var bb: flex::Builder = flex::Builder::new();
+    bb.add(menu);
+    var root: core::Node = ui::row(bb, key: "sel:pl:host");
+    let host: uik::View = probe_host();
+    mount_tree(#addr_of(root), host.raw());
+    let d: *u8 = delegate_instance();
+    if d == (0 as *u8) { return false; }
+    let second: *core::Node = mount::node("sel:pl:b");
+    if second == (0 as *core::Node) { return false; }
+    let cmd: *u8 = menus::command_for_item(second);
+    if cmd == (0 as *u8) { return false; }
+    SHORTCUT_FIRED = 0 as i32;
+    OTHER_SHORTCUT_FIRED = 0 as i32;
+    { rt::msg_void_id(d, rt::sel(#str_ptr("facetMenuCommand:\0")), cmd) };
+    if SHORTCUT_FIRED != (0 as i32) { return false; }
+    return OTHER_SHORTCUT_FIRED == (1 as i32);
+}
+
+fn a_sender_that_is_not_a_key_command_fires_nothing() -> bool {
+    // The responder chain can hand this selector anything that claims to
+    // perform it. `input` is the property that says the sender really is a
+    // `UIKeyCommand`; without the guard the next line is an unrecognized
+    // selector inside a key press.
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ctx_menu_with_shortcut());
+    var root: core::Node = ui::row(b, key: "sel:sc:host");
+    let host: uik::View = probe_host();
+    mount_tree(#addr_of(root), host.raw());
+    let d: *u8 = delegate_instance();
+    if d == (0 as *u8) { return false; }
+    let arr: *u8 = { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) };
+    if arr == (0 as *u8) { return false; }
+    let c0: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    SHORTCUT_FIRED = 0 as i32;
+    { rt::msg_void_id(d, rt::sel(#str_ptr("facetMenuCommand:\0")), c0) };
+    if SHORTCUT_FIRED != (1 as i32) { return false; }
+    let bare: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIAction\0")),
+                                 rt::sel(#str_ptr("new\0"))) };
+    if bare == (0 as *u8) { return false; }
+    { rt::msg_void_id(d, rt::sel(#str_ptr("facetMenuCommand:\0")), bare) };
+    return SHORTCUT_FIRED == (1 as i32);
 }
 
 // ---- the tree bugs --------------------------------------------------------------
@@ -751,36 +1116,270 @@ fn a_non_text_control_is_left_alone_by_the_field_write_back() -> bool {
     return { (*tp).on };
 }
 
+// ---- what a checkbox reports -----------------------------------------------------
+// A CHECKBOX WAS LIVE ON SCREEN AND DEAD TO FACET. It is a UISwitch here
+// (MANIFEST §3 says why) and `create_checkbox` arms the value action, so the
+// event always arrived — but K_CHECKBOX was missing from BOTH halves of the
+// value path. `read_back` never wrote `on`, so `checkbox.on()` answered
+// whatever the application last set rather than what the user did, and
+// `fire_value_changed` never called `on_checked_changed`. The switch moved and
+// nothing else happened.
+//
+// Found by pointing facet_gtk's parity tool at this package. It had read 67/68
+// while these were dead, because a handler name read for ONE kind counted for
+// every kind that declares one — which is why the tests below name the KIND
+// and not just the handler.
+//
+// The drive is `read_back` + `fire_value_changed` in that order, not a real
+// move: `setOn:` is programmatic and UIKit sends no action for it. That is
+// UIKit's rule rather than a shortcut around the wiring, and the arming half
+// is what `a_checkbox_arms_the_value_action` covers.
+
+static CHECKED_HITS: i64 = 0 as i64;
+static CHECKED_SAW_ON: bool = false;
+
+fn note_checked_hit(sender: *u8, ctx: *u8) {
+    CHECKED_HITS = CHECKED_HITS + (1 as i64);
+    // What the handler is told when it asks. This is the ordering claim: it
+    // reads the props the same way an application would, mid-call.
+    let n: *core::Node = input::node_of(sender);
+    if n == (0 as *core::Node) { return; }
+    let cp: *props::CheckboxProps =
+        recycler::props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+    if cp == (0 as *props::CheckboxProps) { return; }
+    CHECKED_SAW_ON = { (*cp).on };
+    return;
+}
+
+fn a_checkbox_arms_the_value_action() -> bool {
+    var n: core::Node = ui::checkbox(false, key: "cb:armed");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    let armed: bool = armed_action(v, input::event_value_changed(),
+                                   "facetValueChanged:");
+    views::view_release(v);
+    return armed;
+}
+
+fn a_checkboxs_change_reaches_the_props() -> bool {
+    var n: core::Node = ui::checkbox(false, key: "cb:props");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    // The control holds the truth — this is what a finger leaves behind.
+    uik::Switch::from_raw(v).set_on(true);
+    input::read_back(p, v);
+    let cp: *props::CheckboxProps =
+        recycler::props_of(p, props::K_CHECKBOX) as *props::CheckboxProps;
+    views::view_release(v);
+    if cp == (0 as *props::CheckboxProps) { return false; }
+    return { (*cp).on };
+}
+
+fn a_checkboxs_change_reaches_the_app() -> bool {
+    CHECKED_HITS = 0 as i64;
+    CHECKED_SAW_ON = false;
+    var n: core::Node = ui::checkbox(false, key: "cb:handler",
+                                     on_checked_changed: note_checked_hit);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    uik::Switch::from_raw(v).set_on(true);
+    // The order `imp_value_changed` uses, and it is load-bearing.
+    input::read_back(p, v);
+    input::fire_value_changed(p, v);
+    views::view_release(v);
+    return CHECKED_HITS == (1 as i64) && CHECKED_SAW_ON;
+}
+
+// NEGATIVE: a toggle is a UISwitch too, and it must still be read back as a
+// TOGGLE. The two branches sit next to each other in both halves and each
+// casts the props pointer to its own struct, so a kind test that matched too
+// widely would write one struct through the other's layout.
+fn a_toggle_is_not_read_back_as_a_checkbox() -> bool {
+    var n: core::Node = ui::toggle(false, key: "cb:nottoggle");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    uik::Switch::from_raw(v).set_on(true);
+    input::read_back(p, v);
+    let tp: *props::ToggleProps =
+        recycler::props_of(p, props::K_TOGGLE) as *props::ToggleProps;
+    let cp: *u8 = recycler::props_of(p, props::K_CHECKBOX);
+    views::view_release(v);
+    if tp == (0 as *props::ToggleProps) { return false; }
+    // Its own props moved, and it has no checkbox props to have moved.
+    return { (*tp).on } && cp == (0 as *u8);
+}
+
+// ---- where a collection is scrolled ----------------------------------------------
+// The comment in `imp_scrolled` says "a collection view arrives here too", and
+// it does — but the imp asked `list_props`, which is `props_of(n, K_LIST)` and
+// answers NULL for any other kind, so a collection reached the guard and
+// returned. A `collection(...)` that asked where it was scrolled got nothing.
+//
+// The two are not one declaration: a list carries `ListView.Scrolled` of its
+// own and a collection carries `ItemsView.Scrolled` on its embedded block.
+// Reading one and calling it done drops whichever the application used.
+
+static COLLECTION_SCROLLED_FIRED: bool = false;
+
+fn note_collection_scrolled(sender: *u8, ctx: *u8) {
+    COLLECTION_SCROLLED_FIRED = true;
+    return;
+}
+
+fn a_collections_scroll_reaches_the_app() -> bool {
+    COLLECTION_SCROLLED_FIRED = false;
+    var n: core::Node = ui::collection(key: "cl:probe",
+                                       observe_scrolled: note_collection_scrolled);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    // A real move through UIKit's own delivery, as the scroll-node check does:
+    // `setContentOffset:` is what `scrollViewDidScroll:` arrives for.
+    uik::ScrollView::from_raw(v).set_content_offset(rt::Point { x: 0.0f64, y: 40.0f64 });
+    let fired: bool = COLLECTION_SCROLLED_FIRED;
+    views::view_release(v);
+    return fired;
+}
+
 // ---- the agent surface -----------------------------------------------------------
-// The reader walks a live UIView tree into agent_core's identity registry. It
-// runs here rather than in agent_uikit's own suite for the reason everything
-// else does: the walk needs UIKit, and only an iOS binary has it.
+//
+// WHY HERE AND NOT IN `agent_uikit`. The walk needs UIKit, and `agent_uikit`
+// cannot link `facet_uikit` on a macOS host — so its own suite could not build
+// a facet tree with views in it. The AppKit sibling lives in
+// `agent_appkit/src/test_main.cplus` because that one CAN run on the host. The
+// asymmetry is the platform's, not a preference.
+//
+// `open` WALKS FACET'S TREE, not the view hierarchy — `window_roots_for_native`
+// looks the window's registered roots up and `walk_facet` reads each node's
+// `key()`. It walked subviews once, and the check below was written against
+// that; `b4b63eaf` moved the walk and did not touch this file, which left the
+// iOS suite red for a day and made red its normal state. See
+// `bugs/closed/ios-agent-walk-test-not-updated-for-the-facet-tree-walk.md`.
+//
+// The fixture is `agent_appkit`'s `mirror` ported: build the views, mirror them
+// into the facet tree those views would have belonged to, and register it as a
+// window so the walk can find it.
+
+// The tests own their views; facet must not free them.
+fn noop_release(v: *u8) { }
+
+// Mirror a view subtree into a facet tree, keyed wherever the view is tagged.
+//
+// A FIXTURE, not a shortcut. The real path builds facet first and mounts views
+// from it; this constructs the tree those views would have belonged to, and the
+// shape that comes out is the same.
+//
+// `get_agent_id` supplies the key, which is also how `accessibilityIdentifier`
+// stays covered on this platform. facet writes a node's key into it — "one
+// token doing three jobs", as that function's own comment puts it — and this
+// reads the same token back out, so a change to either end fails here.
+fn mirror(view: *u8) -> core::Node {
+    let k: text::Text = match agent::get_agent_id(view) {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::new(),
+    };
+    var n: core::Node = core::column(core::Builder::new(), key: k.view());
+    core::set_view(#addr_of(n), view, noop_release);
+    var i: usize = 0 as usize;
+    let c: usize = agent::subview_count(view);
+    while i < c {
+        let _s: status::Status = n.add_child(mirror(agent::subview_at(view, i)));
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+// Register `root` as the window's tree, the way `mount` does.
+//
+// Resets first: `set_window_native` only fills in an EXISTING record, so a
+// second mount against the same native handle would add a second one and
+// `window_roots_for_native` returns the FIRST match — a re-mounting test would
+// go on walking its first tree.
+//
+// THE CALLER HOLDS THE ROOT, in two lines, and the reason is the move: a helper
+// that returned it would register the address of its own local and then move it
+// out, leaving the registration pointing at a dead frame.
+fn mount_tree(root: *core::Node, win: *u8) {
+    app::reset_default_for_tests();
+    app::open_window(root);
+    app::set_window_native(root, win);
+}
+
+fn tag_view(view: *u8, id: str) {
+    { rt::msg_void_id(view, rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
+                      bridge::nsstring(id)) };
+    return;
+}
+
+fn surface_has_id(nodes: *vec::Vec[mcpb::UiNode], id: str) -> bool {
+    var i: usize = 0 as usize;
+    while i < { (*nodes).count() } {
+        match { (*nodes).at_ptr(i) } {
+            option::Option[*mcpb::UiNode]::Some(n) => {
+                if { (*n).id.view() } == id { return true; }
+            }
+            option::Option[*mcpb::UiNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
 
 fn the_agent_walk_finds_a_tagged_view() -> bool {
     let root: uik::View = uik::View::new_with_frame(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
     let btn: uik::Button = uik::Button::button_with_type(uik::ButtonType::System);
     btn.set_title("Save", 0 as u64);
-    { rt::msg_void_id(btn.as_view().raw(),
-                      rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
-                      bridge::nsstring("save")) };
+    tag_view(btn.as_view().raw(), "save");
     root.add_subview(btn.as_view());
-    // `open` takes a WINDOW and walks its subviews, so the root stands in for
-    // one: the walk is the same either way.
+
+    var tree: core::Node = mirror(root.raw());
+    mount_tree(#addr_of(tree), root.raw());
+
     let s: agent::Surface = agent::open(root.raw());
     let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
-    var found: bool = false;
-    var i: usize = 0 as usize;
-    while i < nodes.count() {
-        match nodes.at_ptr(i) {
-            option::Option[*mcpb::UiNode]::Some(n) => {
-                if { (*n).id.view() } == "save" { found = true; }
-            }
-            option::Option[*mcpb::UiNode]::None => { }
-        }
-        i = i +% (1 as usize);
-    }
-    return found;
+    return surface_has_id(#addr_of(nodes), "save");
+}
+
+// AN UNREGISTERED WINDOW ANSWERS NOTHING BENEATH IT, and this is the check the
+// old one had accidentally become. `open` resolves roots by native handle, so a
+// view that never went through `open_window` has no tree — the surface is the
+// app root and a window node and nothing else.
+//
+// Worth asserting rather than leaving implicit: it is the exact state the stale
+// test was in for a day while reading as an ordinary failure, and it is what an
+// app looks like if a backend ever stops registering its roots.
+fn an_unregistered_window_exposes_no_children() -> bool {
+    let root: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    let btn: uik::Button = uik::Button::button_with_type(uik::ButtonType::System);
+    tag_view(btn.as_view().raw(), "orphan");
+    root.add_subview(btn.as_view());
+    app::reset_default_for_tests();
+
+    let s: agent::Surface = agent::open(root.raw());
+    let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
+    return !surface_has_id(#addr_of(nodes), "orphan");
+}
+
+// THE WINDOW NODE'S OWN ID, which is the second surviving reader of
+// `accessibilityIdentifier` and the one `open` uses directly. A tagged window
+// carries its tag into the surface.
+fn a_tagged_window_carries_its_own_id() -> bool {
+    let root: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    tag_view(root.raw(), "main-window");
+
+    var tree: core::Node = mirror(root.raw());
+    mount_tree(#addr_of(tree), root.raw());
+
+    let s: agent::Surface = agent::open(root.raw());
+    let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
+    return surface_has_id(#addr_of(nodes), "main-window");
 }
 
 fn a_button_classifies_as_a_button() -> bool {
@@ -987,37 +1586,393 @@ fn runs_are_read_from_a_labels_attributed_text() -> bool {
     };
 }
 
-// ---- the lifecycle band -----------------------------------------------------------
-// Pure registry logic, so it runs with no app: register, fire, check it ran;
-// cancel, fire again, check it did not. The five phases are separate lists in
-// one vector and a fire must not cross them.
+// ---- the toolbar reaches the navigation bar ----------------------------------
+//
+// iOS has no window toolbar; its answer is the NAVIGATION BAR, and this is the
+// port this file's MANIFEST said should happen "once the chrome tier is
+// ported". `placement` picks the side, `priority` the order within it.
 
-static FIRED: i32 = 0 as i32;
-fn count_fire(ctx: *u8) { FIRED = FIRED + (1 as i32); return; }
-
-fn a_lifecycle_observer_fires_for_its_own_phase() -> bool {
-    FIRED = 0 as i32;
-    var h: services::Cancellable = window::observe_lifecycle(
-        window::PHASE_BACKGROUND, count_fire, 0 as *u8);
-    window::fire_phase(window::PHASE_BACKGROUND);
-    let after_own: i32 = FIRED;
-    // A DIFFERENT phase must not reach it: five edges in one vector, and a
-    // fire that crossed them would tell an app it was backgrounded when it
-    // was merely resigning active.
-    window::fire_phase(window::PHASE_ACTIVE);
-    let after_other: i32 = FIRED;
-    h.cancel();
-    return after_own == (1 as i32) && after_other == (1 as i32);
+fn tb_items_on(side: str, vc: *u8) -> u64 {
+    let ni: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("navigationItem\0"))) };
+    if ni == (0 as *u8) { return 0 as u64; }
+    let arr: *u8 = { rt::msg_id(ni, rt::sel(#str_ptr(side))) };
+    if arr == (0 as *u8) { return 0 as u64; }
+    return { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) };
 }
 
-fn a_cancelled_lifecycle_observer_stops_firing() -> bool {
+fn a_toolbar_item_reaches_the_navigation_bar() -> bool {
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::toolbar_item("Share", placement: vocab::ToolbarPlacement::Primary));
+    b.add(ui::toolbar_item("Back", placement: vocab::ToolbarPlacement::Secondary));
+    var root: core::Node = ui::column(b);
+    window::install_toolbar(vc, #addr_of(root), 0 as *u8);
+    // One each side: Primary is the trailing group, Secondary the leading one.
+    if tb_items_on("rightBarButtonItems\0", vc) != (1 as u64) { return false; }
+    return tb_items_on("leftBarButtonItems\0", vc) == (1 as u64);
+}
+
+// PRIORITY orders within a side, low first — the same order facet_appkit's
+// toolbar uses, so one description reads the same on both.
+fn toolbar_items_sort_by_priority() -> bool {
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::toolbar_item("Second", priority: 2 as i64));
+    b.add(ui::toolbar_item("First", priority: 1 as i64));
+    var root: core::Node = ui::column(b);
+    window::install_toolbar(vc, #addr_of(root), 0 as *u8);
+    let ni: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("navigationItem\0"))) };
+    let arr: *u8 = { rt::msg_id(ni, rt::sel(#str_ptr("rightBarButtonItems\0"))) };
+    if arr == (0 as *u8) { return false; }
+    if { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) } != (2 as u64) { return false; }
+    let first: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    let title: *u8 = { rt::msg_id(first, rt::sel(#str_ptr("title\0"))) };
+    return bridge::to_text(title).view() == "First";
+}
+
+// A tree with no toolbar items puts nothing in the bar — an empty navigation
+// bar is a strip of nothing at the top of every app that never asked for one.
+fn a_tree_with_no_toolbar_items_fills_nothing() -> bool {
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    var root: core::Node = ui::column(core::Builder::new());
+    window::install_toolbar(vc, #addr_of(root), 0 as *u8);
+    if tb_items_on("rightBarButtonItems\0", vc) != (0 as u64) { return false; }
+    return tb_items_on("leftBarButtonItems\0", vc) == (0 as u64);
+}
+
+// ---- a label the user can select and copy ------------------------------------
+//
+// `selectable` was ACCEPTED AND IGNORED: a label on iOS read and did not copy,
+// whatever the application asked for. `UILabel` cannot select at all, so the
+// affordance is a `UITextView` with editing off and selection on — a CREATE-TIME
+// class choice, which is why these check the class the builder picked.
+//
+// The negative matters as much as the positive: a plain label must stay a
+// UILabel, because a text view costs more, eats the touch that would have
+// scrolled the page, and is not what a label is.
+
+fn a_selectable_label_is_a_text_view() -> bool {
+    var n: core::Node = ui::label("pick me", selectable: true);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    if v == (0 as *u8) { return false; }
+    if !controls::label_is_text_view(v) { return false; }
+    // Selectable AND not editable — either alone is the wrong control.
+    let tv: uik::TextView = uik::TextView::from_raw(v);
+    if !tv.is_selectable() { return false; }
+    return tv.is_editable() == false;
+}
+
+fn a_plain_label_stays_a_label() -> bool {
+    var n: core::Node = ui::label("read me");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    if v == (0 as *u8) { return false; }
+    return controls::label_is_text_view(v) == false;
+}
+
+// The text-view flavour still has to LOOK like a label: no scrolling, and none
+// of the padding a text view is born with. A label that inset its own text by
+// 5pt would be measured wrong by flex and read as a layout bug.
+fn a_selectable_label_does_not_scroll_or_pad() -> bool {
+    var n: core::Node = ui::label("pick me", selectable: true);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    if v == (0 as *u8) { return false; }
+    let scrolls: i8 = { rt::msg_i8(v, rt::sel(#str_ptr("isScrollEnabled\0"))) };
+    if scrolls != (0 as i8) { return false; }
+    let tv: uik::TextView = uik::TextView::from_raw(v);
+    let pad: f64 = { tv.text_container().line_fragment_padding() };
+    return pad == 0.0f64;
+}
+
+// ---- the lifecycle band -----------------------------------------------------------
+// THROUGH THE REAL NOTIFICATION CENTRE, and that is the whole point of these.
+//
+// What was here before were two REGISTRY tests: they called `window::fire_phase`
+// themselves, asserted the fan-out, and never touched delivery. They were
+// correct about the registry and they stayed green for years while the four
+// app-delegate methods underneath fired for nobody — UIKit does not send them
+// to a scene-based app. See
+// `bugs/closed/ios-lifecycle-verbs-never-fire-under-scenes.md`.
+//
+// So these post an ACTUAL `UIApplication*Notification` and check that a
+// subscriber sees it. `NSNotificationCenter` delivers synchronously on the
+// posting thread, so there is no waiting and no run loop needed — which is
+// what makes a delivery test possible with no app at all.
+//
+// Each is checked AGAINST ITS OWN NAME: two observers pointed at one
+// notification would pass a single-event test.
+
+static FIRED: i32 = 0 as i32;
+static OTHER_FIRED: i32 = 0 as i32;
+fn count_fire(ctx: *u8) { FIRED = FIRED + (1 as i32); return; }
+fn count_other(ctx: *u8) { OTHER_FIRED = OTHER_FIRED + (1 as i32); return; }
+
+// Post `name` with no object and no userInfo.
+fn post(name: str) {
+    let c: *u8 = notify::notification_center();
+    if c == (0 as *u8) { return; }
+    { rt::msg_void_id_id(c, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                         bridge::nsstring(name), 0 as *u8) };
+    return;
+}
+
+fn a_real_notification_reaches_its_observer() -> bool {
     FIRED = 0 as i32;
-    var h: services::Cancellable = window::observe_lifecycle(
-        window::PHASE_TERMINATE, count_fire, 0 as *u8);
-    window::fire_phase(window::PHASE_TERMINATE);
+    OTHER_FIRED = 0 as i32;
+    var h: services::Cancellable = runtime_observe_background();
+    // A DIFFERENT notification must not reach it. Backgrounding and resigning
+    // active are the two an app confuses at its peril: one means "you may be
+    // killed after this", the other means "a control centre swipe".
+    var g: services::Cancellable = services::Cancellable::of(
+        notify::observe_named("UIApplicationWillResignActiveNotification",
+                              0 as *u8, count_other, 0 as *u8),
+        notify::cancel_observe);
+    post("UIApplicationDidEnterBackgroundNotification");
+    let mine: i32 = FIRED;
+    let theirs: i32 = OTHER_FIRED;
     h.cancel();
-    window::fire_phase(window::PHASE_TERMINATE);
+    g.cancel();
+    return mine == (1 as i32) && theirs == (0 as i32);
+}
+
+fn a_cancelled_observation_stops_being_delivered() -> bool {
+    FIRED = 0 as i32;
+    var h: services::Cancellable = runtime_observe_background();
+    post("UIApplicationDidEnterBackgroundNotification");
+    h.cancel();
+    post("UIApplicationDidEnterBackgroundNotification");
     return FIRED == (1 as i32);
+}
+
+// The observation the five public verbs are built from, made the same way
+// `runtime_ios::observe_backgrounding` makes it. Named rather than inlined so
+// the test exercises the pairing of id and canceller, which is the half a
+// wrong `Cancellable::of` would break silently.
+fn runtime_observe_background() -> services::Cancellable {
+    let id: u64 = notify::observe_named("UIApplicationDidEnterBackgroundNotification",
+                                        0 as *u8, count_fire, 0 as *u8);
+    return services::Cancellable::of(id, notify::cancel_observe);
+}
+
+fn a_cancelled_observation_frees_its_registry_slot() -> bool {
+    let before: usize = notify::pending_count();
+    var h: services::Cancellable = runtime_observe_background();
+    let during: usize = notify::pending_count();
+    h.cancel();
+    let after: usize = notify::pending_count();
+    return during == before +% (1 as usize) && after == before;
+}
+
+// ---- the app-events fan-out ---------------------------------------------------
+// Same discipline one level up: post the real notification, and check the
+// PORTABLE kind a subscriber sees. This is the seam an SDK package subscribes
+// to, so a wrong kind here is a push handled as a backgrounding.
+
+static SEEN_KIND: u32 = 0 as u32;
+static SEEN_COUNT: i32 = 0 as i32;
+fn record_kind(e: *ev::AppEvent, ctx: *u8) {
+    SEEN_KIND = { (*e).kind };
+    SEEN_COUNT = SEEN_COUNT + (1 as i32);
+    return;
+}
+
+fn a_real_notification_reaches_an_app_events_subscriber() -> bool {
+    app_events_uikit::arm();
+    SEEN_KIND = 0 as u32;
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_kind, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    post("UIApplicationDidEnterBackgroundNotification");
+    let kind: u32 = SEEN_KIND;
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_kind, 0 as *u8);
+    return kind == ev::E_BACKGROUND && n == (1 as i32);
+}
+
+// ---- the URL road ------------------------------------------------------------
+//
+// WHAT THESE REACH AND WHAT THEY DO NOT. Every check below builds a REAL
+// Foundation object and drives `app_events_uikit`'s delivery verbs with it, on
+// the simulator, through real `objc_msgSend` — so the NSSet walking, the
+// `absoluteString` read and the `webpageURL` test are covered against the
+// actual runtime rather than a mock.
+//
+// What they cannot reach is UIKit deciding to CALL the scene delegate. That
+// needs a link arriving from outside the process, and `simctl openurl` puts a
+// SpringBoard confirmation in front of it that no scriptable interface here can
+// dismiss. It is one tap, and it is recorded in vendor/applinks/docs/guide.md
+// as the one step of this feature an agent cannot take.
+
+// EVERY CHECK BELOW STARTS WITH `ev::t_reset()`, and it is not hygiene — it is
+// the feature. `E_OPEN_URL` is a LATCHED kind, so `on_app_event` replays the
+// last URL to each new subscriber; without the reset, every check after the
+// first began with one delivery already counted and four of the five failed on
+// their first run. That the latch fires here is the cold-start contract
+// working on the real platform, and the check below asserts it deliberately
+// rather than tripping over it.
+static SEEN_URL: text::Text = #zero::[text::Text]();
+
+fn record_url(e: *ev::AppEvent, ctx: *u8) {
+    if { (*e).kind } != ev::E_OPEN_URL { return; }
+    SEEN_URL = text::from_str({ (*e).text });
+    SEEN_COUNT = SEEN_COUNT + (1 as i32);
+    return;
+}
+
+// An NSURL from a C+ string, the way the system would hand one over.
+fn ns_url(s: str) -> *u8 {
+    return rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                         rt::sel(#str_ptr("URLWithString:\0")), bridge::nsstring(s));
+}
+
+fn a_url_reaches_a_subscriber_as_its_absolute_string() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    SEEN_URL = text::new();
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    app_events_uikit::deliver_url(ns_url("myapp://record/42?x=1"));
+    let seen: bool = SEEN_URL.view() == "myapp://record/42?x=1";
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return seen && n == (1 as i32);
+}
+
+// THE COLD START, on the real platform. A URL delivered while nothing is
+// subscribed must still reach a subscriber that turns up afterwards — which is
+// what makes a link that launched the app reach a handler registered in
+// `on_attach`, and it is the single most load-bearing property of this road.
+fn a_link_delivered_before_anyone_subscribed_still_arrives() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    SEEN_URL = text::new();
+    app_events_uikit::deliver_url(ns_url("myapp://cold/7"));
+    if SEEN_COUNT != (0 as i32) { return false; }
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let seen: bool = SEEN_URL.view() == "myapp://cold/7";
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return seen && n == (1 as i32);
+}
+
+fn a_null_url_is_not_an_event() -> bool {
+    ev::t_reset();
+    // The delegate handing over a context with no URL must cost nothing, not
+    // crash and not fire an empty link that a subscriber would try to route.
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    app_events_uikit::deliver_url(0 as *u8);
+    app_events_uikit::deliver_url_contexts(0 as *u8);
+    app_events_uikit::deliver_user_activity(0 as *u8);
+    app_events_uikit::deliver_user_activities(0 as *u8);
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return n == (0 as i32);
+}
+
+// A universal link is an NSUserActivity carrying a webpageURL, and this one is
+// the real class — `initWithActivityType:` then `setWebpageURL:` is exactly
+// what iOS hands the scene delegate.
+fn a_user_activity_with_a_webpage_url_is_a_link() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    SEEN_URL = text::new();
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    let raw: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let ua: *u8 = rt::msg_id_id(raw, rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("NSUserActivityTypeBrowsingWeb"));
+    rt::msg_void_id(ua, rt::sel(#str_ptr("setWebpageURL:\0")),
+                    ns_url("https://example.com/record/42"));
+    app_events_uikit::deliver_user_activity(ua);
+    let seen: bool = SEEN_URL.view() == "https://example.com/record/42";
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return seen && n == (1 as i32);
+}
+
+// AN ACTIVITY THAT IS NOT A LINK. Handoff and Siri activities reach the same
+// delegate method and carry no webpageURL; firing an empty E_OPEN_URL for them
+// would hand every applinks subscriber a link that does not exist.
+fn a_user_activity_without_a_webpage_url_is_not_a_link() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    let raw: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let ua: *u8 = rt::msg_id_id(raw, rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("com.example.something"));
+    app_events_uikit::deliver_user_activity(ua);
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return n == (0 as i32);
+}
+
+// The SET walk, which is the shape both cold-start payloads arrive in. Two
+// activities in one set must produce two events — a delegate handing over
+// several is the case the loop exists for, and a loop that stopped at the
+// first would look correct in every single-link test.
+fn every_activity_in_a_set_is_delivered() -> bool {
+    ev::t_reset();
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_url, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSUserActivity\0"));
+    let a1: *u8 = rt::msg_id_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                                rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("NSUserActivityTypeBrowsingWeb"));
+    rt::msg_void_id(a1, rt::sel(#str_ptr("setWebpageURL:\0")), ns_url("https://a.example/1"));
+    let a2: *u8 = rt::msg_id_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                                rt::sel(#str_ptr("initWithActivityType:\0")),
+                                bridge::nsstring("NSUserActivityTypeBrowsingWeb"));
+    rt::msg_void_id(a2, rt::sel(#str_ptr("setWebpageURL:\0")), ns_url("https://b.example/2"));
+    // NSMutableSet, NOT `+setWithObjects:` — that one is nil-terminated
+    // variadic, and a two-argument `objc_msgSend` to it reads whatever happens
+    // to sit past the second register.
+    let set: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableSet\0")),
+                              rt::sel(#str_ptr("set\0")));
+    rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), a1);
+    rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), a2);
+    app_events_uikit::deliver_user_activities(set);
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_url, 0 as *u8);
+    return n == (2 as i32);
+}
+
+// FOCUS AND VISIBILITY ARE DIFFERENT KINDS, and this test used to assert them
+// conflated: `didBecomeActive` answering E_FOREGROUND. That is the focus edge
+// wearing the visibility kind, and it is why the same reason meant one thing
+// here and another on Android. An app loses focus to a dialog or to the other
+// half of a Split View while remaining fully visible, and must not release a
+// camera for it.
+fn becoming_active_is_the_focus_level_not_the_visibility_level() -> bool {
+    app_events_uikit::arm();
+    SEEN_KIND = 0 as u32;
+    SEEN_COUNT = 0 as i32;
+    let s: status::Status = ev::on_app_event(record_kind, 0 as *u8);
+    if s != status::Status::Ok { return false; }
+
+    post("UIApplicationDidBecomeActiveNotification");
+    if SEEN_KIND != ev::E_ACTIVE { let _a: status::Status = ev::off_app_event(record_kind, 0 as *u8); return false; }
+
+    post("UIApplicationWillResignActiveNotification");
+    if SEEN_KIND != ev::E_INACTIVE { let _b: status::Status = ev::off_app_event(record_kind, 0 as *u8); return false; }
+
+    // And the visibility level answers its own kinds, from its own pair.
+    post("UIApplicationWillEnterForegroundNotification");
+    if SEEN_KIND != ev::E_FOREGROUND { let _c: status::Status = ev::off_app_event(record_kind, 0 as *u8); return false; }
+
+    post("UIApplicationDidEnterBackgroundNotification");
+    let last: u32 = SEEN_KIND;
+    let n: i32 = SEEN_COUNT;
+    let _o: status::Status = ev::off_app_event(record_kind, 0 as *u8);
+    return last == ev::E_BACKGROUND && n == (4 as i32);
 }
 
 // ---- the dialog tier ---------------------------------------------------------------
@@ -1513,6 +2468,132 @@ fn a_late_end_display_does_not_clear_a_refilled_cell() -> bool {
     return recycler::cell_holds_row(p, cell.raw(), recycler::index_path(7 as i64, 0 as i64)) == false;
 }
 
+
+// ---- more than one window -----------------------------------------------------
+// EVERY ONE OF THESE IS A BUG THAT HAPPENED, on an iPad Pro on 2026-09-06, the
+// first day this backend could have two windows at all. All four read perfectly
+// over the agent socket and were only visible in a screenshot or a device
+// report — which is exactly why they belong here rather than in a suite that
+// cannot open a window.
+
+// `content_view_of(win)` ignored its argument whenever `BASE_VC` was set, so a
+// second window's tree mounted into the PRIMARY's content view: the new window
+// drew nothing and the old one showed the new one's screen. Two symptoms, one
+// line.
+fn content_view_is_the_windows_own_not_the_primarys() -> bool {
+    let a: usize = window::build_scene_window("probe:a");
+    let b: usize = window::build_scene_window("probe:b");
+    if a == b { return false; }
+    let wa: *u8 = window::scene_window_at(a);
+    let wb: *u8 = window::scene_window_at(b);
+    if wa == (0 as *u8) { return false; }
+    if wb == (0 as *u8) { return false; }
+    let ca: *u8 = window::content_view_of(wa);
+    let cb: *u8 = window::content_view_of(wb);
+    if ca == (0 as *u8) { return false; }
+    if cb == (0 as *u8) { return false; }
+    // THE WHOLE CHECK: two windows, two different content views.
+    return ca != cb;
+}
+
+// A window is addressed by the key it was opened under, so `window::find` can
+// answer THE one rather than the first of several.
+fn a_scene_window_is_found_by_its_key() -> bool {
+    let at: usize = window::build_scene_window("probe:keyed");
+    if window::scene_index_for_key("probe:keyed") != at { return false; }
+    // A key nothing carries answers one past the end, never a wrong entry.
+    return window::scene_index_for_key("probe:absent") >= window::scene_count();
+}
+
+// The primary's scene disconnects and reconnects routinely — the app being
+// backgrounded and restored — and its window and tree must survive that. Only
+// an ADDITIONAL window is really gone when its scene goes.
+fn a_disconnecting_primary_keeps_its_window() -> bool {
+    let before: usize = window::scene_count();
+    if before == (0 as usize) { return false; }
+    window::note_scene_gone(window::scene_of_index(0 as usize));
+    return window::scene_count() == before;
+}
+
+// ---- a restored scene, and which session is the primary --------------------------
+//
+// MEASURED on an iPad Pro 13-inch simulator, iOS 26.4, 2026-09-08. Open a
+// second window, background the app, kill it, launch cold:
+//
+//     facet scene willConnect: key=[panel:one] primary_taken=false scenes=1
+//     PROBE late: windows=1 keys=[]
+//
+// iPadOS reconnected the PANEL's session, alone and first, so a fork that told
+// the primary apart by ARRIVAL ORDER read "no primary yet" and handed the
+// panel's scene the primary's window. The panel was gone and the app had one
+// unnamed window. With the fork reading the KEY the same launch answers
+// `windows=2 keys=[panel:one]`.
+//
+// `imp_scene_will_connect` needs a real `UIScene` and nothing here can make
+// one, so what these reach is the RULE it turns on and the record it reads —
+// which is where the defect actually was. The end-to-end half is
+// `playground/ipadwin` and is written up in the closed report.
+
+fn activity_type_of(act: *u8) -> text::Text {
+    if act == (0 as *u8) { return text::new(); }
+    let t: *u8 = { rt::msg_id(act, rt::sel(#str_ptr("activityType\0"))) };
+    if t == (0 as *u8) { return text::new(); }
+    return bridge::to_text(t);
+}
+
+// A pointer that is a real object and is not any scene we know — the stand-in
+// for a `UIScene`, which cannot be constructed.
+fn fake_scene() -> *u8 {
+    return { rt::msg_id(rt::get_class(#str_ptr("NSObject\0")), rt::sel(#str_ptr("new\0"))) };
+}
+
+fn a_session_naming_a_route_is_not_the_primary() -> bool {
+    // The whole dispatch table. Nothing names it but this and the fork.
+    if !window::session_is_primary("") { return false; }
+    if !window::session_is_primary(window::primary_session_key()) { return false; }
+    if window::session_is_primary("panel:one") { return false; }
+    // EXACT MATCH. A route that merely starts with the sentinel is a route —
+    // a prefix test here would silently swallow one.
+    if window::session_is_primary("@primaryish") { return false; }
+    return window::primary_session_key() == "@primary";
+}
+
+fn a_restored_primary_answers_the_sentinel() -> bool {
+    // The primary has no route, so before this it had no name to write on its
+    // session — and an unnamed session is exactly the one that cannot be told
+    // apart on the next launch. Entry 0 is the primary whatever key it carries.
+    let sc: *u8 = fake_scene();
+    if sc == (0 as *u8) { return false; }
+    if window::scene_count() == (0 as usize) { return false; }
+    window::mark_primary_scene(sc);
+    let act: *u8 = window::imp_state_restoration_activity(0 as *u8, 0 as *u8, sc);
+    return activity_type_of(act).view() == "@primary";
+}
+
+fn a_restored_additional_scene_answers_its_own_key() -> bool {
+    let at: usize = window::build_scene_window("probe:restore");
+    if at == (0 as usize) { return false; }
+    let sc: *u8 = fake_scene();
+    if sc == (0 as *u8) { return false; }
+    window::note_scene_connected(at, sc);
+    let act: *u8 = window::imp_state_restoration_activity(0 as *u8, 0 as *u8, sc);
+    return activity_type_of(act).view() == "probe:restore";
+}
+
+fn a_scene_we_do_not_know_is_named_nothing() -> bool {
+    // UIKit asks about every scene it owns, including one whose window this
+    // package never built. Answering an activity for it would name a window
+    // that is not ours.
+    let sc: *u8 = fake_scene();
+    if sc == (0 as *u8) { return false; }
+    if window::imp_state_restoration_activity(0 as *u8, 0 as *u8, sc) != (0 as *u8) {
+        return false;
+    }
+    // And an empty key is not a name: `initWithActivityType:` would take it and
+    // it would read back as "no key" on the next launch.
+    return window::activity_named("") == (0 as *u8);
+}
+
 fn run_all() -> i32 {
     FAILED = 0 as i32;
     RAN = 0 as i32;
@@ -1569,6 +2650,15 @@ fn run_all() -> i32 {
           max_length_is_enforced_where_the_text_arrives());
     check("a non-text control is left alone by the field write-back",
           a_non_text_control_is_left_alone_by_the_field_write_back());
+    check("a checkbox arms the value action", a_checkbox_arms_the_value_action());
+    check("a checkbox's change reaches the props",
+          a_checkboxs_change_reaches_the_props());
+    check("a checkbox's change reaches the app",
+          a_checkboxs_change_reaches_the_app());
+    check("a toggle is not read back as a checkbox",
+          a_toggle_is_not_read_back_as_a_checkbox());
+    check("a collection's scroll reaches the app",
+          a_collections_scroll_reaches_the_app());
     check("a tree row carries the app's row_id",
           a_tree_row_carries_the_apps_row_id());
     check("a tree with no row_id leaves its cell unnamed",
@@ -1594,15 +2684,47 @@ fn run_all() -> i32 {
     check("named keys map from HID codes", named_keys_map_from_hid_codes());
     check("modifier flags map onto facet's bits", modifier_flags_map_onto_facets_bits());
     check("the agent walk finds a tagged view", the_agent_walk_finds_a_tagged_view());
+    check("an unregistered window exposes no children",
+          an_unregistered_window_exposes_no_children());
+    check("a tagged window carries its own id", a_tagged_window_carries_its_own_id());
     check("a button classifies as a button", a_button_classifies_as_a_button());
     check("a label is Text and a field is Input", a_label_classifies_as_text_and_a_field_as_input());
     check("a secure field is sensitive by class", a_secure_field_is_sensitive_by_class());
     check("a control is clickable, a bare view is not",
           a_control_is_clickable_and_a_bare_view_is_not());
-    check("a lifecycle observer fires for its own phase",
-          a_lifecycle_observer_fires_for_its_own_phase());
-    check("a cancelled lifecycle observer stops firing",
-          a_cancelled_lifecycle_observer_stops_firing());
+    check("a real notification reaches its observer",
+          a_real_notification_reaches_its_observer());
+    check("a cancelled observation stops being delivered",
+          a_cancelled_observation_stops_being_delivered());
+    check("a cancelled observation frees its registry slot",
+          a_cancelled_observation_frees_its_registry_slot());
+    check("a real notification reaches an app_events subscriber",
+          a_real_notification_reaches_an_app_events_subscriber());
+    check("a window's content view is its own, not the primary's",
+          content_view_is_the_windows_own_not_the_primarys());
+    check("a scene window is found by its key", a_scene_window_is_found_by_its_key());
+    check("a disconnecting primary keeps its window",
+          a_disconnecting_primary_keeps_its_window());
+    check("a session naming a route is not the primary",
+          a_session_naming_a_route_is_not_the_primary());
+    check("a restored primary answers the sentinel",
+          a_restored_primary_answers_the_sentinel());
+    check("a restored additional scene answers its own key",
+          a_restored_additional_scene_answers_its_own_key());
+    check("a scene we do not know is named nothing",
+          a_scene_we_do_not_know_is_named_nothing());
+    check("focus and visibility answer different kinds",
+          becoming_active_is_the_focus_level_not_the_visibility_level());
+    check("a url reaches a subscriber as its absolute string",
+          a_url_reaches_a_subscriber_as_its_absolute_string());
+    check("a link delivered before anyone subscribed still arrives",
+          a_link_delivered_before_anyone_subscribed_still_arrives());
+    check("a null url is not an event", a_null_url_is_not_an_event());
+    check("a user activity with a webpage url is a link",
+          a_user_activity_with_a_webpage_url_is_a_link());
+    check("a user activity without a webpage url is not a link",
+          a_user_activity_without_a_webpage_url_is_not_a_link());
+    check("every activity in a set is delivered", every_activity_in_a_set_is_delivered());
     check("an alert carries one button per named title",
           an_alert_carries_one_button_per_named_title());
     check("a prompt gets exactly one text field", a_prompt_gets_exactly_one_text_field());
@@ -1614,6 +2736,15 @@ fn run_all() -> i32 {
     check("byte offsets convert to utf16 units", byte_offsets_convert_to_utf16_units());
     check("runs are read from a label's attributed text",
           runs_are_read_from_a_labels_attributed_text());
+    check("a toolbar item reaches the navigation bar",
+          a_toolbar_item_reaches_the_navigation_bar());
+    check("toolbar items sort by priority", toolbar_items_sort_by_priority());
+    check("a tree with no toolbar items fills nothing",
+          a_tree_with_no_toolbar_items_fills_nothing());
+    check("a selectable label is a text view", a_selectable_label_is_a_text_view());
+    check("a plain label stays a label", a_plain_label_stays_a_label());
+    check("a selectable label does not scroll or pad",
+          a_selectable_label_does_not_scroll_or_pad());
     check("a swipe offset round-trips through the association",
           a_swipe_offset_round_trips_through_the_association());
 
@@ -1648,6 +2779,36 @@ fn run_all() -> i32 {
     check("the appearance sentinel answers the trait hook",
           the_appearance_sentinel_answers_the_trait_hook());
     check("the appearance sentinel is a view", the_appearance_sentinel_is_a_view());
+
+    check("facet's modifiers map onto UIKit's flags",
+          facet_modifiers_map_onto_uikit_flags());
+    check("an item with a shortcut is a key command", a_shortcut_item_is_a_key_command());
+    check("an item without one stays an action", an_item_without_a_shortcut_stays_an_action());
+    check("the key equivalent reaches the element",
+          the_key_equivalent_reaches_the_element());
+    check("a command answers its key like an action",
+          a_command_answers_its_key_like_an_action());
+    check("the app delegate answers the shortcut seam",
+          the_app_delegate_answers_the_shortcut_seam());
+    check("the app delegate is a responder", the_app_delegate_is_a_responder());
+    check("keyCommands publishes one per shortcut",
+          key_commands_publishes_one_per_shortcut());
+    check("a tree with no shortcut publishes nothing",
+          a_tree_with_no_shortcut_publishes_nothing());
+    check("two items naming one shortcut publish one command",
+          two_items_naming_one_shortcut_publish_one_command());
+    check("the shortcut reaches the item's handler",
+          the_shortcut_reaches_the_items_handler());
+    check("an item with no key is found by its shortcut",
+          an_item_with_no_key_is_found_by_its_shortcut());
+    check("a disabled item does not fire its shortcut",
+          a_disabled_item_does_not_fire_its_shortcut());
+    check("a command whose tree is gone fires nothing",
+          a_command_whose_tree_is_gone_fires_nothing());
+    check("the key in the property list decides which item",
+          the_key_in_the_property_list_decides_which_item());
+    check("a sender that is not a key command fires nothing",
+          a_sender_that_is_not_a_key_command_fires_nothing());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;

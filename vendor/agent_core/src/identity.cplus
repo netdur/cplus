@@ -93,12 +93,12 @@ fn role_eq(a: Role, b: Role) -> bool {
 // native handle (facet's set_identity) and a walk later recovers it. Unknown
 // indices fall back to Group (structural).
 fn role_from_index(i: u32) -> Role {
-    if i == (0 as u32) { return Role::Button; }
-    if i == (1 as u32) { return Role::Text; }
-    if i == (2 as u32) { return Role::Input; }
-    if i == (3 as u32) { return Role::List; }
-    if i == (4 as u32) { return Role::Group; }
-    if i == (5 as u32) { return Role::Window; }
+    if i == 0 { return Role::Button; }
+    if i == 1 { return Role::Text; }
+    if i == 2 { return Role::Input; }
+    if i == 3 { return Role::List; }
+    if i == 4 { return Role::Group; }
+    if i == 5 { return Role::Window; }
     return Role::Group;
 }
 
@@ -118,13 +118,13 @@ fn role_from_index(i: u32) -> Role {
 // Storage encoding is platform-neutral: a non-null "pointer" integer that
 // AppKit stashes via associated-object ASSIGN and GTK/Win32 via g_object_set_data
 // / a side map. Layout (low bit always set so the value is never null):
-//   bit 0       = marker (1)
+//   bit 0       = marker 1
 //   bits 1..8   = role index (0..255)
 //   bits 9..16  = drive method (0..255)
 
-fn drive_none() -> u32 { return 0 as u32; }
-fn drive_click() -> u32 { return 1 as u32; }
-fn drive_text() -> u32 { return 2 as u32; }
+fn drive_none() -> u32 { return 0; }
+fn drive_click() -> u32 { return 1; }
+fn drive_text() -> u32 { return 2; }
 
 // Default drive method for a role — the mapping facet uses when recording.
 fn drive_for_role(r: Role) -> u32 {
@@ -178,9 +178,9 @@ fn drive_for_role(r: Role) -> u32 {
 // each button inside one unclickable. Sensitivity is the opposite case — a
 // secret's container is a secret — which is why this is its own axis rather
 // than another value of that one.
-fn tier_open() -> u32 { return 0 as u32; }
-fn tier_protected() -> u32 { return 1 as u32; }
-fn tier_private() -> u32 { return 2 as u32; }
+fn tier_open() -> u32 { return 0; }
+fn tier_protected() -> u32 { return 1; }
+fn tier_private() -> u32 { return 2; }
 
 // The strictness order, used to resolve a node's tier against its ancestors'.
 fn stricter_tier(a: u32, b: u32) -> u32 {
@@ -209,10 +209,10 @@ fn act_caps_for_tier(t: u32) -> u32 {
 // The pinned-policy vocabulary a backend reads off a native widget. The tiers
 // plus exclusion, which is not a tier (it removes the node rather than gating
 // its content) but travels on the same wire.
-fn policy_none() -> u32 { return 0 as u32; }
-fn policy_protected() -> u32 { return 1 as u32; }
-fn policy_private() -> u32 { return 2 as u32; }
-fn policy_exclude() -> u32 { return 3 as u32; }
+fn policy_none() -> u32 { return 0; }
+fn policy_protected() -> u32 { return 1; }
+fn policy_private() -> u32 { return 2; }
+fn policy_exclude() -> u32 { return 3; }
 
 // Stable key used as the associated-object / set_data key across backends.
 // Integer cast (not a static address) so every package agrees without sharing
@@ -238,8 +238,8 @@ fn pack_policy(p: u32) -> *u8 {
 }
 
 fn unpack_policy(packed: *u8) -> u32 {
-    if packed == (0 as *u8) { return policy_none(); }
-    if ((packed as usize) & (1 as usize)) != (1 as usize) { return policy_none(); }
+    if packed.is_null() { return policy_none(); }
+    if ((packed as usize) & 1) != 1 { return policy_none(); }
     return (((packed as usize) >> 1) & (0xFF as usize)) as u32;
 }
 
@@ -266,14 +266,16 @@ fn unpack_drive(packed: *u8) -> u32 {
 
 // True when `p` looks like a pack_affordance result (marker bit set, non-null).
 fn is_packed_affordance(p: *u8) -> bool {
-    if p == (0 as *u8) { return false; }
-    return ((p as usize) & (1 as usize)) == (1 as usize);
+    if p.is_null() { return false; }
+    return ((p as usize) & 1) == 1;
 }
 
 // One node as surfaced by `describe` (plan.agent-core.md §4): the curated view
-// the agent consumes. `parent` is the NodeId of the parent (None for the root),
-// so the flat list reconstructs the tree. `actionable` is the resolved affordance
-// ceiling (enabled AND not observe-only), i.e. whether the agent may act on it.
+// the agent consumes. `parent` is the parent's INDEX IN THAT SAME ANSWER (None
+// for the root), so the flat list reconstructs the tree on its own terms — not
+// a NodeId, because `describe` prunes and its numbering is therefore not the
+// registry's. `actionable` is the resolved affordance ceiling (enabled AND not
+// observe-only), i.e. whether the agent may act on it.
 struct NodeView {
     id: text::Text,
     role: Role,
@@ -302,7 +304,7 @@ struct NodeView {
 fn make_path_id(parent: str, tag: str, index: usize) -> text::Text {
     var buf: [u8; 256] = [0u8; 256];
     let n: i32 = {
-        snprintf(#addr_of(buf) as *u8, 256 as usize,
+        snprintf(#addr_of(buf) as *u8, 256,
         #str_ptr("%.*s/%.*s#%llu\0"),
         #str_len(parent) as i32, #str_ptr(parent),
         #str_len(tag) as i32, #str_ptr(tag),
@@ -316,7 +318,7 @@ fn make_path_id(parent: str, tag: str, index: usize) -> text::Text {
 fn make_key_id(parent: str, key: u64) -> text::Text {
     var buf: [u8; 256] = [0u8; 256];
     let n: i32 = {
-        snprintf(#addr_of(buf) as *u8, 256 as usize,
+        snprintf(#addr_of(buf) as *u8, 256,
         #str_ptr("%.*s/%llu\0"),
         #str_len(parent) as i32, #str_ptr(parent), key)
     };
@@ -384,7 +386,7 @@ fn new() -> Registry {
 impl Registry {
     // The application root (always NodeId 0).
     fn root(this) -> usize {
-        return 0 as usize;
+        return 0;
     }
 
     fn count(this) -> usize {
@@ -406,7 +408,7 @@ impl Registry {
         // tree completeness but not exposed; override with `set_exposed`.
         let tagged: bool = match dev_id {
             option::Option[str]::Some(_) => true,
-            option::Option[str]::None => false,
+            option::Option::None => false,
         };
         // The id expression is passed inline, not via `let id = ...; push_node(id)`:
         // moving a named local `string` into a method call double-frees it on a
@@ -414,7 +416,7 @@ impl Registry {
         return this.push_node(
             match dev_id {
                 option::Option[str]::Some(d) => text::from_str(d),
-                option::Option[str]::None => {
+                option::Option::None => {
                     let pid: str = this.id_view(parent);
                     make_path_id(pid, role_tag(role), idx)
                 }
@@ -432,13 +434,13 @@ impl Registry {
         let _idx: usize = this.next_sibling_index(parent);
         let tagged: bool = match dev_id {
             option::Option[str]::Some(_) => true,
-            option::Option[str]::None => false,
+            option::Option::None => false,
         };
         // Inline id expression (no `let id = ...`): see add_child for why.
         return this.push_node(
             match dev_id {
                 option::Option[str]::Some(d) => text::from_str(d),
-                option::Option[str]::None => {
+                option::Option::None => {
                     let pid: str = this.id_view(parent);
                     make_key_id(pid, key)
                 }
@@ -456,7 +458,7 @@ impl Registry {
         assert this.is_valid(node);
         return match this.roles.at_ptr(node) {
             option::Option[*Role]::Some(p) => { *p },
-            option::Option[*Role]::None => Role::Group,
+            option::Option::None => Role::Group,
         };
     }
 
@@ -474,7 +476,6 @@ impl Registry {
     fn set_name(ref this, node: usize, name: str) {
         assert this.is_valid(node);
         this.names.set(text::from_str(name), node);
-        return;
     }
 
     // Set the name from the WIDGET'S OWN CONTENT — a button's title, a field's
@@ -507,7 +508,6 @@ impl Registry {
         // one-setter leak arriving through the other door.
         if this.in_excluded_subtree(node) { return; }
         this.names.set(text::from_str(name), node);
-        return;
     }
 
     // The accessible name, as a view into registry-owned storage ("" if unset).
@@ -515,7 +515,7 @@ impl Registry {
         assert this.is_valid(node);
         return match this.names.at_ptr(node) {
             option::Option[*text::Text]::Some(p) => (*p).view(),
-            option::Option[*text::Text]::None => "",
+            option::Option::None => "",
         };
     }
 
@@ -525,7 +525,6 @@ impl Registry {
     fn set_description(ref this, node: usize, d: str) {
         assert this.is_valid(node);
         this.descriptions.set(text::from_str(d), node);
-        return;
     }
 
     // The intent description ("" if unset), a view into registry-owned storage.
@@ -533,21 +532,20 @@ impl Registry {
         assert this.is_valid(node);
         return match this.descriptions.at_ptr(node) {
             option::Option[*text::Text]::Some(p) => (*p).view(),
-            option::Option[*text::Text]::None => "",
+            option::Option::None => "",
         };
     }
 
     fn set_enabled(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.enabled.set(on, node);
-        return;
     }
 
     fn is_enabled(this, node: usize) -> bool {
         assert this.is_valid(node);
         return match this.enabled.at_ptr(node) {
             option::Option[*bool]::Some(p) => { *p },
-            option::Option[*bool]::None => false,
+            option::Option::None => false,
         };
     }
 
@@ -556,7 +554,6 @@ impl Registry {
     fn set_observe_only(ref this, node: usize) {
         assert this.is_valid(node);
         this.actionable.set(false, node);
-        return;
     }
 
     // Whether the agent may act on this node AS FAR AS THE WIDGET IS CONCERNED
@@ -568,7 +565,7 @@ impl Registry {
         assert this.is_valid(node);
         let ceiling: bool = match this.actionable.at_ptr(node) {
             option::Option[*bool]::Some(p) => { *p },
-            option::Option[*bool]::None => false,
+            option::Option::None => false,
         };
         return ceiling && this.is_enabled(node);
     }
@@ -579,7 +576,6 @@ impl Registry {
     fn set_tier(ref this, node: usize, tier: u32) {
         assert this.is_valid(node);
         this.tiers.set(tier, node);
-        return;
     }
 
     // The node's own declared tier, ignoring its ancestors.
@@ -587,7 +583,7 @@ impl Registry {
         assert this.is_valid(node);
         return match this.tiers.at_ptr(node) {
             option::Option[*u32]::Some(p) => { *p },
-            option::Option[*u32]::None => tier_open(),
+            option::Option::None => tier_open(),
         };
     }
 
@@ -604,7 +600,7 @@ impl Registry {
                     worst = stricter_tier(worst, this.declared_tier(i));
                     cur = this.parent_of(i);
                 }
-                option::Option[usize]::None => { return worst; }
+                option::Option::None => { return worst; }
             }
         }
     }
@@ -624,7 +620,6 @@ impl Registry {
         if policy == policy_protected() { this.set_tier(node, tier_protected()); return; }
         if policy == policy_private() { this.set_tier(node, tier_private()); return; }
         if policy == policy_exclude() { this.set_excluded(node, true); return; }
-        return;
     }
 
     // --- what a PARTICULAR grant may do -----------------------------------
@@ -688,7 +683,7 @@ impl Registry {
         if this.in_excluded_subtree(node) { return false; }
         return match this.exposed.at_ptr(node) {
             option::Option[*bool]::Some(p) => { *p },
-            option::Option[*bool]::None => false,
+            option::Option::None => false,
         };
     }
 
@@ -698,7 +693,6 @@ impl Registry {
     fn set_excluded(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.excluded.set(on, node);
-        return;
     }
 
     // Is this node inside an excluded subtree? Walks up, so marking the root is
@@ -710,12 +704,12 @@ impl Registry {
                 option::Option[usize]::Some(i) => {
                     let hit: bool = match this.excluded.at_ptr(i) {
                         option::Option[*bool]::Some(p) => { *p },
-                        option::Option[*bool]::None => false,
+                        option::Option::None => false,
                     };
                     if hit { return true; }
                     cur = this.parent_of(i);
                 }
-                option::Option[usize]::None => { return false; }
+                option::Option::None => { return false; }
             }
         }
     }
@@ -723,25 +717,48 @@ impl Registry {
     fn set_exposed(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.exposed.set(on, node);
-        return;
     }
 
     // The curated UI description (plan.agent-core.md §4, §5.1): the agent-visible
     // tree. Only exposed nodes appear; each node's `parent` is its nearest
     // exposed ancestor, so unexposed intermediates collapse and the tree stays
     // connected. NodeId order means parents precede children.
+    //
+    // `parent` INDEXES THIS ANSWER, not the registry. It has to: the answer
+    // omits every unexposed node, so the two numberings part company the
+    // moment anything is pruned — and a NodeId arriving in an array of
+    // positions does not read as an error, it reads as a different node. A
+    // consumer walking that chain climbs through unrelated ancestors, and one
+    // that climbs until it reaches a root never reaches one: this is what hung
+    // `agent_mcp::kept_parent_index` indefinitely, a whole core per call, on
+    // every prefixed `describe_ui` (demo_11/bugs/001).
+    //
+    // One pass is enough because a parent's NodeId is always below its child's
+    // — `add_child` can only name a node that already exists — so an
+    // ancestor's position is settled before any descendant asks for it.
     fn describe(this, grant: auth::Grant) -> vec::Vec[NodeView] {
         var out: vec::Vec[NodeView] = vec::new::[NodeView]();
+        // Where each NodeId landed in `out`; -1 for one this view pruned.
+        var pos: vec::Vec[i64] = vec::new::[i64]();
         let n: usize = this.ids.count();
-        var i: usize = 0 as usize;
+        var i: usize = 0;
         while i < n {
             if this.is_exposed(i) && grant.has(auth::cap_read()) {
+                var parent: option::Option[usize] = option::Option[usize]::None;
+                if let option::Option[usize]::Some(a) = this.nearest_exposed_ancestor(i) {
+                    if let option::Option[i64]::Some(np) = pos.at(a) {
+                        if np >= 0 {
+                            parent = option::Option[usize]::Some(np as usize);
+                        }
+                    }
+                }
+                pos.append(out.count() as i64);
                 out.append(NodeView {
                     id: text::from_str(this.id_view(i)),
                     role: this.role_of(i),
                     name: text::from_str(this.name_of(i)),
                     description: text::from_str(this.description_of(i)),
-                    parent: this.nearest_exposed_ancestor(i),
+                    parent: parent,
                     enabled: this.is_enabled(i),
                     // `actionable` is what THIS grant may do, not what the
                     // widget could take. A model uses it as its tool list, so
@@ -751,8 +768,10 @@ impl Registry {
                     tier: this.tier_of(i),
                     readable: this.can_read_value(grant, i),
                 });
+            } else {
+                pos.append((0 as i64) -% (1 as i64));
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
         return out;
     }
@@ -761,7 +780,7 @@ impl Registry {
     fn lookup(this, id: str) -> option::Option[usize] {
         return match this.index.get(id) {
             option::Option[usize]::Some(n) => option::Option[usize]::Some(n),
-            option::Option[usize]::None => option::Option[usize]::None,
+            option::Option::None => option::Option[usize]::None,
         };
     }
 
@@ -778,7 +797,7 @@ impl Registry {
     fn id_view(this, node: usize) -> str {
         return match this.ids.at_ptr(node) {
             option::Option[*text::Text]::Some(p) => (*p).view(),
-            option::Option[*text::Text]::None => "",
+            option::Option::None => "",
         };
     }
 
@@ -814,7 +833,7 @@ impl Registry {
                     }
                     cur = this.parent_of(p);
                 }
-                option::Option[usize]::None => {
+                option::Option::None => {
                     return option::Option[usize]::None;
                 }
             }
@@ -825,9 +844,9 @@ impl Registry {
     fn next_sibling_index(ref this, parent: usize) -> usize {
         let cur: usize = match this.sibling_counts.get(parent) {
             option::Option[usize]::Some(x) => x,
-            option::Option[usize]::None => 0 as usize,
+            option::Option::None => 0,
         };
-        this.sibling_counts.insert(parent, cur +% (1 as usize));
+        this.sibling_counts.insert(parent, cur +% 1);
         return cur;
     }
 }
@@ -843,8 +862,8 @@ fn none_str() -> option::Option[str] {
 #[test]
 fn test_root_exists() {
     let r: Registry = new();
-    assert r.count() == (1 as usize);
-    assert r.root() == (0 as usize);
+    assert r.count() == 1;
+    assert r.root() == 0;
     assert r.contains("app");
     assert r.resolved_id(r.root()) == "app";
     assert role_eq(r.role_of(r.root()), Role::Group);
@@ -859,7 +878,7 @@ fn test_dev_id_wins() {
     assert r.contains("btn_login");
     let found: usize = match r.lookup("btn_login") {
         option::Option[usize]::Some(n) => n,
-        option::Option[usize]::None => 999 as usize,
+        option::Option::None => 999,
     };
     assert found == btn;
 }
@@ -901,7 +920,7 @@ fn test_keyed_item_id() {
     var r: Registry = new();
     let root: usize = r.root();
     let list: usize = r.add_child(root, option::Option[str]::Some("todo_list"), Role::List);
-    let item: usize = r.add_item(list, none_str(), Role::Group, 42 as u64);
+    let item: usize = r.add_item(list, none_str(), Role::Group, 42);
     assert r.resolved_id(list) == "todo_list";
     assert r.resolved_id(item) == "todo_list/42";
     assert r.contains("todo_list/42");
@@ -912,15 +931,15 @@ fn test_keyed_items_distinct_and_addressable() {
     var r: Registry = new();
     let root: usize = r.root();
     let list: usize = r.add_child(root, option::Option[str]::Some("list"), Role::List);
-    let a: usize = r.add_item(list, none_str(), Role::Group, 1 as u64);
-    let b: usize = r.add_item(list, none_str(), Role::Group, 2 as u64);
+    let a: usize = r.add_item(list, none_str(), Role::Group, 1);
+    let b: usize = r.add_item(list, none_str(), Role::Group, 2);
     assert r.resolved_id(a) == "list/1";
     assert r.resolved_id(b) == "list/2";
     let fa: usize = match r.lookup("list/1") {
-        option::Option[usize]::Some(n) => n, option::Option[usize]::None => 999 as usize,
+        option::Option[usize]::Some(n) => n, option::Option::None => 999,
     };
     let fb: usize = match r.lookup("list/2") {
-        option::Option[usize]::Some(n) => n, option::Option[usize]::None => 999 as usize,
+        option::Option[usize]::Some(n) => n, option::Option::None => 999,
     };
     assert fa == a;
     assert fb == b;
@@ -933,12 +952,12 @@ fn test_role_and_parent_recorded() {
     let b: usize = r.add_child(root, none_str(), Role::Button);
     assert role_eq(r.role_of(b), Role::Button);
     let p: usize = match r.parent_of(b) {
-        option::Option[usize]::Some(n) => n, option::Option[usize]::None => 999 as usize,
+        option::Option[usize]::Some(n) => n, option::Option::None => 999,
     };
     assert p == root;
     // The root has no parent.
     let root_has_parent: bool = match r.parent_of(root) {
-        option::Option[usize]::Some(_) => true, option::Option[usize]::None => false,
+        option::Option[usize]::Some(_) => true, option::Option::None => false,
     };
     assert root_has_parent == false;
 }
@@ -950,7 +969,7 @@ fn test_lookup_miss_returns_none() {
     assert (r.contains("nope")) == false;
     let missed: bool = match r.lookup("does/not/exist") {
         option::Option[usize]::Some(_) => false,
-        option::Option[usize]::None => true,
+        option::Option::None => true,
     };
     assert missed;
 }
@@ -960,9 +979,9 @@ fn test_lookup_miss_returns_none() {
 #[test]
 fn test_is_valid_rejects_out_of_range() {
     let r: Registry = new();
-    assert r.is_valid(0 as usize);
-    assert (r.is_valid(1 as usize)) == false;
-    assert (r.is_valid(9999 as usize)) == false;
+    assert r.is_valid(0);
+    assert (r.is_valid(1)) == false;
+    assert (r.is_valid(9999)) == false;
 }
 
 // Build-time stability: the same tree, built twice, yields identical ids. This
@@ -975,14 +994,14 @@ fn test_deterministic_rebuild() {
     let g1: usize = r1.add_child(root1, none_str(), Role::Group);
     let _b1: usize = r1.add_child(g1, none_str(), Role::Button);
     let l1: usize = r1.add_child(root1, option::Option[str]::Some("items"), Role::List);
-    let i1: usize = r1.add_item(l1, none_str(), Role::Group, 7 as u64);
+    let i1: usize = r1.add_item(l1, none_str(), Role::Group, 7);
 
     var r2: Registry = new();
     let root2: usize = r2.root();
     let g2: usize = r2.add_child(root2, none_str(), Role::Group);
     let _b2: usize = r2.add_child(g2, none_str(), Role::Button);
     let l2: usize = r2.add_child(root2, option::Option[str]::Some("items"), Role::List);
-    let i2: usize = r2.add_item(l2, none_str(), Role::Group, 7 as u64);
+    let i2: usize = r2.add_item(l2, none_str(), Role::Group, 7);
 
     assert r1.resolved_id(g1) == r2.resolved_id(g2);
     assert r1.resolved_id(l1) == r2.resolved_id(l2);
@@ -997,12 +1016,12 @@ fn test_deterministic_rebuild() {
 fn test_drop_no_double_free() {
     var r: Registry = new();
     let root: usize = r.root();
-    var i: usize = 0 as usize;
-    while i < (32 as usize) {
+    var i: usize = 0;
+    while i < 32 {
         let _c: usize = r.add_child(root, none_str(), Role::Button);
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
-    assert r.count() == (33 as usize);
+    assert r.count() == 33;
     // r drops at scope exit.
 }
 
@@ -1013,7 +1032,7 @@ fn test_name_defaults_empty_and_sets() {
     var r: Registry = new();
     let root: usize = r.root();
     let b: usize = r.add_child(root, option::Option[str]::Some("btn"), Role::Button);
-    assert #str_len(r.name_of(b)) == (0 as usize);
+    assert #str_len(r.name_of(b)) == 0;
     r.set_name(b, "Log In");
     assert r.name_of(b) == "Log In";
     // overwrite frees the old name buffer (ASan would catch a leak/double free).
@@ -1063,13 +1082,12 @@ fn test_describe_lists_every_node_with_fields() {
             assert { (*p).actionable };
             let parent: usize = match { (*p).parent } {
                 option::Option[usize]::Some(x) => x,
-                option::Option[usize]::None => 999 as usize,
+                option::Option::None => 999,
             };
             assert parent == root;
         }
-        option::Option[*NodeView]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1084,9 +1102,8 @@ fn test_describe_reflects_ceiling() {
             assert { (*p).enabled };
             assert ({ (*p).actionable }) == false;
         }
-        option::Option[*NodeView]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
-    return;
 }
 
 // Memory safety: describe() returns a Vec[NodeView] that owns two strings per
@@ -1095,15 +1112,15 @@ fn test_describe_reflects_ceiling() {
 fn test_describe_drop_no_double_free() {
     var r: Registry = new();
     let root: usize = r.root();
-    var i: usize = 0 as usize;
-    while i < (16 as usize) {
+    var i: usize = 0;
+    while i < 16 {
         let c: usize = r.add_child(root, none_str(), Role::Text);
         r.set_name(c, "row");
         r.set_exposed(c, true);
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     let v: vec::Vec[NodeView] = r.describe(auth::operator());
-    assert v.count() == (17 as usize);
+    assert v.count() == 17;
     // v and r both drop at scope exit; no buffer freed twice.
 }
 
@@ -1129,10 +1146,10 @@ fn test_describe_prunes_unexposed_and_reparents() {
     let btn: usize = r.add_child(group, option::Option[str]::Some("btn"), Role::Button);
     let v: vec::Vec[NodeView] = r.describe(auth::operator());
     // Only root + btn are visible; the auto group is pruned.
-    assert v.count() == (2 as usize);
+    assert v.count() == 2;
     // btn re-parents to the nearest exposed ancestor (root), not the hidden group.
     var found_btn: bool = false;
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < v.count() {
         match v.at_ptr(i) {
             option::Option[*NodeView]::Some(p) => {
@@ -1140,16 +1157,94 @@ fn test_describe_prunes_unexposed_and_reparents() {
                     found_btn = true;
                     let parent: usize = match { (*p).parent } {
                         option::Option[usize]::Some(x) => x,
-                        option::Option[usize]::None => 999 as usize,
+                        option::Option::None => 999,
                     };
                     assert parent == root;
                 }
             }
-            option::Option[*NodeView]::None => { assert false; }
+            option::Option::None => { assert false; }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     assert found_btn;
+}
+
+// THE CASE THE TEST ABOVE CANNOT SEE. There, the surviving parent is the root
+// — NodeId 0 and answer index 0 — so a `parent` in either numbering reads the
+// same and a NodeId leaking onto the wire looks correct. Push the pruning down
+// one level and the two numbers part company, which is the whole bug: every
+// consumer treats `parent` as an index into the array it was handed.
+#[test]
+fn test_describe_parent_indexes_the_answer_not_the_registry() {
+    var r: Registry = new();
+    let root: usize = r.root();
+    // root(0) -> skip(1, auto/pruned)
+    //         -> panel(2, exposed) -> group(3, auto/pruned) -> btn(4, exposed)
+    //
+    // The answer is [root, panel, btn], so the panel is NodeId 2 and answer
+    // index 1. The pruned sibling is there to make those two numbers differ —
+    // without it they coincide and the test proves nothing.
+    let _skip: usize = r.add_child(root, none_str(), Role::Group);
+    let panel: usize = r.add_child(root, option::Option[str]::Some("panel"), Role::Group);
+    let group: usize = r.add_child(panel, none_str(), Role::Group);
+    let btn: usize = r.add_child(group, option::Option[str]::Some("btn"), Role::Button);
+    assert panel == 2;
+    assert btn == 4;
+
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
+    // root, panel, btn — the two auto groups are pruned.
+    assert v.count() == 3;
+    // Answer index 1 is the panel, and NodeId 2 is what the old code sent.
+    match v.at_ptr(1) {
+        option::Option[*NodeView]::Some(p) => { assert (*p).id.equals("panel"); }
+        option::Option::None => { assert false; }
+    }
+    match v.at_ptr(2) {
+        option::Option[*NodeView]::Some(p) => {
+            assert (*p).id.equals("btn");
+            let parent: usize = match { (*p).parent } {
+                option::Option[usize]::Some(x) => x,
+                option::Option::None => 999,
+            };
+            // The panel's place in THIS array, not its NodeId.
+            assert parent == 1;
+            assert parent != panel;
+        }
+        option::Option::None => { assert false; }
+    }
+}
+
+// Every `parent` in an answer must address that answer: in range, and above
+// the node carrying it. A chain that only ever climbs cannot cycle, and a
+// consumer walking it to the root is what a wrong index left spinning.
+#[test]
+fn test_describe_parents_are_in_range_and_ascend() {
+    var r: Registry = new();
+    let root: usize = r.root();
+    let a: usize = r.add_child(root, option::Option[str]::Some("a"), Role::Group);
+    let hidden: usize = r.add_child(a, none_str(), Role::Group);
+    let b: usize = r.add_child(hidden, option::Option[str]::Some("b"), Role::Group);
+    let _c: usize = r.add_child(b, option::Option[str]::Some("c"), Role::Button);
+    let _d: usize = r.add_child(hidden, option::Option[str]::Some("d"), Role::Button);
+
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
+    var i: usize = 0;
+    while i < v.count() {
+        match v.at_ptr(i) {
+            option::Option[*NodeView]::Some(p) => {
+                match { (*p).parent } {
+                    option::Option[usize]::Some(x) => {
+                        assert x < v.count();
+                        assert x < i;
+                    }
+                    // Only the first node — the root — comes back parentless.
+                    option::Option::None => { assert i == 0; }
+                }
+            }
+            option::Option::None => { assert false; }
+        }
+        i = i +% 1;
+    }
 }
 
 #[test]
@@ -1157,13 +1252,13 @@ fn test_set_exposed_opts_auto_node_in() {
     var r: Registry = new();
     let root: usize = r.root();
     let list: usize = r.add_child(root, option::Option[str]::Some("list"), Role::List);
-    let row: usize = r.add_item(list, none_str(), Role::Group, 7 as u64);
+    let row: usize = r.add_item(list, none_str(), Role::Group, 7);
     assert (r.is_exposed(row)) == false;
     r.set_exposed(row, true);
     assert r.is_exposed(row);
     // describe now includes root + list + row.
     let v: vec::Vec[NodeView] = r.describe(auth::operator());
-    assert v.count() == (3 as usize);
+    assert v.count() == 3;
 }
 
 #[test]
@@ -1175,20 +1270,20 @@ fn test_set_exposed_can_hide_tagged_node() {
     r.set_exposed(secret, false);
     let v: vec::Vec[NodeView] = r.describe(auth::operator());
     // Only the root remains visible.
-    assert v.count() == (1 as usize);
+    assert v.count() == 1;
 }
 
 // --- declared affordance packing (Phase 2) ---------------------------------
 
 #[test]
 fn test_role_from_index_roundtrips() {
-    assert role_eq(role_from_index(0 as u32), Role::Button);
-    assert role_eq(role_from_index(1 as u32), Role::Text);
-    assert role_eq(role_from_index(2 as u32), Role::Input);
-    assert role_eq(role_from_index(3 as u32), Role::List);
-    assert role_eq(role_from_index(4 as u32), Role::Group);
-    assert role_eq(role_from_index(5 as u32), Role::Window);
-    assert role_eq(role_from_index(99 as u32), Role::Group);
+    assert role_eq(role_from_index(0), Role::Button);
+    assert role_eq(role_from_index(1), Role::Text);
+    assert role_eq(role_from_index(2), Role::Input);
+    assert role_eq(role_from_index(3), Role::List);
+    assert role_eq(role_from_index(4), Role::Group);
+    assert role_eq(role_from_index(5), Role::Window);
+    assert role_eq(role_from_index(99), Role::Group);
 }
 
 #[test]
@@ -1211,7 +1306,7 @@ fn test_pack_affordance_roundtrips_and_is_non_null() {
     assert unpack_drive(q) == drive_text();
 
     // Marker bit keeps every pack non-null (safe as associated-object ASSIGN).
-    assert pack_affordance(0 as u32, 0 as u32) != (0 as *u8);
+    assert pack_affordance(0, 0) != (0 as *u8);
     assert is_packed_affordance(0 as *u8) == false;
 }
 
@@ -1223,14 +1318,14 @@ fn describe_carries_name_and_description() {
     r.set_description(n, "opens the New Project wizard");
     let views: vec::Vec[NodeView] = r.describe(auth::operator());
     // root + the exposed button
-    assert views.count() == (2 as usize);
-    let ok: bool = match views.at_ptr(1 as usize) {
+    assert views.count() == 2;
+    let ok: bool = match views.at_ptr(1) {
         option::Option[*NodeView]::Some(v) => {
             let nm: str = { (*v).name.view() };
             let dsc: str = { (*v).description.view() };
             nm == "New Project" && dsc == "opens the New Project wizard"
         }
-        option::Option[*NodeView]::None => false,
+        option::Option::None => false,
     };
     assert ok;
     // Unset stays empty, never traps.
@@ -1273,20 +1368,19 @@ fn an_excluded_subtree_hides_its_keyed_children_too() {
     let views: vec::Vec[NodeView] = r.describe(auth::operator());
     var saw_send: bool = false;
     var saw_app: bool = false;
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < views.count() {
         match views.at_ptr(i) {
             option::Option[*NodeView]::Some(v) => {
                 if { (*v).id.view() } == "assistant:send" { saw_send = true; }
                 if { (*v).id.view() } == "app:save" { saw_app = true; }
             }
-            option::Option[*NodeView]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     assert saw_send == false;
     assert saw_app;
-    return;
 }
 
 #[test]
@@ -1304,7 +1398,7 @@ fn a_protected_node_is_still_described_with_its_label() {
 
     let views: vec::Vec[NodeView] = r.describe(auth::operator());
     var seen: bool = false;
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < views.count() {
         match views.at_ptr(i) {
             option::Option[*NodeView]::Some(n) => {
@@ -1316,12 +1410,11 @@ fn a_protected_node_is_still_described_with_its_label() {
                     assert { (*n).name.view() } == "Card number";   // the LABEL survives
                 }
             }
-            option::Option[*NodeView]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     assert seen;
-    return;
 }
 
 #[test]
@@ -1336,22 +1429,21 @@ fn the_same_tree_answers_two_grants_differently() {
 
     let plain: vec::Vec[NodeView] = r.describe(auth::operator());
     let approved: vec::Vec[NodeView] = r.describe(auth::protected_operator());
-    match plain.at_ptr(1 as usize) {
+    match plain.at_ptr(1) {
         option::Option[*NodeView]::Some(n) => {
             assert !{ (*n).readable };
             assert !{ (*n).actionable };
         }
-        option::Option[*NodeView]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
-    match approved.at_ptr(1 as usize) {
+    match approved.at_ptr(1) {
         option::Option[*NodeView]::Some(n) => {
             assert { (*n).readable };
             assert { (*n).actionable };
             assert { (*n).tier } == tier_protected();   // the DECLARATION is unchanged
         }
-        option::Option[*NodeView]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -1373,7 +1465,6 @@ fn a_content_name_never_lands_on_a_sensitive_node() {
     // The dev-authored label is a different door and stays open.
     r.set_name(card, "Card number");
     assert r.name_of(card) == "Card number";
-    return;
 }
 
 #[test]
@@ -1393,7 +1484,6 @@ fn a_content_name_never_lands_inside_an_excluded_subtree_either() {
     // panel may still be called "Assistant"; that is not the user's data.
     r.set_name(panel, "Assistant");
     assert r.name_of(panel) == "Assistant";
-    return;
 }
 
 #[test]
@@ -1426,7 +1516,6 @@ fn the_walked_read_gate_drops_curation_and_keeps_the_two_that_are_content() {
     // ...and a tier is still a tier in the mode an agent chooses for itself.
     assert r.can_read_value_walked(auth::operator(), card) == false;
     assert r.can_read_value_walked(auth::protected_operator(), card);
-    return;
 }
 
 #[test]
@@ -1442,7 +1531,6 @@ fn policy_values_round_trip_through_a_pinned_word() {
     // field the app meant to close.
     assert unpack_policy(0 as *u8) == policy_none();
     assert unpack_policy(8 as *u8) == policy_none();
-    return;
 }
 
 #[test]
@@ -1462,7 +1550,6 @@ fn set_policy_routes_to_the_right_mechanism() {
     assert r.is_exposed(b);
     assert !r.is_exposed(c);       // exclusion does
     assert r.tier_of(d) == tier_open();
-    return;
 }
 
 #[test]
@@ -1478,5 +1565,4 @@ fn tier_capabilities_are_distinct_per_tier() {
     assert act_caps_for_tier(tier_private()) == (auth::cap_act() | auth::cap_act_private());
     assert stricter_tier(tier_open(), tier_private()) == tier_private();
     assert stricter_tier(tier_private(), tier_protected()) == tier_private();
-    return;
 }

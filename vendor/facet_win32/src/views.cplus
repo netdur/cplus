@@ -1,0 +1,512 @@
+// facet_win32/views — the Renderer's five verbs.
+//
+// `mount::Renderer` is the whole seam between facet and a backend: create a
+// window for a node, apply its dirty word, insert into a host, remove, and ask
+// for a sync. Everything else this package does hangs off these.
+//
+// ONE CODE PATH FOR CREATE AND APPLY. `create` configures the new window with
+// `paint::all_bits()`, which is the same call `apply` makes with the node's
+// real dirty word — so a prop honoured on update is honoured on create, and
+// the two cannot drift. That rule is facet_appkit's, kept by facet_gtk, and it
+// is the reason the coverage number means anything.
+//
+// OWNERSHIP. A Win32 window is owned by its parent: destroying a parent
+// destroys its children, and `DestroyWindow` is the only release there is.
+// There is no reference count to sink — the GTK backend's whole floating-ref
+// dance has no analogue here — so `view_release` is one call and the ordering
+// rule is the opposite one: a child must not be destroyed after its parent
+// already was.
+
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "facet/vocabulary" as vocab;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/gestures" as gestures;
+import "facet/text_button" as text_button;
+import "facet/symbol" as symbol;
+import "facet/split" as split;
+import "facet/tree" as tree;
+import "facet/tree" as ftree;
+import "facet/window_chrome" as window_chrome;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./controls" as controls;
+import "./subclass" as subclass;
+import "./paint" as paint;
+import "./anim" as anim;
+import "./drawing" as drawing;
+import "./input" as input;
+import "./measure" as measure;
+import "./fonts" as fonts;
+import "./menus" as menus;
+import "./window" as window;
+import "./recycler" as recycler;
+import "./swipe" as swipe;
+
+// Kinds that are not rectangles at all — read as NODES by whatever owns them,
+// never given a window of their own. Same list, same reasons, as the AppKit
+// and GTK backends': a span is a run inside its label's string, a menu item is
+// a row in a menu.
+fn non_view_kind(kind: u32) -> bool {
+    if kind == props::K_SPAN { return true; }
+    if kind == props::K_MENU { return true; }
+    if kind == props::K_MENU_ITEM { return true; }
+    if kind == props::K_CONTEXT_MENU { return true; }
+    if kind == props::K_CONTEXT_MENU_ITEM { return true; }
+    if kind == props::K_SWIPE_ITEM { return true; }
+    if kind == props::K_TOOLBAR_ITEM { return true; }
+    return false;
+}
+
+// Does this node need a window? A bare container does not, unless something
+// has to arrive ON it — gestures need a window to land on, a key gives it an
+// address, and anything PAINTED needs a rectangle of its own.
+//
+// The painting test is the WHOLE band rather than the props someone needed on
+// the day: an incomplete rule here fails the same silent way, one prop later.
+// facet_appkit learned that the expensive way — every filled pill on a card
+// sheet rendered as bare floating words — and facet_android records inheriting
+// the same bug through `background_color` alone, with a brush and a radius
+// left out.
+fn wants_view(n: *core::Node) -> bool {
+    let kind: u32 = core::kind_of(n);
+    if non_view_kind(kind) { return false; }
+    if kind != core::K_NODE { return true; }
+    if gestures::has_gestures(n) { return true; }
+    if wants_painting(n) { return true; }
+    return { (*n).key() } != "";
+}
+
+fn wants_painting(n: *core::Node) -> bool {
+    if core::background_color(n).is_set() { return true; }
+    // A BRUSH IS A BACKGROUND TOO. Checking only `background_color` is exactly
+    // the incomplete rule the note above warns about, and facet_android records
+    // it costing the same thing there it cost facet_appkit: four rounded
+    // swatches with a brush and a radius, no `background_color`, and so no view
+    // at all — a gap where four coloured rectangles should be, with nothing in
+    // the log.
+    let b: vocab::Brush = core::background(n);
+    if b.start.is_set() { return true; }
+    if b.end.is_set() { return true; }
+    let r: vocab::Corners = core::corner_radius(n);
+    if r.top_leading != 0.0f64 { return true; }
+    if r.top_trailing != 0.0f64 { return true; }
+    if r.bottom_leading != 0.0f64 { return true; }
+    if r.bottom_trailing != 0.0f64 { return true; }
+    if core::clip(n).kind != (0 as i64) { return true; }
+    // A shadow needs BOTH a colour and an opacity to draw anything, which is
+    // what `Shadow::none()` is — asking for either alone is not a request for a
+    // rectangle.
+    let sh: vocab::Shadow = core::shadow(n);
+    if sh.color.is_set() && sh.opacity != 0.0f64 { return true; }
+    return false;
+}
+
+fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
+    if kind == props::K_LABEL { return controls::create_label(n); }
+    if kind == props::K_BUTTON { return controls::create_button(n); }
+    if kind == text_button::K_TEXT_BUTTON { return controls::create_text_button(n); }
+    if kind == props::K_CHECKBOX { return controls::create_checkbox(n); }
+    if kind == props::K_TOGGLE { return controls::create_toggle(n); }
+    if kind == props::K_TEXT_FIELD { return controls::create_text_field(n); }
+    if kind == props::K_TEXT_AREA { return controls::create_text_area(n); }
+    if kind == props::K_SEARCH_FIELD { return controls::create_search_field(n); }
+    if kind == props::K_RADIO { return controls::create_radio(n); }
+    if kind == props::K_SLIDER { return controls::create_slider(n); }
+    if kind == props::K_PROGRESS { return controls::create_progress(n); }
+    if kind == props::K_SPINNER { return controls::create_spinner(n); }
+    if kind == props::K_POPUP { return controls::create_popup(n); }
+    if kind == props::K_DATE_PICKER { return controls::create_date_picker(n); }
+    if kind == props::K_TIME_PICKER { return controls::create_time_picker(n); }
+    if kind == props::K_STEPPER { return controls::create_stepper(n); }
+    if kind == props::K_TABS { return controls::create_tabs(n); }
+    if kind == props::K_PAGE_DOTS { return controls::create_page_dots(n); }
+    if kind == window_chrome::K_WINDOW_BUTTONS { return controls::create_window_buttons(n); }
+    if kind == props::K_BORDERED { return controls::create_bordered(n); }
+    if kind == symbol::K_SYMBOL { return controls::create_symbol(n); }
+    if kind == props::K_REFRESHABLE { return controls::create_refreshable(n); }
+    if kind == split::K_SPLIT { return controls::create_split(n); }
+    if kind == props::K_CAROUSEL { return controls::create_carousel(n); }
+    if kind == props::K_IMAGE { return controls::create_image(n); }
+    if kind == props::K_ICON_BUTTON { return controls::create_icon_button(n); }
+    if kind == props::K_LIST { return recycler::create_sequence(n); }
+    if kind == props::K_TABLE { return controls::create_table(n); }
+    if kind == props::K_COLLECTION { return recycler::create_sequence(n); }
+    if kind == ftree::K_TREE { return recycler::create_tree(n); }
+    if kind == props::K_SCROLL { return controls::create_scroll(n); }
+    if kind == props::K_WEB { return controls::create_web(n); }
+    if kind == props::K_CANVAS { return controls::create_canvas(n); }
+    if kind == props::K_BOX { return controls::create_box(n); }
+    // Every remaining backed kind is a plain panel until it has a body: it
+    // holds children and honours the band, which is more than a null window
+    // and less than a claim. Same posture as facet_gtk, and visible in the
+    // coverage tool rather than hidden behind a placeholder rectangle.
+    return controls::create_panel(n);
+}
+
+fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
+    if kind == props::K_LABEL { controls::apply_label(v, n, dirty); return; }
+    if kind == props::K_BUTTON { controls::apply_button(v, n, dirty); return; }
+    if kind == text_button::K_TEXT_BUTTON { controls::apply_text_button(v, n, dirty); return; }
+    if kind == props::K_CHECKBOX { controls::apply_checkbox(v, n, dirty); return; }
+    if kind == props::K_TOGGLE { controls::apply_toggle(v, n, dirty); return; }
+    if kind == props::K_TEXT_FIELD { controls::apply_text_field(v, n, dirty); return; }
+    if kind == props::K_TEXT_AREA { controls::apply_text_area(v, n, dirty); return; }
+    if kind == props::K_SEARCH_FIELD { controls::apply_search_field(v, n, dirty); return; }
+    if kind == props::K_RADIO { controls::apply_radio(v, n, dirty); return; }
+    if kind == props::K_SLIDER { controls::apply_slider(v, n, dirty); return; }
+    if kind == props::K_PROGRESS { controls::apply_progress(v, n, dirty); return; }
+    if kind == props::K_SPINNER { controls::apply_spinner(v, n, dirty); return; }
+    if kind == props::K_POPUP { controls::apply_popup(v, n, dirty); return; }
+    if kind == props::K_DATE_PICKER { controls::apply_date_picker(v, n, dirty); return; }
+    if kind == props::K_TIME_PICKER { controls::apply_time_picker(v, n, dirty); return; }
+    if kind == props::K_STEPPER { controls::apply_stepper(v, n, dirty); return; }
+    if kind == props::K_TABS { controls::apply_tabs(v, n, dirty); return; }
+    if kind == props::K_PAGE_DOTS { controls::apply_page_dots(v, n, dirty); return; }
+    if kind == window_chrome::K_WINDOW_BUTTONS { controls::apply_window_buttons(v, n, dirty); return; }
+    if kind == props::K_BORDERED { controls::apply_bordered(v, n, dirty); return; }
+    if kind == symbol::K_SYMBOL { controls::apply_symbol(v, n, dirty); return; }
+    if kind == props::K_REFRESHABLE { controls::apply_refreshable(v, n, dirty); return; }
+    if kind == split::K_SPLIT { controls::apply_split(v, n, dirty); return; }
+    if kind == props::K_CAROUSEL { controls::apply_carousel(v, n, dirty); return; }
+    if kind == props::K_IMAGE { controls::apply_image(v, n, dirty); return; }
+    if kind == props::K_ICON_BUTTON { controls::apply_icon_button(v, n, dirty); return; }
+    if kind == props::K_LIST { recycler::apply_sequence(v, n, dirty); return; }
+    if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }
+    if kind == props::K_COLLECTION { recycler::apply_sequence(v, n, dirty); return; }
+    if kind == ftree::K_TREE { recycler::apply_tree(v, n, dirty); return; }
+    if kind == props::K_SCROLL { controls::apply_scroll_props(v, n, dirty); return; }
+    if kind == props::K_WEB { controls::apply_web(v, n, dirty); return; }
+    if kind == props::K_CANVAS { drawing::apply_canvas(v, n, dirty); return; }
+    if kind == props::K_BOX { controls::apply_box(v, n, dirty); return; }
+    if kind == props::K_SWIPEABLE { swipe::apply(v, n, dirty); return; }
+    return;
+}
+
+// The band's properties, then the kind's own writes. One order, one place —
+// so a kind never has to think about the band and the band never has to know a
+// kind.
+fn configure(v: *u8, n: *core::Node, d: u64) {
+    paint::band(v, n, d);
+    anim_band(v, n, d);
+    // THE FONT BEFORE THE KIND'S OWN WRITES, because a control measures its text
+    // in whatever font it is wearing — so a body that sets a string first would
+    // have sized it in the old one.
+    if (d & fonts::font_bits(core::kind_of(n))) != (0 as u64) { fonts::apply(v, n); }
+    apply_for_kind(core::kind_of(n), v, n, d);
+    return;
+}
+
+// THE ANIMATION BAND, the two channels a child HWND can wear. `C_OPACITY` /
+// `ANIM_OPACITY` is a layered-alpha fade; `C_TRANSFORM` / `ANIM_TRANSFORM` is a
+// `SetWindowPos` MOVE for the translation part of the matrix. Scale and rotation
+// are the rest of that matrix and are NOT applied — a control's pixels cannot be
+// scaled or rotated — so animating them changes the model (reads stay truthful)
+// but not the picture, which is the honest platform edge MANIFEST records.
+fn anim_band(v: *u8, n: *core::Node, d: u64) {
+    if v == (0 as *u8) { return; }
+    if (d & props::C_CANCEL_ANIMATIONS) != (0 as u64) {
+        anim::cancel_opacity(v);
+        anim::set_opacity_now(v, core::opacity(n));
+        anim::cancel_translation(v);
+        anim::set_translation_now(v, core::translation_x(n), core::translation_y(n));
+    }
+    if (d & props::C_ANIMATE) != (0 as u64) {
+        let ch: u32 = core::animate_channels_of(n);
+        if (ch & props::ANIM_OPACITY) != (0 as u32) {
+            anim::animate_opacity(v, core::opacity(n),
+                                  core::animate_duration_of(n), core::animate_easing_of(n));
+        }
+        if (ch & props::ANIM_TRANSFORM) != (0 as u32) {
+            anim::animate_translation(v, core::translation_x(n), core::translation_y(n),
+                                      core::animate_duration_of(n), core::animate_easing_of(n));
+        }
+        core::clear_animate_channels(n);
+        return;
+    }
+    // A plain set. Opacity only reaches for a layered window when it is actually
+    // below 1.0 (an opaque control stays unlayered and pays nothing); the move
+    // only when there is a non-zero offset, so a create at (0,0) does not fight
+    // the layout that has not run yet.
+    if (d & props::C_OPACITY) != (0 as u64) {
+        if core::opacity(n) < (1.0 as f64) { anim::set_opacity_now(v, core::opacity(n)); }
+    }
+    if (d & props::C_TRANSFORM) != (0 as u64) {
+        if core::translation_x(n) != (0.0 as f64) || core::translation_y(n) != (0.0 as f64) {
+            anim::set_translation_now(v, core::translation_x(n), core::translation_y(n));
+        }
+    }
+    return;
+}
+
+// ---- the five verbs ------------------------------------------------------------
+
+fn create(ctx: *u8, n: *core::Node) -> *u8 {
+    if n == (0 as *core::Node) { return 0 as *u8; }
+    if !wants_view(n) {
+        // A non-view kind is not a zero-sized box either — it must leave the
+        // LAYOUT, or it consumes a `gap` and a `justify` slot it has no
+        // business in. `Display::None` is flex's own word for that and does
+        // not remove the node from the tree.
+        if non_view_kind(core::kind_of(n)) { { (*n).set_display(flex::Display::None) }; }
+        return 0 as *u8;
+    }
+    let v: *u8 = create_for_kind(core::kind_of(n), n);
+    if v == (0 as *u8) { return 0 as *u8; }
+    // THE MESSAGES A SYSTEM CONTROL KEEPS TO ITSELF. Enter and the caret never
+    // reach the parent, so the three input kinds have their window procedure
+    // hooked — see `subclass`. Installed here rather than in `configure`
+    // because it is a once-per-window act and `configure` runs on every apply.
+    if wants_subclass(core::kind_of(n)) { subclass::install(v); }
+    // Configure it WHOLE — the same call apply makes, with every bit set.
+    configure(v, n, paint::all_bits());
+    // EVERY CONTROL WEARS A REAL FONT, whether or not its kind has a
+    // typography surface. A `CreateWindowEx` control that is never sent
+    // WM_SETFONT draws in the bitmap System font — the single loudest tell of
+    // an unfinished Win32 application — and `configure` only reaches
+    // `fonts::apply` for kinds with font bits. A kind without them (checkbox,
+    // toggle, stepper, tabs...) gets the default spec here, which
+    // `fonts::font_for` resolves to Segoe UI at 9pt at THIS window's DPI.
+    if fonts::font_bits(core::kind_of(n)) == (0 as u64) { fonts::apply(v, n); }
+    // The READ half. `arm` binds the node onto the window, which every backed
+    // node needs whether or not it has a handler, because the sender readers
+    // walk it.
+    input::arm(v, n);
+    // Intrinsic size: from here the node measures itself through its window.
+    // Without this every leaf answers 0x0 and the whole tree lays out correct
+    // and invisible — see `measure`'s header.
+    measure::arm(v, n);
+    return v;
+}
+
+// The bits that mean "ask `input::arm` again". Named so the suite can pin it:
+// a missing bit here is a handler that never fires, which is silent at runtime
+// and looks like an application bug.
+// WHICH KINDS NEED THEIR PROCEDURE HOOKED. Only the three that carry
+// `on_submit`, plus `text_area` for `on_selection_changed`. Subclassing a
+// control that needs neither buys nothing and puts this package's code on the
+// hot path of every message that control receives.
+fn wants_subclass(kind: u32) -> bool {
+    if kind == props::K_TEXT_FIELD { return true; }
+    if kind == props::K_SEARCH_FIELD { return true; }
+    if kind == props::K_TEXT_AREA { return true; }
+    return false;
+}
+
+fn rearm_bits() -> u64 {
+    return core::C_GESTURES | props::C_INPUT_TRANSPARENT | props::C_HANDLERS;
+}
+
+fn apply(ctx: *u8, n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    // AN ADOPTED WINDOW IS BOUND HERE, because this is the first verb the walk
+    // calls for it — `create`, where every other node is armed, is skipped for
+    // one that brought its own view. Without the bind the window carries no
+    // node, so hit testing resolves through it to its host, `native()` readers
+    // find nothing, and the shared band's focus verbs never route.
+    //
+    // Guarded on the bind rather than on `dirty`, and placed BEFORE the early
+    // return, because a node that mounts with nothing dirty still has to be
+    // armed exactly once.
+    if is_adopted_window(v) && input::node_of_window(v) == (0 as *core::Node) {
+        input::arm(v, n);
+    }
+    let d: u64 = core::dirty_of(n);
+    if d == (0 as u64) { return; }
+    configure(v, n, d);
+    // Arming is idempotent, so a set that gained a verb gains it here and one
+    // that gained nothing pays a couple of property reads. `C_HANDLERS` is in
+    // the mask as well as `C_GESTURES` — the shared band's `on_focus`/`on_blur`
+    // are not gestures, and a node that mounted without one and gained it later
+    // was never re-asked. facet_gtk records finding exactly that.
+    if (d & rearm_bits()) != (0 as u64) { input::arm(v, n); }
+    // A MENU SUBTREE CHANGED UNDER THIS NODE. A viewless child cannot say which
+    // of its host's verbs it affected, so `mount` raises `touch_all` on the
+    // host — which is why what this tests for is the bits a MENU carries, on a
+    // node that holds one.
+    if (d & menus::menu_bits()) != (0 as u64) {
+        if menus::holds_a_menu(n) { window::menus_changed(); }
+    }
+    // The write may have changed what this node would MEASURE — a new string is
+    // a new box, and no style changed, so flex's cache would keep the old one.
+    measure::remeasure(n);
+    return;
+}
+
+// `insert` is SetParent plus a z-order that names the sibling to follow.
+//
+// Z-ORDER IS THE CHILD ORDER HERE. There is no child list to splice into: a
+// Win32 parent's children are ordered by z, that order is the PAINT order, and
+// it is what `component::raise` moves a node through. So an insert that ignored
+// the slot would put every node on top of the one before it and reverse the
+// tree on screen.
+fn insert(ctx: *u8, raw_host: *u8, child: *u8, slot: usize) {
+    if raw_host == (0 as *u8) { return; }
+    if child == (0 as *u8) { return; }
+    // A scroll's children belong in its DOCUMENT, not in the scroll view — the
+    // one kind whose window and whose child host differ. Every other kind
+    // answers itself, so there is still ONE child model below this line.
+    let host: *u8 = controls::document_host(raw_host);
+    // AN ADOPTED WINDOW ARRIVES HERE UNPREPARED. `adopt_native` hands facet a
+    // window the application built, and the mount walk skips `create` for it —
+    // so unlike every other child reaching this line it has never been through
+    // the one place that makes a window a facet child.
+    //
+    // Only two things must happen before it can be parented, and both are here
+    // rather than in `apply` because `apply` runs after the whole walk: a
+    // window that is not `WS_CHILD` cannot be a child at all (`SetParent`
+    // "succeeds" and it stays a floating top-level), and the mark has to be on
+    // before the NEXT sibling's insert counts it.
+    if input::node_of_window(child) == (0 as *core::Node) { adopt_window(child); }
+    if { u::GetParent(child) } != host { let _p: *u8 = { u::SetParent(child, host) }; }
+    place_at_slot(host, child, slot);
+    return;
+}
+
+// Is this a window the application brought rather than one this package made?
+fn is_adopted_window(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    return { u::GetPropA(v, sys::prop_adopted() as *i8) } != (0 as *u8);
+}
+
+// Make an application's window fit to be a facet child.
+//
+// WS_CHILD IS NOT OPTIONAL and its absence is the quiet failure here: a
+// top-level or popup window passed to `SetParent` becomes OWNED rather than
+// contained — it keeps its own frame, floats above everything, and ignores
+// every `SetWindowPos` the layout makes. It looks like a layout bug and is not
+// one. WS_POPUP has to go with it; the two are mutually exclusive and leaving
+// both set is undefined.
+//
+// The style write also clears WS_EX_TOPMOST, which a window created as a
+// stand-alone preview may carry and which would keep it above its own siblings.
+// The two style words an adopted window must end up with, as arithmetic on the
+// two it arrived with. Separated from the window calls because this package's
+// suite makes no windows — see `test_main`'s header — and this is the half that
+// can actually be got wrong.
+fn adopted_style(style: i64) -> i64 {
+    return (style & ~(sys::ws_popup() as i64)) | (sys::ws_child() as i64)
+           | (sys::ws_visible() as i64);
+}
+
+fn adopted_exstyle(ex: i64) -> i64 {
+    return ex & ~(sys::ws_ex_topmost() as i64);
+}
+
+fn adopt_window(v: *u8) {
+    let _r: i32 = { u::SetPropA(v, sys::prop_adopted() as *i8, 1 as *u8) };
+    let style: i64 = { u::GetWindowLongPtrW(v, sys::gwl_style()) };
+    let want: i64 = adopted_style(style);
+    if want != style {
+        let _s: i64 = { u::SetWindowLongPtrW(v, sys::gwl_style(), want) };
+    }
+    let ex: i64 = { u::GetWindowLongPtrW(v, sys::gwl_exstyle()) };
+    let want_ex: i64 = adopted_exstyle(ex);
+    if want_ex != ex {
+        let _e: i64 = { u::SetWindowLongPtrW(v, sys::gwl_exstyle(), want_ex) };
+    }
+    return;
+}
+
+// Move `child` so that exactly `slot` of facet's siblings precede it.
+//
+// `SetWindowPos` with an INSERT-AFTER window is the only ordering call Win32
+// has, so the walk finds the window this one should follow. Slot 0 means "top
+// of the z-order", which is HWND_TOP.
+fn place_at_slot(host: *u8, child: *u8, slot: usize) {
+    let flags: u32 = sys::swp_nomove() | sys::swp_nosize() | sys::swp_noactivate();
+    // facet's slot is the child's index among its host's facet children, and
+    // facet paints them in that order: index 0 FIRST — at the back — and the
+    // last index ON TOP. A `zstack`'s "later children paint above", an absolute
+    // overlay, and a badge over a card all rely on it, and NSView's subviews and
+    // GtkFixed's children order the same way, so this is what the other backends
+    // do too. Win32's HWND_TOP is the FRONT of the z-order (painted last), so
+    // slot 0 belongs at the BACK, not the front — the inverse of what this
+    // package did until a zstack's badge came out behind its base.
+    //
+    // Count facet siblings first (a scroll's document and other package-owned
+    // windows carry no node and must not shift the slots).
+    var m: usize = 0 as usize;
+    // `is_facet_child` rather than the node alone, because an ADOPTED window
+    // has no node bound until `apply` runs — which is after this whole walk.
+    // Counting only bound nodes made every adopted view invisible to its
+    // siblings' slot arithmetic, so a later `raise` or re-insert put them in
+    // the wrong z-order.
+    var cur: *u8 = first_child(host);
+    while cur != (0 as *u8) {
+        if cur != child && is_facet_child(cur) {
+            m = m +% (1 as usize);
+        }
+        cur = next_sibling(cur);
+    }
+    // At or past the end of the list, the child is the new FRONTMOST.
+    if slot >= m {
+        let _r: i32 = { u::SetWindowPos(child, sys::hwnd_top(), 0 as i32, 0 as i32,
+                                        0 as i32, 0 as i32, flags) };
+        return;
+    }
+    // `first_child`/`next_sibling` walk TOP -> BOTTOM, so the sibling at facet
+    // `slot` counting from the BOTTOM is the (m-1-slot)-th one seen. The child
+    // sits directly below it — `SetWindowPos` places a window under its
+    // insert-after target — which puts exactly `slot` siblings beneath it.
+    let target: usize = (m -% (1 as usize)) -% slot;
+    var seen: usize = 0 as usize;
+    cur = first_child(host);
+    while cur != (0 as *u8) {
+        if cur != child && is_facet_child(cur) {
+            if seen == target {
+                let _r: i32 = { u::SetWindowPos(child, cur, 0 as i32, 0 as i32,
+                                                0 as i32, 0 as i32, flags) };
+                return;
+            }
+            seen = seen +% (1 as usize);
+        }
+        cur = next_sibling(cur);
+    }
+    let _r: i32 = { u::SetWindowPos(child, sys::hwnd_top(), 0 as i32, 0 as i32,
+                                    0 as i32, 0 as i32, flags) };
+    return;
+}
+
+// A window that occupies one of facet's slots under its host — either one this
+// package created and bound a node onto, or one the application adopted in.
+// Package-owned windows (a scroll's document, a toolbar strip) are neither and
+// must not shift the slots.
+fn is_facet_child(v: *u8) -> bool {
+    if input::node_of_window(v) != (0 as *core::Node) { return true; }
+    return is_adopted_window(v);
+}
+
+// GW_CHILD 5, GW_HWNDNEXT 2 — the two `GetWindow` relations that walk a
+// parent's children in z-order.
+fn first_child(host: *u8) -> *u8 { return { u::GetWindow(host, 5 as u32) }; }
+fn next_sibling(v: *u8) -> *u8 { return { u::GetWindow(v, 2 as u32) }; }
+
+// `remove` takes the child OUT of the tree without destroying it: facet may be
+// moving a node rather than dropping it, and `view_release` is the call that
+// means "gone". Re-parenting to the message-only window is how a Win32 window
+// is made an orphan — there is no `unparent`.
+fn remove(ctx: *u8, host: *u8, child: *u8) {
+    if child == (0 as *u8) { return; }
+    let _s: i32 = { u::ShowWindow(child, sys::sw_hide()) };
+    let _p: *u8 = { u::SetParent(child, controls::message_only_parent()) };
+    return;
+}
+
+// The node let go of the window. `DestroyWindow` takes its children with it,
+// which is correct: facet destroys a subtree from the top and a child whose
+// parent has already gone would otherwise be destroyed twice.
+fn view_release(v: *u8) {
+    if v == (0 as *u8) { return; }
+    // BEFORE the window goes. Putting the original procedure back on a
+    // destroyed window is not merely useless — `RemovePropA` on it would
+    // answer null and leave this package's procedure installed on a handle
+    // that is about to be reused.
+    subclass::remove(v);
+    input::unbind_node(v);
+    let _d: i32 = { u::DestroyWindow(v) };
+    return;
+}

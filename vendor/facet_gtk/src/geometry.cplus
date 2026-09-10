@@ -105,6 +105,16 @@ fn round_i32(v: f64) -> i32 {
     return (v + (0.5 as f64)) as i32;
 }
 
+// The same rounding for an EDGE, which unlike a size may be negative — a child
+// placed above or left of its host, which `position: absolute` and a scrolled
+// document both produce. `round_i32` clamps at zero because a negative size is
+// meaningless; a negative edge is not, and clamping one would drag a widget to
+// the host's corner.
+fn round_edge(v: f64) -> f64 {
+    if v < (0.0 as f64) { return { ((v - (0.5 as f64)) as i64) as f64 }; }
+    return { ((v + (0.5 as f64)) as i64) as f64 };
+}
+
 // The parent widget pointer, or null — tells "already placed" from "first
 // placement". `gtk_fixed_put` on a widget that already has a parent is a GTK
 // warning and a no-op, which would silently pin every widget to its first
@@ -117,27 +127,48 @@ fn parent_raw(child: *u8) -> *u8 {
 }
 
 // Place `child` in `host` (a GtkFixed) at a host-relative rect. Idempotent.
+//
+// A POSITION AND A SIZE ARE ROUNDED TOGETHER, from the two EDGES.
+//
+// Rounding the extent on its own — which this did — means two neighbours
+// disagree about where their shared boundary is: a 99.6 wide box at x=0.4
+// became 100 wide at 0.4, so it ran to 100.4 while the box after it started at
+// 100.0. Half a pixel of overlap at every boundary, and the sign flips with the
+// fraction so some boundaries gapped instead.
+//
+// `window::relayout` now snaps the whole tree to whole logical pixels before
+// the walk, so most frames arrive here already integral and this only absorbs
+// float error. It still derives rather than rounds, because a row laid out on
+// its own (`recycler`) can reach `place` from a path that has not been snapped.
 fn place(host: *u8, child: *u8, x: f64, y: f64, w: f64, h: f64) {
     if host == (0 as *u8) { return; }
     if child == (0 as *u8) { return; }
     let cw: gtk::Widget = gtk::Widget::from_raw(child);
+    // BOTH EDGES OFF THE ORIGINALS. Rounding the leading edge first and then
+    // measuring from THAT re-opens the seam it is meant to close: x=0.6 w=99.6
+    // has its right edge at 100.2, which rounds to 100 — not to 101, which is
+    // what `round_edge(round_edge(0.6) + 99.6)` answers.
+    let px: f64 = round_edge(x);
+    let py: f64 = round_edge(y);
+    let pw: f64 = round_edge(x + w) - px;
+    let ph: f64 = round_edge(y + h) - py;
     // Size first: a Fixed asks its child for a size request, and a widget that
     // has never been sized answers with its own natural size instead of ours.
-    cw.set_size_request(round_i32(w), round_i32(h));
+    cw.set_size_request(round_i32(pw), round_i32(ph));
     if parent_raw(child) == host {
-        gtk::Fixed::from_raw(host).move_(cw, x, y);
+        gtk::Fixed::from_raw(host).move_(cw, px, py);
         // A POSITION AND A TRANSFORM ARE ONE SLOT in a GtkFixed —
         // `gtk_fixed_put(x, y)` IS `translate(x, y)` on GtkFixedLayoutChild,
         // and `move_` has just overwritten whatever `transform` wrote. So the
         // position is recorded and the transform re-asserted on top of it.
         // Without this, every laid-out frame silently cancelled the node's
         // scale and rotation.
-        transform::placed(child, x, y);
-        transform::reapply(child, flex::Frame { left: x, top: y, width: w, height: h });
+        transform::placed(child, px, py);
+        transform::reapply(child, flex::Frame { left: px, top: py, width: pw, height: ph });
         return;
     }
-    gtk::Fixed::from_raw(host).put(cw, x, y);
-    transform::placed(child, x, y);
+    gtk::Fixed::from_raw(host).put(cw, px, py);
+    transform::placed(child, px, py);
     return;
 }
 

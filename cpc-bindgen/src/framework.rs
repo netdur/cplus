@@ -72,7 +72,7 @@ pub fn generate(
     // co-resident, so object returns/args resolve to FULL types (chaining works,
     // no method-less cross-module stubs) and there is no cyclic-import problem.
     if merge {
-        return generate_merged(name, prefix, overrides, overrides_path, &out, &src, &header_paths, &sdk, &pkg, sdk_name, foreign);
+        return generate_merged(name, prefix, overrides, overrides_path, &out, &src, &header_paths, &sdk, &pkg, sdk_name, foreign, &fw_dir);
     }
 
     // One module per header. Detect Objective-C vs C per header (a header is
@@ -157,16 +157,25 @@ fn generate_merged(
     pkg: &str,
     sdk_name: Option<&str>,
     foreign: &[(String, String)],
+    fw_dir: &Path,
 ) -> i32 {
     // The umbrella (`Headers/<name>.h`) transitively imports every public header,
     // so one parse yields all framework types with their home-header locs intact.
-    let umbrella = match header_paths.first().and_then(|p| p.parent()) {
-        Some(d) => d.join(format!("{name}.h")),
-        None => {
-            eprintln!("cpc-bindgen --merge: cannot locate the `{name}` umbrella header");
-            return 1;
-        }
-    };
+    //
+    // Taken from `fw_dir`, NOT inferred from `header_paths.first()`. It was
+    // inferred, and for a framework with a nested sub-framework the sorted first
+    // path is inside that sub-framework — so AVFoundation looked for its umbrella
+    // at `AVFAudio.framework/Headers/AVFoundation.h`, which does not exist, and
+    // the run died in clang with a path nobody had asked for. `Headers/<name>.h`
+    // beside the framework is where an umbrella is, by definition.
+    let umbrella = fw_dir.join("Headers").join(format!("{name}.h"));
+    if !umbrella.is_file() {
+        eprintln!(
+            "cpc-bindgen --merge: cannot locate the `{name}` umbrella header at {}",
+            umbrella.display()
+        );
+        return 1;
+    }
     // Header basenames this framework owns; the merged emitter accepts decls from
     // any of them and drops everything #imported from a system header. Seed from the
     // umbrella's #import list (which also carries sub-framework headers), then add
@@ -287,11 +296,23 @@ fn discover_headers(fw_dir: &Path, name: &str) -> Vec<PathBuf> {
         }
     }
 
-    // Fallback: the framework's own headers (minus its umbrella).
-    if paths.is_empty() {
-        for h in list_headers(&headers_dir, name) {
-            paths.push(headers_dir.join(h));
-        }
+    // The framework's OWN headers, always — not as a fallback.
+    //
+    // It was a fallback, and AVFoundation is what that cost. Its umbrella names
+    // three aggregators (AVFCore, AVFAudio, AVFCapture) that declare nothing
+    // themselves, and it nests ONE real sub-framework, AVFAudio.framework. So
+    // the sub-framework branch filled `paths` with AVFAudio's 46 headers, the
+    // fallback saw a non-empty vector and never ran, and the 156 headers
+    // physically in AVFoundation's own `Headers/` — every AVCapture*, AVAsset*
+    // and AVPlayer* class — were silently absent from a package that reported
+    // success. The symptom is a module written with `0 types`.
+    //
+    // A framework with nested sub-frameworks AND its own headers is the shape
+    // that broke; unioning is what `--merge` already does for the AST it parses
+    // (see the synthetic umbrella above), so this makes the module list agree
+    // with the declarations that were being read all along.
+    for h in list_headers(&headers_dir, name) {
+        paths.push(headers_dir.join(h));
     }
 
     paths.sort();

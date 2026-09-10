@@ -2285,15 +2285,31 @@ fn split_drag_update(gesture: *u8, dx: f64, dy: f64, user: *u8) {
 
 // PURE, so the suite can pin it: the clamp is the half of this that decides
 // what a person is allowed to do, and it is the half that has no widget in it.
-fn clamp_split_to(min_leading: f64, min_trailing: f64, avail: f64, want: f64) -> f64 {
+//
+// FOUR bounds now. The maximums arrive through `split`'s shared rule, which is
+// where the "what does a maximum mean" decision lives for all four backends:
+// the trailing maximum raises the floor (it needs the extent), the leading one
+// lowers the cap (it does not).
+fn clamp_split_to(min_leading: f64, min_trailing: f64,
+                  max_leading: f64, max_trailing: f64,
+                  avail: f64, want: f64) -> f64 {
     var next: f64 = want;
-    if next < min_leading { next = min_leading; }
+    let floor: f64 = split::floor_with_max(min_leading, max_trailing, avail);
+    if next < floor { next = floor; }
+    // The leading maximum is independent of the host's size, so it applies even
+    // before the first allocation — which is the whole asymmetry this pair
+    // exists for.
+    if max_leading > (0.0 as f64) && next > max_leading {
+        next = max_leading;
+        if next < floor { next = floor; }
+    }
     if avail <= (0.0 as f64) { return next; }
-    let cap: f64 = avail - min_trailing;
-    // A host too small to honour BOTH minimums cannot be clamped to both, and
-    // the leading one wins — a divider shoved past the trailing minimum is
-    // recoverable by dragging back, one pinned at zero width is not.
-    if cap <= min_leading { return next; }
+    var cap: f64 = avail - min_trailing;
+    cap = split::ceiling_with_max(cap, max_leading);
+    // A host too small to honour BOTH bounds cannot be clamped to both, and the
+    // floor wins — a divider shoved past the far bound is recoverable by
+    // dragging back, one pinned at zero width is not.
+    if cap <= floor { return next; }
     if next > cap { next = cap; }
     return next;
 }
@@ -2308,7 +2324,8 @@ fn clamp_split(p: *split::SplitProps, n: *core::Node, want: f64) -> f64 {
             split::SplitAxis::Rows => { w.get_height() } as f64,
         };
     }
-    return clamp_split_to({ (*p).min_leading }, { (*p).min_trailing }, avail, want);
+    return clamp_split_to({ (*p).min_leading }, { (*p).min_trailing },
+                          { (*p).max_leading }, { (*p).max_trailing }, avail, want);
 }
 
 fn split_props(n: *core::Node) -> *split::SplitProps {

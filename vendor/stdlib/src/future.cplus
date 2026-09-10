@@ -17,6 +17,21 @@
 // return rewriting lands.
 
 import "./reactor" as reactor;
+import "./thread" as thread;
+
+// DRIVING A FUTURE FROM SYNCHRONOUS CODE lives here, beside the value
+// (v0.0.31): `f.wait()` blocks this thread until the value is out,
+// `wait_or_cancel(f)` does the same but can be stopped by a cancel request
+// against the thread, and `f.cancel()` gives up. All three consume the future
+// (`take`), the way `JoinHandle::join` consumes a handle — the value comes
+// out, then the frame is freed when it drops. The executor is per thread and
+// implicit, so the future is the only handle there is; `executor::block_on`
+// and `executor::run` used to be the first two, elsewhere, and are gone.
+//
+// `await` is the OTHER thing one does with a future, and it is not a method:
+// it suspends the enclosing coroutine and is only legal inside an `async fn`.
+// An `async fn main` / `#[test] async fn` is driven by the compiler through
+// the same loop `wait` is.
 
 // `#[lang("future")]` is how the backend RECOGNIZES an instantiation of this
 // struct as a coroutine future — see the note on `Iterator[T]`; classifying
@@ -41,24 +56,142 @@ impl Future[T] {
         return this._handle;
     }
 
-    // v0.0.29 phase 2: EXPLICIT drop-to-cancel. Destroys the suspended
-    // frame; each suspend point's cancel edge runs the drops of the locals
-    // live there, transitively through whatever this future was awaiting —
-    // so cancelling a future cannot skip a drop. Consumes the future; safe
-    // on an already-completed frame (destroy at final suspend just frees).
+    // DROP IS CANCEL, and that is the whole of it since v0.0.30.
     //
-    // A future that is merely DROPPED — never awaited, driven, or
-    // cancelled — still leaks its frame: wiring this into implicit drop
-    // glue is the recorded follow-up in the cancellation report.
-    fn cancel(take this) {
+    // Destroying the suspended frame runs each suspend point's cancel edge,
+    // which drops the locals live there and cascades through whatever this
+    // future was awaiting — so dropping a future cannot skip a drop either.
+    // Safe on an already-completed frame: destroy at final suspend just frees.
+    //
+    // THE HANDLE IS NULLED, and it is not belt-and-braces. `await` destroys
+    // the inner frame itself when it extracts the value, so the future value
+    // it consumed is left holding a dangling pointer; codegen writes 0 back
+    // into the place at that moment, and this reads it. Any future that has
+    // been through an await therefore drops to nothing, and one that has not
+    // is the only kind that still owns a frame here.
+    fn drop(ref this) {
         if this._handle.is_not_null() {
             // If another drive on this thread pumped the reactor, this frame
-            // may have been notified into the pending queue — purge first.
+            // may have been notified into the pending queue — purge first: a
+            // frame address is reused by malloc, so a stale entry is a
+            // use-after-free rather than a leak.
             reactor::unregister_pending(this._handle);
+            // And every KERNEL registration: the timer or fd park this frame
+            // is suspended at, if any. A timer's kqueue ident IS the frame
+            // address, so left behind it resumes freed memory when it fires —
+            // the stdlib suite did exactly that on every run, visible only
+            // under `cpc test --asan`. Purged before the destroy so the
+            // frame's own cancel edges still find the tables intact
+            // (bugs/a-destroyed-coroutine-frame-stays-registered-with-the-reactor).
+            reactor::unregister_waiter(this._handle);
             __cplus_coro_destroy(this._handle);
+            this._handle = 0 as *u8;
         }
-        return;
     }
+
+    // EXPLICIT drop-to-cancel, kept for the intent it states. Consuming the
+    // future runs the drop above, which is where the work is — this exists so
+    // that "I am giving up on this" reads as a verb at the call site rather
+    // than as a binding nobody uses.
+    fn cancel(take this) { }
+
+    // Drive to completion from synchronous code and return the value. Blocks
+    // the calling thread — running its reactor, so other tasks queued on this
+    // thread make progress meanwhile — until the frame is done. The loop is
+    // compiler IR (`#block_on`): resume until done, drain the pending queue,
+    // park in kevent while anything waits, then read the promise.
+    //
+    // THE DRIVE-TO-COMPLETION FORM: a cancel request against this thread does
+    // not stop it (same doctrine as a compute loop that never checks
+    // `thread::cancelled()`). A worker that should be stoppable while it
+    // drives async code uses `wait_or_cancel`.
+    //
+    // Consumes the future. The value is read out of the promise first; then
+    // `this` drops on the way out and `drop` frees the frame.
+    fn wait(take this) -> T {
+        return { #block_on::[T](this) };
+    }
+}
+
+// Drive to completion — unless this thread is asked to stop.
+//
+// A FREE FUNCTION, not a method, and the reason is the return type: a
+// `Future[T]` method is instantiated for every `T` a prebuilt package
+// contains, `Future[()]` included (`sleep`, `yield_now`), and a
+// `WaitResult[()]` cannot be built — a unit payload has no value to store.
+// A free generic fn is instantiated only where it is called, which is what
+// `run` was and why it never met the problem. `wait` gets to be a method
+// because the `#block_on` intrinsic already answers unit with nothing.
+//
+// The same loop as `wait` (which is intrinsic IR; this is its surface-C+
+// twin), joined to the phase-1 cancellation protocol: the kevent park is
+// cancellable, and the loop re-checks `thread::cancelled()` between
+// resumes. On cancellation it destroys the frame tree this future owns —
+// destroying the top-level frame cascades through every await's cancel
+// edge, running the drops of the locals live at each suspend point — then
+// tears down this thread's reactor (closing the kqueue de-registers every
+// waiter and timer) and reports `Cancelled`. Cancellation cannot skip a
+// drop, and `join` on the worker still returns its value — the value just
+// says the work was cut short.
+//
+// Residual (recorded in the cancellation report): a `spawn_local` task
+// this tree does not own is leaked, not destroyed, by the teardown.
+fn wait_or_cancel[T](take f: Future[T]) -> WaitResult[T] {
+    let hdl: *u8 = f.raw_handle();
+    loop {
+        // Async fns run eagerly to their first suspend, so the frame may
+        // be done before the loop ever resumes it — check first (resuming
+        // a done coroutine is UB in LLVM).
+        if { #coro_done(hdl) } != (0 as i32) {
+            let prom: *T = { #coro_promise::[T](hdl) };
+            let v: T = { #take::[T](prom) };
+            // Consuming `f` is what frees the frame — `drop` purges the
+            // pending queue and destroys. Explicit rather than left to
+            // scope exit so the order is on the page: the value is out of
+            // the promise before the frame goes.
+            f.cancel();
+            return WaitResult[T]::Done(v);
+        }
+        if thread::cancelled() {
+            // DESTROY BEFORE TEARDOWN, and the order is load-bearing: the
+            // frame's cancel edges unregister awaiters and pending entries,
+            // and `teardown` has already freed those arrays and closed the
+            // kqueue. Consuming `f` here is what keeps the two in this
+            // order — leaving it to scope exit would run them the other
+            // way round.
+            f.cancel();
+            reactor::teardown();
+            return WaitResult[T]::Cancelled;
+        }
+        // THE REACTOR RESUMES; THIS LOOP ONLY STEPS IN WHEN IT HAS NOTHING.
+        // Every suspend point arranges its own wake-up (an awaiter entry, a
+        // kernel timer or fd filter, a pending-queue slot), so the frame is
+        // resumed by whoever satisfied it. This loop used to resume the frame
+        // unconditionally on every pass as well, and a timer or fd park does
+        // not re-check its condition on resume: `wait_or_cancel(sleep(200))`
+        // came back at once, timer still armed under an address about to be
+        // freed. Same loop as the `#block_on` intrinsic; the fallback resume
+        // is for a shape neither has foreseen, so it makes progress rather
+        // than parking forever.
+        let _n: i32 = reactor::drain_pending();
+        if reactor::waiter_count() > (0 as i32) {
+            let _p: i32 = reactor::poll_one_event_cancellable();
+        } else if reactor::pending_count() == (0 as i32) {
+            // The drain may have run this very frame to completion (it was
+            // queued as a notified awaiter); a done frame's resume pointer
+            // is null, so re-check before the fallback resume.
+            if { #coro_done(hdl) } == (0 as i32) {
+                { #coro_resume(hdl); }
+            }
+        }
+    }
+}
+
+// The outcome of a CANCELLABLE drive (`wait_or_cancel`): the value,
+// or the news that this thread was asked to stop before it arrived.
+enum WaitResult[T] {
+    Done(T),
+    Cancelled,
 }
 
 // The result of polling a `Future[T]`. The executor's poll loop
@@ -68,4 +201,139 @@ impl Future[T] {
 enum Poll[T] {
     Ready(T),
     Pending,
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+//
+// The cancellation half of `wait_or_cancel` — a worker thread asked to stop
+// mid-drive, its drops counted — lives in executor.cplus beside the bridge
+// tests that share its fixtures. These pin the value paths.
+
+async fn _ready_now() -> i32 {
+    return 41;
+}
+
+// A real reactor suspend, as every stdlib wrapper (`time::sleep`, the fd
+// waits) has inside it — so `wait` is seen parking and resuming, not just
+// reading a promise that was already full.
+async fn _after_a_tick() -> i32 {
+    { #reactor_wait_timer(1 as u64); }
+    return 42;
+}
+
+async fn _twice_after_ticks() -> i64 {
+    let a: i32 = await _after_a_tick();
+    let b: i32 = await _after_a_tick();
+    return (a as i64) +% (b as i64);
+}
+
+#[test]
+fn wait_returns_the_value_of_an_already_done_frame() {
+    assert _ready_now().wait() == 41;
+}
+
+#[test]
+fn wait_parks_on_the_reactor_and_resumes() {
+    assert _after_a_tick().wait() == 42;
+    // Nested awaits through the awaiter table, driven from the outside.
+    assert _twice_after_ticks().wait() == (84 as i64);
+}
+
+// A future dropped while parked takes its kernel registration with it.
+//
+// THIS IS THE ASAN SCENARIO from the report, asserted on the table because
+// the crash itself is only visible under `cpc test --asan`: `_after_a_tick`
+// parks on a 1ms timer whose kqueue ident is the frame address. Drop it
+// undriven, and the timer must be gone — not merely uncounted — or the next
+// drive on this thread is handed that address by the kernel and resumes
+// freed memory. From a fresh reactor, for the reason
+// `a_completed_wait_leaves_the_reactor_empty` gives.
+#[test]
+fn a_future_dropped_while_parked_leaves_no_registration_behind() {
+    reactor::teardown();
+    {
+        let _parked: Future[i32] = _after_a_tick();
+    }
+    assert reactor::waiter_count() == (0 as i32);
+    assert reactor::pending_count() == (0 as i32);
+    // The drive that follows polls the kqueue for its own timers; a stale
+    // one-shot from the dropped frame would be delivered here first.
+    assert _twice_after_ticks().wait() == (84 as i64);
+    assert reactor::waiter_count() == (0 as i32);
+}
+
+// A frame parked on a timer is resumed by the TIMER, not by the drive loop.
+// `_after_a_tick` is the top-level frame here, so the drive loop's own
+// resume — which it used to issue on every pass — would have run it to
+// completion before the timer fired, and this drive would have left one
+// armed timer behind. `time.cplus` measures the wall clock for the same
+// shape; this pins the table.
+#[test]
+fn a_wait_on_a_parked_frame_consumes_its_own_timer() {
+    reactor::teardown();
+    assert _after_a_tick().wait() == 42;
+    assert reactor::waiter_count() == (0 as i32);
+}
+
+#[test]
+fn wait_or_cancel_reports_done_when_nobody_asked_to_stop() {
+    match wait_or_cancel(_after_a_tick()) {
+        WaitResult::Done(v) => { assert v == 42; }
+        WaitResult::Cancelled => { assert false; }
+    }
+    match wait_or_cancel(_ready_now()) {
+        WaitResult::Done(v) => { assert v == 41; }
+        WaitResult::Cancelled => { assert false; }
+    }
+}
+
+// A drive leaves nothing behind in this thread's reactor: no waiter, no
+// pending entry, no awaiter — the next drive starts clean.
+//
+// FROM A FRESH REACTOR, because the suite shares one per thread and a
+// `spawn_local` task an earlier test never awaited may still sit in the
+// pending queue — legitimately, until something drives or tears down. The
+// invariant asserted here is about ONE drive, so start from nothing.
+#[test]
+fn a_completed_wait_leaves_the_reactor_empty() {
+    reactor::teardown();
+    assert _twice_after_ticks().wait() == (84 as i64);
+    assert reactor::waiter_count() == (0 as i32);
+    assert reactor::pending_count() == (0 as i32);
+    assert reactor::awaiter_count() == (0 as i32);
+}
+
+// ---- a dropped frame's fd registration goes with it ----
+
+extern fn pipe(fds: *i32) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// Parks on the read end of a pipe nobody writes to: a registration only the
+// purge can remove.
+async fn _park_on_read(fd: i32) -> i32 {
+    { #reactor_wait_read(fd); }
+    return 1;
+}
+
+// The fd half of `a_future_dropped_while_parked_leaves_no_registration_behind`:
+// the (fd, filter, frame) triple leaves the waiter table AND the kqueue, so a
+// non-blocking poll after the drop has nothing to deliver.
+#[test]
+fn a_future_dropped_while_parked_on_an_fd_leaves_the_waiter_table() {
+    reactor::teardown();
+    let fds: *u8 = { malloc(8 as usize) };
+    let _p: i32 = { pipe(fds as *i32) };
+    let rd: i32 = { *(fds as *i32) };
+    let wr: i32 = { *((fds + (4 as usize)) as *i32) };
+    {
+        let _parked: Future[i32] = _park_on_read(rd);
+        assert reactor::waiter_count() == (1 as i32);
+    }
+    assert reactor::waiter_count() == (0 as i32);
+    assert reactor::poll_one_event_nb() == false;
+    { close(rd); }
+    { close(wr); }
+    { free(fds); }
 }

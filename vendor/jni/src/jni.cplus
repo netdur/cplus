@@ -337,7 +337,13 @@ struct JNINativeInterface {
     // Primitive arrays (175-214): 8 New<P>Array, 8 Get<P>ArrayElements,
     // 8 Release<P>ArrayElements, 8 Get<P>ArrayRegion, 8 Set<P>ArrayRegion.
     opaque reserved_new_prim_array_0: *u8,
-    opaque reserved_new_prim_array_1: *u8,
+    // TYPED, and only this one of the eight. `byte[]` is the array every
+    // stream on the JVM speaks — `InputStream.read(byte[])`,
+    // `OutputStream.write(byte[])` — so a package that talks to
+    // `java.net` needs it and nothing else in the family. The other seven
+    // stay reserved until something wants them, because a slot typed on
+    // spec and never called is a slot nobody has checked.
+    NewByteArray: fn(*JNIEnv, jsize) -> jbyteArray,
     opaque reserved_new_prim_array_2: *u8,
     opaque reserved_new_prim_array_3: *u8,
     opaque reserved_new_prim_array_4: *u8,
@@ -361,7 +367,10 @@ struct JNINativeInterface {
     opaque reserved_release_prim_elems_6: *u8,
     opaque reserved_release_prim_elems_7: *u8,
     opaque reserved_get_prim_region_0: *u8,
-    opaque reserved_get_prim_region_1: *u8,
+    // Copy OUT of a Java `byte[]` into native memory. The `*u8` is the
+    // destination and must have room for `len` bytes; JNI writes and does
+    // not allocate.
+    GetByteArrayRegion: fn(*JNIEnv, jbyteArray, jsize, jsize, *u8),
     opaque reserved_get_prim_region_2: *u8,
     opaque reserved_get_prim_region_3: *u8,
     opaque reserved_get_prim_region_4: *u8,
@@ -369,7 +378,10 @@ struct JNINativeInterface {
     opaque reserved_get_prim_region_6: *u8,
     opaque reserved_get_prim_region_7: *u8,
     opaque reserved_set_prim_region_0: *u8,
-    opaque reserved_set_prim_region_1: *u8,
+    // And back IN. The pair is deliberately region-based rather than
+    // `Get<P>ArrayElements`: a region copy has no release to forget and no
+    // pinning for the GC to work around.
+    SetByteArrayRegion: fn(*JNIEnv, jbyteArray, jsize, jsize, *u8),
     opaque reserved_set_prim_region_2: *u8,
     opaque reserved_set_prim_region_3: *u8,
     opaque reserved_set_prim_region_4: *u8,
@@ -387,7 +399,15 @@ struct JNINativeInterface {
     opaque reserved_unregister_natives: *u8,
     opaque reserved_monitor_enter: *u8,
     opaque reserved_monitor_exit: *u8,
-    opaque reserved_get_java_vm: *u8,
+    // 219: the JavaVM behind this env. The ONLY way a thread that the JVM did
+    // not call into can get a JNIEnv of its own — `AttachCurrentThread` hangs
+    // off the VM, not off an env, and an env belongs to exactly one thread.
+    // Typed when the agent surface needed to answer from its serve worker.
+    // The out-parameter is `*u8` for the same reason `AttachCurrentThread`'s
+    // env slot is: C's `JavaVM**` is three levels deep once `JavaVM` is itself
+    // a pointer to the interface, and spelling that in the signature buys
+    // nothing a cast at the call site does not.
+    GetJavaVM: fn(*JNIEnv, *u8) -> jint,
     opaque reserved_get_string_region: *u8,
     opaque reserved_get_string_utf_region: *u8,
     opaque reserved_get_prim_critical: *u8,
@@ -402,7 +422,11 @@ struct JNINativeInterface {
     // 229: wrap native memory as a java.nio.ByteBuffer. The memory must
     // outlive the buffer; `#include_bytes` blobs (static lifetime) qualify.
     NewDirectByteBuffer: fn(*JNIEnv, *u8, jlong) -> jobject,
-    opaque reserved_get_direct_buffer_address: *u8,
+    // Typed rather than reserved: reading a direct ByteBuffer's memory IN
+    // PLACE is the whole point of handing one to native code, and a camera
+    // frame plane is the case that needed it. Same layout either way — this
+    // slot always held a function pointer.
+    GetDirectBufferAddress: fn(*JNIEnv, jobject) -> *u8,
     opaque reserved_get_direct_buffer_capacity: *u8,
     opaque reserved_get_object_ref_type: *u8,
 }
@@ -455,6 +479,9 @@ fn table_fields_sit_at_their_jni_h_indices() {
     // these move, the fill went in at the wrong place.
     assert { (*t).GetVersion as usize } == (4 as usize);
     assert { (*t).GetMethodID as usize } == (33 as usize);
+    // 219, and it matters more than most: naming a reserved slot is exactly
+    // the edit that shifts every later field if it goes in the wrong place.
+    assert { (*t).GetJavaVM as usize } == (219 as usize);
     assert { (*t).CallVoidMethodA as usize } == (63 as usize);
     assert { (*t).NewStringUTF as usize } == (167 as usize);
     assert { (*t).RegisterNatives as usize } == (215 as usize);

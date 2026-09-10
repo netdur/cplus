@@ -1,0 +1,555 @@
+// notifications_backend_windows — real notifications, through the shell's tray
+// seam rather than WinRT.
+//
+// `Shell_NotifyIconW` with `NIF_INFO` is the pre-WinRT notification API, and on
+// Windows 10/11 the shell renders it as a NATIVE TOAST — a banner that slides in
+// bottom-right and lands in the notification centre, attributed by the tray
+// icon's tooltip. It needs no AppUserModelID, no Start-menu shortcut, no WinRT
+// projection and no message pump: the call marshals to the tray owned by
+// explorer and returns, and the window handle it carries is only ever a
+// CALLBACK ADDRESS the shell would send clicks to. That is why this backend can
+// post from a console test runner. What the tray road does NOT carry is action
+// BUTTONS — a balloon has no buttons — so `publish_categories` stays a no-op
+// and a notification naming a category shows without them, which both platforms
+// already treat as the degraded case (Apple does exactly this for a category
+// registered late). The WinRT toast stack remains the road to buttons and
+// pictures if they are ever needed here.
+//
+// THE TRAY ICON IS THE COST. The shell requires balloons to come from a tray
+// icon, so the first notification adds one (hidden in the overflow by default)
+// named after the executable, and an `atexit` hook removes it. `clear_shown`
+// exploits the same coupling in the useful direction: deleting the icon removes
+// its notifications from the notification centre, so delete-and-re-add IS
+// "clear what was shown".
+//
+// SCHEDULING IS THIS PROCESS HOLDING A TIMER, the same limitation the Android
+// half documents: a deferred notification lives in a table here and a thread
+// sleeps until its moment, so it fires only while the process lives. The Apple
+// half hands that problem to the OS; nothing on classic Win32 will take it.
+// `pending` answers from the table, `cancel` marks the entry dead and the
+// timer's wake finds nothing to fire. A STAMP per entry makes replacement
+// correct: scheduling an id again bumps the stamp, and the superseded timer
+// wakes, sees a stamp it does not recognise, and walks away.
+//
+// Ignored fields, all honestly: `channel` (Android importance groups),
+// `sticky`/`compact` (Android-only by contract), `picture` (BigPicture needs
+// the WinRT road), `category` (no buttons on a balloon, above).
+
+import "./notifications" as notify;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
+#[link_name = "atexit"]
+extern fn c_atexit(f: *u8) -> i32;
+
+#[link_name = "MultiByteToWideChar"]
+extern fn MultiByteToWideChar(cp: u32, flags: u32, mb: *u8, mblen: i32,
+                              wide: *u16, widelen: i32) -> i32;
+#[link_name = "GetModuleHandleW"]
+extern fn GetModuleHandleW(name: *u16) -> *u8;
+#[link_name = "GetModuleFileNameW"]
+extern fn GetModuleFileNameW(module: *u8, buf: *u16, cap: u32) -> u32;
+#[link_name = "CreateWindowExW"]
+extern fn CreateWindowExW(ex: u32, cls: *u16, name: *u16, style: u32,
+                          x: i32, y: i32, w: i32, h: i32,
+                          parent: *u8, menu: *u8, inst: *u8, param: *u8) -> *u8;
+#[link_name = "LoadIconW"]
+extern fn LoadIconW(inst: *u8, name: *u16) -> *u8;
+#[link_name = "Shell_NotifyIconW"]
+extern fn Shell_NotifyIconW(message: u32, data: *u8) -> i32;
+#[link_name = "CreateThread"]
+extern fn CreateThread(attrs: *u8, stack: usize, start: fn(*u8) -> *u8,
+                       arg: *u8, flags: u32, tid_out: *u32) -> *u8;
+#[link_name = "CloseHandle"]
+extern fn CloseHandle(h: *u8) -> i32;
+#[link_name = "Sleep"]
+extern fn Sleep(ms: u32);
+#[link_name = "AcquireSRWLockExclusive"]
+extern fn AcquireSRWLockExclusive(lock: *u8);
+#[link_name = "ReleaseSRWLockExclusive"]
+extern fn ReleaseSRWLockExclusive(lock: *u8);
+
+// ---- constants, as fns the way `securestore_backend_windows` writes them ------
+
+fn _cp_utf8() -> u32 { return 65001 as u32; }
+fn _nim_add() -> u32 { return 0 as u32; }
+fn _nim_modify() -> u32 { return 1 as u32; }
+fn _nim_delete() -> u32 { return 2 as u32; }
+fn _nif_icon_tip() -> u32 { return 6 as u32; }        // NIF_ICON | NIF_TIP
+fn _nif_info() -> u32 { return 16 as u32; }           // NIF_INFO
+// NIIF_INFO | NIIF_RESPECT_QUIET_TIME: an ordinary notification that honours
+// focus assist rather than punching through it.
+fn _niif() -> u32 { return 129 as u32; }
+fn _idi_application() -> *u16 { return { (32512 as usize) as *u16 }; }
+fn _ws_popup() -> u32 { return (32768 as u32) *% (65536 as u32); }   // 0x80000000
+
+// NOTIFYICONDATAW field offsets (x86-64), the same by-offset road the
+// securestore backend takes for CREDENTIALW. cbSize@0, hWnd@8, uID@16,
+// uFlags@20, hIcon@32, szTip[128]@40, szInfo[256]@304, szInfoTitle[64]@820,
+// dwInfoFlags@948. The struct is 976 bytes.
+fn _nid_bytes() -> usize { return 976 as usize; }
+fn _off_cbsize() -> usize { return 0 as usize; }
+fn _off_hwnd() -> usize { return 8 as usize; }
+fn _off_uid() -> usize { return 16 as usize; }
+fn _off_flags() -> usize { return 20 as usize; }
+fn _off_hicon() -> usize { return 32 as usize; }
+fn _off_tip() -> usize { return 40 as usize; }
+fn _tip_wchars() -> usize { return 128 as usize; }
+fn _off_info() -> usize { return 304 as usize; }
+fn _info_wchars() -> usize { return 256 as usize; }
+fn _off_info_title() -> usize { return 820 as usize; }
+fn _info_title_wchars() -> usize { return 64 as usize; }
+fn _off_info_flags() -> usize { return 948 as usize; }
+
+fn _put_u32(p: *u8, off: usize, v: u32) { { *((p + off) as *u32) = v }; return; }
+fn _put_ptr(p: *u8, off: usize, v: *u8) { { *((p + off) as *u64) = v as u64 }; return; }
+
+// ---- state --------------------------------------------------------------------
+
+// One hidden window, one tray icon, for the life of the process. The window is
+// a bare top-level STATIC — never shown, never pumped — that exists because
+// NIM_ADD requires a valid HWND to file the icon under.
+static _HWND: *u8 = 0 as *u8;
+static _TRAY_LIVE: bool = false;
+static _EXIT_HOOKED: bool = false;
+
+// An SRWLOCK is one zero-initialised pointer-sized word, so a static u64 IS
+// one. It serialises the table and the tray against the timer threads.
+static _LOCK: u64 = 0 as u64;
+
+// The deferred table. Sixteen in-flight deferred notifications is generous for
+// a package whose other backends hold the same record in a Vec; a seventeenth
+// is `Failed` rather than silently dropped. `stamp` is the replacement guard —
+// `gen` would be the natural name and is a reserved keyword.
+struct _Pending { id: str, title: str, body: str, live: bool, stamp: u32, delay_ms: u32 }
+
+const _MAX_PENDING: usize = 16 as usize;
+static _PENDING: [_Pending; 16] = #zero::[[_Pending; 16]]();
+static _STAMP: u32 = 0 as u32;
+
+fn _lock() { { AcquireSRWLockExclusive({ #addr_of(_LOCK) as *u8 }) }; return; }
+fn _unlock() { { ReleaseSRWLockExclusive({ #addr_of(_LOCK) as *u8 }) }; return; }
+
+// ---- wide-string plumbing -----------------------------------------------------
+
+// UTF-8 → UTF-16 into an INLINE wide field (the sz* members are arrays, not
+// pointers), truncated to fit and always NUL-terminated. The fast path hands
+// MultiByteToWideChar the whole field; the slow path — a string longer than the
+// field — converts in full off to the side and copies what fits, dropping a
+// trailing high surrogate rather than splitting a pair at the cut.
+fn _wide_into(dst: *u8, cap_wchars: usize, s: str) {
+    let w: *u16 = dst as *u16;
+    let n: usize = #str_len(s);
+    let keep_max: usize = cap_wchars -% (1 as usize);
+    if n == (0 as usize) { { *w = 0 as u16 }; return; }
+    let got: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, #str_ptr(s), n as i32,
+                                         w, keep_max as i32) };
+    if got > (0 as i32) { { *(w + (got as usize)) = 0 as u16 }; return; }
+    let need: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, #str_ptr(s), n as i32,
+                                          0 as *u16, 0 as i32) };
+    if need <= (0 as i32) { { *w = 0 as u16 }; return; }
+    let buf: *u8 = { malloc((need as usize) *% (2 as usize)) };
+    if buf.is_null() { { *w = 0 as u16 }; return; }
+    let full: *u16 = buf as *u16;
+    let got2: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, #str_ptr(s), n as i32,
+                                          full, need) };
+    if got2 <= (0 as i32) { { free(buf) }; { *w = 0 as u16 }; return; }
+    var keep: usize = keep_max;
+    if (got2 as usize) < keep { keep = got2 as usize; }
+    if keep > (0 as usize) {
+        let last: u16 = { *(full + (keep -% (1 as usize))) };
+        if last >= (55296 as u16) && last <= (56319 as u16) { keep = keep -% (1 as usize); }
+    }
+    var i: usize = 0 as usize;
+    while i < keep {
+        { *(w + i) = { *(full + i) } };
+        i = i +% (1 as usize);
+    }
+    { *(w + keep) = 0 as u16 };
+    { free(buf) };
+    return;
+}
+
+// A zeroed NOTIFYICONDATAW with the three fields every verb sets: size, the
+// hidden window, and this backend's one icon id. Caller frees.
+fn _nid_new() -> *u8 {
+    let nid: *u8 = { malloc(_nid_bytes()) };
+    if nid.is_null() { return 0 as *u8; }
+    { memset(nid, 0 as i32, _nid_bytes()) };
+    _put_u32(nid, _off_cbsize(), _nid_bytes() as u32);
+    _put_ptr(nid, _off_hwnd(), _HWND);
+    _put_u32(nid, _off_uid(), 1 as u32);
+    return nid;
+}
+
+// The executable's base name into szTip — the shell shows the tooltip as the
+// toast's attribution line, so it should say WHICH app rather than something
+// generic. Wide in, wide out: no UTF-8 round trip for a path never shown as one.
+fn _tip_into(nid: *u8) {
+    var path: [u16; 260] = #zero::[[u16; 260]]();
+    let n: u32 = { GetModuleFileNameW(0 as *u8, { #addr_of(path) as *u16 }, 260 as u32) };
+    let dst: *u16 = (nid + _off_tip()) as *u16;
+    if n == (0 as u32) { { *dst = 0 as u16 }; return; }
+    var start: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i < (n as usize) {
+        let c: u16 = path[i];
+        if c == (92 as u16) || c == (47 as u16) { start = i +% (1 as usize); }
+        i = i +% (1 as usize);
+    }
+    var o: usize = 0 as usize;
+    while start +% o < (n as usize) && o < (_tip_wchars() -% (1 as usize)) {
+        { *(dst + o) = path[start +% o] };
+        o = o +% (1 as usize);
+    }
+    { *(dst + o) = 0 as u16 };
+    return;
+}
+
+// ---- the tray icon ------------------------------------------------------------
+
+// Remove the icon at process exit so the tray is not left holding a dead one —
+// explorer only reaps those lazily, on mouse-over.
+fn _tray_cleanup() {
+    if !_TRAY_LIVE { return; }
+    let nid: *u8 = _nid_new();
+    if nid.is_null() { return; }
+    let _ok: i32 = { Shell_NotifyIconW(_nim_delete(), nid) };
+    { free(nid) };
+    _TRAY_LIVE = false;
+    return;
+}
+
+// Window + icon, once, lazily, UNDER THE LOCK (both timer threads and the
+// caller's thread arrive here). false means the shell refused and nothing can
+// be shown.
+fn _ensure_tray() -> bool {
+    if _TRAY_LIVE { return true; }
+    if _HWND.is_null() {
+        // The predefined STATIC class: a window that needs no class of ours,
+        // never shown and never pumped.
+        var cls: [u16; 7] = [83 as u16, 84 as u16, 65 as u16, 84 as u16,
+                             73 as u16, 67 as u16, 0 as u16];
+        let hwnd: *u8 = { CreateWindowExW(0 as u32, { #addr_of(cls) as *u16 }, 0 as *u16,
+                                          _ws_popup(), 0 as i32, 0 as i32, 0 as i32, 0 as i32,
+                                          0 as *u8, 0 as *u8,
+                                          { GetModuleHandleW(0 as *u16) }, 0 as *u8) };
+        if hwnd.is_null() { return false; }
+        _HWND = hwnd;
+    }
+    let nid: *u8 = _nid_new();
+    if nid.is_null() { return false; }
+    _put_u32(nid, _off_flags(), _nif_icon_tip());
+    _put_ptr(nid, _off_hicon(), { LoadIconW(0 as *u8, _idi_application()) });
+    _tip_into(nid);
+    let ok: i32 = { Shell_NotifyIconW(_nim_add(), nid) };
+    { free(nid) };
+    if ok == (0 as i32) { return false; }
+    _TRAY_LIVE = true;
+    if !_EXIT_HOOKED {
+        _EXIT_HOOKED = true;
+        let f: fn() = _tray_cleanup;
+        let _r: i32 = { c_atexit({ f as *u8 }) };
+    }
+    return true;
+}
+
+// Show one balloon NOW. Called with the lock RELEASED — the shell call marshals
+// to another process and nothing here needs the table. A balloon with an empty
+// szInfo does not appear, so a body-less notification shows its title there.
+fn _show(title: str, body: str) -> bool {
+    let nid: *u8 = _nid_new();
+    if nid.is_null() { return false; }
+    _put_u32(nid, _off_flags(), _nif_info());
+    _wide_into(nid + _off_info_title(), _info_title_wchars(), title);
+    var info: str = body;
+    if body == "" { info = title; }
+    _wide_into(nid + _off_info(), _info_wchars(), info);
+    _put_u32(nid, _off_info_flags(), _niif());
+    let ok: i32 = { Shell_NotifyIconW(_nim_modify(), nid) };
+    { free(nid) };
+    return ok != (0 as i32);
+}
+
+// ---- the timer thread ---------------------------------------------------------
+
+// One thread per deferred notification, detached at spawn. Its argument is
+// (stamp * 256 + slot) folded into the pointer — no allocation to leak if the
+// entry is cancelled while the thread sleeps. Both checks of the table use the
+// stamp: a cancelled entry is dead, and a REPLACED entry wears a stamp this
+// thread never saw, so the superseded timer walks away without firing.
+fn _timer_main(arg: *u8) -> *u8 {
+    let packed: usize = arg as usize;
+    let slot: usize = packed -% ((packed / (256 as usize)) *% (256 as usize));
+    let stamp: u32 = (packed / (256 as usize)) as u32;
+    if slot >= _MAX_PENDING { return 0 as *u8; }
+    _lock();
+    if !_PENDING[slot].live || _PENDING[slot].stamp != stamp { _unlock(); return 0 as *u8; }
+    let ms: u32 = _PENDING[slot].delay_ms;
+    _unlock();
+    { Sleep(ms) };
+    _lock();
+    if !_PENDING[slot].live || _PENDING[slot].stamp != stamp { _unlock(); return 0 as *u8; }
+    let title: str = _PENDING[slot].title;
+    let body: str = _PENDING[slot].body;
+    _PENDING[slot].live = false;
+    let up: bool = _ensure_tray();
+    _unlock();
+    if up { let _shown: bool = _show(title, body); }
+    return 0 as *u8;
+}
+
+// ---- the seam -----------------------------------------------------------------
+
+export extern fn cplus_notifications_schedule_v1(
+    id_ptr: *u8, id_len: usize,
+    title_ptr: *u8, title_len: usize,
+    body_ptr: *u8, body_len: usize,
+    payload_ptr: *u8, payload_len: usize,
+    channel_ptr: *u8, channel_len: usize,
+    category_ptr: *u8, category_len: usize,
+    sticky: bool,
+    compact: bool,
+    picture_ptr: *u8, picture_len: usize,
+    delay_seconds: f64) -> i32 {
+    let id: str = { #str_from_raw_parts(id_ptr, id_len) };
+    let title: str = { #str_from_raw_parts(title_ptr, title_len) };
+    let body: str = { #str_from_raw_parts(body_ptr, body_len) };
+    // The facade guards these too; guarded again because the seam is callable
+    // on its own, as this file's tests do.
+    if id == "" { return notify::Outcome::InvalidInput.to_code(); }
+    if title == "" { return notify::Outcome::InvalidInput.to_code(); }
+
+    if delay_seconds <= (0.0f64) {
+        _lock();
+        let up: bool = _ensure_tray();
+        _unlock();
+        if !up { return notify::Outcome::Failed.to_code(); }
+        if _show(title, body) { return notify::Outcome::Ok.to_code(); }
+        return notify::Outcome::Failed.to_code();
+    }
+
+    // Deferred. The tray is claimed NOW rather than at fire time: a schedule
+    // that cannot ever show should fail here, not silently at its moment.
+    var ms: f64 = delay_seconds * (1000.0f64);
+    if ms > (4000000000.0f64) { ms = 4000000000.0f64; }
+
+    _lock();
+    if !_ensure_tray() { _unlock(); return notify::Outcome::Failed.to_code(); }
+    _STAMP = _STAMP +% (1 as u32);
+    let stamp: u32 = _STAMP;
+    var slot: usize = _MAX_PENDING;
+    var i: usize = 0 as usize;
+    // Same id replaces — the contract's update-in-place — so the search prefers
+    // the entry already wearing this id over a free slot.
+    while i < _MAX_PENDING {
+        if _PENDING[i].live && _PENDING[i].id == id { slot = i; break; }
+        i = i +% (1 as usize);
+    }
+    if slot == _MAX_PENDING {
+        i = 0 as usize;
+        while i < _MAX_PENDING {
+            if !_PENDING[i].live { slot = i; break; }
+            i = i +% (1 as usize);
+        }
+    }
+    if slot == _MAX_PENDING { _unlock(); return notify::Outcome::Failed.to_code(); }
+    _PENDING[slot].id = text::intern(id);
+    _PENDING[slot].title = text::intern(title);
+    _PENDING[slot].body = text::intern(body);
+    _PENDING[slot].stamp = stamp;
+    _PENDING[slot].delay_ms = ms as u32;
+    _PENDING[slot].live = true;
+    _unlock();
+
+    let packed: usize = ((stamp as usize) *% (256 as usize)) +% slot;
+    let start: fn(*u8) -> *u8 = _timer_main;
+    let h: *u8 = { CreateThread(0 as *u8, 0 as usize, start, packed as *u8,
+                                0 as u32, 0 as *u32) };
+    if h.is_null() {
+        // No thread, no notification: take the entry back out rather than
+        // leaving `pending` promising something nothing will fire.
+        _lock();
+        if _PENDING[slot].live && _PENDING[slot].stamp == stamp { _PENDING[slot].live = false; }
+        _unlock();
+        return notify::Outcome::Failed.to_code();
+    }
+    let _c: i32 = { CloseHandle(h) };
+    return notify::Outcome::Ok.to_code();
+}
+
+export extern fn cplus_notifications_cancel_v1(id_ptr: *u8, id_len: usize) -> i32 {
+    let id: str = { #str_from_raw_parts(id_ptr, id_len) };
+    if id == "" { return notify::Outcome::InvalidInput.to_code(); }
+    _lock();
+    var i: usize = 0 as usize;
+    while i < _MAX_PENDING {
+        if _PENDING[i].live && _PENDING[i].id == id { _PENDING[i].live = false; break; }
+        i = i +% (1 as usize);
+    }
+    _unlock();
+    // Ok whether or not one was pending — the facade's contract.
+    return notify::Outcome::Ok.to_code();
+}
+
+// No buttons on a balloon, so there is nothing to tell the shell. See the
+// header for why the tray road cannot carry actions.
+export extern fn cplus_notifications_publish_categories_v1() { return; }
+
+export extern fn cplus_notifications_cancel_all_v1() -> i32 {
+    _lock();
+    var i: usize = 0 as usize;
+    while i < _MAX_PENDING {
+        _PENDING[i].live = false;
+        i = i +% (1 as usize);
+    }
+    _unlock();
+    return notify::Outcome::Ok.to_code();
+}
+
+// Deleting the tray icon removes ITS notifications from the notification
+// centre — the shell keys them to the icon — so delete-and-re-add is a real
+// clear, not a gesture. Nothing was ever shown when the tray was never added,
+// and that is `Ok` too: clearing nothing succeeds.
+export extern fn cplus_notifications_clear_shown_v1() -> i32 {
+    _lock();
+    if _TRAY_LIVE {
+        let nid: *u8 = _nid_new();
+        if nid.is_null() { _unlock(); return notify::Outcome::Failed.to_code(); }
+        let _d: i32 = { Shell_NotifyIconW(_nim_delete(), nid) };
+        { free(nid) };
+        _TRAY_LIVE = false;
+        if !_ensure_tray() { _unlock(); return notify::Outcome::Failed.to_code(); }
+    }
+    _unlock();
+    return notify::Outcome::Ok.to_code();
+}
+
+// The deferred table's live ids, appended interned. `Ok` with nothing appended
+// IS the empty answer — see the facade's note on why never `Unsupported`.
+export extern fn cplus_notifications_pending_v1(out: *u8) -> i32 {
+    if out.is_null() { return notify::Outcome::InvalidInput.to_code(); }
+    let dst: *vec::Vec[str] = { out as *vec::Vec[str] };
+    _lock();
+    var i: usize = 0 as usize;
+    while i < _MAX_PENDING {
+        if _PENDING[i].live {
+            let _s: status::Status = (*dst).append(_PENDING[i].id);
+        }
+        i = i +% (1 as usize);
+    }
+    _unlock();
+    return notify::Outcome::Ok.to_code();
+}
+
+// ---- tests --------------------------------------------------------------------
+// Against the REAL shell: a run of this suite posts two visible toasts on the
+// test machine (one immediate, one fired from a timer) — the same
+// live-OS-and-clean-up bar the securestore suite sets with the real vault.
+// Everything scheduled is cancelled or fired before each test ends.
+
+fn _sched(id: str, title: str, delay: f64) -> i32 {
+    return { cplus_notifications_schedule_v1(
+        #str_ptr(id), #str_len(id),
+        #str_ptr(title), #str_len(title),
+        #str_ptr("posted by the notifications test suite"), #str_len("posted by the notifications test suite"),
+        #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        false, false,
+        #str_ptr(""), #str_len(""),
+        delay) };
+}
+
+fn _pending_count() -> usize {
+    var out: vec::Vec[str] = vec::new::[str]();
+    let rc: i32 = { cplus_notifications_pending_v1({ #addr_of(out) as *u8 }) };
+    assert notify::Outcome::from_code(rc) == notify::Outcome::Ok;
+    return out.count();
+}
+
+#[test]
+fn a_notification_posts_for_real() {
+    // A visible toast on the machine running this suite, on purpose: the
+    // assertion is the shell ACCEPTING the balloon, which is the whole backend.
+    let rc: i32 = _sched("win-selftest-now", "C+ notifications self-test", 0.0f64);
+    assert notify::Outcome::from_code(rc) == notify::Outcome::Ok;
+}
+
+#[test]
+fn an_empty_id_or_title_is_refused_at_the_seam_too() {
+    assert notify::Outcome::from_code(_sched("", "Title", 0.0f64))
+        == notify::Outcome::InvalidInput;
+    assert notify::Outcome::from_code(_sched("id", "", 0.0f64))
+        == notify::Outcome::InvalidInput;
+    assert notify::Outcome::from_code({ cplus_notifications_cancel_v1(#str_ptr(""), #str_len("")) })
+        == notify::Outcome::InvalidInput;
+}
+
+#[test]
+fn a_deferred_notification_is_pending_until_cancelled() {
+    let _c0: i32 = { cplus_notifications_cancel_all_v1() };
+    assert notify::Outcome::from_code(_sched("win-selftest-later", "Deferred", 60.0f64))
+        == notify::Outcome::Ok;
+    assert _pending_count() == (1 as usize);
+    assert notify::Outcome::from_code({ cplus_notifications_cancel_v1(
+        #str_ptr("win-selftest-later"), #str_len("win-selftest-later")) })
+        == notify::Outcome::Ok;
+    assert _pending_count() == (0 as usize);
+}
+
+#[test]
+fn scheduling_the_same_id_replaces_rather_than_stacking() {
+    let _c0: i32 = { cplus_notifications_cancel_all_v1() };
+    let _a: i32 = _sched("win-selftest-dup", "First", 60.0f64);
+    let _b: i32 = _sched("win-selftest-dup", "Second", 60.0f64);
+    assert _pending_count() == (1 as usize);
+    let _c1: i32 = { cplus_notifications_cancel_all_v1() };
+    assert _pending_count() == (0 as usize);
+}
+
+#[test]
+fn cancelling_the_unknown_is_ok_not_an_error() {
+    assert notify::Outcome::from_code({ cplus_notifications_cancel_v1(
+        #str_ptr("never-scheduled"), #str_len("never-scheduled")) })
+        == notify::Outcome::Ok;
+}
+
+#[test]
+fn pending_into_nothing_is_refused_rather_than_dereferenced() {
+    assert notify::Outcome::from_code({ cplus_notifications_pending_v1(0 as *u8) })
+        == notify::Outcome::InvalidInput;
+}
+
+#[test]
+fn a_deferred_notification_actually_fires_and_leaves_the_table() {
+    // The second visible toast: one second out, then polled off the table. The
+    // deadline is generous because the timer thread's Sleep and this loop's
+    // race under a loaded test machine.
+    let _c0: i32 = { cplus_notifications_cancel_all_v1() };
+    assert notify::Outcome::from_code(_sched("win-selftest-fire", "Deferred self-test", 1.0f64))
+        == notify::Outcome::Ok;
+    assert _pending_count() == (1 as usize);
+    var waited: u32 = 0 as u32;
+    while _pending_count() > (0 as usize) && waited < (8000 as u32) {
+        { Sleep(100 as u32) };
+        waited = waited +% (100 as u32);
+    }
+    assert _pending_count() == (0 as usize);
+}
+
+#[test]
+fn clear_shown_survives_the_round_trip() {
+    // Delete-and-re-add against the live tray. Runs after the posting tests in
+    // file order, so there is usually something real to clear.
+    assert notify::Outcome::from_code({ cplus_notifications_clear_shown_v1() })
+        == notify::Outcome::Ok;
+    // And the tray still works afterwards: a fresh balloon is still accepted.
+    assert notify::Outcome::from_code(_sched("win-selftest-after-clear",
+                                             "C+ notifications after clear", 0.0f64))
+        == notify::Outcome::Ok;
+}

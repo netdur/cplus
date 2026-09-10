@@ -323,6 +323,16 @@ fn fire_primary(n: *core::Node, sender: *u8) {
             let h: fn(*u8, *u8) = { (*ip).on_clicked };
             if h != props::no_handler { h(sender, { (*ip).on_clicked_ctx }); return; }
         }
+        // A TOOLBAR ITEM is not a view — it is a `UIBarButtonItem`, an
+        // NSObject the navigation bar owns — but the node association and this
+        // dispatcher work on any object, so it arrives here like a button.
+        // Its handler lives on the embedded `menu_item` block, because a
+        // toolbar item IS a menu item that happens to be in a bar.
+        if kind == props::K_TOOLBAR_ITEM {
+            let tp: *props::ToolbarItemProps = p as *props::ToolbarItemProps;
+            let h: fn(*u8, *u8) = { (*tp).menu_item.on_clicked };
+            if h != props::no_handler { h(sender, { (*tp).menu_item.on_clicked_ctx }); return; }
+        }
         // A radio arrives here rather than through `read_back` because a
         // UIButton has no value to hand back — pressing it is the whole event,
         // and what it MEANS (this member on, its group off) is the radio body's
@@ -444,6 +454,15 @@ fn fire_value_changed(n: *core::Node, sender: *u8) {
         if h != (0 as fn(*u8, *u8)) { h(sender, { (*tp).on_toggled_ctx }); }
         return;
     }
+    // The other half of the checkbox — see `read_back` above. `read_back` runs
+    // first, so a handler asking `checkbox.on()` is told the state that caused
+    // the call rather than the one before it.
+    if kind == props::K_CHECKBOX {
+        let cp: *props::CheckboxProps = p as *props::CheckboxProps;
+        let h: fn(*u8, *u8) = { (*cp).on_checked_changed };
+        if h != (0 as fn(*u8, *u8)) { h(sender, { (*cp).on_checked_changed_ctx }); }
+        return;
+    }
     if kind == props::K_SLIDER {
         let sp: *props::SliderProps = p as *props::SliderProps;
         let h: fn(*u8, *u8) = { (*sp).on_value_changed };
@@ -520,6 +539,17 @@ fn read_back(n: *core::Node, sender: *u8) {
     if kind == props::K_TOGGLE {
         let tp: *props::ToggleProps = p as *props::ToggleProps;
         { (*tp).on = ui::Switch::from_raw(sender).is_on() };
+        return;
+    }
+    // A CHECKBOX IS A SWITCH HERE (MANIFEST §3 says why) and was missing from
+    // BOTH halves of this path — this one and `fire_value_changed`. So the
+    // switch moved, `checkbox.on()` still answered whatever the application
+    // last wrote, and `on_checked_changed` never fired: the control was live on
+    // screen and dead to facet. `create_checkbox` calls `arm_value`, so the
+    // event was always arriving and being dropped here.
+    if kind == props::K_CHECKBOX {
+        let cp: *props::CheckboxProps = p as *props::CheckboxProps;
+        { (*cp).on = ui::Switch::from_raw(sender).is_on() };
         return;
     }
     if kind == props::K_SLIDER {
@@ -756,6 +786,22 @@ fn superview_of(v: *u8) -> *u8 {
 // asked FIRST because a menu element is never in a view chain, so there is
 // nothing to fall through to.
 fn key_of(sender: *u8) -> text::Text {
+    // A `UIKeyCommand` ANSWERS NO `identifier` — `UICommand` declares none —
+    // and its payload slot is `propertyList`, which is exactly where
+    // `menus.cplus` puts the facet key of a shortcut-bearing menu item. Read
+    // first, so a handler reads its key the same way whether the item was
+    // chosen from the open menu or by pressing the shortcut. Nothing that
+    // reaches here as a view answers this selector.
+    if sender != (0 as *u8) {
+        if synth::class_responds(synth::object_class(sender),
+                                 rt::sel(#str_ptr("propertyList\0"))) != (0 as i8) {
+            let pl: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("propertyList\0"))) };
+            if pl != (0 as *u8) {
+                var t: text::Text = bridge::to_text(pl);
+                if t.view() != "" { return t; }
+            }
+        }
+    }
     if sender != (0 as *u8) {
         if synth::class_responds(synth::object_class(sender),
                                  rt::sel(#str_ptr("identifier\0"))) != (0 as i8) {

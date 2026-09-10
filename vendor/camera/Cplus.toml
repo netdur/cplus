@@ -1,0 +1,46 @@
+[package]
+name    = "camera"
+version = "0.0.1"
+edition = "2026"
+
+# camera — the device's cameras: enumerate, preview, capture a still.
+#
+# ONE PACKAGE ON EVERY PLATFORM, the shape vendor/http proved and permissions,
+# notifications, applinks and securestore copied: `camera/camera` is what an
+# application imports, and the half underneath is swapped by the resolver's
+# `_<platform>` file override. The two halves meet at stable symbols rather than
+# through an import, because the backend imports this module for its types and a
+# cycle back is rejected (E0404).
+#
+# NO AAR ON ANDROID, and unlike securestore this one is a close call worth
+# naming. The obvious answer is CameraX, and CameraX exists for a real reason —
+# it carries the device-quirk database for the OEM long tail. It also costs
+# 6,971,948 bytes of dex and 40,866 of the 65,536 method budget against facet's
+# whole current Android dex of 39,184, plus the Kotlin runtime, paid by every
+# app. `android.hardware.camera2` is 57 classes already in android.jar. The
+# trade and the measurement are in plans/aar.md and plans/camera.md §1; the
+# entry in mobile_packages_plan.md that says CameraX predates them.
+#
+# DEPENDS ON FACET, deliberately and on every platform, because the headline
+# verb returns a `facet::Node`. A preview is a platform view in a facet tree and
+# `facet::adopt_native_with` is the seam that already blesses exactly that — so
+# there is no new ledger element and no gen_contract.py change.
+
+[dependencies]
+stdlib      = "*"
+facet       = "*"
+flex_layout = "*"
+permissions = "*"
+
+[macos.dependencies]
+objc         = "*"
+avfoundation = "*"
+
+[ios.dependencies]
+objc         = "*"
+avfoundation = "*"
+
+[android.dependencies]
+jni          = "*"
+android_view = "*"
+events       = "*"

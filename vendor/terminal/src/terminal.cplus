@@ -165,7 +165,6 @@ fn append_scalar(ref out: text::Text, ch: u32) {
     }
     let s: str = { #str_from_raw_parts(#addr_of(b) as *u8, n) };
     let _st: status::Status = out.append(s);
-    return;
 }
 
 fn scalar_utf8_len(ch: u32) -> usize {
@@ -210,7 +209,6 @@ fn trim_front(ref t: text::Text, cap: usize) {
         }
     }
     let _st: status::Status = t.remove_range(0 as usize, cut);
-    return;
 }
 
 fn blank_cells(n: usize) -> vec::Vec[u32] {
@@ -420,7 +418,6 @@ impl Screen {
     fn set_cell(ref this, r: usize, c: usize, v: u32) {
         if r >= this._rows || c >= this._cols { return; }
         let _s: status::Status = this._cells.set(v, (r *% this._cols) +% c);
-        return;
     }
 
     fn wrap_at(this, r: usize) -> bool {
@@ -433,7 +430,6 @@ impl Screen {
     fn set_wrap(ref this, r: usize, v: bool) {
         if r >= this._rows { return; }
         let _s: status::Status = this._wrap.set(v, r);
-        return;
     }
 
     fn blank_row(ref this, r: usize) {
@@ -443,7 +439,6 @@ impl Screen {
             c = c +% (1 as usize);
         }
         this.set_wrap(r, false);
-        return;
     }
 
     fn copy_row(ref this, dst: usize, src: usize) {
@@ -453,7 +448,6 @@ impl Screen {
             c = c +% (1 as usize);
         }
         this.set_wrap(dst, this.wrap_at(src));
-        return;
     }
 
     // Last column of `r` that holds anything, exclusive. Trailing BLANKs are not
@@ -492,7 +486,6 @@ impl Screen {
         }
         let cap: usize = this._max_scrollback;
         trim_front(this._scrollback, cap);
-        return;
     }
 
     // ---- scrolling ----------------------------------------------------------
@@ -533,7 +526,6 @@ impl Screen {
             this.blank_row(r);
             r = r +% (1 as usize);
         }
-        return;
     }
 
     fn scroll_down(ref this, n: usize) {
@@ -552,7 +544,6 @@ impl Screen {
             this.blank_row(b);
             b = b +% (1 as usize);
         }
-        return;
     }
 
     // ---- cursor -------------------------------------------------------------
@@ -561,7 +552,6 @@ impl Screen {
         if this._col >= this._cols {
             this._col = this._cols -% (1 as usize);
         }
-        return;
     }
 
     fn index(ref this) {
@@ -570,7 +560,6 @@ impl Screen {
         } else if (this._row +% (1 as usize)) < this._rows {
             this._row = this._row +% (1 as usize);
         }
-        return;
     }
 
     fn reverse_index(ref this) {
@@ -579,7 +568,6 @@ impl Screen {
         } else if this._row > (0 as usize) {
             this._row = this._row -% (1 as usize);
         }
-        return;
     }
 
     fn move_to(ref this, r: usize, c: usize) {
@@ -593,7 +581,6 @@ impl Screen {
         if cc >= this._cols { cc = this._cols -% (1 as usize); }
         this._row = rr;
         this._col = cc;
-        return;
     }
 
     // ---- writing ------------------------------------------------------------
@@ -612,7 +599,6 @@ impl Screen {
         }
         let cap: usize = this._max_capture;
         if this._capture.count() > cap { trim_front(this._capture, cap); }
-        return;
     }
 
     // The part of the command's output still on the grid: from the anchor to
@@ -680,7 +666,6 @@ impl Screen {
             this.set_cell(this._row, this._col +% (1 as usize), WIDE_TAIL);
         }
         this._col = this._col +% w;
-        return;
     }
 
     fn tab_forward(ref this, n: usize) {
@@ -693,7 +678,6 @@ impl Screen {
             this._col = next;
             k = k -% (1 as usize);
         }
-        return;
     }
 
     fn tab_back(ref this, n: usize) {
@@ -709,7 +693,6 @@ impl Screen {
             }
             k = k -% (1 as usize);
         }
-        return;
     }
 
     // ---- erase and edit -----------------------------------------------------
@@ -729,7 +712,6 @@ impl Screen {
             c = c +% (1 as usize);
         }
         if to >= this._cols { this.set_wrap(r, false); }
-        return;
     }
 
     fn erase_display(ref this, mode: usize) {
@@ -763,7 +745,6 @@ impl Screen {
             r = r +% (1 as usize);
         }
         this.erase_line(1 as usize);
-        return;
     }
 
     fn erase_chars(ref this, n: usize) {
@@ -776,7 +757,6 @@ impl Screen {
             this.set_cell(this._row, c, BLANK);
             c = c +% (1 as usize);
         }
-        return;
     }
 
     fn insert_blanks(ref this, n: usize) {
@@ -794,7 +774,6 @@ impl Screen {
             this.set_cell(this._row, b, BLANK);
             b = b +% (1 as usize);
         }
-        return;
     }
 
     fn delete_chars(ref this, n: usize) {
@@ -811,7 +790,6 @@ impl Screen {
             this.set_cell(this._row, c, BLANK);
             c = c +% (1 as usize);
         }
-        return;
     }
 
     // Insert and delete run inside the scroll region, and do nothing at all when
@@ -825,7 +803,6 @@ impl Screen {
         this._top = this._row;
         this.scroll_down(k);
         this._top = saved_top;
-        return;
     }
 
     fn delete_lines(ref this, n: usize) {
@@ -836,7 +813,6 @@ impl Screen {
         this._top = this._row;
         this.scroll_up(k);
         this._top = saved_top;
-        return;
     }
 
     // ---- modes and screens --------------------------------------------------
@@ -864,7 +840,6 @@ impl Screen {
         this._g0_graphics = false;
         this._g1_graphics = false;
         this._shift_out = false;
-        return;
     }
 
     fn enter_alt(ref this) {
@@ -898,7 +873,6 @@ impl Screen {
         this._bottom = this._rows -% (1 as usize);
         this._row = 0 as usize;
         this._col = 0 as usize;
-        return;
     }
 
     fn leave_alt(ref this) {
@@ -940,7 +914,6 @@ impl Screen {
         this._bottom = this._rows -% (1 as usize);
         this._row = if this._alt_row < this._rows { this._alt_row } else { this._rows -% (1 as usize) };
         this._col = if this._alt_col < this._cols { this._alt_col } else { this._cols -% (1 as usize) };
-        return;
     }
 
     fn set_private_mode(ref this, n: usize, on: bool) {
@@ -968,7 +941,6 @@ impl Screen {
             return;
         }
         if n == (2004 as usize) { this._bracketed_paste = on; return; }
-        return;
     }
 
     // ---- replies ------------------------------------------------------------
@@ -988,7 +960,6 @@ impl Screen {
             "\x1b[${r};${c}R"
         };
         let _st: status::Status = this._reply.append(body.view());
-        return;
     }
 
     // ---- OSC ----------------------------------------------------------------
@@ -1003,7 +974,6 @@ impl Screen {
         this._anchor_row = this._row;
         this._anchor_col = this._col;
         this._capture_open = true;
-        return;
     }
 
     fn note_command_end(ref this, code: i32) {
@@ -1022,7 +992,6 @@ impl Screen {
         }
         this._cmd_state = CommandState::Done;
         this._exit_code = code;
-        return;
     }
 
     fn dispatch_osc(ref this) {
@@ -1083,7 +1052,6 @@ impl Screen {
             return;
         }
         let _unused: str = v;
-        return;
     }
 
     // ---- CSI ----------------------------------------------------------------
@@ -1109,7 +1077,6 @@ impl Screen {
         this._nparams = 0 as usize;
         this._param_seen = false;
         this._priv = 0 as u8;
-        return;
     }
 
     fn push_param_digit(ref this, d: usize) {
@@ -1119,7 +1086,6 @@ impl Screen {
             this._params[i] = (this._params[i] *% (10 as usize)) +% d;
         }
         this._param_seen = true;
-        return;
     }
 
     fn next_param(ref this) {
@@ -1128,7 +1094,6 @@ impl Screen {
             this._nparams = this._nparams +% (1 as usize);
         }
         this._param_seen = true;
-        return;
     }
 
     fn dispatch_csi(ref this, final_byte: u8) {
@@ -1307,7 +1272,6 @@ impl Screen {
             this.move_to(this._saved_row, this._saved_col);
             return;
         }
-        return;
     }
 
     // ---- feed ---------------------------------------------------------------
@@ -1328,7 +1292,6 @@ impl Screen {
         if b == (0x0d as u8) { this._col = 0 as usize; return; }
         if b == (0x0e as u8) { this._shift_out = true; return; }
         if b == (0x0f as u8) { this._shift_out = false; return; }
-        return;
     }
 
     fn escape(ref this, b: u8) {
@@ -1372,7 +1335,6 @@ impl Screen {
         if b == (0x63 as u8) { this.full_reset(); return; }        // ESC c
         if b == (0x3d as u8) { this._app_keypad = true; return; }  // ESC =
         if b == (0x3e as u8) { this._app_keypad = false; return; } // ESC >
-        return;
     }
 
     fn csi(ref this, b: u8) {
@@ -1397,7 +1359,6 @@ impl Screen {
             return;
         }
         if b < (0x20 as u8) { this.control(b); return; }
-        return;
     }
 
     fn decode(ref this, b: u8) {
@@ -1433,7 +1394,6 @@ impl Screen {
             return;
         }
         this.put_scalar(REPLACEMENT);
-        return;
     }
 
     fn feed(ref this, bytes: str) {
@@ -1501,7 +1461,6 @@ impl Screen {
             }
         }
         this._dirty = true;
-        return;
     }
 
     // ---- rendering ----------------------------------------------------------
@@ -1551,7 +1510,6 @@ impl Screen {
             }
             r = r +% (1 as usize);
         }
-        return;
     }
 
     // The screen as text: scrollback followed by the live grid, with trailing
@@ -1641,14 +1599,12 @@ impl Screen {
         this._saved_row = 0 as usize;
         this._saved_col = 0 as usize;
         this._dirty = true;
-        return;
     }
 
     fn clear(ref this) {
         this._scrollback.remove_all();
         this.full_reset();
         this._dirty = true;
-        return;
     }
 
     // ---- state a host needs -------------------------------------------------
@@ -1672,7 +1628,6 @@ impl Screen {
     fn has_reply(this) -> bool { return this._reply.count() > (0 as usize); }
     fn clear_reply(ref this) {
         this._reply.remove_all();
-        return;
     }
 
     // ---- command ledger -----------------------------------------------------
@@ -1709,7 +1664,6 @@ impl Screen {
         this._capture.remove_all();
         this._cmd_line.remove_all();
         this._capture_open = false;
-        return;
     }
 
     // Stream closed. Nothing is deferred, so this only flushes a scalar that was
@@ -1720,7 +1674,6 @@ impl Screen {
             this.put_scalar(REPLACEMENT);
             this._dirty = true;
         }
-        return;
     }
 }
 

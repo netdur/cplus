@@ -1,0 +1,74 @@
+import "./biometrics" as bio;
+import "./biometrics_backend" as backend;
+
+#[test]
+fn kind_codes_round_trip() {
+    assert bio::Kind::from_code(bio::Kind::None.to_code()).to_code() == 0;
+    assert bio::Kind::from_code(bio::Kind::Fingerprint.to_code()).to_code() == 1;
+    assert bio::Kind::from_code(bio::Kind::Face.to_code()).to_code() == 2;
+    assert bio::Kind::from_code(bio::Kind::Iris.to_code()).to_code() == 3;
+}
+
+#[test]
+fn outcome_codes_round_trip() {
+    assert bio::Outcome::from_code(bio::Outcome::Ok.to_code()).to_code() == 0;
+    assert bio::Outcome::from_code(bio::Outcome::NotEnrolled.to_code()).to_code() == 3;
+    assert bio::Outcome::from_code(bio::Outcome::LockedOut.to_code()).to_code() == 6;
+}
+
+#[test]
+fn the_four_ways_of_failing_are_distinct() {
+    // Each needs a different sentence said to a person, and collapsing any two
+    // sends somebody to the wrong place:
+    //   Unavailable  no sensor          -> nothing to do
+    //   NotEnrolled  sensor, no finger  -> Settings
+    //   Rejected     that was not you   -> try again
+    //   LockedOut    too many tries     -> passcode first
+    assert bio::Outcome::Unavailable.to_code() != bio::Outcome::NotEnrolled.to_code();
+    assert bio::Outcome::Rejected.to_code() != bio::Outcome::LockedOut.to_code();
+    assert bio::Outcome::Rejected.to_code() != bio::Outcome::Cancelled.to_code();
+}
+
+#[test]
+fn cancelled_is_not_a_failure() {
+    // A person who dismissed the prompt already answered. An app that treats
+    // this as Failed nags somebody who said no.
+    assert bio::Outcome::Cancelled.to_code() != bio::Outcome::Failed.to_code();
+}
+
+#[test]
+fn kind_answers_without_trapping() {
+    let k = bio::kind();
+    assert k.to_code() >= 0;
+}
+
+#[test]
+fn availability_answers_without_trapping() {
+    let on: bool = bio::available();
+    assert on || !on;
+}
+
+fn _never(o: bio::Outcome, ctx: *u8) { return; }
+
+#[test]
+fn a_null_handler_is_refused_before_any_prompt() {
+    let nil: fn(bio::Outcome, *u8) = 0 as fn(bio::Outcome, *u8);
+    assert bio::authenticate("unlock", nil).to_code() == bio::Outcome::Failed.to_code();
+}
+
+#[test]
+fn an_empty_reason_is_refused_rather_than_throwing() {
+    // Apple THROWS on an empty localizedReason rather than returning an error,
+    // so the facade guards it — the alternative is an ObjC exception through a
+    // C+ frame.
+    assert bio::authenticate("", _never).to_code() == bio::Outcome::Failed.to_code();
+}
+
+#[test]
+fn asking_on_a_machine_that_cannot_answers_rather_than_prompting() {
+    if !bio::available() {
+        assert bio::authenticate("unlock", _never).to_code()
+            == bio::Outcome::Unavailable.to_code();
+    }
+    assert true;
+}

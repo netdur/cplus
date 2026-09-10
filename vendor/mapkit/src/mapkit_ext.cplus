@@ -1,0 +1,45 @@
+// mapkit_ext — HAND-WRITTEN, and it survives regeneration.
+//
+// `src/mapkit.cplus` is cpc-bindgen's output and the header of Cplus.toml says
+// not to edit it; anything hand-written goes here instead. Same split as
+// `appkit` / `appkit_ext`, for the reason CLAUDE.md gives: a fix written into
+// a generated file survives exactly until the next regen.
+//
+// WHAT IS MISSING FROM THE GENERATED FILE, and why it is missing rather than
+// broken: `javap`'s ObjC counterpart lists what a class DECLARES. `MKMapView`
+// declares no initialiser — it inherits `-initWithFrame:` from `NSView` — and
+// `NSView` is not in a MapKit run, so there is nothing for the generator to
+// emit. The typed upcast has the same cause. Both are two lines here.
+
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "./mapkit" as mk;
+
+// `[[MKMapView alloc] init]`, returned at +1 — the caller owns one retain and
+// gives it back with `rt::release`. That pairing is what `adopt_native`'s
+// `release` argument is for.
+//
+// No frame: facet's layout writes one before the view is ever shown, and an
+// initWithFrame: here would be a size that is overwritten on the first pass.
+fn new_map_view() -> mk::MapView {
+    return mk::MapView::from_raw(synth::alloc_init_class(
+        rt::get_class(#str_ptr("MKMapView\0"))));
+}
+
+// The upcast the generator could not emit. An `MKMapView` IS an `NSView`, and
+// every facet-side verb — adoption, layout, the shared band — speaks in the
+// raw pointer, so this is the whole of what a caller needs.
+impl mk::MapView {
+    fn as_view_ptr(this) -> *u8 { return this.raw(); }
+}
+
+// A region from the two numbers everybody actually has, plus a span in
+// degrees. `MKCoordinateRegionMakeWithDistance` would be the other spelling
+// and it is a C function, not a method — so it is a binding the generator
+// does not produce either.
+fn region_at(latitude: f64, longitude: f64, span_degrees: f64) -> mk::CoordinateRegion {
+    return mk::CoordinateRegion {
+        center: mk::CLLocationCoordinate2D { latitude: latitude, longitude: longitude },
+        span: mk::CoordinateSpan { latitudeDelta: span_degrees, longitudeDelta: span_degrees },
+    };
+}

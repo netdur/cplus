@@ -1,0 +1,58 @@
+// The mutex, condition-variable and sleep primitives `mutex`, `channel`,
+// `thread`, `executor` and `net` are built on — the ONLY part of those five
+// modules that is not portable logic.
+//
+// This file is the POSIX base, used on Darwin, Linux and Android alike (all
+// three have pthreads, so unlike `netsys` or `fs_sys` there is no split
+// between them). `sync_sys_windows.cplus` shadows it through the resolver's
+// `_windows` override.
+//
+// WHY THIS FILE EXISTS AT ALL. It is the split `exe_path.cplus` and
+// `crypto_sys.cplus` describe, applied late: `pthread_mutex_lock` and friends
+// were declared `extern` directly inside `mutex.cplus` and `channel.cplus`,
+// which are otherwise entirely portable. cpc emits one object per package, so
+// those declarations put pthread symbols into every slice of stdlib — and on
+// Windows, where there are no pthreads, a program that only hashed a string
+// still failed to link over `pthread_cond_destroy`.
+//
+// THE SIGNATURES ARE PTHREAD'S ON PURPOSE, including the `attr` parameter that
+// is null at every call site and ignored on Windows. Matching them exactly is
+// what made the extraction a rename rather than a rewrite: the five callers
+// changed only the name they call, never an argument, an order, or a checked
+// return. That keeps the diff on files this repo builds for three other
+// platforms mechanical enough to read in one pass.
+//
+// The returns are pthread's too — 0 on success, an errno on failure — because
+// existing call sites bind them (`let _err: i32 = ...`). Windows' primitives
+// cannot fail in the ways these can, and that file returns 0 throughout.
+//
+// NOT COVERED HERE: thread creation. `pthread_create` / `pthread_join` /
+// `pthread_detach` and the signal-based cancellation in `thread.cplus` stay
+// where they are, because Windows has no signals and no thread id that behaves
+// like a `pthread_t` — replacing them is a design, not a shim.
+
+extern fn pthread_mutex_init(m: *u8, a: *u8) -> i32;
+extern fn pthread_mutex_destroy(m: *u8) -> i32;
+extern fn pthread_mutex_lock(m: *u8) -> i32;
+extern fn pthread_mutex_unlock(m: *u8) -> i32;
+extern fn pthread_cond_init(c: *u8, a: *u8) -> i32;
+extern fn pthread_cond_destroy(c: *u8) -> i32;
+extern fn pthread_cond_wait(c: *u8, m: *u8) -> i32;
+extern fn pthread_cond_signal(c: *u8) -> i32;
+extern fn pthread_cond_broadcast(c: *u8) -> i32;
+extern fn usleep(us: u32) -> i32;
+
+fn mutex_init(m: *u8, a: *u8) -> i32 { return { pthread_mutex_init(m, a) }; }
+fn mutex_destroy(m: *u8) -> i32 { return { pthread_mutex_destroy(m) }; }
+fn mutex_lock(m: *u8) -> i32 { return { pthread_mutex_lock(m) }; }
+fn mutex_unlock(m: *u8) -> i32 { return { pthread_mutex_unlock(m) }; }
+
+fn cond_init(c: *u8, a: *u8) -> i32 { return { pthread_cond_init(c, a) }; }
+fn cond_destroy(c: *u8) -> i32 { return { pthread_cond_destroy(c) }; }
+fn cond_wait(c: *u8, m: *u8) -> i32 { return { pthread_cond_wait(c, m) }; }
+fn cond_signal(c: *u8) -> i32 { return { pthread_cond_signal(c) }; }
+fn cond_broadcast(c: *u8) -> i32 { return { pthread_cond_broadcast(c) }; }
+
+// Microseconds, matching `usleep`. The Windows side rounds up to milliseconds,
+// which is the finest its scheduler takes.
+fn sleep_us(us: u32) -> i32 { return { usleep(us) }; }

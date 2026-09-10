@@ -16,6 +16,7 @@
 // runtime window at all (`present`, plain mounts) the verbs record intent
 // but close nothing. Main-thread only, like every facet verb.
 
+import "stdlib/str" as str_;
 import "stdlib/text" as text;
 import "stdlib/string_map" as map;
 import "stdlib/option" as option;
@@ -33,6 +34,94 @@ fn params_new() -> Params { return map::new::[text::Text](); }
 // key, so there is a single storage: `arg()` is `param(arg_key())`, and a
 // route cannot be handed an `arg` and a params entry that disagree.
 fn arg_key() -> str { return "@arg"; }
+
+// ---- how a route is shown ------------------------------------------------------
+// ONE INTENT, TWO RENDERINGS. `push` means "show this next, with whatever room
+// this platform has": a peer window on a desktop, a stack push on a phone. That
+// is not two meanings — it is one, rendered as each platform renders it, and an
+// app that says nothing gets the right shape on both without asking which it is
+// running on.
+//
+// `Screen` narrows it to "in place, no new window", which is a drill-down and
+// is the same everywhere. It is what a wizard or a master-detail wants on a
+// desktop, and it is what EVERY push is on a phone.
+//
+// The alternative — one verb whose meaning flips per platform, patched apart
+// later with a second verb — is the trap both large frameworks that reached
+// this tier fell into, and neither could remove the first verb afterwards. See
+// plans/nav-windows.md §7.
+enum Show {
+    Window,
+    Screen,
+}
+
+// The hook channel is a u32: `Navigation` lives in application.cplus, which
+// this file imports, and an enum cannot cross back the other way (E0341).
+fn show_code(s: Show) -> u32 {
+    return match s {
+        Show::Window => 0 as u32,
+        Show::Screen => 1 as u32,
+    };
+}
+
+fn show_of_code(c: u32) -> Show {
+    if c == (1 as u32) { return Show::Screen; }
+    return Show::Window;
+}
+
+// THE NAME A PUSHED WINDOW IS ADDRESSED BY: the route, or `route:arg` when an
+// argument was given. What makes two windows of one route different is the
+// argument they were pushed with — two cameras, two documents — so the identity
+// derives from it rather than being invented by the caller.
+//
+//     push("camera", arg: "front")   ->  "camera:front"
+//     push("camera")                 ->  "camera"
+//
+// `params:` does NOT feed the key. Only `arg` does, which is consistent with
+// `arg` already being the privileged unnamed argument above: a route's identity
+// is what it is showing, not every value it was handed.
+fn key_for(route: str, key: str, arg: str) -> text::Text {
+    if key != "" { return text::from_str(key); }
+    if arg == "" { return text::from_str(route); }
+    return text::from_str(route).appending(":").appending(arg);
+}
+
+// THE INVERSE OF `key_for`, and it lives here because that is what makes the
+// pair checkable: a key is written by one function and read back by another,
+// and if they disagree a restored window resolves to the wrong screen or to
+// none. The round trip is pinned by a test below.
+//
+// A platform that persists windows across launches (iPadOS restores scene
+// sessions) gets the KEY back and nothing else — the process is new, so there
+// is no pending route to consult. Splitting the key is how a restored window
+// finds its screen again.
+//
+// `route_of_key("camera:front")` -> "camera"
+// `arg_of_key("camera:front")`   -> "front"
+// `route_of_key("camera")`       -> "camera",  arg ""
+//
+// A key that came from an explicit `key:` override is NOT recoverable, and
+// deliberately so: it was never built from a route, so there is nothing in it
+// to find. The caller's fallback is to refuse the window rather than guess.
+fn route_of_key(key: str) -> str {
+    return match key.find(":") {
+        option::Option[usize]::Some(at) => match key.slice(0 as usize, at) {
+            option::Option[str]::Some(r) => r,
+            option::Option[str]::None => key,
+        },
+        option::Option[usize]::None => key,
+    };
+}
+
+fn arg_of_key(key: str) -> str {
+    return match key.find(":") {
+        option::Option[usize]::Some(at) => match key.slice(at +% (1 as usize), key.count()) {
+            option::Option[str]::Some(a) => a,
+            option::Option[str]::None => "",
+        },
+        option::Option[usize]::None => "",
+    };
+}
 
 // ---- intent codes -----------------------------------------------------------
 
@@ -60,32 +149,41 @@ fn intent_quit() -> u32 { return 2 as u32; }
 fn set_close_fn(f: fn()) {
     let s: *app::Application = app::current();
     { (*s).nav.close_fn = f };
-    return;
 }
-fn set_push_fn(f: fn(str, str) -> bool) {
+fn set_push_fn(f: fn(str, str, str, u32) -> bool) {
     let s: *app::Application = app::current();
     { (*s).nav.push_fn = f };
-    return;
 }
 fn set_pop_fn(f: fn() -> bool) {
     let s: *app::Application = app::current();
     { (*s).nav.pop_fn = f };
-    return;
+}
+
+// How deep the in-place stack is. Registered by the running App alongside the
+// others; null answers 0.
+fn set_depth_fn(f: fn() -> usize) {
+    let s: *app::Application = app::current();
+    { (*s).nav.depth_fn = f };
+}
+
+fn set_pop_to_fn(f: fn(str) -> bool) {
+    let s: *app::Application = app::current();
+    { (*s).nav.pop_to_fn = f };
 }
 
 fn clear_hooks() {
     let s: *app::Application = app::current();
     { (*s).nav.close_fn = 0 as fn() };
-    { (*s).nav.push_fn = 0 as fn(str, str) -> bool };
+    { (*s).nav.push_fn = 0 as fn(str, str, str, u32) -> bool };
     { (*s).nav.pop_fn = 0 as fn() -> bool };
-    return;
+    { (*s).nav.pop_to_fn = 0 as fn(str) -> bool };
+    { (*s).nav.depth_fn = 0 as fn() -> usize };
 }
 
 fn fire_close() {
     let s: *app::Application = app::current();
     let f: fn() = { (*s).nav.close_fn };
-    if f != (0 as fn()) { f(); }
-    return;
+    if f.is_not_null() { f(); }
 }
 
 // ---- verbs ------------------------------------------------------------------
@@ -115,7 +213,6 @@ fn go(route: str, arg: str = "", take params: Params = params_new()) {
     { (*s).nav.target = text::from_str(route) };
     { (*s).nav.params = p };
     fire_close();
-    return;
 }
 
 // End the app: close the current window with nothing pending after it.
@@ -123,26 +220,91 @@ fn quit() {
     let s: *app::Application = app::current();
     { (*s).nav.intent = intent_quit() };
     fire_close();
-    return;
 }
 
-// Show a screen ALONGSIDE the current one (secondary window on desktop, a
-// stack push on mobile). Immediate — nothing unwinds. False when no App is
-// running or the route is unknown.
-fn push(route: str, arg: str = "") -> bool {
+// SHOW THIS NEXT, with whatever room the platform has. `show: Show::Window`
+// (the default) is a peer window on a desktop and a stack push on a phone;
+// `show: Show::Screen` is a drill-down in the current window everywhere. See
+// the `Show` comment above for why that is one intent and not two.
+//
+// `key:` names the window a `Show::Window` push opens, and defaults to the
+// route — or `route:arg` when an argument was given, so two cameras get two
+// addresses without the caller inventing them. A key already open is not
+// opened twice: the platform activates the one that is up.
+//
+// Immediate — nothing unwinds. False when no App is running or the route is
+// unknown.
+//
+//     nav::push("settings");
+//     nav::push("camera", arg: "front");                 // window "camera:front"
+//     nav::push("step2", show: nav::Show::Screen);       // in place, with a back path
+fn push(route: str, key: str = "", arg: str = "",
+        take params: Params = params_new(),
+        show: Show = Show::Window) -> bool {
     let s: *app::Application = app::current();
-    let f: fn(str, str) -> bool = { (*s).nav.push_fn };
-    if f == (0 as fn(str, str) -> bool) { return false; }
-    return f(route, arg);
+    let f: fn(str, str, str, u32) -> bool = { (*s).nav.push_fn };
+    if f.is_null() { return false; }
+    // STAGED, not written. A failed push must leave the current screen's
+    // arguments exactly as they were, and only the hook can tell whether the
+    // route resolved — so the hook adopts these once it has a factory.
+    { (*s).nav.pending = params };
+    let k: text::Text = key_for(route, key, arg);
+    return f(route, k.view(), arg, show_code(show));
 }
 
-// Dismiss the most recently pushed screen. False when nothing is pushed (or
-// no App is running) — never a trap.
+// Dismiss the most recently pushed screen. STACK ONLY — this never closes a
+// window, which is the whole reason `pop` is a stack word: a peer window is
+// not a stack and is closed by name (`window::find(k).close()`), not popped.
+//
+// False when the stack is empty, and that answer is load-bearing: each backend
+// decides what its platform does with it. Android falls through to
+// `super.onBackPressed()`, which backgrounds the app — back from the first
+// screen leaving the app IS the Android behaviour. iOS does nothing, which is
+// what a swipe-back at the root of a nav stack does there.
 fn pop() -> bool {
     let s: *app::Application = app::current();
     let f: fn() -> bool = { (*s).nav.pop_fn };
-    if f == (0 as fn() -> bool) { return false; }
+    if f.is_null() { return false; }
     return f();
+}
+
+// Unwind the in-place stack until `route` is on top. False when it is not on
+// the stack at all, and NOTHING MOVES in that case.
+//
+// The hook answers rather than this file, and the reason is worth keeping: nav
+// can only see `depth()` and what is on top, so an implementation here would
+// have to pop speculatively to discover whether the route was ever down there —
+// destroying the stack to find out it should not have. The stack's owner can
+// look before it moves.
+fn pop_to(route: str) -> bool {
+    let s: *app::Application = app::current();
+    let f: fn(str) -> bool = { (*s).nav.pop_to_fn };
+    if f.is_null() { return false; }
+    return f(route);
+}
+
+// How deep the in-place screen stack is — 0 at the root screen, which is what
+// an app with no stack reads. `can_pop` is the question a back button asks.
+fn depth() -> usize {
+    let s: *app::Application = app::current();
+    let f: fn() -> usize = { (*s).nav.depth_fn };
+    if f.is_null() { return 0 as usize; }
+    return f();
+}
+
+fn can_pop() -> bool { return depth() > (0 as usize); }
+
+// The route on top of the in-place stack, "" when it is empty. Read from the
+// live record the App keeps, so it follows a user's back gesture as well as a
+// programmatic pop.
+fn top_route() -> str {
+    let s: *app::Application = app::current();
+    return { (*s).nav.top.view() };
+}
+
+fn set_top_route(route: str) {
+    let s: *app::Application = app::current();
+    { (*s).nav.top = text::from_str(route) };
 }
 
 // ---- reads (screen + App side) ----------------------------------------------
@@ -175,7 +337,46 @@ fn set_arg(arg: str) {
     let s: *app::Application = app::current();
     let _s: status::Status = { (*s).nav.params.insert(text::from_str(arg_key()),
                                                       text::from_str(arg)) };
-    return;
+}
+
+// What a push hook calls once its route has RESOLVED and before it runs the
+// factory: adopt the whole staged argument set, replacing the current screen's
+// the way `go` does. `set_arg` alone was enough while `push` carried only the
+// unnamed argument; it now carries `params:` as well, and both have to land
+// together or a pushed screen would see its `arg()` and not its `param()`.
+//
+// A push that never gets here — an unknown route — leaves the live arguments
+// untouched, which is the invariant this staging exists for.
+fn adopt_push_args(arg: str) {
+    let s: *app::Application = app::current();
+    // COPIED slot by slot rather than moved. `Navigation` has a destructor, so
+    // a field cannot be moved out of it (E0509) — the staged map stays owned by
+    // the record and is emptied once its contents are safely elsewhere.
+    var out: Params = params_new();
+    let cap: usize = { (*s).nav.pending.slot_capacity() };
+    var i: usize = 0 as usize;
+    while i < cap {
+        match { (*s).nav.pending.key_ptr_at_slot(i) } {
+            option::Option[*text::Text]::Some(kp) => {
+                match { (*s).nav.pending.value_ptr_at_slot(i) } {
+                    option::Option[*text::Text]::Some(vp) => {
+                        let _e: status::Status =
+                            out.insert(text::from_str({ (*kp).view() }),
+                                       text::from_str({ (*vp).view() }));
+                    }
+                    option::Option[*text::Text]::None => { }
+                }
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    { (*s).nav.pending = params_new() };
+    if arg != "" {
+        let _a: status::Status = out.insert(text::from_str(arg_key()),
+                                            text::from_str(arg));
+    }
+    { (*s).nav.params = out };
 }
 
 // The pending intent code, without consuming it.
@@ -213,7 +414,9 @@ fn reset(arg: str = "") {
     var p: Params = params_new();
     if arg != "" { let _s: status::Status = p.insert(text::from_str(arg_key()), text::from_str(arg)); }
     { (*s).nav.params = p };
-    return;
+    // A fresh loop inherits no half-staged push and no stack.
+    { (*s).nav.pending = params_new() };
+    { (*s).nav.top = text::new() };
 }
 
 // ---- tests -------------------------------------------------------------------
@@ -221,11 +424,19 @@ fn reset(arg: str = "") {
 static NAVT_CLOSES: i32 = 0;
 static NAVT_PUSHES: i32 = 0;
 static NAVT_POPS: i32 = 0;
+static NAVT_LAST_KEY: text::Text = #zero::[text::Text]();
+static NAVT_LAST_SHOW: u32 = 0 as u32;
+static NAVT_DEPTH: usize = 0 as usize;
 
 fn navt_close() { NAVT_CLOSES = NAVT_CLOSES + 1; return; }
-fn navt_push(route: str, arg: str) -> bool {
+fn navt_push(route: str, key: str, arg: str, show: u32) -> bool {
     NAVT_PUSHES = NAVT_PUSHES + 1;
-    return route == "settings" && arg == "tab2";
+    NAVT_LAST_KEY = text::from_str(key);
+    NAVT_LAST_SHOW = show;
+    if route != "settings" { return false; }
+    // A real hook adopts the staged arguments only once its route resolved.
+    adopt_push_args(arg);
+    return true;
 }
 fn navt_pop() -> bool { NAVT_POPS = NAVT_POPS + 1; return true; }
 
@@ -376,4 +587,232 @@ fn nav_set_arg_is_the_push_hook_channel() {
     set_arg("pushed-arg");
     assert arg() == "pushed-arg";
     reset();
+}
+
+// ---- push: the key, the shape, and the staged arguments ------------------------
+
+fn navt_depth() -> usize { return NAVT_DEPTH; }
+
+// A pop that models a real stack: it shortens, and it republishes what is now
+// on top the way a backend does after a pop completes (programmatic or swiped).
+fn navt_stack_pop() -> bool {
+    if NAVT_DEPTH == (0 as usize) { return false; }
+    NAVT_DEPTH = NAVT_DEPTH -% (1 as usize);
+    if NAVT_DEPTH == (2 as usize) { set_top_route("b"); }
+    if NAVT_DEPTH == (1 as usize) { set_top_route("a"); }
+    if NAVT_DEPTH == (0 as usize) { set_top_route(""); }
+    return true;
+}
+
+#[test]
+fn a_pushed_window_is_keyed_by_route_and_arg() {
+    // What makes two windows of one route different is the argument they were
+    // pushed with, so the address derives from it rather than being invented.
+    reset();
+    set_push_fn(navt_push);
+    assert push("settings");
+    assert NAVT_LAST_KEY.view() == "settings";
+    assert push("settings", arg: "front");
+    assert NAVT_LAST_KEY.view() == "settings:front";
+    // An explicit key wins over both.
+    assert push("settings", key: "the-one", arg: "front");
+    assert NAVT_LAST_KEY.view() == "the-one";
+    clear_hooks();
+}
+
+#[test]
+fn push_defaults_to_the_platforms_own_shape() {
+    // ONE INTENT: an app that says nothing gets a peer window where there is
+    // room and a stack push where there is not. Saying `Screen` narrows it to
+    // a drill-down, which is the same everywhere.
+    reset();
+    set_push_fn(navt_push);
+    assert push("settings");
+    assert NAVT_LAST_SHOW == show_code(Show::Window);
+    assert push("settings", show: Show::Screen);
+    assert NAVT_LAST_SHOW == show_code(Show::Screen);
+    // The code survives the round trip through the hook channel.
+    assert match show_of_code(1 as u32) { Show::Screen => true, Show::Window => false };
+    assert match show_of_code(0 as u32) { Show::Window => true, Show::Screen => false };
+    clear_hooks();
+}
+
+#[test]
+fn a_push_carries_named_params_as_well_as_its_arg() {
+    reset();
+    set_push_fn(navt_push);
+    var p: Params = params_new();
+    let _a: status::Status = p.insert(text::from_str("lens"), text::from_str("wide"));
+    let _b: status::Status = p.insert(text::from_str("fps"), text::from_str("60"));
+    assert push("settings", arg: "front", params: p);
+    // Both halves land together — a pushed screen that saw its arg() and not
+    // its param() would be the bug this staging exists to prevent.
+    assert arg() == "front";
+    assert param("lens") == "wide";
+    assert param("fps") == "60";
+    clear_hooks();
+}
+
+#[test]
+fn a_failed_push_leaves_the_current_screens_arguments_untouched() {
+    // THE INVARIANT the staging exists for. The hook adjudicates the route, so
+    // only it knows whether the push happened; a push that never resolves must
+    // not have overwritten what the screen already had.
+    reset();
+    set_push_fn(navt_push);
+    var first: Params = params_new();
+    let _a: status::Status = first.insert(text::from_str("lens"), text::from_str("wide"));
+    assert push("settings", arg: "front", params: first);
+    assert arg() == "front";
+    assert param("lens") == "wide";
+
+    var doomed: Params = params_new();
+    let _b: status::Status = doomed.insert(text::from_str("lens"), text::from_str("tele"));
+    assert push("nowhere", arg: "back", params: doomed) == false;
+    assert arg() == "front";          // unchanged
+    assert param("lens") == "wide";   // unchanged
+    clear_hooks();
+}
+
+#[test]
+fn depth_is_zero_without_a_stack_and_a_back_button_can_ask() {
+    reset();
+    assert depth() == (0 as usize);
+    assert can_pop() == false;
+    set_depth_fn(navt_depth);
+    NAVT_DEPTH = 2 as usize;
+    assert depth() == (2 as usize);
+    assert can_pop();
+    NAVT_DEPTH = 0 as usize;
+    assert can_pop() == false;
+    clear_hooks();
+    // and the hooks going away takes the answer back to the neutral one
+    NAVT_DEPTH = 5 as usize;
+    assert depth() == (0 as usize);
+}
+
+// The stack is "a", "b", "c" bottom to top, however deep NAVT_DEPTH says.
+fn navt_route_at(d: usize) -> str {
+    if d == (3 as usize) { return "c"; }
+    if d == (2 as usize) { return "b"; }
+    if d == (1 as usize) { return "a"; }
+    return "";
+}
+
+// LOOKS BEFORE IT MOVES, which is the whole contract this hook exists for.
+fn navt_pop_to(route: str) -> bool {
+    var d: usize = NAVT_DEPTH;
+    var found: bool = false;
+    while d > (0 as usize) {
+        if navt_route_at(d) == route { found = true; }
+        d = d -% (1 as usize);
+    }
+    if !found { return false; }
+    loop {
+        if NAVT_DEPTH == (0 as usize) { return false; }
+        if navt_route_at(NAVT_DEPTH) == route { set_top_route(route); return true; }
+        if !navt_stack_pop() { return false; }
+    }
+}
+
+#[test]
+fn pop_to_unwinds_to_a_named_screen_and_refuses_one_that_is_not_there() {
+    reset();
+    set_depth_fn(navt_depth);
+    set_pop_fn(navt_stack_pop);
+    set_pop_to_fn(navt_pop_to);
+
+    // a, b, c on the stack with c on top
+    NAVT_DEPTH = 3 as usize;
+    set_top_route("c");
+    assert top_route() == "c";
+    assert pop_to("a");
+    assert top_route() == "a";
+    assert depth() == (1 as usize);
+
+    // A route that is not on the stack moves NOTHING — not one pop. The
+    // speculative version destroyed the stack to discover this.
+    NAVT_DEPTH = 3 as usize;
+    set_top_route("c");
+    assert pop_to("nowhere") == false;
+    assert depth() == (3 as usize);
+    assert top_route() == "c";
+
+    // Already on top is success with nothing moved.
+    NAVT_DEPTH = 2 as usize;
+    set_top_route("b");
+    assert pop_to("b");
+    assert depth() == (2 as usize);
+    clear_hooks();
+    // and with no stack owner registered it is false, never a trap
+    assert pop_to("a") == false;
+}
+
+#[test]
+fn pop_is_stack_only_and_reports_an_empty_stack() {
+    // The answer each backend turns into its platform's own behaviour: Android
+    // falls through to super.onBackPressed(), iOS does nothing. `pop` never
+    // closes a window — a peer window is closed by name, not popped.
+    reset();
+    set_depth_fn(navt_depth);
+    set_pop_fn(navt_stack_pop);
+    NAVT_DEPTH = 0 as usize;
+    assert pop() == false;
+    assert can_pop() == false;
+    clear_hooks();
+}
+
+// ---- a key survives a round trip ------------------------------------------------
+
+#[test]
+fn a_key_splits_back_into_the_route_and_arg_it_was_built_from() {
+    // THE PAIR HAS TO AGREE. `key_for` writes the name a window is opened
+    // under; `route_of_key` / `arg_of_key` read it back when a platform hands
+    // the key back and nothing else — iPadOS restoring a scene session across a
+    // launch. A disagreement here is a restored window showing the wrong screen
+    // or none, and neither says anything at the time.
+    let k1: text::Text = key_for("camera", "", "front");
+    assert k1.view() == "camera:front";
+    assert route_of_key(k1.view()) == "camera";
+    assert arg_of_key(k1.view()) == "front";
+
+    // No argument: the key IS the route and there is nothing to recover.
+    let k2: text::Text = key_for("settings", "", "");
+    assert k2.view() == "settings";
+    assert route_of_key(k2.view()) == "settings";
+    assert arg_of_key(k2.view()) == "";
+}
+
+#[test]
+fn an_explicit_key_is_not_recoverable_and_that_is_the_point() {
+    // An override was never built from a route, so there is nothing in it to
+    // find. `route_of_key` answers the whole key, which will not resolve — and
+    // the caller's contract is to REFUSE the window rather than guess, because
+    // a window showing the wrong screen is worse than one that never opened.
+    let k: text::Text = key_for("camera", "the-one", "front");
+    assert k.view() == "the-one";
+    assert route_of_key(k.view()) == "the-one";
+    assert arg_of_key(k.view()) == "";
+}
+
+#[test]
+fn key_splitting_negatives_never_trap() {
+    // Every degenerate shape a key can arrive in, including from a persisted
+    // session written by an older build of the app.
+    assert route_of_key("") == "";
+    assert arg_of_key("") == "";
+    // A leading colon: no route. The caller refuses, which is right.
+    assert route_of_key(":front") == "";
+    assert arg_of_key(":front") == "front";
+    // A trailing colon: a route and an empty argument.
+    assert route_of_key("camera:") == "camera";
+    assert arg_of_key("camera:") == "";
+    // TWO colons split at the FIRST, so an argument may contain one — a path,
+    // a URL, a timestamp. `key_for` does not escape and does not need to.
+    assert route_of_key("open:file:///tmp/a") == "open";
+    assert arg_of_key("open:file:///tmp/a") == "file:///tmp/a";
+    // And that shape round-trips, which is the case that would have bitten.
+    let k: text::Text = key_for("open", "", "file:///tmp/a");
+    assert route_of_key(k.view()) == "open";
+    assert arg_of_key(k.view()) == "file:///tmp/a";
 }

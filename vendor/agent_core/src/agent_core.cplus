@@ -8,6 +8,7 @@ import "./identity" as identity;
 import "./auth" as auth;
 import "./events" as events;
 import "./surface" as surface;
+import "./inspect" as inspect;
 
 // Convenience constructor re-export; also keeps `identity` in the module graph.
 fn new_registry() -> identity::Registry {
@@ -21,7 +22,7 @@ fn closed_gate() -> auth::AuthGate {
 
 // A subscriber to everything; also keeps `events` in the module graph.
 fn subscribe_all() -> events::Subscriber {
-    return events::subscriber(events::everything(), 64 as usize);
+    return events::subscriber(events::everything(), 64);
 }
 
 // A fresh text-version table; also keeps `surface` in the module graph.
@@ -29,8 +30,18 @@ fn new_versions() -> surface::TextVersions {
     return surface::new_text_versions();
 }
 
+// A closed inspector vtable; also keeps `inspect` in the module graph.
+//
+// The DEVELOPER surface, not this one. `agent_mcp` serves its verbs and a
+// toolkit's walker fills it — see the header of `inspect.cplus` for why the
+// two surfaces are separate and why this one lives here rather than in the
+// package that draws the panel.
+fn none_inspector() -> inspect::Backend {
+    return inspect::Backend::none();
+}
+
 #[test]
 fn test_root_constructs_registry() {
     let r: identity::Registry = new_registry();
-    assert r.count() == (1 as usize);
+    assert r.count() == 1;
 }

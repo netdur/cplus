@@ -1,0 +1,31 @@
+[package]
+name    = "notifications_tests"
+version = "0.0.1"
+edition = "2026"
+
+# The iOS test runner for notifications — the package's OWN tests.
+#
+# `cpc test` builds a HOST binary with no bundle, and `UNUserNotificationCenter`
+# refuses a process with no bundle identifier — it RAISES rather than returning
+# nil. So every seam verb answers `Unsupported` on the host and the interesting
+# half of this package is untestable there. This binary is a bundled app, which
+# is the only configuration where the centre exists at all.
+#
+#     vendor/notifications/tools/run_ios_tests.sh
+
+[ios]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"
+# notifications' own closure, restated: the resolver validates every import in a
+# build against ONE flat set taken from the consuming manifest. `facet` arrived
+# with the tap tier — `app_events` is where a cold-start payload is latched.
+facet       = "*"
+flex_layout = "*"
+events      = "*"
+
+[ios.dependencies]
+notifications = "*"
+permissions   = "*"
+objc        = "*"

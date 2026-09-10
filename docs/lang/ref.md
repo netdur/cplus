@@ -90,6 +90,9 @@ c"hi\n"             // *u8, NUL-terminated, for C
 "x = ${n}"          // interpolation — needs stdlib/text in the build (E0613);
                     // sink positions (io::print/println/eprintln, Text::append) never allocate;
                     // any other position builds an owned Text. No format specifiers.
+                    // An interpolation may NOT contain a string literal: the lexer
+                    // ends the outer literal at the inner quote, so "${f("x")}" is
+                    // E0001 on a `"`. Hoist the call into a local first.
 [1, 2, 3]           // array literal
 [0u8; 64]           // fill literal — memset fast path; count is any const expression
 []                  // only where the expected type is a zero-length array (E0332 elsewhere)
@@ -125,7 +128,7 @@ Cross-thread `static` safety is the developer's responsibility.
 |---|---|---|
 | arithmetic | `+ - * / %` | overflow traps in debug, wraps in release; integer `/ 0` and `% 0` always trap. On floats, `/` and `%` are `fdiv`/`frem` — IEEE, no trap (`%` is C's `fmod`) |
 | shifts | `<< >>` | `>>` arithmetic on signed, logical on unsigned. A **constant** distance at or past the left operand's width is W0007 — `(1 << 40) as u64` is 256, not 2^40 |
-| wrapping | `+% -% *%` | always wrap |
+| wrapping | `+% -% *%` | always wrap; **integer operands only** — on floats it is E0302, which then masks any E0333 beside it |
 | bitwise | `& \| ^ ~ << >>` | `>>` arithmetic on signed, logical on unsigned |
 | comparison | `< <= > >= == !=` | `bool`, no coercion between operand types |
 | logical | `&& \|\| !` | short-circuit |
@@ -269,9 +272,9 @@ match r {                                    // payload patterns nest, any depth
 }
 if let Maybe[i32]::Some(v) = m { }
 while let option::Option[i64]::Some(v) = it.next() { }
-guard let Read::Ok(v) = r else { return 1; };            // else must diverge
-guard let Read::Ok(v) = r else |Read::Err(c)| { … };     // complement form: else binds the rest;
-                                                         // both patterns together must cover the enum (E0340)
+guard let Read::Ok(v) = r else { return 1; };           // else must diverge; else-pattern is `_`
+guard let Read::Ok(v) = r else Read::Err(c) { … };     // name it to bind the rest; the two
+                                                       // patterns together must cover the enum (E0340)
 ```
 
 A payload position takes `_`, a binding name, or another variant pattern —
@@ -486,7 +489,9 @@ finisher — diagnostics land on your lines.
 
 ```cplus
 async fn fetch() -> i32 { return (await inner()) +% 1; }
-fn main() -> i32 { return executor::block_on::[i32](fetch()); }   // main is never async
+async fn main() -> i32 { return await fetch(); }       // the compiler drives an async entry (v0.0.31)
+let r: i32 = fetch().wait();                           // driving from other sync code; consumes the future
+let w: future::WaitResult[i32] = future::wait_or_cancel(fetch());   // the cancellable drive: Done(v) | Cancelled
 
 let h = thread::spawn_with::[In, Out](data, worker);  // moves data in; h.join() -> Out
 var s: thread::Scope = thread::scope();               // s.lend::[T](local, f) — joined at scope drop
@@ -536,6 +541,7 @@ Exit 0 on all-pass, 2 on any failure. Details: [testing.md](testing.md).
 | `[package] entry = "src/…"` | app entry; default `src/main.cplus` when the file exists, no `[library]`, and no platform entry is declared |
 | `[<platform>] entry` | per-platform entry; declaring any scopes the app (E0413 elsewhere). Platforms: `macos linux windows ios android esp32 wasm` |
 | `[dependencies]` / `[<platform>.dependencies]` | flat, complete; `name = "*"` or a tree-URL spec |
+| `[android.maven]` | third-party Maven/AAR pins: `"group:artifact" = "version"`, exact, no wildcard. Android only (E0877 elsewhere); `cpc pm add . --maven G:A:V` writes one and downloads its closure |
 | `[library] kind/entry/name` | C-ABI product: `staticlib`(default)/`cdylib`/`both`; explicit `entry` = bare C names |
 | `[link] frameworks/libs/search-paths/extra-objects` | the link surface; `${VAR}` expansion in paths. A dependency's `[link]` travels to its consumers |
 | `[link] bundled` | basenames of binaries this package ships at `lib/<triple>/`; the triple is derived, never declared. Declared-but-missing is E0860, undeclared-but-present is E0861 |

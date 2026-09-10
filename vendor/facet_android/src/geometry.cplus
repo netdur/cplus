@@ -22,8 +22,14 @@ import "flex_layout/flex_layout" as flex;
 import "android_view/runtime" as rt;
 import "android_view/widgets" as w;
 import "facet/facet" as core;
+import "facet/bands" as bands;
 import "./env" as e;
 import "./paint" as paint;
+import "./controls" as controls;
+import "./swipe" as swipe;
+import "./dex" as dex;
+import "facet/props" as props;
+import "facet/split" as split;
 
 type Node = flex::Node;
 
@@ -63,28 +69,51 @@ fn spec_at_most(size: i32) -> i32 { read_modes(); return size | MODE_AT_MOST; }
 // `Undefined` is unbounded — which for a View means "measure at your natural
 // size", spelled as an enormous AT_MOST rather than UNSPECIFIED, because a
 // TextView given UNSPECIFIED lays its text out on ONE line however long it is.
+// NaN is the only value that is not equal to itself, which is the whole test.
+fn is_number(v: f64) -> bool { return v == v; }
+
 fn measure_node(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
                 avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
     if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
     let big: f64 = 1000000.0f64;
     var w_spec: i32 = spec_at_most({ big as i32 });
     var h_spec: i32 = spec_at_most({ big as i32 });
-    match wm {
-        flex::MeasureMode::Exactly => { w_spec = spec_exactly({ avail_w as i32 }); }
-        flex::MeasureMode::AtMost => { w_spec = spec_at_most({ avail_w as i32 }); }
-        flex::MeasureMode::Undefined => { }
+    // AN UNDEFINED AVAILABLE SIZE IS NOT ZERO, and conflating the two is a
+    // silent, total failure.
+    //
+    // flex's `undefined()` is NaN, and `NaN as i32` is 0 — so a mode of AtMost
+    // with an undefined extent turned into `AT_MOST(0)`, which asks a view to
+    // fit in nothing. Every child then measured to height 0. It never showed
+    // while the root had a definite height, because then every extent handed
+    // down is a real number; it appeared the moment something was laid out
+    // UNBOUNDED, which is exactly what a recycled row is — `calculate_layout`
+    // with a width and no height, so the row can be as tall as its content.
+    // Two hundred rows of nothing, and the measure looked like it was working
+    // because the WIDTHS were right.
+    //
+    // A NaN is the only value not equal to itself, which is the whole test.
+    // The extents arrive in facet's units and a MeasureSpec is in pixels.
+    if is_number(avail_w) {
+        match wm {
+            flex::MeasureMode::Exactly => { w_spec = spec_exactly(px_i32(avail_w)); }
+            flex::MeasureMode::AtMost => { w_spec = spec_at_most(px_i32(avail_w)); }
+            flex::MeasureMode::Undefined => { }
+        }
     }
-    match hm {
-        flex::MeasureMode::Exactly => { h_spec = spec_exactly({ avail_h as i32 }); }
-        flex::MeasureMode::AtMost => { h_spec = spec_at_most({ avail_h as i32 }); }
-        flex::MeasureMode::Undefined => { }
+    if is_number(avail_h) {
+        match hm {
+            flex::MeasureMode::Exactly => { h_spec = spec_exactly(px_i32(avail_h)); }
+            flex::MeasureMode::AtMost => { h_spec = spec_at_most(px_i32(avail_h)); }
+            flex::MeasureMode::Undefined => { }
+        }
     }
     var view: w::View = paint::wrap(ctx);
     view.measure(w_spec, h_spec);
     let mw: i32 = view.get_measured_width();
     let mh: i32 = view.get_measured_height();
     paint::unwrap_keep(view);
-    return flex::Size { width: { mw as f64 }, height: { mh as f64 } };
+    // And the answer comes back in pixels, which flex must not see.
+    return flex::Size { width: dp({ mw as f64 }), height: dp({ mh as f64 }) };
 }
 
 fn measure_intrinsic(v: *u8, max_w: f64, max_h: f64) -> flex::Size {
@@ -96,12 +125,49 @@ fn measure_intrinsic(v: *u8, max_w: f64, max_h: f64) -> flex::Size {
     return flex::Size { width: { mw as f64 }, height: { mh as f64 } };
 }
 
+// The density boundary lives in `env` — see `env::px`. Re-exported here because
+// this file is where most of the crossings are.
+fn px(v: f64) -> f64 { return e::px(v); }
+fn dp(v: f64) -> f64 { return e::dp(v); }
+
+// THE CROSSING ROUNDS; IT DOES NOT TRUNCATE, and the two are a visible pixel
+// apart at every density that is not a whole number — which is most of them
+// (2.75 is the common phone). `px(v) as i32` truncates toward zero, so a
+// 100.4dp column at density 2.75 is 276.1px and becomes 276, and the NEXT
+// column starts at 276 while this one's right edge wanted 276.1. One pixel of
+// background shows through, per boundary, and it compounds down a nested tree.
+//
+// `relayout_root` snaps every frame to this density's pixel grid before the
+// walk (flex's `round_to_pixel`), so by the time a number arrives here it is
+// already a whole pixel and this rounding only absorbs float error. The two
+// belong together: snapping without rounding here throws the snap away.
+fn px_i32(v: f64) -> i32 {
+    let p: f64 = px(v);
+    if p < 0.0f64 { return { (p - 0.5f64) as i32 }; }
+    return { (p + 0.5f64) as i32 };
+}
+
+// MEASURED, NOT PLACED. A cell in a GridView is positioned by the GRID — one
+// column across — and laying it out ourselves at the origin stacks every cell
+// on top of the first. The measure still has to happen, because a View that was
+// never measured has no internal layout.
+fn measure_only(v: *u8, wd: f64, ht: f64) {
+    var view: w::View = paint::wrap(v);
+    view.measure(spec_exactly(px_i32(wd)), spec_exactly(px_i32(ht)));
+    paint::unwrap_keep(view);
+    return;
+}
+
 fn place(v: *u8, x: f64, y: f64, wd: f64, ht: f64) {
     var view: w::View = paint::wrap(v);
-    let iw: i32 = { wd as i32 };
-    let ih: i32 = { ht as i32 };
-    let ix: i32 = { x as i32 };
-    let iy: i32 = { y as i32 };
+    let ix: i32 = px_i32(x);
+    let iy: i32 = px_i32(y);
+    // WIDTH IS THE DIFFERENCE OF TWO ROUNDED EDGES, not a rounded width. Rounding
+    // the extent on its own re-opens the seam the snap closed: two neighbours
+    // whose shared boundary rounds one way get a gap or an overlap. Deriving
+    // from the edges makes the boundary a single number both of them use.
+    let iw: i32 = px_i32(x + wd) -% ix;
+    let ih: i32 = px_i32(y + ht) -% iy;
     // MEASURE THEN LAYOUT, always. A View that was never measured has no
     // internal layout — a TextView builds its text Layout in onMeasure — and
     // draws nothing at whatever rect it is given.
@@ -111,11 +177,302 @@ fn place(v: *u8, x: f64, y: f64, wd: f64, ht: f64) {
     return;
 }
 
+// A scroll's DOCUMENT, sized to what it holds.
+//
+// The document is a second view inside the scroll's own, and nothing in facet's
+// tree corresponds to it — so nothing else in this walk would ever place it, and
+// an unplaced FacetHost is zero by zero. The rule is facet_gtk's, ported whole:
+// the union of the children, and never SMALLER than the viewport, because a
+// document short of its scroll leaves a strip nothing draws.
+//
+// Sized at the origin: the children are placed against the scroll's frame
+// already, and the document shares that origin.
+fn size_document(n: *core::Node, v: *u8, frame: flex::Frame) {
+    let k: u32 = core::kind_of(n);
+    // A CAROUSEL HAS ONE TOO, and it is the same view under the same tag: the
+    // pages overflow the viewport by design, and the document is what carries
+    // that overflow. Without this the host stays zero by zero and the pages
+    // have nothing to sit in.
+    if k != props::K_SCROLL && k != props::K_CAROUSEL { return; }
+    let doc: *u8 = controls::document_host(v);
+    if doc == v { return; }
+    let e_size: flex::Size = content_extent(n, frame);
+    // TOLD BEFORE PLACED. `place` measures EXACTLY, which is right — but the
+    // ScrollView will measure this same child AGAIN on its own terms, with an
+    // UNSPECIFIED height, and take THAT as the scroll range. The host has to be
+    // able to answer that question on its own.
+    if e::have_env() {
+        dex::host_set_wanted(e::env(), doc, px_i32(e_size.width), px_i32(e_size.height));
+    }
+    place(doc, 0.0f64, 0.0f64, e_size.width, e_size.height);
+    if !e::have_env() { return; }
+    e::env().delete_global_ref(doc);
+    return;
+}
+
+fn content_extent(node: *core::Node, frame: flex::Frame) -> flex::Size {
+    var wd: f64 = 0.0f64;
+    var ht: f64 = 0.0f64;
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = core::frame_of(c);
+                let right: f64 = (cf.left - frame.left) + cf.width;
+                let bottom: f64 = (cf.top - frame.top) + cf.height;
+                if right > wd { wd = right; }
+                if bottom > ht { ht = bottom; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if wd < frame.width { wd = frame.width; }
+    if ht < frame.height { ht = frame.height; }
+    return flex::Size { width: wd, height: ht };
+}
+
 // Re-run the layout for a root at a given size, then push every frame.
-fn relayout_root(root: *core::Node, width: f64, height: f64) {
+// THE SAFE AREA, read from the window and applied to the ROOT.
+//
+// The window is edge-to-edge — `FacetActivity` turns off the system's own
+// fitting, on purpose: left to itself Android insets every app whether it asked
+// or not, and `SafeArea::None` then has no answer at all. A full-bleed photo is
+// a real thing to ask for, so the insets become a value facet applies rather
+// than a frame the system imposes.
+//
+// `honours_safe_area` is facet's own reduction of the five-way enum to the one
+// question a backend can act on, so this and facet_uikit cannot disagree about
+// what `Container` means.
+struct Insets { left: f64, top: f64, right: f64, bottom: f64 }
+
+fn safe_insets(root: *core::Node) -> Insets {
+    var none: Insets = Insets { left: 0.0f64, top: 0.0f64, right: 0.0f64, bottom: 0.0f64 };
+    if !core::honours_safe_area(root) { return none; }
+    if !e::have_env() { return none; }
+    let host: *u8 = e::host();
+    if host == (0 as *u8) { return none; }
+    var packed: i64 = e::insets_cache();
+    if packed < (0 as i64) {
+        packed = dex::window_insets(e::env(), { host as jni::jobject });
+        e::set_insets_cache(packed);
+    }
+    if packed == (0 as i64) { return none; }
+    let mask: i64 = 65535 as i64;
+    return Insets {
+        left: dp({ ((packed >> (48 as i64)) & mask) as f64 }),
+        top: dp({ ((packed >> (32 as i64)) & mask) as f64 }),
+        right: dp({ ((packed >> (16 as i64)) & mask) as f64 }),
+        bottom: dp({ (packed & mask) as f64 }),
+    };
+}
+
+static INSET_LEFT: f64 = 0.0f64;
+static INSET_TOP: f64 = 0.0f64;
+
+// WHERE THE ROOT HOST'S ORIGIN IS, in facet's units — which is the one thing a
+// reader OUTSIDE this file needs from the pair above, and the reason they are
+// readable at all.
+//
+// `reposition` applies the inset exactly once, and a viewless root's backed
+// descendants are placed against a host frame shifted the other way (see the
+// comment there). So facet's point (x, y) is at host point (x + inset_left,
+// y + inset_top), and anything that has to convert between the two spaces
+// without going through `place` — `inspector/serve_android` resolving a node
+// with no backed ancestor to a rectangle is the one that does — asks here
+// rather than keeping a second copy of a rule that has already cost a blank
+// screen once.
+fn inset_left() -> f64 { return INSET_LEFT; }
+fn inset_top() -> f64 { return INSET_TOP; }
+
+// `scale` is the display density (2.75 on a common phone): snapping frames to
+// the device pixel grid keeps edges seamless and text crisp, AND keeps the
+// numbers bit-stable pass to pass, which is what lets the layout cache report a
+// hit at an unchanged size. Same argument as facet_appkit and facet_uikit; this
+// backend simply never had the step, so every frame reached `place` fractional
+// and was truncated there.
+fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
     if root == (0 as *core::Node) { return; }
-    { (*root).calculate_layout(width, height) };
+    let ins: Insets = safe_insets(root);
+    INSET_LEFT = ins.left;
+    INSET_TOP = ins.top;
+    let width: f64 = width - ins.left - ins.right;
+    let height: f64 = height - ins.top - ins.bottom;
+    // THE ROOT FILLS ITS WINDOW, stated as style rather than assumed.
+    //
+    // `calculate_layout` takes the AVAILABLE space, not the size — a root whose
+    // height is `auto` still sizes to its content. That is invisible while
+    // every root is a column of leaves, and wrong the moment one is a `scroll`:
+    // the scroll grew to the height of what it held (2979 against a 2593 screen
+    // in the probe), so the ScrollView had exactly nothing to scroll and the
+    // page simply ran off the bottom of the window.
+    { (*root).set_width(flex::StyleLength::points(width)) };
+    { (*root).set_height(flex::StyleLength::points(height)) };
+    // The app's band vocabulary rides along, so a node carrying `hide`/`show`
+    // rules is resolved against the box it actually sits in — as part of THIS
+    // pass, not by a size observer firing a second one afterwards. Omitting it
+    // passes a null BandSet, which is silently "no bands": every `hide`/`show`
+    // in the tree was a no-op on this backend, with no error to say so.
+    { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
+    // THE SPLITS, WHICH READ THEIR OWN EXTENT. A split's clamps are against the
+    // box its parent gave it, so the division cannot be written until there has
+    // been a layout — and writing it changes styles, so there has to be another.
+    // Twice is enough in practice and bounded on principle: the second pass
+    // only re-clamps against an extent the first pass fixed.
+    var pass: i32 = 0 as i32;
+    while pass < (2 as i32) {
+        if !settle_splits(root) { pass = 2 as i32; }
+        else {
+            { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
+            pass = pass +% (1 as i32);
+        }
+    }
+    // AFTER THE LAST PASS, never between them: a settle reads extents and
+    // writes styles, so a snap in the middle would be undone by the pass that
+    // follows it.
+    if scale > 0.0f64 { { (*root).round_to_pixel(scale) }; }
     reposition(root);
+    return;
+}
+
+// Every split in the tree, settled against the extent it was just given.
+// Answers whether any style was written, which is what makes the loop above
+// terminate on the pass that changed nothing.
+fn settle_splits(node: *core::Node) -> bool {
+    if node == (0 as *core::Node) { return false; }
+    var wrote: bool = false;
+    if core::kind_of(node) == split::K_SPLIT {
+        let p: *split::SplitProps = controls::split_props(node);
+        if p != (0 as *split::SplitProps) {
+            if controls::settle_split(node, p) { wrote = true; }
+        }
+    }
+    // A CAROUSEL SETTLES THE SAME WAY, and in the same walk: its pages are a
+    // row of fixed widths that flex has to be TOLD, because the width comes
+    // from the viewport and the viewport is not known until this pass.
+    if core::kind_of(node) == props::K_CAROUSEL {
+        let cp: *props::CarouselProps = controls::carousel_props(node);
+        if cp != (0 as *props::CarouselProps) {
+            if controls::settle_carousel(node, cp) { wrote = true; }
+        }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if settle_splits(c) { wrote = true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return wrote;
+}
+
+// A TAB STRIP, across the top of the tabs host and divided evenly. This
+// package's own view, like the split's divider and the swipe strip, so nothing
+// else in the walk places it — and its buttons are placed here too, because
+// their width is the host's over the count and the host's width is this pass's
+// answer.
+fn place_tab_strip(n: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(n) != props::K_TABS { return; }
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    let strip: jni::jobject = controls::tab_strip_of(v);
+    if strip == (0 as jni::jobject) { return; }
+    let h: f64 = controls::strip_height();
+    place(strip, 0.0f64, 0.0f64, frame.width, h);
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, env.new_global_ref({ strip as *u8 }));
+    let count: i32 = g.get_child_count();
+    if count > (0 as i32) {
+        let each: f64 = frame.width / { count as f64 };
+        var i: i32 = 0 as i32;
+        while i < count {
+            let b: jni::jobject = g.get_child_at(i);
+            if b != (0 as jni::jobject) {
+                place({ b as *u8 }, { i as f64 } * each, 0.0f64, each, h);
+                env.delete_local_ref(b);
+            }
+            i = i +% (1 as i32);
+        }
+    }
+    let _k: *u8 = g.into_raw();
+    env.delete_local_ref(strip);
+    return;
+}
+
+// A LIST'S REFRESH INDICATOR, centred above the list's own top edge — which is
+// where a pull reveals it. This package's own view, like the split's divider and
+// the swipe strip, so nothing else in the walk places it.
+//
+// It is the LIST'S PARENT'S child: an `AdapterView` refuses `addView` outright,
+// so the indicator cannot live inside the thing it belongs to. Which means it
+// is placed in the parent's space — the same space the list's own frame is
+// already in.
+fn place_refresh_spinner(n: *core::Node, v: *u8, frame: flex::Frame,
+                         host: flex::Frame) {
+    let kind: u32 = core::kind_of(n);
+    // BOTH KINDS THAT PULL. A refreshable's indicator is its OWN child — a
+    // FacetHost takes `addView` where an AdapterView refuses it — so its
+    // coordinates are the host's own rather than the parent's, which is what
+    // the zeroed frame below says.
+    if kind != props::K_LIST && kind != props::K_REFRESHABLE { return; }
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    let sp: jni::jobject = controls::refresh_spinner_of(env, v);
+    if sp == (0 as jni::jobject) { return; }
+    let h: f64 = controls::refresh_height();
+    if kind == props::K_REFRESHABLE {
+        place(sp, (frame.width - h) / 2.0f64, 0.0f64, h, h);
+        env.delete_local_ref(sp);
+        return;
+    }
+    // HOST-RELATIVE, like every other placement in this walk: flex frames are
+    // absolute in the root's space and the spinner's parent is the list's, so
+    // the host's origin comes off. Placed absolutely it landed halfway down the
+    // page — which looked like a centred spinner and was an unsubtracted one.
+    place(sp, (frame.left - host.left) + ((frame.width - h) / 2.0f64),
+          frame.top - host.top, h, h);
+    env.delete_local_ref(sp);
+    return;
+}
+
+// A split's divider sits ON the seam where the leading pane ends — this
+// package's own view rather than one of facet's children, so nothing else in
+// the frame walk places it. Drawn on the seam and not between the panes:
+// `position` is the distance from the leading edge to the divider, and taking
+// a thickness out of a pane would make the panes disagree with the number the
+// application set and reads back.
+fn place_split_divider(n: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(n) != split::K_SPLIT { return; }
+    let p: *split::SplitProps = controls::split_props(n);
+    if p == (0 as *split::SplitProps) { return; }
+    let thick: f64 = { (*p).divider_thickness };
+    if thick <= 0.0f64 { return; }
+    let bar: jni::jobject = controls::divider_of(v);
+    if bar == (0 as jni::jobject) { return; }
+    // Where the LEADING PANE ENDS, read from the pane rather than from the
+    // props: the position the application asked for is not the one that landed
+    // when a minimum or the split's own extent clamped it, and the line has to
+    // be where the panes actually parted.
+    var at: f64 = 0.0f64;
+    match core::child_of(n, 0 as usize) {
+        option::Option[*core::Node]::Some(lead) => {
+            let lf: flex::Frame = core::frame_of(lead);
+            match { (*p).axis } {
+                split::SplitAxis::Columns => { at = (lf.left - frame.left) + lf.width; }
+                split::SplitAxis::Rows => { at = (lf.top - frame.top) + lf.height; }
+            }
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    match { (*p).axis } {
+        split::SplitAxis::Columns => { place(bar, at, 0.0f64, thick, frame.height); }
+        split::SplitAxis::Rows => { place(bar, 0.0f64, at, frame.width, thick); }
+    }
+    if e::have_env() { e::env().delete_local_ref(bar); }
     return;
 }
 
@@ -126,7 +483,35 @@ fn relayout_root(root: *core::Node, width: f64, height: f64) {
 fn reposition(root: *core::Node) {
     if root == (0 as *core::Node) { return; }
     let f: flex::Frame = core::frame_of(root);
-    reposition_children(root, f);
+    // THE ROOT'S OWN VIEW, which the walk below never reaches: it places
+    // CHILDREN. This was invisible for as long as every root was a keyless
+    // column — a viewless root contributes nothing to place, and
+    // `add_root_views` hands its backed descendants to the Activity's host
+    // directly. The moment an app makes its whole page one `scroll`, which is
+    // the ordinary shape on a phone, the root HAS a view, nothing measures or
+    // lays it out, and the screen is blank with nothing in the log.
+    let rv: *u8 = core::view_of(root);
+    if rv != (0 as *u8) {
+        // THE INSET IS APPLIED ONCE, HERE. The root's view moves into the safe
+        // box and everything under it comes along, because every frame below is
+        // relative to this one.
+        place(rv, f.left + INSET_LEFT, f.top + INSET_TOP, f.width, f.height);
+        size_document(root, rv, f);
+        place_split_divider(root, rv, f);
+        place_tab_strip(root, rv, f);
+        swipe::place_strip(root, rv, f, place);
+        place_refresh_spinner(root, rv, f, f);
+        reposition_children(root, f);
+        return;
+    }
+    size_document(root, rv, f);
+    // A VIEWLESS ROOT HAS NO VIEW TO MOVE, so its backed descendants — which
+    // the facade added to the Activity's host directly — are placed against a
+    // host frame shifted the other way, which puts them in the same box.
+    var host: flex::Frame = f;
+    host.left = f.left - INSET_LEFT;
+    host.top = f.top - INSET_TOP;
+    reposition_children(root, host);
     return;
 }
 
@@ -139,9 +524,24 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                 let cf: flex::Frame = core::frame_of(c);
                 let v: *u8 = core::view_of(c);
                 if v != (0 as *u8) {
+                    // A PARKED PANE HAS TO BE TOLD, every pass. `Display::None`
+                    // gives it a zero frame and a FacetHost does not clip, so
+                    // its subtree draws on at the rects it last had — see
+                    // paint::visibility_of. This is the frame walk's business
+                    // rather than apply's because nothing marks a node dirty
+                    // when its DISPLAY changes.
+                    var vw: w::View = paint::wrap(v);
+                    vw.set_visibility(paint::visibility_of(c));
+                    paint::unwrap_keep(vw);
                     // Host-relative: flex frames are absolute in the root's
                     // space, so subtract the host's origin.
                     place(v, cf.left - host_abs.left, cf.top - host_abs.top, cf.width, cf.height);
+                    size_document(c, v, cf);
+                    place_split_divider(c, v, cf);
+                    place_tab_strip(c, v, cf);
+                    controls::round_icon_button(c, v, cf);
+                    swipe::place_strip(c, v, cf, place);
+                    place_refresh_spinner(c, v, cf, host_abs);
                     reposition_children(c, cf);
                 } else {
                     // Viewless: pass the SAME host down, so a keyless container

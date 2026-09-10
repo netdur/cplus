@@ -41,7 +41,7 @@
 //     `(fd, current_coro_handle)` with the reactor, then issues
 //     `llvm.coro.suspend`.
 //
-//   - `executor::block_on(future)` drives the outer coroutine. When
+//   - `Future::wait` (the `#block_on` intrinsic) drives the outer coroutine. When
 //     `coro.resume(outer)` returns and `coro.done(outer)` is false,
 //     block_on first drains any tasks `spawn_local` queued, then
 //     calls `reactor::poll_one_event` which blocks on `kevent` until
@@ -135,7 +135,9 @@ extern fn __cplus_reactor_set_state(p: *u8);
 //   udata   void*      @ 24
 // total size: 32 bytes.
 
-fn header_bytes() -> usize { return 96 as usize; }
+// 112, not 96: the last three slots are the SPAWNED TABLE (v0.0.30). See
+// `register_spawned` for what owns what.
+fn header_bytes() -> usize { return 112 as usize; }
 fn kevent_bytes() -> usize { return 32 as usize; }
 
 fn off_kqfd() -> usize { return 0 as usize; }
@@ -153,6 +155,9 @@ fn off_n_awaiters() -> usize { return 72 as usize; }
 fn off_cap_awaiters() -> usize { return 76 as usize; }
 fn off_awaitee_hdls() -> usize { return 80 as usize; }
 fn off_awaiter_hdls() -> usize { return 88 as usize; }
+fn off_n_spawned() -> usize { return 96 as usize; }
+fn off_cap_spawned() -> usize { return 100 as usize; }
+fn off_spawned_hdls() -> usize { return 104 as usize; }
 
 // EVFILT_READ = -1, EVFILT_WRITE = -2, EVFILT_TIMER = -7 (macOS sys/event.h).
 fn evfilt_read() -> i16 { return (0 as i16) -% (1 as i16); }
@@ -207,6 +212,14 @@ fn ensure() -> *u8 {
     { *ae_slot = malloc((8 *% 8) as usize); }
     let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
     { *ar_slot = malloc((8 *% 8) as usize); }
+    // v0.0.30: the spawned table. One array of frame handles the reactor OWNS
+    // — see `register_spawned`.
+    let ns_slot: *i32 = { (state + off_n_spawned()) as *i32 };
+    { *ns_slot = 0 as i32; }
+    let cs_slot: *i32 = { (state + off_cap_spawned()) as *i32 };
+    { *cs_slot = 8 as i32; }
+    let sh_slot: **u8 = { (state + off_spawned_hdls()) as **u8 };
+    { *sh_slot = malloc((8 *% 8) as usize); }
     { #reactor_set_state(state); }
     let _x: *u8 = null_p;
     return state;
@@ -228,12 +241,10 @@ fn ptr_is_null(p: *u8) -> bool {
 // polish — at which point these can rename via link_name).
 export extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
     register_read(fd, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
     register_write(fd, hdl);
-    return;
 }
 
 // v0.0.5 Slice 4A: register a one-shot timer that fires after `ms`
@@ -243,7 +254,6 @@ export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
 // lookup, no separate timer-id allocation.
 export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
     register_timer(ms, hdl);
-    return;
 }
 
 // v0.0.5 Slice 4F: awaiter-of-completed-coroutine notification.
@@ -253,12 +263,10 @@ export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
 // top of this file for the full flow.
 export extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
     register_awaiter(awaitee, awaiter);
-    return;
 }
 
 export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
     notify_completed(awaitee);
-    return;
 }
 
 // v0.0.29 phase 2: called from each await's DESTROY edge, just before the
@@ -267,7 +275,6 @@ export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
 // frame's address.
 export extern fn stdlib_reactor_unregister_awaiter_v1(awaitee: *u8) {
     unregister_awaiter(awaitee);
-    return;
 }
 
 // v0.0.29 phase 2: remove `hdl` from the pending queue. Called wherever a
@@ -276,14 +283,22 @@ export extern fn stdlib_reactor_unregister_awaiter_v1(awaitee: *u8) {
 // the queue when the drive loop resumes it directly and destroys it at
 // completion, and the stale entry would make the NEXT executor on this
 // thread call `coro_done` on freed memory (found by ASan, 2026-08-22).
+// The codegen door for `#reactor_spawn_local`. Stable symbol, like every other
+// entry point here: the intrinsic emits a call to this name.
+export extern fn stdlib_reactor_register_spawned_v1(hdl: *u8) {
+    register_spawned(hdl);
+}
+
+export extern fn stdlib_reactor_unregister_spawned_v1(hdl: *u8) {
+    unregister_spawned(hdl);
+}
+
 export extern fn stdlib_reactor_unregister_pending_v1(hdl: *u8) {
     unregister_pending(hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
     enqueue_pending(hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
@@ -292,6 +307,13 @@ export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
 
 export extern fn stdlib_reactor_waiter_count_v1() -> i32 {
     return waiter_count();
+}
+
+// Read by the `#block_on` drive loop (codegen) alongside `waiter_count`: the
+// loop resumes the outer frame itself ONLY when the reactor holds nothing at
+// all that could resume it — see the note on that loop.
+export extern fn stdlib_reactor_pending_count_v1() -> i32 {
+    return pending_count();
 }
 
 export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
@@ -340,13 +362,11 @@ export extern fn stdlib_reactor_kqfd_v1() -> i32 {
 // Register fd for read-readiness; record the coroutine handle to wake.
 fn register_read(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_read());
-    return;
 }
 
 // Register fd for write-readiness (kqueue EVFILT_WRITE).
 fn register_write(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_write());
-    return;
 }
 
 // v0.0.5 Slice 4A: register a one-shot timer. Submits EVFILT_TIMER with
@@ -383,7 +403,6 @@ fn register_timer(ms: u64, hdl: *u8) {
     let udata_slot: **u8 = { (kb + (24 as usize)) as **u8 };
     { *udata_slot = 0 as *u8; }
     let _r: i32 = { kevent(kqfd, kb, 1 as i32, 0 as *u8, 0 as i32, 0 as *u8) };
-    return;
 }
 
 // Append a (fd, filter, hdl) triple to the waiter arrays and submit a
@@ -440,7 +459,6 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
     let udata_slot: **u8 = { (kb + (24 as usize)) as **u8 };
     { *udata_slot = 0 as *u8; }
     let _r: i32 = { kevent(kqfd, kb, 1 as i32, 0 as *u8, 0 as i32, 0 as *u8) };
-    return;
 }
 
 // Wait for one fd to become ready, then resume its waiter. Blocks the
@@ -476,12 +494,133 @@ fn poll_one_event_cancellable() -> i32 {
 // thread starts fresh. Frames the arrays referenced are NOT destroyed here:
 // the cancelling executor destroys the task tree it owns (the cascade
 // through the awaits' cancel edges), and this purge is what guarantees no
-// reactor entry can reach those freed frames afterwards. A `spawn_local`
-// task the cascade does not reach is LEAKED by teardown (nobody owns its
-// frame) — recorded in the cancellation report as the phase-2 residual.
+// reactor entry can reach those freed frames afterwards. A `spawn_local` task
+// the cascade does not reach is DESTROYED here too, by `destroy_spawned` — the
+// reactor owns those frames (see `register_spawned`), which is what closes §2
+// of the cancellation report.
+// ---- spawned tasks: the frames the reactor OWNS (v0.0.30) ----
+//
+// WHY THE REACTOR OWNS THEM, and it stopped being a choice. `spawn_local` hands
+// over a future nothing awaits: no cascade reaches it, and until v0.0.30 no
+// destructor did either, so the frame was simply nobody's and `teardown` freed
+// the arrays around it — the leak recorded as §2 of the cancellation report.
+//
+// Giving `Future` a destructor removed the "nobody" option. The frame is now
+// always owned by something, so a `spawn_local` that did not hand ownership on
+// would have its own local destroy the task the reactor was about to drive.
+// `#reactor_spawn_local` moves the handle out of the value; this is where it
+// lands, and `teardown` is what finally destroys it.
+//
+// A FLAT ARRAY WITH NULL HOLES rather than a compacting one: `unregister_
+// spawned` nulls in place, so an entry's index never moves under an iteration.
+// The table is small — an app spawning thousands of background tasks per
+// reactor lifetime is not the shape this serves.
+fn register_spawned(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let state: *u8 = ensure();
+    let ns_slot: *i32 = { (state + off_n_spawned()) as *i32 };
+    let cs_slot: *i32 = { (state + off_cap_spawned()) as *i32 };
+    let sh_slot: **u8 = { (state + off_spawned_hdls()) as **u8 };
+    var n: i32 = { *ns_slot };
+    var cap: i32 = { *cs_slot };
+    // Reuse a hole before growing: a long-lived reactor spawning and
+    // completing tasks in a loop would otherwise grow without bound.
+    let hs0: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        if ptr_is_null({ *(hs0 + (s as usize)) }) {
+            let dst0: **u8 = { hs0 + (s as usize) };
+            { *dst0 = hdl; }
+            return;
+        }
+        s = s +% (1 as i32);
+    }
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let grown: *u8 = { realloc(*sh_slot, (cap *% 8) as usize) };
+        { *sh_slot = grown; }
+        { *cs_slot = cap; }
+    }
+    let hs: **u8 = { *sh_slot as **u8 };
+    let dst: **u8 = { hs + (n as usize) };
+    { *dst = hdl; }
+    { *ns_slot = n +% (1 as i32); }
+}
+
+// Give up ownership of `hdl` WITHOUT destroying it. The door for a spawned
+// frame that something else has already freed — a completed task the drive loop
+// reaped, say — so `teardown` cannot destroy it a second time.
+fn unregister_spawned(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        let slot: **u8 = { hs + (s as usize) };
+        if { *slot } == hdl { { *slot = 0 as *u8; } }
+        s = s +% (1 as i32);
+    }
+}
+
+// How many spawned frames this reactor still owns. Read by the tests, which is
+// the only way to see that teardown had something to do.
+fn spawned_count() -> i32 {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return 0 as i32; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var live: i32 = 0;
+    var s: i32 = 0;
+    while s < n {
+        if !ptr_is_null({ *(hs + (s as usize)) }) { live = live +% (1 as i32); }
+        s = s +% (1 as i32);
+    }
+    return live;
+}
+
+// Destroy every spawned frame this reactor still owns, running each one's
+// cancel edges — the drops of the locals live at its suspend point, cascading
+// through whatever it was awaiting. Called by `teardown` BEFORE the arrays go,
+// because a cancel edge unregisters awaiter and pending entries and those
+// arrays have to still be there when it does.
+fn destroy_spawned() {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        let slot: **u8 = { hs + (s as usize) };
+        let h: *u8 = { *slot };
+        // NULLED BEFORE THE DESTROY, not after: the cancel edges run arbitrary
+        // drops, and one of those could re-enter here. An entry already taken
+        // is an entry nothing can take twice.
+        { *slot = 0 as *u8; }
+        if !ptr_is_null(h) {
+            unregister_pending(h);
+            unregister_awaiter(h);
+            { #coro_destroy(h); }
+        }
+        s = s +% (1 as i32);
+    }
+    { *ns_slot = 0 as i32; }
+}
+
 fn teardown() {
     let cur: *u8 = { #reactor_get_state() };
     if ptr_is_null(cur) { return; }
+    // THE SPAWNED FRAMES FIRST, while the arrays their cancel edges write to
+    // are still allocated. This is §2 of the cancellation report: they used to
+    // be freed out from under nobody.
+    destroy_spawned();
     let kqfd: i32 = { *((cur + off_kqfd()) as *i32) };
     { close(kqfd); }
     { free(*((cur + off_waiter_fds()) as **u8)); }
@@ -491,9 +630,9 @@ fn teardown() {
     { free(*((cur + off_waiter_filters()) as **u8)); }
     { free(*((cur + off_awaitee_hdls()) as **u8)); }
     { free(*((cur + off_awaiter_hdls()) as **u8)); }
+    { free(*((cur + off_spawned_hdls()) as **u8)); }
     { free(cur); }
     { #reactor_set_state(0 as *u8); }
-    return;
 }
 
 // The non-blocking form: a zero timespec makes kevent return immediately
@@ -618,7 +757,118 @@ fn unregister_pending(hdl: *u8) {
         }
     }
     { *np_slot = n; }
-    return;
+}
+
+// The mirror of `register_read` / `register_write` / `register_timer` for a
+// frame that is being DESTROYED rather than resumed. Every fd triple that
+// names `hdl` leaves the waiter arrays — and the kqueue, when no other waiter
+// shares its (fd, filter) — and the one-shot timer whose ident is `hdl` is
+// deleted from the kqueue and uncounted.
+//
+// Called by `Future::drop` before the frame is freed. A frame address is
+// reused by malloc, so an entry that outlives its frame is not a leak but a
+// resume of freed memory the next time the kernel reports the event. The
+// timer is the sharp one: its kqueue ident IS the frame address, and nothing
+// in this file could remove it (three tables had an unregister, this one had
+// none) — the stdlib suite itself did exactly this on every run and only
+// AddressSanitizer could see it
+// (bugs/a-destroyed-coroutine-frame-stays-registered-with-the-reactor).
+fn unregister_waiter(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let state: *u8 = { #reactor_get_state() };
+    if ptr_is_null(state) { return; }
+    let kqfd: i32 = { *((state + off_kqfd()) as *i32) };
+    let kb: *u8 = { *((state + off_kevent_buf()) as **u8) };
+    // fd waiters: swap-remove every triple naming `hdl`, re-checking the slot
+    // each time (it now holds the old last).
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    let fds: *i32 = { *((state + off_waiter_fds()) as **u8) as *i32 };
+    let hdls: **u8 = { *((state + off_waiter_hdls()) as **u8) as **u8 };
+    let flts: *i16 = { *((state + off_waiter_filters()) as **u8) as *i16 };
+    var n: i32 = { *nw_slot };
+    var i: i32 = 0;
+    while i < n {
+        let cur_hdl: *u8 = { *(hdls + (i as usize)) };
+        if cur_hdl == hdl {
+            let fd: i32 = { *(fds + (i as usize)) };
+            let flt: i16 = { *(flts + (i as usize)) };
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_fd: i32 = { *(fds + (last_i as usize)) };
+                let last_hdl: *u8 = { *(hdls + (last_i as usize)) };
+                let last_flt: i16 = { *(flts + (last_i as usize)) };
+                { *(fds + (i as usize)) = last_fd; }
+                { *(hdls + (i as usize)) = last_hdl; }
+                { *(flts + (i as usize)) = last_flt; }
+            }
+            n = last_i;
+            { *nw_slot = n; }
+            // The kernel filter is shared by every waiter on this (fd, filter);
+            // it goes only when the last of them has.
+            if !another_waiter_on(fds, flts, n, fd, flt) {
+                let _d: i32 = kevent_delete_fd(kqfd, kb, fd, flt);
+            }
+        } else {
+            i = i +% (1 as i32);
+        }
+    }
+    // The timer, if one is armed. Its ident is the handle, and the kernel's
+    // answer to the delete is the only record of whether it existed: 0 means
+    // it was there (and will now never fire), -1 (ENOENT) that it was not —
+    // already fired and consumed, or never registered.
+    if kevent_delete_timer(kqfd, kb, hdl) == (0 as i32) {
+        let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
+        let nt: i32 = { *nt_slot };
+        { *nt_slot = nt -% (1 as i32); }
+    }
+}
+
+// Is any of the first `n` waiter triples on (`fd`, `filter`)?
+fn another_waiter_on(fds: *i32, flts: *i16, n: i32, fd: i32, filter: i16) -> bool {
+    var j: i32 = 0;
+    while j < n {
+        let cur_fd: i32 = { *(fds + (j as usize)) };
+        if cur_fd == fd {
+            let cur_flt: i16 = { *(flts + (j as usize)) };
+            if cur_flt == filter { return true; }
+        }
+        j = j +% (1 as i32);
+    }
+    return false;
+}
+
+// Submit an EV_DELETE for (`fd`, `filter`). Returns kevent's result: 0 when
+// the filter existed and is gone, -1 when there was nothing to delete.
+fn kevent_delete_fd(kqfd: i32, kb: *u8, fd: i32, filter: i16) -> i32 {
+    let ident_slot: *u64 = { kb as *u64 };
+    { *ident_slot = fd as u64; }
+    return kevent_delete_rest(kqfd, kb, filter);
+}
+
+// Submit an EV_DELETE for the EVFILT_TIMER whose ident is the frame handle
+// (`register_timer` writes the pointer through the same `**u8` view).
+fn kevent_delete_timer(kqfd: i32, kb: *u8, hdl: *u8) -> i32 {
+    let ident_slot: **u8 = { kb as **u8 };
+    { *ident_slot = hdl; }
+    return kevent_delete_rest(kqfd, kb, evfilt_timer());
+}
+
+// The rest of a delete kevent, after the caller wrote ident @0: filter @8,
+// flags @10 = EV_DELETE (0x0002), the remaining fields zero. No eventlist, so
+// a failed delete is reported as -1 (errno ENOENT) rather than as an
+// EV_ERROR event.
+fn kevent_delete_rest(kqfd: i32, kb: *u8, filter: i16) -> i32 {
+    let filter_slot: *i16 = { (kb + (8 as usize)) as *i16 };
+    { *filter_slot = filter; }
+    let flags_slot: *u16 = { (kb + (10 as usize)) as *u16 };
+    { *flags_slot = 0x0002 as u16; }
+    let fflags_slot: *u32 = { (kb + (12 as usize)) as *u32 };
+    { *fflags_slot = 0 as u32; }
+    let data_slot: *i64 = { (kb + (16 as usize)) as *i64 };
+    { *data_slot = 0 as i64; }
+    let udata_slot: **u8 = { (kb + (24 as usize)) as **u8 };
+    { *udata_slot = 0 as *u8; }
+    return { kevent(kqfd, kb, 1 as i32, 0 as *u8, 0 as i32, 0 as *u8) };
 }
 
 // Push a coroutine handle to the spawn_local queue.
@@ -639,7 +889,6 @@ fn enqueue_pending(hdl: *u8) {
     let slot: **u8 = { hdls + (n as usize) };
     { *slot = hdl; }
     { *np_slot = n +% (1 as i32); }
-    return;
 }
 
 // Snapshot of "pending kevent-side work" — fd waiters plus active
@@ -720,7 +969,6 @@ fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let ars_dst: **u8 = { ars + (n as usize) };
     { *ars_dst = awaiter; }
     { *na_slot = n +% (1 as i32); }
-    return;
 }
 
 // v0.0.29 phase 2: remove EVERY awaiter entry registered on `awaitee` —
@@ -753,7 +1001,6 @@ fn unregister_awaiter(awaitee: *u8) {
         }
     }
     { *na_slot = n; }
-    return;
 }
 
 // v0.0.5 Slice 4F: linear scan for an awaiter registered on `awaitee`.
@@ -798,7 +1045,6 @@ fn notify_completed(awaitee: *u8) {
         }
         i = i +% (1 as i32);
     }
-    return;
 }
 
 // ───────────────────────────── tests ─────────────────────────────

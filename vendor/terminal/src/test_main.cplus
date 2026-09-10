@@ -1,15 +1,26 @@
+// terminal test root — the PORTABLE half.
+//
+// `cpc test` discovers the `#[test]` fns in the modules this imports, and the
+// imports are the point of the file. What lives HERE is the screen model, which
+// is plain arithmetic over a grid and runs on every platform this package
+// builds for.
+//
+// THE PLATFORM HALVES LIVE NEXT TO THE PLATFORM THEY REACH, which is the rule
+// the rest of the tree already follows: the pseudo-terminal's tests are in
+// `pty.cplus` beside the `forkpty` that only exists there, and the widget's are
+// in `backend.cplus` beside the AppKit it drives. They used to be in this file,
+// and that is what made the whole package macOS-only — a test root importing
+// `objc` and `appkit` cannot be compiled anywhere else, so the 25 tests below,
+// which need neither, could not run on Windows or Linux either.
+//
+// Importing `./pty` and `./widget` still discovers whichever half the resolver
+// picked for this target, so nothing is lost on macOS.
+
 import "./terminal" as terminal;
 import "./pty" as pty;
 import "./widget" as terminal_widget;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
-// THE PLATFORM'S WIDGET TESTS, which are not portable and used to live here.
-// Imported rather than merely present in `src/`: a module nothing names is a
-// module nothing compiles, and these are part of the gate. The resolver picks
-// `test_widget_linux.cplus` on Linux.
-import "./test_platform" as _;
-
-extern fn usleep(us: u32) -> i32;
 
 // ---- the screen model -------------------------------------------------------
 //
@@ -417,30 +428,3 @@ fn osc_7_reports_the_working_directory() {
     s.feed("\x1b]7;file://mac.local/tmp\x1b\\");
     assert s.cwd() == "/tmp";
 }
-
-// ---- the pseudo-terminal ----------------------------------------------------
-
-fn read_all(ref sess: pty::Session, ref s: terminal::Screen, tries: i32) {
-    var buf: [u8; 4096] = [0 as u8; 4096];
-    var n: i32 = 0 as i32;
-    while n < tries {
-        match sess.read_into(#addr_of(buf) as *u8, 4096 as usize) {
-            pty::ReadResult::Data(k) => {
-                s.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) });
-            }
-            pty::ReadResult::WouldBlock => { let _u: i32 = { usleep(5000 as u32) }; }
-            pty::ReadResult::Closed => { break; }
-            pty::ReadResult::Failed => { break; }
-        }
-        n = n +% (1 as i32);
-    }
-    return;
-}
-
-
-
-
-
-
-
-

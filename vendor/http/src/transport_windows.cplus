@@ -1,0 +1,471 @@
+// transport — the Windows half, over WinHTTP. Shadows `transport.cplus`
+// through the resolver's `_windows` override, the same way
+// `transport_android.cplus` does.
+//
+// WinHTTP is the platform's own client in exactly the sense the package's
+// header means: TLS, certificate validation, DNS, redirects, proxy discovery
+// and the system's own protocol support belong to it, and it is serviced by
+// Windows Update rather than by this repo. Nothing here implements HTTP.
+//
+// ---- IT IS SYNCHRONOUS, WHICH IS WHY THIS FILE IS SHORT ----------------------
+//
+// Opened without `WINHTTP_FLAG_ASYNC`, every WinHTTP call blocks until it is
+// done. So there is no completion handler, no semaphore and no escaping block —
+// the three things that make the Foundation transport next door the size it is.
+// The whole exchange is a straight line, and `send`'s contract (blocking, call
+// it off-main) is satisfied by construction.
+//
+// ---- THE URL IS PARSED HERE, NOT BY `WinHttpCrackUrl` -----------------------
+//
+// `WinHttpCrackUrl` wants a `URL_COMPONENTS` — a 15-field struct whose every
+// pointer/length pair has to be laid out by hand and whose `dwStructSize` must
+// match the SDK's, which is a lot of offset arithmetic to get exactly right for
+// something a dozen lines of scanning does. So the scheme / host / port / path
+// split is done below. It handles what a URL actually is here — `scheme://host
+// [:port][/path]` — and rejects the rest rather than guessing.
+//
+// ---- ERROR CODES ARE NEGATED WIN32 ------------------------------------------
+//
+// `http.cplus` specifies NEGATIVE codes for "the platform's own numbering" and
+// positive for the package's own `ERROR_*`. WinHTTP's errors are positive Win32
+// values in the 12000s, so they are negated on the way out: a timeout is
+// `-12002`, a failed TLS handshake `-12175`. A caller compares against the
+// `ERROR_*` constants and treats the rest as opaque, which is what the header
+// asks of it.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+import "./http" as http;
+
+extern fn WinHttpOpen(agent: *u8, access: u32, proxy: *u8, bypass: *u8, flags: u32) -> *u8;
+extern fn WinHttpConnect(session: *u8, host: *u8, port: u16, reserved: u32) -> *u8;
+extern fn WinHttpOpenRequest(connect: *u8, verb: *u8, path: *u8, version: *u8,
+                             referrer: *u8, accept_types: *u8, flags: u32) -> *u8;
+extern fn WinHttpAddRequestHeaders(req: *u8, headers: *u8, len: u32, modifiers: u32) -> i32;
+extern fn WinHttpSendRequest(req: *u8, headers: *u8, headers_len: u32,
+                             optional: *u8, optional_len: u32,
+                             total_len: u32, context: usize) -> i32;
+extern fn WinHttpReceiveResponse(req: *u8, reserved: *u8) -> i32;
+extern fn WinHttpQueryHeaders(req: *u8, info_level: u32, name: *u8,
+                              buffer: *u8, buffer_len: *u32, index: *u32) -> i32;
+extern fn WinHttpQueryDataAvailable(req: *u8, available: *u32) -> i32;
+extern fn WinHttpReadData(req: *u8, buffer: *u8, to_read: u32, read: *u32) -> i32;
+extern fn WinHttpSetTimeouts(h: *u8, resolve: i32, connect: i32, send: i32, receive: i32) -> i32;
+extern fn WinHttpCloseHandle(h: *u8) -> i32;
+extern fn GetLastError() -> u32;
+extern fn MultiByteToWideChar(codepage: u32, flags: u32, mb: *u8, mb_len: i32,
+                              wide: *u8, wide_len: i32) -> i32;
+extern fn WideCharToMultiByte(codepage: u32, flags: u32, wide: *u8, wide_len: i32,
+                              out: *u8, out_len: i32,
+                              default_char: *u8, used_default: *u8) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// ---- constants, from the SDK's winhttp.h on this host ------------------------
+
+fn _cp_utf8() -> u32 { return 65001 as u32; }
+fn _nul_terminated() -> i32 { return 0 - 1; }
+
+fn _access_automatic_proxy() -> u32 { return 4 as u32; }
+fn _flag_secure() -> u32 { return 0x00800000 as u32; }
+fn _https_port() -> u16 { return 443 as u16; }
+fn _http_port() -> u16 { return 80 as u16; }
+
+fn _query_status_code() -> u32 { return 19 as u32; }
+fn _query_flag_number() -> u32 { return 0x20000000 as u32; }
+fn _query_raw_headers_crlf() -> u32 { return 22 as u32; }
+fn _addreq_add() -> u32 { return 0x20000000 as u32; }
+
+fn _read_chunk() -> u32 { return 8192 as u32; }
+
+fn _win32_error() -> i64 {
+    return { GetLastError() } as i64;
+}
+
+// The platform's own code, negated per `http.cplus`'s sign convention.
+fn _platform_code() -> i64 {
+    let e: i64 = _win32_error();
+    if e == (0 as i64) { return (0 as i64) -% (1 as i64); }
+    return (0 as i64) -% e;
+}
+
+// ---- narrow/wide plumbing ----------------------------------------------------
+
+// A malloc'd, NUL-terminated UTF-16 copy of `s`, or null. The caller frees.
+fn _widen(s: str) -> *u8 {
+    let owned: text::Text = text::from_str(s);
+    match owned.c_str() {
+        option::Option[text::CString]::Some(cp) => {
+            let need: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, cp.as_ptr(),
+                                                  _nul_terminated(), 0 as *u8, 0 as i32) };
+            if need <= (0 as i32) { return 0 as *u8; }
+            let wide: *u8 = { malloc((need as usize) *% (2 as usize)) };
+            if wide == (0 as *u8) { return 0 as *u8; }
+            let got: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, cp.as_ptr(),
+                                                 _nul_terminated(), wide, need) };
+            if got <= (0 as i32) { free(wide); return 0 as *u8; }
+            return wide;
+        }
+        option::Option[text::CString]::None => { return 0 as *u8; }
+    }
+}
+
+// A UTF-16 buffer of `wchars` code units back to an owned `Text`.
+fn _narrow(wide: *u8, wchars: i32) -> text::Text {
+    let empty: text::Text = text::from_str("");
+    if wchars <= (0 as i32) { return empty; }
+    let need: i32 = { WideCharToMultiByte(_cp_utf8(), 0 as u32, wide, wchars,
+                                          0 as *u8, 0 as i32, 0 as *u8, 0 as *u8) };
+    if need <= (0 as i32) { return empty; }
+    let buf: *u8 = { malloc(need as usize) };
+    if buf == (0 as *u8) { return empty; }
+    let got: i32 = { WideCharToMultiByte(_cp_utf8(), 0 as u32, wide, wchars,
+                                         buf, need, 0 as *u8, 0 as *u8) };
+    if got <= (0 as i32) { free(buf); return empty; }
+    let out: text::Text = { #str_from_raw_parts(buf, got as usize) }.to_text();
+    free(buf);
+    return out;
+}
+
+// ---- URL splitting -----------------------------------------------------------
+
+struct Url {
+    secure: bool,
+    host: text::Text,
+    port: u16,
+    path: text::Text,
+    ok: bool,
+}
+
+fn _byte_at(s: str, i: usize) -> u8 {
+    return { *({ ({ #addr(#str_ptr(s)) } +% i) as *u8 }) };
+}
+
+fn _slice(s: str, from: usize, to: usize) -> str {
+    return { #str_from_raw_parts({ ({ #addr(#str_ptr(s)) } +% from) as *u8 }, to -% from) };
+}
+
+// `scheme://host[:port][/path]`. Anything else is rejected rather than guessed
+// at — a URL this cannot split is one WinHTTP would have to be handed in pieces
+// anyway, and `ERROR_INVALID_URL` is the honest answer.
+fn _split_url(url: str) -> Url {
+    let bad: Url = Url {
+        secure: false, host: text::from_str(""), port: 0 as u16,
+        path: text::from_str("/"), ok: false,
+    };
+    let n: usize = #str_len(url);
+    if n == (0 as usize) { return bad; }
+
+    // scheme
+    var scheme_end: usize = 0 as usize;
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    while i +% (3 as usize) <= n {
+        if _byte_at(url, i) == (58 as u8)                       // ':'
+            && _byte_at(url, i +% (1 as usize)) == (47 as u8)   // '/'
+            && _byte_at(url, i +% (2 as usize)) == (47 as u8) {
+            scheme_end = i;
+            found = true;
+            break;
+        }
+        i = i +% (1 as usize);
+    }
+    if !found { return bad; }
+    let scheme: str = _slice(url, 0 as usize, scheme_end);
+    var secure: bool = false;
+    if scheme == "https" { secure = true; }
+    else {
+        if scheme != "http" { return bad; }
+    }
+
+    // authority runs to the first '/' after `scheme://`
+    let auth_start: usize = scheme_end +% (3 as usize);
+    var auth_end: usize = n;
+    i = auth_start;
+    while i < n {
+        if _byte_at(url, i) == (47 as u8) { auth_end = i; break; }
+        i = i +% (1 as usize);
+    }
+    if auth_end == auth_start { return bad; }
+
+    // optional `:port` inside the authority
+    var host_end: usize = auth_end;
+    var port: u16 = _http_port();
+    if secure { port = _https_port(); }
+    i = auth_start;
+    while i < auth_end {
+        if _byte_at(url, i) == (58 as u8) {
+            host_end = i;
+            var value: u32 = 0 as u32;
+            var j: usize = i +% (1 as usize);
+            var digits: bool = false;
+            while j < auth_end {
+                let c: u8 = _byte_at(url, j);
+                if c < (48 as u8) || c > (57 as u8) { return bad; }
+                value = (value *% (10 as u32)) +% ((c -% (48 as u8)) as u32);
+                if value > (65535 as u32) { return bad; }
+                digits = true;
+                j = j +% (1 as usize);
+            }
+            if !digits { return bad; }
+            port = value as u16;
+            break;
+        }
+        i = i +% (1 as usize);
+    }
+    if host_end == auth_start { return bad; }
+
+    var path: text::Text = text::from_str("/");
+    if auth_end < n { path = text::from_str(_slice(url, auth_end, n)); }
+
+    return Url {
+        secure: secure,
+        host: text::from_str(_slice(url, auth_start, host_end)),
+        port: port,
+        path: path,
+        ok: true,
+    };
+}
+
+// ---- headers -----------------------------------------------------------------
+
+// The request's headers as one CRLF-joined block, which is the shape
+// `WinHttpAddRequestHeaders` takes. Empty when there are none, and the caller
+// skips the call rather than passing a zero-length block.
+fn _request_header_block(req: *http::Request) -> text::Text {
+    var out: text::Text = text::from_str("");
+    var i: usize = 0 as usize;
+    while i < { (*req).headers.count() } {
+        match { (*req).headers.at_ptr(i) } {
+            option::Option[*http::Header]::Some(h) => {
+                let name: str = { (*h).name.view() };
+                let value: str = { (*h).value.view() };
+                let line: text::Text = "${name}: ${value}\r\n";
+                let _a: status::Status = out.append(line.view());
+            }
+            option::Option[*http::Header]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// Parse the CRLF-joined response header block WinHTTP hands back. The first
+// line is the status line and is skipped; everything after is `Name: value`.
+// Foundation and HttpURLConnection both hand their transports a parsed map, so
+// this is the one place the Windows backend does work the others do not.
+fn _parse_headers(block: str) -> vec::Vec[http::Header] {
+    var out: vec::Vec[http::Header] = vec::new::[http::Header]();
+    let n: usize = #str_len(block);
+    var start: usize = 0 as usize;
+    var first_line: bool = true;
+    var i: usize = 0 as usize;
+    while i <= n {
+        let at_end: bool = i == n;
+        var is_break: bool = at_end;
+        if !at_end { is_break = _byte_at(block, i) == (10 as u8); }   // '\n'
+        if is_break {
+            var stop: usize = i;
+            if stop > start {
+                if _byte_at(block, stop -% (1 as usize)) == (13 as u8) {   // '\r'
+                    stop = stop -% (1 as usize);
+                }
+            }
+            if stop > start {
+                if first_line { first_line = false; }
+                else {
+                    let line: str = _slice(block, start, stop);
+                    var colon: usize = 0 as usize;
+                    var has_colon: bool = false;
+                    var j: usize = 0 as usize;
+                    while j < #str_len(line) {
+                        if _byte_at(line, j) == (58 as u8) { colon = j; has_colon = true; break; }
+                        j = j +% (1 as usize);
+                    }
+                    if has_colon {
+                        var vstart: usize = colon +% (1 as usize);
+                        while vstart < #str_len(line) {
+                            if _byte_at(line, vstart) != (32 as u8) { break; }
+                            vstart = vstart +% (1 as usize);
+                        }
+                        let _a: status::Status = out.append(http::Header {
+                            name: text::from_str(_slice(line, 0 as usize, colon)),
+                            value: text::from_str(_slice(line, vstart, #str_len(line))),
+                        });
+                    }
+                }
+            }
+            start = i +% (1 as usize);
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// ---- the exchange ------------------------------------------------------------
+
+fn _fail(code: i64, message: str) -> result::Result[http::Response, http::Error] {
+    return result::Result[http::Response, http::Error]::Err(http::Error {
+        code: code,
+        message: text::from_str(message),
+    });
+}
+
+fn _closeh(h: *u8) {
+    if h != (0 as *u8) { let _c: i32 = { WinHttpCloseHandle(h) }; }
+    return;
+}
+
+fn _perform(req: *http::Request) -> result::Result[http::Response, http::Error] {
+    let url_text: text::Text = { (*req).url.clone() };
+    let parts: Url = _split_url(url_text.view());
+    if !parts.ok {
+        return _fail(http::ERROR_INVALID_URL, "http: not a usable http/https URL");
+    }
+
+    let agent: *u8 = _widen("cplus-http/1");
+    let session: *u8 = { WinHttpOpen(agent, _access_automatic_proxy(),
+                                     0 as *u8, 0 as *u8, 0 as u32) };
+    if agent != (0 as *u8) { free(agent); }
+    if session == (0 as *u8) {
+        return _fail(_platform_code(), "http: could not open a WinHTTP session");
+    }
+
+    // `timeout_seconds` is Foundation's per-packet idle interval; WinHTTP splits
+    // the same idea across four phases, so the value is applied to each rather
+    // than divided between them — the intent is "no phase stalls longer than
+    // this", not a budget for the whole transfer.
+    var ms: i32 = 60000 as i32;
+    let secs: f64 = { (*req).timeout_seconds };
+    if secs > (0.0 as f64) { ms = (secs * (1000.0 as f64)) as i32; }
+    let _t: i32 = { WinHttpSetTimeouts(session, ms, ms, ms, ms) };
+
+    let whost: *u8 = _widen(parts.host.view());
+    let connect: *u8 = { WinHttpConnect(session, whost, parts.port, 0 as u32) };
+    if whost != (0 as *u8) { free(whost); }
+    if connect == (0 as *u8) {
+        let code: i64 = _platform_code();
+        _closeh(session);
+        return _fail(code, "http: could not connect to the host");
+    }
+
+    var flags: u32 = 0 as u32;
+    if parts.secure { flags = _flag_secure(); }
+    let wverb: *u8 = _widen(http::method_name({ (*req).method }));
+    let wpath: *u8 = _widen(parts.path.view());
+    let request: *u8 = { WinHttpOpenRequest(connect, wverb, wpath, 0 as *u8,
+                                            0 as *u8, 0 as *u8, flags) };
+    if wverb != (0 as *u8) { free(wverb); }
+    if wpath != (0 as *u8) { free(wpath); }
+    if request == (0 as *u8) {
+        let code: i64 = _platform_code();
+        _closeh(connect); _closeh(session);
+        return _fail(code, "http: could not open the request");
+    }
+
+    var headers: text::Text = _request_header_block(req);
+    if headers.count() > (0 as usize) {
+        let wheaders: *u8 = _widen(headers.view());
+        if wheaders != (0 as *u8) {
+            // -1 lets WinHTTP measure the NUL-terminated block itself.
+            let _a: i32 = { WinHttpAddRequestHeaders(request, wheaders,
+                                                     0xFFFFFFFF as u32, _addreq_add()) };
+            free(wheaders);
+        }
+    }
+
+    let body_len: u32 = { (*req).body.count() } as u32;
+    var body_ptr: *u8 = 0 as *u8;
+    if body_len > (0 as u32) {
+        match { (*req).body.at_ptr(0 as usize) } {
+            option::Option[*u8]::Some(base) => { body_ptr = base; }
+            option::Option[*u8]::None => { }
+        }
+    }
+    let sent: i32 = { WinHttpSendRequest(request, 0 as *u8, 0 as u32,
+                                         body_ptr, body_len, body_len, 0 as usize) };
+    if sent == (0 as i32) {
+        let code: i64 = _platform_code();
+        _closeh(request); _closeh(connect); _closeh(session);
+        return _fail(code, "http: the request could not be sent");
+    }
+
+    if { WinHttpReceiveResponse(request, 0 as *u8) } == (0 as i32) {
+        let code: i64 = _platform_code();
+        _closeh(request); _closeh(connect); _closeh(session);
+        return _fail(code, "http: no response was received");
+    }
+
+    // Status: asked for as a NUMBER so WinHTTP parses the status line.
+    var status: u32 = 0 as u32;
+    var status_len: u32 = 4 as u32;
+    if { WinHttpQueryHeaders(request, _query_status_code() | _query_flag_number(),
+                             0 as *u8, #addr_of(status) as *u8,
+                             #addr_of(status_len), 0 as *u32) } == (0 as i32) {
+        let code: i64 = _platform_code();
+        _closeh(request); _closeh(connect); _closeh(session);
+        return _fail(code, "http: the response had no status line");
+    }
+
+    // Headers: probe for the byte length, then fetch. The length comes back in
+    // BYTES for a UTF-16 buffer, which is why it is halved for `_narrow`.
+    var hdr_bytes: u32 = 0 as u32;
+    let _probe: i32 = { WinHttpQueryHeaders(request, _query_raw_headers_crlf(),
+                                            0 as *u8, 0 as *u8,
+                                            #addr_of(hdr_bytes), 0 as *u32) };
+    var out_headers: vec::Vec[http::Header] = vec::new::[http::Header]();
+    if hdr_bytes > (0 as u32) {
+        let hbuf: *u8 = { malloc(hdr_bytes as usize) };
+        if hbuf != (0 as *u8) {
+            if { WinHttpQueryHeaders(request, _query_raw_headers_crlf(), 0 as *u8,
+                                     hbuf, #addr_of(hdr_bytes), 0 as *u32) } != (0 as i32) {
+                let block: text::Text = _narrow(hbuf, (hdr_bytes / (2 as u32)) as i32);
+                out_headers = _parse_headers(block.view());
+            }
+            free(hbuf);
+        }
+    }
+
+    // Body: read to EOF. `WinHttpReadData` returning 0 bytes is the end.
+    var out_body: vec::Vec[u8] = vec::new::[u8]();
+    let chunk: *u8 = { malloc(_read_chunk() as usize) };
+    if chunk == (0 as *u8) {
+        _closeh(request); _closeh(connect); _closeh(session);
+        return _fail(http::ERROR_NO_RESPONSE, "http: out of memory reading the body");
+    }
+    loop {
+        var got: u32 = 0 as u32;
+        if { WinHttpReadData(request, chunk, _read_chunk(), #addr_of(got)) } == (0 as i32) {
+            let code: i64 = _platform_code();
+            free(chunk);
+            _closeh(request); _closeh(connect); _closeh(session);
+            return _fail(code, "http: the response body could not be read");
+        }
+        if got == (0 as u32) { break; }
+        let _e: status::Status = out_body.extend_from_raw(chunk, got as usize);
+    }
+    free(chunk);
+    _closeh(request); _closeh(connect); _closeh(session);
+
+    return result::Result[http::Response, http::Error]::Ok(
+        http::Response::from_parts(status as i32, out_headers, out_body));
+}
+
+export extern fn http_transport_perform_v1(req: *http::Request, ok: *bool,
+                                           response: *http::Response,
+                                           error: *http::Error) {
+    match _perform(req) {
+        result::Result[http::Response, http::Error]::Ok(r) => {
+            { (*response) = r };
+            { (*ok) = true };
+        }
+        result::Result[http::Response, http::Error]::Err(e) => {
+            { (*error) = e };
+            { (*ok) = false };
+        }
+    }
+    return;
+}

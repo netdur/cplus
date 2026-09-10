@@ -96,7 +96,12 @@ fn without_implicit_animation_end() {
 // `scale` is the screen scale (2.0 / 3.0 on iOS): snapping frames to the device
 // pixel grid keeps text crisp AND keeps the numbers bit-stable pass to pass,
 // which is what lets the layout cache report a hit at an unchanged size.
-fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
+// `force` is for the caller that changed something the LAYOUT cannot see. A
+// display-scale change is the case it exists for: the scene is the same size,
+// so `calculate_layout` is a cache hit and `layout_changed()` says false — yet
+// every frame moved, because `round_to_pixel` snapped it to a different grid.
+fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64,
+                 force: bool = false) {
     if root == (0 as *core::Node) { return; }
     // The app's band vocabulary rides along, so a node carrying `hide`/`show`
     // rules is resolved against the box it actually sits in — as part of THIS
@@ -106,7 +111,7 @@ fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
     // The walk only — `calculate_layout` and `round_to_pixel` touch no view, and
     // a transaction is held for as few statements as it can be.
     without_implicit_animation_begin();
-    reposition(root);
+    reposition(root, force);
     without_implicit_animation_end();
     return;
 }
@@ -117,11 +122,13 @@ fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
 //
 // The root's OWN view is not touched: the window host sized it when it made the
 // root view, and it fills that view by construction.
-fn reposition(root: *core::Node) {
+fn reposition(root: *core::Node, force: bool = false) {
     if root == (0 as *core::Node) { return; }
     // The engine's verdict for the whole tree: false means every frame below is
-    // bit-identical to the previous pass, so nothing is walked.
-    if { (*root).layout_changed() } == false { return; }
+    // bit-identical to the previous pass, so nothing is walked. `force` is the
+    // caller saying it moved the frames itself after that verdict was formed —
+    // see `relayout_root`.
+    if !force && { (*root).layout_changed() } == false { return; }
     reposition_children(root, { (*root).frame() });
     return;
 }
@@ -336,10 +343,35 @@ fn is_kind_of(obj: *u8, class_name: *u8) -> bool {
 // in a window yet has no screen, and the main screen is the right answer for
 // the overwhelmingly common single-screen case. 1.0 when even that is missing —
 // rounding to whole points is always safe, it is only less crisp.
+//
+// This is the FALLBACK now, not the answer — see `scale_of_view`.
 fn screen_scale() -> f64 {
     let s: ui::Screen = ui::Screen::main_screen();
     if s.raw() == (0 as *u8) { return 1.0f64; }
     let sc: f64 = s.scale();
     if sc > 0.0f64 { return sc; }
     return 1.0f64;
+}
+
+// THE VIEW'S OWN SCALE, which is not always the main screen's.
+//
+// `drawing.cplus` has always sized its backing store from the view's
+// `contentScaleFactor`, while layout snapped frames to `UIScreen.mainScreen`.
+// The two agree on a phone and part company exactly where it matters: a scene
+// on an external display, and an iPad window that Stage Manager has moved to
+// one. The drawing was then crisp on a grid the layout had never heard of.
+//
+// `traitCollection.displayScale` is the per-view answer and is what UIKit
+// resolves `contentScaleFactor` from, so asking it here makes the two halves
+// the same number. It is 0.0 for "unspecified" — a view outside any hierarchy —
+// which is the case the screen fallback exists for.
+fn scale_of_view(v: *u8) -> f64 {
+    if v != (0 as *u8) {
+        let tc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("traitCollection\0"))) };
+        if tc != (0 as *u8) {
+            let s: f64 = { rt::msg_f64(tc, rt::sel(#str_ptr("displayScale\0"))) };
+            if s > 0.0f64 { return s; }
+        }
+    }
+    return screen_scale();
 }

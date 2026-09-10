@@ -158,9 +158,24 @@ fn deliver(view: *u8, presses: *u8) -> bool {
     return consumed;
 }
 
+// ONE HOP UP IS NOT OUR SUPERCLASS once anything else has subclassed the view.
+//
+// `class_getSuperclass([self class])` is the class below OURS only while ours
+// is the last subclass applied. `keys` and `scheduler` each `object_setClass`
+// independently, gated on their own association, so a view that is both
+// key-armed and size-watched wears both — and one hop up from the runtime class
+// lands on the class carrying the IMP that is running. It then calls itself
+// until the stack guard: SIGSEGV, tens of thousands of identical frames.
+//
+// facet_appkit hit exactly this twice (`imp_hit_test`, and earlier compose's
+// text placement); the second one crashed iris. The IMP passes its OWN address
+// and `super_class_below` walks to the class that defines it, which is right
+// for any number of layers in any order — and keeps two of our own layers over
+// one selector chained through each other, which "skip everything facet
+// synthesized" would silently drop.
 fn call_super_presses(self_obj: *u8, cmd: *u8, presses: *u8, event: *u8) {
-    let cls: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("class\0"))) };
-    let base: *u8 = { class_get_superclass(cls) };
+    let f_self: fn(*u8, *u8, *u8, *u8) = imp_presses_began;
+    let base: *u8 = synth::super_class_below(self_obj, cmd, { f_self as *u8 });
     if base == (0 as *u8) { return; }
     var sup: ObjcSuper = ObjcSuper { receiver: self_obj, class_: base };
     { msg_super_2id(#addr_of(sup), cmd, presses, event) };
@@ -205,8 +220,6 @@ struct ObjcSuper { opaque receiver: *u8, opaque class_: *u8 }
 
 #[link_name = "objc_msgSendSuper"]
 extern fn msg_super_2id(sup: *ObjcSuper, sel: *u8, a: *u8, b: *u8);
-#[link_name = "class_getSuperclass"]
-extern fn class_get_superclass(cls: *u8) -> *u8;
 #[link_name = "object_setClass"]
 extern fn object_set_class(obj: *u8, cls: *u8) -> *u8;
 #[link_name = "class_addMethod"]

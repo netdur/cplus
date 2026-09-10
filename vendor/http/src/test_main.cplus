@@ -1,0 +1,23 @@
+// http test root — `cpc test` discovers the `#[test]` fns in the modules this
+// imports, and the imports are the point of the file.
+//
+// WHY IT EXISTS. Without it, `cpc test` falls back to the package's source
+// entry, which is `http.cplus` — and `http.cplus` deliberately does NOT import
+// the transport. The two halves meet at a stable symbol
+// (`http_transport_perform_v1`) rather than through an import, because the
+// transport must import `http` for Request and Response and a cycle back is
+// rejected outright (E0404). So nothing in the package's own import graph
+// reaches the transport, and a test driver built from that graph linked against
+// a symbol nothing defined.
+//
+// A CONSUMER NEVER HITS THAT, and it is worth knowing why the two differ: a
+// package's archive is built from a SYNTHESIZED entry importing every module in
+// `src/` (that is what `prebuild` means), so the transport is in the archive an
+// application links whether or not anything imported it. The test driver is the
+// one build that uses the real entry.
+//
+// The tests themselves stay next to what they test: the portable half's in
+// `http.cplus`, the Foundation half's in `transport.cplus`.
+
+import "./http" as http;
+import "./transport" as transport;

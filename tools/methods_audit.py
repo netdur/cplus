@@ -76,7 +76,7 @@ def parse_binding(path):
     """class -> {'methods': [...], 'upcasts': [target_class, ...]}"""
     classes = defaultdict(lambda: {"methods": [], "upcasts": []})
     cur = None
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         m = re.match(r"^impl (\w+) \{", line)
         if m:
             cur = m.group(1)
@@ -124,7 +124,7 @@ def is_config(meth):
 
 def main():
     classes = parse_binding(BACKEND_BINDING)
-    facet_text = "".join(open(p).read() for p in FACET_SRC)
+    facet_text = "".join(open(p, encoding="utf-8").read() for p in FACET_SRC)
 
     def covered(meth):
         # facet drives this method if it calls it anywhere in its source.

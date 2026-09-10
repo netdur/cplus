@@ -1,0 +1,97 @@
+// The mutex, condition-variable and sleep primitives — the Windows half.
+// Shadows `sync_sys.cplus` through the resolver's `_windows` override. No
+// pthread symbol may be DECLARED here, for the one-object-per-package reason
+// recorded in `exe_path.cplus`.
+//
+// SRWLOCK, NOT CRITICAL_SECTION. Both are Windows' native mutual exclusion and
+// either would work, but SRWLOCK is the one whose semantics match what these
+// callers already assume: non-recursive, and released by the thread that took
+// it. `CRITICAL_SECTION` is recursive, so a double-lock bug that deadlocks on
+// Darwin — and is meant to — would silently succeed here, and the same code
+// would be correct on one platform and quietly wrong on the other.
+//
+// IT ALSO FITS. `mutex.cplus` and `channel.cplus` reserve 64 bytes for a
+// `pthread_mutex_t` and 64 for a `pthread_cond_t` in their control blocks.
+// SRWLOCK and CONDITION_VARIABLE are one pointer each — 8 bytes — so both sit
+// inside the space already allocated and NO LAYOUT CHANGES. That is what keeps
+// this port to a file the other platforms never compile: the offsets those two
+// modules document stay exactly as they are.
+//
+// NOTHING TO DESTROY. Neither primitive owns a kernel object until it is
+// contended, and neither has a destroy call in the Win32 API — the memory is
+// simply reclaimed with the block that holds it. `mutex_destroy` and
+// `cond_destroy` are therefore genuinely empty rather than stubbed, and return
+// success because their callers check the result.
+
+extern fn InitializeSRWLock(lock: *u8);
+extern fn AcquireSRWLockExclusive(lock: *u8);
+extern fn ReleaseSRWLockExclusive(lock: *u8);
+extern fn InitializeConditionVariable(cv: *u8);
+extern fn SleepConditionVariableSRW(cv: *u8, lock: *u8, ms: u32, flags: u32) -> i32;
+extern fn WakeConditionVariable(cv: *u8);
+extern fn WakeAllConditionVariable(cv: *u8);
+extern fn Sleep(ms: u32);
+
+// INFINITE — `SleepConditionVariableSRW` waits without a deadline, which is
+// what `pthread_cond_wait` does and what every caller here expects.
+fn _infinite() -> u32 { return 0xFFFFFFFF as u32; }
+
+// The `attr` parameter is pthread's and is null at every call site; it is
+// accepted so the five callers can be platform-agnostic, and ignored.
+fn mutex_init(m: *u8, a: *u8) -> i32 {
+    { InitializeSRWLock(m) };
+    return 0 as i32;
+}
+
+fn mutex_destroy(m: *u8) -> i32 { return 0 as i32; }
+
+fn mutex_lock(m: *u8) -> i32 {
+    { AcquireSRWLockExclusive(m) };
+    return 0 as i32;
+}
+
+fn mutex_unlock(m: *u8) -> i32 {
+    { ReleaseSRWLockExclusive(m) };
+    return 0 as i32;
+}
+
+fn cond_init(c: *u8, a: *u8) -> i32 {
+    { InitializeConditionVariable(c) };
+    return 0 as i32;
+}
+
+fn cond_destroy(c: *u8) -> i32 { return 0 as i32; }
+
+// Releases the lock, waits, and reacquires it before returning — the same
+// contract as `pthread_cond_wait`, including the spurious wakeup every caller
+// already loops against. The 0 flag is exclusive mode, matching the
+// `AcquireSRWLockExclusive` the lock was taken with; passing the shared flag
+// here against an exclusively-held lock is undefined, which is why it is a
+// literal rather than a parameter.
+fn cond_wait(c: *u8, m: *u8) -> i32 {
+    let _r: i32 = { SleepConditionVariableSRW(c, m, _infinite(), 0 as u32) };
+    return 0 as i32;
+}
+
+fn cond_signal(c: *u8) -> i32 {
+    { WakeConditionVariable(c) };
+    return 0 as i32;
+}
+
+fn cond_broadcast(c: *u8) -> i32 {
+    { WakeAllConditionVariable(c) };
+    return 0 as i32;
+}
+
+// `Sleep` takes milliseconds, so a sub-millisecond request rounds UP to 1
+// rather than down to 0 — every caller here is a backoff or a poll interval,
+// and a `sleep_us(50)` that returned immediately would turn one into a spin.
+fn sleep_us(us: u32) -> i32 {
+    if us == (0 as u32) {
+        { Sleep(0 as u32) };
+        return 0 as i32;
+    }
+    let ms: u32 = (us +% (999 as u32)) / (1000 as u32);
+    { Sleep(ms) };
+    return 0 as i32;
+}

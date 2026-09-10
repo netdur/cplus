@@ -36,6 +36,7 @@ import "facet/services" as services;
 import "facet/component" as component;
 import "facet/gestures" as gestures;
 import "facet/theme" as theme;
+import "facet/window" as app_window;
 import "facet/application" as app;
 import "objc/runtime" as rt;
 import "./views" as views;
@@ -68,6 +69,7 @@ import "./dialogs" as dialogs;
 //     vendor/facet_uikit/tools/run_ios_tests.sh
 import "./drawing" as drawing;
 import "./swipe" as swipe;
+import "./app_events_uikit" as app_events_uikit;
 
 fn renderer() -> mount::Renderer {
     return mount::Renderer {
@@ -90,13 +92,26 @@ fn install() {
     INSTALLED = true;
     // mount::install also arms M5 (touch -> schedule) and M6 (this thread
     // becomes THE UI thread; every tree write asserts it).
+    // WHICH BACKEND IS DRAWING. A `@` fact, so an application cannot overwrite
+    // it — an app that could claim a backend it is not running on would be
+    // lying to an agent about the one thing the agent cannot check itself.
+    app::set_backend_name("facet_uikit");
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
     theme::set_is_dark_fn(is_dark);
+    // The window cursor's platform half. Fewer slots than AppKit fills, and
+    // deliberately — see `window::window_host`.
+    app_window::install_host(window::window_host());
     theme::set_theme_changed_fn(theme_changed);
     component::install_sender_readers(input::sender_readers());
     gestures::install_key_reader(keys::reader());
     scheduler::install_sync_tick();
+    // The delegate fan-out: the application-level moments an SDK package needs
+    // a share of. Armed once per process and never disarmed — see arm(). It
+    // must be armed HERE rather than from `run_loop`, because `install` is what
+    // a headless test calls, and because arming before `UIApplicationMain` is
+    // what makes E_LAUNCHED reachable at all.
+    app_events_uikit::arm();
     return;
 }
 
@@ -108,6 +123,7 @@ fn installed() -> bool { return INSTALLED; }
 fn uninstall() {
     mount::uninstall();
     services::uninstall_scheduler();
+    app_window::uninstall_host();
     theme::set_is_dark_fn(0 as fn() -> bool);
     theme::set_theme_changed_fn(0 as fn());
     INSTALLED = false;

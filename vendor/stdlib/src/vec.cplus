@@ -115,6 +115,44 @@ fn with_capacity[T](minimum: usize) -> Vec[T] {
     return new::[T]();
 }
 
+// `Vec[T]` owns its buffer outright — no sharing, no aliasing, no interior
+// mutability — so moving one to another thread is sound exactly when moving
+// its elements is, which is what the `T: Send` condition says. The `_ptr`
+// field makes it `!Send`/`!Sync` by default; these markers opt in on that
+// condition, the same shape `Arc`/`Channel`/`Mutex` already use. Without
+// them `thread::spawn_with::[_, Vec[u8]]` is E0502, and so is every owned
+// aggregate with a `Vec` field — which is most of them.
+// ITERATION COPIES, so it is only sound when the element type is Copy — and
+// that bound is what this separate impl block is for. `iter` yields `{ *p }`, a
+// bit-copy of an element the `Vec` still owns: reading one is harmless, but
+// CONSUMING one gives the value two owners and frees it twice. The rule was
+// written in this file's comments from the start and simply never enforced, so
+// `for f in futures.iter() { await f; }` compiled and double-destroyed every
+// coroutine frame it touched (measured 2026-09-06: two elements, four drops).
+//
+// For a non-Copy `T`, read elements in place instead — `each_ref` / `fold_ref`
+// for a visitor, `at_ptr` / `at` by index — or `remove` / `remove_last` /
+// `swap_remove` when you actually want the element MOVED out.
+impl Vec[T: Copy] {
+    // Yield each element by value, in order, as an `Iterator[T]` (drives for-in
+    // and the iterator adapters). A gen *method* (receiver by value) rather than
+    // a free fn because the coroutine must own the receiver across suspension;
+    // a borrowed param does not survive one.
+    gen fn iter(this) -> T {
+        var i: usize = 0 as usize;
+        while i < this._len {
+            match this.at_ptr(i) {
+                option::Option[*T]::Some(p) => { yield { *p }; }
+                option::Option[*T]::None => { return; }
+            }
+            i = i +% (1 as usize);
+        }
+    }
+}
+
+impl Vec[T: Send]: Send {}
+impl Vec[T: Send + Sync]: Sync {}
+
 impl Vec[T] {
     // Grow the backing allocation to hold at least `new_cap` elements. Returns
     // `OutOfMemory` (leaving the vec unchanged and valid) if the size overflows
@@ -276,6 +314,30 @@ impl Vec[T] {
         return option::Option[T]::Some(value);
     }
 
+    // Move every element out, in order, as an `Iterator[T]`, leaving the
+    // vector empty. The consuming counterpart of `iter`: `iter` READS a
+    // container and is therefore `T: Copy`; `drain` EMPTIES one, so it is the
+    // accessor for a vector of owned resources — `JoinHandle`s to `join`,
+    // `Future`s to `wait` on, files to close — whose consuming verb `take`s
+    // its receiver and which `iter` cannot hand out. Before it existed the
+    // only spelling was `while let Some(v) = q.remove(0)`.
+    //
+    // Lazy, like every generator: an element leaves the vector only when the
+    // consumer asks for it, so a `break` leaves the rest in place — the
+    // second half of the `yield` report is what makes that true. Each step
+    // is a `remove(0)`, which shifts what remains: quadratic in the length,
+    // fine for the queue-of-handles this serves. A cursor that shifted once
+    // at the end would need that shift to run when the iterator is abandoned
+    // mid-way, and a generator's cancel edge runs drops, not code.
+    gen fn drain(ref this) -> T {
+        loop {
+            match this.remove(0 as usize) {
+                option::Option[T]::Some(v) => { yield v; }
+                option::Option[T]::None => { return; }
+            }
+        }
+    }
+
     fn remove_all(ref this) {
         var i: usize = 0 as usize;
         while i < this._len {
@@ -284,7 +346,6 @@ impl Vec[T] {
             i = i +% (1 as usize);
         }
         this._len = 0 as usize;
-        return;
     }
 
     fn truncate(ref this, to: usize) {
@@ -298,7 +359,6 @@ impl Vec[T] {
             i = i +% (1 as usize);
         }
         this._len = to;
-        return;
     }
 
     // Release unused capacity. If the shrinking `realloc` fails, the larger
@@ -380,7 +440,6 @@ impl Vec[T] {
             }
             i = i +% (1 as usize);
         }
-        return;
     }
 
     // Fold the elements into an accumulator, each element BORROWED (never moved or
@@ -423,24 +482,6 @@ impl Vec[T] {
         return status::Status::Ok;
     }
 
-    // Yield each element by value, in order, as an `Iterator[T]` (drives for-in
-    // and the iterator adapters). Intended for Copy `T`: iteration copies each
-    // element out, so for a non-Copy `T` the yielded value would alias storage —
-    // read those by index through `at_ptr` instead. This is a gen *method*
-    // (receiver by value), not a `[T: Copy]` free fn, because the coroutine must
-    // own the receiver across yields; a borrowed param does not survive suspension.
-    gen fn iter(this) -> T {
-        var i: usize = 0 as usize;
-        while i < this._len {
-            match this.at_ptr(i) {
-                option::Option[*T]::Some(p) => { yield { *p }; }
-                option::Option[*T]::None => { return; }
-            }
-            i = i +% (1 as usize);
-        }
-        return;
-    }
-
     // Bulk-copy `count` elements from a raw pointer (bitwise). The caller is
     // responsible for `T` being bit-copyable, or for the source relinquishing
     // ownership; this runs no element clone or drop. Mirrors the old vec.cplus
@@ -481,7 +522,6 @@ impl Vec[T] {
         if this._ptr.is_not_null() {
             { free(this._ptr as *u8); }
         }
-        return;
     }
 }
 
@@ -580,7 +620,6 @@ fn vec_append_and_at() {
         option::Option[i32]::Some(x) => { assert x == 20; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -591,7 +630,6 @@ fn vec_at_out_of_bounds_is_none() {
         option::Option[i32]::Some(x) => { assert false; }
         option::Option[i32]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -608,7 +646,6 @@ fn vec_first_last() {
         option::Option[i32]::Some(x) => { assert x == 9; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -618,7 +655,6 @@ fn vec_first_last_empty_is_none() {
         option::Option[i32]::Some(x) => { assert false; }
         option::Option[i32]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -658,7 +694,6 @@ fn vec_insert_shifts() {
         option::Option[i32]::Some(x) => { assert x == 2; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -670,7 +705,6 @@ fn vec_insert_at_count_appends() {
         option::Option[i32]::Some(x) => { assert x == 2; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -691,7 +725,6 @@ fn vec_set_replaces() {
         option::Option[i32]::Some(x) => { assert x == 99; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -711,7 +744,6 @@ fn vec_remove_last() {
         option::Option[i32]::None => { assert false; }
     }
     assert v.count() == (1 as usize);
-    return;
 }
 
 #[test]
@@ -721,7 +753,6 @@ fn vec_remove_last_empty_is_none() {
         option::Option[i32]::Some(x) => { assert false; }
         option::Option[i32]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -739,7 +770,6 @@ fn vec_swap_remove() {
         option::Option[i32]::Some(x) => { assert x == 30; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -760,7 +790,6 @@ fn vec_remove_preserves_order() {
     match v.at(2 as usize) { option::Option[i32]::Some(x) => { assert x == 40; } option::Option[i32]::None => { assert false; } }
     // Out of range → None.
     match v.remove(9 as usize) { option::Option[i32]::Some(_z) => { assert false; } option::Option[i32]::None => { } }
-    return;
 }
 
 #[test]
@@ -817,7 +846,6 @@ fn vec_append_slice() {
         option::Option[i32]::Some(x) => { assert x == 3; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -838,7 +866,6 @@ fn vec_at_ptr_reads_in_place() {
         option::Option[*i32]::Some(p) => { assert { *p } == 42; }
         option::Option[*i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -912,7 +939,6 @@ fn vec_fold_ref_borrows_noncopy_elements() {
         option::Option[*Vec[i32]]::Some(p) => { assert { *p }.count() == (2 as usize); }
         option::Option[*Vec[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -923,7 +949,6 @@ fn as_byte_view_reflects_elements() {
     let v: str = b.as_byte_view();
     assert #str_len(v) == (2 as usize);
     assert { *(#str_ptr(v)) } == (65 as u8);
-    return;
 }
 
 #[test]
@@ -931,5 +956,73 @@ fn as_byte_view_empty_is_empty() {
     let b: Vec[u8] = new::[u8]();
     let v: str = b.as_byte_view();
     assert #str_len(v) == (0 as usize);
-    return;
+}
+
+// ---- drain: owned elements move out, in order, lazily ----
+// `Vec[Vec[i32]]` so the element carries a drop: two owners of one buffer is
+// the double free the `yield` report was about, and ASan sees it if it
+// comes back (`cpc test --asan`).
+
+fn _owned_rows(n: i32) -> Vec[Vec[i32]] {
+    var rows: Vec[Vec[i32]] = new::[Vec[i32]]();
+    var i: i32 = 0;
+    while i < n {
+        var row: Vec[i32] = new::[i32]();
+        row.append(i);
+        rows.append(row);
+        i = i +% (1 as i32);
+    }
+    return rows;
+}
+
+#[test]
+fn drain_moves_every_element_out_in_order_and_empties_the_vec() {
+    var rows: Vec[Vec[i32]] = _owned_rows(3);
+    var seen: Vec[i32] = new::[i32]();
+    var kept: Vec[i32] = new::[i32]();
+    for row in rows.drain() {
+        match row.at(0 as usize) {
+            option::Option[i32]::Some(x) => { seen.append(x); }
+            option::Option[i32]::None => { assert false; }
+        }
+        // CONSUMED, not read: the binding is moved into a longer-lived owner.
+        kept = row;
+    }
+    assert rows.count() == (0 as usize);
+    assert seen.count() == (3 as usize);
+    match seen.at(0 as usize) { option::Option[i32]::Some(x) => { assert x == 0; } option::Option[i32]::None => { assert false; } }
+    match seen.at(2 as usize) { option::Option[i32]::Some(x) => { assert x == 2; } option::Option[i32]::None => { assert false; } }
+    match kept.at(0 as usize) { option::Option[i32]::Some(x) => { assert x == 2; } option::Option[i32]::None => { assert false; } }
+}
+
+#[test]
+fn drain_takes_only_what_the_loop_consumes() {
+    var rows: Vec[Vec[i32]] = _owned_rows(3);
+    var taken: i32 = 0;
+    for _row in rows.drain() {
+        taken = taken +% (1 as i32);
+        if taken == (1 as i32) { break; }
+    }
+    // One consumed, TWO left — the report measured one left, because the
+    // generator had already fetched the next element when the loop broke.
+    assert taken == (1 as i32);
+    assert rows.count() == (2 as usize);
+    match rows.at_ptr(0 as usize) {
+        option::Option[*Vec[i32]]::Some(p) => {
+            match { (*p).at(0 as usize) } {
+                option::Option[i32]::Some(x) => { assert x == 1; }
+                option::Option[i32]::None => { assert false; }
+            }
+        }
+        option::Option[*Vec[i32]]::None => { assert false; }
+    }
+}
+
+#[test]
+fn drain_of_an_empty_vec_yields_nothing() {
+    var rows: Vec[Vec[i32]] = new::[Vec[i32]]();
+    var n: i32 = 0;
+    for _row in rows.drain() { n = n +% (1 as i32); }
+    assert n == (0 as i32);
+    assert rows.count() == (0 as usize);
 }

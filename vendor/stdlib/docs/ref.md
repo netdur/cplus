@@ -47,7 +47,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`mutex`](#mutex) | `Mutex[T]`, `MutexGuard[T]` |
 | [`channel`](#channel) | `Channel[T]`, `ReceiveResult[T]` |
 | [`future`](#future) | `Future[T]`, `Poll[T]` |
-| [`executor`](#executor) | `block_on`, `spawn_local` |
+| [`executor`](#executor) | `spawn_local`, `yield_now`, the async↔thread bridge |
 | [`reactor`](#reactor) | event loop registration / poll |
 | [`time`](#time) | async timers |
 | [`marker`](#marker) | `Send` / `Sync` documentation anchor |
@@ -325,6 +325,27 @@ Platform-specific constants and errno access for `net`. Import as
 `stdlib/netsys`; resolver selects macOS/BSD, Linux, or Windows source.
 Public surface is shared across overrides (numeric constants + errno
 helper — see the active `netsys*.cplus`).
+
+Two socket options are worth naming, because a caller wants them by intent
+rather than by number and each platform spells them differently:
+
+```cplus
+fn set_nosigpipe(fd: i32) -> i32
+fn set_timeout(fd: i32, seconds: i64) -> i32
+```
+
+`set_nosigpipe` makes a write to a departed peer **report** instead of killing
+the process (`SO_NOSIGPIPE` on Darwin, `MSG_NOSIGNAL` inside `send_fd` on
+Linux, nothing needed on Windows).
+
+`set_timeout` bounds how long a read or a write may **wait**, in both
+directions. Without it a peer that accepts a connection and then says nothing
+hangs the calling thread for good — which no probe can predict, since a
+successful `connect(2)` says a socket accepted, not that anything behind it
+will answer, and a port forward (`adb forward`, `iproxy`) accepts on behalf of
+a device that may never reply. After expiry the syscall returns -1 with
+`eagain()`, which is how a caller tells a deadline from a peer that closed
+(0 bytes). Whole seconds; Winsock takes milliseconds and the shim converts.
 
 ---
 
@@ -652,6 +673,13 @@ struct Iterator[T] { /* compiler-known shape from gen fn */ }
 Methods include `next`, and combinators such as `filter` / `map` / `prefix`
 (see source). Produced by `gen fn`, not constructed by hand in normal code.
 
+Lazy: calling a `gen fn` runs none of its body; each `next()` (or `for`
+trip) resumes it for exactly one element, so a `break` leaves the rest
+unproduced. `yield x` moves `x` — the consumer's binding owns it and drops
+it, and `for x in it` drops each element at the end of its trip unless the
+body moves it out. `Vec::iter` therefore yields Copy elements only;
+`Vec::drain` is the accessor that moves owned elements out, in order.
+
 ---
 
 ## range
@@ -743,8 +771,11 @@ control block in ordinary code.
 ## executor
 
 ```cplus
-fn block_on[T](f: future::Future[T]) -> T
 fn spawn_local[T: Send](take f: future::Future[T])
+// Driving lives on the value (stdlib/future):
+//   fn wait(take this) -> T                      // to completion; a cancel request does not stop it
+//   fn wait_or_cancel[T](take f: Future[T]) -> WaitResult[T]   // free fn: Done(T) | Cancelled
+//   fn cancel(take this)
 ```
 
 Single-threaded driver: poll until complete; optional local spawn.
@@ -768,7 +799,7 @@ fn drain_pending() -> i32
 ```
 
 For external pumps (an event loop driving spawned futures without
-`block_on`), stable C-ABI exports include `stdlib_reactor_kqfd_v1()` — the
+`Future::wait`), stable C-ABI exports include `stdlib_reactor_kqfd_v1()` — the
 kqueue fd, itself pollable, so a run loop can watch it — plus the `_v1`
 forms of drain/poll above. facet's `spawn_ui` is the reference consumer.
 
@@ -814,6 +845,65 @@ for wrapped MIME), a length that cannot occur, and padding anywhere but the end.
 Both decoders accept padded and unpadded input, because that is a genuine
 difference between producers rather than malleability — the padding carries no
 information.
+
+---
+
+## url
+
+Take a URL apart. Views, not copies — `parse` allocates nothing.
+
+```cplus
+import "stdlib/url" as url;
+
+url::parse(s)                     // Option[Url]
+url::decode("a%20b")              // Text — percent only: the PATH rule
+url::decode_form("a+b")           // Text — percent + `+` as space: the QUERY rule
+```
+
+```cplus
+struct Url { scheme: str, host: str, port: u16, path: str, query: str, fragment: str }
+```
+
+| | |
+|---|---|
+| `is_scheme(name)` | case-insensitive, which is the only correct way to test one |
+| `is_web()` | http or https |
+| `segment(i)` / `segment_count()` | route components, **host first**; `""` past the end |
+| `query_value(key)` | `Option[Text]`, decoded; first occurrence wins |
+| `has_query(key)` | present at all, with or without a value |
+
+**Every field views the string that was parsed**, so the source has to outlive
+the `Url` — which means a named owner rather than a temporary:
+
+```cplus
+let s: str = incoming.view();     // named
+match url::parse(s) { ... }
+```
+
+**`segment`, not `path`, for routing.** `myapp://record/42` does not have
+"record" in its path — it is the HOST, because `//` opens an authority whatever
+the scheme is. `segment(0)` reads the host when there is one and the first path
+component when there is not, so `myapp://record/42`, `myapp:///record/42` and
+`myapp:record/42` all route identically. Empty segments are skipped, so a
+trailing or doubled `/` changes nothing.
+
+**Strict about structure, lenient about content.** A missing or malformed
+scheme is `None`, because a string that is not a URL must not parse as one with
+an empty scheme — that is how a relative path becomes a link. A port that is
+not a number is `None` too, because misreading it corrupts the host beside it.
+Decoding goes the other way: `%zz` decodes to a literal `%zz` rather than
+failing. Unlike `base64`, nothing here is signed, and a link that refuses to
+open because somebody typed a `%` into a title is a worse failure than a `%`
+that survives into the title.
+
+`decode` and `decode_form` differ only in `+`, and getting that backwards turns
+a filename with a `+` in it into one with a space. `+` means a space in
+`application/x-www-form-urlencoded`, which is what a query string is in
+practice, and a literal `+` everywhere else. `query_value` uses the form rule.
+
+Userinfo (`https://user:pw@host/`) is dropped rather than handed back. IPv6
+literals lose their brackets: `http://[::1]:8080/` answers host `::1`, port
+8080.
 
 ---
 

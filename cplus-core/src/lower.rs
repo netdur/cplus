@@ -6,10 +6,10 @@
 //! 1. Emits the slice-specific diagnostics:
 //!    - E0347: irrefutable `if let` pattern (use plain `let`)
 //!    - E0348: `guard let` else block must diverge (return / break / continue)
-//!    - E0349: `guard let` else complement is not exhaustive with the
-//!      success pattern (only fires when the user wrote an explicit
-//!      `else |Pat|` form — without a complement we synthesize `_`
-//!      which is trivially exhaustive)
+//!    - non-exhaustive `guard let` else-pattern: reported as E0340 by the
+//!      exhaustiveness check on the synthesized match, not by a dedicated
+//!      code. Only reachable when the user named an else-pattern — omitted,
+//!      we synthesize `_`, which is trivially exhaustive.
 //!    - E0350: `guard let` complement overlaps the success pattern
 //!    - E0351: `guard let` requires the success pattern to bind at least
 //!      one value (else it's just an `if let` with side effects)
@@ -75,6 +75,11 @@ pub fn lower_multi(
     // the same reason derive does it here, and with the same consequence:
     // the rest of the compiler sees a hand-written method.
     cx.expand_interface_defaults(prog);
+    // v0.0.31: `async fn main` / `#[test] async fn`. Split each into a
+    // module-private async body plus a synchronous entry that drives it,
+    // before the const and parameter tables are built so the synthesized
+    // functions are ordinary items to everything that follows.
+    cx.desugar_async_entries(prog);
     // v0.0.9 Phase 4: collect consts and validate initializers (both
     // const and static initializers must be literals). Done before the
     // per-item walk so the substitution pass sees a populated table.
@@ -107,9 +112,9 @@ pub fn lower_multi(
 /// One parameter as seen by the named-argument / default-value lowering: its
 /// name (the label) and its default value expression, if any.
 #[derive(Clone)]
-struct ParamInfo {
-    name: String,
-    default: Option<Expr>,
+pub(crate) struct ParamInfo {
+    pub(crate) name: String,
+    pub(crate) default: Option<Expr>,
 }
 
 /// Where a lowered call's argument in one parameter position comes from.
@@ -126,6 +131,97 @@ fn param_info(p: &Param) -> ParamInfo {
         name: p.name.name.clone(),
         default: p.default.as_deref().cloned(),
     }
+}
+
+/// Do two candidates splice the same VALUES into their `Default` slots?
+///
+/// The lists come from `splice_sig`: one entry per parameter position, `Some`
+/// where the call omitted a defaulted parameter and `None` where it supplied an
+/// argument. Two candidates that agree here lower the call identically, so
+/// either may be used and the call is not ambiguous.
+///
+/// The comparison is deliberately by value and deliberately narrow — see
+/// [`same_const_default`]. It answers "provably the same" and nothing else, so
+/// a shape it cannot read stays ambiguous rather than becoming a silent pick.
+fn same_default_list(a: &[Option<Expr>], b: &[Option<Expr>]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b.iter()).all(|(x, y)| match (x, y) {
+            (None, None) => true,
+            (Some(x), Some(y)) => same_const_default(x, y),
+            _ => false,
+        })
+}
+
+/// Are these two default expressions the same VALUE?
+///
+/// Restricted to closed literal forms — a literal, a cast of one, a unary
+/// operator over one. That is what a default value is in practice (`ctx: i32 =
+/// 0`, `once: bool = false`, `scale: f64 = 1.0`, `sep: str = ""`), and it is
+/// the subset whose equality can be decided from the AST alone.
+///
+/// Anything naming a binding returns `false`, and that is the point rather
+/// than a gap: two `FOO`s written in two modules can be two different consts,
+/// and a default is CLONED INTO THE CALL SITE, so "same text" is not "same
+/// value". Answering `false` leaves the call ambiguous, which is what this
+/// compiler did for every default before — the narrow reading loses nothing
+/// that was working and cannot invent an agreement that isn't there.
+///
+/// Floats compare by bit pattern: `0.0` and `-0.0` splice differently, and NaN
+/// defaults are not equal to themselves, which is the conservative answer.
+fn same_const_default(a: &Expr, b: &Expr) -> bool {
+    match (&a.kind, &b.kind) {
+        (ExprKind::IntLit(x, xs), ExprKind::IntLit(y, ys)) => x == y && xs == ys,
+        (ExprKind::FloatLit(x, xs), ExprKind::FloatLit(y, ys)) => {
+            x.to_bits() == y.to_bits() && xs == ys
+        }
+        (ExprKind::BoolLit(x), ExprKind::BoolLit(y)) => x == y,
+        (ExprKind::StrLit(x), ExprKind::StrLit(y)) => x == y,
+        (ExprKind::CStrLit(x), ExprKind::CStrLit(y)) => x == y,
+        (
+            ExprKind::Unary { op: xo, operand: x },
+            ExprKind::Unary { op: yo, operand: y },
+        ) => xo == yo && same_const_default(x, y),
+        (
+            ExprKind::Cast { expr: x, ty: xt },
+            ExprKind::Cast { expr: y, ty: yt },
+        ) => {
+            crate::mangling::render_ast(xt) == crate::mangling::render_ast(yt)
+                && same_const_default(x, y)
+        }
+        _ => false,
+    }
+}
+
+/// Arrange one call's arguments against ONE known parameter list: reorder the
+/// labelled arguments into parameter order and splice the defaults the call
+/// omitted, returning the new argument list.
+///
+/// This is the same matcher `lower_named_call` runs, exposed for sema, which
+/// reaches the cases this pass cannot decide. Lowering keys method candidates
+/// by bare name because it has no types; sema knows the receiver's type, looks
+/// up the ONE parameter list that belongs to it, and calls this. Both routes
+/// therefore agree on labels, duplicates, arity and default placement by
+/// construction rather than by two implementations staying in step.
+pub(crate) fn arrange_named_args(
+    params: &[ParamInfo],
+    args: &[Expr],
+    labels: &[Option<Ident>],
+    call_span: Span,
+) -> Result<Vec<Expr>, (&'static str, String, Span)> {
+    let slots = Lower::match_call(params, args, labels, call_span)?;
+    let mut out = Vec::with_capacity(slots.len());
+    for (pos, slot) in slots.iter().enumerate() {
+        match slot {
+            ArgSlot::Arg(ai) => out.push(args[*ai].clone()),
+            ArgSlot::Default => out.push(
+                params[pos]
+                    .default
+                    .clone()
+                    .expect("Default slot only for a parameter that has one"),
+            ),
+        }
+    }
+    return Ok(out);
 }
 
 struct Lower {
@@ -150,7 +246,24 @@ struct Lower {
     /// `Type::function` suffix. A qualified call such as `json::Value::parse`
     /// uses the final two path segments to select this table.
     assoc_params: std::collections::HashMap<String, Vec<Vec<ParamInfo>>>,
+    /// How deep we are inside defaults spliced from other defaults. A default
+    /// is an expression, and lowering the one just spliced is what lets a
+    /// default call a function that has defaults of its own — but a default may
+    /// also name its own function, so the nesting has to be bounded rather than
+    /// trusted. See `MAX_DEFAULT_SPLICE_DEPTH`.
+    default_splice_depth: usize,
 }
+
+/// How many defaults may be spliced out of one another before the compiler
+/// calls it a cycle.
+///
+/// A default is allowed to be a call (`fn open(r: Request = Request::new())`)
+/// and that call is allowed to omit ITS defaults, so one splice can produce
+/// another. `fn f(a: i32 = f())` produces them without end, and a compiler that
+/// hangs is a worse answer than the arity error this replaced — so the nesting
+/// is capped and the cap is an error the author can read. Sixteen is far past
+/// anything a person writes and far short of anything that takes time.
+const MAX_DEFAULT_SPLICE_DEPTH: usize = 16;
 
 impl Lower {
     fn new(
@@ -174,6 +287,7 @@ impl Lower {
             fn_params: std::collections::HashMap::new(),
             method_params: std::collections::HashMap::new(),
             assoc_params: std::collections::HashMap::new(),
+            default_splice_depth: 0,
         }
     }
 
@@ -301,8 +415,11 @@ impl Lower {
     /// (so every later pass — and codegen — sees an ordinary positional call;
     /// evaluation order follows the lowered positional order). If none accept
     /// the call, the first concrete mismatch is reported. If several accept it
-    /// *differently*, it is ambiguous without type info — the labels are left
-    /// for sema's E1002.
+    /// *differently*, the choice needs the receiver's type, which this pass
+    /// does not have: the labels are left in place and sema arranges the call
+    /// once it knows what the receiver is (`try_arrange_named_call`). Only a
+    /// callee sema cannot pin to one type either — a fn-pointer value, a
+    /// generic receiver — reaches E1002.
     fn lower_named_call(
         &mut self,
         callee: &Expr,
@@ -335,11 +452,18 @@ impl Lower {
         let mut results: Vec<(usize, Vec<ArgSlot>)> = Vec::new();
         let mut first_err: Option<(&'static str, String, Span)> = None;
         // Two arrangements are the same only if they'd produce the same
-        // lowered call: same slot shape AND the same exprs spliced into the
+        // lowered call: same slot shape AND the same values spliced into the
         // `Default` slots. Comparing slots alone deduped `Sig::on(v, ctx=0,
         // once=false)` against `Bus::on(name, v, ctx=0)` for a 2-arg call
         // (both are `[Arg0, Arg1, Default]`) and spliced the FIRST
         // candidate's `false` into the other type's `*u8` slot.
+        //
+        // By VALUE, via `same_default_list` — not by `Expr` equality, which
+        // includes the span. Two types declaring `fn on(v: i32, ctx: i32 = 0)`
+        // splice a `0` written in two different impl blocks; those `Expr`s are
+        // never equal, so every call omitting a shared default fell out of the
+        // dedup and was reported as ambiguous between two candidates that a
+        // reader cannot tell apart and that lower the call identically.
         let splice_sig = |ci: usize, slots: &[ArgSlot]| -> Vec<Option<Expr>> {
             slots
                 .iter()
@@ -350,33 +474,12 @@ impl Lower {
                 })
                 .collect()
         };
-        // Compared with `same_default`, NOT with `==`. `Expr` carries its
-        // `Span` and `Span` derives `PartialEq`, so two defaults that are the
-        // same value written on different lines are structurally UNEQUAL — and
-        // this comparison is the whole of what decides whether two candidates
-        // are "the same arrangement". Two types declaring the identical method
-        // therefore looked like two different arrangements, `results.len()`
-        // came back 2, and every named call to that method died on sema's
-        // E1002 telling the caller their labels were "in different positions"
-        // when they were in the same ones. `vendor/static-arena` — two arenas,
-        // one `alloc_bytes(count, aligned_to:, zeroed:)` apiece — could not
-        // compile at all, on any platform, and the message pointed away from
-        // the cause. `check_call`'s own comment states the invariant this
-        // restores: "Identical signatures are fine: every candidate yields the
-        // same order."
-        let sigs_agree = |a: &[Option<Expr>], b: &[Option<Expr>]| -> bool {
-            a.len() == b.len()
-                && a.iter().zip(b.iter()).all(|(x, y)| match (x, y) {
-                    (None, None) => true,
-                    (Some(p), Some(q)) => Self::same_default(p, q),
-                    _ => false,
-                })
-        };
         for (ci, params) in candidates.iter().enumerate() {
             match Self::match_call(params, args, arg_labels, call_span) {
                 Ok(slots) => {
                     if !results.iter().any(|(pci, s)| {
-                        *s == slots && sigs_agree(&splice_sig(*pci, s), &splice_sig(ci, &slots))
+                        *s == slots
+                            && same_default_list(&splice_sig(*pci, s), &splice_sig(ci, &slots))
                     }) {
                         results.push((ci, slots));
                     }
@@ -388,107 +491,37 @@ impl Lower {
                 }
             }
         }
-        if results.len() == 1 {
+        // One candidate for the name — a free fn, an associated fn, a method
+        // only one type declares — is the receiver's by construction, so its
+        // verdict is the call's verdict either way.
+        let sole_candidate = candidates.len() == 1;
+        // With several candidates, ACCEPTING is not the same as BELONGING.
+        // `A::go(v, ctx = 0)` and `B::go(ctx, v = 9)`: written `a.go(ctx: 3)`,
+        // only B accepts — it is the sole surviving arrangement, and applying
+        // it bound the label `ctx` to A's parameter `v` and spliced B's `9`
+        // into A's `ctx`. A silently wrong call, from a declaration on an
+        // unrelated type. So a candidate REJECTING is itself type-dependent
+        // information: it means the answer turns on which type the receiver
+        // is, which this pass cannot know. Decide here only when every
+        // candidate accepted and they all agree; otherwise leave it for sema,
+        // which knows the receiver's type and either arranges the call from
+        // that type's own parameter list or reports against it.
+        let no_candidate_rejected = first_err.is_none();
+        if results.len() == 1 && (sole_candidate || no_candidate_rejected) {
             let (ci, slots) = &results[0];
             Self::apply_slots(&candidates[*ci], args, arg_labels, slots);
-        } else if results.is_empty() {
+            self.lower_spliced_defaults(args, slots, call_span);
+        } else if results.is_empty() && sole_candidate {
             if let Some((code, msg, span)) = first_err {
                 self.err(code, msg, span);
             }
             // Consumed (errored): clear labels so sema doesn't double-report.
             arg_labels.clear();
         }
-        // results.len() > 1: ambiguous without types — leave labels for sema E1002.
-    }
-
-    /// Do two parameter defaults denote the SAME VALUE, ignoring where each was
-    /// written? The question `lower_named_call`'s dedup actually needs, and the one
-    /// `==` cannot answer: `Expr` carries a `Span` at every level of the tree, so
-    /// `8` on line 89 and `8` on line 150 are not `==`.
-    ///
-    /// It covers the shapes a default takes — a literal, an enum path, a cast of
-    /// one, a unary minus, a constructor call — and ANYTHING ELSE ANSWERS `false`.
-    /// That fallback is deliberate and it is the safe direction: `false` means "two
-    /// distinct arrangements", which is exactly what the span-sensitive comparison
-    /// used to say about everything, so an unrecognised shape keeps today's
-    /// behaviour (an E1002 the caller can work around positionally) rather than
-    /// risking the failure the dedup exists to prevent — splicing one candidate's
-    /// default into another candidate's slot. `Sig::on(v, ctx = 0, once = false)`
-    /// against `Bus::on(name, v, ctx = 0)` still disagrees at the shared position,
-    /// because `false` and `0` are different kinds.
-    ///
-    /// Deliberately NOT a general span-blind `Expr` equality. `ast::walk_expr` could
-    /// build one for `Expr` and `Type` exhaustively, but `Ident` carries a span too
-    /// and the walkers hand those through untouched — so a `Path` comparison would
-    /// still be span-sensitive and the general-looking helper would quietly be a
-    /// partial one. This is the partial one, and says so.
-    fn same_default(a: &Expr, b: &Expr) -> bool {
-        match (&a.kind, &b.kind) {
-            // `8`, `1.0f64`, `false`, `""` — the common case by a wide margin.
-            // The literal's suffix is part of the value: `0` and `0u8` splice
-            // differently.
-            (ExprKind::IntLit(x, sx), ExprKind::IntLit(y, sy)) => x == y && sx == sy,
-            (ExprKind::FloatLit(x, sx), ExprKind::FloatLit(y, sy)) => x == y && sx == sy,
-            (ExprKind::BoolLit(x), ExprKind::BoolLit(y)) => x == y,
-            (ExprKind::StrLit(x), ExprKind::StrLit(y)) => x == y,
-            (ExprKind::CStrLit(x), ExprKind::CStrLit(y)) => x == y,
-            // A bare name, and a qualified one — `vocab::Easing::SinInOut` is the
-            // single most common default in this tree. Compared by NAME only: the
-            // spans on the segments are what this whole helper exists to ignore.
-            (ExprKind::Ident(x), ExprKind::Ident(y)) => x == y,
-            (ExprKind::Path { segments: x }, ExprKind::Path { segments: y }) => {
-                x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.name == q.name)
-            }
-            // `0 as *u8`, `-1 as i32`. The TARGET TYPE is compared by its rendered
-            // form rather than by `==`, for the same reason as everything else here
-            // — `Type` carries a span.
-            (
-                ExprKind::Cast { expr: x, ty: tx },
-                ExprKind::Cast { expr: y, ty: ty_ },
-            ) => Self::same_default(x, y) && format!("{:?}", tx.kind) == format!("{:?}", ty_.kind),
-            (
-                ExprKind::Unary { op: ox, operand: x },
-                ExprKind::Unary { op: oy, operand: y },
-            ) => ox == oy && Self::same_default(x, y),
-            (
-                ExprKind::Binary { op: ox, lhs: lx, rhs: rx },
-                ExprKind::Binary { op: oy, lhs: ly, rhs: ry },
-            ) => ox == oy && Self::same_default(lx, ly) && Self::same_default(rx, ry),
-            // `vocab::Duration::animation()`, `text::new()`. Labels and turbofish
-            // are compared too: a default is only the same value if the call that
-            // produces it is the same call.
-            (
-                ExprKind::Call {
-                    callee: cx,
-                    args: ax,
-                    arg_labels: lx,
-                    type_args: tx,
-                },
-                ExprKind::Call {
-                    callee: cy,
-                    args: ay,
-                    arg_labels: ly,
-                    type_args: ty_,
-                },
-            ) => {
-                Self::same_default(cx, cy)
-                    && ax.len() == ay.len()
-                    && ax.iter().zip(ay.iter()).all(|(p, q)| Self::same_default(p, q))
-                    && lx.len() == ly.len()
-                    && lx.iter().zip(ly.iter()).all(|(p, q)| match (p, q) {
-                        (None, None) => true,
-                        (Some(m), Some(n)) => m.name == n.name,
-                        _ => false,
-                    })
-                    && tx.len() == ty_.len()
-                    && tx
-                        .iter()
-                        .zip(ty_.iter())
-                        .all(|(p, q)| format!("{:?}", p.kind) == format!("{:?}", q.kind))
-            }
-            // Everything else: not recognised, so not provably the same value.
-            _ => false,
-        }
+        // Everything else needs the receiver's type: the labels stay in place
+        // and sema arranges the call (`try_arrange_named_call`) or splices its
+        // trailing defaults (`try_splice_method_defaults`) from the parameter
+        // list that actually belongs to the receiver.
     }
 
     /// Match a call's `args`/`labels` against one parameter list. Returns, per
@@ -567,6 +600,58 @@ impl Lower {
             }
         }
         Ok(out)
+    }
+
+    /// A SPLICED DEFAULT IS AN EXPRESSION NOTHING HAS LOWERED YET.
+    ///
+    /// The arguments the caller WROTE are walked by `lower_expr` before this
+    /// pass runs; a default is cloned in afterwards, out of a table, exactly as
+    /// the declaration wrote it. So a default that is itself a call omitting
+    /// its own defaults kept the declaration's arity all the way to sema, which
+    /// reported it against the DECLARATION's span — an error pointing at a line
+    /// the caller never wrote:
+    ///
+    /// ```text
+    /// fn inner(a: i32 = 7) -> i32 { return a; }
+    /// fn outer(x: i32 = inner()) -> i32 { return x; }
+    /// outer()   ->  E0308: function `inner` takes 1 argument(s), got 0
+    /// ```
+    ///
+    /// It looked like a header or slice problem because that is where it was
+    /// found — `camera::open()`, whose default is `Request::new()` and whose
+    /// eleven defaults live on the other side of a generated header. It is
+    /// neither: five lines in one file reproduce it.
+    ///
+    /// So each newly spliced argument is lowered here, which is also what makes
+    /// a labelled call inside a default work (`= f(b: 2)`).
+    fn lower_spliced_defaults(&mut self, args: &mut [Expr], slots: &[ArgSlot], call_span: Span) {
+        let positions: Vec<usize> = slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| matches!(s, ArgSlot::Default))
+            .map(|(i, _)| i)
+            .collect();
+        if positions.is_empty() {
+            return;
+        }
+        if self.default_splice_depth >= MAX_DEFAULT_SPLICE_DEPTH {
+            self.err(
+                "E1009",
+                format!(
+                    "a default value is nested more than {} deep — a default that calls its own function has no end",
+                    MAX_DEFAULT_SPLICE_DEPTH
+                ),
+                call_span,
+            );
+            return;
+        }
+        self.default_splice_depth += 1;
+        for pos in positions {
+            if let Some(a) = args.get_mut(pos) {
+                self.lower_expr(a);
+            }
+        }
+        self.default_splice_depth -= 1;
     }
 
     /// Rebuild `args` from `slots` (each position takes an original arg or the
@@ -1145,7 +1230,7 @@ impl Lower {
 
     /// `guard let PAT = E else { ELSE };`
     ///   → `let X = match E { PAT => X, _ => { ELSE } };`
-    /// `guard let PAT = E else |COMP| { ELSE };`
+    /// `guard let PAT = E else COMP { ELSE };`
     ///   → `let X = match E { PAT => X, COMP => { ELSE } };`
     /// (where `X` is the single binding extracted from `PAT`.)
     /// `guard var` emits the same rewrite with a `var` head instead of
@@ -1191,7 +1276,7 @@ impl Lower {
         }
         let extracted = bindings.into_iter().next().unwrap();
 
-        // E0349 / E0350: complement (if user wrote `else |Pat|`) must
+        // E0350: the else-pattern (if the user named one) must
         // exhaustively cover the scrutinee together with the success
         // pattern AND must not overlap it. Without a complement we
         // synthesize `_` which is trivially exhaustive and disjoint from
@@ -1375,8 +1460,8 @@ impl Lower {
         // when the lowering pass gets access to a sema context; in the
         // meantime the synthesized match runs through slice-3I
         // exhaustiveness check which will catch missing variants there
-        // (sema's E0343 instead of E0349). Accept E0343 as the surface
-        // error until the dedicated check moves in.
+        // (sema's E0343). Accept E0343 as the surface error; there is no
+        // dedicated guard-let coverage code.
     }
 
     // ---- v0.0.9 Phase 4: const + static literal-only check + const substitution ----
@@ -3997,6 +4082,117 @@ impl Lower {
     }
 }
 
+impl Lower {
+    /// v0.0.31: an entry the compiler drives. `async fn main() -> i32` and
+    /// `#[test] async fn t()` are pure sugar over the one drive loop the
+    /// language has: the async body moves to a module-private
+    /// `__async_<name>`, and a synchronous `<name>` takes its place whose
+    /// whole body is `#block_on::[T](__async_<name>())`. Every pass after
+    /// this one sees two ordinary functions, so `main`'s signature rule
+    /// (E0309) and the test-fn rule (E0358) judge the wrapper exactly as
+    /// they judge a hand-written entry — `async fn main()` with a unit
+    /// return is E0309 for the same reason `fn main()` is.
+    ///
+    /// `await` itself is untouched: it still means suspend, and is still
+    /// only legal inside an `async fn`. Driving a future from other
+    /// synchronous code stays a spelled call (`f.wait()`, `future::wait_or_cancel(f)`),
+    /// which is the form you want to find when a thread stalls.
+    ///
+    /// Only an entry qualifies: a free `async fn` that is `main` or carries
+    /// `#[test]`, with no parameters and no generics. Any other shape is
+    /// left alone so the existing diagnostics name it.
+    fn desugar_async_entries(&mut self, prog: &mut Program) {
+        let mut wrappers: Vec<(usize, Item)> = Vec::new();
+        for (idx, item) in prog.items.iter_mut().enumerate() {
+            let ItemKind::Function(f) = &mut item.kind else {
+                continue;
+            };
+            if !f.is_async || f.is_gen || f.is_extern || f.is_declaration {
+                continue;
+            }
+            let is_test = f.attributes.iter().any(|a| a.path.name == "test");
+            if f.name.name != "main" && !is_test {
+                continue;
+            }
+            if !f.params.is_empty() || !f.generic_params.is_empty() {
+                continue;
+            }
+            let span = f.name.span;
+            let entry_name = f.name.clone();
+            let body_name = format!("__async_{}", entry_name.name);
+            // `#block_on::[T](__async_<name>())` — T spelled from the
+            // declared return, `()` when there is none (the canonical unit
+            // spelling the parser itself produces).
+            let t = f.return_type.clone().unwrap_or(Type {
+                kind: TypeKind::Path("()".to_string()),
+                span,
+            });
+            let call = Expr {
+                kind: ExprKind::Call {
+                    callee: Box::new(Expr {
+                        kind: ExprKind::Ident(body_name.clone()),
+                        span,
+                    }),
+                    args: Vec::new(),
+                    arg_labels: Vec::new(),
+                    type_args: Vec::new(),
+                },
+                span,
+            };
+            let drive = Expr {
+                kind: ExprKind::Intrinsic {
+                    name: "block_on".to_string(),
+                    type_args: vec![t],
+                    args: vec![call],
+                    ret_ty: None,
+                },
+                span,
+            };
+            let stmt = if f.return_type.is_some() {
+                StmtKind::Return(Some(drive))
+            } else {
+                StmtKind::Expr(drive)
+            };
+            let wrapper = Function {
+                name: entry_name,
+                params: Vec::new(),
+                return_type: f.return_type.clone(),
+                body: Block {
+                    stmts: vec![Stmt { kind: stmt, span }],
+                    tail: None,
+                    span: f.body.span,
+                },
+                is_extern: false,
+                is_declaration: false,
+                is_variadic: false,
+                is_pub: f.is_pub,
+                // The attributes ride with the entry: `#[test]` is what the
+                // runner discovers, and a contract on `main` judges the value
+                // the program exits with.
+                attributes: std::mem::take(&mut f.attributes),
+                generic_params: Vec::new(),
+                is_async: false,
+                is_gen: false,
+            };
+            f.name.name = body_name;
+            f.is_pub = false;
+            wrappers.push((
+                idx,
+                Item {
+                    kind: ItemKind::Function(wrapper),
+                    span: item.span,
+                    origin_file: item.origin_file.clone(),
+                },
+            ));
+        }
+        // Each wrapper goes right after its body, back to front so the
+        // recorded indices stay valid.
+        for (idx, it) in wrappers.into_iter().rev() {
+            prog.items.insert(idx + 1, it);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4297,7 +4493,7 @@ fn main() -> i32 { return 0; }\n";
             enum Maybe { Some(i32), None }
             fn main() -> i32 {
                 let m: Maybe = Maybe::Some(7);
-                guard let Maybe::Some(v) = m else |Maybe::Some(_)| { return 0; };
+                guard let Maybe::Some(v) = m else Maybe::Some(_) { return 0; };
                 return v;
             }
         "#;
@@ -5196,5 +5392,423 @@ fn main() -> i32 { return 0; }\n";
             matches!(&callee.kind, ExprKind::Field { name, .. } if name.name == "to_text")
         });
         assert!(has_to_text_call, "nested field should call to_text");
+    }
+
+    // ---- v0.0.31: `async fn main` / `#[test] async fn` desugar ----
+
+    fn fn_named<'a>(prog: &'a Program, name: &str) -> &'a Function {
+        prog.items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) if f.name.name == name => Some(f),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no fn `{name}` in {:#?}", prog.items))
+    }
+
+    /// The body of a wrapper is exactly `#block_on::[T](__async_<name>())`,
+    /// as a `return` when the entry declares a type and a bare statement
+    /// when it doesn't. Returns the spelled `T`.
+    fn drive_type_of<'a>(stmt: &'a Stmt, body_name: &str) -> &'a TypeKind {
+        let drive = match &stmt.kind {
+            StmtKind::Return(Some(e)) => e,
+            StmtKind::Expr(e) => e,
+            other => panic!("wrapper statement is not a drive: {other:?}"),
+        };
+        let ExprKind::Intrinsic {
+            name,
+            type_args,
+            args,
+            ret_ty,
+        } = &drive.kind
+        else {
+            panic!("wrapper body is not an intrinsic: {drive:?}");
+        };
+        assert_eq!(name, "block_on");
+        assert!(ret_ty.is_none());
+        assert_eq!(type_args.len(), 1, "one type arg: {type_args:?}");
+        assert_eq!(args.len(), 1);
+        let ExprKind::Call { callee, args, .. } = &args[0].kind else {
+            panic!("drive operand is not a call: {:?}", args[0]);
+        };
+        assert!(args.is_empty());
+        assert!(
+            matches!(&callee.kind, ExprKind::Ident(n) if n == body_name),
+            "callee should be `{body_name}`: {callee:?}"
+        );
+        &type_args[0].kind
+    }
+
+    #[test]
+    fn async_main_splits_into_a_sync_entry_and_a_private_async_body() {
+        let (prog, diags) = run("async fn main() -> i32 { return 1; }");
+        assert!(diags.is_empty(), "{diags:?}");
+        let main = fn_named(&prog, "main");
+        assert!(!main.is_async, "the entry is synchronous");
+        assert!(main.params.is_empty());
+        assert!(
+            matches!(main.return_type.as_ref().map(|t| &t.kind), Some(TypeKind::Path(p)) if p == "i32")
+        );
+        assert_eq!(main.body.stmts.len(), 1);
+        assert!(main.body.tail.is_none());
+        assert!(matches!(main.body.stmts[0].kind, StmtKind::Return(_)));
+        let t = drive_type_of(&main.body.stmts[0], "__async_main");
+        assert!(matches!(t, TypeKind::Path(p) if p == "i32"));
+        let body = fn_named(&prog, "__async_main");
+        assert!(body.is_async, "the user's body keeps its async");
+        assert!(body.attributes.is_empty());
+        assert!(!body.is_pub);
+        // The wrapper sits right after its body.
+        let names: Vec<&str> = prog
+            .items
+            .iter()
+            .filter_map(|it| match &it.kind {
+                ItemKind::Function(f) => Some(f.name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, vec!["__async_main", "main"]);
+    }
+
+    #[test]
+    fn async_test_fn_keeps_the_attribute_on_the_entry() {
+        let (prog, diags) = run("#[test] async fn t() { }\n#[test] export async fn u() -> i32 { return 0; }");
+        assert!(diags.is_empty(), "{diags:?}");
+        let t = fn_named(&prog, "t");
+        assert!(!t.is_async);
+        assert!(t.attributes.iter().any(|a| a.path.name == "test"));
+        assert!(t.return_type.is_none());
+        assert!(matches!(t.body.stmts[0].kind, StmtKind::Expr(_)), "unit entry: bare drive");
+        let ty = drive_type_of(&t.body.stmts[0], "__async_t");
+        assert!(matches!(ty, TypeKind::Path(p) if p == "()"), "unit spelled `()`: {ty:?}");
+        let body = fn_named(&prog, "__async_t");
+        assert!(body.is_async && body.attributes.is_empty());
+        // `export` follows the entry too; the body is private either way.
+        let u = fn_named(&prog, "u");
+        assert!(u.is_pub && !u.is_async);
+        assert!(!fn_named(&prog, "__async_u").is_pub);
+    }
+
+    #[test]
+    fn async_entries_of_other_shapes_and_plain_async_fns_are_left_alone() {
+        let (prog, _) = run(
+            "async fn main(x: i32) -> i32 { return x; }\n\
+             async fn helper() -> i32 { return 1; }\n\
+             #[test] async fn g[T]() { }",
+        );
+        assert!(fn_named(&prog, "main").is_async, "a main with params is not an entry shape");
+        assert!(fn_named(&prog, "helper").is_async, "a plain async fn is not an entry");
+        assert!(fn_named(&prog, "g").is_async, "a generic test is not an entry shape");
+        assert!(prog.items.iter().all(|it| {
+            !matches!(&it.kind, ItemKind::Function(f) if f.name.name.starts_with("__async_"))
+        }));
+    }
+
+    #[test]
+    fn sync_main_and_sync_tests_are_untouched() {
+        let src = "fn main() -> i32 { return 0; }\n#[test] fn t() { }";
+        let (prog, _) = run(src);
+        let (again, _) = run(src);
+        assert_eq!(prog.items.len(), 2);
+        assert_eq!(prog, again);
+        assert!(!fn_named(&prog, "main").is_async);
+    }
+
+    // ---- named arguments: what this pass may decide without types ----
+    //
+    // `lower_named_call` keys method candidates by BARE NAME — it runs before
+    // sema, so the receiver's type does not exist yet. Everything below is
+    // about the line between what that table can settle and what it must hand
+    // to sema, which knows the type.
+
+    /// The first method call named `method` in `main`, as (its integer
+    /// arguments in order, how many labels it still carries). An arranged call
+    /// has no labels left; one this pass declined to decide keeps them.
+    fn method_call_in_main(prog: &Program, method: &str) -> (Vec<u64>, usize) {
+        let f = fn_named(prog, "main");
+        let mut found: Option<(Vec<u64>, usize)> = None;
+        visit_exprs_in_block(&f.body, &mut |e| {
+            if found.is_some() {
+                return;
+            }
+            if let ExprKind::Call {
+                callee,
+                args,
+                arg_labels,
+                ..
+            } = &e.kind
+            {
+                if matches!(&callee.kind, ExprKind::Field { name, .. } if name.name == method) {
+                    found = Some((int_args(args), arg_labels.len()));
+                }
+            }
+        });
+        return found.expect("a method call in main");
+    }
+
+    fn int_args(args: &[Expr]) -> Vec<u64> {
+        return args
+            .iter()
+            .map(|a| match &a.kind {
+                ExprKind::IntLit(v, _) => *v,
+                other => panic!("expected an int literal argument, got {other:?}"),
+            })
+            .collect();
+    }
+
+    /// The arguments of a free call to `outer` in `main`, where the argument at
+    /// `pos` is itself expected to be a call to `inner`.
+    fn nested_call_args(prog: &Program, outer: &str, inner: &str) -> Vec<u64> {
+        let f = fn_named(prog, "main");
+        let mut found: Option<Vec<u64>> = None;
+        visit_exprs_in_block(&f.body, &mut |e| {
+            if found.is_some() {
+                return;
+            }
+            let ExprKind::Call { callee, args, .. } = &e.kind else {
+                return;
+            };
+            if !matches!(&callee.kind, ExprKind::Ident(n) if n == outer) {
+                return;
+            }
+            let Some(a0) = args.first() else { return };
+            let ExprKind::Call {
+                callee: c2,
+                args: a2,
+                ..
+            } = &a0.kind
+            else {
+                panic!("`{outer}`'s spliced default is not a call: {:?}", a0.kind);
+            };
+            assert!(
+                matches!(&c2.kind, ExprKind::Ident(n) if n == inner),
+                "expected the default to call `{inner}`"
+            );
+            found = Some(int_args(a2));
+        });
+        return found.expect("a call to the outer fn in main");
+    }
+
+    /// A DEFAULT IS AN EXPRESSION, AND NOTHING LOWERED IT.
+    ///
+    /// The arguments a caller WRITES are walked before the splice runs; a
+    /// default is cloned in out of a table afterwards, exactly as the
+    /// declaration wrote it. So `outer()` became `outer(inner())` and that
+    /// `inner()` kept the zero arity — sema then reported E0308 against the
+    /// DECLARATION's span, a line the caller never wrote.
+    ///
+    /// Found through `camera::open()`, whose default is `Request::new()` and
+    /// whose eleven defaults live across a generated header, so it was filed as
+    /// a slice bug. It is not one: these three lines are the whole of it.
+    #[test]
+    fn a_default_that_calls_a_defaulted_fn_gets_its_own_defaults() {
+        let src = "fn inner(a: i32 = 7) -> i32 { return a; }\n\
+                   fn outer(x: i32 = inner()) -> i32 { return x; }\n\
+                   fn main() -> i32 { return outer(); }\n";
+        let (prog, diags) = run(src);
+        assert!(
+            diags.is_empty(),
+            "expected a clean lowering, got {:?}",
+            first_codes(&diags)
+        );
+        assert_eq!(
+            nested_call_args(&prog, "outer", "inner"),
+            vec![7],
+            "the default's own default is spliced too"
+        );
+    }
+
+    /// One level is not the rule — the splice recurses, so a default three
+    /// deep resolves all the way down. Checked because a fix that lowered the
+    /// spliced expression WITHOUT recursing would pass the test above.
+    #[test]
+    fn defaults_splice_through_more_than_one_level() {
+        let src = "fn c(z: i32 = 3) -> i32 { return z; }\n\
+                   fn b(y: i32 = c()) -> i32 { return y; }\n\
+                   fn a(x: i32 = b()) -> i32 { return x; }\n\
+                   fn main() -> i32 { return a(); }\n";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "got {:?}", first_codes(&diags));
+        // a( b( c(3) ) ) — the innermost literal is what proves the recursion.
+        let f = fn_named(&prog, "main");
+        let mut depth3: Option<Vec<u64>> = None;
+        visit_exprs_in_block(&f.body, &mut |e| {
+            if depth3.is_some() {
+                return;
+            }
+            let ExprKind::Call { callee, args, .. } = &e.kind else {
+                return;
+            };
+            if !matches!(&callee.kind, ExprKind::Ident(n) if n == "a") {
+                return;
+            }
+            let ExprKind::Call { args: b_args, .. } = &args[0].kind else {
+                panic!("`a`'s default is not a call");
+            };
+            let ExprKind::Call { args: c_args, .. } = &b_args[0].kind else {
+                panic!("`b`'s default is not a call");
+            };
+            depth3 = Some(int_args(c_args));
+        });
+        assert_eq!(depth3.expect("the a(b(c())) chain"), vec![3]);
+    }
+
+    /// The same walk is what makes a LABELLED call legal inside a default —
+    /// the labels have to be arranged into parameter order like any other call,
+    /// and before this nothing arranged them.
+    #[test]
+    fn a_labelled_call_inside_a_default_is_arranged() {
+        let src = "fn two(p: i32, q: i32 = 0) -> i32 { return p + q; }\n\
+                   fn lab(v: i32 = two(q: 5, p: 2)) -> i32 { return v; }\n\
+                   fn main() -> i32 { return lab(); }\n";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "got {:?}", first_codes(&diags));
+        assert_eq!(
+            nested_call_args(&prog, "lab", "two"),
+            vec![2, 5],
+            "labels inside a default are put in parameter order"
+        );
+    }
+
+    /// A DEFAULT MAY NAME ITS OWN FUNCTION, and then each splice makes another.
+    /// Lowering the spliced expression without a bound turns an arity error
+    /// into a compiler that never finishes, which is the worse failure — so the
+    /// nesting is capped and the cap is a diagnostic.
+    #[test]
+    fn a_self_referential_default_is_refused_rather_than_looping() {
+        let src = "fn f(a: i32 = f()) -> i32 { return a; }\n\
+                   fn main() -> i32 { return f(); }\n";
+        let (_prog, diags) = run(src);
+        assert!(
+            first_codes(&diags).contains(&"E1009"),
+            "expected E1009, got {:?}",
+            first_codes(&diags)
+        );
+    }
+
+    /// Two types declare the same method with the SAME signature. Whichever
+    /// one the receiver turns out to be, the call lowers identically — so this
+    /// pass may decide it, and must.
+    ///
+    /// It did not: the dedup compared the spliced default `Expr`s, and `Expr`
+    /// carries its span, so the `0` written in one impl block never equalled
+    /// the `0` written in the other. Every call omitting a shared default fell
+    /// through as "two candidates" and was reported as ambiguous between two
+    /// declarations a reader cannot tell apart. The comparison is by VALUE now.
+    #[test]
+    fn identical_defaults_on_two_types_are_one_arrangement() {
+        let src = "struct Sig { a: i32 }\n\
+                   impl Sig { fn on(ref this, v: i32, ctx: i32 = 0) -> i32 { return v + ctx; } }\n\
+                   struct Bus { b: i32 }\n\
+                   impl Bus { fn on(ref this, v: i32, ctx: i32 = 0) -> i32 { return v + ctx; } }\n\
+                   fn main() -> i32 {\n\
+                       var s: Sig = Sig { a: 1 };\n\
+                       return s.on(v: 5);\n\
+                   }\n";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "expected a clean lowering, got {:?}", first_codes(&diags));
+        let (args, labels) = method_call_in_main(&prog, "on");
+        assert_eq!(args, vec![5, 0], "the omitted default is spliced");
+        assert_eq!(labels, 0, "an arranged call carries no labels");
+    }
+
+    /// Same shape, but the defaults DIFFER. Now the two candidates would lower
+    /// the call to different values, so which one is right depends on the
+    /// receiver's type: this pass must not choose, and must not report either.
+    #[test]
+    fn differing_defaults_on_two_types_are_left_for_sema() {
+        let src = "struct Sig { a: i32 }\n\
+                   impl Sig { fn on(ref this, v: i32, ctx: i32 = 0) -> i32 { return v + ctx; } }\n\
+                   struct Bus { b: i32 }\n\
+                   impl Bus { fn on(ref this, v: i32, ctx: i32 = 7) -> i32 { return v + ctx; } }\n\
+                   fn main() -> i32 {\n\
+                       var s: Sig = Sig { a: 1 };\n\
+                       return s.on(v: 5);\n\
+                   }\n";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "no diagnostic here — sema decides: {:?}", first_codes(&diags));
+        let (args, labels) = method_call_in_main(&prog, "on");
+        assert_eq!(args, vec![5], "untouched: still as written");
+        assert_eq!(labels, 1, "the labels survive for sema to arrange");
+    }
+
+    /// A candidate REJECTING the call is type-dependent information too.
+    ///
+    /// `A::go(v, ctx = 0)` and `B::go(ctx, v = 9)`, written `a.go(ctx: 3)`:
+    /// only B accepts, so B was the sole surviving arrangement and got applied
+    /// — to a receiver of type `A`. The label `ctx` bound to A's parameter `v`
+    /// and B's default `9` was spliced into A's `ctx`, silently, and
+    /// `a.go(ctx: 3)` returned a value instead of the error it is (A's `v` has
+    /// no default). One accepting candidate is only decisive when it is the
+    /// ONLY candidate.
+    #[test]
+    fn a_rejecting_candidate_leaves_the_call_for_sema() {
+        let src = "struct A { x: i32 }\n\
+                   impl A { fn go(ref this, v: i32, ctx: i32 = 0) -> i32 { return v * 10 + ctx; } }\n\
+                   struct B { y: i32 }\n\
+                   impl B { fn go(ref this, ctx: i32, v: i32 = 9) -> i32 { return ctx * 100 + v; } }\n\
+                   fn main() -> i32 {\n\
+                       var a: A = A { x: 1 };\n\
+                       return a.go(ctx: 3);\n\
+                   }\n";
+        let (prog, diags) = run(src);
+        assert!(
+            diags.is_empty(),
+            "the mismatch belongs to sema, which knows the receiver: {:?}",
+            first_codes(&diags)
+        );
+        let (args, labels) = method_call_in_main(&prog, "go");
+        assert_eq!(args, vec![3], "B's arrangement is NOT applied");
+        assert_eq!(labels, 1, "the label survives for sema");
+    }
+
+    /// The counterweight: with one candidate for the name there is nothing for
+    /// a type to disambiguate, so this pass still arranges the call itself and
+    /// still reports its own mismatches. Deferring everything to sema would
+    /// have moved these diagnostics for no reason.
+    #[test]
+    fn a_sole_candidate_is_still_arranged_and_still_checked() {
+        let ok = "struct A { x: i32 }\n\
+                  impl A { fn go(ref this, v: i32, ctx: i32 = 4) -> i32 { return v + ctx; } }\n\
+                  fn main() -> i32 {\n\
+                      var a: A = A { x: 1 };\n\
+                      return a.go(v: 5);\n\
+                  }\n";
+        let (prog, diags) = run(ok);
+        assert!(diags.is_empty(), "{:?}", first_codes(&diags));
+        let (args, labels) = method_call_in_main(&prog, "go");
+        assert_eq!(args, vec![5, 4]);
+        assert_eq!(labels, 0);
+
+        let bad = "struct A { x: i32 }\n\
+                   impl A { fn go(ref this, v: i32, ctx: i32 = 4) -> i32 { return v + ctx; } }\n\
+                   fn main() -> i32 {\n\
+                       var a: A = A { x: 1 };\n\
+                       return a.go(nope: 5);\n\
+                   }\n";
+        let (_, diags) = run(bad);
+        assert_eq!(first_codes(&diags), vec!["E1005"], "unknown label, named here");
+    }
+
+    /// The dedup answers "provably the same value" and nothing else. An
+    /// identifier default is not readable from the AST — two `FOO`s in two
+    /// modules can be two different consts, and a default is CLONED INTO THE
+    /// CALL SITE — so it stays ambiguous and goes to sema rather than becoming
+    /// a silent pick.
+    #[test]
+    fn only_literal_defaults_are_compared_by_value() {
+        let src = "const FOO: i32 = 1;\n\
+                   struct Sig { a: i32 }\n\
+                   impl Sig { fn on(ref this, v: i32, ctx: i32 = FOO) -> i32 { return v + ctx; } }\n\
+                   struct Bus { b: i32 }\n\
+                   impl Bus { fn on(ref this, v: i32, ctx: i32 = FOO) -> i32 { return v + ctx; } }\n\
+                   fn main() -> i32 {\n\
+                       var s: Sig = Sig { a: 1 };\n\
+                       return s.on(v: 5);\n\
+                   }\n";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "{:?}", first_codes(&diags));
+        let (_, labels) = method_call_in_main(&prog, "on");
+        assert_eq!(labels, 1, "not decided here — sema uses the receiver's type");
     }
 }

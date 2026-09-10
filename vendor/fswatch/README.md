@@ -1,6 +1,7 @@
 # fswatch
 
-macOS filesystem watching with typed, owner-thread change events.
+Filesystem watching with typed, owner-thread change events. macOS, Linux and
+Windows.
 
 ```toml
 [dependencies]
@@ -39,7 +40,8 @@ the watcher thread. For a loop you drive yourself, use the low-level
 
 ## Scope
 
-- macOS first, backed by `kqueue` vnode notifications;
+- three backends behind one seam — `kqueue` vnode notifications on macOS,
+  `inotify` on Linux, `ReadDirectoryChangesW` on Windows;
 - individual file or directory roots;
 - shallow immediate-child or recursive nested snapshots;
 - glob ignores with ignored-directory pruning;
@@ -76,7 +78,16 @@ cd vendor/fswatch
 ../../target/debug/cpc test
 ```
 
-The package tests exercise real `kqueue` notifications in temporary paths.
+The package tests exercise the real platform notifications in temporary paths.
 The imported stdlib currently has an unrelated sandbox-sensitive TCP bind test;
 the fswatch-specific tests are listed under `src::fswatch` and
 `src::test_main`.
+
+**One platform difference worth knowing**: Windows stamps `LastWriteTime` from a
+clock that advances about every 13ms, so two writes of the same size inside one
+tick look identical to a snapshot differ — macOS and Linux stamp from a
+high-resolution clock and do not collide. The Windows backend closes that gap
+with the NTFS USN, a per-file counter that moves on every change, carried as
+`Metadata::version`; macOS and Linux answer a constant `0`. On a volume with no
+journal (FAT32, exFAT, a network share) it degrades back to mtime rather than
+reporting spurious changes. The guide has the measurement.

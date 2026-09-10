@@ -5,12 +5,29 @@ A macOS-first, portable-shaped terminal widget for C+.
 The package provides:
 
 - `terminal/terminal`: a platform-neutral VT screen with scrollback.
-- `terminal/pty`: a real macOS pseudo-terminal session backed by `forkpty`,
-  with shell integration installed into zsh.
-- `terminal/appkit`: a live AppKit widget with automatic main-queue PTY reads,
-  keyboard forwarding, paste, resize propagation, and bounded scrollback.
+- `terminal/pty`: a real pseudo-terminal session — `forkpty` on macOS, with
+  shell integration installed into zsh.
+- `terminal/backend`: the platform half — on Apple, a live AppKit widget with
+  automatic main-queue PTY reads, keyboard forwarding, paste, resize
+  propagation, and bounded scrollback.
 - `terminal/widget`: the portable facet-facing wrapper applications should
   normally import.
+
+> **`terminal/backend` was `terminal/appkit` until 2026-09-08.** The rename is
+> what let a second platform exist at all: the module naming one platform was
+> the one module whose job is not to, and the package did not build off macOS.
+> Anything importing `terminal/appkit` should import `terminal/backend`, or
+> better, `terminal/widget`.
+
+**Windows: the screen model and the package build and pass, the widget does
+not exist yet.** `terminal/terminal` is platform-neutral and fully exercised
+there. What is missing is a live session: a ConPTY backend was written in full
+against this seam and BACKED OUT, because on the host it was developed on it
+produces zero bytes — `CreatePseudoConsole` returns S_OK, the host process
+spawns, the child exits, and the pipe stays empty, with every explanation ruled
+out by measurement. Shipping a terminal that shows nothing is worse than not
+shipping one. The recipe is preserved in the header of
+`src/pty_windows.cplus` for whoever picks it up on a machine where it works.
 
 The model is a grid of cells addressed by row and column, so `clear`, the
 alternate screen, scroll regions and absolute cursor addressing all work —
@@ -102,7 +119,7 @@ addressable by key, so `facet::find(key)` cannot do this — the widget owns the
 verb.
 
 Apps working directly with AppKit or `facet_appkit/ui` can instead import
-`terminal/appkit` and use `view()`, `native_handle()`, or the flex `node()`.
+`terminal/backend` and use `view()`, `native_handle()`, or the flex `node()`.
 
 ## Shell history
 
@@ -118,9 +135,14 @@ history. Either way the shell loads the user's own rc files.
 
 ## Status
 
-macOS is the only PTY/UI backend at the moment. The public session seam is kept
-to `start/read/write/resize/close/poll_exit` so Linux (`forkpty`/`epoll`) and
-Windows (`ConPTY`) can be added without changing the screen model.
+macOS is the only PTY/UI backend that WORKS at the moment. The public session
+seam is kept to `start/read/write/resize/close/poll_exit`, which is what let a
+Windows implementation be written against it without touching the screen model —
+and that seam held: the ConPTY attempt failed on the platform, not on the shape.
+Linux (`forkpty`/`epoll`) is the same job again.
+
+The package builds and its suite passes on Windows; only the live session is
+missing there. See the note at the top.
 
 Run the tests with:
 

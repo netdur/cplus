@@ -41,9 +41,9 @@ import "facet/canvas" as canvas;
 // out from under `drawing`, which owns that class and asserts it.
 fn wants_press_band(n: *core::Node) -> bool {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return false; }
+    if d.is_null() { return false; }
     let raw: *u8 = { (*d).props };
-    if raw == (0 as *u8) { return false; }
+    if raw.is_null() { return false; }
     let kind: u32 = { (*d).kind };
     if kind == props::K_BUTTON {
         let p: *props::ButtonProps = raw as *props::ButtonProps;
@@ -70,10 +70,10 @@ fn wants_press_band(n: *core::Node) -> bool {
 // gesture band is asked, so a canvas that never hovers pays nothing.
 fn wants_tracking(n: *core::Node) -> bool {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return false; }
+    if d.is_null() { return false; }
     if { (*d).kind } != props::K_CANVAS { return false; }
     let p: *props::CanvasProps = { (*d).props } as *props::CanvasProps;
-    if p == (0 as *props::CanvasProps) { return false; }
+    if p.is_null() { return false; }
     return { (*p).on_hover } != props::no_handler
         || { (*p).on_unhover } != props::no_handler
         || { (*p).observe_move_hover_interaction } != props::no_handler;
@@ -87,16 +87,16 @@ fn fire(h: fn(*u8, *u8), ctx: *u8, sender: *u8) -> bool {
 
 fn canvas_props(n: *core::Node) -> *props::CanvasProps {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return 0 as *props::CanvasProps; }
+    if d.is_null() { return 0 as *props::CanvasProps; }
     if { (*d).kind } != props::K_CANVAS { return 0 as *props::CanvasProps; }
     return { (*d).props } as *props::CanvasProps;
 }
 
 fn press(n: *core::Node, sender: *u8) -> bool {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return false; }
+    if d.is_null() { return false; }
     let raw: *u8 = { (*d).props };
-    if raw == (0 as *u8) { return false; }
+    if raw.is_null() { return false; }
     let kind: u32 = { (*d).kind };
     if kind == props::K_BUTTON {
         let p: *props::ButtonProps = raw as *props::ButtonProps;
@@ -115,9 +115,9 @@ fn press(n: *core::Node, sender: *u8) -> bool {
 
 fn release(n: *core::Node, sender: *u8) -> bool {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return false; }
+    if d.is_null() { return false; }
     let raw: *u8 = { (*d).props };
-    if raw == (0 as *u8) { return false; }
+    if raw.is_null() { return false; }
     let kind: u32 = { (*d).kind };
     if kind == props::K_BUTTON {
         let p: *props::ButtonProps = raw as *props::ButtonProps;
@@ -139,26 +139,26 @@ fn release(n: *core::Node, sender: *u8) -> bool {
 
 fn hover(n: *core::Node, sender: *u8) -> bool {
     let p: *props::CanvasProps = canvas_props(n);
-    if p == (0 as *props::CanvasProps) { return false; }
+    if p.is_null() { return false; }
     return fire({ (*p).on_hover }, { (*p).on_hover_ctx }, sender);
 }
 
 fn unhover(n: *core::Node, sender: *u8) -> bool {
     let p: *props::CanvasProps = canvas_props(n);
-    if p == (0 as *props::CanvasProps) { return false; }
+    if p.is_null() { return false; }
     return fire({ (*p).on_unhover }, { (*p).on_unhover_ctx }, sender);
 }
 
 fn moved(n: *core::Node, sender: *u8) -> bool {
     let p: *props::CanvasProps = canvas_props(n);
-    if p == (0 as *props::CanvasProps) { return false; }
+    if p.is_null() { return false; }
     return fire({ (*p).observe_move_hover_interaction },
                 { (*p).observe_move_hover_interaction_ctx }, sender);
 }
 
 fn dragged(n: *core::Node, sender: *u8) -> bool {
     let p: *props::CanvasProps = canvas_props(n);
-    if p == (0 as *props::CanvasProps) { return false; }
+    if p.is_null() { return false; }
     return fire({ (*p).observe_drag_interaction },
                 { (*p).observe_drag_interaction_ctx }, sender);
 }
@@ -169,6 +169,6 @@ fn dragged(n: *core::Node, sender: *u8) -> bool {
 // pointer leaves gets a cancel, and one that is merely hovered gets an unhover.
 fn cancelled(n: *core::Node, sender: *u8) -> bool {
     let p: *props::CanvasProps = canvas_props(n);
-    if p == (0 as *props::CanvasProps) { return false; }
+    if p.is_null() { return false; }
     return fire({ (*p).on_cancel }, { (*p).on_cancel_ctx }, sender);
 }

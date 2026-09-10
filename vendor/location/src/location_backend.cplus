@@ -1,0 +1,452 @@
+// CoreLocation, for macOS and iOS.
+//
+// One backend for both: `CLLocationManager` is the same class on each, and the
+// differences that exist (an "always" grant iOS asks for separately, a status
+// macOS answers before any prompt) are differences in what the ANSWER is, not
+// in which calls are made.
+//
+// ---- authorization has exactly one door -----------------------------------
+//
+// There is no way to ask for location without `CLLocationManager`: the request
+// is a method on the manager and the answer arrives on its delegate. So this
+// package asks, rather than deferring to `permissions` and deadlocking — the
+// same shape iOS uses for the camera, where the first `open` is what prompts.
+//
+// ---- the manager needs a run loop ------------------------------------------
+//
+// `CLLocationManager` delivers on the thread that created it, and only if that
+// thread has a live run loop. Created off the main thread it goes silent with
+// no error — the classic symptom is "the delegate is never called" — so the
+// manager is built lazily on whatever thread asks first, and every caller here
+// is expected to be the main one.
+
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "corelocation/corelocation" as cl;
+import "corelocation/corelocation_ext" as clx;
+import "./location" as loc;
+
+// ---- the accuracy constants ------------------------------------------------
+//
+// `kCLLocationAccuracy*` are C doubles, not an enum, and cpc-bindgen does not
+// emit C constants — so they are written out with the values Apple documents.
+// The two NEGATIVE ones are sentinels rather than distances: -1 means "best the
+// hardware can do" and -2 adds course/speed at navigation rates. A positive
+// value is a real metre budget the framework is allowed to undershoot.
+const _ACC_BEST_FOR_NAVIGATION: f64 = -2.0f64;
+const _ACC_BEST: f64 = -1.0f64;
+const _ACC_HUNDRED_METERS: f64 = 100.0f64;
+const _ACC_THREE_KILOMETERS: f64 = 3000.0f64;
+
+fn _desired_accuracy(a: i32) -> f64 {
+    if a == 0 { return _ACC_THREE_KILOMETERS; }
+    if a == 1 { return _ACC_HUNDRED_METERS; }
+    if a == 3 { return _ACC_BEST_FOR_NAVIGATION; }
+    return _ACC_BEST;
+}
+
+// ---- one live request ------------------------------------------------------
+//
+// BOXED and never moved: the delegate holds this address as an associated
+// object, and CoreLocation may call back at any time between `start` and
+// `stop`. A session on the stack would be a use-after-free the moment the
+// caller returned.
+struct _Session {
+    // `opaque` on all three because ANOTHER OWNER frees them (E0510): the two
+    // ObjC objects are released in `_stop`, and `ctx` belongs to the caller who
+    // passed it — freeing a borrowed context would be a double-free in their
+    // frame, not ours.
+    opaque manager: *u8,
+    opaque delegate: *u8,
+    on_fix: fn(loc::Fix, *u8),
+    opaque ctx: *u8,
+    // THE LAST STATUS THE DELEGATE REPORTED, because reading it is not enough:
+    // `authorizationStatus` answers `notDetermined` immediately after
+    // `alloc/init` on EITHER the class or the instance — CoreLocation resolves
+    // it asynchronously and tells you through the delegate. An app that only
+    // reads it at start-up therefore never learns it was denied.
+    // 0 notDetermined  1 restricted  2 denied  3 always  4 whenInUse
+    status: i64,
+    // A one-shot stops itself after the first fix. A stream does not.
+    once: bool,
+    running: bool,
+}
+
+// The association key only has to be a stable unique address; its contents are
+// never read. Taking the address of a static is the cheapest way to have one.
+static _SESSION_KEY: u8 = 0 as u8;
+static _DELEGATE_CLASS: *u8 = 0 as *u8;
+
+fn _delegate_class() -> *u8 {
+    if _DELEGATE_CLASS.is_not_null() { return _DELEGATE_CLASS; }
+    let sup: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    if sup.is_null() { return 0 as *u8; }
+    let cls: *u8 = synth::allocate_class_pair(sup, #str_ptr("CplusLocationDelegate\0"), 0 as usize);
+    if cls.is_null() { return 0 as *u8; }
+
+    let _ = synth::conform(cls, #str_ptr("CLLocationManagerDelegate\0"));
+    let _ = synth::add_method_v_2id(cls,
+        rt::sel(#str_ptr("locationManager:didUpdateLocations:\0")),
+        _imp_did_update, #str_ptr("v@:@@\0"));
+    let _ = synth::add_method_v_2id(cls,
+        rt::sel(#str_ptr("locationManager:didFailWithError:\0")),
+        _imp_did_fail, #str_ptr("v@:@@\0"));
+    // THE ONLY RELIABLE SOURCE OF THE STATUS. Fires once shortly after the
+    // manager is built, and again on every change — including the moment the
+    // person answers the prompt. macOS 11+ / iOS 14+ spells it without a
+    // status argument; the older `didChangeAuthorizationStatus:` is registered
+    // beside it so a pre-14 system is not left silent.
+    let _ = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("locationManagerDidChangeAuthorization:\0")),
+        _imp_did_change_auth, #str_ptr("v@:@\0"));
+
+    synth::register_class_pair(cls);
+    _DELEGATE_CLASS = cls;
+    return cls;
+}
+
+fn _session_of(delegate: *u8) -> *_Session {
+    if delegate.is_null() { return 0 as *_Session; }
+    let raw: *u8 = synth::get_associated(delegate, #addr_of(_SESSION_KEY));
+    return raw as *_Session;
+}
+
+// `locations` is an NSArray, newest LAST. CoreLocation may deliver several at
+// once — a batch it had buffered — and the only one an app asked for is the
+// most recent, so the rest are dropped rather than replayed as a burst.
+fn _imp_did_update(self_obj: *u8, cmd: *u8, manager: *u8, locations: *u8) {
+    let s: *_Session = _session_of(self_obj);
+    if s.is_null() { return; }
+    if !{ (*s).running } { return; }
+    if locations.is_null() { return; }
+    let n: i64 = rt::msg_i64(locations, rt::sel(#str_ptr("count\0")));
+    if n <= (0 as i64) { return; }
+    let last: *u8 = rt::msg_id_i64(locations, rt::sel(#str_ptr("objectAtIndex:\0")),
+                                   n - (1 as i64));
+    if last.is_null() { return; }
+
+    let fix: loc::Fix = _fix_of(last);
+    // A ONE-SHOT STOPS BEFORE IT DELIVERS, not after. The handler is free to
+    // start another request, and stopping afterwards would tear that one down.
+    if { (*s).once } {
+        _stop(s);
+    }
+    let f: fn(loc::Fix, *u8) = { (*s).on_fix };
+    if f.is_not_null() { f(fix, { (*s).ctx }); }
+    return;
+}
+
+// A STREAM survives an error: they are common and mostly transient — indoors,
+// airplane mode, a moment after launch — and CoreLocation retries on its own.
+// Only a hard denial stops it, and that arrives as a status change.
+//
+// A ONE-SHOT DOES NOT. `requestLocation` gives up after about ten seconds of
+// its own accord and reports it here, and that is the ONLY notification a
+// caller will ever get: the handler must be told, or an app that asked for a
+// fix indoors waits for one forever with nothing to time out against.
+//
+// It is told with an INVALID FIX — negative `accuracy_m` — which is
+// CoreLocation's own convention for "an object, but not a position", already
+// documented on `Fix::is_valid`. Delivering nothing would leave the caller
+// unable to distinguish "still trying" from "never coming", which is exactly
+// the silence this fixes.
+fn _imp_did_fail(self_obj: *u8, cmd: *u8, manager: *u8, error: *u8) {
+    let s: *_Session = _session_of(self_obj);
+    if s.is_null() { return; }
+    if !{ (*s).running } { return; }
+    if !{ (*s).once } { return; }
+
+    _stop(s);
+    let f: fn(loc::Fix, *u8) = { (*s).on_fix };
+    if f.is_null() { return; }
+    var miss: loc::Fix = #zero::[loc::Fix]();
+    miss.accuracy_m = -1.0f64;
+    miss.altitude_accuracy_m = -1.0f64;
+    miss.speed_mps = -1.0f64;
+    miss.course_deg = -1.0f64;
+    f(miss, { (*s).ctx });
+    return;
+}
+
+// The person answered the prompt, or changed their mind in Settings.
+//
+// A REFUSAL STOPS THE STREAM. Left running it would burn the radio forever
+// delivering nothing, which is the shape of battery bug nobody reports because
+// the app simply looks broken.
+fn _imp_did_change_auth(self_obj: *u8, cmd: *u8, manager: *u8) {
+    let s: *_Session = _session_of(self_obj);
+    if s.is_null() { return; }
+    let st: i64 = _status_of(manager);
+    { (*s).status = st };
+    if _is_refused(st) { _stop(s); }
+    return;
+}
+
+fn _fix_of(l: *u8) -> loc::Fix {
+    let o: cl::Location = cl::Location::from_raw(l);
+    let c: clx::Coordinate = o.coordinate();
+    return loc::Fix {
+        latitude: c.latitude,
+        longitude: c.longitude,
+        accuracy_m: o.horizontal_accuracy(),
+        altitude_m: o.altitude(),
+        altitude_accuracy_m: o.vertical_accuracy(),
+        speed_mps: o.speed(),
+        course_deg: o.course(),
+        timestamp_ms: o.timestamp_ms(),
+    };
+}
+
+// ---- authorization ---------------------------------------------------------
+
+// ON THE MANAGER, NEVER ON THE CLASS.
+//
+// `+[CLLocationManager authorizationStatus]` still exists and still links, and
+// on macOS 26 it answers `notDetermined` FOREVER — measured 2026-09-02 against
+// an app that was demonstrably authorized and receiving fixes. It has been
+// deprecated in favour of the instance property since macOS 11 / iOS 14, and
+// what "deprecated" means here is "answers a constant", not "warns".
+//
+// The consequence was not cosmetic: every status check saw `notDetermined`, so
+// a DENIED app was never detected as denied — it re-asked, got nothing, and
+// reported `Ok` while no fix would ever arrive.
+fn _status_of(manager: *u8) -> i64 {
+    if manager.is_null() { return 0 as i64; }
+    return rt::msg_i64(manager, rt::sel(#str_ptr("authorizationStatus\0")));
+}
+
+// 0 notDetermined, 1 restricted, 2 denied, 3 always, 4 whenInUse.
+fn _is_granted(st: i64) -> bool {
+    return st == (3 as i64) || st == (4 as i64);
+}
+
+fn _is_refused(st: i64) -> bool {
+    return st == (1 as i64) || st == (2 as i64);
+}
+
+fn _services_on() -> bool {
+    let cls: *u8 = rt::get_class(#str_ptr("CLLocationManager\0"));
+    if cls.is_null() { return false; }
+    return rt::msg_i8(cls, rt::sel(#str_ptr("locationServicesEnabled\0"))) != (0 as i8);
+}
+
+// ---- building a session ----------------------------------------------------
+
+fn _new_session(req: *loc::Request, on_fix: fn(loc::Fix, *u8), ctx: *u8,
+                once: bool, out_code: *i32) -> *_Session {
+    if !_services_on() {
+        if out_code.is_not_null() { { *out_code = 3 }; }   // Disabled
+        return 0 as *_Session;
+    }
+    let mcls: *u8 = rt::get_class(#str_ptr("CLLocationManager\0"));
+    if mcls.is_null() {
+        if out_code.is_not_null() { { *out_code = 2 }; }   // Unsupported
+        return 0 as *_Session;
+    }
+    let manager: *u8 = rt::msg_id(rt::msg_id(mcls, rt::sel(#str_ptr("alloc\0"))),
+                                  rt::sel(#str_ptr("init\0")));
+    if manager.is_null() {
+        if out_code.is_not_null() { { *out_code = 5 }; }
+        return 0 as *_Session;
+    }
+
+    // The status is a property OF THIS MANAGER, so it cannot be read until the
+    // manager exists — which is why this check sits here and not at the top.
+    let st: i64 = _status_of(manager);
+    if _is_refused(st) {
+        rt::release(manager);
+        if out_code.is_not_null() { { *out_code = 1 }; }   // Denied
+        return 0 as *_Session;
+    }
+
+    let dcls: *u8 = _delegate_class();
+    if dcls.is_null() {
+        rt::release(manager);
+        if out_code.is_not_null() { { *out_code = 2 }; }
+        return 0 as *_Session;
+    }
+    let delegate: *u8 = rt::msg_id(rt::msg_id(dcls, rt::sel(#str_ptr("alloc\0"))),
+                                   rt::sel(#str_ptr("init\0")));
+    if delegate.is_null() {
+        rt::release(manager);
+        if out_code.is_not_null() { { *out_code = 5 }; }
+        return 0 as *_Session;
+    }
+
+    // BOXED so the address outlives this frame: the delegate holds it as an
+    // associated object and CoreLocation calls back long after `start` returns.
+    var blank: _Session = _Session {
+        manager: 0 as *u8, delegate: 0 as *u8,
+        on_fix: on_fix, ctx: ctx, once: once, running: false,
+        status: 0 as i64,
+    };
+    var s: *_Session = match box::new::[_Session](blank) {
+        option::Option[box::Box[_Session]]::Some(b) => { b.into_raw() as *_Session },
+        option::Option[box::Box[_Session]]::None => { 0 as *_Session },
+    };
+    if s.is_null() {
+        rt::release(delegate);
+        rt::release(manager);
+        if out_code.is_not_null() { { *out_code = 5 }; }
+        return 0 as *_Session;
+    }
+    { (*s).manager = manager };
+    { (*s).delegate = delegate };
+    { (*s).on_fix = on_fix };
+    { (*s).ctx = ctx };
+    { (*s).once = once };
+    { (*s).running = true };
+
+    // RETAINED by the association, which is what keeps the session alive for
+    // as long as the delegate is — the manager holds the delegate WEAKLY, so
+    // nothing else here owns it.
+    synth::set_associated(delegate, #addr_of(_SESSION_KEY), s as *u8);
+    rt::msg_void_id(manager, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+
+    let acc: f64 = _desired_accuracy({ (*req).accuracy.to_code() });
+    rt::msg_void_f64(manager, rt::sel(#str_ptr("setDesiredAccuracy:\0")), acc);
+    let filt: f64 = { (*req).distance_filter_m };
+    if filt > (0.0 as f64) {
+        rt::msg_void_f64(manager, rt::sel(#str_ptr("setDistanceFilter:\0")), filt);
+    }
+
+    // ASK IF WE HAVE NOT BEEN ANSWERED. CoreLocation queues the start behind
+    // the prompt, so this is not a race: an app that has never asked gets the
+    // dialog and then its fix, in one call, with nothing to sequence.
+    if st == (0 as i64) {
+        rt::msg_void(manager, rt::sel(#str_ptr("requestWhenInUseAuthorization\0")));
+    }
+    if out_code.is_not_null() { { *out_code = 0 }; }
+    return s;
+}
+
+fn _stop(s: *_Session) {
+    if s.is_null() { return; }
+    if !{ (*s).running } { return; }
+    { (*s).running = false };
+    let m: *u8 = { (*s).manager };
+    if m.is_not_null() {
+        rt::msg_void(m, rt::sel(#str_ptr("stopUpdatingLocation\0")));
+        // The delegate goes FIRST. CoreLocation may have a delivery in flight,
+        // and a callback landing on a released session is the crash this
+        // ordering exists to prevent.
+        rt::msg_void_id(m, rt::sel(#str_ptr("setDelegate:\0")), 0 as *u8);
+    }
+    return;
+}
+
+// ---- the seam --------------------------------------------------------------
+
+// THE STATUS WITHOUT STARTING ANYTHING.
+//
+// A throwaway manager, because there is no class-level answer worth having:
+// `+authorizationStatus` is deprecated and answers `notDetermined` forever on
+// macOS 26 — measured. The instance property is right, but only once
+// CoreLocation has resolved it, which is asynchronous. So a caller that has
+// never started a stream can get `Unknown` here and should treat it as "ask",
+// not as "denied".
+export extern fn _c_permission() -> i32 {
+    let mcls: *u8 = rt::get_class(#str_ptr("CLLocationManager\0"));
+    if mcls.is_null() { return 5; }             // Unsupported
+    let m: *u8 = rt::msg_id(rt::msg_id(mcls, rt::sel(#str_ptr("alloc\0"))),
+                            rt::sel(#str_ptr("init\0")));
+    if m.is_null() { return 5; }
+    let st: i64 = _status_of(m);
+    rt::release(m);
+    if st == (1 as i64) { return 4; }           // restricted -> Blocked
+    if st == (2 as i64) { return 3; }           // denied
+    if st == (3 as i64) { return 1; }           // always -> Granted
+    if st == (4 as i64) { return 1; }           // whenInUse -> Granted
+    return 0;                                   // notDetermined -> Unknown
+}
+
+export extern fn _c_available() -> i32 {
+    if rt::get_class(#str_ptr("CLLocationManager\0")).is_null() { return 0; }
+    return 1;
+}
+
+export extern fn _c_enabled() -> i32 {
+    if _services_on() { return 1; }
+    return 0;
+}
+
+export extern fn _c_last_known(into: *loc::Fix) -> i32 {
+    if into.is_null() { return 0; }
+    let mcls: *u8 = rt::get_class(#str_ptr("CLLocationManager\0"));
+    if mcls.is_null() { return 0; }
+    let manager: *u8 = rt::msg_id(rt::msg_id(mcls, rt::sel(#str_ptr("alloc\0"))),
+                                  rt::sel(#str_ptr("init\0")));
+    if manager.is_null() { return 0; }
+    let l: *u8 = rt::msg_id(manager, rt::sel(#str_ptr("location\0")));
+    if l.is_null() { rt::release(manager); return 0; }
+    { *into = _fix_of(l) };
+    rt::release(manager);
+    // An object with negative horizontal accuracy is CoreLocation saying "not
+    // a fix" — reporting it as one would put the caller at (0,0).
+    if { (*into).accuracy_m } < (0.0 as f64) { return 0; }
+    return 1;
+}
+
+export extern fn _c_once(req: *loc::Request, on_fix: fn(loc::Fix, *u8), ctx: *u8) -> i32 {
+    var code: i32 = 0;
+    let s: *_Session = _new_session(req, on_fix, ctx, true, #addr_of(code));
+    if s.is_null() { return code; }
+    // `requestLocation` rather than start/stop: it delivers ONE fix, times out
+    // on its own, and powers the radio down afterwards. Starting a stream and
+    // stopping it in the callback burns more battery for the same answer.
+    rt::msg_void({ (*s).manager }, rt::sel(#str_ptr("requestLocation\0")));
+    return 0;
+}
+
+export extern fn _c_updates_start(req: *loc::Request, on_fix: fn(loc::Fix, *u8),
+                                  ctx: *u8, out_code: *i32) -> *u8 {
+    let s: *_Session = _new_session(req, on_fix, ctx, false, out_code);
+    if s.is_null() { return 0 as *u8; }
+    rt::msg_void({ (*s).manager }, rt::sel(#str_ptr("startUpdatingLocation\0")));
+    return s as *u8;
+}
+
+// WHAT THE GRANT ACTUALLY ALLOWS, not what was asked for. iOS 14+ and macOS
+// 11+ let a person grant REDUCED accuracy, and every fix then arrives coarse
+// however fine the request was — with no error and no other signal.
+export extern fn _c_updates_accuracy(h: *u8) -> i32 {
+    if h.is_null() { return 1; }
+    let s: *_Session = h as *_Session;
+    let m: *u8 = { (*s).manager };
+    if m.is_null() { return 1; }
+    // PRE-14 HAS NO REDUCED MODE, so a manager that does not answer this
+    // selector is fully accurate by definition. The guard used to call
+    // `respondsToSelector:` with no argument and discard the result, which
+    // tested nothing and read as if it did.
+    let sel: *u8 = rt::sel(#str_ptr("accuracyAuthorization\0"));
+    if rt::msg_i8_id(m, rt::sel(#str_ptr("respondsToSelector:\0")), sel) == (0 as i8) {
+        return 2;
+    }
+    let a: i64 = rt::msg_i64(m, sel);
+    // 0 = full, 1 = reduced.
+    if a == (1 as i64) { return 0; }
+    return 2;
+}
+
+// 0 notDetermined, 1 restricted, 2 denied, 3 always, 4 whenInUse — as last
+// reported by the delegate, not as guessed at start-up.
+export extern fn _c_updates_status(h: *u8) -> i32 {
+    if h.is_null() { return 0; }
+    let s: *_Session = h as *_Session;
+    return { (*s).status as i32 };
+}
+
+export extern fn _c_updates_running(h: *u8) -> i32 {
+    if h.is_null() { return 0; }
+    let s: *_Session = h as *_Session;
+    if { (*s).running } { return 1; }
+    return 0;
+}
+
+export extern fn _c_updates_stop(h: *u8) {
+    if h.is_null() { return; }
+    _stop(h as *_Session);
+    return;
+}

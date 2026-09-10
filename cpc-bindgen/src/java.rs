@@ -415,8 +415,14 @@ impl Emitter {
         }
 
         let mname = if m.is_ctor { "<init>" } else { &m.name };
+        // A STATIC method's id comes from GetStaticMethodID, and the two
+        // lookups are not interchangeable: ART answers NoSuchMethodError ("no
+        // non-static method ...") for a static asked of the instance table, and
+        // the error surfaces at whatever JNI call runs NEXT. A constructor is
+        // an instance member even though the C+ wrapper takes `env`.
+        let midfn = if m.is_static { "method_static" } else { "method" };
         self.out.push_str(&format!(
-            "        let mid: jni::jmethodID = {envx}.method(#str_ptr(\"{jni_cls}\\0\"), #str_ptr(\"{mname}\\0\"), #str_ptr(\"{}\\0\"));\n",
+            "        let mid: jni::jmethodID = {envx}.{midfn}(#str_ptr(\"{jni_cls}\\0\"), #str_ptr(\"{mname}\\0\"), #str_ptr(\"{}\\0\"));\n",
             m.desc
         ));
 
@@ -506,12 +512,23 @@ impl Emitter {
                 return;
             }
         };
-        if fm.is_string || m.desc.starts_with('L') || m.desc.starts_with('[') {
-            self.skip("field", &m.name, "object fields are not bound; call the accessor instead");
+        // A String field would need a decode, and there is no honest C+ type to
+        // hand back without one — `*u8` is what a UTF-8 buffer is, and a
+        // `jstring` is not that. Every other object field IS bindable: it comes
+        // back as the `jni::jobject` it is, which is what an enum constant like
+        // `Paint.Style.FILL` has to be at the call it is passed to.
+        if fm.is_string {
+            self.skip("field", &m.name, "String fields need a decode; call the accessor instead");
             return;
         }
         let kind = fm.call_kind; // Int / Float / ... reused as the field-slot name
         let ret_ty = if m.desc == "Z" { "bool".to_string() } else { fm.cplus.clone() };
+        if kind == "Object" {
+            // The body below is one line and says nothing about lifetime, so
+            // the generated file says it: a field read is a LOCAL ref.
+            self.out
+                .push_str("    // A LOCAL ref, the caller's for the length of the native call.\n");
+        }
         if m.is_static {
             self.out
                 .push_str(&format!("    fn {fname}(env: rt::Env) -> {ret_ty} {{\n"));
@@ -550,6 +567,7 @@ impl Emitter {
         self.emitted += 1;
     }
 }
+
 
 /// Bind `classes` from `classpath` into one C+ module.
 pub fn generate(classpath: &str, classes: &[String], runtime: &str) -> Result<String, String> {
@@ -710,6 +728,12 @@ public class android.widget.TextView extends android.view.View implements androi
     descriptor: (F)V
   public boolean isFocused();
     descriptor: ()Z
+  public static android.widget.TextView inflate(android.content.Context);
+    descriptor: (Landroid/content/Context;)Landroid/widget/TextView;
+  public static final android.widget.TextView$BufferType NORMAL;
+    descriptor: Landroid/widget/TextView$BufferType;
+  public static final java.lang.String TAG;
+    descriptor: Ljava/lang/String;
   static {};
     descriptor: ()V
 }
@@ -807,6 +831,26 @@ public class android.widget.TextView extends android.view.View implements androi
     }
 
     #[test]
+    fn an_object_static_field_is_bound_as_a_jobject() {
+        // An enum constant — `Paint.Style.FILL`, `Path.Direction.CW` — is a
+        // static object FIELD, and it is the only way to name the argument the
+        // setter takes. Skipping it left the setters unreachable.
+        let out = emit(&parse_javap(FIXTURE));
+        assert!(out.contains("fn normal(env: rt::Env) -> jni::jobject"));
+        assert!(out.contains("GetStaticObjectField(env.raw(), cls, fid)"));
+        assert!(out.contains("// A LOCAL ref, the caller's for the length of the native call."));
+    }
+
+    #[test]
+    fn a_string_field_is_still_skipped() {
+        // `*u8` is what a UTF-8 buffer is and a jstring is not that, so there
+        // is no honest type to hand back without a decode.
+        let out = emit(&parse_javap(FIXTURE));
+        assert!(out.contains("// SKIPPED field `TAG`: String fields need a decode"));
+        assert!(!out.contains("fn tag(env: rt::Env)"));
+    }
+
+    #[test]
     fn a_string_parameter_round_trips_through_a_jstring() {
         let out = emit(&parse_javap(FIXTURE));
         assert!(out.contains("let arg0_s: jni::jstring = this._env.new_string_utf(arg0);"));
@@ -827,6 +871,29 @@ public class android.widget.TextView extends android.view.View implements androi
         let out = emit(&parse_javap(FIXTURE));
         assert!(out.contains("this._env.method(#str_ptr(\"android/widget/TextView\\0\")"));
         assert!(!out.contains("find_class(#str_ptr(\"android/widget/TextView"));
+    }
+
+    #[test]
+    fn a_static_method_resolves_its_id_from_the_static_table() {
+        // GetMethodID and GetStaticMethodID search DIFFERENT tables. Asking the
+        // instance one for a static answers NoSuchMethodError — "no non-static
+        // method ..." — and JNI leaves that exception PENDING, so the abort
+        // lands on whatever call runs next with a stack pointing somewhere
+        // innocent. Every static binding was emitted this way until 2026-08-25;
+        // nothing had called one, so nothing had noticed.
+        let out = emit(&parse_javap(FIXTURE));
+        assert!(out.contains("env.method_static(#str_ptr(\"android/widget/TextView\\0\"), #str_ptr(\"inflate\\0\")"));
+        // And the instance methods must NOT have moved to the static table.
+        assert!(out.contains("this._env.method(#str_ptr(\"android/widget/TextView\\0\"), #str_ptr(\"setTextSize\\0\")"));
+        assert!(!out.contains("method_static(#str_ptr(\"android/widget/TextView\\0\"), #str_ptr(\"setTextSize"));
+    }
+
+    #[test]
+    fn a_constructor_is_an_instance_member_however_it_is_called() {
+        // A ctor's C+ wrapper takes `env` like a static's does, which is what
+        // made this worth pinning: `<init>` is still GetMethodID.
+        let out = emit(&parse_javap(FIXTURE));
+        assert!(out.contains("env.method(#str_ptr(\"android/widget/TextView\\0\"), #str_ptr(\"<init>\\0\")"));
     }
 
     #[test]

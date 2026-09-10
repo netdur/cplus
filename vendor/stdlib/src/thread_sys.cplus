@@ -1,0 +1,90 @@
+// Thread creation, joining, and the blocking-call interrupt the cancel
+// protocol kicks parked workers with — the part of `thread` that is not
+// portable, split out for the one-object-per-package reason recorded in
+// `exe_path.cplus`.
+//
+// This file is the POSIX base, used on Darwin, Linux and Android alike.
+// `thread_sys_windows.cplus` shadows it through the resolver's `_windows`
+// override.
+//
+// `thread.cplus` keeps the whole cancel protocol — the record layout, the
+// parked flag, the verb spinlock, the published condvar. Only two things
+// cross into the OS: starting/reaping a thread, and making a thread that is
+// blocked in a SYSCALL return early. The condvar half of the kick is already
+// platform-free, since it goes through `./sync_sys`.
+//
+// THE HANDLE IS A `u64` because that is what `JoinHandle` stores. On POSIX it
+// is a `pthread_t`; on Windows it is a `HANDLE`. Neither side interprets the
+// other's, and nothing outside these two files reads it.
+
+import "./platform_sys" as platform_sys;
+
+extern fn pthread_create(tid: *u64, attr: *u8, start: fn(*u8) -> *u8, arg: *u8) -> i32;
+extern fn pthread_join(tid: u64, retval: *u8) -> i32;
+extern fn pthread_detach(tid: u64) -> i32;
+extern fn pthread_kill(tid: u64, sig: i32) -> i32;
+extern fn signal(sig: i32, handler: fn(i32)) -> *u8;
+extern fn siginterrupt(sig: i32, flag: i32) -> i32;
+
+// The signal the cancel protocol interrupts blocking syscalls with. SIGURG:
+// ignored by default, meaningless to almost every program (it exists for
+// TCP urgent data), and therefore the conventional choice for exactly this
+// job. stdlib OWNS it — a program that installs its own SIGURG handler
+// forfeits syscall-park cancellation.
+fn _cancel_signal() -> i32 {
+    // NOT `#platform() == "linux"`. That answers false on Android, whose kernel
+    // is Linux — and 16 is SIGSTKFLT there, not SIGURG. See
+    // `platform_sys::is_linux_abi`.
+    if platform_sys::is_linux_abi() { return 23; }
+    return 16;                                  // Darwin
+}
+
+fn _cancel_sig_noop(sig: i32) {
+    return;
+}
+
+fn create(tid_out: *u64, start: fn(*u8) -> *u8, arg: *u8) -> i32 {
+    return { pthread_create(tid_out, 0 as *u8, start, arg) };
+}
+
+fn join(tid: u64) -> i32 {
+    return { pthread_join(tid, 0 as *u8) };
+}
+
+fn detach(tid: u64) -> i32 {
+    return { pthread_detach(tid) };
+}
+
+// Make `tid` return early from a blocking syscall. A signal until one lands
+// DURING the park and forces EINTR — one landing before is consumed by the
+// no-op handler, which is why the caller loops.
+fn interrupt(tid: u64) -> i32 {
+    return { pthread_kill(tid, _cancel_signal()) };
+}
+
+// Install the no-op handler, with SA_RESTART stripped (BSD `signal()` sets it;
+// a restarting park never reports EINTR and the kick would be invisible).
+// Installation is process-global, so doing it on the canceller's thread covers
+// every target. The caller serialises this behind a one-time CAS.
+fn install_interrupt_handler() {
+    { signal(_cancel_signal(), _cancel_sig_noop) };
+    { siginterrupt(_cancel_signal(), 1) };
+    return;
+}
+
+// A pipe, for the cancellation tests: they need a descriptor a worker can park
+// on in a blocking read. Wrapped rather than called directly because the MSVC
+// runtime spells it `_pipe` and takes two extra arguments.
+extern fn pipe(fds: *i32) -> i32;
+
+fn make_pipe(fds: *i32) -> i32 {
+    return { pipe(fds) };
+}
+
+// Can `interrupt` actually break a thread out of a blocking syscall?
+//
+// On POSIX yes: a signal makes any blocking call return EINTR, so
+// `JoinHandle::cancel` can spin until the worker un-parks and know it will.
+// Windows has no such guarantee — see thread_sys_windows.cplus — and `cancel`
+// consults this to decide whether spinning is a wait or a hang.
+fn interrupt_is_reliable() -> bool { return true; }

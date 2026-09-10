@@ -1,0 +1,33 @@
+// facet/platform_sys_windows.cplus — the Windows half of the two primitives
+// facet calls for itself. Shadows `platform_sys.cplus` through the resolver's
+// `_windows` override.
+//
+// Same two questions, same contract; neither `pthread_self` nor `sched_yield`
+// exists here, which is exactly why this file does.
+//
+// Both calls are kernel32, which is on the linker's default search path — so
+// this needs no `[link]` section, the same way `stdlib/platform_sys_windows`
+// reaches `GetActiveProcessorCount` without one.
+
+// The calling thread's id. A DWORD, widened to the carrier the portable half
+// uses — the value is only ever compared against another one taken the same
+// way, so the width is storage and not meaning.
+//
+// `GetCurrentThreadId` and NOT `GetCurrentThread`: the latter answers a
+// PSEUDO-HANDLE, the constant -1, which is the same value on every thread and
+// would make M6's assertion pass everywhere. That is the failure mode this
+// whole check exists to catch, so the wrong call here is worse than no check.
+extern fn GetCurrentThreadId() -> u32;
+
+// Yield the remainder of this thread's slice to another READY thread on the
+// same processor, or answer false when there was none to yield to.
+//
+// The near neighbour is `Sleep(0)`, which will not release to a lower-priority
+// thread — so a worker the main thread is waiting on can be starved by the
+// wait itself. `SwitchToThread` has no such priority floor, which is what a
+// teardown spin needs.
+extern fn SwitchToThread() -> i32;
+
+fn ui_thread_id() -> u64 { return { GetCurrentThreadId() } as u64; }
+
+fn yield_once() { let _r: i32 = { SwitchToThread() }; return; }

@@ -9,7 +9,7 @@
 //   - the `stdlib_reactor_*_v1` C-ABI symbols codegen emits calls to, and
 //   - `pub fn poll_one_event` / `waiter_count`, which executor.cplus uses.
 //
-// so async lowering, executor::block_on, time::sleep and the cooperative
+// so async lowering, `Future::wait`, time::sleep and the cooperative
 // primitives (yield_now / spawn_local / await chains) all work unchanged.
 //
 // **Readiness source: WSAPoll.** Socket/file readiness is wired through
@@ -35,6 +35,11 @@
 // 8-byte WSAPOLLFD slot. Valid for the small handles a normal process is
 // handed (same assumption as netsys_windows / net.cplus).
 
+// `poll_one_event_cancellable` parks around the poll, which is thread's
+// business. Not a cycle: thread imports netsys and platform_sys, never the
+// reactor.
+import "./thread" as thread;
+
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -48,6 +53,17 @@ extern fn GetTickCount64() -> u64;
 // each, 8-byte aligned), a count, and a millisecond timeout (-1 = infinite).
 extern fn WSAPoll(fdarray: *u8, nfds: u32, timeout: i32) -> i32;
 extern fn WSAStartup(version: u16, data: *u8) -> i32;
+
+// POSIX `pipe(2)`, which `future.cplus`'s fd-registration test asks for by that
+// bare name. The Windows CRT provides `close`/`read`/`write` under their POSIX
+// spellings but NOT `pipe` — only `_pipe`, which takes an explicit buffer size
+// and text mode. This wrapper gives the linker the symbol the test names; a
+// 4 KiB binary pipe is more than enough for a test that registers the read fd
+// and never moves a byte through it.
+extern fn _pipe(pfds: *i32, psize: u32, textmode: i32) -> i32;
+export extern fn pipe(fds: *i32) -> i32 {
+    return { _pipe(fds, 4096 as u32, 0 as i32) };
+}
 
 // LLVM coroutine intrinsics — surfaced via stable wrapper symbols emitted
 // by codegen, so stdlib can call them as plain extern fns.
@@ -69,8 +85,10 @@ fn pollrdnorm() -> i16 { return 0x0100 as i16; }
 fn pollwrnorm() -> i16 { return 0x0010 as i16; }
 
 // Heap-block layout (Windows-private; only this module reads these offsets).
-// Eight i32 counters, then eight pointers to the parallel arrays.
-fn header_bytes() -> usize { return 96 as usize; }
+// Eight i32 counters, then eight pointers to the parallel arrays, then the
+// spawned table's own counter pair and pointer (added v0.0.30 to match the
+// Darwin and Linux reactors).
+fn header_bytes() -> usize { return 112 as usize; }
 
 fn off_n_waiters() -> usize { return 0 as usize; }
 fn off_cap_waiters() -> usize { return 4 as usize; }
@@ -89,6 +107,10 @@ fn off_awaitee_hdls() -> usize { return 72 as usize; }
 fn off_awaiter_hdls() -> usize { return 80 as usize; }
 // Per-waiter WSAPOLLFD events mask (i16), parallel to waiter_fds/_hdls.
 fn off_waiter_evmask() -> usize { return 88 as usize; }
+// The spawned table — the frames this reactor OWNS. See `register_spawned`.
+fn off_n_spawned() -> usize { return 96 as usize; }
+fn off_cap_spawned() -> usize { return 100 as usize; }
+fn off_spawned_hdls() -> usize { return 104 as usize; }
 
 fn ptr_is_null(p: *u8) -> bool {
     let null_p: *u8 = { 0 as *u8 };
@@ -138,6 +160,13 @@ fn ensure() -> *u8 {
     { *ae_slot = malloc((8 *% 8) as usize); }
     let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
     { *ar_slot = malloc((8 *% 8) as usize); }
+    // The spawned table — the frames this reactor OWNS. See `register_spawned`.
+    let ns_slot: *i32 = { (state + off_n_spawned()) as *i32 };
+    { *ns_slot = 0 as i32; }
+    let cs_slot: *i32 = { (state + off_cap_spawned()) as *i32 };
+    { *cs_slot = 8 as i32; }
+    let sh_slot: **u8 = { (state + off_spawned_hdls()) as **u8 };
+    { *sh_slot = malloc((8 *% 8) as usize); }
     // Bring Winsock up so WSAPoll is usable even if the reactor is driven
     // before net's own WSAStartup. Refcounted by the OS; safe to repeat.
     let wsad: *u8 = { malloc(512 as usize) };
@@ -149,32 +178,26 @@ fn ensure() -> *u8 {
 
 export extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
     register_read(fd, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
     register_write(fd, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
     register_timer(ms, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
     register_awaiter(awaitee, awaiter);
-    return;
 }
 
 export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
     notify_completed(awaitee);
-    return;
 }
 
 export extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
     enqueue_pending(hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
@@ -183,6 +206,27 @@ export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
 
 export extern fn stdlib_reactor_waiter_count_v1() -> i32 {
     return waiter_count();
+}
+
+// The async lowering asks how many pending (ready-to-run) tasks the reactor
+// holds; codegen emits this by stable symbol, so the Windows reactor exports it
+// the same as the epoll and kqueue ones.
+export extern fn stdlib_reactor_pending_count_v1() -> i32 {
+    return pending_count();
+}
+
+// The two spellings, one body. Blocking waits up to `_max_wait_ms`; the
+// non-blocking one probes with a zero timeout and is what an external pump
+// driving spawned tasks from a UI run loop needs — `facet/services::pump_async`
+// is that pump, and without this export no facet application linked on Windows
+// at all.
+fn poll_one_event() -> bool { return poll_one_event_within(_max_wait_ms()); }
+
+fn poll_one_event_nb() -> bool { return poll_one_event_within(0 as i32); }
+
+export extern fn stdlib_reactor_poll_one_event_nb_v1() -> i32 {
+    if poll_one_event_nb() { return 1 as i32; }
+    return 0 as i32;
 }
 
 export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
@@ -195,13 +239,11 @@ export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
 // Register fd for read-readiness; record the coroutine handle to wake.
 fn register_read(fd: i32, hdl: *u8) {
     register_fd(fd, hdl, pollrdnorm());
-    return;
 }
 
 // Register fd for write-readiness.
 fn register_write(fd: i32, hdl: *u8) {
     register_fd(fd, hdl, pollwrnorm());
-    return;
 }
 
 // Append a (fd, hdl, events) triple to the waiter arrays. `poll_one_event`
@@ -232,7 +274,6 @@ fn register_fd(fd: i32, hdl: *u8, evmask: i16) {
     { *(hdls + (n as usize)) = hdl; }
     { *(masks + (n as usize)) = evmask; }
     { *nw_slot = n +% (1 as i32); }
-    return;
 }
 
 // Register a one-shot timer that fires `ms` milliseconds from now and
@@ -261,7 +302,6 @@ fn register_timer(ms: u64, hdl: *u8) {
     { *(deadlines + (n as usize)) = deadline; }
     { *(hdls + (n as usize)) = hdl; }
     { *nt_slot = n +% (1 as i32); }
-    return;
 }
 
 // Index of the timer with the earliest deadline (caller guarantees n>0).
@@ -316,7 +356,28 @@ fn fire_earliest_timer(state: *u8) -> bool {
 // waiter. With fd waiters parked, blocks on WSAPoll bounded by the earliest
 // timer deadline; with timers only, sleeps to the deadline. Returns true if
 // a coroutine was resumed.
-fn poll_one_event() -> bool {
+// The longest this backend will sit in one WSAPoll. See the note inside
+// `poll_one_event` for why an unbounded wait is not available here.
+fn _max_wait_ms() -> i32 { return 50 as i32; }
+
+// Is the earliest timer actually DUE? Asked only by the non-blocking path:
+// `fire_earliest_timer` SLEEPS to the deadline when it has not arrived, which
+// is right for a blocking poll and is exactly what a non-blocking one must
+// never do.
+fn timer_due(state: *u8) -> bool {
+    let nt: i32 = { *((state + off_n_timers()) as *i32) };
+    if nt == (0 as i32) { return false; }
+    let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
+    let deadlines: *u64 = { *td_slot as *u64 };
+    let best: i32 = earliest_timer(state);
+    let best_dl: u64 = { *(deadlines + (best as usize)) };
+    return best_dl <= { GetTickCount64() };
+}
+
+// The body of both polls. `max_wait_ms` is the LONGEST this call may sit in
+// WSAPoll; zero makes it a probe, which is what the non-blocking spelling
+// passes.
+fn poll_one_event_within(max_wait_ms: i32) -> bool {
     let state: *u8 = ensure();
     let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
     let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
@@ -324,11 +385,53 @@ fn poll_one_event() -> bool {
     let nt: i32 = { *nt_slot };
     if nw == (0 as i32) {
         if nt == (0 as i32) { return false; }
-        return fire_earliest_timer(state);
+        // A due timer IS the event — fire it (fire_earliest_timer does not
+        // sleep once the deadline has passed).
+        if timer_due(state) { return fire_earliest_timer(state); }
+        // Not yet due. A zero budget may not sleep at all.
+        if max_wait_ms == (0 as i32) { return false; }
+        // BOUND THE NAP BY max_wait_ms, exactly as the WSAPoll path below
+        // bounds its wait. `fire_earliest_timer` would otherwise `Sleep` all
+        // the way to the deadline — and a `wait_or_cancel(sleep(1 hour))` on a
+        // spawned worker registers a timer an hour out with no fd waiter, so
+        // that unbounded sleep is uncancellable (the thread kick does not
+        // reach a `Sleep`) and `JoinHandle::join` hangs for the hour. Napping
+        // at most max_wait_ms lets the drive loop wake to re-check
+        // cancellation; the timer stays registered and no event is reported.
+        let best: i32 = earliest_timer(state);
+        let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
+        let deadlines: *u64 = { *td_slot as *u64 };
+        let best_dl: u64 = { *(deadlines + (best as usize)) };
+        let now: u64 = { GetTickCount64() };
+        var nap: u64 = best_dl -% now;
+        if nap > (max_wait_ms as u64) { nap = max_wait_ms as u64; }
+        { Sleep(nap as u32); }
+        if timer_due(state) { return fire_earliest_timer(state); }
+        return false;
     }
-    // Bound the wait by the earliest timer (so timers + I/O share one wait);
-    // -1 means block until an fd is ready when no timer is pending.
-    var timeout: i32 = (0 as i32) -% (1 as i32);
+    // Bound the wait by the earliest timer (so timers + I/O share one wait).
+    //
+    // NEVER -1, which is what "block until an fd is ready" would be and what the
+    // kqueue and epoll backends can safely do. Two Windows facts rule it out:
+    //
+    //   * WSAPoll TAKES ONLY SOCKETS. A waiter registered on a pipe or a file
+    //     descriptor — which `reactor::read_fd_async` accepts, and which the
+    //     executor's own tests use — is not pollable here at all, and an
+    //     infinite wait on a set containing one never returns. That is a hang
+    //     with no diagnostic, in a test that looks like it is doing async I/O.
+    //   * `JoinHandle::cancel` interrupts a parked worker with
+    //     `CancelSynchronousIo`, which does not reach a thread sitting inside
+    //     WSAPoll. An unbounded wait here is therefore also uncancellable.
+    //
+    // A bounded wait turns both into progress: the call returns, the executor
+    // re-polls, and `poll_one_event_cancellable` gets to observe cancellation.
+    // 50 ms is short enough that a cancel feels immediate and long enough that
+    // an idle reactor is not a spin.
+    //
+    // This is a floor, not the answer. Real Windows async is IOCP, or
+    // `WaitForMultipleObjects` over handles rather than sockets; either would
+    // let a pipe be waited on properly instead of polled around.
+    var timeout: i32 = max_wait_ms;
     if nt > (0 as i32) {
         let best: i32 = earliest_timer(state);
         let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
@@ -338,7 +441,8 @@ fn poll_one_event() -> bool {
         if best_dl <= now {
             timeout = 0 as i32;
         } else {
-            timeout = (best_dl -% now) as i32;
+            let until: u64 = best_dl -% now;
+            if until < (max_wait_ms as u64) { timeout = until as i32; }
         }
     }
     // Build the WSAPOLLFD array (16 bytes/entry: fd@0, events@8, revents@10).
@@ -391,8 +495,11 @@ fn poll_one_event() -> bool {
     }
     { free(arr); }
     if nready == (0 as i32) {
-        // Timed out — the earliest timer is due.
+        // Timed out. On the BLOCKING path the wait was bounded by the earliest
+        // deadline, so a timeout means the timer is due; on the non-blocking
+        // one nothing waited at all and it has to be asked.
         if nt > (0 as i32) {
+            if max_wait_ms == (0 as i32) && !timer_due(state) { return false; }
             return fire_earliest_timer(state);
         }
         return false;
@@ -439,7 +546,6 @@ fn enqueue_pending(hdl: *u8) {
     let hdls: **u8 = { *ph_slot as **u8 };
     { *(hdls + (n as usize)) = hdl; }
     { *np_slot = n +% (1 as i32); }
-    return;
 }
 
 // Snapshot of pending event-side work — fd waiters plus active timers.
@@ -513,7 +619,6 @@ fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     { *(aes + (n as usize)) = awaitee; }
     { *(ars + (n as usize)) = awaiter; }
     { *na_slot = n +% (1 as i32); }
-    return;
 }
 
 // Linear scan for an awaiter registered on `awaitee`; if found, swap-remove
@@ -545,12 +650,335 @@ fn notify_completed(awaitee: *u8) {
         }
         i = i +% (1 as i32);
     }
+}
+
+// This thread's reactor identity. See the note on `reactor_fd` in
+// reactor.cplus for why the name is not `kqfd`.
+//
+// THERE IS NO DESCRIPTOR HERE, and that is not an omission. kqueue and epoll
+// each own a kernel object the caller can hold an fd to; WSAPoll owns nothing
+// between calls — it takes the whole pollfd array every time. So this backend
+// has no fd to hand back, and the state block reserves no room for one
+// (`header_bytes` is 96, and the offsets above fill it exactly).
+//
+// What the contract actually asks for is an identity: two threads must get two
+// DIFFERENT non-negative values, which is how `each_thread_gets_its_own_reactor`
+// checks that the state slot is thread-local rather than shared. The state
+// block's own address answers that — it is per-thread by construction and
+// stable for the reactor's life — so this returns the low 31 bits of it,
+// masked to stay non-negative.
+//
+// It is therefore a TOKEN, not a handle: comparing two is meaningful, and
+// passing one to any Win32 call is not. The "watch this fd from an external
+// event loop" use the base file describes has no Windows analogue through this
+// function; a caller wanting that needs a real waitable object, which is a
+// different design than the one this backend has.
+fn reactor_fd() -> i32 {
+    let state: *u8 = ensure();
+    return { ((state as usize) & (0x7FFFFFFF as usize)) as i32 };
+}
+
+// ---- unregistration --------------------------------------------------------
+// Both are swap-removes over the parallel arrays, and both scan the WHOLE
+// range rather than stopping at the first hit: a handle can be enqueued more
+// than once (an awaiter notified while already pending), and leaving the
+// duplicate behind would hand a freed frame to `drain_pending`. `i` only
+// advances on a non-match, because the swap moves an unexamined element into
+// the slot just vacated.
+
+// Drop a parked reader (a socket/file waiter or a timer) by its coroutine
+// handle. `Future::wait` / `wait_or_cancel` call this to tear a suspended frame
+// out of the reactor. The Linux twin has to `epoll_ctl(DEL)` and close a
+// timerfd; here there is neither — WSAPoll rebuilds its pollfd array from these
+// arrays on every call, and a Windows timer is a bare deadline with no fd — so
+// removal is just a swap-remove from the parallel arrays. A handle can sit in
+// only one of the two tables, but both are swept so the door works for either.
+fn unregister_waiter(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let state: *u8 = { #reactor_get_state() };
+    if ptr_is_null(state) { return; }
+
+    // The waiter (fd) table: fds (i32), handles (ptr), evmask (i16) — parallel.
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    let fds: *i32 = { *((state + off_waiter_fds()) as **u8) as *i32 };
+    let whdls: **u8 = { *((state + off_waiter_hdls()) as **u8) as **u8 };
+    let evm: *i16 = { *((state + off_waiter_evmask()) as **u8) as *i16 };
+    var nw: i32 = { *nw_slot };
+    var i: i32 = 0;
+    while i < nw {
+        if { *(whdls + (i as usize)) } == hdl {
+            let last_i: i32 = nw -% (1 as i32);
+            if i != last_i {
+                let lf: i32 = { *(fds + (last_i as usize)) };
+                let lh: *u8 = { *(whdls + (last_i as usize)) };
+                let lm: i16 = { *(evm + (last_i as usize)) };
+                { *(fds + (i as usize)) = lf; }
+                { *(whdls + (i as usize)) = lh; }
+                { *(evm + (i as usize)) = lm; }
+            }
+            nw = last_i;
+        } else {
+            i = i +% (1 as i32);
+        }
+    }
+    { *nw_slot = nw; }
+
+    // The timer table: deadlines (u64), handles (ptr) — parallel, no fd.
+    let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
+    let deadlines: *u64 = { *((state + off_timer_deadlines()) as **u8) as *u64 };
+    let thdls: **u8 = { *((state + off_timer_hdls()) as **u8) as **u8 };
+    var nt: i32 = { *nt_slot };
+    var j: i32 = 0;
+    while j < nt {
+        if { *(thdls + (j as usize)) } == hdl {
+            let last_j: i32 = nt -% (1 as i32);
+            if j != last_j {
+                let ld: u64 = { *(deadlines + (last_j as usize)) };
+                let lh: *u8 = { *(thdls + (last_j as usize)) };
+                { *(deadlines + (j as usize)) = ld; }
+                { *(thdls + (j as usize)) = lh; }
+            }
+            nt = last_j;
+        } else {
+            j = j +% (1 as i32);
+        }
+    }
+    { *nt_slot = nt; }
     return;
 }
 
-// This thread's reactor descriptor. See the note on `reactor_fd` in
-// reactor.cplus for why the name is not `kqfd`.
-fn reactor_fd() -> i32 {
+fn unregister_pending(hdl: *u8) {
     let state: *u8 = ensure();
-    return { *((state + off_kqfd()) as *i32) };
+    let np_slot: *i32 = { (state + off_n_pending()) as *i32 };
+    let ph_slot: **u8 = { (state + off_pending_hdls()) as **u8 };
+    let hdls: **u8 = { *ph_slot as **u8 };
+    var n: i32 = { *np_slot };
+    var i: i32 = 0;
+    while i < n {
+        let cur: *u8 = { *(hdls + (i as usize)) };
+        if cur == hdl {
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_h: *u8 = { *(hdls + (last_i as usize)) };
+                { *(hdls + (i as usize)) = last_h; }
+            }
+            n = last_i;
+        } else {
+            i = i +% (1 as i32);
+        }
+    }
+    { *np_slot = n; }
+    return;
+}
+
+fn unregister_awaiter(awaitee: *u8) {
+    let state: *u8 = ensure();
+    let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
+    let ae_slot: **u8 = { (state + off_awaitee_hdls()) as **u8 };
+    let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
+    let aes: **u8 = { *ae_slot as **u8 };
+    let ars: **u8 = { *ar_slot as **u8 };
+    var n: i32 = { *na_slot };
+    var i: i32 = 0;
+    while i < n {
+        let cur_ae: *u8 = { *(aes + (i as usize)) };
+        if cur_ae == awaitee {
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_ae: *u8 = { *(aes + (last_i as usize)) };
+                let last_ar: *u8 = { *(ars + (last_i as usize)) };
+                { *(aes + (i as usize)) = last_ae; }
+                { *(ars + (i as usize)) = last_ar; }
+            }
+            n = last_i;
+        } else {
+            i = i +% (1 as i32);
+        }
+    }
+    { *na_slot = n; }
+    return;
+}
+
+// ---- spawned tasks: the frames the reactor OWNS ----
+//
+// The Darwin and Linux reactors carry the full reasoning; the short version is
+// that a `spawn_local` task is awaited by nothing, so no cancel cascade reaches
+// it, and since `Future` gained a destructor the frame is always owned by
+// something. `#reactor_spawn_local` moves the handle out of the value and this
+// is where it lands.
+//
+// A flat array with NULL HOLES: `unregister_spawned` nulls in place, so an
+// entry's index never moves under an iteration.
+fn register_spawned(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let state: *u8 = ensure();
+    let ns_slot: *i32 = { (state + off_n_spawned()) as *i32 };
+    let cs_slot: *i32 = { (state + off_cap_spawned()) as *i32 };
+    let sh_slot: **u8 = { (state + off_spawned_hdls()) as **u8 };
+    var n: i32 = { *ns_slot };
+    var cap: i32 = { *cs_slot };
+    // Reuse a hole before growing, or a long-lived reactor spawning in a loop
+    // grows without bound.
+    let hs0: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        if ptr_is_null({ *(hs0 + (s as usize)) }) {
+            let dst0: **u8 = { hs0 + (s as usize) };
+            { *dst0 = hdl; }
+            return;
+        }
+        s = s +% (1 as i32);
+    }
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let grown: *u8 = { realloc(*sh_slot, (cap *% 8) as usize) };
+        { *sh_slot = grown; }
+        { *cs_slot = cap; }
+    }
+    let hs: **u8 = { *sh_slot as **u8 };
+    let dst: **u8 = { hs + (n as usize) };
+    { *dst = hdl; }
+    { *ns_slot = n +% (1 as i32); }
+}
+
+// Give up ownership WITHOUT destroying — the door for a frame something else
+// already freed, so teardown cannot destroy it twice.
+fn unregister_spawned(hdl: *u8) {
+    if ptr_is_null(hdl) { return; }
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        let slot: **u8 = { hs + (s as usize) };
+        if { *slot } == hdl { { *slot = 0 as *u8; } }
+        s = s +% (1 as i32);
+    }
+}
+
+// How many spawned frames this reactor still owns. Read by the tests.
+fn spawned_count() -> i32 {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return 0 as i32; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var live: i32 = 0;
+    var s: i32 = 0;
+    while s < n {
+        if !ptr_is_null({ *(hs + (s as usize)) }) { live = live +% (1 as i32); }
+        s = s +% (1 as i32);
+    }
+    return live;
+}
+
+// Destroy every spawned frame still owned, running each one's cancel edges.
+// Called by `teardown` BEFORE the arrays go, because a cancel edge unregisters
+// awaiter and pending entries and those arrays have to still be there.
+fn destroy_spawned() {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    let ns_slot: *i32 = { (cur + off_n_spawned()) as *i32 };
+    let sh_slot: **u8 = { (cur + off_spawned_hdls()) as **u8 };
+    let n: i32 = { *ns_slot };
+    let hs: **u8 = { *sh_slot as **u8 };
+    var s: i32 = 0;
+    while s < n {
+        let slot: **u8 = { hs + (s as usize) };
+        let h: *u8 = { *slot };
+        // Nulled BEFORE the destroy: cancel edges run arbitrary drops and one
+        // could re-enter. An entry already taken cannot be taken twice.
+        { *slot = 0 as *u8; }
+        if !ptr_is_null(h) {
+            unregister_pending(h);
+            unregister_awaiter(h);
+            { #coro_destroy(h); }
+        }
+        s = s +% (1 as i32);
+    }
+    { *ns_slot = 0 as i32; }
+}
+
+// ---- teardown --------------------------------------------------------------
+// Frees the arrays `ensure` allocates, then the state block, then clears the
+// thread-local slot so a later use lazily builds a fresh reactor.
+//
+// There is no descriptor to close here, which is the one line that differs
+// from the kqueue and epoll backends: WSAPoll takes the pollfd array on every
+// call and owns no kernel object between them. Winsock itself is left up —
+// `WSAStartup` is refcounted per process and `net` may still be using it, so a
+// `WSACleanup` on one thread's reactor teardown would be reaching well past
+// what this function owns.
+fn teardown() {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    // The spawned frames first, while the arrays their cancel edges write to
+    // are still allocated.
+    destroy_spawned();
+    { free(*((cur + off_waiter_fds()) as **u8)); }
+    { free(*((cur + off_waiter_hdls()) as **u8)); }
+    { free(*((cur + off_waiter_evmask()) as **u8)); }
+    { free(*((cur + off_pending_hdls()) as **u8)); }
+    { free(*((cur + off_timer_deadlines()) as **u8)); }
+    { free(*((cur + off_timer_hdls()) as **u8)); }
+    { free(*((cur + off_awaitee_hdls()) as **u8)); }
+    { free(*((cur + off_awaiter_hdls()) as **u8)); }
+    { free(*((cur + off_spawned_hdls()) as **u8)); }
+    { free(cur); }
+    { #reactor_set_state(0 as *u8); }
+    return;
+}
+
+// ---- cancellable poll ------------------------------------------------------
+// The parked form of `poll_one_event`, so a `block_on` waiting on I/O can be
+// woken by `JoinHandle::cancel` instead of sitting in WSAPoll until its
+// timeout. `park_begin` returns true when cancellation was already requested,
+// in which case there is nothing to wait for.
+//
+//   -2  cancelled before polling      0  polled, nothing resumed
+//    1  polled, a coroutine resumed
+fn poll_one_event_cancellable() -> i32 {
+    if thread::park_begin() {
+        thread::park_end();
+        return 0 - 2;
+    }
+    let resumed: bool = poll_one_event();
+    thread::park_end();
+    if resumed { return 1; }
+    return 0;
+}
+
+// ---- the C-ABI shims -------------------------------------------------------
+// The reactor is reachable from generated coroutine code by stable C symbol,
+// not by C+ name, so every verb the compiler emits a call to needs one. These
+// are emitted by codegen directly; without them the failure is a LINK error
+// inside generated IR (`use of undefined value
+// '@stdlib_reactor_unregister_awaiter_v1'`) that names the shim, not the
+// caller. Same shim set reactor_linux.cplus carries.
+
+// The codegen door for `#reactor_spawn_local` — the same stable symbol the
+// Darwin and Linux reactors export, because the intrinsic emits one call site
+// for every target.
+export extern fn stdlib_reactor_register_spawned_v1(hdl: *u8) {
+    register_spawned(hdl);
+    return;
+}
+
+export extern fn stdlib_reactor_unregister_spawned_v1(hdl: *u8) {
+    unregister_spawned(hdl);
+    return;
+}
+
+export extern fn stdlib_reactor_unregister_pending_v1(hdl: *u8) {
+    unregister_pending(hdl);
+    return;
+}
+
+export extern fn stdlib_reactor_unregister_awaiter_v1(awaitee: *u8) {
+    unregister_awaiter(awaitee);
+    return;
 }

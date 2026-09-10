@@ -11,8 +11,14 @@ cpc pm install [DIR]      resolve DIR/Cplus.toml deps into the store
 cpc pm update  [DIR]      the same materialization as install (pre-1.0)
 cpc pm add DIR NAME [SPEC]  write NAME + its declared closure into the
                           manifest, then install (see below)
+cpc pm add DIR --maven G:A:V  pin a third-party Maven/AAR coordinate in
+                          [android.maven], price it, download it (D18)
 cpc pm remove DIR NAME    delete DIR/vendor/NAME (the project copy only)
 cpc pm manifest [DIR]     parse DIR/Cplus.toml and print the pm's view as JSON
+cpc pm maven [WHAT] [DIR] what the Maven closure gives an Android build:
+                          list (default) | classpath | manifests | res | jni
+                          | root — all resolved OFFLINE from the local repo
+cpc pm maven price G:A:V  what one coordinate would cost, no project needed
 
 install/update flags:
   --local                install into DIR/vendor/ instead of the store
@@ -22,6 +28,9 @@ install/update flags:
                           offline installs, tests)
   --toolchain-repo R     toolchain monorepo (`cpc pm` supplies this)
   --toolchain-version V  toolchain version (`cpc pm` supplies this)
+  --m2 DIR               local Maven repo (default <store>/m2)
+  --maven-repo URL       remote Maven repo, repeatable, IN ORDER
+  --maven-offline        never download a Maven artifact
 ```
 
 `DIR` defaults to the current directory, matching `cpc build`. All commands
@@ -36,6 +45,7 @@ a context, bare `*` deps cannot resolve and global install has no tier.
 ~/.cplus/                        ($CPLUS_HOME overrides the root)
   cache/                         disposable git clones — safe to delete
   tags/<repo>/<tag>              first-seen commit per release tag (D8)
+  m2/<group>/<artifact>/<ver>/   the local Maven repo (D18) — NOT tiered
   v0.0.27/vendor/<name>/         the store tier: one package set per line
 ```
 
@@ -145,6 +155,45 @@ The edit is surgical (`toml_edit`): comments and formatting survive, and
 existing entries are never modified — a differing spec is reported and
 kept, because the manifest is the user's file. Idempotent: re-running with
 another `--platform` fills only the missing sections.
+
+## Maven / AAR dependencies (D18)
+
+`add DIR --maven <group:artifact:version>` writes
+`"group:artifact" = "version"` into `[android.maven]` and installs. Only the
+ROOT coordinate is written: a POM is immutable, so the closure is derivable
+and writing it out would be a lockfile with extra steps (D3). What is
+printed instead is the price — the artifact count and the megabytes.
+
+Resolution walks POMs with `<parent>` chains, `<properties>` interpolation,
+`<dependencyManagement>` and BOM `<scope>import</scope>`; `compile` and
+`runtime` scopes only, `optional` skipped, hard ranges (`[1.6.2]`) unwrapped.
+Two repos are tried in order and **the order is load-bearing**: androidx
+lives on Google's Maven, and Central answers 404 for every `androidx.*`
+coordinate in a way that looks exactly like a bad version number.
+
+Artifacts land in `<store>/m2` laid out as a real Maven repo, and each AAR is
+exploded beside its archive into `<artifact>-<version>/` — `d8` wants
+`classes.jar`, not a zip. **An incomplete closure installs nothing**: a
+missing transitive artifact is a `NoClassDefFoundError` on a device.
+
+`cpc pm maven <what>` reads it back, always offline, so a build never
+reaches the network:
+
+```sh
+d8 --release --min-api 26 --lib "$AJ" --output out \
+   $(cpc pm maven classpath) vendor/facet_android/facet_android.dex
+```
+
+`manifests`, `res` and `jni` name the other three things an AAR carries.
+Merging the manifest fragments and running `aapt2` over the resources is
+still the build script's job (`plans/third-party-sdks.md` §3).
+
+`cpc pm maven price <coord>` answers "what would this cost?" without a
+project — run it before taking on a dependency.
+
+Conflicts are **nearest-wins** (Maven's rule; Gradle takes the highest). The
+report warns only where the two differ — where nearest-wins kept the older
+version — and counts the rest.
 
 ## remove
 

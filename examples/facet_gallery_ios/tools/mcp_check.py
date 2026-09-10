@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """End-to-end MCP check against a RUNNING facet_gallery_ios.
 
-    tools/mcp_check.py [port]        # 8787 by default
+    tools/mcp_check.py <port>         # 9000 + pid % 1000
+
+THE PORT IS DERIVED FROM THE PID, not configured: `9000 + pid % 1000`. A
+launcher that started the app knows the pid; anything else reads what the app
+filed in /tmp/mcp-<id>-<pid>.json. (It used to be a literal 8787, passed by the
+app — and the app still passed "8787" for a while after that became the app's
+ID rather than its port, which is how it ended up serving somewhere nobody was
+looking.)
 
 The one script for both targets, and that is the point of it. On the SIMULATOR
-the app's loopback is the Mac's, so it connects straight to 127.0.0.1:8787. On a
-DEVICE the same port arrives over usbmuxd — `iproxy 8787 8787 <UDID>` or
-`pymobiledevice3 usbmux forward 8787 8787` — and nothing here changes, which is
-how "the device answers the same as the simulator" becomes a thing you can check
-rather than a thing you believe.
+the app's loopback is the Mac's, so it connects straight to 127.0.0.1:<port>. On
+a DEVICE the same port arrives over usbmuxd — `iproxy <port> <port> <UDID>` or
+`pymobiledevice3 usbmux forward <port> <port>` — and nothing here changes, which
+is how "the device answers the same as the simulator" becomes a thing you can
+check rather than a thing you believe.
 
 It drives the app: it navigates, types, and puts it back where it found it. Run
 it against a gallery you are not also using by hand.
@@ -16,7 +23,7 @@ it against a gallery you are not also using by hand.
 import json, sys, time
 from mcpc import MCP
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8787
+PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8787   # pass it; see above
 fails = []
 def check(name, ok, detail=""):
     print(("  PASS  " if ok else "  FAIL  ") + name + (("   " + str(detail)) if detail else ""))

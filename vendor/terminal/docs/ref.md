@@ -4,7 +4,7 @@ Four modules:
 
 ```cplus
 import "terminal/widget" as terminal;      // portable facet-facing widget
-import "terminal/appkit" as terminal_ui;   // the same widget in AppKit types
+import "terminal/backend" as terminal_ui;  // the platform half, AppKit types on Apple
 import "terminal/terminal" as terminal;    // platform-neutral VT screen
 import "terminal/pty" as pty;              // pseudo-terminal session
 ```
@@ -271,10 +271,21 @@ fn shell_exit_code(this) -> option::Option[i32]
 The shell's own exit status, once it has exited. `None` while it is still
 running.
 
-## `terminal/appkit`
+## `terminal/backend`
 
-The same `Widget` with AppKit types, for applications that mount views
+The platform half of the same `Widget`, for applications that mount views
 themselves. Every verb above is identical.
+
+**This module was called `terminal/appkit` until 2026-09-08.** It named one
+platform in the one module whose whole job is not to, so there was nowhere for a
+second implementation to go and the package did not build off macOS at all. It
+is `./backend` now, and the resolver picks `backend_windows.cplus` on Windows
+the same way it picks `pty_windows.cplus` beside `pty.cplus`. The AppKit
+implementation is unchanged — it is simply spelled as what it is.
+
+The signatures below are the Apple ones. A backend answers the same verbs in its
+own types; `terminal/widget` is the portable surface and is what an application
+should import.
 
 #### `Widget::view`, `Widget::native_handle`, `Widget::node`
 

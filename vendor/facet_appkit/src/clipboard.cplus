@@ -1,0 +1,41 @@
+// facet_appkit clipboard — the general pasteboard, both directions.
+//
+// A platform service with no view, which is what puts it beside `dialogs`
+// rather than inside a control: nothing here draws, and nothing here needs a
+// window. See `facet_runtime/runtime`'s `copy_text` / `paste_text` for why the
+// portable half has it at all.
+//
+// `NSPasteboardTypeString` is a global NSString the linker would otherwise have
+// to resolve; its value is the UTI, and writing the UTI out is one string
+// instead of an extern and a load.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "appkit/appkit" as ak;
+
+// The UTI for plain UTF-8 text, which is what `NSPasteboardTypeString` holds.
+const UTF8_TEXT: str = "public.utf8-plain-text";
+
+// COPY, AND IT ANSWERS. A pasteboard that refused looks exactly like one that
+// worked until you paste — by which time you are in another app and it reads
+// as your own mistake — so the outcome is returned rather than dropped.
+//
+// `clearContents` FIRST IS NOT OPTIONAL: `setString:forType:` on a board that
+// was not cleared is documented to fail, and the change count it returns is
+// what makes the write the owner of the board.
+fn copy_text(s: str) -> bool {
+    let pb: ak::Pasteboard = ak::Pasteboard::general_pasteboard();
+    if pb.raw() == (0 as *u8) { return false; }
+    let _n: i64 = pb.clear_contents();
+    return pb.set_string(s, UTF8_TEXT);
+}
+
+// PASTE. `None` and `Some("")` are different answers and both are real: an
+// empty board has no string at all, and a board holding an empty string is a
+// thing a person can put there. Distinguishing them is why this is an Option
+// rather than a Text that is sometimes empty.
+fn paste_text() -> option::Option[text::Text] {
+    let pb: ak::Pasteboard = ak::Pasteboard::general_pasteboard();
+    if pb.raw() == (0 as *u8) { return option::Option[text::Text]::None; }
+    return pb.string_for_type(UTF8_TEXT);
+}

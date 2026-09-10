@@ -7,9 +7,113 @@ from an abandoned one.
 
 Status 2026-08-23: **first light.** A label, a button and a container render on
 a Pixel 9 Pro XL emulator (API 36); taps route through facet's handler; state
-survives an Activity recreation. Everything else is section 2.
+survives an Activity recreation.
+
+**Status 2026-09-08: EVERY DECLARED VERB IS IMPLEMENTED OR RECORDED.**
+`python3 tools/verb_coverage.py android --check` passes.
+
+    312 live / 363 declared      88 of 89 handlers wired
+    20 host-rendered   22 decided   6 modifier   1 derived   1 create-only
+     1 by-architecture
+     0 absent   0 gated-but-unread   0 handlers that never fire
+
+That number is the STRICT one: `verb_coverage.py` credits a verb only when the
+dirty bit is GATED and the field is READ. `tools/parity.py` is the looser
+measure this file used to quote — it counts a bit that is merely NAMED — and it
+now reads 347/363, floor raised to match.
+
+Read the ledgers below before trusting any adjective here. A row in them is a
+commitment: the tool refuses a `host-rendered`, `create-only`, `derived` or
+`modifier` claim whose field no body reads, and says LEDGER CONTRADICTED
+instead. That is the only thing stopping another backend's reasoning being
+pasted over a gap in this one.
 
 ---
+
+## The ledgers
+
+`tools/verb_coverage.py android` reads the fenced blocks below and separates
+"decided" from "nobody built it yet", so the debt number means something. They
+are written from THIS backend's code, not copied from facet_appkit: a row is
+only here because the field was traced to the line that reads it.
+
+The tool refuses a `create-only`, `host-rendered`, `derived` or `modifier` row
+whose field no body reads — it reports LEDGER CONTRADICTED and the verb stays
+debt. That is deliberate: it is the only thing stopping another backend's
+reasoning being pasted over a gap here.
+
+```cannot-ledger
+collection.is_grouped           a GridView has no sections; a group header would have to SPAN a row, which a grid's fixed column width cannot do
+collection.can_mix_groups       as collection.is_grouped — there are no groups to mix
+collection.can_reorder_items    dragging a row is AndroidX ItemTouchHelper — an .aar with its own dex, and this project ships no Gradle
+collection.reorder              as collection.can_reorder_items
+list.reorder                    as collection.can_reorder_items
+carousel.wraps                  a paging HorizontalScrollView over the node's own children has a first page and a last; wrapping would mean reordering children under the finger
+carousel.scroll_anchor          a carousel has no MODEL to anchor — its pages are built once, by the application, as children
+carousel.item_sizing            nothing to measure: every page is one column wide by construction
+carousel.peek_insets            as carousel.item_sizing — the page IS the viewport here
+bordered.stroke_cap             a GradientDrawable's stroke has a width and a colour and nothing else; the Paint those belong to is reachable only by drawing the border ourselves, which is what `canvas` is for
+bordered.stroke_join            as bordered.stroke_cap
+bordered.stroke_miter_limit     as bordered.stroke_cap
+bordered.stroke_dash_offset     as bordered.stroke_cap
+popup.label                     a Spinner's field IS its selected item; facet's `label` names a second line there is no slot for
+popup.title_color               the prompt is drawn by the platform's own dialog, a view this backend neither builds nor reaches
+menu.text                       there is no menu BAR on Android — an app's commands live in the ActionBar's overflow, which is what `toolbar_item` reaches
+menu.priority                   as menu.text
+menu_item.text                  as menu.text — a menu bar's items have nowhere to be
+menu_item.icon                  as menu.text
+menu_item.is_destructive        as menu.text
+window_chrome.style             an Android app has no title bar and no window controls — there is no chrome to style
+window_chrome.spacing           as window_chrome.style — nothing to space
+collection.group_size           a GridView has no sections — see collection.is_grouped
+collection.group_header         a GridView has no sections — a header would have to SPAN a row
+collection.on_reorder_completed no drag to complete — see collection.can_reorder_items
+```
+
+```host-rendered
+span.text                       a run in its label's SpannableString, built by `apply_span_children`
+toolbar_item.text               the title of the ActionBar MenuItem built from it
+toolbar_item.icon               the MenuItem's icon, resolved as a drawable resource name
+toolbar_item.is_destructive     a danger-coloured title span; an Android MenuItem has no destructive style
+toolbar_item.placement          SHOW_AS_ACTION_IF_ROOM for Primary, NEVER for Secondary — Android's word for "on the bar" and "in the overflow"
+toolbar_item.priority           the id AND the order the item is added at, low first
+swipe_item.text                 the title of the Button the swipe strip builds for it
+swipe_item.icon                 a COMPOUND drawable above that title — a swipe action is a Button, so the icon is not an image view of its own
+swipe_item.is_destructive       the Button's background — danger, against the system fill for a plain one
+list.row_height                 a STATED height, read into the RowModel and applied as the row is placed
+span.text_color                 a ForegroundColorSpan on the run
+span.font_size                  an AbsoluteSizeSpan on the run
+span.font_weight                a StyleSpan on the run — Android's spans carry bold, not a weight axis
+span.is_italic                  a StyleSpan on the run
+span.text_decoration            an underline or strikethrough span on the run
+span.font_family                a TypefaceSpan on the run
+span.line_height                a LineHeightSpan.Standard on the run (API 29+; below it the run keeps the label's)
+span.character_spacing          a MetricAffectingSpan setting letterSpacing — points converted to the EMs Android wants
+span.text_transform             applied to the STRING before it is appended; Android has no per-run case transform
+span.font_scales                decides the UNIT the size resolves in — `env::font_scale()` (scaledDensity) or `env::density()`
+```
+
+```by-architecture
+list.has_uneven_rows            a ListView asks its adapter for EVERY row's view and never assumes a height, so the hint is already true of it — there is nothing to switch on
+```
+
+```create-only
+scroll.axis                     a create-time CLASS choice — HorizontalScrollView or ScrollView; `create_scroll` reads it and there is no reclass
+```
+
+```derived
+carousel.is_scrolling           written BACK by the scroll listener — true when a drag starts, false when the pager settles
+```
+
+```modifier
+date_picker.minimum_date        no write of its own; it bounds what the DatePickerDialog allows, read as the dialog opens
+date_picker.maximum_date        as date_picker.minimum_date
+stepper.increment               no write of its own — Android's two buttons know nothing about a range, so `fire_step` reads it when a step arrives
+stepper.minimum                 as stepper.increment — the clamp is this side's
+stepper.maximum                 as stepper.increment — the clamp is this side's
+radio.group                     no write of its own; it decides which siblings `turn_off_group_siblings` switches off when this one is picked
+```
+
 
 ## 1. Decided absent — Android has no such thing
 
@@ -34,38 +138,613 @@ computes every frame and this backend pushes it with `View.layout()` onto a
 `FacetHost` whose `onLayout` is empty. Binding Android's layout system would be
 binding a second, contradictory answer to the same question.
 
-This is why `vendor/android_view`'s generated class list is seven leaf widgets
+This is why `vendor/android_view`'s generated class list is a curated list
 rather than all of `android.widget`.
+
+### AN SF SYMBOL NAME
+
+`image("square.and.arrow.up")` and `icon_button("checkmark.circle")` name SF
+Symbols, and Android ships no such glyph set. A source resolves through four
+doors here — a FILE on disk, an APK ASSET, a DRAWABLE RESOURCE in the app, then
+one in the `android` package — and an SF Symbol name is none of them, so it
+warns once and draws nothing.
+
+That fourth door IS the system tier `symbol.cplus` describes: "the platform's
+own set. macOS reads SF Symbols, Linux the freedesktop theme, Windows Segoe
+Fluent." Android's own set is `android.R.drawable`, reached by name, and asking
+for it is what an app writing `icon_button("ic_menu_share")` gets. The names
+differ per platform BY DESIGN — the contract calls naming one "a deliberate,
+visible choice to write platform-specific code" — so a shared source picks the
+name with `#platform()`, which is what examples/facet_gallery_ios does.
+
+An `icon_button` is a GLYPH AND A CIRCLE and nothing else: no background at
+all, and the theme's own `selectableItemBackgroundBorderless` for the press,
+with its hotspot bounds pinned to a centred SQUARE so the ripple is a circle
+around the glyph rather than one the width of whatever box the layout gave it.
+That is what a glyph button wears everywhere else on the platform.
+
+The default `imageButtonStyle` puts an opaque background under the glyph, and
+with no glyph to put there it WAS the control — a slab that read as a broken
+button rather than an empty one.
+
+Mapping the common names onto `android.R.drawable` was considered and rejected:
+the legacy set is a different vocabulary drawn in a different decade, and
+picking `ic_menu_share` for `square.and.arrow.up` would put a picture on the
+screen the application never asked for. An Android app that wants an icon ships
+one, and all three doors are open to it.
 
 ---
 
+### Sections in a `collection`, and dragging a row to reorder one
+
+`is_grouped`, `can_mix_groups`, `can_reorder_items` and `reorder` on a
+`collection`, and `reorder` on a `list`.
+
+A `GridView` has no sections: an `AbsListView` is one flat run of cells, and a
+group header would have to SPAN a row — which is the one thing a grid's fixed
+column width cannot do. `list` grouping is answered because a `ListView` can
+carry a header row like any other; a grid cannot, and faking it by padding a
+row with empty cells would be inventing a look facet has not described.
+
+Dragging a row to reorder is the platform's `ItemTouchHelper`, which is
+AndroidX — an `.aar` with its own dex and dependency graph, and this project
+ships no Gradle. That leaves hand-rolling a long-press drag over a recycler,
+which is a gesture tier rather than a prop, and the swipe strip is the only one
+of those this backend has taken on so far.
+
+### `wraps`, `scroll_anchor` and `item_sizing` on a `carousel`
+
+A carousel here is a paging `HorizontalScrollView` over the node's own
+children. It has a first page and a last one: `wraps` would mean reordering
+children under the finger, which is a different control rather than a flag.
+
+The other two are questions about a MODEL that is being updated while the view
+is scrolled, and a carousel has no model — its pages are built once, by the
+application, as children. `scroll_anchor` has nothing to anchor and
+`item_sizing` has nothing to measure: every page is one column wide by
+construction. Both are answered on `collection`, where there IS a model.
+
+### `stroke_cap`, `stroke_join` and `stroke_miter_limit` on a `bordered`
+
+A `bordered` is a `GradientDrawable` with a stroke, and that stroke has a width
+and a colour and nothing else — no cap, no join, no miter limit. The Paint
+those three belong to is reachable only by drawing the border ourselves, which
+is what `canvas` is for and what `bordered` deliberately is not: it is a
+container with a border, so its children draw normally over a background the
+platform paints.
+
+### A `popup`'s own `label`
+
+A `Spinner`'s field IS its selected item — there is no second line of text
+above or beside it. facet's `label` names exactly that second line, so there is
+no slot to put it in. `title` is answered, because a Spinner has a prompt.
+
+### `C_AGENT`
+
+The other two backends PIN the agent tier onto the platform view, because their
+agent surfaces walk views. `agent_android` walks facet's own tree — its
+MANIFEST §1 says so, and `attach` hands over a `*core::Node` rather than a
+view — so the tier is already where the surface reads it, on the node.
+
+Wiring `app::agent_pin` here anyway is not merely redundant, it CRASHES: the
+Android surface casts its first argument to a `*core::Node`, so passing a view
+segfaults on the first field read. Measured, on the way to writing this row.
+
+### `C_FLUSH`
+
+A command that means "commit whatever the platform is holding before the tree
+is read". It exists for AppKit's FIELD EDITOR — a single shared NSTextView that
+holds the text of whichever field has focus, so a read before the commit sees
+the previous value. Android has no such object: an `EditText` holds its own
+text and every keystroke has already been through `TextWatcher` by the time
+anything can ask.
+
+
+### A `popup`'s `title_color`
+
+A Spinner's `title` is its PROMPT, which is drawn by the platform's own dialog
+when the list opens — a view this backend neither builds nor reaches. The prompt
+text is answered; the colour of it is the dialog's.
+
+
 ## 2. Not yet built — Android has an answer, this pass did not write it
+
+**This section is EMPTY of verbs as of 2026-09-08.** What follows is the one
+entry that was never a missing verb — a built thing whose answer is weaker than
+AppKit's — kept because the difference is worth knowing. Everything that used to
+be here is either built or recorded in a ledger above.
+
+### The clipboard IS built, and its `copy_text` answers weaker than AppKit's
+
+Noted here rather than in section 1 because the portable contract says
+`copy_text` returns whether the platform took the string, and on Android that
+is not knowable at the call.
+
+`ClipboardManager.setPrimaryClip` is **void**, and since API 29 the platform may
+refuse a write from an app that is not in the foreground — silently, with no
+return value and no exception. So `copy_text` answers that the write was
+ISSUED, not that the board took it. Same weaker answer UIKit and GTK give, for
+the same reason, and stated rather than invented.
+
+`paste_text` has no such caveat: it reads through `coerceToText`, which resolves
+a clip holding a URI or styled markup rather than answering null the way
+`getText` would.
+
+Both go through plain JNI on framework classes — `Context.getSystemService`,
+`ClipData.newPlainText`, `ClipboardManager`, `ClipData$Item` — so **neither
+touches `facet_android.dex`**. A Java edit would have needed
+`tools/build_dex.sh` to change anything at all, and none was necessary.
+
 
 Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
 
-- **Every control except `label`, `button`, `box` and the plain container.**
-  `text_field`, `image`, `scroll`, `checkbox`, `radio`, `toggle`, `slider`,
-  `progress`, `spinner`, `stepper`, `popup`, `tabs`, `list`, `collection`,
-  `table`, `tree`, `canvas`, `web`, the pickers, the menu tier. `views.cplus`
-  dispatches on kind; each needs a `create_` / `apply_` pair in
-  `controls.cplus`.
+**TWO TAGS, because the backend talking and the application talking are
+different things to filter for.** An app's stdout and stderr are `/dev/null` on
+this platform, so `io::println` would reach nobody; stdlib offers a sink and
+this backend installs one in `install()`, routing to liblog:
+
+    adb logcat -s facet     this backend's own warnings
+    adb logcat -s cplus     the application's `println` / `eprintln`
+
+Measured 2026-09-09: before the sink an app printing every two seconds put ZERO
+lines in logcat over a whole run, and `android:debuggable="true"` does not
+change that — it turns CheckJNI on, which is a different and also valuable
+thing, but it does not redirect the streams.
+
+**The debt is a NUMBER, and it is measured rather than estimated:**
+
+    python3 vendor/facet_android/tools/parity.py            # from the repo root
+    python3 vendor/facet_android/tools/parity.py --check    # non-zero on a regression
+
+facet_gtk's script, with this package's floors. It walks facet's contract for
+every `P_*` bit and asks which ones this backend NAMES in code — comments
+stripped first, so a manifest entry explaining why a verb is absent does not
+count as answering it. Three surfaces, because they fail differently:
+
+| | android | gtk | appkit | uikit |
+|---|---|---|---|---|
+| props | 319/360 · 89% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 67/68 · 98% | 68 · 100% | 68 · 100% | 65 · 95% |
+| shared band | 19/21 · 90% | 19 · 90% | 20 · 95% | 18 · 85% |
+
+The ONE handler still unfired is `on_reorder_completed`, on a gesture this
+platform does not offer without AndroidX — §1 says so. The gap between the two
+rows has closed: what is left is PROPS on controls that already work.
+
+- **PULL-TO-REFRESH IS HAND-ROLLED**, because `SwipeRefreshLayout` is AndroidX
+  — an `.aar` with its own dex and dependency graph — and this project ships no
+  Gradle. The gesture is a drag at the top of the list, and the indicator is a
+  ProgressBar in the list's PARENT: an `AdapterView` refuses `addView` outright,
+  so it cannot live inside the thing it belongs to. It is placed by the frame
+  walk, like the split's divider and the swipe strip.
+
+  The pull CLAIMS the gesture with `requestDisallowInterceptTouchEvent` — the
+  page's own scroll view steals a vertical drag at the touch slop (8dp), which
+  is well before the pull threshold (64), so without it the list saw a DOWN and
+  then a CANCEL every time. Claimed only at row zero, and released the moment
+  the drag turns upward, which is a scroll and the page's.
+
+- **The controls still without a body.** `menu` and `menu_item` — the MENU BAR
+  tier. A `MenuBarItem` is a desktop menu bar's top-level entry, and Android's
+  nearest thing is the app bar's overflow, which belongs to an ActionBar this
+  backend does not create. `context_menu` and `context_menu_item` ARE built —
+  see below.
+
+- **Rich text is SPANS, and the two verbs differ only in where the string comes
+  from.** A label's `formatted_text` carries the text inside each run, so
+  writing it replaces the content; a text area's `style_runs` styles text that
+  is already there and must not touch it — re-setting an editor's text moves the
+  caret and breaks the undo stack. Both become spans on a
+  `SpannableStringBuilder` parked on the view between a begin and a commit.
+
+  Offsets cross an encoding boundary. facet counts in BYTES and says so; a Java
+  string indexes in UTF-16, so each offset is converted against the control's
+  own text — one unit per leading byte, two for a four-byte sequence, which is a
+  surrogate pair.
+
+  A text area's restyle runs AFTER the text is written, and that ordering is not
+  a preference: `setText` runs the TextWatcher, which writes what it sees back
+  into the props. Restyling first committed the view's OLD text — empty, at
+  create — the watcher copied that emptiness into `text`, and the real text was
+  gone before anything could write it. The editor showed its placeholder.
+
+- **THE WINDOW IS EDGE-TO-EDGE, and the safe area is facet's.** Left alone,
+  Android insets every app's window itself — which reads as a safe area that
+  works and is really the system deciding, and it makes `SafeArea::None`
+  unanswerable. A full-bleed photo is a real thing to ask for. So
+  `FacetActivity` turns the system's fitting OFF and the layout pass insets the
+  ROOT by `getRootWindowInsets` (system bars plus display cutout) when
+  `honours_safe_area` says so. Measured both ways on the emulator: `Default`
+  puts the root at 159..2920 of a 2992-tall window, `None` gives it all 2992.
+
+  The insets are CACHED, and `C_SAFE_AREA` is what drops the cache. Reading
+  them is a JNI round trip and the layout pass runs constantly; they move only
+  when the window does — a rotation, a split-screen resize, the IME — or when a
+  node changes its own answer.
+
+- **A `hybrid_web`'s page is an ASSET, and its channel is built in JavaScript.**
+  `hybrid_root` and `default_file` become `file:///android_asset/<root>/<file>`
+  — the APK's assets are the bundle folder the contract describes, the same
+  standing the icon font has here — and `setAllowFileAccess` is what makes the
+  page's own relative `<link>` and `<script>` resolve. Without it the page loads
+  and everything it references fails, which reads as a page that renders
+  unstyled and does nothing.
+
+  The channel is `window.facet.postMessage` up and `window.facet.receive` down,
+  the names facet_uikit's page sees. Up is an `addJavascriptInterface` object,
+  but injected under a PRIVATE name: an injected object is a Java object and a
+  page cannot add properties to one, so binding it as `window.facet` makes the
+  page's own `window.facet.receive = ...` fail silently and kills the down
+  channel for the sake of the up one. The name a page uses is defined over a
+  plain object by a script run on every finished load — every load, because a
+  new document starts with nothing.
+
+  `on_raw_message_received` and `on_web_resource_requested` hand the BODY and
+  the URL over as the sender: facet's handler shape is `(sender, ctx)` and its
+  props carry no field for either, so there is nowhere else to put them.
+  facet_uikit hands over an NSString in the same slot; this backend hands over a
+  NUL-terminated UTF-8 pointer, valid for the length of the call. The two are
+  different pointers because the CONTRACT has no place for the value — that is
+  a facet gap, not a backend choice.
+
+  `on_web_resource_requested` reports and does not intercept. It also never
+  fires for the page's own files: Android does not route `file://` through
+  `shouldInterceptRequest`. Verified against a network request, which does.
+
+- **A `carousel` does not WRAP, and its pages are as wide as one column.**
+  `wraps` defaults to true in the contract and there is no looping here: a
+  HorizontalScrollView has a first page and a last one, and a wrap would mean
+  reordering the children under the finger. The page width is the viewport less
+  the peek insets divided by `columns`, written into flex as a fixed width with
+  no shrink — the overflow that produces IS the scroll range. `bounces` is the
+  overscroll EDGE EFFECT, which is Android's whole answer: there is no rubber
+  band to switch off, so it is `OVER_SCROLL_NEVER` or the glow.
+
+  It clips itself, in `dispatchDraw`. `clipChildren` bounds each child to the
+  CHILD'S rectangle, not the parent's, so a document laid out four pages wide
+  inside a one-page window still draws in full — and what would cut it off is
+  the grandparent clipping the carousel, which every FacetHost deliberately
+  does not do. **The same hole is open for a `scroll` whose content is taller
+  than its viewport and whose parent is a plain host**: it has not been seen
+  because every scroll in the gallery fills its page, and it is the same fix
+  one class over when it is.
+
+- **THE KEYBOARD IS AN INSET, and it has to be, because the window no longer
+  resizes.** Left to itself Android resizes a window when the IME opens, and a
+  scroll view inside it then reveals the focused field by itself. Turning the
+  system's fitting off — the thing that makes `SafeArea::None` answerable — takes
+  that away: the window keeps its full height, the keyboard covers the bottom
+  third, and a field down there is typed into blind.
+
+  So `ime()` joins the system bars and the cutout in the inset the root is laid
+  out inside, and a `FacetInsets` listener is how a change arrives — on an
+  edge-to-edge window nothing else notices. The pass runs SYNCHRONOUSLY inside
+  that callback because the focused field is revealed immediately afterwards
+  with `requestRectangleOnScreen`, and asking a scroll view to reveal a rectangle
+  before it has been given its smaller height scrolls to where the field already
+  was. Measured on a device: the editor moves up 329px as the keyboard opens and
+  the caret stays in it.
+
+  `setDecorFitsSystemWindows` and `WindowInsets.Type.ime()` are BOTH API 30, and
+  this backend's floor is 26. Below 30 the call is skipped and `windowInsets`
+  answers zero — which is not a lesser mode but the older one: the system fits
+  the window, so there is nothing left for facet to take off.
+
+- **One `setInputType` per field, and it used to be two.** `keyboard`,
+  `is_secure`, `checks_spelling` and `predicts_text` are FOUR facet verbs and
+  ONE Android value, so they are computed together in `apply_input_flags`. A
+  second arm wrote `TYPE_CLASS_TEXT` on its own whenever a field was not secure —
+  after the flags, on the same pass, with every bit set at create. Every field on
+  the platform therefore came up plain: an email field, a phone field and a
+  number field reported `inputType=0x1` to the IME, identically, and the keyboard
+  verb looked like one this backend had never implemented. It was implemented and
+  then overwritten, one arm later. Verified against `dumpsys input_method`:
+  0x21 EMAIL, 0x3 PHONE, 0x2 NUMBER, 0x11 URL.
+
+- **A WIDGET ASKING FOR A LAYOUT REACHES FACET, or it never gets one.** Every
+  host here has an empty `onLayout` because facet owns the frames, and that has
+  a consequence nobody wrote down until a device found it: a child that changes
+  its own size or content calls `requestLayout()`, the request walks up to the
+  host, and there it DIES. facet places views when its own geometry changes, and
+  a widget's internal state is not facet's geometry.
+
+  A `Spinner` reports its selection from `checkSelectionChanged`, which runs
+  inside the widget's own LAYOUT. So picking an item did nothing at all — no
+  callback, no handler, no redraw — until an unrelated change made facet run a
+  pass, at which point the pick arrived late. Reported exactly that way: "I
+  select 2, nothing happens; I toggle the switch and the picker suddenly
+  changes."
+
+  `FacetHost.requestLayout` forwards to `scheduler::request_layout`, which
+  schedules a pass unless one is already RUNNING — every `setText` in an apply
+  raises a request on its way up, so answering those would be a pass scheduling
+  itself. Idle CPU measured at 0.0% after the change.
+
+- **THE SYSTEM BACK IS THE APP'S, through `nav::pop`.** Closing the app was the
+  wrong default and it is what this backend did: a demo screen deep in the
+  gallery, and back quit. The press goes to facet's navigation tier and only
+  falls through to the platform when facet says there is nowhere to go back to —
+  which at the top level is right, because back from the first screen leaving the
+  app IS the Android behaviour. `onBackPressed` rather than an
+  OnBackInvokedCallback: the callback API is API 33 and opt-in per manifest, and
+  the deprecated override still runs everywhere this backend targets.
+
+  **This section claimed that before it was true, and the gap is worth
+  recording.** The Java override, the JNI door and `facet_android_back` were all
+  built and all correct — and nothing on the C+ side ever registered a
+  `nav::pop` hook, because this platform had no App tier at all
+  (`runtime_android::App::run` refused loudly and `push_screen` / `pop_screen`
+  were no-backend stubs). So `nav::pop()` answered false every time and back
+  always fell through and quit. It read as working on a device only because the
+  gallery hand-registered `nav::set_pop_fn` in its own `on_attach` — the
+  application doing the runtime's job.
+
+  **Verified on a Galaxy Fold SM_F966B, 2026-09-06**, by hand: the edge swipe
+  pops the in-place stack and returns to the first screen, and a second swipe
+  from there leaves the app. By hand because it has to be — `click` through the
+  agent surface skips hit testing and the responder chain deliberately, so it
+  can say a handler fired and nothing at all about whether a gesture reaches it.
+
+  The runtime registers it now. `App::run` sets up and RETURNS here (the
+  Activity owns the loop, which is why `runtime::App` had to become a handle to
+  a runtime-owned instance first), and it wires `close_fn` / `push_fn` /
+  `pop_fn` / `pop_to_fn` / `depth_fn` over the shared in-place screen stack in
+  `facet/stack.cplus` — one body that also serves `nav::push(show:
+  Show::Screen)` on the desktop backends and a bare `push` on a phone. An
+  application needs no hook of its own.
+
+- **A glyph button is ROUND, and its shape is known only after layout.**
+  `bordered` DEFAULTS TO TRUE on `icon_button` in facet's contract, so the
+  border is not the backend's choice — only its shape is, and every bordered
+  icon button on this platform is a circle. The radius is half the smaller side,
+  so a stretched one is a capsule rather than an ellipse.
+
+  It is applied from the FRAME WALK because a node's frame is ZERO when its view
+  is created: computing the radius at create gave square corners, which is what
+  shipped until a device showed it. A remembered side keeps the drawable from
+  being rebuilt once a pass.
+
+- **A `context_menu` is a LONG PRESS and a `PopupMenu`.** The first non-view
+  kind this backend answers: a `context_menu` node decorates the node it sits
+  UNDER, so it has no place in the view tree and no frame, and neither have its
+  items — both already answered `wants_view` with false. The menu is built from
+  the NODES at the moment the PARENT'S view is created and hung on that view,
+  which is where facet_appkit hangs its NSMenu for the same reason. The gesture
+  differs, because a phone has no second button; the shape does not.
+
+  `registerForContextMenu` is Android's other answer and is NOT used: it needs
+  the Activity to override `onCreateContextMenu`, and this backend's Activity is
+  the one class an app cannot replace.
+
+  DESTRUCTIVE IS A COLOUR, because Android's menu API has no flag for it and
+  every app that marks one marks it red — the same conclusion facet_appkit
+  reached about NSMenuItem. A contract verb the backend silently drops is worse
+  than one it answers plainly.
+
+  A menu and its items have no views, so `views::apply` never visits them and
+  nothing ever clears their dirty bits. Reading those bits from the PARENT —
+  which does apply — is the only place a changed item can be noticed, and the
+  rebuild is idempotent so a bit that stays set costs a few JNI calls. An item
+  changed with NOTHING else on the parent dirty does not reach the menu until
+  the parent next applies; facet_appkit attaches at create only, which is
+  strictly less.
+
+- **`tabs` reads the way facet_appkit reads it, and that settles a question this
+  file used to leave open.** The panes are the node's CHILDREN and each pane's
+  KEY is its title — "a tab needs a title and every addressable node already has
+  one". `TabsProps` carries five bar colours, a selected index and a handler,
+  and nothing that could name a tab, so there was no other reading available.
+  The note that stood here said the intent was unknown because facet_uikit
+  builds a UISegmentedControl and never populates it; AppKit had the answer all
+  along, and reading only the nearest backend is what hid it.
+
+  The strip is a native child this package owns — like the split's divider and
+  the swipe strip — placed by the frame walk, and it lives in the node's
+  PADDING, which is how flex is told it is there. An unselected pane is
+  `Display::None` rather than hidden: its space comes out of the layout.
+
+  A tab has its OWN listener class, because a tab click carries two things —
+  the node and which tab — and a listener is free to hold both. The first
+  attempt packed them into the one long `FacetClick` already carries, on the
+  reasoning that an ordinary address shifted back could not be a node. It cannot
+  be a VALID node, which is not the same thing: it is a garbage POINTER, and the
+  kind check dereferenced it. Every button in the application crashed on its
+  first click. Two fields cost less than that arithmetic did.
+
+- **A text area's caret is a SPAN, and the watch re-arms itself.** Android has
+  no selection listener. The caret is two spans on the Editable —
+  `Selection.SELECTION_START` and `SELECTION_END` — and a `SpanWatcher` hears
+  them move, but only by being set as a span itself. `setText` hands the view a
+  NEW Editable and spans do not survive that, so the watch is dropped by the
+  first apply that writes text, which is every one of them.
+  `afterTextChanged` is the one callback guaranteed to run afterwards — the
+  TextWatcher registration lives on the VIEW, not on the buffer — so that is
+  where it re-attaches.
+
+  Both spans move for one caret move, so the pair is compared before reporting
+  or every arrow key is two callbacks saying the same thing. Offsets convert
+  UTF-16 back to BYTES, the inverse of the rich-text path.
+
+- **A `collection`'s COLUMN WIDTH is the whole control, and `item_sizing` is
+  half of one.** A GridView does not divide its width by its column count — it
+  divides by a column WIDTH you give it, and hands the remainder back only if
+  `STRETCH_COLUMN_WIDTH` is set. Without that mode the width stays at the
+  requested zero, every cell is measured `EXACTLY 0`, and the grid draws one
+  visible cell and eight invisible ones. `columns: 0` is ONE column here, which
+  is what facet_uikit clamps to and what facet_gtk says in as many words —
+  AUTO_FIT would have been this backend inventing a meaning the other two do not
+  give the prop. `item_sizing` is honoured as a HEIGHT: `MeasureFirstItem` pins
+  every cell to the measured height of the one at index 0, and `MeasureAllItems`
+  is what the widget does unasked. There is no per-item WIDTH on a GridView.
+
+- **A `refreshable` cannot tell a pull from a scroll.** The kind is built — the
+  same gesture, indicator and threshold the list's pull uses — but a container
+  has no first visible ROW to ask about, and a refreshable wrapping a scroll
+  cannot see that the scroll is at its top, because the position belongs to the
+  child. Every downward drag in it is a pull. `views.cplus` dispatches on kind;
+  each needs a `create_` / `apply_` pair in `controls.cplus`.
+
+- **A `popup`'s typography reaches the ROW, and its selection is UNVERIFIED.**
+  A Spinner's field and its drop-down are both views an `ArrayAdapter` inflates
+  from a platform layout, so the font verbs are applied as each row is handed
+  back — through `getView` AND `getDropDownView`, because styling only the first
+  leaves a picker whose closed state and open state disagree. Verified on the
+  emulator: the field and the open list both read at the stated size, weight and
+  colour.
+
+  What is NOT verified is choosing an item. Tapping a row dismisses the list
+  without reporting a selection, and so does the D-pad — but an injected tap and
+  an injected key are not a finger, and everything the application controls has
+  been checked and is correct. See
+  `bugs/facet_android-spinner-dropdown-never-selects.md` for what was ruled out
+  and how; it needs a human to settle it.
+
+- **A `bordered`'s CAP, JOIN and MITER LIMIT have nowhere to land.** Those are
+  Paint properties and a drawable's stroke is not a Paint: `setStroke` takes a
+  width, a colour and a dash pair, and nothing else. A dash longer than one
+  on/off pair is read from its first two runs for the same reason.
+
+  Built: `label`, `button`, `box` and the plain container, plus `checkbox`,
+  `toggle`, `radio`, `slider`, `progress`, `spinner`, `text_field`,
+  `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
+  `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots`,
+  `date_picker`, `symbol`, `time_picker`, `bordered`, `popup`, `web`,
+  `refreshable`, `table`, `collection`, `carousel`, `hybrid_web` and `tabs` —
+  each with BOTH
+  halves, the props write and the event read. Half a control is worse than none:
+  it looks finished and reports nothing, which is the shape of the bug
+  facet_uikit carried in its checkbox until 2026-08-25.
+
+- **A `canvas` replays everything except FOUR blend modes and a wrapped span
+  list.** The display list is read whole — every state command, the state stack,
+  all four transforms, three clips, ten shapes, text, spans and images. What is
+  absent is named rather than approximated: `Hue`, `Saturation`, `Color` and
+  `Luminosity` are the non-separable blends, which arrived with `BlendMode` on
+  API 29 and this backend's floor is 26; and `draw_spans` puts its runs on ONE
+  baseline, because wrapping a run list means a SpannableString where a
+  `draw_text_block` already goes through StaticLayout for the case that asks for
+  a box. A font WEIGHT rounds to bold or not: `Typeface.create(String, int)` has
+  four styles, and the variable-weight door is API 28.
+
+- **A `swipeable` does not ANIMATE its reveal open under the finger** — it
+  animates the LANDING, which is the part that has a duration. Everything else
+  the kind names is here: the drag, the threshold, the two minimums of travel,
+  the actions, the destructive colouring and all five events.
+
+  The one structural difference from facet_uikit: there the strip sits UNDER the
+  content at subview zero, and here the children's native indices are facet's —
+  `insert` puts a child at ITS slot — so the strip is parked just past the
+  trailing edge and content and strip translate TOGETHER. Nothing overlaps, so
+  nothing depends on who draws first.
+
+- **A `split` does not DRAG.** The kind is built and every verb it has works —
+  the axis, the position, both minimums, the collapse and the drawn divider are
+  all geometry, and geometry is flex's, so the division is written into facet's
+  own layout exactly as facet_uikit writes it. What is absent is the grab: there
+  is no touch gesture that means "take hold of this hairline", so `on_move`
+  never fires and the position is the application's to set. The divider is one
+  extra `View` this package owns, tagged onto the split's host and placed by the
+  frame walk — facet's children keep their own indices.
+
+- **A gradient `background` SNAPS to eight directions.** Both stops are drawn
+  now — `FacetDraw.gradientBackground` builds the `int[]` and picks the
+  Orientation, because `vendor/jni` types no array slots and C+ cannot name the
+  ctor's enum parameter. What Android has is eight directions and nothing
+  between them, so facet's angle rounds to the nearest 45 degrees. A gradient on
+  a `canvas` does NOT round: a Shader takes two endpoints, so the angle is
+  honoured exactly there.
+
+- **A `date_picker` is a FIELD that opens a dialog**, and a `time_picker` is not
+  built at all. Android's `DatePicker` widget is a full calendar whose mode is
+  fixed by an XML attribute with no setter; UIDatePicker's compact posture — a
+  chip that opens a picker, which is what an app asking for a 44-point picker
+  means — is a Button and a `DatePickerDialog` here. Every verb the kind names
+  lands: the date, the format (`SimpleDateFormat` reads the same LDML patterns),
+  both bounds, `open`, and all three events.
+
+  AND THE FONT WORKS, which is the one place this backend does something the
+  iOS one cannot: a Button is a TextView, so the twelve font verbs facet_uikit
+  records as unreachable all reach it.
+
+- **A `symbol` has BOTH tiers, and one of them needs an asset.** The portable
+  tier — `symbol(icons::home)`, a codepoint in facet's own
+  MaterialSymbolsOutlined — is a TextView carrying that font, loaded through
+  `Typeface.Builder` so the FILL axis can be asked for; the system tier is an
+  ImageView against `android.R.drawable`. A node whose SET changes after mount
+  keeps the view it was created with.
+
+  The font is an APK ASSET, which is the standing it has in a macOS app's
+  bundle: `build_android.sh` copies it out of `vendor/facet/assets` and
+  `aapt2 -A` ships it. An app that ships no symbols can drop that line — the
+  backend warns once and draws nothing rather than failing.
+
+- **An image is resolved but never CACHED.** All three doors are open — a file,
+  an APK asset through the AssetManager, a drawable resource by name — and each
+  decode happens on the apply that asked for it. A list of thumbnails would
+  decode the same bitmap once per row; a cache keyed by source is the answer and
+  is not written.
+
+- **`ScrollAxis::Both` scrolls vertically only.** ScrollView and
+  HorizontalScrollView are separate widgets and neither becomes the other;
+  nesting one in the other is the usual trick and it fights the gesture
+  arbiter. Vertical is the phone-shaped default.
+- **A pinch MAGNIFIES; nobody has felt it yet.** `Chrome.zoomable` is built —
+  the tree is wrapped in one `FacetZoomHost`, which is a ScaleGestureDetector, a
+  scale and a translation written onto the child, the same shape the iOS backend
+  gets from a UIScrollView's zoom. Scale only, never a relayout, and touches
+  belong to the content until there are two of them.
+
+  What is NOT verified is the FEEL. `adb shell input` has no pinch, so nothing
+  in this repo can drive a two-finger gesture — the arithmetic is pinned by
+  reading, and the rest is a person's hands on a device.
+
+- **A BOUNCE only bounces OUT.** The animate band is built —
+  `ViewPropertyAnimator` drives both channels, and every easing maps to an
+  interpolator: the sine and cubic curves to `PathInterpolator`, which takes the
+  same four numbers a CSS `cubic-bezier` does, and the two springs to
+  Anticipate and Overshoot, which are what a backswing and an overshoot are.
+  What Android has no twin for is `BounceIn`: `BounceInterpolator` is an OUT
+  bounce, and an in-bounce would have to be invented. It uses the out one and
+  this line is why.
+
+- **A TEXT TRANSFORM only goes UP.** `setAllCaps` is Android's and there is no
+  lowercase twin — and rewriting the string instead would leave the control
+  disagreeing with the props an application reads back. `Uppercase` works,
+  `Lowercase` does nothing, and the other two are the identity.
+
+- **A font WEIGHT rounds to bold or not.** `Typeface.create(String, int)` has
+  four styles — plain, bold, italic, bold-italic — and the variable-weight door
+  (`Typeface.create(Typeface, int weight, boolean italic)`) is API 28 against a
+  floor of 26. So Semibold, Bold, Heavy and Black are all bold, and the six
+  lighter weights are all plain. Same rounding in the canvas replay, for the
+  same reason.
+
 - **The gesture band.** `gestures::install_key_reader` and
   `component::install_sender_readers` are not filled, so only a button's
   `on_click` fires. `wants_view` already answers true for a node with gestures,
   so the tree shape is right and only the arming is missing.
 - **`observe_size`.** Android's answer is `addOnLayoutChangeListener`, which
   needs a fifth DEX adapter. Returns 0 (no handle) today.
-- **The recycler.** `RecyclerView.Adapter` is an abstract class, so it cannot be
-  implemented from native code — the DEX must carry a `CplusAdapter` calling
-  back into a bind hook, the same trick as `FacetClick` but much larger. See
-  plan.android.md rung 5.
+- **The recycling tier, and what shares what.** `list` runs on a `ListView`
+  with a `FacetRows` adapter from the dex, `tree` is that same adapter over a
+  flattened visible-row index, and `collection` is a `GridView` — an
+  `AbsListView`, so it takes the adapter unchanged. `carousel` is NOT one of
+  them: its pages are the node's own children, already built and mounted, so
+  there is nothing for a `getView` to answer, and it is a paging
+  `HorizontalScrollView` beside the `scroll` it shares a document host with.
+  `RecyclerView` was not used anywhere here: it is AndroidX, an .aar with its
+  own dex, and this project ships no Gradle; `ListView` recycles through
+  `convertView`, which is the whole mechanism, and facet owns layout so
+  RecyclerView's LayoutManagers would go unused.
 - **`theme::set_theme_changed_fn`.** `is_dark` is filled; the repaint-on-flip
   hook is not.
-- **Prop parity is unmeasured.** `tools/parity.py` counts props AND handlers for
-  the other two backends; this one has no numbers yet. The uikit lesson stands —
-  a prop-only count is misleading, because a control can honour every prop bit
-  and still call nothing on tap.
+- **Prop parity, measured.** The numbers live at the top of this section and
+  are produced by `vendor/facet_android/tools/parity.py`, which is
+  `vendor/facet_gtk/tools/parity.py` with this package's floors. Both props and
+  handlers are quoted because either alone misleads — a control can honour every
+  prop bit and still call nothing on tap, which is exactly what the tool was
+  taught to catch.
 
 ---
 
@@ -92,6 +771,159 @@ the whole tree dirty (`core::touch_all` per node) and re-mounts — which is
 facet's `create` == `apply`-with-all-bits rule, and here it is the only thing
 that makes recreation survivable. Verified: a tap count survives a rotation.
 
+### A stretched compound button draws at the far end
+
+A `Switch` in a column looks right-aligned and a `CheckBox` looks left-aligned.
+Neither is a layout bug: flex stretches a column's children across the cross
+axis, so both views are the FULL row width — and Android draws a CheckBox's box
+at the leading edge and a Switch's track at the trailing one, with the (absent)
+label filling the gap. An app that wants either hugged gives it a width.
+
+### An app writes no Java, and the dex has two ways in
+
+`FacetActivity` ships in this package's dex. The system instantiates the launch
+Activity before any C+ runs, so that one class cannot come from the in-memory
+loader like the rest — it is merged into the app's own `classes.dex` at build
+time (`d8` takes a `.dex` as an input, so the merge IS the build step that would
+otherwise compile the app's Activity). The manifest names it and a `meta-data`
+line says which `.so` to load, the way `NativeActivity` takes
+`android.app.lib_name`.
+
+So `dex::ensure_loaded` tries `FindClass` FIRST and only falls back to
+`InMemoryDexClassLoader`. Loading the in-memory copy when the classes are
+already merged would give the process TWO sets: the Activity would hold a
+FacetHost of one class while this code registered natives on the other, and
+`nativeSizeChanged` would never arrive. A missing class on that first attempt is
+the ordinary case, not an error — the pending NoClassDefFoundError is cleared
+rather than left for the next JNI call to trip over.
+
+Both paths stay live and both are exercised: `examples/facet_gallery_android`
+merges and has no `.java` at all; `playground/facet_android_demo` supplies its
+own Activity and loads the dex at runtime.
+
+What an app still writes is the `Java_cplus_facet_FacetActivity_nativeCreateView`
+export, five lines calling `entry::start`. It lives in the APP because cpc emits
+one object per package: a package that names a symbol obligates everything that
+links it.
+
+### A COLOUR IS A TOKEN, not three numbers
+
+`vocab::Color` carries a `token`, and only 255 means "the rgba fields are the
+answer". Reading `r`/`g`/`b` off any other kind gives 0,0,0,0 — transparent
+black — which is why every themed surface on this backend painted NOTHING while
+literal colours looked perfect. Four kinds resolve first:
+
+| token | is | resolved by |
+|---|---|---|
+| 100..117 | a theme ROLE | the application's palette, then facet's fallback |
+| 200..217 | a derived INK | the contrast of the role it reads against |
+| 254 | an adaptive PAIR | the side for this appearance |
+| 1..24 | a PLATFORM colour | a table, light and dark |
+
+Two reductions, both deliberate:
+
+**A derived ink is the CONTRAST of its base, not the base.** AppKit reads the
+effective appearance; Android has nothing equivalent, so the base's Rec. 601
+luma decides — light base, dark ink. Resolving it to the base instead paints
+text the colour of the thing behind it, which is a whole screen of invisible
+words with every individual value correct.
+
+**Platform tokens are a table, not a Resources read.** Android's system colours
+are attributes on a theme, and reading them means a round trip per colour per
+paint; the table holds what those attributes resolve to on a stock theme, in
+both appearances. An UNKNOWN token paints the label colour rather than nothing:
+visible and obviously wrong beats invisible and silent.
+
+### A background, a radius and a border are ONE drawable
+
+facet declares them as separate bits; Android expresses them as a single
+`GradientDrawable` set as the view's background. `setBackgroundColor` can say
+only the first of them, and calling it after building a drawable throws the
+drawable away — so any of the four rebuilds the background whole, which is the
+only version that cannot half-apply. A radius also turns on `clipToOutline`, or
+a rounded background is a rounded rectangle with square content sitting on it.
+
+### A shadow is an ELEVATION
+
+Android's shadow is derived from a view's height above the surface, not authored
+as an offset, a radius and a colour. facet's four fields collapse to one number
+and the colour is the theme's. Recorded here rather than approximated with a
+drawn shadow, which would be a different thing that looked similar.
+
+### facet's units are density-independent; Android's are pixels
+
+Every other backend gets this free — a point is a point on AppKit and UIKit, and
+GTK scales the surface — so `geometry`'s `px` / `dp` are the only crossing here,
+and everything above them is in facet's units.
+
+IT HID FOR AS LONG AS EVERYTHING WAS MEASURED. A TextView's default text is in
+`sp`, so a label asked for its natural size answers in already-scaled pixels and
+the layout looks right; the probe that started this backend used no density
+constant at all and was correct to. It breaks the moment an application STATES a
+number. The iOS gallery's catalog asks for `row_height: 44` — 44 points, and 44
+raw pixels on a 3x phone is a third of a row, so every row showed the top eighth
+of its text.
+
+`density` is cached in `env` (not `window`) because `px` runs for every frame in
+every layout pass and the read is three JNI calls — and because
+window -> scheduler -> geometry is already a chain.
+
+### An undefined extent is not zero
+
+`flex`'s `undefined()` is NaN, and `NaN as i32` is 0 — so `measure_node`
+translated "no constraint on this axis" into `AT_MOST(0)` and every child
+measured to nothing. It never showed while the root had a definite height,
+because then every extent handed down is a real number. It appeared the moment
+something was laid out UNBOUNDED, which is exactly what a recycled row is:
+`calculate_layout` with a width and no height, so the row can be as tall as its
+content.
+
+Two hundred rows of nothing, and the measure looked like it was working because
+the WIDTHS were right. `is_number` is the guard, and a NaN is the only value not
+equal to itself.
+
+### A radio group has no widget
+
+`RadioButton` is a `CompoundButton` like a checkbox: a tap TOGGLES it, and
+nothing turns its siblings off. Exclusivity on Android belongs to `RadioGroup`
+— which is a `LinearLayout`, one of the layout containers this backend never
+binds because facet owns geometry. So the group is the backend's own business,
+as it is on uikit and appkit, and `controls::radio_changed` is a port of
+`facet_uikit::input::radio_pressed` with one root instead of a window list.
+
+Two rules, and the second is the one a checkbox does not have: turning one ON
+turns every other in its group OFF, and a radio cannot be turned off BY TAPPING
+IT — Android will have toggled the control already, so the answer is to put it
+back and tell no handler about a change that did not happen. A radio with an
+empty group name stands alone, having nothing to be exclusive with.
+
+### Two writers, one visibility
+
+`paint::visibility_of` is the ONLY function that decides whether a view shows,
+and it has to be, because the frame walk rewrites visibility on every layout
+pass. Three rules feed it: flex's `Display::None` (which `mount::switch_to`
+sets on every parked pane), a spinner that is not running, and the
+application's own `is_visible`. Each was written in its own place first and
+each was undone by the walk within a pass — a parked screen sat on top of the
+one that replaced it, and a stopped spinner came straight back.
+
+GONE, not INVISIBLE, for the first two: the node is out of layout and facet has
+already given its space away.
+
+### A FacetHost answers a loose measure with what facet told it
+
+Android asks rather than tells in one place: a ScrollView measures its child
+with an UNSPECIFIED height so the child may be taller than the viewport, and
+`MeasureSpec.getSize` of UNSPECIFIED is ZERO. `FacetHost.setWanted` is how the
+document answers; EXACTLY still wins when Android pins a size.
+
+### Only the root host reports the window size
+
+Every box and every scroll document is a FacetHost, and facet resizes them
+itself. A host that reported its own size would hand it back as THE WINDOW'S:
+a document sized to its content told facet the window was that tall, the
+viewport grew to match, and the scroll had nothing left to scroll.
+
 ### stderr goes nowhere
 
 An app's stdout and stderr are discarded unless someone sets
@@ -105,3 +937,30 @@ the app's archive. A missing archive fails at **dlopen, not at link**. Build
 with `-Wl,--no-undefined` — it turns a one-symbol-per-launch hunt into a single
 list at build time. `playground/facet_android_demo/build.sh` is the worked
 example.
+
+### A listening socket needs `android.permission.INTERNET`
+
+The inspector and the agent surface both bind a socket on LOOPBACK, and Android
+gates `socket()` on the app's membership of the inet group — which that
+permission is what grants. Without it the bind fails with `EACCES` the instant
+the serve worker starts. Nothing crashes: the app runs perfectly, the accept
+loop ends before anyone can connect, and the only trace is facet_agent's one
+`the accept loop ended` line in logcat.
+
+Loopback is not an exception. There is no permission below INTERNET that grants
+`socket()`, so an app that wants to be inspected declares it. `cpc init` writes
+it into the scaffolded AndroidManifest.xml beside the agent-surface lines
+that needs it; an app writing its own manifest has to.
+
+    adb shell am start -n <pkg>/cplus.facet.FacetActivity
+    adb forward tcp:<port> tcp:<port>           # the counterpart of usbmuxd
+
+The port is DERIVED FROM THE PID, so nothing has to be set on the device — an
+Activity has no environment a launcher could write into, and a launcher knows
+the pid it started. `adb shell setprop debug.facet.inspect <port>` was the
+channel until 2026-08-30 and reaches nothing now; `facet_agent`'s Android
+facade computes the port and writes the descriptor.
+
+Measured on an emulator, 2026-08-27, in both directions: without the permission
+`/proc/net/tcp` has no listener and `describe_tree` never connects; with
+it, `0100007F:2253` is there and the tree comes back.

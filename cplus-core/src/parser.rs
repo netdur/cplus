@@ -2614,8 +2614,10 @@ impl Parser {
     }
 
     /// `guard let PATTERN = EXPR else { ELSE };`
-    /// `guard let PATTERN = EXPR else |COMPLEMENT_PATTERN| { ELSE };`
+    /// `guard let PATTERN = EXPR else COMPLEMENT_PATTERN { ELSE };`
     /// Slice 4A.5. `guard var` makes the enclosing-scope binding mutable.
+    /// The else-pattern is optional; omitted it is `_`, which is what
+    /// `lower` synthesizes for the else arm.
     fn parse_guard_let_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::Guard, "`guard`")?.span;
         let mutable = self.eat_let_or_var()?;
@@ -2623,16 +2625,52 @@ impl Parser {
         self.expect(&TokenKind::Eq, "`=`")?;
         let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
         self.expect(&TokenKind::Else, "`else`")?;
-        // Optional complement pattern: `else |PAT| { ... }`.
-        let complement = if self.eat(&TokenKind::Pipe) {
-            let p = self.parse_pattern()?;
-            self.expect(&TokenKind::Pipe, "`|`")?;
-            Some(p)
-        } else {
+        // v0.0.28: `else |Pat|` is retired — the pipes were the only paired
+        // `|` delimiter in the grammar, borrowed from closures C+ does not
+        // have. Reject with a hint pointing at the current form.
+        if self.at(&TokenKind::Pipe) {
+            let tok = self.peek().clone();
+            return Err(ParseError {
+                kind: ParseErrorKind::Unexpected {
+                    found: "`|`".into(),
+                    expected: "a pattern or `{` — `else |Pat|` is retired; \
+                               write the else-pattern without pipes (`else Pat { ... }`)",
+                },
+                span: tok.span,
+            });
+        }
+        // Optional else-pattern: `else PAT { ... }`. Omitted it is `_`, which
+        // `lower` synthesizes. A pattern never starts with `{` — patterns are
+        // `_`, a literal, a bare name, or `Path::Variant(..)` — so one token of
+        // lookahead separates the two forms.
+        let complement = if self.at(&TokenKind::LBrace) {
             None
+        } else {
+            // Both spellings are legal here, so say so — `parse_pattern`'s own
+            // message names only the pattern and would read as if the plain
+            // `else { ... }` form had stopped being valid.
+            Some(self.parse_pattern().map_err(|mut e| {
+                if let ParseErrorKind::Unexpected { expected, .. } = &mut e.kind {
+                    *expected = "an else-pattern or `{`";
+                }
+                e
+            })?)
         };
         let else_body = self.parse_block()?;
-        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        // The terminator is the one thing about this statement people forget,
+        // so the message says WHY rather than just naming the token: `guard
+        // let` is a BINDING — it introduces `PATTERN`'s names into the
+        // enclosing scope, exactly as `let` does — and the `else { … }` is a
+        // clause of that binding, not the statement's body. So it ends the way
+        // every binding ends. (`if`/`while`, whose braces ARE the body, take no
+        // semicolon; that contrast is the whole rule.)
+        let end = self
+            .expect(
+                &TokenKind::Semi,
+                "`;` (a `guard let` is a binding, like `let` — the \
+                 `else { ... }` is part of it, not a body)",
+            )?
+            .span;
         Ok(Stmt {
             kind: StmtKind::GuardLet {
                 pattern,
@@ -4727,6 +4765,23 @@ mod tests {
     /// follow-set was spelled per site as `Ident | Star | Fn`, which left out
     /// the tuple and array type starts — `fn(ref (i32, i32))` parsed `ref` as
     /// the type name and failed with a confusing error.
+    #[test]
+    fn a_missing_guard_semicolon_explains_why_one_is_needed() {
+        // The trailing `;` is the thing people forget about `guard let`, and
+        // the reason is not obvious from the shape: it looks like `if`, whose
+        // braces ARE its body and which takes no terminator. So the message
+        // says which of the two this is rather than only naming the token.
+        let src = "\
+fn pick() -> i32 { return 3; }\n\
+fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
+        let err = parse(tokenize(src).expect("lex")).expect_err("must not parse");
+        let rendered = format!("{err:?}");
+        assert!(
+            rendered.contains("binding"),
+            "the diagnostic must say `guard let` is a binding, got: {rendered}"
+        );
+    }
+
     #[test]
     fn fn_pointer_param_markers_accept_every_type_start() {
         for src in [
@@ -7190,7 +7245,7 @@ mod tests {
     #[test]
     fn guard_var_complement_parses() {
         let p = parse_src(
-            "fn f() -> i32 { guard var M::S(v) = m else |M::N(e)| { return e; }; return v; }",
+            "fn f() -> i32 { guard var M::S(v) = m else M::N(e) { return e; }; return v; }",
         )
         .unwrap();
         let StmtKind::GuardLet {
@@ -7203,6 +7258,55 @@ mod tests {
         };
         assert!(*mutable);
         assert!(complement.is_some());
+    }
+
+    /// The else-pattern is optional. Omitted, the parser reports no
+    /// complement and `lower` synthesizes `_` for the else arm.
+    #[test]
+    fn guard_let_without_else_pattern_has_no_complement() {
+        let p = parse_src("fn f() -> i32 { guard let M::S(v) = m else { return 0; }; return v; }")
+            .unwrap();
+        let StmtKind::GuardLet { complement, .. } = first_fn_stmt(&p) else {
+            panic!("expected guard-let");
+        };
+        assert!(complement.is_none());
+    }
+
+    /// `_` written out is accepted as an ordinary pattern and means what the
+    /// omitted form means.
+    #[test]
+    fn guard_let_wildcard_else_pattern_parses() {
+        let p = parse_src("fn f() -> i32 { guard let M::S(v) = m else _ { return 0; }; return v; }")
+            .unwrap();
+        let StmtKind::GuardLet { complement, .. } = first_fn_stmt(&p) else {
+            panic!("expected guard-let");
+        };
+        assert!(complement.is_some());
+    }
+
+    /// v0.0.28: the retired `else |Pat|` spelling is rejected with a hint
+    /// naming the current form, the way `let mut` is.
+    #[test]
+    fn guard_let_piped_complement_rejected() {
+        let err = parse_src(
+            "fn f() -> i32 { guard let M::S(v) = m else |M::N(e)| { return e; }; return v; }",
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("retired"), "hint names the retirement: {msg}");
+        assert!(msg.contains("without pipes"), "hint names the fix: {msg}");
+    }
+
+    /// Junk in else position names both legal spellings — `parse_pattern`'s
+    /// own message would mention only the pattern.
+    #[test]
+    fn guard_let_junk_after_else_names_both_spellings() {
+        let err = parse_src("fn f() -> i32 { guard let M::S(v) = m else return 0; }").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("else-pattern or `{`"),
+            "names both spellings: {msg}"
+        );
     }
 
     #[test]

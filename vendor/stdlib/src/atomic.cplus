@@ -50,7 +50,6 @@ fn store_i32(p: *i32, val: i32, ordering: Ordering) {
         Ordering::AcqRel => { #atomic_store_i32_seqcst(p, val); },
         Ordering::SeqCst => { #atomic_store_i32_seqcst(p, val); },
     }
-    return;
 }
 
 fn swap_i32(p: *i32, val: i32, ordering: Ordering) -> i32 {
@@ -149,7 +148,6 @@ fn store_i64(p: *i64, val: i64, ordering: Ordering) {
         Ordering::AcqRel => { #atomic_store_i64_seqcst(p, val); },
         Ordering::SeqCst => { #atomic_store_i64_seqcst(p, val); },
     }
-    return;
 }
 
 fn swap_i64(p: *i64, val: i64, ordering: Ordering) -> i64 {
@@ -244,7 +242,6 @@ fn store_u32(p: *u32, val: u32, ordering: Ordering) {
         Ordering::AcqRel => { #atomic_store_u32_seqcst(p, val); },
         Ordering::SeqCst => { #atomic_store_u32_seqcst(p, val); },
     }
-    return;
 }
 
 fn fetch_add_u32(p: *u32, val: u32, ordering: Ordering) -> u32 {
@@ -301,7 +298,6 @@ fn store_u64(p: *u64, val: u64, ordering: Ordering) {
         Ordering::AcqRel => { #atomic_store_u64_seqcst(p, val); },
         Ordering::SeqCst => { #atomic_store_u64_seqcst(p, val); },
     }
-    return;
 }
 
 #[no_alloc] #[no_block]
@@ -353,7 +349,6 @@ fn fence(ordering: Ordering) {
         Ordering::AcqRel => { { #atomic_fence_acqrel(); } }
         Ordering::SeqCst => { { #atomic_fence_seqcst(); } }
     };
-    return;
 }
 
 // ───────────────────────────── tests ─────────────────────────────

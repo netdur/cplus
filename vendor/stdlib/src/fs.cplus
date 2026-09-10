@@ -12,7 +12,6 @@ import "./status" as status;
 // fd-readiness path. Phase 3 Slice 3D's File::lines is sync but
 // the gen-method machinery needs Iterator[T] in scope.
 import "./net" as net;
-import "./netsys" as netsys;
 import "./iterator" as iterator;
 import "./text" as text;
 // The kernel-ABI half — `open` flag values, `mode_t`'s width, and the byte
@@ -25,8 +24,6 @@ import "./fs_sys" as fsys;
 // aarch64-darwin a fixed third arg lands in a register but libc's
 // implementation reads it via `va_arg`, which expects stack passing).
 extern fn open(path: *u8, flags: i32, ...) -> i32;
-extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
-extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn close(fd: i32) -> i32;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -37,9 +34,6 @@ extern fn free(p: *u8);
 // `./fs_sys` behind `make_dir` / `stat_*`.
 extern fn access(path: *u8, amode: i32) -> i32;
 extern fn unlink(path: *u8) -> i32;
-extern fn opendir(path: *u8) -> *u8;
-extern fn readdir(dirp: *u8) -> *u8;
-extern fn closedir(dirp: *u8) -> i32;
 extern fn strlen(s: *u8) -> usize;
 
 // Owned file handle. `fd == -1` is the invalid / closed state (disarms Drop).
@@ -60,11 +54,13 @@ fn c_path(path: str) -> option::Option[text::CString] {
     return text::from_str(path).c_str();
 }
 
-// Open `path` for reading. macOS + Linux: O_RDONLY = 0.
+// Open `path` for reading. The flags come from `./fs_sys`: O_RDONLY is 0 on
+// macOS and Linux, but Windows needs _O_BINARY on top or the runtime rewrites
+// CRLF on the way through and the byte count stops matching the file.
 fn open_read(path: str) -> result::Result[File, result::IoError] {
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
-            let fd: i32 = { open(cp.as_ptr(), 0 as i32, 0 as i32) };
+            let fd: i32 = { open(cp.as_ptr(), fsys::read_flags(), 0 as i32) };
             if fd < (0 as i32) {
                 return result::io_err::[File](result::IoError::NotFound);
             }
@@ -82,7 +78,7 @@ fn open_read(path: str) -> result::Result[File, result::IoError] {
 // factor of eight between Darwin and Linux.
 fn create(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = fsys::create_flags();
-    let mode: i32 = 420 as i32;
+    let mode: i32 = 420;
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
             let fd: i32 = { open(cp.as_ptr(), flags, mode) };
@@ -100,7 +96,7 @@ fn create(path: str) -> result::Result[File, result::IoError] {
 // Open `path` for appending, creating it if missing. Mode 0o644.
 fn open_append(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = fsys::append_flags();
-    let mode: i32 = 420 as i32;
+    let mode: i32 = 420;
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
             let fd: i32 = { open(cp.as_ptr(), flags, mode) };
@@ -133,7 +129,7 @@ fn metadata(path: str) -> result::Result[Metadata, result::IoError] {
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
             let buf: *u8 = { malloc(fsys::stat_buf_bytes()) };
-            if buf == (0 as *u8) { return result::io_err::[Metadata](result::IoError::Other); }
+            if buf.is_null() { return result::io_err::[Metadata](result::IoError::Other); }
             let rc: i32 = fsys::stat_path(cp.as_ptr(), buf);
             if rc != (0 as i32) {
                 let err: i32 = errno();
@@ -187,13 +183,13 @@ impl File {
         if this._fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
         }
-        let chunk_size: usize = 4096 as usize;
+        let chunk_size: usize = 4096;
         let chunk: *u8 = { malloc(chunk_size) };
         if chunk.is_null() {
             return result::io_err::[vec::Vec[u8]](result::IoError::Other);
         }
         loop {
-            let n: isize = { read(this._fd, chunk, chunk_size) };
+            let n: isize = { fsys::read_fd(this._fd, chunk, chunk_size) };
             if n < (0 as isize) {
                 { free(chunk); }
                 return result::io_err::[vec::Vec[u8]](result::IoError::Other);
@@ -221,7 +217,7 @@ impl File {
         while written < n {
             let remaining: usize = n -% written;
             let q: *u8 = { p + written };
-            let w: isize = { write(this._fd, q, remaining) };
+            let w: isize = { fsys::write_fd(this._fd, q, remaining) };
             if w <= (0 as isize) {
                 return result::io_err::[usize](result::IoError::BrokenPipe);
             }
@@ -243,7 +239,7 @@ impl File {
         while written < n {
             let remaining: usize = n -% written;
             let q: *u8 = { p + written };
-            let w: isize = { write(this._fd, q, remaining) };
+            let w: isize = { fsys::write_fd(this._fd, q, remaining) };
             if w <= (0 as isize) {
                 return result::io_err::[usize](result::IoError::BrokenPipe);
             }
@@ -258,7 +254,6 @@ impl File {
             { close(this._fd); }
             this._fd = 0 -% 1 as i32;
         }
-        return;
     }
 
     // v0.0.5 Phase 4 Slice 4C: flip O_NONBLOCK on the underlying fd so
@@ -285,13 +280,13 @@ impl File {
     // is yielded as the last line.
     gen fn lines(this) -> text::Text {
         var carry: vec::Vec[u8] = vec::new::[u8]();
-        let chunk_size: usize = 4096 as usize;
+        let chunk_size: usize = 4096;
         let chunk: *u8 = { malloc(chunk_size) };
         if chunk.is_null() {
             return;   // cannot allocate the scan buffer; yield no lines
         }
         loop {
-            let n: isize = { read(this._fd, chunk, chunk_size) };
+            let n: isize = { fsys::read_fd(this._fd, chunk, chunk_size) };
             if n <= (0 as isize) {
                 // EOF (n == 0) or error (n < 0). Yield any pending
                 // partial line, then stop. Read errors are silently
@@ -340,7 +335,6 @@ impl File {
                 carry.extend_from_raw(rest_p, count -% start);
             }
         }
-        return;
     }
 
     // Destructor: close the fd if not already closed.
@@ -348,7 +342,6 @@ impl File {
         if this._fd >= (0 as i32) {
             { close(this._fd); }
         }
-        return;
     }
 }
 
@@ -356,16 +349,19 @@ impl File {
 
 // errno as an `IoError`. Only the file-system-relevant codes are named; the
 // rest collapse to `Other`.
-// Reached through `netsys` rather than by declaring `__error()` here.
 //
-// `__error` is DARWIN's name for the thread's errno slot; glibc calls it
-// `__errno_location` and bionic calls it `__errno`. This module has no platform
-// override — it is 888 lines and only one line of it is platform-specific — so
-// declaring the Darwin symbol here put it in the stdlib slice for EVERY target
-// and broke the Android link. `netsys` already has the three spellings behind
-// one name; use it.
+// Reached through `fsys::file_errno` rather than by declaring the errno slot
+// here. `__error` is DARWIN's name for it, glibc calls it `__errno_location`,
+// bionic `__errno`, and MSVC `_errno` — four spellings, and worse than that the
+// Windows one reads a DIFFERENT channel: its C-runtime errno, not Winsock's
+// `WSAGetLastError`. `fs` reads FILE errors, so `fs_sys` per platform picks the
+// right slot — the shared POSIX errno everywhere, the C-runtime errno on
+// Windows. This module has no platform override of its own (declaring `__error`
+// here once put the Darwin symbol in every target's slice and broke the Android
+// link), and reading the socket error on Windows made `create_dir_all` report
+// failure for a directory that already existed (EEXIST unseen).
 fn errno() -> i32 {
-    return netsys::errno();
+    return fsys::file_errno();
 }
 fn errno_as_ioerror() -> result::IoError {
     let e: i32 = errno();
@@ -445,6 +441,41 @@ fn create_dir_all(path: str) -> result::Result[bool, result::IoError] {
     return result::io_ok::[bool](true);
 }
 
+// Rename `from` to `to`, REPLACING `to` if it already exists.
+//
+// THE ATOMIC REPLACE, which is how a careful program updates a file: write
+// `x.new` in full, then rename it over `x`, so a concurrent reader sees either
+// the whole old file or the whole new one and never a half-written one.
+//
+// It is a verb rather than a bare `rename` extern because the two platforms do
+// not agree on the interesting half: POSIX `rename(2)` replaces, and the MSVC
+// runtime's `rename` REFUSES an existing destination with EEXIST — so the
+// idiom above, spelled with libc, silently fails on Windows every time, which
+// is to say always. `fs_sys` carries the difference (`MoveFileExW` with
+// MOVEFILE_REPLACE_EXISTING there).
+//
+// Both paths must be on the same volume; Windows refuses a cross-volume replace
+// and POSIX answers EXDEV.
+fn rename(from: str, to: str) -> result::Result[bool, result::IoError] {
+    match c_path(from) {
+        option::Option[text::CString]::Some(f) => {
+            match c_path(to) {
+                option::Option[text::CString]::Some(t) => {
+                    let r: i32 = fsys::rename_replacing(f.as_ptr(), t.as_ptr());
+                    if r == (0 as i32) { return result::io_ok::[bool](true); }
+                    return result::io_err::[bool](errno_as_ioerror());
+                }
+                option::Option[text::CString]::None => {
+                    return result::io_err::[bool](result::IoError::InvalidInput);
+                }
+            }
+        }
+        option::Option[text::CString]::None => {
+            return result::io_err::[bool](result::IoError::InvalidInput);
+        }
+    }
+}
+
 // Delete the file at `path`. `Err(NotFound)` if it does not exist.
 fn remove_file(path: str) -> result::Result[bool, result::IoError] {
     match c_path(path) {
@@ -475,27 +506,27 @@ fn read_dir(path: str) -> option::Option[vec::Vec[text::Text]] {
     // opendir copies the path internally, so the CString need only outlive the
     // call (it does — bound in the match arm).
     let dir: *u8 = match c_path(path) {
-        option::Option[text::CString]::Some(cp) => { opendir(cp.as_ptr()) }
+        option::Option[text::CString]::Some(cp) => { fsys::dir_open(cp.as_ptr()) }
         option::Option[text::CString]::None => { 0 as *u8 }
     };
     if dir == { 0 as *u8 } {
         return option::Option[vec::Vec[text::Text]]::None;
     }
     var out: vec::Vec[text::Text] = vec::new::[text::Text]();
-    var ent: *u8 = { readdir(dir) };
+    var ent: *u8 = { fsys::dir_next(dir) };
     while ent != { 0 as *u8 } {
         // `d_name` is a NUL-terminated C string, but at a per-platform offset
         // into `struct dirent` (Darwin has a d_namlen field Linux does not), so
         // the offset comes from `./fs_sys`.
-        let name_ptr: *u8 = fsys::dirent_name(ent);
+        let name_ptr: *u8 = fsys::dir_name(ent);
         let len: usize = { strlen(name_ptr) };
         if !_is_dot_entry(name_ptr, len) {
             let name: str = { #str_from_raw_parts(name_ptr, len) };
             out.append(name.to_text());
         }
-        ent = { readdir(dir) };
+        ent = { fsys::dir_next(dir) };
     }
-    let _c: i32 = { closedir(dir) };
+    let _c: i32 = { fsys::dir_close(dir) };
     return option::Option[vec::Vec[text::Text]]::Some(out);
 }
 
@@ -749,7 +780,6 @@ fn fs_write_then_read_roundtrip() {
         }
         result::Result[File, result::IoError]::Err(e) => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -771,7 +801,6 @@ fn fs_path_reads_only_the_view_not_the_buffer_tail() {
         result::Result[File, result::IoError]::Err(e) => { assert false; }
     }
     let _c: result::Result[bool, result::IoError] = remove_file(real);
-    return;
 }
 
 #[test]
@@ -833,7 +862,6 @@ fn dir_create_exists_read_remove() {
             match e { result::IoError::NotFound => { } _ => { assert false; } }
         }
     }
-    return;
 }
 
 #[test]
@@ -855,7 +883,6 @@ fn read_to_string_reads_a_utf8_file() {
         result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
     }
     let _rm: result::Result[bool, result::IoError] = remove_file(path);
-    return;
 }
 
 #[test]
@@ -878,7 +905,6 @@ fn read_to_string_rejects_non_utf8() {
         }
     }
     let _rm: result::Result[bool, result::IoError] = remove_file(path);
-    return;
 }
 
 #[test]
@@ -889,5 +915,63 @@ fn read_to_string_missing_file_is_not_found() {
             match e { result::IoError::NotFound => { } _ => { assert false; } }
         }
     }
-    return;
+}
+
+// ---- rename ------------------------------------------------------------------
+
+#[test]
+fn rename_replaces_an_existing_destination() {
+    // THE WHOLE POINT OF THE VERB. libc's `rename` does this on POSIX and
+    // refuses it on Windows, so a test that only renamed onto a free name would
+    // pass on both while the idiom every careful writer uses stayed broken on
+    // one of them.
+    let dst: str = "/tmp/cplus_stdlib_fs_rename_dst.txt";
+    let src: str = "/tmp/cplus_stdlib_fs_rename_src.txt";
+    let _c0 = remove_file(dst);
+    let _c1 = remove_file(src);
+    let _w0 = write_string(dst, "old");
+    let _w1 = write_string(src, "new");
+    assert exists(dst);
+    assert exists(src);
+
+    match rename(src, dst) {
+        result::Result[bool, result::IoError]::Ok(_b) => { }
+        result::Result[bool, result::IoError]::Err(_e) => { assert false; }
+    }
+    // The source is gone and the destination now holds what the source had.
+    assert exists(src) == false;
+    match read_to_string(dst) {
+        result::Result[text::Text, result::IoError]::Ok(t) => { assert t.view() == "new"; }
+        result::Result[text::Text, result::IoError]::Err(_e) => { assert false; }
+    }
+    let _rm = remove_file(dst);
+}
+
+#[test]
+fn rename_onto_a_free_name_moves_the_file() {
+    let src: str = "/tmp/cplus_stdlib_fs_rename_move_src.txt";
+    let dst: str = "/tmp/cplus_stdlib_fs_rename_move_dst.txt";
+    let _c0 = remove_file(src);
+    let _c1 = remove_file(dst);
+    let _w = write_string(src, "body");
+    match rename(src, dst) {
+        result::Result[bool, result::IoError]::Ok(_b) => { }
+        result::Result[bool, result::IoError]::Err(_e) => { assert false; }
+    }
+    assert exists(src) == false;
+    assert exists(dst);
+    let _rm = remove_file(dst);
+}
+
+#[test]
+fn renaming_something_absent_is_an_error_not_a_silent_success() {
+    let src: str = "/tmp/cplus_stdlib_fs_rename_absent_zzz.txt";
+    let dst: str = "/tmp/cplus_stdlib_fs_rename_absent_dst.txt";
+    let _c0 = remove_file(src);
+    let _c1 = remove_file(dst);
+    match rename(src, dst) {
+        result::Result[bool, result::IoError]::Ok(_b) => { assert false; }
+        result::Result[bool, result::IoError]::Err(_e) => { }
+    }
+    assert exists(dst) == false;
 }

@@ -893,20 +893,50 @@ struct SigTable {
 /// it), and `ref` is a write-back borrow — neither moves. This mirrors codegen
 /// `effective_move` (`p.move_ && non-Copy aggregate`).
 ///
-/// Restricted to `TypeKind::Path` on purpose: borrowck runs *before*
-/// monomorphization, so a generic instantiation (`Vec[T]`, `Pair[A, B]`) or a
-/// bare generic param (`T`) is unresolved here — `definitely_non_copy` returns
-/// false for those. Treating them as non-moves keeps the analysis conservative;
-/// codegen still moves them correctly post-mono.
-fn param_is_effective_move(p: &crate::ast::Param, oracle: &CopyOracle) -> bool {
+/// A `take` parameter whose type NAMES ONE OF THE CALLEE'S OWN GENERIC PARAMS
+/// (`take x: T`, `take x: Option[T]`) is a move too — a *conditional* one,
+/// settled at the call site by the argument's own type, which is always
+/// concrete there. Skipping it was a soundness hole, not conservatism:
+///
+/// ```text
+/// fn nsink(take x: Text)   -> E0372 when `x` is borrowed
+/// fn gsink[T](take x: T)   -> silence, and the borrow outlives the value
+/// ```
+///
+/// The permissive direction is what made it dangerous. "Unresolved, so assume
+/// it does not move" admits a real move; the analysis has to assume it MIGHT.
+/// `thread::spawn_with[I, O](take input: I, ...)` is on the silent side of
+/// that line, so the standard library's threading entry point would move a
+/// `Text` out from under a live `str` view of it — a use-after-free the
+/// checker was built to reject and reported clean (2026-08-28).
+///
+/// Callers must pair this with the argument-side gate in the call walker:
+/// `T` may instantiate to a Copy type, and moving a Copy value invalidates
+/// nothing. Whether it consumes is the ARGUMENT's business, and the caller
+/// knows the argument's type whether or not the callee is generic.
+fn param_is_effective_move(
+    p: &crate::ast::Param,
+    oracle: &CopyOracle,
+    generic_names: &[String],
+) -> bool {
     // `Path` and `Generic` (an instantiation like `Vec[i32]`) both reach
     // `definitely_non_copy`, which now answers definitively for Drop generic
     // bases — so passing a `take v: Vec[T]` consumes it, and a move-while-view
-    // is caught. Non-Drop generics still answer `false` there (conservative),
-    // so this stays a no-move for genuinely-maybe-Copy instantiations.
+    // is caught. Non-Drop generics still answer `false` there, which is where
+    // the generic-param arm below takes over.
     p.move_
         && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. })
-        && oracle.definitely_non_copy(&p.ty)
+        && (oracle.definitely_non_copy(&p.ty) || type_mentions_name(&p.ty, generic_names))
+}
+
+/// Is this `take` parameter's move CONDITIONAL on the argument — i.e. did it
+/// qualify only through the generic-param arm above? A parameter whose written
+/// type is definitely non-Copy moves whatever the caller hands it; one typed
+/// `T` moves only when `T` turned out non-Copy, and the call walker asks the
+/// argument. Recomputed at the call site from the recorded parameter type
+/// rather than stored, so no signature entry has to carry a parallel vector.
+fn param_move_is_conditional(param_ty: &Type, oracle: &CopyOracle) -> bool {
+    !oracle.definitely_non_copy(param_ty)
 }
 
 /// Does this type name any of the given generic params anywhere in its
@@ -1018,7 +1048,7 @@ impl SigTable {
                             param_moves: f
                                 .params
                                 .iter()
-                                .map(|p| param_is_effective_move(p, oracle))
+                                .map(|p| param_is_effective_move(p, oracle, &generic_names))
                                 .collect(),
                             param_muts: f.params.iter().map(|p| p.mutable).collect(),
                             return_borrow,
@@ -1128,7 +1158,7 @@ impl SigTable {
                                 param_moves: m
                                     .params
                                     .iter()
-                                    .map(|p| param_is_effective_move(p, oracle))
+                                    .map(|p| param_is_effective_move(p, oracle, &generic_names))
                                     .collect(),
                                 param_muts: m.params.iter().map(|p| p.mutable).collect(),
                                 return_borrow,
@@ -1178,6 +1208,10 @@ impl SigTable {
     /// and detect the four intra-call conflict patterns.
     fn fn_param_muts(&self, name: &str) -> Option<&Vec<bool>> {
         self.fns.get(name).map(|e| &e.param_muts)
+    }
+
+    fn fn_param_tys(&self, name: &str) -> Option<&Vec<Type>> {
+        self.fns.get(name).map(|e| &e.param_tys)
     }
 
     /// The effective per-param keeps flags for an entry: declared
@@ -3055,6 +3089,25 @@ struct Analyzer<'p> {
     /// cleanup — releasing the borrower decrements every source's
     /// `BorrowedShared(N)` count.
     binding_borrows_from: HashMap<String, Vec<Place>>,
+    /// NLL precision: borrowers whose last mention is the CONDITION of the
+    /// `if` that is a whole statement, and which are therefore dead before
+    /// either arm runs.
+    ///
+    /// The release schedule works in whole top-level statements, so an `if`
+    /// is one point and a name mentioned anywhere inside it — condition
+    /// included — stayed live until the statement finished. That made
+    /// `if !looks_at(p) { s.put(v) }` an E0372 while the straight-line
+    /// spelling of the same program was accepted: the only difference is
+    /// WHERE the last use sits, and a condition is evaluated to completion
+    /// before an arm is entered.
+    ///
+    /// Carried on the analyzer rather than threaded through `apply_expr`
+    /// because the two facts live at different levels: which names are due
+    /// is a property of the enclosing BLOCK's schedule, and the release
+    /// point is inside the expression walk. The span pins it to the exact
+    /// `if` the statement is, so an `if` nested inside the condition cannot
+    /// consume a release meant for the outer one.
+    nll_cond_release: Option<(Span, Vec<String>)>,
 }
 
 /// Diagnostic with a `Span` only; the caller converts to a full
@@ -3084,6 +3137,7 @@ impl<'p> Analyzer<'p> {
             diags: Vec::new(),
             live_borrows: BTreeMap::new(),
             binding_borrows_from: HashMap::new(),
+            nll_cond_release: None,
         }
     }
 
@@ -6326,7 +6380,9 @@ impl Analyzer<'_> {
 
         let nll = self.nll_release_schedule(body);
         for (i, stmt) in body.stmts.iter().enumerate() {
+            self.nll_cond_release = self.cond_only_releases(stmt, &nll[i]);
             self.apply_stmt(stmt, &mut state);
+            self.nll_cond_release = None;
             // NLL: end borrows whose last mention was this statement.
             for name in &nll[i] {
                 self.drop_borrower(name, &mut state);
@@ -6337,7 +6393,9 @@ impl Analyzer<'_> {
             });
         }
         if let Some(tail) = &body.tail {
+            self.nll_cond_release = self.tail_cond_releases(tail);
             self.apply_expr(tail, &mut state);
+            self.nll_cond_release = None;
         }
         points.push(PointSnapshot {
             label: "exit".into(),
@@ -6618,6 +6676,131 @@ impl Analyzer<'_> {
         schedule
     }
 
+    /// Which of the borrowers due for release at this statement are dead
+    /// before the statement's `if` enters an arm.
+    ///
+    /// `nll_release_schedule` works in whole top-level statements, so an `if`
+    /// is one release point and a name mentioned anywhere inside it stays
+    /// live to the end of it. For a name mentioned only in the CONDITION that
+    /// is too coarse: the condition is evaluated to completion before either
+    /// arm runs, so the borrow is already dead when the arm moves the owner.
+    /// That coarseness rejected
+    ///
+    /// ```text
+    /// if !looks_at(p) { let _r: i32 = s.put(v); }
+    /// ```
+    ///
+    /// while accepting the same program written straight-line, which is the
+    /// one shape a person reaches for when the question is "is it already
+    /// there? if not, move it in".
+    ///
+    /// ONLY WHEN THE `if` IS THE WHOLE STATEMENT — a bare `if`, or a
+    /// `let x = if …;`. An `if` buried in a larger expression does not
+    /// qualify: in `f(if p.ok() { s.put(v) } else { 0 }, g(p))` a sibling
+    /// still reads `p` after the arms, and releasing before them would admit
+    /// the arm's move and leave that read dangling. The mention must also be
+    /// IN the condition and in NEITHER arm; a name the schedule retires here
+    /// for some other reason keeps the release point it had.
+    fn cond_only_releases(&self, st: &Stmt, due: &[String]) -> Option<(Span, Vec<String>)> {
+        use std::collections::BTreeSet;
+        let e = match &st.kind {
+            StmtKind::Expr(e) => e,
+            StmtKind::Let { init: Some(e), .. } => e,
+            _ => return None,
+        };
+        let ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } = &e.kind
+        else {
+            return None;
+        };
+        let mut in_cond: BTreeSet<String> = BTreeSet::new();
+        crate::ast::visit_exprs(cond, &mut |x| {
+            if let ExprKind::Ident(n) = &x.kind {
+                in_cond.insert(n.clone());
+            }
+        });
+        let mut in_arms: BTreeSet<String> = BTreeSet::new();
+        crate::ast::visit_exprs_in_block(then, &mut |x| {
+            if let ExprKind::Ident(n) = &x.kind {
+                in_arms.insert(n.clone());
+            }
+        });
+        if let Some(eb) = else_branch {
+            crate::ast::visit_exprs(eb, &mut |x| {
+                if let ExprKind::Ident(n) = &x.kind {
+                    in_arms.insert(n.clone());
+                }
+            });
+        }
+        let names: Vec<String> = due
+            .iter()
+            .filter(|n| in_cond.contains(*n) && !in_arms.contains(*n))
+            .cloned()
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+        Some((e.span, names))
+    }
+
+    /// The same release, for a block whose TAIL is an `if`.
+    ///
+    /// A tail is pinned to scope exit by `nll_release_schedule`, and rightly:
+    /// the block's value may itself borrow, so a name mentioned in the tail
+    /// cannot be retired at some earlier statement. A name mentioned only in
+    /// the tail's CONDITION is the exception — the condition runs to
+    /// completion before either arm, and the block's value comes from an arm,
+    /// so that name cannot be in it.
+    ///
+    /// Unpinning it in the schedule would be wrong: the schedule can only
+    /// name a STATEMENT to release at, and every statement is before the tail
+    /// — which would release the borrow before code that still reads it. This
+    /// releases at the one point that is both after the last read and before
+    /// the arms, which is a point only the expression walk can see.
+    fn tail_cond_releases(&self, tail: &Expr) -> Option<(Span, Vec<String>)> {
+        use std::collections::BTreeSet;
+        let ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } = &tail.kind
+        else {
+            return None;
+        };
+        let mut in_cond: BTreeSet<String> = BTreeSet::new();
+        crate::ast::visit_exprs(cond, &mut |x| {
+            if let ExprKind::Ident(n) = &x.kind {
+                in_cond.insert(n.clone());
+            }
+        });
+        let mut in_arms: BTreeSet<String> = BTreeSet::new();
+        crate::ast::visit_exprs_in_block(then, &mut |x| {
+            if let ExprKind::Ident(n) = &x.kind {
+                in_arms.insert(n.clone());
+            }
+        });
+        if let Some(eb) = else_branch {
+            crate::ast::visit_exprs(eb, &mut |x| {
+                if let ExprKind::Ident(n) = &x.kind {
+                    in_arms.insert(n.clone());
+                }
+            });
+        }
+        // Only actual borrowers: this set is not filtered by a release
+        // schedule, so it is narrowed to the bindings that hold a loan at all.
+        let names: Vec<String> = in_cond
+            .into_iter()
+            .filter(|n| !in_arms.contains(n) && self.binding_borrows_from.contains_key(n))
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+        Some((tail.span, names))
+    }
+
     /// Walk a block whose state must be scope-restricted to bindings that
     /// existed at `outer`. Bindings introduced inside the block are
     /// discarded from `state` on exit so they don't leak to subsequent
@@ -6630,7 +6813,9 @@ impl Analyzer<'_> {
     ) {
         let nll = self.nll_release_schedule(b);
         for (i, s) in b.stmts.iter().enumerate() {
+            self.nll_cond_release = self.cond_only_releases(s, &nll[i]);
             self.apply_stmt(s, state);
+            self.nll_cond_release = None;
             // NLL: this statement was the last mention of these borrowers —
             // their borrows end here, not at scope exit.
             for name in &nll[i] {
@@ -6638,7 +6823,9 @@ impl Analyzer<'_> {
             }
         }
         if let Some(t) = &b.tail {
+            self.nll_cond_release = self.tail_cond_releases(t);
             self.apply_expr(t, state);
+            self.nll_cond_release = None;
         }
         // 5BC.3b: release any borrows held by bindings that are about to
         // be dropped (block-local bindings not present in `outer`).
@@ -6774,10 +6961,14 @@ impl Analyzer<'_> {
             ExprKind::Await(inner) => {
                 self.apply_expr(inner, state);
             }
-            // v0.0.4 Phase 4 Slice 4A: yield's value flows through; the
-            // suspend itself doesn't change Place state.
+            // v0.0.4 Phase 4 Slice 4A: the suspend itself doesn't change Place
+            // state — but the VALUE leaves the frame. A bare non-Copy binding
+            // is moved to the consumer, through the same door as a variant
+            // payload, so a live view borrow of it blocks the yield (E0372)
+            // and the place is `Moved` afterwards (bug 2026-09-06,
+            // yield-does-not-transfer-ownership).
             ExprKind::Yield(inner) => {
-                self.apply_expr(inner, state);
+                self.apply_aggregate_element(inner, state);
             }
             ExprKind::If {
                 cond,
@@ -6785,6 +6976,18 @@ impl Analyzer<'_> {
                 else_branch,
             } => {
                 self.apply_expr(cond, state);
+                // The condition has run to completion. Any borrower whose
+                // last mention was in it is dead before either arm is
+                // entered, so a move in an arm invalidates nothing.
+                if let Some((sp, names)) = &self.nll_cond_release {
+                    if *sp == e.span {
+                        let due = names.clone();
+                        self.nll_cond_release = None;
+                        for n in &due {
+                            self.drop_borrower(n, state);
+                        }
+                    }
+                }
                 let pre = state.clone();
                 let mut then_state = pre.clone();
                 self.walk_block_in_scope(then, &mut then_state, &pre);
@@ -6833,14 +7036,14 @@ impl Analyzer<'_> {
                 // MaybePartial stays an error because codegen has no drop
                 // flags: `v = mk()` after a *conditional* move can't decide
                 // statically whether to drop the old value.
-                let heal = match &target.kind {
+                let heal_before = match &target.kind {
                     ExprKind::Ident(name) => matches!(
                         state.get(&Place::root(name)),
                         Some(PlaceState::Moved)
                     ),
                     _ => false,
                 };
-                if !heal {
+                if !heal_before {
                     self.apply_expr(target, state);
                 }
                 // v0.0.28: a WRITE into a place someone else is borrowing is
@@ -6864,6 +7067,31 @@ impl Analyzer<'_> {
                 // already rejects (E0372).
                 let borrow_sources = self.classify_borrow_source(value);
                 self.apply_expr(value, state);
+                // v0.0.28: the heal has to be re-tested AFTER the value, because
+                // the value is what performs the move in the self-consuming
+                // form `x = f(x)` — `f` takes ownership and hands back a new
+                // value. Tested only before the walk, `x` is still `Owned` at
+                // that point, so `heal_before` is false and the block exits
+                // with `x` MOVED; merging that with a path that did not run
+                // (an `if` with no `else`, a loop body) yields MaybePartial and
+                // E0371 fires on the next read of a binding that is live on
+                // every path. Straight-line code never hit it (no join to
+                // merge at), and splitting the statement in two made it go
+                // away (the assign then sees a definitely-moved `x`), which is
+                // what made this read as a rule about blocks.
+                //
+                // Healing here stays inside the original constraint: only a
+                // DEFINITELY-moved place heals. A conditionally-moved one is
+                // still MaybePartial and still an error, because codegen has
+                // no drop flags to decide whether the old value needs dropping.
+                let heal = heal_before
+                    || match &target.kind {
+                        ExprKind::Ident(name) => matches!(
+                            state.get(&Place::root(name)),
+                            Some(PlaceState::Moved)
+                        ),
+                        _ => false,
+                    };
                 if heal {
                     if let ExprKind::Ident(name) = &target.kind {
                         state.insert(Place::root(name), PlaceState::Owned);
@@ -7088,9 +7316,9 @@ impl Analyzer<'_> {
                         span,
                         name.to_string(),
                         format!(
-                            "`{name}` is moved on some branches but not others; \
-                             ensure every branch either moves or preserves the binding, \
-                             or clone it before the branch: `let {name}_owned = {name}.clone();`"
+                            "`{name}` is moved on some paths and not others; \
+                             ensure every path either moves or preserves the binding, \
+                             or clone it before the split: `let {name}_owned = {name}.clone();`"
                         ),
                     )),
                     label: None,
@@ -7226,9 +7454,9 @@ impl Analyzer<'_> {
                     span,
                     name.to_string(),
                     format!(
-                        "`{name}` is moved on some branches but not others; \
-                         ensure every branch either moves or preserves the binding, \
-                         or clone it before the branch: `let {name}_owned = {name}.clone();`"
+                        "`{name}` is moved on some paths and not others; \
+                         ensure every path either moves or preserves the binding, \
+                         or clone it before the split: `let {name}_owned = {name}.clone();`"
                     ),
                 )),
                 label: None,
@@ -7284,6 +7512,13 @@ impl Analyzer<'_> {
             ExprKind::Ident(name) => self.sigs.fn_param_muts(name).cloned(),
             _ => None,
         };
+        // Parallel to `move_flags`: the callee's WRITTEN parameter types, which
+        // is how the move loop below tells an unconditional `take Text` from a
+        // `take T` whose move depends on what the caller passed.
+        let mut param_tys: Option<Vec<Type>> = match &callee.kind {
+            ExprKind::Ident(name) => self.sigs.fn_param_tys(name).cloned(),
+            _ => None,
+        };
         // Handle-projection Tier 2: an indirect call through a fn-pointer
         // local. The callee ident isn't a named fn, but its recorded binding
         // type carries the per-param `take`/`ref` markers — source the same
@@ -7323,10 +7558,38 @@ impl Analyzer<'_> {
         } = &callee.kind
         {
             if let ExprKind::Ident(recv_name) = &receiver.kind {
+                // A GENERIC-TYPED RECEIVER RESOLVES TOO.
+                //
+                // Matching only `Path` meant a call on `Vec[T]`, `Box[T]`,
+                // `Option[T]`, `Mutex[T]`, `Arc[T]` or `HashMap[K, V]` —
+                // `TypeKind::Generic`, not `Path` — found no `FnEntry` and
+                // carried NO flags at all: no move flags, no `ref` flags, no
+                // receiver claim. So `s.put(t)` was rejected under a live view
+                // and `vs.append(t)` was silent, same call, same rule. The
+                // whole intra-call family went with it — E0372, E0380, E0381,
+                // E0382, E0374 and the cross-statement `ref`-argument check,
+                // every one of which fires on the concrete spelling.
+                //
+                // The method table is keyed by the impl target's WRITTEN name,
+                // so `Vec[Text]` finds `Vec.append` exactly as `Sink` finds
+                // `Sink.put`. The `#[keeps(this)]` tie a few lines below
+                // already resolved through `keeps_flags_for_receiver_ty`,
+                // which handles both; this lookup was the odd one out.
+                //
+                // Held back until 2026-08-30 because it exposed a SEPARATE
+                // precision bug on real code — a view whose last use is an
+                // `if` condition stayed live inside the branch body, so
+                // `if !seen(p) { out.append(pg); }` reported E0372 against a
+                // borrow NLL had already ended. That is fixed
+                // (`cond_only_releases`), so this can land.
+                // bugs/generic-receiver-method-calls-carry-no-borrow-flags.md
                 let entry = self
                     .binding_type(recv_name)
                     .and_then(|bt| match &bt.kind {
-                        TypeKind::Path(type_name) => self
+                        TypeKind::Path(type_name)
+                        | TypeKind::Generic {
+                            name: type_name, ..
+                        } => self
                             .sigs
                             .methods
                             .get(&format!("{type_name}.{}", method.name)),
@@ -7336,6 +7599,7 @@ impl Analyzer<'_> {
                 if let Some(entry) = entry {
                     if move_flags.is_none() {
                         move_flags = Some(entry.param_moves.clone());
+                        param_tys = Some(entry.param_tys.clone());
                     }
                     if mut_flags.is_none() {
                         mut_flags = Some(entry.param_muts.clone());
@@ -7426,8 +7690,23 @@ impl Analyzer<'_> {
                 .unwrap_or(false);
             if arg_is_move {
                 if let ExprKind::Ident(name) = &arg.kind {
-                    self.apply_move_of_binding(name, arg.span, state);
-                    continue;
+                    // A `take` parameter written as one of the callee's own
+                    // generic params consumes only what is actually non-Copy,
+                    // and the CALLER is where that is known — `gsink::[Text](t)`
+                    // moves, `gsink::[i32](n)` copies. A parameter with a
+                    // definitely-non-Copy written type moves unconditionally,
+                    // which is the pre-existing path and stays exact: asking
+                    // the argument there would silently drop the check for a
+                    // binding whose type borrowck could not infer.
+                    let conditional = param_tys
+                        .as_ref()
+                        .and_then(|v| v.get(i))
+                        .map(|t| param_move_is_conditional(t, &self.oracle))
+                        .unwrap_or(false);
+                    if !conditional || self.binding_is_non_copy(name) {
+                        self.apply_move_of_binding(name, arg.span, state);
+                        continue;
+                    }
                 }
             }
             self.apply_expr(arg, state);
@@ -8809,6 +9088,65 @@ fn caller() {
         );
     }
 
+    // 2026-08-28: the GENERIC half of the same rule, which was missing.
+    // `param_is_effective_move` asked whether the WRITTEN parameter type is
+    // definitely non-Copy, and a bare `T` never is before monomorphization —
+    // so `fn gsink[T](take x: T)` recorded no move at all and a live view
+    // outlived the value it borrowed. That is not a corner: the signature is
+    // `thread::spawn_with[I, O](take input: I, ...)`, so the standard
+    // library's threading entry point moved a `Text` into a worker out from
+    // under a `str` view of it, and the checker reported clean. Confirmed as a
+    // real heap-use-after-free under `--asan` (freed by `Text.drop` inside the
+    // instantiated sink) before the fix went in.
+    //
+    // The comment on the old code called treating `T` as a non-move
+    // "conservative". It is the opposite: for a move-while-borrowed check,
+    // assuming no move is the PERMISSIVE direction, and it admits a real one.
+    #[test]
+    fn generic_take_param_while_borrowed_is_move_e0372() {
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn gsink[T](take v: T) -> i32 { return 0; }
+fn caller() {
+  let v: B = B { x: 1 };
+  let cur: B = cursor(v);
+  let n: i32 = gsink::[B](v);
+  let m: i32 = cur.x;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a `take` param typed by the callee's own generic param still moves; got {codes:?}"
+        );
+    }
+
+    // The other half, and the reason the call site asks the ARGUMENT rather
+    // than trusting the parameter: `T` may instantiate Copy, and moving a Copy
+    // value invalidates nothing. Marking every generic `take` a move outright
+    // would have turned this into a false E0335/E0372 — a compile error on
+    // correct code, which is worse than the hole it closes.
+    #[test]
+    fn generic_take_param_of_a_copy_argument_is_not_a_move() {
+        let src = "\
+fn gsink[T](take v: T) -> i32 { return 0; }
+fn caller() -> i32 {
+  let y: i32 = 1;
+  let a: i32 = gsink::[i32](y);
+  let b: i32 = gsink::[i32](y);
+  return y;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes
+                .iter()
+                .any(|c| c == "E0372" || c == "E0335" || c == "E0370"),
+            "a Copy instantiation consumes nothing; got {codes:?}"
+        );
+    }
+
     #[test]
     fn take_noncopy_enum_arg_while_borrowed_is_move_e0372() {
         let src = "\
@@ -9041,6 +9379,121 @@ fn caller(c: bool) {
     }
 
     // --- 5BC.2b E0371 emission tests ---
+
+    // ---- v0.0.28: `x = f(x)` re-initialises across a control-flow join ----
+    //
+    // `f` takes ownership and hands back a new value, so the statement moves
+    // AND re-initialises `x` — `x` is live on every path out of the block,
+    // whether that block ran once, many times, or not at all. The heal that
+    // records the re-initialisation used to be tested only BEFORE the value
+    // was walked, and the value is what performs the move, so the branch
+    // exited with `x` moved and the join produced MaybePartial → E0371 on a
+    // binding that was never in doubt.
+    //
+    // Straight-line code (no join to merge at) and a bare block never hit it,
+    // which is what made the shape read as a rule about blocks.
+
+    const REINIT_MOCK: &str = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn mk() -> B { return B { x: 0 }; }
+fn bump(take b: B) -> B { return b; }
+fn eat(take b: B) { return; }
+";
+
+    fn reinit_codes(body: &str) -> Vec<String> {
+        check_src(&format!("{REINIT_MOCK}fn caller(c: bool) {{\n{body}\n  return;\n}}"))
+    }
+
+    #[test]
+    fn reinit_in_an_if_without_else_is_not_possibly_moved() {
+        let codes = reinit_codes(
+            "  var y: B = mk();
+  if c { y = bump(y); }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(codes.is_empty(), "expected a clean program; got {codes:?}");
+    }
+
+    #[test]
+    fn reinit_in_a_loop_body_is_not_possibly_moved() {
+        // The clearest case: one unconditional path through the body, and it
+        // still failed. The old help text ("moved on some branches but not
+        // others") named branches this program does not have.
+        let codes = reinit_codes(
+            "  var y: B = mk();
+  var i: i32 = 0;
+  while i < 3 { y = bump(y); i = i + 1; }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(codes.is_empty(), "expected a clean program; got {codes:?}");
+    }
+
+    #[test]
+    fn reinit_in_both_arms_and_in_a_bare_block_stay_clean() {
+        // These two compiled before the fix; pinned so the new post-value
+        // heal cannot regress them.
+        let both_arms = reinit_codes(
+            "  var y: B = mk();
+  if c { y = bump(y); } else { y = bump(y); }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(both_arms.is_empty(), "both-arms: {both_arms:?}");
+        let bare_block = reinit_codes(
+            "  var y: B = mk();
+  { y = bump(y); }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(bare_block.is_empty(), "bare block: {bare_block:?}");
+    }
+
+    #[test]
+    fn reinit_split_across_two_statements_stays_clean() {
+        // The zero-cost workaround, and the shape whose success proved the
+        // analysis already understood re-initialisation.
+        let codes = reinit_codes(
+            "  var y: B = mk();
+  if c { let t: B = bump(y); y = t; }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(codes.is_empty(), "expected a clean program; got {codes:?}");
+    }
+
+    // ---- the negative half: a conditional move with NO re-initialisation is
+    // still an error. The heal must not swallow these. ----
+
+    #[test]
+    fn conditional_move_without_reinit_is_still_rejected() {
+        let codes = reinit_codes("  var y: B = mk();
+  if c { eat(y); }
+  let z: B = y;
+  eat(z);");
+        assert!(
+            codes.iter().any(|c| c == "E0371" || c == "E0335"),
+            "a conditional move must still be caught; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn one_arm_moving_and_one_reinitialising_is_still_rejected() {
+        // The genuine disagreement the diagnostic is actually for: the `then`
+        // path leaves `y` dead, the `else` path leaves it live.
+        let codes = reinit_codes(
+            "  var y: B = mk();
+  if c { eat(y); } else { y = bump(y); }
+  let z: B = y;
+  eat(z);",
+        );
+        assert!(
+            codes.iter().any(|c| c == "E0371" || c == "E0335"),
+            "paths that genuinely disagree must still be caught; got {codes:?}"
+        );
+    }
 
     #[test]
     fn e0371_does_not_fire_on_copy_binding_after_asymmetric_branch() {
@@ -10674,6 +11127,247 @@ fn caller() {
         assert!(
             !codes.iter().any(|c| c == "E0381" || c == "E0383" || c == "E0372"),
             "a dead view borrower must release its owner; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_a_view_whose_last_use_is_a_branch_condition_is_dead_in_the_body() {
+        // TWO SPELLINGS OF ONE PROGRAM. Straight-line, the view is dead at the
+        // move and the move is admitted; with the same last use moved into an
+        // `if` CONDITION it was refused. A condition is evaluated to
+        // completion before an arm runs, so nothing about the borrow differs —
+        // only where the last use sits.
+        //
+        // The shape is "is it already there? if not, move it in", which is
+        // what a person writes; iris/src/services/settings.cplus:520 is
+        // exactly it.
+        // bugs/a-view-whose-last-use-is-a-branch-condition-stays-live-in-the-body.md
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if !looks(p) { let r: i32 = s.put(v); }
+  let done: i32 = 0;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "a view whose last use is the condition is dead in the body; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_the_same_relaxation_reaches_a_block_tail_if() {
+        // A tail is pinned to scope exit because the block's VALUE may borrow.
+        // A name in the tail's condition cannot be in that value, so it gets
+        // the same treatment — and it has to, because a unit function ending
+        // in an `if` is the shape the bug was reported in.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if !looks(p) { let r: i32 = s.put(v); }
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "a tail `if`'s condition is still the last use; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_a_view_read_inside_the_arm_still_pins_the_owner() {
+        // The first thing the relaxation must not break: the view IS used in
+        // the body, after the move. Releasing at the condition here would
+        // hand the arm a dangling view.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if true { let r: i32 = s.put(v); let b: bool = looks(p); }
+  let done: i32 = 0;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a view read in the arm after the move must be refused; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_a_view_read_after_the_if_still_pins_the_owner() {
+        // The condition is not the last use if anything below the `if` reads
+        // it — and the release schedule already knows that, which is why the
+        // relaxation is filtered by it rather than deciding on its own.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if !looks(p) { let r: i32 = s.put(v); }
+  let b: bool = looks(p);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a view read after the `if` must still pin the owner; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_an_if_buried_in_a_call_does_not_get_the_relaxation() {
+        // WHY THE RELAXATION IS RESTRICTED TO A WHOLE STATEMENT. Here a
+        // SIBLING argument still reads the view after the arms have run, so
+        // releasing at the condition would admit the arm's move and leave that
+        // read dangling. The `if` is not the statement, so it does not
+        // qualify.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn two(a: i32, b: bool) -> i32 { return a; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  let q: i32 = two(if looks(p) { s.put(v) } else { 0 }, looks(p));
+  let done: i32 = 0;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "an `if` inside a larger expression must not release early; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_a_move_before_the_tail_condition_is_still_refused() {
+        // The tail relaxation releases AFTER the condition, never before. A
+        // move in a statement above it happens while the view is still live,
+        // and unpinning the name in the schedule instead — the obvious
+        // shortcut — would have admitted exactly this.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Sink { n: i32 }
+impl Sink { fn put(ref this, take b: B) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref s: Sink) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  let r: i32 = s.put(v);
+  if looks(p) { let n: i32 = 1; }
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a move above the tail condition must still be refused; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn a_generic_receiver_carries_the_same_borrow_flags_as_a_concrete_one() {
+        // SAME CALL, TWO SPELLINGS, TWO ANSWERS. The receiver's type decided
+        // whether the call was checked at all: `Vec[T]`, `Box[T]`, `Option[T]`,
+        // `Mutex[T]` are `TypeKind::Generic`, the lookup matched only `Path`,
+        // and a generic receiver resolved to no `FnEntry` — so no move flags,
+        // no `ref` flags, no receiver claim. Moving into `vs.append(t)` under
+        // a live view was silent while `s.put(t)` was correctly refused.
+        // bugs/generic-receiver-method-calls-carry-no-borrow-flags.md
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Bag[T] { n: i32 }
+impl Bag[T] { fn add(ref this, take v: T) -> i32 { return 0; } }
+fn looks(s: str) -> bool { return true; }
+fn caller(ref g: Bag[B]) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  let r: i32 = g.add(v);
+  let b: bool = looks(p);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a move into a generic receiver's `take` param under a live view \
+             must be refused, exactly as the concrete spelling is; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn the_generic_receiver_check_does_not_reject_the_shape_it_was_held_back_for() {
+        // The two fixes are one change. Checking generic receivers exposed the
+        // NLL condition imprecision on real code — iris's
+        // `if !has(out, p) { out.append(pg); }` — which is why the three-line
+        // lookup sat unapplied. With `cond_only_releases` in place the unsound
+        // call is caught AND this stays accepted; without it, this is the
+        // false positive that made the trade a bad one.
+        let src = "\
+struct B { x: i32 }
+impl B {
+  fn drop(ref this) { return; }
+  fn peek(this) -> str { return \"x\"; }
+}
+struct Bag[T] { n: i32 }
+impl Bag[T] { fn add(ref this, take v: T) -> i32 { return 0; } }
+fn seen(s: str) -> bool { return true; }
+fn caller(ref g: Bag[B]) {
+  var v: B = B { x: 1 };
+  let p: str = v.peek();
+  if !seen(p) { let r: i32 = g.add(v); }
+  let done: i32 = 0;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "the view is dead at the condition; the move in the arm is fine; got {codes:?}"
         );
     }
 

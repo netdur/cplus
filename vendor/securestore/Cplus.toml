@@ -1,0 +1,48 @@
+[package]
+name    = "securestore"
+version = "0.0.1"
+edition = "2026"
+
+# securestore — small secrets, at rest, under the platform's own key material.
+#
+# A token, a refresh token, a password, an API key: kilobytes, not megabytes.
+# The Keychain is a daemon round-trip per item and the Android side encrypts
+# each value individually, so an app storing a megabyte here has a cache rather
+# than a secret. Not a database, not a preferences store, not a file API.
+#
+# ONE PACKAGE ON EVERY PLATFORM, the shape vendor/http proved and permissions,
+# notifications and applinks copied: `securestore/securestore` is what an
+# application imports, and the half underneath is swapped by the resolver's
+# `_<platform>` file override. The two halves meet at stable symbols rather than
+# through an import, because the backend imports this module for its types and a
+# cycle back is rejected (E0404).
+#
+# NO AAR ON ANDROID, and it is worth saying why since the obvious answer is
+# `EncryptedSharedPreferences`. That is androidx.security:security-crypto, which
+# depends on Tink — a large general-purpose crypto library — for what is sixty
+# lines of JNI over classes already in android.jar: KeyStore, KeyGenerator,
+# Cipher, SharedPreferences. All ten classes verified present. See
+# plans/securestore.md §2.
+#
+# NOT A DEPENDENT OF `permissions`, deliberately: neither platform gates secure
+# storage behind one, and adding it for symmetry with the other Tier-1 packages
+# would make an app ask for something it does not need.
+
+[dependencies]
+stdlib = "*"
+
+[macos.dependencies]
+objc = "*"
+
+[ios.dependencies]
+objc = "*"
+
+[android.dependencies]
+jni          = "*"
+android_view = "*"
+# THE ACTIVITY IS WHERE A `Context` COMES FROM, and a Context is what
+# `getSharedPreferences` is a method on. `app_events::host()` publishes it —
+# facet is the portable core here, not a backend.
+facet        = "*"
+flex_layout  = "*"
+events       = "*"

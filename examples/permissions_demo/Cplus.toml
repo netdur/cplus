@@ -1,0 +1,35 @@
+[package]
+name    = "permissions_demo"
+version = "0.0.1"
+edition = "2026"
+
+# permissions_demo — vendor/permissions on macOS, in a real .app bundle.
+#
+# WHY IT IS A BUNDLE, and it is the whole reason this example exists rather than
+# being a paragraph in the docs. macOS gates every privacy prompt on TCC, and
+# TCC reads the usage-description key out of the app's `Info.plist`. A bare
+# `cpc build` binary has no plist, so asking it for the camera does not fail —
+# **the OS terminates the process**. `bundle.sh` assembles the .app that makes
+# the prompt possible, and its plist is the demonstration.
+#
+#   cd examples/permissions_demo && ./bundle.sh && open out/Permissions.app
+
+[macos]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib        = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+permissions   = "*"
+
+# The resolver validates every import against ONE flat set taken from THIS
+# manifest, so the backend's closure and permissions' own `objc` are named here.
+[macos.dependencies]
+facet_appkit = "*"
+objc         = "*"
+appkit       = "*"
+quartzcore   = "*"
+webkit       = "*"

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="cplus.notificationsdemo">
+
+    <!-- API 33+. Below it the permission does not exist and notifications are
+         on unless a person turned them off in Settings — a different question
+         with a different call, which `permissions` answers with a version
+         fork. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application android:label="Notifications"
+                 android:theme="@android:style/Theme.DeviceDefault.DayNight">
+        <!-- THE ACTIVITY IS FACET'S. It ships inside facet_android as a
+             precompiled dex merged into classes.dex by build_android.sh, so
+             this app contains no Java of its own. It is also what receives a
+             notification tap — onNewIntent when running, the launch intent when
+             the process was dead. -->
+        <!-- singleTop, and it is what makes a deep link into a RUNNING app
+             call onNewIntent instead of building a second Activity — a second
+             facet mount stacked on the first. The notification tap never
+             needed it because notifications set FLAG_ACTIVITY_SINGLE_TOP on
+             their own intent; a browser does not. -->
+        <activity android:name="cplus.facet.FacetActivity" android:exported="true"
+                  android:launchMode="singleTop"
+                  android:configChanges="orientation|screenSize|keyboardHidden">
+            <meta-data android:name="cplus.facet.lib"  android:value="notificationsdemo" />
+            <meta-data android:name="cplus.facet.main" android:value="notifications_demo_ios_main" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- THE DEEP LINK. BROWSABLE is what lets a link from a browser or
+                 a message reach the app; DEFAULT is what lets an implicit
+                 intent match at all. Try it:
+
+                   adb shell am start -a android.intent.action.VIEW \
+                     -d "cplusdemo://record/42?from=adb"
+
+                 A VERIFIED APP LINK (https) is a different thing and cannot be
+                 demonstrated locally: it needs assetlinks.json served from a
+                 real domain over HTTPS, naming this package and its signing
+                 certificate's SHA-256. See vendor/applinks/docs/guide.md. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="cplusdemo" />
+            </intent-filter>
+        </activity>
+
+        <!-- ACTION BUTTONS ROUTE THROUGH HERE. A button must do its thing and
+             leave the shade open, and only a broadcast can do that — an
+             Activity PendingIntent always brings the app forward. The class
+             ships inside facet_android's dex, merged into classes.dex by
+             build_android.sh, so this line is all an app adds. Omit it and the
+             buttons quietly do nothing; everything else still works. -->
+        <receiver android:name="cplus.facet.FacetNotificationReceiver"
+                  android:exported="false" />
+    </application>
+</manifest>

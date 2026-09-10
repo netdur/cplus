@@ -1,0 +1,5 @@
+import "./selftest" as selftest;
+
+export extern fn notifications_tests_main() -> i32 {
+    return selftest::run_all();
+}

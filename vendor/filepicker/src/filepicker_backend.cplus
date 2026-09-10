@@ -1,0 +1,189 @@
+// NSOpenPanel and NSSavePanel. macOS only.
+//
+// ---- asynchronous on purpose, though `runModal` exists ----------------------
+//
+// `runModal` is the obvious call and it spins a NESTED RUN LOOP: timers fire,
+// the app's own event handlers run, and a facet tree can be mutated from
+// inside a frame that is still inside the caller's. That is a reentrancy
+// problem, not a convenience. `beginWithCompletionHandler:` hands the answer
+// back on the main run loop with the stack unwound, which is what the other
+// two platforms do anyway.
+//
+// The completion block is the stack-block shape cpc-bindgen builds, and it is
+// stored by AppKit until the panel closes — verified safe on an iPad against
+// CMAltimeter, which stores its handler far longer.
+
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "./filepicker" as fp;
+
+// The (fn, ctx) pair, alive across the panel.
+struct _Pending {
+    on_pick: fn(*u8, usize, *u8),
+    opaque ctx: *u8,
+    opaque panel: *u8,
+    // A save panel answers `URL`; an open panel answers `URLs`. One flag
+    // rather than two callbacks.
+    saving: bool,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn _msg_begin(recv: *u8, sel: *u8, handler: *u8);
+
+// The completion block, built by hand rather than through a binding: AppKit's
+// `beginWithCompletionHandler:` is declared on NSSavePanel and the generated
+// form is not reachable from an NSOpenPanel handle without a cast the binding
+// does not offer.
+#[repr(C)]
+struct _Block {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, i64),
+    opaque descriptor: *u8,
+    user_ctx: usize,
+}
+
+static _DESC: rt::BlockDescriptor = rt::BlockDescriptor {
+    reserved: 0 as u64, size: 40 as u64,
+};
+
+#[link_name = "strlen"]
+extern fn _strlen(s: *u8) -> usize;
+
+fn _invoke(block: *u8, response: i64) {
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let b: *_Block = { block as *_Block };
+    let raw: usize = { (*b).user_ctx };
+    if raw == 0 { return; }
+    let p: *_Pending = { raw as *_Pending };
+
+    var out_ptr: *u8 = 0 as *u8;
+    var out_len: usize = 0 as usize;
+    // NSModalResponseOK is 1. Anything else is a cancel, which is an ANSWER
+    // and not an error — the handler still runs, with an empty path.
+    if response == (1 as i64) {
+        let panel: *u8 = { (*p).panel };
+        var url: *u8 = 0 as *u8;
+        if { (*p).saving } {
+            url = rt::msg_id(panel, rt::sel(#str_ptr("URL\0")));
+        } else {
+            let urls: *u8 = rt::msg_id(panel, rt::sel(#str_ptr("URLs\0")));
+            if urls.is_not_null() {
+                let n: i64 = rt::msg_i64(urls, rt::sel(#str_ptr("count\0")));
+                if n > (0 as i64) {
+                    url = rt::msg_id_i64(urls, rt::sel(#str_ptr("objectAtIndex:\0")),
+                                         0 as i64);
+                }
+            }
+        }
+        if url.is_not_null() {
+            let s: *u8 = rt::msg_id(url, rt::sel(#str_ptr("path\0")));
+            if s.is_not_null() {
+                // COPIED INTO THIS FRAME, then viewed. `UTF8String` answers a
+                // pointer owned by the autoreleased NSString, and handing that
+                // straight to a handler that might outlive the pool is the
+                // use-after-free `AppEvent.text` documents. The buffer lives
+                // for the dispatch, which is exactly what the `str` promises.
+                let raw: *u8 = rt::msg_id(s, rt::sel(#str_ptr("UTF8String\0")));
+                if raw.is_not_null() {
+                    let n: usize = { _strlen(raw) };
+                    var i: usize = 0 as usize;
+                    while i < n && i < (1023 as usize) {
+                        buf[i] = { *({ raw + i }) };
+                        i = i + (1 as usize);
+                    }
+                    out_ptr = { #addr_of(buf) as *u8 };
+                    out_len = i;
+                }
+            }
+        }
+    }
+
+    let f: fn(*u8, usize, *u8) = { (*p).on_pick };
+    let c: *u8 = { (*p).ctx };
+    let panel: *u8 = { (*p).panel };
+    if panel.is_not_null() { rt::release(panel); }
+    if f.is_not_null() { f(out_ptr, out_len, c); }
+    return;
+}
+
+fn _begin(panel: *u8, p: *_Pending) {
+    var blk: _Block = _Block {
+        isa: rt::stack_block_isa(), flags: 0, reserved: 0,
+        invoke: _invoke, descriptor: { #addr_of(_DESC) as *u8 },
+        user_ctx: { p as usize },
+    };
+    { _msg_begin(panel, rt::sel(#str_ptr("beginWithCompletionHandler:\0")),
+                 { #addr_of(blk) as *u8 }) };
+    return;
+}
+
+fn _pending(on_pick: fn(*u8, usize, *u8), ctx: *u8, panel: *u8, saving: bool) -> *_Pending {
+    var blank: _Pending = _Pending { on_pick: on_pick, ctx: ctx,
+                                     panel: panel, saving: saving };
+    return match box::new::[_Pending](blank) {
+        option::Option[box::Box[_Pending]]::Some(b) => { b.into_raw() as *_Pending },
+        option::Option[box::Box[_Pending]]::None => { 0 as *_Pending },
+    };
+}
+
+export extern fn _c_available() -> i32 {
+    if rt::get_class(#str_ptr("NSOpenPanel\0")).is_null() { return 0; }
+    return 1;
+}
+
+export extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
+                         types: *u8, types_len: usize) -> i32 {
+    let cls: *u8 = rt::get_class(#str_ptr("NSOpenPanel\0"));
+    if cls.is_null() { return 1; }
+    let panel: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("openPanel\0")));
+    if panel.is_null() { return 4; }
+    let _r: *u8 = { rt::retain(panel) };
+
+    rt::msg_void_i8(panel, rt::sel(#str_ptr("setCanChooseFiles:\0")), 1 as i8);
+    rt::msg_void_i8(panel, rt::sel(#str_ptr("setCanChooseDirectories:\0")), 0 as i8);
+    rt::msg_void_i8(panel, rt::sel(#str_ptr("setAllowsMultipleSelection:\0")), 0 as i8);
+
+    // EXTENSIONS, not UTIs. `setAllowedFileTypes:` is deprecated in favour of
+    // `setAllowedContentTypes:` and still works, and it takes exactly the
+    // strings the facade already has. Building UTType objects from three
+    // letters would be a guess for anything unusual.
+    if types_len > (0 as usize) {
+        let s: *u8 = bridge::nsstring({ #str_from_raw_parts(types, types_len) });
+        if s.is_not_null() {
+            let comma: *u8 = bridge::nsstring(",");
+            let arr: *u8 = rt::msg_id_id(s, rt::sel(#str_ptr("componentsSeparatedByString:\0")),
+                                         comma);
+            if arr.is_not_null() {
+                rt::msg_void_id(panel, rt::sel(#str_ptr("setAllowedFileTypes:\0")), arr);
+            }
+        }
+    }
+
+    let p: *_Pending = _pending(on_pick, ctx, panel, false);
+    if p.is_null() { rt::release(panel); return 4; }
+    _begin(panel, p);
+    return 0;
+}
+
+export extern fn _c_save(suggested: *u8, suggested_len: usize,
+                         on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    let cls: *u8 = rt::get_class(#str_ptr("NSSavePanel\0"));
+    if cls.is_null() { return 1; }
+    let panel: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("savePanel\0")));
+    if panel.is_null() { return 4; }
+    let _r: *u8 = { rt::retain(panel) };
+
+    let name: *u8 = bridge::nsstring({ #str_from_raw_parts(suggested, suggested_len) });
+    if name.is_not_null() {
+        rt::msg_void_id(panel, rt::sel(#str_ptr("setNameFieldStringValue:\0")), name);
+    }
+
+    let p: *_Pending = _pending(on_pick, ctx, panel, true);
+    if p.is_null() { rt::release(panel); return 4; }
+    _begin(panel, p);
+    return 0;
+}

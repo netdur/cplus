@@ -1,0 +1,409 @@
+// facet_win32/toolbar — the command strip a screen's `toolbar_item`s make.
+//
+// A `toolbar_item` IS NOT IN THE LAYOUT. `views::non_view_kind` says so: it gets
+// no window, measures nothing, and occupies no space in the flex tree. It is
+// DESCRIBED wherever the content that owns it is described — a screen composes
+// its toolbar next to the thing the toolbar acts on, which is rarely the root —
+// and the backend is expected to find every one of them and put them somewhere
+// the layout does not reach. AppKit collects them into an `NSToolbar` on the
+// window; this collects them into a strip across the top of the client area.
+//
+// A STRIP OF REAL BUTTONS, not a `ToolbarWindow32`. The comctl32 toolbar is the
+// obvious reach and it is the wrong one here: its buttons are indices into a
+// `TBBUTTON` array and an image list, addressed by command id, which is a whole
+// second identity to keep in step with a facet tree that already has one — and
+// what it buys is a look Windows itself has moved away from. A row of flat
+// BUTTON controls is what a modern Windows command bar actually is, and each one
+// is a real control: themed, focusable, in the accessibility tree, and reachable
+// by `agent_win32` with no work at all. The strip is a plain panel, so it wears
+// the window's background and dark mode like every other host in this package.
+//
+// THE ORDER IS THE CONTRACT'S, not the tree's. `placement` groups
+// (Default/Primary/Secondary), `priority` orders within a group, and ties fall
+// back to the order they were described in — which is the only order an
+// application that set neither can have expressed. The sort is insertion and
+// STABLE for exactly that reason.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./controls" as controls;
+import "./fonts" as fonts;
+import "./measure" as measure;
+import "facet/toolbar_item" as tb;
+
+// The strip's height and each button's padding, in LOGICAL points — the same
+// currency the rest of the layout speaks. A command bar is shorter than a
+// dialog's button row: it is chrome, not content.
+fn bar_height() -> f64 { return 34.0f64; }
+fn button_height() -> f64 { return 26.0f64; }
+fn button_pad() -> f64 { return 14.0f64; }
+fn button_gap() -> f64 { return 4.0f64; }
+fn edge_pad() -> f64 { return 6.0f64; }
+
+fn prop_bar() -> *u8 { return { #str_ptr("facet-toolbar-strip\0") }; }
+fn prop_item_node() -> *u8 { return { #str_ptr("facet-toolbar-item-node\0") }; }
+fn prop_bar_old() -> *u8 { return { #str_ptr("facet-toolbar-oldproc\0") }; }
+
+// ---- finding the items ---------------------------------------------------------
+
+// Every `toolbar_item` under `n`, in tree order.
+//
+// ANYWHERE IN THE TREE, not only at the root — see the header. The walk stops
+// descending INTO an item, because an item's children are its own affair and
+// nothing nests a toolbar inside one.
+fn collect(n: *core::Node, out: *vec::Vec[*core::Node]) {
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) == props::K_TOOLBAR_ITEM {
+        let _s: status::Status = { (*out).append(n) };
+        return;
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { collect(c, out); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn item_props(n: *core::Node) -> *props::ToolbarItemProps {
+    return controls::props_of(n, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+}
+
+// The group a placement sorts into. Primary leads, Default follows, Secondary
+// trails — the reading order of a command bar, where the thing the screen is
+// FOR sits leftmost and the incidentals collect at the end.
+fn placement_rank(p: *props::ToolbarItemProps) -> i64 {
+    if p == (0 as *props::ToolbarItemProps) { return 1 as i64; }
+    return match { (*p).placement } {
+        vocab::ToolbarPlacement::Primary => 0 as i64,
+        vocab::ToolbarPlacement::Default => 1 as i64,
+        vocab::ToolbarPlacement::Secondary => 2 as i64,
+    };
+}
+
+// HIGHER PRIORITY FIRST within a group, which is what the word means: the item
+// an application called more important leads. A default of 0 leaves every
+// unprioritised item tied, and the stable sort then keeps them in tree order.
+fn priority_of(p: *props::ToolbarItemProps) -> i64 {
+    if p == (0 as *props::ToolbarItemProps) { return 0 as i64; }
+    return { (*p).priority };
+}
+
+// Does `b` belong before `a`? Group first, then priority. NEVER true on a tie —
+// that is what makes the insertion sort below stable, and stability is the whole
+// of how tree order survives as the last tiebreak.
+fn precedes(b: *core::Node, a: *core::Node) -> bool {
+    let pb: *props::ToolbarItemProps = item_props(b);
+    let pa: *props::ToolbarItemProps = item_props(a);
+    let gb: i64 = placement_rank(pb);
+    let ga: i64 = placement_rank(pa);
+    if gb != ga { return gb < ga; }
+    return priority_of(pb) > priority_of(pa);
+}
+
+fn node_at(v: *vec::Vec[*core::Node], i: usize) -> *core::Node {
+    return match { (*v).at(i) } {
+        option::Option[*core::Node]::Some(p) => p,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+}
+
+fn sort_items(v: *vec::Vec[*core::Node]) {
+    let count: usize = { (*v).count() };
+    var i: usize = 1 as usize;
+    while i < count {
+        var j: usize = i;
+        while j > (0 as usize) {
+            let a: *core::Node = node_at(v, j -% (1 as usize));
+            let b: *core::Node = node_at(v, j);
+            if !precedes(b, a) { j = 0 as usize; } else {
+                let _x: status::Status = { (*v).set(b, j -% (1 as usize)) };
+                let _y: status::Status = { (*v).set(a, j) };
+                j = j -% (1 as usize);
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The ordered items under `root`. One call, because every caller wants both
+// halves and doing them apart is how the two drift.
+fn ordered(root: *core::Node) -> vec::Vec[*core::Node] {
+    var out: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    collect(root, #addr_of(out));
+    sort_items(#addr_of(out));
+    return out;
+}
+
+// Does this tree want a strip at all? THE OPT-IN, and the reason every window
+// without toolbar items lays out down exactly the path it did before this
+// module existed.
+fn wanted(root: *core::Node) -> bool {
+    var found: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    collect(root, #addr_of(found));
+    return found.count() > (0 as usize);
+}
+
+// How much room to take off the top, in points. Zero when there is nothing to
+// show, which is what keeps the strip out of every other window's way.
+fn height_for(root: *core::Node) -> f64 {
+    if !wanted(root) { return 0.0f64; }
+    return bar_height();
+}
+
+// ---- the strip -----------------------------------------------------------------
+
+// A button's width in POINTS: the text measured in the control''s own font,
+// which `measure::text_extent` answers in PHYSICAL pixels, divided back down.
+// The same boundary `measure_view` crosses, in the same direction.
+fn label_width_points(v: *u8, s: str) -> f64 {
+    var w: i32 = 0 as i32;
+    var h: i32 = 0 as i32;
+    measure::text_extent(v, s, 0 as i32, #addr_of(w), #addr_of(h));
+    let scale: f64 = sys::dpi_scale(v);
+    if scale <= (0.0f64) { return w as f64; }
+    return (w as f64) / scale;
+}
+
+fn item_text(n: *core::Node) -> text::Text {
+    let p: *props::ToolbarItemProps = item_props(n);
+    if p == (0 as *props::ToolbarItemProps) { return text::new(); }
+    return { (*p).menu_item.text }.clone();
+}
+
+// Fire the item's handler. Its props EMBED a menu item rather than restating
+// one, so the handler lives one level down — the same shape
+// `menus` reads for a context-menu item.
+fn fire(n: *core::Node) -> bool {
+    let p: *props::ToolbarItemProps = item_props(n);
+    if p == (0 as *props::ToolbarItemProps) { return false; }
+    let f: fn(*u8, *u8) = { (*p).menu_item.on_clicked };
+    if f == props::no_handler { return false; }
+    f(n as *u8, { (*p).menu_item.on_clicked_ctx });
+    return true;
+}
+
+fn bar_proc_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, i64) -> i64 = bar_proc;
+    return f as *u8;
+}
+
+// A BUTTON tells its PARENT it was pressed, so the strip is where the click
+// arrives — `lParam` carries the button's own HWND, which is how the node it
+// stands for is found without a command-id table.
+fn bar_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    let old: *u8 = { u::GetPropA(hwnd, prop_bar_old() as *i8) };
+    if old == (0 as *u8) { return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+    if msg == sys::wm_command() && l != (0 as i64) {
+        let btn: *u8 = l as *u8;
+        let n: *core::Node = { u::GetPropA(btn, prop_item_node() as *i8) } as *core::Node;
+        if n != (0 as *core::Node) {
+            let _f: bool = fire(n);
+            return 0 as i64;
+        }
+    }
+    if msg == 0x0082 as u32 {
+        let _o: i64 = { u::SetWindowLongPtrA(hwnd, sys::gwlp_wndproc(), old as i64) };
+        let _r: *u8 = { u::RemovePropA(hwnd, prop_bar_old() as *i8) };
+        return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+    }
+    return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+}
+
+fn install(bar: *u8) {
+    if bar == (0 as *u8) { return; }
+    if { u::GetPropA(bar, prop_bar_old() as *i8) } != (0 as *u8) { return; }
+    let old: i64 = { u::SetWindowLongPtrA(bar, sys::gwlp_wndproc(), bar_proc_addr() as i64) };
+    if old == (0 as i64) { return; }
+    let _p: i32 = { u::SetPropA(bar, prop_bar_old() as *i8, old as *u8) };
+    return;
+}
+
+// The window's strip, made on first use and remembered on the window itself —
+// there is one per window and the window outlives every rebuild of its contents.
+fn ensure(win: *u8) -> *u8 {
+    if win == (0 as *u8) { return 0 as *u8; }
+    let existing: *u8 = { u::GetPropA(win, prop_bar() as *i8) };
+    if existing != (0 as *u8) { return existing; }
+    let bar: *u8 = controls::make_child(sys::panel_class(), controls::empty_title(),
+                                        0 as u32, 0 as u32);
+    if bar == (0 as *u8) { return 0 as *u8; }
+    let _s: *u8 = { u::SetParent(bar, win) };
+    let _p: i32 = { u::SetPropA(win, prop_bar() as *i8, bar) };
+    install(bar);
+    return bar;
+}
+
+// WHICH ITEMS THE STRIP WAS LAST BUILT FROM, as one number: the count folded
+// together with the node addresses in order.
+//
+// THE STRIP MUST NOT BE REBUILT ON EVERY LAYOUT, and finding that out was the
+// whole of why this exists. `relayout` runs on every write that changes a
+// measured control, and a handler on a toolbar button almost always causes one —
+// so a rebuild-every-time strip DESTROYS THE BUTTON THAT IS CURRENTLY BEING
+// CLICKED, from inside its own click. Measured on the probe: the first press
+// fired its handler and every press after it did nothing, because the HWND had
+// been torn down and replaced while the message was still being delivered.
+//
+// So the list is fingerprinted and the buttons survive a layout that did not
+// change them. Addresses rather than contents: a node is stable for as long as
+// it is mounted, and a TEXT change on an existing item is answered by the
+// per-button text write rather than by rebuilding the row.
+fn signature(items: *vec::Vec[*core::Node]) -> usize {
+    var sig: usize = { (*items).count() };
+    var i: usize = 0 as usize;
+    while i < { (*items).count() } {
+        let n: *core::Node = node_at(items, i);
+        sig = sig +% ({ #addr(n as *u8) } *% (i +% (1 as usize)));
+        i = i +% (1 as usize);
+    }
+    return sig;
+}
+
+fn prop_sig() -> *u8 { return { #str_ptr("facet-toolbar-sig\0") }; }
+
+// Tear every button out. Only reached when the fingerprint above says the list
+// really did change — see `signature`.
+fn clear_buttons(bar: *u8) {
+    loop {
+        let child: *u8 = { u::GetWindow(bar, 5 as u32) };   // GW_CHILD
+        if child == (0 as *u8) { return; }
+        let _d: i32 = { u::DestroyWindow(child) };
+    }
+}
+
+// Build the strip's buttons for `root` and place them. `w` is the client width
+// in POINTS; the strip spans it and the buttons run from the left edge.
+fn refresh(win: *u8, root: *core::Node, w: f64) {
+    let bar: *u8 = ensure(win);
+    if bar == (0 as *u8) { return; }
+    let scale: f64 = sys::dpi_scale(win);
+    let _p: i32 = { u::SetWindowPos(bar, 0 as *u8, 0 as i32, 0 as i32,
+                                    (w * scale) as i32, (bar_height() * scale) as i32,
+                                    0x0004 as u32) };   // SWP_NOZORDER
+
+    let items: vec::Vec[*core::Node] = ordered(root);
+    // SAME ITEMS, SAME BUTTONS. The strip is only torn down when the list
+    // actually changed; a layout caused by something else leaves it alone, which
+    // is what keeps a button alive through its own click. The bar was resized
+    // above, and the buttons' own positions do not depend on the width.
+    let sig: usize = signature(#addr_of(items));
+    let was: usize = { u::GetPropA(bar, prop_sig() as *i8) } as usize;
+    // +1 so a genuinely empty list is still distinguishable from "never built",
+    // which is what a zero prop means.
+    if was == (sig +% (1 as usize)) { return; }
+    let _sg: i32 = { u::SetPropA(bar, prop_sig() as *i8, (sig +% (1 as usize)) as *u8) };
+    clear_buttons(bar);
+
+    var x: f64 = edge_pad();
+    let y: f64 = (bar_height() - button_height()) / (2.0f64);
+    var i: usize = 0 as usize;
+    while i < items.count() {
+        let n: *core::Node = node_at(#addr_of(items), i);
+        if n != (0 as *core::Node) {
+            var label: text::Text = item_text(n);
+            // A BUTTON WITH NO TEXT IS STILL A BUTTON, and it would be an
+            // invisible one — an item that named only an icon has nothing to
+            // draw until icons land, so it gets its own width and a blank face
+            // rather than collapsing the row.
+            let bw: f64 = label_width_points(bar, label.view()) + button_pad() * (2.0f64);
+            let b: *u8 = controls::make_child(sys::button_class(), controls::empty_title(),
+                                              sys::bs_pushbutton() | sys::ws_tabstop(),
+                                              0 as u32);
+            if b != (0 as *u8) {
+                let _s: *u8 = { u::SetParent(b, bar) };
+                controls::set_window_text(b, label.clone());
+                let _f: i32 = { u::SetPropA(b, prop_item_node() as *i8, n as *u8) };
+                fonts::apply(b, n);
+                let _pos: i32 = { u::SetWindowPos(b, 0 as *u8,
+                                                  (x * scale) as i32, (y * scale) as i32,
+                                                  (bw * scale) as i32,
+                                                  (button_height() * scale) as i32,
+                                                  0x0004 as u32) };
+                let _sh: i32 = { u::ShowWindow(b, 5 as i32) };   // SW_SHOW
+                x = x + bw + button_gap();
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    let _sb: i32 = { u::ShowWindow(bar, 5 as i32) };
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+// The ORDERING is the part with a right answer and no window in it, so it is
+// tested properly here; the strip itself is pixels and is checked with a probe.
+
+#[test]
+fn placement_groups_lead_default_and_secondary_trails() {
+    // The reading order of a command bar: what the screen is FOR sits leftmost
+    // and the incidentals collect at the end.
+    var prim: core::Node = tb::toolbar_item("p", key: "p",
+                                            placement: vocab::ToolbarPlacement::Primary);
+    var def: core::Node = tb::toolbar_item("d", key: "d");
+    var sec: core::Node = tb::toolbar_item("s", key: "s",
+                                           placement: vocab::ToolbarPlacement::Secondary);
+    assert placement_rank(item_props(#addr_of(prim)))
+         < placement_rank(item_props(#addr_of(def)));
+    assert placement_rank(item_props(#addr_of(def)))
+         < placement_rank(item_props(#addr_of(sec)));
+    // An item with no props at all reads as Default rather than as Primary — a
+    // malformed node must not jump the queue.
+    assert placement_rank(0 as *props::ToolbarItemProps)
+        == placement_rank(item_props(#addr_of(def)));
+}
+
+#[test]
+fn a_higher_priority_leads_within_its_group() {
+    var lo: core::Node = tb::toolbar_item("lo", key: "lo", priority: 1 as i64);
+    var hi: core::Node = tb::toolbar_item("hi", key: "hi", priority: 9 as i64);
+    // HIGHER FIRST, which is what the word means.
+    assert precedes(#addr_of(hi), #addr_of(lo));
+    assert precedes(#addr_of(lo), #addr_of(hi)) == false;
+}
+
+#[test]
+fn placement_outranks_priority() {
+    // A Secondary item with a huge priority still trails a Primary one: the
+    // group is the coarser decision and priority orders WITHIN it.
+    var sec: core::Node = tb::toolbar_item("s", key: "s2", priority: 99 as i64,
+                                           placement: vocab::ToolbarPlacement::Secondary);
+    var prim: core::Node = tb::toolbar_item("p", key: "p2", priority: 0 as i64,
+                                            placement: vocab::ToolbarPlacement::Primary);
+    assert precedes(#addr_of(prim), #addr_of(sec));
+    assert precedes(#addr_of(sec), #addr_of(prim)) == false;
+}
+
+#[test]
+fn a_tie_never_precedes_which_is_what_keeps_the_sort_stable() {
+    // Two items with the same group and priority are ordered by the tree, and
+    // that only survives because `precedes` answers FALSE on a tie — an
+    // insertion sort that swapped equals would reverse them.
+    var a: core::Node = tb::toolbar_item("a", key: "a");
+    var b: core::Node = tb::toolbar_item("b", key: "b");
+    assert precedes(#addr_of(a), #addr_of(b)) == false;
+    assert precedes(#addr_of(b), #addr_of(a)) == false;
+}
+
+#[test]
+fn a_tree_with_no_items_wants_no_strip() {
+    // THE OPT-IN. Every window without toolbar items must lay out down exactly
+    // the path it did before this module existed, and `height_for` answering 0
+    // is what guarantees it.
+    var empty: core::Node = core::column(core::Builder::new());
+    assert wanted(#addr_of(empty)) == false;
+    assert height_for(#addr_of(empty)) == (0.0f64);
+    assert height_for(0 as *core::Node) == (0.0f64);
+}

@@ -1,0 +1,1084 @@
+// inspect — the neutral surface a developer inspector is written against.
+//
+// This module names no backend, no toolkit and no platform. It declares what
+// an inspector consumer needs — an address for a mounted node, a tagged value,
+// a property listing, and the vtable that answers them — exactly as
+// `agent_core::backend` does for the agent surface, and for the same reason:
+// C+ has no `dyn` and no method dispatch on a generic type parameter, so a
+// struct of fn-pointers over a type-erased receiver is how runtime
+// polymorphism is spelled here.
+//
+// IT LIVES HERE BECAUSE THE VERBS DO. `agent_mcp` serves the inspector's
+// fourteen verbs beside its own eleven, and `agent_mcp` must not depend on a
+// toolkit — so the types those verbs carry cannot either. This file used to be
+// `inspector/inspector.cplus`, whose own header said "names no backend and
+// touches no platform" while importing `facet/facet`, `facet/vocabulary`,
+// `facet/props` and `flex_layout`. It was the toolkit-shaped seam that kept
+// fourteen MCP verbs living in a UI package.
+//
+// WHAT MOVED TO GET HERE, and each was a plain POD already:
+//   `core::Frame`  -> `Frame`, the same four f64s
+//   `vocab::Color` -> `Color`, the same token + eight channels
+//   `*core::Node`  -> `*u8`, opaque; only the walker dereferences it
+//   `flex::removal_count()` -> `set_revision_fn`, installed by the walker
+// `kind_name` did NOT move: mapping a facet kind ordinal to a name is facet
+// knowledge, and it belongs beside the walker that reads the ordinal.
+//
+// WHY THIS IS NOT THE AGENT SURFACE. `agent_core::backend` is curated and
+// permissioned: it hides unexposed nodes, limits actions to declared
+// affordances, and refuses point-addressed operations. Those rules protect a
+// user-facing automation surface and must not be weakened. A developer
+// inspector needs the opposite powers — every node including the unkeyed ones,
+// and writes to properties that are not affordances. So it gets its own vtable
+// rather than growing `Backend` a debug mode, and the capability check on the
+// verbs is what keeps the two apart.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/str" as _;
+
+// The laid-out rectangle, in the toolkit's own coordinates. Field-for-field
+// what `flex::Frame` is; copied rather than imported so this file names no
+// toolkit. A backend fills it from whatever its layout engine calls these.
+struct Frame {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+
+// A colour as an inspector carries it: a TOKEN plus channels, not just rgba.
+//
+// Field-for-field `facet::vocabulary::Color`, and the token is why it cannot
+// be flattened to four floats. 255 is a literal colour, 254 is an adaptive
+// light/dark PAIR (which is what the second four channels are for), and
+// anything else is a theme ROLE with no channels of its own. A client that
+// flattened them would write a resolved colour back over a role and silently
+// unlink it from the theme.
+struct Color {
+    token: u32,
+    r: f64,
+    g: f64,
+    b: f64,
+    a: f64,
+    // The dark side of an `adaptive` pair (token 254); unused otherwise.
+    r2: f64,
+    g2: f64,
+    b2: f64,
+    a2: f64,
+}
+
+// ---- liveness ------------------------------------------------------------------
+
+// The backend's structural revision, asked rather than imported.
+//
+// A `Handle` is only valid while the tree has not changed shape, and the
+// counter that says so belongs to the toolkit — `flex::removal_count()` for
+// facet. This file cannot name it, so the walker installs it. With none
+// installed every handle reads live, which is the right answer for a headless
+// consumer that never removes anything.
+static REVISION: fn() -> u64 = #zero::[fn() -> u64]();
+
+fn set_revision_fn(f: fn() -> u64) { REVISION = f; return; }
+
+fn revision() -> u64 {
+    let f: fn() -> u64 = REVISION;
+    if f.is_null() { return 0 as u64; }
+    return f();
+}
+
+// ---- addressing --------------------------------------------------------------
+
+// Where a mounted node is, and whether that answer is still true.
+//
+// The address is the node pointer, because facet's own typed handles
+// (`label::Label`, `button::Button`) are built the same way and for the same
+// reason: a child lives in its own heap slot, so its address is stable from
+// insertion until it is itself removed. Appends, inserts, sibling removals and
+// reorders never move it.
+//
+// `seen` is flex's global removal counter at the moment the handle was issued.
+// ANY removal anywhere in ANY tree invalidates every outstanding handle. That
+// is deliberately conservative — a removal elsewhere cannot actually have
+// moved this node — but it is the check facet's own handles use, it costs one
+// comparison, and the alternative (per-node generations) is a second identity
+// system to keep in step. A client that sees `Stale` re-describes; describing
+// is cheap and structural change is rare next to property editing.
+//
+// A REMOTE client cannot hold one of these: a pointer does not survive a
+// socket. The flat `describe` listing is the wire address — an index into that
+// array, with `parent` linking it back into a tree — and a transport adapter
+// resolves index to Handle on the app's side. That is why `describe` returns a
+// flat parent-indexed vector rather than a nested structure.
+struct Handle {
+    // The backend's own address for the node. OPAQUE here — only the walker
+    // that issued it may dereference it, and it is the walker's business what
+    // it points at.
+    opaque node: *u8,
+    seen: u64,
+    // Which window root this node was reached from, so a keyed re-resolve can
+    // be scoped to the right tree. Two windows sharing a key is legal.
+    window: usize,
+}
+
+impl Handle {
+    fn none() -> Handle {
+        return Handle { node: 0 as *u8, seen: 0, window: 0 };
+    }
+
+    fn of(n: *u8, window: usize) -> Handle {
+        return Handle { node: n, seen: revision(), window: window };
+    }
+
+    // Both halves: a handle to nothing is not live either.
+    fn is_live(this) -> bool {
+        if this.node.is_null() { return false; }
+        return this.seen == revision();
+    }
+
+    fn is_none(this) -> bool { return this.node.is_null(); }
+}
+
+// ---- values ------------------------------------------------------------------
+
+// The tagged vocabulary an inspector can carry across its boundary.
+//
+// Handlers, raw pointers, child nodes and owned collections are deliberately
+// absent. A value an inspector cannot round-trip is a value it must not claim
+// to edit, and a function pointer typed into a text box is not an edit — it is
+// a crash with extra steps.
+enum Value {
+    Nothing,
+    Bool(bool),
+    Int(i64),
+    Num(f64),
+    Str(text::Text),
+    Color(Color),
+    // A named member of a closed set (`flow_direction`, `display`). Carried as
+    // its spelling rather than its discriminant so a client never has to know
+    // the numbering, and so a rename is caught rather than silently accepted.
+    Enum(text::Text),
+}
+
+impl Value {
+    // The tag alone, for error messages and for type-checking a write before
+    // it is applied.
+    fn type_name(this) -> str {
+        return match this {
+            Value::Nothing => "nothing",
+            Value::Bool(_b) => "bool",
+            Value::Int(_i) => "int",
+            Value::Num(_n) => "number",
+            Value::Str(_s) => "text",
+            Value::Color(_c) => "color",
+            Value::Enum(_e) => "enum",
+        };
+    }
+
+    fn is_nothing(this) -> bool {
+        return match this {
+            Value::Nothing => true,
+            _ => false,
+        };
+    }
+
+    // A `Value` owns a `Text` in two of its arms, so it carries a destructor
+    // and a field of it cannot be moved out of an owning struct. The override
+    // ledger needs exactly that — hand back what was recorded while keeping
+    // the record intact until the restore has actually happened — so the
+    // duplicate is explicit here rather than a borrow that would outlive its
+    // bytes.
+    fn clone(this) -> Value {
+        return match this {
+            Value::Nothing => Value::Nothing,
+            Value::Bool(b) => Value::Bool(b),
+            Value::Int(i) => Value::Int(i),
+            Value::Num(n) => Value::Num(n),
+            Value::Str(s) => Value::Str(s.clone()),
+            Value::Color(c) => Value::Color(c),
+            Value::Enum(e) => Value::Enum(e.clone()),
+        };
+    }
+}
+
+// ---- construction ------------------------------------------------------------
+
+// What to build, for the structural verbs.
+//
+// The vocabulary is a MAKER NAME and not a control kind, and the difference is
+// load-bearing. Kind 0 is every container facet did not generate — row, column
+// and spacer are all kind 0 — so a kind code cannot say which of them to build.
+// The maker name can, and it is spelled exactly as `elements` spells the
+// function, so the line the journal emits is the call that was made rather than
+// a translation of it.
+//
+// Deliberately three fields. A spec that could carry arbitrary props would be a
+// second property-writing path to keep in step with `set`, and the node is
+// addressable the instant it exists — so the honest shape is "make the thing,
+// then edit it with the editor that is already there".
+struct Spec {
+    maker: text::Text,
+    // Empty is legal, and gives an unkeyed node. That is not a degraded case:
+    // it is what an application's own pure-layout containers look like, and the
+    // inspector edits tiers 1 and 2 on them exactly as it does anywhere else.
+    // Tier 3 will refuse, the same way it already refuses on any unkeyed node.
+    key: text::Text,
+    // The one string the makers that take one take — a label's text, a button's
+    // title, a field's initial text. Ignored by the containers, which take none.
+    label: text::Text,
+}
+
+impl Spec {
+    fn of(maker: str, key: str = "", label: str = "") -> Spec {
+        return Spec {
+            maker: text::from_str(maker),
+            key: text::from_str(key),
+            label: text::from_str(label),
+        };
+    }
+
+    // Owned `Text` in all three fields, so a caller that needs to both journal
+    // a spec and build from it duplicates rather than borrows — same reason
+    // `Value::clone` exists.
+    fn clone(this) -> Spec {
+        return Spec {
+            maker: this.maker.clone(),
+            key: this.key.clone(),
+            label: this.label.clone(),
+        };
+    }
+}
+
+// One row of a property listing.
+//
+// `name` is a `str` and not a `Text` because every name in this package comes
+// from a literal in the tables below — there is no path by which a caller
+// supplies one. A computed name would need an owned string for the reason
+// `facet::Data.key` documents at length; none is computed, so none is owned.
+// ONE PROPERTY THE INSPECTOR CHANGED.
+//
+// The journal is the DIFF between the tree the application built and the tree
+// as it stands, and this is a row of it: which node, which property, and the
+// value it holds now. Just the edited values — the number you would put in the
+// source, not the history of how it got there.
+//
+// The override ledger records only the FIRST write to a pair, so twenty nudges
+// on one property are one row, carrying the value it landed on. A `reset`
+// removes the row: the difference is gone.
+struct Change {
+    // `kind#key` — `button#tap`. The kind is there because a key alone does not
+    // say what you are looking at when you come back to a list of them.
+    node: text::Text,
+    // A literal from `declared_names`, so a borrowed view is sound here for the
+    // same reason it is in `Prop`.
+    prop: str,
+    now: Value,
+}
+
+struct Prop {
+    name: str,
+    value: Value,
+    // False for everything in `computed` and `native`, and for a declared
+    // property this build cannot write back. The UI draws no editor at all
+    // rather than a disabled one: a greyed-out field still reads as "this is
+    // the kind of thing you set", which for a laid-out frame is a lie.
+    writable: bool,
+    // True when an inspector write is currently overriding what the
+    // application declared, so the UI can offer a reset and mark the row.
+    overridden: bool,
+}
+
+impl Prop {
+    fn read_only(name: str, take v: Value) -> Prop {
+        return Prop { name: name, value: v, writable: false, overridden: false };
+    }
+    fn editable(name: str, take v: Value, overridden: bool) -> Prop {
+        return Prop { name: name, value: v, writable: true, overridden: overridden };
+    }
+}
+
+// ---- outcomes ----------------------------------------------------------------
+
+// Why a write did not happen. The distinctions are the point: an inspector
+// that answers a silent no-op to a misspelled property teaches the developer
+// that the property does not do anything, which is the opposite of true.
+enum Outcome {
+    Ok,
+    // The handle's generation is dead — something was removed from a tree
+    // since it was issued. Re-describe and try again.
+    Stale,
+    // The handle addresses nothing (null node).
+    NotFound,
+    // No property of that name on this node.
+    UnknownProperty,
+    // The property exists and does not take a value of that tag.
+    TypeMismatch,
+    // The property exists, is real, and is not writable through the inspector
+    // (a computed frame, a native class name).
+    ReadOnly,
+    // The property is writable in principle but not on THIS node in this
+    // build — a control-specific property on an unkeyed node, which v1 cannot
+    // reach without the generated dispatch layer. Distinct from
+    // `UnknownProperty` because the name was right.
+    Unsupported,
+
+    // ---- structural refusals -------------------------------------------------
+    // Four, rather than one `Refused`, for the reason the four above are four:
+    // a developer who is told "no" learns nothing, and a developer who is told
+    // which no it was stops guessing.
+
+    // The parent cannot take an inspector-inserted child. Either it is a leaf
+    // control (a label has no host view, so the child's view would land in the
+    // label's PARENT while the node sat under the label — visibly wrong and
+    // wrong in the measure too), or it is a control that owns its own children
+    // through recycling or a pane registry, which a raw insert would fight.
+    NotAContainer,
+    // A window root, or the inspector panel's own subtree. A root is closed
+    // with `app::close_window`, not deleted out from under itself; the panel is
+    // the thing the developer is reading, and a tool that can delete its own
+    // controls is a tool that can end a debugging session by accident.
+    Protected,
+    // No maker of that name. Distinct from `NotAContainer` the way
+    // `UnknownProperty` is distinct from `Unsupported`: this one is a spelling.
+    UnknownKind,
+    // A move that would put a node inside its own subtree. The tree would stop
+    // being a tree, and the walk that found the cycle would not return.
+    Cycle,
+    // `undo` with an empty trash, or a restore whose parent has since gone.
+    // Not an error the caller made — the state to undo is simply not there.
+    NothingToUndo,
+}
+
+impl Outcome {
+    fn is_ok(this) -> bool { return this == Outcome::Ok; }
+
+    fn describe(this) -> str {
+        return match this {
+            Outcome::Ok => "ok",
+            Outcome::Stale => "stale: the tree changed, re-describe",
+            Outcome::NotFound => "no such node",
+            Outcome::UnknownProperty => "no property of that name on this node",
+            Outcome::TypeMismatch => "wrong value type for that property",
+            Outcome::ReadOnly => "that property is read-only",
+            Outcome::Unsupported => "that property needs a key on this node",
+            Outcome::NotAContainer => "that node does not take inserted children",
+            Outcome::Protected => "a window root and the panel itself are not editable",
+            Outcome::UnknownKind => "no element of that name can be made here",
+            Outcome::Cycle => "cannot move a node inside itself",
+            Outcome::NothingToUndo => "nothing to undo",
+        };
+    }
+}
+
+// ---- the tree listing --------------------------------------------------------
+
+// One node in a `describe` snapshot. Flat and parent-indexed, so the same
+// answer serves an in-process UI (which can follow `handle` directly) and a
+// transport adapter (which sends indices).
+struct Node {
+    handle: Handle,
+    // Index into the same vector, or None for a window root.
+    parent: option::Option[usize],
+    depth: usize,
+    key: text::Text,
+    slot: text::Text,
+    kind: u32,
+    // The laid-out frame, in the node's own parent's coordinates — flex's
+    // answer, not the platform's.
+    frame: Frame,
+    has_view: bool,
+    is_attached: bool,
+    is_focused: bool,
+    is_visible: bool,
+    dirty: u64,
+    child_count: usize,
+    // WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT, as declared on the facet
+    // node (`the agent tier` as its ordinal: 0 Open, 1 Protected, 2 Private,
+    // 3 Hidden). Carried in the snapshot rather than re-read on demand because
+    // the effective tier is INHERITED, and this listing's parent indices are
+    // the only parent chain the inspector has — a facet node cannot be walked
+    // upward.
+    agent_tier: u32,
+    // True for the inspector UI's own subtree. An embedded inspector is part
+    // of the tree it is inspecting, and a tool that lists itself as something
+    // to edit invites the developer to restyle the panel they are reading.
+    // The walk still descends (excluding it would need a second traversal
+    // rule); it marks instead, and the UI filters.
+    is_inspector: bool,
+}
+
+// What `inspect` answers for one node, in the three categories that must not
+// be flattened into a single list.
+//
+// Setting `width` writes a style; reading the frame reads what layout decided.
+// The browser calls these `style.width` and `offsetWidth` and keeps them in
+// separate panels, and facet's own documentation draws the same line. A
+// property grid that shows one `width` row is a grid that will eventually show
+// a number the developer cannot write back and cannot explain.
+struct Detail {
+    node: Node,
+    // Facet props and flex style: what the application asked for. Writable.
+    declared: vec::Vec[Prop],
+    // What layout and mount decided: frame, attachment, focus. Read-only.
+    computed: vec::Vec[Prop],
+    // What the platform owns: native class, backing view presence. Read-only,
+    // and empty when no platform module is installed.
+    native: vec::Vec[Prop],
+}
+
+// ---- the vtable --------------------------------------------------------------
+
+fn no_describe(_s: *u8) -> vec::Vec[Node] { return vec::new::[Node](); }
+fn no_inspect(_s: *u8, _h: Handle) -> option::Option[Detail] {
+    return option::Option[Detail]::None;
+}
+fn no_set(_s: *u8, _h: Handle, _p: str, take _v: Value) -> Outcome {
+    return Outcome::Unsupported;
+}
+fn no_reset(_s: *u8, _h: Handle, _p: str) -> Outcome { return Outcome::Unsupported; }
+fn no_highlight(_s: *u8, _h: Handle) { return; }
+fn no_clear_highlight(_s: *u8) { return; }
+fn no_insert(_s: *u8, _h: Handle, _at: usize, take _sp: Spec) -> Outcome {
+    return Outcome::Unsupported;
+}
+fn no_remove(_s: *u8, _h: Handle) -> Outcome { return Outcome::Unsupported; }
+fn no_reparent(_s: *u8, _h: Handle, _p: Handle, _at: usize) -> Outcome {
+    return Outcome::Unsupported;
+}
+fn no_undo(_s: *u8) -> Outcome { return Outcome::NothingToUndo; }
+fn no_get(_s: *u8, _h: Handle, _p: str) -> option::Option[Value] {
+    return option::Option[Value]::None;
+}
+fn no_parse_for(_s: *u8, _h: Handle, _p: str, _raw: str) -> option::Option[Value] {
+    return option::Option[Value]::None;
+}
+fn no_canonical_prop(_s: *u8, _n: str) -> option::Option[str] {
+    return option::Option[str]::None;
+}
+fn no_changes(_s: *u8) -> vec::Vec[Change] { return vec::new::[Change](); }
+fn no_journal_count(_s: *u8) -> usize { return 0 as usize; }
+fn no_journal_at(_s: *u8, _i: usize) -> option::Option[text::Text] {
+    return option::Option[text::Text]::None;
+}
+fn no_maker_names(_s: *u8) -> vec::Vec[str] { return vec::new::[str](); }
+fn no_kind_name(_s: *u8, _k: u32) -> str { return "node"; }
+
+// Every fn takes the type-erased receiver first; the implementor casts it back.
+// `Backend` is Copy — all fields are fn-pointers plus one pointer — so it
+// passes by value through the whole call chain the way `agent_core`'s does.
+//
+// All the rows but two are portable: they read and write facet's own tree and
+// need no platform. `highlight` and `clear_highlight` are the platform's, and a
+// build with no platform module keeps their no-ops, which do nothing rather
+// than pretending.
+//
+// There is no `pick`. Point-addressed selection was built and removed — see
+// the note in docs/design.md. Selecting from the tree is the way in.
+struct Backend {
+    opaque surface: *u8,
+
+    describe: fn(*u8) -> vec::Vec[Node],
+    inspect: fn(*u8, Handle) -> option::Option[Detail],
+    set: fn(*u8, Handle, str, take Value) -> Outcome,
+    reset: fn(*u8, Handle, str) -> Outcome,
+
+    highlight: fn(*u8, Handle),
+    clear_highlight: fn(*u8),
+
+    // ---- structure -----------------------------------------------------------
+    // Portable like the first four: `facet/mount` already owns every one of
+    // these operations against the LIVE tree — it creates the views, computes
+    // the native slot through passthrough containers, notifies detach while
+    // the subtree is still whole, and pulls the views out in the right order.
+    // Nothing here reimplements any of that; it addresses it and refuses the
+    // cases mount would happily perform and a developer would not want.
+
+    // Build `Spec` and put it in the node at `at`, clamped to the end.
+    insert: fn(*u8, Handle, usize, take Spec) -> Outcome,
+    // Take the node out and keep it, so `undo` can put it back. The tree is
+    // left exactly as `remove_child` leaves it — detached, views released from
+    // the host, handlers notified.
+    remove: fn(*u8, Handle) -> Outcome,
+    // Move an existing node under a new parent at `at`. One verb rather than
+    // remove-then-insert at the call site, because between the two the node is
+    // owned by nobody the caller can name.
+    reparent: fn(*u8, Handle, Handle, usize) -> Outcome,
+    // Put back the most recent removal. One level is not a compromise here:
+    // an inspector edit is an experiment, and the mistake it guards against is
+    // deleting the wrong row and losing the subtree under it.
+    undo: fn(*u8) -> Outcome,
+
+    // ---- what the VERBS need beyond the operations ---------------------------
+    //
+    // These eight were direct calls into the toolkit's walker while the verbs
+    // lived in the UI package. They are slots now because the verbs moved to
+    // `agent_mcp`, which cannot name a toolkit — and the shape they were always
+    // in says why they belong here: every one is already spelled in neutral
+    // types, so nothing changed but who is allowed to call them.
+
+    // ONE property, rather than `inspect`'s whole `Detail`. `nudge` and
+    // `set_many` read a single value back after writing it, and building a
+    // Detail to answer that is a walk per property.
+    get: fn(*u8, Handle, str) -> option::Option[Value],
+    // Parse a raw string against the tag the property ALREADY HOLDS — the rule
+    // the whole surface reads by, and the reason a client never sends a type.
+    parse_for: fn(*u8, Handle, str, str) -> option::Option[Value],
+    // The package's own spelling of a property name, or None if it has none.
+    // A misspelling is an error rather than a silent no-op, and this is what
+    // tells them apart.
+    canonical_prop: fn(*u8, str) -> option::Option[str],
+    // The override ledger: every property that differs from what the
+    // application built, with what it was and what it is now.
+    changes: fn(*u8) -> vec::Vec[Change],
+    // The structural journal, as the source lines that would make the edits.
+    journal_count: fn(*u8) -> usize,
+    journal_at: fn(*u8, usize) -> option::Option[text::Text],
+    // Element kinds `insert` can make.
+    maker_names: fn(*u8) -> vec::Vec[str],
+    // What a control kind is CALLED, for a row with no key to show. The
+    // ordinal is the toolkit's; only the toolkit can name it.
+    kind_name: fn(*u8, u32) -> str,
+}
+
+impl Backend {
+    // The degraded backend: answers nothing, refuses every write, crashes
+    // nothing. What a consumer gets before anything installs a real one.
+    fn none() -> Backend {
+        return Backend {
+            surface: 0 as *u8,
+            describe: no_describe,
+            inspect: no_inspect,
+            set: no_set,
+            reset: no_reset,
+            highlight: no_highlight,
+            clear_highlight: no_clear_highlight,
+            insert: no_insert,
+            remove: no_remove,
+            reparent: no_reparent,
+            undo: no_undo,
+        get: no_get,
+        parse_for: no_parse_for,
+        canonical_prop: no_canonical_prop,
+        changes: no_changes,
+        journal_count: no_journal_count,
+        journal_at: no_journal_at,
+        maker_names: no_maker_names,
+        kind_name: no_kind_name,
+        };
+    }
+
+    // Call-through sugar, so a consumer writes `b.describe()` rather than
+    // spelling the receiver at every site.
+    fn describe_now(this) -> vec::Vec[Node] {
+        let f: fn(*u8) -> vec::Vec[Node] = this.describe;
+        return f(this.surface);
+    }
+    fn inspect_now(this, h: Handle) -> option::Option[Detail] {
+        let f: fn(*u8, Handle) -> option::Option[Detail] = this.inspect;
+        return f(this.surface, h);
+    }
+    fn set_now(this, h: Handle, p: str, take v: Value) -> Outcome {
+        let f: fn(*u8, Handle, str, take Value) -> Outcome = this.set;
+        return f(this.surface, h, p, v);
+    }
+    fn reset_now(this, h: Handle, p: str) -> Outcome {
+        let f: fn(*u8, Handle, str) -> Outcome = this.reset;
+        return f(this.surface, h, p);
+    }
+    fn highlight_now(this, h: Handle) {
+        let f: fn(*u8, Handle) = this.highlight;
+        f(this.surface, h);
+    }
+    fn clear_highlight_now(this) {
+        let f: fn(*u8) = this.clear_highlight;
+        f(this.surface);
+    }
+    fn insert_now(this, parent: Handle, at: usize, take sp: Spec) -> Outcome {
+        let f: fn(*u8, Handle, usize, take Spec) -> Outcome = this.insert;
+        return f(this.surface, parent, at, sp);
+    }
+    fn remove_now(this, h: Handle) -> Outcome {
+        let f: fn(*u8, Handle) -> Outcome = this.remove;
+        return f(this.surface, h);
+    }
+    fn reparent_now(this, h: Handle, parent: Handle, at: usize) -> Outcome {
+        let f: fn(*u8, Handle, Handle, usize) -> Outcome = this.reparent;
+        return f(this.surface, h, parent, at);
+    }
+    fn undo_now(this) -> Outcome {
+        let f: fn(*u8) -> Outcome = this.undo;
+        return f(this.surface);
+    }
+}
+
+
+// ---- the property vocabulary ---------------------------------------------------
+//
+// What a property IS, so a client never has to guess: its name, its type, its
+// unit, the element kinds that carry it, the closed set of spellings it takes
+// if it has one, and a line saying what it does.
+//
+// PURE DATA AND STRING WORK, which is why it is here and not beside the walker.
+// The table names facet's property spellings, but it names them as STRINGS —
+// nothing in it imports a toolkit, and `agent_mcp` serves the `vocabulary`
+// verb straight out of it. The half that DID name facet types (the
+// `font_weight_name(fvocab::FontWeight)` family and its siblings) stayed in
+// `inspector/vocabulary.cplus`, where the walker that produces those enums is.
+
+struct Descriptor {
+    name: str,
+    ty: str,
+    unit: str,
+    applies: str,
+    values: str,
+    doc: str,
+}
+
+fn d(name: str, ty: str, unit: str, applies: str, values: str, doc: str) -> Descriptor {
+    return Descriptor { name: name, ty: ty, unit: unit, applies: applies, values: values, doc: doc };
+}
+
+// A length is a number of points, or one of two words. Named once because five
+// property groups say it and a client reads it once.
+const LENGTH_DOC: str =
+    "A number is points. The strings \"auto\" and \"50%\" are also accepted, and a percent or auto reads back as that string.";
+
+fn table() -> vec::Vec[Descriptor] {
+    var v: vec::Vec[Descriptor] = vec::new::[Descriptor]();
+
+    // ---- taking a node out of flow, and placing it ----
+    let _p0: status::Status = v.append(d("position", "enum", "", "*",
+        "static relative absolute",
+        "How the node is placed. `absolute` takes it out of flow — siblings lay out as if it were not there — and top/left/right/bottom place it against the parent's padding box. `relative` keeps it in flow and OFFSETS the flowed frame by those insets, without moving its siblings. `static` is in flow and ignores the insets entirely."));
+    let _p0b: status::Status = v.append(d("direction", "enum", "", "*",
+        "inherit ltr rtl",
+        "Writing direction, which decides which physical edge `start` and `end` mean. `inherit` takes the parent's."));
+    let _p1: status::Status = v.append(d("z_index", "number", "", "*", "",
+        "Paint order among overlapping siblings; higher is on top. Layout-neutral."));
+    let _p2: status::Status = v.append(d("top", "length", "points", "*", "", LENGTH_DOC));
+    let _p3: status::Status = v.append(d("left", "length", "points", "*", "", LENGTH_DOC));
+    let _p4: status::Status = v.append(d("right", "length", "points", "*", "", LENGTH_DOC));
+    let _p5: status::Status = v.append(d("bottom", "length", "points", "*", "", LENGTH_DOC));
+
+    // ---- how big ----
+    let _s0: status::Status = v.append(d("width", "length", "points", "*", "", LENGTH_DOC));
+    let _s1: status::Status = v.append(d("height", "length", "points", "*", "", LENGTH_DOC));
+    let _s2: status::Status = v.append(d("min_width", "length", "points", "*", "", LENGTH_DOC));
+    let _s3: status::Status = v.append(d("max_width", "length", "points", "*", "", LENGTH_DOC));
+    let _s4: status::Status = v.append(d("min_height", "length", "points", "*", "", LENGTH_DOC));
+    let _s5: status::Status = v.append(d("max_height", "length", "points", "*", "", LENGTH_DOC));
+    let _s6: status::Status = v.append(d("aspect_ratio", "number", "width/height", "*", "",
+        "Width divided by height. Unset reads as nothing rather than as a number."));
+    let _s7: status::Status = v.append(d("grow", "number", "factor", "*", "",
+        "Share of leftover space along the parent's main axis. 0 takes none."));
+    let _s8: status::Status = v.append(d("shrink", "number", "factor", "*", "",
+        "Share of the overflow given up when the line is too small. 0 refuses to shrink."));
+    let _s9: status::Status = v.append(d("flex_basis", "length", "points", "*", "",
+        "The size along the main axis before grow and shrink are applied."));
+
+    // ---- space around and inside ----
+    let _m0: status::Status = v.append(d("padding", "length", "points", "*", "",
+        "All four inner edges at once. Reads as nothing when the four disagree — set an edge by name to see it."));
+    let _m1: status::Status = v.append(d("padding_left", "length", "points", "*", "", LENGTH_DOC));
+    let _m2: status::Status = v.append(d("padding_top", "length", "points", "*", "", LENGTH_DOC));
+    let _m3: status::Status = v.append(d("padding_right", "length", "points", "*", "", LENGTH_DOC));
+    let _m4: status::Status = v.append(d("padding_bottom", "length", "points", "*", "", LENGTH_DOC));
+    let _m5: status::Status = v.append(d("margin", "length", "points", "*", "",
+        "All four outer edges at once. Reads as nothing when the four disagree."));
+    let _m6: status::Status = v.append(d("margin_left", "length", "points", "*", "", LENGTH_DOC));
+    let _m7: status::Status = v.append(d("margin_top", "length", "points", "*", "", LENGTH_DOC));
+    let _m8: status::Status = v.append(d("margin_right", "length", "points", "*", "", LENGTH_DOC));
+    let _m9: status::Status = v.append(d("margin_bottom", "length", "points", "*", "", LENGTH_DOC));
+    // FLEX'S BORDER IS A LAYOUT INSET, not a stroke: it reserves space inside
+    // the frame the way padding does and draws nothing. `border_width` on a
+    // button is the visible one, which is why there is no bare `border`
+    // shorthand here — two things one letter apart, and the shorthand is where
+    // they would be confused.
+    let _b0: status::Status = v.append(d("border_left", "length", "points", "*", "",
+        "Layout inset on the left edge — space reserved inside the frame, drawn by nobody. Not a stroke; see border_width."));
+    let _b1: status::Status = v.append(d("border_top", "length", "points", "*", "",
+        "Layout inset on the top edge. Reserves space; draws nothing."));
+    let _b2: status::Status = v.append(d("border_right", "length", "points", "*", "",
+        "Layout inset on the right edge. Reserves space; draws nothing."));
+    let _b3: status::Status = v.append(d("border_bottom", "length", "points", "*", "",
+        "Layout inset on the bottom edge. Reserves space; draws nothing."));
+
+    // THE LOGICAL EDGES. `start` and `end` follow the writing direction, so a
+    // layout written in them mirrors under `direction: rtl` and a layout
+    // written in left/right does not. A physical edge wins where both are set.
+    let _l0: status::Status = v.append(d("margin_start", "length", "points", "*", "",
+        "Outer space on the leading edge — left under ltr, right under rtl. A physical margin_left wins where both are set."));
+    let _l1: status::Status = v.append(d("margin_end", "length", "points", "*", "",
+        "Outer space on the trailing edge — right under ltr, left under rtl."));
+    let _l2: status::Status = v.append(d("padding_start", "length", "points", "*", "",
+        "Inner space on the leading edge."));
+    let _l3: status::Status = v.append(d("padding_end", "length", "points", "*", "",
+        "Inner space on the trailing edge."));
+    let _l4: status::Status = v.append(d("border_start", "length", "points", "*", "",
+        "Layout inset on the leading edge."));
+    let _l5: status::Status = v.append(d("border_end", "length", "points", "*", "",
+        "Layout inset on the trailing edge."));
+    let _l6: status::Status = v.append(d("start", "length", "points", "*", "",
+        "Inset from the leading edge, for a positioned node — the logical twin of `left`."));
+    let _l7: status::Status = v.append(d("end", "length", "points", "*", "",
+        "Inset from the trailing edge — the logical twin of `right`."));
+
+    let _m10: status::Status = v.append(d("gap", "length", "points", "*", "",
+        "Space between children, both axes. Reads as nothing when the two axes disagree."));
+    let _m11: status::Status = v.append(d("gap_row", "length", "points", "*", "",
+        "Space between rows — between items when the direction is a column."));
+    let _m12: status::Status = v.append(d("gap_column", "length", "points", "*", "",
+        "Space between columns — between items when the direction is a row."));
+
+    // ---- how the children sit ----
+    let _f0: status::Status = v.append(d("flex_direction", "enum", "", "*",
+        "column column_reverse row row_reverse",
+        "The main axis children are laid along."));
+    let _f1: status::Status = v.append(d("justify_content", "enum", "", "*",
+        "flex_start center flex_end space_between space_around space_evenly stretch start end",
+        "How children are distributed along the main axis."));
+    let _f2: status::Status = v.append(d("align_items", "enum", "", "*",
+        "auto flex_start center flex_end stretch baseline space_between space_around space_evenly start end",
+        "How children are placed across the cross axis. The default, stretch, is why a child with no height fills its row."));
+    let _f3: status::Status = v.append(d("align_content", "enum", "", "*",
+        "auto flex_start center flex_end stretch baseline space_between space_around space_evenly start end",
+        "How WRAPPED LINES are distributed across the cross axis. No effect unless flex_wrap wraps."));
+    let _f4: status::Status = v.append(d("align_self", "enum", "", "*",
+        "auto flex_start center flex_end stretch baseline space_between space_around space_evenly start end",
+        "This node's own cross-axis placement, overriding the parent's align_items. auto defers to the parent."));
+    let _f5: status::Status = v.append(d("flex_wrap", "enum", "", "*",
+        "no_wrap wrap wrap_reverse",
+        "Whether children that do not fit start a new line."));
+    let _f6: status::Status = v.append(d("display", "enum", "", "*",
+        "flex none grid",
+        "none removes the node from layout entirely — it takes no space, unlike visible=false which reserves it."));
+    let _f7: status::Status = v.append(d("overflow", "enum", "", "*",
+        "visible hidden scroll",
+        "What happens to content past the edge."));
+    // GRID, the half that is numbers. The TRACK LISTS
+    // (`grid_template_columns` and friends) are `Vec[GridTrack]` — a value and
+    // a unit per track — and `Value` has no tag that carries one, so they stay
+    // out. These four are a grid ITEM's placement and are plain integers.
+    //
+    // `grid_dense` and the two subgrid flags are settable on the engine and
+    // have no getter, so an inspector could write them and never show them —
+    // which is worse than not offering them. They need a reader in
+    // `flex_layout` first.
+    let _g0: status::Status = v.append(d("grid_column_span", "number", "tracks", "*", "",
+        "How many columns this item spans. 1 unless set."));
+    let _g1: status::Status = v.append(d("grid_row_span", "number", "tracks", "*", "",
+        "How many rows this item spans. 1 unless set."));
+    let _g2: status::Status = v.append(d("grid_column_start", "number", "line", "*", "",
+        "The column line this item starts at, 1-based. Unset means auto-placed."));
+    let _g3: status::Status = v.append(d("grid_row_start", "number", "line", "*", "",
+        "The row line this item starts at, 1-based. Unset means auto-placed."));
+
+    let _f8: status::Status = v.append(d("box_sizing", "enum", "", "*",
+        "border_box content_box",
+        "Whether width and height measure the border box or the content box."));
+
+    // ---- what it looks like ----
+    let _a0: status::Status = v.append(d("visible", "bool", "", "*", "",
+        "Hide the node while KEEPING its space. Use display=none to take the space back."));
+    let _a1: status::Status = v.append(d("enabled", "bool", "", "*", "",
+        "Whether the control responds to input and draws in its normal colours."));
+    let _a2: status::Status = v.append(d("input_transparent", "bool", "", "*", "",
+        "Let clicks pass through to whatever is behind."));
+    let _a3: status::Status = v.append(d("opacity", "number", "0..1", "*", "",
+        "1 is fully opaque. Applies to the node and everything under it."));
+    let _a4: status::Status = v.append(d("background_color", "color", "", "*", "",
+        "Fill behind the node's content. Send #rrggbb or #rrggbbaa."));
+    let _a5: status::Status = v.append(d("corner_radius", "number", "points", "*", "",
+        "All four corners. Reads the top-leading corner."));
+    let _a6: status::Status = v.append(d("shadow_color", "color", "", "*", "",
+        "The drop shadow's colour. Its opacity is separate — a colour alone draws nothing until shadow_opacity is above zero."));
+    let _a7: status::Status = v.append(d("shadow_opacity", "number", "0..1", "*", "",
+        "How strongly the drop shadow prints. 0 is no shadow."));
+    let _a8: status::Status = v.append(d("shadow_radius", "number", "points", "*", "",
+        "The drop shadow's blur."));
+    let _a9: status::Status = v.append(d("shadow_offset_x", "number", "points", "*", "",
+        "How far right the drop shadow falls."));
+    let _a10: status::Status = v.append(d("shadow_offset_y", "number", "points", "*", "",
+        "How far down the drop shadow falls."));
+
+    // ---- moved without being re-laid-out ----
+    let _t0: status::Status = v.append(d("rotation", "number", "degrees", "*", "",
+        "Rotate about the centre. Paint only — layout keeps the unrotated box."));
+    let _t1: status::Status = v.append(d("rotation_x", "number", "degrees", "*", "",
+        "Rotate about the horizontal axis."));
+    let _t2: status::Status = v.append(d("rotation_y", "number", "degrees", "*", "",
+        "Rotate about the vertical axis."));
+    let _t3: status::Status = v.append(d("scale", "number", "factor", "*", "",
+        "Scale both axes about the centre. 1 is unscaled. Paint only."));
+    let _t4: status::Status = v.append(d("scale_x", "number", "factor", "*", "",
+        "Scale horizontally about the centre."));
+    let _t5: status::Status = v.append(d("scale_y", "number", "factor", "*", "",
+        "Scale vertically about the centre."));
+    let _t6: status::Status = v.append(d("translation_x", "number", "points", "*", "",
+        "Shift right at paint time, without moving anything else."));
+    let _t7: status::Status = v.append(d("translation_y", "number", "points", "*", "",
+        "Shift down at paint time, without moving anything else."));
+
+    // ---- what it says ----
+    let _c0: status::Status = v.append(d("text", "string", "", "label text_field text_area", "",
+        "The words the control shows."));
+    let _c1: status::Status = v.append(d("title", "string", "", "button", "",
+        "The button's label."));
+    let _c2: status::Status = v.append(d("on", "bool", "", "checkbox toggle", "",
+        "Whether the control is switched on."));
+    let _c3: status::Status = v.append(d("font_size", "number", "points", "label button text_field text_area", "",
+        "Point size of the control's text."));
+    let _c4: status::Status = v.append(d("font_weight", "enum", "",
+        "label button text_field text_area",
+        "default ultra_light thin light regular medium semibold bold heavy black",
+        "Stroke weight of the control's text."));
+    let _c5: status::Status = v.append(d("text_color", "color", "", "label button text_field text_area", "",
+        "Colour of the control's text. Send #rrggbb or #rrggbbaa."));
+    let _c6: status::Status = v.append(d("border_color", "color", "", "button", "",
+        "Colour of the button's border. Draws nothing until border_width is above zero."));
+    let _c7: status::Status = v.append(d("border_width", "number", "points", "button", "",
+        "Thickness of the button's border."));
+
+    // ---- what it says to someone who cannot see it ----
+    let _x0: status::Status = v.append(d("tooltip", "string", "", "*", "",
+        "Hover text."));
+    let _x1: status::Status = v.append(d("accessibility_label", "string", "", "*", "",
+        "What a screen reader — or an agent reading the tree — is told this node is."));
+
+    return v;
+}
+
+// The descriptor for a name, or None. Linear: the table is fifty-odd entries
+// read once per `vocabulary` call, and a map would be a second thing to keep
+// in step with the table for no measurable gain.
+fn describe_prop(name: str) -> option::Option[Descriptor] {
+    let t: vec::Vec[Descriptor] = table();
+    var i: usize = 0;
+    while i < t.count() {
+        match t.at_ptr(i) {
+            option::Option[*Descriptor]::Some(p) => {
+                if { (*p).name } == name {
+                    return option::Option[Descriptor]::Some(Descriptor {
+                        name: { (*p).name }, ty: { (*p).ty }, unit: { (*p).unit },
+                        applies: { (*p).applies }, values: { (*p).values }, doc: { (*p).doc },
+                    });
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return option::Option[Descriptor]::None;
+}
+
+// Does `applies` cover this kind? `*` covers every one, and an empty kind is
+// a caller who did not name one, which is not a reason to hide anything.
+fn covers(applies: str, kind_name: str) -> bool {
+    if applies == "*" { return true; }
+    if kind_name == "" { return true; }
+    let parts: vec::Vec[str] = applies.split(" ");
+    var i: usize = 0;
+    while i < parts.count() {
+        match parts.at(i) {
+            option::Option[str]::Some(w) => { if w == kind_name { return true; } }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return false;
+}
+
+
+// ---- writing a value down ------------------------------------------------------
+//
+// How a value is SPELLED, for the journal, the change ledger and any client
+// showing a person what a property holds. Pure formatting over the neutral
+// types — no tree, no toolkit — which is why it sits beside them rather than
+// beside the walker it used to live in.
+
+
+fn plain_num(x: f64) -> text::Text {
+    // Whole numbers read as whole numbers. This is the value a person copies
+    // back into source, so `50%` beats `50.000000%`.
+    let r: f64 = x - (((x as i64) as f64));
+    if r == 0.0 { return { (x as i64) }.to_text(); }
+    return x.to_text();
+}
+
+
+// ---- the diff ------------------------------------------------------------------
+//
+// THE JOURNAL IS THE DIFF between the tree the application built and the tree
+// as it stands. Not a log of calls: nobody transcribing an editing session
+// wants the nineteen intermediate values a nudge passed through, they want the
+// one it landed on and the one it started from.
+//
+// The override ledger already IS that diff for properties — it records the
+// first write to each (node, property) pair and nothing after it — so this
+// reads it out rather than keeping a second record that could disagree. A
+// `reset` removes the row, which is exactly right: the difference is gone.
+//
+// Structural edits keep their append-only lines. An insert is not a value that
+// changed, it is a node that was not there, and the only honest way to state
+// that difference is the operation that made it.
+
+fn hex_digit_str(v: usize) -> str {
+    if v == 0 { return "0"; }   if v == 1 { return "1"; }
+    if v == 2 { return "2"; }   if v == 3 { return "3"; }
+    if v == 4 { return "4"; }   if v == 5 { return "5"; }
+    if v == 6 { return "6"; }   if v == 7 { return "7"; }
+    if v == 8 { return "8"; }   if v == 9 { return "9"; }
+    if v == 10 { return "a"; }  if v == 11 { return "b"; }
+    if v == 12 { return "c"; }  if v == 13 { return "d"; }
+    if v == 14 { return "e"; }
+    return "f";
+}
+
+
+fn hex2(out: *text::Text, v: f64) {
+    var x: f64 = v;
+    if x < 0.0 { x = 0.0; }
+    if x > 1.0 { x = 1.0; }
+    let n: i64 = ((x * 255.0) + 0.5) as i64;
+    let _a: status::Status = { (*out).append(hex_digit_str(((n / 16) as usize))) };
+    let _b: status::Status = { (*out).append(hex_digit_str(((n % 16) as usize))) };
+}
+
+
+// A colour as the thing a person types back: `#rrggbb`, or `#rrggbbaa` when it
+// is not fully opaque. A token-only colour (a theme role, no channels) says so
+// by name — writing `#000000` for it would be a lie the developer then pastes.
+fn color_text(c: Color) -> text::Text {
+    if c.token != 255u32 {
+        var t: text::Text = text::from_str("token ");
+        let _a: status::Status = t.append((c.token as i64).to_text().view());
+        return t;
+    }
+    var out: text::Text = text::from_str("#");
+    hex2(#addr_of(out), c.r);
+    hex2(#addr_of(out), c.g);
+    hex2(#addr_of(out), c.b);
+    if c.a < 1.0 { hex2(#addr_of(out), c.a); }
+    return out;
+}
+
+
+// One value, as it would be written.
+
+// One value, as it would be written. Every shape the surface can hold — which
+// is the part `snippet_for` never grew: a colour came out `/* colour */` and
+// every enum fell through to `/* unset */`.
+fn value_text(v: Value) -> text::Text {
+    return match v {
+        Value::Nothing => text::from_str("unset"),
+        Value::Bool(b) => text::from_str(if b { "true" } else { "false" }),
+        Value::Int(i) => i.to_text(),
+        Value::Num(x) => plain_num(x),
+        Value::Str(t) => t.clone(),
+        Value::Enum(e) => e.clone(),
+        Value::Color(c) => color_text(c),
+    };
+}
+
+// ---- the diff, as the text you paste -------------------------------------------
+//
+// PURE OVER THE LEDGER, and it takes the ledger as an ARGUMENT rather than
+// reading one. That is the whole fix: the panel's Copy button called a
+// walker-level `changes_text()` with no parameter, which read the LOCAL tree —
+// so a panel pointed at another process over a socket copied its own empty
+// ledger and said "nothing changed yet" over a screen full of edits.
+//
+// Formatting has no business knowing which tree the rows came from.
+
+
+// The diff as the text a person pastes. The same two levels the `journal` verb
+// answers, laid out to be read:
+//
+//     {
+//       "label#title": { "font_size": 30, "text_color": "#cc2200" },
+//       "node#card":   { "padding": 24 }
+//     }
+//
+// Written here rather than in the widget so both consumers — the panel's Copy
+// button and anything that wants the text form over the wire — say the same
+// thing, and so the widget stays free of a JSON dependency it has no other use
+// for.
+fn quoted_value(v: Value) -> text::Text {
+    // Numbers and booleans are bare; everything else is a string, which is what
+    // the wire form does too — a colour is `"#cc2200"`, an enum is its
+    // spelling, a percent length is `"50%"`.
+    let bare: bool = match v {
+        Value::Num(_x) => true,
+        Value::Int(_i) => true,
+        Value::Bool(_b) => true,
+        _ => false,
+    };
+    let body: text::Text = value_text(v);
+    if bare { return body; }
+    var out: text::Text = text::from_str("\"");
+    let _a: status::Status = out.append(body.view());
+    let _b: status::Status = out.append("\"");
+    return out;
+}
+
+
+fn changes_text(cs: vec::Vec[Change]) -> text::Text {
+    if cs.count() == 0 { return text::from_str("{}\n"); }
+    var out: text::Text = text::from_str("{\n");
+    var i: usize = 0;
+    while i < cs.count() {
+        var label: text::Text = text::new();
+        match cs.at_ptr(i) {
+            option::Option[*Change]::Some(c) => { label = { (*c).node }.clone(); }
+            option::Option::None => { }
+        }
+        // One entry per node, gathering its rows: the ledger is in write order,
+        // so a node's properties are not necessarily adjacent.
+        if !node_written_before(cs, i, { label.view() }) {
+            if out.count() > (2 as usize) { let _s: status::Status = out.append(",\n"); }
+            let _a: status::Status = out.append("  \"");
+            let _b: status::Status = out.append(label.view());
+            let _c2: status::Status = out.append("\": { ");
+            var first: bool = true;
+            var j: usize = i;
+            while j < cs.count() {
+                match cs.at_ptr(j) {
+                    option::Option[*Change]::Some(c) => {
+                        if { (*c).node.view() } == { label.view() } {
+                            if !first { let _d: status::Status = out.append(", "); }
+                            first = false;
+                            let _e: status::Status = out.append("\"");
+                            let _f: status::Status = out.append({ (*c).prop });
+                            let _g: status::Status = out.append("\": ");
+                            let _h2: status::Status =
+                                out.append(quoted_value({ (*c).now }.clone()).view());
+                        }
+                    }
+                    option::Option::None => { }
+                }
+                j = j +% 1;
+            }
+            let _i2: status::Status = out.append(" }");
+        }
+        i = i +% 1;
+    }
+    let _z: status::Status = out.append("\n}\n");
+    return out;
+}
+
+
+fn node_written_before(cs: vec::Vec[Change], i: usize, label: str) -> bool {
+    var k: usize = 0;
+    while k < i {
+        match cs.at_ptr(k) {
+            option::Option[*Change]::Some(c) => {
+                if { (*c).node.view() } == label { return true; }
+            }
+            option::Option::None => { }
+        }
+        k = k +% 1;
+    }
+    return false;
+}

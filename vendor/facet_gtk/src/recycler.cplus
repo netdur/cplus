@@ -1256,6 +1256,11 @@ fn lay_row_out(n: *core::Node, host: *u8, node: *core::Node) {
         if est >= (1.0 as f64) { h = est; }
     }
     { (*node).calculate_layout(width: w, height: h) };
+    // SNAPPED LIKE A WINDOW'S TREE. A row is laid out here rather than by
+    // `window::relayout`, so it would otherwise be the one tree in the backend
+    // that reaches `place` fractional — visible as rows whose internal columns
+    // do not line up with the same columns in the row above.
+    { (*node).round_to_pixel(1.0f64) };
     let f: flex::Frame = { (*node).frame() };
     // WHOSE HOST THE CHILDREN GO IN is the same question `window::host_for`
     // answers for a window root, and getting it wrong here was 61463

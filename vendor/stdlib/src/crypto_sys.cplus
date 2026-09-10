@@ -21,17 +21,14 @@ extern fn CCRandomGenerateBytes(bytes: *u8, count: usize) -> i32;
 
 fn sha256_into(p: *u8, n: usize, out: *u8) {
     let _r: *u8 = { CC_SHA256(p, n as u32, out) };
-    return;
 }
 
 fn sha512_into(p: *u8, n: usize, out: *u8) {
     let _r: *u8 = { CC_SHA512(p, n as u32, out) };
-    return;
 }
 
 fn hmac_into(alg: u32, key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
     { CCHmac(alg, key, key_len, msg, msg_len, out) };
-    return;
 }
 
 fn random_into(p: *u8, n: usize) -> bool {

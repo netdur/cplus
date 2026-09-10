@@ -7,11 +7,40 @@
 // facades carry their own headless #[test]s (routes, refusals, agent-hook
 // defaults), which run as part of this suite.
 
+import "stdlib/option" as option;
+import "stdlib/text" as text;
 import "./runtime" as runtime;
 
 #[test]
 fn the_facade_and_its_backend_compile() {
     // The import above is the assertion: resolving `./runtime` on this
     // platform compiles the platform facade and the backend it installs.
-    return;
+}
+
+// ---- the clipboard, through the FACADE ----------------------------------------
+
+#[test]
+fn the_clipboard_is_reachable_from_the_portable_facade() {
+    // THE POINT OF THIS ONE IS THE FORWARD, not the pasteboard. The backend's
+    // own suite already asserts NSPasteboard round-trips; what it cannot catch
+    // is a facade variant that never got the two lines — and there are five of
+    // them (base, macos, ios, linux, android), each a separate file, each
+    // silently compiling without them.
+    //
+    // Reaching `runtime::` rather than the backend is what makes this an
+    // assertion about the wiring. On a platform whose facade forwards, this
+    // round-trips; on the NEUTRAL BASE it answers false and None, loudly, which
+    // is the documented no-backend contract and not a failure of this test.
+    let sentinel: str = "facet_runtime-clipboard-forward";
+    if runtime::copy_text(sentinel) {
+        match runtime::paste_text() {
+            option::Option[text::Text]::Some(got) => {
+                // A backend that CAN read answers what was written. GTK cannot
+                // — its clipboard read is async-only — so `None` below is a
+                // legitimate answer there and not a broken forward.
+                assert got.view() == sentinel;
+            }
+            option::Option[text::Text]::None => { }
+        }
+    }
 }

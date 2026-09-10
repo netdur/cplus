@@ -1,0 +1,1372 @@
+// terminal/appkit — live macOS terminal widget.
+//
+// A Widget owns an NSScrollView/NSTextView pair and a real PTY session. A
+// libdispatch READ source drains the master fd on the main queue, feeds the
+// portable Transcript, and updates AppKit. A tiny NSTextView subclass forwards
+// keys to the PTY. The returned flex node is compatible with facet_appkit's
+// view-bearing layout layer; `native_handle` also plugs into facet::native.
+
+import "./pty" as pty;
+import "./terminal" as terminal;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "appkit/appkit" as ak;
+import "appkit/appkit_ext" as akx;
+import "flex_layout/flex_layout" as flex;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
+extern fn dispatch_source_create(type_: *u8, handle: u64, mask: u64, queue: *u8) -> *u8;
+// dispatch_source_set_context does NOT exist. The context setter is the generic
+// dispatch_set_context(dispatch_object_t, void*), which applies to sources too.
+extern fn dispatch_set_context(source: *u8, context: *u8);
+extern fn dispatch_source_set_event_handler_f(source: *u8, handler: fn(*u8));
+extern fn dispatch_source_set_cancel_handler_f(source: *u8, handler: fn(*u8));
+extern fn dispatch_resume(object: *u8);
+extern fn dispatch_source_cancel(source: *u8);
+extern fn dispatch_release(object: *u8);
+// Hop to the NEXT main-queue turn. Async even when the caller is already on the
+// main thread, which is the whole point where it is used (repaint_for_focus).
+extern fn dispatch_async_f(queue: *u8, context: *u8, work: fn(*u8));
+
+// A handler slot. A null fn pointer is not a value C+ hands out, so "nobody is
+// listening" is a flag beside the pointer rather than a comparison against one.
+fn no_handler(_ctx: *u8) { return; }
+
+struct TerminalContext {
+    session: pty::Session,
+    screen: terminal::Screen,
+    opaque text_view: *u8,     // borrowed from Widget._scroll's view tree
+    opaque scroll_view: *u8,   // borrowed from Widget._scroll
+    opaque source: *u8,        // released by the dispatch cancel handler
+    cell_width: f64,
+    cell_height: f64,
+    cancel_requested: bool,
+    cancel_finished: bool,
+    dispose_requested: bool,
+    // Command completions already delivered. The read handler compares this
+    // against the ledger to fire the callback once per command rather than once
+    // per chunk of output that happens to contain the mark.
+    delivered: u64,
+    on_command_end: fn(*u8),
+    opaque on_command_end_ctx: *u8,
+    has_command_handler: bool,
+    on_exit: fn(*u8),
+    opaque on_exit_ctx: *u8,
+    has_exit_handler: bool,
+    exit_delivered: bool,
+}
+
+struct Widget {
+    _scroll: ak::ScrollView,
+    opaque _ctx: *TerminalContext,
+}
+
+fn supported() -> bool { return true; }
+
+fn terminal_context_key() -> *u8 { return { 30101 as *u8 }; }
+
+fn main_dispatch_queue() -> *u8 {
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    return { dlsym(rtld_default, #str_ptr("_dispatch_main_q\0")) };
+}
+
+// AppKit's attribute names are NSString globals. Read them out of the framework
+// instead of hardcoding their values: `NSColor` / `NSBackgroundColor` are the
+// real contents of those symbols, which makes a literal look correct right up
+// until it is not.
+fn appkit_string_global(symbol: *u8) -> *u8 {
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    let slot: *u8 = { dlsym(rtld_default, symbol) };
+    if slot.is_null() { return 0 as *u8; }
+    let cell: *u64 = { slot as *u64 };
+    let value: u64 = { *cell };
+    return { value as *u8 };
+}
+
+// UTF-16 units in `p[from..to)`. NSRange counts UTF-16, the transcript counts
+// bytes, and the two only agree while the text stays ASCII — a prompt with a
+// single accented character or an em dash is enough to put the cursor block on
+// the wrong cell.
+fn utf16_units(p: *u8, from: usize, to: usize) -> u64 {
+    var i: usize = from;
+    var n: u64 = 0 as u64;
+    while i < to {
+        let b: u8 = { p[i] };
+        if !terminal::is_utf8_continuation(b) {
+            // A 4-byte scalar is a surrogate PAIR in UTF-16.
+            if b >= (0xf0 as u8) { n = n +% (2 as u64); } else { n = n +% (1 as u64); }
+        }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+// Does the terminal hold the keyboard right now? Both halves matter: the view
+// must be its window's first responder AND that window must be key. Typing goes
+// nowhere if either is false, so both must read as "not focused".
+fn view_has_focus(tv_raw: *u8) -> bool {
+    if tv_raw.is_null() { return false; }
+    let win: *u8 = rt::msg_id(tv_raw, rt::sel(#str_ptr("window\0")));
+    if win.is_null() { return false; }
+    if rt::msg_i8(win, rt::sel(#str_ptr("isKeyWindow\0"))) == (0 as i8) { return false; }
+    return rt::msg_id(win, rt::sel(#str_ptr("firstResponder\0"))) == tv_raw;
+}
+
+// The cursor. FOCUSED: the cell in reverse video — a solid block, the way a
+// terminal draws it, meaning "type and it lands here". UNFOCUSED: a thick
+// underline under the same cell — the cursor position is still legible, but it
+// plainly is not taking keys.
+//
+// The two states differ in SHAPE, not shade. Dimming the block would encode
+// focus as a colour difference alone, which is unreadable to anyone who cannot
+// separate close colours, and washes out on a light theme besides. Filled block
+// vs underline survives any palette and any vision, and it is the same
+// distinction Terminal.app and iTerm2 draw (they hollow the block instead).
+//
+// Attributes rather than the selection, so selecting text with the mouse and
+// copying it still works.
+//
+// `set_string` does NOT hand back a clean slate, which is the trap here.
+// `-[NSTextView setString:]` stamps the view's TYPING attributes onto the new
+// text, and NSTextView derives those from the character at the insertion
+// point — which `render` parks directly on the cell we just styled. So the
+// cursor's own attribute is adopted as the typing attribute and the NEXT
+// render paints it across the WHOLE string: one render looks right, and from
+// the second one on the entire line is a cursor. (That is why it read as
+// "the block is enormous" rather than as a missing cursor.)
+//
+// Wiping the range we own before painting it is the fix, and it has to happen
+// on every pass, not just when the style changes.
+fn paint_cursor(tv: ak::TextView, at: rt::Range, focused: bool, full: rt::Range) {
+    let bg_name: *u8 = appkit_string_global(#str_ptr("NSBackgroundColorAttributeName\0"));
+    let fg_name: *u8 = appkit_string_global(#str_ptr("NSForegroundColorAttributeName\0"));
+    let ul_name: *u8 = appkit_string_global(#str_ptr("NSUnderlineStyleAttributeName\0"));
+    if bg_name.is_null() || fg_name.is_null() { return; }
+    match tv.text_storage() {
+        option::Option[ak::TextStorage]::Some(storage) => {
+            let s: *u8 = storage.as_mutable_attributed_string().raw();
+            let add: *u8 = rt::sel(#str_ptr("addAttribute:value:range:\0"));
+            let remove: *u8 = rt::sel(#str_ptr("removeAttribute:range:\0"));
+            // Clean slate over the whole document: drop any inherited cursor
+            // styling, then restore the one attribute the terminal always
+            // wants. Background is left absent so the view's own background
+            // shows through; foreground must be re-applied or the text falls
+            // back to the default black on a dark view.
+            rt::msg_void_id_range(s, remove, bg_name, full);
+            if ul_name.is_not_null() { rt::msg_void_id_range(s, remove, ul_name, full); }
+            rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_color().raw(), full);
+            if focused {
+                rt::msg_void_id_id_range(s, add, bg_name, ak::Color::text_color().raw(), at);
+                rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_background_color().raw(), at);
+            } else {
+                if ul_name.is_null() { return; }
+                // NSUnderlineStyleThick = 2.
+                let thick: *u8 = rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")), rt::sel(#str_ptr("numberWithInt:\0")), 2 as i64);
+                rt::msg_void_id_id_range(s, add, ul_name, thick, at);
+            }
+        }
+        option::Option[ak::TextStorage]::None => {}
+    }
+}
+
+// The clean-slate half of `paint_cursor`, for when there is no cursor to draw.
+// It still has to run every pass: the wipe is what stops NSTextView adopting a
+// cursor attribute as its typing attribute and painting the whole document with
+// it on the next render.
+fn paint_cursor_none(tv: ak::TextView, full: rt::Range) {
+    let bg_name: *u8 = appkit_string_global(#str_ptr("NSBackgroundColorAttributeName\0"));
+    let fg_name: *u8 = appkit_string_global(#str_ptr("NSForegroundColorAttributeName\0"));
+    let ul_name: *u8 = appkit_string_global(#str_ptr("NSUnderlineStyleAttributeName\0"));
+    if bg_name.is_null() || fg_name.is_null() { return; }
+    match tv.text_storage() {
+        option::Option[ak::TextStorage]::Some(storage) => {
+            let s: *u8 = storage.as_mutable_attributed_string().raw();
+            let add: *u8 = rt::sel(#str_ptr("addAttribute:value:range:\0"));
+            let remove: *u8 = rt::sel(#str_ptr("removeAttribute:range:\0"));
+            rt::msg_void_id_range(s, remove, bg_name, full);
+            if ul_name.is_not_null() { rt::msg_void_id_range(s, remove, ul_name, full); }
+            rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_color().raw(), full);
+        }
+        option::Option[ak::TextStorage]::None => {}
+    }
+}
+
+fn render(c: *TerminalContext) {
+    if c.is_null() || { (*c).text_view } == (0 as *u8) { return; }
+    let tv: ak::TextView = ak::TextView::from_raw({ (*c).text_view });
+
+    // The cursor needs a cell to sit on. The screen drops the blanks a shell
+    // leaves under it (that is what makes `\b space \b` read as an erase), so
+    // pad them back for display only — otherwise the block would have nothing
+    // to occupy at the end of a line, which is where it spends most of its time.
+    let cursor: usize = { (*c).screen.cursor() };
+    var display: text::Text = text::from_str({ (*c).screen.view() });
+    while display.count() <= cursor {
+        let _pad: status::Status = display.append(" ");
+    }
+    tv.as_text().set_string(display.view());
+
+    // NSString length is UTF-16 units, which is exactly what NSRange expects.
+    // Measure the TAIL from the cursor rather than the head: the tail is the
+    // rest of the live line, the head is the whole scrollback.
+    let ns: *u8 = rt::msg_id(tv.raw(), rt::sel(#str_ptr("string\0")));
+    let end: u64 = rt::msg_u64(ns, rt::sel(#str_ptr("length\0")));
+    let tail: u64 = utf16_units(#str_ptr(display.view()), cursor, display.count());
+    var at: u64 = 0 as u64;
+    if end > tail { at = end -% tail; }
+    // The padding guarantees a cell at the cursor, so `at` lands inside the
+    // string — unless the shell emitted bytes NSString and this arithmetic
+    // disagree about (invalid UTF-8 survives `feed`, which is deliberate). An
+    // out-of-bounds NSRange is an ObjC exception, i.e. the app dies, so clamp
+    // rather than trust the two counts to agree.
+    if end == (0 as u64) { return; }
+    if at >= end { at = end -% (1 as u64); }
+
+    let cell: rt::Range = rt::Range { location: at, length: 1 as u64 };
+    let whole: rt::Range = rt::Range { location: 0 as u64, length: end };
+    // A program that hid the cursor (`ESC[?25l` — every full-screen TUI does it
+    // while repainting) gets no block drawn. Painting one anyway would leave a
+    // block parked wherever the program last left the cursor, which in a TUI is
+    // wherever its last write happened to end rather than anywhere meaningful.
+    let visible: bool = { (*c).screen.cursor_visible() };
+    let focused: bool = visible && view_has_focus({ (*c).text_view });
+    if visible {
+        paint_cursor(tv, cell, focused, whole);
+    } else {
+        paint_cursor_none(tv, whole);
+    }
+    // Empty selection at the cursor: nothing is highlighted (the block is drawn
+    // by attributes) and ⌘C with no selection copies nothing, as it should.
+    let caret: rt::Range = rt::Range { location: at, length: 0 as u64 };
+    tv.as_text().set_selected_range(caret);
+    tv.as_text().scroll_range_to_visible(cell);
+}
+
+// Freeing the context also CLEARS the association that points at it. Every
+// handler below reaches the context by looking it up through the view, so
+// clearing it here is what makes them all safe at once — and it happens in the
+// one place that knows the memory is going away.
+//
+// This used to live only in `Widget::drop`, which left the two in sync by
+// convention. `destroy_context` is reachable from the dispatch cancel handler
+// as well, so a terminal torn down that way left the association pointing at
+// freed memory.
+// bugs/terminal-key-observer-outlives-its-context.md
+fn destroy_context(c: *TerminalContext) {
+    if c.is_null() { return; }
+    // Read the view BEFORE dropping — the field is gone after drop_in_place.
+    let tv: *u8 = { (*c).text_view };
+    if tv.is_not_null() { synth::set_associated(tv, terminal_context_key(), 0 as *u8); }
+    { #drop_in_place::[TerminalContext](c); }
+    { free(c as *u8); }
+}
+
+fn cancel_finished(ctx: *u8) {
+    let c: *TerminalContext = { ctx as *TerminalContext };
+    { (*c).session.close(); }
+    if { (*c).source } != (0 as *u8) {
+        { dispatch_release({ (*c).source }); }
+        { (*c).source = 0 as *u8; }
+    }
+    { (*c).cancel_finished = true; }
+    if { (*c).dispose_requested } { destroy_context(c); }
+}
+
+fn request_cancel(c: *TerminalContext) {
+    if c.is_null() || { (*c).cancel_requested } { return; }
+    { (*c).cancel_requested = true; }
+    { dispatch_source_cancel({ (*c).source }); }
+    // Cancellation prevents further main-queue reads. Close/reap now as well
+    // as in the cancel handler so dropping a widget during application
+    // shutdown cannot leave its shell alive if the run loop never turns again.
+    { (*c).session.close(); }
+}
+
+// Answers the screen owes the program — a device-attributes or cursor-position
+// query — written straight back to the pseudo-terminal. A program that asks and
+// never hears back simply waits, so this is not optional politeness.
+fn flush_replies(c: *TerminalContext) {
+    if !{ (*c).screen.has_reply() } { return; }
+    let answer: text::Text = text::from_str({ (*c).screen.reply() });
+    { (*c).screen.clear_reply(); }
+    let _w: isize = { (*c).session.write(answer.view()) };
+}
+
+// Fire the caller's callbacks for anything that happened during this drain.
+// Counted rather than edge-triggered: one read can carry several commands'
+// worth of marks, and a handler that ran once per chunk would miss some and
+// repeat others.
+fn deliver_events(c: *TerminalContext) {
+    let finished: u64 = { (*c).screen.finished_count() };
+    if finished > { (*c).delivered } {
+        { (*c).delivered = finished; }
+        if { (*c).has_command_handler } {
+            let f: fn(*u8) = { (*c).on_command_end };
+            let a: *u8 = { (*c).on_command_end_ctx };
+            f(a);
+        }
+    }
+    if { (*c).cancel_requested } && !{ (*c).exit_delivered } {
+        { (*c).exit_delivered = true; }
+        if { (*c).has_exit_handler } {
+            let f: fn(*u8) = { (*c).on_exit };
+            let a: *u8 = { (*c).on_exit_ctx };
+            f(a);
+        }
+    }
+}
+
+fn read_ready(ctx: *u8) {
+    let c: *TerminalContext = { ctx as *TerminalContext };
+    if c.is_null() || { (*c).cancel_requested } { return; }
+    var buf: [u8; 8192] = [0 as u8; 8192];
+    var changed: bool = false;
+    loop {
+        match { (*c).session.read_into(#addr_of(buf) as *u8, 8192 as usize) } {
+            pty::ReadResult::Data(n) => {
+                let chunk: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n) };
+                { (*c).screen.feed(chunk); }
+                changed = true;
+            }
+            pty::ReadResult::WouldBlock => { break; }
+            pty::ReadResult::Closed => {
+                { (*c).screen.finish(); }
+                changed = true;
+                request_cancel(c);
+                break;
+            }
+            pty::ReadResult::Failed => {
+                request_cancel(c);
+                break;
+            }
+        }
+    }
+    if changed { flush_replies(c); }
+    if changed { render(c); }
+    deliver_events(c);
+}
+
+fn send(c: *TerminalContext, bytes: str) {
+    if c.is_null() || { (*c).cancel_requested } { return; }
+    let _written: isize = { (*c).session.write(bytes) };
+}
+
+// Keys, natively — and NOT through facet's `on_key`, which is the portable key
+// primitive and would be the obvious home for this. The decision, recorded
+// because the alternative keeps looking attractive from outside:
+//
+//   * The table below is Darwin virtual key codes (36 Return, 48 Tab, 51
+//     Delete, 123-126 arrows, ...). facet's `key_code` is documented as the
+//     PLATFORM code, so routing through `on_key` would carry these same
+//     constants into the handler — the same backend-specific code, one layer
+//     further from the thing it is specific to. Portability would need facet to
+//     grow named keys, which is a change worth making when something portable
+//     needs them, not to relocate this.
+//   * The Command branch is not key handling at all: it is `copy:`,
+//     `selectAll:` and NSPasteboard on the text view. No portable primitive
+//     covers those, and dropping them would cost the terminal native
+//     selection and paste.
+//   * `on_key` delivers through a process-wide event filter matched by view.
+//     This widget is a first responder with focus-dependent cursor painting
+//     (`view_has_focus` above drives the block-vs-underline shape) and wants
+//     the real responder chain, including the super call for anything it does
+//     not claim.
+//
+// The consequence is accepted, not overlooked: this widget cannot run on a
+// non-AppKit backend. A terminal emulator is a native widget in every toolkit
+// that ships one, and the portable seam it does sit behind is the `terminal`
+// package's own API, not its key path.
+fn key_down_imp(self_obj: *u8, cmd: *u8, event_obj: *u8) {
+    let c: *TerminalContext = { synth::get_associated(self_obj, terminal_context_key()) as *TerminalContext };
+    if c.is_null() || { (*c).cancel_requested } { return; }
+    let event: ak::Event = ak::Event::from_raw(event_obj);
+    let key: u16 = event.key_code();
+    let mods: u64 = event.modifier_flags();
+
+    // Preserve native selection/copy and implement paste explicitly (the view
+    // is read-only so pasted text must go to the PTY, never into the transcript).
+    if (mods & ak::event_modifier_flags_n_s_event_modifier_flag_command) != (0 as u64) {
+        // C
+        if key == (8 as u16) {
+            ak::TextView::from_raw(self_obj).as_text().copy(self_obj);
+            // A
+        } else if key == (0 as u16) {
+            ak::TextView::from_raw(self_obj).as_text().select_all(self_obj);
+            // V
+        } else if key == (9 as u16) {
+            let pb: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("generalPasteboard\0")));
+            let ns: *u8 = rt::msg_id_id(pb, rt::sel(#str_ptr("stringForType:\0")), bridge::nsstring("public.utf8-plain-text"));
+            if ns.is_not_null() {
+                let pasted = bridge::to_text(ns);
+                // Bracketed paste, when the program asked for it. Without the
+                // brackets an editor cannot tell pasted text from typing, so it
+                // auto-indents every line of a pasted block and reflows it into
+                // a staircase — and a pasted newline runs as a command.
+                if { (*c).screen.bracketed_paste() } {
+                    send(c, "\x1b[200~");
+                    send(c, pasted);
+                    send(c, "\x1b[201~");
+                } else {
+                    send(c, pasted);
+                }
+            }
+        }
+        return;
+    }
+
+    if key == (36 as u16) || key == (76 as u16) { send(c, "\r"); return; }
+    if key == (48 as u16) { send(c, "\t"); return; }
+    if key == (51 as u16) { send(c, "\x7f"); return; }
+    if key == (53 as u16) { send(c, "\x1b"); return; }
+
+    // Arrows and Home/End change SHAPE with DECCKM (`ESC[?1h`): `ESC O A`
+    // rather than `ESC [ A`. Every full-screen program turns it on, and one that
+    // gets the wrong form sees a literal `[` followed by an `A` — which is how
+    // arrow keys "do nothing but insert junk" inside `top`, `less` and vim.
+    let app: bool = { (*c).screen.application_cursor_keys() };
+    if key == (123 as u16) { if app { send(c, "\x1bOD"); } else { send(c, "\x1b[D"); } return; }
+    if key == (124 as u16) { if app { send(c, "\x1bOC"); } else { send(c, "\x1b[C"); } return; }
+    if key == (125 as u16) { if app { send(c, "\x1bOB"); } else { send(c, "\x1b[B"); } return; }
+    if key == (126 as u16) { if app { send(c, "\x1bOA"); } else { send(c, "\x1b[A"); } return; }
+    if key == (115 as u16) { if app { send(c, "\x1bOH"); } else { send(c, "\x1b[H"); } return; }
+    if key == (119 as u16) { if app { send(c, "\x1bOF"); } else { send(c, "\x1b[F"); } return; }
+    if key == (117 as u16) { send(c, "\x1b[3~"); return; }
+    if key == (116 as u16) { send(c, "\x1b[5~"); return; }
+    if key == (121 as u16) { send(c, "\x1b[6~"); return; }
+
+    match event.characters() {
+        option::Option[text::Text]::Some(chars) => { send(c, chars); }
+        option::Option[text::Text]::None => {}
+    }
+}
+
+// Gaining or losing the keyboard produces no PTY output, so nothing would
+// redraw and the cursor would keep whichever shape it had when the last byte
+// arrived — the exact confusion this is meant to remove. Repaint on the
+// transition instead.
+//
+// `objc_msgSendSuper` and the BOOL-returning no-argument `class_addMethod`
+// shape are not in objc/synthesis, so both are declared here (the same way
+// appkit_ext declares its own super trampolines).
+#[repr(C)]
+struct ObjcSuper { opaque receiver: *u8, opaque super_class: *u8 }
+
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_i8(sup: *ObjcSuper, sel: *u8) -> i8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_i8_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;
+
+fn call_super_i8(self_obj: *u8, sel: *u8) -> i8 {
+    var sup: ObjcSuper = ObjcSuper { receiver: self_obj, super_class: rt::get_class(#str_ptr("NSTextView\0")) };
+    return { msg_super_i8(#addr_of(sup), sel) };
+}
+
+// Super decides whether the change actually happens, so run it FIRST and only
+// repaint if it agreed — repainting on a refused focus change would draw a
+// state the view is not in.
+//
+// The repaint is DEFERRED by one main-queue turn, and that is load-bearing:
+// -[NSWindow makeFirstResponder:] cannot update its `firstResponder` before
+// calling resignFirstResponder, because resign is allowed to return NO and veto
+// the change. So inside resign, the window still names THIS view as its first
+// responder, view_has_focus still answers true, and a synchronous render would
+// repaint the focused block that is already on screen — leaving a terminal that
+// looks focused forever, since nothing else repaints until the next PTY byte.
+// (becomeFirstResponder runs after the ivar is set and would read correctly;
+// deferring both keeps one path instead of two.)
+fn repaint_for_focus(self_obj: *u8) {
+    let c: *TerminalContext = { synth::get_associated(self_obj, terminal_context_key()) as *TerminalContext };
+    if c.is_null() || { (*c).cancel_requested } { return; }
+    // The VIEW travels as the context, retained for the hop — never the
+    // TerminalContext pointer. Widget::drop can free the context between this
+    // responder change and the next turn (it frees synchronously when the source
+    // already finished cancelling), and a queued repaint holding that pointer
+    // would land in freed memory. Drop also clears this associated object first,
+    // so re-reading it below is precisely how the deferred pass learns it must
+    // do nothing.
+    { dispatch_async_f(main_dispatch_queue(), rt::retain(self_obj), repaint_deferred); }
+}
+
+// The deferred half. Balances the retain above on every path.
+fn repaint_deferred(ctx: *u8) {
+    let c: *TerminalContext = { synth::get_associated(ctx, terminal_context_key()) as *TerminalContext };
+    if c.is_not_null() && !{ (*c).cancel_requested } { render(c); }
+    rt::release(ctx);
+}
+
+fn become_first_responder_imp(self_obj: *u8, cmd: *u8) -> i8 {
+    let ok: i8 = call_super_i8(self_obj, cmd);
+    if ok != (0 as i8) { repaint_for_focus(self_obj); }
+    return ok;
+}
+
+fn resign_first_responder_imp(self_obj: *u8, cmd: *u8) -> i8 {
+    let ok: i8 = call_super_i8(self_obj, cmd);
+    if ok != (0 as i8) { repaint_for_focus(self_obj); }
+    return ok;
+}
+
+// The window becoming or resigning KEY is the other half of focus, and it fires
+// on the window, not the view. Registered with a nil object (any window), which
+// costs a repaint when some other window changes key and saves tracking when
+// this view is mounted, re-parented, or moved between windows.
+// `ctx` is the TEXT VIEW, not the context — the context is looked up through it,
+// exactly as `repaint_deferred` does.
+//
+// Carrying the raw `*TerminalContext` here was a crash on quit, every time: the
+// observer is pinned to the text view, which outlives the context, so after the
+// widget was dropped the handler still held a pointer to freed memory and the
+// next window key change read it. The guard was itself the use-after-free —
+// `cancel_requested` lives INSIDE the freed block, and a null check cannot help
+// because the pointer is dangling, not null.
+//
+// Going through the association fixes it by construction: `destroy_context`
+// nils it, so after teardown the lookup returns null and there is no dangling
+// pointer left to dereference.
+// bugs/terminal-key-observer-outlives-its-context.md
+static KEY_NOTE_CALLS: i32 = 0;
+fn key_note_calls() -> i32 { return KEY_NOTE_CALLS; }
+
+fn window_key_changed(ctx: *u8) {
+    KEY_NOTE_CALLS = KEY_NOTE_CALLS + 1;
+    if ctx.is_null() { return; }
+    let c: *TerminalContext = { synth::get_associated(ctx, terminal_context_key()) as *TerminalContext };
+    if c.is_null() || { (*c).cancel_requested } { return; }
+    render(c);
+}
+
+fn focus_obs_key_became() -> *u8 { return { 30102 as *u8 }; }
+fn focus_obs_key_resigned() -> *u8 { return { 30103 as *u8 }; }
+
+fn terminal_text_view_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("CplusTerminalTextView\0"));
+    if existing.is_not_null() { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSTextView\0")), #str_ptr("CplusTerminalTextView\0"), 0 as usize);
+    let _m: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("keyDown:\0")), key_down_imp, #str_ptr("v@:@\0"));
+    let _b: i8 = { add_method_i8_0(cls, rt::sel(#str_ptr("becomeFirstResponder\0")), become_first_responder_imp, #str_ptr("c@:\0")) };
+    let _r: i8 = { add_method_i8_0(cls, rt::sel(#str_ptr("resignFirstResponder\0")), resign_first_responder_imp, #str_ptr("c@:\0")) };
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+fn new_terminal_text_view(frame: rt::Rect) -> ak::TextView {
+    let alloced: *u8 = rt::msg_id(terminal_text_view_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+    return ak::TextView::from_raw(rt::autorelease(inited));
+}
+
+// Same shape as `window_key_changed`, and the report did not name it: this is
+// registered through `observe_frame_change`, which pins the observer to the
+// SCROLL view — another lifetime that outlives the context. `ctx` is the text
+// view here too, so one lookup rule covers every observer.
+fn resize_pty(ctx: *u8) {
+    if ctx.is_null() { return; }
+    let c: *TerminalContext = { synth::get_associated(ctx, terminal_context_key()) as *TerminalContext };
+    if c.is_null() || { (*c).cancel_requested } { return; }
+    let size: rt::Size = ak::ScrollView::from_raw({ (*c).scroll_view }).content_size();
+    var cols: u16 = (size.w / { (*c).cell_width }) as u16;
+    var rows: u16 = (size.h / { (*c).cell_height }) as u16;
+    if cols < (2 as u16) { cols = 2 as u16; }
+    if rows < (1 as u16) { rows = 1 as u16; }
+    let _ok: bool = { (*c).session.resize(rows, cols) };
+    // The MODEL has to move with the pseudo-terminal, or the program is drawing
+    // to a screen of one size while we lay it out at another: every absolute
+    // cursor address lands on the wrong cell and a full-screen program renders
+    // as diagonal wreckage. This is the whole reason the screen has a size.
+    { (*c).screen.resize(rows, cols); }
+    render(c);
+}
+
+fn start(
+    // "" is the platform's own shell, resolved by `pty::start`. See
+    // `widget.cplus` for why this is not the literal it used to be.
+    shell: str = "",
+    cwd: str = "",
+    max_scrollback: usize = 1048576 as usize,
+    font_size: f64 = 13.0f64,
+    save_history: bool = false,
+) -> option::Option[Widget] {
+    var session: pty::Session = match pty::start(shell, cwd: cwd, save_history: save_history) {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { return option::Option[Widget]::None; }
+    };
+
+    let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    let scroll: ak::ScrollView = ak::ScrollView::new(zero);
+    scroll.set_border_type(ak::BorderType::NSNoBorder);
+    scroll.set_has_vertical_scroller(true);
+    scroll.set_autohides_scrollers(true);
+    scroll.set_draws_background(true);
+    scroll.set_background_color(ak::Color::text_background_color());
+
+    let tv: ak::TextView = new_terminal_text_view(zero);
+    tv.set_editable(false);
+    tv.set_selectable(true);
+    tv.set_rich_text(false);
+    tv.set_draws_background(true);
+    tv.set_background_color(ak::Color::text_background_color());
+    tv.as_text().set_text_color(ak::Color::text_color());
+    let font: ak::Font = ak::Font::monospaced_system_font_of_size(font_size, 0.0f64);
+    tv.as_text().set_font(font);
+    tv.set_text_container_inset(rt::Size { w: 8.0f64, h: 6.0f64 });
+    tv.as_view().set_autoresizing_mask(ak::autoresizing_mask_options_n_s_view_width_sizable);
+    scroll.set_document_view(tv.as_view());
+
+    let c: *TerminalContext = { malloc(#size_of::[TerminalContext]()) as *TerminalContext };
+    if c.is_null() {
+        session.close();
+        return option::Option[Widget]::None;
+    }
+    { *c = TerminalContext {
+        session: session,
+        screen: terminal::new(max_scrollback: max_scrollback),
+        text_view: tv.raw(),
+        scroll_view: scroll.raw(),
+        source: 0 as *u8,
+        cell_width: font.maximum_advancement().w,
+        cell_height: font.ascender() - font.descender() + font.leading(),
+        cancel_requested: false,
+        cancel_finished: false,
+        dispose_requested: false,
+        delivered: 0 as u64,
+        on_command_end: no_handler,
+        on_command_end_ctx: 0 as *u8,
+        has_command_handler: false,
+        on_exit: no_handler,
+        on_exit_ctx: 0 as *u8,
+        has_exit_handler: false,
+        exit_delivered: false,
+    }; }
+    synth::set_associated(tv.raw(), terminal_context_key(), c as *u8);
+
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    let read_type: *u8 = { dlsym(rtld_default, #str_ptr("_dispatch_source_type_read\0")) };
+    if read_type.is_null() {
+        synth::set_associated(tv.raw(), terminal_context_key(), 0 as *u8);
+        { (*c).session.close(); }
+        destroy_context(c);
+        return option::Option[Widget]::None;
+    }
+    let source: *u8 = { dispatch_source_create(read_type, { (*c).session.master_fd() } as u64, 0 as u64, main_dispatch_queue()) };
+    if source.is_null() {
+        synth::set_associated(tv.raw(), terminal_context_key(), 0 as *u8);
+        { (*c).session.close(); }
+        destroy_context(c);
+        return option::Option[Widget]::None;
+    }
+    { (*c).source = source; }
+    { dispatch_set_context(source, c as *u8); }
+    { dispatch_source_set_event_handler_f(source, read_ready); }
+    { dispatch_source_set_cancel_handler_f(source, cancel_finished); }
+    { dispatch_resume(source); }
+
+    // Every observer carries the TEXT VIEW as its context, never the raw
+    // `*TerminalContext`. The observers are pinned to views, which outlive the
+    // context, so a raw pointer here is a dangling read waiting for the next
+    // notification. The view is what the pin already ties them to.
+    akx::observe_frame_change(scroll.as_view(), resize_pty, tv.raw());
+    akx::observe_notification("NSWindowDidBecomeKeyNotification", 0 as *u8, window_key_changed, tv.raw(),
+                              pin_on: tv.raw(), pin_key: focus_obs_key_became());
+    akx::observe_notification("NSWindowDidResignKeyNotification", 0 as *u8, window_key_changed, tv.raw(),
+                              pin_on: tv.raw(), pin_key: focus_obs_key_resigned());
+    resize_pty(tv.raw());
+    return option::Option[Widget]::Some(Widget { _scroll: scroll, _ctx: c });
+}
+
+fn release_view(p: *u8) { rt::release(p); return; }
+
+// ---- test seams -------------------------------------------------------------
+// The lifetime bug this file had is only observable from outside if a test can
+// see the text view, ask what the association currently points at, and force
+// teardown without waiting for the dispatch source to finish cancelling.
+
+fn text_view_of(w: Widget) -> *u8 { return { (*w._ctx).text_view }; }
+
+fn context_of(tv: *u8) -> *u8 {
+    if tv.is_null() { return 0 as *u8; }
+    return synth::get_associated(tv, terminal_context_key());
+}
+
+// Tear the context down NOW rather than when the source's cancel handler runs.
+// A test cannot pump the dispatch queue, and the bug is about what survives the
+// free — so the free has to be reachable synchronously.
+// `ref` so the widget's own `_ctx` can be cleared: a plain by-value parameter
+// BORROWS, so the caller's Widget would still drop afterwards and free the same
+// context a second time.
+fn force_destroy(ref w: Widget) {
+    let c: *TerminalContext = w._ctx;
+    if c.is_null() { return; }
+    w._ctx = 0 as *TerminalContext;
+    { (*c).session.close(); }
+    destroy_context(c);
+}
+
+impl Widget {
+    // Owned AppKit view handle. The Widget must stay alive while the terminal
+    // should remain interactive.
+    fn view(this) -> ak::View { return this._scroll.as_view(); }
+
+    // Retained raw handle for facet::native(handle).
+    fn native_handle(this) -> *u8 { return rt::retain(this._scroll.raw()); }
+
+    // A fixed flex leaf. Size it with width/height/grow like any @ui widget.
+    fn node(this) -> flex::Node {
+        var n: flex::Node = flex::Node::new();
+        n.attach(rt::retain(this._scroll.raw()), release_view);
+        return n;
+    }
+
+    fn send(this, bytes: str) { send(this._ctx, bytes); return; }
+
+    // Put the keyboard IN the terminal. Typing is the primary way to use a
+    // terminal, so an app must be able to say where the caret is rather than
+    // inherit whatever the key-view loop picked — and a keyed focus verb is not
+    // available here, because a view mounted through the native escape hatch is
+    // not addressable by key. Call it AFTER the widget is mounted (on_attach,
+    // or a handler): false means it is not on screen yet, so there is no window
+    // to hold a first responder.
+    fn focus(this) -> bool {
+        if this._ctx.is_null() { return false; }
+        let tv: *u8 = { (*this._ctx).text_view };
+        if tv.is_null() { return false; }
+        let win: *u8 = rt::msg_id(tv, rt::sel(#str_ptr("window\0")));
+        if win.is_null() { return false; }
+        return rt::msg_i8_id(win, rt::sel(#str_ptr("makeFirstResponder:\0")), tv) != (0 as i8);
+    }
+
+    // Does the terminal currently hold the keyboard? The counterpart to focus:
+    // an app that re-focuses after its own controls can ask first instead of
+    // reasserting blindly.
+    fn has_focus(this) -> bool {
+        if this._ctx.is_null() { return false; }
+        let tv: *u8 = { (*this._ctx).text_view };
+        if tv.is_null() { return false; }
+        let win: *u8 = rt::msg_id(tv, rt::sel(#str_ptr("window\0")));
+        if win.is_null() { return false; }
+        return rt::msg_id(win, rt::sel(#str_ptr("firstResponder\0"))) == tv;
+    }
+
+    fn text(this) -> text::Text {
+        if this._ctx.is_null() { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.view() });
+    }
+
+    fn is_running(this) -> bool {
+        return this._ctx.is_not_null() && !{ (*this._ctx).cancel_requested };
+    }
+
+    // ---- driving commands ---------------------------------------------------
+
+    // Run `command` and let the ledger report how it ends. Returns the id the
+    // command will be given, or 0 if it was not sent — a stopped session, or one
+    // that is still busy with the previous command.
+    //
+    // Refusing while busy is what makes the returned id meaningful: ids are
+    // handed out when the SHELL reports the command starting, which has not
+    // happened yet when this returns, so "the next id" is only a sound promise
+    // if nothing else can claim it first.
+    fn run(this, command: str) -> u64 {
+        let c: *TerminalContext = this._ctx;
+        if c.is_null() || { (*c).cancel_requested } { return 0 as u64; }
+        if { (*c).screen.command_state() } == terminal::CommandState::Running { return 0 as u64; }
+        let next: u64 = { (*c).screen.command_id() } +% (1 as u64);
+        // ASKED OF THE SESSION AS WELL, and this is the whole of why: the
+        // screen can only say "integrated" once a mark has ARRIVED, and the
+        // first command of a pane is routinely sent before the shell has drawn
+        // its first prompt. Reading that silence as "no integration" sent the
+        // bracketing printfs into a shell that was about to mark the command
+        // itself: our `133;C` opened a SECOND command on top of the shim's, so
+        // the ledger's ids ran ahead of the `next` promised above and the end
+        // this returns an id for never matched. A build finished, the pane said
+        // so, and the caller waited on it for the rest of the session.
+        if { (*c).screen.has_integration() } || { (*c).session.expects_marks() } {
+            send(c, command);
+            send(c, "\r");
+        } else {
+            // No shell integration — a shell other than zsh, or a shim that
+            // could not be written. The command still has to report itself, so
+            // it is bracketed by marks of our own. Three lines rather than one
+            // `;`-joined line because a command ending in `&` or `;` would make
+            // the joined form a syntax error, and newlines separate anything.
+            // The cost is that the two printf lines are echoed where the user
+            // can see them, which is why the shim exists at all.
+            send(c, "printf '\\033]133;C\\007'\r");
+            send(c, command);
+            send(c, "\r");
+            send(c, "printf '\\033]133;D;%d\\007' \"$?\"\r");
+        }
+        return next;
+    }
+
+    // Interrupt whatever is running, as ^C does.
+    fn interrupt(this) {
+        send(this._ctx, "\x03");
+    }
+
+    // Empty the pane — the visible screen AND the scrollback, the way a
+    // terminal's own Clear does it. NOTHING GOES DOWN THE PTY: the shell is
+    // not asked to print anything and is not interrupted, so the next thing on
+    // screen is whatever the host sends next. That is the whole difference
+    // between this and running `clear`, which arrives too late to spare the
+    // command line it was typed on and wipes that as well.
+    //
+    // The caller decides whether it is allowed to: a command still running owns
+    // the screen it is drawing on, and this does not ask.
+    fn clear(this) {
+        let c: *TerminalContext = this._ctx;
+        if c.is_null() { return; }
+        { (*c).screen.clear(); }
+        render(c);
+    }
+
+    // Whether the shell reports prompt and command marks at all. False means
+    // `command_state` never leaves Idle on its own and `run` falls back to
+    // bracketing commands itself.
+    fn has_integration(this) -> bool {
+        if this._ctx.is_null() { return false; }
+        return { (*this._ctx).screen.has_integration() };
+    }
+
+    fn command_state(this) -> terminal::CommandState {
+        if this._ctx.is_null() { return terminal::CommandState::Idle; }
+        return { (*this._ctx).screen.command_state() };
+    }
+
+    fn command_id(this) -> u64 {
+        if this._ctx.is_null() { return 0 as u64; }
+        return { (*this._ctx).screen.command_id() };
+    }
+
+    fn command_line(this) -> text::Text {
+        if this._ctx.is_null() { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.command_line() });
+    }
+
+    // The exit status of the last command that finished. `None` before any has,
+    // and while a NEW one is running — but not merely because the shell has
+    // drawn its next prompt. The prompt-start mark arrives within microseconds
+    // of the command-finished one, so gating this on the Done state made the
+    // answer evaporate before any caller could read it.
+    fn exit_code(this) -> option::Option[i32] {
+        if this._ctx.is_null() { return option::Option[i32]::None; }
+        if { (*this._ctx).screen.command_state() } == terminal::CommandState::Running {
+            return option::Option[i32]::None;
+        }
+        let code: i32 = { (*this._ctx).screen.exit_code() };
+        if code < (0 as i32) { return option::Option[i32]::None; }
+        return option::Option[i32]::Some(code);
+    }
+
+    // Commands that have run to completion. Poll this to notice one finishing
+    // without having to catch `command_state` mid-transition.
+    fn finished_count(this) -> u64 {
+        if this._ctx.is_null() { return 0 as u64; }
+        return { (*this._ctx).screen.finished_count() };
+    }
+
+    // What the running or last-finished command put on the screen — the text a
+    // build's errors are in.
+    fn output(this) -> text::Text {
+        if this._ctx.is_null() { return text::new(); }
+        return { (*this._ctx).screen.output() };
+    }
+
+    // The shell's working directory, as it reports it after every command.
+    fn cwd(this) -> text::Text {
+        if this._ctx.is_null() { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.cwd() });
+    }
+
+    fn title(this) -> text::Text {
+        if this._ctx.is_null() { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.title() });
+    }
+
+    // Is a full-screen program up? A caller that wants to disable its own
+    // "run a build" button while `vim` has the pane needs to know.
+    fn alternate_screen(this) -> bool {
+        if this._ctx.is_null() { return false; }
+        return { (*this._ctx).screen.alternate_screen() };
+    }
+
+    // Called on the main thread once per command that finishes. Read the result
+    // off the widget from inside it; the handler carries only its own context
+    // pointer, which must outlive the widget.
+    fn on_command_end(this, handler: fn(*u8), ctx: *u8) {
+        let c: *TerminalContext = this._ctx;
+        if c.is_null() { return; }
+        { (*c).on_command_end = handler; }
+        { (*c).on_command_end_ctx = ctx; }
+        { (*c).has_command_handler = true; }
+    }
+
+    // Called once when the shell itself goes away.
+    fn on_exit(this, handler: fn(*u8), ctx: *u8) {
+        let c: *TerminalContext = this._ctx;
+        if c.is_null() { return; }
+        { (*c).on_exit = handler; }
+        { (*c).on_exit_ctx = ctx; }
+        { (*c).has_exit_handler = true; }
+    }
+
+    // The shell's own exit status, once it has exited.
+    fn shell_exit_code(this) -> option::Option[i32] {
+        if this._ctx.is_null() { return option::Option[i32]::None; }
+        return { (*this._ctx).session.poll_exit() };
+    }
+
+    fn stop(this) { request_cancel(this._ctx); return; }
+
+    fn drop(ref this) {
+        let c: *TerminalContext = this._ctx;
+        if c.is_null() { return; }
+        // Cleared here too, not only in `destroy_context`: teardown may be
+        // DEFERRED to the cancel handler, and a dropped widget must stop
+        // responding at once rather than when the source finishes.
+        synth::set_associated({ (*c).text_view }, terminal_context_key(), 0 as *u8);
+        { (*c).dispose_requested = true; }
+        if { (*c).cancel_finished } {
+            destroy_context(c);
+        } else {
+            request_cancel(c);
+        }
+        this._ctx = 0 as *TerminalContext;
+    }
+}
+
+// ---- tests -------------------------------------------------------------------
+//
+// THE WIDGET'S OWN HALF, moved here from `test_main.cplus`.
+//
+// These drive a real NSView through a real run loop, so they can only run where
+// AppKit is — which is this file. Keeping them in the test root is what forced
+// that root to `import "objc/runtime"` and `import "appkit/appkit"`, and a root
+// that does cannot be compiled on any other platform: it made the whole package
+// macOS-only, including the 25 screen-model tests that touch nothing native.
+//
+// `terminal_ui::` is gone from every line below — it was this module's own alias
+// in the root, and a module does not qualify itself.
+//
+// The Windows sibling (`backend_windows.cplus`) shadows this whole file and
+// carries its own tests for the refusal it answers instead.
+
+// ---- the widget -------------------------------------------------------------
+
+extern fn CFRunLoopRunInMode(mode: *u8, seconds: f64, return_after_source: i8) -> i32;
+
+// Let the main run loop turn so the widget's dispatch read source fires and
+// render() actually runs — several times, which is the point.
+fn pump(times: i32) {
+    let mode: *u8 = appkit_string_global(#str_ptr("kCFRunLoopDefaultMode\0"));
+    var i: i32 = 0 as i32;
+    while i < times {
+        let _r: i32 = { CFRunLoopRunInMode(mode, 0.05f64, 0 as i8) };
+        i = i +% (1 as i32);
+    }
+}
+
+#[test]
+fn widget_focus_reports_failure_off_screen() {
+    // Typing is the primary way to drive a terminal, so `focus` is part of the
+    // widget's contract — and its honest answer when the widget is not mounted
+    // is FALSE. A window is what holds a first responder; silently returning
+    // true would let an app believe its pane was ready to type into.
+    match start() {
+        option::Option[Widget]::Some(w) => {
+            assert w.is_running();
+            assert !w.focus();
+            assert !w.has_focus();
+            w.stop();
+            assert !w.is_running();
+            // Focus stays false on a stopped widget rather than trapping.
+            assert !w.focus();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+#[test]
+fn focus_probe_is_false_without_a_key_window() {
+    // What the cursor's shape is keyed on. A null view, and a live-but-unmounted
+    // one, both have no window to hold a first responder — so the answer is
+    // false and the cursor draws its NOT-focused shape.
+    assert view_has_focus(0 as *u8) == false;
+    match start() {
+        option::Option[Widget]::Some(w) => {
+            assert w.has_focus() == false;
+            // Rendering must survive the no-window state — it is where every
+            // widget starts, and render() paints the cursor on every pass.
+            w.send("printf hi\n");
+            pump(4 as i32);
+            assert w.has_focus() == false;
+            w.stop();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+// Counter for the completion callback. A `static` because the handler is a
+// plain fn pointer with a context argument, which is the shape every native
+// callback in this package uses.
+static COMMAND_ENDED: i32 = 0;
+fn note_command_ended(_ctx: *u8) {
+    COMMAND_ENDED = COMMAND_ENDED + 1;
+}
+
+#[test]
+fn the_widget_runs_a_command_and_reports_how_it_ended() {
+    // The whole point of the API, end to end: an application asks for a command
+    // to run and finds out when it finished, what it exited with, and what it
+    // printed — without watching the byte stream itself.
+    match start() {
+        option::Option[Widget]::Some(w) => {
+            COMMAND_ENDED = 0;
+            w.on_command_end(note_command_ended, 0 as *u8);
+
+            var i: i32 = 0 as i32;
+            while i < (200 as i32) && !w.has_integration() {
+                pump(1 as i32);
+                i = i +% (1 as i32);
+            }
+            assert w.has_integration();
+            assert w.command_state() == terminal::CommandState::Idle;
+            assert match w.exit_code() {
+                option::Option[i32]::Some(_) => false,
+                option::Option[i32]::None => true,
+            };
+
+            let id: u64 = w.run("printf 'built\\n'; (exit 2)");
+            assert id == (1 as u64);
+
+            var j: i32 = 0 as i32;
+            while j < (400 as i32) && w.finished_count() == (0 as u64) {
+                pump(1 as i32);
+                j = j +% (1 as i32);
+            }
+            assert w.finished_count() == (1 as u64);
+            assert w.command_id() == (1 as u64);
+            assert match w.exit_code() {
+                option::Option[i32]::Some(c) => c == (2 as i32),
+                option::Option[i32]::None => false,
+            };
+            let out: text::Text = w.output();
+            assert out.equals("built\n");
+            // Fired once, from the read handler, on the main thread.
+            assert COMMAND_ENDED == (1 as i32);
+
+            // The pane knows where it is, too.
+            let cwd: text::Text = w.cwd();
+            assert cwd.has_prefix("/");
+
+            w.stop();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+#[test]
+fn clear_empties_the_widget_without_disturbing_the_shell() {
+    // WHAT A RUN PRESS DOES BEFORE IT SENDS THE BUILD: empty the pane, so that
+    // everything in it afterwards belongs to the run the user just asked for.
+    // Nothing goes down the pty, which is the half worth testing — the ledger
+    // keeps counting and the next command still reports itself, so a caller
+    // that cleared is not a caller that lost track of its own build.
+    match start() {
+        option::Option[Widget]::Some(w) => {
+            var i: i32 = 0 as i32;
+            while i < (200 as i32) && !w.has_integration() {
+                pump(1 as i32);
+                i = i +% (1 as i32);
+            }
+            assert w.has_integration();
+
+            let first: u64 = w.run("printf 'old\\n'");
+            assert first == (1 as u64);
+            var j: i32 = 0 as i32;
+            while j < (400 as i32) && w.finished_count() == (0 as u64) {
+                pump(1 as i32);
+                j = j +% (1 as i32);
+            }
+            assert w.finished_count() == (1 as u64);
+            let before: text::Text = w.text();
+            assert before.count() > (0 as usize);
+
+            w.clear();
+            assert w.text().count() == (0 as usize);
+
+            // Still the same session, and still the same ledger: the next
+            // command gets the NEXT id rather than starting the count again,
+            // and it ends where the caller is already listening.
+            let second: u64 = w.run("printf 'new\\n'");
+            assert second == (2 as u64);
+            var k: i32 = 0 as i32;
+            while k < (400 as i32) && w.finished_count() < (2 as u64) {
+                pump(1 as i32);
+                k = k +% (1 as i32);
+            }
+            assert w.finished_count() == (2 as u64);
+            let out: text::Text = w.output();
+            assert out.equals("new\n");
+
+            w.stop();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+// Counter for the test below. Separate from COMMAND_ENDED so the two tests
+// cannot read each other's tally.
+static EARLY_ENDED: i32 = 0;
+fn note_early_ended(_ctx: *u8) {
+    EARLY_ENDED = EARLY_ENDED + 1;
+}
+
+#[test]
+fn a_command_sent_before_the_first_prompt_still_reports_its_own_end() {
+    // THE CASE EVERY IDE PANE IS: a build starts the moment the pane opens, so
+    // the first command is sent before the shell has drawn a prompt and
+    // therefore before any mark could have arrived. The test above waits for
+    // `has_integration` first, which is precisely the wait a real caller does
+    // not do — and the wait that hid this: with the shim installed but not yet
+    // heard from, `run` bracketed the command with printf marks of its own,
+    // those marks opened a SECOND command on top of the shim's, and the id
+    // promised here was never the id that ended. The caller's build finished on
+    // screen and its status chip said "Building" for the rest of the session.
+    match start() {
+        option::Option[Widget]::Some(w) => {
+            EARLY_ENDED = 0;
+            w.on_command_end(note_early_ended, 0 as *u8);
+
+            // No pump: nothing has been read, so no mark has been seen. This is
+            // the state a first Run press actually finds.
+            assert !w.has_integration();
+
+            let id: u64 = w.run("printf 'early\\n'; (exit 3)");
+            assert id == (1 as u64);
+
+            var j: i32 = 0 as i32;
+            while j < (400 as i32) && w.finished_count() == (0 as u64) {
+                pump(1 as i32);
+                j = j +% (1 as i32);
+            }
+
+            // The id the caller was promised is the id that ended — the whole
+            // contract, and the half that was broken.
+            assert w.finished_count() == (1 as u64);
+            assert w.command_id() == id;
+            assert match w.exit_code() {
+                option::Option[i32]::Some(c) => c == (3 as i32),
+                option::Option[i32]::None => false,
+            };
+            assert w.output().equals("early\n");
+            assert EARLY_ENDED == (1 as i32);
+
+            // And nothing of ours was typed at the user: the shim marks the
+            // command, so the pane holds what a developer would have typed.
+            assert !w.text().contains("133;C");
+
+            w.stop();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+#[test]
+fn the_widget_refuses_to_run_over_a_busy_shell() {
+    // The id `run` returns is only a sound promise if nothing else can claim it
+    // first, which is why a busy pane is refused rather than queued.
+    match start() {
+        option::Option[Widget]::Some(w) => {
+            var i: i32 = 0 as i32;
+            while i < (200 as i32) && !w.has_integration() {
+                pump(1 as i32);
+                i = i +% (1 as i32);
+            }
+            assert w.has_integration();
+
+            let first: u64 = w.run("sleep 2");
+            assert first == (1 as u64);
+            var j: i32 = 0 as i32;
+            while j < (100 as i32) && w.command_state() != terminal::CommandState::Running {
+                pump(1 as i32);
+                j = j +% (1 as i32);
+            }
+            assert w.command_state() == terminal::CommandState::Running;
+            assert w.run("echo nope") == (0 as u64);
+
+            // ^C gets the pane back rather than waiting the sleep out.
+            w.interrupt();
+            var k: i32 = 0 as i32;
+            while k < (200 as i32) && w.finished_count() == (0 as u64) {
+                pump(1 as i32);
+                k = k +% (1 as i32);
+            }
+            assert w.finished_count() == (1 as u64);
+            w.stop();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+#[test]
+fn a_stopped_widget_answers_rather_than_traps() {
+    match start() {
+        option::Option[Widget]::Some(w) => {
+            w.stop();
+            assert w.run("true") == (0 as u64);
+            assert w.command_state() == terminal::CommandState::Idle;
+            assert w.finished_count() == (0 as u64);
+            assert !w.alternate_screen();
+            let out: text::Text = w.output();
+            assert out.is_empty();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_attr_at(recv: *u8, sel: *u8, name: *u8, idx: u64, eff: *rt::Range) -> *u8;
+
+// How many characters carry `name`, over a string of `len` UTF-16 units.
+fn attr_span(storage: *u8, name: *u8, len: u64) -> u64 {
+    let q: *u8 = rt::sel(#str_ptr("attribute:atIndex:effectiveRange:\0"));
+    var i: u64 = 0 as u64;
+    var n: u64 = 0 as u64;
+    while i < len {
+        var eff: rt::Range = rt::Range { location: 0 as u64, length: 0 as u64 };
+        if { msg_attr_at(storage, q, name, i, #addr_of(eff)) } != (0 as *u8) { n = n +% (1 as u64); }
+        i = i +% (1 as u64);
+    }
+    return n;
+}
+
+#[test]
+fn the_cursor_stays_one_cell_across_repeated_renders() {
+    // The cursor is drawn with text attributes, and `-[NSTextView setString:]`
+    // stamps the view's TYPING attributes onto the new text. NSTextView derives
+    // those from the character at the insertion point — which render() parks
+    // directly on the cell it just styled. So the cursor's own attribute became
+    // the typing attribute and the NEXT render painted it over the WHOLE string:
+    // the first frame looked right and every frame after drew the entire line as
+    // one enormous cursor.
+    //
+    // This has to drive the REAL widget through REAL renders. Calling
+    // paint_cursor by hand does not reproduce it — the typing attributes are
+    // only re-derived once the view is in a window with a live layout manager
+    // and the run loop is turning.
+    match start() {
+        option::Option[Widget]::Some(w) => {
+            let scroll: *u8 = w.native_handle();
+            let win: ak::Window = ak::Window::new(
+                rt::Rect { x: 0.0f64, y: 0.0f64, w: 500.0f64, h: 200.0f64 },
+                15 as u64, ak::BackingStoreType::NSBackingStoreBuffered, false);
+            win.set_content_view(ak::View::from_raw(scroll));
+            let tv_raw: *u8 = rt::msg_id(scroll, rt::sel(#str_ptr("documentView\0")));
+            assert tv_raw.is_not_null();
+            // The insertion point — and therefore the typing attributes that
+            // carried the bug — is only maintained for a first responder in an
+            // ordered-in window. Without these two calls the widget renders but
+            // never re-derives typing attributes, and the test passes against
+            // the bug.
+            win.make_key_and_order_front(0 as *u8);
+            let _fr: i8 = rt::msg_i8_id(win.raw(), rt::sel(#str_ptr("makeFirstResponder:\0")), tv_raw);
+
+            w.send("printf 'ABC'\n");
+            pump(40 as i32);
+            w.send("printf 'DEF'\n");
+            pump(40 as i32);
+
+            let ns: *u8 = rt::msg_id(tv_raw, rt::sel(#str_ptr("string\0")));
+            let len: u64 = rt::msg_u64(ns, rt::sel(#str_ptr("length\0")));
+            assert len > (0 as u64);
+
+            let bg: *u8 = appkit_string_global(#str_ptr("NSBackgroundColorAttributeName\0"));
+            let ul: *u8 = appkit_string_global(#str_ptr("NSUnderlineStyleAttributeName\0"));
+            assert bg.is_not_null();
+            assert ul.is_not_null();
+
+            match ak::TextView::from_raw(tv_raw).text_storage() {
+                option::Option[ak::TextStorage]::Some(st) => {
+                    let s: *u8 = st.as_mutable_attributed_string().raw();
+                    // Not in a key window, so the cursor is the UNFOCUSED shape:
+                    // exactly one underlined cell, and no reverse-video block.
+                    // The bug made both of these the whole document.
+                    assert attr_span(s, ul, len) == (1 as u64);
+                    assert attr_span(s, bg, len) == (0 as u64);
+                }
+                option::Option[ak::TextStorage]::None => { assert false; }
+            }
+            w.stop();
+        }
+        option::Option[Widget]::None => { assert false; }
+    }
+}
+
+// ---- the window-key observer must not outlive the context ------------------
+
+// Post a notification by name with a nil object — what AppKit does when a
+// window becomes or resigns key. Every registered observer for that name runs.
+fn post_note(name: str) {
+    let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")),
+                             rt::sel(#str_ptr("defaultCenter\0")));
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                       bridge::nsstring(name), 0 as *u8);
+}
+
+#[test]
+fn a_key_notification_after_teardown_touches_nothing() {
+    // CRASH ON QUIT, every time, once the widget was dropped and the window then
+    // closed: the key observer is pinned to the TEXT VIEW, which outlives the
+    // malloc'd context it dereferenced. The guard was itself the use-after-free —
+    // `cancel_requested` lives inside the freed block.
+    //
+    // Silent without ASan (freed-but-mapped memory reads as garbage and the
+    // process exits), which is why it survived. Run with `cpc test --asan` to
+    // see it fail without the fix.
+    // bugs/terminal-key-observer-outlives-its-context.md
+    match start() {
+        option::Option[Widget]::Some(w) => {
+            var wv: Widget = w;
+            assert wv.is_running();
+            let tv: *u8 = text_view_of(wv);
+            assert tv.is_not_null();
+            // Alive: the context is reachable through the view.
+            assert context_of(tv) != (0 as *u8);
+
+            wv.stop();
+            force_destroy(wv);
+
+            // The association is cleared BY the free, so every observer that
+            // goes through it now finds nothing — no dangling pointer is left
+            // to dereference.
+            assert context_of(tv) == (0 as *u8);
+
+            // The observers are still registered (pinned to a live view) and
+            // still FIRE — asserted, because a test that proves the handler is
+            // safe while never invoking it proves nothing. Counted with `>`
+            // rather than an exact delta: widgets from earlier tests leave their
+            // own observers registered, so each post reaches several.
+            let before: i32 = key_note_calls();
+            post_note("NSWindowDidBecomeKeyNotification");
+            let after_became: i32 = key_note_calls();
+            assert after_became > before;
+            post_note("NSWindowDidResignKeyNotification");
+            assert key_note_calls() > after_became;
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+// The widget half of what `pty.cplus`'s `the_posix_pty_backend_is_present`
+// asserts for the session. Both Windows siblings assert the opposite.
+#[test]
+fn the_appkit_widget_backend_is_present() {
+    assert supported();
+}

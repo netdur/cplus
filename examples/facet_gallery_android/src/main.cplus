@@ -1,0 +1,51 @@
+// Facet Gallery on Android.
+//
+// THERE IS NO JAVA IN THIS APP, and no Android-shaped code either. The entry
+// below is the same shape the iOS gallery's is: set a theme, call
+// `run_component`, return. `facet_android`'s Activity finds this function by
+// NAME — `cplus.facet.main` in AndroidManifest.xml — and the Android facade
+// stores the tree instead of entering a loop, because onCreate returns.
+//
+// So the only Android-specific artifact in this app is its manifest, which an
+// Android app must write anyway.
+
+import "facet/facet" as core;
+import "facet/component" as component;
+import "facet/theme" as theme;
+import "facet/vocabulary" as vocab;
+import "facet_runtime/runtime" as runtime;
+import "./gallery" as gallery;
+
+struct Gallery { }
+
+impl Gallery {
+    fn new() -> Gallery { return Gallery { }; }
+}
+
+impl Gallery: component::Component {
+    fn build(ref this) -> core::Node { return gallery::build(); }
+}
+
+impl Gallery: component::Lifecycle {
+    // The first screen cannot be chosen until the tree is MOUNTED, and this is
+    // the hook that says it is. Doing it in `build` would call `switch_to`
+    // against a tree nothing has walked yet — the same trap facet_uikit records
+    // about its launch hook.
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } gallery::show_home(); return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
+}
+
+export extern fn facet_gallery_android_main() -> i32 {
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
+        surface: vocab::Color::adaptive(
+            light: vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
+            dark: vocab::Color::rgba(0.11, 0.11, 0.13, 1.0),
+        ),
+    ));
+    runtime::run_component(Gallery::new(), title: "Facet Gallery",
+                           width: 390.0, height: 844.0);
+    return 0;
+}

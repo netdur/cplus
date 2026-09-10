@@ -21,6 +21,14 @@ edition = "2026"
 [ios]
 entry = "src/main.cplus"
 
+# ANDROID RUNS THE SAME SOURCE. The entry is the same file and the same
+# function; what differs is the manifest, which is where a platform's
+# configuration belongs. `facet_android`'s Activity finds
+# `facet_gallery_ios_main` by name — AndroidManifest.xml's `cplus.facet.main` —
+# so the app needs no Android-shaped export, no Java, and no Gradle.
+[android]
+entry = "src/main.cplus"
+
 [dependencies]
 stdlib      = "*"
 facet       = "*"
@@ -42,3 +50,16 @@ agent_mcp   = "*"
 agent_inapp = "*"
 json        = "*"
 webkit      = "*"
+
+# Android's closure. Same rule as above: this manifest names it, not
+# facet_android's own.
+[android.dependencies]
+facet_android = "*"
+android_view  = "*"
+jni           = "*"
+agent_android = "*"
+agent_core    = "*"
+agent_mcp     = "*"
+agent_inapp   = "*"
+json          = "*"
+events        = "*"

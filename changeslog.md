@@ -913,6 +913,37 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   menu and no warning. It warns once now, like every other not-yet-built
   kind. `facet_gtk`'s README carries the same decision in writing.
 
+### Language — a label names a parameter of the receiver's own method
+- **Two types may share a labeled method name.** Named arguments are rewritten
+  into positional order by the LOWERING pass, which runs before types exist and
+  so keys method candidates by bare name — every type declaring `on` was a
+  candidate for `s.on(v: 5)`, and the call was **E1002** whenever those
+  candidates disagreed. It now settles only what every candidate agrees on and
+  leaves the rest to sema, which knows the receiver's type and arranges the call
+  from that type's own parameter list. `reload(then:, then_ctx:)` on two stores
+  no longer breaks either one's callers, and no method needs renaming to make a
+  labeled call resolve.
+- **Two identical declarations are one arrangement.** The dedup that decides
+  whether two candidates would lower a call the same way compared the spliced
+  default *expressions*, and an `Expr` carries its span — so the `0` in one impl
+  block never equalled the `0` in another, and any call omitting a shared
+  default was reported as ambiguous between two declarations a reader cannot
+  tell apart. Defaults now compare by VALUE.
+- **A label that fits only another type's method was a MISCOMPILE, not an
+  error.** Given `A::go(v, ctx = 0)` and `B::go(ctx, v = 9)`, the call
+  `a.go(ctx: 3)` had exactly one candidate that accepted it — B's — and that
+  arrangement was applied to an `A` receiver: the label `ctx` bound to A's
+  parameter `v`, and B's default `9` was spliced into A's `ctx`. It compiled,
+  and returned a value, for a call whose required argument was never given.
+  Accepting is not belonging: with more than one candidate, a candidate
+  *rejecting* the call is itself type-dependent information, so the decision
+  goes to sema. `a.go(ctx: 3)` is now E0308, naming A's own `v`.
+- **E1002 is left for the callees that really have no parameter names**: a
+  fn-pointer value (its type records parameter types, not names — a handler
+  field included), and a method reached through a generic receiver, which is not
+  one type until it is instantiated. Its message says which, instead of
+  describing method-name matching that no longer decides anything.
+
 ### Docs & process
 - Vendor tutorial / guide / ref layout across packages; facet and
   facet_appkit docs closed Stage 4 / audit.

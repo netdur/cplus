@@ -10,11 +10,17 @@ import "android_view/widgets" as w;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/text_button" as text_button;
+import "facet/tree" as tree;
+import "facet/split" as split;
+import "facet/symbol" as symbol;
 import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
 import "./controls" as controls;
+import "./recycler" as recycler;
+import "./swipe" as swipe;
 import "./geometry" as geometry;
 import "./dex" as dex;
 import "./log" as log;
@@ -31,10 +37,27 @@ import "./log" as log;
 // of the native tree.
 fn wants_view(n: *core::Node) -> bool {
     let kind: u32 = core::kind_of(n);
+    if non_view_kind(kind) { return false; }
     if kind != core::K_NODE { return true; }
     if gestures::has_gestures(n) { return true; }
     if wants_painting(n) { return true; }
     return { (*n).key() } != "";
+}
+
+// The kinds that are DESCRIPTIONS, not rectangles. A `swipe_item` is a row the
+// way a `menu_item` is: it is read by the control that owns it and built into
+// something of that control's own. Giving one a view of its own is not a
+// missing feature, it is an empty box in the layout — which is what this
+// backend did to a swipeable's actions until the swipe was built.
+fn non_view_kind(kind: u32) -> bool {
+    if kind == props::K_SWIPE_ITEM { return true; }
+    if kind == props::K_SPAN { return true; }
+    if kind == props::K_MENU_ITEM { return true; }
+    if kind == props::K_CONTEXT_MENU { return true; }
+    if kind == props::K_CONTEXT_MENU_ITEM { return true; }
+    if kind == props::K_MENU { return true; }
+    if kind == props::K_TOOLBAR_ITEM { return true; }
+    return false;
 }
 
 // Is this node asking for something only a view can express?
@@ -45,7 +68,32 @@ fn wants_view(n: *core::Node) -> bool {
 // on a card sheet rendered as bare floating words.
 fn wants_painting(n: *core::Node) -> bool {
     if core::background_color(n).is_set() { return true; }
+    // A BRUSH IS A BACKGROUND TOO. Checking only `background_color` is exactly
+    // the incomplete rule the comment above warns about, and it cost the same
+    // thing here it cost facet_appkit: the decoration demo's four rounded
+    // swatches had a brush and a radius, no `background_color`, and so no view
+    // at all — a gap where four coloured rectangles should be, with nothing in
+    // the log.
+    let b: vocab::Brush = core::background(n);
+    if b.start.is_set() { return true; }
+    if b.end.is_set() { return true; }
+    let r: vocab::Corners = core::corner_radius(n);
+    if r.top_leading != 0.0f64 { return true; }
+    if r.top_trailing != 0.0f64 { return true; }
+    if r.bottom_leading != 0.0f64 { return true; }
+    if r.bottom_trailing != 0.0f64 { return true; }
+    if core::clip(n).kind != (0 as i64) { return true; }
+    // A shadow needs BOTH a colour and an opacity to draw anything, which is
+    // what `Shadow::none()` is — asking for either alone is not a request for a
+    // rectangle.
+    let sh: vocab::Shadow = core::shadow(n);
+    if sh.color.is_set() && sh.opacity != 0.0f64 { return true; }
     if core::opacity(n) != 1.0f64 { return true; }
+    // A TRANSFORM needs something to transform.
+    if core::rotation(n) != 0.0f64 { return true; }
+    if core::scale(n) != 1.0f64 { return true; }
+    if core::translation_x(n) != 0.0f64 { return true; }
+    if core::translation_y(n) != 0.0f64 { return true; }
     if !core::is_visible(n) { return true; }
     return false;
 }
@@ -60,6 +108,10 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // BEFORE anything is written to it — `setText` dereferences LayoutParams.
     // See controls::attach_layout_params.
     controls::attach_layout_params(v);
+    // BEFORE the band writes anything: a widget that arrives WITH a background
+    // — every Material button does — needs that drawable remembered, because
+    // "facet declares no colour" means "the platform's", not "none".
+    paint::remember_native_background(v);
     // INTRINSIC SIZE. flex sizes a node from its style, its children, or — for
     // a leaf that knows its own content — a measure callback. A label and a
     // button have no children and no explicit height, so without this they lay
@@ -74,6 +126,11 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // bit set. One code path with apply, so the two cannot drift.
     paint::configure(v, n, paint::all_bits());
     apply_for_kind(kind, v, n, paint::all_bits());
+    // A CONTEXT MENU IS THE PARENT'S, and this is the moment it can be hung:
+    // the node's children are already in the tree — build ran long before mount
+    // — even though no view exists for a menu or its items and none ever will.
+    // facet_appkit calls its own `attach_context_menu` from exactly here.
+    controls::attach_context_menu(v, n);
     return v;
 }
 
@@ -82,6 +139,38 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_LABEL { return controls::create_label(n); }
     if kind == props::K_BUTTON { return controls::create_button(n); }
     if kind == props::K_BOX { return controls::create_container(n); }
+    if kind == props::K_CHECKBOX { return controls::create_checkbox(n); }
+    if kind == props::K_TOGGLE { return controls::create_toggle(n); }
+    if kind == props::K_RADIO { return controls::create_radio(n); }
+    if kind == props::K_SLIDER { return controls::create_slider(n); }
+    if kind == props::K_PROGRESS { return controls::create_progress(n); }
+    if kind == props::K_SPINNER { return controls::create_spinner(n); }
+    if kind == props::K_TEXT_FIELD { return controls::create_text_field(n); }
+    if kind == text_button::K_TEXT_BUTTON { return controls::create_text_button(n); }
+    if kind == props::K_TEXT_AREA { return controls::create_multiline(n); }
+    if kind == props::K_SEARCH_FIELD { return controls::create_search_field(n); }
+    if kind == props::K_IMAGE { return controls::create_image(n); }
+    if kind == props::K_ICON_BUTTON { return controls::create_icon_button(n); }
+    if kind == props::K_SCROLL { return controls::create_scroll(n); }
+    if kind == props::K_STEPPER { return controls::create_stepper(n); }
+    if kind == props::K_LIST { return recycler::create_list(n); }
+    if kind == tree::K_TREE { return recycler::create_tree(n); }
+    if kind == split::K_SPLIT { return controls::create_split(n); }
+    if kind == props::K_CANVAS { return controls::create_canvas(n); }
+    if kind == props::K_PAGE_DOTS { return controls::create_page_dots(n); }
+    if kind == props::K_DATE_PICKER { return controls::create_date_picker(n); }
+    if kind == props::K_TIME_PICKER { return controls::create_time_picker(n); }
+    if kind == props::K_BORDERED { return controls::create_bordered(n); }
+    if kind == props::K_POPUP { return controls::create_popup(n); }
+    if kind == props::K_WEB { return controls::create_web(n); }
+    if kind == props::K_REFRESHABLE { return recycler::create_refreshable(n); }
+    if kind == props::K_TABLE { return controls::create_table(n); }
+    if kind == props::K_COLLECTION { return recycler::create_collection(n); }
+    if kind == props::K_CAROUSEL { return controls::create_carousel(n); }
+    if kind == props::K_HYBRID_WEB { return controls::create_hybrid_web(n); }
+    if kind == props::K_TABS { return controls::create_tabs(n); }
+    if kind == symbol::K_SYMBOL { return controls::create_symbol(n); }
+    if kind == props::K_SWIPEABLE { return swipe::create(n); }
     // Not built yet. A backend that silently substituted a blank container for
     // a control it does not have would be indistinguishable from a finished
     // one, so MANIFEST.md §2 names every kind that lands here and each warns
@@ -99,6 +188,12 @@ fn apply(ctx: *u8, n: *core::Node) {
     if d == (0 as u64) { return; }
     paint::configure(v, n, d);
     apply_for_kind(core::kind_of(n), v, n, d);
+    // A CONTEXT MENU IS REBUILT WHEN ITS ITEMS SAY SO. A menu and its items
+    // have no views, so this walk never visits them and nothing ever clears
+    // their dirty bits — reading those bits from the PARENT, which does apply,
+    // is the only place the change can be noticed. Rebuilding is idempotent, so
+    // a bit that stays set costs a few JNI calls and nothing else.
+    controls::refresh_context_menu(v, n);
     // A node that measures ITSELF has just been written to, so its measurement
     // is stale — and nothing else in the pipeline knows that. flex's
     // incremental cache prunes a subtree whose STYLE is unchanged, and
@@ -110,14 +205,74 @@ fn apply(ctx: *u8, n: *core::Node) {
 }
 
 fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
+    if kind == props::K_BOX { controls::apply_box(v, n, dirty); return; }
     if kind == props::K_LABEL { controls::apply_label(v, n, dirty); return; }
     if kind == props::K_BUTTON { controls::apply_button(v, n, dirty); return; }
+    if kind == props::K_CHECKBOX { controls::apply_checkbox(v, n, dirty); return; }
+    if kind == props::K_TOGGLE { controls::apply_toggle(v, n, dirty); return; }
+    if kind == props::K_RADIO { controls::apply_radio(v, n, dirty); return; }
+    if kind == props::K_SLIDER { controls::apply_slider(v, n, dirty); return; }
+    if kind == props::K_PROGRESS { controls::apply_progress(v, n, dirty); return; }
+    if kind == props::K_SPINNER { controls::apply_spinner(v, n, dirty); return; }
+    if kind == props::K_TEXT_FIELD { controls::apply_text_field(v, n, dirty); return; }
+    if kind == text_button::K_TEXT_BUTTON { controls::apply_text_button(v, n, dirty); return; }
+    if kind == props::K_TEXT_AREA { controls::apply_text_area(v, n, dirty); return; }
+    if kind == props::K_SEARCH_FIELD { controls::apply_search_field(v, n, dirty); return; }
+    if kind == props::K_IMAGE { controls::apply_image(v, n, dirty); return; }
+    if kind == props::K_ICON_BUTTON { controls::apply_icon_button(v, n, dirty); return; }
+    if kind == props::K_SCROLL { controls::apply_scroll(v, n, dirty); return; }
+    if kind == props::K_STEPPER { controls::apply_stepper(v, n, dirty); return; }
+    if kind == props::K_LIST { recycler::apply_list(v, n, dirty); return; }
+    if kind == tree::K_TREE { recycler::apply_tree(v, n, dirty); return; }
+    if kind == split::K_SPLIT { controls::apply_split(v, n, dirty); return; }
+    if kind == props::K_CANVAS { controls::apply_canvas(v, n, dirty); return; }
+    if kind == props::K_PAGE_DOTS { controls::apply_page_dots(v, n, dirty); return; }
+    if kind == props::K_DATE_PICKER { controls::apply_date_picker(v, n, dirty); return; }
+    if kind == props::K_TIME_PICKER { controls::apply_time_picker(v, n, dirty); return; }
+    if kind == props::K_BORDERED { controls::apply_bordered(v, n, dirty); return; }
+    if kind == props::K_POPUP { controls::apply_popup(v, n, dirty); return; }
+    if kind == props::K_WEB { controls::apply_web(v, n, dirty); return; }
+    if kind == props::K_REFRESHABLE { recycler::apply_refreshable(v, n, dirty); return; }
+    if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }
+    if kind == props::K_COLLECTION { recycler::apply_collection(v, n, dirty); return; }
+    if kind == props::K_CAROUSEL { controls::apply_carousel(v, n, dirty); return; }
+    if kind == props::K_HYBRID_WEB { controls::apply_hybrid_web(v, n, dirty); return; }
+    if kind == props::K_TABS { controls::apply_tabs(v, n, dirty); return; }
+    if kind == symbol::K_SYMBOL { controls::apply_symbol(v, n, dirty); return; }
+    if kind == props::K_SWIPEABLE { swipe::apply(v, n, dirty); return; }
     return;
 }
 
+// Every control whose size comes from its CONTENT rather than from the style
+// it was given. A checkbox is as wide as its box plus its label; a seek bar is
+// as tall as its thumb. Miss one and it keeps the box measured for its old
+// content — see `apply` for why this is not flex's job.
 fn has_intrinsic_size(kind: u32) -> bool {
     if kind == props::K_LABEL { return true; }
     if kind == props::K_BUTTON { return true; }
+    if kind == props::K_CHECKBOX { return true; }
+    if kind == props::K_TOGGLE { return true; }
+    if kind == props::K_RADIO { return true; }
+    if kind == props::K_SLIDER { return true; }
+    if kind == props::K_PROGRESS { return true; }
+    if kind == props::K_SPINNER { return true; }
+    if kind == props::K_TEXT_FIELD { return true; }
+    if kind == text_button::K_TEXT_BUTTON { return true; }
+    if kind == props::K_TEXT_AREA { return true; }
+    if kind == props::K_SEARCH_FIELD { return true; }
+    // An image measures from its BITMAP, which arrives with the source — so it
+    // is intrinsic in exactly the same sense a label is.
+    if kind == props::K_IMAGE { return true; }
+    if kind == props::K_ICON_BUTTON { return true; }
+    if kind == props::K_STEPPER { return true; }
+    // A strip of dots is as wide as its dots and their gaps, which is a
+    // measurement and not a style — the same standing a stepper has.
+    if kind == props::K_PAGE_DOTS { return true; }
+    if kind == props::K_DATE_PICKER { return true; }
+    if kind == props::K_TIME_PICKER { return true; }
+    if kind == props::K_POPUP { return true; }
+    // A symbol is as big as its glyph, which is a measurement.
+    if kind == symbol::K_SYMBOL { return true; }
     return false;
 }
 
@@ -135,10 +290,15 @@ fn insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
     if child == (0 as *u8) { return; }
     if !e::have_env() { return; }
     let env: rt::Env = e::env();
-    var h: w::ViewGroup = w::ViewGroup::from_global(env, host);
+    // A scroll's children belong to its DOCUMENT, not to the ScrollView, which
+    // takes exactly one child of its own.
+    let target: *u8 = controls::document_host(host);
+    var h: w::ViewGroup = w::ViewGroup::from_global(env, target);
     h.add_view_view_i(child, { slot as i32 });
-    var hv: w::View = w::View::from_global(env, h.into_raw());
-    paint::unwrap_keep(hv);
+    if target == host {
+        var hv: w::View = w::View::from_global(env, h.into_raw());
+        paint::unwrap_keep(hv);
+    }
     return;
 }
 
@@ -147,10 +307,13 @@ fn remove(ctx: *u8, host: *u8, child: *u8) {
     if child == (0 as *u8) { return; }
     if !e::have_env() { return; }
     let env: rt::Env = e::env();
-    var h: w::ViewGroup = w::ViewGroup::from_global(env, host);
+    let target: *u8 = controls::document_host(host);
+    var h: w::ViewGroup = w::ViewGroup::from_global(env, target);
     h.remove_view(child);
-    var hv: w::View = w::View::from_global(env, h.into_raw());
-    paint::unwrap_keep(hv);
+    if target == host {
+        var hv: w::View = w::View::from_global(env, h.into_raw());
+        paint::unwrap_keep(hv);
+    }
     return;
 }
 

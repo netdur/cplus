@@ -32,6 +32,7 @@ import "facet/gestures" as gestures;
 import "facet/component" as component;
 import "facet/theme" as theme;
 import "facet/application" as app;
+import "facet/window" as app_window;
 import "./views" as views;
 import "./paint" as paint;
 import "./input" as input;
@@ -40,6 +41,7 @@ import "./controls" as controls;
 import "./recycler" as recycler;
 import "./geometry" as geometry;
 import "./window" as window;
+import "./app_events_appkit" as app_events_appkit;
 
 type Node = flex::Node;
 
@@ -64,6 +66,10 @@ fn install() {
     INSTALLED = true;
     // mount::install also arms M5 (touch -> schedule) and M6 (this thread
     // becomes THE UI thread; every tree write asserts it).
+    // WHICH BACKEND IS DRAWING. A `@` fact, so an application cannot overwrite
+    // it — an app that could claim a backend it is not running on would be
+    // lying to an agent about the one thing the agent cannot check itself.
+    app::set_backend_name("facet_appkit");
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
     gestures::install_key_reader(input::key_reader());
@@ -75,12 +81,17 @@ fn install() {
     scheduler::set_debug_dump_fn(recycler::debug_dump);
     component::install_sender_readers(input::sender_readers());
     theme::set_is_dark_fn(window::is_dark);
+    // The window cursor's platform half. Without this `window::find(k).frame()`
+    // answers the neutral zero on a Mac — the seam exists and nothing fills it.
+    app_window::install_host(window::window_host());
     theme::set_theme_changed_fn(theme_changed);
     scheduler::install_sync_tick();
     // The reactor's wake source. Without it a `spawn_ui` task runs to its
     // first suspension and is never polled again — see scheduler.cplus.
     scheduler::install_async_pump();
-    return;
+    // The delegate fan-out: the application-level moments an SDK package needs
+    // a share of. Armed once per process and never disarmed — see arm().
+    app_events_appkit::arm();
 }
 
 fn installed() -> bool { return INSTALLED; }
@@ -89,6 +100,7 @@ fn installed() -> bool { return INSTALLED; }
 // loop observer stays armed — it is inert with nothing pending, and CFRunLoop
 // offers no clean way to take one back out mid-process.
 fn uninstall() {
+    app_window::uninstall_host();
     mount::uninstall();
     services::uninstall_scheduler();
     gestures::uninstall_key_reader();
@@ -96,7 +108,6 @@ fn uninstall() {
     theme::set_is_dark_fn(0 as fn() -> bool);
     theme::set_theme_changed_fn(0 as fn());
     INSTALLED = false;
-    return;
 }
 
 // ---- theme changed -----------------------------------------------------------
@@ -112,10 +123,9 @@ fn theme_changed() {
     let n: usize = app::window_count();
     while i < n {
         let r: *core::Node = app::window_root(i);
-        if r != (0 as *core::Node) { repaint_walk(r); }
+        if r.is_not_null() { repaint_walk(r); }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 fn repaint_walk(n: *core::Node) {
@@ -147,5 +157,4 @@ fn repaint_walk(n: *core::Node) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }

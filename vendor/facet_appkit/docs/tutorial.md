@@ -96,7 +96,7 @@ backend::install();
 agent::enable();
 
 var app: runtime::App = runtime::App::new("hello");
-app.agent_mcp("/tmp/hello.sock");
+app.agent_mcp();                  // an ID, defaulting to the app's name
 ```
 
 Then, with the app running:

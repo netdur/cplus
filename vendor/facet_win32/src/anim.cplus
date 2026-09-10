@@ -1,0 +1,649 @@
+// facet_win32/anim — the verb that moves on its own.
+//
+// `progress.animate_progress(to, duration, easing)` is not a set with a
+// comment: the application states HOW LONG and WHICH CURVE, and a progress bar
+// that jumps to the value has answered neither. Windows has no property
+// animation to hand the request to — a common control's position is a message
+// and the message takes effect immediately — so the tween is driven here.
+//
+// (The classic bar does animate a PBM_SETPOS over a few frames of its own, and
+// that is exactly the trap: it looks like the verb works, at a duration and a
+// curve nobody asked for. `PBM_SETPOS` twice in a row also refuses to animate
+// backwards. Neither is the application's animation.)
+//
+// A TIMER WITH NO WINDOW. `SetTimer(NULL, 0, ms, proc)` calls the proc from the
+// message loop's own DispatchMessage, which is where every other tick in this
+// package already runs. The alternative — a timer on the bar — does not work:
+// a system control has its own window procedure and WM_TIMER never reaches
+// this package's.
+//
+// ---- one outstanding tween ----------------------------------------------------
+//
+// A second `animate_progress` before the first finishes REPLACES it, which is
+// what the verb means: an application animating to 0.7 and then to 0.9 wants to
+// end at 0.9, not to queue. The limit that IS real is that the state is one
+// static set, so it holds ONE BAR — two bars animating at once and the second
+// takes the tween. Written down rather than discovered, and the same limit
+// facet_gtk records for the same verb.
+
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "./sys" as sys;
+
+// The CRT's own, not a series. facet_gtk approximates because it would rather
+// not link libm; this package already links the CRT for `malloc`, so the
+// accurate ones are free.
+extern fn sin(x: f64) -> f64;
+extern fn cos(x: f64) -> f64;
+
+// Sixty steps a second — the rate a desktop compositor presents at, and the
+// same interval facet_gtk ticks its copy of this tween at.
+fn frame_ms() -> u32 { return 16 as u32; }
+
+static BAR: usize = 0;
+static TIMER: u64 = 0;
+static FROM: f64 = 0.0f64;
+static TO: f64 = 0.0f64;
+static STEP: i64 = 0;
+static STEPS: i64 = 0;
+static CURVE: vocab::Easing = #zero::[vocab::Easing]();
+
+fn animating() -> bool { return BAR != (0 as usize); }
+
+// How many frames a duration is worth. At least one, because a zero duration is
+// a jump and a jump is a tween of one step — the alternative is a branch that
+// makes the "no animation" path a different code path from the animated one.
+fn steps_for(d: vocab::Duration) -> i64 {
+    let frames: f64 = d.seconds * (60.0 as f64);
+    if frames < (1.0 as f64) { return 1 as i64; }
+    return (frames + (0.5 as f64)) as i64;
+}
+
+fn clamped(v: f64) -> f64 {
+    if v < (0.0 as f64) { return 0.0f64; }
+    if v > (1.0 as f64) { return 1.0f64; }
+    return v;
+}
+
+// Start (or restart) the tween on the progress bar `v`.
+//
+// A ZERO DURATION IS A SET, and that is not a shortcut — it is the difference
+// between a create and an animation. `create` configures a control with every
+// bit raised, `P_ANIMATE_PROGRESS` among them, so a bar that has never been
+// animated would otherwise start a tween the moment it is made — and because
+// the state is one static set, A NEW BAR WOULD TAKE THE TWEEN AWAY from one
+// mid-animation. The default `animate_duration` is zero, so this branch is what
+// every create lands in. All four other backends gate the same verb on the same
+// test.
+fn animate_progress(v: *u8, to: f64, duration: vocab::Duration, curve: vocab::Easing) {
+    if v == (0 as *u8) { return; }
+    if duration.seconds <= (0.0 as f64) {
+        write_fraction(v, clamped(to));
+        return;
+    }
+    let running: bool = animating();
+    BAR = { #addr(v) };
+    FROM = read_fraction(v);
+    TO = to;
+    STEPS = steps_for(duration);
+    CURVE = curve;
+    // A tween already running is REPLACED rather than joined: resetting the
+    // step counter is what the live timer reads, so it finishes THIS tween
+    // instead of the previous one and no second timer is created.
+    STEP = 0 as i64;
+    if running { return; }
+    TIMER = { u::SetTimer(0 as *u8, 0 as u64, frame_ms(), tick_addr()) };
+    return;
+}
+
+// A function's address needs an `fn(...)`-typed binding before it can be cast
+// — the same shape `window::proc_addr` uses for the window procedure.
+fn tick_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, u32) = progress_step;
+    return f as *u8;
+}
+
+fn stop() {
+    if TIMER != (0 as u64) { let _k: i32 = { u::KillTimer(0 as *u8, TIMER) }; }
+    TIMER = 0 as u64;
+    BAR = 0 as usize;
+    STEP = 0 as i64;
+    return;
+}
+
+fn progress_step(w: *u8, msg: u32, id: u64, ticks: u32) {
+    if BAR == (0 as usize) { stop(); return; }
+    STEP = STEP +% (1 as i64);
+    let t: f64 = (STEP as f64) / (STEPS as f64);
+    let at: f64 = clamped(FROM + ((TO - FROM) * eased(t, CURVE)));
+    write_fraction(BAR as *u8, at);
+    if STEP >= STEPS {
+        // LAND EXACTLY. An eased last step is a fraction short, and a bar that
+        // stops at 0.998 is a bar that never finished.
+        write_fraction(BAR as *u8, clamped(TO));
+        stop();
+    }
+    return;
+}
+
+// The bar's own scale. `controls` states the range once as `slider_steps()` and
+// this has to agree with it — a tween written in a different unit would move
+// the bar to a hundredth of where it was asked to go.
+fn steps() -> i32 { return 1000 as i32; }
+
+fn write_fraction(v: *u8, f: f64) {
+    let pos: i32 = (f * (steps() as f64) + (0.5 as f64)) as i32;
+    let _r: i64 = { u::SendMessageA(v, sys::pbm_setpos(), pos as u64, 0 as i64) };
+    return;
+}
+
+fn read_fraction(v: *u8) -> f64 {
+    let pos: i64 = { u::SendMessageA(v, pbm_getpos(), 0 as u64, 0 as i64) };
+    return (pos as f64) / (steps() as f64);
+}
+
+fn pbm_getpos() -> u32 { return 0x0408 as u32; }
+
+// ---- the shared band: opacity and translation, CONCURRENTLY ------------------
+//
+// Both of the two animation channels a child HWND can wear (see MANIFEST):
+// OPACITY through a layered-window alpha, and the TRANSLATION part of the
+// transform through `SetWindowPos`. Scale and rotation cannot touch a control's
+// pixels and are left to the model alone.
+//
+// A REGISTRY, not a single outstanding tween. The progress bar and the carousel
+// animate one thing, but the shared band does not: the gallery's Easing page
+// launches ELEVEN translations at once to compare the curves, so anything
+// single-outstanding would show one row moving and ten snapping. So a fixed set
+// of slots is walked by one 16ms timer, and a fade and a slide on the same node
+// are two slots that run together.
+//
+// A DISPLAYED value lives on the window, separate from the model, because the
+// model already holds the destination the moment the verb is called. For
+// translation `geometry::place` reads the displayed offset and adds it on top of
+// the layout, so a move survives a relayout mid-slide.
+
+// -- layered opacity --
+
+fn lwa_alpha() -> u32 { return 0x2 as u32; }
+
+fn ensure_layered(v: *u8) {
+    let ex: i64 = { u::GetWindowLongPtrA(v, sys::gwl_exstyle()) };
+    if (ex & (sys::ws_ex_layered() as i64)) == (0 as i64) {
+        let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_exstyle(),
+                                             ex | (sys::ws_ex_layered() as i64)) };
+    }
+    return;
+}
+
+fn alpha_byte(opacity: f64) -> u8 {
+    var a: i32 = (clamped(opacity) * (255.0 as f64) + (0.5 as f64)) as i32;
+    if a < (0 as i32) { a = 0 as i32; }
+    if a > (255 as i32) { a = 255 as i32; }
+    return a as u8;
+}
+
+// Take the layered style back off. A WS_EX_LAYERED window with LWA_ALPHA does
+// NOT composite its CHILD windows — user32 alpha-blends the window's own paint
+// and leaves child HWNDs rendered BLACK. A leaf (a coloured box) has none and
+// fades cleanly; a card that holds labels or controls, faded in and left
+// layered, shows those children as black bars. So at full opacity — the one
+// state where the children matter and the alpha does not — the style comes off
+// and the children paint normally again. The frame change makes the ex-style
+// take, and the redraw brings the children back from the black.
+fn unlayer(v: *u8) {
+    let ex: i64 = { u::GetWindowLongPtrA(v, sys::gwl_exstyle()) };
+    if (ex & (sys::ws_ex_layered() as i64)) == (0 as i64) { return; }
+    let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_exstyle(),
+                                         ex & ~(sys::ws_ex_layered() as i64)) };
+    // SWP_FRAMECHANGED (0x0020): re-apply the frame so the dropped ex-style
+    // takes effect without a move, size or z change.
+    let flags: u32 = sys::swp_nomove() | sys::swp_nosize() | sys::swp_nozorder()
+                   | sys::swp_noactivate() | (0x0020 as u32);
+    let _p: i32 = { u::SetWindowPos(v, sys::hwnd_top(), 0 as i32, 0 as i32,
+                                    0 as i32, 0 as i32, flags) };
+    // RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW — repaint the
+    // window AND every child, now, so the blacked-out children come back.
+    let _r: i32 = { u::RedrawWindow(v, 0 as *u::tagRECT, 0 as *u8, 0x0185 as u32) };
+    return;
+}
+
+fn set_opacity_now(v: *u8, opacity: f64) {
+    if v == (0 as *u8) { return; }
+    if opacity >= (1.0 as f64) { unlayer(v); return; }
+    ensure_layered(v);
+    let _r: i32 = { u::SetLayeredWindowAttributes(v, 0 as u32, alpha_byte(opacity), lwa_alpha()) };
+    return;
+}
+
+fn current_opacity(v: *u8) -> f64 {
+    var a: u8 = 255 as u8;
+    var key: u32 = 0 as u32;
+    var flags: u32 = 0 as u32;
+    if { u::GetLayeredWindowAttributes(v, #addr_of(key), #addr_of(a), #addr_of(flags)) } == (0 as i32) {
+        return 1.0f64;
+    }
+    return (a as f64) / (255.0 as f64);
+}
+
+// -- translation offset, stored on the window --
+
+fn prop_tx() -> *u8 { return { #str_ptr("facet-anim-tx\0") }; }
+fn prop_ty() -> *u8 { return { #str_ptr("facet-anim-ty\0") }; }
+fn prop_bx() -> *u8 { return { #str_ptr("facet-anim-bx\0") }; }
+fn prop_by() -> *u8 { return { #str_ptr("facet-anim-by\0") }; }
+
+fn read_i32_prop(v: *u8, name: *u8) -> i32 {
+    return ((({ u::GetPropA(v, name as *i8) } as usize) as i64) as i32);
+}
+fn write_i32_prop(v: *u8, name: *u8, x: i32) {
+    let _r: i32 = { u::SetPropA(v, name as *i8, ((x as i64) as usize) as *u8) };
+    return;
+}
+
+// The layout position, before translation. `geometry::place` records it on
+// every placement so an in-flight tween offsets the CURRENT base.
+fn store_layout_base(v: *u8, x: i32, y: i32) {
+    write_i32_prop(v, prop_bx(), x);
+    write_i32_prop(v, prop_by(), y);
+    return;
+}
+fn displayed_tx(v: *u8) -> i32 { return read_i32_prop(v, prop_tx()); }
+fn displayed_ty(v: *u8) -> i32 { return read_i32_prop(v, prop_ty()); }
+
+fn place_translated(v: *u8) {
+    let bx: i32 = read_i32_prop(v, prop_bx());
+    let by: i32 = read_i32_prop(v, prop_by());
+    let flags: u32 = sys::swp_nozorder() | sys::swp_noactivate() | sys::swp_nosize();
+    let _r: i32 = { u::SetWindowPos(v, sys::hwnd_top(),
+                                    bx +% displayed_tx(v), by +% displayed_ty(v),
+                                    0 as i32, 0 as i32, flags) };
+    return;
+}
+
+fn round_px(x: f64) -> i32 {
+    if x < (0.0 as f64) { return (0 as i32) -% (((0.0 as f64) - x) + (0.5 as f64)) as i32; }
+    return (x + (0.5 as f64)) as i32;
+}
+
+fn set_translation_now(v: *u8, x: f64, y: f64) {
+    if v == (0 as *u8) { return; }
+    write_i32_prop(v, prop_tx(), round_px(x));
+    write_i32_prop(v, prop_ty(), round_px(y));
+    place_translated(v);
+    return;
+}
+
+// -- the concurrent tween registry --
+
+fn a_opacity() -> i32 { return 0 as i32; }
+fn a_translate() -> i32 { return 1 as i32; }
+fn amax() -> usize { return 48 as usize; }
+
+struct ASlot {
+    win: usize,        // 0 = free
+    kind: i32,
+    fx: f64,           // FROM (opacity uses fx/tx only)
+    fy: f64,
+    tx: f64,           // TO
+    ty: f64,
+    step: i64,
+    steps: i64,
+    curve: vocab::Easing,
+}
+
+static SLOTS: [ASlot; 48] = #zero::[[ASlot; 48]]();
+static ANIM_TIMER: u64 = 0;
+
+fn slot_of(win: usize, kind: i32) -> i32 {
+    var i: usize = 0 as usize;
+    while i < amax() {
+        if SLOTS[i].win == win && SLOTS[i].kind == kind { return i as i32; }
+        i = i +% (1 as usize);
+    }
+    return (0 as i32) -% (1 as i32);
+}
+
+fn free_slot() -> i32 {
+    var i: usize = 0 as usize;
+    while i < amax() {
+        if SLOTS[i].win == (0 as usize) { return i as i32; }
+        i = i +% (1 as usize);
+    }
+    return (0 as i32) -% (1 as i32);
+}
+
+fn any_active() -> bool {
+    var i: usize = 0 as usize;
+    while i < amax() {
+        if SLOTS[i].win != (0 as usize) { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn anim_tick_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, u32) = anim_tick;
+    return f as *u8;
+}
+
+fn ensure_anim_timer() {
+    if ANIM_TIMER == (0 as u64) {
+        ANIM_TIMER = { u::SetTimer(0 as *u8, 0 as u64, frame_ms(), anim_tick_addr()) };
+    }
+    return;
+}
+
+// Arm (or re-arm) a slot for `v` and `kind` — a second animation of the same
+// channel on the same node REPLACES the first, which is what a re-issued verb
+// means. A full registry drops the request rather than growing.
+fn arm_slot(v: *u8, kind: i32, fx: f64, fy: f64, tx: f64, ty: f64,
+            steps: i64, curve: vocab::Easing) {
+    var idx: i32 = slot_of({ #addr(v) }, kind);
+    if idx < (0 as i32) { idx = free_slot(); }
+    if idx < (0 as i32) { return; }
+    let i: usize = idx as usize;
+    SLOTS[i].win = { #addr(v) };
+    SLOTS[i].kind = kind;
+    SLOTS[i].fx = fx;
+    SLOTS[i].fy = fy;
+    SLOTS[i].tx = tx;
+    SLOTS[i].ty = ty;
+    SLOTS[i].step = 0 as i64;
+    SLOTS[i].steps = steps;
+    SLOTS[i].curve = curve;
+    ensure_anim_timer();
+    return;
+}
+
+fn free_for(v: *u8, kind: i32) {
+    let idx: i32 = slot_of({ #addr(v) }, kind);
+    if idx >= (0 as i32) { SLOTS[idx as usize].win = 0 as usize; }
+    return;
+}
+
+fn apply_slot(i: usize, at: f64) {
+    if SLOTS[i].kind == a_opacity() {
+        let a: f64 = SLOTS[i].fx + ((SLOTS[i].tx - SLOTS[i].fx) * at);
+        set_opacity_now(SLOTS[i].win as *u8, a);
+    } else {
+        let v: *u8 = SLOTS[i].win as *u8;
+        let x: f64 = SLOTS[i].fx + ((SLOTS[i].tx - SLOTS[i].fx) * at);
+        let y: f64 = SLOTS[i].fy + ((SLOTS[i].ty - SLOTS[i].fy) * at);
+        write_i32_prop(v, prop_tx(), round_px(x));
+        write_i32_prop(v, prop_ty(), round_px(y));
+        place_translated(v);
+    }
+    return;
+}
+
+fn anim_tick(w: *u8, msg: u32, id: u64, ticks: u32) {
+    var i: usize = 0 as usize;
+    while i < amax() {
+        if SLOTS[i].win != (0 as usize) {
+            SLOTS[i].step = SLOTS[i].step +% (1 as i64);
+            let t: f64 = (SLOTS[i].step as f64) / (SLOTS[i].steps as f64);
+            apply_slot(i, eased(t, SLOTS[i].curve));
+            if SLOTS[i].step >= SLOTS[i].steps {
+                apply_slot(i, 1.0f64);          // land exactly on the end value
+                SLOTS[i].win = 0 as usize;
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    if !any_active() {
+        if ANIM_TIMER != (0 as u64) { let _k: i32 = { u::KillTimer(0 as *u8, ANIM_TIMER) }; }
+        ANIM_TIMER = 0 as u64;
+    }
+    return;
+}
+
+// -- the public verbs the band calls --
+
+fn animate_opacity(v: *u8, opacity: f64, duration: vocab::Duration, curve: vocab::Easing) {
+    if v == (0 as *u8) { return; }
+    if duration.seconds <= (0.0 as f64) { set_opacity_now(v, opacity); return; }
+    ensure_layered(v);
+    arm_slot(v, a_opacity(), current_opacity(v), 0.0f64, opacity, 0.0f64,
+             steps_for(duration), curve);
+    return;
+}
+
+fn cancel_opacity(v: *u8) { free_for(v, a_opacity()); return; }
+
+fn animate_translation(v: *u8, to_x: f64, to_y: f64, duration: vocab::Duration, curve: vocab::Easing) {
+    if v == (0 as *u8) { return; }
+    if duration.seconds <= (0.0 as f64) { set_translation_now(v, to_x, to_y); return; }
+    arm_slot(v, a_translate(), displayed_tx(v) as f64, displayed_ty(v) as f64,
+             to_x, to_y, steps_for(duration), curve);
+    return;
+}
+
+fn cancel_translation(v: *u8) { free_for(v, a_translate()); return; }
+
+// ---- the eleven curves ---------------------------------------------------------
+//
+// `t` runs 0..1 and the answer runs 0..1, except where the curve deliberately
+// overshoots — Spring does, and that is the point of it.
+fn eased(t: f64, curve: vocab::Easing) -> f64 {
+    let x: f64 = t;
+    if x <= (0.0 as f64) { return 0.0f64; }
+    if x >= (1.0 as f64) { return 1.0f64; }
+    let half_pi: f64 = 1.5707963267948966f64;
+    return match curve {
+        vocab::Easing::Linear => x,
+        vocab::Easing::SinIn => (1.0 as f64) - { cos(x * half_pi) },
+        vocab::Easing::SinOut => { sin(x * half_pi) },
+        vocab::Easing::SinInOut =>
+            ((1.0 as f64) - { cos(x * (half_pi * (2.0 as f64))) }) / (2.0 as f64),
+        vocab::Easing::CubicIn => x * x * x,
+        vocab::Easing::CubicOut => {
+            let inv: f64 = (1.0 as f64) - x;
+            (1.0 as f64) - (inv * inv * inv)
+        }
+        vocab::Easing::CubicInOut => {
+            if x < (0.5 as f64) { (4.0 as f64) * x * x * x }
+            else {
+                let inv: f64 = ((0.0 as f64) - ((2.0 as f64) * x)) + (2.0 as f64);
+                (1.0 as f64) - ((inv * inv * inv) / (2.0 as f64))
+            }
+        }
+        // A bounce is the OUT curve read backwards, which is how every toolkit
+        // defines the pair — writing two tables is how they come to disagree.
+        vocab::Easing::BounceIn => (1.0 as f64) - bounce_out((1.0 as f64) - x),
+        vocab::Easing::BounceOut => bounce_out(x),
+        // A spring OVERSHOOTS and settles. `SpringOut` is the familiar one (the
+        // thing arrives, goes past, comes back); `SpringIn` is its mirror, and
+        // it dips below zero on the way out — which for a progress fraction is
+        // clamped by the CALLER, not here, because clamping a curve is how a
+        // spring stops being one.
+        vocab::Easing::SpringIn => (1.0 as f64) - spring_out((1.0 as f64) - x),
+        vocab::Easing::SpringOut => spring_out(x),
+    };
+}
+
+// The four-segment bounce every toolkit uses, with the same constants.
+fn bounce_out(x: f64) -> f64 {
+    let n1: f64 = 7.5625f64;
+    let d1: f64 = 2.75f64;
+    if x < ((1.0 as f64) / d1) { return n1 * x * x; }
+    if x < ((2.0 as f64) / d1) {
+        let y: f64 = x - ((1.5 as f64) / d1);
+        return n1 * y * y + (0.75 as f64);
+    }
+    if x < ((2.5 as f64) / d1) {
+        let y: f64 = x - ((2.25 as f64) / d1);
+        return n1 * y * y + (0.9375 as f64);
+    }
+    let y: f64 = x - ((2.625 as f64) / d1);
+    return n1 * y * y + (0.984375 as f64);
+}
+
+// A decaying sine — the standard "back" overshoot, which settles at 1 from
+// above.
+fn spring_out(x: f64) -> f64 {
+    let c: f64 = 1.70158f64;
+    let c3: f64 = c + (1.0 as f64);
+    let inv: f64 = x - (1.0 as f64);
+    return (1.0 as f64) + c3 * inv * inv * inv + c * inv * inv;
+}
+
+#[test]
+fn a_zero_duration_is_a_jump_not_a_tween() {
+    // The create path. Every bit is raised on create, `P_ANIMATE_PROGRESS`
+    // included, and the default duration is zero — so this must not start a
+    // timer, or every progress bar made would steal the tween from one that
+    // was running.
+    animate_progress(0 as *u8, 0.5f64, vocab::Duration::zero(),
+                     vocab::Easing::SinInOut);
+    assert !animating();
+    assert TIMER == (0 as u64);
+    return;
+}
+
+#[test]
+fn a_null_bar_starts_nothing() {
+    animate_progress(0 as *u8, 0.5f64, vocab::Duration::animation(),
+                     vocab::Easing::Linear);
+    assert !animating();
+    return;
+}
+
+#[test]
+fn the_curves_all_start_at_zero_and_end_at_one() {
+    // Both ends are pinned before the curve is consulted, which is what keeps a
+    // spring's overshoot from leaving the bar short of its target.
+    assert eased(0.0f64, vocab::Easing::SpringOut) == (0.0 as f64);
+    assert eased(1.0f64, vocab::Easing::SpringOut) == (1.0 as f64);
+    assert eased(0.0f64, vocab::Easing::BounceIn) == (0.0 as f64);
+    assert eased(1.0f64, vocab::Easing::BounceIn) == (1.0 as f64);
+    assert eased(0.5f64, vocab::Easing::Linear) == (0.5 as f64);
+    return;
+}
+
+#[test]
+fn a_duration_becomes_at_least_one_step() {
+    // A tween of zero steps divides by zero on the first tick. Any duration
+    // short enough to round to no frames is one frame instead.
+    assert steps_for(vocab::Duration::zero()) == (1 as i64);
+    assert steps_for(vocab::Duration { seconds: 1.0f64 }) == (60 as i64);
+    return;
+}
+
+#[test]
+fn the_tween_writes_in_the_same_unit_the_bar_was_ranged_in() {
+    // `controls::create_progress` sets the bar's range to `slider_steps()`.
+    // A tween written in a different unit moves it to a fraction of where it
+    // was asked to go, and nothing about the bar would say why.
+    assert steps() == (1000 as i32);
+    return;
+}
+
+// ================================================================================
+// carousel.animates_scroll — sliding a page instead of jumping to it
+// ================================================================================
+//
+// A SECOND TWEEN, with its own state, and that is deliberate rather than
+// duplication. The progress tween above moves a NUMBER inside a control; this
+// moves a WINDOW. They have different subjects, different end conditions and
+// different callers, and sharing one set of statics would mean a progress bar
+// animating cancelled a carousel mid-slide — the two are unrelated and a user
+// would see one interrupt the other for no reason they could name.
+//
+// One slide at a time is still the rule, for the reason the progress tween
+// gives: a second carousel starting a slide REPLACES the first, because a
+// pointer can only be doing one thing.
+
+static SLIDE_DOC: usize = 0;
+static SLIDE_FROM: f64 = 0.0f64;
+static SLIDE_TO: f64 = 0.0f64;
+static SLIDE_STEP: i64 = 0;
+static SLIDE_STEPS: i64 = 0;
+static SLIDE_TIMER: u64 = 0;
+static SLIDE_DONE: fn(*u8) = no_slide_done;
+static SLIDE_DONE_CTX: usize = 0;
+
+fn no_slide_done(ctx: *u8) { return; }
+
+fn sliding() -> bool { return SLIDE_DOC != (0 as usize); }
+
+fn slide_addr() -> *u8 {
+    let f: fn(*u8, u32, u64, u32) = slide_step;
+    return f as *u8;
+}
+
+// Slide `doc` from where it is to `to`, then call `done`. A zero duration is a
+// SET — same rule as the progress tween, and for the same reason: `create`
+// raises every bit, so a carousel would otherwise slide on the frame it was
+// made.
+fn slide_to(doc: *u8, from: f64, to: f64, duration: vocab::Duration,
+            done: fn(*u8), ctx: *u8) {
+    if doc == (0 as *u8) { return; }
+    if duration.seconds <= (0.0 as f64) {
+        place_doc(doc, to);
+        done(ctx as *u8);
+        return;
+    }
+    let running: bool = sliding();
+    SLIDE_DOC = { #addr(doc) };
+    SLIDE_FROM = from;
+    SLIDE_TO = to;
+    SLIDE_STEPS = steps_for(duration);
+    SLIDE_STEP = 0 as i64;
+    SLIDE_DONE = done;
+    SLIDE_DONE_CTX = { #addr(ctx) };
+    if running { return; }
+    SLIDE_TIMER = { u::SetTimer(0 as *u8, 0 as u64, frame_ms(), slide_addr()) };
+    return;
+}
+
+fn slide_stop() {
+    if SLIDE_TIMER != (0 as u64) { let _k: i32 = { u::KillTimer(0 as *u8, SLIDE_TIMER) }; }
+    SLIDE_TIMER = 0 as u64;
+    SLIDE_DOC = 0 as usize;
+    SLIDE_STEP = 0 as i64;
+    return;
+}
+
+fn slide_step(w: *u8, msg: u32, id: u64, ticks: u32) {
+    if SLIDE_DOC == (0 as usize) { slide_stop(); return; }
+    SLIDE_STEP = SLIDE_STEP +% (1 as i64);
+    let t: f64 = (SLIDE_STEP as f64) / (SLIDE_STEPS as f64);
+    // A CAROUSEL EASES OUT. It is a flick: fast at the start, settling at the
+    // end. `SinInOut` would make it start slowly, which reads as lag.
+    let at: f64 = SLIDE_FROM + ((SLIDE_TO - SLIDE_FROM) * eased(t, vocab::Easing::CubicOut));
+    place_doc(SLIDE_DOC as *u8, at);
+    if SLIDE_STEP >= SLIDE_STEPS {
+        // LAND EXACTLY. An eased last step is a fraction short, and a carousel
+        // resting one pixel off its page is a carousel that does not rest.
+        place_doc(SLIDE_DOC as *u8, SLIDE_TO);
+        let f: fn(*u8) = SLIDE_DONE;
+        let ctx: usize = SLIDE_DONE_CTX;
+        slide_stop();
+        f(ctx as *u8);
+    }
+    return;
+}
+
+fn place_doc(doc: *u8, x: f64) {
+    let _m: i32 = { u::SetWindowPos(doc, sys::hwnd_top(), x as i32, 0 as i32,
+                                    0 as i32, 0 as i32,
+                                    sys::swp_nosize() | sys::swp_nozorder()
+                                    | sys::swp_noactivate()) };
+    return;
+}
+
+#[test]
+fn a_slide_and_a_progress_tween_do_not_share_state() {
+    // The reason they are separate sets: a progress bar animating must not
+    // cancel a carousel mid-slide. Neither starts on a null subject, which is
+    // what makes this assertable without a window.
+    slide_to(0 as *u8, 0.0f64, 100.0f64, vocab::Duration { seconds: 0.25f64 },
+             no_slide_done, 0 as *u8);
+    assert !sliding();
+    animate_progress(0 as *u8, 0.5f64, vocab::Duration { seconds: 0.25f64 },
+                     vocab::Easing::Linear);
+    assert !animating();
+    assert !sliding();
+    return;
+}

@@ -209,15 +209,14 @@ impl Gestures {
 }
 
 fn release_gestures(p: *u8) {
-    if p == (0 as *u8) { return; }
+    if p.is_null() { return; }
     let _b: box::Box[Gestures] = box::from_raw::[Gestures](p);
-    return;
 }
 
 // The set on this node, or null. Reading does not allocate.
 fn gestures_of(n: *core::Node) -> *Gestures {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return 0 as *Gestures; }
+    if d.is_null() { return 0 as *Gestures; }
     return { (*d).gestures } as *Gestures;
 }
 
@@ -229,9 +228,9 @@ fn _attach(n: *core::Node, take g: Gestures) {
     // `.gesture()` on a container must work, and a modifier that does nothing
     // is the exact failure this package is built against.
     let d: *core::Data = core::ensure_data(n);
-    if d == (0 as *core::Data) { return; }
+    if d.is_null() { return; }
     let old: *u8 = { (*d).gestures };
-    if old != (0 as *u8) { release_gestures(old); }
+    if old.is_not_null() { release_gestures(old); }
     match box::new::[Gestures](g) {
         option::Option[box::Box[Gestures]]::Some(b) => {
             { (*d).gestures = b.into_raw() };
@@ -242,7 +241,6 @@ fn _attach(n: *core::Node, take g: Gestures) {
         }
     }
     core::touch(n, core::C_GESTURES);
-    return;
 }
 
 // The live path. `.gesture(...)` takes `this` by value, so it belongs to the
@@ -254,20 +252,19 @@ fn attach(n: *core::Node, take g: Gestures) { _attach(n, g); return; }
 // Drop the set. A node with no gestures costs nothing again.
 fn detach(n: *core::Node) {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return; }
+    if d.is_null() { return; }
     let old: *u8 = { (*d).gestures };
-    if old == (0 as *u8) { return; }
+    if old.is_null() { return; }
     release_gestures(old);
     { (*d).gestures = 0 as *u8 };
     core::touch(n, core::C_GESTURES);
-    return;
 }
 
 // A handler's own context, or the set-wide one when it has none. Resolved
 // ONCE here so every stored slot is final: `fire` reads a context, it never
 // decides which context.
 fn _ctx_or(own: *u8, shared: *u8) -> *u8 {
-    if own != (0 as *u8) { return own; }
+    if own.is_not_null() { return own; }
     return shared;
 }
 
@@ -418,19 +415,19 @@ impl flex::Node {
 
 fn on_click_of(n: *core::Node) -> Handler {
     let g: *Gestures = gestures_of(n);
-    if g == (0 as *Gestures) { return no_gesture; }
+    if g.is_null() { return no_gesture; }
     return { (*g).on_click };
 }
 
 fn ctx_of(n: *core::Node) -> *u8 {
     let g: *Gestures = gestures_of(n);
-    if g == (0 as *Gestures) { return 0 as *u8; }
+    if g.is_null() { return 0 as *u8; }
     return { (*g).ctx };
 }
 
 fn hit_of(n: *core::Node) -> HitTest {
     let g: *Gestures = gestures_of(n);
-    if g == (0 as *Gestures) { return HitTest::DeferToChild; }
+    if g.is_null() { return HitTest::DeferToChild; }
     return { (*g).hit };
 }
 
@@ -451,7 +448,7 @@ fn is_opaque_to_input(n: *core::Node) -> bool {
 // empty, which is the same answer they would give for an unmounted view.
 fn gesture_sender(n: *core::Node) -> *u8 {
     let v: *u8 = core::view_of(n);
-    if v != (0 as *u8) { return v; }
+    if v.is_not_null() { return v; }
     return n as *u8;
 }
 
@@ -470,19 +467,19 @@ fn gesture_sender(n: *core::Node) -> *u8 {
 fn fire(n: *core::Node, f: Handler, ctx: *u8) -> bool {
     if f == no_gesture { return false; }
     let g: *Gestures = gestures_of(n);
-    if g == (0 as *Gestures) { return false; }
+    if g.is_null() { return false; }
     return f(gesture_sender(n), ctx);
 }
 
 fn fire_click(n: *core::Node) -> bool {
     let g: *Gestures = gestures_of(n);
-    if g == (0 as *Gestures) { return false; }
+    if g.is_null() { return false; }
     return fire(n, { (*g).on_click }, { (*g).on_click_ctx });
 }
 
 fn fire_right_click(n: *core::Node) -> bool {
     let g: *Gestures = gestures_of(n);
-    if g == (0 as *Gestures) { return false; }
+    if g.is_null() { return false; }
     return fire(n, { (*g).on_right_click }, { (*g).on_right_click_ctx });
 }
 
@@ -491,13 +488,13 @@ fn fire_right_click(n: *core::Node) -> bool {
 // declines with `false` to let it fall through.
 fn on_key_of(n: *core::Node) -> Handler {
     let g: *Gestures = gestures_of(n);
-    if g == (0 as *Gestures) { return no_gesture; }
+    if g.is_null() { return no_gesture; }
     return { (*g).on_key };
 }
 
 fn fire_key(n: *core::Node, event: *u8) -> bool {
     let g: *Gestures = gestures_of(n);
-    if g == (0 as *Gestures) { return false; }
+    if g.is_null() { return false; }
     let h: Handler = { (*g).on_key };
     if h == no_gesture { return false; }
     return h(event, { (*g).on_key_ctx });
@@ -505,7 +502,7 @@ fn fire_key(n: *core::Node, event: *u8) -> bool {
 
 fn fire_hover(n: *core::Node, entering: bool) -> bool {
     let g: *Gestures = gestures_of(n);
-    if g == (0 as *Gestures) { return false; }
+    if g.is_null() { return false; }
     let f: Handler = if entering { { (*g).on_hover } } else { { (*g).on_unhover } };
     let c: *u8 = if entering { { (*g).on_hover_ctx } } else { { (*g).on_unhover_ctx } };
     return fire(n, f, c);
@@ -550,17 +547,17 @@ fn uninstall_key_reader() { KEY_READER = key_reader_none(); return; }
 // tested with the mod_* helpers.
 fn key_code(event: *u8) -> i64 {
     let f: fn(*u8) -> i64 = KEY_READER.code;
-    if f == (0 as fn(*u8) -> i64) { return -1 as i64; }
+    if f.is_null() { return -1 as i64; }
     return f(event);
 }
 fn key_chars(event: *u8) -> text::Text {
     let f: fn(*u8) -> text::Text = KEY_READER.chars;
-    if f == (0 as fn(*u8) -> text::Text) { return text::from_str(""); }
+    if f.is_null() { return text::from_str(""); }
     return f(event);
 }
 fn key_modifiers(event: *u8) -> u64 {
     let f: fn(*u8) -> u64 = KEY_READER.modifiers;
-    if f == (0 as fn(*u8) -> u64) { return 0 as u64; }
+    if f.is_null() { return 0 as u64; }
     return f(event);
 }
 
@@ -609,7 +606,7 @@ fn key_page_down() -> i64 { return 14 as i64; }
 // raw code.
 fn key_named(event: *u8) -> i64 {
     let f: fn(*u8) -> i64 = KEY_READER.named;
-    if f == (0 as fn(*u8) -> i64) { return key_none(); }
+    if f.is_null() { return key_none(); }
     return f(event);
 }
 
@@ -649,7 +646,6 @@ fn a_gesture_change_is_not_a_handler_change() {
     detach(p);
     assert (core::dirty_of(p) & core::C_GESTURES) != (0 as u64);
     assert (core::dirty_of(p) & props::C_HANDLERS) == (0 as u64);
-    return;
 }
 
 #[test]
@@ -676,7 +672,6 @@ fn on_key_rides_the_gesture_band_and_consume_is_one_shot() {
     // A node with no key handler declines.
     var plain: flex::Node = flex::box();
     assert fire_key(#addr_of(plain), 0 as *u8) == false;
-    return;
 }
 
 static IT_SEEN: *u8 = 0 as *u8;
@@ -702,7 +697,6 @@ fn a_gesture_sender_is_the_same_kind_of_thing_a_controls_is() {
     assert fire_click(p);
     assert IT_SEEN == (#addr_of(fake_view) as *u8);
     core::set_view(p, 0 as *u8, core::no_release);
-    return;
 }
 
 #[test]
@@ -724,7 +718,6 @@ fn an_item_is_what_a_shared_handler_tells_its_nodes_apart_by() {
     // BORROWED: facet stores the pointer, never frees it, never reads through
     // it. The value the app sees is the value the app put there.
     assert { *(core::item_of(p) as *i64) } == (42 as i64);
-    return;
 }
 
 // ---- a handler may be a BOUND METHOD -----------------------------------------
@@ -758,7 +751,6 @@ fn a_gesture_handler_can_be_a_bound_method() {
     assert row.hits == (1 as i64);
     // the receiver reached the method — it wrote through `ref this`
     assert row.tag == (7 as i64);
-    return;
 }
 
 // Two handlers, two receivers, one set. This is what a single set-wide `ctx`
@@ -777,7 +769,6 @@ fn each_bound_handler_keeps_its_own_receiver() {
     assert fire_right_click(p);
     assert a.hits == (1 as i64);
     assert b.hits == (100 as i64);
-    return;
 }
 
 // The set-wide `ctx:` still answers for every handler that did not bring one,
@@ -796,7 +787,6 @@ fn the_set_wide_ctx_still_reaches_a_free_handler() {
     BM_CTX = 0 as *u8;
     assert fire_click(#addr_of(n));
     assert BM_CTX == (#addr_of(owner) as *u8);
-    return;
 }
 
 // And the two mix: a bound method beside a free handler, each with its own
@@ -812,8 +802,7 @@ fn a_bound_handler_and_a_free_one_share_a_set() {
     BM_CTX = 0 as *u8;
     assert fire_click(p);
     assert row.hits == (1 as i64);
-    assert BM_CTX == (0 as *u8);          // the bound one never touched it
+    assert BM_CTX.is_null();          // the bound one never touched it
     assert fire_right_click(p);
     assert BM_CTX == (#addr_of(owner) as *u8);
-    return;
 }

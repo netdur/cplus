@@ -1,0 +1,35 @@
+[package]
+name    = "applinks"
+version = "0.0.1"
+edition = "2026"
+
+# applinks — a link that opens this app, routed to whoever asked for it.
+#
+# NO PLATFORM HALF, and that is the finding rather than an omission. Every
+# other services package in this repo (`http`, `permissions`, `notifications`)
+# has a `_<platform>.cplus` under its facade because it has an outbound call to
+# make. This one has none: a link ARRIVES, and the object it arrives at — the
+# NSApplication delegate, the UIScene delegate, the Activity — already belongs
+# to a facet backend, which already fans it out as `app_events::E_OPEN_URL`.
+# A platform half here would be a second claim on a delegate that is already
+# spoken for.
+#
+# So the package is the CONTRACT and the ROUTING: one door, cold start and warm
+# alike, with the scheme and host filtering that keeps an app's own links apart
+# from the OAuth callbacks a sign-in SDK watches the same channel for.
+#
+# WHAT IT DOES NOT DO. It does not hand a URL to the system (`open`) — that
+# needs no registration and is a different feature. It does not register the
+# scheme or the domain: those are Info.plist keys, an entitlement, an
+# AndroidManifest intent-filter and a file on your web server, and `cpc new`
+# scaffolds the ones it can. docs/guide.md is where they are written down.
+
+[dependencies]
+stdlib = "*"
+# THE LINK RIDES `facet/app_events`, on every platform, for the same reason the
+# notification tap does: a link that launches a dead app arrives before
+# anything has subscribed, and app_events LATCHES that kind. facet is the
+# portable core here, not a backend — this package names no backend at all.
+facet       = "*"
+flex_layout = "*"
+events      = "*"

@@ -19,6 +19,8 @@ import "./future" as future;
 // resolver's `_linux` override). Keeps this file platform-neutral.
 import "./netsys" as netsys;
 import "./thread" as thread;
+import "./sync_sys" as sync_sys;
+import "./time" as time;
 
 extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
 extern fn connect(fd: i32, addr: *u8, len: u32) -> i32;
@@ -144,7 +146,7 @@ impl TcpStream {
         if this._fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
         }
-        let chunk_size: usize = 4096 as usize;
+        let chunk_size: usize = 4096;
         let chunk: *u8 = { malloc(chunk_size) };
         if chunk.is_null() {
             return result::io_err::[vec::Vec[u8]](result::IoError::Other);
@@ -214,7 +216,6 @@ impl TcpStream {
         if this._fd >= (0 as i32) {
             { shutdown(this._fd, 1 as i32); }
         }
-        return;
     }
 
     fn close(ref this) {
@@ -222,14 +223,12 @@ impl TcpStream {
             { netsys::close_fd(this._fd); }
             this._fd = 0 -% 1 as i32;
         }
-        return;
     }
 
     fn drop(ref this) {
         if this._fd >= (0 as i32) {
             { netsys::close_fd(this._fd); }
         }
-        return;
     }
 
     // v0.0.5 Phase 4 Slice 4B: async I/O method form. `mut this` is
@@ -277,6 +276,14 @@ impl TcpListener {
         // + caller-side parsing). Pass NULL pointers so accept skips it.
         let null_ptr: *u8 = { 0 as *u8 };
         let null_len: *u32 = { 0 as *u32 };
+        // COOPERATIVE CANCELLATION. A cancel `kick` cannot break a thread out of
+        // a blocking Winsock `accept` (thread_sys_windows), so on Windows the
+        // listener is flipped non-blocking and readiness is awaited in bounded
+        // slices — the loop wakes every ~50 ms to re-check `thread::cancelled()`
+        // via `park_begin`. On POSIX `make_interruptible` is a no-op: the socket
+        // stays blocking, the signal kick surfaces as EINTR, and the EAGAIN arm
+        // (hence `wait_ready`) is never reached.
+        let _mi: i32 = netsys::make_interruptible(this._fd);
         loop {
             if thread::park_begin() {
                 { thread::park_end(); }
@@ -285,7 +292,14 @@ impl TcpListener {
             let cfd: i32 = { accept(this._fd, null_ptr, null_len) };
             { thread::park_end(); }
             if cfd < (0 as i32) {
-                if netsys::errno() == netsys::eintr() { continue; }
+                let e: i32 = netsys::errno();
+                if e == netsys::eintr() { continue; }
+                if e == netsys::eagain() {
+                    // No connection pending. Wait a bounded slice for one, then
+                    // loop so cancellation is observed within the slice.
+                    let _r: i32 = netsys::wait_ready(this._fd, false, 50 as i32);
+                    continue;
+                }
                 return result::io_err::[TcpStream](result::IoError::Other);
             }
             // An accepted client that disconnects mid-response must not be
@@ -300,14 +314,12 @@ impl TcpListener {
             { netsys::close_fd(this._fd); }
             this._fd = 0 -% 1 as i32;
         }
-        return;
     }
 
     fn drop(ref this) {
         if this._fd >= (0 as i32) {
             { netsys::close_fd(this._fd); }
         }
-        return;
     }
 
     // v0.0.5 Phase 4 Slice 4B: async accept method form. Slice 4F's
@@ -358,7 +370,7 @@ fn set_nonblocking(fd: i32) -> i32 {
 //   < 0  — error (-1 generic).
 //
 // Suspends the calling coroutine via the reactor until data is available;
-// under `block_on`, other queued tasks make progress meanwhile.
+// under a drive (`wait`), other queued tasks make progress meanwhile.
 async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
     loop {
         let n: isize = { netsys::recv_fd(fd, buf, count) };
@@ -366,6 +378,29 @@ async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
             return n;
         }
         let e: i32 = netsys::errno();
+        // EINTR IS "ASK AGAIN", NOT A FAILURE, and treating it as one broke
+        // every `run_on_worker` on Windows.
+        //
+        // A PIPE is the case that made it visible. `recv_fd` cannot `recv` an
+        // anonymous pipe and an anonymous pipe cannot be WSAPoll'd, so its
+        // Windows half peeks, and when nothing is ready yet it naps a slice and
+        // reports EINTR — deliberately, so a parked reader wakes to re-check
+        // cancellation. That is the ORDINARY state of a worker pipe: the
+        // coroutine reaches the read before the worker thread has written. This
+        // loop then fell out with -1, `services::run_on_worker` unwrapped a Box
+        // built from the null it never filled, and the process took an access
+        // violation inside `Box::unwrap` — a crash whose stack named neither the
+        // pipe nor the reactor.
+        //
+        // Retrying WITHOUT the reactor wait is the whole of the fix: `recv_fd`
+        // has already slept its slice, and the fd it just reported on may be a
+        // pipe, which `#reactor_wait_read` cannot register on this platform.
+        //
+        // Correct on POSIX for the older reason too — a read interrupted by a
+        // signal has not failed, it has been asked to come back — so this is one
+        // rule on both rather than a Windows branch. The write side has the same
+        // shape and is left alone: `send_fd` has no path that answers EINTR.
+        if e == netsys::eintr() { continue; }
         if e != netsys::eagain() {
             return (0 -% 1) as isize;
         }
@@ -431,8 +466,7 @@ async fn accept_fd_async(listener_fd: i32) -> i32 {
 
 // ───────────────────────────── tests ─────────────────────────────
 
-extern fn usleep(us: u32) -> i32;
-extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
+
 
 // A write to a socket whose peer has gone away must REPORT the dead peer,
 // not raise SIGPIPE — whose default disposition terminates the process with
@@ -446,7 +480,7 @@ extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
 #[test]
 fn a_write_to_a_departed_peer_reports_instead_of_killing_us() {
     var fds: [i32; 2] = [0, 0];
-    assert { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(fds) as *i32) } == 0;
+    assert { netsys::socket_pair(#addr_of(fds) as *i32) } == 0;
     assert netsys::set_nosigpipe(fds[0]) == (0 as i32);
     { netsys::close_fd(fds[1]); }               // the peer goes away
     var buf: [u8; 8] = [65u8; 8];
@@ -457,6 +491,52 @@ fn a_write_to_a_departed_peer_reports_instead_of_killing_us() {
         i = i +% 1;
     }
     { netsys::close_fd(fds[0]); }
+}
+
+// A peer that is THERE and SILENT must not hang the reader for good.
+//
+// The dangerous shape is not a dead peer — that reports EPIPE, which the test
+// above pins. It is a live one that accepts and then says nothing: `read`
+// blocks until it speaks, and it never does. On a worker that is a leaked
+// thread; on a UI thread it is a frozen window with no way back short of
+// killing the process. It is also invisible in advance, which is the part that
+// makes a deadline the only answer — a `connect(2)` that succeeds says a
+// socket accepted, not that anything behind it will reply, and a port forward
+// (`adb forward`, `iproxy`) accepts on behalf of a peer that may never answer.
+//
+// A socketpair is exactly that peer: fds[1] is open — so no EOF, no EPIPE —
+// and nothing is ever written to it.
+//
+// THIS TEST PROVES ITSELF the way the SIGPIPE one does: without the deadline
+// the read never returns and the suite hangs here rather than failing an
+// assertion.
+#[test]
+fn a_read_from_a_silent_peer_expires_instead_of_hanging_for_good() {
+    var fds: [i32; 2] = [0, 0];
+    // THROUGH THE WRAPPER, not the raw call. Windows has no `socketpair` at any
+    // spelling — `netsys_windows` builds an equivalent pair over loopback TCP —
+    // and calling the BSD name directly is what stops the whole package
+    // compiling there.
+    assert netsys::socket_pair(#addr_of(fds) as *i32) == 0;
+    assert netsys::set_timeout(fds[0], 1 as i64) == (0 as i32);
+
+    let began: i64 = time::now_millis();
+    var buf: [u8; 8] = [0u8; 8];
+    let n: isize = { netsys::recv_fd(fds[0], #addr_of(buf) as *u8, 8 as usize) };
+    let took: i64 = time::now_millis() -% began;
+
+    // -1 and EAGAIN, which is how a caller tells an expiry from a peer that
+    // closed (0 bytes) or a peer that answered (> 0).
+    assert n < (0 as isize);
+    assert netsys::errno() == netsys::eagain();
+    // It WAITED. An option that silently failed to apply would come back
+    // instantly with some other error, and the assertion above would not see
+    // the difference.
+    assert took >= (900 as i64);
+    assert took < (5000 as i64);
+
+    { netsys::close_fd(fds[0]); }
+    { netsys::close_fd(fds[1]); }
 }
 
 // Parks in accept() on a listener nobody connects to; only cancellation
@@ -482,13 +562,12 @@ fn net_accept_reports_cancellation_instead_of_blocking() {
         result::Result[TcpListener, result::IoError]::Ok(l) => {
             let h: thread::JoinHandle[i64] =
                 thread::spawn_with::[TcpListener, i64](l, _accept_until_cancelled);
-            usleep(3000 as u32);
+            sync_sys::sleep_us(3000 as u32);
             h.cancel();
             assert h.join() == (5 as i64);
         }
         result::Result[TcpListener, result::IoError]::Err(e) => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -502,5 +581,4 @@ fn net_listen_tcp_binds_on_ephemeral_port() {
         }
         result::Result[TcpListener, result::IoError]::Err(e) => { assert false; }
     }
-    return;
 }

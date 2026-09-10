@@ -1,0 +1,41 @@
+[package]
+name    = "location"
+version = "0.0.1"
+edition = "2026"
+
+# location — where the device is, once or continuously.
+#
+# SCOPE IS FOREGROUND, deliberately. What 99% of apps mean by "requesting
+# location" is a fix now, or a stream while the person is using the app. This
+# package does that on all three platforms and says `Unsupported` to the rest.
+#
+# NOT HERE, and not by omission:
+#   - background tracking while the app is not frontmost
+#   - a service started from BOOT_COMPLETED that outlives the app
+# Both are Android-shaped and have no iOS equivalent — iOS has background
+# MODES and significant-change relaunch, where the SYSTEM decides when you run.
+# Offering one API over two models that different would be a lie, and the
+# Android half alone is a typed foreground service, a persistent notification,
+# and an "always" grant that cannot be prompted for at all (Android 10+ sends
+# the user to Settings instead).
+
+[dependencies]
+stdlib      = "*"
+permissions = "*"
+
+[macos.dependencies]
+objc         = "*"
+corelocation = "*"
+
+[ios.dependencies]
+objc         = "*"
+corelocation = "*"
+
+[android.dependencies]
+jni          = "*"
+android_view = "*"
+events       = "*"
+# The Activity and the JavaVM come from facet's app_events fan-out — there is
+# no other portable door to them — so the consumer's flat set must name it.
+facet        = "*"
+flex_layout  = "*"

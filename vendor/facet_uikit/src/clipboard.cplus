@@ -1,0 +1,33 @@
+// facet_uikit clipboard — UIPasteboard, both directions.
+//
+// See facet_appkit/clipboard for the shape and facet_runtime/runtime for why
+// the portable half has it.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "uikit/uikit" as ui;
+
+// UIPasteboard HAS NO FAILURE TO REPORT. `setString:` is void — there is no
+// clear-then-own dance as on AppKit, because the general pasteboard on iOS is
+// a system service an app writes to rather than a board it takes ownership of.
+//
+// So the `bool` this answers is not a platform outcome, and it does not
+// pretend to be: it says the pasteboard object was there. That is weaker than
+// the AppKit answer and it is the true one for this platform — inventing a
+// success value would make the portable contract read stronger here than it is.
+fn copy_text(s: str) -> bool {
+    let pb: ui::Pasteboard = ui::Pasteboard::general_pasteboard();
+    if pb.raw() == (0 as *u8) { return false; }
+    pb.set_string(s);
+    return true;
+}
+
+// `has_strings` FIRST, because `string` answers an empty Text for a board with
+// no string at all — so without the check an empty board and a board holding
+// "" are the same answer, and the Option exists precisely to tell them apart.
+fn paste_text() -> option::Option[text::Text] {
+    let pb: ui::Pasteboard = ui::Pasteboard::general_pasteboard();
+    if pb.raw() == (0 as *u8) { return option::Option[text::Text]::None; }
+    if !pb.has_strings() { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(pb.string());
+}

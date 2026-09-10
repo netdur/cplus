@@ -14,7 +14,7 @@ fn skill_prints_the_reference() {
     let out = Command::new(cpc()).arg("skill").output().expect("run cpc skill");
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("SKILL — writing C+ source"), "unexpected skill output");
+    assert!(s.contains("SKILL — writing C+"), "unexpected skill output");
     assert!(s.len() > 1000, "skill reference seems too short");
 }
 
@@ -29,7 +29,7 @@ fn skill_write_creates_file_and_refuses_overwrite() {
     assert!(w.status.success());
     assert!(dest.exists());
     let body = std::fs::read_to_string(&dest).unwrap();
-    assert!(body.contains("SKILL — writing C+ source"));
+    assert!(body.contains("SKILL — writing C+"));
 
     // Second write without --force must fail (no clobber).
     let again = Command::new(cpc())
@@ -85,7 +85,7 @@ fn skill_appends_a_dependencys_own_skill() {
         .expect("run cpc skill");
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("SKILL — writing C+ source"), "language reference must still lead");
+    assert!(s.contains("SKILL — writing C+"), "language reference must still lead");
     assert!(s.contains("# WIDGETS SKILL"), "dependency skill must be appended:\n{s}");
     assert!(
         s.contains("package skill: widgets"),
@@ -106,7 +106,7 @@ fn skill_lang_only_suppresses_package_skills() {
         .expect("run");
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("SKILL — writing C+ source"));
+    assert!(s.contains("SKILL — writing C+"));
     assert!(!s.contains("# WIDGETS SKILL"), "--lang-only must print the language reference alone");
 }
 
@@ -303,6 +303,32 @@ fn kind_gui_scaffolds_a_facet_app_for_a_desktop_only_project() {
 }
 
 #[test]
+fn the_agent_page_carries_the_aci_half_only_for_a_gui_project() {
+    // A cli project has no `src/app.cplus`, no facet dependency and no window,
+    // so the "Driving the running app" half — describe_ui, the consent retry,
+    // the twenty-five verbs — is a page of instructions about a file that is
+    // not there. It used to be written unconditionally: roughly half of a cli
+    // scaffold's AGENTS.md described an app it had not scaffolded. The cli
+    // half of this is asserted in `init_scaffolds_a_named_project`; this is
+    // the complement, so the branch is pinned in both directions.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .args(["init", "--kind", "gui", "--platform", "macos", "withui"])
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let agents = std::fs::read_to_string(dir.path().join("withui/AGENTS.md")).unwrap();
+    assert!(
+        agents.contains("Driving the running app"),
+        "a gui scaffold must carry the agent surface:\n{agents}"
+    );
+    assert!(agents.contains("describe_ui"), "and the verbs that read the tree");
+    // The common half is still there, for both kinds.
+    assert!(agents.contains("cpc skill"), "and still points at the reference");
+}
+
+#[test]
 fn kind_cli_is_refused_for_ios() {
     // iOS has no console: a printing entry is a black rectangle on a phone, so
     // the platform has already answered and the flag has nothing to say.
@@ -434,8 +460,22 @@ fn init_scaffolds_a_named_project() {
     assert!(main.contains("io::println"));
 
     assert!(proj.join(".gitignore").exists());
-    // The fresh project ships the agent reference.
-    assert!(read(&proj.join("SKILL.md")).contains("SKILL — writing C+ source"));
+
+    // The fresh project points at the agent reference, and deliberately does
+    // NOT check a copy of it in: a file drifts from the compiler that wrote it,
+    // and the AGENTS.md beside it says so. `cpc skill` is the reference.
+    let agents = read(&proj.join("AGENTS.md"));
+    assert!(agents.contains("cpc skill"), "AGENTS.md must point at `cpc skill`");
+    assert!(
+        !proj.join("SKILL.md").exists(),
+        "init must not check in a SKILL.md — it drifts; `cpc skill` cannot"
+    );
+    // A cli project has no app.cplus and no window, so it must not be handed
+    // the ACI half of the page.
+    assert!(
+        !agents.contains("describe_ui"),
+        "a cli scaffold must not carry the GUI agent-surface section"
+    );
 }
 
 #[test]
@@ -642,4 +682,208 @@ fn init_rejects_an_unknown_platform() {
     assert!(stderr.contains("unknown platform `amiga`"), "{stderr}");
     assert!(stderr.contains("macos"), "the error lists the valid names: {stderr}");
     assert!(!dir.path().join("x").exists(), "nothing scaffolded on error");
+}
+
+// An Android project is inspectable, which it was not until 2026-08-27.
+//
+// Three things have to agree or the Inspect tab is blank against a running app,
+// and each was separately absent: the ENTRY has to arm the server, the manifest
+// has to name what that line links, and the APK has to hold the permission
+// Android gates a listening socket on. See
+// iris/gaps/done/the-inspector-has-no-android-half.txt.
+#[test]
+fn init_android_serves_the_inspector_without_a_second_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        // `--kind gui` and not the default: unlike `--platform ios`, android
+        // does not imply gui, so a bare `--platform android` scaffolds a
+        // printing entry. A facet app is the gui one, which is the form
+        // iris/gaps' own VERIFY block uses.
+        .args(["init", "--kind", "gui", "--platform", "android", "droid"])
+        .output()
+        .expect("run cpc init");
+    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+    let proj = dir.path().join("droid");
+
+    // 1. The APP asks to be served — one file, every platform, not three
+    //    entries reading three differently-spelled channels. The entry itself
+    //    is now agent-free, which is the point: nothing about arming a surface
+    //    is Android-shaped.
+    let app = read(&proj.join("src/app.cplus"));
+    assert!(app.contains("agent::enable();"), "{app}");
+    // Through the APP, because the scaffold builds one now. TWO facts, because
+    // the id is no longer written twice: the app is NAMED, and the agent is
+    // armed from it — `agent_mcp()` with no argument takes the app's own name,
+    // which is what `serverInfo.name` then reports. What this asserts is
+    // unchanged in substance: ONE file arms it, and it is the file every
+    // platform builds.
+    assert!(app.contains("runtime::App::new(\"droid\")"), "{app}");
+    assert!(app.contains("app.agent_mcp();"), "{app}");
+    // AND NOTHING ELSE. `inspect::arm()` was a third line an app had to
+    // remember, and forgetting it answered `-32601 method not found` from
+    // three packages away. The serving facade installs the walker now, so
+    // serving is the whole opt-in and there is nothing left to forget.
+    assert!(!app.contains("inspect::arm()"), "the scaffold still arms: {app}");
+    assert!(!app.contains("inspector/serve"), "the scaffold still imports it: {app}");
+    let main = read(&proj.join("src/main.cplus"));
+    assert!(!main.contains("serve_if_asked"), "the entry should not arm anything: {main}");
+
+    // 2. The closure names what that line links. The resolver checks every
+    //    import against ONE flat set taken from this manifest, so a missing
+    //    line here is a build failure and not a degraded feature.
+    let manifest = read(&proj.join("Cplus.toml"));
+    for dep in [
+        "facet_android", "android_view", "jni",
+        "inspector", "facet_agent", "agent_android", "agent_core",
+        "agent_inapp", "agent_mcp", "json",
+    ] {
+        assert!(
+            manifest.contains(&format!("{dep} ")),
+            "[android.dependencies] should name `{dep}`: {manifest}"
+        );
+    }
+    // And the SIBLING backends stay out: agent_android is the Android reader,
+    // and naming another platform's would resolve and then walk nothing.
+    assert!(!manifest.contains("agent_appkit"), "{manifest}");
+    assert!(!manifest.contains("agent_uikit"), "{manifest}");
+
+    // 3. The permission the socket needs. Without it `bind` fails with EACCES,
+    //    the accept loop ends the instant it starts, and the app runs perfectly
+    //    while nothing listens — which is exactly how this went unnoticed.
+    let android_manifest = read(&proj.join("android/AndroidManifest.xml"));
+    assert!(
+        android_manifest.contains("android.permission.INTERNET"),
+        "{android_manifest}"
+    );
+}
+
+// The reported case: one project, all three platforms, and the Inspect tab
+// blank on exactly one of them. Every entry arms the inspector now.
+#[test]
+fn init_three_platforms_serve_the_inspector_from_one_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "--kind", "gui", "--platform", "macos",
+               "--platform", "ios", "--platform", "android", "all3"])
+        .output()
+        .expect("run cpc init");
+    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+    let proj = dir.path().join("all3");
+
+    // ONE file asks to be served, and it is the one every platform builds.
+    // Being served IS being inspectable — all 25 verbs, no second call.
+    let app = read(&proj.join("src/app.cplus"));
+    assert!(app.contains("runtime::App::new(\"all3\")"), "{app}");
+    assert!(app.contains("app.agent_mcp();"), "{app}");
+    assert!(!app.contains("inspect::arm()"), "the scaffold still arms: {app}");
+
+    // ...and no entry does. Three copies of it, reading three channels, is what
+    // this replaced — see plan.md.
+    for entry in ["src/main.cplus", "src/main_ios.cplus", "src/main_android.cplus"] {
+        let body = read(&proj.join(entry));
+        assert!(
+            !body.contains("serve_if_asked"),
+            "{entry} should not arm anything of its own: {body}"
+        );
+    }
+}
+
+// ---- the scaffold against the interfaces it implements ----
+
+/// The parameter lists `interface Lifecycle` declares, by method name.
+///
+/// Read out of facet's own source rather than restated here: restating is how
+/// the drift this guards against happened in the first place.
+fn lifecycle_signatures() -> Vec<(String, String)> {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../vendor/facet/src/component.cplus"),
+    )
+    .expect("facet/component.cplus — this test reads the interface it checks against");
+    let body = src
+        .split_once("interface Lifecycle {")
+        .expect("interface Lifecycle")
+        .1
+        .split_once('}')
+        .expect("its closing brace")
+        .0;
+    body.lines()
+        .filter_map(|l| {
+            let l = l.trim().strip_prefix("fn ")?;
+            let (name, rest) = l.split_once('(')?;
+            let params = rest.split(')').next()?;
+            Some((name.to_string(), params.to_string()))
+        })
+        .collect()
+}
+
+#[test]
+fn kind_gui_implements_the_lifecycle_interface_facet_actually_declares() {
+    // THE HOLE THIS CLOSES. `kind_gui_scaffolds_a_facet_app_...` asserts on the
+    // TEXT of the generated files and never compiles them, and
+    // `init_manifest_parses_and_builds_front_end` gets only as far as proving
+    // the manifest parses. So when `Lifecycle` grew its `why` reason, the
+    // scaffold kept emitting the old no-argument pair and the whole suite
+    // stayed green — while `cpc init --kind gui --platform macos` followed by
+    // the `cpc build` its own closing message tells you to run failed with two
+    // E0505s. The first command a new user types, broken, with nothing failing.
+    //
+    // Compiling the scaffold here is the obvious check and the wrong one: it
+    // needs the facet packages in the store, so it would pass or fail on
+    // machine state rather than on the code. What actually drifted is a
+    // template string in this binary against an interface in facet's source,
+    // and those two can be compared directly, needing neither a store nor a
+    // network.
+    let dir = tempfile::tempdir().unwrap();
+    assert!(Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "--kind", "gui", "--platform", "macos", "sigcheck"])
+        .status()
+        .unwrap()
+        .success());
+
+    let app = read(&dir.path().join("sigcheck/src/app.cplus"));
+    let sigs = lifecycle_signatures();
+    assert!(
+        !sigs.is_empty(),
+        "read no methods out of interface Lifecycle — the parse above is stale"
+    );
+    for (name, params) in &sigs {
+        // An implementor outside facet writes `component::Attach` where the
+        // interface, being in that module, writes `Attach`. The qualifier is
+        // not the thing being checked, so it comes off both sides.
+        let want = strip_qualifiers(params);
+        let got: Vec<String> = app
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with(&format!("fn {name}(")))
+            .filter_map(|l| l.split_once('(')?.1.split(')').next().map(strip_qualifiers))
+            .collect();
+        assert!(
+            got.iter().any(|g| *g == want),
+            "the scaffolded Lifecycle impl does not match the interface facet \
+             declares.\n  interface wants: fn {name}({want})\n  scaffold has:    {}\n\n\
+             Update the template in cpc/src/main.rs.",
+            if got.is_empty() { "nothing by that name".to_string() } else { got.join(" / ") },
+        );
+    }
+}
+
+/// `ref this, why: component::Attach` -> `ref this, why: Attach`.
+fn strip_qualifiers(params: &str) -> String {
+    params
+        .split(',')
+        .map(|p| {
+            let p = p.trim();
+            match p.rsplit_once("::") {
+                Some((_, tail)) => {
+                    let head = p.split(':').next().unwrap_or("").trim();
+                    format!("{head}: {tail}")
+                }
+                None => p.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

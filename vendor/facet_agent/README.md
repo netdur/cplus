@@ -13,13 +13,23 @@ facet_agent = "*"
 ```cplus
 import "facet_agent/agent" as agent;
 
-fn main() -> i32 {
-    agent::enable();                       // register the serving hooks
-    var app: runtime::App = runtime::App::new("MyApp");
-    app.agent_mcp("/tmp/myapp.sock");      // the MCP socket (a PORT on iOS)
-    // ...
+fn run() -> i32 {
+    agent::enable();                 // register the serving hooks
+    runtime::agent_mcp("myapp");     // serve under this NAME, on any tier
+    runtime::run_screen(Home::new());
+    return 0 as i32;
 }
 ```
+
+An **id, not an address**: the platform derives where it listens from the id and
+this process's pid — a 0600 Unix socket plus an HTTP port on desktop, an HTTP
+port on a phone. A launcher that spawned the app knows the pid, so it can work
+the address out without being told. The app also prints it and writes it to
+`/tmp/mcp-<id>-<pid>.json`.
+
+Without a policy, anything that connects is admitted with `operator()` — read
+the tree and drive it, nothing behind a tier. `facet_agent/consent` is a
+ready-made policy that asks the user once per client.
 
 `import "facet_agent/agent"` resolves by filename override: `agent.cplus`
 on desktop (drives agent_appkit), `agent_ios.cplus` on iOS (agent_uikit,
@@ -29,10 +39,13 @@ agent stack.
 
 This is facet's OPTIONAL tier as a package boundary (2026-08-17): an app
 that never imports facet_agent links none of the agent machinery, by
-construction rather than by promise. The surface (enable/disable, the
-policy translation from `vocab::Agent` tiers) is documented in
-`vendor/facet/docs/ref.md` under "facet_agent/agent"; only the import path
-moved.
+construction rather than by promise.
+
+| Need | File |
+|---|---|
+| Use it in minutes | `docs/tutorial.md` |
+| Why it is shaped this way, and the traps | `docs/guide.md` |
+| Exact signatures | `docs/ref.md` |
 
 Tests: `cd vendor/facet_agent && cpc test`. The suite compiles the serving
 surface on the active platform — the `vocab::Agent` → policy translation

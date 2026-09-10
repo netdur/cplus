@@ -102,7 +102,6 @@ fn _ensure(st: *State) {
         { (*st)._busy = false; }
         { (*st)._live = 1 as u64; }
     }
-    return;
 }
 
 // What a type implements to be a resource. The interface IS the threading
@@ -217,7 +216,6 @@ fn _submit[R: Resource](rp: *R, take req: Request) {
     }
     { (*st)._busy = true; }
     _launch::[R](rp, req);
-    return;
 }
 
 fn _launch[R: Resource](rp: *R, take req: Request) {
@@ -230,7 +228,6 @@ fn _launch[R: Resource](rp: *R, take req: Request) {
         req: req,
     };
     let _bg: thread::JoinHandle[i32] = thread::spawn_with::[Flight, i32](f, _fly);
-    return;
 }
 
 // The worker half. ORDER MATTERS at the handoff: the landing is counted
@@ -264,13 +261,11 @@ fn _land(raw: *u8) {
     let fin: fn(*u8, *Request) = f.finish;
     fin((f.res_addr) as *u8, { #addr_of(f.req) });
     services::applies_pending_sub(1 as u64);
-    return;
 }
 
 fn _run_tramp[R: Resource](p: *u8, req: *Request) {
     let rp: *R = p as *R;
     { (*rp).run(req) };
-    return;
 }
 
 fn _finish_tramp[R: Resource](p: *u8, req: *Request) {
@@ -304,9 +299,8 @@ fn _finish_tramp[R: Resource](p: *u8, req: *Request) {
         { (*st).changes.emit(ch) };
     }
     let cb: fn(*u8) = { (*req)._then };
-    if cb != (0 as fn(*u8)) { cb(((*req)._then_ctx) as *u8); }
+    if cb.is_not_null() { cb(((*req)._then_ctx) as *u8); }
     _drain::[R](rp);
-    return;
 }
 
 // After a landing: start the next queued request, or go idle.
@@ -320,7 +314,6 @@ fn _drain[R: Resource](rp: *R) {
         option::Option[Request]::Some(next) => { _launch::[R](rp, next); }
         option::Option[Request]::None => { { (*st)._busy = false; } }
     }
-    return;
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -369,13 +362,11 @@ static HOLD: u64 = 0 as u64;
 fn hold_raise() {
     let p: *u64 = { #addr_of(HOLD) };
     let _x: u64 = atomic::fetch_add_u64(p, 1 as u64, atomic::Ordering::AcqRel);
-    return;
 }
 
 fn hold_lower() {
     let p: *u64 = { #addr_of(HOLD) };
     let _x: u64 = atomic::fetch_sub_u64(p, 1 as u64, atomic::Ordering::AcqRel);
-    return;
 }
 
 fn hold_read() -> u64 {
@@ -458,7 +449,6 @@ impl TestRes: Resource {
                 this.staged = copy_ids({ #addr_of(this.db) });
             }
         }
-        return;
     }
 
     fn apply(ref this, req: *Request) {
@@ -476,7 +466,6 @@ impl TestRes: Resource {
             this.rows = copy_ids({ #addr_of(this.staged) });
         }
         let _a: status::Status = this.log.append(verb_code(kind));
-        return;
     }
 }
 
@@ -494,7 +483,6 @@ fn test_reset(seed_a: i64 = 0 as i64, seed_b: i64 = 0 as i64, seed_c: i64 = 0 as
     if seed_a != (0 as i64) { let _a: status::Status = TESTR.db.append(seed_a); }
     if seed_b != (0 as i64) { let _b: status::Status = TESTR.db.append(seed_b); }
     if seed_c != (0 as i64) { let _c: status::Status = TESTR.db.append(seed_c); }
-    return;
 }
 
 fn res_inline_hop(work: fn(*u8), ctx: *u8) { work(ctx); return; }
@@ -503,12 +491,10 @@ fn install_inline_hop() {
     var sch: services::Scheduler = services::scheduler_none();
     sch.run_on_main = res_inline_hop;
     services::install_scheduler(sch);
-    return;
 }
 
 fn settle() {
     while !services::jobs_settled() { services::sched_yield_once(); }
-    return;
 }
 
 // The watcher's recorder — what the change channel delivered, in order.
@@ -521,7 +507,6 @@ fn record_change(c: Change, ctx: *u8) {
     SEEN_COUNT = SEEN_COUNT +% (1 as i64);
     SEEN_VERB = verb_code(c.verb);
     SEEN_ID = c.id;
-    return;
 }
 
 fn record_then(ctx: *u8) { THEN_FIRED = THEN_FIRED +% (1 as i64); return; }
@@ -531,7 +516,6 @@ fn recorder_reset() {
     SEEN_VERB = 0 as i64;
     SEEN_ID = 0 as i64;
     THEN_FIRED = 0 as i64;
-    return;
 }
 
 fn ids_are(v: *vec::Vec[i64], a: i64, b: i64, c: i64, n: usize) -> bool {

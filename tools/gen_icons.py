@@ -48,7 +48,7 @@ def keywords():
     so had never needed `move` — and `move` is an icon. The compiler is the only
     authority on what it will not let you spell.
     """
-    src = open(LEXER).read()
+    src = open(LEXER, encoding="utf-8").read()
     return set(re.findall(r'^\s*"([a-z_][a-z_0-9]*)"\s*=>\s*TokenKind::', src, re.M))
 
 
@@ -73,7 +73,7 @@ def main():
         raise SystemExit(1)
     src = os.path.join(ASSETS, FONT + ".codepoints")
     rows = []
-    for line in open(src):
+    for line in open(src, encoding="utf-8"):
         if not line.strip():
             continue
         name, hexcp = line.split()

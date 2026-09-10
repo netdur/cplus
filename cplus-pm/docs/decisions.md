@@ -320,3 +320,63 @@ manifest surgically, preserving comments and formatting. Rejected:
 expanding all platforms unconditionally — the manifest is the readable bill
 of materials, and sections for platforms a project will never target are
 noise for every future reader.
+
+---
+
+## D18 — Maven/AAR dependencies, no Gradle — DECIDED & IMPLEMENTED 2026-09-03
+
+The Android toolchain ships no dependency resolver. There is no `mvn` and no
+`cs`; Android Studio carries maven-resolver as a LIBRARY for its own
+indexing, and Gradle itself is downloaded by the wrapper rather than
+installed. **Gradle is the resolver.** But resolution over pinned coordinates
+is reading XML, and an AAR is a zip — so the pm does that, and the closure
+dexes with stock `d8`. `plans/aar.md` is the measurement that settled it;
+`cpc pm maven price androidx.camera:camera-camera2:1.6.2` reproduces it (35
+artifacts, 8.2 MB, one 6,971,948-byte dex).
+
+**The manifest surface is `[android.maven]`**, `"group:artifact" = "version"`.
+Android-only by construction — the table under any other platform is E0877,
+not a silently ignored key, because Maven is an Android ecosystem and a
+coordinate that is quietly dropped is a class missing at runtime on a device.
+
+**Only the ROOT coordinate is written**, unlike D17's closure expansion for
+C+ packages. A coordinate's POM is immutable, so its closure is a function of
+the pin and re-deriving it is reading cached XML. Writing 35 transitive
+coordinates into `Cplus.toml` would be a lockfile with extra steps (D3), and
+it would go stale the moment the root version changed. The closure is
+PRINTED instead — the artifact count and the megabytes are what the decision
+turns on.
+
+**The local repo is `~/.cplus/m2`, and it is NOT tiered** (unlike the package
+set, D13). A Maven coordinate is immutable: `androidx.core:core:1.3.2` is the
+same bytes to every toolchain version, so tiering it would only duplicate
+megabytes. It is laid out as a real Maven repo, and AARs are exploded beside
+their archive — `d8` wants `classes.jar`, not a zip.
+
+**An incomplete closure installs nothing.** A missing transitive artifact is
+a `NoClassDefFoundError` on a device, and unlike a C+ package there is no
+link step that would have caught it first.
+
+**Conflicts are nearest-wins** — Maven's rule, applied the way D9 applies it
+to git deps (the project is nearest, so the project wins what it names).
+Gradle uses highest-wins, so the two can disagree, and the report says
+exactly where: a conflict is warned about only when nearest-wins kept the
+OLDER version. One CameraX resolve has 26 version conflicts and diverges from
+Gradle in 2 of them; reporting all 26 buries the two that matter.
+
+**Not handled, and loud about it:** open version ranges, classifiers,
+exclusions, mirrors, and `.module` Gradle metadata. The last one is the
+interesting exemption — AndroidX publishes `.module` and its POM is a
+compatibility shim, but the shim declares the platform variant
+(`tracing-android`) as an ordinary `compile` dependency, so the code arrives
+through the closure anyway and the facade AAR simply carries no
+`classes.jar`. That is why ignoring variant selection survives plain AAR
+consumption.
+
+**Still the build script's job:** merging the AAR manifest fragments and
+running `aapt2` over their `res/`. `cpc pm maven manifests|res|jni` names
+those inputs so a build can reach them; assembling them is
+`plans/third-party-sdks.md` §3, and it is the biggest single work item there.
+Rejected: doing that half now — the closures worth reaching for first (Play
+Services, ML Kit) are code-heavy and resource-light, so `classpath` into `d8`
+is already a working pipeline.

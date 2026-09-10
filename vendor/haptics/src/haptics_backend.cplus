@@ -1,0 +1,64 @@
+// AppKit's haptic feedback manager. macOS only.
+//
+// ---- a Mac has three patterns, not seven -----------------------------------
+//
+// `NSHapticFeedbackManager` offers Generic, Alignment and LevelChange, and
+// they are meant for a trackpad under a finger — an alignment guide snapping,
+// a slider passing a detent. There is no "error" buzz, because a Mac has
+// nowhere to buzz: the feedback comes out of the TRACKPAD, and only a Force
+// Touch one.
+//
+// So the seven `Feel` values collapse onto three, and the collapse is a
+// judgement rather than a lookup:
+//
+//   Selection            -> Alignment    the detent pattern, which is what a
+//                                        value passing under a finger is
+//   Light/Medium/Heavy   -> LevelChange  a step, with no weight to vary
+//   Success/Warning/Error-> Generic      an outcome, undifferentiated
+//
+// `available` answers false on a Mac with no Force Touch trackpad, and every
+// verb is then a no-op rather than an error.
+
+import "objc/runtime" as rt;
+import "appkit/appkit" as ak;
+import "./haptics" as hap;
+
+const _SELECTION: i32 = 0;
+const _SUCCESS: i32 = 4;
+
+fn _performer() -> *u8 {
+    let cls: *u8 = rt::get_class(#str_ptr("NSHapticFeedbackManager\0"));
+    if cls.is_null() { return 0 as *u8; }
+    return rt::msg_id(cls, rt::sel(#str_ptr("defaultPerformer\0")));
+}
+
+export extern fn _c_available() -> i32 {
+    // A NIL PERFORMER IS THE ANSWER. AppKit hands back nothing on a machine
+    // with no Force Touch trackpad, which is the only availability signal it
+    // offers — there is no `isHapticFeedbackAvailable`.
+    if _performer().is_null() { return 0; }
+    return 1;
+}
+
+export extern fn _c_play(feel: i32) -> i32 {
+    let p: *u8 = _performer();
+    if p.is_null() { return 0; }
+
+    // 0 Generic, 1 Alignment, 2 LevelChange.
+    var pattern: i64 = 0 as i64;
+    if feel == _SELECTION { pattern = 1 as i64; }
+    else if feel < _SUCCESS { pattern = 2 as i64; }
+
+    // NOW, not Default: `Default` defers to the next screen refresh, which is
+    // right for a drag that is drawing and wrong for a tap that already
+    // happened. This package's verb is "play it", so it plays it.
+    rt::msg_void_i64_i64(p, rt::sel(#str_ptr("performFeedbackPattern:performanceTime:\0")),
+                         pattern, 1 as i64);
+    return 1;
+}
+
+// NOTHING TO WARM. macOS has no equivalent of the Taptic Engine's idle, so
+// this is a no-op rather than an approximation — the facade documents that.
+export extern fn _c_prepare(feel: i32) {
+    return;
+}

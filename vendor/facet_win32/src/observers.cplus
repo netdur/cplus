@@ -1,0 +1,145 @@
+// facet_win32/observers — the size-observer table, and nothing else.
+//
+// A LEAF, and that is its whole reason for existing. `Scheduler.observe_size`
+// is registered from `scheduler` and FIRED from the layout walk in `geometry`
+// — and `scheduler` imports `window` imports `geometry`, so neither end can
+// hold the table without a cycle. A module both can reach can.
+//
+// facet_gtk has this file for the same reason and says so in the same place.
+// The difference is what fires it: GTK 4 has no size-allocate signal to hang
+// this on, and Win32 does have WM_SIZE — but WM_SIZE is about a WINDOW, and
+// most facet nodes are not windows. The layout walk is the moment every node's
+// frame is known, which makes it the honest place for both backends.
+
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+
+// A watcher, and the size it last saw. The remembered size is what makes this
+// an OBSERVER rather than a per-pass callback: the layout walk runs on every
+// sync, and a handler called when nothing changed is a handler that cannot
+// tell "resized" from "repainted".
+struct SizeWatch {
+    node: usize,
+    f: fn(*u8),
+    ctx: usize,
+    last_w: f64,
+    last_h: f64,
+    live: bool,
+}
+
+static WATCHES: vec::Vec[SizeWatch] = #zero::[vec::Vec[SizeWatch]]();
+
+fn watch_slot() -> usize {
+    var i: usize = 0 as usize;
+    let n: usize = WATCHES.count();
+    while i < n {
+        match WATCHES.at_ptr(i) {
+            option::Option[*SizeWatch]::Some(w) => { if !{ (*w).live } { return i; } }
+            option::Option[*SizeWatch]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _e: status::Status = WATCHES.append(SizeWatch {
+        node: 0 as usize, f: 0 as fn(*u8), ctx: 0 as usize,
+        last_w: 0.0f64, last_h: 0.0f64, live: false,
+    });
+    return n;
+}
+
+// The tag is the slot +1, so that zero is never a live tag — `cancel` takes
+// zero as "nothing to cancel" and an application that stores a tag it never
+// set must not remove someone else's.
+fn observe_size(n: *core::Node, f: fn(*u8), ctx: *u8) -> u64 {
+    if n == (0 as *core::Node) { return 0 as u64; }
+    let slot: usize = watch_slot();
+    match WATCHES.at_ptr(slot) {
+        option::Option[*SizeWatch]::Some(w) => {
+            { (*w).node = { #addr(n as *u8) } };
+            { (*w).f = f };
+            { (*w).ctx = { #addr(ctx) } };
+            // SEEDED FROM THE NODE'S CURRENT FRAME, not from zero. Seeding at
+            // zero makes the first layout pass look like a resize and fires
+            // every watcher once for nothing — which an application reads as
+            // "the pane changed size" on the frame it opened.
+            let fr: flex::Frame = { (*n).frame() };
+            { (*w).last_w = fr.width };
+            { (*w).last_h = fr.height };
+            { (*w).live = true };
+        }
+        option::Option[*SizeWatch]::None => { return 0 as u64; }
+    }
+    return (slot +% (1 as usize)) as u64;
+}
+
+fn cancel_observe_size(tag: u64) {
+    if tag == (0 as u64) { return; }
+    let slot: usize = (tag as usize) -% (1 as usize);
+    match WATCHES.at_ptr(slot) {
+        option::Option[*SizeWatch]::Some(w) => { { (*w).live = false }; }
+        option::Option[*SizeWatch]::None => { }
+    }
+    return;
+}
+
+// Called from the layout walk for every node it visits, with the node's frame
+// already computed. Cheap when nothing is watching — one count read — which
+// matters because it runs per node per sync.
+fn note_size(n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    let count: usize = WATCHES.count();
+    if count == (0 as usize) { return; }
+    let key: usize = { #addr(n as *u8) };
+    let fr: flex::Frame = { (*n).frame() };
+    var i: usize = 0 as usize;
+    while i < count {
+        match WATCHES.at_ptr(i) {
+            option::Option[*SizeWatch]::Some(w) => {
+                if { (*w).live } && { (*w).node } == key {
+                    if { (*w).last_w } != fr.width || { (*w).last_h } != fr.height {
+                        { (*w).last_w = fr.width };
+                        { (*w).last_h = fr.height };
+                        let f: fn(*u8) = { (*w).f };
+                        // THE HANDLER RUNS LAST, after the remembered size is
+                        // written. It is entitled to write the tree, which
+                        // re-enters the layout walk — and a handler that ran
+                        // before the update would see the old size again and
+                        // fire forever.
+                        if f != (0 as fn(*u8)) { f({ (*w).ctx } as *u8); }
+                    }
+                }
+            }
+            option::Option[*SizeWatch]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn watch_table_size() -> usize { return WATCHES.count(); }
+
+#[test]
+fn a_tag_is_never_zero_and_a_dead_slot_is_reused() {
+    let a: usize = watch_slot();
+    match WATCHES.at_ptr(a) {
+        option::Option[*SizeWatch]::Some(w) => { { (*w).live = true }; }
+        option::Option[*SizeWatch]::None => { }
+    }
+    let b: usize = watch_slot();
+    assert b != a;
+    match WATCHES.at_ptr(a) {
+        option::Option[*SizeWatch]::Some(w) => { { (*w).live = false }; }
+        option::Option[*SizeWatch]::None => { }
+    }
+    assert watch_slot() == a;
+    assert (a +% (1 as usize)) != (0 as usize);
+    return;
+}
+
+#[test]
+fn cancelling_a_tag_nobody_set_is_quiet() {
+    cancel_observe_size(0 as u64);
+    return;
+}

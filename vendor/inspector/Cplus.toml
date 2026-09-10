@@ -8,17 +8,26 @@ edition = "2026"
 # - inspector/inspector: the neutral surface (Handle, Value, Prop, Backend vtable)
 # - inspector/tree:      the facet-tree walker and the typed get/set dispatch
 # - inspector/appkit:    highlight overlay and native rows (macOS)
-# - inspector/serve_linux: the same two on GTK 4, plus the GLib main-thread hop
-#                        — `inspector/appkit` forwards here on Linux
-# - inspector/uikit:     the same two, on iOS — and `serve_if_asked` there takes
-#                        a PORT, because a Unix socket inside the app sandbox is
+# - inspector/uikit:     the same two, on iOS — where the address is a PORT,
+#                        because a Unix socket inside the app sandbox is
 #                        unreachable from the machine running the IDE
+# - inspector/serve_android: the same two again, on Android — where the port is
+#                        derived from the pid, because an Activity has no
+#                        environment a launcher could set
 # - inspector/widget:    the facet-facing inspector UI applications embed
 #
 # This is NOT the agent surface. The agent surface is curated and permissioned;
 # this one sees unexposed nodes and writes properties that are not user
 # affordances. See docs/design.md.
 
+# APPLE PACKAGES ARE NOT DECLARED HERE, and the reason is the LINK line rather
+# than the resolver. `objc`, `appkit` and `quartzcore` sat in this block because
+# `facet_agent/inspect_platform` imports them on macOS — but a top-level
+# dependency splices its `[link]` entry on EVERY platform, so a Windows build of
+# this package handed lld-link `-framework AppKit`, `-framework QuartzCore` and
+# `objc.lib` and stopped at "could not open 'AppKit'". Nothing in `src/` imports
+# any of the three (the `inspector/appkit` module the header describes is long
+# gone), so they belong in the per-platform blocks that actually reach them.
 [dependencies]
 stdlib      = "*"
 flex_layout = "*"
@@ -34,53 +43,55 @@ agent_core  = "*"
 # without these four the suite does not build at all. Same list the probe
 # under `examples/inspector_probe` declares, and for the same reason.
 [macos.dependencies]
-# objc / appkit / quartzcore are the macOS half's OWN dependencies and used to
-# sit in the unconditional block above. They cannot: a `[link] frameworks` entry
-# reaches the linker for every target that declares the package, so a Linux
-# build got `-framework Foundation` and GNU ld answered "-f may not be used
-# without -shared" — an error naming nothing this package wrote.
-objc         = "*"
-appkit       = "*"
-quartzcore   = "*"
 facet_appkit = "*"
 webkit       = "*"
 agent_appkit = "*"
 agent_inapp  = "*"
-
-# The LINUX/GTK half, and the same reason as the macOS block above: the suite
-# imports facet, `facet_agent/agent` resolves to `agent_linux.cplus` on Linux,
-# and that names `agent_gtk`. A transitive platform dependency is resolved
-# against the ROOT package's manifest, so without this block the suite does not
-# build at all — it failed with E0852 pointing at facet_agent's own include.
-# The GTK stack under facet_gtk is restated here for the same flat-vendor
-# reason the gallery restates it.
-[linux.dependencies]
-facet_gtk   = "*"
-agent_gtk   = "*"
-agent_inapp = "*"
-gtk4        = "*"
-gobject     = "*"
-gobject_gir = "*"
-gio         = "*"
-glib        = "*"
-cairo       = "*"
-gdk         = "*"
-gdkpixbuf   = "*"
-graphene    = "*"
-gsk         = "*"
-harfbuzz    = "*"
-pango       = "*"
-pangocairo  = "*"
-gmodule     = "*"
+# Moved down from `[dependencies]` — see the note there. Same three packages the
+# macOS build always had; only the platforms that do NOT need them changed.
+objc         = "*"
+appkit       = "*"
+quartzcore   = "*"
 
 # The iOS half. `uikit.cplus` is only ever compiled by a build that imports it —
 # an iOS entry — so these are named for that build rather than for this
 # package's own, which is macOS and never reaches the file.
 [ios.dependencies]
-objc        = "*"
-quartzcore  = "*"
 facet_uikit = "*"
 uikit       = "*"
 webkit      = "*"
 agent_uikit = "*"
 agent_inapp = "*"
+# `inspect_platform_ios` is written against the same runtime as its macOS
+# sibling, so the two it shares come down from `[dependencies]` here too.
+objc        = "*"
+quartzcore  = "*"
+
+# The Windows half, and it exists for the reason the macOS block above states
+# rather than for a file of this package's own: `facet_agent/agent` resolves to
+# its Windows facade, whose `inspect_platform_windows.cplus` imports
+# `win32/winuser` for the highlight overlay — and the flat set the resolver
+# checks every import against is taken from the ROOT package's manifest, so a
+# transitive dependency of a dependency is still this file's to name. Without
+# these the build stops at `E0852: first segment win32 is not a declared
+# dependency`, naming an import in a package that does declare it.
+[windows.dependencies]
+facet_win32 = "*"
+win32       = "*"
+agent_win32 = "*"
+agent_inapp = "*"
+
+# The Android half. `serve_android.cplus` is only ever compiled by a build that
+# imports it, so these are named for that build rather than for this package's
+# own — same reason as the iOS block above.
+#
+# `agent_android` is here because `facet_agent/agent` resolves to its Android
+# facade, which is written against that backend; the flat set the resolver
+# checks every import against is taken from the ROOT package's manifest, so a
+# transitive dependency of a dependency is still this file's to name.
+[android.dependencies]
+facet_android = "*"
+android_view  = "*"
+jni           = "*"
+agent_android = "*"
+agent_inapp   = "*"

@@ -29,11 +29,14 @@ import sys
 import glob
 
 FACET = "vendor/facet/src"
+FOCUS = "gtk"
+
 BACKENDS = {
     "appkit": "vendor/facet_appkit/src",
     "uikit": "vendor/facet_uikit/src",
     "gtk": "vendor/facet_gtk/src",
     "android": "vendor/facet_android/src",
+    "win32": "vendor/facet_win32/src",
 }
 # The floor this backend has already reached. `--check` fails below it, so a
 # refactor that quietly drops a verb is caught at the number rather than by
@@ -54,6 +57,36 @@ HANDLER_FLOOR = 68
 # node has (`C_ANIMATE`, `C_TRANSFORM`, `C_SHADOW`, `C_CLIP`) sat unanswered
 # while the two numbers above read 98% and 100%. See `shared_band`.
 SHARED_FLOOR = 19
+
+# PER BACKEND, because `--check` used to be spelled `totals.get("gtk")` no matter
+# which column was asked for — so `parity.py win32 --check` measured win32 and
+# then gated GTK, and a Windows regression could not fail the check that existed
+# to catch one. The three constants above stay as GTK's for compatibility with
+# anything that imports them; this table is what the gate reads.
+FLOORS = {
+    "gtk": (FLOOR, HANDLER_FLOOR, SHARED_FLOOR),
+    # Where facet_win32 stands today. Raise them as the gap closes — the point
+    # of a floor is that it only ever goes up.
+    #
+    # 315 -> 309 ON 2026-09-09, AND THE DROP IS THE POINT. This tool counts a
+    # NAMED bit as answered; the stricter `tools/verb_coverage.py` separates
+    # "the mask gates it AND a body reads the field" from "the mask promises and
+    # nothing reads it". Clearing that second bucket to zero meant withdrawing
+    # six bits that were promises the code did not keep:
+    #
+    #   symbol.fill                       a variable-font axis; the bundled face
+    #                                     is static and GDI has no axis support
+    #   bordered.stroke_dash_offset       GDI models no dash PHASE
+    #   carousel/collection.item_sizing   an optimisation hint, not a different
+    #                                     result — every item is measured anyway
+    #   menu_item/context_menu_item.icon  buildable and NOT BUILT; see §2
+    #
+    # Four are recorded decisions and two are now visible debt, which is the
+    # honest shape. The shared band went down on 2026-09-01 for exactly this
+    # reason. A floor only rises while the measurement means the same thing;
+    # when a lie leaves the numerator it has to come down, and be said out loud.
+    "win32": (309, 62, 19),
+}
 
 # Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification
 # queue (M4). A backend neither can nor should wire them, so counting them
@@ -80,7 +113,7 @@ def referenced(directory):
     for path in glob.glob(os.path.join(directory, "*.cplus")):
         if path.endswith("test_main.cplus"):
             continue
-        text = strip_comments(open(path).read())
+        text = strip_comments(open(path, encoding="utf-8").read())
         alias = {}
         for module, name in re.findall(
             r'import\s+"(?:\.\./)?(?:facet/)?([\w/]+)"\s+as\s+(\w+)\s*;', text
@@ -91,11 +124,24 @@ def referenced(directory):
     return hits
 
 
-MANIFEST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        "MANIFEST.md")
+# THE LEDGER IS PER BACKEND, and this used to be one path.
+#
+# `decided_absent` reads a MANIFEST's section 1 to tell "looked at and argued"
+# from "nobody has decided" - and it read THIS tool's own package, facet_gtk,
+# whatever backend column it was reporting. So the closing "nothing unanswered
+# is unrecorded" line was a statement about GTK printed under everyone's
+# numbers, and a second backend's ledger was never checked at all.
+#
+# The numbers were always right; the CROSS-CHECK was not portable. It is now
+# keyed on the backend, which is what makes the line mean something for each.
+def manifest_for(backend):
+    d = BACKENDS.get(backend)
+    if not d:
+        return None
+    return os.path.join(os.path.dirname(d), "MANIFEST.md")
 
 
-def decided_absent():
+def decided_absent(backend="gtk"):
     """Names this backend has DECIDED it cannot answer, read out of MANIFEST §1.
 
     WHY THE TOOL READS PROSE. Everything above is an upper bound on what is
@@ -114,14 +160,29 @@ def decided_absent():
     fails towards reporting debt that is not there rather than hiding debt that
     is.
     """
-    if not os.path.isfile(MANIFEST):
+    mf = manifest_for(backend)
+    if not mf or not os.path.isfile(mf):
         return set()
-    body = open(MANIFEST).read()
+    body = open(mf, encoding="utf-8").read()
     start = body.find("\n## 1.")
     end = body.find("\n## 2.", start + 1)
     if start < 0 or end < 0:
         return set()
     section = body[start:end]
+    # FENCED CODE BLOCKS COME OUT FIRST, and leaving them in was a silent bug.
+    #
+    # The extraction below pairs backticks. A ``` fence is THREE of them, so a
+    # single fenced block in section 1 leaves an odd count and every pair after
+    # it is shifted by one - the closing tick of one name becomes the opening
+    # tick of the next, and real ledger rows stop being seen.
+    #
+    # Found on facet_win32, whose section 1 quotes measured output in a fence:
+    # four rows it had argued in full were reported UNRECORDED, because a code
+    # block earlier in the file had desynchronised the parse. Nothing about
+    # those rows was wrong and no error was printed.
+    #
+    # A fence is an EXAMPLE, never a ledger row, so dropping it loses nothing.
+    section = re.sub(r"```.*?```", "", section, flags=re.S)
     names = set()
     for tick in re.findall(r"`([^`]+)`", section):
         # `carousel.bounces` -> bounces ; `C_SAFE_AREA` -> C_SAFE_AREA
@@ -148,7 +209,7 @@ def shared_band():
     Bits that are pure BOOKKEEPING are excluded by name — a blanket word, a
     sentinel, a mask — because they are not verbs a backend answers.
     """
-    text = open(os.path.join(FACET, "props.cplus")).read()
+    text = open(os.path.join(FACET, "props.cplus"), encoding="utf-8").read()
     declared = [c for c in re.findall(r"^const (C_[A-Z0-9_]+)\s*:", text, re.M)
                 if c not in NOT_A_VERB]
     out = {}
@@ -156,7 +217,7 @@ def shared_band():
         if not os.path.isdir(d):
             continue
         src = strip_comments("".join(
-            open(p).read() for p in glob.glob(os.path.join(d, "*.cplus"))
+            open(p, encoding="utf-8").read() for p in glob.glob(os.path.join(d, "*.cplus"))
             if not p.endswith("test_main.cplus")))
         out[k] = sorted(c for c in declared if re.search(r"\bprops::" + c + r"\b", src))
     return declared, out
@@ -168,6 +229,17 @@ NOT_A_VERB = {
     "C_RESTYLE",       # C_ALL_STATE minus one bit
     "C_COMMANDS",      # the verb group, as a mask
     "C_LAYOUT",        # raised by geometry writes, answered by the layout pass
+    # Raised when a begin_updates/end_updates batch CLOSES, and by then every
+    # bit the batch raised is already on the node — the sync walk applies
+    # those. A backend acting on the flush as well re-applies the same node
+    # twice for one edit. So there is nothing to name, and NO BACKEND NAMES IT:
+    # appkit and uikit each mention it once, in a comment, which this tool
+    # strips by design.
+    #
+    # It was counted as an unanswered VERB until 2026-09-08 and each backend
+    # was expected to argue it away in its own manifest, which facet_gtk duly
+    # did. That is one census bug wearing three copies of the same excuse.
+    "C_FLUSH",
 }
 
 
@@ -178,7 +250,7 @@ def handlers():
         if path.endswith("test_main.cplus"):
             continue
         for m in re.finditer(r"struct (\w+Props) \{(.*?)\n\}",
-                             open(path).read(), re.S):
+                             open(path, encoding="utf-8").read(), re.S):
             hs = sorted({h for h in re.findall(
                 r"^\s+(on_\w+|observe_\w+): fn\(", m.group(2), re.M)
                 if h not in FACET_FIRED})
@@ -238,7 +310,7 @@ def fires(source, handler, struct=None, scoped=None):
     TWO SHAPES COUNT, and the second is the one a naive proxy misses. A backend
     usually reads the field off the props block (`{ (*p).on_click }`), but for
     the handlers facet owns the delivery of it calls the blessed API instead —
-    `core::fire_focus_handler` for `on_focus`. Counting only the field access
+    `core::fire_FOCUS_handler` for `on_FOCUS`. Counting only the field access
     marks a correct implementation as missing, which pushes whoever is chasing
     the number toward touching the struct directly just to be counted.
 
@@ -254,13 +326,19 @@ def fires(source, handler, struct=None, scoped=None):
     return re.search(r"fire_" + stem + r"_handler\b", source) is not None
 
 
+def module_for(struct):
+    """`TimePickerProps` -> `time_picker`, the inverse of `struct_for`."""
+    name = struct[:-5] if struct.endswith("Props") else struct
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
 def handler_parity():
     src = {}
     for k, d in BACKENDS.items():
         if not os.path.isdir(d):
             continue
         src[k] = strip_comments("".join(
-            open(p).read() for p in glob.glob(os.path.join(d, "*.cplus"))
+            open(p, encoding="utf-8").read() for p in glob.glob(os.path.join(d, "*.cplus"))
             if not p.endswith("test_main.cplus")))
     H = handlers()
     declared = sum(len(v) for v in H.values())
@@ -268,20 +346,46 @@ def handler_parity():
     totals = {k: sum(len([h for h in hs if fires(src[k], h, s_, scoped[k])])
                      for s_, hs in H.items()) for k in src}
     print(f"\n{declared} handlers declared across facet's Props structs\n")
-    for k in ("appkit", "uikit", "gtk", "android"):
+    for k in ("appkit", "uikit", "gtk", "android", "win32"):
         if k not in totals:
             continue
         pct = totals[k] * 100 // declared if declared else 0
-        mark = "  <-- this package" if k == "gtk" else ""
+        mark = "  <-- this package" if k == FOCUS else ""
         print(f"  {k:<8} {totals[k]:>4} / {declared}   {pct:>3}%{mark}")
-    gaps = [(s, [h for h in hs if not fires(src["gtk"], h, s, scoped["gtk"])])
+    gaps = [(s, [h for h in hs if not fires(src[FOCUS], h, s, scoped[FOCUS])])
             for s, hs in sorted(H.items())]
     gaps = [(s, m) for s, m in gaps if m]
+    # THE READ HALF IS CHECKED AGAINST §1 TOO, and it was the last surface that
+    # was not. Props and the shared band both ask "is this gap argued anywhere",
+    # and a handler gap could only ever be printed — so a backend that had
+    # written down exactly why a control cannot report something still read as
+    # having undecided debt, and one that had written nothing read the same.
+    # The two states the ledger exists to separate were identical here.
+    absent = decided_absent(FOCUS)
+    unrecorded = []
     if gaps:
-        print("\n  gtk does not fire:")
+        print(f"\n{FOCUS} does not fire:")
         for s, m in gaps:
-            print(f"    {s:24} {' '.join(m)}")
-    return totals.get("gtk", 0)
+            # A whole KIND argued absent takes its handlers with it: a control
+            # this backend does not build cannot report, and §1 makes that case
+            # once under the kind's name rather than once per handler.
+            kind = module_for(s)
+            if kind in absent:
+                print(f"    {s:24} {' '.join(m)}   (kind decided absent — MANIFEST §1)")
+                continue
+            open_rows = [h for h in m if h not in absent]
+            unrecorded += [f"{kind}.{h}" for h in open_rows]
+            if not open_rows:
+                note = "   (decided absent — MANIFEST §1)"
+            elif len(open_rows) < len(m):
+                note = "   (some argued — MANIFEST §1)"
+            else:
+                note = ""
+            print(f"    {s:24} {' '.join(m)}{note}")
+    # The FOCUSED backend's count, which is what `--check` gates on. Spelled
+    # "gtk" here regardless of the column asked for, so the handler floor was
+    # always GTK's however the tool was invoked.
+    return totals.get(FOCUS, 0), unrecorded
 
 
 def field_touches(directory):
@@ -328,16 +432,29 @@ def field_touches(directory):
     for path in glob.glob(os.path.join(directory, "*.cplus")):
         if path.endswith("test_main.cplus"):
             continue
-        text = strip_comments(open(path).read())
+        text = strip_comments(open(path, encoding="utf-8").read())
         for body in re.split(r"\n(?=fn |impl )", text):
             in_scope = set(re.findall(r"\*\w+::(\w+Props)\b", body))
             for m in re.finditer(r"\.\s*(?:(\w+)\.)?([a-z_][a-z_0-9]*)\b", body):
                 qualifier, field = m.group(1), m.group(2)
                 if qualifier:
-                    embedded = "".join(x.title() for x in qualifier.split("_")) + "Props"
-                    per.setdefault(embedded, set()).add(field)
-                    # The qualifier is itself a field of whatever is in scope.
+                    # AN EMBEDDED READ ANSWERS THE OUTER KIND, not the embedded
+                    # one. `(*p).menu_item.is_destructive` inside a swipe
+                    # action's painter is how `swipe_item` declares that prop —
+                    # facet puts it in the embedded block — and it says nothing
+                    # about whether a real MENU ITEM is drawn red. Crediting
+                    # `MenuItemProps` for it moved facet_win32 from 294 to 295
+                    # while `menus.cplus` ignored the field and MANIFEST §1 said
+                    # it would, which is the same disagreement between the
+                    # number and the document that took the floor from 357 to
+                    # 356.
+                    #
+                    # A backend that genuinely implements the embedded kind
+                    # reads it UNQUALIFIED, with that Props type in scope —
+                    # `menus.cplus` does — so nothing real is lost.
                     for st in in_scope:
+                        per.setdefault(st, set()).add(field)
+                        # The qualifier is itself a field of whatever is in scope.
                         per.setdefault(st, set()).add(qualifier)
                     continue
                 for st in in_scope:
@@ -351,6 +468,14 @@ def struct_for(module):
 
 
 def main():
+    # WHICH PACKAGE'S PER-KIND TABLE GETS PRINTED. It was gtk and only gtk,
+    # which meant the one report that names missing props by name could only be
+    # read for the package already at 98%. `parity.py win32` steers a package
+    # still being built, which is when that list is worth anything.
+    global FOCUS
+    for a in sys.argv[1:]:
+        if not a.startswith("-") and a in BACKENDS:
+            FOCUS = a
     root = os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__)))))
     os.chdir(root)
@@ -359,6 +484,15 @@ def main():
         return 2
 
     seen = {k: referenced(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
+    # Whole-backend source, for the kind-constant half of the evidence test
+    # below. Comments stripped for the reason `strip_comments` gives.
+    srcs = {k: strip_comments("".join(
+        # ENCODING IS NOT OPTIONAL ON WINDOWS: a bare `open` there defaults to
+        # cp1252 and dies on the first em-dash in a comment, which is every file
+        # in this repo. Every other read in this tool already says utf-8.
+        open(p_, encoding="utf-8").read() for p_ in glob.glob(os.path.join(d, "*.cplus"))
+        if not p_.endswith("test_main.cplus")))
+        for k, d in BACKENDS.items() if os.path.isdir(d)}
     written = {k: field_touches(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
     totals = {k: 0 for k in seen}
     declared = 0
@@ -367,7 +501,7 @@ def main():
     for path in sorted(glob.glob(os.path.join(FACET, "*.cplus"))):
         module = os.path.basename(path)[:-6]
         props = sorted(set(re.findall(
-            r"^\s*const (P_[A-Z0-9_]+)\s*:", open(path).read(), re.M)))
+            r"^\s*const (P_[A-Z0-9_]+)\s*:", open(path, encoding="utf-8").read(), re.M)))
         if not props:
             continue
         declared += len(props)
@@ -375,25 +509,67 @@ def main():
         for k in seen:
             named = seen[k].get(module, set())
             # The field-touch fallback needs evidence this backend implements
-            # the KIND — see `field_touches`. One named bit is that evidence.
-            plausible = len(named) > 0
+            # the KIND — see `field_touches`. A named bit is that evidence, and
+            # so is naming the kind CONSTANT.
+            #
+            # THE SECOND HALF WAS MISSING AND IT COST APPKIT 16 BITS. A backend
+            # need not route through `<module>::P_*` at all: facet_appkit
+            # dispatches menu, menu_item, context_menu_item, swipe_item and
+            # toolbar_item on `props::K_MENU_ITEM` and reads the struct fields
+            # directly. Requiring a named bit as the ONLY evidence discarded
+            # every one of those field touches, so five kinds it fully
+            # implements scored zero and vanished from the per-kind table
+            # entirely — the report has a row only where something is answered.
+            # appkit read 337/363 against gtk's 359 largely on that.
+            plausible = len(named) > 0 or re.search(
+                r"\bprops::K_" + module.upper() + r"\b", srcs[k]) is not None
             fields = written[k].get(struct_for(module), set())
             got[k] = {p for p in props
                       if p in named
                       or (plausible and p[2:].lower() in fields)}
             totals[k] += len(got[k])
-        if got.get("gtk"):
-            rows.append((module, len(props), len(got["gtk"]),
-                         sorted(p[2:].lower() for p in set(props) - got["gtk"])))
+        # EVERY KIND, INCLUDING THE ONES THIS BACKEND ANSWERS NOTHING FOR.
+        #
+        # This used to be `if got.get(FOCUS)`, and the heading still said "where
+        # anything is answered at all" — so a kind the backend had never heard of
+        # did not appear on the report, and its props were never checked against
+        # MANIFEST §1 either. The actionable line at the bottom therefore counted
+        # only the debt inside kinds already begun.
+        #
+        # Measured on win32 when this was changed: the report closed with "1
+        # unanswered and UNRECORDED" while 29 of its 61 missing props sat in
+        # kinds that were absent from the table entirely. The one number a person
+        # reads for "what is left" was wrong by 29, and wrong in the flattering
+        # direction, on the backend the list exists to steer.
+        rows.append((module, len(props), len(got[FOCUS]),
+                     sorted(p[2:].lower() for p in set(props) - got[FOCUS])))
 
-    absent = decided_absent()
-    print("facet_gtk — per kind, where anything is answered at all:\n")
+    absent = decided_absent(FOCUS)
+    print(f"facet_{FOCUS} — every kind facet declares:\n")
     unrecorded = []
     for module, n, g, missing in sorted(rows, key=lambda r: -r[2]):
-        open_debt = [m for m in missing if m not in absent]
+        # A WHOLE KIND CAN BE ARGUED AT ONCE, but only a kind with NOTHING built.
+        # §1 makes its case per name, and for a kind nobody implements the name
+        # it argues is the KIND — "Win32 has no hybrid_web" — not each of that
+        # kind's props in turn. Reading only prop names would bury real debt
+        # under an argument already made.
+        #
+        # THE `g == 0` GUARD IS NOT DECORATION. Kind names and prop names share a
+        # namespace: `popup.label` is a prop, and without this guard §1's row for
+        # it marked the whole `label` KIND — 14 props built and one genuinely
+        # undecided — as argued, silencing `label.selectable`, the single open
+        # row on the whole report. A kind with any implementation is by
+        # definition not one this backend decided against.
+        whole_kind_argued = g == 0 and module in absent
+        open_debt = [] if whole_kind_argued else [m for m in missing if m not in absent]
         unrecorded += [f"{module}.{m}" for m in open_debt]
         line = f"  {module:14} {g:>2}/{n:<2}"
-        if open_debt:
+        if g == 0:
+            # NOT STARTED, which is a different state from a kind with gaps and
+            # is the one this report used to omit entirely.
+            line += "   NOT IMPLEMENTED" + ("  (decided absent — MANIFEST §1)"
+                                            if whole_kind_argued else "")
+        elif open_debt:
             line += "   not yet: " + " ".join(open_debt[:8])
             if len(open_debt) > 8:
                 line += f" (+{len(open_debt) - 8})"
@@ -403,26 +579,27 @@ def main():
         print(line)
 
     print(f"\n{declared} prop bits declared across facet's kind modules\n")
-    for k in ("appkit", "uikit", "gtk", "android"):
+    for k in ("appkit", "uikit", "gtk", "android", "win32"):
         if k not in totals:
             continue
         pct = totals[k] * 100 // declared if declared else 0
-        mark = "  <-- this package" if k == "gtk" else ""
+        mark = "  <-- this package" if k == FOCUS else ""
         print(f"  {k:<8} {totals[k]:>4} / {declared}   {pct:>3}%{mark}")
 
-    fired = handler_parity()
+    fired, handler_debt = handler_parity()
+    unrecorded += handler_debt
 
     declared_c, named = shared_band()
     print(f"\n{len(declared_c)} bits declared on facet's SHARED band\n")
-    for k in ("appkit", "uikit", "gtk", "android"):
+    for k in ("appkit", "uikit", "gtk", "android", "win32"):
         if k not in named:
             continue
         pct = len(named[k]) * 100 // len(declared_c) if declared_c else 0
-        mark = "  <-- this package" if k == "gtk" else ""
+        mark = "  <-- this package" if k == FOCUS else ""
         print(f"  {k:<8} {len(named[k]):>4} / {len(declared_c)}   {pct:>3}%{mark}")
-    missing = [c for c in declared_c if c not in named.get("gtk", [])]
+    missing = [c for c in declared_c if c not in named.get(FOCUS, [])]
     if missing:
-        print("\n  gtk does not name:")
+        print(f"\n{FOCUS} does not name:")
         for c in missing:
             mark = "  (decided absent — MANIFEST §1)" if c in absent else "  <-- UNRECORDED"
             print(f"    {c}{mark}")
@@ -440,27 +617,58 @@ def main():
     else:
         print("Nothing unanswered is unrecorded: every gap is either built "
               "or argued in MANIFEST §1.")
-    shared = len(named.get("gtk", []))
+
+    # EVERY BACKEND'S LEDGER, not just this package's.
+    #
+    # The block above is about `gtk` because this tool lives beside it. That
+    # left a second backend's §1 unchecked entirely - it could name nothing at
+    # all and the report would still close with "nothing unrecorded", because
+    # the sentence was only ever about GTK.
+    #
+    # One line each: of the shared-band bits a backend does not name, how many
+    # it has ARGUED, and how many nobody has decided. The second number is the
+    # only actionable one, which is why it is last.
+    print("\n  the shared band, against each backend's own MANIFEST §1:")
+    for k in ("appkit", "uikit", "gtk", "android", "win32"):
+        if k not in named:
+            continue
+        gaps = [c for c in declared_c if c not in named[k]]
+        if not gaps:
+            print(f"    {k:<8} all {len(declared_c)} named")
+            continue
+        argued = decided_absent(k)
+        open_rows = [c for c in gaps if c not in argued]
+        state = "clean" if not open_rows else f"{len(open_rows)} UNRECORDED"
+        print(f"    {k:<8} {len(gaps)} unnamed, "
+              f"{len(gaps) - len(open_rows)} argued -> {state}")
+        for c in open_rows:
+            print(f"             {c}")
+    shared = len(named.get(FOCUS, []))
 
     if "--check" in sys.argv:
-        got = totals.get("gtk", 0)
+        if FOCUS not in FLOORS:
+            print(f"\nno floors recorded for {FOCUS} — add them to FLOORS to gate it.",
+                  file=sys.stderr)
+            return 2
+        p_floor, h_floor, s_floor = FLOORS[FOCUS]
+        got = totals.get(FOCUS, 0)
         bad = False
-        if got < FLOOR:
-            print(f"\nFAIL: gtk answers {got} props, floor is {FLOOR} — a verb was dropped.",
+        if got < p_floor:
+            print(f"\nFAIL: {FOCUS} answers {got} props, floor is {p_floor} — a verb was dropped.",
                   file=sys.stderr)
             bad = True
-        if fired < HANDLER_FLOOR:
-            print(f"FAIL: gtk fires {fired} handlers, floor is {HANDLER_FLOOR}.",
+        if fired < h_floor:
+            print(f"FAIL: {FOCUS} fires {fired} handlers, floor is {h_floor}.",
                   file=sys.stderr)
             bad = True
-        if shared < SHARED_FLOOR:
-            print(f"FAIL: gtk names {shared} shared-band bits, floor is {SHARED_FLOOR}.",
+        if shared < s_floor:
+            print(f"FAIL: {FOCUS} names {shared} shared-band bits, floor is {s_floor}.",
                   file=sys.stderr)
             bad = True
         if bad:
             return 1
-        print(f"\nok: props {got} (floor {FLOOR}), handlers {fired} "
-              f"(floor {HANDLER_FLOOR}), shared {shared} (floor {SHARED_FLOOR})")
+        print(f"\nok: props {got} (floor {p_floor}), handlers {fired} "
+              f"(floor {h_floor}), shared {shared} (floor {s_floor})")
     return 0
 
 

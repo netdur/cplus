@@ -5,11 +5,11 @@ edition = "2026"
 
 # fswatch — owner-thread filesystem change events.
 #
-# Two backends, picked by C+'s platform override on `import "./backend"`:
-# kqueue on macOS (`backend.cplus`) and inotify on Linux
-# (`backend_linux.cplus`). The seam is five verbs wide and the engine above it
-# is the same code on both — a snapshot differ, so neither backend's event
-# payload reaches the public module. Windows would be a third file.
+# TWO BACKENDS, ONE PACKAGE. `backend.cplus` is kqueue (macOS); it is shadowed
+# by `backend_linux.cplus`, which is inotify and serves Android too — the
+# resolver falls back from `android` to `_linux`, and Android's kernel IS Linux.
+# A `backend_windows.cplus` (ReadDirectoryChangesW) would be the third. The
+# public module — `fswatch/fswatch` — is the same on all of them.
 
 [dependencies]
 stdlib = "*"

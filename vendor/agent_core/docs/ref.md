@@ -105,9 +105,10 @@ fn operator() -> Grant                 // read | act
 fn protected_reader() -> Grant         // + read_protected
 fn protected_operator() -> Grant       // + act_protected
 
-struct Request { channel: Channel, token: str }
+struct Request { channel: Channel, token: str, client: str, method: str }
 fn request(channel: Channel) -> Request
-fn request_with_token(channel: Channel, token: str) -> Request
+fn request_with_token(channel: Channel, token: str,
+                      client: str = "", method: str = "") -> Request
 
 struct AuthGate { policy: fn(Request) -> Grant }
 fn deny_all() -> AuthGate

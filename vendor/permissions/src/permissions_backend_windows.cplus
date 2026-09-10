@@ -1,0 +1,243 @@
+// permissions_backend_windows — the honest Windows answer, with one thing it
+// can actually do.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `permissions.cplus` declares four
+// stable symbols and something must define them on every platform the package
+// claims; without a `_windows` sibling the build falls back to
+// `permissions_backend.cplus` — the Apple half — and stops at `import
+// "objc/runtime"`, which is not available here.
+//
+// STATE IS `Unsupported`, like Linux and for a similar reason. A classic Win32
+// desktop process has no per-app authorization object to read: camera, mic and
+// location are governed by GLOBAL Settings toggles (and, for packaged apps, a
+// capability manifest), and reading those without asking needs WinRT
+// (`Windows.Security.Authorization` / `Windows.Devices.Enumeration`) that this
+// pass does not pull in. `Unsupported`, never `Denied` — "the person said no"
+// and "this build cannot ask" call for opposite responses, and a Windows build
+// that reported refusals would show a settings button on every screen.
+//
+// NOTIFICATIONS ARE THE EXCEPTION, because their global toggle IS readable
+// without WinRT: `HKCU\...\PushNotifications\ToastEnabled`, the switch behind
+// Settings > System > Notifications. A desktop process may notify BY DEFAULT —
+// there is no consent prompt to have missed — so the honest map is `Granted`
+// unless the person flipped that switch, and then `Blocked` rather than
+// `Denied`: `request` has no dialog to show here, the Settings pane is the only
+// remedy, and `Blocked` is the state whose remedy is `open_settings`. This is
+// what lets the `notifications` package's permission gate pass on Windows —
+// its real backend exists, and a gate answering `Unsupported` would have kept
+// every caller away from it.
+//
+// `open_settings` IS REAL, though, which is the difference from the Linux stub.
+// Windows 10+ deep-links every privacy domain through the `ms-settings:` URI
+// scheme, and `ShellExecuteA` on one opens exactly that pane. shell32 is already
+// on `cpc`'s Windows link line, so the one extern needs no manifest entry.
+
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "./permissions" as perm;
+
+// ShellExecuteA — the ANSI door is enough here: every `ms-settings:` URI and the
+// verb "open" are ASCII, so there is nothing a wide call would carry that this
+// one drops. Returns an HINSTANCE-shaped handle; a value ABOVE 32 is success,
+// 32-and-below is one of the documented error codes.
+#[link_name = "ShellExecuteA"]
+extern fn ShellExecuteA(hwnd: *u8, op: *u8, file: *u8, params: *u8,
+                        dir: *u8, show: i32) -> *u8;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+#[link_name = "MultiByteToWideChar"]
+extern fn MultiByteToWideChar(cp: u32, flags: u32, mb: *u8, mblen: i32,
+                              wide: *u16, widelen: i32) -> i32;
+// RegGetValueW rather than the open/query/close triple: one call, and it
+// refuses to hand back an unterminated string, though a DWORD read cares about
+// neither. advapi32 is already on `cpc`'s Windows link line for securestore.
+#[link_name = "RegGetValueW"]
+extern fn RegGetValueW(hkey: *u8, subkey: *u16, value: *u16, flags: u32,
+                       type_out: *u32, data: *u8, cb: *u32) -> i32;
+
+fn _cp_utf8() -> u32 { return 65001 as u32; }
+fn _hkcu() -> *u8 { return { ((2147483648 as usize) +% (1 as usize)) as *u8 }; }  // 0x80000001
+fn _rrf_rt_reg_dword() -> u32 { return 16 as u32; }
+
+// UTF-8 → malloc'd, NUL-terminated UTF-16 — the securestore backend's helper,
+// verbatim. `0 as *u16` on failure. Caller frees.
+fn _to_wide(s: str) -> *u16 {
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let need: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, cs.as_ptr(),
+                                                  0 -% (1 as i32), 0 as *u16, 0 as i32) };
+            if need <= (0 as i32) { return 0 as *u16; }
+            let buf: *u8 = { malloc((need as usize) *% (2 as usize)) };
+            if buf.is_null() { return 0 as *u16; }
+            let w: *u16 = buf as *u16;
+            let got: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, cs.as_ptr(),
+                                                 0 -% (1 as i32), w, need) };
+            if got <= (0 as i32) { { free(buf) }; return 0 as *u16; }
+            return w;
+        }
+        option::Option[text::CString]::None => { return 0 as *u16; }
+    }
+}
+
+// The one real state read. Absent value — or a registry this process cannot
+// reach — answers `Granted`, because enabled IS the Windows default and the
+// value only exists once somebody has touched the switch.
+fn _toast_state() -> perm::State {
+    let sub: *u16 = _to_wide("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications");
+    if sub == (0 as *u16) { return perm::State::Unknown; }
+    let val: *u16 = _to_wide("ToastEnabled");
+    if val == (0 as *u16) { { free(sub as *u8) }; return perm::State::Unknown; }
+    var data: u32 = 0 as u32;
+    var cb: u32 = 4 as u32;
+    let rc: i32 = { RegGetValueW(_hkcu(), sub, val, _rrf_rt_reg_dword(),
+                                 0 as *u32, { #addr_of(data) as *u8 }, #addr_of(cb)) };
+    { free(sub as *u8) };
+    { free(val as *u8) };
+    if rc != (0 as i32) { return perm::State::Granted; }
+    if data == (0 as u32) { return perm::State::Blocked; }
+    return perm::State::Granted;
+}
+
+// Every name's answer, shared by `state` and both `request` verbs: asking on
+// Windows shows no dialog, so a request's callback answers what a read would.
+fn _state_of(name: str) -> perm::State {
+    if name == perm::NOTIFICATIONS { return _toast_state(); }
+    return perm::State::Unsupported;
+}
+
+// The Settings pane for a portable permission name. Split from `open_settings`
+// so the mapping is testable without launching the Settings app. An unknown
+// name — or the empty pane an app passes for "my settings" — lands on the
+// privacy dashboard, which always exists on Windows 10+, so the verb can always
+// honestly report that a pane opened.
+fn _pane_uri(name: str) -> str {
+    if name == perm::CAMERA { return "ms-settings:privacy-webcam"; }
+    if name == perm::MICROPHONE { return "ms-settings:privacy-microphone"; }
+    if name == perm::LOCATION_WHEN_IN_USE { return "ms-settings:privacy-location"; }
+    if name == perm::LOCATION_ALWAYS { return "ms-settings:privacy-location"; }
+    if name == perm::CONTACTS { return "ms-settings:privacy-contacts"; }
+    if name == perm::CALENDAR { return "ms-settings:privacy-calendar"; }
+    if name == perm::PHOTOS_READ { return "ms-settings:privacy-pictures"; }
+    if name == perm::PHOTOS_ADD { return "ms-settings:privacy-pictures"; }
+    if name == perm::NOTIFICATIONS { return "ms-settings:notifications"; }
+    return "ms-settings:privacy";
+}
+
+export extern fn cplus_permissions_state_v1(name_ptr: *u8, name_len: usize) -> u32 {
+    let n: str = { #str_from_raw_parts(name_ptr, name_len) };
+    return _state_of(n).to_code();
+}
+
+// 0 when a pane opened, non-zero when it did not. `ShellExecuteA`'s handle is
+// >32 on success.
+export extern fn cplus_permissions_open_settings_v1(name_ptr: *u8, name_len: usize) -> i32 {
+    let name: str = { #str_from_raw_parts(name_ptr, name_len) };
+    let uri: str = _pane_uri(name);
+    match text::from_str(uri).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let h: *u8 = { ShellExecuteA(0 as *u8, { #str_ptr("open\0") }, cs.as_ptr(),
+                                         0 as *u8, 0 as *u8, 1 as i32) };
+            if (h as usize) > (32 as usize) { return 0 as i32; }
+            return 1 as i32;
+        }
+        option::Option[text::CString]::None => { return 1 as i32; }
+    }
+}
+
+// The callback ALWAYS runs — a Windows build that answered nothing would hang
+// every caller that waits for the answer before showing a screen — and it
+// answers what a read would: there is no dialog here, so requesting cannot
+// change the state, only report it.
+export extern fn cplus_permissions_request_v1(name_ptr: *u8, name_len: usize,
+                                              cb_raw: *u8, ctx: *u8) -> i32 {
+    if cb_raw.is_null() { return 1 as i32; }
+    let cb: fn(str, perm::State, *u8) = { cb_raw as fn(str, perm::State, *u8) };
+    let n: str = { #str_from_raw_parts(name_ptr, name_len) };
+    cb(n, _state_of(n), ctx);
+    return 0 as i32;
+}
+
+export extern fn cplus_permissions_request_many_v1(names: *str, count: usize,
+                                                   cb_raw: *u8, ctx: *u8) -> i32 {
+    if cb_raw.is_null() { return 1 as i32; }
+    let cb: fn(str, perm::State, *u8) = { cb_raw as fn(str, perm::State, *u8) };
+    var i: usize = 0 as usize;
+    while i < count {
+        let n: str = { *(names + i) };
+        cb(n, _state_of(n), ctx);
+        i = i +% (1 as usize);
+    }
+    return 0 as i32;
+}
+
+// ---- tests -------------------------------------------------------------------
+// The pane mapping is asserted here; the ACTUAL launch is not, because a test
+// that ran `ShellExecuteA` would pop the Settings app open on the test machine.
+
+#[test]
+fn every_unreadable_name_is_unsupported_and_none_is_denied() {
+    assert { cplus_permissions_state_v1(#str_ptr("camera"), #str_len("camera")) } == perm::State::Unsupported.to_code();
+    assert { cplus_permissions_state_v1(#str_ptr("camera"), #str_len("camera")) } != perm::State::Denied.to_code();
+    assert { cplus_permissions_state_v1(#str_ptr(""), #str_len("")) } == perm::State::Unsupported.to_code();
+}
+
+#[test]
+fn the_notification_state_is_real_and_never_unsupported() {
+    // Against the LIVE registry, so the exact answer depends on the machine's
+    // switch: `Granted` with notifications on (the Windows default), `Blocked`
+    // with them off. What it must never be is `Unsupported` — that answer would
+    // wall off the real notifications backend behind the facade's gate — or
+    // `Denied`, whose remedy (ask again) does not exist here.
+    let s: u32 = { cplus_permissions_state_v1(#str_ptr("notifications"), #str_len("notifications")) };
+    assert s == perm::State::Granted.to_code() || s == perm::State::Blocked.to_code();
+}
+
+#[test]
+fn known_panes_map_to_their_ms_settings_uri() {
+    assert _pane_uri("camera") == "ms-settings:privacy-webcam";
+    assert _pane_uri("microphone") == "ms-settings:privacy-microphone";
+    assert _pane_uri("location.when_in_use") == "ms-settings:privacy-location";
+    assert _pane_uri("location.always") == "ms-settings:privacy-location";
+    assert _pane_uri("notifications") == "ms-settings:notifications";
+}
+
+#[test]
+fn an_unknown_pane_falls_back_to_the_privacy_dashboard() {
+    // Better a real page than none: an unheard-of name, and the empty "my
+    // settings" pane, both land on the dashboard that always exists.
+    assert _pane_uri("not.a.real.permission") == "ms-settings:privacy";
+    assert _pane_uri("") == "ms-settings:privacy";
+}
+
+static _W_SEEN: i32 = 0 as i32;
+static _W_LAST: u32 = 99 as u32;
+fn _w_probe(name: str, s: perm::State, ctx: *u8) {
+    _W_SEEN = _W_SEEN + (1 as i32);
+    _W_LAST = s.to_code();
+    return;
+}
+
+#[test]
+fn request_answers_unsupported_and_always_calls_back() {
+    _W_SEEN = 0 as i32;
+    let f: fn(str, perm::State, *u8) = _w_probe;
+    let rc: i32 = { cplus_permissions_request_v1(#str_ptr("camera"), #str_len("camera"),
+                                                 { f as *u8 }, 0 as *u8) };
+    assert rc == (0 as i32);
+    assert _W_SEEN == (1 as i32);
+    assert _W_LAST == perm::State::Unsupported.to_code();
+}
+
+#[test]
+fn requesting_notifications_answers_the_read_not_a_dialog() {
+    // No dialog exists, so the callback's answer must agree with `state` —
+    // requesting reports, it does not change.
+    _W_SEEN = 0 as i32;
+    let f: fn(str, perm::State, *u8) = _w_probe;
+    let rc: i32 = { cplus_permissions_request_v1(#str_ptr("notifications"), #str_len("notifications"),
+                                                 { f as *u8 }, 0 as *u8) };
+    assert rc == (0 as i32);
+    assert _W_SEEN == (1 as i32);
+    assert _W_LAST == { cplus_permissions_state_v1(#str_ptr("notifications"), #str_len("notifications")) };
+}

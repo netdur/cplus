@@ -1,0 +1,2461 @@
+// camera_backend_windows — a real capture device, through Media Foundation.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `camera.cplus` declares
+// twenty-four stable symbols and something must define them on every platform
+// the package claims; without a `_windows` sibling the build falls back to
+// `camera_backend.cplus`, the AVFoundation half, and stops at
+// `import "objc/runtime"`.
+//
+// WHAT IS REAL HERE: enumerating capture devices, opening one, reporting the
+// format it settled on, streaming frames, and taking a still photo as JPEG.
+// What is not is written down at the bottom, verb by verb, with the reason each
+// one refuses rather than pretending.
+//
+// ---- COM BY VTABLE INDEX, and why that is not as fragile as it looks --------
+//
+// C+ has no COM. An interface pointer is a pointer to a vtable pointer, so a
+// method is `(*(*obj))[i]` called with `obj` as the first argument — which is
+// exactly what `call_*` below do. `webview2.cplus` in facet_win32 established
+// the shape; this is the same idea against a different set of interfaces.
+//
+// EVERY INDEX BELOW WAS MEASURED, not counted off a header. A C# harness made
+// the identical calls against this machine's camera before a line of this file
+// existed, and the numbers here are the ones that answered S_OK. That matters
+// because a wrong index is not a compile error and not a crash — it is a call
+// into a DIFFERENT method with the same arity, which is the worst failure this
+// file could have.
+//
+// The awkward ones are the derived interfaces. `IMFActivate` extends
+// `IMFAttributes`, which is thirty methods, so `ActivateObject` is at 3 + 30 =
+// 33 rather than at 3. `IMFSample` extends `IMFAttributes` the same way, which
+// puts `ConvertToContiguousBuffer` at 41.
+//
+// ---- THE FRAME PUMP IS A THREAD ---------------------------------------------
+//
+// `IMFSourceReader::ReadSample` blocks until a frame is ready. A UI cannot call
+// it, so `_c_on_frame` starts a thread that reads in a loop and calls the
+// handler from there — and the handler therefore runs OFF the UI thread, which
+// is the same contract the AppKit half has (AVFoundation delivers on its own
+// queue). A caller that touches the UI hops itself, exactly as it must there.
+//
+// The loop owns the reader for its lifetime and stops on a flag. Nothing is
+// freed under it: `_c_close` sets the flag, waits for the thread to notice, and
+// only then releases the COM objects.
+
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "./camera" as camera;
+
+// The request as the facade packs it. Layout must match `_CRequest`,
+// which is module-private there — so it is mirrored rather than imported, and
+// the pointer type in the seam signature matches by construction.
+#[repr(C)]
+struct _CRequest {
+    opaque device: *u8,
+    device_len: usize,
+    facing: i32,
+    width: i32,
+    height: i32,
+    frame_rate: i32,
+    pixel: i32,
+    color: i32,
+    hdr: i32,
+    stabilization: i32,
+    depth: i32,
+    high_speed: i32,
+    buffers: i32,
+}
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, v: i32, n: usize) -> *u8;
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+
+// ---- Media Foundation IS LOADED AT RUNTIME, not linked -------------------------
+//
+// `mfplat.dll`, `mf.dll` and `mfreadwrite.dll` ship with every ordinary Windows
+// — and NOT with the N editions or with Server Core, where the Media Feature
+// Pack is a separate install. A link-time dependency on a DLL that might be
+// absent makes the whole program REFUSE TO START, which for a package whose
+// contract already includes "there is no camera here" would be a catastrophic
+// way to say it: an application that merely IMPORTS camera would die on a
+// machine that simply has no lens.
+//
+// So the entry points are bound with `LoadLibrary` and a machine without them
+// answers `count() == 0` and keeps running. It also keeps every other C+
+// program off the hook — nothing is added to `cpc`'s Windows link line for a
+// package most programs never touch, which is the same call `haptics` makes for
+// XInput and for the same reason.
+extern fn LoadLibraryA(name: *u8) -> *u8;
+extern fn GetProcAddress(module: *u8, name: *u8) -> *u8;
+
+static MF_STARTUP: fn(u32, u32) -> i32 = #zero::[fn(u32, u32) -> i32]();
+static MF_CREATE_ATTRS: fn(**u8, u32) -> i32 = #zero::[fn(**u8, u32) -> i32]();
+static MF_ENUM: fn(*u8, ***u8, *u32) -> i32 = #zero::[fn(*u8, ***u8, *u32) -> i32]();
+static MF_READER: fn(*u8, *u8, **u8) -> i32 = #zero::[fn(*u8, *u8, **u8) -> i32]();
+static CO_FREE: fn(*u8) = #zero::[fn(*u8)]();
+static MF_BOUND: bool = false;
+static MF_OK: bool = false;
+
+fn bind_mf() -> bool {
+    if MF_BOUND { return MF_OK; }
+    MF_BOUND = true;
+    let plat: *u8 = { LoadLibraryA({ #str_ptr("mfplat.dll\0") }) };
+    let mf: *u8 = { LoadLibraryA({ #str_ptr("mf.dll\0") }) };
+    let rw: *u8 = { LoadLibraryA({ #str_ptr("mfreadwrite.dll\0") }) };
+    let ole: *u8 = { LoadLibraryA({ #str_ptr("ole32.dll\0") }) };
+    if plat == (0 as *u8) || mf == (0 as *u8) || rw == (0 as *u8) || ole == (0 as *u8) {
+        return false;
+    }
+    let a: *u8 = { GetProcAddress(plat, { #str_ptr("MFStartup\0") }) };
+    let b: *u8 = { GetProcAddress(plat, { #str_ptr("MFCreateAttributes\0") }) };
+    let c: *u8 = { GetProcAddress(mf, { #str_ptr("MFEnumDeviceSources\0") }) };
+    let d: *u8 = { GetProcAddress(rw, { #str_ptr("MFCreateSourceReaderFromMediaSource\0") }) };
+    let e: *u8 = { GetProcAddress(ole, { #str_ptr("CoTaskMemFree\0") }) };
+    if a == (0 as *u8) || b == (0 as *u8) || c == (0 as *u8)
+        || d == (0 as *u8) || e == (0 as *u8) { return false; }
+    MF_STARTUP = { a as fn(u32, u32) -> i32 };
+    MF_CREATE_ATTRS = { b as fn(**u8, u32) -> i32 };
+    MF_ENUM = { c as fn(*u8, ***u8, *u32) -> i32 };
+    MF_READER = { d as fn(*u8, *u8, **u8) -> i32 };
+    CO_FREE = { e as fn(*u8) };
+    MF_OK = true;
+    return true;
+}
+
+fn MFStartup(version: u32, flags: u32) -> i32 {
+    let f: fn(u32, u32) -> i32 = MF_STARTUP;
+    return { f(version, flags) };
+}
+fn MFCreateAttributes(out: **u8, initial: u32) -> i32 {
+    let f: fn(**u8, u32) -> i32 = MF_CREATE_ATTRS;
+    return { f(out, initial) };
+}
+fn MFEnumDeviceSources(attrs: *u8, devices: ***u8, count: *u32) -> i32 {
+    let f: fn(*u8, ***u8, *u32) -> i32 = MF_ENUM;
+    return { f(attrs, devices, count) };
+}
+fn MFCreateSourceReaderFromMediaSource(src: *u8, attrs: *u8, reader: **u8) -> i32 {
+    let f: fn(*u8, *u8, **u8) -> i32 = MF_READER;
+    return { f(src, attrs, reader) };
+}
+fn CoTaskMemFree(p: *u8) {
+    let f: fn(*u8) = CO_FREE;
+    if f.is_not_null() { { f(p) }; }
+    return;
+}
+
+// ---- WIC, bound the same way and for the same reason ---------------------------
+//
+// The still-photo path is a SECOND stack: Media Foundation delivers pixels, the
+// Windows Imaging Component turns them into the JPEG bytes the contract
+// promises. It is bound separately from MF on purpose — a machine where WIC will
+// not load can still STREAM, and only `capture` has to refuse. Folding the two
+// bindings together would take the whole package down for the narrower failure.
+//
+// Nothing here is `windowscodecs.dll` by name: WIC is an in-process COM server,
+// so `CoCreateInstance` finds and loads it, and the only imports needed are
+// ole32's.
+static CO_CREATE: fn(*u8, *u8, u32, *u8, *u8) -> i32 = #zero::[fn(*u8, *u8, u32, *u8, *u8) -> i32]();
+static CO_INIT: fn(*u8, u32) -> i32 = #zero::[fn(*u8, u32) -> i32]();
+static CO_UNINIT: fn() = #zero::[fn()]();
+static WIC_BOUND: bool = false;
+static WIC_OK: bool = false;
+
+fn bind_wic() -> bool {
+    if WIC_BOUND { return WIC_OK; }
+    WIC_BOUND = true;
+    let ole: *u8 = { LoadLibraryA({ #str_ptr("ole32.dll\0") }) };
+    if ole == (0 as *u8) { return false; }
+    let a: *u8 = { GetProcAddress(ole, { #str_ptr("CoCreateInstance\0") }) };
+    let b: *u8 = { GetProcAddress(ole, { #str_ptr("CoInitializeEx\0") }) };
+    let c: *u8 = { GetProcAddress(ole, { #str_ptr("CoUninitialize\0") }) };
+    if a == (0 as *u8) || b == (0 as *u8) || c == (0 as *u8) { return false; }
+    CO_CREATE = { a as fn(*u8, *u8, u32, *u8, *u8) -> i32 };
+    CO_INIT = { b as fn(*u8, u32) -> i32 };
+    CO_UNINIT = { c as fn() };
+    WIC_OK = true;
+    return true;
+}
+
+// COM ON WHICHEVER THREAD ENCODES. `CoCreateInstance` needs an initialized
+// apartment, and the encode runs either on the caller's thread or on the pump's,
+// neither of which this file controls.
+//
+// The return value is what has to be read carefully. `S_OK` means this call
+// initialized the apartment and owes a `CoUninitialize`; `S_FALSE` means it was
+// already initialized and this call added a reference, which ALSO owes one;
+// `RPC_E_CHANGED_MODE` means the thread is already an STA, which is not a
+// failure — COM is up and `CoCreateInstance` will work — but the balancing
+// uninitialize must NOT happen, because nothing was added. Answering that case
+// with a leave is how a UI thread's apartment gets torn down underneath it.
+fn rpc_e_changed_mode() -> i32 { return (0x80010106 as u32) as i32; }
+
+fn com_enter() -> bool {
+    let f: fn(*u8, u32) -> i32 = CO_INIT;
+    if f.is_null() { return false; }
+    // COINIT_MULTITHREADED — the encode touches no window and no apartment
+    // object, so the freest mode is the right one where there is a choice.
+    let hr: i32 = { f(0 as *u8, 0 as u32) };
+    if hr == rpc_e_changed_mode() { return false; }
+    return true;
+}
+
+fn com_leave() {
+    let f: fn() = CO_UNINIT;
+    if f.is_not_null() { { f() }; }
+    return;
+}
+
+#[link_name = "WideCharToMultiByte"]
+extern fn WideCharToMultiByte(cp: u32, flags: u32, wide: *u8, wlen: i32,
+                              mb: *u8, mblen: i32, def: *u8, used: *u8) -> i32;
+#[link_name = "CreateThread"]
+extern fn CreateThread(attrs: *u8, stack: usize, start: fn(*u8) -> *u8,
+                       arg: *u8, flags: u32, tid: *u32) -> *u8;
+#[link_name = "CloseHandle"]
+extern fn CloseHandle(h: *u8) -> i32;
+#[link_name = "Sleep"]
+extern fn Sleep(ms: u32);
+
+// ---- calling a COM method by vtable index --------------------------------------
+
+fn slot(obj: *u8, idx: usize) -> *u8 {
+    let vtbl: *u8 = { *(obj as **u8) };
+    return { *((vtbl + (idx *% (8 as usize))) as **u8) };
+}
+
+fn call_release(obj: *u8) -> u32 {
+    if obj == (0 as *u8) { return 0 as u32; }
+    let f: fn(*u8) -> u32 = { slot(obj, 2 as usize) as fn(*u8) -> u32 };
+    return { f(obj) };
+}
+
+fn call_gg(obj: *u8, idx: usize, a: *u8, b: *u8) -> i32 {
+    let f: fn(*u8, *u8, *u8) -> i32 = { slot(obj, idx) as fn(*u8, *u8, *u8) -> i32 };
+    return { f(obj, a, b) };
+}
+
+fn call_ggg(obj: *u8, idx: usize, a: *u8, b: *u8, c: *u8) -> i32 {
+    let f: fn(*u8, *u8, *u8, *u8) -> i32 = { slot(obj, idx) as fn(*u8, *u8, *u8, *u8) -> i32 };
+    return { f(obj, a, b, c) };
+}
+
+fn call_u_p(obj: *u8, idx: usize, a: u32, b: *u8) -> i32 {
+    let f: fn(*u8, u32, *u8) -> i32 = { slot(obj, idx) as fn(*u8, u32, *u8) -> i32 };
+    return { f(obj, a, b) };
+}
+
+fn call_u_i(obj: *u8, idx: usize, a: u32, b: i32) -> i32 {
+    let f: fn(*u8, u32, i32) -> i32 = { slot(obj, idx) as fn(*u8, u32, i32) -> i32 };
+    return { f(obj, a, b) };
+}
+
+fn call_p(obj: *u8, idx: usize, a: *u8) -> i32 {
+    let f: fn(*u8, *u8) -> i32 = { slot(obj, idx) as fn(*u8, *u8) -> i32 };
+    return { f(obj, a) };
+}
+
+fn call_0(obj: *u8, idx: usize) -> i32 {
+    let f: fn(*u8) -> i32 = { slot(obj, idx) as fn(*u8) -> i32 };
+    return { f(obj) };
+}
+
+fn call_read_sample(obj: *u8, stream: u32, flags: u32,
+                    a: *u8, b: *u8, c: *u8, d: *u8) -> i32 {
+    let f: fn(*u8, u32, u32, *u8, *u8, *u8, *u8) -> i32 =
+        { slot(obj, 9 as usize) as fn(*u8, u32, u32, *u8, *u8, *u8, *u8) -> i32 };
+    return { f(obj, stream, flags, a, b, c, d) };
+}
+
+fn call_lock(obj: *u8, p: *u8, max: *u8, cur: *u8) -> i32 {
+    let f: fn(*u8, *u8, *u8, *u8) -> i32 =
+        { slot(obj, 3 as usize) as fn(*u8, *u8, *u8, *u8) -> i32 };
+    return { f(obj, p, max, cur) };
+}
+
+fn call_p_u(obj: *u8, idx: usize, a: *u8, b: u32) -> i32 {
+    let f: fn(*u8, *u8, u32) -> i32 = { slot(obj, idx) as fn(*u8, *u8, u32) -> i32 };
+    return { f(obj, a, b) };
+}
+
+fn call_u_u(obj: *u8, idx: usize, a: u32, b: u32) -> i32 {
+    let f: fn(*u8, u32, u32) -> i32 = { slot(obj, idx) as fn(*u8, u32, u32) -> i32 };
+    return { f(obj, a, b) };
+}
+
+fn call_gg_p(obj: *u8, idx: usize, a: *u8, b: *u8, c: *u8, d: *u8) -> i32 {
+    let f: fn(*u8, *u8, *u8, *u8, *u8) -> i32 =
+        { slot(obj, idx) as fn(*u8, *u8, *u8, *u8, *u8) -> i32 };
+    return { f(obj, a, b, c, d) };
+}
+
+// `IWICBitmapFrameEncode::WritePixels(lineCount, stride, bufferSize, pixels)`.
+fn call_write_pixels(obj: *u8, lines: u32, stride: u32, size: u32, buf: *u8) -> i32 {
+    let f: fn(*u8, u32, u32, u32, *u8) -> i32 =
+        { slot(obj, 10 as usize) as fn(*u8, u32, u32, u32, *u8) -> i32 };
+    return { f(obj, lines, stride, size, buf) };
+}
+
+// `IStream::Seek(dlibMove, dwOrigin, plibNewPosition)`. The offset is a
+// LARGE_INTEGER BY VALUE, which on x64 is one 64-bit register like any other
+// integer — it is only on 32-bit that it would need splitting.
+fn call_seek(obj: *u8, move_by: i64, origin: u32, out_pos: *u8) -> i32 {
+    let f: fn(*u8, i64, u32, *u8) -> i32 =
+        { slot(obj, 5 as usize) as fn(*u8, i64, u32, *u8) -> i32 };
+    return { f(obj, move_by, origin, out_pos) };
+}
+
+// ---- the vtable indices, all measured ------------------------------------------
+//
+// IMFAttributes: GetUINT64 8, GetGUID 10, GetAllocatedString 13, SetGUID 24.
+// IMFActivate = IUnknown(3) + IMFAttributes(30), so ActivateObject is 33.
+// IMFSourceReader: SetStreamSelection 4, GetCurrentMediaType 6, ReadSample 9.
+// IMFSample = IUnknown(3) + IMFAttributes(30), so ConvertToContiguousBuffer 41.
+// IMFMediaBuffer: Lock 3, Unlock 4.
+fn idx_get_u64() -> usize { return 8 as usize; }
+fn idx_get_guid() -> usize { return 10 as usize; }
+fn idx_get_alloc_string() -> usize { return 13 as usize; }
+fn idx_set_guid() -> usize { return 24 as usize; }
+fn idx_activate_object() -> usize { return 33 as usize; }
+fn idx_set_stream_selection() -> usize { return 4 as usize; }
+fn idx_get_current_media_type() -> usize { return 6 as usize; }
+fn idx_to_contiguous() -> usize { return 41 as usize; }
+fn idx_unlock() -> usize { return 4 as usize; }
+
+// MF_VERSION for Windows 7 and later, and MFSTARTUP_LITE.
+fn mf_version() -> u32 { return 0x00020070 as u32; }
+fn mf_startup_lite() -> u32 { return 1 as u32; }
+fn first_video_stream() -> u32 { return 0xFFFFFFFC as u32; }
+fn cp_utf8() -> u32 { return 65001 as u32; }
+
+// ---- the GUIDs, as bytes -------------------------------------------------------
+//
+// A GUID is `{u32, u16, u16, u8[8]}` in memory, which is NOT the order it is
+// written in: the first three fields are little-endian and the last eight bytes
+// are literal. Writing them by hand is where a transcription error hides, so
+// each is built from its printed form field by field and the layout is pinned
+// by a test.
+struct Guid { a: u32, b: u16, c: u16, d: [u8; 8] }
+
+fn guid_bytes() -> usize { return 16 as usize; }
+
+fn mk(a: u32, b: u16, c: u16, d0: u8, d1: u8, d2: u8, d3: u8,
+      d4: u8, d5: u8, d6: u8, d7: u8) -> Guid {
+    return Guid { a: a, b: b, c: c, d: [d0, d1, d2, d3, d4, d5, d6, d7] };
+}
+
+// {c60ac5fe-252a-478f-a0ef-bc8fa5f7cad3}
+fn g_source_type() -> Guid {
+    return mk(0xc60ac5fe as u32, 0x252a as u16, 0x478f as u16,
+              0xa0 as u8, 0xef as u8, 0xbc as u8, 0x8f as u8,
+              0xa5 as u8, 0xf7 as u8, 0xca as u8, 0xd3 as u8);
+}
+// {8ac3587a-4ae7-42d8-99e0-0a6013eef90f}
+fn g_vidcap() -> Guid {
+    return mk(0x8ac3587a as u32, 0x4ae7 as u16, 0x42d8 as u16,
+              0x99 as u8, 0xe0 as u8, 0x0a as u8, 0x60 as u8,
+              0x13 as u8, 0xee as u8, 0xf9 as u8, 0x0f as u8);
+}
+// {60d0e559-52f8-4fa2-bbce-acdb34a8ec01}
+fn g_friendly_name() -> Guid {
+    return mk(0x60d0e559 as u32, 0x52f8 as u16, 0x4fa2 as u16,
+              0xbb as u8, 0xce as u8, 0xac as u8, 0xdb as u8,
+              0x34 as u8, 0xa8 as u8, 0xec as u8, 0x01 as u8);
+}
+// {279a808d-aec7-40c8-9c6b-a6b492c78a66} IID_IMFMediaSource
+fn g_iid_media_source() -> Guid {
+    return mk(0x279a808d as u32, 0xaec7 as u16, 0x40c8 as u16,
+              0x9c as u8, 0x6b as u8, 0xa6 as u8, 0xb4 as u8,
+              0x92 as u8, 0xc7 as u8, 0x8a as u8, 0x66 as u8);
+}
+// {1652c33d-d6b2-4012-b834-72030849a37d} MF_MT_FRAME_SIZE
+fn g_frame_size() -> Guid {
+    return mk(0x1652c33d as u32, 0xd6b2 as u16, 0x4012 as u16,
+              0xb8 as u8, 0x34 as u8, 0x72 as u8, 0x03 as u8,
+              0x08 as u8, 0x49 as u8, 0xa3 as u8, 0x7d as u8);
+}
+// {c459a2e8-3d2c-4e44-b132-fee5156c7bb0} MF_MT_FRAME_RATE
+fn g_frame_rate() -> Guid {
+    return mk(0xc459a2e8 as u32, 0x3d2c as u16, 0x4e44 as u16,
+              0xb1 as u8, 0x32 as u8, 0xfe as u8, 0xe5 as u8,
+              0x15 as u8, 0x6c as u8, 0x7b as u8, 0xb0 as u8);
+}
+// {f7e34c9a-42e8-4714-b74b-cb29d72c35e5} MF_MT_SUBTYPE
+fn g_subtype() -> Guid {
+    return mk(0xf7e34c9a as u32, 0x42e8 as u16, 0x4714 as u16,
+              0xb7 as u8, 0x4b as u8, 0xcb as u8, 0x29 as u8,
+              0xd7 as u8, 0x2c as u8, 0x35 as u8, 0xe5 as u8);
+}
+
+// {cacaf262-9370-4615-a13b-9f5539da4c0a} CLSID_WICImagingFactory
+fn g_wic_factory() -> Guid {
+    return mk(0xcacaf262 as u32, 0x9370 as u16, 0x4615 as u16,
+              0xa1 as u8, 0x3b as u8, 0x9f as u8, 0x55 as u8,
+              0x39 as u8, 0xda as u8, 0x4c as u8, 0x0a as u8);
+}
+// {ec5ec8a9-c395-4314-9c77-54d7a935ff70} IID_IWICImagingFactory
+fn g_iid_wic_factory() -> Guid {
+    return mk(0xec5ec8a9 as u32, 0xc395 as u16, 0x4314 as u16,
+              0x9c as u8, 0x77 as u8, 0x54 as u8, 0xd7 as u8,
+              0xa9 as u8, 0x35 as u8, 0xff as u8, 0x70 as u8);
+}
+// {19e4a5aa-5662-4fc5-a0c0-1758028e1057} GUID_ContainerFormatJpeg
+fn g_jpeg_container() -> Guid {
+    return mk(0x19e4a5aa as u32, 0x5662 as u16, 0x4fc5 as u16,
+              0xa0 as u8, 0xc0 as u8, 0x17 as u8, 0x58 as u8,
+              0x02 as u8, 0x8e as u8, 0x10 as u8, 0x57 as u8);
+}
+// {c6e13370-30ac-11d0-a18c-00a0c9118956} IID_IAMCameraControl
+fn g_iid_camera_control() -> Guid {
+    return mk(0xc6e13370 as u32, 0x30ac as u16, 0x11d0 as u16,
+              0xa1 as u8, 0x8c as u8, 0x00 as u8, 0xa0 as u8,
+              0xc9 as u8, 0x11 as u8, 0x89 as u8, 0x56 as u8);
+}
+// {c6e13360-30ac-11d0-a18c-00a0c9118956} IID_IAMVideoProcAmp — one digit from
+// the interface above, which is exactly why both are pinned by a test.
+fn g_iid_video_proc_amp() -> Guid {
+    return mk(0xc6e13360 as u32, 0x30ac as u16, 0x11d0 as u16,
+              0xa1 as u8, 0x8c as u8, 0x00 as u8, 0xa0 as u8,
+              0xc9 as u8, 0x11 as u8, 0x89 as u8, 0x56 as u8);
+}
+
+// {6fddc324-4e03-4bfe-b185-3d77768dc90c} GUID_WICPixelFormat24bppBGR
+fn g_pf_24bpp_bgr() -> Guid {
+    return mk(0x6fddc324 as u32, 0x4e03 as u16, 0x4bfe as u16,
+              0xb1 as u8, 0x85 as u8, 0x3d as u8, 0x77 as u8,
+              0x76 as u8, 0x8d as u8, 0xc9 as u8, 0x0c as u8);
+}
+
+// A media subtype's FOURCC lives in the first four bytes: NV12 is 0x3231564E,
+// YUY2 0x32595559, RGB32 0x00000016. Comparing that one word is enough to tell
+// the formats apart and avoids sixteen byte compares per frame.
+fn fourcc_nv12() -> u32 { return 0x3231564E as u32; }
+fn fourcc_yuy2() -> u32 { return 0x32595559 as u32; }
+fn fourcc_rgb32() -> u32 { return 0x00000016 as u32; }
+
+// ---- the open session ------------------------------------------------------------
+//
+// ONE SESSION, in a static rather than on the heap. The facade hands back an
+// opaque `*u8` handle and this returns the address of the block below, which
+// means a second `open` while one is live is refused rather than silently
+// handing out a second view of the same device — which is what Windows would do
+// anyway, with the second `ActivateObject` failing.
+struct Session {
+    live: bool,
+    source: usize,
+    reader: usize,
+    width: i32,
+    height: i32,
+    fps: i32,
+    fourcc: u32,
+    name: text::Text,
+    // The pump: the handler, its context, and the two flags that stop it.
+    on_frame: fn(*u8, i32, i32, i32, i32, *u8, *u8),
+    opaque frame_ctx: *u8,
+    streaming: bool,
+    stopped: bool,
+    // A CAPTURE IN FLIGHT. `capture` does not take its own frame when the pump
+    // is running — two `ReadSample` calls on one reader from two threads is not
+    // something Media Foundation promises — so it leaves the handler here and
+    // the pump encodes the next frame it already has. With no pump running,
+    // `_c_capture` reads that one frame itself on the caller's thread.
+    on_photo: fn(*u8, usize, *u8),
+    opaque photo_ctx: *u8,
+    want_photo: bool,
+    // The two device-control interfaces, QueryInterface'd off the media source
+    // at open and released at close. Either may be absent, and a device that
+    // answers one still refuses most of its properties — which is why nothing
+    // below assumes support, it asks.
+    camctl: usize,
+    procamp: usize,
+    // The preview window and the two buffers the pump paints into. See the
+    // preview section for why there are two and why the window is a subclassed
+    // STATIC rather than a class of this package's own.
+    preview: usize,
+    preview_proc: usize,
+    pv_buf: [usize; 2],
+    pv_cap: usize,
+    pv_front: i32,
+    pv_w: i32,
+    pv_h: i32,
+}
+
+static SESSION: Session = #zero::[Session]();
+static LAST_ERROR: i32 = 0 as i32;
+static MF_STARTED: bool = false;
+
+fn ok() -> i32 { return 0 as i32; }
+
+// Start Media Foundation once per process. `MFShutdown` is deliberately never
+// called: the pump thread and the COM objects outlive any one session, and a
+// shutdown while another part of the process still holds an MF object is a
+// crash rather than a tidy-up.
+fn ensure_mf() -> bool {
+    if MF_STARTED { return true; }
+    // A MACHINE WITHOUT MEDIA FOUNDATION is not an error — it is a machine with
+    // no camera stack, which the contract already has a word for. `Unsupported`
+    // rather than `Failed`: an N edition without the Media Feature Pack is a
+    // configuration, not a fault.
+    if !bind_mf() { LAST_ERROR = camera::Outcome::Unsupported.to_code(); return false; }
+    let hr: i32 = { MFStartup(mf_version(), mf_startup_lite()) };
+    if hr != ok() { LAST_ERROR = camera::Outcome::Failed.to_code(); return false; }
+    MF_STARTED = true;
+    return true;
+}
+
+// The attribute block that says "video capture devices". Caller releases.
+fn vidcap_attributes() -> *u8 {
+    var attrs: *u8 = 0 as *u8;
+    if { MFCreateAttributes(#addr_of(attrs), 1 as u32) } != ok() { return 0 as *u8; }
+    var key: Guid = g_source_type();
+    var val: Guid = g_vidcap();
+    if call_gg(attrs, idx_set_guid(), { #addr_of(key) as *u8 }, { #addr_of(val) as *u8 }) != ok() {
+        let _r: u32 = call_release(attrs);
+        return 0 as *u8;
+    }
+    return attrs;
+}
+
+// Enumerate. `out_count` receives how many; the returned array is the caller's
+// to free with `CoTaskMemFree` after releasing each element.
+fn enumerate(out_count: *u32) -> **u8 {
+    { *out_count = 0 as u32 };
+    if !ensure_mf() { return 0 as **u8; }
+    let attrs: *u8 = vidcap_attributes();
+    if attrs == (0 as *u8) { return 0 as **u8; }
+    var devices: **u8 = 0 as **u8;
+    var count: u32 = 0 as u32;
+    let hr: i32 = { MFEnumDeviceSources(attrs, #addr_of(devices), #addr_of(count)) };
+    let _r: u32 = call_release(attrs);
+    if hr != ok() { return 0 as **u8; }
+    { *out_count = count };
+    return devices;
+}
+
+fn release_devices(devices: **u8, count: u32) {
+    if devices == (0 as **u8) { return; }
+    var i: u32 = 0 as u32;
+    while i < count {
+        let d: *u8 = { *(devices + (i as usize)) };
+        let _r: u32 = call_release(d);
+        i = i +% (1 as u32);
+    }
+    { CoTaskMemFree(devices as *u8) };
+    return;
+}
+
+// A device's friendly name as UTF-8. Empty when it will not say.
+fn device_name(dev: *u8) -> text::Text {
+    var key: Guid = g_friendly_name();
+    var wide: *u8 = 0 as *u8;
+    var wlen: u32 = 0 as u32;
+    if call_ggg(dev, idx_get_alloc_string(), { #addr_of(key) as *u8 },
+                { #addr_of(wide) as *u8 }, { #addr_of(wlen) as *u8 }) != ok() {
+        return text::new();
+    }
+    if wide == (0 as *u8) { return text::new(); }
+    let need: i32 = { WideCharToMultiByte(cp_utf8(), 0 as u32, wide, wlen as i32,
+                                          0 as *u8, 0 as i32, 0 as *u8, 0 as *u8) };
+    if need <= (0 as i32) { { CoTaskMemFree(wide) }; return text::new(); }
+    let buf: *u8 = { malloc((need as usize) +% (1 as usize)) };
+    if buf == (0 as *u8) { { CoTaskMemFree(wide) }; return text::new(); }
+    let got: i32 = { WideCharToMultiByte(cp_utf8(), 0 as u32, wide, wlen as i32,
+                                         buf, need, 0 as *u8, 0 as *u8) };
+    { CoTaskMemFree(wide) };
+    if got <= (0 as i32) { free(buf); return text::new(); }
+    let view: str = { #str_from_raw_parts(buf, got as usize) };
+    let out: text::Text = text::from_str(view);
+    free(buf);
+    return out;
+}
+
+// ---- the device controls ------------------------------------------------------------
+//
+// `IAMCameraControl` and `IAMVideoProcAmp` are DirectShow interfaces that a
+// Media Foundation capture source still answers `QueryInterface` for, and they
+// are the only road to exposure, white balance, focus and zoom on this platform.
+// Both derive straight from IUnknown and have the SAME three methods in the same
+// order, which is why one set of helpers drives both: `GetRange` 3, `Set` 4,
+// `Get` 5. Measured, like everything else here.
+//
+// NOTHING BELOW ASSUMES A PROPERTY EXISTS. `GetRange` answering
+// `ERROR_NOT_SUPPORTED` is the normal case — the camera this was written
+// against supports Exposure and WhiteBalance and refuses Pan, Tilt, Roll, Zoom,
+// Iris and Focus — so every verb asks first and reports the device's own answer.
+// That is the difference between a refusal that is true and one that is merely
+// written down.
+
+fn prop_zoom() -> i32 { return 3 as i32; }
+fn prop_exposure() -> i32 { return 4 as i32; }
+fn prop_focus() -> i32 { return 6 as i32; }
+fn prop_white_balance() -> i32 { return 7 as i32; }
+
+// The per-property capability bits, which are also the flag values `Set` takes.
+fn flag_auto() -> i32 { return 1 as i32; }
+fn flag_manual() -> i32 { return 2 as i32; }
+
+// `Mode` as the facade defines it: Auto 0, Once 1, Locked 2.
+fn mode_auto() -> i32 { return 0 as i32; }
+fn mode_once() -> i32 { return 1 as i32; }
+
+fn call_qi(obj: *u8, iid: *u8, out: *u8) -> i32 {
+    let f: fn(*u8, *u8, *u8) -> i32 = { slot(obj, 0 as usize) as fn(*u8, *u8, *u8) -> i32 };
+    return { f(obj, iid, out) };
+}
+
+fn ctl_range(obj: *u8, prop: i32, lo: *i32, hi: *i32, step: *i32,
+             def: *i32, caps: *i32) -> i32 {
+    let f: fn(*u8, i32, *i32, *i32, *i32, *i32, *i32) -> i32 =
+        { slot(obj, 3 as usize) as fn(*u8, i32, *i32, *i32, *i32, *i32, *i32) -> i32 };
+    return { f(obj, prop, lo, hi, step, def, caps) };
+}
+
+fn ctl_set(obj: *u8, prop: i32, value: i32, flags: i32) -> i32 {
+    let f: fn(*u8, i32, i32, i32) -> i32 =
+        { slot(obj, 4 as usize) as fn(*u8, i32, i32, i32) -> i32 };
+    return { f(obj, prop, value, flags) };
+}
+
+fn ctl_get(obj: *u8, prop: i32, value: *i32, flags: *i32) -> i32 {
+    let f: fn(*u8, i32, *i32, *i32) -> i32 =
+        { slot(obj, 5 as usize) as fn(*u8, i32, *i32, *i32) -> i32 };
+    return { f(obj, prop, value, flags) };
+}
+
+// What a property can do, or -1 when the device does not have it. A null
+// interface answers -1 too, so callers need only the one check.
+fn ctl_caps(obj: *u8, prop: i32) -> i32 {
+    if obj == (0 as *u8) { return 0 -% (1 as i32); }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    var step: i32 = 0 as i32;
+    var def: i32 = 0 as i32;
+    var caps: i32 = 0 as i32;
+    if ctl_range(obj, prop, #addr_of(lo), #addr_of(hi), #addr_of(step),
+                 #addr_of(def), #addr_of(caps)) != ok() {
+        return 0 -% (1 as i32);
+    }
+    return caps;
+}
+
+// A property's range, or false when it has none.
+fn ctl_bounds(obj: *u8, prop: i32, out_lo: *i32, out_hi: *i32) -> bool {
+    { *out_lo = 0 as i32 };
+    { *out_hi = 0 as i32 };
+    if obj == (0 as *u8) { return false; }
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    var step: i32 = 0 as i32;
+    var def: i32 = 0 as i32;
+    var caps: i32 = 0 as i32;
+    if ctl_range(obj, prop, #addr_of(lo), #addr_of(hi), #addr_of(step),
+                 #addr_of(def), #addr_of(caps)) != ok() { return false; }
+    { *out_lo = lo };
+    { *out_hi = hi };
+    return true;
+}
+
+// Put one property into Auto or Manual, holding whatever value it currently has.
+//
+// `Mode::Locked` means "stop adjusting and hold what is current", which is
+// exactly Manual with the value read back first — the read matters, because
+// Manual with a stale value would jump the image rather than freeze it.
+//
+// `Mode::Once` IS REFUSED. It means "adjust once, then hold", and neither
+// interface has a one-shot: implementing it would be switching to Auto, waiting
+// some invented number of milliseconds, and latching whatever happened to be
+// there. Answering `Locked` to a request for `Once` is the quiet substitution
+// this package exists to avoid, so the honest answer is that it cannot.
+fn apply_mode(obj: *u8, prop: i32, mode: i32) -> i32 {
+    let caps: i32 = ctl_caps(obj, prop);
+    if caps < (0 as i32) { return camera::Outcome::Unsupported.to_code(); }
+    if mode == mode_once() { return camera::Outcome::Unsupported.to_code(); }
+
+    var want: i32 = flag_manual();
+    if mode == mode_auto() { want = flag_auto(); }
+    // A PROPERTY CAN BE MANUAL-ONLY — most of this camera's are — and asking a
+    // manual-only control to adjust itself is not something it can do. `caps`
+    // is a bitmask of the same two flag values `Set` takes.
+    if (caps & want) == (0 as i32) { return camera::Outcome::Unsupported.to_code(); }
+
+    var cur: i32 = 0 as i32;
+    var fl: i32 = 0 as i32;
+    if ctl_get(obj, prop, #addr_of(cur), #addr_of(fl)) != ok() {
+        return camera::Outcome::Failed.to_code();
+    }
+    if ctl_set(obj, prop, cur, want) != ok() {
+        return camera::Outcome::Failed.to_code();
+    }
+    return camera::Outcome::Ok.to_code();
+}
+
+// Ask the media source for both control interfaces. Neither is required: a
+// source that refuses both still streams, and every verb above already answers
+// for a null interface.
+fn bind_controls(source: *u8) {
+    SESSION.camctl = 0 as usize;
+    SESSION.procamp = 0 as usize;
+    if source == (0 as *u8) { return; }
+    var iid_cc: Guid = g_iid_camera_control();
+    var cc: *u8 = 0 as *u8;
+    if call_qi(source, { #addr_of(iid_cc) as *u8 }, { #addr_of(cc) as *u8 }) == ok() {
+        SESSION.camctl = { #addr(cc) };
+    }
+    var iid_amp: Guid = g_iid_video_proc_amp();
+    var amp: *u8 = 0 as *u8;
+    if call_qi(source, { #addr_of(iid_amp) as *u8 }, { #addr_of(amp) as *u8 }) == ok() {
+        SESSION.procamp = { #addr(amp) };
+    }
+    return;
+}
+
+fn release_controls() {
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    let amp: *u8 = { SESSION.procamp as *u8 };
+    if cc != (0 as *u8) { let _a: u32 = call_release(cc); }
+    if amp != (0 as *u8) { let _b: u32 = call_release(amp); }
+    SESSION.camctl = 0 as usize;
+    SESSION.procamp = 0 as usize;
+    return;
+}
+
+// ---- the preview window ---------------------------------------------------------
+//
+// A WINDOW THIS PACKAGE OWNS, handed to facet through `adopt_native_with`. The
+// AppKit half returns a retained NSView carrying an
+// `AVCaptureVideoPreviewLayer`; the equivalent here is an HWND that blits the
+// frames the pump is already reading.
+//
+// IT IS A SUBCLASSED "STATIC", not a class of this package's own. Registering
+// one means laying out WNDCLASSEXW by hand, and the only messages this window
+// answers are WM_PAINT and WM_ERASEBKGND — so replacing the window procedure of
+// a built-in class costs two `SetWindowLongPtrW` calls and no struct layout.
+// `notifications` files its tray icon under a STATIC for the same reason.
+//
+// IT IS CREATED AS WS_POPUP AND HIDDEN, which looks wrong and is not:
+// `CreateWindowEx` REFUSES a WS_CHILD window with no parent, and this one has
+// no parent until facet inserts it. facet_win32's `adopt_window` turns it into
+// a visible child at that moment — the case that path exists for.
+//
+// TWO BUFFERS. The pump converts a frame on its own thread while the UI thread
+// may be blitting the last one, so the pump fills the back buffer, publishes it
+// by moving `pv_front`, and asks for a repaint. One buffer tears; the same
+// arrangement is in `playground/cam_view` and was measured there.
+
+extern fn realloc(p: *u8, n: usize) -> *u8;
+
+#[link_name = "CreateWindowExW"]
+extern fn CreateWindowExW(ex: u32, cls: *u16, name: *u16, style: u32,
+                          x: i32, y: i32, w: i32, h: i32,
+                          parent: *u8, menu: *u8, inst: *u8, param: *u8) -> *u8;
+#[link_name = "DestroyWindow"]
+extern fn DestroyWindow(h: *u8) -> i32;
+#[link_name = "GetModuleHandleW"]
+extern fn GetModuleHandleW(name: *u16) -> *u8;
+#[link_name = "SetWindowLongPtrW"]
+extern fn SetWindowLongPtrW(h: *u8, idx: i32, v: i64) -> i64;
+#[link_name = "CallWindowProcW"]
+extern fn CallWindowProcW(prev: *u8, h: *u8, msg: u32, wp: usize, lp: usize) -> usize;
+#[link_name = "DefWindowProcW"]
+extern fn DefWindowProcW(h: *u8, msg: u32, wp: usize, lp: usize) -> usize;
+#[link_name = "BeginPaint"]
+extern fn BeginPaint(h: *u8, ps: *u8) -> *u8;
+#[link_name = "EndPaint"]
+extern fn EndPaint(h: *u8, ps: *u8) -> i32;
+#[link_name = "InvalidateRect"]
+extern fn InvalidateRect(h: *u8, rect: *u8, erase: i32) -> i32;
+#[link_name = "GetClientRect"]
+extern fn GetClientRect(h: *u8, rect: *i32) -> i32;
+
+// gdi32 AT RUNTIME, for the same reason Media Foundation is: it keeps `cpc`'s
+// Windows link line free of a library that only this one verb of one package
+// needs. A facet application already has gdi32 through `win32`; a console-shaped
+// consumer of `camera` should not have to.
+static GDI_STRETCH: fn(*u8, i32, i32, i32, i32, i32, i32, i32, i32, *u8, *u8, u32, u32) -> i32 =
+    #zero::[fn(*u8, i32, i32, i32, i32, i32, i32, i32, i32, *u8, *u8, u32, u32) -> i32]();
+static GDI_MODE: fn(*u8, i32) -> i32 = #zero::[fn(*u8, i32) -> i32]();
+static GDI_ORG: fn(*u8, i32, i32, *u8) -> i32 = #zero::[fn(*u8, i32, i32, *u8) -> i32]();
+static GDI_BOUND: bool = false;
+static GDI_OK: bool = false;
+
+fn bind_gdi() -> bool {
+    if GDI_BOUND { return GDI_OK; }
+    GDI_BOUND = true;
+    let g: *u8 = { LoadLibraryA({ #str_ptr("gdi32.dll\0") }) };
+    if g == (0 as *u8) { return false; }
+    let a: *u8 = { GetProcAddress(g, { #str_ptr("StretchDIBits\0") }) };
+    let b: *u8 = { GetProcAddress(g, { #str_ptr("SetStretchBltMode\0") }) };
+    let c: *u8 = { GetProcAddress(g, { #str_ptr("SetBrushOrgEx\0") }) };
+    if a == (0 as *u8) || b == (0 as *u8) || c == (0 as *u8) { return false; }
+    GDI_STRETCH = { a as fn(*u8, i32, i32, i32, i32, i32, i32, i32, i32, *u8, *u8, u32, u32) -> i32 };
+    GDI_MODE = { b as fn(*u8, i32) -> i32 };
+    GDI_ORG = { c as fn(*u8, i32, i32, *u8) -> i32 };
+    GDI_OK = true;
+    return true;
+}
+
+// BITMAPINFOHEADER. Forty bytes with no padding at natural alignment, which a
+// test pins — GDI reads `biSize` and refuses anything else.
+#[repr(C)]
+struct BmiHeader {
+    size: u32,
+    width: i32,
+    height: i32,
+    planes: u16,
+    bits: u16,
+    compression: u32,
+    size_image: u32,
+    xppm: i32,
+    yppm: i32,
+    clr_used: u32,
+    clr_important: u32,
+}
+
+fn wm_paint() -> u32 { return 0x000F as u32; }
+fn wm_erasebkgnd() -> u32 { return 0x0014 as u32; }
+fn gwlp_wndproc() -> i32 { return 0 -% (4 as i32); }
+fn srccopy() -> u32 { return 0x00CC0020 as u32; }
+fn halftone() -> i32 { return 4 as i32; }
+
+// Blit the published frame into the window.
+//
+// `SetStretchBltMode(HALFTONE)` IS NOT OPTIONAL. A DC defaults to
+// `BLACKONWHITE`, which ANDs together the pixels it DROPS when scaling — and on
+// colour data that ANDs channels into saturated garbage, so a preview that is
+// not exactly the frame size comes out sprayed with red and cyan dots that read
+// exactly like sensor noise. It cost two rounds of debugging in
+// `playground/cam_view`. `SetBrushOrgEx` goes with it: HALFTONE leaves the brush
+// origin shifted, which Windows documents and which shows as a drifting dither.
+fn paint_preview(hwnd: *u8) {
+    var ps: [u8; 128] = #zero::[[u8; 128]]();
+    let hdc: *u8 = { BeginPaint(hwnd, { #addr_of(ps) as *u8 }) };
+    if hdc == (0 as *u8) { return; }
+
+    let w: i32 = SESSION.pv_w;
+    let h: i32 = SESSION.pv_h;
+    let front: usize = { SESSION.pv_buf[SESSION.pv_front as usize] };
+    if w > (0 as i32) && h > (0 as i32) && front != (0 as usize) && bind_gdi() {
+        var rc: [i32; 4] = #zero::[[i32; 4]]();
+        let _g: i32 = { GetClientRect(hwnd, { #addr_of(rc) as *i32 }) };
+        let cw: i32 = rc[2] -% rc[0];
+        let ch: i32 = rc[3] -% rc[1];
+        if cw > (0 as i32) && ch > (0 as i32) {
+            var bmi: BmiHeader = #zero::[BmiHeader]();
+            bmi.size = 40 as u32;
+            bmi.width = w;
+            // NEGATIVE HEIGHT IS TOP-DOWN. A DIB is bottom-up by default and a
+            // camera frame is not, so a positive height here shows the world
+            // upside down.
+            bmi.height = 0 -% h;
+            bmi.planes = 1 as u16;
+            bmi.bits = 32 as u16;
+            bmi.compression = 0 as u32;
+            let mode: fn(*u8, i32) -> i32 = GDI_MODE;
+            let _m: i32 = { mode(hdc, halftone()) };
+            let org: fn(*u8, i32, i32, *u8) -> i32 = GDI_ORG;
+            let _o: i32 = { org(hdc, 0 as i32, 0 as i32, 0 as *u8) };
+            let blit: fn(*u8, i32, i32, i32, i32, i32, i32, i32, i32, *u8, *u8, u32, u32) -> i32 =
+                GDI_STRETCH;
+            let _b: i32 = { blit(hdc, 0 as i32, 0 as i32, cw, ch,
+                                 0 as i32, 0 as i32, w, h,
+                                 front as *u8, { #addr_of(bmi) as *u8 },
+                                 0 as u32, srccopy()) };
+        }
+    }
+    let _e: i32 = { EndPaint(hwnd, { #addr_of(ps) as *u8 }) };
+    return;
+}
+
+fn preview_proc(hwnd: *u8, msg: u32, wp: usize, lp: usize) -> usize {
+    // NO BACKGROUND ERASE. Every pixel is painted by the blit, so letting the
+    // STATIC clear to grey first is a flash of grey between frames and nothing
+    // else.
+    if msg == wm_erasebkgnd() { return 1 as usize; }
+    if msg == wm_paint() { paint_preview(hwnd); return 0 as usize; }
+    let prev: *u8 = { SESSION.preview_proc as *u8 };
+    if prev != (0 as *u8) { return { CallWindowProcW(prev, hwnd, msg, wp, lp) }; }
+    return { DefWindowProcW(hwnd, msg, wp, lp) };
+}
+
+// Convert the frame into the back buffer and publish it. Called from the pump
+// thread, so it touches only the buffers and `InvalidateRect`, which is the one
+// user32 call documented to be safe from any thread.
+fn preview_frame(src: *u8, len: u32) {
+    let hwnd: *u8 = { SESSION.preview as *u8 };
+    if hwnd == (0 as *u8) { return; }
+    let w: i32 = SESSION.width;
+    let h: i32 = SESSION.height;
+    if w <= (0 as i32) || h <= (0 as i32) { return; }
+    let need: usize = (w as usize) *% (h as usize) *% (4 as usize);
+
+    if SESSION.pv_cap < need {
+        var i: i32 = 0 as i32;
+        while i < (2 as i32) {
+            let old: *u8 = { SESSION.pv_buf[i as usize] as *u8 };
+            let got: *u8 = { realloc(old, need) };
+            if got == (0 as *u8) { return; }
+            { SESSION.pv_buf[i as usize] = #addr(got) };
+            i = i +% (1 as i32);
+        }
+        SESSION.pv_cap = need;
+    }
+
+    let back: i32 = 1 as i32 -% SESSION.pv_front;
+    let dst: *u8 = { SESSION.pv_buf[back as usize] as *u8 };
+    if dst == (0 as *u8) { return; }
+    if !pixels_from_frame(src, len, w, h, 4 as usize, dst) { return; }
+    SESSION.pv_w = w;
+    SESSION.pv_h = h;
+    // PUBLISHED BY THIS ONE WRITE. Until it lands, the UI thread is still
+    // blitting the previous frame from the other buffer.
+    SESSION.pv_front = back;
+    let _i: i32 = { InvalidateRect(hwnd, 0 as *u8, 0 as i32) };
+    return;
+}
+
+fn free_preview_buffers() {
+    var i: i32 = 0 as i32;
+    while i < (2 as i32) {
+        let p: *u8 = { SESSION.pv_buf[i as usize] as *u8 };
+        if p != (0 as *u8) { free(p); }
+        { SESSION.pv_buf[i as usize] = 0 as usize };
+        i = i +% (1 as i32);
+    }
+    SESSION.pv_cap = 0 as usize;
+    SESSION.pv_front = 0 as i32;
+    SESSION.pv_w = 0 as i32;
+    SESSION.pv_h = 0 as i32;
+    return;
+}
+
+// ---- the seam ---------------------------------------------------------------------
+
+export extern fn _c_count() -> i64 {
+    var count: u32 = 0 as u32;
+    let devices: **u8 = enumerate(#addr_of(count));
+    if devices == (0 as **u8) { return 0 as i64; }
+    release_devices(devices, count);
+    return count as i64;
+}
+
+// WINDOWS HAS NO FACING. A capture device is addressed by name or by index and
+// says nothing about which way it points — `Facing` is an Apple and Android
+// idea, and the contract's own comment says so where it defines `External`. So
+// any camera answers a request for any facing, and `_c_actual_facing` reports
+// `External` rather than guessing a side.
+export extern fn _c_has(facing: i32) -> i32 {
+    let _f: i32 = facing;
+    if { _c_count() } > (0 as i64) { return 1 as i32; }
+    return 0 as i32;
+}
+
+export extern fn _c_last_error() -> i32 { return LAST_ERROR; }
+
+// Read the settled format off the reader's current media type.
+fn read_format(reader: *u8) {
+    var mt: *u8 = 0 as *u8;
+    if call_u_p(reader, idx_get_current_media_type(), first_video_stream(),
+                { #addr_of(mt) as *u8 }) != ok() { return; }
+    if mt == (0 as *u8) { return; }
+
+    var key_sz: Guid = g_frame_size();
+    var packed: u64 = 0 as u64;
+    if call_gg(mt, idx_get_u64(), { #addr_of(key_sz) as *u8 },
+               { #addr_of(packed) as *u8 }) == ok() {
+        // WIDTH IN THE HIGH HALF, height in the low — MF packs it that way and
+        // reading it the other round gives a 360x640 portrait camera.
+        SESSION.width = (packed / (4294967296 as u64)) as i32;
+        SESSION.height = (packed -% ((packed / (4294967296 as u64)) *% (4294967296 as u64))) as i32;
+    }
+
+    var key_fr: Guid = g_frame_rate();
+    var rate: u64 = 0 as u64;
+    if call_gg(mt, idx_get_u64(), { #addr_of(key_fr) as *u8 },
+               { #addr_of(rate) as *u8 }) == ok() {
+        // A RATIO, not a number: 30/1 and 30000/1001 are both "thirty".
+        let num: u64 = rate / (4294967296 as u64);
+        let den: u64 = rate -% (num *% (4294967296 as u64));
+        if den > (0 as u64) { SESSION.fps = (num / den) as i32; }
+    }
+
+    var key_st: Guid = g_subtype();
+    var sub: Guid = #zero::[Guid]();
+    if call_gg(mt, idx_get_guid(), { #addr_of(key_st) as *u8 },
+               { #addr_of(sub) as *u8 }) == ok() {
+        SESSION.fourcc = sub.a;
+    }
+    let _r: u32 = call_release(mt);
+    return;
+}
+
+export extern fn _c_open(req: *_CRequest) -> *u8 {
+    LAST_ERROR = camera::Outcome::Ok.to_code();
+    // ONE AT A TIME. A second open would ask Windows for a device this process
+    // already holds, and the honest answer to that is Busy rather than a second
+    // handle onto the same frames.
+    if SESSION.live { LAST_ERROR = camera::Outcome::Busy.to_code(); return 0 as *u8; }
+
+    var count: u32 = 0 as u32;
+    let devices: **u8 = enumerate(#addr_of(count));
+    if devices == (0 as **u8) || count == (0 as u32) {
+        if devices != (0 as **u8) { release_devices(devices, count); }
+        LAST_ERROR = camera::Outcome::Unsupported.to_code();
+        return 0 as *u8;
+    }
+
+    // WHICH DEVICE. `Request::device` names one — the contract's own answer for
+    // a platform with no facing — and an empty name takes the first. A name
+    // that matches nothing is NOT silently the first: asking for a camera that
+    // is not here and being handed a different one is the lie this package
+    // exists to avoid.
+    var chosen: u32 = 0 as u32;
+    var found: bool = true;
+    if req != (0 as *_CRequest) {
+        let want_len: usize = { (*req).device_len };
+        if want_len > (0 as usize) {
+            let want: str = { #str_from_raw_parts({ (*req).device }, want_len) };
+            found = false;
+            var i: u32 = 0 as u32;
+            while i < count {
+                let d: *u8 = { *(devices + (i as usize)) };
+                let nm: text::Text = device_name(d);
+                if nm.view() == want { chosen = i; found = true; i = count; }
+                else { i = i +% (1 as u32); }
+            }
+        }
+    }
+    if !found {
+        release_devices(devices, count);
+        LAST_ERROR = camera::Outcome::Unsupported.to_code();
+        return 0 as *u8;
+    }
+
+    let dev: *u8 = { *(devices + (chosen as usize)) };
+    let name: text::Text = device_name(dev);
+
+    var iid: Guid = g_iid_media_source();
+    var source: *u8 = 0 as *u8;
+    let hr: i32 = call_gg(dev, idx_activate_object(), { #addr_of(iid) as *u8 },
+                          { #addr_of(source) as *u8 });
+    if hr != ok() || source == (0 as *u8) {
+        release_devices(devices, count);
+        // A DEVICE THAT ENUMERATES AND WILL NOT ACTIVATE is almost always held
+        // by something else — a video call, the Camera app. `Busy` is the
+        // actionable answer; `Failed` would send a caller looking for a bug.
+        LAST_ERROR = camera::Outcome::Busy.to_code();
+        return 0 as *u8;
+    }
+
+    var reader: *u8 = 0 as *u8;
+    let hr2: i32 = { MFCreateSourceReaderFromMediaSource(source, 0 as *u8,
+                                                         #addr_of(reader)) };
+    if hr2 != ok() || reader == (0 as *u8) {
+        let _r: u32 = call_release(source);
+        release_devices(devices, count);
+        LAST_ERROR = camera::Outcome::Failed.to_code();
+        return 0 as *u8;
+    }
+    let _sel: i32 = call_u_i(reader, idx_set_stream_selection(),
+                             first_video_stream(), 1 as i32);
+
+    SESSION.live = true;
+    SESSION.source = { #addr(source) };
+    SESSION.reader = { #addr(reader) };
+    SESSION.width = 0 as i32;
+    SESSION.height = 0 as i32;
+    SESSION.fps = 0 as i32;
+    SESSION.fourcc = 0 as u32;
+    SESSION.name = name;
+    SESSION.streaming = false;
+    SESSION.stopped = true;
+    SESSION.want_photo = false;
+    read_format(reader);
+    bind_controls(source);
+
+    release_devices(devices, count);
+    return { #addr_of(SESSION) as *u8 };
+}
+
+fn is_live(h: *u8) -> bool {
+    if h == (0 as *u8) { return false; }
+    return SESSION.live;
+}
+
+export extern fn _c_actual_facing(h: *u8) -> i32 {
+    if !is_live(h) { return 3 as i32; }          // Unspecified
+    // EXTERNAL, and never a guess. Windows does not report which way a camera
+    // points, so calling a laptop's built-in lens `Front` would be inventing
+    // the one fact this enum exists to carry honestly.
+    return 2 as i32;
+}
+
+export extern fn _c_frame_rate(h: *u8) -> i32 {
+    if !is_live(h) { return 0 as i32; }
+    return SESSION.fps;
+}
+
+export extern fn _c_frame_size(h: *u8, out_width: *i32, out_height: *i32) {
+    if out_width != (0 as *i32) { { *out_width = 0 as i32 }; }
+    if out_height != (0 as *i32) { { *out_height = 0 as i32 }; }
+    if !is_live(h) { return; }
+    if out_width != (0 as *i32) { { *out_width = SESSION.width }; }
+    if out_height != (0 as *i32) { { *out_height = SESSION.height }; }
+    return;
+}
+
+// NV12 and YUY2 both carry a full-resolution LUMA plane first, which is exactly
+// what `PixelFormat::Luma8` means and what `Frame::luma` slices. RGB32 is packed
+// and has no luma plane, so it reports `Bgra32` and the pixels arrive through
+// `Frame::native`. Anything else answers `Any` rather than naming a layout a
+// caller would then read by.
+export extern fn _c_pixel_format(h: *u8) -> i32 {
+    if !is_live(h) { return 0 as i32; }
+    if SESSION.fourcc == fourcc_nv12() { return 1 as i32; }
+    if SESSION.fourcc == fourcc_yuy2() { return 1 as i32; }
+    if SESSION.fourcc == fourcc_rgb32() { return 2 as i32; }
+    return 0 as i32;
+}
+
+export extern fn _c_device(h: *u8, into: *text::Text) -> i32 {
+    if into == (0 as *text::Text) { return camera::Outcome::Failed.to_code(); }
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    { *into = SESSION.name.clone() };
+    return camera::Outcome::Ok.to_code();
+}
+
+// ---- a still photo -------------------------------------------------------------------
+//
+// The contract says the bytes arrive AS JPEG, so this is two steps: turn the
+// capture format into something an encoder accepts, then encode.
+//
+// 24bpp BGR is the intermediate because it is the one format every WIC encoder
+// takes without a converter, and because it is what the two YUV layouts and the
+// one packed layout can all reach in a single pass. The alternative — handing
+// WIC the native buffer and letting it convert — means describing NV12 to it,
+// and WIC's NV12 support is a later addition that not every codec honours.
+
+fn clamp255(v: i32) -> i32 {
+    if v < (0 as i32) { return 0 as i32; }
+    if v > (255 as i32) { return 255 as i32; }
+    return v;
+}
+
+// BT.601, video range, in fixed point — the same coefficients the preview path
+// uses. Chroma is signed around 128 and luma starts at 16, which is why a frame
+// converted with the studio-range formula on full-range data looks washed out
+// rather than wrong.
+fn yuv_to_bgr(dst: *u8, off: usize, y: i32, u: i32, v: i32) {
+    let c: i32 = (298 as i32) *% (y -% (16 as i32));
+    let d: i32 = u -% (128 as i32);
+    let e: i32 = v -% (128 as i32);
+    let b: i32 = clamp255((c +% ((516 as i32) *% d) +% (128 as i32)) / (256 as i32));
+    let g: i32 = clamp255((c -% ((100 as i32) *% d) -% ((208 as i32) *% e) +% (128 as i32)) / (256 as i32));
+    let r: i32 = clamp255((c +% ((409 as i32) *% e) +% (128 as i32)) / (256 as i32));
+    { *(dst + off) = b as u8 };
+    { *(dst + (off +% (1 as usize))) = g as u8 };
+    { *(dst + (off +% (2 as usize))) = r as u8 };
+    return;
+}
+
+// How many bytes a frame of this format occupies, or 0 for one this file cannot
+// convert. Checked against what the buffer ACTUALLY holds before a single byte
+// is read — a short buffer is the one failure here that would be a read past the
+// end rather than a wrong picture.
+fn frame_bytes_needed(w: i32, h: i32) -> usize {
+    let px: usize = (w as usize) *% (h as usize);
+    if SESSION.fourcc == fourcc_nv12() { return px +% (px / (2 as usize)); }
+    if SESSION.fourcc == fourcc_yuy2() { return px *% (2 as usize); }
+    if SESSION.fourcc == fourcc_rgb32() { return px *% (4 as usize); }
+    return 0 as usize;
+}
+
+// Convert one frame to 24bpp BGR. Returns a `malloc`'d buffer of `w*h*3` for
+// the caller to free, or null when the format is not one of the three or the
+// buffer is shorter than that format requires.
+//
+// STRIDE IS THE FORMAT'S DEFAULT, not a queried one. `ConvertToContiguousBuffer`
+// produces the packed layout for the subtype, which is what makes a single
+// `width`-based walk correct here; a device delivering padded rows would arrive
+// through a different path and `luma_stride` above makes the same assumption.
+fn bgr_from_frame(src: *u8, len: u32, w: i32, h: i32) -> *u8 {
+    let dst: *u8 = { malloc((w as usize) *% (h as usize) *% (3 as usize)) };
+    if dst == (0 as *u8) { return 0 as *u8; }
+    if !pixels_from_frame(src, len, w, h, 3 as usize, dst) { free(dst); return 0 as *u8; }
+    return dst;
+}
+
+// The conversion itself, into a buffer the caller owns, at either 3 or 4 bytes
+// a pixel.
+//
+// FOUR IS FOR BLITTING, three for encoding. A DIB's rows must be DWORD-aligned,
+// so a 24bpp bitmap of an odd width needs padding that a packed buffer does not
+// have — and every capture width being a multiple of four is a coincidence, not
+// a rule. 32bpp sidesteps it, and the fourth byte is the only difference: the
+// three colour bytes are written by the same code.
+fn pixels_from_frame(src: *u8, len: u32, w: i32, h: i32, bpp: usize, dst: *u8) -> bool {
+    if w <= (0 as i32) || h <= (0 as i32) { return false; }
+    if src == (0 as *u8) || dst == (0 as *u8) { return false; }
+    let need: usize = frame_bytes_needed(w, h);
+    if need == (0 as usize) { return false; }
+    if (len as usize) < need { return false; }
+
+    let px: usize = (w as usize) *% (h as usize);
+    // Opaque alpha for the 32bpp form. `StretchDIBits` ignores it for BI_RGB,
+    // but a layered parent would not, and a buffer of zeroes there reads as a
+    // fully transparent image.
+    if bpp == (4 as usize) {
+        var a: usize = 0 as usize;
+        while a < px {
+            { *(dst + ((a *% (4 as usize)) +% (3 as usize))) = 255 as u8 };
+            a = a +% (1 as usize);
+        }
+    }
+
+    if SESSION.fourcc == fourcc_nv12() {
+        // Y plane at full resolution, then one interleaved U,V pair per 2x2
+        // block — so the chroma row index is y/2 and the pair index x/2.
+        var y: i32 = 0 as i32;
+        while y < h {
+            let yrow: usize = (y as usize) *% (w as usize);
+            let crow: usize = px +% (((y / (2 as i32)) as usize) *% (w as usize));
+            var x: i32 = 0 as i32;
+            while x < w {
+                let cpair: usize = crow +% ((((x / (2 as i32)) *% (2 as i32)) as usize));
+                yuv_to_bgr(dst, (yrow +% (x as usize)) *% bpp,
+                           { *(src + (yrow +% (x as usize))) } as i32,
+                           { *(src + cpair) } as i32,
+                           { *(src + (cpair +% (1 as usize))) } as i32);
+                x = x +% (1 as i32);
+            }
+            y = y +% (1 as i32);
+        }
+    } else if SESSION.fourcc == fourcc_yuy2() {
+        // Y0 U Y1 V per two pixels, so chroma is shared along the row only.
+        var y: i32 = 0 as i32;
+        while y < h {
+            let row: usize = (y as usize) *% (w as usize) *% (2 as usize);
+            let drow: usize = (y as usize) *% (w as usize) *% bpp;
+            var x: i32 = 0 as i32;
+            while x +% (1 as i32) < w {
+                let o: usize = row +% ((x as usize) *% (2 as usize));
+                let u: i32 = { *(src + (o +% (1 as usize))) } as i32;
+                let v: i32 = { *(src + (o +% (3 as usize))) } as i32;
+                yuv_to_bgr(dst, drow +% ((x as usize) *% bpp),
+                           { *(src + o) } as i32, u, v);
+                yuv_to_bgr(dst, drow +% (((x +% (1 as i32)) as usize) *% bpp),
+                           { *(src + (o +% (2 as usize))) } as i32, u, v);
+                x = x +% (2 as i32);
+            }
+            y = y +% (1 as i32);
+        }
+    } else {
+        // RGB32 is already BGRA in memory; at 32bpp only the alpha differs, and
+        // at 24bpp it is the byte to drop.
+        var i: usize = 0 as usize;
+        while i < px {
+            let s: usize = i *% (4 as usize);
+            let d: usize = i *% bpp;
+            { *(dst + d) = *(src + s) };
+            { *(dst + (d +% (1 as usize))) = *(src + (s +% (1 as usize))) };
+            { *(dst + (d +% (2 as usize))) = *(src + (s +% (2 as usize))) };
+            i = i +% (1 as usize);
+        }
+    }
+    return true;
+}
+
+// Encode 24bpp BGR as JPEG. Returns a `malloc`'d buffer for the caller to free
+// with the byte count through `out_len`, or null.
+//
+// The stream is `InitializeFromMemory` over that same buffer rather than an
+// HGLOBAL one, which is what makes the bytes land where they are wanted with no
+// second copy — the price is a fixed capacity, and three bytes per pixel is
+// several times what a JPEG of the same image has ever needed.
+//
+// `WICBitmapEncoderNoCache`, and it is NOT a free choice: the JPEG encoder
+// answers `WINCODEC_ERR_UNSUPPORTEDOPERATION` to `Initialize` with
+// `CacheInMemory`, which is the value most examples pass.
+fn encode_jpeg(bgr: *u8, w: i32, h: i32, out_len: *u32) -> *u8 {
+    { *out_len = 0 as u32 };
+    if bgr == (0 as *u8) || w <= (0 as i32) || h <= (0 as i32) { return 0 as *u8; }
+    if !bind_wic() { return 0 as *u8; }
+    let entered: bool = com_enter();
+
+    let stride: usize = (w as usize) *% (3 as usize);
+    let pixels: usize = stride *% (h as usize);
+    let cap: usize = pixels;
+
+    var factory: *u8 = 0 as *u8;
+    var stream: *u8 = 0 as *u8;
+    var enc: *u8 = 0 as *u8;
+    var frame: *u8 = 0 as *u8;
+    var props: *u8 = 0 as *u8;
+    var written: u32 = 0 as u32;
+    var bad: bool = false;
+
+    var out: *u8 = { malloc(cap) };
+    if out == (0 as *u8) { bad = true; }
+
+    if !bad {
+        var clsid: Guid = g_wic_factory();
+        var iid: Guid = g_iid_wic_factory();
+        let f: fn(*u8, *u8, u32, *u8, *u8) -> i32 = CO_CREATE;
+        // CLSCTX_INPROC_SERVER — WIC is a DLL, and asking for a local server
+        // would spin up a surrogate process for an image encode.
+        let hr: i32 = { f({ #addr_of(clsid) as *u8 }, 0 as *u8, 1 as u32,
+                          { #addr_of(iid) as *u8 }, { #addr_of(factory) as *u8 }) };
+        if hr != ok() || factory == (0 as *u8) { bad = true; }
+    }
+    if !bad {
+        if call_p(factory, 14 as usize, { #addr_of(stream) as *u8 }) != ok()
+            || stream == (0 as *u8) { bad = true; }
+    }
+    if !bad {
+        if call_p_u(stream, 16 as usize, out, cap as u32) != ok() { bad = true; }
+    }
+    if !bad {
+        var jpg: Guid = g_jpeg_container();
+        if call_gg_p(factory, 8 as usize, { #addr_of(jpg) as *u8 }, 0 as *u8,
+                     { #addr_of(enc) as *u8 }, 0 as *u8) != ok()
+            || enc == (0 as *u8) { bad = true; }
+    }
+    if !bad {
+        if call_p_u(enc, 3 as usize, stream, 2 as u32) != ok() { bad = true; }
+    }
+    if !bad {
+        if call_gg(enc, 10 as usize, { #addr_of(frame) as *u8 },
+                   { #addr_of(props) as *u8 }) != ok()
+            || frame == (0 as *u8) { bad = true; }
+    }
+    if !bad {
+        if call_p(frame, 3 as usize, props) != ok() { bad = true; }
+    }
+    if !bad {
+        if call_u_u(frame, 4 as usize, w as u32, h as u32) != ok() { bad = true; }
+    }
+    if !bad {
+        var pf: Guid = g_pf_24bpp_bgr();
+        // The encoder may answer a DIFFERENT format than the one asked for, and
+        // says so by writing it back through the same pointer. JPEG takes 24bpp
+        // BGR, so this is only refused when something has gone very wrong.
+        if call_p(frame, 6 as usize, { #addr_of(pf) as *u8 }) != ok() { bad = true; }
+    }
+    if !bad {
+        if call_write_pixels(frame, h as u32, stride as u32, pixels as u32, bgr) != ok() {
+            bad = true;
+        }
+    }
+    if !bad {
+        if call_0(frame, 12 as usize) != ok() { bad = true; }
+    }
+    if !bad {
+        if call_0(enc, 11 as usize) != ok() { bad = true; }
+    }
+    if !bad {
+        // HOW MANY BYTES WERE WRITTEN. The stream sits at the end of what the
+        // encoder produced, so seeking zero from the current position reports
+        // the size — an `IWICStream` over fixed memory has no other way to say.
+        var pos: u64 = 0 as u64;
+        if call_seek(stream, 0 as i64, 1 as u32, { #addr_of(pos) as *u8 }) != ok() {
+            bad = true;
+        } else {
+            written = pos as u32;
+            if written == (0 as u32) { bad = true; }
+        }
+    }
+
+    if frame != (0 as *u8) { let _a: u32 = call_release(frame); }
+    if props != (0 as *u8) { let _b: u32 = call_release(props); }
+    if enc != (0 as *u8) { let _c: u32 = call_release(enc); }
+    if stream != (0 as *u8) { let _d: u32 = call_release(stream); }
+    if factory != (0 as *u8) { let _e: u32 = call_release(factory); }
+    if entered { com_leave(); }
+
+    if bad {
+        if out != (0 as *u8) { free(out); }
+        return 0 as *u8;
+    }
+    { *out_len = written };
+    return out;
+}
+
+// Hand a frame to the waiting capture handler as JPEG, and clear the request
+// whatever happens.
+//
+// THE HANDLER RUNS EVEN WHEN THE ENCODE FAILS, with an empty slice — the
+// facade's rule, and the reason is that a caller awaiting a photo that will
+// never arrive is worse off than one told immediately that none is coming.
+fn deliver_photo(src: *u8, len: u32) {
+    let cb: fn(*u8, usize, *u8) = SESSION.on_photo;
+    let ctx: *u8 = SESSION.photo_ctx;
+    SESSION.want_photo = false;
+    SESSION.on_photo = #zero::[fn(*u8, usize, *u8)]();
+    if cb.is_null() { return; }
+
+    let w: i32 = SESSION.width;
+    let h: i32 = SESSION.height;
+    let bgr: *u8 = bgr_from_frame(src, len, w, h);
+    if bgr == (0 as *u8) { cb(0 as *u8, 0 as usize, ctx); return; }
+
+    var jlen: u32 = 0 as u32;
+    let jpg: *u8 = encode_jpeg(bgr, w, h, #addr_of(jlen));
+    free(bgr);
+    if jpg == (0 as *u8) { cb(0 as *u8, 0 as usize, ctx); return; }
+
+    // BORROWED FOR THE CALL, exactly as the contract states, and freed the
+    // moment it returns. An owned buffer would put a free across the seam.
+    cb(jpg, jlen as usize, ctx);
+    free(jpg);
+    return;
+}
+
+// Read one frame on THIS thread and deliver it. Only ever called with the pump
+// stopped, so the reader has a single caller.
+fn capture_one_shot(reader: *u8) -> bool {
+    if reader == (0 as *u8) { return false; }
+    var tries: i32 = 0 as i32;
+    while tries < (200 as i32) {
+        tries = tries +% (1 as i32);
+        var actual: u32 = 0 as u32;
+        var flags: u32 = 0 as u32;
+        var stamp: u64 = 0 as u64;
+        var sample: *u8 = 0 as *u8;
+        let hr: i32 = call_read_sample(reader, first_video_stream(), 0 as u32,
+                                       { #addr_of(actual) as *u8 },
+                                       { #addr_of(flags) as *u8 },
+                                       { #addr_of(stamp) as *u8 },
+                                       { #addr_of(sample) as *u8 });
+        if hr != ok() { return false; }
+        // A NULL SAMPLE IS NORMAL while the pipeline spins up — and a camera
+        // that has never streamed in this session takes several of these before
+        // the first real frame, which is why the loop is generous.
+        if sample == (0 as *u8) { { Sleep(10 as u32) }; continue; }
+        var got: bool = false;
+        var buf: *u8 = 0 as *u8;
+        if call_p(sample, idx_to_contiguous(), { #addr_of(buf) as *u8 }) == ok() {
+            var p: *u8 = 0 as *u8;
+            var maxlen: u32 = 0 as u32;
+            var curlen: u32 = 0 as u32;
+            if call_lock(buf, { #addr_of(p) as *u8 }, { #addr_of(maxlen) as *u8 },
+                         { #addr_of(curlen) as *u8 }) == ok() {
+                deliver_photo(p, curlen);
+                got = true;
+                let _u: i32 = call_0(buf, idx_unlock());
+            }
+            let _rb: u32 = call_release(buf);
+        }
+        let _rs: u32 = call_release(sample);
+        return got;
+    }
+    return false;
+}
+
+// ---- the frame pump ----------------------------------------------------------------
+
+// One row of luma. NV12 and YUY2 differ here and the difference is the whole of
+// what a handler needs to walk the plane: NV12's Y plane is one byte per pixel,
+// YUY2 packs Y and chroma together at two bytes per pixel.
+// HOW FAR THE BUFFER WOULD HAVE TO TURN to be upright, clockwise.
+//
+// ALWAYS ZERO HERE, and `Rotation::None` is also the contract's word for "this
+// backend cannot say" — which is the honest reading. A USB or laptop webcam is
+// fixed in a body that does not rotate, so there is no orientation to track:
+// the sensor and the screen turn together or not at all. That is the opposite
+// of a phone, where the body turns under a sensor bolted at one angle, and it
+// is why this is a constant rather than a lookup.
+//
+// Media Foundation CAN carry `MF_MT_VIDEO_ROTATION` on the media type for a
+// source that knows better. It is not read, deliberately: no camera reachable
+// from this machine sets it, so the non-zero branch could not be exercised, and
+// an unexercised branch that silently turns every frame a quarter turn is a
+// worse bug than the gap. Read it when a rotating source exists to test against.
+fn frame_rotation() -> i32 { return 0 as i32; }
+
+fn luma_stride() -> i32 {
+    if SESSION.fourcc == fourcc_yuy2() { return SESSION.width *% (2 as i32); }
+    return SESSION.width;
+}
+
+fn pump(arg: *u8) -> *u8 {
+    let _a: *u8 = arg;
+    let reader: *u8 = { SESSION.reader as *u8 };
+    if reader == (0 as *u8) { SESSION.stopped = true; return 0 as *u8; }
+    while SESSION.streaming {
+        var actual: u32 = 0 as u32;
+        var flags: u32 = 0 as u32;
+        var stamp: u64 = 0 as u64;
+        var sample: *u8 = 0 as *u8;
+        let hr: i32 = call_read_sample(reader, first_video_stream(), 0 as u32,
+                                       { #addr_of(actual) as *u8 },
+                                       { #addr_of(flags) as *u8 },
+                                       { #addr_of(stamp) as *u8 },
+                                       { #addr_of(sample) as *u8 });
+        if hr != ok() { SESSION.streaming = false; }
+        else {
+            // A NULL SAMPLE IS NORMAL, not an error: the reader returns S_OK
+            // with nothing while the pipeline spins up or a format changes.
+            if sample == (0 as *u8) { { Sleep(5 as u32) }; }
+            else {
+                var buf: *u8 = 0 as *u8;
+                if call_p(sample, idx_to_contiguous(), { #addr_of(buf) as *u8 }) == ok() {
+                    var p: *u8 = 0 as *u8;
+                    var maxlen: u32 = 0 as u32;
+                    var curlen: u32 = 0 as u32;
+                    if call_lock(buf, { #addr_of(p) as *u8 },
+                                 { #addr_of(maxlen) as *u8 },
+                                 { #addr_of(curlen) as *u8 }) == ok() {
+                        let f: fn(*u8, i32, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
+                        if f.is_not_null() {
+                            // THE BUFFER IS VALID FOR THIS CALL ONLY, which is
+                            // the contract `Frame::luma` states — it is unlocked
+                            // the moment the handler returns.
+                            f(p, SESSION.width, SESSION.height, luma_stride(),
+                              frame_rotation(), p, SESSION.frame_ctx);
+                        }
+                        // THE PREVIEW IS A SECOND CONSUMER of the same frame,
+                        // not a second reader of the device — which is why it
+                        // lives inside this loop rather than opening a stream
+                        // of its own.
+                        if SESSION.preview != (0 as usize) { preview_frame(p, curlen); }
+                        // A CAPTURE ASKED FOR MID-STREAM rides this frame
+                        // rather than opening a second read. The encode costs
+                        // a few milliseconds and the pump does not deliver
+                        // during it, so one photo drops roughly one frame —
+                        // which is the trade every platform's still capture
+                        // makes and is why it only happens when asked.
+                        if SESSION.want_photo { deliver_photo(p, curlen); }
+                        let _u: i32 = call_0(buf, idx_unlock());
+                    }
+                    let _rb: u32 = call_release(buf);
+                }
+                let _rs: u32 = call_release(sample);
+            }
+        }
+    }
+    SESSION.stopped = true;
+    return 0 as *u8;
+}
+
+// Start the reader thread if it is not already running.
+//
+// TWO INDEPENDENT CONSUMERS ask for it — `on_frame` and the preview — and
+// neither owns it. So starting is idempotent and stopping asks whether the
+// OTHER one still wants frames, which is what keeps `stop_frames` from blanking
+// a preview the caller never mentioned.
+fn start_pump() -> bool {
+    if SESSION.streaming { return true; }
+    SESSION.streaming = true;
+    SESSION.stopped = false;
+    let start: fn(*u8) -> *u8 = pump;
+    let t: *u8 = { CreateThread(0 as *u8, 0 as usize, start, 0 as *u8,
+                                0 as u32, 0 as *u32) };
+    if t == (0 as *u8) {
+        SESSION.streaming = false;
+        SESSION.stopped = true;
+        return false;
+    }
+    let _c: i32 = { CloseHandle(t) };
+    return true;
+}
+
+fn pump_still_wanted() -> bool {
+    if SESSION.preview != (0 as usize) { return true; }
+    let f: fn(*u8, i32, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
+    return f.is_not_null();
+}
+
+export extern fn _c_on_frame(h: *u8, cb: fn(*u8, i32, i32, i32, i32, *u8, *u8), ctx: *u8) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    if cb.is_null() { return camera::Outcome::Failed.to_code(); }
+    SESSION.on_frame = cb;
+    SESSION.frame_ctx = ctx;
+    if !start_pump() { return camera::Outcome::Failed.to_code(); }
+    return camera::Outcome::Ok.to_code();
+}
+
+// Stop the pump and WAIT for it. The thread holds the reader for the length of
+// a `ReadSample`, so returning before it has noticed would let `_c_close`
+// release an interface a live call is still inside.
+fn stop_pump() {
+    if SESSION.streaming {
+        SESSION.streaming = false;
+        var spins: i32 = 0 as i32;
+        while !SESSION.stopped && spins < (2000 as i32) {
+            { Sleep(2 as u32) };
+            spins = spins +% (1 as i32);
+        }
+    }
+    // A CAPTURE THAT WAS WAITING ON THE NEXT FRAME will never get one now, and
+    // its handler is still owed a call. Settling it here rather than dropping it
+    // is what keeps `stop_frames` and `close` from stranding an awaiting caller.
+    if SESSION.want_photo { deliver_photo(0 as *u8, 0 as u32); }
+    return;
+}
+
+// TAKE A PHOTO. `Ok` means the request was ACCEPTED, which for the streaming
+// case is all that can be said yet — the bytes follow on the next frame.
+//
+// WHICH THREAD THE HANDLER RUNS ON depends on which path it took, and the
+// difference is worth stating rather than hiding. With no pump running the
+// encode happens INLINE and the handler runs on the caller's own thread, before
+// this function returns; with a pump running it runs on the pump's thread, the
+// same one `on_frame` already arrives on. The AppKit half hops to the main queue
+// in both cases because AVFoundation's delivery queue is never the caller's;
+// here the common case already is it, and a hop would need a message loop this
+// package has no claim on.
+export extern fn _c_capture(h: *u8, cb: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    if cb.is_null() { return camera::Outcome::Failed.to_code(); }
+    if !is_live(h) { cb(0 as *u8, 0 as usize, ctx); return camera::Outcome::Failed.to_code(); }
+    // A FORMAT WITH NO CONVERSION cannot become a JPEG, and saying so before
+    // taking a frame is better than taking one and discarding it.
+    if frame_bytes_needed(SESSION.width, SESSION.height) == (0 as usize) {
+        cb(0 as *u8, 0 as usize, ctx);
+        return camera::Outcome::Unsupported.to_code();
+    }
+    if !bind_wic() {
+        cb(0 as *u8, 0 as usize, ctx);
+        return camera::Outcome::Unsupported.to_code();
+    }
+    // ONE AT A TIME. A second capture before the first has been delivered would
+    // overwrite the handler that is still owed a call.
+    if SESSION.want_photo { cb(0 as *u8, 0 as usize, ctx); return camera::Outcome::Busy.to_code(); }
+
+    SESSION.on_photo = cb;
+    SESSION.photo_ctx = ctx;
+    SESSION.want_photo = true;
+
+    if SESSION.streaming { return camera::Outcome::Ok.to_code(); }
+
+    let reader: *u8 = { SESSION.reader as *u8 };
+    if capture_one_shot(reader) { return camera::Outcome::Ok.to_code(); }
+    // Nothing arrived, so nothing has called the handler — and it is still owed
+    // one. `deliver_photo` clears the request and reports the empty slice.
+    deliver_photo(0 as *u8, 0 as u32);
+    return camera::Outcome::Failed.to_code();
+}
+
+// STOP DELIVERING TO THE HANDLER, which is not the same as stopping the reader.
+// A live preview is the other consumer of the same frames, and a `stop_frames`
+// that killed the pump would blank a view the caller never mentioned.
+export extern fn _c_stop_frames(h: *u8) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    SESSION.on_frame = #zero::[fn(*u8, i32, i32, i32, i32, *u8, *u8)]();
+    SESSION.frame_ctx = 0 as *u8;
+    if !pump_still_wanted() { stop_pump(); }
+    return camera::Outcome::Ok.to_code();
+}
+
+export extern fn _c_close(h: *u8) {
+    if !is_live(h) { return; }
+    // A PREVIEW OUTLIVING ITS SESSION would blit a buffer nothing refills. The
+    // window itself belongs to facet's release, not to close, so what happens
+    // here is that the pump forgets it.
+    SESSION.preview = 0 as usize;
+    SESSION.on_frame = #zero::[fn(*u8, i32, i32, i32, i32, *u8, *u8)]();
+    stop_pump();
+    // The control interfaces are views onto the source, so they go first.
+    release_controls();
+    let reader: *u8 = { SESSION.reader as *u8 };
+    let source: *u8 = { SESSION.source as *u8 };
+    if reader != (0 as *u8) { let _r: u32 = call_release(reader); }
+    if source != (0 as *u8) { let _s: u32 = call_release(source); }
+    SESSION.reader = 0 as usize;
+    SESSION.source = 0 as usize;
+    SESSION.live = false;
+    SESSION.width = 0 as i32;
+    SESSION.height = 0 as i32;
+    SESSION.fps = 0 as i32;
+    SESSION.fourcc = 0 as u32;
+    return;
+}
+
+// ---- the verbs this backend does not answer, and why --------------------------------
+//
+// Each returns the contract's `Unsupported` rather than a false `Ok`. The rule
+// the facade sets is that a caller must be able to tell "this device cannot"
+// from "it did" — a `set_torch` that reported success and did nothing is
+// exactly the silent failure the whole package is written against.
+
+// A LAPTOP WEBCAM HAS NO TORCH, and `_c_has_torch` is a flat no rather than a
+// query because there is nothing on this road to query: neither
+// `IAMCameraControl` nor `IAMVideoProcAmp` has a lamp property. A camera that
+// does have one exposes it through `Windows.Devices.Lights.Lamp` or a
+// KSPROPERTY extended-control set, both of which are a different pipeline.
+export extern fn _c_set_torch(h: *u8, on: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
+export extern fn _c_has_torch(h: *u8) -> i32 { return 0 as i32; }
+
+// FOCUS, EXPOSURE and WHITE BALANCE are modes, and both interfaces express a
+// mode the same way: a per-property flag that is Auto or Manual. So all three
+// are `apply_mode` against a different property on a different interface, and
+// each ASKS the device rather than assuming — `set_focus` refuses on the camera
+// this was written against and would work unchanged on one with a focus motor.
+export extern fn _c_set_focus(h: *u8, mode: i32) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    return apply_mode({ SESSION.camctl as *u8 }, prop_focus(), mode);
+}
+
+export extern fn _c_set_exposure(h: *u8, mode: i32) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    return apply_mode({ SESSION.camctl as *u8 }, prop_exposure(), mode);
+}
+
+export extern fn _c_set_white_balance(h: *u8, mode: i32) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    return apply_mode({ SESSION.procamp as *u8 }, prop_white_balance(), mode);
+}
+
+// ZOOM IS A NUMBER, not a mode, and the number is a focal length. DirectShow
+// specifies the Zoom property in MILLIMETRES, which is what makes a ratio out of
+// it meaningful: the range's maximum over its minimum is the real optical zoom
+// the lens can reach, and `min * factor` is the focal length for a given factor.
+// That is the whole mapping, and it is the only defensible one — a device-unit
+// scale invented here would mean nothing on the next camera.
+//
+// THIS DEVICE HAS NO ZOOM, so what is exercised here is the refusal: all three
+// verbs query and answer 1.0 or `Unsupported` because `GetRange` says the
+// property is not supported, rather than because the answer was written in.
+export extern fn _c_max_zoom(h: *u8) -> f64 {
+    if !is_live(h) { return 1.0; }
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !ctl_bounds(cc, prop_zoom(), #addr_of(lo), #addr_of(hi)) { return 1.0; }
+    if lo <= (0 as i32) { return 1.0; }
+    return (hi as f64) / (lo as f64);
+}
+
+export extern fn _c_zoom(h: *u8) -> f64 {
+    if !is_live(h) { return 1.0; }
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !ctl_bounds(cc, prop_zoom(), #addr_of(lo), #addr_of(hi)) { return 1.0; }
+    if lo <= (0 as i32) { return 1.0; }
+    var cur: i32 = 0 as i32;
+    var fl: i32 = 0 as i32;
+    if ctl_get(cc, prop_zoom(), #addr_of(cur), #addr_of(fl)) != ok() { return 1.0; }
+    return (cur as f64) / (lo as f64);
+}
+
+export extern fn _c_set_zoom(h: *u8, factor: f64) -> i32 {
+    if !is_live(h) { return camera::Outcome::Failed.to_code(); }
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    var lo: i32 = 0 as i32;
+    var hi: i32 = 0 as i32;
+    if !ctl_bounds(cc, prop_zoom(), #addr_of(lo), #addr_of(hi)) {
+        return camera::Outcome::Unsupported.to_code();
+    }
+    if lo <= (0 as i32) { return camera::Outcome::Unsupported.to_code(); }
+    if factor < 1.0 { return camera::Outcome::Failed.to_code(); }
+    // CLAMPED rather than refused above the maximum: a caller asking for more
+    // zoom than the lens has wants the most it can give, and `zoom()` reports
+    // what it actually got.
+    var want: i32 = ((lo as f64) * factor) as i32;
+    if want > hi { want = hi; }
+    if want < lo { want = lo; }
+    if ctl_set(cc, prop_zoom(), want, flag_manual()) != ok() {
+        return camera::Outcome::Failed.to_code();
+    }
+    return camera::Outcome::Ok.to_code();
+}
+
+// SWITCHING BY FACING NEEDS A FACING, and Windows has none — see
+// `_c_actual_facing`. An application that wants a different camera on this
+// platform names it in `Request::device` and opens that one.
+export extern fn _c_switch_to(h: *u8, facing: i32) -> i32 { return camera::Outcome::Unsupported.to_code(); }
+
+// A PREVIEW IS A WINDOW THIS PACKAGE OWNS — see the preview section above for
+// the shape and for why it is created as a hidden popup.
+//
+// IT STARTS THE READER ITSELF. `preview()` is independent of `on_frame` in the
+// contract, so a preview with no `on_frame` must still show something; the pump
+// gains a second consumer rather than the caller gaining an obligation.
+//
+// IT HAS NO INTRINSIC SIZE. An adopted node carries no measure callback, so
+// flex sizes it — `grow(1)` or a stated width and height. A preview given
+// neither lays out at 0x0 and is invisible, which is the same on every backend
+// and is what `adopt_native`'s own note describes.
+export extern fn _c_preview_create(h: *u8) -> *u8 {
+    if !is_live(h) { return 0 as *u8; }
+    // ONE PREVIEW. A second would be a second window blitting the same buffers,
+    // and the session has one slot to remember it by.
+    if SESSION.preview != (0 as usize) { return 0 as *u8; }
+    if !bind_gdi() { return 0 as *u8; }
+
+    // "STATIC", as UTF-16.
+    var cls: [u16; 7] = [83 as u16, 84 as u16, 65 as u16, 84 as u16,
+                         73 as u16, 67 as u16, 0 as u16];
+    // WS_POPUP AND HIDDEN. `CreateWindowEx` refuses WS_CHILD with no parent,
+    // and this window has none until facet inserts it — at which point
+    // facet_win32's `adopt_window` makes it a visible child.
+    let hwnd: *u8 = { CreateWindowExW(0 as u32, { #addr_of(cls) as *u16 }, 0 as *u16,
+                                      0x80000000 as u32, 0 as i32, 0 as i32,
+                                      16 as i32, 16 as i32, 0 as *u8, 0 as *u8,
+                                      { GetModuleHandleW(0 as *u16) }, 0 as *u8) };
+    if hwnd == (0 as *u8) { return 0 as *u8; }
+
+    SESSION.preview = { #addr(hwnd) };
+    SESSION.pv_front = 0 as i32;
+    SESSION.pv_w = 0 as i32;
+    SESSION.pv_h = 0 as i32;
+    let proc: fn(*u8, u32, usize, usize) -> usize = preview_proc;
+    let prev: i64 = { SetWindowLongPtrW(hwnd, gwlp_wndproc(), proc as i64) };
+    SESSION.preview_proc = prev as usize;
+
+    if !start_pump() {
+        SESSION.preview = 0 as usize;
+        let _r: i32 = { DestroyWindow(hwnd) };
+        return 0 as *u8;
+    }
+    return hwnd;
+}
+
+// The release `adopt_native_with` was given, and the only thing that means
+// "gone" — facet fires it on drop, on detach, and when a later view replaces
+// this one.
+export extern fn _c_preview_release(v: *u8) {
+    if v == (0 as *u8) { return; }
+    // FORGET IT BEFORE DESTROYING IT, so the pump cannot paint into a window
+    // that is on its way out. The pump reads `SESSION.preview` every frame.
+    SESSION.preview = 0 as usize;
+    if !pump_still_wanted() { stop_pump(); }
+    // Put the original procedure back before the window goes, so nothing is
+    // dispatched into this module's code after the session is gone.
+    let prev: *u8 = { SESSION.preview_proc as *u8 };
+    if prev != (0 as *u8) {
+        let _p: i64 = { SetWindowLongPtrW(v, gwlp_wndproc(), prev as i64) };
+    }
+    SESSION.preview_proc = 0 as usize;
+    let _d: i32 = { DestroyWindow(v) };
+    free_preview_buffers();
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------------
+//
+// Against the REAL Media Foundation stack and whatever camera this machine has.
+// A build server with no lens takes the `count == 0` branch of every test below
+// and still exercises the enumeration path — which is the half that runs before
+// any device exists.
+
+#[test]
+fn a_guid_is_sixteen_bytes_in_the_layout_com_expects() {
+    // THE ONE THING A WRONG ANSWER HERE WOULD HIDE. Every GUID below is passed
+    // to COM by address; if the struct were padded, `SetGUID` would read four
+    // bytes of nothing and enumeration would quietly find no devices.
+    assert { #size_of::[Guid]() } == (16 as usize);
+    assert guid_bytes() == (16 as usize);
+}
+
+#[test]
+fn the_guids_carry_the_values_they_are_written_as() {
+    // Transcribed by hand from their printed forms, so the first field of each
+    // is pinned — a digit lost there is a different attribute and a silent
+    // enumeration of nothing.
+    assert g_source_type().a == (0xc60ac5fe as u32);
+    assert g_vidcap().a == (0x8ac3587a as u32);
+    assert g_friendly_name().a == (0x60d0e559 as u32);
+    assert g_iid_media_source().a == (0x279a808d as u32);
+    assert g_frame_size().a == (0x1652c33d as u32);
+    assert g_frame_rate().a == (0xc459a2e8 as u32);
+    assert g_subtype().a == (0xf7e34c9a as u32);
+    // WIC's, and the two control interfaces — whose IIDs differ by ONE DIGIT
+    // (…3370 against …3360), so a transcription slip there would silently hand
+    // camera control to the video-proc interface and set the wrong property.
+    assert g_wic_factory().a == (0xcacaf262 as u32);
+    assert g_iid_wic_factory().a == (0xec5ec8a9 as u32);
+    assert g_jpeg_container().a == (0x19e4a5aa as u32);
+    assert g_pf_24bpp_bgr().a == (0x6fddc324 as u32);
+    assert g_iid_camera_control().a == (0xc6e13370 as u32);
+    assert g_iid_video_proc_amp().a == (0xc6e13360 as u32);
+    // And the trailing bytes, which are literal rather than byte-swapped.
+    assert g_vidcap().d[7] == (0x0f as u8);
+    assert g_source_type().d[7] == (0xd3 as u8);
+}
+
+#[test]
+fn media_foundation_starts_on_this_machine() {
+    // If MF will not start, every verb below is unreachable and the reason is
+    // worth naming rather than discovering as "no cameras".
+    // MF is absent on an N edition without the Media Feature Pack, which is a
+    // configuration rather than a fault — so what is asserted is that BINDING
+    // answers cleanly either way and that a bound stack really does start.
+    let bound: bool = bind_mf();
+    if bound { assert ensure_mf(); }
+}
+
+#[test]
+fn counting_devices_does_not_need_a_camera_to_be_safe() {
+    // 0 on a machine with no lens and a positive number on one with. Both are
+    // correct; what is asserted is that enumeration completes and never reports
+    // a negative count.
+    let n: i64 = { _c_count() };
+    assert n >= (0 as i64);
+    // Idempotent — the attribute block and the device array are released each
+    // time, so a second call must answer the same.
+    assert { _c_count() } == n;
+}
+
+#[test]
+fn has_answers_for_every_facing_the_same_way() {
+    // Windows reports no facing, so every facing is answered by whether ANY
+    // camera is present — see `_c_has`. What must never happen is a `true` for
+    // one facing and `false` for another on the same machine, which would send
+    // an application looking for a second lens that does not exist.
+    let back: i32 = { _c_has(0 as i32) };
+    let front: i32 = { _c_has(1 as i32) };
+    let ext: i32 = { _c_has(2 as i32) };
+    assert back == front;
+    assert front == ext;
+    if { _c_count() } > (0 as i64) { assert back == (1 as i32); }
+    else { assert back == (0 as i32); }
+}
+
+#[test]
+fn opening_and_closing_a_real_camera_reports_a_real_format() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+
+    // A REAL FORMAT, read off the reader's own media type rather than assumed.
+    var w: i32 = 0 as i32;
+    var ht: i32 = 0 as i32;
+    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    assert w > (0 as i32);
+    assert ht > (0 as i32);
+    assert { _c_frame_rate(h) } > (0 as i32);
+
+    // And the device names itself.
+    var name: text::Text = text::new();
+    assert { _c_device(h, #addr_of(name)) } == camera::Outcome::Ok.to_code();
+    assert name.count() > (0 as usize);
+
+    // Windows has no facing: External, never a guess at a side.
+    assert { _c_actual_facing(h) } == (2 as i32);
+
+    { _c_close(h) };
+    // Closed means closed: the geometry is gone rather than stale.
+    var w2: i32 = 9 as i32;
+    { _c_frame_size(h, #addr_of(w2), #addr_of(ht)) };
+    assert w2 == (0 as i32);
+}
+
+#[test]
+fn a_second_open_is_busy_rather_than_a_second_handle() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    // BUSY, not a second view of the same device — and the code says which, so
+    // a caller can retry rather than conclude there is no camera.
+    let second: *u8 = { _c_open(#addr_of(req)) };
+    assert second == (0 as *u8);
+    assert { _c_last_error() } == camera::Outcome::Busy.to_code();
+    { _c_close(h) };
+}
+
+#[test]
+fn a_device_name_nothing_matches_is_refused_rather_than_substituted() {
+    if { _c_count() } == (0 as i64) { return; }
+    let want: str = "no-such-camera-on-this-machine";
+    var req: _CRequest = #zero::[_CRequest]();
+    req.device = { #str_ptr(want) };
+    req.device_len = { #str_len(want) };
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    // Handing back a DIFFERENT camera than the one asked for is the lie this
+    // package exists to avoid.
+    assert h == (0 as *u8);
+    assert { _c_last_error() } == camera::Outcome::Unsupported.to_code();
+}
+
+static FRAMES: i32 = 0 as i32;
+static FRAME_W: i32 = 0 as i32;
+static FRAME_BYTES: u8 = 0 as u8;
+
+fn count_frame(luma: *u8, w: i32, h: i32, stride: i32, rotation: i32,
+                native: *u8, ctx: *u8) {
+    FRAMES = FRAMES + (1 as i32);
+    FRAME_W = w;
+    if luma.is_not_null() && w > (0 as i32) { FRAME_BYTES = { *luma }; }
+    return;
+}
+
+#[test]
+fn frames_arrive_from_a_real_lens() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    FRAMES = 0 as i32;
+    FRAME_W = 0 as i32;
+    let cb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
+    assert { _c_on_frame(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+
+    // A camera takes a moment to start; 30fps means a frame every 33ms, so this
+    // is generous rather than tight.
+    var waited: i32 = 0 as i32;
+    while FRAMES == (0 as i32) && waited < (5000 as i32) {
+        { Sleep(20 as u32) };
+        waited = waited +% (20 as i32);
+    }
+    assert FRAMES > (0 as i32);
+    // The frame carries the geometry the session reported, not zeroes.
+    var w: i32 = 0 as i32;
+    var ht: i32 = 0 as i32;
+    { _c_frame_size(h, #addr_of(w), #addr_of(ht)) };
+    assert FRAME_W == w;
+
+    assert { _c_stop_frames(h) } == camera::Outcome::Ok.to_code();
+    { _c_close(h) };
+}
+
+#[test]
+fn the_controls_answer_for_a_closed_camera_without_touching_anything() {
+    // WITH NO SESSION there is no interface to ask, and the answer must still
+    // be a defined one rather than a call through a null vtable.
+    let h: *u8 = 0 as *u8;
+    assert { _c_set_zoom(h, 2.0) } == camera::Outcome::Failed.to_code();
+    assert { _c_set_focus(h, 0 as i32) } == camera::Outcome::Failed.to_code();
+    assert { _c_set_exposure(h, 0 as i32) } == camera::Outcome::Failed.to_code();
+    assert { _c_set_white_balance(h, 0 as i32) } == camera::Outcome::Failed.to_code();
+    // Zoom reads as 1.0 rather than 0, which would read as "no image".
+    assert { _c_zoom(h) } == (1.0);
+    assert { _c_max_zoom(h) } == (1.0);
+    // A laptop lens has no lamp behind it, and there is nothing to query.
+    assert { _c_set_torch(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _c_has_torch(h) } == (0 as i32);
+    // Windows has no facing, so switching by one cannot mean anything.
+    assert { _c_switch_to(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+}
+
+#[test]
+fn exposure_and_white_balance_really_change_the_devices_mode() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+
+    // THE POINT OF THIS TEST is that `Ok` is earned. Each mode is set and then
+    // READ BACK off the device, so an `Ok` that did nothing fails here.
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    let amp: *u8 = { SESSION.procamp as *u8 };
+
+    if ctl_caps(cc, prop_exposure()) >= (0 as i32) {
+        let caps: i32 = ctl_caps(cc, prop_exposure());
+        if (caps & flag_manual()) != (0 as i32) {
+            assert { _c_set_exposure(h, 2 as i32) } == camera::Outcome::Ok.to_code();
+            var v: i32 = 0 as i32;
+            var f: i32 = 0 as i32;
+            assert ctl_get(cc, prop_exposure(), #addr_of(v), #addr_of(f)) == ok();
+            assert f == flag_manual();
+        }
+        if (caps & flag_auto()) != (0 as i32) {
+            assert { _c_set_exposure(h, 0 as i32) } == camera::Outcome::Ok.to_code();
+            var v2: i32 = 0 as i32;
+            var f2: i32 = 0 as i32;
+            assert ctl_get(cc, prop_exposure(), #addr_of(v2), #addr_of(f2)) == ok();
+            assert f2 == flag_auto();
+        }
+    }
+
+    if ctl_caps(amp, prop_white_balance()) >= (0 as i32) {
+        let caps: i32 = ctl_caps(amp, prop_white_balance());
+        if (caps & flag_manual()) != (0 as i32) {
+            assert { _c_set_white_balance(h, 2 as i32) } == camera::Outcome::Ok.to_code();
+            var v: i32 = 0 as i32;
+            var f: i32 = 0 as i32;
+            assert ctl_get(amp, prop_white_balance(), #addr_of(v), #addr_of(f)) == ok();
+            assert f == flag_manual();
+        }
+        if (caps & flag_auto()) != (0 as i32) {
+            // And put it back, so a suite run does not leave the camera latched
+            // to whatever the last assertion wanted.
+            assert { _c_set_white_balance(h, 0 as i32) } == camera::Outcome::Ok.to_code();
+            var v2: i32 = 0 as i32;
+            var f2: i32 = 0 as i32;
+            assert ctl_get(amp, prop_white_balance(), #addr_of(v2), #addr_of(f2)) == ok();
+            assert f2 == flag_auto();
+        }
+    }
+
+    { _c_close(h) };
+}
+
+#[test]
+fn a_mode_the_device_does_not_have_is_refused_from_a_real_query() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+
+    // `Once` MEANS "adjust once, then hold", and neither interface has a
+    // one-shot. It is refused for every property, including the two this
+    // device does support — which is what proves the refusal is about the
+    // mode and not about the property being missing.
+    assert { _c_set_exposure(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _c_set_white_balance(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+    assert { _c_set_focus(h, 1 as i32) } == camera::Outcome::Unsupported.to_code();
+
+    // And a property the device really lacks refuses because `GetRange` said so.
+    // On a camera WITH a focus motor this same code would answer Ok, which is
+    // the difference between asking and assuming.
+    let cc: *u8 = { SESSION.camctl as *u8 };
+    if ctl_caps(cc, prop_focus()) < (0 as i32) {
+        assert { _c_set_focus(h, 0 as i32) } == camera::Outcome::Unsupported.to_code();
+    }
+    if ctl_caps(cc, prop_zoom()) < (0 as i32) {
+        assert { _c_set_zoom(h, 2.0) } == camera::Outcome::Unsupported.to_code();
+        // No zoom means exactly 1x, both current and maximum.
+        assert { _c_max_zoom(h) } == (1.0);
+        assert { _c_zoom(h) } == (1.0);
+    }
+
+    { _c_close(h) };
+}
+
+#[test]
+fn the_bitmap_header_is_the_forty_bytes_gdi_expects() {
+    // GDI READS `biSize` AND REFUSES ANYTHING ELSE, so a padded struct here is
+    // a `StretchDIBits` that draws nothing and reports nothing — the preview
+    // would be a grey rectangle with no error anywhere.
+    assert { #size_of::[BmiHeader]() } == (40 as usize);
+    var b: BmiHeader = #zero::[BmiHeader]();
+    b.size = 40 as u32;
+    b.width = 640 as i32;
+    b.height = 0 -% (360 as i32);
+    b.planes = 1 as u16;
+    b.bits = 32 as u16;
+    // TOP-DOWN IS A NEGATIVE HEIGHT. A DIB is bottom-up by default and a camera
+    // frame is not, so a positive height here shows the world upside down.
+    assert b.height < (0 as i32);
+}
+
+#[test]
+fn a_preview_needs_a_live_camera_and_only_one_at_a_time() {
+    // A CLOSED SESSION HAS NO WINDOW TO GIVE, and answering one would hand
+    // facet a view that never receives a frame.
+    assert { _c_preview_create(0 as *u8) } == (0 as *u8);
+    if { _c_count() } == (0 as i64) { return; }
+
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    let v: *u8 = { _c_preview_create(h) };
+    assert v != (0 as *u8);
+    // The preview STARTS THE READER ITSELF — `preview()` is independent of
+    // `on_frame` in the contract, so a preview with no handler must still show
+    // something.
+    assert SESSION.streaming;
+    // ONE PREVIEW. A second would be a second window blitting the same buffers.
+    assert { _c_preview_create(h) } == (0 as *u8);
+
+    { _c_preview_release(v) };
+    assert SESSION.preview == (0 as usize);
+    // Nothing else wanted the frames, so the reader stopped with it.
+    assert SESSION.streaming == false;
+    { _c_close(h) };
+}
+
+#[test]
+fn stopping_frames_does_not_blank_a_live_preview() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    let v: *u8 = { _c_preview_create(h) };
+    assert v != (0 as *u8);
+
+    let cb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
+    FRAMES = 0 as i32;
+    assert { _c_on_frame(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+    var waited: i32 = 0 as i32;
+    while FRAMES == (0 as i32) && waited < (5000 as i32) {
+        { Sleep(20 as u32) };
+        waited = waited +% (20 as i32);
+    }
+    assert FRAMES > (0 as i32);
+
+    // TWO INDEPENDENT CONSUMERS. `stop_frames` ends the handler's delivery and
+    // must NOT kill the reader, or it blanks a view the caller never mentioned.
+    assert { _c_stop_frames(h) } == camera::Outcome::Ok.to_code();
+    assert SESSION.streaming;
+    let f: fn(*u8, i32, i32, i32, i32, *u8, *u8) = SESSION.on_frame;
+    assert f.is_null();
+
+    // And the preview really is still being fed: the published buffer keeps
+    // taking new frames after the handler was dropped.
+    SESSION.pv_w = 0 as i32;
+    var w2: i32 = 0 as i32;
+    while SESSION.pv_w == (0 as i32) && w2 < (5000 as i32) {
+        { Sleep(20 as u32) };
+        w2 = w2 +% (20 as i32);
+    }
+    assert SESSION.pv_w > (0 as i32);
+    assert SESSION.pv_h > (0 as i32);
+
+    { _c_preview_release(v) };
+    assert SESSION.streaming == false;
+    { _c_close(h) };
+}
+
+#[test]
+fn closing_the_camera_forgets_a_preview_the_pump_would_paint_into() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    let v: *u8 = { _c_preview_create(h) };
+    assert v != (0 as *u8);
+    // A PREVIEW OUTLIVING ITS SESSION would blit a buffer nothing refills, so
+    // close forgets it even though the window belongs to facet's release.
+    { _c_close(h) };
+    assert SESSION.preview == (0 as usize);
+    assert SESSION.streaming == false;
+    // The release still runs — facet fires it on drop regardless — and must be
+    // safe after the session is gone.
+    { _c_preview_release(v) };
+}
+
+#[test]
+fn the_control_interfaces_are_released_with_the_session() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    // A REAL CAPTURE SOURCE ANSWERS AT LEAST ONE of the two, and asserting it
+    // is what keeps the two tests above from passing vacuously: with both
+    // interfaces null every `caps` guard in them is false and nothing is
+    // exercised at all.
+    assert SESSION.camctl != (0 as usize) || SESSION.procamp != (0 as usize);
+    // Whatever was taken is given back, because these are views onto the media
+    // source and outliving it is a use-after-free.
+    { _c_close(h) };
+    assert SESSION.camctl == (0 as usize);
+    assert SESSION.procamp == (0 as usize);
+}
+
+static CAPTURED: i32 = 0 as i32;
+static PHOTO_LEN: usize = 0 as usize;
+static PHOTO_MAGIC: bool = false;
+
+fn note_capture(data: *u8, len: usize, ctx: *u8) {
+    CAPTURED = CAPTURED + (1 as i32);
+    PHOTO_LEN = len;
+    PHOTO_MAGIC = false;
+    // SOI, then the marker that starts every JFIF/EXIF segment. Checking the
+    // bytes rather than the length is what tells a real encode from a buffer
+    // that merely got written to.
+    if data.is_not_null() && len > (3 as usize) {
+        if { *data } == (0xFF as u8)
+            && { *(data + (1 as usize)) } == (0xD8 as u8)
+            && { *(data + (2 as usize)) } == (0xFF as u8) { PHOTO_MAGIC = true; }
+    }
+    return;
+}
+
+#[test]
+fn a_dead_handle_still_calls_the_capture_handler_back() {
+    // THE HANDLER MUST ALWAYS RUN. An awaiting caller left hanging on a photo
+    // that will never arrive is worse than one told immediately that none is
+    // coming — the facade's own note, and the rule every seam here follows.
+    CAPTURED = 0 as i32;
+    let cb: fn(*u8, usize, *u8) = note_capture;
+    assert { _c_capture(0 as *u8, cb, 0 as *u8) } == camera::Outcome::Failed.to_code();
+    assert CAPTURED == (1 as i32);
+    assert PHOTO_LEN == (0 as usize);
+}
+
+#[test]
+fn the_encoder_turns_pixels_into_a_real_jpeg_with_no_camera_present() {
+    // THE HALF THAT NEEDS NO LENS. A build machine with no camera still has
+    // WIC, so the encode path — every vtable index and the whole GUID set it
+    // uses — is exercised here rather than only on a machine with hardware.
+    if !bind_wic() { return; }
+    let w: i32 = 64 as i32;
+    let h: i32 = 48 as i32;
+    let n: usize = (w as usize) *% (h as usize) *% (3 as usize);
+    let bgr: *u8 = { malloc(n) };
+    assert bgr != (0 as *u8);
+    // A gradient rather than a flat colour: a solid image compresses to almost
+    // nothing and would pass a size check that means very little.
+    var i: usize = 0 as usize;
+    while i < n {
+        { *(bgr + i) = (i -% ((i / (256 as usize)) *% (256 as usize))) as u8 };
+        i = i +% (1 as usize);
+    }
+    var len: u32 = 0 as u32;
+    let jpg: *u8 = encode_jpeg(bgr, w, h, #addr_of(len));
+    free(bgr);
+    assert jpg != (0 as *u8);
+    assert len > (0 as u32);
+    // A JPEG, by its own magic — not just a buffer that came back non-null.
+    assert { *jpg } == (0xFF as u8);
+    assert { *(jpg + (1 as usize)) } == (0xD8 as u8);
+    assert { *(jpg + (2 as usize)) } == (0xFF as u8);
+    // And it ENDS with EOI, which is what says the encoder committed rather
+    // than that a header was written and the stream then failed.
+    assert { *(jpg + ((len as usize) -% (2 as usize))) } == (0xFF as u8);
+    assert { *(jpg + ((len as usize) -% (1 as usize))) } == (0xD9 as u8);
+    free(jpg);
+}
+
+#[test]
+fn the_encoder_refuses_nonsense_rather_than_writing_a_broken_file() {
+    var len: u32 = 9 as u32;
+    assert encode_jpeg(0 as *u8, 4 as i32, 4 as i32, #addr_of(len)) == (0 as *u8);
+    assert len == (0 as u32);
+    let one: *u8 = { malloc(16 as usize) };
+    assert encode_jpeg(one, 0 as i32, 4 as i32, #addr_of(len)) == (0 as *u8);
+    assert encode_jpeg(one, 4 as i32, 0 as i32, #addr_of(len)) == (0 as *u8);
+    free(one);
+}
+
+#[test]
+fn nv12_converts_to_the_colours_it_encodes() {
+    // The conversion is arithmetic on a buffer, so it can be checked exactly —
+    // and a wrong coefficient or a swapped U and V shows here rather than as a
+    // photo somebody has to look at.
+    let saved: u32 = SESSION.fourcc;
+    let sw: i32 = SESSION.width;
+    let sh: i32 = SESSION.height;
+    SESSION.fourcc = fourcc_nv12();
+    let w: i32 = 2 as i32;
+    let h: i32 = 2 as i32;
+    // 2x2: full luma, neutral chroma — white. NV12 is 4 luma bytes then one
+    // U,V pair for the whole block.
+    let src: *u8 = { malloc(6 as usize) };
+    assert src != (0 as *u8);
+    { *(src + (0 as usize)) = 235 as u8 };
+    { *(src + (1 as usize)) = 235 as u8 };
+    { *(src + (2 as usize)) = 235 as u8 };
+    { *(src + (3 as usize)) = 235 as u8 };
+    { *(src + (4 as usize)) = 128 as u8 };
+    { *(src + (5 as usize)) = 128 as u8 };
+    let bgr: *u8 = bgr_from_frame(src, 6 as u32, w, h);
+    assert bgr != (0 as *u8);
+    // Video-range white is 235, which lands on 255 across all three channels.
+    assert { *bgr } == (255 as u8);
+    assert { *(bgr + (1 as usize)) } == (255 as u8);
+    assert { *(bgr + (2 as usize)) } == (255 as u8);
+    free(bgr);
+
+    // Now black, and a red-ish chroma to prove V drives RED and not blue —
+    // the swap that would otherwise only ever be noticed by eye.
+    { *(src + (0 as usize)) = 16 as u8 };
+    { *(src + (1 as usize)) = 16 as u8 };
+    { *(src + (2 as usize)) = 16 as u8 };
+    { *(src + (3 as usize)) = 16 as u8 };
+    let black: *u8 = bgr_from_frame(src, 6 as u32, w, h);
+    assert black != (0 as *u8);
+    assert { *black } == (0 as u8);
+    assert { *(black + (2 as usize)) } == (0 as u8);
+    free(black);
+
+    { *(src + (0 as usize)) = 128 as u8 };
+    { *(src + (1 as usize)) = 128 as u8 };
+    { *(src + (2 as usize)) = 128 as u8 };
+    { *(src + (3 as usize)) = 128 as u8 };
+    { *(src + (5 as usize)) = 240 as u8 };      // V high
+    let red: *u8 = bgr_from_frame(src, 6 as u32, w, h);
+    assert red != (0 as *u8);
+    let b: u8 = { *red };
+    let r: u8 = { *(red + (2 as usize)) };
+    assert r > b;
+    free(red);
+    free(src);
+
+    // A SHORT BUFFER IS REFUSED rather than read past — the one failure in this
+    // file that would be memory corruption instead of a wrong picture.
+    let tiny: *u8 = { malloc(6 as usize) };
+    assert bgr_from_frame(tiny, 5 as u32, w, h) == (0 as *u8);
+    // And so is a format with no conversion.
+    SESSION.fourcc = 0x11111111 as u32;
+    assert bgr_from_frame(tiny, 64 as u32, w, h) == (0 as *u8);
+    free(tiny);
+
+    SESSION.fourcc = saved;
+    SESSION.width = sw;
+    SESSION.height = sh;
+}
+
+#[test]
+fn a_still_photo_comes_off_a_real_lens_as_jpeg() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    CAPTURED = 0 as i32;
+    PHOTO_LEN = 0 as usize;
+    PHOTO_MAGIC = false;
+    let cb: fn(*u8, usize, *u8) = note_capture;
+    // NOT STREAMING, so this takes its own frame and the handler runs before
+    // the call returns.
+    let rc: i32 = { _c_capture(h, cb, 0 as *u8) };
+    assert rc == camera::Outcome::Ok.to_code();
+    assert CAPTURED == (1 as i32);
+    assert PHOTO_MAGIC;
+    // A photo of a real scene at a real resolution is never a few hundred bytes.
+    assert PHOTO_LEN > (1024 as usize);
+    { _c_close(h) };
+}
+
+#[test]
+fn a_capture_asked_for_mid_stream_rides_the_next_frame() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    FRAMES = 0 as i32;
+    let fcb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
+    assert { _c_on_frame(h, fcb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+    var waited: i32 = 0 as i32;
+    while FRAMES == (0 as i32) && waited < (5000 as i32) {
+        { Sleep(20 as u32) };
+        waited = waited +% (20 as i32);
+    }
+    assert FRAMES > (0 as i32);
+
+    CAPTURED = 0 as i32;
+    PHOTO_MAGIC = false;
+    let cb: fn(*u8, usize, *u8) = note_capture;
+    // ACCEPTED, not delivered — the bytes come on the pump's next frame, which
+    // is the whole difference this return value carries.
+    assert { _c_capture(h, cb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+    var w2: i32 = 0 as i32;
+    while CAPTURED == (0 as i32) && w2 < (5000 as i32) {
+        { Sleep(20 as u32) };
+        w2 = w2 +% (20 as i32);
+    }
+    assert CAPTURED == (1 as i32);
+    assert PHOTO_MAGIC;
+    assert PHOTO_LEN > (1024 as usize);
+
+    // And the pump kept going — one photo costs a frame, not the stream.
+    let before: i32 = FRAMES;
+    { Sleep(200 as u32) };
+    assert FRAMES > before;
+
+    assert { _c_stop_frames(h) } == camera::Outcome::Ok.to_code();
+    { _c_close(h) };
+}
+
+#[test]
+fn stopping_settles_a_capture_that_would_never_arrive() {
+    if { _c_count() } == (0 as i64) { return; }
+    var req: _CRequest = #zero::[_CRequest]();
+    let h: *u8 = { _c_open(#addr_of(req)) };
+    assert h != (0 as *u8);
+    // Ask while streaming, then stop before a frame can carry it. The handler
+    // is still owed a call, and gets one with an empty slice rather than being
+    // dropped on the floor.
+    let fcb: fn(*u8, i32, i32, i32, i32, *u8, *u8) = count_frame;
+    assert { _c_on_frame(h, fcb, 0 as *u8) } == camera::Outcome::Ok.to_code();
+    CAPTURED = 0 as i32;
+    SESSION.on_photo = note_capture;
+    SESSION.photo_ctx = 0 as *u8;
+    SESSION.want_photo = true;
+    { _c_close(h) };
+    assert CAPTURED == (1 as i32);
+}

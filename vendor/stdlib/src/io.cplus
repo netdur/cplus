@@ -6,6 +6,41 @@
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn printf(fmt: *u8, ...) -> i32;
 
+// ───────────────────────────── the sink ─────────────────────────────
+//
+// WHERE THE PROCESS'S OWN STREAMS GO NOWHERE, SOMETHING HAS TO SAY SO.
+//
+// On Android an app's stdout and stderr are `/dev/null` — not redirected, not
+// buffered, gone — unless someone has run `setprop log.redirect-stdio true`.
+// Measured on a Fold 2026-09-09: an app printing a line every two seconds put
+// NOTHING in logcat over a whole run, and `android:debuggable="true"` does not
+// change it. The platform's channel is liblog, and reaching it needs a symbol
+// stdlib cannot have: an `extern` in ANY stdlib module is an undefined symbol
+// in the WHOLE slice (see `exe_path.cplus`), `[<platform>.link]` is not a thing
+// the manifest accepts, and the workaround for that — a platform-scoped
+// dependency carrying its own `[link]` — is unavailable to the package every
+// other package depends on.
+//
+// So stdlib keeps writing to the fd, and offers a DOOR. A backend that knows
+// where text should go installs a sink; every `println` in every package keeps
+// being a `println`. Same shape as `services::install_scheduler` and
+// `theme::set_is_dark_fn` — the portable tier states the verb, the platform
+// supplies the mechanism.
+//
+// ONE CALL, ONE LINE. `stream` is 1 for stdout and 2 for stderr, and the bytes
+// carry NO trailing newline: a log channel supplies its own line structure. A
+// `print` without a newline therefore becomes its own line rather than joining
+// the next one, which is the one place this is not the terminal's behaviour and
+// is worth the trade.
+static SINK: fn(i32, *u8, usize) = 0 as fn(i32, *u8, usize);
+
+// Install (or, with a null, remove) the sink. Main-thread-only by convention,
+// like every other install in the tree: it is a process-wide decision made once
+// while the backend comes up.
+fn set_sink(f: fn(i32, *u8, usize)) { SINK = f; return; }
+
+fn has_sink() -> bool { return SINK != (0 as fn(i32, *u8, usize)); }
+
 // Loop until all `n` bytes from `p` are written to `fd` (or write errors).
 // `#[no_alloc]`: write(2) is a syscall — no heap is touched here, so
 // real-time code may report through this path.
@@ -19,7 +54,6 @@ fn write_all(fd: i32, p: *u8, n: usize) {
         if w <= (0 as isize) { return; }
         written = written +% (w as usize);
     }
-    return;
 }
 
 // Write `s` to stdout, no trailing newline.
@@ -30,23 +64,26 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 // nothing either.
 #[no_alloc]
 fn print(s: str) {
+    let f: fn(i32, *u8, usize) = SINK;
+    if f != (0 as fn(i32, *u8, usize)) { f(1 as i32, #str_ptr(s), #str_len(s)); return; }
     { printf(#str_ptr("%.*s\0"), #str_len(s) as i32, #str_ptr(s)); }
-    return;
 }
 
 // Write `s` to stdout, followed by '\n'. `#[no_alloc]`: see `print`.
 #[no_alloc]
 fn println(s: str) {
+    let f: fn(i32, *u8, usize) = SINK;
+    if f != (0 as fn(i32, *u8, usize)) { f(1 as i32, #str_ptr(s), #str_len(s)); return; }
     { printf(#str_ptr("%.*s\n\0"), #str_len(s) as i32, #str_ptr(s)); }
-    return;
 }
 
 // Write `s` to stderr, followed by '\n'. `#[no_alloc]`: see `write_all`.
 #[no_alloc]
 fn eprintln(s: str) {
+    let f: fn(i32, *u8, usize) = SINK;
+    if f != (0 as fn(i32, *u8, usize)) { f(2 as i32, #str_ptr(s), #str_len(s)); return; }
     write_all(2 as i32, #str_ptr(s), #str_len(s));
     write_all(2 as i32, #str_ptr("\n"), 1 as usize);
-    return;
 }
 
 // ───────────────────────────── tests ─────────────────────────────
@@ -61,4 +98,43 @@ fn io_write_paths_do_not_trap() {
     write_all(1 as i32, #str_ptr(""), 0 as usize);
     eprintln("");
     assert true;
+}
+
+// `write_all` is the RAW fd path and must stay raw: a caller that passed a file
+// descriptor of its own would be astonished to find its bytes in a log. Only
+// `print`/`println`/`eprintln` — the ones that mean "tell the developer" —
+// route through the sink.
+static _T_STREAM: i32 = 0 as i32;
+static _T_LEN: usize = 0 as usize;
+
+fn _t_sink(stream: i32, p: *u8, n: usize) {
+    _T_STREAM = stream;
+    _T_LEN = n;
+    return;
+}
+
+#[test]
+fn an_installed_sink_takes_the_prints_and_not_write_all() {
+    // `eprintln` and not `println`: inside this module the bare names `print`
+    // and `println` are shadowed by the `#print`/`#println` INTRINSICS (E0905),
+    // which is why the check above says consumers exercise them. The sink is
+    // the same three lines in all three.
+    set_sink(_t_sink);
+    _T_STREAM = 0 as i32;
+    _T_LEN = 0 as usize;
+    eprintln("abcd");
+    assert _T_STREAM == (2 as i32);
+    assert _T_LEN == (4 as usize);
+
+    eprintln("xy");
+    assert _T_STREAM == (2 as i32);          // stderr is stream 2
+    assert _T_LEN == (2 as usize);           // and NO trailing newline is added
+
+    // The raw path is NOT diverted.
+    _T_STREAM = 0 as i32;
+    write_all(1 as i32, #str_ptr(""), 0 as usize);
+    assert _T_STREAM == (0 as i32);
+
+    set_sink(0 as fn(i32, *u8, usize));
+    assert !has_sink();
 }

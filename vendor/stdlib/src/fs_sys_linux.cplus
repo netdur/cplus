@@ -11,6 +11,8 @@
 // want if it ever comes up.
 
 // Linux `mode_t` is `unsigned int`, not Darwin's `__uint16_t`.
+import "./netsys" as netsys;
+
 extern fn mkdir(path: *u8, mode: u32) -> i32;
 extern fn stat(path: *u8, buf: *u8) -> i32;
 
@@ -28,8 +30,24 @@ fn make_dir(path: *u8, mode: u32) -> i32 {
 //
 // x86_64/aarch64 Linux: 144 bytes — the same SIZE as Darwin's and a completely
 // different layout, which is exactly why the Darwin offsets read plausible
-// garbage instead of faulting. st_mode is a u32 at byte 24, st_size an i64 at
-// byte 48, st_mtim.tv_sec an i64 at byte 88.
+// garbage instead of faulting. st_size is an i64 at byte 48 and st_mtim.tv_sec
+// an i64 at byte 88 on BOTH; `st_mode` is the one field that moves.
+//
+// AND IT MOVES BY ARCHITECTURE, not by OS — which is how it came to be wrong.
+// The two kernel layouts differ in where `st_nlink` sits:
+//
+//   x86_64    dev@0  ino@8  nlink@16(8)  MODE@24  uid@28 gid@32 ... size@48
+//   aarch64   dev@0  ino@8  MODE@16      nlink@20 uid@24 gid@28 ... size@48
+//
+// This file hard-coded 24, which on aarch64 reads `st_uid`. The effect was not
+// a crash and not a wrong number a reader would notice — `fs::is_dir` simply
+// answered FALSE for every directory on Android, because a uid ANDed with
+// S_IFMT is not S_IFDIR. Measured on an emulator, 2026-08-28, before the fix:
+// `fs::is_dir("/data/data/<pkg>/files")` was false while `fs::exists` on the
+// same path was true.
+//
+// `#arch()` is a compile-time string, so the branch folds; there is no runtime
+// cost and no way for the two to disagree at run time.
 
 fn stat_buf_bytes() -> usize { return 144 as usize; }
 
@@ -37,8 +55,14 @@ fn stat_path(path: *u8, buf: *u8) -> i32 {
     return { stat(path, buf) };
 }
 
+// Where `st_mode` is, for the architecture this binary is being built for.
+fn stat_mode_offset() -> usize {
+    if #arch() == "aarch64" { return 16 as usize; }
+    return 24 as usize;
+}
+
 fn stat_mode(buf: *u8) -> u32 {
-    return { *((buf + (24 as usize)) as *u32) };
+    return { *((buf + stat_mode_offset()) as *u32) };
 }
 
 fn stat_mtime_secs(buf: *u8) -> i64 {
@@ -57,3 +81,68 @@ fn stat_file_size(buf: *u8) -> i64 {
 fn dirent_name(ent: *u8) -> *u8 {
     return { ent + (19 as usize) };
 }
+
+// O_RDONLY = 0, and there is no mode bit to add: POSIX has no text/binary
+// distinction. Split out because Windows does — see fs_sys_windows.cplus.
+fn read_flags() -> i32 { return 0 as i32; }
+
+// ---- directory iteration -----------------------------------------------------
+//
+// `opendir` / `readdir` / `closedir` wrapped rather than called directly from
+// `fs.cplus`, because Windows has none of the three: its enumeration is
+// `FindFirstFileW`, which returns the FIRST entry as part of opening. The
+// wrapper is the seam that lets one shape serve both.
+//
+// `dir_next` returns an opaque entry pointer, or null at the end. `dir_name`
+// turns that into a NUL-terminated C string. Nothing outside this file reads
+// the entry.
+
+extern fn opendir(path: *u8) -> *u8;
+extern fn readdir(dirp: *u8) -> *u8;
+extern fn closedir(dirp: *u8) -> i32;
+
+fn dir_open(path: *u8) -> *u8 { return { opendir(path) }; }
+fn dir_next(dirp: *u8) -> *u8 { return { readdir(dirp) }; }
+fn dir_name(ent: *u8) -> *u8 { return dirent_name(ent); }
+fn dir_close(dirp: *u8) -> i32 { return { closedir(dirp) }; }
+
+// ---- path separators ---------------------------------------------------------
+//
+// Split out for `bundle`, which walks and joins paths and had `/` written into
+// it directly. POSIX has exactly one separator and a backslash is an ordinary
+// filename character, so only `/` may match here.
+
+fn separator() -> u8 { return 47 as u8; }
+fn separator_str() -> str { return "/"; }
+fn is_separator(c: u8) -> bool { return c == (47 as u8); }
+
+// An absolute path starts at the root.
+fn is_absolute(path: str) -> bool {
+    let n: usize = #str_len(path);
+    if n == (0 as usize) { return false; }
+    let p: *u8 = #str_ptr(path);
+    return { *p } == (47 as u8);
+}
+
+// ---- read / write ------------------------------------------------------------
+//
+// Wrapped because the MSVC runtime is not POSIX here: its `_read`/`_write`
+// return `int` and take an `unsigned int` count, where POSIX returns `ssize_t`
+// and takes `size_t`. Declaring the POSIX shape against the Windows CRT leaves
+// the upper 32 bits of the return undefined — an EOF `0` can read back as a
+// huge positive count, and a read loop that stops at 0 never stops.
+
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+
+fn read_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    return { read(fd, buf, count) };
+}
+
+fn write_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    return { write(fd, buf, count) };
+}
+
+// See the Darwin `fs_sys::file_errno`: one POSIX errno serves files and sockets,
+// so `fs`'s file errno is `netsys::errno` here too.
+fn file_errno() -> i32 { return netsys::errno(); }

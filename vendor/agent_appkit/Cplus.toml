@@ -4,8 +4,14 @@ version = "0.0.1"
 edition = "2026"
 
 [dependencies]
-stdlib     = "*"
-objc       = "*"
-quartzcore = "*"
-appkit     = "*"
-agent_core = "*"
+stdlib      = "*"
+objc        = "*"
+quartzcore  = "*"
+appkit      = "*"
+agent_core  = "*"
+# THE TREE. The walk is over facet's own nodes, not over the NSView hierarchy —
+# an app IS a facet tree and AppKit is one backend's realisation of it. Walking
+# views reported AppKit's wrappers as though the developer had written them.
+# agent_android has always done it this way; this is macOS catching up.
+facet       = "*"
+flex_layout = "*"

@@ -38,6 +38,35 @@ SPEC = os.path.join(ROOT, "plans", "facet", "spec", "ledger-spec.json")
 MODEL = "the ledger's MVVM model — facet describes UI with components, keys, and fn-ptr handlers"
 LAYOUT = "layout belongs to flex_layout — facet Nodes carry flex modifiers"
 ENGINE = "the ledger engine internals, not application vocabulary"
+# The ledger's modal PAGE STACK, which facet does not have and does not want.
+#
+# `runtime::alert` / `choose` / `prompt` are window-modal SHEETS built as
+# ordinary facet trees: NON-BLOCKING, so the caller returns at once and the
+# answer arrives on `on_answer`. That was a deliberate choice — a modal loop is
+# a dialog an AGENT cannot get past, and a sheet built from facet nodes has a
+# key on every part (`alert:primary`, `choose:opt:0`, `prompt:value`). Nothing
+# is pushed or popped, so there is no push/pop to raise an event for.
+#
+# This map already DROPs `DisplayAlert` and `DisplayPromptAsync` on exactly
+# that reasoning — "no async in the UI; the answer is a handler" — and then
+# ADOPTed the EVENTS of the stack those methods drive: nine rows naming
+# `on_modal_pushed` and friends, which do not exist and by this design should
+# not. One document saying both things about one decision.
+MODAL = ("facet's dialogs answer on a handler and there is no modal stack to "
+         "observe — runtime::alert/choose/prompt are non-blocking sheets, so "
+         "nothing is pushed or popped")
+# The ledger's `Toolbar` is NavigationPage/Shell's NAVIGATION BAR — a back
+# button, a bar height, a drawer toggle. That is an iOS and Android idiom, and
+# it is not what facet's window toolbar is: `toolbar_item` NODES the backend
+# lifts out of the tree (facet_appkit/window.cplus:369), with the bar's own
+# look on `Chrome.bar` and the back verb on `nav`.
+#
+# The type was extracted as runtime rather than dropped with the rest of the
+# Shell family, so eleven rows were ADOPTed under default names that describe a
+# tier facet does not have and has not been asked for.
+NAVBAR = ("the ledger's navigation bar — a NavigationPage/Shell idiom. facet's "
+          "window toolbar is toolbar_item nodes, its chrome is Chrome.bar, and "
+          "its back verb is nav::pop")
 
 # ---- value types -> facet types. A scalar/struct the contract can carry. -----
 TYMAP = {
@@ -758,6 +787,32 @@ OVERLAY = {
     ("VisualElement", "SafeAreaEdges"):
         ("DROP", "", "facet says it as set_safe_area on the shared band — NOT flex's, "
                      "the window's own insets"),
+    ("Window", "ModalPushing"): ("DROP", "", MODAL),
+    ("Window", "ModalPushed"): ("DROP", "", MODAL),
+    ("Window", "ModalPopping"): ("DROP", "", MODAL),
+    ("Window", "ModalPopped"): ("DROP", "", MODAL),
+    ("Application", "ModalPushing"): ("DROP", "", MODAL),
+    ("Application", "ModalPushed"): ("DROP", "", MODAL),
+    ("Application", "ModalPopping"): ("DROP", "", MODAL),
+    ("Application", "ModalPopped"): ("DROP", "", MODAL),
+    ("Window", "PopCanceled"): ("DROP", "", MODAL),
+    ("Toolbar", "BackButtonEnabled"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BackButtonTitle"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BackButtonVisible"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BarBackground"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BarHeight"): ("DROP", "", NAVBAR),
+    ("Toolbar", "BarTextColor"): ("DROP", "", NAVBAR),
+    ("Toolbar", "DrawerToggleVisible"): ("DROP", "", NAVBAR),
+    ("Toolbar", "DynamicOverflowEnabled"): ("DROP", "", NAVBAR),
+    ("Toolbar", "IconColor"): ("DROP", "", NAVBAR),
+    ("Toolbar", "TitleIcon"): ("DROP", "", NAVBAR),
+    ("Toolbar", "TitleView"): ("DROP", "", NAVBAR),
+    ("Page", "IsBusy"):
+        ("DROP", "", "facet says it as a `spinner` node — a busy state is something "
+                     "in the tree, not a flag on the page"),
+    ("TitleBar", "PassthroughElements"):
+        ("DROP", "", "facet says it the other way round: `.window_drag()` marks what "
+                     "DRAGS the window, so everything unmarked already passes through"),
     ("View", "GestureRecognizers"):
         ("DROP", "", "facet says it as the .gesture() band — not a bound collection"),
     ("VisualElement", "GestureRecognizers"):
@@ -986,7 +1041,7 @@ DROP_TYPES = {_bare(k): v for k, v in DROP_TYPES.items()}
 
 
 def rows():
-    spec = json.load(open(SPEC))
+    spec = json.load(open(SPEC, encoding="utf-8"))
     out, undecided = [], []
     for ty, bands in spec.items():
         for declared in ("writes", "reads", "events", "methods"):
@@ -1067,7 +1122,13 @@ def main():
             cur = ty
         out.append(f"| {member} | {band} | **{status}** | {fname or '—'} | {note} |\n")
 
-    path = os.path.join(ROOT, "plans", "facet", "row_type-map-draft.md")
+    # `ledger-map-draft.md`, matching `ledger-spec.json` and
+    # `ledger-spec-report.md`. It was `row_type-map-draft.md` until 2026-09-08:
+    # the find/replace that scrubbed the framework's name out of this pipeline
+    # hit a PATH as well as the prose, so the map landed under a name nothing
+    # else used and the previous `maui-map-draft.md` sat beside it looking
+    # current. A generated file with two names is a generated file with none.
+    path = os.path.join(ROOT, "plans", "facet", "ledger-map-draft.md")
     with open(path, "w") as f:
         f.writelines(out)
     print(f"{len(rs)} rows — " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))

@@ -21,10 +21,19 @@ import "android_view/runtime" as rt;
 import "android_view/widgets" as w;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
+import "facet/application" as app;
 import "facet/mount" as mount;
+import "facet/window" as app_window;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
 import "./env" as e;
 import "./paint" as paint;
 import "./dex" as dex;
+import "./controls" as controls;
+import "./mainthread" as mainthread;
 import "./scheduler" as scheduler;
 import "./log" as log;
 
@@ -35,6 +44,12 @@ import "./log" as log;
 fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::jobject {
     e::set_env(env);
     e::set_activity(env.new_global_ref(activity));
+    // The VM, kept from the one thread that is certain to have an env. Every
+    // other thread gets its own through it — see mainthread::attach.
+    mainthread::remember_vm(env);
+    // Cached before the first paint: a colour resolves per node and the read is
+    // three JNI calls.
+    e::set_is_dark(read_is_dark());
 
     // A view is needed before the dex loader can reach a Context, and the dex
     // is needed before a FacetHost can be made. Break the cycle with one plain
@@ -45,6 +60,8 @@ fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::
     let host_local: jni::jobject = dex::new_host(env, activity);
     let host: jni::jobject = env.new_global_ref(host_local);
     e::set_host(host);
+    // This one, and no other, speaks for the window.
+    dex::host_reports_size(env, host);
     env.delete_local_ref(host_local);
 
     // RE-MOUNT. If this Activity is a recreation, the tree is already marked
@@ -58,7 +75,68 @@ fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::
     // The root's own view is inserted nowhere by the walk (mount.cplus says so:
     // the caller puts it into a window), so it goes in here.
     add_root_views(env, host, root);
-    return host;
+
+    // THE INSETS LISTENER, on the one view that speaks for the window. Without
+    // it an edge-to-edge window never hears the keyboard: the window does not
+    // resize, so nothing else in this backend would notice.
+    let insets: jni::jobject = dex::new_insets_listener(env);
+    if insets != (0 as jni::jobject) {
+        var hv: w::View = w::View::from_global(env, { host as *u8 });
+        hv.set_on_apply_window_insets_listener(insets);
+        paint::unwrap_keep(hv);
+        env.delete_local_ref(insets);
+    }
+
+    // POINT THE AGENT SURFACE AT THE TREE. Inert for every app that never
+    // called `agent::enable()`, which is the same posture facet_uikit's window
+    // takes on the line after it adds its root.
+    //
+    // The handle is the ROOT NODE, not a view: agent_android walks facet's own
+    // tree (see its MANIFEST §1), so what the two ends agree on is a
+    // `*core::Node`. Without this line the surface answers, correctly and
+    // uselessly, with zero nodes.
+    app::agent_attach({ #addr(root) as *u8 });
+    return content_view(env, activity, host);
+}
+
+// PINCH-TO-MAGNIFY, which is a Chrome property and not a control. The facade
+// reads it off the window description and leaves it here, because the wrapper
+// it turns into can only be built once there is an Activity — which is one call
+// later, in `attach_root` below.
+//
+// It lives in this file and not in `entry` for a duller reason: `entry` imports
+// the backend to install it, so a window that imported `entry` closed a cycle.
+static ZOOM_ON: bool = false;
+static ZOOM_MIN: f64 = 1.0f64;
+static ZOOM_MAX: f64 = 1.0f64;
+
+fn set_zoom(min: f64, max: f64) {
+    ZOOM_ON = true;
+    ZOOM_MIN = min;
+    ZOOM_MAX = max;
+    return;
+}
+
+// What the ACTIVITY is handed, which is the facet host itself unless the
+// window asked to magnify. A zoomable window gets one wrapper around it: the
+// facet host stays the thing facet places into and reports the size of, and
+// the wrapper only scales and translates what is already laid out.
+//
+// The wrapper is NOT the host: making it one would put the zoom transform
+// between flex's frames and the views they belong to, and every coordinate the
+// agent reports would be in a space that moves when a finger does.
+fn content_view(env: rt::Env, activity: jni::jobject, host: jni::jobject) -> jni::jobject {
+    if !ZOOM_ON { return host; }
+    let wrapper: jni::jobject = dex::new_zoom_host(env, activity, ZOOM_MIN, ZOOM_MAX);
+    if wrapper == (0 as jni::jobject) { return host; }
+    controls::attach_layout_params(host);
+    // `from_local` PROMOTES: it takes a global ref and deletes the local one
+    // it was given. Deleting `wrapper` afterwards was a second delete of a
+    // reference already popped — invisible in an ordinary run and an immediate
+    // abort under `adb shell setprop debug.checkjni 1`, which is what found it.
+    var g: w::ViewGroup = w::ViewGroup::from_local(env, wrapper);
+    g.add_view_view(host);
+    return g.into_raw();
 }
 
 // The root's view — or, when the root is a KEYLESS PASS-THROUGH, its topmost
@@ -127,13 +205,32 @@ fn touch_all_walk(n: *core::Node) {
 // from: inside the entry point the host has no size at all, so laying out there
 // would size the whole tree against zero.
 fn size_changed(wd: i32, ht: i32) {
-    scheduler::set_size({ wd as f64 }, { ht as f64 });
+    // THE DENSITY CAN HAVE MOVED, and this is the edge that says so. An app
+    // that declares `screenLayout` in its own configChanges is NOT recreated
+    // across a fold, so `set_activity` never runs and a new size is the only
+    // signal there is. Three JNI calls on a resize — a rotation, the IME, a
+    // split-screen drag — is nothing; the cache exists to keep them out of the
+    // per-frame conversion, not out of this.
+    e::forget_density();
+    // THE WINDOW ARRIVES IN PIXELS and facet lays out in its own units, so the
+    // size crosses the density boundary here — the one place a window size
+    // enters the system. See geometry's `px` / `dp`.
+    let d: f64 = e::density();
+    var scale: f64 = d;
+    if scale <= 0.0f64 { scale = 1.0f64; }
+    // THE OTHER THING THAT MOVES THE INSETS. A rotation, a split-screen resize
+    // and the IME all arrive here as a new size, and all three change what the
+    // system bars cover.
+    e::invalidate_insets();
+    scheduler::set_size({ wd as f64 } / scale, { ht as f64 } / scale);
     scheduler::relayout_current();
     return;
 }
 
 // The system appearance. `Configuration.uiMode & UI_MODE_NIGHT_MASK`.
-fn is_dark() -> bool {
+fn is_dark() -> bool { return read_is_dark(); }
+
+fn read_is_dark() -> bool {
     if !e::have_env() { return false; }
     let env: rt::Env = e::env();
     let res: jni::jobject = env.call_object_0(
@@ -149,4 +246,177 @@ fn is_dark() -> bool {
     env.delete_local_ref(res);
     // UI_MODE_NIGHT_MASK = 0x30, UI_MODE_NIGHT_YES = 0x20.
     return (ui & (48 as i32)) == (32 as i32);
+}
+
+// ---- the facade's reads -------------------------------------------------------
+// `runtime_android` answers `display_density` and `app_appearance` from here, so
+// the facade holds no JNI of its own.
+
+// The screen's density, read once and cached — see `env::density`. Kept here as
+// the name the facade calls.
+fn density() -> f64 { return e::density(); }
+
+
+// ---- the toolbar ---------------------------------------------------------------
+//
+// ANDROID HAS NO WINDOW TOOLBAR AND NO MENU BAR. Its answer to "what can this
+// screen do" is the ActionBar, and facet's `toolbar_item` is the vocabulary
+// that reaches it — the same reading facet_uikit gives `UINavigationItem`, for
+// the same reason: each backend picks the affordance its platform has.
+//
+// The items are read from facet's TREE, which is what a `toolbar_item` is: a
+// non-view kind, a description rather than a rectangle. `views::non_view_kind`
+// has said so since this backend was written, and nothing had ever read one.
+//
+// ORDER IS IDENTITY. `Menu.add(group, id, order, title)` takes the index this
+// side chose for both id and order, so `onOptionsItemSelected` hands back the
+// same integer and the item is found by re-walking rather than by holding a
+// map across a menu Android may rebuild whenever it likes.
+
+fn collect_toolbar_nodes(n: *core::Node, out: *vec::Vec[*core::Node]) {
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) == props::K_TOOLBAR_ITEM {
+        let _s: status::Status = { (*out).append(n) };
+        return;
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { collect_toolbar_nodes(c, out); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn toolbar_priority(n: *core::Node) -> i64 {
+    let p: *props::ToolbarItemProps =
+        controls::props_of(n, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+    if p == (0 as *props::ToolbarItemProps) { return 0 as i64; }
+    return { (*p).priority };
+}
+
+// Insertion sort, low priority first — the order facet_appkit's toolbar uses,
+// so a description that names the same priorities reads the same on both.
+fn sort_toolbar(v: *vec::Vec[*core::Node]) {
+    let count: usize = { (*v).count() };
+    var i: usize = 1 as usize;
+    while i < count {
+        var j: usize = i;
+        while j > (0 as usize) {
+            var a: *core::Node = 0 as *core::Node;
+            var b: *core::Node = 0 as *core::Node;
+            match { (*v).at_ptr(j -% (1 as usize)) } {
+                option::Option[**core::Node]::Some(s) => { a = { *s }; }
+                option::Option[**core::Node]::None => { }
+            }
+            match { (*v).at_ptr(j) } {
+                option::Option[**core::Node]::Some(s) => { b = { *s }; }
+                option::Option[**core::Node]::None => { }
+            }
+            if a == (0 as *core::Node) || b == (0 as *core::Node) { j = 0 as usize; }
+            else if toolbar_priority(b) >= toolbar_priority(a) { j = 0 as usize; }
+            else {
+                let _x: status::Status = { (*v).set(b, j -% (1 as usize)) };
+                let _y: status::Status = { (*v).set(a, j) };
+                j = j -% (1 as usize);
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn toolbar_items() -> vec::Vec[*core::Node] {
+    var found: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    match app_window::primary() {
+        option::Option[app_window::Window]::Some(win) => {
+            collect_toolbar_nodes(win.root(), #addr_of(found));
+        }
+        option::Option[app_window::Window]::None => { }
+    }
+    sort_toolbar(#addr_of(found));
+    return found;
+}
+
+// `SHOW_AS_ACTION_IF_ROOM` for Primary, `NEVER` for Secondary — the ledger's
+// two placements read onto Android's, where "primary" means a button on the bar
+// and "secondary" means the overflow. Default follows Primary, because an item
+// that says nothing is an action.
+fn show_as_action(n: *core::Node) -> i32 {
+    let p: *props::ToolbarItemProps =
+        controls::props_of(n, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+    if p == (0 as *props::ToolbarItemProps) { return 1 as i32; }
+    return match { (*p).placement } {
+        vocab::ToolbarPlacement::Secondary => 0 as i32,
+        vocab::ToolbarPlacement::Primary => 1 as i32,
+        vocab::ToolbarPlacement::Default => 1 as i32,
+    };
+}
+
+fn build_menu(menu: jni::jobject) -> bool {
+    if menu == (0 as jni::jobject) { return false; }
+    let env: rt::Env = e::env();
+    let items: vec::Vec[*core::Node] = toolbar_items();
+    let n: usize = items.count();
+    if n == (0 as usize) { return false; }
+    var i: usize = 0 as usize;
+    while i < n {
+        match items.at_ptr(i) {
+            option::Option[**core::Node]::Some(slot) => {
+                let node: *core::Node = { *slot };
+                let p: *props::ToolbarItemProps =
+                    controls::props_of(node, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+                if p != (0 as *props::ToolbarItemProps) {
+                    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+                    var buf: [u8; 256] = #zero::[[u8; 256]]();
+                    let base: *u8 = { #addr_of(buf[0]) };
+                    let _c: bool = paint::cstr({ (*mi).text.view() }, base, 256 as usize);
+                    var ibuf: [u8; 256] = #zero::[[u8; 256]]();
+                    let ibase: *u8 = { #addr_of(ibuf[0]) };
+                    let _ic: bool = paint::cstr({ (*mi).icon.view() }, ibase, 256 as usize);
+                    // DESTRUCTIVE IS A TITLE COLOUR here, not an attribute: an
+                    // Android MenuItem has no destructive style, so the platform
+                    // convention is the danger role on the title. Saying it any
+                    // other way would invent an affordance.
+                    var tint: i32 = 0 as i32;
+                    var tinted: bool = false;
+                    if { (*mi).is_destructive } {
+                        tint = paint::argb_of(vocab::Color::danger());
+                        tinted = true;
+                    }
+                    dex::options_menu_add(env, menu, { i as i32 }, base, ibase,
+                                          show_as_action(node), tint, tinted);
+                }
+            }
+            option::Option[**core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+fn menu_selected(id: i32) -> bool {
+    let items: vec::Vec[*core::Node] = toolbar_items();
+    if id < (0 as i32) { return false; }
+    let at: usize = { id as usize };
+    if at >= items.count() { return false; }
+    return match items.at_ptr(at) {
+        option::Option[**core::Node]::Some(slot) => {
+            let node: *core::Node = { *slot };
+            let p: *props::ToolbarItemProps =
+                controls::props_of(node, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+            if p == (0 as *props::ToolbarItemProps) { false } else {
+                let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+                let h: fn(*u8, *u8) = { (*mi).on_clicked };
+                if h == props::no_handler { false } else {
+                    h(0 as *u8, { (*mi).on_clicked_ctx });
+                    true
+                }
+            }
+        }
+        option::Option[**core::Node]::None => false,
+    };
 }

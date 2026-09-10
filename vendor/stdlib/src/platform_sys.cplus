@@ -52,7 +52,7 @@ fn os_version_raw() -> text::Text {
     if len == (0 as usize) { return empty; }
 
     let buf: *u8 = { malloc(len) };
-    if buf == (0 as *u8) { return empty; }
+    if buf.is_null() { return empty; }
     let rc: i32 = { sysctlbyname(#str_ptr(key), buf, #addr_of(len), 0 as *u8, 0 as usize) };
     if rc != (0 as i32) { free(buf); return empty; }
 
@@ -62,4 +62,40 @@ fn os_version_raw() -> text::Text {
     let out: text::Text = { #str_from_raw_parts(buf, n) }.to_text();
     free(buf);
     return out;
+}
+
+// ---- the ABI family ----------------------------------------------------------
+//
+// "Is this the Linux ABI?" — which is NOT the same question as
+// `#platform() == "linux"`, and the difference is a whole class of bug.
+//
+// `#platform()` answers "android" on Android, so every site that compared it to
+// "linux" silently took the DARWIN branch on a kernel that is Linux: the agent's
+// `bind` was handed a BSD `sockaddr_in` and refused it, and the thread
+// cancellation signal was 16 (SIGSTKFLT there) instead of 23. Neither failed
+// loudly; the socket just never listened.
+//
+// The answer rides the resolver's platform override, which the compiler already
+// teaches about Android (`resolver::override_suffixes_for`: an `android` target
+// falls back to `_linux`). So this file — the Darwin base — says false, its
+// `_linux` shadow says true, and a target that IS Linux gets the right answer
+// without anyone remembering to add it to a list.
+fn is_linux_abi() -> bool { return false; }
+
+// ---- is that process still running? ------------------------------------------
+//
+// `kill(pid, 0)` sends no signal: it performs the permission and existence
+// checks and stops. It is the POSIX idiom for "is this pid live", and there is
+// nothing else that answers the question without side effects.
+//
+// It is behind a shim because Windows has no `kill` at any spelling — see
+// `platform_sys_windows.cplus`. `agent_mcp::sweep_stale` is the caller that
+// matters: it removes the descriptors of dead agent processes, and an
+// undefined `kill` there took every consumer of that package down at link
+// time on Windows.
+extern fn kill(pid: i32, sig: i32) -> i32;
+
+fn pid_is_live(pid: i32) -> bool {
+    if pid <= (0 as i32) { return false; }
+    return { kill(pid, 0 as i32) } == (0 as i32);
 }

@@ -46,7 +46,6 @@ static ASSERT_DEPTH: i32 = 0;
 fn begin_assert() { ASSERT_DEPTH = ASSERT_DEPTH +% 1; return; }
 fn end_assert() {
     if ASSERT_DEPTH > 0 { ASSERT_DEPTH = ASSERT_DEPTH -% 1; }
-    return;
 }
 fn is_asserting() -> bool { return ASSERT_DEPTH > 0; }
 
@@ -78,10 +77,10 @@ static RESOLVE_DEPTH: i32 = 0;
 fn current_appearance_raw() -> *u8 {
     let cur: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSAppearance\0")),
                                 rt::sel(#str_ptr("currentAppearance\0"))) };
-    if cur != (0 as *u8) { return cur; }
+    if cur.is_not_null() { return cur; }
     let nsapp: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
                                   rt::sel(#str_ptr("sharedApplication\0"))) };
-    if nsapp == (0 as *u8) { return 0 as *u8; }
+    if nsapp.is_null() { return 0 as *u8; }
     return { rt::msg_id(nsapp, rt::sel(#str_ptr("effectiveAppearance\0"))) };
 }
 
@@ -124,7 +123,6 @@ fn measure_luminance(ctx: *u8) {
         }
         option::Option[ak::Color]::None => { }
     }
-    return;
 }
 
 // WCAG relative luminance of a colour AS IT RESOLVES under `a`. Negative when
@@ -137,7 +135,7 @@ fn luminance_in(c: ak::Color, a: *u8) -> f64 {
     MEASURE_COLOR = c.raw();
     MEASURE_OUT = -1.0f64;
     let cb: fn(*u8) = measure_luminance;
-    if a != (0 as *u8) {
+    if a.is_not_null() {
         ak::Appearance::from_raw(a).perform_as_current_drawing_appearance(cb, 0 as *u8);
     } else {
         measure_luminance(0 as *u8);
@@ -320,7 +318,7 @@ fn needs_dynamic(c: vocab::Color) -> bool {
 fn ns_color(c: vocab::Color) -> ak::Color {
     if needs_dynamic(c) {
         let raw: *u8 = dyn_wrapper(c);
-        if raw != (0 as *u8) { return ak::Color::from_raw(raw); }
+        if raw.is_not_null() { return ak::Color::from_raw(raw); }
     }
     return resolve_in(c, current_appearance_raw());
 }
@@ -421,7 +419,7 @@ fn body_scale() -> f64 {
     }
     let f: *u8 = { msg_id_id_font(cls, sel, bridge::nsstring("NSCTFontTextStyleBody"),
                                   { rt::alloc_init(#str_ptr("NSDictionary\0")) }) };
-    if f == (0 as *u8) { return 1.0f64; }
+    if f.is_null() { return 1.0f64; }
     let got: f64 = { rt::msg_f64(f, rt::sel(#str_ptr("pointSize\0"))) };
     let base: f64 = ak::Font::system_font_size();
     if base <= 0.0f64 || got <= 0.0f64 { return 1.0f64; }
@@ -517,7 +515,7 @@ fn ns_paragraph(line_height: f64, align: option::Option[vocab::TextAlign]) -> *u
         }
     }
     let p: *u8 = { rt::alloc_init(#str_ptr("NSMutableParagraphStyle\0")) };
-    if p == (0 as *u8) { return 0 as *u8; }
+    if p.is_null() { return 0 as *u8; }
     let ps: ak::MutableParagraphStyle = ak::MutableParagraphStyle::from_raw(p);
     if line_height > 0.0f64 {
         ps.set_minimum_line_height(line_height);
@@ -538,7 +536,7 @@ fn rich_attributes(font: option::Option[ak::Font], color: vocab::Color, kern: f6
                    line_height: f64, align: option::Option[vocab::TextAlign],
                    d: vocab::TextDecoration) -> *u8 {
     let attrs: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
-    if attrs == (0 as *u8) { return 0 as *u8; }
+    if attrs.is_null() { return 0 as *u8; }
     match font {
         option::Option[ak::Font]::Some(f) => { dict_set(attrs, "NSFont", f.raw()); }
         option::Option[ak::Font]::None => { }
@@ -546,7 +544,7 @@ fn rich_attributes(font: option::Option[ak::Font], color: vocab::Color, kern: f6
     if color.is_set() { dict_set(attrs, "NSColor", ns_color(color).raw()); }
     if kern != 0.0f64 { dict_set(attrs, "NSKern", ns_number_f64(kern)); }
     let para: *u8 = ns_paragraph(line_height, align);
-    if para != (0 as *u8) {
+    if para.is_not_null() {
         dict_set(attrs, "NSParagraphStyle", para);
         rt::release(para);
     }
@@ -560,15 +558,14 @@ fn rich_attributes(font: option::Option[ak::Font], color: vocab::Color, kern: f6
 }
 
 fn dict_set(dict: *u8, key: str, value: *u8) {
-    if value == (0 as *u8) { return; }
+    if value.is_null() { return; }
     { rt::msg_void_id_id(dict, rt::sel(#str_ptr("setObject:forKey:\0")),
                          value, bridge::nsstring(key)) };
-    return;
 }
 
 // An NSAttributedString of `s` carrying `attrs`, at +1. `attrs` is consumed.
 fn attributed(s: str, attrs: *u8) -> *u8 {
-    if attrs == (0 as *u8) { return 0 as *u8; }
+    if attrs.is_null() { return 0 as *u8; }
     let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")),
                                     rt::sel(#str_ptr("alloc\0"))) };
     let a: *u8 = { rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithString:attributes:\0")),
@@ -663,7 +660,6 @@ fn apply_semantics(v: *u8, n: *core::Node) {
         { rt::msg_void_id(v, rt::sel(#str_ptr("setAccessibilityRole:\0")),
                           bridge::nsstring("AXHeading")) };
     }
-    return;
 }
 
 fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
@@ -784,7 +780,6 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
             option::Option[ak::Window]::None => { }
         }
     }
-    return;
 }
 
 // A background needs a layer. `clear()` is the unset colour — leave the view
@@ -824,7 +819,6 @@ fn apply_flow_direction(view: ak::View, n: *core::Node) {
             vocab::FlowDirection::MatchParent => { }
         }
     }
-    return;
 }
 
 // The shared band's corner radius. Core Animation has ONE radius per layer and
@@ -932,7 +926,6 @@ fn apply_background(view: ak::View, c: vocab::Color) {
     view.set_wants_layer(true);
     let l: quartz::Layer = view.layer();
     l.set_background_color(ns_color(c).c_g_color());
-    return;
 }
 
 // The shared band's `background` — a Brush, which is a solid or a linear
@@ -968,7 +961,6 @@ fn apply_brush(view: ak::View, b: vocab::Brush) {
     set_layer_point(g.raw(), #str_ptr("setStartPoint:\0"), 0.5f64 - dx, 0.5f64 + dy);
     set_layer_point(g.raw(), #str_ptr("setEndPoint:\0"), 0.5f64 + dx, 0.5f64 - dy);
     { msg_void_rect(g.raw(), rt::sel(#str_ptr("setFrame:\0")), view.bounds()) };
-    return;
 }
 
 fn gradient_key() -> *u8 { return 29060 as *u8; }
@@ -977,9 +969,9 @@ fn gradient_key() -> *u8 { return 29060 as *u8; }
 // updates it rather than stacking a second one under the first.
 fn gradient_sublayer(host: quartz::Layer) -> quartz::GradientLayer {
     let existing: *u8 = { synth::get_associated(host.raw(), gradient_key()) };
-    if existing != (0 as *u8) { return quartz::GradientLayer::from_raw(existing); }
+    if existing.is_not_null() { return quartz::GradientLayer::from_raw(existing); }
     let g: *u8 = { rt::alloc_init(#str_ptr("CAGradientLayer\0")) };
-    if g == (0 as *u8) { return quartz::GradientLayer::from_raw(0 as *u8); }
+    if g.is_null() { return quartz::GradientLayer::from_raw(0 as *u8); }
     // BELOW index 0: a background is behind whatever the control draws.
     { rt::msg_void_id_u64(host.raw(), rt::sel(#str_ptr("insertSublayer:atIndex:\0")), g, 0 as u64) };
     synth::set_associated(host.raw(), gradient_key(), g);
@@ -991,10 +983,9 @@ fn remove_gradient(view: ak::View) {
     if view.wants_layer() == false { return; }
     let host: quartz::Layer = view.layer();
     let existing: *u8 = { synth::get_associated(host.raw(), gradient_key()) };
-    if existing == (0 as *u8) { return; }
+    if existing.is_null() { return; }
     { rt::msg_void(existing, rt::sel(#str_ptr("removeFromSuperlayer\0"))) };
     synth::set_associated(host.raw(), gradient_key(), 0 as *u8);
-    return;
 }
 
 fn two_colour_array(a: vocab::Color, b: vocab::Color) -> *u8 {
@@ -1030,7 +1021,6 @@ fn apply_shadow(view: ak::View, s: vocab::Shadow) {
     // A shadow is drawn OUTSIDE the layer, so a clipping ancestor would eat it.
     // Nothing here clips by default; `clip` below is the verb that opts in, and
     // an application asking for both gets the documented interaction.
-    return;
 }
 
 // The shared band's `clip`. A CAShapeLayer used as the layer's MASK, which is
@@ -1051,15 +1041,14 @@ fn apply_clip(view: ak::View, s: vocab::Shape) {
     // which insets. (controls imports paint, so it could not be borrowed
     // anyway without a cycle.)
     let path: *u8 = clip_path(b, s);
-    if path == (0 as *u8) { return; }
+    if path.is_null() { return; }
     let mask: *u8 = { rt::alloc_init(#str_ptr("CAShapeLayer\0")) };
-    if mask == (0 as *u8) { return; }
+    if mask.is_null() { return; }
     { msg_void_rect(mask, rt::sel(#str_ptr("setFrame:\0")), b) };
     { rt::msg_void_id(mask, rt::sel(#str_ptr("setPath:\0")), path) };
     { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setMask:\0")), mask) };
     rt::release(mask);
     { CGPathRelease(path) };
-    return;
 }
 
 #[link_name = "objc_msgSend"]
@@ -1098,12 +1087,10 @@ fn cos_of(x: f64) -> f64 { return { cos(x) }; }
 
 fn set_layer_point(l: *u8, sel: *u8, x: f64, y: f64) {
     { msg_void_point(l, rt::sel(sel), rt::Point { x: x, y: y }) };
-    return;
 }
 
 fn set_layer_size(l: *u8, sel: *u8, w: f64, h: f64) {
     { msg_void_size(l, rt::sel(sel), rt::Size { w: w, h: h }) };
-    return;
 }
 
 // The background IMAGE, which is the layer's `contents` rather than a subview.
@@ -1136,7 +1123,6 @@ fn apply_background_image(view: ak::View, src: str) {
     // word for it.
     { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setContentsGravity:\0")),
                       bridge::nsstring("resizeAspectFill")) };
-    return;
 }
 
 // Same three-step resolution `image` uses. Answers a null Image when the name
@@ -1192,7 +1178,6 @@ fn set_anchor_keeping_place(l: quartz::Layer, ax: f64, ay: f64) {
         x: p.x + ((ax - old.x) * b.w),
         y: p.y + ((ay - old.y) * b.h),
     });
-    return;
 }
 
 // The nine transform numbers become one CATransform3D on the layer. facet
@@ -1222,7 +1207,6 @@ fn apply_transform(view: ak::View, n: *core::Node) {
     let l: quartz::Layer = view.layer();
     set_anchor_keeping_place(l, core::anchor_x(n), core::anchor_y(n));
     l.set_transform(transform_of(n));
-    return;
 }
 
 fn transform_is_identity_of(n: *core::Node) -> bool {
@@ -1288,18 +1272,18 @@ fn apply_animate(view: ak::View, n: *core::Node) {
     let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
     { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
     let ctx: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentContext\0"))) };
-    if ctx != (0 as *u8) {
+    if ctx.is_not_null() {
         { rt::msg_void_f64(ctx, rt::sel(#str_ptr("setDuration:\0")), secs) };
         // timingFunction is best-effort: CAMediaTimingFunction names only.
         // Bounce/Spring fall to easeIn/easeOut; MANIFEST records the gap.
         let tf: *u8 = timing_function_of(core::animate_easing_of(n));
-        if tf != (0 as *u8) {
+        if tf.is_not_null() {
             { rt::msg_void_id(ctx, rt::sel(#str_ptr("setTimingFunction:\0")), tf) };
         }
     }
     if (channels & props::ANIM_OPACITY) != (0u32) {
         let anim: *u8 = { rt::msg_id(view.raw(), rt::sel(#str_ptr("animator\0"))) };
-        if anim != (0 as *u8) {
+        if anim.is_not_null() {
             { rt::msg_void_f64(anim, rt::sel(#str_ptr("setAlphaValue:\0")), core::opacity(n)) };
         }
     }
@@ -1311,7 +1295,6 @@ fn apply_animate(view: ak::View, n: *core::Node) {
     }
     { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
     core::clear_animate_channels(n);
-    return;
 }
 
 // Interpolate a layer's transform to `to` over `secs`, with an EXPLICIT
@@ -1335,7 +1318,7 @@ fn animate_layer_transform(l: quartz::Layer, to: quartz::Transform3D, secs: f64,
                            easing: vocab::Easing) {
     var from: quartz::Transform3D = l.transform();
     let pres: *u8 = { rt::msg_id(l.raw(), rt::sel(#str_ptr("presentationLayer\0"))) };
-    if pres != (0 as *u8) {
+    if pres.is_not_null() {
         let pl: quartz::Layer = quartz::Layer::from_raw(pres);
         from = pl.transform();
     }
@@ -1343,15 +1326,15 @@ fn animate_layer_transform(l: quartz::Layer, to: quartz::Transform3D, secs: f64,
     // settles on when it is removed is whatever the model holds.
     l.set_transform(to);
     let cls: *u8 = rt::get_class(#str_ptr("CABasicAnimation\0"));
-    if cls == (0 as *u8) { return; }
+    if cls.is_null() { return; }
     let a: *u8 = { rt::msg_id_id(cls, rt::sel(#str_ptr("animationWithKeyPath:\0")),
                                  bridge::nsstring("transform")) };
-    if a == (0 as *u8) { return; }
+    if a.is_null() { return; }
     { rt::msg_void_id(a, rt::sel(#str_ptr("setFromValue:\0")), nsvalue_transform(from)) };
     { rt::msg_void_id(a, rt::sel(#str_ptr("setToValue:\0")), nsvalue_transform(to)) };
     { rt::msg_void_f64(a, rt::sel(#str_ptr("setDuration:\0")), secs) };
     let tf: *u8 = timing_function_of(easing);
-    if tf != (0 as *u8) {
+    if tf.is_not_null() {
         { rt::msg_void_id(a, rt::sel(#str_ptr("setTimingFunction:\0")), tf) };
     }
     { rt::msg_void_id_id(l.raw(), rt::sel(#str_ptr("addAnimation:forKey:\0")),
@@ -1376,11 +1359,10 @@ fn cancel_view_animations(view: ak::View) {
     let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
     { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
     let ctx: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentContext\0"))) };
-    if ctx != (0 as *u8) {
+    if ctx.is_not_null() {
         { rt::msg_void_f64(ctx, rt::sel(#str_ptr("setDuration:\0")), 0.0f64) };
     }
     { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
-    return;
 }
 
 // Map facet's Easing to a CAMediaTimingFunction name. MAUI's Bounce/Spring are
@@ -1400,7 +1382,7 @@ fn timing_function_of(e: vocab::Easing) -> *u8 {
         vocab::Easing::SpringOut => "easeOut",
     };
     let cls: *u8 = rt::get_class(#str_ptr("CAMediaTimingFunction\0"));
-    if cls == (0 as *u8) { return 0 as *u8; }
+    if cls.is_null() { return 0 as *u8; }
     return { rt::msg_id_id(cls, rt::sel(#str_ptr("functionWithName:\0")),
                            bridge::nsstring(name)) };
 }

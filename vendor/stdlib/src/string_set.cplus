@@ -250,7 +250,6 @@ impl StringSet {
         { memset(this._occupied, 0 as i32, this._cap); }
         this._len = 0 as usize;
         this._tombstones = 0 as usize;
-        return;
     }
 
     // Every element of `this` is in `of`.
@@ -439,7 +438,6 @@ impl StringSet {
         }
         { free(this._slots as *u8); }
         { free(this._occupied); }
-        return;
     }
 }
 

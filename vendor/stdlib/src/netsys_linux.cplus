@@ -25,6 +25,36 @@ fn eintr() -> i32 { return 4 as i32; }
 fn sol_socket() -> i32 { return 1 as i32; }
 fn so_reuseaddr() -> i32 { return 2 as i32; }
 
+// The only setsockopt this variant makes: Linux has no SO_NOSIGPIPE (see
+// `set_nosigpipe`), so the deadline below is what the call is here for.
+extern fn setsockopt(fd: i32, level: i32, optname: i32, optval: *u8, optlen: u32) -> i32;
+
+// setsockopt optname for SO_RCVTIMEO / SO_SNDTIMEO. Linux: 20 / 21.
+fn so_rcvtimeo() -> i32 { return 20 as i32; }
+fn so_sndtimeo() -> i32 { return 21 as i32; }
+
+// `struct timeval` as setsockopt wants it: `{ time_t tv_sec; suseconds_t
+// tv_usec; }`, both 8 bytes here. The Darwin variant's second field is 4 plus
+// 4 of padding, so the same 16 bytes serve both as long as a caller only sets
+// whole seconds — see the note there.
+struct Timeval {
+    sec: i64,
+    usec: i64,
+}
+
+// Bound how long a read or a write on this socket may WAIT. See the Darwin
+// variant for why this exists: a peer that accepts and then says nothing hangs
+// the calling thread for good, and a connect probe cannot see it coming.
+// Seconds, both directions, and expiry surfaces as -1 with `eagain()`.
+fn set_timeout(fd: i32, seconds: i64) -> i32 {
+    var tv: Timeval = Timeval { sec: seconds, usec: 0 as i64 };
+    let p: *u8 = { #addr_of(tv) as *u8 };
+    let r: i32 = { setsockopt(fd, sol_socket(), so_rcvtimeo(), p, 16 as u32) };
+    let w: i32 = { setsockopt(fd, sol_socket(), so_sndtimeo(), p, 16 as u32) };
+    if r != (0 as i32) { return r; }
+    return w;
+}
+
 // First two bytes of `sockaddr_in`. Linux has no `sin_len`: the struct
 // starts with `sa_family_t sin_family` (a 2-byte field), so for AF_INET=2
 // the little-endian bytes are [2, 0].
@@ -71,6 +101,15 @@ fn close_fd(fd: i32) -> i32 {
     return { close(fd) };
 }
 
+// Cooperative-cancellation seam for blocking socket I/O — see the macOS
+// netsys note. A POSIX blocking call is broken by the signal kick, so this is a
+// no-op and `wait_ready` is never reached; the Windows netsys does the work.
+fn make_interruptible(fd: i32) -> i32 { let _f: i32 = fd; return 0 as i32; }
+fn wait_ready(fd: i32, for_write: bool, timeout_ms: i32) -> i32 {
+    let _f: i32 = fd; let _w: bool = for_write; let _t: i32 = timeout_ms;
+    return 0 as i32;
+}
+
 // F_GETFL / F_SETFL are 3 / 4 on both macOS and Linux.
 fn f_getfl() -> i32 { return 3 as i32; }
 fn f_setfl() -> i32 { return 4 as i32; }
@@ -95,3 +134,13 @@ fn set_nonblocking(fd: i32) -> i32 {
 
 // Socket subsystem init — a no-op on POSIX (matches Winsock's WSAStartup).
 fn startup() -> i32 { return 0 as i32; }
+
+// A connected socket pair, for the tests that need a peer they can hang up on.
+// Wrapped because Windows has no `socketpair` at ANY spelling — see
+// netsys_windows.cplus, which builds one over loopback TCP.
+extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
+
+// AF_UNIX (1), SOCK_STREAM (1).
+fn socket_pair(fds: *i32) -> i32 {
+    return { socketpair(1 as i32, 1 as i32, 0 as i32, fds) };
+}

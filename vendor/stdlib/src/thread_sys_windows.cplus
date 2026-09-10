@@ -1,0 +1,132 @@
+// Thread creation, joining, and the blocking-call interrupt — the Windows
+// half. Shadows `thread_sys.cplus` through the resolver's `_windows` override.
+// No pthread or signal symbol may be DECLARED here; Windows has neither.
+//
+// THE HANDLE. `CreateThread` returns a HANDLE, which is stored in the same
+// `u64` a `pthread_t` occupies on POSIX. `join` waits on it and closes it;
+// `detach` just closes it. Those are mutually exclusive in `thread.cplus` —
+// `JoinHandle::join` consumes the handle and `JoinHandle::drop` runs only when
+// it was not joined — so the handle is closed exactly once either way.
+//
+// CANCELLATION IS WEAKER HERE, and this is the one place Windows cannot match
+// the POSIX contract. On POSIX a signal makes ANY blocking syscall return
+// EINTR. Windows has no signals; `CancelSynchronousIo` is the nearest thing,
+// and it cancels a synchronous I/O operation the target thread has PENDING on
+// a handle. That covers the case the protocol was built for — a worker parked
+// in a blocking read — and does nothing for a thread blocked somewhere else.
+//
+// It does not need to do more, because the other park kind is already covered:
+// a worker parked on a condition variable is woken by the broadcast half of
+// `JoinHandle::cancel`, which goes through `./sync_sys` and works here
+// unchanged. Between the two, both parks `thread.cplus` actually creates are
+// interruptible. A worker blocked in something that is neither — a bare
+// `Sleep`, a wait on a foreign handle — observes cancellation at its next
+// `thread::cancelled()` check rather than immediately, which is the
+// cooperative behaviour, not a hang: `cancel` sets the flag before it ever
+// kicks, and its loop re-kicks until the worker un-parks.
+//
+// A zero return from `CancelSynchronousIo` is normal, not a failure: it means
+// the thread had no I/O pending, which is exactly the common case when the
+// canceller wins the race. The caller ignores the value and loops.
+
+extern fn CreateThread(attrs: *u8, stack: usize, start: fn(*u8) -> *u8,
+                       arg: *u8, flags: u32, tid_out: *u32) -> *u8;
+extern fn WaitForSingleObject(handle: *u8, ms: u32) -> u32;
+extern fn CloseHandle(handle: *u8) -> i32;
+extern fn CancelSynchronousIo(thread: *u8) -> i32;
+
+// INFINITE.
+fn _infinite() -> u32 { return 0xFFFFFFFF as u32; }
+
+fn _as_handle(tid: u64) -> *u8 { return { (tid as usize) as *u8 }; }
+
+// 0 on success, non-zero on failure — pthread_create's convention, not
+// Win32's. `CreateThread` reports failure with a null handle.
+fn create(tid_out: *u64, start: fn(*u8) -> *u8, arg: *u8) -> i32 {
+    var os_id: u32 = 0 as u32;
+    let h: *u8 = { CreateThread(0 as *u8, 0 as usize, start, arg,
+                                0 as u32, #addr_of(os_id)) };
+    if h == (0 as *u8) { return 1 as i32; }
+    { *tid_out = { #addr(h) } as u64 };
+    return 0 as i32;
+}
+
+fn join(tid: u64) -> i32 {
+    let h: *u8 = _as_handle(tid);
+    if h == (0 as *u8) { return 1 as i32; }
+    let _w: u32 = { WaitForSingleObject(h, _infinite()) };
+    let _c: i32 = { CloseHandle(h) };
+    return 0 as i32;
+}
+
+// Nothing to detach from: closing the handle releases this side's claim and
+// the thread is reaped by the OS when it exits. That is what `pthread_detach`
+// arranges too, in one call instead of a flag.
+fn detach(tid: u64) -> i32 {
+    let h: *u8 = _as_handle(tid);
+    if h == (0 as *u8) { return 1 as i32; }
+    let _c: i32 = { CloseHandle(h) };
+    return 0 as i32;
+}
+
+fn interrupt(tid: u64) -> i32 {
+    let h: *u8 = _as_handle(tid);
+    if h == (0 as *u8) { return 1 as i32; }
+    let _r: i32 = { CancelSynchronousIo(h) };
+    return 0 as i32;
+}
+
+// No handler to install — there is no signal to catch. Kept so the one-time
+// init in `thread.cplus` stays a single code path on both platforms.
+fn install_interrupt_handler() {
+    return;
+}
+
+// ---- what the INTRINSICS use, and why it is not here -------------------------
+//
+// `thread::spawn` and `JoinHandle::join` are intrinsics: the compiler emits the
+// trampoline and calls out by stable C symbol to start and reap the thread —
+// `pthread_create` / `pthread_join` on POSIX, and on Windows two names of its
+// own (`codegen::thread_create_sym`). Those two are DEFINED BY THE COMPILER, in
+// the preamble, as `linkonce_odr` bodies over `CreateThread` and
+// `WaitForSingleObject`.
+//
+// Defining them here instead was the first attempt and cannot work: the
+// preamble is emitted into every module including stdlib's own, so an
+// `export extern fn` of the same name lands beside its own declaration and
+// clang rejects it — "invalid redefinition of function". The functions above
+// are the C+-callable half, used by `thread.cplus` directly; the intrinsic half
+// lives in codegen.rs next to the declarations it has to agree with.
+
+// ---- a pipe for the cancellation tests ---------------------------------------
+//
+// `_pipe` is the MSVC runtime's, and takes a buffer size and a mode POSIX's
+// does not. `_O_BINARY` (0x8000) matters for the same reason it does in
+// `fs_sys_windows.cplus`: text mode would rewrite CRLF in the bytes these tests
+// push through and the counts would stop matching.
+extern fn _pipe(fds: *i32, size: u32, mode: i32) -> i32;
+
+fn make_pipe(fds: *i32) -> i32 {
+    return { _pipe(fds, 4096 as u32, 32768 as i32) };
+}
+
+// FALSE, and this is the honest half of the Windows port.
+//
+// There is no Windows call that reliably breaks a thread out of an arbitrary
+// blocking wait. `CancelSynchronousIo` is the closest and it does not cover
+// Winsock's `recv` — measured: a worker parked in a blocking `recv` on a real
+// socket is NOT woken by it, so a `cancel` that spun until the worker un-parked
+// spun forever. `QueueUserAPC` only lands on a thread in an ALERTABLE wait, and
+// `recv` is not one.
+//
+// So `cancel` bounds its kicking here instead of spinning. What a caller gets
+// on Windows is COOPERATIVE cancellation: the flag is set before any kick, so
+// `thread::cancelled()` reports true and every park that CAN be woken — the
+// condition-variable parks behind `channel`, which `sync_sys` broadcasts — is
+// woken normally. A thread sitting in a blocking syscall keeps sitting there
+// until that call returns on its own, and then observes the flag.
+//
+// Making this true needs the blocking calls themselves to change: overlapped
+// I/O with an event the canceller can signal, or non-blocking sockets driven
+// through the reactor. That is a redesign of the I/O layer, not a flag.
+fn interrupt_is_reliable() -> bool { return false; }

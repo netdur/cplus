@@ -14,6 +14,9 @@ per-user store (`~/.cplus/<tier>/vendor/<name>` — shared by every project
 on the machine) by default, or the project's own `vendor/<name>/` with
 `--local`; builds look in the project first, then the store.
 
+One dependency kind is not a C+ package and does not go through that loop:
+`[android.maven]` coordinates resolve POM closures into `~/.cplus/m2` (§3a).
+
 Non-goals, permanently out of scope here:
 
 - **Building.** `cpc build` compiles and links; the pm never runs a build.
@@ -98,6 +101,39 @@ A bare version (`stdlib = "0.0.25"`) parses as a sibling too, and its
 version is **ignored**: a sibling lives in the parent's checkout, and that
 checkout is at one tag. The monorepo has one version; a sibling cannot pick
 a different one.
+
+## 3a. A third identity: a Maven coordinate
+
+`[android.maven]` names something that is not a C+ package at all — a
+third-party Android library, by `"group:artifact" = "version"`:
+
+```toml
+[android.maven]
+"com.google.android.gms:play-services-maps" = "19.0.0"
+```
+
+It is a different *kind* of identity rather than a third spec form, and the
+differences all follow from that:
+
+- **The version is exact and stands alone.** There is no repo, no tag, no
+  subpath — the coordinate IS the address, and Maven Central and Google's
+  Maven both serve it. A wildcard or a range is rejected (E0877): there is
+  no version solver here, the same way there is none for git deps (D2).
+- **Its closure is derived, not declared.** A C+ package's transitive deps
+  are written into the manifest (D17) because the compiler's resolution is
+  flat and the manifest is the bill of materials. A POM is immutable, so a
+  Maven closure is a function of the pin — re-deriving it is reading cached
+  XML, and writing it out would be a lockfile with extra steps (D3).
+- **It lands outside the tier.** `~/.cplus/m2`, shared by every toolchain
+  version, because `androidx.core:core:1.3.2` is the same bytes to all of
+  them. The package store is tiered (D13); this is not.
+- **The compiler links none of it.** It validates the coordinates and passes
+  them on. What consumes them is `d8`, through `cpc pm maven classpath`.
+
+Why the pm resolves this at all: the Android toolchain ships no dependency
+resolver. Gradle *is* the resolver. But resolution over pinned coordinates is
+reading XML, which is a thing this tool already does. D18 has the reasoning
+and the measurement.
 
 ## 4. Two readers of `[dependencies]`
 

@@ -1,0 +1,169 @@
+// ACTION_SEND through a chooser. No Java class and no dex — like `haptics`,
+// this is a call out with no callback in.
+//
+// ---- always a chooser -------------------------------------------------------
+//
+// `startActivity(intent)` on a bare ACTION_SEND lets Android pick a default and
+// then never ask again, so a person who once tapped "always" for one app can
+// never share anywhere else. `createChooser` forces the sheet every time, which
+// is what the other two platforms do and what "share" means.
+//
+// ---- a file needs a content:// URI, not a path ------------------------------
+//
+// `file://` URIs have thrown `FileUriExposedException` since API 24. A real
+// file share needs a `FileProvider` declared in the app's manifest with an
+// authority and an XML path list — an APP-LEVEL arrangement this package cannot
+// make on the caller's behalf. So `file()` answers `Unsupported` on Android
+// rather than crashing the app with a URI the system refuses.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "facet/app_events" as ev;
+import "./share" as sh;
+
+// A `str` is a fat pointer with NO TERMINATOR and `NewStringUTF` reads a C
+// string, so a runtime string has to be copied and terminated first. Every
+// other caller in this repo passes a literal with an explicit `\0`, which is
+// why no helper existed.
+fn _jstr(env: rt::Env, s: str) -> jni::jstring {
+    var buf: text::Text = text::from_str(s);
+    let _a: status::Status = buf.append("\0");
+    return env.new_string_utf(#str_ptr(buf.view()));
+}
+
+fn _context() -> jni::jobject {
+    return { ev::host() as jni::jobject };
+}
+
+fn _env() -> rt::Env {
+    let vm: *jni::JavaVM = { ev::host_runtime() as *jni::JavaVM };
+    if vm.is_null() { return rt::from_native(0 as *jni::JNIEnv); }
+    var envp: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    let rc: i32 = { (*(*vm)).AttachCurrentThreadAsDaemon(vm, { #addr_of(envp) as *u8 },
+                                                         0 as *u8) };
+    if rc != (0 as i32) { return rt::from_native(0 as *jni::JNIEnv); }
+    return rt::from_native(envp);
+}
+
+fn _env_ready() -> option::Option[rt::Env] {
+    if !ev::has_host_runtime() { return option::Option[rt::Env]::None; }
+    if !ev::has_host() { return option::Option[rt::Env]::None; }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return option::Option[rt::Env]::None; }
+    return option::Option[rt::Env]::Some(env);
+}
+
+// Build `new Intent(ACTION_SEND)` with `text/plain`, the extras filled, and
+// hand it to a chooser.
+fn _send_text(env: rt::Env, body: str, subject: str) -> i32 {
+    let icls: jni::jclass = env.find_class(#str_ptr("android/content/Intent\0"));
+    if icls == (0 as jni::jclass) { env.clear_exception(); return 1; }
+
+    let action: jni::jstring = env.new_string_utf(#str_ptr("android.intent.action.SEND\0"));
+    let ctor: jni::jmethodID = env.method_id(icls, #str_ptr("<init>\0"),
+                                             #str_ptr("(Ljava/lang/String;)V\0"));
+    var ca: [jni::JValue; 1] = [jni::arg_object(action)];
+    let intent: jni::jobject = {
+        (*(*env.raw())).NewObjectA(env.raw(), icls, ctor, #addr_of(ca[0]))
+    };
+    env.delete_local_ref(action);
+    if intent == (0 as jni::jobject) { env.clear_exception(); return 3; }
+
+    let mime: jni::jstring = env.new_string_utf(#str_ptr("text/plain\0"));
+    let _t: jni::jobject = env.call_object_1(intent, #str_ptr("android/content/Intent\0"),
+        #str_ptr("setType\0"), #str_ptr("(Ljava/lang/String;)Landroid/content/Intent;\0"),
+        jni::arg_object(mime));
+    env.delete_local_ref(mime);
+
+    let key: jni::jstring = env.new_string_utf(#str_ptr("android.intent.extra.TEXT\0"));
+    let val: jni::jstring = _jstr(env, body);
+    var ea: [jni::JValue; 2] = [jni::arg_object(key), jni::arg_object(val)];
+    let em: jni::jmethodID = env.method_id(icls, #str_ptr("putExtra\0"),
+        #str_ptr("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;\0"));
+    let _e: jni::jobject = {
+        (*(*env.raw())).CallObjectMethodA(env.raw(), intent, em, #addr_of(ea[0]))
+    };
+    env.delete_local_ref(key);
+    env.delete_local_ref(val);
+    if env.has_pending_exception() { env.clear_exception(); }
+
+    // A SUBJECT IS CARRIED HERE, unlike on Apple — Android has a real extra for
+    // it and mail clients read it.
+    if #str_len(subject) > (0 as usize) {
+        let skey: jni::jstring = env.new_string_utf(#str_ptr("android.intent.extra.SUBJECT\0"));
+        let sval: jni::jstring = _jstr(env, subject);
+        var sa: [jni::JValue; 2] = [jni::arg_object(skey), jni::arg_object(sval)];
+        let _s: jni::jobject = {
+            (*(*env.raw())).CallObjectMethodA(env.raw(), intent, em, #addr_of(sa[0]))
+        };
+        env.delete_local_ref(skey);
+        env.delete_local_ref(sval);
+        if env.has_pending_exception() { env.clear_exception(); }
+    }
+
+    // ALWAYS A CHOOSER, never a bare startActivity — see the note above.
+    let title: jni::jstring = env.new_string_utf(#str_ptr("Share\0"));
+    let cm: jni::jmethodID = env.method_id_static(icls, #str_ptr("createChooser\0"),
+        #str_ptr("(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;\0"));
+    var ka: [jni::JValue; 2] = [jni::arg_object(intent), jni::arg_object(title)];
+    let chooser: jni::jobject = {
+        (*(*env.raw())).CallStaticObjectMethodA(env.raw(), icls, cm, #addr_of(ka[0]))
+    };
+    env.delete_local_ref(title);
+    env.delete_local_ref(intent);
+    if chooser == (0 as jni::jobject) { env.clear_exception(); return 3; }
+
+    env.call_void_1(_context(), #str_ptr("android/content/Context\0"),
+        #str_ptr("startActivity\0"), #str_ptr("(Landroid/content/Intent;)V\0"),
+        jni::arg_object(chooser));
+    if env.has_pending_exception() { env.clear_exception(); env.delete_local_ref(chooser); return 3; }
+    env.delete_local_ref(chooser);
+    return 0;
+}
+
+export extern fn _c_available() -> i32 {
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 0; }
+        option::Option[rt::Env]::Some(_e) => {
+            if _context() == (0 as jni::jobject) { return 0; }
+            return 1;
+        }
+    }
+}
+
+export extern fn _c_text(body: *u8, body_len: usize,
+                         subject: *u8, subject_len: usize) -> i32 {
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 1; }
+        option::Option[rt::Env]::Some(env) => {
+            return _send_text(env, { #str_from_raw_parts(body, body_len) },
+                              { #str_from_raw_parts(subject, subject_len) });
+        }
+    }
+}
+
+// A URL IS TEXT HERE, deliberately. Android has no distinct "share a link"
+// intent — ACTION_SEND with text/plain is what every app does, and receivers
+// parse the URL out of EXTRA_TEXT themselves. The Apple platforms DO treat a
+// URL differently, which is why the facade keeps the two verbs apart even
+// though this backend does not.
+export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 1; }
+        option::Option[rt::Env]::Some(env) => {
+            return _send_text(env, { #str_from_raw_parts(link, link_len) }, "");
+        }
+    }
+}
+
+// UNSUPPORTED, and said rather than half-done. A file share needs a
+// FileProvider declared in the APP's manifest with an authority and a paths
+// XML — this package cannot add either on the caller's behalf, and a `file://`
+// URI has thrown FileUriExposedException since API 24. Answering Unsupported
+// beats crashing the app that trusted us.
+export extern fn _c_file(path: *u8, path_len: usize) -> i32 {
+    return 1;
+}

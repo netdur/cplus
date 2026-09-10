@@ -1,0 +1,284 @@
+// facet_win32/scheduler — the Renderer's `schedule` verb and facet's Scheduler
+// service, both over the thread's message queue.
+//
+// facet coalesces: a handler that writes ten props marks ten bits and asks for
+// ONE sync. `schedule` is that ask, and it must be idempotent within a turn —
+// so a pending flag, not a queue.
+//
+// A POSTED MESSAGE is the `g_idle_add` analogue and it lands in the right
+// place for the same reason: `PostMessage` appends to the queue, and the queue
+// is not read again until the current message has been fully dispatched. So
+// every write from one event lands, then one sync, then one layout and one
+// frame walk.
+//
+// THIS MODULE OWNS ITS OWN MESSAGE-ONLY WINDOW, and that is a structural
+// decision rather than a convenience. The sync signal and the timers both need
+// a window to be delivered to; borrowing the app's would make `window` call
+// back into this module and this module call `window::relayout_all`, which is
+// the import cycle facet_gtk had to break with a separate `observers` leaf. A
+// message-only window costs nothing — it never renders, never lays out and is
+// never enumerated — so owning one is cheaper than the cycle.
+
+import "stdlib/option" as option;
+import "stdlib/io" as io;
+import "stdlib/env" as env;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./observers" as observers;
+import "./window" as window;
+
+// ---- the message-only window ---------------------------------------------------
+
+static PUMP: usize = 0 as usize;
+
+fn pump_class() -> *u8 { return { #str_ptr("FacetWin32Pump\0") }; }
+
+// HWND_MESSAGE — a window that exists only to receive. See the header.
+fn message_only_parent() -> *u8 { return ((0 as i64) -% (3 as i64)) as *u8; }
+
+fn pump_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    if msg == sys::wm_facet_sync() { drain(); return 0 as i64; }
+    if msg == sys::wm_timer() { fire_timer(w); return 0 as i64; }
+    return { u::DefWindowProcA(hwnd, msg, w, l) };
+}
+
+fn pump_addr() -> *u8 {
+    let p: fn(*u8, u32, u64, i64) -> i64 = pump_proc;
+    return p as *u8;
+}
+
+fn pump() -> *u8 {
+    if PUMP != (0 as usize) { return PUMP as *u8; }
+    var wc: u::tagWNDCLASSEXA = u::tagWNDCLASSEXA {
+        cbSize: 80 as u32,
+        style: 0 as u32,
+        lpfnWndProc: pump_addr(),
+        cbClsExtra: 0 as i32,
+        cbWndExtra: 0 as i32,
+        hInstance: window::hinstance(),
+        hIcon: 0 as *u8,
+        hCursor: 0 as *u8,
+        hbrBackground: 0 as *u8,
+        lpszMenuName: 0 as *i8,
+        lpszClassName: pump_class() as *i8,
+        hIconSm: 0 as *u8,
+    };
+    // A duplicate registration answers 0 and sets ERROR_CLASS_ALREADY_EXISTS,
+    // which is fine: `install` is idempotent and a second call must not fail.
+    let _a: u16 = { u::RegisterClassExA(#addr_of(wc)) };
+    let h: *u8 = { u::CreateWindowExA(0 as u32, pump_class() as *i8,
+                                      { #str_ptr("\0") } as *i8, 0 as u32,
+                                      0 as i32, 0 as i32, 0 as i32, 0 as i32,
+                                      message_only_parent(), 0 as *u8,
+                                      window::hinstance(), 0 as *u8) };
+    PUMP = { #addr(h) };
+    return h;
+}
+
+// ---- schedule -------------------------------------------------------------------
+
+// One pending sync at a time — see the header.
+static PENDING: bool = false;
+
+// `FACET_WIN32_SYNC=1` — WHAT A FRAME COSTS, in the two parts it has. An
+// adjective about performance is worthless without a number, and this is the
+// number. Off by default and read once.
+static SYNC_TRACE_READ: bool = false;
+static SYNC_TRACE_ON: bool = false;
+
+fn tracing_sync() -> bool {
+    if !SYNC_TRACE_READ {
+        SYNC_TRACE_READ = true;
+        SYNC_TRACE_ON = env::has_var("FACET_WIN32_SYNC");
+    }
+    return SYNC_TRACE_ON;
+}
+
+extern fn GetTickCount64() -> u64;
+
+fn drain() {
+    PENDING = false;
+    let t0: u64 = if tracing_sync() { { GetTickCount64() } } else { 0 as u64 };
+    mount::sync();
+    // Layout is facet's, but PLACING the results is ours, and it has to happen
+    // in the same turn as the sync or the frame the user sees is one write
+    // behind.
+    let t1: u64 = if tracing_sync() { { GetTickCount64() } } else { 0 as u64 };
+    window::relayout_all();
+    if tracing_sync() {
+        let t2: u64 = { GetTickCount64() };
+        io::eprintln("[sync] mount=${t1 -% t0}ms relayout=${t2 -% t1}ms total=${t2 -% t0}ms");
+    }
+    return;
+}
+
+fn schedule(ctx: *u8) {
+    if PENDING { return; }
+    PENDING = true;
+    let _r: i32 = { u::PostMessageA(pump(), sys::wm_facet_sync(), 0 as u64, 0 as i64) };
+    return;
+}
+
+// ---- the Scheduler service ------------------------------------------------------
+
+// The message loop IS the main thread here, and facet only ever calls this from
+// it, so "run on main" is "run now". A backend with a worker tier would post
+// this; this one would only be adding a turn's latency to something already on
+// the right thread. facet_gtk's scheduler says the same in the same words.
+fn run_on_main(f: fn(*u8), ctx: *u8) {
+    f(ctx);
+    return;
+}
+
+// ---- timers ----------------------------------------------------------------------
+//
+// A one-shot timer. facet's unit is SECONDS and Win32's is milliseconds.
+//
+// MANY OUTSTANDING, not one — the table facet_gtk's scheduler grew after a
+// second `after` before the first fired silently replaced it. A dead slot is
+// REUSED, because an application that polls with `after` would otherwise grow
+// the table without bound; the entries are tiny, but a table that only grows is
+// a leak whatever the constant is.
+//
+// THE SLOT IS THE TIMER ID, offset by one so that it is never zero —
+// `SetTimer` treats 0 as a valid id but `KillTimer` uses it as "no such timer",
+// and the ambiguity is not worth carrying.
+
+struct Timer { f: fn(*u8), ctx: usize, live: bool }
+
+static TIMERS: vec::Vec[Timer] = #zero::[vec::Vec[Timer]]();
+
+fn timer_slot() -> usize {
+    var i: usize = 0 as usize;
+    let n: usize = TIMERS.count();
+    while i < n {
+        match TIMERS.at_ptr(i) {
+            option::Option[*Timer]::Some(t) => { if !{ (*t).live } { return i; } }
+            option::Option[*Timer]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _e: status::Status = TIMERS.append(
+        Timer { f: 0 as fn(*u8), ctx: 0 as usize, live: false });
+    return n;
+}
+
+fn fire_timer(id: u64) {
+    if id == (0 as u64) { return; }
+    let slot: usize = (id as usize) -% (1 as usize);
+    // ONE SHOT: the timer is killed before the callback, not after. A callback
+    // is entitled to schedule another timer and would otherwise be handed back
+    // the slot it is standing in — and a `cancel_after` from inside it must not
+    // try to kill a timer that is already gone.
+    let _k: i32 = { u::KillTimer(pump(), id) };
+    var f: fn(*u8) = 0 as fn(*u8);
+    var c: *u8 = 0 as *u8;
+    match TIMERS.at_ptr(slot) {
+        option::Option[*Timer]::Some(t) => {
+            if !{ (*t).live } { return; }
+            f = { (*t).f };
+            c = { (*t).ctx } as *u8;
+            { (*t).live = false };
+        }
+        option::Option[*Timer]::None => { return; }
+    }
+    if f != (0 as fn(*u8)) { f(c); }
+    return;
+}
+
+fn after(seconds: f64, f: fn(*u8), ctx: *u8) -> u64 {
+    let slot: usize = timer_slot();
+    match TIMERS.at_ptr(slot) {
+        option::Option[*Timer]::Some(t) => {
+            { (*t).f = f };
+            { (*t).ctx = { #addr(ctx) } };
+            { (*t).live = true };
+        }
+        option::Option[*Timer]::None => { return 0 as u64; }
+    }
+    let id: u64 = (slot +% (1 as usize)) as u64;
+    let ms: f64 = seconds * (1000.0 as f64);
+    // `SetTimer` with an EXPLICIT id returns that id back — it only invents one
+    // when the window is null. So the return is not the handle; the slot is.
+    let _r: u64 = { u::SetTimer(pump(), id, ms as u32, 0 as *u8) };
+    return id;
+}
+
+fn cancel_after(tag: u64) {
+    if tag == (0 as u64) { return; }
+    let slot: usize = (tag as usize) -% (1 as usize);
+    match TIMERS.at_ptr(slot) {
+        option::Option[*Timer]::Some(t) => {
+            // A tag that already FIRED is not a timer any more. The live bit is
+            // the difference and it is why cancelling twice, or cancelling
+            // after the fact, is quiet.
+            if !{ (*t).live } { return; }
+            { (*t).live = false };
+            let _k: i32 = { u::KillTimer(pump(), tag) };
+        }
+        option::Option[*Timer]::None => { }
+    }
+    return;
+}
+
+// For the suite: the table is a static nothing else can see, and "a dead slot
+// is reused" is the property worth pinning.
+fn timer_table_size() -> usize { return TIMERS.count(); }
+
+// ---- size observers ---------------------------------------------------------------
+//
+// The table lives in `observers`, a leaf, for the reason facet_gtk's does: the
+// two ends of this verb sit on opposite sides of an import cycle. Registration
+// is a scheduler service, and the moment a size actually changes is inside the
+// layout walk — and `scheduler` imports `window` imports `geometry`. A leaf
+// both can reach is the seam.
+fn observe_size(n: *core::Node, f: fn(*u8), ctx: *u8) -> u64 {
+    return observers::observe_size(n, f, ctx);
+}
+
+fn cancel_observe_size(tag: u64) { observers::cancel_observe_size(tag); return; }
+
+fn scheduler() -> services::Scheduler {
+    return services::Scheduler {
+        run_on_main: run_on_main,
+        after: after,
+        cancel_after: cancel_after,
+        observe_size: observe_size,
+        cancel_observe_size: cancel_observe_size,
+    };
+}
+
+#[test]
+fn a_dead_timer_slot_is_reused() {
+    let a: usize = timer_slot();
+    match TIMERS.at_ptr(a) {
+        option::Option[*Timer]::Some(t) => { { (*t).live = true }; }
+        option::Option[*Timer]::None => { }
+    }
+    let b: usize = timer_slot();
+    assert b != a;
+    // Retire the first and the next ask must come back to it rather than
+    // growing the table — the property that keeps a polling `after` from
+    // leaking a slot per call.
+    match TIMERS.at_ptr(a) {
+        option::Option[*Timer]::Some(t) => { { (*t).live = false }; }
+        option::Option[*Timer]::None => { }
+    }
+    assert timer_slot() == a;
+    return;
+}
+
+#[test]
+fn a_timer_id_is_never_zero() {
+    // `KillTimer` reads 0 as "no such timer", so a slot-0 timer with the
+    // obvious id could never be cancelled. The +1 is what avoids it.
+    let slot: usize = 0 as usize;
+    let id: u64 = (slot +% (1 as usize)) as u64;
+    assert id != (0 as u64);
+    return;
+}

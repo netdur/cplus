@@ -1,0 +1,213 @@
+// The Storage Access Framework, through `startActivityForResult` and the
+// `E_NATIVE_RESULT` app event.
+//
+// ---- no Java class, because facet already has the door ----------------------
+//
+// Every other Android backend here ships a dex to satisfy a listener
+// interface. This one does not: the answer arrives through
+// `FacetActivity.onActivityResult`, which fires `app_events::E_NATIVE_RESULT`.
+// That kind had been DECLARED and documented since the sign-in work and was
+// unreachable — nothing fired it — until this package needed it.
+//
+// ---- what comes back is NOT a path ------------------------------------------
+//
+// `ACTION_OPEN_DOCUMENT` answers a `content://` URI: opaque, provider-owned,
+// and meaningless to `open()`. It is handed through as the `path` because it is
+// what the platform gives and inventing a filesystem path would be a lie — an
+// app reads it with `ContentResolver.openInputStream`, and the guide says so.
+//
+// The permission it carries is also PER-PROCESS and dies with the app unless
+// `takePersistableUriPermission` is called, which is an app-level decision
+// about long-term access rather than something a picker should do silently.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "facet/app_events" as ev;
+import "./filepicker" as fp;
+
+// Distinct enough not to collide with an app's own flows, and stable so a
+// result arriving after a rotation still finds us.
+const _REQ_OPEN: i32 = 0x0F11 as i32;
+const _REQ_SAVE: i32 = 0x0F12 as i32;
+
+static _ON_PICK: usize = 0;
+static _CTX: usize = 0;
+static _SUBSCRIBED: bool = false;
+
+fn _context() -> jni::jobject {
+    return { ev::host() as jni::jobject };
+}
+
+fn _env() -> rt::Env {
+    let vm: *jni::JavaVM = { ev::host_runtime() as *jni::JavaVM };
+    if vm.is_null() { return rt::from_native(0 as *jni::JNIEnv); }
+    var envp: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    let rc: i32 = { (*(*vm)).AttachCurrentThreadAsDaemon(vm, { #addr_of(envp) as *u8 },
+                                                         0 as *u8) };
+    if rc != (0 as i32) { return rt::from_native(0 as *jni::JNIEnv); }
+    return rt::from_native(envp);
+}
+
+fn _env_ready() -> option::Option[rt::Env] {
+    if !ev::has_host_runtime() { return option::Option[rt::Env]::None; }
+    if !ev::has_host() { return option::Option[rt::Env]::None; }
+    let env: rt::Env = _env();
+    if env.raw().is_null() { return option::Option[rt::Env]::None; }
+    return option::Option[rt::Env]::Some(env);
+}
+
+fn _jstr(env: rt::Env, s: str) -> jni::jstring {
+    var buf: text::Text = text::from_str(s);
+    let _a: status::Status = buf.append("\0");
+    return env.new_string_utf(#str_ptr(buf.view()));
+}
+
+// The result, through facet's fan-out. Only ours is answered — another
+// package's `startActivityForResult` lands here too, which is exactly why the
+// request code is carried rather than swallowed.
+fn _on_native_result(e: *ev::AppEvent, ctx: *u8) {
+    if e.is_null() { return; }
+    if { (*e).kind } != ev::E_NATIVE_RESULT { return; }
+    let code: i64 = { (*e).code };
+    if code != { _REQ_OPEN as i64 } && code != { _REQ_SAVE as i64 } { return; }
+
+    let f_raw: usize = _ON_PICK;
+    if f_raw == 0 { return; }
+    let f: fn(*u8, usize, *u8) = { f_raw as fn(*u8, usize, *u8) };
+    let user: *u8 = { _CTX as *u8 };
+    _ON_PICK = 0;
+    _CTX = 0;
+
+    // RESULT_OK is -1 on Android, and anything else is a cancel — which is an
+    // answer. The handler runs either way, with an empty path.
+    let uri: str = { (*e).text };
+    if { (*e).result } != (-1 as i64) || #str_len(uri) == (0 as usize) {
+        f(0 as *u8, 0 as usize, user);
+        return;
+    }
+    f(#str_ptr(uri), #str_len(uri), user);
+    return;
+}
+
+fn _subscribe() {
+    if _SUBSCRIBED { return; }
+    _SUBSCRIBED = true;
+    let _s: status::Status = ev::on_app_event(_on_native_result, 0 as *u8);
+    return;
+}
+
+// Turn "png,jpg" into a MIME type. ONE type, not a list: `setType` takes a
+// single string and `EXTRA_MIME_TYPES` takes an array, and the common case is
+// either everything or one family. Anything unrecognised falls back to */*
+// rather than filtering the person's own files out of view.
+fn _mime_for(types: str) -> str {
+    if #str_len(types) == (0 as usize) { return "*/*"; }
+    if types == "png" { return "image/png"; }
+    if types == "jpg" { return "image/jpeg"; }
+    if types == "jpeg" { return "image/jpeg"; }
+    if types == "pdf" { return "application/pdf"; }
+    if types == "txt" { return "text/plain"; }
+    if types == "json" { return "application/json"; }
+    return "*/*";
+}
+
+fn _launch(env: rt::Env, action: str, mime: str, name: str, request: i32) -> i32 {
+    let icls: jni::jclass = env.find_class(#str_ptr("android/content/Intent\0"));
+    if icls == (0 as jni::jclass) { env.clear_exception(); return 1; }
+
+    let a: jni::jstring = _jstr(env, action);
+    let ctor: jni::jmethodID = env.method_id(icls, #str_ptr("<init>\0"),
+                                             #str_ptr("(Ljava/lang/String;)V\0"));
+    var ca: [jni::JValue; 1] = [jni::arg_object(a)];
+    let intent: jni::jobject = {
+        (*(*env.raw())).NewObjectA(env.raw(), icls, ctor, #addr_of(ca[0]))
+    };
+    env.delete_local_ref(a);
+    if intent == (0 as jni::jobject) { env.clear_exception(); return 4; }
+
+    // CATEGORY_OPENABLE: without it the picker offers things that cannot be
+    // streamed, and the app gets a URI its ContentResolver refuses.
+    let cat: jni::jstring = _jstr(env, "android.intent.category.OPENABLE");
+    let _c: jni::jobject = env.call_object_1(intent, #str_ptr("android/content/Intent\0"),
+        #str_ptr("addCategory\0"),
+        #str_ptr("(Ljava/lang/String;)Landroid/content/Intent;\0"),
+        jni::arg_object(cat));
+    env.delete_local_ref(cat);
+
+    let m: jni::jstring = _jstr(env, mime);
+    let _t: jni::jobject = env.call_object_1(intent, #str_ptr("android/content/Intent\0"),
+        #str_ptr("setType\0"),
+        #str_ptr("(Ljava/lang/String;)Landroid/content/Intent;\0"),
+        jni::arg_object(m));
+    env.delete_local_ref(m);
+
+    if #str_len(name) > (0 as usize) {
+        let key: jni::jstring = _jstr(env, "android.intent.extra.TITLE");
+        let val: jni::jstring = _jstr(env, name);
+        var ea: [jni::JValue; 2] = [jni::arg_object(key), jni::arg_object(val)];
+        let em: jni::jmethodID = env.method_id(icls, #str_ptr("putExtra\0"),
+            #str_ptr("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;\0"));
+        let _e: jni::jobject = {
+            (*(*env.raw())).CallObjectMethodA(env.raw(), intent, em, #addr_of(ea[0]))
+        };
+        env.delete_local_ref(key);
+        env.delete_local_ref(val);
+        if env.has_pending_exception() { env.clear_exception(); }
+    }
+
+    // startActivityForResult on the ACTIVITY, not the Context: only an
+    // Activity has a result to deliver, and `Context.startActivity` would open
+    // the picker and answer nobody.
+    var sa: [jni::JValue; 2] = [jni::arg_object(intent), jni::arg_int(request)];
+    let acls: jni::jclass = env.find_class(#str_ptr("android/app/Activity\0"));
+    let sm: jni::jmethodID = env.method_id(acls, #str_ptr("startActivityForResult\0"),
+                                           #str_ptr("(Landroid/content/Intent;I)V\0"));
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), _context(), sm, #addr_of(sa[0])) };
+    env.delete_local_ref(acls);
+    env.delete_local_ref(intent);
+    if env.has_pending_exception() { env.clear_exception(); return 4; }
+    return 0;
+}
+
+export extern fn _c_available() -> i32 {
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 0; }
+        option::Option[rt::Env]::Some(_e) => {
+            if _context() == (0 as jni::jobject) { return 0; }
+            return 1;
+        }
+    }
+}
+
+export extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
+                         types: *u8, types_len: usize) -> i32 {
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 1; }
+        option::Option[rt::Env]::Some(env) => {
+            _subscribe();
+            _ON_PICK = { on_pick as usize };
+            _CTX = { #addr(ctx) };
+            return _launch(env, "android.intent.action.OPEN_DOCUMENT",
+                           _mime_for({ #str_from_raw_parts(types, types_len) }),
+                           "", _REQ_OPEN);
+        }
+    }
+}
+
+export extern fn _c_save(suggested: *u8, suggested_len: usize,
+                         on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32 {
+    match _env_ready() {
+        option::Option[rt::Env]::None => { return 1; }
+        option::Option[rt::Env]::Some(env) => {
+            _subscribe();
+            _ON_PICK = { on_pick as usize };
+            _CTX = { #addr(ctx) };
+            return _launch(env, "android.intent.action.CREATE_DOCUMENT", "*/*",
+                           { #str_from_raw_parts(suggested, suggested_len) },
+                           _REQ_SAVE);
+        }
+    }
+}

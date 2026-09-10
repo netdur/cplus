@@ -30,6 +30,8 @@ import "agent_core/identity" as identity;
 import "facet/vocabulary" as vocab;
 import "agent_inapp/agent_inapp" as inapp;
 import "agent_mcp/agent_mcp" as mcp;
+import "agent_mcp/inspect" as mcp_inspect;
+import "./inspect_tree" as itree;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
 import "stdlib/thread" as thread;
@@ -49,7 +51,6 @@ fn enable() {
         serve_once: serve_once,
         pin_policy: pin_policy,
     });
-    return;
 }
 
 // Back to the portable no-op: an app that stops serving has no surface, and
@@ -60,7 +61,6 @@ fn disable() {
         serve_once: 0 as fn(str),
         pin_policy: 0 as fn(*u8, vocab::Agent),
     });
-    return;
 }
 
 // Open the already-attached Facet surface for an assistant embedded in this
@@ -114,14 +114,12 @@ fn policy_for(a: vocab::Agent) -> u32 {
 // for every node whose C_AGENT bit is up.
 fn pin_policy(view: *u8, a: vocab::Agent) {
     agent_gtk::set_agent_policy(view, policy_for(a));
-    return;
 }
 
 // Walk `win`'s live view tree into the surface, replacing the previous
 // screen's (its retained views are released by the drop).
 fn attach_window(win: *u8) {
     AGENT_SURFACE = agent_gtk::open(win);
-    return;
 }
 
 // The default channel policy: the developer opted in by giving a socket path,
@@ -133,8 +131,27 @@ fn attach_window(win: *u8) {
 // line, written to get an agent talking at all — silently the line that hands
 // a card number to whatever connects. Widening is an app supplying its own
 // policy, which is a place a reader can find it.
+// AND `edit_tree`, because this is the line that publishes an editing surface.
+//
+// `serve_once` installs the inspector's walker and publishes its fourteen
+// verbs, eight of which rewrite the tree. `cap_edit_tree` gates those eight and
+// NOTHING GRANTED IT — it appeared at its definition and in agent_core's own
+// tests and nowhere else, so every write on every app was refused, always. The
+// inspector was reliably read-only and said so in a `-32002` a panel showed as
+// a field that reverted. A capability that only ever refuses is not a policy,
+// it is a defect with a error message.
+//
+// It does not widen what the paragraph above argues about. That argument is
+// about protected CONTENT — a card number behind a tier — and the tier caps
+// stay out of this grant exactly as before. `edit_tree` is the DEVELOPER
+// surface: structure and properties that are not user affordances, published
+// by the same call that installs the walker to read them. The thing that
+// publishes an editing surface is the thing that authorizes it.
+//
+// An app that wants a reader hands out `auth::operator()` from its own
+// `set_policy`, which is where narrowing has always belonged.
 fn admit(req: auth::Request) -> auth::Grant {
-    return auth::operator();
+    return auth::operator().with(auth::cap_edit_tree());
 }
 
 // THE APP'S OWN POLICY, if it has one.
@@ -157,34 +174,95 @@ static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
 
 fn set_policy(f: fn(auth::Request) -> auth::Grant) {
     AGENT_POLICY = f;
-    return;
 }
 
 fn effective_policy() -> fn(auth::Request) -> auth::Grant {
-    if AGENT_POLICY == (0 as fn(auth::Request) -> auth::Grant) { return admit; }
+    if AGENT_POLICY.is_null() { return admit; }
     return AGENT_POLICY;
 }
 
 struct AgentServe {
-    path: text::Text,
+    fd: i32,
 }
 
 fn serve_main(take job: AgentServe) -> i32 {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64);
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
-    return mcp::serve_uds(surf, agent_gtk::mcp_backend(), sub, effective_policy(), job.path.view());
+    return mcp::accept_loop(surf, agent_gtk::mcp_backend(), sub, effective_policy(), job.fd, true);
 }
 
-// Start the serve worker exactly once per process. The accept loop lives for
-// the app's life; a stale socket file at `path` is unlinked on entry.
-fn serve_once(path: str) {
+// Start the serve worker exactly once per process.
+//
+// `id` NAMES THE APP and this derives where it listens —
+// `agent_mcp::uds_path`, `/tmp/mcp-<id>-<pid>.socket`.
+//
+// BOUND ON THIS THREAD, NOT THE WORKER'S, so the result is something a caller
+// is still alive to hear. It used to bind inside the spawned thread whose
+// return value nobody reads, so every setup failure was silent: a path too
+// long, a stale path a live server still answers, a permission the app does not
+// have. All of them looked identical to an app nobody had connected to yet, and
+// two of them are documented failures this project has actually hit.
+//
+// It prints on SUCCESS too, and that is not noise: the address is derived now,
+// so the one line naming it is how a developer finds out where to connect
+// without recomputing the convention by hand.
+fn serve_once(id: str) {
     if AGENT_SERVING { return; }
+    // Clear out what dead processes left behind. A path carries the pid, so a
+    // name is never reused and nothing else would ever remove these.
+    let _swept: usize = mcp::sweep_stale();
+    if !mcp::valid_id(id) {
+        let bad: text::Text = "facet: agent surface not served — \"${id}\" is not a valid id (a NAME, not a path)";
+        io::eprintln(bad.view());
+        return;
+    }
+    let path: text::Text = mcp::uds_path(id, mcp::current_pid());
+    let fd: i32 = mcp::bind_uds(path.view());
+    if fd < 0 {
+        let why: text::Text = "facet: agent surface not served at ${path} — ${mcp::bind_reason(fd)}";
+        io::eprintln(why.view());
+        return;
+    }
+    let l: i32 = mcp::listen_on(fd);
+    if l < 0 {
+        let why2: text::Text = "facet: agent surface not served at ${path} — ${mcp::bind_reason(l)}";
+        io::eprintln(why2.view());
+        mcp::unlink_bound_socket();
+        return;
+    }
     AGENT_SERVING = true;
+    // WHO THIS IS, on the wire. A client that reached a stale address finds out
+    // during the handshake instead of driving the wrong process.
+    // THE INSPECTOR'S FOURTEEN VERBS, published with the other eleven and not
+    // by an application remembering to. Serving IS the opt-in — an app that
+    // does not want to be driven does not call this function — and there is no
+    // second flag beside it.
+    //
+    // They REFUSE until a toolkit installs a walker (`inspect::arm()`), and
+    // they refuse with a policy answer that names what is missing. That is the
+    // whole point of publishing them unconditionally: `-32601 method not
+    // found` was the wrong sentence, and three packages downstream had grown
+    // machinery to translate it.
+    mcp_inspect::publish();
+    // AND THE WALKER, here rather than in application code. The toolkit is what
+    // knows what a tree is; an application asking to be driven has already said
+    // everything it has to say by calling this function.
+    //
+    // This was `inspect::arm()` — a line every app had to remember, whose
+    // absence answered `-32601 method not found` three packages downstream.
+    // There is nothing left to forget.
+    mcp_inspect::set_backend(itree::local_backend());
+    mcp::set_server_name(id);
+    // ...and what was actually bound, beside the socket. The address is
+    // derivable, so this is confirmation rather than discovery — see
+    // `agent_mcp::write_descriptor`.
+    let _d: bool = mcp::write_descriptor(id, mcp::current_pid(), "uds", path.view());
     let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
-        AgentServe { path: text::from_str(path) },
+        AgentServe { fd: fd },
         serve_main,
     );
-    return;
+    let ok: text::Text = "facet: agent surface on ${path} — ${mcp::verb_summary()}";
+    io::eprintln(ok.view());
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -201,7 +279,6 @@ fn enable_fills_the_install_struct_and_disable_empties_it() {
     // window exists; the surface opens empty rather than refusing.
     app::agent_attach(0 as *u8);
     disable();
-    return;
 }
 
 #[test]
@@ -223,7 +300,6 @@ fn every_facet_tier_maps_to_the_policy_the_core_reads() {
     assert identity::policy_none() != identity::policy_protected();
     assert identity::policy_protected() != identity::policy_private();
     assert identity::policy_private() != identity::policy_exclude();
-    return;
 }
 
 #[test]
@@ -235,12 +311,12 @@ fn the_pinned_tier_is_what_the_agent_surface_reads_back() {
     // A GtkLabel needs GTK up, and this suite must run without a display —
     // `gtk_init_check` answers that, and the test says so when it skips rather
     // than passing quietly over nothing.
-    if { gtk_init_check() } == (0 as i32) {
+    if { gtk_init_check() } == 0 {
         io::eprintln("facet_agent: no display — the pin round trip is skipped.");
         return;
     }
     let probe: *u8 = { gtk_label_new(#str_ptr("probe\0")) };
-    assert probe != (0 as *u8);
+    assert probe.is_not_null();
     pin_policy(probe, vocab::Agent::Private);
     assert agent_gtk::get_agent_policy(probe) == identity::policy_private();
     pin_policy(probe, vocab::Agent::Protected);
@@ -252,7 +328,6 @@ fn the_pinned_tier_is_what_the_agent_surface_reads_back() {
     // gating its content, which is a different mechanism for a different job.
     pin_policy(probe, vocab::Agent::Hidden);
     assert agent_gtk::get_agent_policy(probe) == identity::policy_exclude();
-    return;
 }
 
 #[link_name = "gtk_init_check"]

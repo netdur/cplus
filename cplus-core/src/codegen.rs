@@ -1293,7 +1293,7 @@ fn generate_inner(
     // on `preserve_nonecc` — fastcc can't compose with it. `main` keeps
     // C cc so the OS runtime can invoke it.
     {
-        let address_taken = collect_address_taken_fns(program, &sigs);
+        let address_taken = collect_address_taken_fns(program, &sigs, &types);
         *md.address_taken_funcs.borrow_mut() = address_taken.clone();
         let mut fastcc = md.fastcc_funcs.borrow_mut();
         for item in &program.items {
@@ -1332,16 +1332,24 @@ fn generate_inner(
                             // issue-03 step 7: the free-fn arm above excludes
                             // address-taken names, because a `fastcc` function
                             // cannot be called through a C-cc fn pointer. This
-                            // arm skips that check on the grounds that a method
-                            // has no address-taking syntax — a bound method
-                            // reference goes through a synthesized free-fn
-                            // BRIDGE, which the free-fn arm covers. Asserted
-                            // rather than asserted-in-a-comment.
-                            debug_assert!(
-                                !address_taken.contains(&mangle(target_name, &m.name.name)),
-                                "method `{}` is address-taken but the fastcc gate assumed methods never are",
-                                mangle(target_name, &m.name.name)
-                            );
+                            // arm does NOT, and that is deliberate: a method
+                            // whose address is taken keeps `fastcc` because
+                            // nothing ever points at the method itself. Both
+                            // address-taking syntaxes go through a synthesized
+                            // C-ABI free-fn BRIDGE — `recv.method` through
+                            // sema's bound-method bridge, `Type::f` through
+                            // `emit_fnptr_bridge` — and the bridge is what the
+                            // fn-pointer holds.
+                            //
+                            // This arm used to carry a `debug_assert!` claiming
+                            // a method is never address-taken. It was compiled
+                            // out of the release compiler, and `Type::f` in
+                            // value position had been violating it silently:
+                            // the method kept `fastcc` AND the raw-aggregate
+                            // METHOD_ABI while the indirect call site used the
+                            // C ABI, so any argument over 16 bytes was read
+                            // from the wrong place. See
+                            // `emit_fnptr_bridge`.
                             fastcc.insert(mangle(target_name, &m.name.name));
                         }
                     }
@@ -1423,8 +1431,13 @@ fn generate_inner(
     // which user code may legitimately re-declare to get a typed
     // handle.
     for sym in [
-        "pthread_create",
-        "pthread_join",
+        thread_create_sym(),
+        thread_join_sym(),
+        // Windows preamble declares these for the thread helpers above;
+        // thread_sys_windows.cplus re-declares CloseHandle for `detach`.
+        "CreateThread",
+        "WaitForSingleObject",
+        "CloseHandle",
         "malloc",
         "free",
         "memcpy",
@@ -1554,6 +1567,15 @@ fn generate_inner(
                             &mut out, id, m, &sigs, &types, &str_lits, mode, test_mode, &md,
                             &tramps, is_lib,
                         );
+                        // `Type::f` in value position points at a C-ABI thunk,
+                        // not at the method. See `emit_fnptr_bridge`.
+                        if md
+                            .address_taken_funcs
+                            .borrow()
+                            .contains(&mangle(&b.target.name, &m.name.name))
+                        {
+                            emit_fnptr_bridge(&mut out, id, m, &types, &md, is_lib);
+                        }
                     }
                 } else if let Some(&enum_id) = types.enum_by_name.get(&b.target.name) {
                     // v0.0.5 Phase 2C: enum impl-method emission.
@@ -1634,6 +1656,11 @@ fn generate_inner(
         let src = std::fs::read_to_string(path).ok();
         emit_dwarf_metadata(&mut out, program, path, src.as_deref());
     }
+    // COFF only: give every weak definition a comdat so two objects defining
+    // it coalesce instead of colliding. See `attach_coff_comdats`.
+    if crate::target::active_platform() == "windows" {
+        out = attach_coff_comdats(&out);
+    }
     #[cfg(debug_assertions)]
     assert_every_define_carries_fn_attrs(&out, &md.fn_attrs.borrow());
     out
@@ -1662,6 +1689,35 @@ fn generate_inner(
 /// `non-leaf` rather than `all` is what clang emits on this platform: a leaf
 /// function needs no record, because the innermost frame is read from pc/lr
 /// and there is nothing below it to find.
+/// The symbols the `thread::spawn` / `JoinHandle::join` intrinsics call to
+/// start and reap an OS thread.
+///
+/// POSIX targets call `pthread_create` / `pthread_join` directly, which is what
+/// the emitted IR has always done and what keeps those targets byte-identical.
+///
+/// WINDOWS HAS NEITHER, and the port cannot simply define them in stdlib: the
+/// preamble `declare`s both in every module, so an `export extern fn
+/// pthread_create` in C+ lands in the same module as its own declaration and
+/// clang rejects it as an invalid redefinition. So Windows gets its own two
+/// names, which `stdlib/thread_sys_windows.cplus` defines over `CreateThread`
+/// and `WaitForSingleObject` — the same shape the intrinsics already use to
+/// reach the reactor through `stdlib_reactor_*_v1` rather than by C+ name.
+fn thread_create_sym() -> &'static str {
+    if crate::target::active_platform() == "windows" {
+        "__cplus_thread_create_v1"
+    } else {
+        "pthread_create"
+    }
+}
+
+fn thread_join_sym() -> &'static str {
+    if crate::target::active_platform() == "windows" {
+        "__cplus_thread_join_v1"
+    } else {
+        "pthread_join"
+    }
+}
+
 fn fn_attrs_for(sanitizers: &[&str]) -> String {
     let mut attrs: Vec<&str> = vec!["\"frame-pointer\"=\"non-leaf\""];
     attrs.extend(sanitizers.iter().filter_map(|s| match *s {
@@ -1674,6 +1730,94 @@ fn fn_attrs_for(sanitizers: &[&str]) -> String {
         _ => None,
     }));
     format!(" {}", attrs.join(" "))
+}
+
+/// COFF needs an explicit COMDAT for a `weak_odr` / `linkonce_odr` definition to
+/// coalesce; ELF and Mach-O do not.
+///
+/// WHAT BREAKS WITHOUT IT. LLVM's COFF backend, handed a weak definition with no
+/// comdat attached, does not emit one — it emits a real definition plus a weak
+/// external alias. Two objects that both define the symbol are then two real
+/// definitions, and lld-link reports `duplicate symbol`. Measured on a two-file
+/// reduction: `define weak_odr i32 @shared()` in two objects fails to link, and
+/// the same pair with `$shared = comdat any` + `comdat` on the define links.
+///
+/// This is not a corner case on Windows — it is every generic instantiation.
+/// `Vec[u8]`'s methods are emitted `weak_odr` into every package archive that
+/// uses them, so an application depending on two C+ packages that both touch a
+/// `Vec[u8]` had two definitions of `stdlib.src.vec.new__u8` and could not
+/// link. It also took out the cancellation slot the preamble emits into every
+/// module.
+///
+/// Done as a post-pass rather than at each of the nine emitters that can choose
+/// `weak_odr`: the rule is "every weak definition in this module", which is
+/// exactly what a pass over the finished text can see and what nine separate
+/// call sites would each have to remember.
+fn attach_coff_comdats(ir: &str) -> String {
+    let mut names: Vec<String> = Vec::new();
+    let mut body = String::with_capacity(ir.len() + 4096);
+    for line in ir.lines() {
+        let is_weak_define = line.starts_with("define weak_odr ")
+            || line.starts_with("define linkonce_odr ");
+        if is_weak_define && line.ends_with('{') {
+            // The name runs from the first `@` to the `(` that opens its
+            // parameter list. A struct return type sits before the `@`, so the
+            // first `@` on the line is always the symbol.
+            if let Some(at) = line.find('@') {
+                if let Some(paren) = line[at..].find('(') {
+                    let name = &line[at + 1..at + paren];
+                    if !name.is_empty() {
+                        names.push(name.to_string());
+                        // ` comdat` goes after the attributes, before the brace.
+                        let head = line[..line.len() - 1].trim_end();
+                        body.push_str(head);
+                        body.push_str(" comdat {
+");
+                        continue;
+                    }
+                }
+            }
+        }
+        // Globals take the same treatment, with LLVM's other spelling: the
+        // comdat goes in the attribute list after the initializer rather than
+        // before the brace. `weak_odr` statics and the preamble's cancellation
+        // slot both land here.
+        let is_weak_global = line.starts_with('@')
+            && (line.contains(" = weak_odr ") || line.contains(" = linkonce_odr "));
+        if is_weak_global {
+            if let Some(sp) = line.find(' ') {
+                let name = &line[1..sp];
+                if !name.is_empty() && !line.contains(", comdat") {
+                    names.push(name.to_string());
+                    // Before `, align N` when there is one, else at the end.
+                    let rewritten = match line.rfind(", align ") {
+                        Some(at) => format!("{}, comdat{}", &line[..at], &line[at..]),
+                        None => format!("{line}, comdat"),
+                    };
+                    body.push_str(&rewritten);
+                    body.push('\n');
+                    continue;
+                }
+            }
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    if names.is_empty() {
+        return ir.to_string();
+    }
+    names.sort();
+    names.dedup();
+    let mut out = String::with_capacity(body.len() + names.len() * 24);
+    out.push_str("; COFF comdats for weak definitions — see attach_coff_comdats.
+");
+    for n in &names {
+        out.push_str(&format!("${n} = comdat any
+"));
+    }
+    out.push('\n');
+    out.push_str(&body);
+    out
 }
 
 /// issue-08: every `define` carries the module's function attributes. The
@@ -2307,6 +2451,12 @@ struct MethodInfo {
     /// cpc-emission time shrinks the IR clang has to optimize and lets
     /// the optimizer converge faster on the remaining work.
     trivial_inline: Option<TrivialInline>,
+    /// `async fn` / `gen fn`. A coroutine method is emitted by
+    /// `gen_async_method` / `gen_gen_method`, whose signatures this file's
+    /// fn-pointer BRIDGE does not mirror, so `Type::f` on one keeps handing out
+    /// the method's own symbol — the behaviour it had before the bridge
+    /// existed. See [`emit_fnptr_bridge`].
+    is_coroutine: bool,
 }
 
 /// v0.0.8 bench-gap fix D: classify a method's body for cpc-side
@@ -2644,6 +2794,7 @@ fn collect_types(
                         params,
                         return_type,
                         trivial_inline,
+                        is_coroutine: m.is_gen || m.is_async,
                     },
                 );
             }
@@ -2675,6 +2826,7 @@ fn collect_types(
                         params,
                         return_type,
                         trivial_inline: None,
+                        is_coroutine: false,
                     },
                 );
             }
@@ -2726,6 +2878,7 @@ fn collect_types(
                     params,
                     return_type,
                     trivial_inline,
+                    is_coroutine: m.is_gen || m.is_async,
                 },
             );
             // Mirror sema's Drop detection so codegen knows which bindings
@@ -3690,7 +3843,26 @@ fn return_passes_by_sret_widened(ty: &Ty, types: &TypeTable) -> bool {
     }
     if let Ty::Struct(id) = ty {
         let def = &types.struct_defs[id.0 as usize];
-        if !def.is_copy {
+        // A COROUTINE FUTURE KEEPS ITS REGISTER RETURN, whatever its Copy flag
+        // says. `Future[T]` is `{ ptr }` and the five `async`/generator ramp
+        // emitters return it by value — their signatures are hand-written and
+        // consult nothing, so widening here would make every call site pass an
+        // `sret` slot to a definition that returns a struct. That is an ABI
+        // mismatch with no diagnostic: the caller reads its uninitialised slot
+        // and jumps through whatever was in it.
+        //
+        // It went unnoticed while `Future` had no destructor and was therefore
+        // Copy. Giving it one (v0.0.30, so a future that is merely dropped
+        // stops leaking its frame) cleared `is_copy` and tripped this — the
+        // minimal repro is `let _f = an_async_fn();` and it segfaults before
+        // main's first line.
+        //
+        // The widening exists to stop a drop-after-move on a COPIED aggregate:
+        // the by-value return duplicates the struct, and both copies then drop
+        // the same heap. A future is never in that position — a ramp
+        // constructs the only value there is and hands it over, and a `return
+        // f;` moves out of a local whose drop is already suppressed.
+        if !def.is_copy && !def.is_lang_future {
             return true;
         }
     }
@@ -4242,7 +4414,18 @@ fn scan_moves_in_expr(
         }
         ExprKind::Block(b) => scan_moves_in_block(b, sigs, types, set),
         ExprKind::Await(inner) => scan_moves_in_expr(inner, sigs, types, set),
-        ExprKind::Yield(inner) => scan_moves_in_expr(inner, sigs, types, set),
+        ExprKind::Yield(inner) => {
+            // bug 2026-09-06 (yield-does-not-transfer-ownership): `yield x`
+            // hands `x` to the consumer — the same consuming position as a
+            // variant payload or a `let` init. Pre-register the bare-Ident
+            // source so it gets a Runtime drop flag for `gen_yield_expr`'s
+            // `mark_moved` to flip; with an `Always` disposition the
+            // generator's scope exit freed what the consumer now owned.
+            if let ExprKind::Ident(n) = &inner.kind {
+                set.insert(n.clone());
+            }
+            scan_moves_in_expr(inner, sigs, types, set);
+        }
         ExprKind::If {
             cond,
             then,
@@ -4335,6 +4518,21 @@ fn scan_moves_in_expr(
             }
             for a in args {
                 scan_moves_in_expr(a, sigs, types, set);
+            }
+        }
+        // A MOVE CAN HAPPEN INSIDE AN INTERPOLATION, and this arm is what lets
+        // the scanner see it: `"${consume(a)}"` moves `a` exactly as
+        // `consume(a)` does. Without it the parts were never walked, so `a` was
+        // classified never-moved, got no drop flag, and the emission-time
+        // `mark_moved` had nothing to flip — scope exit then dropped a value
+        // the callee already owned. A silent double free, and only in RELEASE:
+        // `mark_moved`'s `debug_assert!` catches exactly this shape, and a
+        // release compiler skips it.
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let crate::ast::InterpStrPart::Expr(e) = p {
+                    scan_moves_in_expr(e, sigs, types, set);
+                }
             }
         }
         _ => {}
@@ -4904,6 +5102,28 @@ fn coro_end_decl_ir() -> String {
     }
 }
 
+/// Could this IR instruction write memory that a memoized field read
+/// aliases? A `ref` binding is a pointer into memory the caller owns, so
+/// any store through any pointer and any call may change what it points at;
+/// the field-read memo (`field_load_cache`) must not outlive one. Loads,
+/// arithmetic, GEPs, casts and phis are pure. The opcode is the first token,
+/// or the token after ` = ` when the instruction names a result.
+fn ir_instr_may_write_memory(instr: &str) -> bool {
+    let op = if instr.starts_with('%') {
+        match instr.find(" = ") {
+            Some(i) => &instr[i + 3..],
+            None => "",
+        }
+    } else {
+        instr
+    };
+    matches!(
+        op.split_whitespace().next().unwrap_or(""),
+        "store" | "call" | "invoke" | "tail" | "musttail" | "notail" | "atomicrmw" | "cmpxchg"
+            | "fence"
+    )
+}
+
 /// A `call` to `llvm.coro.end` on `%.coro.hdl`, matching the declared form. The
 /// `i1` form binds (and discards) a result SSA value; the `void` form does not.
 fn coro_end_call_ir() -> String {
@@ -5234,8 +5454,74 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
     // as an 8-byte pointer for the ccc convention. On macOS pthread
     // is part of libSystem (linked by default); Linux callers need
     // `[link] libs = ["pthread"]` in their manifest (Phase 5C).
-    out.push_str("declare i32 @pthread_create(ptr, ptr, ptr, ptr)\n");
-    out.push_str("declare i32 @pthread_join(i64, ptr)\n");
+    if crate::target::active_platform() == "windows" {
+        // WINDOWS HAS NO PTHREADS, so the two symbols the spawn/join intrinsics
+        // call are DEFINED here rather than declared, as `internal` — the same answer
+        // `__cplus_reactor_get_state` above gives. Every module gets its own copy
+        // of two stateless wrappers, which costs nothing and cannot collide.
+        // `linkonce_odr` was the first choice and lld-link reported a duplicate
+        // symbol against the stdlib archive, so COMDAT merging is not something
+        // to rely on for these.
+        //
+        // Defining them in stdlib instead was the obvious move and does not
+        // work — the preamble is emitted into EVERY module including stdlib's
+        // own, so a C+ `export extern fn` of the same name lands beside its own
+        // declaration and clang rejects it as an invalid redefinition. Emitting
+        // the body here sidesteps that and keeps the pair in one place.
+        //
+        // The handle is stored in the i64 the emitter models `pthread_t` as.
+        // `CreateThread` wants a `DWORD (LPVOID)` start routine and the
+        // trampoline is `ptr (ptr)`; on x64 both take one pointer argument and
+        // return in RAX, and the caller discards the value.
+        out.push_str("declare ptr @CreateThread(ptr, i64, ptr, ptr, i32, ptr)
+");
+        out.push_str("declare i32 @WaitForSingleObject(ptr, i32)
+");
+        out.push_str("declare i32 @CloseHandle(ptr)
+");
+        // The closing `}` MUST sit at column 0, and the body must not carry an
+        // indented `}` of its own: `prune.rs::collect_blocks` ends a `define`
+        // block at the first line that is exactly `}`. An indented brace here
+        // once let the join wrapper's block run on and SWALLOW the reactor
+        // state slot and `__cplus_reactor_get_state` that codegen emits right
+        // after — and, the wrapper being uncalled in a test with no thread
+        // join, the pruner then dropped the getter as dead while keeping its
+        // live callers, i.e. undefined-symbol IR. Emit these two the same shape
+        // every other function has: `define` and `}` at column 0.
+        out.push_str(&format!(
+            "define internal i32 @{}(ptr %tid, ptr %attr, ptr %start, ptr %arg){} {{\n\
+             entry:\n  \
+             %h = call ptr @CreateThread(ptr null, i64 0, ptr %start, ptr %arg, i32 0, ptr null)\n  \
+             %isnull = icmp eq ptr %h, null\n  \
+             br i1 %isnull, label %fail, label %ok\n\
+             ok:\n  \
+             %hi = ptrtoint ptr %h to i64\n  \
+             store i64 %hi, ptr %tid\n  \
+             ret i32 0\n\
+             fail:\n  \
+             ret i32 1\n\
+             }}\n",
+            thread_create_sym(),
+            fn_attrs
+        ));
+        // INFINITE is 0xFFFFFFFF, which is -1 read as the i32 DWORD is.
+        out.push_str(&format!(
+            "define internal i32 @{}(i64 %tid, ptr %retval){} {{\n\
+             entry:\n  \
+             %h = inttoptr i64 %tid to ptr\n  \
+             %w = call i32 @WaitForSingleObject(ptr %h, i32 -1)\n  \
+             %c = call i32 @CloseHandle(ptr %h)\n  \
+             ret i32 0\n\
+             }}\n",
+            thread_join_sym(),
+            fn_attrs
+        ));
+    } else {
+        out.push_str(&format!("declare i32 @{}(ptr, ptr, ptr, ptr)
+", thread_create_sym()));
+        out.push_str(&format!("declare i32 @{}(i64, ptr)
+", thread_join_sym()));
+    }
     // v0.0.3 Phase 5 Slice 5E.3: LLVM coroutine intrinsics for the
     // `async fn` lowering. The `presplitcoroutine` function attribute
     // on each async fn triggers LLVM's CoroSplit pass during the
@@ -5338,17 +5624,32 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
     // Same general-dynamic TLS model as the reactor slot, for the same
     // dlopen reasons.
     out.push_str("\n; v0.0.29: cancellation slot (per-thread), one per image.\n");
-    out.push_str(
-        "@__cplus_cancel_slot = linkonce_odr hidden thread_local global ptr null, align 8\n",
-    );
+    // `hidden` is an ELF/Mach-O concept; COFF has no visibility field, so on
+    // Windows it hides nothing and only stops LLVM emitting these into a
+    // COMDAT — lld-link then reports the app's copy and stdlib's as a
+    // duplicate symbol, which is what a threaded Windows program hit. Dropping
+    // it there restores the coalescing the comment above describes; ELF and
+    // Mach-O keep it, where it does real work.
+    // `hidden` is an ELF/Mach-O concept; COFF has no visibility field. Windows
+    // therefore drops it and relies on the comdat `attach_coff_comdats` attaches
+    // to every weak definition, which is what makes the copies in stdlib and in
+    // the application coalesce instead of colliding.
+    let linkage = if crate::target::active_platform() == "windows" {
+        "linkonce_odr "
+    } else {
+        "linkonce_odr hidden "
+    };
     out.push_str(&format!(
-        "define linkonce_odr hidden ptr @__cplus_cancel_get_slot(){fn_attrs} {{\n  \
+        "@__cplus_cancel_slot = {linkage}thread_local global ptr null, align 8\n",
+    ));
+    out.push_str(&format!(
+        "define {linkage}ptr @__cplus_cancel_get_slot(){fn_attrs} {{\n  \
          %p = load ptr, ptr @__cplus_cancel_slot, align 8\n  \
          ret ptr %p\n\
          }}\n"
     ));
     out.push_str(&format!(
-        "define linkonce_odr hidden void @__cplus_cancel_set_slot(ptr %p){fn_attrs} {{\n  \
+        "define {linkage}void @__cplus_cancel_set_slot(ptr %p){fn_attrs} {{\n  \
          store ptr %p, ptr @__cplus_cancel_slot, align 8\n  \
          ret void\n\
          }}\n"
@@ -5365,7 +5666,7 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
          }}\n"
     ));
     // v0.0.29 phase 2: FFI-callable destroy — `future::cancel` and the
-    // cancellable executor (`executor::run`) call this to tear down a
+    // cancellable drive (`future::wait_or_cancel`) call this to tear down a
     // suspended frame; the per-suspend cancel blocks make it run the live
     // locals' drops before freeing.
     out.push_str(&format!(
@@ -5628,8 +5929,33 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
 /// "Free fn" here means a `sigs`-registered top-level function. Methods
 /// (looked up via type + name) aren't take-the-address-able in C+ —
 /// there's no `&T::method` syntax — so they're never added to the set.
-fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -> HashSet<String> {
-    fn visit_expr(e: &Expr, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
+fn collect_address_taken_fns(
+    program: &Program,
+    sigs: &HashMap<String, FnSig>,
+    types: &TypeTable,
+) -> HashSet<String> {
+    /// `Type::f` in value position: the mangled symbol whose address is taken,
+    /// or `None` when the path is an enum variant / an unknown name. MIRRORS
+    /// `gen_path`'s value-position arm — the two must agree on exactly which
+    /// paths hand out a function address, or the bridge emitted here and the
+    /// symbol referenced there drift apart (a link error, not a miscompile).
+    fn assoc_fn_path(segments: &[Ident], types: &TypeTable) -> Option<String> {
+        if segments.len() != 2 || types.enum_by_name.contains_key(&segments[0].name) {
+            return None;
+        }
+        let sid = *types.struct_by_name.get(&segments[0].name)?;
+        let m = types.struct_defs[sid.0 as usize]
+            .methods
+            .get(&segments[1].name)?;
+        (m.receiver.is_none() && !m.is_coroutine)
+            .then(|| mangle(&segments[0].name, &segments[1].name))
+    }
+    fn visit_expr(
+        e: &Expr,
+        sigs: &HashMap<String, FnSig>,
+        types: &TypeTable,
+        taken: &mut HashSet<String>,
+    ) {
         match &e.kind {
             // v0.0.22 DSL.2: never reached — builder blocks desugar to
             // ordinary AST long before codegen.
@@ -5648,125 +5974,150 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
                 // Ident referring to a fn name is safe to skip. Any
                 // other callee shape (parenthesized, indirect via a
                 // local fn-ptr, etc.) gets recursed normally.
-                if !matches!(callee.kind, ExprKind::Ident(_)) {
-                    visit_expr(callee, sigs, taken);
+                //
+                // A `Path` callee — `Type::f(...)` or `Enum::Variant(x)` — is
+                // direct too (`gen_assoc_call`), and must be skipped for the
+                // same reason: the Path arm below now treats a path in VALUE
+                // position as an address-take, and without this every
+                // directly-called associated fn would lose `fastcc`.
+                if !matches!(callee.kind, ExprKind::Ident(_) | ExprKind::Path { .. }) {
+                    visit_expr(callee, sigs, types, taken);
                 }
                 for a in args {
-                    visit_expr(a, sigs, taken);
+                    visit_expr(a, sigs, types, taken);
                 }
             }
-            ExprKind::Block(b) => visit_block(b, sigs, taken),
-            ExprKind::Await(inner) | ExprKind::Yield(inner) => visit_expr(inner, sigs, taken),
+            ExprKind::Block(b) => visit_block(b, sigs, types, taken),
+            ExprKind::Await(inner) | ExprKind::Yield(inner) => visit_expr(inner, sigs, types, taken),
             ExprKind::If {
                 cond,
                 then,
                 else_branch,
             } => {
-                visit_expr(cond, sigs, taken);
-                visit_block(then, sigs, taken);
+                visit_expr(cond, sigs, types, taken);
+                visit_block(then, sigs, types, taken);
                 if let Some(eb) = else_branch {
-                    visit_expr(eb, sigs, taken);
+                    visit_expr(eb, sigs, types, taken);
                 }
             }
             ExprKind::Binary { lhs, rhs, .. } => {
-                visit_expr(lhs, sigs, taken);
-                visit_expr(rhs, sigs, taken);
+                visit_expr(lhs, sigs, types, taken);
+                visit_expr(rhs, sigs, types, taken);
             }
-            ExprKind::Unary { operand, .. } => visit_expr(operand, sigs, taken),
-            ExprKind::Field { receiver, .. } => visit_expr(receiver, sigs, taken),
+            ExprKind::Unary { operand, .. } => visit_expr(operand, sigs, types, taken),
+            ExprKind::Field { receiver, .. } => visit_expr(receiver, sigs, types, taken),
             ExprKind::Index { receiver, index } => {
-                visit_expr(receiver, sigs, taken);
-                visit_expr(index, sigs, taken);
+                visit_expr(receiver, sigs, types, taken);
+                visit_expr(index, sigs, types, taken);
             }
             ExprKind::Assign { target, value, .. } => {
-                visit_expr(target, sigs, taken);
-                visit_expr(value, sigs, taken);
+                visit_expr(target, sigs, types, taken);
+                visit_expr(value, sigs, types, taken);
             }
             ExprKind::Cast { expr: inner, .. } | ExprKind::CastChecked { expr: inner, .. } => {
-                visit_expr(inner, sigs, taken)
+                visit_expr(inner, sigs, types, taken)
             }
             ExprKind::Range { start, end, .. } => {
                 if let Some(s) = start {
-                    visit_expr(s, sigs, taken);
+                    visit_expr(s, sigs, types, taken);
                 }
                 if let Some(e) = end {
-                    visit_expr(e, sigs, taken);
+                    visit_expr(e, sigs, types, taken);
                 }
             }
             ExprKind::Match { scrutinee, arms } => {
-                visit_expr(scrutinee, sigs, taken);
+                visit_expr(scrutinee, sigs, types, taken);
                 for a in arms {
-                    visit_expr(&a.body, sigs, taken);
+                    visit_expr(&a.body, sigs, types, taken);
                 }
             }
             ExprKind::StructLit { fields, .. }
             | ExprKind::InferredStructLit { fields }
             | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
-                    visit_expr(&f.value, sigs, taken);
+                    visit_expr(&f.value, sigs, types, taken);
                 }
             }
             ExprKind::ArrayLit { elements }
             | ExprKind::TupleLit { elements }
             | ExprKind::GenericEnumCall { args: elements, .. } => {
                 for e in elements {
-                    visit_expr(e, sigs, taken);
+                    visit_expr(e, sigs, types, taken);
                 }
             }
-            ExprKind::ArrayFill { fill, .. } => visit_expr(fill, sigs, taken),
+            ExprKind::ArrayFill { fill, .. } => visit_expr(fill, sigs, types, taken),
             ExprKind::InterpStr { parts } => {
                 for p in parts {
                     if let crate::ast::InterpStrPart::Expr(e) = p {
-                        visit_expr(e, sigs, taken);
+                        visit_expr(e, sigs, types, taken);
                     }
                 }
             }
-            // Leaves: literals, paths (Type::variant — not a free-fn
-            // address), include_bytes/str compiler builtins.
+            // `Type::f` in VALUE position takes the address of an associated
+            // fn (`gen_path` emits its symbol). Recorded under the method's
+            // mangled name — the same key the `fastcc` gate and the fn-pointer
+            // BRIDGE emitter use. An enum variant path (`Maybe::None`) lands
+            // here too and is a leaf: `mangle(enum, variant)` is not a fn sig
+            // key, and a name is either a struct or an enum, never both.
+            ExprKind::Path { segments } => {
+                if let Some(m) = assoc_fn_path(segments, types) {
+                    taken.insert(m);
+                }
+            }
+            // Leaves: literals, include_bytes/str compiler builtins.
             ExprKind::IntLit(_, _)
             | ExprKind::FloatLit(_, _)
             | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
             | ExprKind::CStrLit(_)
-            | ExprKind::Path { .. }
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }
             | ExprKind::EnvVar { .. } => {}
             ExprKind::Intrinsic { args, .. } => {
                 for a in args {
-                    visit_expr(a, sigs, taken);
+                    visit_expr(a, sigs, types, taken);
                 }
             }
             ExprKind::Asm { operands, .. } => {
                 for op in operands {
-                    visit_expr(&op.value, sigs, taken);
+                    visit_expr(&op.value, sigs, types, taken);
                 }
             }
         }
     }
-    fn visit_block(b: &Block, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
+    fn visit_block(
+        b: &Block,
+        sigs: &HashMap<String, FnSig>,
+        types: &TypeTable,
+        taken: &mut HashSet<String>,
+    ) {
         for s in &b.stmts {
-            visit_stmt(s, sigs, taken);
+            visit_stmt(s, sigs, types, taken);
         }
         if let Some(t) = &b.tail {
-            visit_expr(t, sigs, taken);
+            visit_expr(t, sigs, types, taken);
         }
     }
-    fn visit_stmt(s: &Stmt, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
+    fn visit_stmt(
+        s: &Stmt,
+        sigs: &HashMap<String, FnSig>,
+        types: &TypeTable,
+        taken: &mut HashSet<String>,
+    ) {
         match &s.kind {
-            StmtKind::Let { init: Some(e), .. } => visit_expr(e, sigs, taken),
+            StmtKind::Let { init: Some(e), .. } => visit_expr(e, sigs, types, taken),
             StmtKind::Expr(e) | StmtKind::Assert(e) | StmtKind::Defer(e) => {
-                visit_expr(e, sigs, taken);
+                visit_expr(e, sigs, types, taken);
             }
-            StmtKind::Return(Some(e)) => visit_expr(e, sigs, taken),
+            StmtKind::Return(Some(e)) => visit_expr(e, sigs, types, taken),
             StmtKind::While { cond, body, .. } => {
-                visit_expr(cond, sigs, taken);
-                visit_block(body, sigs, taken);
+                visit_expr(cond, sigs, types, taken);
+                visit_block(body, sigs, types, taken);
             }
             StmtKind::For(forloop, _) => match forloop {
                 crate::ast::ForLoop::Range { iter, body, .. } => {
-                    visit_expr(iter, sigs, taken);
-                    visit_block(body, sigs, taken);
+                    visit_expr(iter, sigs, types, taken);
+                    visit_block(body, sigs, types, taken);
                 }
                 crate::ast::ForLoop::CStyle {
                     init,
@@ -5775,18 +6126,18 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
                     body,
                 } => {
                     if let Some(s) = init {
-                        visit_stmt(s, sigs, taken);
+                        visit_stmt(s, sigs, types, taken);
                     }
                     if let Some(c) = cond {
-                        visit_expr(c, sigs, taken);
+                        visit_expr(c, sigs, types, taken);
                     }
                     for u in update {
-                        visit_expr(u, sigs, taken);
+                        visit_expr(u, sigs, types, taken);
                     }
-                    visit_block(body, sigs, taken);
+                    visit_block(body, sigs, types, taken);
                 }
             },
-            StmtKind::Loop(body, _) => visit_block(body, sigs, taken),
+            StmtKind::Loop(body, _) => visit_block(body, sigs, types, taken),
             _ => {}
         }
     }
@@ -5794,12 +6145,12 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
     for item in &program.items {
         match &item.kind {
             ItemKind::Function(f) if f.generic_params.is_empty() => {
-                visit_block(&f.body, sigs, &mut taken);
+                visit_block(&f.body, sigs, types, &mut taken);
             }
             ItemKind::Impl(b) => {
                 for m in &b.methods {
                     if m.generic_params.is_empty() {
-                        visit_block(&m.body, sigs, &mut taken);
+                        visit_block(&m.body, sigs, types, &mut taken);
                     }
                 }
             }
@@ -5810,8 +6161,8 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
             // call through that slot would then use the C convention against
             // a fastcc definition. That is a miscompile, not a link error,
             // which is why this arm exists before the feature it serves.
-            ItemKind::Static(st) => visit_expr(&st.value, sigs, &mut taken),
-            ItemKind::Const(c) => visit_expr(&c.value, sigs, &mut taken),
+            ItemKind::Static(st) => visit_expr(&st.value, sigs, types, &mut taken),
+            ItemKind::Const(c) => visit_expr(&c.value, sigs, types, &mut taken),
             _ => {}
         }
     }
@@ -6054,9 +6405,22 @@ fn emit_statics(
     // `weak_odr`, not `linkonce_odr` — the archive must retain its public
     // surface even though nothing inside the archive references it.
     // Executable builds are unaffected: statics keep external linkage.
+    // COFF NEEDS THE EXECUTABLE TO PLAY ALONG TOO. On ELF and Mach-O the note
+    // above holds: the executable's strong definition simply wins over the
+    // archive's weak one and nothing is reported. COFF has no such rule — a
+    // strong definition beside the archive's comdat copy is a `duplicate
+    // symbol`, which is what `stdlib.src.text.INTERN_HEAD` did to every Windows
+    // test driver. So on Windows an executable emits the same `weak_odr` a
+    // library does, and `attach_coff_comdats` gives both copies a comdat to
+    // merge through.
+    let coff = crate::target::active_platform() == "windows";
     let static_linkage = |qname: &str| -> &'static str {
         if !is_lib {
-            ""
+            if coff && lib_public_name(true, qname) {
+                "weak_odr "
+            } else {
+                ""
+            }
         } else if lib_public_name(is_lib, qname) {
             "weak_odr "
         } else {
@@ -6614,7 +6978,7 @@ fn gen_function(
     // wrapping an LLVM coroutine handle; the user's declared return
     // type T lands in the coroutine promise for the executor to read.
     if f.is_async {
-        gen_async_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps);
+        gen_async_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps, is_lib);
         return;
     }
     // v0.0.4 Phase 4 Slice 4A: `gen fn` bodies are also coroutines, but
@@ -6623,7 +6987,7 @@ fn gen_function(
     // coroutine promise and suspends; the iterator's `next()` reads the
     // promise + resumes.
     if f.is_gen {
-        gen_gen_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps);
+        gen_gen_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps, is_lib);
         return;
     }
 
@@ -7258,6 +7622,7 @@ fn gen_async_method(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
     let sig = types.struct_defs[struct_id.0 as usize]
@@ -7286,7 +7651,28 @@ fn gen_async_method(
 
     // Function header: receiver + params, returns Future[T] (single-ptr
     // aggregate, fits in a register — no sret).
-    write!(out, "define {}{}{} @{}(", linkage, cc, future_llvm, mangled).unwrap();
+    // Body-less declaration → `declare`. See the note in `gen_async_function`:
+    // a synthesized empty coroutine shadows the archive's real one at link
+    // time and completes immediately with a garbage promise.
+    // A LIBRARY BUILD MAKES THE PUBLIC SURFACE LINKABLE, and the coroutine
+    // emitters missed the rule the ordinary ones apply — the same lockstep
+    // miss `gen_enum_method` records for 2026-08-16, one emitter family later.
+    // `internal` linkage on an archive's async fn means a consumer that
+    // declares it links against nothing, which is how `time::sleep` came to be
+    // resolved by an empty copy compiled from its own header rather than by the
+    // real one. `weak_odr` and not plain external for the reason spelled out in
+    // `gen_function`: a package ships its generic modules as source, so some
+    // definitions legitimately exist twice.
+    let linkage = if m.is_declaration {
+        ""
+    } else if lib_public_name(is_lib, &mangled) {
+        "weak_odr "
+    } else {
+        linkage
+    };
+    let cc = if linkage == "internal " { cc } else { "" };
+    let keyword = if m.is_declaration { "declare" } else { "define" };
+    write!(out, "{} {}{}{} @{}(", keyword, linkage, cc, future_llvm, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     let struct_ty = Ty::Struct(struct_id);
@@ -7326,6 +7712,12 @@ fn gen_async_method(
         first = false;
     }
     out.push(')');
+    // Declaration: the signature is the whole emission. The implementation is
+    // in the bundled archive — see the note in `gen_async_function`.
+    if m.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.fn_attrs.borrow());
     out.push_str(" presplitcoroutine {\nentry:\n");
 
@@ -7478,6 +7870,7 @@ fn gen_gen_method(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
     let sig = types.struct_defs[struct_id.0 as usize]
@@ -7507,7 +7900,26 @@ fn gen_gen_method(
     // Function header: same receiver + param structure as a regular
     // method, but the return is `Iterator[T]` (one-ptr aggregate that
     // fits in a register, so no sret).
-    write!(out, "define {}{}{} @{}(", linkage, cc, iter_llvm, mangled).unwrap();
+    // Body-less declaration → `declare`, as in `gen_async_method`.
+    // A LIBRARY BUILD MAKES THE PUBLIC SURFACE LINKABLE, and the coroutine
+    // emitters missed the rule the ordinary ones apply — the same lockstep
+    // miss `gen_enum_method` records for 2026-08-16, one emitter family later.
+    // `internal` linkage on an archive's async fn means a consumer that
+    // declares it links against nothing, which is how `time::sleep` came to be
+    // resolved by an empty copy compiled from its own header rather than by the
+    // real one. `weak_odr` and not plain external for the reason spelled out in
+    // `gen_function`: a package ships its generic modules as source, so some
+    // definitions legitimately exist twice.
+    let linkage = if m.is_declaration {
+        ""
+    } else if lib_public_name(is_lib, &mangled) {
+        "weak_odr "
+    } else {
+        linkage
+    };
+    let cc = if linkage == "internal " { cc } else { "" };
+    let keyword = if m.is_declaration { "declare" } else { "define" };
+    write!(out, "{} {}{}{} @{}(", keyword, linkage, cc, iter_llvm, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     let struct_ty = Ty::Struct(struct_id);
@@ -7547,6 +7959,12 @@ fn gen_gen_method(
         first = false;
     }
     out.push(')');
+    // Declaration: the signature is the whole emission. The implementation
+    // is in the bundled archive — see the note in `gen_async_function`.
+    if m.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.fn_attrs.borrow());
     out.push_str(" presplitcoroutine {\nentry:\n");
 
@@ -7620,6 +8038,7 @@ fn gen_gen_method(
         next_idx += 1;
     }
 
+    state.emit_gen_initial_suspend();
     let _body_value = state.gen_block_expr(&m.body);
 
     // gen-method body is Unit-typed (it `yield`s values rather than
@@ -7680,6 +8099,7 @@ fn gen_gen_function(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     let sig = sigs.get(&f.name.name).expect("sig was collected");
     let inner_ty = match &f.return_type {
@@ -7703,10 +8123,28 @@ fn gen_gen_function(
     };
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
+    // Body-less declaration → `declare`, for the reason spelled out in
+    // `gen_async_function`: a synthesized empty coroutine would shadow the
+    // archive's real one at link time and silently answer an exhausted
+    // iterator. Same hole, same fix; no `gen fn` has been caught by it yet
+    // because none is declared across a prebuilt boundary today.
+    // A LIBRARY BUILD MAKES THE PUBLIC SURFACE LINKABLE — see the note in
+    // `gen_async_method`. Without it an archive's async fn is `internal` and a
+    // consumer's declaration of it links against nothing.
+    let linkage = if f.is_declaration {
+        ""
+    } else if lib_public_name(is_lib, &f.name.name) {
+        "weak_odr "
+    } else {
+        linkage
+    };
+    let cc = if linkage == "internal " { cc } else { "" };
+    let keyword = if f.is_declaration { "declare" } else { "define" };
+
     write!(
         out,
-        "define {}{}{} @{}(",
-        linkage, cc, iter_llvm, f.name.name
+        "{} {}{}{} @{}(",
+        keyword, linkage, cc, iter_llvm, f.name.name
     )
     .unwrap();
     // Same ABI classification as every other def emitter — `ref` and non-Copy
@@ -7722,6 +8160,10 @@ fn gen_gen_function(
         out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(i as u32));
     }
     out.push(')');
+    if f.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.fn_attrs.borrow());
     out.push_str(" presplitcoroutine {\nentry:\n");
 
@@ -7776,6 +8218,7 @@ fn gen_gen_function(
         }
     }
 
+    state.emit_gen_initial_suspend();
     let _body_value = state.gen_block_expr(&f.body);
 
     // Gen fn body is Unit-typed. Fall-off and explicit `return;` both
@@ -7831,6 +8274,7 @@ fn gen_async_function(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     let sig = sigs.get(&f.name.name).expect("sig was collected");
     // codegen's `collect_sigs` wraps async fn sigs to Future[T] for
@@ -7857,14 +8301,46 @@ fn gen_async_function(
     };
     let future_llvm = llvm_ty(&future_ret_ty, types);
 
+    // A BODY-LESS DECLARATION EMITS `declare`, NOT A RAMP — the same rule the
+    // ordinary path applies a few hundred lines up, and it was missing here
+    // because `is_async` routes to this function BEFORE that guard runs.
+    //
+    // What it cost: a prebuilt package's `lib/include/<mod>.cplus` declares its
+    // async fns body-less (`async fn sleep(milliseconds: u64) ;`). Emitting a
+    // `define` for one synthesizes a coroutine whose body is empty — it mallocs
+    // a frame, calls the final-suspend epilogue, marks itself DONE and returns.
+    // The linker then has two `_pkg.src.mod.f` symbols and binds the call site
+    // to the consumer's empty one, so `await` on it completes IMMEDIATELY with
+    // a garbage promise and the archive's real implementation is never reached.
+    //
+    // Measured: `await time::sleep(3000)` returned in under a millisecond, and
+    // the process it ran in lived 0.3 seconds. It also silently disarmed all
+    // four of `stdlib/net`'s async I/O verbs for every consumer of prebuilt
+    // stdlib. See bugs/time-sleep-does-not-sleep.md.
+    //
+    // The declaration reuses the SAME lowered signature the definition emits —
+    // `Future[T]` return, identical param ABI — so the two cannot drift.
+    // A LIBRARY BUILD MAKES THE PUBLIC SURFACE LINKABLE — see the note in
+    // `gen_async_method`. Without it an archive's async fn is `internal` and a
+    // consumer's declaration of it links against nothing.
+    let linkage = if f.is_declaration {
+        ""
+    } else if lib_public_name(is_lib, &f.name.name) {
+        "weak_odr "
+    } else {
+        linkage
+    };
+    let cc = if linkage == "internal " { cc } else { "" };
+    let keyword = if f.is_declaration { "declare" } else { "define" };
+
     // Function signature. Async fns can't be C-exports (no extern
     // export), so we don't need the C-ABI coercion paths. They also
     // can't use the sret return path because the return value
     // (Future[T] = { *u8 }) is just one ptr — fits in a register.
     write!(
         out,
-        "define {}{}{} @{}(",
-        linkage, cc, future_llvm, f.name.name
+        "{} {}{}{} @{}(",
+        keyword, linkage, cc, future_llvm, f.name.name
     )
     .unwrap();
     // Same ABI classification as every other def emitter — `ref` and non-Copy
@@ -7880,6 +8356,12 @@ fn gen_async_function(
         out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(i as u32));
     }
     out.push(')');
+    // Declaration: the signature is the whole emission. The implementation
+    // is in the bundled archive — see the note above.
+    if f.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.fn_attrs.borrow());
     out.push_str(" presplitcoroutine {\nentry:\n");
 
@@ -8360,6 +8842,7 @@ fn gen_gen_enum_method(
         next_idx += 1;
     }
 
+    state.emit_gen_initial_suspend();
     let _ = state.gen_block_expr(&m.body);
     if !state.terminated {
         state.emit_terminator("br label %.coro.final_suspend");
@@ -8400,6 +8883,246 @@ fn gen_gen_enum_method(
     out.push_str("}\n\n");
 }
 
+/// The symbol a `Type::f` fn-pointer actually points at. See
+/// [`emit_fnptr_bridge`].
+fn fnptr_bridge_symbol(struct_name: &str, method_name: &str) -> String {
+    format!("{}.fnptr", mangle(struct_name, method_name))
+}
+
+/// Emit the C-ABI thunk that stands in for a receiverless associated fn
+/// whose ADDRESS IS TAKEN (`Type::f` in value position).
+///
+/// WHY A THUNK AND NOT THE METHOD ITSELF. Two conventions meet here and they
+/// are not the same one:
+///
+///   - A method is emitted with [`METHOD_ABI`] — Copy aggregates pass as raw
+///     LLVM aggregates — and, when it qualifies, `fastcc`.
+///   - Every call through a `fn(T)` pointer uses the platform C ABI:
+///     `gen_indirect_call` says so in as many words ("All callable signatures
+///     here are C-ABI"), because a fn-pointer may just as well hold a C
+///     function or an `export`ed one.
+///
+/// The two agree for aggregates of 16 bytes or less — AAPCS64 passes those in
+/// registers and `fastcc` happens to pick the same registers — and disagree
+/// above it, where the C ABI passes a POINTER to a copy and the raw-aggregate
+/// form does not. Handing the method's own symbol to a `fn(T)` slot therefore
+/// compiled, linked, called, and read every argument over 16 bytes from the
+/// wrong address, with no diagnostic. The same split exists on the return
+/// side: a Copy struct return coerces (≤16B) or goes through `sret` (>16B)
+/// for the C ABI, while a method returns the raw aggregate.
+///
+/// So the fn-pointer gets a thunk with the free-function ABI, and the method
+/// keeps its own. Nothing about the method or its direct call sites changes —
+/// which is why it stays `fastcc`-eligible: nothing points at IT.
+///
+/// This is the same shape sema already uses for the other address-taking
+/// syntax: `recv.method` becomes a synthesized bridge plus a context pointer
+/// (`BoundMethodRefInfo`).
+#[allow(clippy::too_many_arguments)]
+fn emit_fnptr_bridge(
+    out: &mut String,
+    struct_id: StructId,
+    m: &Method,
+    types: &TypeTable,
+    md: &ModuleMetadata,
+    is_lib: bool,
+) {
+    let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
+    let mangled = mangle(&struct_name, &m.name.name);
+    let Some(sig) = types.struct_defs[struct_id.0 as usize]
+        .methods
+        .get(&m.name.name)
+        .cloned()
+    else {
+        return;
+    };
+    // Only the shape `gen_path` routes through a bridge — kept in step with
+    // `assoc_fn_path` in `collect_address_taken_fns`, which is what decided to
+    // call this.
+    if sig.receiver.is_some() || sig.is_coroutine {
+        return;
+    }
+    let bridge = fnptr_bridge_symbol(&struct_name, &m.name.name);
+    let return_ty = sig.return_type.clone();
+
+    // The bridge's own ABI is a free function's: never `fastcc`, never a
+    // C export, Copy aggregates coerced. `AbiCtx { coerce_copy_aggregates:
+    // true }` is exactly what `gen_fn` builds for a non-fastcc fn, and what
+    // `gen_indirect_call` assumes on the other side of the pointer.
+    let c_cx = AbiCtx {
+        c_export: false,
+        coerce_copy_aggregates: true,
+    };
+    let bridge_abis: Vec<PassBy> = sig
+        .params
+        .iter()
+        .map(|ps| classify_param(ps, c_cx, types))
+        .collect();
+
+    // Return classification, mirroring `gen_fn`'s `want_c_abi_ret` for a
+    // non-export non-fastcc fn and `gen_indirect_call`'s call side.
+    let ret_is_copy_struct = matches!(return_ty, Ty::Struct(_)) && is_copy_ty(&return_ty, types);
+    let ret_abi = if ret_is_copy_struct {
+        classify_c_abi_return(&return_ty, types)
+    } else {
+        CAbiClass::Direct
+    };
+    let bridge_sret = if ret_is_copy_struct {
+        return_passes_by_sret(&return_ty) || matches!(ret_abi, CAbiClass::Indirect)
+    } else {
+        return_passes_by_sret_widened(&return_ty, types)
+    };
+    // What the METHOD itself does with its return (`gen_method`).
+    let method_sret = return_passes_by_sret_widened(&return_ty, types);
+    let coerce_ret: Option<(String, u64)> = match &ret_abi {
+        CAbiClass::Coerce {
+            llvm_ty, align, ..
+        } => Some((llvm_ty.clone(), *align)),
+        _ => None,
+    };
+    let ret_ty_str = if bridge_sret {
+        "void".to_string()
+    } else if let Some((t, _)) = &coerce_ret {
+        t.clone()
+    } else {
+        llvm_ty(&return_ty, types)
+    };
+
+    // Linkage: `linkonce_odr`, so a library and a consumer that recompiles the
+    // same verbatim generic module each emit one and the linker keeps one copy.
+    // Nothing declares this symbol in a generated header, so unlike a
+    // name-public method there is no archive copy that must be retained.
+    let _ = is_lib;
+    write!(
+        out,
+        "define linkonce_odr {} @{}(",
+        ret_ty_str, bridge
+    )
+    .unwrap();
+    let mut idx: u32 = 0;
+    let mut first = true;
+    if bridge_sret {
+        let (sz, al) = static_layout(&return_ty, types).expect("sret return type has layout");
+        let inner = llvm_ty(&return_ty, types);
+        out.push_str(&sret_fragment_for(&inner, sz, al, &format!("%{idx}")));
+        idx += 1;
+        first = false;
+    }
+    let first_param_idx = idx;
+    for abi in &bridge_abis {
+        if !first {
+            out.push_str(", ");
+        }
+        out.push_str(&abi.sig_fragment(idx));
+        idx += 1;
+        first = false;
+    }
+    out.push(')');
+    out.push_str(&md.fn_attrs.borrow());
+    out.push_str(" {\nentry:\n");
+
+    // Reconstitute each argument in the form the METHOD expects. The method's
+    // classification is `METHOD_ABI`, which only ever yields `Ptr` or `Value` —
+    // `param_passes_by_ptr` is consulted before the C-ABI arm in
+    // `classify_param` and does not depend on the context, so `Ptr` on one side
+    // is `Ptr` on the other. The work is entirely in the two C-ABI classes.
+    let mut tmp: u32 = 0;
+    let mut next_tmp = |out: &mut String| {
+        let _ = out;
+        tmp += 1;
+        format!("%b{}", tmp)
+    };
+    let mut call_args: Vec<String> = Vec::with_capacity(sig.params.len());
+    for (i, ps) in sig.params.iter().enumerate() {
+        let arg = format!("%{}", first_param_idx + i as u32);
+        let method_abi = classify_param(ps, METHOD_ABI, types);
+        match (&bridge_abis[i], &method_abi) {
+            (PassBy::Coerced { llvm_ty: clty, align }, PassBy::Value { llvm_ty: vty, .. }) => {
+                // The coerced class is at least as large as the struct; the
+                // alloca must satisfy both (`PassBy::Coerced`'s doc).
+                let (_, struct_al) = static_layout(&ps.ty, types).unwrap_or((0, *align));
+                let slot_al = (*align).max(struct_al);
+                let slot = next_tmp(out);
+                writeln!(out, "  {slot} = alloca {clty}, align {slot_al}").unwrap();
+                writeln!(out, "  store {clty} {arg}, ptr {slot}, align {slot_al}").unwrap();
+                let v = next_tmp(out);
+                writeln!(out, "  {v} = load {vty}, ptr {slot}, align {struct_al}").unwrap();
+                call_args.push(format!("{vty} {v}"));
+            }
+            (PassBy::Indirect { .. }, PassBy::Value { llvm_ty: vty, .. }) => {
+                // The C caller passed a pointer to its own copy; the method
+                // wants the aggregate.
+                let (_, al) = static_layout(&ps.ty, types).unwrap_or((0, 8));
+                let v = next_tmp(out);
+                writeln!(out, "  {v} = load {vty}, ptr {arg}, align {al}").unwrap();
+                call_args.push(format!("{vty} {v}"));
+            }
+            (_, method_abi) => {
+                // Identical on both sides: forward verbatim, using the
+                // METHOD's spelling of the type.
+                let ty = match method_abi {
+                    PassBy::Ptr { .. } => "ptr".to_string(),
+                    PassBy::Value { llvm_ty, .. } => llvm_ty.clone(),
+                    PassBy::Indirect { ty } => ty.clone(),
+                    PassBy::Coerced { llvm_ty, .. } => llvm_ty.clone(),
+                };
+                call_args.push(format!("{ty} {arg}"));
+            }
+        }
+    }
+
+    let cc = md.fastcc_prefix(&mangled);
+    let call_ret_ty = if method_sret {
+        "void".to_string()
+    } else {
+        llvm_ty(&return_ty, types)
+    };
+    // `sret` on both sides: hand the caller's slot straight through.
+    if method_sret {
+        debug_assert!(bridge_sret, "a method with sret cannot have a by-value bridge");
+        let (sz, al) = static_layout(&return_ty, types).expect("sret return type has layout");
+        let inner = llvm_ty(&return_ty, types);
+        let mut head = sret_fragment_for(&inner, sz, al, "%0");
+        for a in &call_args {
+            head.push_str(", ");
+            head.push_str(a);
+        }
+        writeln!(out, "  call {cc}void @{mangled}({head})").unwrap();
+        out.push_str("  ret void\n}\n\n");
+        return;
+    }
+    let arg_str = call_args.join(", ");
+    if matches!(return_ty, Ty::Unit) {
+        writeln!(out, "  call {cc}void @{mangled}({arg_str})").unwrap();
+        out.push_str("  ret void\n}\n\n");
+        return;
+    }
+    let r = next_tmp(out);
+    writeln!(out, "  {r} = call {cc}{call_ret_ty} @{mangled}({arg_str})").unwrap();
+    if bridge_sret {
+        // The method returns the aggregate by value; the C ABI wants it
+        // written into the caller's hidden slot.
+        let (_, al) = static_layout(&return_ty, types).expect("sret return type has layout");
+        writeln!(out, "  store {call_ret_ty} {r}, ptr %0, align {al}").unwrap();
+        out.push_str("  ret void\n}\n\n");
+        return;
+    }
+    if let Some((clty, align)) = &coerce_ret {
+        let (_, struct_al) = static_layout(&return_ty, types).unwrap_or((0, *align));
+        let slot_al = (*align).max(struct_al);
+        let slot = next_tmp(out);
+        writeln!(out, "  {slot} = alloca {clty}, align {slot_al}").unwrap();
+        writeln!(out, "  store {call_ret_ty} {r}, ptr {slot}, align {struct_al}").unwrap();
+        let c = next_tmp(out);
+        writeln!(out, "  {c} = load {clty}, ptr {slot}, align {slot_al}").unwrap();
+        writeln!(out, "  ret {clty} {c}").unwrap();
+        out.push_str("}\n\n");
+        return;
+    }
+    writeln!(out, "  ret {call_ret_ty} {r}").unwrap();
+    out.push_str("}\n\n");
+}
+
 fn gen_method(
     out: &mut String,
     struct_id: StructId,
@@ -8418,7 +9141,7 @@ fn gen_method(
     // + parameter shape.
     if m.is_gen {
         gen_gen_method(
-            out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps,
+            out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps, is_lib,
         );
         return;
     }
@@ -8427,7 +9150,7 @@ fn gen_method(
     // suspend/end) but with method-shaped receiver + params.
     if m.is_async {
         gen_async_method(
-            out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps,
+            out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps, is_lib,
         );
         return;
     }
@@ -8920,6 +9643,13 @@ fn gen_str_method(
         out.push('\n');
         return;
     }
+    // The module's attributes first, then the method's own `#[inline]` — the
+    // same order every other emitter uses. This one pushed only the inline
+    // attribute, so every `impl str` method came out without the frame-pointer
+    // attribute (and without the sanitizer ones), which
+    // `assert_every_define_carries_fn_attrs` catches now that the frame pointer
+    // put a non-empty string in `md.fn_attrs` on every debug build.
+    out.push_str(&md.fn_attrs.borrow());
     out.push_str(&fn_attrs);
     out.push_str(" {\n");
     out.push_str("entry:\n");
@@ -9400,6 +10130,20 @@ impl<'a> FnState<'a> {
     fn emit(&mut self, s: &str) {
         if self.terminated {
             return;
+        }
+        // The field-read memo holds values LOADED since the last instruction
+        // that could have written memory. Every earlier invalidation site
+        // (`gen_assign`, the call lowerers) cleared it BEFORE lowering the
+        // operands — and the operands are exactly where the next reads get
+        // cached, so a read of `this.n` made while lowering the right-hand
+        // side of `this.n = this.n + 1` survived the store and was handed to
+        // the next expression in the same block. The exposure was any read
+        // that is not at a statement boundary: an `if` in tail position, a
+        // block's tail value, an argument evaluated after a sibling call.
+        // The store (or call) instruction itself is the only correct place
+        // to draw the line, and this is where every one of them is emitted.
+        if !self.field_load_cache.is_empty() && ir_instr_may_write_memory(s) {
+            self.field_load_cache.clear();
         }
         self.body.push_str("  ");
         self.body.push_str(s);
@@ -11574,15 +12318,29 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{hdl} = extractvalue {iter_llvm} {iter_v}, 0"));
 
         self.push_scope();
+        // The slot is hoisted once; the NAME is bound per trip, inside the
+        // body's scope, so that scope owns what the slot holds (below).
         let var_slot = self.alloca_named(&var.name, elem_ty.clone());
-        self.bind(&var.name, var_slot.clone(), elem_ty.clone());
 
         let head = self.next_block_label();
+        let resume_lbl = self.next_block_label();
         let body_lbl = self.next_block_label();
         let exit = self.next_block_label();
 
         self.emit_terminator(&format!("br label %{head}"));
         self.open_block(&head);
+        // ONE RESUME PER ELEMENT. The generator starts suspended before its
+        // body (`emit_gen_initial_suspend`), so each trip resumes it to run
+        // up to the next `yield` and then reads what that yield left in the
+        // promise — or finds the body finished. The check BEFORE the resume
+        // is for an iterator someone already exhausted through `next()`:
+        // resuming a done coroutine is undefined in LLVM.
+        let done0 = self.next_tmp();
+        self.emit(&format!("{done0} = call i1 @llvm.coro.done(ptr {hdl})"));
+        self.emit_terminator(&format!("br i1 {done0}, label %{exit}, label %{resume_lbl}"));
+
+        self.open_block(&resume_lbl);
+        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
         let done = self.next_tmp();
         self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
         self.emit_terminator(&format!("br i1 {done}, label %{exit}, label %{body_lbl}"));
@@ -11603,12 +12361,21 @@ impl<'a> FnState<'a> {
             "{val} = load {elem_llvm}, ptr {prom_ptr}, align {elem_align}"
         ));
         self.gen_store(&elem_ty, &val, &var_slot);
-        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
 
         // `continue` should jump back to head; `break` to exit.
         self.loop_labels.push((head.clone(), exit.clone()));
         self.loop_scope_depth.push(self.scope_exits.len());
         self.push_scope();
+        // THE BINDING OWNS THE ELEMENT. `yield` disarmed the generator's
+        // drop of it (`gen_yield_expr`), so this is now its only owner: it
+        // drops at the end of every trip — `pop_scope` on the way to the
+        // back-edge, `emit_scope_exits_to` on `break`/`continue` — unless
+        // the body moved it out, in which case the Runtime drop flag the
+        // move scanner allotted is already off. A Copy element registers
+        // nothing. Sema's `owns_value: true` on this binding was a promise
+        // that neither end kept before (bug 2026-09-06).
+        self.bind(&var.name, var_slot.clone(), elem_ty.clone());
+        self.register_value_drop(&var.name, &var_slot, &elem_ty, true);
         for s in &body.stmts {
             if self.terminated {
                 break;
@@ -11632,7 +12399,10 @@ impl<'a> FnState<'a> {
 
         self.open_block(&exit);
         // Destroy the iterator's frame so the malloc'd coroutine state
-        // is freed once iteration completes.
+        // is freed once iteration completes. On an early exit the frame is
+        // suspended at the yield whose value this loop already took — the
+        // generator's own copy was disarmed by that yield — so the cancel
+        // edge drops only what the generator still owns.
         self.emit(&format!("call void @llvm.coro.destroy(ptr {hdl})"));
         self.pop_scope();
     }
@@ -14032,9 +14802,16 @@ impl<'a> FnState<'a> {
         let enum_name = &segments[0].name;
         let variant_name = &segments[1].name;
         // `Type::f` in value position: a receiverless associated fn is a
-        // namespaced fn, and its address is the symbol its own definition
-        // emitted. Methods are mangled `Struct.method`, which is what a
-        // direct call at any other site resolves to.
+        // namespaced fn, and its address is the C-ABI BRIDGE emitted beside
+        // it (`emit_fnptr_bridge`) — NOT the method symbol itself.
+        //
+        // The method symbol cannot be handed out: a method is emitted with
+        // `METHOD_ABI` (Copy aggregates raw) and usually `fastcc`, while every
+        // call through a `fn(T)` pointer uses the C ABI (`gen_indirect_call`:
+        // "All callable signatures here are C-ABI"). The two agree for
+        // aggregates of 16 bytes or less and disagree above it, which is
+        // exactly where a >16-byte struct argument used to be read from the
+        // wrong address, silently.
         if !self.types.enum_by_name.contains_key(enum_name) {
             if let Some(sid) = self.types.struct_by_name.get(enum_name).copied() {
                 if let Some(m) = self.types.struct_defs[sid.0 as usize]
@@ -14042,6 +14819,29 @@ impl<'a> FnState<'a> {
                     .get(variant_name)
                     .cloned()
                 {
+                    // A COROUTINE keeps the method symbol: `emit_fnptr_bridge`
+                    // does not mirror `gen_async_method` / `gen_gen_method`, so
+                    // `Type::f` on one behaves exactly as it did before the
+                    // bridge existed. `assoc_fn_path` in
+                    // `collect_address_taken_fns` makes the same exclusion —
+                    // the two must agree or the symbol referenced here has no
+                    // definition.
+                    if m.receiver.is_none() && m.is_coroutine {
+                        let params: Vec<Ty> = m.params.iter().map(|p| p.ty.clone()).collect();
+                        let param_takes: Vec<bool> =
+                            m.params.iter().map(|p| p.mode.is_take()).collect();
+                        let param_refs: Vec<bool> =
+                            m.params.iter().map(|p| p.mode.is_ref()).collect();
+                        return (
+                            format!("@{}", mangle(enum_name, variant_name)),
+                            Ty::FnPtr {
+                                params,
+                                param_takes,
+                                param_refs,
+                                return_type: Box::new(m.return_type.clone()),
+                            },
+                        );
+                    }
                     if m.receiver.is_none() {
                         let params: Vec<Ty> = m.params.iter().map(|p| p.ty.clone()).collect();
                         let param_takes: Vec<bool> =
@@ -14054,7 +14854,10 @@ impl<'a> FnState<'a> {
                             param_refs,
                             return_type: Box::new(m.return_type.clone()),
                         };
-                        return (format!("@{}", mangle(enum_name, variant_name)), ty);
+                        return (
+                            format!("@{}", fnptr_bridge_symbol(enum_name, variant_name)),
+                            ty,
+                        );
                     }
                 }
             }
@@ -14110,18 +14913,70 @@ impl<'a> FnState<'a> {
         self.gen_store(&Ty::I32, &tag.to_string(), &tag_ptr);
         // Store each payload value at its byte offset (shared layout with
         // match extraction + enum-variant drop).
-        let ptys: Vec<Ty> = args.iter().map(|(_, t)| t.clone()).collect();
+        //
+        // THE DECLARED TYPES, not the argument ones. This side used to take
+        // both the offsets and the store widths from whatever the argument
+        // expressions happened to produce, while match extraction and
+        // enum-variant drop take theirs from `variant_payloads` — so the two
+        // halves read different tables and only agreed by luck.
+        //
+        // They did not agree for `V::Int(10)` where the payload is declared
+        // `i64`: sema accepts the literal at i64, codegen generated it as an
+        // i32 and emitted `store i32 10` into a 64-bit slot. The high word kept
+        // whatever the alloca held, `get(V::Int(10)) != get(V::Int(10 as i64))`,
+        // and both printed 10 when truncated — a silently wrong value that
+        // type-checks. In `stdlib` the same defect surfaced as invalid IR that
+        // clang rejected ("defined with type 'i32' but expected 'i64'"), which
+        // is the same bug where the store happens to be checkable.
+        // bugs/int-literal-in-an-i64-slot-is-stored-as-i32.md
+        let declared: Vec<Ty> = self.types.enum_defs[id.0 as usize]
+            .variant_payloads
+            .get(tag as usize)
+            .cloned()
+            .unwrap_or_default();
+        let ptys: Vec<Ty> = if declared.len() == args.len() {
+            declared
+        } else {
+            args.iter().map(|(_, t)| t.clone()).collect()
+        };
         for (i, (val, ty)) in args.iter().enumerate() {
+            let want = ptys.get(i).cloned().unwrap_or_else(|| ty.clone());
             let slot_ptr = self.payload_slot_ptr(&llvm_enum, &slot, &ptys, i);
+            let (v, st) = self.widen_int_for_slot(val, ty, &want);
             // v0.0.7 Slice 1.2: payload store — primitive payload types
             // pick up their TBAA leaf via gen_store; aggregate payloads
             // (struct/enum/string/etc.) fall through untagged.
-            self.gen_store(ty, val, &slot_ptr);
+            self.gen_store(&st, &v, &slot_ptr);
         }
         // Load the aggregate value (whole enum — gen_load skips TBAA on aggregates).
         let v = self.next_tmp();
         self.gen_load(&v, &enum_ty, &slot);
         (v, enum_ty)
+    }
+
+    /// Widen an integer value to the type of the slot it is about to be stored
+    /// into, so the store covers the whole slot.
+    ///
+    /// Only int-to-wider-int, and only when the two differ: everything else is
+    /// left exactly as it was, because sema has already rejected the
+    /// mismatches that are not this one. A constant operand (`sext i32 10 to
+    /// i64`) folds, so the concise form costs nothing the cast form did not.
+    fn widen_int_for_slot(&mut self, val: &str, from: &Ty, to: &Ty) -> (String, Ty) {
+        if from == to {
+            return (val.to_string(), to.clone());
+        }
+        if !(from.is_int() && to.is_int()) {
+            return (val.to_string(), from.clone());
+        }
+        if ty_bit_width(from) >= ty_bit_width(to) {
+            return (val.to_string(), from.clone());
+        }
+        let r = self.next_tmp();
+        let ext = if from.is_signed_int() { "sext" } else { "zext" };
+        let flty = self.lty(from);
+        let tlty = self.lty(to);
+        self.emit(&format!("{r} = {ext} {flty} {val} to {tlty}"));
+        (r, to.clone())
     }
 
     /// Materialize a tagged-enum value as a pointer (for match destructuring).
@@ -15715,7 +16570,8 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{tid_slot} = call ptr @malloc(i64 8)"));
         let err = self.next_tmp();
         self.emit(&format!(
-            "{err} = call i32 @pthread_create(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})"
+            "{err} = call i32 @{sym}(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})",
+            sym = thread_create_sym()
         ));
         // pthread_create returns 0 on success. Trap on failure so the
         // user doesn't get a zero'd tid silently. v0.0.3 has no
@@ -15812,7 +16668,8 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{tid_slot} = call ptr @malloc(i64 8)"));
         let err = self.next_tmp();
         self.emit(&format!(
-            "{err} = call i32 @pthread_create(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})"
+            "{err} = call i32 @{sym}(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})",
+            sym = thread_create_sym()
         ));
         let ok = self.next_tmp();
         let trap_bb = self.next_block_label();
@@ -15844,12 +16701,56 @@ impl<'a> FnState<'a> {
     /// EXPR evaluates to a `Future[U]`; drive it to completion via a
     /// resume-loop, then extract the result from the coroutine promise.
     /// Requires `self.coro_promise.is_some()` (sema's E0901 enforces).
+    /// A generator's INITIAL suspend, emitted between the prologue and the
+    /// body: the ramp hands back the handle with the body not yet started,
+    /// and each `next()` (or `for` trip) resumes it to produce ONE element.
+    ///
+    /// Before this a `gen fn` ran eagerly to its first `yield` at the call,
+    /// and `next()` read the promise and then resumed to compute the
+    /// FOLLOWING element — so the generator always ran one element ahead of
+    /// its consumer, and a `break` stranded an element that had already been
+    /// produced (removed from its container, in the case of a drain) inside
+    /// the frame (bug 2026-09-06, yield-does-not-transfer-ownership §2).
+    /// Now nothing runs until it is asked for, and the element in the promise
+    /// is always the one the consumer has just taken.
+    ///
+    /// Same switch shape as `gen_yield_expr`: default → ramp-return, 0 → run
+    /// the body, 1 → destroyed before it ever ran (nothing live to drop, so
+    /// straight to the frame free).
+    fn emit_gen_initial_suspend(&mut self) {
+        let suspend_v = self.next_tmp();
+        let body_bb = self.next_block_label();
+        let ramp_bb = self.next_block_label();
+        self.emit(&format!(
+            "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
+        ));
+        self.emit_terminator(&format!(
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{body_bb} i8 1, label %.coro.cleanup]"
+        ));
+        self.body.push_str(&format!("{ramp_bb}:\n"));
+        self.body.push_str("  br label %.coro.end\n");
+        self.body.push_str(&format!("{body_bb}:\n"));
+        self.terminated = false;
+    }
+
     /// v0.0.4 Phase 4 Slice 4A: lower `yield EXPR` inside a `gen fn`
     /// body. Stash the value in the coroutine promise, then suspend
     /// (non-final). Resume falls through; ramp exits the gen fn.
     fn gen_yield_expr(&mut self, inner_expr: &Expr) -> Option<(String, Ty)> {
         // Evaluate the yielded value.
         let (val, vty) = self.gen_expr(inner_expr).expect("yield value has SSA");
+        // THE VALUE NOW BELONGS TO THE CONSUMER — the `for` binding, or the
+        // `Option` that `next()` builds — which owns it and drops it. Disarm
+        // the source binding's scope-exit drop, exactly as the variant
+        // constructor path does for `Result::Ok(local_vec)`. Without this the
+        // generator freed the buffer at its own scope exit and the consumer
+        // freed it again: a SIGTRAP the moment a yielded value was moved
+        // anywhere (bug 2026-09-06, yield-does-not-transfer-ownership §1).
+        if !is_copy_ty(&vty, self.types) {
+            if let ExprKind::Ident(name) = &inner_expr.kind {
+                self.mark_moved(name);
+            }
+        }
         let vty_llvm = self.lty(&vty);
         let (_size, align) = match static_layout(&vty, self.types) {
             Some((s, a)) => (s, a),
@@ -15998,9 +16899,24 @@ impl<'a> FnState<'a> {
         self.body.push_str(&format!(
             "  call void @stdlib_reactor_unregister_pending_v1(ptr {inner_hdl})\n"
         ));
-        self.body.push_str(&format!(
-            "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
-        ));
+        // THE AWAITED FRAME GOES THROUGH ITS OWNER'S DROP, not a destroy here,
+        // and the two drop calls below are what make that cover both shapes.
+        //
+        // The awaited future is either a NAMED LOCAL or a TEMPORARY, and those
+        // reach the drop machinery by different routes: locals through
+        // `scope_exits`, temporaries through `temp_scopes`. This edge used to
+        // `coro.destroy` the inner frame itself and then run only the local
+        // drops — correct while `Future` had no destructor, and a double
+        // destroy the moment it got one, because a future held in a local was
+        // then freed twice. `cancelling_through_an_awaited_LOCAL_destroys_once`
+        // is that case, and it SIGBUSes without this.
+        //
+        // Dropping the temporaries too is not merely symmetry: with the
+        // explicit destroy gone, they are the only thing that frees an
+        // `await mk()` frame on a cancel. Both are safe to run here because
+        // this edge terminates into `.coro.cleanup` — nothing downstream will
+        // drop them again.
+        self.emit_all_temp_scope_exits();
         self.emit_coro_cancel_drops();
         self.emit_terminator("br label %.coro.cleanup");
 
@@ -16026,11 +16942,24 @@ impl<'a> FnState<'a> {
         // v0.0.5 Slice 4A fix: when U is Unit, the promise has no
         // payload to load — emitting `load void, ...` is illegal LLVM.
         // Skip the load and produce the canonical unit value instead.
+        // THE FRAME IS NOT DESTROYED HERE, and that changed in v0.0.30.
+        //
+        // This used to `coro.destroy` the inner frame the moment it extracted
+        // the value, which was correct while `Future` had no destructor and
+        // wrong the instant it got one: the future VALUE this await consumed —
+        // a named local or the temporary of `await mk()`, both of which the
+        // drop machinery tracks — would then destroy the same frame a second
+        // time at scope exit. It segfaults on the first test that awaits
+        // anything.
+        //
+        // So destruction belongs to `Future::drop` alone, which is also what
+        // makes the leak this fixes go away: one owner, one destroy, whether
+        // the future was awaited, cancelled, or merely dropped. The frame
+        // sitting at its final suspend after the value is out is exactly what
+        // `drop` is documented to handle ("destroy at final suspend just
+        // frees").
         self.body.push_str(&format!("{extract_bb}:\n"));
         let result = if matches!(u_ty, Ty::Unit) {
-            self.body.push_str(&format!(
-                "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
-            ));
             self.body.push_str(&format!("  br label %{done_bb}\n"));
             self.body.push_str(&format!("{done_bb}:\n"));
             self.terminated = false;
@@ -16046,9 +16975,7 @@ impl<'a> FnState<'a> {
             ));
             r
         };
-        self.body.push_str(&format!(
-            "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
-        ));
+        // No destroy — see the note on `extract_bb` above.
         self.body.push_str(&format!("  br label %{done_bb}\n"));
 
         self.body.push_str(&format!("{done_bb}:\n"));
@@ -16074,19 +17001,35 @@ impl<'a> FnState<'a> {
         //
         //   loop:
         //     if done(future_hdl): goto extract
-        //     resume(future_hdl)
-        //     if done(future_hdl): goto extract
-        //     drain pending tasks (spawn_local'd, yield_now'd)
-        //     if waiter_count() > 0: poll_one_event (blocks on kevent)
+        //     drain pending tasks (spawn_local'd, yield_now'd, notified awaiters)
+        //     if waiter_count() > 0:   poll_one_event (blocks on kevent)
+        //     else if pending_count() == 0: resume(future_hdl)   -- last resort
         //     goto loop
         //
-        // Check done BEFORE resume — async fns run their body eagerly
-        // from the call site (no initial_suspend), so the handle may
-        // already be done before block_on ever sees it. Resuming a
-        // done handle is undefined behavior in LLVM coroutines.
+        // THE REACTOR RESUMES; THE DRIVER ONLY STEPS IN WHEN IT HAS NOTHING.
+        // Every suspend point arranges its own wake-up — an `await` registers
+        // an awaiter that `notify_completed` enqueues, a timer or fd park
+        // registers with the kernel, `yield_now` enqueues itself — so the
+        // outer frame is resumed by whoever satisfied it. Until 2026-09-06
+        // this loop ALSO resumed the outer frame unconditionally on every
+        // pass, and a timer or fd park does not re-check its condition on
+        // resume: a top-level `time::sleep(200).wait()` returned in 1 ms,
+        // with its timer still registered in the kqueue under a frame
+        // address that was then freed (bugs/a-destroyed-coroutine-frame-
+        // stays-registered-with-the-reactor). The `await` park survived it
+        // only because it loops back to a `coro.done` check.
+        //
+        // The fallback resume runs only when the reactor holds nothing that
+        // could resume the frame, which no suspend point above leaves
+        // behind — it is there so a shape this loop has not foreseen makes
+        // progress the way it always did rather than parking forever.
+        //
+        // Check done BEFORE anything else — async fns run their body eagerly
+        // from the call site (no initial_suspend), so the handle may already
+        // be done before block_on ever sees it. Resuming a done handle is
+        // undefined behavior in LLVM coroutines.
         let loop_bb = self.next_block_label();
         let extract_bb = self.next_block_label();
-        let resume_bb = self.next_block_label();
         let drive_bb = self.next_block_label();
         self.emit_terminator(&format!("br label %{loop_bb}"));
         self.body.push_str(&format!("{loop_bb}:\n"));
@@ -16094,45 +17037,75 @@ impl<'a> FnState<'a> {
         let pre_done = self.next_tmp();
         self.emit(&format!("{pre_done} = call i1 @llvm.coro.done(ptr {hdl})"));
         self.emit_terminator(&format!(
-            "br i1 {pre_done}, label %{extract_bb}, label %{resume_bb}"
+            "br i1 {pre_done}, label %{extract_bb}, label %{drive_bb}"
         ));
-        self.body.push_str(&format!("{resume_bb}:\n"));
-        self.terminated = false;
-        self.body
-            .push_str(&format!("  call void @llvm.coro.resume(ptr {hdl})\n"));
-        let post_done = self.next_tmp();
-        self.emit(&format!("{post_done} = call i1 @llvm.coro.done(ptr {hdl})"));
-        self.emit_terminator(&format!(
-            "br i1 {post_done}, label %{extract_bb}, label %{drive_bb}"
-        ));
-        // Drive: drain pending queue, then kevent_wait if there are
-        // waiters. Loop back to check done + maybe resume outer.
+        // Drive: drain the pending queue, then block on the kernel if anything
+        // is parked there, else resume the outer frame ourselves if nothing at
+        // all is registered. Loop back to check done.
         self.body.push_str(&format!("{drive_bb}:\n"));
         self.terminated = false;
+        let nw = self.next_tmp();
+        let has_waiters = self.next_tmp();
+        let np = self.next_tmp();
+        let has_pending = self.next_tmp();
+        let poll_val = self.next_tmp();
         self.body
             .push_str("  call i32 @stdlib_reactor_drain_pending_v1()\n");
         self.body
-            .push_str("  %.bo.nw = call i32 @stdlib_reactor_waiter_count_v1()\n");
+            .push_str(&format!("  {nw} = call i32 @stdlib_reactor_waiter_count_v1()\n"));
         self.body
-            .push_str("  %.bo.has_waiters = icmp sgt i32 %.bo.nw, 0\n");
+            .push_str(&format!("  {has_waiters} = icmp sgt i32 {nw}, 0\n"));
         let poll_bb = self.next_block_label();
-        let loop_skip = self.next_block_label();
+        let idle_bb = self.next_block_label();
+        let recheck_bb = self.next_block_label();
+        let resume_bb = self.next_block_label();
+        let still_parked = self.next_tmp();
         self.body.push_str(&format!(
-            "  br i1 %.bo.has_waiters, label %{poll_bb}, label %{loop_skip}\n"
+            "  br i1 {has_waiters}, label %{poll_bb}, label %{idle_bb}\n"
         ));
         self.body.push_str(&format!("{poll_bb}:\n"));
         self.body
-            .push_str("  %.bo.poll = call i32 @stdlib_reactor_poll_one_event_v1()\n");
-        self.body.push_str(&format!("  br label %{loop_skip}\n"));
-        self.body.push_str(&format!("{loop_skip}:\n"));
+            .push_str(&format!("  {poll_val} = call i32 @stdlib_reactor_poll_one_event_v1()\n"));
         self.body.push_str(&format!("  br label %{loop_bb}\n"));
-        // Extract path: read the outer's promise, destroy the frame. The
-        // frame may still sit in the reactor's pending queue (a notified
-        // awaiter this loop then resumed DIRECTLY — block_on always resumes
-        // the outermost each pass) — purge that entry, or the next executor
-        // on this thread reads freed memory (ASan, 2026-08-22).
+        self.body.push_str(&format!("{idle_bb}:\n"));
+        self.body
+            .push_str(&format!("  {np} = call i32 @stdlib_reactor_pending_count_v1()\n"));
+        self.body
+            .push_str(&format!("  {has_pending} = icmp sgt i32 {np}, 0\n"));
+        self.body.push_str(&format!(
+            "  br i1 {has_pending}, label %{loop_bb}, label %{recheck_bb}\n"
+        ));
+        // The drain above may have run THIS frame to completion (it was in
+        // the pending queue as a notified awaiter): a done frame's resume
+        // pointer is null, so the fallback must re-check before it resumes.
+        self.body.push_str(&format!("{recheck_bb}:\n"));
+        self.body.push_str(&format!(
+            "  {still_parked} = call i1 @llvm.coro.done(ptr {hdl})\n"
+        ));
+        self.body.push_str(&format!(
+            "  br i1 {still_parked}, label %{loop_bb}, label %{resume_bb}\n"
+        ));
+        self.body.push_str(&format!("{resume_bb}:\n"));
+        self.body
+            .push_str(&format!("  call void @llvm.coro.resume(ptr {hdl})\n"));
+        self.body.push_str(&format!("  br label %{loop_bb}\n"));
+        // Extract path: read the outer's promise. The frame may still sit in
+        // the reactor's pending queue (notified as an awaiter and then run to
+        // completion by the same drain, or by the fallback resume) — purge
+        // that entry, or the next executor on this thread reads freed memory
+        // (ASan, 2026-08-22).
         self.body.push_str(&format!("{extract_bb}:\n"));
         self.terminated = false;
+        // A unit future has no payload to read out — `load void` is not IR.
+        // Purge and answer unit, the same shape as the `await` lowering.
+        // Reached by `#[test] async fn t()` since v0.0.31 (its wrapper is
+        // `#block_on::[()](__async_t())`).
+        if matches!(t_ty, Ty::Unit) {
+            self.emit(&format!(
+                "call void @stdlib_reactor_unregister_pending_v1(ptr {hdl})"
+            ));
+            return None;
+        }
         let prom = self.next_tmp();
         self.emit(&format!(
             "{prom} = call ptr @llvm.coro.promise(ptr {hdl}, i32 {t_align}, i1 false)"
@@ -16144,7 +17117,10 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "call void @stdlib_reactor_unregister_pending_v1(ptr {hdl})"
         ));
-        self.emit(&format!("call void @llvm.coro.destroy(ptr {hdl})"));
+        // NO DESTROY HERE — `Future::drop` owns the frame, the same rule the
+        // await lowering follows. `block_on(mk())` binds its operand to a
+        // temporary the drop machinery tracks, so destroying it here would be
+        // the first of two.
         Some((result, t_ty))
     }
 
@@ -16172,12 +17148,20 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
+        // i8 1 = destroyed while parked: drop the locals live here, then free
+        // the frame — the same edge `gen_reactor_wait_write` and the timer
+        // park have. This one went straight to `.coro.cleanup` and leaked
+        // them. The reactor's own entry for this park is purged by
+        // `Future::drop` (`reactor::unregister_waiter`) before the destroy.
+        // The dead `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+        let cancel_bb = self.next_block_label();
         self.emit_terminator(&format!(
-            // i8 1 = destroy (coroutine cancelled mid-suspend) → run cleanup,
-            // never trap. Same fix as gen_yield_expr; see its note. The dead
-            // `{trap_bb}` block below is left unreferenced (valid, DCE'd).
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{cancel_bb}]"
         ));
+        self.body.push_str(&format!("{cancel_bb}:\n"));
+        self.terminated = false;
+        self.emit_coro_cancel_drops();
+        self.emit_terminator("br label %.coro.cleanup");
         // Ramp-return path: yield Pending up to the outer awaiter (or
         // block_on). Falls into the standard `.coro.end` block emitted
         // by gen_async_function's epilogue.
@@ -16252,10 +17236,13 @@ impl<'a> FnState<'a> {
         ));
         // i8 1 = destroy (coroutine cancelled mid-suspend) → per-park cancel
         // block (v0.0.29 phase 2): drop the locals live at this suspend, then
-        // free the frame. Same machinery as gen_yield_expr. The reactor entry
-        // that still names this frame (waiter / timer / pending) is the
-        // executor teardown's job to purge — see `reactor::teardown`. The
-        // dead `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+        // free the frame. Same machinery as gen_yield_expr. The kqueue timer
+        // that still names this frame is purged by `Future::drop`
+        // (`reactor::unregister_waiter`) before the destroy — leaving it to
+        // `reactor::teardown` meant every dropped-while-parked frame stayed
+        // registered under an address malloc would reuse
+        // (bugs/a-destroyed-coroutine-frame-stays-registered-with-the-reactor).
+        // The dead `{trap_bb}` block below is left unreferenced (valid, DCE'd).
         let cancel_bb = self.next_block_label();
         self.emit_terminator(&format!(
             "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{cancel_bb}]"
@@ -16293,8 +17280,21 @@ impl<'a> FnState<'a> {
     /// while that source stays armed. When the source later fires,
     /// `poll_one_event` resumes the now-completed coroutine (its resume
     /// pointer nulled at final suspend) and the program jumps through
-    /// null → SEGV. So we consume the future (keeping its frame alive —
-    /// `Future` has no destroying drop glue) without enqueuing.
+    /// null → SEGV. So we consume the future without enqueuing.
+    ///
+    /// CONSUMING MEANS NULLING THE SOURCE, and it did not used to. This said
+    /// "keeping its frame alive — `Future` has no destroying drop glue", which
+    /// was true until v0.0.30 gave it one so a merely-dropped future would stop
+    /// leaking. After that, `spawn_local`'s own `take f` local dropped at the
+    /// end of the wrapper and destroyed the frame the reactor was still
+    /// driving: the spawned task simply never ran, silently, and no test in the
+    /// tree called `spawn_local` to notice.
+    ///
+    /// So the handle is moved OUT of the value here — the transfer of ownership
+    /// the name always implied. The argument is the wrapper's own `take`
+    /// parameter, a place, so its slot is reachable; a non-place argument keeps
+    /// the old behaviour, which is the pre-v0.0.30 leak rather than a
+    /// use-after-free.
     fn gen_reactor_spawn_local(&mut self, args: &[Expr]) -> Option<(String, Ty)> {
         let (fut_val, fut_ty) = self.gen_expr(&args[0]).expect("spawn_local future arg");
         // Extract the handle to consume the moved-in Future; the task is
@@ -16303,6 +17303,22 @@ impl<'a> FnState<'a> {
         let fut_llvm = self.lty(&fut_ty);
         let hdl = self.next_tmp();
         self.emit(&format!("{hdl} = extractvalue {fut_llvm} {fut_val}, 0"));
+        // HAND THE FRAME TO THE REACTOR. Nothing awaits a spawned task, so no
+        // cancel cascade reaches it and the value it came in on is about to be
+        // nulled below — without this the frame would have no owner at all,
+        // which is the leak §2 of the cancellation report describes.
+        // `reactor::teardown` destroys whatever is still registered.
+        self.emit(&format!(
+            "call void @stdlib_reactor_register_spawned_v1(ptr {hdl})"
+        ));
+        if Self::is_place_expr(&args[0]) {
+            let (slot, _) = self.gen_place(&args[0]);
+            let fld = self.next_tmp();
+            self.emit(&format!(
+                "{fld} = getelementptr inbounds {fut_llvm}, ptr {slot}, i32 0, i32 0"
+            ));
+            self.emit(&format!("store ptr null, ptr {fld}"));
+        }
         None
     }
 
@@ -16358,7 +17374,8 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{ctx} = extractvalue {handle_llvm} {h_val}, 1"));
         let _err = self.next_tmp();
         self.emit(&format!(
-            "{_err} = call i32 @pthread_join(i64 {tid}, ptr null)"
+            "{_err} = call i32 @{sym}(i64 {tid}, ptr null)",
+            sym = thread_join_sym()
         ));
         // v0.0.4 Phase 2 Slice 2H: refcounted ctx. After pthread_join
         // returns, the worker has finished and atomically decremented
@@ -18489,18 +19506,29 @@ impl<'a> FnState<'a> {
         } else {
             panic!("`#[lang(\"iterator\")]` instantiation `{name}` is not mangled `Iterator__<U>`");
         };
-        // Reuse the future-name-decoder; the suffix grammar is identical.
-        let synthetic = format!("Future__{suffix}");
-        Some(ty_from_future_name(&synthetic, self.types))
+        // DECODE THE SUFFIX DIRECTLY. This used to wrap it back up as
+        // `Future__{suffix}` and hand that to `ty_from_future_name`, which
+        // splits on the LAST `Future__` — so an element type that is itself a
+        // future (`Vec[Future[T]]`, whose `iter()` instantiates
+        // `Iterator[Future[T]]`) had one level eaten: the element decoded as
+        // `T` instead of `Future[T]`, and `lookup_option_ty` then panicked
+        // hunting an `Option[T]` nothing had instantiated. The suffix is
+        // already the element's own mangled spelling; there is nothing to
+        // re-parse.
+        Some(ty_from_suffix(suffix, self.types))
     }
 
     /// v0.0.4 Phase 4 Slice 4B: emit IR for `it.next()`. Returns
     /// `Option[T]`. Algorithm:
     ///   1. Extract handle from the Iterator aggregate.
-    ///   2. If coro.done(hdl) → return Option::None.
-    ///   3. Else read T from the coroutine promise.
-    ///   4. coro.resume(hdl) to advance for the next call.
-    ///   5. Wrap T in Option::Some and return.
+    ///   2. If coro.done(hdl) → return Option::None (already exhausted).
+    ///   3. coro.resume(hdl): run the body to its next `yield`, or its end.
+    ///   4. If coro.done(hdl) → return Option::None.
+    ///   5. Else read T from the coroutine promise, wrap in Option::Some.
+    /// The resume comes BEFORE the read since bug 2026-09-06
+    /// (yield-does-not-transfer-ownership §2): the generator starts
+    /// suspended ahead of its body and produces one element per `next()`,
+    /// instead of running one element ahead of the consumer.
     fn gen_iter_next_intrinsic(&mut self, rv: &str, rt: &Ty, elem: &Ty) -> (String, Ty) {
         // The Iterator aggregate is `{ ptr }`. Extract the handle.
         let iter_llvm = self.lty(rt);
@@ -18523,11 +19551,20 @@ impl<'a> FnState<'a> {
         // Result slot for the Option[T] aggregate we'll return.
         let result_slot = self.alloca_anon(option_ty.clone());
 
-        let done = self.next_tmp();
-        self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
+        let done0 = self.next_tmp();
+        self.emit(&format!("{done0} = call i1 @llvm.coro.done(ptr {hdl})"));
+        let resume_bb = self.next_block_label();
         let none_bb = self.next_block_label();
         let some_bb = self.next_block_label();
         let join_bb = self.next_block_label();
+        self.emit_terminator(&format!("br i1 {done0}, label %{none_bb}, label %{resume_bb}"));
+
+        // Resume: the body runs to its next `yield` (promise written) or to
+        // its end (done).
+        self.open_block(&resume_bb);
+        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
+        let done = self.next_tmp();
+        self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
         self.emit_terminator(&format!("br i1 {done}, label %{none_bb}, label %{some_bb}"));
 
         // None arm.
@@ -18538,7 +19575,8 @@ impl<'a> FnState<'a> {
         ));
         self.emit_terminator(&format!("br label %{join_bb}"));
 
-        // Some arm: read promise, resume, build Some(v).
+        // Some arm: read the promise, build Some(v). The Option owns the
+        // value from here — the yield disarmed the generator's copy.
         self.open_block(&some_bb);
         let prom_ptr = self.next_tmp();
         self.emit(&format!(
@@ -18548,7 +19586,6 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{val} = load {elem_llvm}, ptr {prom_ptr}, align {elem_align}"
         ));
-        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
         let some_agg = self.build_option_some_aggregate(&option_ty, elem, &val);
         self.emit(&format!(
             "store {option_llvm} {some_agg}, ptr {result_slot}, align {option_align}"
@@ -20639,6 +21676,86 @@ mod tests {
     /// `let _ = expr;` is a discard binding: it parses, type-checks, and lowers
     /// (evaluating — and dropping — its initializer). Multiple `let _` in one
     /// scope must not collide (each gets a unique synthesized name).
+    /// v0.0.31: `async fn main` — the entry the compiler drives. Lower splits
+    /// it, so the IR must carry a synchronous `@main` whose body is the
+    /// `#block_on` loop (resume until done) over the coroutine `__async_main`,
+    /// and no coroutine ramp named `main`. Runs lower first, as the driver
+    /// does; `gen_src` alone would stop at E0309.
+    /// Lower → sema (with the monomorphization table, since `Future[T]` is a
+    /// generic the coroutine lowering must find instantiated) → mono → IR.
+    /// The driver's own sequence for an async program.
+    fn gen_lowered_mono(src: &str) -> String {
+        let toks = tokenize(src).expect("lex");
+        let mut prog = parse(toks).expect("parse");
+        let file_path = PathBuf::from("test.cplus");
+        let lower_diags = crate::lower::lower(&mut prog, &file_path, src);
+        assert!(lower_diags.is_empty(), "lower: {lower_diags:#?}");
+        let mut files: std::collections::BTreeMap<String, (PathBuf, String)> =
+            std::collections::BTreeMap::new();
+        files.insert(
+            "test.cplus".to_string(),
+            (file_path.clone(), src.to_string()),
+        );
+        let (diags, mono) = sema::check_multi_with_mono(&prog, file_path, src, files);
+        assert!(diags.is_empty(), "sema: {diags:#?}");
+        let name_of = |ty: &sema::Ty| -> String { ty.name().to_string() };
+        let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
+        generate_with_mono(&post, BuildMode::Debug, true, None, &[], false, &mono)
+    }
+
+    #[test]
+    fn async_main_lowers_to_a_sync_main_driving_the_coroutine() {
+        let ir = gen_lowered_mono(
+            "#[lang(\"future\")] struct Future[T] { opaque handle: *u8 }\n\
+             async fn main() -> i32 { return 42; }\n",
+        );
+        let main_start = ir.find("define i32 @main()").expect("a synchronous @main");
+        let main_body = &ir[main_start..];
+        let main_body = &main_body[..main_body.find("\n}").expect("main closes")];
+        assert!(
+            main_body.contains("@llvm.coro.resume(") && main_body.contains("@llvm.coro.done("),
+            "main should drive the coroutine:\n{main_body}"
+        );
+        assert!(
+            !main_body.contains("@llvm.coro.begin("),
+            "main itself is not a coroutine:\n{main_body}"
+        );
+        assert!(
+            main_body.contains("__async_main"),
+            "main should call the async body:\n{main_body}"
+        );
+        let body_start = ir.find("__async_main(").expect("the async body is defined");
+        let body = &ir[body_start..];
+        let body = &body[..body.find("\n}").expect("body closes")];
+        assert!(
+            body.contains("@llvm.coro.begin("),
+            "the async body is the coroutine ramp:\n{body}"
+        );
+    }
+
+    /// The unit-returning drive `#block_on::[()](f)` — what `#[test] async fn
+    /// t()` desugars to — must not `load void`: the extract path purges the
+    /// frame from the pending queue and produces nothing.
+    #[test]
+    fn unit_block_on_reads_no_promise() {
+        let ir = gen_lowered_mono(
+            "#[lang(\"future\")] struct Future[T] { opaque handle: *u8 }\n\
+             #[test] async fn t() { }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let t_start = ir
+            .find("define internal fastcc void @t()")
+            .or_else(|| ir.find(" @t()"))
+            .expect("the wrapper `t` is defined");
+        let t_body = &ir[t_start..];
+        let t_body = &t_body[..t_body.find("\n}").expect("t closes")];
+        assert!(!ir.contains("load void"), "a unit drive must not load void:\n{ir}");
+        assert!(
+            t_body.contains("@llvm.coro.resume(") && t_body.contains("unregister_pending"),
+            "the wrapper drives and purges:\n{t_body}"
+        );
+    }
+
     #[test]
     fn let_underscore_is_a_discard_binding() {
         let ir = gen_src(
@@ -21325,6 +22442,98 @@ fn main() -> i32 {\n\
     }
 
     #[test]
+    fn a_narrow_literal_widens_to_its_declared_enum_payload() {
+        // A SILENTLY WRONG VALUE THAT TYPE-CHECKS. Sema accepts a bare `10`
+        // against an `i64` payload; codegen generated it as an i32 and emitted
+        // `store i32 10` into the 64-bit slot, so the high word kept whatever
+        // the alloca held and `V::Int(10) != V::Int(10 as i64)`. Both printed
+        // 10 through a truncating read, which is what hid it.
+        //
+        // Nobody wrote the concise form — the house style casts — so the bug
+        // was only reachable by writing what the type checker already accepts.
+        // bugs/int-literal-in-an-i64-slot-is-stored-as-i32.md
+        let ir = gen_src(
+            "enum V { Int(i64) }\n\
+             fn make() -> V { return V::Int(10); }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let make = ir
+            .split("@make")
+            .nth(1)
+            .expect("make defined")
+            .split("\n}")
+            .next()
+            .expect("make body");
+        assert!(
+            !make.contains("store i32 10"),
+            "narrow store into a 64-bit payload slot:\n{make}"
+        );
+        assert!(
+            make.contains("store i64"),
+            "payload not stored at its declared width:\n{make}"
+        );
+    }
+
+    #[test]
+    fn an_unsigned_literal_fills_its_whole_slot_too() {
+        // The unsigned twin. Only a LITERAL can reach this: sema refuses an
+        // implicit `u32` into a `u64` payload (E0302), so the widening path
+        // exists for the value the type checker lets through and for nothing
+        // else — which is exactly the shape the signed bug had.
+        let ir = gen_src(
+            "enum W { Big(u64) }\n\
+             fn make() -> W { return W::Big(10); }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let make = ir
+            .split("@make")
+            .nth(1)
+            .expect("make defined")
+            .split("\n}")
+            .next()
+            .expect("make body");
+        assert!(
+            !make.contains("store i32 10"),
+            "narrow store into a 64-bit unsigned payload slot:\n{make}"
+        );
+        assert!(
+            make.contains("store i64"),
+            "unsigned payload not stored at its declared width:\n{make}"
+        );
+    }
+
+    #[test]
+    fn construction_and_destructuring_agree_on_payload_offsets() {
+        // The two halves used to read DIFFERENT tables: construction took its
+        // offsets from whatever the argument expressions produced, extraction
+        // from `variant_payloads`. With a mixed-width variant and a concise
+        // literal, those disagree — the write lands at one offset and the read
+        // looks at another. Both sides take the declared types now.
+        let ir = gen_src(
+            "enum P { Two(i64, i64) }\n\
+             fn make() -> P { return P::Two(1, 2); }\n\
+             fn second(p: P) -> i64 { return match p { P::Two(_a, b) => b }; }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let make = ir
+            .split("@make")
+            .nth(1)
+            .expect("make defined")
+            .split("\n}")
+            .next()
+            .expect("make body");
+        assert!(
+            !make.contains("store i32 1") && !make.contains("store i32 2"),
+            "mixed-width payload stored narrow:\n{make}"
+        );
+        // The second payload sits 8 bytes in, on BOTH sides.
+        assert!(
+            make.contains("i64 8"),
+            "second payload not written at its declared offset:\n{make}"
+        );
+    }
+
+    #[test]
     fn debug_arithmetic_uses_overflow_intrinsics() {
         let ir = gen_src_with(
             "fn main() -> i32 { return 1 + 2 * 3 - 4; }",
@@ -21600,6 +22809,73 @@ fn main() -> i32 {\n\
             geps >= 3,
             "expected at least 3 GEPs across the if's three basic blocks; got {geps}. IR:\n{ir}"
         );
+    }
+
+    // bug 2026-09-01 (a-field-write-through-ref-is-invisible-to-the-next-if-
+    // condition): the memo was cleared BEFORE an assignment or call was
+    // lowered, and the operands lowered after that clear were exactly the
+    // reads that got cached — so the read of `this.n` made for the right-hand
+    // side of `this.n = this.n + 1` outlived the store and fed the `if` that
+    // followed in tail position. The memo now clears at the store (or call)
+    // instruction itself, in `emit`.
+    #[test]
+    fn field_read_memo_does_not_survive_a_store_in_the_same_block() {
+        let ir = gen_src(
+            "struct S { n: i32 }\n\
+             impl S {\n\
+                 fn m(ref this) {\n\
+                     this.n = this.n +% 1;\n\
+                     if (this.n % (10 as i32)) == (0 as i32) { return; }\n\
+                 }\n\
+             }\n\
+             fn main() -> i32 { var s: S = S { n: 0 }; s.m(); return 0; }",
+        );
+        // The overflow check on `%` opens a fresh block before the `srem`,
+        // so read the whole function in emission order.
+        let body: String = blocks_of(&ir, "S.m")
+            .iter()
+            .map(|(_, b)| b.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let store_at = body
+            .find("store i32")
+            .expect("the increment stores the field");
+        let srem_at = body.find("srem i32").expect("the `%` in the condition");
+        assert!(store_at < srem_at, "store precedes the condition:\n{body}");
+        // The condition's operand must be a load emitted AFTER the store, not
+        // the SSA name loaded for the right-hand side before it.
+        let reloaded = body[store_at..srem_at].contains("load i32");
+        assert!(
+            reloaded,
+            "the condition reused the pre-store load of `this.n`:\n{body}"
+        );
+    }
+
+    #[test]
+    fn ir_instr_may_write_memory_classifies_opcodes() {
+        for w in [
+            "store i32 %t4, ptr %t1, !tbaa !1",
+            "call void @f(ptr %p)",
+            "%t9 = call i32 @g()",
+            "%t2 = tail call i32 @g()",
+            "invoke void @f() to label %a unwind label %b",
+            "%old = atomicrmw add ptr %p, i32 1 seq_cst",
+            "%r = cmpxchg ptr %p, i32 0, i32 1 seq_cst seq_cst",
+            "fence seq_cst",
+        ] {
+            assert!(ir_instr_may_write_memory(w), "{w}");
+        }
+        for r in [
+            "%t3 = load i32, ptr %t2, !tbaa !1",
+            "%t4 = add i32 %t3, 1",
+            "%t1 = getelementptr inbounds %S, ptr %0, i32 0, i32 0",
+            "%t5 = icmp eq i32 10, 0",
+            "%p = phi ptr [ %a, %bb1 ], [ %b, %bb2 ]",
+            "%c = bitcast ptr %p to ptr",
+            "; a comment",
+        ] {
+            assert!(!ir_instr_may_write_memory(r), "{r}");
+        }
     }
 
     #[test]

@@ -1,7 +1,8 @@
-// Phase 4 slice 4A.5 — `guard let ... else |Pat| { ... }` complement form.
+// Phase 4 slice 4A.5 — `guard let ... else Pat { ... }` complement form.
 //
-// The optional `|COMP|` binds the value when the success pattern doesn't
-// match, so the else block can inspect / wrap / rethrow it. This is the
+// The optional else-pattern binds the value when the success pattern doesn't
+// match, so the else block can inspect / wrap / rethrow it. Omit it and it is
+// `_`, which is the plain `else { ... }` form. This is the
 // motivating "wrap-and-rethrow" use case for fallible chains: the
 // caller's error type may differ from the callee's, and the complement
 // pattern lets you destructure the callee's error and build the wrapper
@@ -22,7 +23,7 @@ fn run(seed: i32) -> InnerResult {
 }
 
 fn translate(seed: i32) -> OuterResult {
-    guard let InnerResult::Ok(v) = run(seed) else |InnerResult::Err(code)| {
+    guard let InnerResult::Ok(v) = run(seed) else InnerResult::Err(code) {
         return OuterResult::Wrapped(code);
     };
     return OuterResult::Ok(v);

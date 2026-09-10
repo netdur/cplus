@@ -1,0 +1,737 @@
+// stdlib/url.cplus — take a URL apart. Views, not copies.
+//
+// WHY THIS IS IN STDLIB and not in whichever package needed it first: two of
+// them need it and neither is about URLs. `vendor/http` hands a URL straight to
+// NSURL / OkHttp and has never been able to look inside one; `vendor/applinks`
+// receives a URL from the operating system and its whole job is to answer
+// "which screen, and which record". A parser living inside either would be a
+// parser the other one writes again, slightly differently.
+//
+// ---- views, and what that costs the caller --------------------------------
+//
+// `parse` allocates nothing. Every field of `Url` is a `str` view into the
+// string that was parsed, so the source has to outlive the `Url` — which the
+// borrow checker enforces, and which means the source needs a NAMED owner:
+//
+//     let s: str = incoming.view();      // named, not a temporary
+//     match url::parse(s) { ... }
+//
+// Decoding is the one thing that must copy, and it is a separate call for
+// exactly that reason.
+//
+// ---- the deep-link trap, and it is the reason this comment is long --------
+//
+// `myapp://record/42` does not have "record" in its path. It is the HOST. That
+// is not a quirk of this parser, it is what the URL grammar says — `//` opens
+// an authority, and the first segment after it is the authority whatever the
+// scheme is. Every deep-link bug of this shape looks the same: the app matches
+// on `path` and the first path segment is `42`.
+//
+//     myapp://record/42       scheme myapp   host record   path /42
+//     myapp:///record/42      scheme myapp   host ""       path /record/42
+//     myapp:record/42         scheme myapp   host ""       path record/42
+//     https://ex.com/rec/42   scheme https   host ex.com   path /rec/42
+//
+// `segment(0)` is the routing verb an app actually wants, and it reads the
+// host when there is one and the first path segment when there is not — so the
+// three spellings above route identically. Use it in preference to `path`.
+//
+// ---- strictness ------------------------------------------------------------
+//
+// `parse` is strict about STRUCTURE and lenient about CONTENT. A missing or
+// malformed scheme is None, because a string that is not a URL must not parse
+// as one with an empty scheme — that is how a relative path becomes a link. A
+// port that is not a number is None too, because misreading it silently
+// corrupts the host next to it.
+//
+// Decoding is the other way round: `%zz` decodes to a literal `%zz` rather
+// than failing. This deliberately differs from `base64`, whose strictness is
+// there because two inputs decoding alike breaks a signature. Nothing here is
+// signed, and a link that refuses to open because a human typed a `%` into a
+// title field is a worse failure than a `%` that survives into the title.
+
+import "./option" as option;
+import "./text" as text;
+import "./str" as strx;
+import "./status" as status;
+
+// A parsed URL. Every field views the string `parse` was given.
+//
+// `scheme` and `host` are VERBATIM, not lowercased — lowercasing would mean
+// allocating, and both are case-insensitive by the grammar. Compare with
+// `is_scheme` / `equals_ignoring_case` rather than `==`.
+//
+// `port` is 0 when absent, which is also what it is for a URL that relies on
+// the scheme's default; this parser does not know the defaults and does not
+// invent them.
+//
+// `query` and `fragment` are RAW — no `?`, no `#`, and not decoded. Reach the
+// values through `query_value`.
+struct Url {
+    scheme: str,
+    host: str,
+    port: u16,
+    path: str,
+    query: str,
+    fragment: str,
+}
+
+#[no_alloc]
+fn _is_alpha(b: u8) -> bool {
+    return (b >= (65 as u8) && b <= (90 as u8)) || (b >= (97 as u8) && b <= (122 as u8));
+}
+
+#[no_alloc]
+fn _is_digit(b: u8) -> bool {
+    return b >= (48 as u8) && b <= (57 as u8);
+}
+
+// RFC 3986: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+#[no_alloc]
+fn _is_scheme_byte(b: u8) -> bool {
+    if _is_alpha(b) || _is_digit(b) { return true; }
+    return b == (43 as u8) || b == (45 as u8) || b == (46 as u8);
+}
+
+// The value of one hex digit, or -1.
+#[no_alloc]
+fn _hex_value(b: u8) -> i32 {
+    if _is_digit(b) { return { b as i32 } -% (48 as i32); }
+    if b >= (97 as u8) && b <= (102 as u8) { return ({ b as i32 } -% (97 as i32)) +% (10 as i32); }
+    if b >= (65 as u8) && b <= (70 as u8) { return ({ b as i32 } -% (65 as i32)) +% (10 as i32); }
+    return 0 -% 1;
+}
+
+#[no_alloc]
+fn _byte(s: str, i: usize) -> u8 {
+    return { *(#str_ptr(s) + i) };
+}
+
+// The offset of the first occurrence of `b` in `s` at or after `from`, or the
+// length when there is none. Length-not-Option because every caller here wants
+// "the rest of the string" as the miss.
+#[no_alloc]
+fn _index_of(s: str, b: u8, from: usize) -> usize {
+    let n: usize = #str_len(s);
+    var i: usize = from;
+    while i < n {
+        if _byte(s, i) == b { return i; }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+// Where the authority ends: the first `/`, `?` or `#`, or the length.
+#[no_alloc]
+fn _authority_end(s: str, from: usize) -> usize {
+    let n: usize = #str_len(s);
+    var i: usize = from;
+    while i < n {
+        let b: u8 = _byte(s, i);
+        if b == (47 as u8) || b == (63 as u8) || b == (35 as u8) { return i; }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+// Take a URL apart. None when it is not one — see the strictness note above.
+fn parse(s: str) -> option::Option[Url] {
+    let n: usize = #str_len(s);
+    if n == (0 as usize) { return option::Option[Url]::None; }
+
+    // ---- scheme, and it is required -------------------------------------
+    if !_is_alpha(_byte(s, 0 as usize)) { return option::Option[Url]::None; }
+    var i: usize = 1 as usize;
+    while i < n {
+        let b: u8 = _byte(s, i);
+        if b == (58 as u8) { break; }
+        if !_is_scheme_byte(b) { return option::Option[Url]::None; }
+        i = i +% (1 as usize);
+    }
+    // Ran off the end without a colon: not a URL.
+    if i >= n { return option::Option[Url]::None; }
+    let scheme: str = strx::sub_view(s, 0 as usize, i);
+    var rest: usize = i +% (1 as usize);
+
+    var host: str = "";
+    var port: u16 = 0 as u16;
+
+    // ---- authority, only when `//` opens one ----------------------------
+    if (rest +% (2 as usize)) <= n
+        && _byte(s, rest) == (47 as u8)
+        && _byte(s, rest +% (1 as usize)) == (47 as u8) {
+        let astart: usize = rest +% (2 as usize);
+        let aend: usize = _authority_end(s, astart);
+
+        // userinfo, dropped. It is a credential in a URL — this parser will
+        // not hand one back as if it were an ordinary field, and no caller
+        // in this repo wants it.
+        var hstart: usize = astart;
+        var j: usize = astart;
+        while j < aend {
+            if _byte(s, j) == (64 as u8) { hstart = j +% (1 as usize); }
+            j = j +% (1 as usize);
+        }
+
+        var hend: usize = aend;
+        if hstart < aend && _byte(s, hstart) == (91 as u8) {
+            // An IPv6 literal. The brackets are grammar, not address, so the
+            // host comes back as `::1` and a caller comparing it to something
+            // it read out of a config file matches.
+            let close: usize = _index_of(s, 93 as u8, hstart);
+            if close >= aend { return option::Option[Url]::None; }
+            host = strx::sub_view(s, hstart +% (1 as usize), close);
+            // A port may follow the bracket.
+            if (close +% (1 as usize)) < aend {
+                if _byte(s, close +% (1 as usize)) != (58 as u8) {
+                    return option::Option[Url]::None;
+                }
+                hend = close +% (1 as usize);
+            } else {
+                hend = aend;
+            }
+        } else {
+            // The LAST colon, so that a malformed host containing one does not
+            // silently take the tail as a port.
+            var colon: usize = aend;
+            var k: usize = hstart;
+            while k < aend {
+                if _byte(s, k) == (58 as u8) { colon = k; }
+                k = k +% (1 as usize);
+            }
+            hend = colon;
+            host = strx::sub_view(s, hstart, colon);
+        }
+
+        // ---- port -------------------------------------------------------
+        if hend < aend && _byte(s, hend) == (58 as u8) {
+            var v: i64 = 0 as i64;
+            var d: usize = hend +% (1 as usize);
+            if d >= aend { return option::Option[Url]::None; }
+            while d < aend {
+                let b: u8 = _byte(s, d);
+                if !_is_digit(b) { return option::Option[Url]::None; }
+                v = (v *% (10 as i64)) +% ({ b as i64 } -% (48 as i64));
+                if v > (65535 as i64) { return option::Option[Url]::None; }
+                d = d +% (1 as usize);
+            }
+            port = v as u16;
+        }
+        rest = aend;
+    }
+
+    // ---- path, query, fragment ------------------------------------------
+    let hash: usize = _index_of(s, 35 as u8, rest);
+    var qmark: usize = _index_of(s, 63 as u8, rest);
+    if qmark > hash { qmark = hash; }
+
+    let path: str = strx::sub_view(s, rest, qmark);
+    var query: str = "";
+    if qmark < hash { query = strx::sub_view(s, qmark +% (1 as usize), hash); }
+    var fragment: str = "";
+    if hash < n { fragment = strx::sub_view(s, hash +% (1 as usize), n); }
+
+    return option::Option[Url]::Some(Url {
+        scheme: scheme,
+        host: host,
+        port: port,
+        path: path,
+        query: query,
+        fragment: fragment,
+    });
+}
+
+// ---- decoding ---------------------------------------------------------------
+
+// Append the decoded bytes of `s` to `out`. `plus_is_space` is the one real
+// difference between a path and a query: `+` means a space in
+// application/x-www-form-urlencoded, which is what a query string is in
+// practice, and means a literal `+` everywhere else. Getting this backwards
+// turns `a+b` in a path into `a b`, which is why it is a parameter and not a
+// guess.
+fn _decode_into(ref out: text::Text, s: str, plus_is_space: bool) {
+    let n: usize = #str_len(s);
+    var i: usize = 0 as usize;
+    var run: usize = 0 as usize;
+    while i < n {
+        let b: u8 = _byte(s, i);
+        var special: bool = false;
+        var decoded: u8 = 0 as u8;
+        if b == (37 as u8) && (i +% (2 as usize)) < n {
+            let hi: i32 = _hex_value(_byte(s, i +% (1 as usize)));
+            let lo: i32 = _hex_value(_byte(s, i +% (2 as usize)));
+            if hi >= (0 as i32) && lo >= (0 as i32) {
+                special = true;
+                decoded = ((hi *% (16 as i32)) +% lo) as u8;
+            }
+        }
+        if !special && plus_is_space && b == (43 as u8) {
+            special = true;
+            decoded = 32 as u8;
+        }
+        if !special {
+            run = run +% (1 as usize);
+            i = i +% (1 as usize);
+        } else {
+            // Flush the literal run in ONE append rather than a byte at a
+            // time: an escape-free string costs a single copy, which is the
+            // common case by a wide margin.
+            if run > (0 as usize) {
+                let _a: status::Status = out.append(strx::sub_view(s, i -% run, i));
+                run = 0 as usize;
+            }
+            var one: u8 = decoded;
+            let _b: status::Status = out.append({ #str_from_raw_parts(#addr_of(one), 1 as usize) });
+            if b == (37 as u8) { i = i +% (3 as usize); } else { i = i +% (1 as usize); }
+        }
+    }
+    if run > (0 as usize) {
+        let _c: status::Status = out.append(strx::sub_view(s, n -% run, n));
+    }
+    return;
+}
+
+// Percent-decode. `+` is a literal `+` — this is the PATH rule. A `%` that is
+// not followed by two hex digits stays a `%`.
+fn decode(s: str) -> text::Text {
+    var out: text::Text = text::with_capacity(#str_len(s));
+    _decode_into(out, s, false);
+    return out;
+}
+
+// Percent-decode with `+` meaning a space — the QUERY rule, and what
+// `query_value` uses.
+fn decode_form(s: str) -> text::Text {
+    var out: text::Text = text::with_capacity(#str_len(s));
+    _decode_into(out, s, true);
+    return out;
+}
+
+// Does the encoded key `raw` mean `key`? Decoded on the fly and compared byte
+// by byte, so a percent-encoded key still matches and nothing is allocated to
+// find that out.
+#[no_alloc]
+fn _key_matches(raw: str, key: str) -> bool {
+    let rn: usize = #str_len(raw);
+    let kn: usize = #str_len(key);
+    var i: usize = 0 as usize;
+    var j: usize = 0 as usize;
+    while i < rn {
+        var b: u8 = _byte(raw, i);
+        var step: usize = 1 as usize;
+        if b == (37 as u8) && (i +% (2 as usize)) < rn {
+            let hi: i32 = _hex_value(_byte(raw, i +% (1 as usize)));
+            let lo: i32 = _hex_value(_byte(raw, i +% (2 as usize)));
+            if hi >= (0 as i32) && lo >= (0 as i32) {
+                b = ((hi *% (16 as i32)) +% lo) as u8;
+                step = 3 as usize;
+            }
+        } else {
+            if b == (43 as u8) { b = 32 as u8; }
+        }
+        if j >= kn { return false; }
+        if b != _byte(key, j) { return false; }
+        j = j +% (1 as usize);
+        i = i +% step;
+    }
+    return j == kn;
+}
+
+impl Url {
+    // True when the scheme is `name`, ignoring case — which the grammar says
+    // is the only correct way to test one.
+    #[no_alloc]
+    fn is_scheme(this, name: str) -> bool {
+        return this.scheme.equals_ignoring_case(name);
+    }
+
+    // http or https: the two schemes a UNIVERSAL LINK can arrive under. The
+    // question an applinks consumer asks to tell a web link from its own
+    // private scheme.
+    #[no_alloc]
+    fn is_web(this) -> bool {
+        return this.is_scheme("http") || this.is_scheme("https");
+    }
+
+    // Segment `index` of the route, or `""` past the end.
+    //
+    // THE HOST IS SEGMENT ZERO, and that is the whole point of this function —
+    // see the deep-link trap at the top of the file. `myapp://record/42`,
+    // `myapp:///record/42` and `myapp:record/42` all answer "record" then
+    // "42", so an app routes on one shape instead of three.
+    //
+    // Empty segments are skipped, so a trailing or doubled `/` changes
+    // nothing. The value is a RAW view — `decode` it if it might be escaped.
+    //
+    // `""` past the end rather than an Option, deliberately: routing reads as
+    // `if u.segment(0 as usize) == "record"`, and an Option there would put a
+    // match around every comparison for a case that already means "no".
+    //
+    // NO `segments() -> Vec[str]` to go with this, and that is the borrow
+    // checker's call rather than a preference: a return-borrow reaches a field
+    // projection, not a container built out of one, so a Vec of views into
+    // `this` cannot outlive the method (E0514). Walking is also cheaper, and
+    // `u.path.split("/")` is there for anyone who genuinely wants the vector.
+    #[no_alloc]
+    fn segment(this, index: usize) -> str {
+        var want: usize = index;
+        if #str_len(this.host) > (0 as usize) {
+            if want == (0 as usize) { return this.host; }
+            want = want -% (1 as usize);
+        }
+        let n: usize = #str_len(this.path);
+        var start: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        var seen: usize = 0 as usize;
+        while i < n {
+            if _byte(this.path, i) == (47 as u8) {
+                if i > start {
+                    if seen == want { return strx::sub_view(this.path, start, i); }
+                    seen = seen +% (1 as usize);
+                }
+                start = i +% (1 as usize);
+            }
+            i = i +% (1 as usize);
+        }
+        if n > start && seen == want { return strx::sub_view(this.path, start, n); }
+        return "";
+    }
+
+    // How many segments `segment` will answer, host included.
+    #[no_alloc]
+    fn segment_count(this) -> usize {
+        var count: usize = 0 as usize;
+        if #str_len(this.host) > (0 as usize) { count = 1 as usize; }
+        let n: usize = #str_len(this.path);
+        var start: usize = 0 as usize;
+        var i: usize = 0 as usize;
+        while i < n {
+            if _byte(this.path, i) == (47 as u8) {
+                if i > start { count = count +% (1 as usize); }
+                start = i +% (1 as usize);
+            }
+            i = i +% (1 as usize);
+        }
+        if n > start { count = count +% (1 as usize); }
+        return count;
+    }
+
+    // The decoded value of query parameter `key`, or None when it is absent.
+    //
+    // A key with no `=` answers Some("") — `?debug` is a flag that is present,
+    // and reporting it as absent would make the two indistinguishable. Use
+    // `has_query` when only presence matters.
+    //
+    // The FIRST occurrence wins. A repeated key is a real thing in a query
+    // string and it has no agreed meaning; taking the first is the behaviour
+    // that does not depend on the order a producer emitted them in.
+    fn query_value(this, key: str) -> option::Option[text::Text] {
+        let n: usize = #str_len(this.query);
+        var start: usize = 0 as usize;
+        while start <= n {
+            var end: usize = _index_of(this.query, 38 as u8, start);
+            if end > n { end = n; }
+            if end > start {
+                let pair: str = strx::sub_view(this.query, start, end);
+                let eq: usize = _index_of(pair, 61 as u8, 0 as usize);
+                let raw_key: str = strx::sub_view(pair, 0 as usize, eq);
+                if _key_matches(raw_key, key) {
+                    let pn: usize = #str_len(pair);
+                    if eq >= pn { return option::Option[text::Text]::Some(text::new()); }
+                    return option::Option[text::Text]::Some(
+                        decode_form(strx::sub_view(pair, eq +% (1 as usize), pn)));
+                }
+            }
+            if end >= n { break; }
+            start = end +% (1 as usize);
+        }
+        return option::Option[text::Text]::None;
+    }
+
+    // Is `key` present at all, with or without a value?
+    fn has_query(this, key: str) -> bool {
+        return match this.query_value(key) {
+            option::Option[text::Text]::Some(_) => true,
+            option::Option::None => false,
+        };
+    }
+}
+
+// ---- tests -------------------------------------------------------------------
+
+#[test]
+fn a_web_url_comes_apart_into_its_five_pieces() {
+    let s: str = "https://example.com:8443/a/b?x=1&y=2#frag";
+    match parse(s) {
+        option::Option[Url]::Some(u) => {
+            assert u.scheme == "https";
+            assert u.host == "example.com";
+            assert u.port == (8443 as u16);
+            assert u.path == "/a/b";
+            assert u.query == "x=1&y=2";
+            assert u.fragment == "frag";
+        }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn the_first_segment_of_a_custom_scheme_is_the_host_not_the_path() {
+    // THE DEEP-LINK TRAP, pinned. An app that matched on `path` here would be
+    // routing on "/42" and would never find its own screen.
+    let s: str = "myapp://record/42";
+    match parse(s) {
+        option::Option[Url]::Some(u) => {
+            assert u.host == "record";
+            assert u.path == "/42";
+            // And `segment` is what makes that not matter.
+            assert u.segment(0 as usize) == "record";
+            assert u.segment(1 as usize) == "42";
+            assert u.segment_count() == (2 as usize);
+        }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn the_three_spellings_of_a_deep_link_route_identically() {
+    // The whole reason `segment` exists rather than the caller reading `path`.
+    let a: str = "myapp://record/42";
+    let b: str = "myapp:///record/42";
+    let c: str = "myapp:record/42";
+    match parse(a) {
+        option::Option[Url]::Some(u) => {
+            assert u.segment(0 as usize) == "record";
+            assert u.segment(1 as usize) == "42";
+        }
+        option::Option::None => { assert false; }
+    };
+    match parse(b) {
+        option::Option[Url]::Some(u) => {
+            assert u.host == "";
+            assert u.segment(0 as usize) == "record";
+            assert u.segment(1 as usize) == "42";
+        }
+        option::Option::None => { assert false; }
+    };
+    match parse(c) {
+        option::Option[Url]::Some(u) => {
+            assert u.host == "";
+            assert u.path == "record/42";
+            assert u.segment(0 as usize) == "record";
+            assert u.segment(1 as usize) == "42";
+        }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn a_missing_piece_is_empty_and_not_a_failure() {
+    let s: str = "myapp://host";
+    match parse(s) {
+        option::Option[Url]::Some(u) => {
+            assert u.host == "host";
+            assert u.port == (0 as u16);
+            assert u.path == "";
+            assert u.query == "";
+            assert u.fragment == "";
+            assert u.segment_count() == (1 as usize);
+            assert u.segment(1 as usize) == "";
+        }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn empty_segments_are_skipped_so_slashes_do_not_change_a_route() {
+    let s: str = "myapp://a//b/";
+    match parse(s) {
+        option::Option[Url]::Some(u) => {
+            assert u.segment_count() == (2 as usize);
+            assert u.segment(0 as usize) == "a";
+            assert u.segment(1 as usize) == "b";
+        }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn a_string_that_is_not_a_url_does_not_parse_as_one() {
+    // Each of these would be a routing bug if it came back with an empty
+    // scheme instead of None.
+    match parse("") { option::Option[Url]::Some(_) => { assert false; } option::Option::None => { } };
+    match parse("/record/42") { option::Option[Url]::Some(_) => { assert false; } option::Option::None => { } };
+    match parse("record/42") { option::Option[Url]::Some(_) => { assert false; } option::Option::None => { } };
+    match parse("42:record") { option::Option[Url]::Some(_) => { assert false; } option::Option::None => { } };
+    match parse("my app://x") { option::Option[Url]::Some(_) => { assert false; } option::Option::None => { } };
+    match parse("https") { option::Option[Url]::Some(_) => { assert false; } option::Option::None => { } };
+}
+
+#[test]
+fn a_scheme_may_carry_the_three_punctuation_bytes_the_grammar_allows() {
+    let s: str = "x-y.z+1://h/p";
+    match parse(s) {
+        option::Option[Url]::Some(u) => { assert u.scheme == "x-y.z+1"; assert u.host == "h"; }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn a_port_that_is_not_a_number_is_refused_rather_than_folded_into_the_host() {
+    // Silently answering host "h:zz" would be worse than refusing: the caller
+    // would compare it to "h" and quietly not match.
+    match parse("s://h:zz/p") { option::Option[Url]::Some(_) => { assert false; } option::Option::None => { } };
+    match parse("s://h:/p") { option::Option[Url]::Some(_) => { assert false; } option::Option::None => { } };
+    match parse("s://h:99999/p") { option::Option[Url]::Some(_) => { assert false; } option::Option::None => { } };
+    match parse("s://h:65535/p") {
+        option::Option[Url]::Some(u) => { assert u.port == (65535 as u16); }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn userinfo_is_dropped_rather_than_handed_back() {
+    let s: str = "https://user:pw@example.com/p";
+    match parse(s) {
+        option::Option[Url]::Some(u) => { assert u.host == "example.com"; assert u.path == "/p"; }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn an_ipv6_host_loses_its_brackets_and_keeps_its_port() {
+    let s: str = "http://[::1]:8080/p";
+    match parse(s) {
+        option::Option[Url]::Some(u) => {
+            assert u.host == "::1";
+            assert u.port == (8080 as u16);
+            assert u.path == "/p";
+        }
+        option::Option::None => { assert false; }
+    };
+    let bare: str = "http://[::1]/p";
+    match parse(bare) {
+        option::Option[Url]::Some(u) => { assert u.host == "::1"; assert u.port == (0 as u16); }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn a_query_stops_at_the_fragment_and_a_fragment_may_contain_a_question_mark() {
+    let s: str = "s://h/p#a?b";
+    match parse(s) {
+        option::Option[Url]::Some(u) => {
+            assert u.path == "/p";
+            assert u.query == "";
+            assert u.fragment == "a?b";
+        }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn scheme_comparison_ignores_case_because_the_grammar_says_it_must() {
+    let s: str = "HTTPS://Example.COM/p";
+    match parse(s) {
+        option::Option[Url]::Some(u) => {
+            // Verbatim in the field...
+            assert u.scheme == "HTTPS";
+            // ...and case-insensitive through the verb.
+            assert u.is_scheme("https");
+            assert u.is_web();
+        }
+        option::Option::None => { assert false; }
+    };
+    let mine: str = "myapp://x";
+    match parse(mine) {
+        option::Option[Url]::Some(u) => { assert !u.is_web(); assert u.is_scheme("MyApp"); }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn query_values_come_back_decoded() {
+    let s: str = "s://h/p?name=a%20b&plus=a+b&empty=&flag";
+    match parse(s) {
+        option::Option[Url]::Some(u) => {
+            match u.query_value("name") {
+                option::Option[text::Text]::Some(v) => { assert v.view() == "a b"; }
+                option::Option::None => { assert false; }
+            };
+            // `+` IS a space in a query string, and only there.
+            match u.query_value("plus") {
+                option::Option[text::Text]::Some(v) => { assert v.view() == "a b"; }
+                option::Option::None => { assert false; }
+            };
+            // Present with no value, and present with no `=`, are both Some("")
+            // — a flag that is there is not a flag that is absent.
+            match u.query_value("empty") {
+                option::Option[text::Text]::Some(v) => { assert v.view() == ""; }
+                option::Option::None => { assert false; }
+            };
+            match u.query_value("flag") {
+                option::Option[text::Text]::Some(v) => { assert v.view() == ""; }
+                option::Option::None => { assert false; }
+            };
+            assert u.has_query("flag");
+            assert !u.has_query("absent");
+            match u.query_value("absent") {
+                option::Option[text::Text]::Some(_) => { assert false; }
+                option::Option::None => { }
+            };
+        }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn a_percent_encoded_key_still_matches_and_the_first_of_a_repeat_wins() {
+    let s: str = "s://h/p?a%2Db=1&k=first&k=second";
+    match parse(s) {
+        option::Option[Url]::Some(u) => {
+            // The key decodes to "a-b" and matching it allocates nothing.
+            match u.query_value("a-b") {
+                option::Option[text::Text]::Some(v) => { assert v.view() == "1"; }
+                option::Option::None => { assert false; }
+            };
+            match u.query_value("k") {
+                option::Option[text::Text]::Some(v) => { assert v.view() == "first"; }
+                option::Option::None => { assert false; }
+            };
+        }
+        option::Option::None => { assert false; }
+    };
+}
+
+#[test]
+fn decode_is_the_path_rule_and_decode_form_is_the_query_rule() {
+    // The one difference, and getting it backwards turns a filename with a `+`
+    // in it into a filename with a space in it.
+    assert decode("a+b").view() == "a+b";
+    assert decode_form("a+b").view() == "a b";
+    assert decode("a%2Fb").view() == "a/b";
+    assert decode_form("a%2Fb").view() == "a/b";
+    assert decode("").view() == "";
+    assert decode("plain").view() == "plain";
+}
+
+#[test]
+fn a_malformed_escape_survives_rather_than_failing_the_whole_link() {
+    // Deliberately UNLIKE base64, whose strictness protects a signature. A
+    // link that will not open because somebody typed a `%` into a title is a
+    // worse outcome than a `%` that reaches the title.
+    assert decode("100%").view() == "100%";
+    assert decode("100%z").view() == "100%z";
+    assert decode("a%zzb").view() == "a%zzb";
+    assert decode("a%2").view() == "a%2";
+    // A well-formed escape next to a malformed one still decodes.
+    assert decode("%41%zz%42").view() == "A%zzB";
+}
+
+#[test]
+fn decoding_handles_the_two_hex_cases_and_the_high_bytes() {
+    assert decode("%41%61").view() == "Aa";
+    assert decode("%4a%4A").view() == "JJ";
+    // UTF-8 passes through as bytes — this is a byte decoder, not a validator.
+    assert decode("%C3%A9").view() == "é";
+}

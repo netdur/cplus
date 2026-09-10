@@ -4674,18 +4674,48 @@ fn ctor_name(sel: &str) -> String {
     }
 }
 
-/// camelCase / PascalCase -> snake_case.
+/// camelCase / PascalCase -> snake_case, keeping ACRONYMS whole.
+///
+/// The naive rule — an underscore before every capital — turns `URL` into
+/// `u_r_l`, `GPU` into `g_p_u` and `DOMHTMLElement` into
+/// `as_d_o_m_h_t_m_l_element`. A run of capitals is ONE word, so the break
+/// belongs at the END of the run, not inside it:
+///
+/// ```text
+/// compileModelAtURL                   -> compile_model_at_url
+/// allowLowPrecisionAccumulationOnGPU  -> allow_low_precision_accumulation_on_gpu
+/// URLSession                          -> url_session      (run ends, new word)
+/// setZIndex                           -> set_z_index      (one-letter run)
+/// openURLs                            -> open_urls        (plural, not a word)
+/// ```
+///
+/// The last line is why this is not two conditions. A trailing lowercase `s`
+/// closing an acronym is a PLURAL SUFFIX, not the start of the next word, so
+/// `openURLs` must not split into `open_ur_ls`.
 fn snake(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
     let mut out = String::new();
-    for (i, ch) in s.chars().enumerate() {
-        if ch.is_ascii_uppercase() {
-            if i != 0 {
-                out.push('_');
-            }
-            out.push(ch.to_ascii_lowercase());
-        } else {
+    for i in 0..chars.len() {
+        let ch = chars[i];
+        if !ch.is_ascii_uppercase() {
             out.push(ch);
+            continue;
         }
+        // A capital after a lowercase or a digit always starts a word.
+        let after_word = i > 0 && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit());
+        // A capital inside a run of capitals starts a word only when the run is
+        // ending — i.e. the NEXT char is lowercase — and that lowercase is not
+        // a plural `s` belonging to the acronym itself.
+        let in_run = i > 0 && chars[i - 1].is_ascii_uppercase();
+        let next_lower = i + 1 < chars.len() && chars[i + 1].is_ascii_lowercase();
+        let plural_s = next_lower
+            && chars[i + 1] == 's'
+            && (i + 2 == chars.len() || chars[i + 2].is_ascii_uppercase());
+        let run_ending = in_run && next_lower && !plural_s;
+        if i != 0 && (after_word || run_ending) {
+            out.push('_');
+        }
+        out.push(ch.to_ascii_lowercase());
     }
     out
 }
@@ -5492,7 +5522,12 @@ mod tests {
         assert!(out.contains("fn use_buffer(this, buffer: Buffer)"), "typed arg:\n{out}");
         assert!(out.contains("buffer.raw()"), "arg unwrapped via .raw():\n{out}");
         // Foreign type (no local def) stays raw.
-        assert!(out.contains("fn source_u_r_l(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
+        // `source_url`, not `source_u_r_l`: `snake` keeps ACRONYMS WHOLE and has
+        // since it was documented (`compileModelAtURL -> compile_model_at_url`).
+        // This expectation was written against the naive rule and outlived it —
+        // the only red check in the tree, and invisible to
+        // `cargo test -p cplus-core`, which is the suite CLAUDE.md names.
+        assert!(out.contains("fn source_url(this) -> option::Option[*u8]"), "foreign stays raw:\n{out}");
         // Pointer-to-pointer out-param stays raw.
         assert!(out.contains("error: *u8"), "NSError** out-param stays raw:\n{out}");
     }

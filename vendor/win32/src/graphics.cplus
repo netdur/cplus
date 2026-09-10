@@ -101,6 +101,73 @@ impl Painter {
 // `Color::rgb` packs r/g/b into a COLORREF (0x00BBGGRR); this is plain
 // arithmetic with no Win32 dependency, so it runs on any host.
 
+// ---- alpha compositing ------------------------------------------------------------
+//
+// `AlphaBlend` IS in the generated `wingdi`, and it is uncallable from outside
+// it: the SDK spells the struct `typedef struct _BLENDFUNCTION {...}
+// BLENDFUNCTION`, `cpc-bindgen` names the record after the C TAG, and a leading
+// underscore is what C+ reads as module-private. So the generated entry point
+// takes a type no other module can name.
+//
+// 65 generated records across winuser/wingdi/commctrl have a `_`-prefixed tag,
+// and every public fn that takes one by value is unreachable the same way. The
+// durable fix is in the generator — see
+// `bugs/cpc-bindgen-underscore-tags-are-module-private.md` — and this is the
+// curated binding that unblocks the one this package needed, in the module
+// CLAUDE.md names for exactly that.
+//
+// LAID OUT BY HAND, and it is four bytes: op, flags, constant alpha, format.
+#[repr(C)] struct BlendFunction {
+    op: u8,
+    flags: u8,
+    source_constant_alpha: u8,
+    alpha_format: u8,
+}
+
+// AC_SRC_OVER is the only blend op GDI has; AC_SRC_ALPHA says the source
+// carries PER-PIXEL alpha, and that the colour channels are already multiplied
+// by it. A source that is not premultiplied blends as a bright halo around the
+// shape — the classic tell, and impossible to explain from the call site.
+fn ac_src_over() -> u8 { return 0 as u8; }
+fn ac_src_alpha() -> u8 { return 1 as u8; }
+
+fn blend_over(constant_alpha: u8, per_pixel: bool) -> BlendFunction {
+    return BlendFunction {
+        op: ac_src_over(),
+        flags: 0 as u8,
+        source_constant_alpha: constant_alpha,
+        alpha_format: if per_pixel { ac_src_alpha() } else { 0 as u8 },
+    };
+}
+
+#[link_name = "AlphaBlend"]
+extern fn __alpha_blend(dst: *u8, dx: i32, dy: i32, dw: i32, dh: i32,
+                        src: *u8, sx: i32, sy: i32, sw: i32, sh: i32,
+                        blend: BlendFunction) -> i32;
+
+fn alpha_blend(dst: *u8, dx: i32, dy: i32, dw: i32, dh: i32,
+               src: *u8, sx: i32, sy: i32, sw: i32, sh: i32,
+               blend: BlendFunction) -> i32 {
+    return { __alpha_blend(dst, dx, dy, dw, dh, src, sx, sy, sw, sh, blend) };
+}
+
+#[test]
+fn a_blend_function_is_four_bytes_in_the_sdks_order() {
+    // op, flags, constant alpha, format — and the SDK reads them at those
+    // offsets, so a different layout blends with whatever the next field
+    // happens to be. `#[repr(C)]` is what holds it.
+    let b: BlendFunction = blend_over(255 as u8, true);
+    assert b.op == (0 as u8);
+    assert b.flags == (0 as u8);
+    assert b.source_constant_alpha == (255 as u8);
+    assert b.alpha_format == (1 as u8);
+    // A blit with no per-pixel alpha says so with a ZERO format, not with a
+    // different op — there is only one op.
+    let flat: BlendFunction = blend_over(128 as u8, false);
+    assert flat.op == (0 as u8);
+    assert flat.alpha_format == (0 as u8);
+}
+
 #[test]
 fn test_color_rgb_packs_bbggrr() {
     // 0x11 red, 0x22 green, 0x33 blue -> 0x00332211.
@@ -131,3 +198,5 @@ fn test_color_rgb_white() {
     let c: Color = Color::rgb(0xFF as u8, 0xFF as u8, 0xFF as u8);
     assert c.raw() == (0x00FFFFFF as u32);
 }
+
+

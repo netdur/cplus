@@ -1,0 +1,919 @@
+// facet_win32 drawing — the canvas replay.
+//
+// facet's `canvas` carries a `Drawable`, and a Drawable RECORDS: handed a
+// `Canvas` and a rect, it appends drawing commands. The command list is
+// facet's; this module reads it and executes it against GDI+, once, in order,
+// on the canvas window's WM_PAINT. One replay loop stands in for the forty
+// callbacks a per-primitive API would need.
+//
+// WHY GDI+ AND NOT GDI. GDI has no gradient, no path fill mode, no world
+// transform, no antialiasing. GDI+ has all four through the same flat C API
+// `imaging` already starts up. So the canvas — the one surface where an
+// application draws freely — is the one place this package leans on GDI+ for
+// more than a bitmap.
+//
+// STATE. GDI+ carries the world transform and the clip, and `GdipSaveGraphics`
+// / `GdipRestoreGraphics` save both. What it has no single place for — the
+// stroke and fill colours, the pen's width and joins, the font, the fill brush,
+// the opacity — rides in a `DrawState` this module pushes and pops alongside,
+// the same split every backend makes.
+
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/canvas" as canvas;
+import "stdlib/text" as text;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./paint" as paint;
+import "./imaging" as imaging;
+
+// ---- GDI+ flat API -----------------------------------------------------------
+
+#[repr(C)] struct GpRectF { x: f32, y: f32, w: f32, h: f32 }
+
+extern fn GdipCreateFromHDC(hdc: *u8, graphics: *usize) -> i32;
+extern fn GdipDeleteGraphics(graphics: usize) -> i32;
+extern fn GdipSetSmoothingMode(graphics: usize, mode: i32) -> i32;
+extern fn GdipSetTextRenderingHint(graphics: usize, hint: i32) -> i32;
+extern fn GdipSaveGraphics(graphics: usize, state: *u32) -> i32;
+extern fn GdipRestoreGraphics(graphics: usize, state: u32) -> i32;
+extern fn GdipResetWorldTransform(graphics: usize) -> i32;
+extern fn GdipTranslateWorldTransform(graphics: usize, dx: f32, dy: f32, order: i32) -> i32;
+extern fn GdipScaleWorldTransform(graphics: usize, sx: f32, sy: f32, order: i32) -> i32;
+extern fn GdipRotateWorldTransform(graphics: usize, angle: f32, order: i32) -> i32;
+extern fn GdipCreateMatrix2(a: f32, b: f32, c: f32, d: f32, tx: f32, ty: f32, matrix: *usize) -> i32;
+extern fn GdipMultiplyWorldTransform(graphics: usize, matrix: usize, order: i32) -> i32;
+extern fn GdipDeleteMatrix(matrix: usize) -> i32;
+extern fn GdipSetClipRectI(graphics: usize, x: i32, y: i32, w: i32, h: i32, mode: i32) -> i32;
+extern fn GdipSetClipPath(graphics: usize, path: usize, mode: i32) -> i32;
+
+extern fn GdipCreatePen1(argb: u32, width: f32, unit: i32, pen: *usize) -> i32;
+extern fn GdipDeletePen(pen: usize) -> i32;
+extern fn GdipSetPenStartCap(pen: usize, cap: i32) -> i32;
+extern fn GdipSetPenEndCap(pen: usize, cap: i32) -> i32;
+extern fn GdipSetPenLineJoin(pen: usize, join: i32) -> i32;
+extern fn GdipSetPenMiterLimit(pen: usize, limit: f32) -> i32;
+
+extern fn GdipCreateSolidFill(argb: u32, brush: *usize) -> i32;
+extern fn GdipDeleteBrush(brush: usize) -> i32;
+extern fn GdipCreateLineBrushFromRectWithAngle(rect: *GpRectF, c1: u32, c2: u32,
+    angle: f32, scalable: i32, wrap: i32, brush: *usize) -> i32;
+
+extern fn GdipDrawLine(graphics: usize, pen: usize, x1: f32, y1: f32, x2: f32, y2: f32) -> i32;
+extern fn GdipDrawRectangle(graphics: usize, pen: usize, x: f32, y: f32, w: f32, h: f32) -> i32;
+extern fn GdipFillRectangle(graphics: usize, brush: usize, x: f32, y: f32, w: f32, h: f32) -> i32;
+extern fn GdipDrawEllipse(graphics: usize, pen: usize, x: f32, y: f32, w: f32, h: f32) -> i32;
+extern fn GdipFillEllipse(graphics: usize, brush: usize, x: f32, y: f32, w: f32, h: f32) -> i32;
+extern fn GdipDrawArc(graphics: usize, pen: usize, x: f32, y: f32, w: f32, h: f32, start: f32, sweep: f32) -> i32;
+extern fn GdipFillPie(graphics: usize, brush: usize, x: f32, y: f32, w: f32, h: f32, start: f32, sweep: f32) -> i32;
+extern fn GdipDrawPath(graphics: usize, pen: usize, path: usize) -> i32;
+extern fn GdipFillPath(graphics: usize, brush: usize, path: usize) -> i32;
+
+extern fn GdipCreatePath(fill_mode: i32, path: *usize) -> i32;
+extern fn GdipDeletePath(path: usize) -> i32;
+extern fn GdipSetPathFillMode(path: usize, mode: i32) -> i32;
+extern fn GdipStartPathFigure(path: usize) -> i32;
+extern fn GdipClosePathFigure(path: usize) -> i32;
+extern fn GdipAddPathLine(path: usize, x1: f32, y1: f32, x2: f32, y2: f32) -> i32;
+extern fn GdipAddPathBezier(path: usize, x1: f32, y1: f32, x2: f32, y2: f32,
+    x3: f32, y3: f32, x4: f32, y4: f32) -> i32;
+extern fn GdipAddPathArc(path: usize, x: f32, y: f32, w: f32, h: f32, start: f32, sweep: f32) -> i32;
+
+extern fn GdipCreateFontFamilyFromName(name: *u16, collection: usize, family: *usize) -> i32;
+extern fn GdipDeleteFontFamily(family: usize) -> i32;
+extern fn GdipCreateFont(family: usize, em_size: f32, style: i32, unit: i32, font: *usize) -> i32;
+extern fn GdipDeleteFont(font: usize) -> i32;
+extern fn GdipCreateStringFormat(flags: i32, language: u16, format: *usize) -> i32;
+extern fn GdipDeleteStringFormat(format: usize) -> i32;
+extern fn GdipSetStringFormatAlign(format: usize, align: i32) -> i32;
+extern fn GdipSetStringFormatLineAlign(format: usize, align: i32) -> i32;
+extern fn GdipDrawString(graphics: usize, str: *u16, length: i32, font: usize,
+    layout: *GpRectF, format: usize, brush: usize) -> i32;
+
+fn ok() -> i32 { return 0 as i32; }
+fn r32(x: f64) -> f32 { return x as f32; }
+
+// ---- colour ------------------------------------------------------------------
+
+fn chan(f: f64) -> u32 {
+    if f <= (0.0 as f64) { return 0 as u32; }
+    if f >= (1.0 as f64) { return 255 as u32; }
+    return (f * (255.0 as f64) + (0.5 as f64)) as u32;
+}
+
+// ARGB (0xAARRGGBB) from a facet colour, with the state opacity folded into the
+// alpha. Resolved through `paint`, so a token or an appearance-adaptive colour
+// answers the same live value it would on any control.
+fn argb(c: vocab::Color, opacity: f64) -> u32 {
+    let live: vocab::Color = paint::resolved(c);
+    let a: u32 = chan(live.a * opacity);
+    let r: u32 = chan(live.r);
+    let g: u32 = chan(live.g);
+    let b: u32 = chan(live.b);
+    return (a << (24 as u32)) | (r << (16 as u32)) | (g << (8 as u32)) | b;
+}
+
+// ---- state -------------------------------------------------------------------
+
+struct DrawState {
+    stroke: vocab::Color,
+    fill: vocab::Color,
+    text_color: vocab::Color,
+    stroke_width: f64,
+    miter: f64,
+    cap: vocab::LineCap,
+    join: vocab::LineJoin,
+    font_family: i64,          // index into the canvas text table, -1 = system
+    font_size: f64,
+    font_weight: vocab::FontWeight,
+    is_italic: bool,
+    has_brush: bool,
+    brush: vocab::Brush,
+    brush_rect: vocab::Rect,
+    opacity: f64,
+}
+
+fn initial_state() -> DrawState {
+    return DrawState {
+        stroke: vocab::Color::text(),
+        fill: vocab::Color::text(),
+        text_color: vocab::Color::text(),
+        stroke_width: 1.0f64,
+        miter: 10.0f64,
+        cap: vocab::LineCap::Flat,
+        join: vocab::LineJoin::Miter,
+        font_family: (0 as i64) -% (1 as i64),
+        font_size: 0.0f64,
+        font_weight: vocab::FontWeight::Default,
+        is_italic: false,
+        has_brush: false,
+        brush: vocab::Brush::none(),
+        brush_rect: vocab::Rect::zero(),
+        opacity: 1.0f64,
+    };
+}
+
+const MAX_DEPTH: usize = 32;
+
+// ---- pens and brushes, built per op from the state ---------------------------
+
+fn make_pen(st: *DrawState) -> usize {
+    var pen: usize = 0 as usize;
+    var w: f64 = { (*st).stroke_width };
+    if w <= (0.0 as f64) { w = 1.0 as f64; }
+    if { GdipCreatePen1(argb({ (*st).stroke }, { (*st).opacity }), r32(w), 2 as i32,
+                        #addr_of(pen)) } != ok() { return 0 as usize; }
+    let _sc: i32 = { GdipSetPenStartCap(pen, gp_cap({ (*st).cap })) };
+    let _ec: i32 = { GdipSetPenEndCap(pen, gp_cap({ (*st).cap })) };
+    let _j: i32 = { GdipSetPenLineJoin(pen, gp_join({ (*st).join })) };
+    let _m: i32 = { GdipSetPenMiterLimit(pen, r32({ (*st).miter })) };
+    return pen;
+}
+
+// The fill: a gradient when one is armed and reaches across a real box, a solid
+// otherwise. The gradient's axis belongs to the BRUSH's recorded rect, not to
+// whatever shape is being filled — `set_fill_brush` carried it for exactly this.
+fn make_fill(st: *DrawState, bx: vocab::Rect) -> usize {
+    var brush: usize = 0 as usize;
+    if { (*st).has_brush } {
+        let b: vocab::Brush = { (*st).brush };
+        if b.is_gradient && b.end.is_set() {
+            var across: vocab::Rect = { (*st).brush_rect };
+            if across.width <= (0.0 as f64) || across.height <= (0.0 as f64) { across = bx; }
+            var rect: GpRectF = GpRectF { x: r32(across.x), y: r32(across.y),
+                                          w: r32(across.width), h: r32(across.height) };
+            if r32(across.width) > (0.0 as f32) && r32(across.height) > (0.0 as f32) {
+                if { GdipCreateLineBrushFromRectWithAngle(#addr_of(rect),
+                        argb(b.start, { (*st).opacity }), argb(b.end, { (*st).opacity }),
+                        b.angle as f32, 0 as i32, 0 as i32, #addr_of(brush)) } == ok() {
+                    return brush;
+                }
+            }
+            let _s: i32 = { GdipCreateSolidFill(argb(b.start, { (*st).opacity }), #addr_of(brush)) };
+            return brush;
+        }
+        let _s: i32 = { GdipCreateSolidFill(argb(b.start, { (*st).opacity }), #addr_of(brush)) };
+        return brush;
+    }
+    let _s: i32 = { GdipCreateSolidFill(argb({ (*st).fill }, { (*st).opacity }), #addr_of(brush)) };
+    return brush;
+}
+
+fn gp_cap(c: vocab::LineCap) -> i32 {
+    return match c {
+        vocab::LineCap::Flat => 0,
+        vocab::LineCap::Round => 2,
+        vocab::LineCap::Square => 1,
+    };
+}
+fn gp_join(j: vocab::LineJoin) -> i32 {
+    return match j {
+        vocab::LineJoin::Miter => 0,
+        vocab::LineJoin::Bevel => 1,
+        vocab::LineJoin::Round => 2,
+    };
+}
+
+// ---- paths -------------------------------------------------------------------
+
+// A rounded-rectangle path: four corner arcs joined by the sides. GDI+ has no
+// rounded-rect primitive, so it is built once here and used by draw and fill.
+fn rounded_path(bx: vocab::Rect, radius: f64) -> usize {
+    var path: usize = 0 as usize;
+    if { GdipCreatePath(1 as i32, #addr_of(path)) } != ok() { return 0 as usize; }
+    var rad: f64 = radius;
+    let hw: f64 = bx.width / (2.0 as f64);
+    let hh: f64 = bx.height / (2.0 as f64);
+    if rad > hw { rad = hw; }
+    if rad > hh { rad = hh; }
+    let d: f64 = rad * (2.0 as f64);
+    let x: f64 = bx.x; let y: f64 = bx.y; let w: f64 = bx.width; let h: f64 = bx.height;
+    let _a1: i32 = { GdipAddPathArc(path, r32(x), r32(y), r32(d), r32(d), 180.0f32, 90.0f32) };
+    let _a2: i32 = { GdipAddPathArc(path, r32(x + (w - d)), r32(y), r32(d), r32(d), 270.0f32, 90.0f32) };
+    let _a3: i32 = { GdipAddPathArc(path, r32(x + (w - d)), r32(y + (h - d)), r32(d), r32(d), 0.0f32, 90.0f32) };
+    let _a4: i32 = { GdipAddPathArc(path, r32(x), r32(y + (h - d)), r32(d), r32(d), 90.0f32, 90.0f32) };
+    let _c: i32 = { GdipClosePathFigure(path) };
+    return path;
+}
+
+// A facet Path -> a GpPath. Quads are raised to cubics (GDI+ has no quadratic),
+// arcs and rounded rects hand straight to the native builder, and a Move starts
+// a fresh figure so a compound path draws as the separate contours it is.
+fn build_path(p: *vocab::Path, winding: bool) -> usize {
+    var path: usize = 0 as usize;
+    let mode: i32 = if winding { 1 as i32 } else { 0 as i32 };
+    if { GdipCreatePath(mode, #addr_of(path)) } != ok() { return 0 as usize; }
+    if p == (0 as *vocab::Path) { return path; }
+    var cur: vocab::Point = vocab::Point::zero();
+    var i: usize = 0 as usize;
+    let n: usize = { (*p).count() };
+    while i < n {
+        let s: vocab::PathSegment = { (*p).at(i) };
+        match s.op {
+            vocab::PathOp::Move => {
+                let _f: i32 = { GdipStartPathFigure(path) };
+                cur = s.point;
+            }
+            vocab::PathOp::Line => {
+                let _l: i32 = { GdipAddPathLine(path, r32(cur.x), r32(cur.y), r32(s.point.x), r32(s.point.y)) };
+                cur = s.point;
+            }
+            vocab::PathOp::Quad => {
+                // Quadratic (cur, c, end) -> cubic control points.
+                let c: vocab::Point = s.control1;
+                let c1x: f64 = cur.x + (2.0f64 / 3.0f64) * (c.x - cur.x);
+                let c1y: f64 = cur.y + (2.0f64 / 3.0f64) * (c.y - cur.y);
+                let c2x: f64 = s.point.x + (2.0f64 / 3.0f64) * (c.x - s.point.x);
+                let c2y: f64 = s.point.y + (2.0f64 / 3.0f64) * (c.y - s.point.y);
+                let _b: i32 = { GdipAddPathBezier(path, r32(cur.x), r32(cur.y),
+                    r32(c1x), r32(c1y), r32(c2x), r32(c2y), r32(s.point.x), r32(s.point.y)) };
+                cur = s.point;
+            }
+            vocab::PathOp::Curve => {
+                let _b: i32 = { GdipAddPathBezier(path, r32(cur.x), r32(cur.y),
+                    r32(s.control1.x), r32(s.control1.y), r32(s.control2.x), r32(s.control2.y),
+                    r32(s.point.x), r32(s.point.y)) };
+                cur = s.point;
+            }
+            vocab::PathOp::Arc => {
+                let bx: vocab::Rect = s.bounds;
+                var sweep: f64 = s.end_angle() - s.start_angle();
+                if !s.is_clockwise && sweep > (0.0 as f64) { sweep = sweep - (360.0 as f64); }
+                if s.is_clockwise && sweep < (0.0 as f64) { sweep = sweep + (360.0 as f64); }
+                let _ar: i32 = { GdipAddPathArc(path, r32(bx.x), r32(bx.y), r32(bx.width), r32(bx.height),
+                    r32(s.start_angle()), r32(sweep)) };
+            }
+            vocab::PathOp::Rect => {
+                let bx: vocab::Rect = s.bounds;
+                let _f: i32 = { GdipStartPathFigure(path) };
+                let _l1: i32 = { GdipAddPathLine(path, r32(bx.x), r32(bx.y), r32(bx.x + bx.width), r32(bx.y)) };
+                let _l2: i32 = { GdipAddPathLine(path, r32(bx.x + bx.width), r32(bx.y), r32(bx.x + bx.width), r32(bx.y + bx.height)) };
+                let _l3: i32 = { GdipAddPathLine(path, r32(bx.x + bx.width), r32(bx.y + bx.height), r32(bx.x), r32(bx.y + bx.height)) };
+                let _cl: i32 = { GdipClosePathFigure(path) };
+            }
+            vocab::PathOp::Close => { let _c: i32 = { GdipClosePathFigure(path) }; }
+            _other => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return path;
+}
+
+// ---- text --------------------------------------------------------------------
+
+fn gp_align(a: vocab::TextAlign) -> i32 {
+    return match a {
+        vocab::TextAlign::Start => 0,
+        vocab::TextAlign::Center => 1,
+        vocab::TextAlign::End => 2,
+        vocab::TextAlign::Justify => 0,
+    };
+}
+fn gp_valign(a: vocab::VerticalAlign) -> i32 {
+    return match a {
+        vocab::VerticalAlign::Top => 0,
+        vocab::VerticalAlign::Center => 1,
+        vocab::VerticalAlign::Bottom => 2,
+    };
+}
+fn is_bold(w: vocab::FontWeight) -> bool {
+    return match w {
+        vocab::FontWeight::Semibold => true,
+        vocab::FontWeight::Bold => true,
+        vocab::FontWeight::Heavy => true,
+        vocab::FontWeight::Black => true,
+        _other => false,
+    };
+}
+
+// Make the GDI+ font the state describes. The family is the recorded name, or
+// Segoe UI — the Windows UI face — when none was set.
+fn make_font(c: *vocab::Canvas, st: *DrawState) -> usize {
+    var family_name: str = "Segoe UI";
+    let at: i64 = { (*st).font_family };
+    if at >= (0 as i64) {
+        let nm: str = { (*c).text(at as usize) };
+        if nm != "" { family_name = nm; }
+    }
+    let wide: *u16 = sys::to_wide(family_name);
+    if wide == (0 as *u16) { return 0 as usize; }
+    var fam: usize = 0 as usize;
+    if { GdipCreateFontFamilyFromName(wide, 0 as usize, #addr_of(fam)) } != ok() {
+        // A name the machine does not have — fall back to Segoe UI.
+        sys::free_wide(wide);
+        let sui: *u16 = sys::to_wide("Segoe UI");
+        if sui == (0 as *u16) { return 0 as usize; }
+        if { GdipCreateFontFamilyFromName(sui, 0 as usize, #addr_of(fam)) } != ok() {
+            sys::free_wide(sui);
+            return 0 as usize;
+        }
+        sys::free_wide(sui);
+    } else {
+        sys::free_wide(wide);
+    }
+    var style: i32 = 0 as i32;
+    if is_bold({ (*st).font_weight }) { style = style | (1 as i32); }
+    if { (*st).is_italic } { style = style | (2 as i32); }
+    var size: f64 = { (*st).font_size };
+    if size <= (0.0 as f64) { size = 14.0 as f64; }
+    var font: usize = 0 as usize;
+    let rc: i32 = { GdipCreateFont(fam, r32(size), style, 2 as i32, #addr_of(font)) };
+    let _d: i32 = { GdipDeleteFontFamily(fam) };
+    if rc != ok() { return 0 as usize; }
+    return font;
+}
+
+fn draw_text_at(g: usize, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: *DrawState) {
+    if !cmd.has_aux() { return; }
+    let s: str = { (*c).text(cmd.aux as usize) };
+    if s == "" { return; }
+    let at: vocab::Point = cmd.at();
+    var size: f64 = { (*st).font_size };
+    if size <= (0.0 as f64) { size = 14.0 as f64; }
+    // The point is the BASELINE; GDI+ lays a box from its top, so the ascent
+    // (about 0.8em for a UI face) is lifted off the y before drawing.
+    let bx: vocab::Rect = vocab::Rect::of(at.x, at.y - (size * 0.8f64),
+                                          100000.0f64, size * 2.0f64);
+    draw_text_boxed(g, c, s, bx, st, vocab::TextAlign::Start, vocab::VerticalAlign::Top);
+    return;
+}
+
+fn draw_text_block(g: usize, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: *DrawState) {
+    if !cmd.has_aux() { return; }
+    let s: str = { (*c).text(cmd.aux as usize) };
+    if s == "" { return; }
+    let bx: vocab::Rect = cmd.bounds;
+    if bx.width <= (0.0 as f64) { return; }
+    draw_text_boxed(g, c, s, bx, st, cmd.align, cmd.vertical_align);
+    return;
+}
+
+fn draw_text_boxed(g: usize, c: *vocab::Canvas, s: str, bx: vocab::Rect, st: *DrawState,
+                   align: vocab::TextAlign, valign: vocab::VerticalAlign) {
+    let font: usize = make_font(c, st);
+    if font == (0 as usize) { return; }
+    var brush: usize = 0 as usize;
+    let _b: i32 = { GdipCreateSolidFill(argb({ (*st).text_color }, { (*st).opacity }), #addr_of(brush)) };
+    var fmt: usize = 0 as usize;
+    let _f: i32 = { GdipCreateStringFormat(0 as i32, 0 as u16, #addr_of(fmt)) };
+    let _al: i32 = { GdipSetStringFormatAlign(fmt, gp_align(align)) };
+    let _la: i32 = { GdipSetStringFormatLineAlign(fmt, gp_valign(valign)) };
+    let wide: *u16 = sys::to_wide(s);
+    if wide != (0 as *u16) {
+        var rect: GpRectF = GpRectF { x: r32(bx.x), y: r32(bx.y), w: r32(bx.width), h: r32(bx.height) };
+        let _d: i32 = { GdipDrawString(g, wide, (0 as i32) -% (1 as i32), font,
+                                       #addr_of(rect), fmt, brush) };
+        sys::free_wide(wide);
+    }
+    let _df: i32 = { GdipDeleteStringFormat(fmt) };
+    let _db: i32 = { GdipDeleteBrush(brush) };
+    let _dfont: i32 = { GdipDeleteFont(font) };
+    return;
+}
+
+// ---- the replay --------------------------------------------------------------
+
+fn replay(g: usize, c: *vocab::Canvas) {
+    var st: DrawState = initial_state();
+    var stack: [DrawState; MAX_DEPTH] = [#zero::[DrawState](); MAX_DEPTH];
+    var gstate: [u32; MAX_DEPTH] = [0 as u32; MAX_DEPTH];
+    var depth: usize = 0 as usize;
+    let _sm: i32 = { GdipSetSmoothingMode(g, 4 as i32) };        // AntiAlias
+    let _th: i32 = { GdipSetTextRenderingHint(g, 4 as i32) };    // AntiAlias
+    var i: usize = 0 as usize;
+    let count: usize = { (*c).count() };
+    while i < count {
+        let cmd: vocab::DrawCommand = { (*c).at(i) };
+        step(g, c, cmd, #addr_of(st), #addr_of(stack), #addr_of(gstate), #addr_of(depth));
+        i = i +% (1 as usize);
+    }
+    // Unwind an unbalanced recording so the graphics state we hand back is the
+    // one we started with.
+    while depth > (0 as usize) {
+        depth = depth -% (1 as usize);
+        let _r: i32 = { GdipRestoreGraphics(g, stack_state({ #addr_of(gstate) }, depth)) };
+    }
+    return;
+}
+
+fn stack_state(gstate: *[u32; MAX_DEPTH], at: usize) -> u32 { return { (*gstate)[at] }; }
+
+fn step(g: usize, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: *DrawState,
+        stack: *[DrawState; MAX_DEPTH], gstate: *[u32; MAX_DEPTH], depth: *usize) {
+    match cmd.op {
+        vocab::DrawOp::None => { }
+        // ---- state ----
+        vocab::DrawOp::SetStroke => { { (*st).stroke = cmd.color }; }
+        vocab::DrawOp::SetFill => {
+            { (*st).fill = cmd.color };
+            { (*st).has_brush = false };
+        }
+        vocab::DrawOp::SetFillBrush => {
+            if cmd.has_aux() {
+                { (*st).brush = { (*c).brush(cmd.aux as usize) } };
+                { (*st).brush_rect = cmd.bounds };
+                { (*st).has_brush = true };
+            }
+        }
+        vocab::DrawOp::SetTextColor => { { (*st).text_color = cmd.color }; }
+        vocab::DrawOp::SetStrokeWidth => { { (*st).stroke_width = cmd.stroke_width() }; }
+        vocab::DrawOp::SetMiterLimit => { { (*st).miter = cmd.miter_limit() }; }
+        vocab::DrawOp::SetStrokeCap => { { (*st).cap = cmd.cap }; }
+        vocab::DrawOp::SetStrokeJoin => { { (*st).join = cmd.join }; }
+        vocab::DrawOp::SetStrokeDash => { }
+        vocab::DrawOp::SetFont => {
+            { (*st).font_size = cmd.font_size() };
+            { (*st).font_weight = cmd.weight };
+            { (*st).is_italic = cmd.is_italic };
+            { (*st).font_family = cmd.aux };
+        }
+        vocab::DrawOp::SetOpacity => { { (*st).opacity = cmd.opacity() }; }
+        vocab::DrawOp::SetAntialiased => {
+            let _m: i32 = { GdipSetSmoothingMode(g, if cmd.is_on { 4 as i32 } else { 3 as i32 }) };
+        }
+        vocab::DrawOp::SetBlend => { }
+        vocab::DrawOp::SetShadow => { }
+        // ---- the stack and the transform ----
+        vocab::DrawOp::Save => {
+            if { (*depth) } < MAX_DEPTH {
+                { (*stack)[{ (*depth) }] = { *st } };
+                var token: u32 = 0 as u32;
+                let _s: i32 = { GdipSaveGraphics(g, #addr_of(token)) };
+                { (*gstate)[{ (*depth) }] = token };
+                { (*depth) = { (*depth) } +% (1 as usize) };
+            }
+        }
+        vocab::DrawOp::Restore => {
+            if { (*depth) } > (0 as usize) {
+                { (*depth) = { (*depth) } -% (1 as usize) };
+                { (*st) = { (*stack)[{ (*depth) }] } };
+                let _r: i32 = { GdipRestoreGraphics(g, { (*gstate)[{ (*depth) }] }) };
+            }
+        }
+        vocab::DrawOp::Reset => {
+            let _r: i32 = { GdipResetWorldTransform(g) };
+            { (*st) = initial_state() };
+        }
+        vocab::DrawOp::Rotate => {
+            // About a pivot: translate there, rotate, translate back. Prepend
+            // order composes them onto the coordinate system the way cairo does.
+            let p: vocab::Point = cmd.pivot();
+            let _t1: i32 = { GdipTranslateWorldTransform(g, r32(p.x), r32(p.y), 0 as i32) };
+            let _rr: i32 = { GdipRotateWorldTransform(g, r32(cmd.degrees()), 0 as i32) };
+            let _t2: i32 = { GdipTranslateWorldTransform(g, r32((0.0 as f64) - p.x), r32((0.0 as f64) - p.y), 0 as i32) };
+        }
+        vocab::DrawOp::Scale => { let _s: i32 = { GdipScaleWorldTransform(g, r32(cmd.x()), r32(cmd.y()), 0 as i32) }; }
+        vocab::DrawOp::Translate => { let _t: i32 = { GdipTranslateWorldTransform(g, r32(cmd.x()), r32(cmd.y()), 0 as i32) }; }
+        vocab::DrawOp::ConcatTransform => {
+            let t: vocab::Transform = cmd.transform();
+            var m: usize = 0 as usize;
+            if { GdipCreateMatrix2(r32(t.a), r32(t.b), r32(t.c), r32(t.d), r32(t.tx), r32(t.ty), #addr_of(m)) } == ok() {
+                let _mm: i32 = { GdipMultiplyWorldTransform(g, m, 0 as i32) };
+                let _dm: i32 = { GdipDeleteMatrix(m) };
+            }
+        }
+        // ---- clipping ----
+        vocab::DrawOp::ClipRect => {
+            let b: vocab::Rect = cmd.bounds;
+            let _c: i32 = { GdipSetClipRectI(g, b.x as i32, b.y as i32, b.width as i32, b.height as i32, 1 as i32) };
+        }
+        vocab::DrawOp::ClipPath => {
+            if cmd.has_aux() {
+                let path: usize = build_path({ (*c).path(cmd.aux as usize) }, !is_even_odd(cmd.winding));
+                if path != (0 as usize) {
+                    let _c: i32 = { GdipSetClipPath(g, path, 1 as i32) };
+                    let _d: i32 = { GdipDeletePath(path) };
+                }
+            }
+        }
+        vocab::DrawOp::SubtractFromClip => {
+            let b: vocab::Rect = cmd.bounds;
+            let _c: i32 = { GdipSetClipRectI(g, b.x as i32, b.y as i32, b.width as i32, b.height as i32, 4 as i32) };  // Exclude
+        }
+        // ---- shapes ----
+        vocab::DrawOp::DrawLine => {
+            let pen: usize = make_pen(st);
+            if pen != (0 as usize) {
+                let a: vocab::Point = cmd.from();
+                let b: vocab::Point = cmd.to();
+                let _l: i32 = { GdipDrawLine(g, pen, r32(a.x), r32(a.y), r32(b.x), r32(b.y)) };
+                let _d: i32 = { GdipDeletePen(pen) };
+            }
+        }
+        vocab::DrawOp::DrawRect => {
+            let pen: usize = make_pen(st);
+            if pen != (0 as usize) {
+                let b: vocab::Rect = cmd.bounds;
+                let _r: i32 = { GdipDrawRectangle(g, pen, r32(b.x), r32(b.y), r32(b.width), r32(b.height)) };
+                let _d: i32 = { GdipDeletePen(pen) };
+            }
+        }
+        vocab::DrawOp::FillRect => {
+            let b: vocab::Rect = cmd.bounds;
+            let brush: usize = make_fill(st, b);
+            if brush != (0 as usize) {
+                let _r: i32 = { GdipFillRectangle(g, brush, r32(b.x), r32(b.y), r32(b.width), r32(b.height)) };
+                let _d: i32 = { GdipDeleteBrush(brush) };
+            }
+        }
+        vocab::DrawOp::DrawRoundedRect => {
+            let path: usize = rounded_path(cmd.bounds, cmd.corner_radius());
+            let pen: usize = make_pen(st);
+            if path != (0 as usize) && pen != (0 as usize) {
+                let _r: i32 = { GdipDrawPath(g, pen, path) };
+            }
+            if pen != (0 as usize) { let _d: i32 = { GdipDeletePen(pen) }; }
+            if path != (0 as usize) { let _d: i32 = { GdipDeletePath(path) }; }
+        }
+        vocab::DrawOp::FillRoundedRect => {
+            let path: usize = rounded_path(cmd.bounds, cmd.corner_radius());
+            let brush: usize = make_fill(st, cmd.bounds);
+            if path != (0 as usize) && brush != (0 as usize) {
+                let _r: i32 = { GdipFillPath(g, brush, path) };
+            }
+            if brush != (0 as usize) { let _d: i32 = { GdipDeleteBrush(brush) }; }
+            if path != (0 as usize) { let _d: i32 = { GdipDeletePath(path) }; }
+        }
+        vocab::DrawOp::DrawEllipse => {
+            let pen: usize = make_pen(st);
+            if pen != (0 as usize) {
+                let b: vocab::Rect = cmd.bounds;
+                let _r: i32 = { GdipDrawEllipse(g, pen, r32(b.x), r32(b.y), r32(b.width), r32(b.height)) };
+                let _d: i32 = { GdipDeletePen(pen) };
+            }
+        }
+        vocab::DrawOp::FillEllipse => {
+            let b: vocab::Rect = cmd.bounds;
+            let brush: usize = make_fill(st, b);
+            if brush != (0 as usize) {
+                let _r: i32 = { GdipFillEllipse(g, brush, r32(b.x), r32(b.y), r32(b.width), r32(b.height)) };
+                let _d: i32 = { GdipDeleteBrush(brush) };
+            }
+        }
+        vocab::DrawOp::DrawArc => {
+            let pen: usize = make_pen(st);
+            if pen != (0 as usize) {
+                let b: vocab::Rect = cmd.bounds;
+                let _r: i32 = { GdipDrawArc(g, pen, r32(b.x), r32(b.y), r32(b.width), r32(b.height),
+                    r32(cmd.start_angle()), r32(arc_sweep(cmd.start_angle(), cmd.end_angle(), cmd.is_clockwise))) };
+                let _d: i32 = { GdipDeletePen(pen) };
+            }
+        }
+        vocab::DrawOp::FillArc => {
+            let b: vocab::Rect = cmd.bounds;
+            let brush: usize = make_fill(st, b);
+            if brush != (0 as usize) {
+                let _r: i32 = { GdipFillPie(g, brush, r32(b.x), r32(b.y), r32(b.width), r32(b.height),
+                    r32(cmd.start_angle()), r32(arc_sweep(cmd.start_angle(), cmd.end_angle(), cmd.is_clockwise))) };
+                let _d: i32 = { GdipDeleteBrush(brush) };
+            }
+        }
+        vocab::DrawOp::DrawPath => {
+            if cmd.has_aux() {
+                let path: usize = build_path({ (*c).path(cmd.aux as usize) }, true);
+                let pen: usize = make_pen(st);
+                if path != (0 as usize) && pen != (0 as usize) { let _r: i32 = { GdipDrawPath(g, pen, path) }; }
+                if pen != (0 as usize) { let _d: i32 = { GdipDeletePen(pen) }; }
+                if path != (0 as usize) { let _d: i32 = { GdipDeletePath(path) }; }
+            }
+        }
+        vocab::DrawOp::FillPath => {
+            if cmd.has_aux() {
+                let path: usize = build_path({ (*c).path(cmd.aux as usize) }, !is_even_odd(cmd.winding));
+                let brush: usize = make_fill(st, cmd.bounds);
+                if path != (0 as usize) && brush != (0 as usize) { let _r: i32 = { GdipFillPath(g, brush, path) }; }
+                if brush != (0 as usize) { let _d: i32 = { GdipDeleteBrush(brush) }; }
+                if path != (0 as usize) { let _d: i32 = { GdipDeletePath(path) }; }
+            }
+        }
+        // ---- content ----
+        vocab::DrawOp::DrawText => { draw_text_at(g, c, cmd, st); }
+        vocab::DrawOp::DrawTextBlock => { draw_text_block(g, c, cmd, st); }
+        vocab::DrawOp::DrawSpans => { }
+        vocab::DrawOp::DrawImage => { }
+    }
+    return;
+}
+
+fn is_even_odd(w: vocab::Winding) -> bool {
+    return match w { vocab::Winding::EvenOdd => true, _other => false };
+}
+
+// A GDI+ arc's sweep is signed degrees from the start; facet gives two angles
+// and a direction.
+fn arc_sweep(start: f64, end: f64, clockwise: bool) -> f64 {
+    var sweep: f64 = end - start;
+    if clockwise && sweep < (0.0 as f64) { sweep = sweep + (360.0 as f64); }
+    if !clockwise && sweep > (0.0 as f64) { sweep = sweep - (360.0 as f64); }
+    return sweep;
+}
+
+// ---- the seam controls.cplus calls -------------------------------------------
+
+fn drawable_of(n: *core::Node) -> vocab::Drawable {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return vocab::Drawable::none(); }
+    if { (*d).kind } != props::K_CANVAS { return vocab::Drawable::none(); }
+    let p: *props::CanvasProps = { (*d).props } as *props::CanvasProps;
+    if p == (0 as *props::CanvasProps) { return vocab::Drawable::none(); }
+    return { (*p).drawable };
+}
+
+// The canvas's WM_PAINT. The recording is made HERE, per paint, because a
+// Drawable is a function of the size it is given — a resized canvas draws
+// itself again rather than scaling what it drew before.
+fn paint_canvas(v: *u8, n: *core::Node, hdc: *u8) {
+    if n == (0 as *core::Node) { return; }
+    let d: vocab::Drawable = drawable_of(n);
+    if d.is_none() { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    let w: f64 = (r.right -% r.left) as f64;
+    let h: f64 = (r.bottom -% r.top) as f64;
+    if w <= (0.0 as f64) || h <= (0.0 as f64) { return; }
+    if !imaging::ensure_gdiplus() { return; }
+    let size: vocab::Size = vocab::Size::of(w, h);
+    var cv: vocab::Canvas = vocab::Canvas::of(size, 1.0f64);
+    let f: fn(*vocab::Canvas, vocab::Rect, *u8) = d.draw;
+    f(#addr_of(cv), vocab::Rect::sized(w, h), d.ctx);
+    var g: usize = 0 as usize;
+    if { GdipCreateFromHDC(hdc, #addr_of(g)) } != ok() { return; }
+    replay(g, #addr_of(cv));
+    let _dg: i32 = { GdipDeleteGraphics(g) };
+    return;
+}
+
+fn apply_canvas(v: *u8, n: *core::Node, dirty: u64) {
+    // A canvas is drawn entirely by us, so ANY apply repaints it — cheap, and
+    // it covers a reused host coming back on-screen whose drawable did not
+    // change and so would otherwise never be re-invalidated.
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return;
+}
+
+// ---- the canvas host's subclass ----------------------------------------------
+//
+// The canvas host is a plain panel: its window class has a NULL background
+// brush, so any pixel it has not painted yet is BLACK, not the theme's ground.
+// On its own a panel is fine — WM_PAINT covers it — but a canvas is drawn from a
+// recording that depends on the host's SIZE, and a size change that repaints
+// only the newly-uncovered strip (or, under WS_EX_COMPOSITED, a stale buffer
+// left after an in-window navigation) leaves the rest showing that black.
+//
+// So the host is subclassed: WM_SIZE invalidates the WHOLE client, erase on, so
+// the drawing is replayed against the new size and the ground is repainted
+// under it. WM_ERASEBKGND paints the theme ground rather than letting the null
+// class brush show black for the frame before the replay lands.
+
+fn prop_canvas_old() -> *u8 { return { #str_ptr("facet-canvas-oldproc\0") }; }
+
+fn canvas_proc_addr() -> *u8 {
+    let p: fn(*u8, u32, u64, i64) -> i64 = canvas_proc;
+    return p as *u8;
+}
+
+fn attach(host: *u8) {
+    if host == (0 as *u8) { return; }
+    if { u::GetPropA(host, prop_canvas_old() as *i8) } != (0 as *u8) { return; }
+    let old: i64 = { u::SetWindowLongPtrA(host, sys::gwlp_wndproc(), canvas_proc_addr() as i64) };
+    if old == (0 as i64) { return; }
+    let _p: i32 = { u::SetPropA(host, prop_canvas_old() as *i8, old as *u8) };
+    return;
+}
+
+fn wm_ncdestroy() -> u32 { return 0x0082 as u32; }
+fn wm_erasebkgnd() -> u32 { return 0x0014 as u32; }
+
+fn canvas_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    let old: *u8 = { u::GetPropA(hwnd, prop_canvas_old() as *i8) };
+    if old == (0 as *u8) { return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+    if msg == sys::wm_size() {
+        let _i: i32 = { u::InvalidateRect(hwnd, 0 as *u::tagRECT, 1 as i32) };
+    }
+    if msg == wm_erasebkgnd() {
+        // Paint the theme ground now, so the frame before the replay is dark
+        // grey and not the null class brush's black. The replay draws over it.
+        paint::erase(hwnd, w as *u8);
+        return 1 as i64;
+    }
+    if msg == wm_ncdestroy() {
+        let _o: i64 = { u::SetWindowLongPtrA(hwnd, sys::gwlp_wndproc(), old as i64) };
+        let _r: *u8 = { u::RemovePropA(hwnd, prop_canvas_old() as *i8) };
+        return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+    }
+    return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+}
+
+// ---- the spinner, a rotating ring --------------------------------------------
+//
+// Win32 has no circular busy indicator — the shell uses a marquee bar — so the
+// ring the other three backends draw is drawn here instead: an owner-painted
+// panel with a timer that advances an angle and a GDI+ arc that follows it. A
+// 270° arc with round caps reads as the modern spinner; the empty quarter is
+// what makes the motion visible.
+
+fn spinner_side() -> i32 { return 20 as i32; }
+fn wm_timer() -> u32 { return 0x0113 as u32; }
+fn spinner_timer_id() -> u64 { return 0xFACE as u64; }
+
+fn prop_spin_old() -> *u8 { return { #str_ptr("facet-spin-oldproc\0") }; }
+fn prop_spin_angle() -> *u8 { return { #str_ptr("facet-spin-angle\0") }; }
+fn prop_spin_running() -> *u8 { return { #str_ptr("facet-spin-running\0") }; }
+
+fn spinner_proc_addr() -> *u8 {
+    let p: fn(*u8, u32, u64, i64) -> i64 = spinner_proc;
+    return p as *u8;
+}
+
+fn attach_spinner(host: *u8) {
+    if host == (0 as *u8) { return; }
+    if { u::GetPropA(host, prop_spin_old() as *i8) } != (0 as *u8) { return; }
+    let old: i64 = { u::SetWindowLongPtrA(host, sys::gwlp_wndproc(), spinner_proc_addr() as i64) };
+    if old == (0 as i64) { return; }
+    let _p: i32 = { u::SetPropA(host, prop_spin_old() as *i8, old as *u8) };
+    return;
+}
+
+// Start or stop the animation. The timer is a per-window one, so WM_TIMER
+// reaches the subclass; 40ms is 25 frames a second, smooth enough for a ring
+// and cheap enough to leave running.
+fn spinner_set_running(host: *u8, on: bool) {
+    if host == (0 as *u8) { return; }
+    let _p: i32 = { u::SetPropA(host, prop_spin_running() as *i8,
+                                (if on { 1 as usize } else { 0 as usize }) as *u8) };
+    if on {
+        let _t: u64 = { u::SetTimer(host, spinner_timer_id(), 40 as u32, 0 as *u8) };
+    } else {
+        let _k: i32 = { u::KillTimer(host, spinner_timer_id()) };
+    }
+    let _i: i32 = { u::InvalidateRect(host, 0 as *u::tagRECT, 0 as i32) };
+    return;
+}
+
+fn spinner_running(host: *u8) -> bool {
+    return { u::GetPropA(host, prop_spin_running() as *i8) } != (0 as *u8);
+}
+
+fn spinner_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
+    let old: *u8 = { u::GetPropA(hwnd, prop_spin_old() as *i8) };
+    if old == (0 as *u8) { return { u::DefWindowProcA(hwnd, msg, w, l) }; }
+    if msg == wm_timer() && w == spinner_timer_id() {
+        let a: i32 = ({ u::GetPropA(hwnd, prop_spin_angle() as *i8) } as usize) as i32;
+        var na: i32 = a +% (24 as i32);
+        if na >= (360 as i32) { na = na -% (360 as i32); }
+        let _p: i32 = { u::SetPropA(hwnd, prop_spin_angle() as *i8, (na as usize) as *u8) };
+        // erase=false: `draw_spinner` grounds the whole client itself, so the
+        // previous arc is covered without a second full erase.
+        let _i: i32 = { u::InvalidateRect(hwnd, 0 as *u::tagRECT, 0 as i32) };
+        return 0 as i64;
+    }
+    if msg == wm_ncdestroy() {
+        let _k: i32 = { u::KillTimer(hwnd, spinner_timer_id()) };
+        let _o: i64 = { u::SetWindowLongPtrA(hwnd, sys::gwlp_wndproc(), old as i64) };
+        let _r0: *u8 = { u::RemovePropA(hwnd, prop_spin_old() as *i8) };
+        let _r1: *u8 = { u::RemovePropA(hwnd, prop_spin_angle() as *i8) };
+        let _r2: *u8 = { u::RemovePropA(hwnd, prop_spin_running() as *i8) };
+        return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+    }
+    return { u::CallWindowProcA(old, hwnd, msg, w, l) };
+}
+
+fn spinner_color(n: *core::Node) -> vocab::Color {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return vocab::Color::accent(); }
+    if { (*d).kind } != props::K_SPINNER { return vocab::Color::accent(); }
+    let p: *props::SpinnerProps = { (*d).props } as *props::SpinnerProps;
+    if p == (0 as *props::SpinnerProps) { return vocab::Color::accent(); }
+    let c: vocab::Color = { (*p).color };
+    if c.is_set() { return c; }
+    return vocab::Color::accent();
+}
+
+fn draw_spinner(v: *u8, n: *core::Node, hdc: *u8) {
+    if n == (0 as *core::Node) { return; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return; }
+    // Ground the client, so a rotating arc leaves no trail and a stopped
+    // spinner is the theme's own background rather than the panel-class black.
+    let ground: *u8 = paint::brush_for(paint::effective_bg(v));
+    if ground != (0 as *u8) { let _f: i32 = { u::FillRect(hdc, #addr_of(r), ground) }; }
+    if !spinner_running(v) { return; }
+    if !imaging::ensure_gdiplus() { return; }
+
+    let w: i32 = r.right -% r.left;
+    let h: i32 = r.bottom -% r.top;
+    var side: i32 = if w < h { w } else { h };
+    let pen_w: i32 = if side >= (16 as i32) { 3 as i32 } else { 2 as i32 };
+    let inset: i32 = pen_w +% (1 as i32);
+    side = side -% (inset *% (2 as i32));
+    if side <= (0 as i32) { return; }
+    let x: i32 = r.left +% ((w -% side) / (2 as i32));
+    let y: i32 = r.top +% ((h -% side) / (2 as i32));
+    let angle: i32 = ({ u::GetPropA(v, prop_spin_angle() as *i8) } as usize) as i32;
+
+    var g: usize = 0 as usize;
+    if { GdipCreateFromHDC(hdc, #addr_of(g)) } != ok() { return; }
+    let _sm: i32 = { GdipSetSmoothingMode(g, 4 as i32) };
+    var pen: usize = 0 as usize;
+    if { GdipCreatePen1(argb(spinner_color(n), 1.0f64), pen_w as f32, 2 as i32, #addr_of(pen)) } == ok() {
+        let _sc: i32 = { GdipSetPenStartCap(pen, 2 as i32) };   // round
+        let _ec: i32 = { GdipSetPenEndCap(pen, 2 as i32) };
+        let _a: i32 = { GdipDrawArc(g, pen, x as f32, y as f32, side as f32, side as f32,
+                                    angle as f32, 270.0f32) };
+        let _dp: i32 = { GdipDeletePen(pen) };
+    }
+    let _dg: i32 = { GdipDeleteGraphics(g) };
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+//
+// The replay needs GDI+ and a live HDC, so the drawing itself is verified on
+// screen in the gallery's Graphics page. What is pure — the ARGB packing, the
+// signed arc sweep, and the enum maps GDI+ is indexed by — is pinned here,
+// because a wrong number in any of them is a shape drawn wrong rather than a
+// build that fails.
+
+#[test]
+fn argb_packs_straight_not_reversed() {
+    // Opaque red is 0xFFFF0000 in ARGB — the reverse of a COLORREF's 0x000000FF.
+    assert argb(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64), 1.0f64) == (0xFFFF0000 as u32);
+    // Opacity folds into the alpha: half of an opaque colour is 0x80 alpha.
+    assert argb(vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64), 0.5f64) == (0x800000FF as u32);
+    return;
+}
+
+#[test]
+fn an_arc_sweep_is_signed_by_direction() {
+    // A clockwise arc that would read backwards is wrapped forward a full turn,
+    // and a counter-clockwise one the other way — the difference between a
+    // 90° wedge and a 270° one.
+    assert arc_sweep(0.0f64, 90.0f64, true) == (90.0f64);
+    assert arc_sweep(90.0f64, 0.0f64, true) == (270.0f64);
+    assert arc_sweep(0.0f64, 90.0f64, false) == ((0.0f64) - (270.0f64));
+    return;
+}
+
+#[test]
+fn the_gdiplus_enum_maps_are_the_ones_gdiplus_indexes_by() {
+    // GDI+ LineCap: Flat 0, Square 1, Round 2. Getting Round and Square swapped
+    // is the kind of mistake a screenshot of one demo would miss.
+    assert gp_cap(vocab::LineCap::Flat) == (0 as i32);
+    assert gp_cap(vocab::LineCap::Square) == (1 as i32);
+    assert gp_cap(vocab::LineCap::Round) == (2 as i32);
+    // LineJoin: Miter 0, Bevel 1, Round 2.
+    assert gp_join(vocab::LineJoin::Miter) == (0 as i32);
+    assert gp_join(vocab::LineJoin::Round) == (2 as i32);
+    // StringAlignment: Near 0, Center 1, Far 2 — for both axes.
+    assert gp_align(vocab::TextAlign::Start) == (0 as i32);
+    assert gp_align(vocab::TextAlign::Center) == (1 as i32);
+    assert gp_align(vocab::TextAlign::End) == (2 as i32);
+    assert gp_valign(vocab::VerticalAlign::Bottom) == (2 as i32);
+    // A weight at or past Semibold takes the bold style bit.
+    assert is_bold(vocab::FontWeight::Bold);
+    assert !is_bold(vocab::FontWeight::Default);
+    return;
+}

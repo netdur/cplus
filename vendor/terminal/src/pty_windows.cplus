@@ -1,0 +1,199 @@
+// terminal/pty — the Windows half, which refuses, and the ConPTY recipe it
+// refuses WITH so the next attempt starts from a measured position.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `pty.cplus` is written against
+// `forkpty`, `execl`, `waitpid`, `ioctl(TIOCSWINSZ)` and Darwin's `__error` —
+// the whole POSIX pseudo-terminal, none of which Windows has under any
+// spelling. Without a `_windows` sibling the build falls back to it and the
+// link fails on a handful of libc symbols that do not exist here.
+//
+// ---- ConPTY: BUILT, AND NOT SHIPPED ------------------------------------------
+//
+// Windows 10 1809 added a real pseudo-console, and it was implemented here in
+// full — pipes, console, attribute list, child, reads through
+// `netsys::recv_fd`, `ResizePseudoConsole`, `GetExitCodeProcess`. It is not in
+// this file because IT PRODUCES NO OUTPUT ON THE MACHINE IT WAS WRITTEN ON, and
+// a terminal that starts a shell and displays nothing is a worse answer than
+// one that says it cannot.
+//
+// WHAT WAS MEASURED, so nobody repeats it:
+//
+//   * `CreatePseudoConsole` returns S_OK and a live HPCON.
+//   * The console host really is spawned — the conhost count goes up by two
+//     across the call.
+//   * `CreateProcessW` succeeds and the child RUNS: `cmd.exe /c exit 7` is
+//     reaped as exactly 7 through `GetExitCodeProcess`.
+//   * And the output pipe stays EMPTY. Zero bytes, every time.
+//
+// Ruled out, each by its own run: the C+ side (the identical sequence written
+// in C# against Microsoft's own EchoCon sample reads zero too); `PeekNamedPipe`
+// (a blocking `ReadFile` on a thread, which is what the sample does, also reads
+// zero); the sandbox (same outside it); a console-less parent (same from a
+// process with a real console window); and the client (`cmd.exe`,
+// `cmd.exe /c echo`, `powershell.exe` — all zero). One run of the C# probe had
+// the child die with 0xC0000142, STATUS_DLL_INIT_FAILED, which is what a client
+// that cannot attach to its console looks like.
+//
+// So the fault is in the console host on that host, not in the sequence below.
+// On a machine where ConPTY works, this is the whole of it:
+//
+//   CreatePipe(&in_read,  &in_write,  NULL, 0);      // we write in_write
+//   CreatePipe(&out_read, &out_write, NULL, 0);      // we read  out_read
+//   CreatePseudoConsole(COORD{cols,rows}, in_read, out_write, 0, &hpc);
+//   CloseHandle(in_read); CloseHandle(out_write);    // the console dup'd both;
+//                                                    // holding them means the
+//                                                    // output pipe never EOFs
+//   InitializeProcThreadAttributeList(NULL, 1, 0, &size);   // sizes: 48 bytes
+//   attrs = malloc(size);
+//   InitializeProcThreadAttributeList(attrs, 1, 0, &size);
+//   UpdateProcThreadAttribute(attrs, 0, 0x00020016 /* PSEUDOCONSOLE */,
+//                             &hpc, sizeof(HPCON), NULL, NULL);
+//   si.cb = 112; si.lpAttributeList = attrs;         // STARTUPINFOEXW on x64:
+//                                                    // 112 bytes, list at 104
+//   CreateProcessW(NULL, cmdline_mutable, NULL, NULL, FALSE,
+//                  EXTENDED_STARTUPINFO_PRESENT /* 0x00080000 */,
+//                  NULL, cwd, &si, &pi);
+//
+// PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE is 0x00020016 =
+// ProcThreadAttributeValue(22, thread:FALSE, input:TRUE, additive:FALSE) —
+// 22 | PROC_THREAD_ATTRIBUTE_INPUT(0x20000). COORD is two SHORTs passed BY
+// VALUE, so under the x64 ABI it crosses as one u32 with columns in the low
+// half and rows in the high. Reads want `netsys::recv_fd` over an fd from
+// `_open_osfhandle(out_read, 0)`: it already reads a Windows pipe cooperatively
+// (peek, read what is ready, nap and answer EINTR when empty) so a parked
+// reader stays cancellable. Resizing is `ResizePseudoConsole`; reaping is
+// `GetExitCodeProcess`, where STILL_ACTIVE is 259 and the POSIX 128+signal
+// convention `decode_wait_status` implements has no meaning at all.
+//
+// ---- AND THE DEEPER HALF, which is not ConPTY's fault ------------------------
+//
+// What makes this package's terminal report command marks and exit codes is an
+// OSC 133 shim written into a throwaway `ZDOTDIR` — a zsh mechanism. PowerShell
+// has prompt hooks of its own shape and cmd has nothing, so even a working
+// ConPTY session would answer `expects_marks() == false` and every
+// command-tracking verb above it would stay quiet. That is a design decision
+// this package has not made yet rather than a translation, and it is the larger
+// piece of work of the two.
+//
+// So this half answers honestly: `supported()` is false and `start` is `None`.
+// Both are shapes `pty.cplus` itself returns — a macOS build whose `forkpty`
+// fails takes exactly the same branch — so no caller learns a new failure.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+struct WinSize {
+    rows: u16,
+    cols: u16,
+    x: u16,
+    y: u16,
+}
+
+enum ReadResult {
+    Data(usize),
+    WouldBlock,
+    Closed,
+    Failed,
+}
+
+// The same fields the POSIX half carries, so the two types read alike to
+// anything above them. Nothing can construct one — `start` is the only door.
+struct Session {
+    _master: i32,
+    _pid: i32,
+    _closed: bool,
+    _reaped: bool,
+    _status: i32,
+    _marks: bool,
+}
+
+// No pseudo-terminal on this platform yet — see the header for the ConPTY road
+// and for what stopped it.
+fn supported() -> bool { return false; }
+
+fn start(shell: str = "cmd.exe", cwd: str = "", rows: u16 = 24 as u16,
+         cols: u16 = 80 as u16, save_history: bool = false) -> option::Option[Session] {
+    return option::Option[Session]::None;
+}
+
+impl Session {
+    // -1 rather than 0: 0 is a REAL descriptor (stdin) on every platform, and a
+    // caller that forgot to check `is_open` would otherwise read the console.
+    fn master_fd(this) -> i32 { return 0 -% (1 as i32); }
+    fn pid(this) -> i32 { return 0 -% (1 as i32); }
+    fn is_open(this) -> bool { return false; }
+    // NOT `true`: the OSC 133 shim is a zsh `ZDOTDIR` mechanism with no
+    // PowerShell or cmd equivalent, so a Windows session would never see a
+    // mark. Claiming otherwise makes every command-tracking verb above this
+    // wait for something that is not coming.
+    fn expects_marks(this) -> bool { return false; }
+
+    // `Closed`, not `Failed`. There is no session, which is the same thing a
+    // caller sees after the shell exits — a state every reader already handles
+    // — where `Failed` would read as an error worth reporting.
+    fn read_into(this, buffer: *u8, capacity: usize) -> ReadResult {
+        return ReadResult::Closed;
+    }
+
+    // -1 is the write error every caller of this already checks for.
+    fn write(this, bytes: str) -> isize { return (0 -% 1) as isize; }
+    fn resize(this, rows: u16, cols: u16) -> bool { return false; }
+
+    // `None` is "still running", which is wrong in the safe direction: a caller
+    // polling for an exit code gets no answer rather than a fabricated 0 that
+    // would read as a command that succeeded.
+    fn poll_exit(ref this) -> option::Option[i32] { return option::Option[i32]::None; }
+    fn has_exited(ref this) -> bool { return true; }
+    fn close(ref this) { return; }
+    fn drop(ref this) { return; }
+}
+
+// ---- tests -------------------------------------------------------------------
+// The platform half only: that this refuses in the shapes callers already
+// handle, and never in one that would be mistaken for success.
+
+#[test]
+fn the_windows_pty_says_it_cannot_rather_than_pretending() {
+    assert supported() == false;
+    assert match start("cmd.exe") {
+        option::Option[Session]::Some(_s) => false,
+        option::Option[Session]::None => true,
+    };
+}
+
+#[test]
+fn a_session_never_looks_open_or_readable() {
+    // Unreachable through `start`, built directly to pin the surface the widget
+    // facade compiles against.
+    var s: Session = Session { _master: 0 as i32, _pid: 0 as i32, _closed: true,
+                               _reaped: true, _status: 0 as i32, _marks: false };
+    assert s.is_open() == false;
+    assert s.has_exited();
+    assert s.expects_marks() == false;
+    // A FILE DESCRIPTOR OF 0 IS STDIN. Answering it here would let a caller
+    // that skipped `is_open` read the console instead of a shell.
+    assert s.master_fd() == (0 -% (1 as i32));
+    assert s.pid() == (0 -% (1 as i32));
+    assert s.resize(40 as u16, 100 as u16) == false;
+    assert s.write("echo hi") < (0 as isize);
+}
+
+#[test]
+fn reading_answers_closed_and_the_exit_code_is_unknown() {
+    var s: Session = Session { _master: 0 as i32, _pid: 0 as i32, _closed: true,
+                               _reaped: true, _status: 0 as i32, _marks: false };
+    var buf: [u8; 16] = [0 as u8; 16];
+    // `Closed` and not `Failed`: no session is the same state as a shell that
+    // has gone, which every reader already handles.
+    assert match s.read_into(#addr_of(buf) as *u8, 16 as usize) {
+        ReadResult::Closed => true,
+        ReadResult::Data(_n) => false,
+        ReadResult::WouldBlock => false,
+        ReadResult::Failed => false,
+    };
+    // NEVER `Some(0)` — that reads as a command that succeeded.
+    assert match s.poll_exit() {
+        option::Option[i32]::Some(_c) => false,
+        option::Option[i32]::None => true,
+    };
+}

@@ -14,10 +14,24 @@
 //
 // **`it.next()` is a blessed compiler method.** Sema recognizes the
 // call shape `<Iterator[T]>.next()` and returns `Option[T]`; codegen
-// lowers it inline to: check coro.done → if done return Option::None;
-// else read promise → resume coroutine → return Option::Some(v). The
-// method has no source-level body because the operation can't be
-// expressed in surface C+ (it needs raw access to LLVM coro intrinsics).
+// lowers it inline to: if coro.done → Option::None; else resume the
+// coroutine (it runs to its next `yield`, or to its end) → if coro.done →
+// Option::None; else read the promise → Option::Some(v). The method has
+// no source-level body because the operation can't be expressed in
+// surface C+ (it needs raw access to LLVM coro intrinsics).
+//
+// **A generator is lazy, and a yielded value is MOVED.** Calling a `gen fn`
+// runs none of its body: the frame starts suspended ahead of it, and each
+// `next()` (or `for` trip) resumes it to produce exactly one element. `yield
+// x` consumes `x` the way a `let` init or a variant payload does — the
+// consumer's binding owns it and drops it, and a later use of `x` in the
+// generator is E0335. Until 2026-09-06 neither held: the body ran eagerly
+// to its first `yield` and `next()` resumed AFTER reading, so the generator
+// was always one element ahead of its consumer (a `break` stranded the
+// element already produced), and a yielded value kept its owner in the
+// frame as well — reading it worked, moving it anywhere freed it twice
+// (bugs/closed/yield-does-not-transfer-ownership-so-consuming-a-loop-binding-
+// double-frees). `Vec::drain` is the accessor that fix made writable.
 
 import "./option" as option;
 
@@ -68,7 +82,6 @@ impl Iterator[T] {
             }
             k = k +% (1 as usize);
         }
-        return;
     }
 }
 
@@ -92,7 +105,6 @@ gen fn _ints_below(n: i32) -> i32 {
         yield i;
         i = i +% (1 as i32);
     }
-    return;
 }
 
 fn _is_even(x: i32) -> bool {
@@ -118,7 +130,6 @@ fn iterator_next_yields_in_order() {
         option::Option[i32]::Some(x) => { assert false; }
         option::Option[i32]::None => { assert true; }
     }
-    return;
 }
 
 #[test]

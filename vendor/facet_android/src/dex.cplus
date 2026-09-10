@@ -1,8 +1,10 @@
 // The package's own Java side, shipped as a precompiled DEX.
 //
 // Java interfaces and ViewGroup subclasses cannot be written from native code,
-// so four small classes have to exist on the JVM side: the do-nothing-layout
-// host, the Choreographer tick, the click adapter and the delayed-post adapter.
+// so a handful of small classes have to exist on the JVM side: the
+// do-nothing-layout host, the Choreographer tick, the delayed-post adapter, and
+// one listener adapter per event shape a control reports — click, checked
+// change, seek, text.
 // They ship INSIDE this package (tools/build_dex.sh regenerates
 // facet_android.dex; consumers never run it), are embedded here with
 // `#include_bytes`, and are loaded at runtime with `InMemoryDexClassLoader`.
@@ -19,15 +21,61 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 2164;
+const DEX_LEN: usize = 44096;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
 static C_TICK: usize = 0;
 static C_CLICK: usize = 0;
 static C_POST: usize = 0;
+static C_CHECKED: usize = 0;
+static C_SEEK: usize = 0;
+static C_TEXT: usize = 0;
+static C_STEP: usize = 0;
+static C_ROWS: usize = 0;
+static C_ROWTAP: usize = 0;
+static C_JOB: usize = 0;
+static C_CANVAS: usize = 0;
+static C_DRAW: usize = 0;
+static C_SWIPE: usize = 0;
+static C_DATE: usize = 0;
+static C_EDIT: usize = 0;
+static C_SCROLL: usize = 0;
+static C_TOUCH: usize = 0;
+static C_TIME: usize = 0;
+static C_POPUP: usize = 0;
+static C_WEB: usize = 0;
+static C_ZOOM: usize = 0;
+static C_CAROUSEL: usize = 0;
+static C_BRIDGE: usize = 0;
+static C_TABCLICK: usize = 0;
+static C_MENU: usize = 0;
+static C_INSETS: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
+#[repr(C)]
+// (int, String, int) -> void, for the Activity's permission result.
+// (String) -> void, for the Activity's notification tap. `S` for String —
+// `Native1L` is already taken by the (long) shape, where L is the JNI type
+// letter for a long rather than for an object.
+struct Native1S {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, jni::jobject),
+}
+
+struct Native3ILI {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32, jni::jobject, i32),
+}
+
+struct Native0Z {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject) -> u8,
+}
+
 #[repr(C)]
 struct Native0 {
     opaque name: *u8,
@@ -43,6 +91,119 @@ struct Native1L {
 }
 
 #[repr(C)]
+struct Native2LZ {
+    opaque name: *u8,
+    opaque signature: *u8,
+    // JNI's jboolean is an unsigned byte, not C+'s bool — the JVM passes 0 or 1
+    // in a byte-wide slot and a wider `bool` would read the neighbouring bytes.
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, u8),
+}
+
+#[repr(C)]
+struct Native2LI {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32),
+}
+
+#[repr(C)]
+struct Native2LO {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, jni::jobject),
+}
+
+#[repr(C)]
+struct NativeL_I {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64) -> i32,
+}
+
+// `boolean (jobject)` and `boolean (int)` — the options menu's two doors.
+struct NativeO_Z {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, jni::jobject) -> u8,
+}
+
+struct NativeI_Z {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32) -> u8,
+}
+
+// `int (long, int)` — the view-type question, which takes a position.
+struct NativeLI_I {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32) -> i32,
+}
+
+#[repr(C)]
+struct NativeLIOO_O {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, jni::jobject, jni::jobject) -> jni::jobject,
+}
+
+#[repr(C)]
+struct Native3LZZ {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, u8, u8),
+}
+
+#[repr(C)]
+struct Native3LII_B {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, i32),
+}
+
+#[repr(C)]
+struct Native3LII {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, i32),
+}
+
+#[repr(C)]
+struct Native4LIII {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, i32, i32),
+}
+
+#[repr(C)]
+struct NativeLIFF {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, f32, f32),
+}
+
+#[repr(C)]
+struct NativeLIFF_Z {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, f32, f32) -> u8,
+}
+
+#[repr(C)]
+struct Native3IIS {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32, i32, jni::jobject),
+}
+
+#[repr(C)]
+struct Native1I {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i32),
+}
+
+#[repr(C)]
 struct Native2I {
     opaque name: *u8,
     opaque signature: *u8,
@@ -53,11 +214,103 @@ extern fn facet_android_tick(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_click(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_after(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_size_changed(envp: *jni::JNIEnv, cls: jni::jobject, w: i32, h: i32);
+extern fn facet_android_checked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, on: u8);
+extern fn facet_android_progress(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, p: i32);
+extern fn facet_android_seek_start(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_seek_stop(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, s: jni::jobject);
+extern fn facet_android_step(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, delta: i32);
+extern fn facet_android_selection(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                  start: i32, length: i32);
+extern fn facet_android_tab(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, index: i32);
+extern fn facet_android_menu_item(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                  index: i32);
+extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8;
+extern fn facet_android_app_event(envp: *jni::JNIEnv, cls: jni::jobject, kind: i32);
+extern fn facet_android_activity_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                        request_code: i32, result_code: i32,
+                                        uri: jni::jobject);
+extern fn facet_android_permission_result(envp: *jni::JNIEnv, cls: jni::jobject,
+                                          request_code: i32, permission: jni::jobject,
+                                          result: i32);
+extern fn facet_android_notification_tap(envp: *jni::JNIEnv, cls: jni::jobject,
+                                         payload: jni::jobject);
+extern fn facet_android_open_url(envp: *jni::JNIEnv, cls: jni::jobject,
+                                         payload: jni::jobject);
+extern fn facet_android_layout_requested(envp: *jni::JNIEnv, cls: jni::jobject);
+extern fn facet_android_insets(envp: *jni::JNIEnv, cls: jni::jobject);
+extern fn facet_android_carousel_page(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                      index: i32);
+extern fn facet_android_raw_message(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                    body: jni::jobject);
+extern fn facet_android_resource(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                 url: jni::jobject);
+extern fn facet_android_row_count(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) -> i32;
+extern fn facet_android_build_menu(envp: *jni::JNIEnv, cls: jni::jobject,
+                                   menu: jni::jobject) -> u8;
+extern fn facet_android_menu_selected(envp: *jni::JNIEnv, cls: jni::jobject, id: i32) -> u8;
+extern fn facet_android_view_type_count(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) -> i32;
+extern fn facet_android_item_view_type(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                       position: i32) -> i32;
+extern fn facet_android_row_view(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32,
+                                 convert: jni::jobject, parent: jni::jobject) -> jni::jobject;
+extern fn facet_android_row_tapped(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32);
+extern fn facet_android_job(envp: *jni::JNIEnv, cls: jni::jobject);
+extern fn facet_android_draw(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                             canvas: jni::jobject);
+extern fn facet_android_touch_event(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                    action: i32, x: f32, y: f32);
+extern fn facet_android_scrolled(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                 x: i32, y: i32);
+extern fn facet_android_rows_visible(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                     first: i32, visible: i32, total: i32);
+extern fn facet_android_submit(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_focus(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, on: u8);
+extern fn facet_android_navigating(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_navigated(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                  back: u8, forward: u8);
+extern fn facet_android_terminated(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_picked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                               index: i32);
+extern fn facet_android_time_set(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                 hour: i32, minute: i32);
+extern fn facet_android_time_opened(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_time_dismissed(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_date_set(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                 y: i32, m: i32, d: i32);
+extern fn facet_android_date_opened(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_date_dismissed(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_intercept(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                  action: i32, x: f32, y: f32) -> u8;
+extern fn facet_android_touch(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                              action: i32, x: f32, y: f32) -> u8;
 
 fn host_class() -> jni::jclass { return { C_HOST as *u8 }; }
 fn tick_class() -> jni::jclass { return { C_TICK as *u8 }; }
 fn click_class() -> jni::jclass { return { C_CLICK as *u8 }; }
 fn post_class() -> jni::jclass { return { C_POST as *u8 }; }
+fn checked_class() -> jni::jclass { return { C_CHECKED as *u8 }; }
+fn seek_class() -> jni::jclass { return { C_SEEK as *u8 }; }
+fn text_class() -> jni::jclass { return { C_TEXT as *u8 }; }
+fn step_class() -> jni::jclass { return { C_STEP as *u8 }; }
+fn rows_class() -> jni::jclass { return { C_ROWS as *u8 }; }
+fn rowtap_class() -> jni::jclass { return { C_ROWTAP as *u8 }; }
+fn job_class() -> jni::jclass { return { C_JOB as *u8 }; }
+fn canvas_class() -> jni::jclass { return { C_CANVAS as *u8 }; }
+fn swipe_class() -> jni::jclass { return { C_SWIPE as *u8 }; }
+fn date_class() -> jni::jclass { return { C_DATE as *u8 }; }
+fn edit_class() -> jni::jclass { return { C_EDIT as *u8 }; }
+fn scroll_class() -> jni::jclass { return { C_SCROLL as *u8 }; }
+fn touch_class() -> jni::jclass { return { C_TOUCH as *u8 }; }
+fn time_class() -> jni::jclass { return { C_TIME as *u8 }; }
+fn popup_class() -> jni::jclass { return { C_POPUP as *u8 }; }
+fn web_class() -> jni::jclass { return { C_WEB as *u8 }; }
+fn zoom_class() -> jni::jclass { return { C_ZOOM as *u8 }; }
+fn carousel_class() -> jni::jclass { return { C_CAROUSEL as *u8 }; }
+fn bridge_class() -> jni::jclass { return { C_BRIDGE as *u8 }; }
+fn tabclick_class() -> jni::jclass { return { C_TABCLICK as *u8 }; }
+fn menu_class() -> jni::jclass { return { C_MENU as *u8 }; }
+fn insets_class() -> jni::jclass { return { C_INSETS as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -65,7 +318,16 @@ fn loaded() -> bool { return LOADER != 0; }
 // must be parented to it or the app's own classes become invisible to it.
 fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     if LOADER != 0 { return; }
-    let dex: *[u8; 2164] = #include_bytes("../facet_android.dex");
+    // MERGED FIRST. An app whose build fed this package's `facet_android.dex`
+    // to `d8` alongside its own classes already HAS these classes in its own
+    // classes.dex — and its loader is the one that supplied `FacetActivity`,
+    // the launch Activity an in-memory loader cannot provide.
+    //
+    // Loading the in-memory copy anyway would give the process TWO sets: the
+    // Activity would hold a FacetHost of one class while this code registered
+    // natives on the other, and `nativeSizeChanged` would never arrive.
+    if load_merged(env) { return; }
+    let dex: *[u8; 44096] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -89,7 +351,92 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_TICK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetTick\0"))) };
     C_CLICK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetClick\0"))) };
     C_POST = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetPost\0"))) };
+    C_CHECKED = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetChecked\0"))) };
+    C_SEEK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetSeek\0"))) };
+    C_TEXT = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetText\0"))) };
+    C_STEP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetStep\0"))) };
+    C_ROWS = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetRows\0"))) };
+    C_ROWTAP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetRowTap\0"))) };
+    C_JOB = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetJob\0"))) };
+    C_CANVAS = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetCanvas\0"))) };
+    C_DRAW = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetDraw\0"))) };
+    C_SWIPE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetSwipeHost\0"))) };
+    C_DATE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetDate\0"))) };
+    C_EDIT = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetEdit\0"))) };
+    C_SCROLL = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetScroll\0"))) };
+    C_TOUCH = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetTouch\0"))) };
+    C_TIME = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetTime\0"))) };
+    C_POPUP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetPopup\0"))) };
+    C_WEB = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetWeb\0"))) };
+    C_ZOOM = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetZoomHost\0"))) };
+    C_CAROUSEL = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetCarousel\0"))) };
+    C_BRIDGE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetBridge\0"))) };
+    C_TABCLICK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetTabClick\0"))) };
+    C_MENU = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetMenu\0"))) };
+    C_INSETS = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetInsets\0"))) };
 
+    bind_natives(env);
+
+    env.delete_local_ref(loader);
+    env.delete_local_ref(imdcl);
+    env.delete_local_ref(app_loader);
+    env.delete_local_ref(ctx);
+    env.delete_local_ref(buffer);
+    return;
+}
+
+// The classes as the APP's own loader sees them. False when the app did not
+// merge the dex, which is the ordinary case and not an error — so the pending
+// NoClassDefFoundError is cleared rather than left for the next JNI call to
+// trip over.
+fn load_merged(env: rt::Env) -> bool {
+    let host: jni::jclass = env.find_class(#str_ptr("cplus/facet/FacetHost\0"));
+    if host == (0 as jni::jclass) { env.clear_exception(); return false; }
+    C_HOST = { #addr(env.retain_local_as_global(host)) };
+    C_TICK = { #addr(find_global(env, #str_ptr("cplus/facet/FacetTick\0"))) };
+    C_CLICK = { #addr(find_global(env, #str_ptr("cplus/facet/FacetClick\0"))) };
+    C_POST = { #addr(find_global(env, #str_ptr("cplus/facet/FacetPost\0"))) };
+    C_CHECKED = { #addr(find_global(env, #str_ptr("cplus/facet/FacetChecked\0"))) };
+    C_SEEK = { #addr(find_global(env, #str_ptr("cplus/facet/FacetSeek\0"))) };
+    C_TEXT = { #addr(find_global(env, #str_ptr("cplus/facet/FacetText\0"))) };
+    C_STEP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetStep\0"))) };
+    C_ROWS = { #addr(find_global(env, #str_ptr("cplus/facet/FacetRows\0"))) };
+    C_ROWTAP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetRowTap\0"))) };
+    C_JOB = { #addr(find_global(env, #str_ptr("cplus/facet/FacetJob\0"))) };
+    C_CANVAS = { #addr(find_global(env, #str_ptr("cplus/facet/FacetCanvas\0"))) };
+    C_DRAW = { #addr(find_global(env, #str_ptr("cplus/facet/FacetDraw\0"))) };
+    C_SWIPE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetSwipeHost\0"))) };
+    C_DATE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetDate\0"))) };
+    C_EDIT = { #addr(find_global(env, #str_ptr("cplus/facet/FacetEdit\0"))) };
+    C_SCROLL = { #addr(find_global(env, #str_ptr("cplus/facet/FacetScroll\0"))) };
+    C_TOUCH = { #addr(find_global(env, #str_ptr("cplus/facet/FacetTouch\0"))) };
+    C_TIME = { #addr(find_global(env, #str_ptr("cplus/facet/FacetTime\0"))) };
+    C_POPUP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetPopup\0"))) };
+    C_WEB = { #addr(find_global(env, #str_ptr("cplus/facet/FacetWeb\0"))) };
+    C_ZOOM = { #addr(find_global(env, #str_ptr("cplus/facet/FacetZoomHost\0"))) };
+    C_CAROUSEL = { #addr(find_global(env, #str_ptr("cplus/facet/FacetCarousel\0"))) };
+    C_BRIDGE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetBridge\0"))) };
+    C_TABCLICK = { #addr(find_global(env, #str_ptr("cplus/facet/FacetTabClick\0"))) };
+    C_MENU = { #addr(find_global(env, #str_ptr("cplus/facet/FacetMenu\0"))) };
+    C_INSETS = { #addr(find_global(env, #str_ptr("cplus/facet/FacetInsets\0"))) };
+    // A sentinel rather than a loader object: `loaded()` asks whether the
+    // classes are here, and by this path there is no loader to keep.
+    LOADER = 1 as usize;
+    bind_natives(env);
+    return true;
+}
+
+fn find_global(env: rt::Env, name: *u8) -> jni::jobject {
+    let c: jni::jclass = env.find_class(name);
+    if c == (0 as jni::jclass) { env.clear_exception(); return 0 as jni::jobject; }
+    return env.retain_local_as_global(c);
+}
+
+// Bind every native. Both paths need it: a class from the app's loader resolves
+// a native by symbol, but only for a name JNI can mangle — and every adapter
+// here is a nested class whose methods are private, so all of them are bound
+// explicitly either way.
+fn bind_natives(env: rt::Env) {
     var tick_rec: Native0 = Native0 {
         name: #str_ptr("nativeTick\0"),
         signature: #str_ptr("()V\0"),
@@ -118,12 +465,391 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     };
     let _r3: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_HOST as *u8 },
                                                      #addr_of(size_rec) as *u8, 1) };
+    var relayout_rec: Native0 = Native0 {
+        name: #str_ptr("nativeLayoutRequested\0"),
+        signature: #str_ptr("()V\0"),
+        fn_ptr: facet_android_layout_requested,
+    };
+    let _r18: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_HOST as *u8 },
+                                                      #addr_of(relayout_rec) as *u8, 1) };
 
-    env.delete_local_ref(loader);
-    env.delete_local_ref(imdcl);
-    env.delete_local_ref(app_loader);
-    env.delete_local_ref(ctx);
-    env.delete_local_ref(buffer);
+    var checked_rec: Native2LZ = Native2LZ {
+        name: #str_ptr("nativeChecked\0"),
+        signature: #str_ptr("(JZ)V\0"),
+        fn_ptr: facet_android_checked,
+    };
+    let _r4: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_CHECKED as *u8 },
+                                                     #addr_of(checked_rec) as *u8, 1) };
+    // THREE IN ONE CALL, because RegisterNatives takes an ARRAY and a slider
+    // reports three things. Registering them one at a time would work as well;
+    // the array is what jni.h's shape is for, and it keeps the three names that
+    // must match FacetSeek.java side by side.
+    var seek_recs: [Native2LI; 1] = [Native2LI {
+        name: #str_ptr("nativeProgress\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_progress,
+    }];
+    let _r5: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SEEK as *u8 },
+                                                     #addr_of(seek_recs[0]) as *u8, 1) };
+    var track_recs: [Native1L; 2] = [
+        Native1L {
+            name: #str_ptr("nativeSeekStart\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_seek_start,
+        },
+        Native1L {
+            name: #str_ptr("nativeSeekStop\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_seek_stop,
+        },
+    ];
+    let _r6: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SEEK as *u8 },
+                                                     #addr_of(track_recs[0]) as *u8, 2) };
+    var text_rec: Native2LO = Native2LO {
+        name: #str_ptr("nativeText\0"),
+        signature: #str_ptr("(JLjava/lang/String;)V\0"),
+        fn_ptr: facet_android_text,
+    };
+    let _r7: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TEXT as *u8 },
+                                                     #addr_of(text_rec) as *u8, 1) };
+    var sel_rec: Native3LII = Native3LII {
+        name: #str_ptr("nativeSelection\0"),
+        signature: #str_ptr("(JII)V\0"),
+        fn_ptr: facet_android_selection,
+    };
+    let _r7b: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TEXT as *u8 },
+                                                      #addr_of(sel_rec) as *u8, 1) };
+
+    var job_rec: Native0 = Native0 {
+        name: #str_ptr("nativeJob\0"),
+        signature: #str_ptr("()V\0"),
+        fn_ptr: facet_android_job,
+    };
+    var touch_rec: NativeLIFF = NativeLIFF {
+        name: #str_ptr("nativeTouchEvent\0"),
+        signature: #str_ptr("(JIFF)V\0"),
+        fn_ptr: facet_android_touch_event,
+    };
+    let _rt: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TOUCH as *u8 },
+                                                     #addr_of(touch_rec) as *u8, 1) };
+    var scrolled_rec: Native3LII = Native3LII {
+        name: #str_ptr("nativeScrolled\0"),
+        signature: #str_ptr("(JII)V\0"),
+        fn_ptr: facet_android_scrolled,
+    };
+    let _rs0: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SCROLL as *u8 },
+                                                      #addr_of(scrolled_rec) as *u8, 1) };
+    var rows_rec: Native4LIII = Native4LIII {
+        name: #str_ptr("nativeRows\0"),
+        signature: #str_ptr("(JIII)V\0"),
+        fn_ptr: facet_android_rows_visible,
+    };
+    let _rs1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SCROLL as *u8 },
+                                                      #addr_of(rows_rec) as *u8, 1) };
+    var submit_rec: Native1L = Native1L {
+        name: #str_ptr("nativeSubmit\0"),
+        signature: #str_ptr("(J)V\0"),
+        fn_ptr: facet_android_submit,
+    };
+    let _re0: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_EDIT as *u8 },
+                                                      #addr_of(submit_rec) as *u8, 1) };
+    var focus_rec: Native2LZ = Native2LZ {
+        name: #str_ptr("nativeFocus\0"),
+        signature: #str_ptr("(JZ)V\0"),
+        fn_ptr: facet_android_focus,
+    };
+    let _re1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_EDIT as *u8 },
+                                                      #addr_of(focus_rec) as *u8, 1) };
+    var web_edges: [Native1L; 2] = [
+        Native1L {
+            name: #str_ptr("nativeNavigating\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_navigating,
+        },
+        Native1L {
+            name: #str_ptr("nativeTerminated\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_terminated,
+        },
+    ];
+    let _rw0: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_WEB as *u8 },
+                                                      #addr_of(web_edges[0]) as *u8, 2) };
+    var navigated_rec: Native3LZZ = Native3LZZ {
+        name: #str_ptr("nativeNavigated\0"),
+        signature: #str_ptr("(JZZ)V\0"),
+        fn_ptr: facet_android_navigated,
+    };
+    let _rw1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_WEB as *u8 },
+                                                      #addr_of(navigated_rec) as *u8, 1) };
+    var picked_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativePicked\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_picked,
+    };
+    let _rp: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_POPUP as *u8 },
+                                                     #addr_of(picked_rec) as *u8, 1) };
+    var time_set_rec: Native3LII = Native3LII {
+        name: #str_ptr("nativeTimeSet\0"),
+        signature: #str_ptr("(JII)V\0"),
+        fn_ptr: facet_android_time_set,
+    };
+    let _rti0: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TIME as *u8 },
+                                                       #addr_of(time_set_rec) as *u8, 1) };
+    var time_edge_recs: [Native1L; 2] = [
+        Native1L {
+            name: #str_ptr("nativeOpened\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_time_opened,
+        },
+        Native1L {
+            name: #str_ptr("nativeTimeDismissed\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_time_dismissed,
+        },
+    ];
+    let _rti1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TIME as *u8 },
+                                                       #addr_of(time_edge_recs[0]) as *u8, 2) };
+    var date_set_rec: Native4LIII = Native4LIII {
+        name: #str_ptr("nativeDateSet\0"),
+        signature: #str_ptr("(JIII)V\0"),
+        fn_ptr: facet_android_date_set,
+    };
+    let _rd0: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_DATE as *u8 },
+                                                      #addr_of(date_set_rec) as *u8, 1) };
+    var date_edge_recs: [Native1L; 2] = [
+        Native1L {
+            name: #str_ptr("nativeOpened\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_date_opened,
+        },
+        Native1L {
+            name: #str_ptr("nativeDismissed\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_date_dismissed,
+        },
+    ];
+    let _rd1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_DATE as *u8 },
+                                                      #addr_of(date_edge_recs[0]) as *u8, 2) };
+    // TWO IN ONE CALL: an intercept and a touch are the same question asked at
+    // two moments, and RegisterNatives takes an array.
+    var swipe_recs: [NativeLIFF_Z; 2] = [
+        NativeLIFF_Z {
+            name: #str_ptr("nativeIntercept\0"),
+            signature: #str_ptr("(JIFF)Z\0"),
+            fn_ptr: facet_android_intercept,
+        },
+        NativeLIFF_Z {
+            name: #str_ptr("nativeTouch\0"),
+            signature: #str_ptr("(JIFF)Z\0"),
+            fn_ptr: facet_android_touch,
+        },
+    ];
+    let _rs: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SWIPE as *u8 },
+                                                     #addr_of(swipe_recs[0]) as *u8, 2) };
+    var draw_rec: Native2LO = Native2LO {
+        name: #str_ptr("nativeDraw\0"),
+        signature: #str_ptr("(JLandroid/graphics/Canvas;)V\0"),
+        fn_ptr: facet_android_draw,
+    };
+    let _rc: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_CANVAS as *u8 },
+                                                     #addr_of(draw_rec) as *u8, 1) };
+    let _rj: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_JOB as *u8 },
+                                                     #addr_of(job_rec) as *u8, 1) };
+
+    var rows_recs: [NativeL_I; 1] = [NativeL_I {
+        name: #str_ptr("nativeRowCount\0"),
+        signature: #str_ptr("(J)I\0"),
+        fn_ptr: facet_android_row_count,
+    }];
+    let _r9: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWS as *u8 },
+                                                     #addr_of(rows_recs[0]) as *u8, 1) };
+    // The two the recycler needs BEFORE it builds anything: how many pools there
+    // are, and which pool a position belongs to.
+    var vtc_rec: NativeL_I = NativeL_I {
+        name: #str_ptr("nativeViewTypeCount\0"),
+        signature: #str_ptr("(J)I\0"),
+        fn_ptr: facet_android_view_type_count,
+    };
+    let _r9a: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWS as *u8 },
+                                                      #addr_of(vtc_rec) as *u8, 1) };
+    var ivt_rec: NativeLI_I = NativeLI_I {
+        name: #str_ptr("nativeItemViewType\0"),
+        signature: #str_ptr("(JI)I\0"),
+        fn_ptr: facet_android_item_view_type,
+    };
+    let _r9b: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWS as *u8 },
+                                                      #addr_of(ivt_rec) as *u8, 1) };
+    var rowview_rec: NativeLIOO_O = NativeLIOO_O {
+        name: #str_ptr("nativeRowView\0"),
+        signature: #str_ptr("(JILandroid/view/View;Landroid/view/ViewGroup;)Landroid/view/View;\0"),
+        fn_ptr: facet_android_row_view,
+    };
+    let _r10: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWS as *u8 },
+                                                      #addr_of(rowview_rec) as *u8, 1) };
+    var rowtap_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativeRowTapped\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_row_tapped,
+    };
+    let _r11: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWTAP as *u8 },
+                                                      #addr_of(rowtap_rec) as *u8, 1) };
+
+    var page_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativeCarouselPage\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_carousel_page,
+    };
+    let _r12: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_CAROUSEL as *u8 },
+                                                      #addr_of(page_rec) as *u8, 1) };
+
+    var bridge_rec: Native2LO = Native2LO {
+        name: #str_ptr("nativeRawMessage\0"),
+        signature: #str_ptr("(JLjava/lang/String;)V\0"),
+        fn_ptr: facet_android_raw_message,
+    };
+    let _r13: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_BRIDGE as *u8 },
+                                                      #addr_of(bridge_rec) as *u8, 1) };
+    var resource_rec: Native2LO = Native2LO {
+        name: #str_ptr("nativeResourceRequested\0"),
+        signature: #str_ptr("(JLjava/lang/String;)V\0"),
+        fn_ptr: facet_android_resource,
+    };
+    let _r14: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_WEB as *u8 },
+                                                      #addr_of(resource_rec) as *u8, 1) };
+
+    var tab_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativeTab\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_tab,
+    };
+    let _r15: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TABCLICK as *u8 },
+                                                      #addr_of(tab_rec) as *u8, 1) };
+
+    var menu_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativeMenuItem\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_menu_item,
+    };
+    let _r16: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_MENU as *u8 },
+                                                      #addr_of(menu_rec) as *u8, 1) };
+
+    // THE ACTIVITY'S OWN NATIVE. `FacetActivity` is the one class NOT in this
+    // dex — the system loads it from the APK before any of our code runs — so
+    // it is looked up by name rather than through a cached handle, and its
+    // native is registered here like every other.
+    let act: jni::jclass = env.class_cached(#str_ptr("cplus/facet/FacetActivity\0"));
+    if act != (0 as jni::jclass) {
+        var back_rec: Native0Z = Native0Z {
+            name: #str_ptr("nativeBack\0"),
+            signature: #str_ptr("()Z\0"),
+            fn_ptr: facet_android_back,
+        };
+        let _r17: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(back_rec) as *u8, 1) };
+
+        // THE TOOLBAR'S TWO DOORS, registered separately for the same reason the
+        // permission one below is: an app whose APK predates this override has
+        // a FacetActivity without `onCreateOptionsMenu`, and RegisterNatives on
+        // a missing method throws. A stale APK must not take the back button
+        // down with it.
+        var menu_build_rec: NativeO_Z = NativeO_Z {
+            name: #str_ptr("nativeBuildMenu\0"),
+            signature: #str_ptr("(Landroid/view/Menu;)Z\0"),
+            fn_ptr: facet_android_build_menu,
+        };
+        let _r17a: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                           #addr_of(menu_build_rec) as *u8, 1) };
+        var menu_sel_rec: NativeI_Z = NativeI_Z {
+            name: #str_ptr("nativeMenuSelected\0"),
+            signature: #str_ptr("(I)Z\0"),
+            fn_ptr: facet_android_menu_selected,
+        };
+        let _r17b: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                           #addr_of(menu_sel_rec) as *u8, 1) };
+
+        // The permission answer's door. Registered on the SAME class and in the
+        // same guarded block: an app whose APK predates this override has a
+        // FacetActivity without the method, and RegisterNatives on a missing
+        // one throws — so a stale APK must not take the back button down with
+        // it. Separate call, separate result.
+        var perm_rec: Native3ILI = Native3ILI {
+            name: #str_ptr("nativePermissionResult\0"),
+            signature: #str_ptr("(ILjava/lang/String;I)V\0"),
+            fn_ptr: facet_android_permission_result,
+        };
+        let _r18: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(perm_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // The notification tap's door. Separate call for the same reason as the
+        // permission result: an APK whose FacetActivity predates this override
+        // must not take the others down with it.
+        var tap_rec: Native1S = Native1S {
+            name: #str_ptr("nativeNotificationTap\0"),
+            signature: #str_ptr("(Ljava/lang/String;)V\0"),
+            fn_ptr: facet_android_notification_tap,
+        };
+        let _r20: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(tap_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // The deep link's door. Separate call for the same reason as the two
+        // above: an APK whose FacetActivity predates this override must not
+        // take the others down with it.
+        var link_rec: Native1S = Native1S {
+            name: #str_ptr("nativeOpenUrl\0"),
+            signature: #str_ptr("(Ljava/lang/String;)V\0"),
+            fn_ptr: facet_android_open_url,
+        };
+        let _r21: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(link_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // The Activity lifecycle's door — onResume / onPause / onDestroy /
+        // onLowMemory, all four through one native carrying the kind. Separate
+        // call and separate result for the same reason as the three above: an
+        // APK whose FacetActivity predates this override must not take them
+        // down with it. That case is REAL here and not theoretical — every
+        // Android app built before this change has such an APK, and its only
+        // symptom should be the lifecycle it never had.
+        var life_rec: Native1I = Native1I {
+            name: #str_ptr("nativeAppEvent\0"),
+            signature: #str_ptr("(I)V\0"),
+            fn_ptr: facet_android_app_event,
+        };
+        let _r22: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(life_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+
+        // `onActivityResult`'s door. Separate call for the same reason as the
+        // others: an APK whose FacetActivity predates this override must not
+        // take them down with it.
+        var res_rec: Native3IIS = Native3IIS {
+            name: #str_ptr("nativeActivityResult\0"),
+            signature: #str_ptr("(IILjava/lang/String;)V\0"),
+            fn_ptr: facet_android_activity_result,
+        };
+        let _r23: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(res_rec) as *u8, 1) };
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+    }
+
+    var insets_rec: Native0 = Native0 {
+        name: #str_ptr("nativeInsets\0"),
+        signature: #str_ptr("()V\0"),
+        fn_ptr: facet_android_insets,
+    };
+    let _r19: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_INSETS as *u8 },
+                                                      #addr_of(insets_rec) as *u8, 1) };
+
+    var step_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativeStep\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_step,
+    };
+    let _r8: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_STEP as *u8 },
+                                                     #addr_of(step_rec) as *u8, 1) };
+
     return;
 }
 
@@ -145,9 +871,668 @@ fn new_with_token(env: rt::Env, cls: jni::jclass, token: i64) -> jni::jobject {
     return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, #addr_of(args[0])) };
 }
 
+// `new FacetStep(token, delta)` — the only adapter whose token is not the whole
+// story, because a stepper has two buttons behind one node.
+fn new_with_token_i(env: rt::Env, cls: jni::jclass, token: i64, arg: i32) -> jni::jobject {
+    let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"), #str_ptr("(JI)V\0"));
+    var args: [jni::JValue; 2] = [jni::arg_long(token), jni::arg_int(arg)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, #addr_of(args[0])) };
+}
+
+// `new FacetCanvas(context, token)` — the only adapter that is itself a VIEW,
+// so it needs the Context every View constructor takes.
+fn new_view_with_token(env: rt::Env, cls: jni::jclass, ctx: jni::jobject,
+                       token: i64) -> jni::jobject {
+    let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"),
+                                             #str_ptr("(Landroid/content/Context;J)V\0"));
+    var args: [jni::JValue; 2] = [jni::arg_object(ctx), jni::arg_long(token)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, #addr_of(args[0])) };
+}
+
+// ---- FacetDraw -----------------------------------------------------------------
+// The three calls whose arguments C+ cannot build. See FacetDraw.java; the
+// reason each one is over there is written there and not repeated here.
+
+fn draw_concat(env: rt::Env, canvas: jni::jobject, a: f64, b: f64, c: f64, d: f64,
+               tx: f64, ty: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, #str_ptr("concat\0"),
+        #str_ptr("(Landroid/graphics/Canvas;FFFFFF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 7] = [jni::arg_object(canvas),
+        jni::arg_float(a as f32), jni::arg_float(b as f32), jni::arg_float(c as f32),
+        jni::arg_float(d as f32), jni::arg_float(tx as f32), jni::arg_float(ty as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn draw_dash(env: rt::Env, paint: jni::jobject, count: i32, phase: f64,
+             r0: f64, r1: f64, r2: f64, r3: f64, r4: f64, r5: f64, r6: f64, r7: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, #str_ptr("dash\0"),
+        #str_ptr("(Landroid/graphics/Paint;IFFFFFFFFF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 11] = [jni::arg_object(paint), jni::arg_int(count),
+        jni::arg_float(phase as f32),
+        jni::arg_float(r0 as f32), jni::arg_float(r1 as f32), jni::arg_float(r2 as f32),
+        jni::arg_float(r3 as f32), jni::arg_float(r4 as f32), jni::arg_float(r5 as f32),
+        jni::arg_float(r6 as f32), jni::arg_float(r7 as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn draw_input_transparent(env: rt::Env, view: jni::jobject, through: bool) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("inputTransparent\0"), #str_ptr("(Landroid/view/View;Z)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_object(view), jni::arg_bool(if through { 1 as u8 } else { 0 as u8 })];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+// THE CARET WATCH, armed on the Editable rather than the view: a SpanWatcher
+// hears a selection move only if it is itself a span. Re-armed whenever the
+// text is replaced, because a new Editable carries none of the old one's spans.
+fn watch_selection(env: rt::Env, view: jni::jobject, watcher: jni::jobject) {
+    if C_TEXT == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_TEXT as *u8 },
+        #str_ptr("watchSelection\0"),
+        #str_ptr("(Landroid/widget/EditText;Lcplus/facet/FacetText;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_object(view), jni::arg_object(watcher)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_TEXT as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+// ---- rich text -----------------------------------------------------------------
+// The span builder lives on the view between these calls; see FacetDraw.
+
+fn spans_begin(env: rt::Env, view: jni::jobject, text: *u8) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("spansBegin\0"),
+        #str_ptr("(Landroid/widget/TextView;Ljava/lang/String;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let s: jni::jstring = env.new_string_utf(text);
+    var args: [jni::JValue; 2] = [jni::arg_object(view), jni::arg_object(s)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(s);
+    return;
+}
+
+fn spans_begin_from_view(env: rt::Env, view: jni::jobject) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("spansBeginFromView\0"), #str_ptr("(Landroid/widget/TextView;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_object(view)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn spans_add(env: rt::Env, view: jni::jobject, start: i32, length: i32,
+             color: i32, has_color: bool, background: i32, has_background: bool,
+             bold: bool, italic: bool, decoration: i32, size_px: i32, link: *u8) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("spansAdd\0"),
+        #str_ptr("(Landroid/widget/TextView;IIIZIZZZIILjava/lang/String;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var l: jni::jstring = 0 as jni::jstring;
+    if link != (0 as *u8) { l = env.new_string_utf(link); }
+    var args: [jni::JValue; 12] = [
+        jni::arg_object(view), jni::arg_int(start), jni::arg_int(length),
+        jni::arg_int(color), jni::arg_bool(if has_color { 1 as u8 } else { 0 as u8 }),
+        jni::arg_int(background),
+        jni::arg_bool(if has_background { 1 as u8 } else { 0 as u8 }),
+        jni::arg_bool(if bold { 1 as u8 } else { 0 as u8 }),
+        jni::arg_bool(if italic { 1 as u8 } else { 0 as u8 }),
+        jni::arg_int(decoration), jni::arg_int(size_px), jni::arg_object(l)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    if l != (0 as jni::jstring) { env.delete_local_ref(l); }
+    return;
+}
+
+// The TYPOGRAPHY half of a run — a family, a line height and a letter spacing,
+// each of which is a span class Android has had for years and that this bridge
+// simply never exposed. `span.font_family`, `span.line_height` and
+// `span.character_spacing` were unanswerable from the C+ side until it did.
+//
+// A second entry point rather than four more parameters on `spans_add`: that
+// already takes twelve, and a caller wanting none of these should not have to
+// say so four times.
+fn spans_add_typography(env: rt::Env, view: jni::jobject, start: i32, length: i32,
+                        family: *u8, line_height_px: f32, letter_spacing_em: f32,
+                        transform: i32) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("spansAddTypography\0"),
+        #str_ptr("(Landroid/widget/TextView;IILjava/lang/String;FFI)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var f: jni::jstring = 0 as jni::jstring;
+    if family != (0 as *u8) { f = env.new_string_utf(family); }
+    var args: [jni::JValue; 7] = [
+        jni::arg_object(view), jni::arg_int(start), jni::arg_int(length),
+        jni::arg_object(f), jni::arg_float(line_height_px),
+        jni::arg_float(letter_spacing_em), jni::arg_int(transform)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    if f != (0 as jni::jstring) { env.delete_local_ref(f); }
+    return;
+}
+
+// One ActionBar item. Named `options_menu_add` because `menu_add` above is the
+// CONTEXT menu's, and the two are different menus with different lifetimes.
+fn options_menu_add(env: rt::Env, menu: jni::jobject, id: i32, title: *u8,
+                    icon: *u8, show_as: i32, tint: i32, tinted: bool) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("optionsMenuAdd\0"),
+        #str_ptr("(Landroid/view/Menu;ILjava/lang/String;Ljava/lang/String;IIZ)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let jt: jni::jstring = env.new_string_utf(title);
+    let ji: jni::jstring = env.new_string_utf(icon);
+    var args: [jni::JValue; 7] = [
+        jni::arg_object(menu), jni::arg_int(id), jni::arg_object(jt),
+        jni::arg_object(ji), jni::arg_int(show_as), jni::arg_int(tint),
+        jni::arg_bool(if tinted { 1 as u8 } else { 0 as u8 })];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(jt);
+    env.delete_local_ref(ji);
+    return;
+}
+
+fn spans_commit(env: rt::Env, view: jni::jobject, has_links: bool) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("spansCommit\0"), #str_ptr("(Landroid/widget/TextView;Z)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_object(view),
+                                  jni::arg_bool(if has_links { 1 as u8 } else { 0 as u8 })];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+// THE WINDOW'S INSETS, in pixels, as {left, top, right, bottom}.
+//
+// `FacetActivity` is the one class NOT in this dex — the system instantiates
+// the launch Activity before any of our code runs, so it is merged into the
+// APK's own classes.dex — which is why this is looked up by name off the
+// activity's own class rather than through a cached handle.
+fn window_insets(env: rt::Env, host: jni::jobject) -> i64 {
+    let cls: jni::jclass = env.class_cached(#str_ptr("cplus/facet/FacetActivity\0"));
+    if cls == (0 as jni::jclass) { return 0 as i64; }
+    let mid: jni::jmethodID = env.method_id_static(cls, #str_ptr("windowInsets\0"),
+        #str_ptr("(Landroid/view/View;)J\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as i64; }
+    var args: [jni::JValue; 1] = [jni::arg_object(host)];
+    return { (*(*env.raw())).CallStaticLongMethodA(env.raw(), cls, mid, #addr_of(args[0])) };
+}
+
+// Whether this view's remembered shape differs from the one it now needs.
+fn shape_changed(env: rt::Env, view: jni::jobject, side: i32) -> bool {
+    if C_DRAW == 0 { return false; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("shapeChanged\0"), #str_ptr("(Landroid/view/View;I)Z\0"));
+    if mid == (0 as jni::jmethodID) { return false; }
+    var args: [jni::JValue; 2] = [jni::arg_object(view), jni::arg_int(side)];
+    let r: u8 = { (*(*env.raw())).CallStaticBooleanMethodA(env.raw(), { C_DRAW as *u8 },
+                                                           mid, #addr_of(args[0])) };
+    return r != (0 as u8);
+}
+
+// `new FacetInsets()` — the window-insets listener, installed on the root host.
+fn new_insets_listener(env: rt::Env) -> jni::jobject {
+    if C_INSETS == 0 { return 0 as jni::jobject; }
+    let ctor: jni::jmethodID = env.method_id({ C_INSETS as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("()V\0"));
+    if ctor == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    return { (*(*env.raw())).NewObjectA(env.raw(), { C_INSETS as *u8 }, ctor,
+                                        0 as *jni::JValue) };
+}
+
+// ---- FacetMenu -----------------------------------------------------------------
+
+fn menu_begin(env: rt::Env, token: i64) {
+    if C_MENU == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_MENU as *u8 }, #str_ptr("begin\0"),
+                                                   #str_ptr("(J)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_long(token)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_MENU as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn menu_add(env: rt::Env, token: i64, label: *u8, destructive: bool,
+            icon: *u8, shortcut: *u8) {
+    if C_MENU == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_MENU as *u8 }, #str_ptr("add\0"),
+        #str_ptr("(JLjava/lang/String;ZLjava/lang/String;Ljava/lang/String;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let js: jni::jstring = env.new_string_utf(label);
+    let ji: jni::jstring = env.new_string_utf(icon);
+    let jk: jni::jstring = env.new_string_utf(shortcut);
+    var args: [jni::JValue; 5] = [jni::arg_long(token), jni::arg_object(js),
+                                  rt::arg_bool(destructive),
+                                  jni::arg_object(ji), jni::arg_object(jk)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_MENU as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return;
+}
+
+fn menu_attach(env: rt::Env, view: jni::jobject, token: i64) {
+    if C_MENU == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_MENU as *u8 }, #str_ptr("attach\0"),
+        #str_ptr("(Landroid/view/View;J)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_object(view), jni::arg_long(token)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_MENU as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+// `new FacetTabClick(token, index)` — one tab button's listener.
+fn new_tab_click(env: rt::Env, token: i64, index: i32) -> jni::jobject {
+    if C_TABCLICK == 0 { return 0 as jni::jobject; }
+    let ctor: jni::jmethodID = env.method_id({ C_TABCLICK as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("(JI)V\0"));
+    if ctor == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 2] = [jni::arg_long(token), jni::arg_int(index)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), { C_TABCLICK as *u8 }, ctor,
+                                        #addr_of(args[0])) };
+}
+
+// `new FacetBridge(token, host)` — the object a page posts to.
+fn new_bridge(env: rt::Env, token: i64, host: jni::jobject) -> jni::jobject {
+    if C_BRIDGE == 0 { return 0 as jni::jobject; }
+    let ctor: jni::jmethodID = env.method_id({ C_BRIDGE as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("(JLandroid/view/View;)V\0"));
+    if ctor == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 2] = [jni::arg_long(token), jni::arg_object(host)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), { C_BRIDGE as *u8 }, ctor,
+                                        #addr_of(args[0])) };
+}
+
+// ---- FacetCarousel -------------------------------------------------------------
+
+fn new_carousel(env: rt::Env, ctx: jni::jobject, token: i64) -> jni::jobject {
+    if C_CAROUSEL == 0 { return 0 as jni::jobject; }
+    let ctor: jni::jmethodID = env.method_id({ C_CAROUSEL as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("(Landroid/content/Context;J)V\0"));
+    if ctor == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 2] = [jni::arg_object(ctx), jni::arg_long(token)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), { C_CAROUSEL as *u8 }, ctor,
+                                        #addr_of(args[0])) };
+}
+
+fn carousel_set_page(env: rt::Env, v: jni::jobject, width: i32, count: i32) {
+    carousel_call_ii(env, v, #str_ptr("setPage\0"), #str_ptr("(II)V\0"), width, count);
+    return;
+}
+
+fn carousel_go_to(env: rt::Env, v: jni::jobject, index: i32) {
+    carousel_call_ii(env, v, #str_ptr("goTo\0"), #str_ptr("(IZ)V\0"), index, 0 as i32);
+    return;
+}
+
+fn carousel_set_flag(env: rt::Env, v: jni::jobject, name: *u8, on: bool) {
+    if C_CAROUSEL == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_CAROUSEL as *u8 }, name, #str_ptr("(Z)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_bool(if on { 1 as u8 } else { 0 as u8 })];
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), v, mid, #addr_of(args[0])) };
+    return;
+}
+
+// `setPage(int,int)` and `goTo(int,boolean)` differ only in the second
+// argument's TYPE, and a jvalue is a union — so one call site serves both.
+fn carousel_call_ii(env: rt::Env, v: jni::jobject, name: *u8, sig: *u8, a: i32, b: i32) {
+    if C_CAROUSEL == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_CAROUSEL as *u8 }, name, sig);
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_int(a), jni::arg_int(b)];
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), v, mid, #addr_of(args[0])) };
+    return;
+}
+
+// `new FacetZoomHost(context, min, max)` — the magnifier the Chrome asks for.
+fn new_zoom_host(env: rt::Env, ctx: jni::jobject, min: f64, max: f64) -> jni::jobject {
+    if C_ZOOM == 0 { return 0 as jni::jobject; }
+    let ctor: jni::jmethodID = env.method_id({ C_ZOOM as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("(Landroid/content/Context;FF)V\0"));
+    if ctor == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 3] = [jni::arg_object(ctx), jni::arg_float(min as f32),
+                                  jni::arg_float(max as f32)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), { C_ZOOM as *u8 }, ctor,
+                                        #addr_of(args[0])) };
+}
+
+// ---- FacetDate -----------------------------------------------------------------
+
+fn date_show(env: rt::Env, ctx: jni::jobject, token: i64, y: i32, m: i32, d: i32,
+             min_y: i32, min_m: i32, min_d: i32, max_y: i32, max_m: i32, max_d: i32) {
+    if C_DATE == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DATE as *u8 }, #str_ptr("show\0"),
+        #str_ptr("(Landroid/content/Context;JIIIIIIIII)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 11] = [jni::arg_object(ctx), jni::arg_long(token),
+        jni::arg_int(y), jni::arg_int(m), jni::arg_int(d),
+        jni::arg_int(min_y), jni::arg_int(min_m), jni::arg_int(min_d),
+        jni::arg_int(max_y), jni::arg_int(max_m), jni::arg_int(max_d)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DATE as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+// A formatted date, as a LOCAL jstring the caller reads and releases.
+// ---- FacetPopup ----------------------------------------------------------------
+// The items arrive ONE AT A TIME: an ArrayAdapter takes a List and there is no
+// array door from C+, so the list is accumulated on the Java side between
+// `begin` and `commit`.
+
+fn popup_begin(env: rt::Env, token: i64) {
+    if C_POPUP == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_POPUP as *u8 }, #str_ptr("begin\0"),
+                                                   #str_ptr("(J)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_long(token)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_POPUP as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn popup_style(env: rt::Env, token: i64, size: f64, scales: bool, bold: bool,
+               italic: bool, family: *u8, color: i32, has_color: bool,
+               gravity: i32, letter_spacing: f64) {
+    if C_POPUP == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_POPUP as *u8 }, #str_ptr("style\0"),
+        #str_ptr("(JFZZZLjava/lang/String;IZIF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let fam: jni::jstring = env.new_string_utf(family);
+    var args: [jni::JValue; 10] = [
+        jni::arg_long(token), jni::arg_float(size as f32), rt::arg_bool(scales),
+        rt::arg_bool(bold), rt::arg_bool(italic), jni::arg_object(fam),
+        jni::arg_int(color), rt::arg_bool(has_color), jni::arg_int(gravity),
+        jni::arg_float(letter_spacing as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_POPUP as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(fam);
+    return;
+}
+
+fn popup_add(env: rt::Env, token: i64, label: *u8, enabled: bool) {
+    if C_POPUP == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_POPUP as *u8 }, #str_ptr("add\0"),
+        #str_ptr("(JLjava/lang/String;Z)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let js: jni::jstring = env.new_string_utf(label);
+    var args: [jni::JValue; 3] = [jni::arg_long(token), jni::arg_object(js),
+                                  rt::arg_bool(enabled)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_POPUP as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return;
+}
+
+fn popup_commit(env: rt::Env, spinner: jni::jobject, token: i64, selected: i32) {
+    if C_POPUP == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_POPUP as *u8 }, #str_ptr("commit\0"),
+        #str_ptr("(Landroid/widget/Spinner;JI)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 3] = [jni::arg_object(spinner), jni::arg_long(token),
+                                  jni::arg_int(selected)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_POPUP as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn time_show(env: rt::Env, ctx: jni::jobject, token: i64, hour: i32, minute: i32) {
+    if C_TIME == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_TIME as *u8 }, #str_ptr("show\0"),
+        #str_ptr("(Landroid/content/Context;JII)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 4] = [jni::arg_object(ctx), jni::arg_long(token),
+                                  jni::arg_int(hour), jni::arg_int(minute)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_TIME as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn time_format(env: rt::Env, pattern: *u8, hour: i32, minute: i32) -> jni::jobject {
+    if C_TIME == 0 { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static({ C_TIME as *u8 }, #str_ptr("format\0"),
+        #str_ptr("(Ljava/lang/String;II)Ljava/lang/String;\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    let js: jni::jstring = env.new_string_utf(pattern);
+    var args: [jni::JValue; 3] = [jni::arg_object(js), jni::arg_int(hour),
+                                  jni::arg_int(minute)];
+    let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(),
+                                { C_TIME as *u8 }, mid, #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return r;
+}
+
+fn date_format(env: rt::Env, pattern: *u8, y: i32, m: i32, d: i32) -> jni::jobject {
+    if C_DATE == 0 { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DATE as *u8 }, #str_ptr("format\0"),
+        #str_ptr("(Ljava/lang/String;III)Ljava/lang/String;\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    let js: jni::jstring = env.new_string_utf(pattern);
+    var args: [jni::JValue; 4] = [jni::arg_object(js), jni::arg_int(y), jni::arg_int(m),
+                                  jni::arg_int(d)];
+    let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(),
+                                { C_DATE as *u8 }, mid, #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return r;
+}
+
+fn draw_gradient_background(env: rt::Env, v: jni::jobject, start: i32, end: i32,
+                            angle: f64, radius: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("gradientBackground\0"),
+        #str_ptr("(Landroid/view/View;IIFF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 5] = [jni::arg_object(v), jni::arg_int(start), jni::arg_int(end),
+                                  jni::arg_float(angle as f32), jni::arg_float(radius as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn control_background(env: rt::Env, v: jni::jobject, fill: i32, has_fill: bool,
+                      stroke: i32, stroke_width: i32, radius: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("controlBackground\0"), #str_ptr("(Landroid/view/View;IZIIF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 6] = [jni::arg_object(v), jni::arg_int(fill),
+                                  rt::arg_bool(has_fill), jni::arg_int(stroke),
+                                  jni::arg_int(stroke_width),
+                                  jni::arg_float(radius as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+// The icon font, as a LOCAL ref or null. Cached on the Java side by path and
+// fill, so this is a HashMap lookup after the first call.
+fn icon_font(env: rt::Env, ctx: jni::jobject, path: *u8, fill: i32) -> jni::jobject {
+    if C_DRAW == 0 { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, #str_ptr("iconFont\0"),
+        #str_ptr("(Landroid/content/Context;Ljava/lang/String;I)Landroid/graphics/Typeface;\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    let js: jni::jstring = env.new_string_utf(path);
+    var args: [jni::JValue; 3] = [jni::arg_object(ctx), jni::arg_object(js),
+                                  jni::arg_int(fill)];
+    let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(),
+                                { C_DRAW as *u8 }, mid, #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    env.clear_exception();
+    return r;
+}
+
+// The theme's own BORDERLESS ripple — a circle, which is what a glyph button
+// wears everywhere else on the platform.
+// A ColorStateList with a CHECKED colour and an unchecked one, as a LOCAL ref.
+fn checked_csl(env: rt::Env, on: i32, off: i32) -> jni::jobject {
+    if C_DRAW == 0 { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("checkedCsl\0"), #str_ptr("(II)Landroid/content/res/ColorStateList;\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 2] = [jni::arg_int(on), jni::arg_int(off)];
+    return { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                                     #addr_of(args[0])) };
+}
+
+fn set_html(env: rt::Env, v: jni::jobject, source: *u8) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, #str_ptr("setHtml\0"),
+        #str_ptr("(Landroid/widget/TextView;Ljava/lang/String;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let js: jni::jstring = env.new_string_utf(source);
+    var args: [jni::JValue; 2] = [jni::arg_object(v), jni::arg_object(js)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return;
+}
+
+fn max_length(env: rt::Env, v: jni::jobject, max: i32) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("maxLength\0"), #str_ptr("(Landroid/widget/TextView;I)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_object(v), jni::arg_int(max)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn call_view_void(env: rt::Env, name: *u8, v: jni::jobject) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, name,
+        #str_ptr("(Landroid/view/View;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_object(v)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn show_keyboard(env: rt::Env, v: jni::jobject) {
+    call_view_void(env, #str_ptr("showKeyboard\0"), v);
+    return;
+}
+
+fn hide_keyboard(env: rt::Env, v: jni::jobject) {
+    call_view_void(env, #str_ptr("hideKeyboard\0"), v);
+    return;
+}
+
+fn set_heading(env: rt::Env, v: jni::jobject, heading: bool) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("setHeading\0"), #str_ptr("(Landroid/view/View;Z)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_object(v), rt::arg_bool(heading)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn tap_feedback_borderless(env: rt::Env, v: jni::jobject) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("tapFeedbackBorderless\0"), #str_ptr("(Landroid/view/View;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_object(v)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn tap_feedback(env: rt::Env, v: jni::jobject, radius: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("tapFeedback\0"), #str_ptr("(Landroid/view/View;F)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_object(v), jni::arg_float(radius as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn draw_text_block(env: rt::Env, canvas: jni::jobject, paint: jni::jobject, s: *u8,
+                   x: f64, y: f64, w: f64, h: f64, align: i32, valign: i32,
+                   clip: bool, line_spacing: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, #str_ptr("textBlock\0"),
+        #str_ptr("(Landroid/graphics/Canvas;Landroid/graphics/Paint;Ljava/lang/String;FFFFIIZF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let js: jni::jstring = env.new_string_utf(s);
+    var args: [jni::JValue; 11] = [jni::arg_object(canvas), jni::arg_object(paint),
+        jni::arg_object(js),
+        jni::arg_float(x as f32), jni::arg_float(y as f32),
+        jni::arg_float(w as f32), jni::arg_float(h as f32),
+        jni::arg_int(align), jni::arg_int(valign), rt::arg_bool(clip),
+        jni::arg_float(line_spacing as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return;
+}
+
 fn new_no_args(env: rt::Env, cls: jni::jclass) -> jni::jobject {
     let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"), #str_ptr("()V\0"));
     return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, 0 as *jni::JValue) };
+}
+
+// `adapter.changed()` — the model moved, so ListView re-asks.
+fn rows_changed(env: rt::Env, adapter: jni::jobject) {
+    if C_ROWS == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_ROWS as *u8 }, #str_ptr("changed\0"),
+                                            #str_ptr("()V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), adapter, mid, 0 as *jni::JValue) };
+    return;
+}
+
+// Tell a FacetHost the size facet gave it, so its `onMeasure` can answer when
+// Android asks with a loose spec. Resolved against the DEX's class handle
+// rather than by name: `FindClass` cannot see a class that lives in an
+// in-memory loader.
+fn host_set_wanted(env: rt::Env, host: jni::jobject, wd: i32, ht: i32) {
+    if C_HOST == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_HOST as *u8 }, #str_ptr("setWanted\0"),
+                                            #str_ptr("(II)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_int(wd), jni::arg_int(ht)];
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), host, mid, #addr_of(args[0])) };
+    return;
+}
+
+// Mark the one host whose size IS the window's. See FacetHost.setReportsSize.
+fn host_reports_size(env: rt::Env, host: jni::jobject) {
+    if C_HOST == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_HOST as *u8 }, #str_ptr("setReportsSize\0"),
+                                            #str_ptr("(Z)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_bool(1 as jni::jboolean)];
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), host, mid, #addr_of(args[0])) };
+    return;
 }
 
 // `new FacetHost(context)`.

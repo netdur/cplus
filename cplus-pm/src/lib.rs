@@ -9,6 +9,7 @@ pub mod add;
 pub mod cli;
 pub mod fetch;
 pub mod manifest;
+pub mod maven;
 pub mod spec;
 pub mod store;
 pub mod vendor;

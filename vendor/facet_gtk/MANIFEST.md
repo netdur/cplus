@@ -40,10 +40,59 @@ like.
 before believing any adjective in this file.
 
 **EVERY DECLARED VERB IS NOW EITHER IMPLEMENTED OR RECORDED — on all three
-axes.** The three shared-band bits the tool counts as unanswered are `C_FLUSH`
-(nothing to do, and no backend names it) and `C_SAFE_AREA` (a GTK window under
-a compositor has no such inset). Both are in §1. `C_HANDLERS` used to be a
-third and was WRONG — see its struck-through row.
+axes.** The one shared-band bit the tool counts as unanswered is `C_SAFE_AREA`
+(a GTK window under a compositor has no such inset), and it is in §1.
+`C_FLUSH` was a second until 2026-09-08, when the row below was accepted as
+right about the wrong thing: it is not a verb any backend answers, so it left
+this file's problem and became `NOT_A_VERB` in `tools/parity.py`. The band is
+20 bits now, not 21. `C_HANDLERS` used to be a third and was WRONG — see its
+struck-through row.
+
+### TWO TOOLS, and the claim above is the LOOSER one's
+
+Added 2026-09-08. Everything above is measured by `tools/parity.py`, which
+counts a prop implemented when this package **names its bit**. That is an
+UPPER BOUND and its own docstring says so.
+
+`tools/verb_coverage.py gtk` is the exact measure — it requires the bit
+**gated** AND the field **read** — and it does not agree:
+
+    351  live         gated on the dirty bit; a later write lands
+      5  gated, unread  the mask names the bit and the body never reads it
+      7  absent       neither implemented nor decided
+      2  never fire   a handler neither wired nor decided
+
+**The five GATED BUT UNREAD are the expensive kind**, and they are the reason
+this section exists: the code LOOKS finished. A mask names the bit, the body
+gates on it, and no line ever reads the field. It is the same shape as
+`symbol.icon`, which scored live for the life of the module while
+`symbol(icons::home)` drew nothing.
+
+    carousel.item_sizing
+    carousel.remaining_threshold
+    carousel.scroll_anchor
+    carousel.scroll_to
+    list.has_uneven_rows
+
+The seven ABSENT: `carousel.bounces`, `carousel.is_scrolling`,
+`context_menu_item.is_destructive`, `icon_button.is_opaque`,
+`image.is_opaque`, `search_field.return_key`, `text_field.return_key`. Two of
+them — the `is_opaque` pair — facet_appkit records as dispositions rather than
+debt, so they may be the same answer here.
+
+The two dead handlers: `carousel.on_remaining_items_threshold_reached` and
+`carousel.observe_scrolled`.
+
+**FILED, NOT FIXED, deliberately.** AppKit is the priority backend and a
+non-AppKit defect stays recorded until that changes. What this section buys is
+that they are recorded BY NAME rather than hidden behind a 98% that counts a
+promise as a payment.
+
+Closing them needs the six fenced LEDGER blocks facet_appkit's MANIFEST
+carries — `cannot-ledger`, `no-carrier`, `host-rendered`, `create-only`,
+`derived`, `modifier`, and now `by-architecture`. This file has none, which is
+why `verb_coverage.py` reports every non-live verb here as debt: §1's prose
+says the same things and no tool can read it.
 
 **EVERY DECLARED PROP IS NOW EITHER IMPLEMENTED OR RECORDED,** and the tool
 enforces it rather than the prose claiming it: `parity.py` reads §1 for the
@@ -252,11 +301,20 @@ is worth re-reading with that in mind.
   `gdk_surface_set_opaque_region`, which is a WINDOW-level region and says
   nothing about one widget. Approximating it with a background colour would
   change what is drawn, which is the one thing a hint must not do.
-- **`C_FLUSH` is nothing to do, and NO BACKEND NAMES IT** — not this one, not
-  appkit, not uikit. It is raised when a `begin_updates` / `end_updates` batch
-  closes, and by then every bit the batch raised is already on the node. The
-  sync walk applies those. A backend acting on the flush as well would re-apply
-  the same node twice for one edit.
+- ~~**`C_FLUSH` is nothing to do, and NO BACKEND NAMES IT**~~ — **RIGHT, and
+  therefore no longer this file's row. Moved into the tool 2026-09-08; kept as
+  the record.**
+
+  It is raised when a `begin_updates` / `end_updates` batch closes, and by then
+  every bit the batch raised is already on the node. The sync walk applies
+  those. A backend acting on the flush as well would re-apply the same node
+  twice for one edit.
+
+  The sentence that ended the row — "not this one, not appkit, not uikit" — is
+  what made it the wrong place to say it. A bit NO backend answers is not four
+  backends each owing an excuse; it is a census counting something that is not
+  a verb. `tools/parity.py` now lists it beside `C_LAYOUT` in `NOT_A_VERB`, the
+  shared band is 20 bits, and this package reads 19/20 on `C_SAFE_AREA` alone.
 - ~~**`C_HANDLERS` is free HERE**~~ — **WRONG, and it cost a real bug. Corrected
   2026-08-25; the bit is acted on now and this row is kept as the record.**
 
@@ -290,6 +348,33 @@ is worth re-reading with that in mind.
   from a backend that forgot.
 
 ## 2. Not built yet — the debt
+
+### `paste_text` — GTK4 has no synchronous clipboard read
+
+`copy_text` IS live: `gdk_clipboard_set_text` on the default display's
+clipboard, one call. Reading is the half that cannot be written.
+
+GTK3 had `gtk_clipboard_wait_for_text`, which spun a nested main loop
+internally. **GTK4 removed it deliberately** — the clipboard's contents may be
+owned by another process, so reading them is a round trip that can block for as
+long as that process takes to answer, and a toolkit does not put that on the UI
+thread behind a synchronous call.
+
+What remains is `gdk_clipboard_read_text_async` plus `_finish`, and the
+generator skipped the async half (`param callback — unmapped type
+Gio.AsyncReadyCallback`), so not even the pieces are all bound.
+
+So `paste_text()` answers `None` here, always, and that is the honest answer
+rather than a stub: this backend does not know what is on the clipboard and
+will not report an unreadable board and an empty one as the same fact.
+
+Closing it needs three things, and the third is why it is not done in passing:
+an extern for `gdk_clipboard_read_text_async`, a C-ABI callback to hand it, and
+a nested `GMainLoop` to run until that callback fires — which is exactly the
+re-entrancy hazard GTK4 removed the GTK3 API to avoid. The alternative is to
+make `paste_text` async in the portable facade, which is a decision for
+`facet_runtime` and not for this backend to take on its own.
+
 
 Everything not listed as live above. The large ones, in the order they matter.
 

@@ -1,0 +1,328 @@
+// facet_win32/field_furniture — the clear button and the magnifier, drawn over
+// an EDIT.
+//
+// MANIFEST §1 recorded three verbs absent on one argument, and the argument
+// contained its own answer:
+//
+//   "there is no clear button on an `EDIT`. The one in Explorer's box is
+//    Explorer DRAWING OVER THE CONTROL, the same as the magnifier."
+//
+// That is exactly what this package does to an input kind now. `subclass.cplus`
+// replaces the EDIT's window procedure and paints the placeholder after the
+// control's own WM_PAINT; a magnifier and a clear button are the same brush
+// stroke in the same place. The entry was written before the subclass existed
+// and was not revisited when it arrived — the same way the swipe entry outlived
+// its own premise.
+//
+// So `text_field.clear_button`, `search_field.search_icon_color` and
+// `search_field.cancel_button_color` are answered here.
+//
+// ---- what is drawn, and what is NOT ------------------------------------------------
+//
+// A GLYPH, not a control. There is no child window: a button inside the field
+// would take the focus off the text on its first click, would need its own
+// z-order against the caret, and would be one more window per field in a form
+// that may have twenty. The furniture is two rectangles this file paints and
+// hit-tests, which is what Explorer does.
+//
+// THE TEXT INSET MOVES WITH IT. An EDIT lays its text out inside a margin it
+// owns, and drawing a magnifier over that margin would put the glyph on top of
+// the first characters. `EM_SETMARGINS` is the message that widens it, and it
+// is the only way the two can share the box.
+
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "win32/wingdi" as gdi;
+import "./sys" as sys;
+import "./paint" as paint;
+
+// How wide the furniture is, and the gap it keeps from the frame. One number
+// for both sides: a magnifier and a clear button that were different widths
+// would make the text box off-centre in a search field that has both.
+fn glyph_box() -> i32 { return 18 as i32; }
+fn edge_gap() -> i32 { return 2 as i32; }
+
+fn em_setmargins() -> u32 { return 0x00D3 as u32; }
+fn ec_leftmargin() -> u64 { return 0x0001 as u64; }
+fn ec_rightmargin() -> u64 { return 0x0002 as u64; }
+
+// ---- which furniture this field has ------------------------------------------------
+
+fn input_view(n: *core::Node) -> *props::InputViewProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::InputViewProps; }
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return 0 as *props::InputViewProps; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_TEXT_FIELD {
+        return { #addr_of((*(p as *props::TextFieldProps)).input_view) };
+    }
+    if kind == props::K_SEARCH_FIELD {
+        return { #addr_of((*(p as *props::SearchFieldProps)).input_view) };
+    }
+    if kind == props::K_TEXT_AREA {
+        return { #addr_of((*(p as *props::TextAreaProps)).input_view) };
+    }
+    return 0 as *props::InputViewProps;
+}
+
+fn search_props(n: *core::Node) -> *props::SearchFieldProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::SearchFieldProps; }
+    if { (*d).kind } != props::K_SEARCH_FIELD { return 0 as *props::SearchFieldProps; }
+    return { (*d).props } as *props::SearchFieldProps;
+}
+
+fn text_field_props(n: *core::Node) -> *props::TextFieldProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::TextFieldProps; }
+    if { (*d).kind } != props::K_TEXT_FIELD { return 0 as *props::TextFieldProps; }
+    return { (*d).props } as *props::TextFieldProps;
+}
+
+// A SEARCH FIELD ALWAYS HAS BOTH, which is what makes it a search field rather
+// than a text field — the magnifier says what the box is for and the cancel
+// button is how a search is abandoned. A text field has a clear button only
+// when it asked for one.
+fn has_magnifier(n: *core::Node) -> bool {
+    return core::kind_of(n) == props::K_SEARCH_FIELD;
+}
+
+fn has_clear(n: *core::Node, v: *u8) -> bool {
+    let kind: u32 = core::kind_of(n);
+    if kind == props::K_SEARCH_FIELD { return has_text(v); }
+    if kind != props::K_TEXT_FIELD { return false; }
+    let p: *props::TextFieldProps = text_field_props(n);
+    if p == (0 as *props::TextFieldProps) { return false; }
+    // `WhileEditing` is facet's word for "when there is something to clear",
+    // which is the only mode Windows users have seen. `Never` is the default
+    // and costs nothing.
+    return match { (*p).clear_button } {
+        vocab::ClearButton::Never => false,
+        vocab::ClearButton::WhileEditing => has_text(v),
+    };
+}
+
+fn has_text(v: *u8) -> bool {
+    return { u::GetWindowTextLengthW(v) } > (0 as i32);
+}
+
+// ---- the margins -------------------------------------------------------------------
+
+// Widen the EDIT's own text margins so the glyphs have somewhere to be. Called
+// from `apply`, because the answer changes with the props and with the text —
+// a clear button that appears when the first character is typed would otherwise
+// land on top of it.
+//
+// `EM_SETMARGINS` takes the two widths PACKED, low word left and high word
+// right, which is one of the few messages that reads its lParam that way.
+fn apply_margins(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    var left: i64 = 0 as i64;
+    var right: i64 = 0 as i64;
+    if has_magnifier(n) { left = (glyph_box() + edge_gap()) as i64; }
+    if has_clear(n, v) { right = (glyph_box() + edge_gap()) as i64; }
+    let packed: i64 = (left & (0xFFFF as i64)) | ((right & (0xFFFF as i64)) << (16 as i64));
+    let _r: i64 = { u::SendMessageA(v, em_setmargins(),
+                                    ec_leftmargin() | ec_rightmargin(), packed) };
+    return;
+}
+
+// ---- where the two glyphs are ---------------------------------------------------------
+
+fn magnifier_rect(v: *u8) -> u::tagRECT {
+    var r: u::tagRECT = client_of(v);
+    r.left = r.left +% edge_gap();
+    r.right = r.left +% glyph_box();
+    return r;
+}
+
+fn clear_rect(v: *u8) -> u::tagRECT {
+    var r: u::tagRECT = client_of(v);
+    r.right = r.right -% edge_gap();
+    r.left = r.right -% glyph_box();
+    return r;
+}
+
+fn client_of(v: *u8) -> u::tagRECT {
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    let _g: i32 = { u::GetClientRect(v, #addr_of(r)) };
+    return r;
+}
+
+fn hit(r: u::tagRECT, x: i32, y: i32) -> bool {
+    return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+}
+
+// ---- drawing them ----------------------------------------------------------------------
+//
+// GDI PRIMITIVES rather than a font glyph, and the reason is the same one
+// `controls`' glyph tier records: a codepoint that a user's font does not have
+// draws a box, and there is no way to ask in advance. A circle with a handle
+// and two crossed lines are drawn from the same three calls on every machine.
+
+fn draw(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) || n == (0 as *core::Node) { return; }
+    let want_mag: bool = has_magnifier(n);
+    let want_clear: bool = has_clear(n, v);
+    if !want_mag && !want_clear { return; }
+    let hdc: *u8 = { u::GetDC(v) };
+    if hdc == (0 as *u8) { return; }
+    if want_mag { draw_magnifier(hdc, magnifier_rect(v), icon_color(n, true)); }
+    if want_clear { draw_clear(hdc, clear_rect(v), icon_color(n, false)); }
+    let _r: i32 = { u::ReleaseDC(v, hdc) };
+    return;
+}
+
+// The stated colour, or the field's own secondary text colour. A search field
+// that named neither still needs its furniture drawn in SOMETHING, and grey
+// text is what both are on every platform that has them.
+fn icon_color(n: *core::Node, magnifier: bool) -> u32 {
+    let p: *props::SearchFieldProps = search_props(n);
+    if p != (0 as *props::SearchFieldProps) {
+        let stated: vocab::Color = if magnifier { { (*p).search_icon_color } }
+                                   else { { (*p).cancel_button_color } };
+        var has: bool = false;
+        let c: u32 = paint::resolve(stated, #addr_of(has));
+        if has { return c; }
+    }
+    var d: bool = false;
+    let fallback: u32 = paint::resolve(vocab::Color::text_secondary(), #addr_of(d));
+    if d { return fallback; }
+    return paint::colorref(0.5f64, 0.5f64, 0.5f64);
+}
+
+// A circle and a handle. The pen is 1px and SOLID: a wider one would need the
+// box to grow with it, and the glyph is 18 points across at every DPI this
+// package has been run at.
+fn draw_magnifier(hdc: *u8, r: u::tagRECT, colour: u32) {
+    let pen: *u8 = { gdi::CreatePen(0 as i32, 1 as i32, colour) };
+    if pen == (0 as *u8) { return; }
+    let hollow: *u8 = { gdi::GetStockObject(5 as i32) };       // HOLLOW_BRUSH
+    let old_pen: *u8 = { gdi::SelectObject(hdc, pen) };
+    let old_brush: *u8 = { gdi::SelectObject(hdc, hollow) };
+    let cx: i32 = (r.left +% r.right) / (2 as i32);
+    let cy: i32 = (r.top +% r.bottom) / (2 as i32);
+    let rad: i32 = 4 as i32;
+    // The lens sits ABOVE centre so the handle has room below it without the
+    // whole glyph drifting off the text's baseline.
+    let _e: i32 = { gdi::Ellipse(hdc, cx -% rad -% (1 as i32), cy -% rad -% (2 as i32),
+                                 cx +% rad -% (1 as i32), cy +% rad -% (2 as i32)) };
+    let _m: i32 = { gdi::MoveToEx(hdc, cx +% (2 as i32), cy +% (1 as i32), 0 as *gdi::tagPOINT) };
+    let _l: i32 = { gdi::LineTo(hdc, cx +% (5 as i32), cy +% (4 as i32)) };
+    let _b: *u8 = { gdi::SelectObject(hdc, old_brush) };
+    let _p: *u8 = { gdi::SelectObject(hdc, old_pen) };
+    let _d: i32 = { gdi::DeleteObject(pen) };
+    return;
+}
+
+// Two crossed lines. Not an `✕` codepoint, for the reason above.
+fn draw_clear(hdc: *u8, r: u::tagRECT, colour: u32) {
+    let pen: *u8 = { gdi::CreatePen(0 as i32, 1 as i32, colour) };
+    if pen == (0 as *u8) { return; }
+    let old_pen: *u8 = { gdi::SelectObject(hdc, pen) };
+    let cx: i32 = (r.left +% r.right) / (2 as i32);
+    let cy: i32 = (r.top +% r.bottom) / (2 as i32);
+    let a: i32 = 4 as i32;
+    let _m1: i32 = { gdi::MoveToEx(hdc, cx -% a, cy -% a, 0 as *gdi::tagPOINT) };
+    let _l1: i32 = { gdi::LineTo(hdc, cx +% a +% (1 as i32), cy +% a +% (1 as i32)) };
+    let _m2: i32 = { gdi::MoveToEx(hdc, cx +% a, cy -% a, 0 as *gdi::tagPOINT) };
+    let _l2: i32 = { gdi::LineTo(hdc, cx -% a -% (1 as i32), cy +% a +% (1 as i32)) };
+    let _p: *u8 = { gdi::SelectObject(hdc, old_pen) };
+    let _d: i32 = { gdi::DeleteObject(pen) };
+    return;
+}
+
+// ---- clicking the clear button -----------------------------------------------------------
+//
+// Answered from the SUBCLASS, before the EDIT sees the press — a click that
+// reached the control would move the caret to the end of the text and then
+// clear it, which leaves the field focused with a selection that no longer
+// exists.
+//
+// The magnifier is not clickable. It is a LABEL for the box, which is what it
+// is in Explorer and in every search field on every platform; a click on it
+// falls through to the EDIT and puts the caret where it always would.
+fn on_press(v: *u8, n: *core::Node, x: i32, y: i32) -> bool {
+    if !has_clear(n, v) { return false; }
+    if !hit(clear_rect(v), x, y) { return false; }
+    let empty: *u16 = sys::to_wide("");
+    if empty != (0 as *u16) {
+        let _s: i32 = { u::SetWindowTextW(v, empty) };
+        sys::free_wide(empty);
+    }
+    // THE APPLICATION IS TOLD, through the same door a keystroke uses: clearing
+    // the field IS a text change, and a search box whose `on_text_changed` did
+    // not fire would leave the results showing what was typed before.
+    let _c: bool = notify_changed(v);
+    apply_margins(v, n);
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return true;
+}
+
+// EN_CHANGE to the parent, which is where `input::on_command` reads it — the
+// same notification the control sends when a key changes the text.
+fn en_change() -> u32 { return 0x0300 as u32; }
+
+fn notify_changed(v: *u8) -> bool {
+    let parent: *u8 = { u::GetParent(v) };
+    if parent == (0 as *u8) { return false; }
+    let id: u64 = ({ u::GetWindowLongPtrA(v, sys::gwl_id()) } as u64) & (0xFFFF as u64);
+    let w: u64 = id | (((en_change() as u64) & (0xFFFF as u64)) << (16 as u64));
+    let _r: i64 = { u::SendMessageA(parent, sys::wm_command(), w, { #addr(v) } as i64) };
+    return true;
+}
+
+#[test]
+fn a_search_field_always_has_a_magnifier_and_a_text_field_never_does() {
+    // The one asymmetry worth pinning: the magnifier says what the box IS, so
+    // it does not wait to be asked for. The clear button does — a text field
+    // that never states `clear_button` must not grow one.
+    var s: core::Node = core::node_with("s", props::K_SEARCH_FIELD, 0 as *u8,
+                                        core::no_release);
+    var t: core::Node = core::node_with("t", props::K_TEXT_FIELD, 0 as *u8,
+                                        core::no_release);
+    assert has_magnifier(#addr_of(s));
+    assert !has_magnifier(#addr_of(t));
+    return;
+}
+
+#[test]
+fn the_two_glyphs_sit_at_opposite_ends_and_do_not_overlap() {
+    // A field with both — a search box with something typed in it — has 18
+    // points at each end and the text between them. Getting the arithmetic
+    // wrong puts the magnifier over the first characters, which is what the
+    // margins exist to prevent.
+    let r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 200 as i32, bottom: 24 as i32 };
+    var mag: u::tagRECT = r;
+    mag.left = mag.left +% edge_gap();
+    mag.right = mag.left +% glyph_box();
+    var clr: u::tagRECT = r;
+    clr.right = clr.right -% edge_gap();
+    clr.left = clr.right -% glyph_box();
+    assert mag.right == (20 as i32);
+    assert clr.left == (180 as i32);
+    assert mag.right < clr.left;
+    // ...and a press lands on the clear button only inside it.
+    assert hit(clr, 190 as i32, 12 as i32);
+    assert !hit(clr, 100 as i32, 12 as i32);
+    assert !hit(clr, 190 as i32, 30 as i32);
+    return;
+}
+
+#[test]
+fn the_margins_are_packed_low_left_high_right() {
+    // `EM_SETMARGINS` is one of the few messages that reads its lParam as two
+    // packed words, and swapping them indents the wrong side — which reads as
+    // the text refusing to start at the left rather than as a bad constant.
+    let left: i64 = 20 as i64;
+    let right: i64 = 20 as i64;
+    let packed: i64 = (left & (0xFFFF as i64)) | ((right & (0xFFFF as i64)) << (16 as i64));
+    assert (packed & (0xFFFF as i64)) == left;
+    assert ((packed >> (16 as i64)) & (0xFFFF as i64)) == right;
+    return;
+}

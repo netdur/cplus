@@ -1,0 +1,334 @@
+// Where the device is — once, or continuously while the app is in use.
+//
+// The shape follows `camera`, because the problem is the same one: an app says
+// what it WANTS and the platform is free to answer with something else. A
+// coarse-only grant, a device with no GPS, a user who moved indoors — all of
+// these answer, they just do not answer what was asked. So `Request` is a wish
+// and every read-back reports what actually arrived.
+
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+import "permissions/permissions" as perm;
+
+// ---- how good a fix, and what it costs -------------------------------------
+//
+// Four tiers rather than a metre count, because the platforms do not agree on
+// units and a number invites precision nobody can deliver. What a tier really
+// selects is a POWER BUDGET; the accuracy is a consequence.
+enum Accuracy {
+    // City-level, ~1-3km. Network and cell only, no GPS radio. This is also
+    // what a COARSE-ONLY grant gives you no matter what you asked for —
+    // Android 12+ lets the user grant approximate location, and a fine request
+    // then succeeds while quietly answering at this tier. `Updates::accuracy()`
+    // is how you find out.
+    Coarse,
+    // Neighbourhood, ~100m. Wi-Fi and cell. The right default for "roughly
+    // where am I" — a weather app, a store locator, a timezone guess.
+    Balanced,
+    // Best the device can do, GPS on. Metres outdoors, much worse indoors.
+    Fine,
+    // Fine, plus course and speed, updated as fast as the hardware allows.
+    // Turn-by-turn only: this is the tier that visibly drains a battery.
+    Navigation,
+}
+
+impl Accuracy {
+    fn to_code(this) -> i32 {
+        match this {
+            Accuracy::Coarse => { return 0; }
+            Accuracy::Balanced => { return 1; }
+            Accuracy::Fine => { return 2; }
+            Accuracy::Navigation => { return 3; }
+        }
+    }
+
+    fn from_code(c: i32) -> Accuracy {
+        if c == 0 { return Accuracy::Coarse; }
+        if c == 1 { return Accuracy::Balanced; }
+        if c == 3 { return Accuracy::Navigation; }
+        return Accuracy::Fine;
+    }
+}
+
+// ---- what went wrong, in this package's own words ---------------------------
+enum Outcome {
+    Ok,
+    // The person said no, or has not been asked. `permissions` owns the ask;
+    // this package will not prompt behind your back.
+    Denied,
+    // This build or this device cannot answer at all — no backend, no hardware.
+    Unsupported,
+    // Location services are switched off system-wide, which is NOT the same as
+    // the app being denied and needs a different thing said to the person.
+    Disabled,
+    // Asked and nothing arrived in time. Ordinary indoors, and not an error to
+    // panic about — retry or fall back to the last known fix.
+    Timeout,
+    Failed,
+}
+
+impl Outcome {
+    // PAIRED WITH `to_code`, which is the rule camera's pass recorded after
+    // hitting it twice in one package: a code that can be written must be
+    // readable, or the seam owns a vocabulary the caller cannot re-enter.
+    fn from_code(c: i32) -> Outcome {
+        if c == 0 { return Outcome::Ok; }
+        if c == 1 { return Outcome::Denied; }
+        if c == 2 { return Outcome::Unsupported; }
+        if c == 3 { return Outcome::Disabled; }
+        if c == 4 { return Outcome::Timeout; }
+        return Outcome::Failed;
+    }
+
+    fn to_code(this) -> i32 {
+        match this {
+            Outcome::Ok => { return 0; }
+            Outcome::Denied => { return 1; }
+            Outcome::Unsupported => { return 2; }
+            Outcome::Disabled => { return 3; }
+            Outcome::Timeout => { return 4; }
+            Outcome::Failed => { return 5; }
+        }
+    }
+}
+
+// ---- a fix -------------------------------------------------------------------
+//
+// Plain values, copied out at the seam. Nothing here borrows: a fix outlives
+// the callback that delivered it, which is the opposite of `camera::Frame` and
+// is affordable because this is 64 bytes rather than a megapixel.
+//
+// THE UNKNOWNS ARE NEGATIVE, following CoreLocation, rather than an Option per
+// field. A fix with no speed reading is the common case, not an error case, and
+// six Options would make the ordinary read unbearable.
+// #[repr(C)] because this crosses the SEAM: the backend hands it to a
+// `fn(Fix, *u8)` handler through an `export extern fn`, and a struct with
+// unspecified layout there is undefined behaviour rather than a portability
+// worry (E0410).
+#[repr(C)]
+struct Fix {
+    latitude: f64,
+    longitude: f64,
+    // Horizontal accuracy in metres: the true position is within this radius
+    // with ~68% confidence. NEGATIVE means the coordinate is invalid — check
+    // it before trusting lat/lon.
+    accuracy_m: f64,
+    altitude_m: f64,
+    // Negative when the device cannot measure vertical accuracy, which also
+    // means `altitude_m` is a guess.
+    altitude_accuracy_m: f64,
+    // Metres per second. Negative = unknown.
+    speed_mps: f64,
+    // Degrees clockwise from true north. Negative = unknown, which includes
+    // standing still: a stationary device has no course.
+    course_deg: f64,
+    // Unix milliseconds AT THE DEVICE. A cached fix can be minutes old — check
+    // this before treating it as current.
+    timestamp_ms: i64,
+}
+
+impl Fix {
+    fn is_valid(this) -> bool { return this.accuracy_m >= (0.0 as f64); }
+    fn has_speed(this) -> bool { return this.speed_mps >= (0.0 as f64); }
+    fn has_course(this) -> bool { return this.course_deg >= (0.0 as f64); }
+    fn has_altitude(this) -> bool { return this.altitude_accuracy_m >= (0.0 as f64); }
+}
+
+// ---- the wish ----------------------------------------------------------------
+//
+// Every field is a REQUEST. The per-field notes say what each platform actually
+// does with it, and they are measured rather than assumed — the same discipline
+// `camera::Request` records, for the same reason.
+struct Request {
+    accuracy: Accuracy,
+    // Metres of movement before another fix is delivered. 0 = every fix the
+    // platform produces. The cheapest knob there is: a filter of 50m on a
+    // walking user is the difference between a stream and a trickle.
+    distance_filter_m: f64,
+    // How long `once` waits before giving up.
+    //
+    //   Apple    IGNORED. `requestLocation` runs its own timer (about ten
+    //            seconds) and there is no way to set it. The give-up arrives
+    //            as an INVALID FIX at the handler, not as a return value.
+    //   Android  honoured.
+    //
+    // 0 takes the platform default rather than meaning "forever" — an
+    // unbounded wait indoors is a hang, not a feature.
+    timeout_ms: i64,
+}
+
+impl Request {
+    // A DELIBERATE DEVIATION from "collapse constructors into one signature
+    // with defaults", recorded rather than hidden: this is a second
+    // constructor that adds nothing.
+    //
+    // The default for a `request:` PARAMETER, and it exists because
+    // `Request::new()` cannot be one: a call that relies on its own defaults is
+    // not accepted as a default-argument expression (E0308 counts the
+    // parameters before filling them). A no-argument constructor sidesteps that
+    // and reads better at the call site than a spelled-out triple.
+    fn defaults() -> Request {
+        return Request::new(Accuracy::Balanced, 0.0f64, 0 as i64);
+    }
+
+    fn new(accuracy: Accuracy = Accuracy::Balanced,
+           distance_filter_m: f64 = 0.0f64,
+           timeout_ms: i64 = 0 as i64) -> Request {
+        return Request {
+            accuracy: accuracy,
+            distance_filter_m: distance_filter_m,
+            timeout_ms: timeout_ms,
+        };
+    }
+}
+
+// ---- asking ------------------------------------------------------------------
+//
+// PERMISSION IS NOT A SEPARATE STEP ON APPLE, and pretending otherwise would
+// deadlock. `CLLocationManager` is the only door: authorization is requested
+// through the manager and answered on its delegate, so this package asks when
+// it first needs to and reports what came back. `permissions::state` reads the
+// same status; it does not own the ask because on Apple nothing can.
+
+// Is there a backend and does the device have the hardware? Says nothing about
+// permission, and nothing about whether location services are switched on —
+// those are `permissions::state` and `Outcome::Disabled`. Conflating the three
+// is how an app ends up telling someone to grant a permission they already
+// granted.
+fn available() -> bool {
+    return { _c_available() } != (0 as i32);
+}
+
+// What the person has said, WITHOUT starting a stream.
+//
+// `Unknown` means not yet asked OR not yet resolved — the platforms settle
+// this asynchronously, so it is not a synonym for denied and an app that
+// treats it as one will never prompt. Once a stream is running,
+// `Updates::permission()` is the better source: it reports what the delegate
+// actually saw rather than what a fresh manager guesses.
+fn permission() -> perm::State {
+    let c: i32 = { _c_permission() };
+    if c == 1 { return perm::State::Granted; }
+    if c == 3 { return perm::State::Denied; }
+    if c == 4 { return perm::State::Blocked; }
+    if c == 5 { return perm::State::Unsupported; }
+    return perm::State::Unknown;
+}
+
+// The system-wide switch, which no app can change and every app must respect.
+//
+// Named for what it answers rather than for the call it makes: `location::
+// enabled()` reads as "is the location package enabled", which is not the
+// question. It is the DEVICE's switch, and `Outcome::Disabled` is the answer a
+// verb gives when it is off.
+fn services_enabled() -> bool {
+    return { _c_enabled() } != (0 as i32);
+}
+
+// The most recent fix the SYSTEM already had, with no radio work at all.
+// Answers None when there is none. Free, possibly stale — check `timestamp_ms`.
+fn last_known() -> option::Option[Fix] {
+    var f: Fix = #zero::[Fix]();
+    if { _c_last_known(#addr_of(f)) } == (0 as i32) { return option::Option[Fix]::None; }
+    return option::Option[Fix]::Some(f);
+}
+
+// ONE FIX, then done. The handler runs EXACTLY ONCE either way.
+//
+// THE RETURN VALUE IS NOT THE ANSWER. It says whether the request was
+// accepted — `Denied`, `Disabled` and `Unsupported` are known immediately, so
+// they come back here. Whether a position ever arrives is decided later and
+// told to the HANDLER: a fix that failed or timed out arrives with a negative
+// `accuracy_m`, so `f.is_valid()` is the check that matters.
+//
+//     fn got(f: loc::Fix, ctx: *u8) {
+//         if !f.is_valid() { /* no fix — indoors, or it gave up */ return; }
+//         ...
+//     }
+//
+// The (fn, ctx) pair is adjacent with ctx defaulted, which is what lets a
+// caller pass a bound method (`this.got_fix`) and have the receiver filled in.
+fn once(on_fix: fn(Fix, *u8),
+        ctx: *u8 = 0 as *u8,
+        request: Request = Request::defaults()) -> Outcome {
+    if on_fix.is_null() { return Outcome::Failed; }
+    var req: Request = request;
+    let code: i32 = { _c_once(#addr_of(req), on_fix, ctx) };
+    return Outcome::from_code(code);
+}
+
+// A running stream. STOPS ON DROP, like `events::Subscription` — a stream that
+// outlived the thing reading it is a battery drain that reports to nobody.
+struct Updates {
+    opaque _h: *u8,
+}
+
+fn updates(on_fix: fn(Fix, *u8),
+           ctx: *u8 = 0 as *u8,
+           request: Request = Request::defaults()) -> result::Result[Updates, Outcome] {
+    if on_fix.is_null() { return result::Result[Updates, Outcome]::Err(Outcome::Failed); }
+    var req: Request = request;
+    var code: i32 = 0;
+    let h: *u8 = { _c_updates_start(#addr_of(req), on_fix, ctx, #addr_of(code)) };
+    if h.is_null() { return result::Result[Updates, Outcome]::Err(Outcome::from_code(code)); }
+    return result::Result[Updates, Outcome]::Ok(Updates { _h: h });
+}
+
+impl Updates {
+    // WHAT WE ACTUALLY GOT, read from the platform rather than echoed back. A
+    // coarse-only grant answers `Coarse` here however fine the request was.
+    fn accuracy(this) -> Accuracy {
+        return Accuracy::from_code({ _c_updates_accuracy(this._h) });
+    }
+
+    // WHY NOTHING IS ARRIVING, when nothing is arriving.
+    //
+    // The status is only true once the platform has resolved it, which happens
+    // asynchronously after the stream starts — reading it at start-up answers
+    // `Unknown` on every platform, so this is the accessor to poll rather than
+    // a value to capture once.
+    fn permission(this) -> perm::State {
+        if this._h.is_null() { return perm::State::Unknown; }
+        let st: i32 = { _c_updates_status(this._h) };
+        if st == 1 { return perm::State::Blocked; }
+        if st == 2 { return perm::State::Denied; }
+        if st == 3 { return perm::State::Granted; }
+        if st == 4 { return perm::State::Granted; }
+        return perm::State::Unknown;
+    }
+
+    fn is_running(this) -> bool {
+        return this._h.is_not_null() && { _c_updates_running(this._h) } != (0 as i32);
+    }
+
+    fn stop(ref this) {
+        if this._h.is_null() { return; }
+        { _c_updates_stop(this._h) };
+        this._h = 0 as *u8;
+        return;
+    }
+
+    // The stream is a platform object this handle owns; dropping the handle
+    // without stopping would leave the radio running for the process's life.
+    fn drop(ref this) {
+        this.stop();
+        return;
+    }
+}
+
+// ---- the seam ----------------------------------------------------------------
+//
+// The two halves meet at these symbols and never import each other — a facade
+// that imported its backend, or the reverse, is the import cycle E0404 names.
+extern fn _c_permission() -> i32;
+extern fn _c_available() -> i32;
+extern fn _c_enabled() -> i32;
+extern fn _c_last_known(into: *Fix) -> i32;
+extern fn _c_once(req: *Request, on_fix: fn(Fix, *u8), ctx: *u8) -> i32;
+extern fn _c_updates_start(req: *Request, on_fix: fn(Fix, *u8), ctx: *u8,
+                           out_code: *i32) -> *u8;
+extern fn _c_updates_accuracy(h: *u8) -> i32;
+extern fn _c_updates_status(h: *u8) -> i32;
+extern fn _c_updates_running(h: *u8) -> i32;
+extern fn _c_updates_stop(h: *u8);

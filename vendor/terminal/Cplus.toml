@@ -3,45 +3,35 @@ name    = "terminal"
 version = "0.0.1"
 edition = "2026"
 
-# Portable terminal-facing API with two live backends:
-# - terminal/terminal: bounded, ANSI-aware transcript model
-# - terminal/pty:      pseudo-terminal session, over `ptysys{,_linux}` for the
-#                      four libc numbers and the shell-integration story
-# - terminal/appkit:   live AppKit widget (macOS)
-# - terminal/gtk:      live GTK 4 widget (Linux) — `terminal/appkit` forwards
-#                      here through `appkit_linux.cplus`
-# - terminal/widget:   the facet-facing surface applications use
+# Portable terminal-facing API:
+# - terminal/terminal: bounded, ANSI-aware transcript model — PORTABLE, and the
+#                      bulk of the package
+# - terminal/pty:      pseudo-terminal session (POSIX forkpty; the Windows
+#                      sibling refuses — ConPTY is the road, see the file)
+# - terminal/backend:  the live widget (AppKit today; the Windows sibling
+#                      refuses, and says what building one costs)
+# - terminal/widget:   the facet-facing facade applications use
+#
+# THE APPLE PACKAGES ARE NOT TOP-LEVEL, and that is what kept this package off
+# every other platform. A top-level dependency splices its `[link]` entry on
+# EVERY target, so a Windows build was handed `-framework AppKit` and stopped at
+# the linker even once the imports were sorted out — the same trap
+# `vendor/inspector` was in. Only `backend.cplus` reaches them, and it only
+# compiles on macOS.
 
 [dependencies]
 stdlib      = "*"
 flex_layout = "*"
 facet       = "*"
 
-# objc / appkit / quartzcore are the macOS BACKEND's own dependencies and cannot
-# sit in the unconditional block above: a `[link] frameworks` entry reaches the
-# linker for every target that declares the package, so a Linux build got
-# `-framework Foundation` and GNU ld answered "-f may not be used without
-# -shared" — an error naming nothing this package wrote.
 [macos.dependencies]
 objc       = "*"
 appkit     = "*"
 quartzcore = "*"
 
-# The GTK stack under `gtk.cplus`, restated in full: C+ vendor dependencies are
-# FLAT, so the closure the build touches has to be declared here rather than
-# inherited from gtk4's own manifest.
-[linux.dependencies]
-gtk4        = "*"
-gobject     = "*"
-gobject_gir = "*"
-gio         = "*"
-glib        = "*"
-cairo       = "*"
-gdk         = "*"
-gdkpixbuf   = "*"
-graphene    = "*"
-gsk         = "*"
-harfbuzz    = "*"
-pango       = "*"
-pangocairo  = "*"
-gmodule     = "*"
+# The resolver validates every import in a build against ONE flat set taken from
+# the consuming manifest, and facet's runtime facade reaches its backend on
+# whatever platform it is built for.
+[windows.dependencies]
+facet_win32 = "*"
+win32       = "*"

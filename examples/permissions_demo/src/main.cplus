@@ -1,0 +1,203 @@
+// permissions_demo — read a state, ask for access, watch the answer.
+//
+// One row per domain: the name, the state this package reports, and a button
+// that asks. Refresh re-reads everything, which matters because a person can
+// change any of it in System Settings while this app is in the background.
+//
+// WHAT TO WATCH, because the interesting part is not that a dialog appears:
+//
+//   1. Every row starts `Unknown` on a machine that has never been asked.
+//   2. Ask for Camera and allow it. The row reads `Granted`.
+//   3. Ask for Contacts and refuse. The row reads `Denied` — and on macOS,
+//      unlike Android, asking a second time shows NOTHING, so the next state is
+//      `Blocked` rather than another prompt. That is the difference the two
+//      words exist to carry.
+//   4. Open Settings, flip Camera off, come back and Refresh. `Blocked`.
+//   5. Notifications reads `Unsupported`, and that is correct rather than
+//      broken: `UNUserNotificationCenter` wants an app whose signature it
+//      trusts, and this one is only ad-hoc signed.
+//   6. Take a usage-description key out of `bundle.sh`, rebuild, and press that
+//      row's Ask. The app vanishes — TCC kills it — and the READ that ran a
+//      moment earlier was perfectly happy. That asymmetry is the whole reason
+//      `docs/guide.md` spends a section on the manifest.
+
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/vec" as vec;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/theme" as theme;
+import "facet/vocabulary" as vocab;
+import "facet_runtime/runtime" as runtime;
+import "permissions/permissions" as permissions;
+
+// The domains this demo shows. Notifications is included deliberately even
+// though macOS cannot answer it — a row that reads `Unsupported` is the clearest
+// way to show that the state is not a refusal.
+fn name_at(i: usize) -> str {
+    if i == (0 as usize) { return permissions::CAMERA; }
+    if i == (1 as usize) { return permissions::MICROPHONE; }
+    if i == (2 as usize) { return permissions::CONTACTS; }
+    if i == (3 as usize) { return permissions::CALENDAR; }
+    if i == (4 as usize) { return permissions::PHOTOS_READ; }
+    return permissions::NOTIFICATIONS;
+}
+
+fn row_count() -> usize { return 6 as usize; }
+
+fn state_key(i: usize) -> str {
+    if i == (0 as usize) { return "state:0"; }
+    if i == (1 as usize) { return "state:1"; }
+    if i == (2 as usize) { return "state:2"; }
+    if i == (3 as usize) { return "state:3"; }
+    if i == (4 as usize) { return "state:4"; }
+    return "state:5";
+}
+
+fn word(s: permissions::State) -> str {
+    return match s {
+        permissions::State::Unknown => "Unknown",
+        permissions::State::Granted => "Granted",
+        permissions::State::Limited => "Limited",
+        permissions::State::Denied => "Denied",
+        permissions::State::Blocked => "Blocked",
+        permissions::State::Unsupported => "Unsupported",
+    };
+}
+
+// The colour is the point of the row: green means go, amber means ask, red
+// means the only road left is Settings. Far-apart hues rather than shades, and
+// the WORD carries the same information — colour is never the only signal.
+fn tint(s: permissions::State) -> vocab::Color {
+    return match s {
+        permissions::State::Granted => vocab::Color::rgba(0.18, 0.60, 0.30, 1.0),
+        permissions::State::Limited => vocab::Color::rgba(0.18, 0.45, 0.75, 1.0),
+        permissions::State::Unknown => vocab::Color::rgba(0.62, 0.45, 0.05, 1.0),
+        permissions::State::Denied => vocab::Color::rgba(0.62, 0.45, 0.05, 1.0),
+        permissions::State::Blocked => vocab::Color::rgba(0.75, 0.20, 0.18, 1.0),
+        permissions::State::Unsupported => vocab::Color::rgba(0.45, 0.45, 0.48, 1.0),
+    };
+}
+
+// Re-read every row. Called on attach, from Refresh, and after every answer.
+fn refresh() {
+    var i: usize = 0 as usize;
+    while i < row_count() {
+        let s: permissions::State = permissions::state(of: name_at(i));
+        match label::find(state_key(i)) {
+            option::Option[label::Label]::Some(l) => {
+                let l2: label::Label = l.set_text(word(s));
+                let _l3: label::Label = l2.set_text_color(tint(s));
+            }
+            option::Option::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The answer, from whichever road it came — an immediate one for a state that
+// needed no dialog, or the completion block for a real prompt. The demo cannot
+// tell the two apart and should not: that is the facade's job.
+fn answered(name: str, s: permissions::State, ctx: *u8) {
+    refresh();
+    return;
+}
+
+fn ask(sender: *u8, ctx: *u8) {
+    let i: usize = { ctx as usize };
+    let _s: status::Status = permissions::request(name_at(i), on_answer: answered);
+    refresh();
+    return;
+}
+
+// Ask for the two capture domains in one call. On macOS this is two prompts in
+// sequence — Apple has no batch API — where the same call on Android is a
+// single dialog. Same code, and the difference is the facade's to absorb.
+fn ask_capture(sender: *u8, ctx: *u8) {
+    var want: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = want.append(permissions::CAMERA);
+    let _b: status::Status = want.append(permissions::MICROPHONE);
+    let _r: status::Status = permissions::request_many(want.as_slice(), on_answer: answered);
+    refresh();
+    return;
+}
+
+fn do_refresh(sender: *u8, ctx: *u8) { refresh(); return; }
+
+// Open the pane for the first row that is `Blocked`, or the app's own page when
+// nothing is. macOS deep-links per domain, which is why the verb takes a name
+// at all — on iOS and Android the argument is ignored.
+fn open_settings(sender: *u8, ctx: *u8) {
+    var i: usize = 0 as usize;
+    while i < row_count() {
+        if permissions::state(of: name_at(i)) == permissions::State::Blocked {
+            let _o: bool = permissions::open_settings(pane: name_at(i));
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    let _o: bool = permissions::open_settings();
+    return;
+}
+
+fn row(i: usize) -> core::Node {
+    let ctx: *u8 = { i as *u8 };
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label(name_at(i), font_size: 14.0).width(150.0));
+    b.add(ui::label("...", key: state_key(i), font_size: 14.0,
+                    font_weight: vocab::FontWeight::Semibold).width(120.0));
+    b.add(ui::text_button("Ask", on_click: ask, on_click_ctx: ctx));
+    return core::row(b).gap(10.0).padding(6.0);
+}
+
+struct Demo { }
+
+impl Demo {
+    fn new() -> Demo { return Demo { }; }
+}
+
+impl Demo: component::Component {
+    fn build(ref this) -> core::Node {
+        var b: core::Builder = core::Builder::new();
+        b.add(ui::label("Permissions", font_size: 20.0,
+                        font_weight: vocab::FontWeight::Bold).padding(4.0));
+        // One literal: C+ has no adjacent-string concatenation.
+        b.add(ui::label("A .app bundle carrying usage-description keys. Without them macOS terminates the process on the first read.",
+                        font_size: 12.0).padding(4.0));
+
+        var i: usize = 0 as usize;
+        while i < row_count() {
+            b.add(row(i));
+            i = i +% (1 as usize);
+        }
+
+        var actions: core::Builder = core::Builder::new();
+        actions.add(ui::text_button("Refresh", on_click: do_refresh));
+        actions.add(ui::text_button("Ask camera + mic", on_click: ask_capture));
+        actions.add(ui::text_button("Open Settings", on_click: open_settings));
+        b.add(core::row(actions).gap(12.0).padding(8.0));
+
+        return core::column(b).padding(16.0);
+    }
+}
+
+impl Demo: component::Lifecycle {
+    // ON ATTACH, not in `build`: the state labels are found by key, and a key
+    // lookup against a tree nothing has walked yet finds nothing.
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } refresh(); return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
+}
+
+fn main() -> i32 {
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
+    ));
+    runtime::run_component(Demo::new(), title: "Permissions",
+                           width: 520.0, height: 420.0);
+    return 0;
+}

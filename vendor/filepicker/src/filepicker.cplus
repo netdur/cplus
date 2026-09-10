@@ -1,0 +1,139 @@
+// The system's own file chooser.
+
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+
+enum Outcome {
+    // The picker was SHOWN. The chosen path arrives on the handler.
+    Ok,
+    Unsupported,
+    // Nothing to present from — no window, no Activity.
+    Unavailable,
+    InvalidInput,
+    Failed,
+}
+
+impl Outcome {
+    fn to_code(this) -> i32 {
+        match this {
+            Outcome::Ok => { return 0; }
+            Outcome::Unsupported => { return 1; }
+            Outcome::Unavailable => { return 2; }
+            Outcome::InvalidInput => { return 3; }
+            Outcome::Failed => { return 4; }
+        }
+    }
+
+    fn from_code(c: i32) -> Outcome {
+        if c == 1 { return Outcome::Unsupported; }
+        if c == 2 { return Outcome::Unavailable; }
+        if c == 3 { return Outcome::InvalidInput; }
+        if c == 4 { return Outcome::Failed; }
+        return Outcome::Ok;
+    }
+}
+
+// What came back.
+//
+// `path` IS EMPTY WHEN THE PERSON CANCELLED, which is the ordinary ending and
+// not an error — a picker dismissed without a choice is an answer. Check
+// `chose()` before reading it.
+//
+// AND IT IS NOT ALWAYS A FILESYSTEM PATH. On Android it is a `content://` URI
+// from the Storage Access Framework: opaque, valid only for this process, and
+// not something `fs::open_read` can take. The guide says what to do with it.
+// #[repr(C)] because this crosses the SEAM in a handler's parameter list.
+#[repr(C)]
+struct Pick {
+    path: str,
+}
+
+impl Pick {
+    fn chose(this) -> bool { return #str_len(this.path) > (0 as usize); }
+}
+
+fn available() -> bool {
+    return { _c_available() } != (0 as i32);
+}
+
+// Choose an existing file.
+//
+// `types` is a comma-separated list of EXTENSIONS without dots — "png,jpg" —
+// translated per platform: uniform type identifiers on Apple, MIME types on
+// Android. Empty means everything.
+//
+// The extension list is the portable half of a genuinely unportable idea, and
+// it is a lossy translation: Apple wants UTIs and Android wants MIME, and a
+// mapping from three letters to either is a guess for anything unusual. It is
+// offered because "let me pick a png" is the common case and the alternative
+// is every caller writing two lists.
+//
+// THE RETURN VALUE IS WHETHER THE PICKER OPENED. The choice arrives on the
+// handler, which runs on the main thread on every platform.
+fn open(on_pick: fn(Pick, *u8),
+        ctx: *u8 = 0 as *u8,
+        types: str = "") -> Outcome {
+    if on_pick.is_null() { return Outcome::InvalidInput; }
+    let b: *u8 = _bridge(on_pick, ctx);
+    if b.is_null() { return Outcome::Failed; }
+    return Outcome::from_code({ _c_open(_tramp, b,
+                                        #str_ptr(types), #str_len(types)) });
+}
+
+// Choose where to write a new file.
+//
+// `suggested` is the name the field starts with. The person can change it, and
+// the path that comes back is theirs rather than yours.
+fn save(suggested: str,
+        on_pick: fn(Pick, *u8),
+        ctx: *u8 = 0 as *u8) -> Outcome {
+    if on_pick.is_null() { return Outcome::InvalidInput; }
+    if #str_len(suggested) == (0 as usize) { return Outcome::InvalidInput; }
+    let b: *u8 = _bridge(on_pick, ctx);
+    if b.is_null() { return Outcome::Failed; }
+    return Outcome::from_code({ _c_save(#str_ptr(suggested), #str_len(suggested),
+                                        _tramp, b) });
+}
+
+// ---- the seam ----------------------------------------------------------------
+//
+// THE SEAM SPLITS THE `str`, and the facade puts it back together. A `str` is a
+// fat pointer with no C-ABI counterpart (E0410), so `Pick` cannot cross an
+// `export extern fn` — the same wall `camera`'s photo handler hit, and the same
+// answer: the backend hands back a pointer and a length, and one trampoline
+// here rebuilds the value the caller actually asked for.
+//
+// The caller's own (fn, ctx) rides across as the backend's `ctx`, boxed so it
+// outlives this frame — the panel answers seconds later.
+
+struct _Bridge {
+    on_pick: fn(Pick, *u8),
+    opaque ctx: *u8,
+}
+
+fn _tramp(path: *u8, path_len: usize, ctx: *u8) {
+    if ctx.is_null() { return; }
+    let b: *_Bridge = ctx as *_Bridge;
+    let f: fn(Pick, *u8) = { (*b).on_pick };
+    let user: *u8 = { (*b).ctx };
+    var p: Pick = Pick { path: "" };
+    if path.is_not_null() && path_len > (0 as usize) {
+        p.path = { #str_from_raw_parts(path, path_len) };
+    }
+    if f.is_not_null() { f(p, user); }
+    return;
+}
+
+fn _bridge(on_pick: fn(Pick, *u8), ctx: *u8) -> *u8 {
+    var blank: _Bridge = _Bridge { on_pick: on_pick, ctx: ctx };
+    return match box::new::[_Bridge](blank) {
+        option::Option[box::Box[_Bridge]]::Some(b) => { b.into_raw() as *u8 },
+        option::Option[box::Box[_Bridge]]::None => { 0 as *u8 },
+    };
+}
+
+extern fn _c_available() -> i32;
+extern fn _c_open(on_pick: fn(*u8, usize, *u8), ctx: *u8,
+                  types: *u8, types_len: usize) -> i32;
+extern fn _c_save(suggested: *u8, suggested_len: usize,
+                  on_pick: fn(*u8, usize, *u8), ctx: *u8) -> i32;

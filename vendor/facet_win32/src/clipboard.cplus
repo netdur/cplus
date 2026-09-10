@@ -1,0 +1,119 @@
+// facet_win32 clipboard — the Win32 clipboard, both halves.
+//
+// See facet_appkit/clipboard for the shape and facet_runtime/runtime for why
+// the portable half has it. Unlike GTK4 (whose read is async-only, so its
+// `paste_text` can only answer `None`), Win32's clipboard read is a synchronous
+// door — `GetClipboardData(CF_UNICODETEXT)` hands back the current text right
+// away — so this backend answers what it actually holds in BOTH directions.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "win32/winuser" as u;
+import "facet_win32/sys" as sys;
+
+// CF_UNICODETEXT — the one format worth speaking; everything modern round-trips
+// through UTF-16 and `sys` already owns the conversion both ways.
+fn cf_unicodetext() -> u32 { return 13 as u32; }
+// GMEM_MOVEABLE — SetClipboardData REQUIRES a moveable HGLOBAL. A fixed block
+// (GMEM_FIXED, which is what a bare `malloc` gives) is rejected, and the memory
+// is OWNED BY THE SYSTEM once handed over, so it must come from GlobalAlloc.
+fn gmem_moveable() -> u32 { return 0x0002 as u32; }
+
+#[link_name = "GlobalAlloc"]
+extern fn GlobalAlloc(flags: u32, bytes: usize) -> *u8;
+#[link_name = "GlobalLock"]
+extern fn GlobalLock(hmem: *u8) -> *u8;
+#[link_name = "GlobalUnlock"]
+extern fn GlobalUnlock(hmem: *u8) -> i32;
+#[link_name = "GlobalFree"]
+extern fn GlobalFree(hmem: *u8) -> *u8;
+// `sys` has its own `free`, but an extern is private to its module — the C+
+// name does not cross the import even though the linker symbol is one and the
+// same — so the malloc'd wide buffer is released through this local door.
+#[link_name = "free"]
+extern fn free(p: *u8);
+
+fn wide_len(w: *u16) -> usize {
+    var n: usize = 0 as usize;
+    while sys::read_u16(w, n) != (0 as u16) { n = n +% (1 as usize); }
+    return n;
+}
+
+fn copy_text(s: str) -> bool {
+    // Convert once, up front; if the conversion could not run there is nothing
+    // to publish and the board is left untouched. CRLF on the way out is the
+    // Win32 clipboard convention — `paste_text` collapses it back on the way in.
+    let src: *u16 = sys::to_wide_crlf(s);
+    if src == (0 as *u16) { return false; }
+    let n: usize = wide_len(src);
+    let bytes: usize = (n +% (1 as usize)) *% (2 as usize);
+
+    // The handle we hand to the system must be a *separate* moveable block —
+    // `to_wide`'s buffer is a plain malloc and stays ours to free.
+    let h: *u8 = { GlobalAlloc(gmem_moveable(), bytes) };
+    if h.is_null() { { free(src as *u8) }; return false; }
+    let dst: *u8 = { GlobalLock(h) };
+    if dst.is_null() {
+        { GlobalFree(h) };
+        { free(src as *u8) };
+        return false;
+    }
+    let d: *u16 = dst as *u16;
+    var i: usize = 0 as usize;
+    while i < n {
+        sys::write_u16(d, i, sys::read_u16(src, i));
+        i = i +% (1 as usize);
+    }
+    sys::write_u16(d, n, 0 as u16);
+    { GlobalUnlock(h) };
+    { free(src as *u8) };
+
+    // Opening with a NULL owner works and, being ownerless, will not fight a
+    // window's own edit-control copy. Between OpenClipboard and CloseClipboard
+    // the board is locked to this process.
+    if { u::OpenClipboard(0 as *u8) } == (0 as i32) {
+        // Never gave the handle away, so this side still owns it.
+        { GlobalFree(h) };
+        return false;
+    }
+    { u::EmptyClipboard() };
+    let placed: *u8 = { u::SetClipboardData(cf_unicodetext(), h) };
+    { u::CloseClipboard() };
+    if placed.is_null() {
+        // The system did NOT take ownership on failure — free it, or leak.
+        { GlobalFree(h) };
+        return false;
+    }
+    // On success the system owns `h`; freeing it here would be a double free.
+    return true;
+}
+
+fn paste_text() -> option::Option[text::Text] {
+    // Cheap pre-check that needs no open — nothing textual on the board is a
+    // legitimate `None`, distinct from a board this process could not open.
+    if { u::IsClipboardFormatAvailable(cf_unicodetext()) } == (0 as i32) {
+        return option::Option[text::Text]::None;
+    }
+    if { u::OpenClipboard(0 as *u8) } == (0 as i32) {
+        return option::Option[text::Text]::None;
+    }
+    let h: *u8 = { u::GetClipboardData(cf_unicodetext()) };
+    if h.is_null() {
+        { u::CloseClipboard() };
+        return option::Option[text::Text]::None;
+    }
+    // The returned handle is still owned by the clipboard — lock to read, do
+    // NOT free, and unlock before closing.
+    let p: *u8 = { GlobalLock(h) };
+    if p.is_null() {
+        { u::CloseClipboard() };
+        return option::Option[text::Text]::None;
+    }
+    // `from_wide_lf` collapses the CRLF the copier put in back to bare LFs, the
+    // mirror of `to_wide_crlf` on the way out — but text placed by other apps
+    // arrives CRLF-normalised too, which is what a caller expects.
+    let out: text::Text = sys::from_wide_lf(p as *u16);
+    { GlobalUnlock(h) };
+    { u::CloseClipboard() };
+    return option::Option[text::Text]::Some(out);
+}

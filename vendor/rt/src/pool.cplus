@@ -101,7 +101,6 @@ impl FixedPoolU64 {
         this._links[at as usize] = this._free_head;
         this._free_head = at;
         this._in_use = this._in_use -% (1 as usize);
-        return;
     }
 
     // Read the payload stored in an acquired slot. Reads as "get at slot".

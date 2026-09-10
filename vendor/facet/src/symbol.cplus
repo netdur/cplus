@@ -97,9 +97,8 @@ impl SymbolProps {
 }
 
 fn release_symbol_props(p: *u8) {
-    if p == (0 as *u8) { return; }
+    if p.is_null() { return; }
     let _b: box::Box[SymbolProps] = box::from_raw::[SymbolProps](p);
-    return;
 }
 
 fn _node(take p: SymbolProps, key: str) -> core::Node {
@@ -173,14 +172,14 @@ impl Symbol {
 
     fn _props(this) -> *SymbolProps {
         let d: *core::Data = { (*this._p).data() };
-        if d == (0 as *core::Data) { return 0 as *SymbolProps; }
+        if d.is_null() { return 0 as *SymbolProps; }
         if { (*d).kind } != K_SYMBOL { return 0 as *SymbolProps; }
         return { (*d).props } as *SymbolProps;
     }
 
     fn set_icon(this, v: u32) -> Symbol {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).icon = v };
         { (*p).set = IconSet::Bundled };
         core::touch(this._p, P_ICON);
@@ -189,13 +188,13 @@ impl Symbol {
 
     fn icon(this) -> u32 {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return 0u32; }
+        if p.is_null() { return 0u32; }
         return { (*p).icon };
     }
 
     fn set_name(this, v: str) -> Symbol {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).name = text::from_str(v) };
         { (*p).set = IconSet::System };
         core::touch(this._p, P_NAME);
@@ -204,13 +203,13 @@ impl Symbol {
 
     fn name(this) -> str {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return ""; }
+        if p.is_null() { return ""; }
         return { (*p).name.view() };
     }
 
     fn set_size(this, v: f64) -> Symbol {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).size = v };
         core::touch(this._p, P_SIZE);
         return this;
@@ -218,7 +217,7 @@ impl Symbol {
 
     fn size(this) -> f64 {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return 0.0f64; }
+        if p.is_null() { return 0.0f64; }
         return { (*p).size };
     }
 
@@ -226,7 +225,7 @@ impl Symbol {
     // FILL axis, so a backend may animate it rather than snap.
     fn set_fill(this, v: f64) -> Symbol {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).fill = v };
         core::touch(this._p, P_FILL);
         return this;
@@ -234,7 +233,7 @@ impl Symbol {
 
     fn fill(this) -> f64 {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return 0.0f64; }
+        if p.is_null() { return 0.0f64; }
         return { (*p).fill };
     }
 
@@ -242,7 +241,7 @@ impl Symbol {
 
     fn set_color(this, v: vocab::Color) -> Symbol {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).color = v };
         core::touch(this._p, P_COLOR);
         return this;
@@ -250,13 +249,13 @@ impl Symbol {
 
     fn color(this) -> vocab::Color {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return vocab::Color::clear(); }
+        if p.is_null() { return vocab::Color::clear(); }
         return { (*p).color };
     }
 
     fn set_font(this, v: str) -> Symbol {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).font = text::from_str(v) };
         core::touch(this._p, P_FONT);
         return this;
@@ -264,7 +263,7 @@ impl Symbol {
 
     fn font(this) -> str {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return ""; }
+        if p.is_null() { return ""; }
         return { (*p).font.view() };
     }
 
@@ -272,7 +271,7 @@ impl Symbol {
     // asking: a System symbol only means something on the platform it names.
     fn is_system(this) -> bool {
         let p: *SymbolProps = this._props();
-        if p == (0 as *SymbolProps) { return false; }
+        if p.is_null() { return false; }
         return match { (*p).set } { IconSet::System => true, IconSet::Bundled => false };
     }
 
@@ -323,15 +322,15 @@ impl Symbol {
 // Narrow a node to this control, the DOM step: a node carries what EVERY
 // node has, and a checked cast adds what only this control has.
 fn from(p: *core::Node) -> option::Option[Symbol] {
-    if p == (0 as *core::Node) { return option::Option[Symbol]::None; }
+    if p.is_null() { return option::Option[Symbol]::None; }
     let d: *core::Data = { (*p).data() };
-    if d == (0 as *core::Data) { return option::Option[Symbol]::None; }
+    if d.is_null() { return option::Option[Symbol]::None; }
     if { (*d).kind } != K_SYMBOL { return option::Option[Symbol]::None; }
     return option::Option[Symbol]::Some(Symbol::_of(p));
 }
 
 fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[Symbol] {
-    if within != (0 as *core::Node) {
+    if within.is_not_null() {
         return match core::find_in(within, key) {
             option::Option[*core::Node]::Some(p) => from(p),
             option::Option[*core::Node]::None => option::Option[Symbol]::None,

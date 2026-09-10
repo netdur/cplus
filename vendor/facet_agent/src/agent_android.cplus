@@ -1,0 +1,249 @@
+// facet agent facade for iOS. `import "facet_agent/agent"` resolves HERE on an iOS
+// target, through the same filename override that picks `runtime_ios.cplus` —
+// and for the same reason: the module names a platform package, and on this
+// platform that package does not exist.
+//
+// `agent.cplus` is written against `agent_appkit`, which walks an NSWindow's
+// live view tree into a surface an MCP worker serves. `agent_android` is the
+// sibling that does the same for a UIWindow, and this file is the same facade
+// over it — nothing here refuses. (It USED to: this module was written while
+// `agent_android` did not exist, and kept the surface compiling by answering no.
+// The header said so for a while after it stopped being true.)
+//
+// The whole stack below the backend — agent_core, agent_mcp, agent_inapp — is
+// portable and is the same code on both platforms. What differs is the reader
+// and the transport, and the transport is the interesting half; see below.
+//
+// `policy_for` is shared rather than merely similar: it is facet's vocabulary
+// translated into agent_core's, identical to the AppKit module's on purpose. A
+// second translation table would be the thing that drifts.
+
+import "facet/application" as app;
+import "facet/vocabulary" as vocab;
+import "agent_core/auth" as auth;
+import "agent_core/identity" as identity;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/thread" as thread;
+import "agent_core/events" as events;
+import "agent_inapp/agent_inapp" as inapp;
+import "agent_mcp/agent_mcp" as mcp;
+import "agent_mcp/inspect" as mcp_inspect;
+import "./inspect_tree" as itree;
+import "./inspect_platform" as iplatform;
+import "agent_android/agent_android" as agent_android;
+import "facet_android/log" as alog;
+
+static AGENT_SURFACE: agent_android::Surface = #zero::[agent_android::Surface]();
+static AGENT_SERVING: bool = false;
+
+
+
+fn enable() {
+    app::install_agent(app::AgentHooks {
+        attach_window: attach_window,
+        serve_once: serve_once,
+        pin_policy: pin_policy,
+    });
+}
+
+fn disable() {
+    app::install_agent(app::AgentHooks {
+        attach_window: 0 as fn(*u8),
+        serve_once: 0 as fn(str),
+        pin_policy: 0 as fn(*u8, vocab::Agent),
+    });
+}
+
+// The in-process assistant, which needs no socket at all: it drives the same
+// backend vtable as the external bridge, with the same grant model.
+fn in_app() -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open(surf, agent_android::mcp_backend());
+}
+
+fn in_app_with_grant(g: auth::Grant) -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open_with_grant(surf, agent_android::mcp_backend(), g);
+}
+
+// (WAS ABSENT, and the reason is worth keeping.)
+// `in_app` and `in_app_with_grant` were DELIBERATELY ABSENT rather than stubbed.
+//
+// Every other entry here can refuse at runtime because refusing costs nothing:
+// `enable` installs no hooks, `serve_once` starts no worker. A session cannot.
+// It is a value the caller then CALLS — `describe_ui`, `click`, `set_text` —
+// through a backend vtable, and a stub would have to hand back a session with a
+// null vtable whose first use is a jump through a null function pointer.
+//
+// So an app that opens an in-process assistant fails to COMPILE for iOS, at the
+// call site, with the name of the thing that is missing. That is the loudest and
+// earliest signal available, and it is the same rule the rest of facet follows:
+// no side door that looks portable.
+
+// THE ONE PLACE the two vocabularies meet, and it is portable: facet's
+// `vocab::Agent` is what a developer writes, agent_core's `policy_*` is what a
+// backend pins and reads. Identical to the AppKit module's, deliberately — a
+// second translation table would be the thing that drifts.
+fn policy_for(a: vocab::Agent) -> u32 {
+    return match a {
+        vocab::Agent::Open => identity::policy_none(),
+        vocab::Agent::Protected => identity::policy_protected(),
+        vocab::Agent::Private => identity::policy_private(),
+        vocab::Agent::Hidden => identity::policy_exclude(),
+    };
+}
+
+fn pin_policy(view: *u8, a: vocab::Agent) {
+    agent_android::set_agent_policy(view, policy_for(a));
+}
+
+// Walk the tree into the surface, replacing the previous screen's.
+//
+// `win` is a facet NODE on this backend, not a native view: agent_android walks
+// facet's own tree, where the key, the kind and the handlers are. See its
+// Cplus.toml for why the other three do it the other way.
+fn attach_window(win: *u8) {
+    AGENT_SURFACE = agent_android::open(win);
+}
+
+// The default channel policy: the developer opted in by asking for a port, so
+// the channel is admitted — as an ORDINARY OPERATOR. Read the app, drive the
+// app, and nothing from a node the application put behind a tier. Widening is
+// an app supplying its own policy, which is a place a reader can find it.
+// AND `edit_tree`, because this is the line that publishes an editing surface.
+//
+// `serve_once` installs the inspector's walker and publishes its fourteen
+// verbs, eight of which rewrite the tree. `cap_edit_tree` gates those eight and
+// NOTHING GRANTED IT — it appeared at its definition and in agent_core's own
+// tests and nowhere else, so every write on every app was refused, always. The
+// inspector was reliably read-only and said so in a `-32002` a panel showed as
+// a field that reverted. A capability that only ever refuses is not a policy,
+// it is a defect with a error message.
+//
+// It does not widen what the paragraph above argues about. That argument is
+// about protected CONTENT — a card number behind a tier — and the tier caps
+// stay out of this grant exactly as before. `edit_tree` is the DEVELOPER
+// surface: structure and properties that are not user affordances, published
+// by the same call that installs the walker to read them. The thing that
+// publishes an editing surface is the thing that authorizes it.
+//
+// An app that wants a reader hands out `auth::operator()` from its own
+// `set_policy`, which is where narrowing has always belonged.
+fn admit(req: auth::Request) -> auth::Grant {
+    return auth::operator().with(auth::cap_edit_tree());
+}
+
+// THE APP'S OWN POLICY, if it has one.
+//
+// THIS PLATFORM DID NOT HAVE ONE AT ALL until now, and the absence was silent
+// in the worst direction: `set_policy` existed only in the desktop facade, so
+// an app that installed a consent gate and then built for a phone either failed
+// to compile or — on the path that did compile — served `admit` to anything
+// that reached the loopback port, which on a device is every other app on it.
+// The grant model is not a desktop feature.
+//
+// A function pointer and not a closure, matching `auth::AuthGate`: C+ has no
+// closures, and per-caller behaviour comes from the `Request`.
+//
+// SET IT BEFORE `enable()`. The serve thread reads it once when it starts; a
+// policy installed afterwards would leave a window in which the default served.
+static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
+    #zero::[fn(auth::Request) -> auth::Grant]();
+
+fn set_policy(f: fn(auth::Request) -> auth::Grant) {
+    AGENT_POLICY = f;
+}
+
+fn effective_policy() -> fn(auth::Request) -> auth::Grant {
+    if AGENT_POLICY.is_null() { return admit; }
+    return AGENT_POLICY;
+}
+
+struct AgentServe { fd: i32 }
+
+fn serve_main(take job: AgentServe) -> i32 {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64);
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    // HTTP, NOT THE PRIVATE FRAMING. This platform has no Unix socket a client
+    // could reach, so the loopback port is the ONLY door — which makes it the
+    // one place the framing has to be something an MCP client already speaks.
+    // It served line-delimited JSON-RPC, so reaching a phone app meant writing
+    // a bridge for it; now `adb forward` or a simulator's shared loopback is
+    // enough and any client connects to `http://127.0.0.1:<port>/`.
+    return mcp::accept_loop(surf, agent_android::mcp_backend(), sub, effective_policy(),
+                            job.fd, false, http: true);
+}
+
+// Start the serve worker exactly once per process.
+//
+// `id` NAMES THE APP; the port is derived from the pid —
+// `agent_mcp::loopback_port`. BOUND ON THIS THREAD so a failure is something a
+// caller can hear: on this platform the documented one is Android refusing
+// `socket()` without `android.permission.INTERNET`, which used to end the
+// accept loop instantly and look exactly like an agent nobody connected to.
+fn serve_once(id: str) {
+    if AGENT_SERVING { return; }
+    // Clear out what dead processes left behind. A path carries the pid, so a
+    // name is never reused and nothing else would ever remove these.
+    let _swept: usize = mcp::sweep_stale();
+    if !mcp::valid_id(id) {
+        alog::warn(#str_ptr("agent: not served - the id is a NAME, not a path\0"));
+        return;
+    }
+    let port: u16 = mcp::loopback_port(mcp::current_pid());
+    let fd: i32 = mcp::bind_tcp(port);
+    if fd < 0 {
+        // logcat, not stderr: a device has nowhere to put stderr, and this is
+        // the message that says why the Inspect tab is empty. `adb logcat -s facet`.
+        let why: text::Text = "agent: not served on port ${port} - ${mcp::bind_reason(fd)}";
+        alog::warn(#str_ptr(why.view()));
+        return;
+    }
+    AGENT_SERVING = true;
+    // THE INSPECTOR'S FOURTEEN VERBS, published with the other eleven and not
+    // by an application remembering to. Serving IS the opt-in — an app that
+    // does not want to be driven does not call this function — and there is no
+    // second flag beside it.
+    //
+    // They REFUSE until a toolkit installs a walker (`inspect::arm()`), and
+    // they refuse with a policy answer that names what is missing. That is the
+    // whole point of publishing them unconditionally: `-32601 method not
+    // found` was the wrong sentence, and three packages downstream had grown
+    // machinery to translate it.
+    // The platform half — overlay, native rows, and the synchronous
+    // main-thread hop `core::touch` requires. Was `inspect::arm()`'s other job.
+    iplatform::install();
+    mcp_inspect::publish();
+    // AND THE WALKER, here rather than in application code. The toolkit is what
+    // knows what a tree is; an application asking to be driven has already said
+    // everything it has to say by calling this function.
+    //
+    // This was `inspect::arm()` — a line every app had to remember, whose
+    // absence answered `-32601 method not found` three packages downstream.
+    // There is nothing left to forget.
+    mcp_inspect::set_backend(itree::local_backend());
+    mcp::set_server_name(id);
+    let addr: text::Text = "http://127.0.0.1:${port}/";
+    let _d: bool = mcp::write_descriptor(id, mcp::current_pid(), "http", addr.view());
+    let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
+        AgentServe { fd: fd },
+        serve_main,
+    );
+    let ok: text::Text = "agent: serving on http://127.0.0.1:${port}/ — ${mcp::verb_summary()}";
+    alog::info(#str_ptr(ok.view()));
+}
+
+// ---- tests ------------------------------------------------------------------
+
+// The half that is real here. The tier translation is agent_core's vocabulary
+// and does not touch a platform, so it is asserted on iOS exactly as the AppKit
+// module asserts it — and a divergence between the two tables is what this
+// catches.
+#[test]
+fn every_facet_tier_maps_to_the_policy_the_core_reads() {
+    assert policy_for(vocab::Agent::Open) == identity::policy_none();
+    assert policy_for(vocab::Agent::Protected) == identity::policy_protected();
+    assert policy_for(vocab::Agent::Private) == identity::policy_private();
+    assert policy_for(vocab::Agent::Hidden) == identity::policy_exclude();
+}

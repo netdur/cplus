@@ -11,10 +11,10 @@ import "./gallery" as gallery;
 
 fn main() -> i32 {
     theme::set_theme(theme::Theme::new(
-        primary: vocab::Color::rgba(0.35f64, 0.42f64, 0.95f64, 1.0f64),
+        primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
         surface: vocab::Color::adaptive(
-            light: vocab::Color::rgba(0.94f64, 0.94f64, 0.96f64, 1.0f64),
-            dark: vocab::Color::rgba(0.09f64, 0.09f64, 0.11f64, 1.0f64),
+            light: vocab::Color::rgba(0.94, 0.94, 0.96, 1.0),
+            dark: vocab::Color::rgba(0.09, 0.09, 0.11, 1.0),
         ),
     ));
 
@@ -29,7 +29,13 @@ fn main() -> i32 {
     // opens a socket by default would teach the wrong default.
     if env::has_var("FACET_GALLERY_AGENT") {
         agent::enable();
-        app.agent_mcp("/tmp/facet-gallery.sock");
+        // An ID, not a path: the platform derives the address from it
+        // (`/tmp/mcp-<id>-<pid>.socket` here, a loopback port on mobile). This
+        // said "/tmp/facet-gallery.sock" until 2026-08-30 and had therefore
+        // been refused at startup — "is not a valid id (a NAME, not a path)" —
+        // since the address stopped being configured. It still built, which is
+        // the whole trap with examples.
+        app.agent_mcp("facet_gallery");
     }
 
     match app.run("gallery") {

@@ -1,0 +1,450 @@
+// facet_win32/shadow — the shared band's drop shadow.
+//
+// `C_SHADOW` was NAMED in `paint::band_bits()` and answered by nothing: a
+// claim that the band handles it, beside a body that did not. facet_gtk shipped
+// exactly the same bug and records it — there the fix was one CSS declaration,
+// and here it is this file, because Win32 has no shadow of any kind on a child
+// window.
+//
+// ---- why the PARENT draws it -------------------------------------------------------
+//
+// A child window owns its own rectangle and cannot paint one pixel outside it.
+// A shadow is entirely outside it. So the node that casts one cannot draw it,
+// and the only surface that can is the one BEHIND it — which is its host's
+// client area, in its host's WM_PAINT.
+//
+// That is the same answer `recycler`'s separators and `swipe`'s action strip
+// reached, for the same reason, and it is why this is called from `window`'s
+// WNDPROC beside them rather than from `paint::band`.
+//
+// `CS_DROPSHADOW` is the other thing Win32 has, and it is not this: it is a
+// class style for TOP-LEVEL windows — menus and tooltips — and it draws the
+// system's own small shadow with no colour, no offset and no radius. facet's
+// Shadow has all three.
+//
+// ---- the blur ----------------------------------------------------------------------
+//
+// GDI has no blur. What it has is `AlphaBlend`, which takes a 32-bit
+// PREMULTIPLIED source, so the shadow is built as a DIB: an alpha mask of the
+// node's own shape, box-blurred three times — which is a close enough gaussian
+// that nobody has ever noticed the difference — then multiplied by the colour.
+//
+// THREE PASSES, and the count is the whole approximation. One box blur is a
+// visible flat-edged smear; two is triangular; three is within a couple of
+// percent of a true gaussian, and is what every renderer that cannot afford a
+// real one does.
+//
+// PREMULTIPLIED, which is what `AC_SRC_ALPHA` means and the one thing about
+// this API that is easy to get wrong: the colour channels must already be
+// multiplied by the alpha. A non-premultiplied source blends as a bright halo
+// around the shape — visible immediately, and impossible to explain from the
+// call site.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "win32/wingdi" as gdi;
+import "win32/graphics" as graphics;
+import "./sys" as sys;
+import "./paint" as paint;
+
+// How far a shadow reaches past its node. facet's `radius` is the visual reach
+// — the same meaning CSS's blur radius has — and the buffer needs that much on
+// every side plus room for the offset.
+//
+// THE OFFSET IS NOT PART OF THE REACH. It moves the whole shape rather than
+// spreading it, so it is applied when the buffer is BLITTED and the buffer is
+// sized for the blur alone. Folding it in would make a shadow with a large
+// offset allocate a buffer mostly full of nothing.
+fn reach_of(sh: vocab::Shadow) -> i32 {
+    if sh.radius <= (0.0 as f64) { return 0 as i32; }
+    return (sh.radius + (0.5 as f64)) as i32;
+}
+
+// Does this node cast anything at all? A shadow needs a colour AND an opacity —
+// `Shadow::none()` is both zero — and a shadow with no radius and no offset is
+// exactly underneath the node it belongs to, where nothing can see it.
+//
+// Asked before any allocation, because the answer is no for almost every node
+// in a tree and this runs in a paint.
+fn casts(sh: vocab::Shadow) -> bool {
+    if !sh.color.is_set() { return false; }
+    if sh.opacity <= (0.0 as f64) { return false; }
+    if sh.radius <= (0.0 as f64)
+        && sh.offset.x == (0.0 as f64) && sh.offset.y == (0.0 as f64) { return false; }
+    return true;
+}
+
+// ---- the buffer ---------------------------------------------------------------------
+
+#[link_name = "malloc"]
+extern fn shadow_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn shadow_free(p: *u8);
+
+fn bi_rgb() -> u32 { return 0 as u32; }
+fn dib_rgb_colors() -> u32 { return 0 as u32; }
+
+// A 32-bit top-down DIB, and its pixels. `CreateDIBSection` hands back the
+// bits, which is the whole reason it is used rather than `CreateCompatibleBitmap`:
+// the alpha mask is written by this file, not drawn by GDI.
+//
+// TOP-DOWN, which is a NEGATIVE height. A bottom-up DIB is the default and
+// would put the shadow's offset the wrong way round, which reads as a shadow
+// above a node that asked for one below it.
+fn make_dib(hdc: *u8, w: i32, h: i32, bits: **u8) -> *u8 {
+    var info: gdi::tagBITMAPINFO = gdi::tagBITMAPINFO {
+        bmiHeader: gdi::tagBITMAPINFOHEADER {
+            biSize: 40 as u32,
+            biWidth: w,
+            biHeight: (0 as i32) -% h,
+            biPlanes: 1 as u16,
+            biBitCount: 32 as u16,
+            biCompression: bi_rgb(),
+            biSizeImage: 0 as u32,
+            biXPelsPerMeter: 0 as i32,
+            biYPelsPerMeter: 0 as i32,
+            biClrUsed: 0 as u32,
+            biClrImportant: 0 as u32,
+        },
+        bmiColors: 0 as *u8,
+    };
+    return { gdi::CreateDIBSection(hdc, #addr_of(info), dib_rgb_colors(), bits,
+                                   0 as *u8, 0 as u32) };
+}
+
+// ---- the mask ------------------------------------------------------------------------
+//
+// The node's own SHAPE, in alpha. A rounded node casts a rounded shadow — a
+// square one under a rounded card is the tell that a backend is faking it.
+
+fn put_alpha(px: *u8, w: i32, x: i32, y: i32, a: u8) {
+    // The ALPHA byte of a BGRA pixel is the fourth, and the offset is computed
+    // as an integer before it ever touches the pointer: `+%` is integer
+    // arithmetic and a pointer is not an integer here.
+    let at: usize = ((((y * w) + x) as usize) *% (4 as usize)) +% (3 as usize);
+    { *(px + at) = a };
+    return;
+}
+
+fn get_alpha(px: *u8, w: i32, x: i32, y: i32) -> i32 {
+    let at: usize = ((((y * w) + x) as usize) *% (4 as usize)) +% (3 as usize);
+    return { *(px + at) } as i32;
+}
+
+// The rounded-rect mask, written as full alpha inside the shape and zero
+// outside. The corner test is the circle's own — a point in the corner square
+// is inside the shape when it is within the radius of that corner's centre.
+fn fill_mask(px: *u8, w: i32, h: i32, box_x: i32, box_y: i32,
+             box_w: i32, box_h: i32, radius: i32) {
+    var y: i32 = 0 as i32;
+    while y < h {
+        var x: i32 = 0 as i32;
+        while x < w {
+            var inside: bool = x >= box_x && x < box_x +% box_w
+                            && y >= box_y && y < box_y +% box_h;
+            if inside && radius > (0 as i32) {
+                // Which corner, if any, this point is in the square of.
+                let lx: i32 = x -% box_x;
+                let ly: i32 = y -% box_y;
+                var cx: i32 = (0 as i32) -% (1 as i32);
+                var cy: i32 = (0 as i32) -% (1 as i32);
+                if lx < radius && ly < radius { cx = radius; cy = radius; }
+                else if lx >= box_w -% radius && ly < radius {
+                    cx = box_w -% radius; cy = radius;
+                }
+                else if lx < radius && ly >= box_h -% radius {
+                    cx = radius; cy = box_h -% radius;
+                }
+                else if lx >= box_w -% radius && ly >= box_h -% radius {
+                    cx = box_w -% radius; cy = box_h -% radius;
+                }
+                if cx >= (0 as i32) {
+                    // THE PIXEL'S CENTRE, in DOUBLED coordinates — `2*lx + 1`
+                    // is twice the centre of pixel `lx`, and the radius is
+                    // doubled to match, so the comparison stays exact integer
+                    // arithmetic with no halves to round.
+                    //
+                    // Sampling the pixel's top-left corner instead makes the
+                    // mask ASYMMETRIC: the left circle sits a full pixel inside
+                    // the edge and the right one two thirds of it, so a rounded
+                    // box came out with two sharp corners and two round ones.
+                    // Measured on an 8x8 box at radius 3, which is why the test
+                    // checks all four.
+                    let dx: i32 = ((2 as i32) * lx) + (1 as i32) -% ((2 as i32) * cx);
+                    let dy: i32 = ((2 as i32) * ly) + (1 as i32) -% ((2 as i32) * cy);
+                    let r2: i32 = (2 as i32) * radius;
+                    if (dx * dx) + (dy * dy) > (r2 * r2) { inside = false; }
+                }
+            }
+            put_alpha(px, w, x, y, if inside { 255 as u8 } else { 0 as u8 });
+            x = x + (1 as i32);
+        }
+        y = y + (1 as i32);
+    }
+    return;
+}
+
+// ---- the blur -------------------------------------------------------------------------
+//
+// A box blur, separably: rows then columns, three times. Separable is what
+// makes it affordable — a 2D box of radius r costs r² per pixel and two 1D
+// passes cost 2r, which at radius 12 is the difference between 144 and 24.
+//
+// A RUNNING SUM would make each pass O(1) per pixel rather than O(r). It is
+// deliberately not done: the window is small (a node plus its reach), the code
+// is a third the size, and the first thing that would go wrong in a sliding
+// window is the edge handling — which is what a shadow is made of.
+
+fn blur_pass(src: *u8, dst: *u8, w: i32, h: i32, r: i32, horizontal: bool) {
+    var y: i32 = 0 as i32;
+    while y < h {
+        var x: i32 = 0 as i32;
+        while x < w {
+            var total: i32 = 0 as i32;
+            var count: i32 = 0 as i32;
+            var k: i32 = (0 as i32) -% r;
+            while k <= r {
+                let sx: i32 = if horizontal { x + k } else { x };
+                let sy: i32 = if horizontal { y } else { y + k };
+                // OUTSIDE IS TRANSPARENT, and counted. Skipping the samples
+                // that fall off the edge would keep the average high there and
+                // leave the shadow with a hard line down its own border.
+                if sx >= (0 as i32) && sx < w && sy >= (0 as i32) && sy < h {
+                    total = total + get_alpha(src, w, sx, sy);
+                }
+                count = count + (1 as i32);
+                k = k + (1 as i32);
+            }
+            put_alpha(dst, w, x, y, (total / count) as u8);
+            x = x + (1 as i32);
+        }
+        y = y + (1 as i32);
+    }
+    return;
+}
+
+// ---- the colour ------------------------------------------------------------------------
+
+// Premultiply the whole buffer by the shadow's colour and opacity. This is the
+// last pass, and the one `AC_SRC_ALPHA` requires: `AlphaBlend` reads the colour
+// channels as ALREADY multiplied by alpha, and a buffer that is not gives a
+// bright halo around the shape.
+fn tint(px: *u8, w: i32, h: i32, c: vocab::Color, opacity: f64) {
+    let r: f64 = c.r;
+    let g: f64 = c.g;
+    let b: f64 = c.b;
+    let scale: f64 = c.a * opacity;
+    var i: usize = 0 as usize;
+    let n: usize = ((w * h) as usize) *% (4 as usize);
+    while i < n {
+        let a: f64 = ({ *(px + (i +% (3 as usize))) } as f64) * scale;
+        // BGRA in memory, which is what a 32-bit DIB is on this platform.
+        { *(px + i) = ((b * a) as i64) as u8 };
+        { *(px + (i +% (1 as usize))) = ((g * a) as i64) as u8 };
+        { *(px + (i +% (2 as usize))) = ((r * a) as i64) as u8 };
+        { *(px + (i +% (3 as usize))) = (a as i64) as u8 };
+        i = i +% (4 as usize);
+    }
+    return;
+}
+
+// ---- drawing one -------------------------------------------------------------------------
+
+// Draw `n`'s shadow into `hdc`, which is its HOST's. `x`/`y`/`w`/`h` are the
+// node's rectangle in the host's client coordinates — the caller has them from
+// the walk and this file must not go asking the window, which would be a
+// different answer during a move.
+fn draw_one(hdc: *u8, n: *core::Node, x: i32, y: i32, w: i32, h: i32) {
+    let sh: vocab::Shadow = core::shadow(n);
+    if !casts(sh) { return; }
+    if w <= (0 as i32) || h <= (0 as i32) { return; }
+    let reach: i32 = reach_of(sh);
+    let bw: i32 = w + (reach * (2 as i32));
+    let bh: i32 = h + (reach * (2 as i32));
+    if bw <= (0 as i32) || bh <= (0 as i32) { return; }
+
+    var bits: *u8 = 0 as *u8;
+    let dib: *u8 = make_dib(hdc, bw, bh, #addr_of(bits));
+    if dib == (0 as *u8) { return; }
+    if bits == (0 as *u8) { let _d: i32 = { gdi::DeleteObject(dib) }; return; }
+
+    // The node's shape, inset by the reach on every side.
+    let radius: i32 = paint::uniform_radius(core::corner_radius(n)) as i32;
+    fill_mask(bits, bw, bh, reach, reach, w, h, radius);
+
+    if reach > (0 as i32) {
+        // A SCRATCH BUFFER, because a box blur cannot read and write the same
+        // pixels: the second sample of a row would already contain the first
+        // sample's average. Three passes, ping-ponging.
+        let scratch: *u8 = { shadow_malloc(((bw * bh) as usize) *% (4 as usize)) };
+        if !scratch.is_null() {
+            let r: i32 = if reach / (3 as i32) > (1 as i32) { reach / (3 as i32) }
+                         else { 1 as i32 };
+            blur_pass(bits, scratch, bw, bh, r, true);
+            blur_pass(scratch, bits, bw, bh, r, false);
+            blur_pass(bits, scratch, bw, bh, r, true);
+            blur_pass(scratch, bits, bw, bh, r, false);
+            blur_pass(bits, scratch, bw, bh, r, true);
+            blur_pass(scratch, bits, bw, bh, r, false);
+            { shadow_free(scratch) };
+        }
+    }
+    tint(bits, bw, bh, paint::resolved(sh.color), sh.opacity);
+
+    let mem: *u8 = { gdi::CreateCompatibleDC(hdc) };
+    if mem != (0 as *u8) {
+        let old: *u8 = { gdi::SelectObject(mem, dib) };
+        // 255 for the CONSTANT alpha, because the per-pixel alpha already
+        // carries the opacity — applying it here as well would square it, and a
+        // 0.5 shadow would come out at a quarter.
+        //
+        // THROUGH `win32/graphics`, not through the generated `wingdi`: the
+        // SDK's `_BLENDFUNCTION` tag makes that binding's parameter type
+        // module-private, so `gdi::AlphaBlend` cannot be called from here at
+        // all. See the curated binding for the whole of it.
+        let bf: graphics::BlendFunction = graphics::blend_over(255 as u8, true);
+        let ox: i32 = x -% reach + (sh.offset.x as i32);
+        let oy: i32 = y -% reach + (sh.offset.y as i32);
+        let _b: i32 = graphics::alpha_blend(hdc, ox, oy, bw, bh, mem,
+                                            0 as i32, 0 as i32, bw, bh, bf);
+        let _s: *u8 = { gdi::SelectObject(mem, old) };
+        let _d: i32 = { gdi::DeleteDC(mem) };
+    }
+    let _d: i32 = { gdi::DeleteObject(dib) };
+    return;
+}
+
+// Every shadow a host has to draw: its children's, in child order, so a later
+// sibling's shadow lands over an earlier one exactly as the siblings themselves
+// do.
+//
+// A VIEWLESS CHILD IS WALKED THROUGH, not skipped — its own children are in
+// this same host, so their shadows are this host's to draw too. That is the
+// same rule `geometry::reposition_children` follows for placement, and the two
+// have to agree or a shadow lands where its node is not.
+fn draw_child_shadows(host: *u8, n: *core::Node, hdc: *u8) {
+    if host == (0 as *u8) || n == (0 as *core::Node) { return; }
+    var hr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetWindowRect(host, #addr_of(hr)) } == (0 as i32) { return; }
+    walk(host, n, hdc, hr);
+    return;
+}
+
+fn walk(host: *u8, n: *core::Node, hdc: *u8, hr: u::tagRECT) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) {
+                    if casts(core::shadow(c)) {
+                        var cr: u::tagRECT = u::tagRECT {
+                            left: 0 as i32, top: 0 as i32,
+                            right: 0 as i32, bottom: 0 as i32,
+                        };
+                        if { u::GetWindowRect(v, #addr_of(cr)) } != (0 as i32) {
+                            draw_one(hdc, c, cr.left -% hr.left, cr.top -% hr.top,
+                                     cr.right -% cr.left, cr.bottom -% cr.top);
+                        }
+                    }
+                    // A CHILD WITH A WINDOW OWNS ITS OWN SHADOWS. Its children
+                    // are in ITS client area, not this one, and are reached
+                    // when it paints.
+                } else {
+                    walk(host, c, hdc, hr);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+#[test]
+fn a_shadow_needs_a_colour_an_opacity_and_somewhere_to_fall() {
+    // The gate that runs before any allocation, for every node in a tree.
+    var sh: vocab::Shadow = vocab::Shadow::none();
+    assert !casts(sh);
+    sh.color = vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64);
+    assert !casts(sh);           // ...still no opacity
+    sh.opacity = 0.5f64;
+    // A shadow with no reach and no offset is exactly underneath its node,
+    // where nothing can see it — and drawing it would cost a blur per paint to
+    // produce nothing.
+    assert !casts(sh);
+    sh.radius = 8.0f64;
+    assert casts(sh);
+    // An offset alone is a hard-edged shadow, which is a real request.
+    sh.radius = 0.0f64;
+    sh.offset = vocab::Point { x: 0.0f64, y: 3.0f64 };
+    assert casts(sh);
+    return;
+}
+
+#[test]
+fn the_buffer_is_the_node_plus_the_reach_on_every_side() {
+    // The offset moves the blit rather than the buffer — folding it in would
+    // allocate a buffer mostly full of nothing for a shadow thrown far.
+    var sh: vocab::Shadow = vocab::Shadow::none();
+    sh.radius = 12.0f64;
+    assert reach_of(sh) == (12 as i32);
+    sh.radius = 0.0f64;
+    assert reach_of(sh) == (0 as i32);
+    // A hard-edged shadow needs no buffer beyond the node itself, and the blur
+    // is skipped entirely for it.
+    return;
+}
+
+#[test]
+fn the_mask_is_the_nodes_own_shape() {
+    // A square shadow under a rounded card is the tell that a backend is
+    // faking it, so the corner test is asserted rather than assumed: the pixel
+    // at the very corner of a rounded box is OUTSIDE the shape, and the one at
+    // its centre is inside.
+    let w: i32 = 8 as i32;
+    let h: i32 = 8 as i32;
+    let px: *u8 = { shadow_malloc(((w * h) as usize) *% (4 as usize)) };
+    assert !px.is_null();
+    fill_mask(px, w, h, 0 as i32, 0 as i32, w, h, 3 as i32);
+    assert get_alpha(px, w, 4 as i32, 4 as i32) == (255 as i32);
+    assert get_alpha(px, w, 0 as i32, 0 as i32) == (0 as i32);
+    assert get_alpha(px, w, 7 as i32, 0 as i32) == (0 as i32);
+    assert get_alpha(px, w, 0 as i32, 7 as i32) == (0 as i32);
+    assert get_alpha(px, w, 7 as i32, 7 as i32) == (0 as i32);
+    // ...and a square one keeps its corners.
+    fill_mask(px, w, h, 0 as i32, 0 as i32, w, h, 0 as i32);
+    assert get_alpha(px, w, 0 as i32, 0 as i32) == (255 as i32);
+    { shadow_free(px) };
+    return;
+}
+
+#[test]
+fn a_blur_pass_spreads_alpha_and_keeps_it_bounded() {
+    // One lit pixel, blurred: its neighbours gain and nothing exceeds full.
+    // The property that matters is the EDGE — a sample that falls off the
+    // buffer counts as transparent, and skipping those instead would leave a
+    // hard line down the shadow's own border.
+    let w: i32 = 5 as i32;
+    let h: i32 = 5 as i32;
+    let src: *u8 = { shadow_malloc(((w * h) as usize) *% (4 as usize)) };
+    let dst: *u8 = { shadow_malloc(((w * h) as usize) *% (4 as usize)) };
+    assert !src.is_null();
+    assert !dst.is_null();
+    fill_mask(src, w, h, 2 as i32, 2 as i32, 1 as i32, 1 as i32, 0 as i32);
+    assert get_alpha(src, w, 2 as i32, 2 as i32) == (255 as i32);
+    assert get_alpha(src, w, 1 as i32, 2 as i32) == (0 as i32);
+    blur_pass(src, dst, w, h, 1 as i32, true);
+    // One lit pixel over a three-wide window: 255/3 = 85, and its neighbours
+    // in the same ROW get the same — a horizontal pass does not touch columns.
+    assert get_alpha(dst, w, 2 as i32, 2 as i32) == (85 as i32);
+    assert get_alpha(dst, w, 1 as i32, 2 as i32) == (85 as i32);
+    assert get_alpha(dst, w, 2 as i32, 1 as i32) == (0 as i32);
+    { shadow_free(src) };
+    { shadow_free(dst) };
+    return;
+}

@@ -78,9 +78,9 @@ escape hatch; shared mutation goes through `with_mut` or a mutex.
 | `channel` | `Channel[T]` | MPMC; `send` `receive` `try_receive` `close` `clone` |
 | `mutex` | `Mutex[T]`, `MutexGuard[T]` | internally refcounted — no `Arc` wrapper needed |
 | `atomic` | `Ordering` | `load_*` `store_*` `swap_*` `fetch_add_*` `fetch_sub_*` `fetch_and_*` `fetch_or_*` `fetch_xor_*` `compare_exchange_*` over `i32 i64 u32 u64`, plus `fence` |
-| `future` | `Future[T]`, `Poll[T]` | the `async fn` protocol type; `cancel(take this)` |
-| `executor` | `RunResult[T]` | `block_on` `run` `spawn_local`, and the `join_worker` / `receive_or_cancel` bridge |
-| `reactor` | — | the kqueue/epoll loop under `executor`; you rarely name it |
+| `future` | `Future[T]`, `WaitResult[T]`, `Poll[T]` | the `async fn` protocol type; `wait(take this) -> T`, `cancel(take this)`; free `wait_or_cancel(take f) -> WaitResult[T]` |
+| `executor` | — | `spawn_local` `yield_now`, and the `join_worker` / `receive_or_cancel` bridge |
+| `reactor` | — | the kqueue/epoll loop under every drive; you rarely name it |
 | `iterator` | `Iterator[T]` | the `gen fn` protocol type; `.filter` `.prefix`, free `map` |
 | `marker` | — | the `Copy` / `Send` / `Sync` framework; import for the names |
 
@@ -112,6 +112,7 @@ rather than compare strings.
 | Module | Surface |
 |---|---|
 | `base64` | `encode` `encode_bytes` `encode_url` · `decode` `decode_url` `decode_url_text` (→ `Option`) |
+| `url` | `parse` (→ `Option[Url]`) · `decode` `decode_form` · `Url::is_scheme` `is_web` `segment` `segment_count` `query_value` `has_query`. Fields VIEW the parsed string, so it needs a named owner. `segment(0)` is the HOST, which is what routing wants |
 | `crypto` | `Digest` / `Digest512` · `sha256` `sha512` (`_bytes` variants) · `hmac_sha256` `hmac_sha512` · `random_bytes` `random_hex` · `Digest::hex` `equals` (constant-time byte compare) |
 
 ## 7. The ones that are mostly shims

@@ -1,0 +1,101 @@
+// Windows argv. Shadows `argv_sys.cplus` through the resolver's `_windows`
+// override — no `_NSGetArgv` here, and none may even be DECLARED, for the
+// one-object-per-package reason recorded in `exe_path.cplus`.
+//
+// THE PROCESS ARGUMENT VECTOR IS A SINGLE STRING on Windows. The kernel hands
+// a process one command line, not a vector, and splitting it is the caller's
+// job — quoting, backslash escaping before a quote, and the special treatment
+// of argv[0] are all rules a hand-rolled splitter gets subtly wrong.
+// `CommandLineToArgvW` is the OS's own implementation of exactly those rules,
+// so it is what runs here rather than a loop over the string.
+//
+// It is UTF-16 only (there is no `CommandLineToArgvA`), and the rest of stdlib
+// speaks UTF-8 bytes, so each argument is converted once through
+// `WideCharToMultiByte`. That conversion is also the reason this file caches:
+// `env::arg` hands out a `str` view over the returned pointer, so the bytes
+// have to outlive the call, and converting per call would hand back a pointer
+// into a buffer freed on return.
+//
+// Nothing frees the UTF-8 copies. That matches the Darwin file, where argv is
+// process-lifetime data owned by dyld, and the Linux one, which leaks its
+// `/proc/self/cmdline` buffer for the same reason.
+
+extern fn GetCommandLineW() -> *u8;
+extern fn CommandLineToArgvW(cmdline: *u8, argc_out: *i32) -> **u8;
+extern fn LocalFree(p: **u8) -> **u8;
+extern fn WideCharToMultiByte(codepage: u32, flags: u32,
+                              wide: *u8, wide_len: i32,
+                              out: *u8, out_len: i32,
+                              default_char: *u8, used_default: *u8) -> i32;
+extern fn malloc(n: usize) -> *u8;
+
+const MAX_ARGS: usize = 256;
+
+// CP_UTF8.
+fn _cp_utf8() -> u32 { return 65001 as u32; }
+
+// `cchWideChar = -1` means "the string is NUL-terminated": the conversion
+// reads to the terminator and the returned/required length INCLUDES it, so the
+// UTF-8 copy is NUL-terminated too without writing one by hand. That is what
+// makes the result usable as the `*u8` C string this module's contract returns.
+fn _wide_is_nul_terminated() -> i32 { return 0 - 1; }
+
+static LOADED: bool = false;
+static N_ARGS: usize = 0;
+struct Ptrs { at: [usize; 256] }
+static PTRS: Ptrs = #zero::[Ptrs]();
+
+fn load() {
+    if LOADED { return; }
+    LOADED = true;
+    var n: i32 = 0 as i32;
+    let wargv: **u8 = { CommandLineToArgvW(GetCommandLineW(), #addr_of(n)) };
+    if wargv == (0 as **u8) { return; }
+    var count: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i < (n as usize) {
+        if count >= MAX_ARGS { break; }
+        let w: *u8 = { *(wargv + i) };
+        // Probe for the byte count, then convert. A zero return is a failure
+        // (an unpaired surrogate, say); that argument is skipped rather than
+        // aborting the whole vector, so one bad argument does not cost the
+        // program the others.
+        let need: i32 = { WideCharToMultiByte(_cp_utf8(), 0 as u32,
+                                              w, _wide_is_nul_terminated(),
+                                              0 as *u8, 0 as i32,
+                                              0 as *u8, 0 as *u8) };
+        if need > (0 as i32) {
+            let buf: *u8 = { malloc(need as usize) };
+            if buf != (0 as *u8) {
+                let got: i32 = { WideCharToMultiByte(_cp_utf8(), 0 as u32,
+                                                     w, _wide_is_nul_terminated(),
+                                                     buf, need,
+                                                     0 as *u8, 0 as *u8) };
+                if got > (0 as i32) {
+                    PTRS.at[count] = { #addr(buf) };
+                    count = count +% (1 as usize);
+                }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    N_ARGS = count;
+    // The ARRAY is a LocalAlloc block owned by the caller; the UTF-8 copies
+    // above are ours and outlive it. Freeing it here rather than leaking it is
+    // safe precisely because nothing points into it any more.
+    let _f: **u8 = { LocalFree(wargv) };
+    return;
+}
+
+fn argc() -> usize {
+    load();
+    return N_ARGS;
+}
+
+// argv[index], or null when out of range — the caller bounds-checks against
+// `argc`.
+fn argv_at(index: usize) -> *u8 {
+    load();
+    if index >= N_ARGS { return 0 as *u8; }
+    return { PTRS.at[index] as *u8 };
+}

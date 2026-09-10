@@ -299,8 +299,27 @@ child, because only async-signal-safe calls are legal between fork and exec and
 
 ## Portability
 
-Only the macOS backend exists today. The session seam is deliberately narrow —
-start, read, write, resize, close, poll_exit — so a Linux backend (`forkpty`
-plus `epoll`) or a Windows one (ConPTY) can be added without changing the screen
-model or the widget's API. `terminal/terminal` is platform-neutral and is tested
-as such.
+Only the macOS backend WORKS today. The session seam is deliberately narrow —
+start, read, write, resize, close, poll_exit — so another backend can be added
+without changing the screen model or the widget's API. `terminal/terminal` is
+platform-neutral and is tested as such.
+
+The package's structure now reflects that: `backend.cplus` +
+`backend_windows.cplus`, `pty.cplus` + `pty_windows.cplus`, resolved by C+'s
+platform-override convention. The module was called `appkit.cplus` until
+2026-09-08, which named one platform in the one module whose job is not to —
+there was nowhere for a second implementation to go, and the package did not
+build off macOS at all.
+
+**Windows builds and passes; it has no live session.** A ConPTY backend was
+written in full against this seam and then backed out. On the host it was
+developed on it produces zero bytes: `CreatePseudoConsole` returns S_OK, the
+host process spawns, the child exits, and the pipe stays empty. The C+ side was
+ruled out (an equivalent C# harness is also empty), as were `PeekNamedPipe`
+versus a blocking `ReadFile`, the sandbox, a console-less parent, and three
+different client programs; one run showed the child exiting
+`STATUS_DLL_INIT_FAILED`. Rather than ship a terminal that shows nothing, the
+code was removed and the full recipe kept in the header of `pty_windows.cplus`.
+
+That the seam needed no change to host the attempt is the part worth keeping:
+the failure was the platform, not the shape.

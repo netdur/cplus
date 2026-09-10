@@ -1,0 +1,128 @@
+// sensors_backend_windows — the honest Windows answer: no motion sensors.
+//
+// THIS FILE EXISTS SO A WINDOWS BUILD LINKS. `sensors.cplus` declares five
+// stable symbols (`_c_available`, `_c_start`, `_c_kind`, `_c_running`,
+// `_c_stop`) and something must define them on every platform the package
+// claims. Without a `_windows` sibling the build falls back to
+// `sensors_backend.cplus` — the CoreMotion half — and stops at
+// `import "objc/runtime"`, which is not available here. (`_sqrt` is libc
+// `sqrt`, `#[link_name = "sqrt"]` in the facade; it resolves to the C runtime
+// on Windows, so it is NOT redefined here.)
+//
+// NO SENSORS ON THIS BUILD. A classic Win32 desktop process reaches an
+// accelerometer, gyroscope, magnetometer or barometer only through WinRT
+// (`Windows.Devices.Sensors`), which this pass does not pull in. So every
+// availability probe answers "no", and starting a stream fails.
+//
+// THE FAILURE CODE IS `Unavailable` (2), NOT `Unsupported` (1). The two are
+// genuinely distinct in the facade — "no backend for this platform" versus
+// "this backend runs but the hardware is absent" — and either could be argued
+// for a WinRT-less desktop build. Two things settle it on `Unavailable`:
+//   * The facade's contract, echoed in `test_main.cplus`, treats a machine
+//     that LACKS a given sensor (a Mac has no gyroscope) as `Unavailable`, and
+//     a desktop with the sensors unreachable is that same shape — a backend
+//     that answers, reporting the hardware simply is not there.
+//   * The facade signals the outcome purely through `_c_start`'s `out_code`
+//     while it returns a null handle; the caller reads `Outcome::from_code`.
+//
+// A STREAM THAT CANNOT START NEVER FIRES ITS CALLBACK. `_c_start` reports the
+// failure through `out_code` and returns null; it does NOT invoke `on_sample`.
+// An unavailable sensor is a radio that never comes on — one callback with a
+// zeroed `Sample` would be a fabricated reading, worse than silence. The
+// facade turns the null handle plus `out_code` into `Result::Err`, which is
+// how the caller learns starting failed.
+
+import "stdlib/option" as option;
+import "./sensors" as sens;
+
+// The four facade Outcome codes this backend uses. Named rather than magic so
+// the honest-stub intent reads at the call site.
+const _OUT_UNAVAILABLE: i32 = 2;   // sens::Outcome::Unavailable.to_code()
+
+// No sensor of any kind is reachable on this build.
+export extern fn _c_available(kind: i32) -> i32 {
+    // `kind` is one of 0..=3 (accel/gyro/mag/baro); the answer is the same for
+    // every one — nothing is here.
+    let _k: i32 = kind;
+    return 0 as i32;
+}
+
+// Always fails. Reports `Unavailable` through `out_code`, returns a null
+// handle, and — deliberately — never touches `on_sample`. See the header.
+export extern fn _c_start(kind: i32, req: *sens::Request,
+                          on_sample: fn(sens::Sample, *u8), ctx: *u8,
+                          out_code: *i32) -> *u8 {
+    let _k: i32 = kind;
+    let _r: *sens::Request = req;
+    let _cb: fn(sens::Sample, *u8) = on_sample;
+    let _c: *u8 = ctx;
+    if out_code.is_not_null() { { *out_code = _OUT_UNAVAILABLE }; }
+    return 0 as *u8;
+}
+
+// No handle is ever handed out, so this only ever sees the facade's own null
+// checks miss — return the "none/unknown" code, which the facade decodes as
+// `Kind::Accelerometer` (its default for an unrecognised code) exactly as the
+// Apple and Android backends do for a null handle.
+export extern fn _c_kind(h: *u8) -> i32 {
+    let _h: *u8 = h;
+    return 0 as i32;
+}
+
+// Nothing runs.
+export extern fn _c_running(h: *u8) -> i32 {
+    let _h: *u8 = h;
+    return 0 as i32;
+}
+
+// Nothing to stop.
+export extern fn _c_stop(h: *u8) {
+    let _h: *u8 = h;
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+// The honest stub is fully assertable: availability is a flat no, nothing
+// runs, and a start fails through `out_code` WITHOUT ever calling back.
+
+#[test]
+fn no_kind_is_available() {
+    assert { _c_available(0) } == (0 as i32);   // accelerometer
+    assert { _c_available(1) } == (0 as i32);   // gyroscope
+    assert { _c_available(2) } == (0 as i32);   // magnetometer
+    assert { _c_available(3) } == (0 as i32);   // barometer
+}
+
+#[test]
+fn a_null_handle_never_runs_and_has_no_kind() {
+    assert { _c_running(0 as *u8) } == (0 as i32);
+    assert { _c_kind(0 as *u8) } == (0 as i32);
+}
+
+// A start must fail without fabricating a sample. This probe would flip the
+// flag if the backend called it; the assert is that it did not.
+static _W_FIRED: i32 = 0 as i32;
+fn _w_probe(s: sens::Sample, ctx: *u8) {
+    _W_FIRED = _W_FIRED + (1 as i32);
+    return;
+}
+
+#[test]
+fn start_fails_unavailable_and_never_calls_back() {
+    _W_FIRED = 0 as i32;
+    var req: sens::Request = sens::Request::defaults();
+    var code: i32 = 99 as i32;
+    let cb: fn(sens::Sample, *u8) = _w_probe;
+    let h: *u8 = { _c_start(0 as i32, #addr_of(req), cb, 0 as *u8, #addr_of(code)) };
+    assert h.is_null();
+    assert code == (2 as i32);                 // Outcome::Unavailable
+    assert code == sens::Outcome::Unavailable.to_code();
+    assert _W_FIRED == (0 as i32);             // an unavailable sensor never fires
+}
+
+#[test]
+fn stopping_a_null_handle_is_inert() {
+    // No handle exists to stop; the call must simply return.
+    { _c_stop(0 as *u8) };
+    assert { _c_running(0 as *u8) } == (0 as i32);
+}

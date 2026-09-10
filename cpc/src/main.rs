@@ -66,14 +66,19 @@ usage:
                                     code until the consumer instantiates it)
   cpc doc FILE                      extract public items + `///` docs from FILE, emit
                                     Markdown to ./target/doc/<basename>.md
-  cpc test [FILE] [--json]          discover + run `#[test]` functions. Single-file mode
+  cpc test [FILE] [--json] [--filter S]
+                                    discover + run `#[test]` functions. Single-file mode
                                     if FILE is given; project mode (reads ./Cplus.toml)
                                     otherwise. Honors the build flags below, so
                                     `--release` runs the suite at -O3 and `--asan`/`--ubsan`
                                     instrument the test binary.
                                     `--json` emits one JSON object per test
-                                    plus a final summary line.
-  cpc fmt FILE|DIR [...]            format C+ source. By default: rewrites in place.
+                                    plus a final summary line. `--filter S`
+                                    builds and runs only the tests whose name
+                                    contains S — a package's driver holds every
+                                    dependency's tests as well as its own.
+  cpc fmt [FILE|DIR ...]            format C+ source. By default: rewrites in place.
+                                    With no path: the current project's `src/` (./Cplus.toml).
                                     flags: --check (no write, exit non-zero on diff)
                                            --emit  (print to stdout, leave file alone)
                                            --stdin (read source from stdin, write to stdout)
@@ -170,6 +175,31 @@ Everything else — imports, `struct` layouts, `const`s, comments — is preserv
 byte for byte, so the header cannot drift from the source it came from.
 "
         }
+        Some(Subcommand::Package) => {
+            "\
+cpc package [--release]
+
+Wrap what `build` produced in the platform's shippable container. Runs the
+build first — there is no useful \"package the stale one\".
+
+macOS: `target/{debug,release}/<Name>.app`, an ordinary bundle —
+`Contents/MacOS/<Name>`, `Contents/Info.plist`, `PkgInfo` — ad-hoc signed,
+because an arm64 binary needs a signature to run and moving one into a
+bundle invalidates the one clang gave it.
+
+`macos/Info.plist` is used when present (`cpc init --platform macos` writes
+one) and a minimal plist is synthesized when it is not. `CFBundleExecutable`
+is filled in to match the binary if the file does not set it: a mismatch
+there makes the bundle refuse to launch and the error names none of it.
+
+NOT a mode of `--release`. That flag is an optimisation level and means the
+same thing on every target; a release binary and a debug bundle are both
+wanted — the second is how you test permissions, which need a bundle.
+
+Android (.apk) and iOS (.ipa) are not implemented. The Android recipe exists
+as examples/facet_gallery_ios/build_android.sh.
+"
+        }
         Some(Subcommand::Build) => {
             "\
 cpc build [-o OUT] [--release] [-g] [--asan|--ubsan|--tsan|--msan]
@@ -206,18 +236,24 @@ reference focused on the project's stable surface.
         }
         Some(Subcommand::Test) => {
             "\
-cpc test [FILE] [--json]
+cpc test [FILE] [--json] [--filter SUBSTRING]
 
 Discover and run every `#[test]` function in the project (or in FILE if
 given). Each test compiles into the test driver and runs sequentially.
 Doctests embedded in `///` comments are extracted into synthesized
 `#[test]` functions before running. With `--json`, emits one JSON object
 per test plus a final summary line — for tool consumption.
+
+`--filter SUBSTRING` keeps only the tests whose display name contains
+SUBSTRING, and does it before codegen, so the driver is built smaller as
+well as run shorter. The name is `<package>::<path>::<fn>`, so a filter
+can name a package, a module or one function. Matching nothing is an
+error rather than an empty pass.
 "
         }
         Some(Subcommand::Fmt) => {
             "\
-cpc fmt FILE|DIR [...]
+cpc fmt [FILE|DIR ...]
 
 Format C+ source. By default rewrites each file in place. Flags:
   --check    don't write; exit 1 if any file would change (CI mode)
@@ -225,7 +261,8 @@ Format C+ source. By default rewrites each file in place. Flags:
   --stdin    read source from stdin, write to stdout, no file arg
 
 Multiple paths accepted; directories are walked recursively for
-`.cplus` files.
+`.cplus` files. With no path, formats the current project's `src/`
+via ./Cplus.toml, the way `cpc build` and `cpc test` operate on it.
 "
         }
         Some(Subcommand::Lsp) => {
@@ -749,6 +786,10 @@ fn main() -> ExitCode {
                 subcommand = Some(Subcommand::Build);
                 i += 1;
             }
+            Some("package") if subcommand.is_none() && input.is_none() => {
+                subcommand = Some(Subcommand::Package);
+                i += 1;
+            }
             Some("fmt") if subcommand.is_none() && input.is_none() => {
                 subcommand = Some(Subcommand::Fmt);
                 i += 1;
@@ -799,6 +840,24 @@ fn main() -> ExitCode {
             // `cpc test`-specific flags.
             Some("--json") if matches!(subcommand, Some(Subcommand::Test)) => {
                 test_opts.json = true;
+                i += 1;
+            }
+            Some("--filter") if matches!(subcommand, Some(Subcommand::Test)) => {
+                match args.get(i + 1).map(|v| v.to_string_lossy().into_owned()) {
+                    Some(v) if !v.starts_with('-') && !v.is_empty() => {
+                        test_opts.filter = Some(v);
+                        i += 2;
+                    }
+                    _ => {
+                        eprintln!("cpc test: --filter requires a substring");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            Some(a)
+                if a.starts_with("--filter=") && matches!(subcommand, Some(Subcommand::Test)) =>
+            {
+                test_opts.filter = Some(a["--filter=".len()..].to_string());
                 i += 1;
             }
             // `cpc fmt`-specific flags. Only recognized after `fmt`.
@@ -926,6 +985,9 @@ fn main() -> ExitCode {
         (Some(Subcommand::Build), _) => {
             build_project(out, diag_mode, build_mode, fp_contract, &sanitizers)
         }
+        (Some(Subcommand::Package), _) => {
+            run_package(out, diag_mode, build_mode, fp_contract, &sanitizers)
+        }
         (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode, fp_contract),
         (Some(Subcommand::PrintLinkArgs), _) => {
             print_link_args(diag_mode, build_mode, &sanitizers)
@@ -962,6 +1024,22 @@ fn main() -> ExitCode {
 #[derive(Debug, Clone, Copy)]
 enum Subcommand {
     Build,
+    /// `cpc package` — the SHIPPABLE artifact, which is not what the compiler
+    /// produces.
+    ///
+    /// `build` emits what the toolchain makes: a binary, an archive, a `.so`.
+    /// `package` wraps that in whatever the platform hands to a person — a
+    /// `.app` on macOS, and one day a `.apk` (the forty lines of
+    /// `build_android.sh` every Android app copies) and an `.ipa`.
+    ///
+    /// NOT a mode of `--release`, deliberately. `--release` is an optimisation
+    /// level and means the same thing on every platform; making it also mean
+    /// "package for this platform" would give one flag two meanings that vary
+    /// by target. Both directions are wanted in practice: a release-optimised
+    /// bare binary for a CLI or a benchmark, and a DEBUG bundle for testing
+    /// permissions — TCC needs the bundle and the developer still wants
+    /// symbols.
+    Package,
     /// `cpc headers` — generate `lib/include/` from `src/` for the package in
     /// the current directory. Concrete modules get their bodies stripped to
     /// declarations; modules declaring generics are copied verbatim, because a
@@ -1009,9 +1087,21 @@ struct FmtOpts {
     stdin: bool,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 struct TestOpts {
     json: bool,
+    /// `--filter SUBSTRING`: run only the tests whose display name contains it.
+    ///
+    /// A package's driver holds every DEPENDENCY's tests as well as its own —
+    /// `vendor/facet_win32` runs ~800, of which 117 are the package's — so
+    /// checking one function has meant rebuilding and rerunning all of them.
+    /// It is also the only way to make progress when one test in a dependency
+    /// hangs: without a filter, everything ordered after it is unreachable.
+    /// See bugs/cpc-test-hangs-on-windows-in-facets-own-suite.md.
+    ///
+    /// Filtered at DISCOVERY, not at run time: the tests that do not match are
+    /// never emitted into the driver, so the build shrinks with the run.
+    filter: Option<String>,
 }
 
 /// The clang executable cpc shells out to for assembling and linking.
@@ -2227,17 +2317,15 @@ fn write_package_entry(vendor_dir: &Path, pkg: &str) -> Result<PathBuf, String> 
     // nothing is lost by leaving it out.
     modules.retain(|m| m != "test_main");
 
-    let stems: std::collections::HashSet<String> = modules.iter().cloned().collect();
-    let active_suffix = format!("_{}", target::active_platform());
-    modules.retain(|m| {
-        for p in target::PLATFORMS {
-            let suffix = format!("_{p}");
-            if let Some(base) = m.strip_suffix(suffix.as_str()) {
-                return suffix == active_suffix && !stems.contains(base);
-            }
-        }
-        true
-    });
+    // WHICH PLATFORM VARIANT IS ACTIVE IS THE RESOLVER'S QUESTION, and asking it
+    // here is the fix for a bug where this sweep answered it itself: it compared
+    // against a single active suffix, while the resolver walks an ORDERED list
+    // whose Android entry falls back to `_linux`. A module existing only as
+    // `foo_linux.cplus` was therefore reachable from an app build on Android and
+    // missing from a library archive built for it, silently.
+    let stems: Vec<String> = modules.clone();
+    let platform = target::active_platform();
+    modules.retain(|m| cplus_core::resolver::is_active_module(m, &stems, platform));
 
     let mut text = String::from(
         "// Generated by cpc. The entry a prebuilt package is compiled from:\n         // it imports every module in src/, so the archive covers the whole\n         // package and matches the declarations in lib/include/.\n",
@@ -2588,6 +2676,156 @@ fn warn_orphan_sources(loaded: &[PathBuf], root: &Path, diag_mode: DiagMode) {
     }
 }
 
+/// `cpc package` — wrap what `build` produced in the platform's shippable
+/// container. macOS today; Android and iOS are the obvious next two.
+///
+/// A macOS `.app` is a DIRECTORY, and Xcode's own split is the one followed
+/// here: a bundled app keeps its plist as `Contents/Info.plist`, while a
+/// command-line tool carries it in `__TEXT,__info_plist`. Xcode has a build
+/// setting for exactly that second case (`CREATE_INFOPLIST_SECTION_IN_BINARY`,
+/// on by default for tool targets), which is what `cpc build` does. So the two
+/// modes are Apple's distinction rather than one being a lesser version of the
+/// other.
+fn run_package(
+    out: Option<PathBuf>,
+    diag_mode: DiagMode,
+    build_mode: BuildMode,
+    fp_contract: bool,
+    sanitizers: &[&str],
+) -> ExitCode {
+    if !cfg!(target_os = "macos") {
+        eprintln!("cpc package: only macOS is implemented — it produces a `.app`.");
+        eprintln!("             Android (.apk) and iOS (.ipa) are the next two; the");
+        eprintln!("             Android recipe exists as examples/facet_gallery_ios/build_android.sh.");
+        return ExitCode::FAILURE;
+    }
+    // PACKAGE IMPLIES BUILD. There is no useful "package the stale one", and a
+    // bundle wrapping yesterday's binary is a bug that looks like a build
+    // system being fast.
+    let code = build_project(out, diag_mode, build_mode, fp_contract, sanitizers);
+    if code != ExitCode::SUCCESS {
+        return code;
+    }
+    let m = match manifest::load(&PathBuf::from("Cplus.toml")) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), diag_mode, "");
+            return ExitCode::FAILURE;
+        }
+    };
+    let name = m.package.name.clone();
+    let mode_dir = match build_mode {
+        BuildMode::Release => "release",
+        _ => "debug",
+    };
+    let bin = m.root.join("target").join(mode_dir).join(&name);
+    if !bin.is_file() {
+        eprintln!("cpc package: no binary at {} — is this a library?", bin.display());
+        return ExitCode::FAILURE;
+    }
+    let display = {
+        let mut c = name.chars();
+        match c.next() {
+            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            None => name.clone(),
+        }
+    };
+    let app = m.root.join("target").join(mode_dir).join(format!("{display}.app"));
+    let contents = app.join("Contents");
+    let macos_dir = contents.join("MacOS");
+    let resources = contents.join("Resources");
+    // Rebuilt each time: a stale Resources/ outliving the file that produced it
+    // is the classic bundle bug.
+    let _ = std::fs::remove_dir_all(&app);
+    for d in [&macos_dir, &resources] {
+        if let Err(e) = std::fs::create_dir_all(d) {
+            eprintln!("cpc package: could not create {}: {e}", d.display());
+            return ExitCode::FAILURE;
+        }
+    }
+    let exe = macos_dir.join(&display);
+    if let Err(e) = std::fs::copy(&bin, &exe) {
+        eprintln!("cpc package: could not copy the binary: {e}");
+        return ExitCode::FAILURE;
+    }
+    // `CFBundleExecutable` MUST match the file in Contents/MacOS or the bundle
+    // will not launch, and the error names none of this.
+    let src_plist = m.root.join("macos").join("Info.plist");
+    let plist = if src_plist.is_file() {
+        match std::fs::read_to_string(&src_plist) {
+            Ok(t) => {
+                if t.contains("<key>CFBundleExecutable</key>") {
+                    t
+                } else {
+                    t.replace(
+                        "<dict>",
+                        &format!(
+                            "<dict>\n    <key>CFBundleExecutable</key>\n    <string>{display}</string>"
+                        ),
+                    )
+                }
+            }
+            Err(e) => {
+                eprintln!("cpc package: could not read {}: {e}", src_plist.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        // No macos/Info.plist: synthesize the minimum a bundle needs rather
+        // than refusing. An app that never asks for a permission needs no
+        // usage-description keys, and `cpc init --platform macos` writes a
+        // fuller one anyway.
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+             <plist version=\"1.0\">\n<dict>\n\
+             \x20   <key>CFBundleName</key>\n    <string>{display}</string>\n\
+             \x20   <key>CFBundleExecutable</key>\n    <string>{display}</string>\n\
+             \x20   <key>CFBundleIdentifier</key>\n    <string>dev.cplus.{name}</string>\n\
+             \x20   <key>CFBundlePackageType</key>\n    <string>APPL</string>\n\
+             \x20   <key>CFBundleShortVersionString</key>\n    <string>1.0</string>\n\
+             \x20   <key>CFBundleVersion</key>\n    <string>1</string>\n\
+             \x20   <key>NSHighResolutionCapable</key>\n    <true/>\n\
+             </dict>\n</plist>\n"
+        )
+    };
+    if let Err(e) = std::fs::write(contents.join("Info.plist"), plist) {
+        eprintln!("cpc package: could not write Info.plist: {e}");
+        return ExitCode::FAILURE;
+    }
+    // Legacy, tiny, and still read by some of Launch Services.
+    let _ = std::fs::write(contents.join("PkgInfo"), "APPL????");
+
+    // AD-HOC SIGN, and on Apple Silicon this is not optional: an arm64 binary
+    // must carry SOME signature to run at all. clang already ad-hoc signs what
+    // it links, and MOVING that binary into a bundle invalidates it — so a
+    // bundle that skipped this launched on the machine that built it and was
+    // "damaged" everywhere else.
+    let signed = std::process::Command::new("codesign")
+        .arg("--force")
+        .arg("--sign")
+        .arg("-")
+        .arg(&app)
+        .status();
+    match signed {
+        Ok(st) if st.success() => {}
+        Ok(st) => {
+            eprintln!("cpc package: codesign failed ({st}) — the bundle is built but will not launch");
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("cpc package: could not run codesign: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    println!("ok: {}", app.display());
+    if !src_plist.is_file() {
+        println!("note: no macos/Info.plist — a minimal one was synthesized. A permission");
+        println!("      needs its usage-description key there, or `request` kills the process.");
+    }
+    ExitCode::SUCCESS
+}
+
 fn build_project(
     out: Option<PathBuf>,
     diag_mode: DiagMode,
@@ -2828,7 +3066,14 @@ fn build_project(
             BuildMode::Debug => "debug",
             BuildMode::Release => "release",
         };
-        m.root.join("target").join(sub).join(&m.package.name)
+        // `.exe` ON WINDOWS, from the TARGET rather than the host — see
+        // `TargetSpec::exe_suffix`. An extensionless PE is a working binary the
+        // operating system refuses to launch, which looks like a build failure.
+        let suffix = target::active_target().exe_suffix();
+        m.root
+            .join("target")
+            .join(sub)
+            .join(format!("{}{suffix}", m.package.name))
     });
     if let Some(parent) = out_path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
@@ -2860,6 +3105,36 @@ fn build_project(
         }
         for lib in &ls.libs {
             link_args.push(format!("-l{lib}"));
+        }
+    }
+    // THE APP'S Info.plist, EMBEDDED — and on macOS this is not cosmetic.
+    //
+    // A permission (camera, microphone, location) needs a usage-description key
+    // in the app's Info.plist, and a bare Mach-O binary has no bundle to keep
+    // one in. Without it `permissions::state` keeps answering normally and
+    // `request` KILLS THE PROCESS — asynchronously, after the call has already
+    // returned, so the crash does not name the call that caused it. See
+    // vendor/permissions/README.md.
+    //
+    // `__TEXT,__info_plist` is how a non-bundled binary carries one, and it is
+    // the same mechanism iOS uses for entitlements on a simulator (CLAUDE.md).
+    // Convention over configuration, and the same convention `ios/Info.plist`
+    // already follows: if the file is there, it is used.
+    //
+    // Not gated on `--kind gui`: a CLI that asks for the microphone has exactly
+    // the same problem, and a plist the author wrote is a plist the author
+    // meant.
+    if cfg!(target_os = "macos") {
+        let plist = m.root.join("macos").join("Info.plist");
+        if plist.is_file() {
+            link_args.push("-Xlinker".to_string());
+            link_args.push("-sectcreate".to_string());
+            link_args.push("-Xlinker".to_string());
+            link_args.push("__TEXT".to_string());
+            link_args.push("-Xlinker".to_string());
+            link_args.push("__info_plist".to_string());
+            link_args.push("-Xlinker".to_string());
+            link_args.push(plist.to_string_lossy().to_string());
         }
     }
     // Phase 2 Slice 2C: walk dependencies, validate each vendor package's
@@ -3639,10 +3914,31 @@ fn run_fmt(paths: Vec<PathBuf>, opts: FmtOpts, diag_mode: DiagMode) -> ExitCode 
             }
         }
     } else {
-        if paths.is_empty() {
-            eprintln!("cpc fmt: needs a file or directory argument (or `--stdin`)");
-            return ExitCode::FAILURE;
-        }
+        // No path: behave like `cpc build` / `cpc test` and operate on the
+        // project in the current directory. Three sibling subcommands invoked
+        // the same way from the same place, and only this one refusing, was
+        // the whole of bug 006. Only `src/` is walked — never `.`, which would
+        // descend into `target/` and into the `vendor/` symlink loop.
+        let paths: Vec<PathBuf> = if paths.is_empty() {
+            if !Path::new("Cplus.toml").is_file() {
+                eprintln!(
+                    "cpc fmt: needs a file or directory argument (or `--stdin`).\n\
+                     \x20        Run it from a project root to format that project's `src/`."
+                );
+                return ExitCode::FAILURE;
+            }
+            let src = PathBuf::from("src");
+            if !src.is_dir() {
+                eprintln!(
+                    "cpc fmt: this project has no `src/` directory; name the files or \
+                     directories to format"
+                );
+                return ExitCode::FAILURE;
+            }
+            vec![src]
+        } else {
+            paths
+        };
         let mut files: Vec<PathBuf> = Vec::new();
         for p in &paths {
             collect_cplus_files(p, &mut files);
@@ -3880,26 +4176,41 @@ fn run_test(
             // target only). Splice in the package's own [link]
             // contributions so tests resolve against the same symbols
             // a real consumer would.
-            if let Some(ls) = m.link.as_ref() {
-                for fw in &ls.frameworks {
-                    la.push("-framework".to_string());
-                    la.push(fw.clone());
-                }
-                for lib in &ls.libs {
-                    la.push(format!("-l{lib}"));
-                }
-                for obj in &ls.extra_objects {
-                    if !obj.is_file() {
-                        return emit_extra_object_missing(diag_mode, obj, &manifest_path);
-                    }
-                    la.push(obj.to_string_lossy().to_string());
-                }
+            //
+            // THROUGH THE SHARED SPLICE, not a second copy of it. This block
+            // was hand-rolled and had drifted: it pushed `frameworks`, `libs`
+            // and `extra-objects` and silently dropped `search-paths`, so a
+            // package whose own libraries need a `-L` could not run its own
+            // tests while a CONSUMER of it linked fine — `splice_plain_link_args`
+            // has emitted the `-L` and the matching `-rpath` for a DEPENDENCY
+            // all along. `vendor/{cuda,cblas,llama_cpp}` are the packages that
+            // declare one.
+            if let Err(code) = splice_plain_link_args(&mut la, &m, diag_mode, &manifest_path) {
+                return code;
             }
             let entry_src = fs::read_to_string(&entry_path).unwrap_or_default();
             (program, entry_src, mono, la)
         }
     };
-    let tests = attrs::discover_tests(&program);
+    let mut tests = attrs::discover_tests(&program);
+    // `--filter`, applied here so the driver is BUILT smaller and not merely
+    // run selectively: a package's driver carries every dependency's tests,
+    // and emitting eight hundred of them to run five is most of the wait.
+    //
+    // NOTHING MATCHED IS AN ERROR, not an empty green run. A filter is a
+    // question about tests the caller believes exist, and answering "0 passed;
+    // 0 failed" to a typo reads as "they all pass".
+    if let Some(pat) = opts.filter.as_deref() {
+        let before = tests.len();
+        tests.retain(|t| t.display_name.contains(pat));
+        if tests.is_empty() {
+            eprintln!("cpc test: --filter {pat:?} matched none of the {before} tests");
+            return ExitCode::FAILURE;
+        }
+        if !opts.json {
+            println!("running {} of {before} tests matching {pat:?}", tests.len());
+        }
+    }
     if tests.is_empty() {
         if opts.json {
             println!("{{\"passed\":0,\"failed\":0}}");
@@ -5491,6 +5802,72 @@ fn prune_ir(ir: String) -> String {
     pruned
 }
 
+
+/// Compile the default Windows application manifest into a `.res` and add it to
+/// the link line. See the call site in `run_clang` for why this is a resource
+/// rather than `/manifest:embed`.
+///
+/// Every failure path is silent and leaves the link untouched: the program still
+/// builds and runs, it just draws with Common Controls 5.82.
+#[cfg(windows)]
+fn embed_windows_manifest(cmd: &mut Command, out: &Path) {
+    const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls"
+                        version="6.0.0.0" processorArchitecture="*"
+                        publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
+    </application>
+  </compatibility>
+</assembly>
+"#;
+    // Named after the OUTPUT rather than put in a shared temp file: two
+    // `cpc build`s running at once would otherwise race for one path, and the
+    // loser links a half-written resource.
+    let xml = out.with_extension("cpc-manifest.xml");
+    let rc = out.with_extension("cpc-manifest.rc");
+    let res = out.with_extension("cpc-manifest.res");
+    if std::fs::write(&xml, MANIFEST).is_err() {
+        return;
+    }
+    // `1 24 "path"` — resource id 1 is CREATEPROCESS_MANIFEST_RESOURCE_ID, the
+    // one the loader reads for an executable, and 24 is RT_MANIFEST. The path
+    // is a C string to the resource compiler, so its backslashes have to be
+    // escaped or a Windows path silently becomes an escape sequence.
+    let script = format!("1 24 \"{}\"\n", xml.display().to_string().replace('\\', "\\\\"));
+    if std::fs::write(&rc, script).is_err() {
+        return;
+    }
+    let compiled = Command::new("llvm-rc")
+        .arg("-fo")
+        .arg(&res)
+        .arg(&rc)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if compiled {
+        cmd.arg(&res);
+    }
+}
+
+#[cfg(not(windows))]
+fn embed_windows_manifest(_cmd: &mut Command, _out: &Path) {}
 fn run_clang(
     input_ll: &Path,
     out: &Path,
@@ -5588,8 +5965,96 @@ fn run_clang(
     // WSAStartup, recv/send/closesocket/ioctlsocket. ws2_32 is not auto-
     // linked by the MSVC driver, so request it here. Harmless (an import
     // table entry) for programs that don't touch sockets.
+    //
+    // shell32 is `CommandLineToArgvW`, the OS's own command-line splitter that
+    // argv_sys_windows.cplus uses instead of re-deriving Windows' quoting
+    // rules; bcrypt is CNG, which crypto_sys_windows.cplus binds for SHA-2,
+    // HMAC and the system CSPRNG; ntdll is `RtlGetVersion`, the only call that
+    // reports the real Windows version; winhttp is the http package's transport.
+    // advapi32 is the Credential Manager (`CredWriteW`/`CredReadW`/…), the
+    // Windows keychain the `securestore` backend binds; comdlg32 is
+    // `GetOpenFileNameW`/`GetSaveFileNameW`, the file dialogs the `filepicker`
+    // backend binds; user32 is `CreateWindowExW`/`LoadIconW`, the hidden window
+    // the `notifications` backend files its tray icon under (a facet app pulls
+    // user32 through win32 anyway — this covers the console-shaped consumer).
+    // None is auto-linked, and each is the same import-table-only
+    // cost as ws2_32 for a program that never calls into it.
     if cfg!(windows) {
         cmd.arg("-lws2_32");
+        cmd.arg("-lshell32");
+        cmd.arg("-lbcrypt");
+        cmd.arg("-lntdll");
+        cmd.arg("-lwinhttp");
+        cmd.arg("-ladvapi32");
+        cmd.arg("-lcomdlg32");
+        cmd.arg("-luser32");
+        // THE APPLICATION MANIFEST, embedded as an RT_MANIFEST resource.
+        //
+        // A Windows process gets Common Controls **5.82** by default — the 1995
+        // renderer, with bevelled buttons and 3D check boxes. The themed 6.0
+        // that every modern Windows application uses is side-by-side, and the
+        // loader binds it only when the executable DECLARES a dependency on it
+        // in an application manifest. There is no runtime call that asks.
+        //
+        // MEASURED, by printing which comctl32 the process actually loaded:
+        //
+        //   no manifest    ...common-controls_..._5.82.26100...   classic
+        //   this manifest  ...common-controls_..._6.0.26100...    themed
+        //
+        // ---- why `llvm-rc` and not `/manifest:embed` --------------------------
+        //
+        // lld-link HAS `/manifest:embed` with `/manifestinput:`, it accepts both
+        // without complaint, and on this toolchain it produces a STUB — an
+        // `<assembly>` element with the dependency stripped out. Manifest
+        // merging needs libxml2 and the LLVM Windows releases are built without
+        // it, so the merge silently degrades to LLD's own empty default.
+        //
+        // That is worse than doing nothing: an empty manifest still marks the
+        // process as manifested. The failure looks exactly like success — the
+        // link is clean and both flags are accepted.
+        //
+        // Compiling the manifest into a `.res` and handing that to the linker as
+        // an ordinary input has no such dependency: `llvm-rc` writes the
+        // resource directory itself and lld-link merges `.res` inputs natively.
+        //
+        // ---- what the default says -------------------------------------------
+        //
+        //   Common-Controls 6.0  Without it every C+ program that opens a window
+        //                        looks two decades old. A console program is
+        //                        unaffected — it creates no controls to theme.
+        //   PerMonitorV2 DPI     Without a declaration the process is
+        //                        DPI-UNAWARE and Windows scales its windows as a
+        //                        BITMAP on a high-DPI display: blurry text, and
+        //                        `GetDpiForWindow` answering 96 everywhere so a
+        //                        UI backend computes the wrong pixel sizes.
+        //   supportedOS          Some shell behaviours are gated on it; a binary
+        //                        naming no OS is treated as pre-Vista for those.
+        //   activeCodePage       UTF-8. THE ONE THAT MAKES C+ STRINGS WORK.
+        //
+        //                        Win32 ships two parallel APIs: `*A` takes the
+        //                        process ANSI codepage (CP1252 on a Western
+        //                        install) and `*W` takes UTF-16. A C+ `str` is
+        //                        UTF-8, which historically matched NEITHER — so
+        //                        every byte above 0x7F handed to an `*A` call
+        //                        was decoded as the wrong character. An em-dash
+        //                        in a window title came out as `â€"`.
+        //
+        //                        Since Windows 10 1903 a process can DECLARE
+        //                        its ANSI codepage to be UTF-8, and then the
+        //                        `*A` family takes UTF-8 directly — which is
+        //                        what `vendor/win32` assumed all along when it
+        //                        chose the ANSI entry points. This line is what
+        //                        makes that assumption true.
+        //
+        //                        Older Windows ignores the element and keeps
+        //                        CP1252, so a backend still has to convert for
+        //                        anything it cannot afford to get wrong.
+        //
+        // Skipped in silence when `llvm-rc` is not on PATH. A missing resource
+        // compiler is not a reason to fail a build that would otherwise link —
+        // the program runs, it just looks old, and that is recoverable where a
+        // failed build is not.
+        embed_windows_manifest(&mut cmd, out);
     }
     cmd.arg("-o").arg(out);
     // Under `-g`, clang DISCARDS the whole module's debug info — with only a
@@ -6537,15 +7002,17 @@ usage:
                     --kind exists to answer. `--kind cli --platform ios` is
                     refused rather than obeyed.
 
-                    Backends: macOS gets facet_appkit, iOS gets facet_uikit.
-                    A gui project naming a platform with no facet backend
-                    scaffolds the shared app and says which entry you will have
-                    to finish yourself.
+                    Backends: macOS gets facet_appkit, iOS facet_uikit,
+                    Android facet_android. A gui project naming a platform
+                    with no facet backend scaffolds the shared app and says
+                    which entry you will have to finish yourself.
 
-writes: Cplus.toml, src/main*.cplus, .gitignore, SKILL.md,
-        AGENTS.md, .mcp.json
-   gui: + src/app.cplus
-   ios: + ios/main.m, ios/Info.plist
+writes:  Cplus.toml, src/main*.cplus, .gitignore, AGENTS.md, .mcp.json
+         (no SKILL.md — `cpc skill` prints it, version-matched and including
+         every dependency's; `cpc skill --write` if you want the file)
+    gui: + src/app.cplus
+    ios: + ios/main.m, ios/Info.plist
+android: + android/AndroidManifest.xml
 ";
 
 /// What kind of program this project is. Not a boolean: C+ targets printing
@@ -6755,13 +7222,13 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // with no hint about why.
     let backed: Vec<&String> = platforms
         .iter()
-        .filter(|p| matches!(p.as_str(), "macos" | "ios"))
+        .filter(|p| matches!(p.as_str(), "macos" | "ios" | "android"))
         .collect();
     if gui {
         let unbacked: Vec<&str> = platforms
             .iter()
             .map(String::as_str)
-            .filter(|p| !matches!(*p, "macos" | "ios"))
+            .filter(|p| !matches!(*p, "macos" | "ios" | "android"))
             .collect();
         if !unbacked.is_empty() {
             eprintln!(
@@ -6789,7 +7256,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                       objc        = \"*\"\n\
                       quartzcore  = \"*\"\n\
                       webkit      = \"*\"\n\n\
-                      # What `serve_if_asked` in src/main_ios.cplus links, named here for\n\
+                      # What the agent surface in src/app.cplus links, named here for\n\
                       # the same flat-set reason as the backend's own closure.\n\
                       inspector   = \"*\"\n\
                       facet_agent = \"*\"\n\
@@ -6806,7 +7273,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                         objc         = \"*\"\n\
                         quartzcore   = \"*\"\n\
                         webkit       = \"*\"\n\n\
-                        # What `serve_if_asked` in the desktop entry links. Named here for\n\
+                        # What the agent surface in src/app.cplus links. Named here for\n\
                         # the same reason the backend's closure is: the resolver checks every\n\
                         # import against this one flat set. Delete these with that line if\n\
                         # you would rather the binary could not be inspected.\n\
@@ -6817,6 +7284,35 @@ fn run_init(args: &[OsString]) -> ExitCode {
                         agent_inapp  = \"*\"\n\
                         agent_mcp    = \"*\"\n\
                         json         = \"*\"\n"
+                .to_string(),
+            // The third full closure, the same shape as its two neighbours.
+            //
+            // `agent_android` is the Android sibling of agent_appkit and
+            // agent_uikit and walks facet's OWN node tree rather than a native
+            // hierarchy — see its manifest. `events` is NOT here despite what
+            // examples/facet_gallery_android declares; that is the gallery's own
+            // import, not the backend's.
+            "android" => "\n# facet's Android backend and its closure. The JVM half — the Activity\n\
+                          # the manifest names — ships inside facet_android as a precompiled\n\
+                          # dex, so this app has no Java of its own; the packaging step merges it.\n\
+                          [android.dependencies]\n\
+                          facet_android = \"*\"\n\
+                          android_view  = \"*\"\n\
+                          jni           = \"*\"\n\n\
+                          # What the agent surface in src/app.cplus links, named here\n\
+                          # for the same flat-set reason as the backend's own closure. It\n\
+                          # listens on a loopback PORT here rather than a socket: an app's\n\
+                          # files live under /data/data/<pkg>, which your machine cannot\n\
+                          # reach. The port is derived from the pid, so a launcher that\n\
+                          # spawned the app can work it out; `adb forward tcp:P tcp:P` is\n\
+                          # the hop.\n\
+                          inspector     = \"*\"\n\
+                          facet_agent   = \"*\"\n\
+                          agent_android = \"*\"\n\
+                          agent_core    = \"*\"\n\
+                          agent_inapp   = \"*\"\n\
+                          agent_mcp     = \"*\"\n\
+                          json          = \"*\"\n"
                 .to_string(),
             _ => String::new(),
         }
@@ -6880,18 +7376,20 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"facet/screen\" as screen;\n\
          import \"facet/vocabulary\" as vocab;\n\
          import \"facet_runtime/runtime\" as runtime;\n\
+         import \"facet_agent/agent\" as agent;\n\
+
+         import \"./agent_consent\" as agent_consent;\n\
          import \"stdlib/option\" as option;\n\
          import \"stdlib/status\" as status;\n\
          import \"stdlib/vec\" as vec;\n\n\
          struct Home {{\n    taps: i64,\n}}\n\n\
          impl Home {{\n\
-         \x20   fn new() -> Home {{ return Home {{ taps: 0 as i64 }}; }}\n\n\
+         \x20   fn new() -> Home {{ return Home {{ taps: 0 }}; }}\n\n\
          \x20   // A handler is a bound METHOD — `on_click: this.on_tap` wires it, and\n\
          \x20   // the compiler fills the context slot. Never hand-roll `#addr_of(this)`.\n\
          \x20   fn on_tap(ref this, sender: *u8) {{\n\
-         \x20       this.taps = this.taps + (1 as i64);\n\
+         \x20       this.taps = this.taps + 1;\n\
          \x20       this.show_taps();\n\
-         \x20       return;\n\
          \x20   }}\n\n\
          \x20   // The live tree, reached through a TYPED cursor. A label is not a\n\
          \x20   // button: the wrong kind of `find` answers None and does nothing.\n\
@@ -6900,7 +7398,6 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       if let option::Option::Some(l) = label::find(\"taps\") {{\n\
          \x20           let _l: label::Label = l.set_text(\"tapped ${{n}}\");\n\
          \x20       }}\n\
-         \x20       return;\n\
          \x20   }}\n\
          }}\n\n\
          impl Home: component::Component {{\n\
@@ -6908,22 +7405,25 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       return @ui {{\n\
          \x20           column {{\n\
          \x20               label(\"Hello from C+\", key: \"hello\",\n\
-         \x20                     font_size: 28.0f64,\n\
+         \x20                     font_size: 28.0,\n\
          \x20                     font_weight: vocab::FontWeight::Bold)\n\
          \x20               label(\"tapped 0\", key: \"taps\")\n\
          \x20               button(\"Tap me\", key: \"tap\", on_click: this.on_tap)\n\
          \x20           }}\n\
-         \x20               .grow(1.0f64)\n\
-         \x20               .gap(12.0f64)\n\
-         \x20               .padding(24.0f64)\n\
+         \x20               .grow(1.0)\n\
+         \x20               .gap(12.0)\n\
+         \x20               .padding(24.0)\n\
          \x20               .align(flex::Align::Center)\n\
          \x20               .justify(flex::Justify::Center)\n\
          \x20       }};\n\
          \x20   }}\n\
          }}\n\n\
          impl Home: component::Lifecycle {{\n\
-         \x20   fn on_attach(ref this) {{ return; }}\n\
-         \x20   fn on_detach(ref this) {{ return; }}\n\
+         \x20   // `why` says WHICH attach: Mount is the screen appearing, Active is\n\
+         \x20   // the app coming to the foreground. Detach mirrors it, and Inactive\n\
+         \x20   // is NOT a release signal — see facet/component.\n\
+         \x20   fn on_attach(ref this, why: component::Attach) {{ }}\n\
+         \x20   fn on_detach(ref this, why: component::Detach) {{ }}\n\
          }}\n\n\
          impl Home: screen::Screen {{\n\
          \x20   fn chrome(this) -> screen::Chrome {{\n\
@@ -6931,20 +7431,73 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       // window — but they are the same facade on both platforms and the\n\
          \x20       // iOS backend drops them.\n\
          \x20       return screen::Chrome::new(title: \"{proj_name}\",\n\
-         \x20                                  width: 390.0f64, height: 844.0f64);\n\
+         \x20                                  width: 390.0, height: 844.0);\n\
          \x20   }}\n\
          \x20   fn menu_items(this) -> vec::Vec[screen::MenuItem] {{\n\
          \x20       return vec::new::[screen::MenuItem]();\n\
          \x20   }}\n\
          }}\n\n\
-         fn boxed() -> screen::ScreenBox {{ return screen::screen_box(Home::new()); }}\n\n\
-         // Every entry — iOS and desktop alike — comes through here.\n\
+         // WHAT A ROUTE REGISTERS: a plain factory, so the registry is one shape\n\
+         // whatever the screens are. It builds a FRESH screen each time the route\n\
+         // is shown — a route is a name, not an instance.\n\
+         fn home_boxed() -> screen::ScreenBox {{\n\
+         \x20   return screen::screen_box::[Home](Home::new());\n\
+         }}\n\n\
+         // Every entry — macOS, iOS and Android alike — comes through here.\n\
+         //\n\
+         // `runtime::App` is the tier, and all three backends implement it now.\n\
+         // A screen is registered under a NAME and `run` shows one of them, so\n\
+         // the second screen costs one line rather than a rewrite:\n\
+         //\n\
+         //     app.screen(\"settings\", settings::boxed);\n\
+         //     nav::push(\"settings\");            // a window where there is room,\n\
+         //                                        // a stack entry where there is not\n\
+         //     nav::go(\"workspace\");             // REPLACE this screen; no way back\n\
+         //\n\
+         // This used to scaffold `run_screen` — the one-screen tier — because\n\
+         // Android's `App::run` refused and an app built on it came up to a\n\
+         // blank Activity. That was fixed on 2026-09-06 and verified on a\n\
+         // device, so the scaffold starts where an app is going rather than\n\
+         // where it can get stuck.\n\
          fn run() -> i32 {{\n\
-         \x20   var app: runtime::App = runtime::App::new(\"{proj_name}\");\n\
-         \x20   app.screen(\"home\", boxed);\n\
+         \x20   // DRIVEABLE BY AN AGENT, and by the IDE that launched it. Two\n\
+         \x20   // lines, each saying what it does:\n\
+         \x20   //\n\
+         \x20   //   enable()      fills the serving seam (without it, nothing serves)\n\
+         \x20   //   agent_mcp(id) names THIS APP; the platform derives where it\n\
+         \x20   //                 listens — `/tmp/mcp-{proj_name}-<pid>.socket` on a\n\
+         \x20   //                 desktop, a loopback port on a phone. A launcher\n\
+         \x20   //                 knows the pid it spawned, so it can work the\n\
+         \x20   //                 address out without being told.\n\
+         \x20   //\n\
+         \x20   // That is the whole opt-in. All 25 verbs come with it — the eleven\n\
+         \x20   // that drive the app as a person would, and the fourteen that\n\
+         \x20   // inspect it as a developer would, seeing unexposed nodes and\n\
+         \x20   // writing properties that are not user affordances. There is no\n\
+         \x20   // third line: the serving facade installs the tree walker, so\n\
+         \x20   // being served and being inspectable are one decision.\n\
+         \x20   //\n\
+         \x20   // Delete both (and the agent packages from Cplus.toml) if you\n\
+         \x20   // would rather this binary could not be driven.\n\
+         \x20   //\n\
+         \x20   // ANYTHING THAT CONNECTS IS ADMITTED. To ask the user first, add\n\
+         \x20   // `agent_consent::install();` above — see src/agent_consent.cplus.\n\
+         \x20   agent::enable();\n\n\
+         \x20   // `let`, not `var`: an App is a HANDLE to an instance the runtime\n\
+         \x20   // owns, so nothing here is mutated — the registration goes to the\n\
+         \x20   // instance, not to this binding. (It is a handle because\n\
+         \x20   // `App::run` RETURNS on Android, where the Activity owns the\n\
+         \x20   // loop: an App the caller owned would be dropped the moment\n\
+         \x20   // `main` unwound.)\n\
+         \x20   let app: runtime::App = runtime::App::new(\"{proj_name}\");\n\
+         \x20   app.screen(\"home\", home_boxed);\n\
+         \x20   // No id: it defaults to the app's own name.\n\
+         \x20   app.agent_mcp();\n\n\
+         \x20   // The route `run` shows first. An unregistered name is refused\n\
+         \x20   // here rather than coming up blank.\n\
          \x20   match app.run(\"home\") {{\n\
-         \x20       status::Status::Ok => {{ return 0 as i32; }}\n\
-         \x20       _other => {{ return 1 as i32; }}\n\
+         \x20       status::Status::Ok => {{ return 0; }}\n\
+         \x20       _other => {{ return 1; }}\n\
          \x20   }}\n\
          }}\n"
     );
@@ -6957,37 +7510,82 @@ fn run_init(args: &[OsString]) -> ExitCode {
          // produces a STATICLIB, and a library has no entry the system knows to\n\
          // call. It does not return — `UIApplicationMain` owns the process from\n\
          // here — so the value below is unreachable in a running app.\n\n\
-         import \"./app\" as app;\n\
-         import \"inspector/serve\" as inspect;\n\n\
+         import \"./app\" as app;\n\n\
          export extern fn {sym}_main() -> i32 {{\n\
-         \x20   // Inspectable ON REQUEST, the same line the desktop entry has.\n\
-         \x20   // `FACET_INSPECT` carries a PORT here — a Unix socket would sit\n\
-         \x20   // inside the app sandbox where the launcher cannot reach it — and\n\
-         \x20   // `simctl launch` passes it in as `SIMCTL_CHILD_FACET_INSPECT`.\n\
-         \x20   inspect::serve_if_asked();\n\
+         \x20   // The agent surface is armed in src/app.cplus, the one file every\n\
+         \x20   // platform builds — there is nothing platform-shaped about it. On\n\
+         \x20   // this platform it listens on a loopback PORT rather than a socket\n\
+         \x20   // path, because a Unix socket sits inside the app sandbox where the\n\
+         \x20   // launcher cannot reach it; the port is derived from the pid, which\n\
+         \x20   // `simctl launch` and `devicectl` both report.\n\
          \x20   return app::run();\n}}\n"
     );
 
-    // macOS gets one line the other desktops do not: the inspector is an
-    // AppKit package, and `serve_if_asked` is what makes a launched binary
-    // inspectable BY THE LAUNCHER. An IDE (iris's Run) sets FACET_INSPECT to a
-    // socket path and connects a remote backend to it; without this call the
-    // variable arrives at a process that serves nothing, and the IDE's inspect
-    // pane sits empty against an app that is running perfectly. Scaffolded in
-    // because a fresh project's first Run is exactly when that reads as broken.
+    // Android's entry is the iOS shape — `export extern fn {sym}_main` — and
+    // NOT the desktop one, which is the bug this replaced: an android entry
+    // written as `fn main` is rejected outright (E0409, "this build produces a
+    // library archive — `fn main` has no caller here"), so a scaffolded
+    // project did not compile once.
+    //
+    // Nothing here is Android-shaped, and that is the design: facet_android's
+    // Activity owns the JNI surface, finds this function by NAME through the
+    // `cplus.facet.main` meta-data in android/AndroidManifest.xml, and dlsym's
+    // it out of the .so. The app writes no Java and no JNI.
+    //
+    // It arms NOTHING of its own, like both its neighbours: the agent surface
+    // is set up in src/app.cplus, which every platform builds. That used to be
+    // three per-platform `serve_if_asked` calls reading three differently-spelled
+    // channels; the address is derived from the pid now, so there is no channel
+    // and no per-platform line.
+    //
+    // It DOES return, unlike iOS. `onCreate` called in, takes a View back and
+    // returns to the looper that was already running — so the Android facade's
+    // `App::run` builds and STORES the tree rather than entering a loop, and
+    // the 0 below is reached on every launch.
+    let facet_android_entry = format!(
+        "// {proj_name} — the entry point facet_android's Activity calls.\n\
+         //\n\
+         // `export extern fn` gives the symbol a stable, unmangled C name in the\n\
+         // .so. A `fn main` would not do: this target produces a STATICLIB, and a\n\
+         // library has no entry the system knows to call.\n\
+         //\n\
+         // The Activity finds this function BY NAME — `cplus.facet.main` in\n\
+         // android/AndroidManifest.xml — and dlsym's it, so nothing above this\n\
+         // line is Android-shaped and src/app.cplus is the same file every\n\
+         // platform builds. Rename the function and you must rename it there too.\n\n\
+         import \"./app\" as app;\n\n\
+         export extern fn {sym}_main() -> i32 {{\n\
+         \x20   // The agent surface is armed in src/app.cplus, the one file every\n\
+         \x20   // platform builds. It listens on a loopback port derived from this\n\
+         \x20   // process\'s pid, so nothing has to be passed in — an Activity has no\n\
+         \x20   // environment for a launcher to set, which is what the old system\n\
+         \x20   // property was working around:\n\
+         \x20   //\n\
+         \x20   //     adb shell am start -n <pkg>/cplus.facet.FacetActivity\n\
+         \x20   //     pid=$(adb shell pidof <pkg>); adb forward tcp:$((9000+pid%1000)) tcp:$((9000+pid%1000))\n\
+         \x20   //\
+         \x20   // This RETURNS, unlike the iOS entry: onCreate is calling in and\n\
+         \x20   // needs its View back, so `App::run` builds the tree and stores it\n\
+         \x20   // rather than entering a loop it would never leave.\n\
+         \x20   return app::run();\n}}\n"
+    );
+
+    // Every desktop entry is now the same three lines: the agent surface is
+    // armed in src/app.cplus, not here. It used to be macOS-only and in the
+    // entry, because the inspector was an AppKit package reached through
+    // `serve_if_asked` reading FACET_INSPECT — a second way to start the same
+    // server, which silently decided whether eleven of the socket's twenty-one
+    // verbs existed. See plan.md.
     let facet_desktop_entry = |p: &str| -> String {
         if p == "macos" {
             format!(
                 "// {proj_name} — the desktop entry. The same `app::run` the iOS shell\n\
                  // calls; `facet_runtime` selects its own per-platform backend, so there\n\
                  // is nothing to install here.\n\n\
-                 import \"./app\" as app;\n\
-                 import \"inspector/serve\" as inspect;\n\n\
+                 import \"./app\" as app;\n\n\
                  fn main() -> i32 {{\n\
-                 \x20   // Inspectable ON REQUEST. `FACET_INSPECT` names a socket the\n\
-                 \x20   // launcher is listening on; started any other way there is no\n\
-                 \x20   // variable and this costs one getenv.\n\
-                 \x20   inspect::serve_if_asked();\n\
+                 \x20   // The agent surface is armed in src/app.cplus, the one file\n\
+                 \x20   // every platform builds.\n\
                  \x20   return app::run();\n}}\n"
             )
         } else {
@@ -7047,6 +7645,59 @@ fn run_init(args: &[OsString]) -> ExitCode {
             None => proj_name.clone(),
         }
     };
+    // THE macOS Info.plist, and it is not decoration.
+    //
+    // A permission needs a usage-description key in the app's Info.plist, and a
+    // bare Mach-O binary has no bundle to keep one in. Without it
+    // `permissions::state` keeps answering normally and `request` KILLS THE
+    // PROCESS — asynchronously, after the call returned, so the crash does not
+    // name what caused it (vendor/permissions/README.md). A scaffolded app that
+    // asks for the camera would die and the author would have nothing to read.
+    //
+    // `cpc build` embeds this into `__TEXT,__info_plist` whenever the file
+    // exists, which is how a non-bundled binary carries one. Nothing to wire.
+    let macos_plist = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n\
+         <dict>\n\
+         \x20   <key>CFBundleName</key>\n\
+         \x20   <string>{display}</string>\n\
+         \x20   <key>CFBundleDisplayName</key>\n\
+         \x20   <string>{display}</string>\n\
+         \x20   <key>CFBundleIdentifier</key>\n\
+         \x20   <string>dev.cplus.{app_id}</string>\n\
+         \x20   <key>CFBundleShortVersionString</key>\n\
+         \x20   <string>1.0</string>\n\
+         \x20   <key>CFBundleVersion</key>\n\
+         \x20   <string>1</string>\n\
+         \x20   <key>CFBundlePackageType</key>\n\
+         \x20   <string>APPL</string>\n\
+         \x20   <key>NSHighResolutionCapable</key>\n\
+         \x20   <true/>\n\n\
+         \x20   <!-- WHY THIS FILE EXISTS. macOS refuses a permission to an app\n\
+         \x20        that has not said what it wants it FOR, and the refusal is\n\
+         \x20        not a `Denied` you can handle: `permissions::request` kills\n\
+         \x20        the process, asynchronously, after the call has already\n\
+         \x20        returned. The string is shown to the person in the dialog,\n\
+         \x20        so write it for them and not for the compiler.\n\n\
+         \x20        Uncomment what this app actually asks for. Leaving one in\n\
+         \x20        that the app never requests is harmless; leaving one OUT\n\
+         \x20        that it does request is fatal at runtime. -->\n\n\
+         \x20   <!--\n\
+         \x20   <key>NSCameraUsageDescription</key>\n\
+         \x20   <string>{display} uses the camera to …</string>\n\
+         \x20   <key>NSMicrophoneUsageDescription</key>\n\
+         \x20   <string>{display} uses the microphone to …</string>\n\
+         \x20   <key>NSLocationWhenInUseUsageDescription</key>\n\
+         \x20   <string>{display} uses your location to …</string>\n\
+         \x20   <key>NSPhotoLibraryUsageDescription</key>\n\
+         \x20   <string>{display} reads your photo library to …</string>\n\
+         \x20   -->\n\
+         </dict>\n\
+         </plist>\n"
+    );
+
     let ios_plist = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
@@ -7080,6 +7731,27 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20        No UISceneStoryboardFile: a storyboard makes UIKit wait for a\n\
          \x20        nib facet does not have, and the screen stays black. That is\n\
          \x20        the key that was correctly avoided; this one is not it. -->\n\
+         \x20   <!-- A DEEP LINK'S REGISTRATION, commented out because a scheme is\n\
+         \x20        the app's to choose. Uncomment, put your own scheme in, and\n\
+         \x20        `applinks::on_link(handler, scheme: \"myapp\")` receives it —\n\
+         \x20        cold start included. WITHOUT THIS KEY the scheme belongs to\n\
+         \x20        nobody, the app is never launched for it, and the handler is\n\
+         \x20        perfectly correct and perfectly silent.\n\
+         \x20\n\
+         \x20        A UNIVERSAL LINK (https://) IS NOT THIS KEY. It needs the\n\
+         \x20        com.apple.developer.associated-domains entitlement, a paid\n\
+         \x20        team, and an apple-app-site-association file served from your\n\
+         \x20        domain. See vendor/applinks/docs/guide.md.\n\
+         \x20   <key>CFBundleURLTypes</key>\n\
+         \x20   <array>\n\
+         \x20       <dict>\n\
+         \x20           <key>CFBundleURLName</key>\n\
+         \x20           <string>dev.cplus.{app_id}.link</string>\n\
+         \x20           <key>CFBundleURLSchemes</key>\n\
+         \x20           <array><string>myapp</string></array>\n\
+         \x20       </dict>\n\
+         \x20   </array>\n\
+         \x20   -->\n\
          \x20   <key>UIApplicationSceneManifest</key>\n\
          \x20   <dict>\n\
          \x20       <key>UIApplicationSupportsMultipleScenes</key>\n\
@@ -7130,6 +7802,126 @@ fn run_init(args: &[OsString]) -> ExitCode {
          </plist>\n"
     );
 
+    // ---- the Android side --------------------------------------------------
+    //
+    // THE MANIFEST IS NOT BOILERPLATE HERE, which is why it is scaffolded at
+    // all. `aapt2 link` takes it as a required input — there is no default and
+    // nothing downstream can synthesize one — and three of its lines are facet
+    // wiring an app cannot derive from anything it owns:
+    //
+    //   - the Activity is `cplus.facet.FacetActivity`, which lives in
+    //     facet_android and ships as a precompiled dex. Guess `MainActivity`
+    //     and the app dies at launch with ClassNotFoundException.
+    //   - `cplus.facet.lib` is the .so basename, which must agree with what
+    //     the packaging step passes to `-o`. Neither name is derivable from the
+    //     other, so whoever packages the APK reads this value rather than
+    //     guessing it — iris does exactly that (services/android_deploy.cplus).
+    //   - `cplus.facet.main` is the entry SYMBOL, dlsym'd by name. It is the
+    //     `export extern fn {sym}_main` in src/main_android.cplus.
+    //
+    // `configChanges` is the fourth: without it Android destroys and recreates
+    // the Activity on every rotation, which tears down the mounted facet tree.
+    //
+    // `package=` is deprecated under AGP (it moved to `namespace` in Gradle),
+    // but this is the no-Gradle path and `aapt2` still requires it.
+    //
+    // minSdk/targetSdk are deliberately NOT a `<uses-sdk>` element here: they
+    // are aapt2 flags at package time, so there is one source of truth for them
+    // rather than two that can disagree.
+    //
+    // A Java package may not begin with a digit, and `app_id` is the project
+    // name with everything but alphanumerics stripped — so `9lives` would mint
+    // `cplus.9lives`, which aapt2 rejects.
+    let android_pkg = format!(
+        "cplus.{}",
+        if app_id.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            format!("app{app_id}")
+        } else {
+            app_id.clone()
+        }
+    );
+    let android_manifest = format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
+         <manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n\
+         \x20   package=\"{android_pkg}\">\n\
+         \x20   <!-- FOR THE INSPECTOR, and for nothing else this project does.\n\
+         \x20        the agent surface in src/app.cplus binds a listening\n\
+         \x20        socket on LOOPBACK, and Android gates socket() on the app's\n\
+         \x20        membership of the inet group — which this permission is what\n\
+         \x20        grants. Without it the bind fails with EACCES, the accept loop\n\
+         \x20        ends the instant it starts, and an IDE that forwarded the\n\
+         \x20        port connects to nothing while the app runs perfectly.\n\
+         \x20        Measured, on an emulator, before this line existed.\n\n\
+         \x20        Delete it with the three lines in src/app.cplus if you would\n\
+         \x20        rather the app could not be inspected: they belong together. -->\n\
+         \x20   <uses-permission android:name=\"android.permission.INTERNET\" />\n\
+         \x20   <application android:label=\"{display}\"\n\
+         \x20                android:theme=\"@android:style/Theme.DeviceDefault.DayNight\">\n\
+         \x20       <!-- THE ACTIVITY IS FACET'S, not this app's. It ships inside\n\
+         \x20            facet_android as a precompiled dex and is merged into\n\
+         \x20            classes.dex when the APK is packaged, so this app has no\n\
+         \x20            Java of its own.\n\n\
+         \x20            configChanges is not a preference: without it the system\n\
+         \x20            destroys and recreates the Activity on rotation, and the\n\
+         \x20            mounted facet tree goes with it. -->\n\
+         \x20       <!-- singleTop, and it is a correctness fix rather than a\n\
+         \x20            preference. The default `standard` mode builds a SECOND\n\
+         \x20            instance of this Activity for an incoming intent — a\n\
+         \x20            second facet mount stacked on the first — instead of\n\
+         \x20            calling onNewIntent on the one already up. Notifications\n\
+         \x20            escape it by setting FLAG_ACTIVITY_SINGLE_TOP on their own\n\
+         \x20            intent; a browser opening a deep link does not. -->\n\
+         \x20       <activity android:name=\"cplus.facet.FacetActivity\"\n\
+         \x20                 android:exported=\"true\"\n\
+         \x20                 android:launchMode=\"singleTop\"\n\
+         \x20                 android:configChanges=\"orientation|screenSize|keyboardHidden\">\n\
+         \x20           <!-- Which .so to load, the way NativeActivity takes\n\
+         \x20                android.app.lib_name — the Activity is generic across\n\
+         \x20                apps and cannot know the name. It must match the `-o`\n\
+         \x20                `-o` of whatever links the .so. -->\n\
+         \x20           <meta-data android:name=\"cplus.facet.lib\" android:value=\"{sym}\" />\n\
+         \x20           <!-- The app's entry, found BY NAME: facet_android's Activity\n\
+         \x20                dlsym's it, which is what lets src/app.cplus be the same\n\
+         \x20                source every platform builds. It is the\n\
+         \x20                `export extern fn` in src/main_android.cplus. -->\n\
+         \x20           <meta-data android:name=\"cplus.facet.main\" android:value=\"{sym}_main\" />\n\
+         \x20           <intent-filter>\n\
+         \x20               <action android:name=\"android.intent.action.MAIN\" />\n\
+         \x20               <category android:name=\"android.intent.category.LAUNCHER\" />\n\
+         \x20           </intent-filter>\n\
+         \x20           <!-- A DEEP LINK, commented out because the scheme is the\n\
+         \x20                app's to choose. BROWSABLE is what lets a link in a\n\
+         \x20                browser or a message reach the app; DEFAULT is what\n\
+         \x20                lets an implicit intent match at all. Without both,\n\
+         \x20                the filter is there and nothing is ever delivered.\n\
+         \x20           <intent-filter>\n\
+         \x20               <action android:name=\"android.intent.action.VIEW\" />\n\
+         \x20               <category android:name=\"android.intent.category.DEFAULT\" />\n\
+         \x20               <category android:name=\"android.intent.category.BROWSABLE\" />\n\
+         \x20               <data android:scheme=\"myapp\" />\n\
+         \x20           </intent-filter>\n\
+         \x20           -->\n\
+         \x20           <!-- A VERIFIED APP LINK (https), which is a different\n\
+         \x20                feature and needs a file on your web server:\n\
+         \x20                https://example.com/.well-known/assetlinks.json,\n\
+         \x20                naming this package and its signing certificate\n\
+         \x20                SHA-256. autoVerify is what makes Android check it.\n\
+         \x20                Unverified, the link opens the BROWSER instead and\n\
+         \x20                nothing reports an error — check with\n\
+         \x20                `adb shell pm get-app-links <package>`.\n\
+         \x20                See vendor/applinks/docs/guide.md.\n\
+         \x20           <intent-filter android:autoVerify=\"true\">\n\
+         \x20               <action android:name=\"android.intent.action.VIEW\" />\n\
+         \x20               <category android:name=\"android.intent.category.DEFAULT\" />\n\
+         \x20               <category android:name=\"android.intent.category.BROWSABLE\" />\n\
+         \x20               <data android:scheme=\"https\" android:host=\"example.com\" />\n\
+         \x20           </intent-filter>\n\
+         \x20           -->\n\
+         \x20       </activity>\n\
+         \x20   </application>\n\
+         </manifest>\n"
+    );
+
     let entry_body = |p: &str| -> String {
         if matches!(p, "ios" | "android") {
             external_main(p)
@@ -7138,7 +7930,15 @@ fn run_init(args: &[OsString]) -> ExitCode {
         }
     };
 
-    let gitignore = "/target\n/vendor\n";
+    let android = platforms.iter().any(|p| p == "android");
+    // `android/out` is where the APK is assembled — the .so, a dex, an
+    // intermediate unsigned .apk and a signed one. Ignored for the same reason
+    // /target is; it is build output, whoever produced it.
+    let gitignore = if gui && android {
+        "/target\n/vendor\n/android/out\n"
+    } else {
+        "/target\n/vendor\n"
+    };
 
     // ---- what the AGENT is handed ------------------------------------------
     //
@@ -7162,6 +7962,61 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // This is cpc's section because WHICH SUBCOMMANDS EXIST is a fact about the
     // binary, and a pointer file naming one the toolchain dropped is worse than
     // no pointer file. An IDE appends its own section below; see the marker.
+    // The ACI half is GUI-ONLY. A cli project has no `src/app.cplus`, no facet
+    // dependency and no window on screen, so a page telling an agent to
+    // `describe_ui` a running app is a page about a file that is not there —
+    // and a pointer file naming what the project does not have is worse than no
+    // pointer file, the same rule as naming a subcommand cpc lacks.
+    let aci_md = if gui {
+        format!(
+        "## Driving the running app\n\n\
+         This app is an ACI: while it runs it serves MCP, and you can read its\n\
+         UI and act on it. `src/app.cplus` is where that is turned on.\n\n\
+         **Find it.** The address is derived from the app id and its pid, so a\n\
+         running instance writes `/tmp/mcp-{proj_name}-<pid>.json` saying where\n\
+         it landed:\n\n\
+         ```\n\
+         cat /tmp/mcp-{proj_name}-*.json\n\
+         ```\n\n\
+         A pid whose process is gone is a leftover — check with `kill -0 <pid>`.\n\
+         If you launched the app yourself you already know the pid, so you can\n\
+         skip the file: the port is `9000 + pid % 1000`.\n\n\
+         **Talk to it.** Plain JSON-RPC over POST, no bridge:\n\n\
+         ```\n\
+         curl -s -X POST http://127.0.0.1:<port>/ \\\n\
+         \x20    -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}}'\n\
+         ```\n\n\
+         `tools/list` names every verb, and the startup line says how many\n\
+         there are. The core eleven are `describe_ui`, `click`, `set_text`,\n\
+         `hit_test`, `set_caret`, `read_text`, `read_runs`, `invoke_menu`,\n\
+         `scroll_to`, `poll_event` and `activity`. Fourteen more see the whole\n\
+         tree rather than just what is exposed, and can write any property on\n\
+         it: `describe_tree`, `inspect`, `set`, `set_many`, `reset`, `nudge`,\n\
+         `insert`, `remove`, `reparent`, `undo`, `highlight`,\n\
+         `clear_highlight`, `vocabulary` and `journal`. They come with the\n\
+         surface — there is nothing extra for the app to call. Ask\n\
+         `vocabulary` what a property takes before you `set` one.\n\n\
+         `activity` is the record of what has been DONE through the surface —\n\
+         useful when a person is supervising you, and when you want to check\n\
+         what you already tried.\n\n\
+         **This is how you test a UI change.** `describe_ui` answers a flat node\n\
+         list and each `id` is the `key:` written in the code. Click, describe\n\
+         again, and read the change — that is evidence, in a way \"it should work\n\
+         now\" is not.\n\n\
+         Two things worth knowing before you are confused by them:\n\n\
+         - **You have no hands.** There is no drag, pinch or swipe verb and\n\
+         \x20 there will not be one. An affordance only a gesture can reach is a\n\
+         \x20 bug in the app — it is unreachable for anyone driving by voice too.\n\
+         \x20 Fix the click path; do not look for a gesture verb.\n\
+         - **You may be refused once.** If the app wired `agent_consent`, your\n\
+         \x20 first request is refused while a dialog asks the user. The error\n\
+         \x20 says whether to retry — `consent pending` means come back,\n\
+         \x20 `consent denied` means the user said no.\n\n"
+        )
+    } else {
+        String::new()
+    };
+
     let agents_md = format!(
         "# {proj_name}\n\n\
          This is a C+ project. C+ is a young language, so **do not write it from\n\
@@ -7171,8 +8026,11 @@ fn run_init(args: &[OsString]) -> ExitCode {
          Run `cpc skill`. It prints the language reference, and inside a project\n\
          it also prints the reference of every dependency that ships one — facet\n\
          contributes several hundred lines about its retained, non-reactive model\n\
-         and the mistakes that compile anyway. Read it rather than a checked-in\n\
-         copy: a file drifts from the compiler, this cannot.\n\n\
+         and the mistakes that compile anyway.\n\n\
+         There is deliberately no SKILL.md checked in beside this file. A copy\n\
+         drifts from the compiler that wrote it; `cpc skill` cannot, because it\n\
+         IS the compiler answering — and it is the only form that also carries\n\
+         your dependencies' references.\n\n\
          `cpc skill --lang-only` is the language alone, if that is all you need.\n\n\
          ## When the compiler says no\n\n\
          Run `cpc explain <CODE>` before you guess. Every diagnostic code has a\n\
@@ -7199,8 +8057,9 @@ fn run_init(args: &[OsString]) -> ExitCode {
          ```\n\
          cpc build          compile and link\n\
          cpc test           run the tests\n\
-         cpc fmt            canonical formatting\n\
+         cpc fmt            canonical formatting (no arg = this project)\n\
          ```\n\n\
+         {aci_md}\
          <!-- Sections below this line are written by your IDE and are rewritten\n\
               when it opens the project. Edit above the line, not below it. -->\n"
     );
@@ -7221,17 +8080,73 @@ fn run_init(args: &[OsString]) -> ExitCode {
         "{{\n  \"mcpServers\": {{\n    \"cplus\": {{\n      \"command\": \"{cpc_path}\",\n      \"args\": [\"mcp\"]\n    }}\n  }}\n}}\n"
     );
 
+
+    // Consent, as a file the developer OWNS rather than a paragraph in a
+    // comment. Generated unwired: the surface admits by default so an agent can
+    // drive a fresh project immediately, and turning this on is one call. The
+    // file itself carries no explanation — `facet_agent/consent` is where the
+    // reasoning lives, and a generated file that lectures is a generated file
+    // people delete.
+    let facet_consent = format!(
+        "// Ask before an agent may drive this app.\n\
+         //\n\
+         // Wire it in src/app.cplus, before `agent::enable()`:\n\
+         //\n\
+         //     agent_consent::install();\n\n\
+         import \"facet_runtime/runtime\" as runtime;\n\
+         import \"facet_agent/agent\" as agent;\n\
+         import \"facet_agent/consent\" as consent;\n\
+         import \"facet/services\" as services;\n\
+         import \"stdlib/text\" as text;\n\n\
+         fn answered(index: i32, ctx: *u8) {{\n\
+         \x20   if index == 0 {{ consent::allow_pending(); return; }}\n\
+         \x20   consent::deny_pending();\n\
+         }}\n\n\
+         fn show(ctx: *u8) {{\n\
+         \x20   let message: text::Text = \"${{consent::pending()}} wants to read this app and press its buttons.\";\n\
+         \x20   runtime::alert(\"Allow agent access?\", message.view(), \"Allow\",\n\
+         \x20                  secondary: \"Deny\", on_answer: answered);\n\
+         }}\n\n\
+         fn ask(client: str, ctx: *u8) {{\n\
+         \x20   // `ask` runs on the serve thread. A dialog built there is an\n\
+         \x20   // NSWindow off the main thread, which aborts the process.\n\
+         \x20   if !services::has_main_hop() {{ consent::cancel_pending(); return; }}\n\
+         \x20   services::run_on_main(show, 0 as *u8);\n\
+         }}\n\n\
+         fn install() {{\n\
+         \x20   consent::on_ask(ask);\n\
+         \x20   agent::set_policy(consent::gate);\n\
+         }}\n"
+    );
+
     let mut files: Vec<(PathBuf, String)> = vec![(manifest, manifest_toml)];
     if gui {
         // The shared app, then one door per platform.
         files.push((src.join("app.cplus"), facet_app));
+        files.push((src.join("agent_consent.cplus"), facet_consent.clone()));
         for p in platforms.iter() {
-            let body = if p == "ios" {
-                facet_ios_entry.clone()
-            } else {
-                facet_desktop_entry(p)
+            // EVERY EXTERNAL-BUILDER PLATFORM, not just iOS. Testing `p ==
+            // "ios"` here is what handed android the desktop `fn main`, which
+            // its own build rejects (E0409) — so naming --platform ios flipped
+            // an android entry that was correct on its own from right to wrong.
+            let body = match p.as_str() {
+                "ios" => facet_ios_entry.clone(),
+                "android" => facet_android_entry.clone(),
+                _ => facet_desktop_entry(p),
             };
             files.push((src.join(entry_file(p)), body));
+        }
+        if android {
+            // The Gradle-free Android side: the manifest `aapt2` requires, and
+            // the pipeline that turns the archive cpc builds into an APK. Two
+            // files, one template, because the .so name in one has to match the
+            // `cplus.facet.lib` meta-data in the other.
+            let android_dir = root.join("android");
+            if let Err(e) = std::fs::create_dir_all(&android_dir) {
+                eprintln!("cpc init: could not create {}: {e}", android_dir.display());
+                return ExitCode::FAILURE;
+            }
+            files.push((android_dir.join("AndroidManifest.xml"), android_manifest.clone()));
         }
         if ios {
             // The Xcode side. `main.m` is the whole of the Objective-C in a
@@ -7245,6 +8160,17 @@ fn run_init(args: &[OsString]) -> ExitCode {
             files.push((ios_dir.join("main.m"), ios_main_m.clone()));
             files.push((ios_dir.join("Info.plist"), ios_plist.clone()));
         }
+        // The macOS half of the same problem — see `macos_plist`. Written for
+        // any macOS project, gui or cli: a CLI that asks for the microphone
+        // dies exactly the same way.
+        if platforms.iter().any(|p| p == "macos") {
+            let macos_dir = root.join("macos");
+            if let Err(e) = std::fs::create_dir_all(&macos_dir) {
+                eprintln!("cpc init: could not create {}: {e}", macos_dir.display());
+                return ExitCode::FAILURE;
+            }
+            files.push((macos_dir.join("Info.plist"), macos_plist.clone()));
+        }
     } else if platforms.is_empty() {
         files.push((src.join("main.cplus"), desktop_main.to_string()));
     } else {
@@ -7253,8 +8179,14 @@ fn run_init(args: &[OsString]) -> ExitCode {
         }
     }
     files.push((root.join(".gitignore"), gitignore.to_string()));
-    // The agent reference, so the fresh project is immediately LLM-ready.
-    files.push((root.join("SKILL.md"), SKILL_MD.to_string()));
+    // NO CHECKED-IN SKILL.md. It used to be written here, next to an AGENTS.md
+    // telling the agent not to trust a checked-in copy — the file and the advice
+    // beside it contradicted each other, and the file is the half a reader meets
+    // first. `cpc skill` cannot drift because it IS the compiler answering, and
+    // it also prints every dependency's reference, which the copy never did:
+    // what landed here was the language alone, so a facet project got a
+    // scaffolded reference with nothing about facet in it. `cpc skill --write`
+    // still exists for anyone who deliberately wants the file.
     files.push((root.join("AGENTS.md"), agents_md));
     files.push((root.join(".mcp.json"), mcp_json));
     for (path, content) in files {
@@ -7285,8 +8217,19 @@ fn run_init(args: &[OsString]) -> ExitCode {
         println!("directory to the header search path — examples/DEPLOYING.md has the recipe.");
         println!("The app is src/app.cplus; `cpc skill` prints facet's reference with it.");
     }
-    if platforms.iter().any(|p| p == "android") {
-        println!("  cpc build --target <android target>      # see examples/DEPLOYING.md");
+    if android {
+        if gui {
+            println!("  cpc build --target android-arm64         # -> lib{proj_name}.a + {proj_name}.h");
+            println!();
+            println!("android/AndroidManifest.xml is the Android side: it names facet's own");
+            println!("Activity (which ships inside facet_android as a dex, so this app writes");
+            println!("no Java), the .so to load, and {sym}_main as `cplus.facet.main`.");
+            println!("Linking that archive into an .so and packaging it into an APK is the");
+            println!("platform builder's half, the same way ios/ is Xcode's — iris does it from");
+            println!("Run, and examples/facet_gallery_android/build.sh is the recipe by hand.");
+        } else {
+            println!("  cpc build --target android-arm64         # -> lib{proj_name}.a + {proj_name}.h");
+        }
     }
     if platforms.is_empty()
         || platforms

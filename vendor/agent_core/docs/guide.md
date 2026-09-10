@@ -7,7 +7,7 @@ How the agent surface core is layered and what each module owns. Tutorial:
 
 ```
 identity   — agent-id tree, roles, exposure, affordance ceiling, describe
-auth       — AuthGate: allow/reject External vs InApp (no prompts)
+auth       — AuthGate: allow/reject External vs InApp (dispatch only)
 surface    — Outcome authorization + TextVersions for concurrent text
 events     — curated verbs, bubbling subscriptions, bounded queues
 backend    — Backend vtable + UiNode/Rect for MCP (fn-pointer polymorphism)
@@ -52,8 +52,48 @@ Backends may pack role+drive on native handles via `pack_affordance` /
 ## Auth gate — capabilities, not yes/no
 
 Policy is a **function pointer** `fn(Request) -> Grant`. `deny_all()` grants
-nothing; `serve(policy)` arms the surface. The gate never blocks, prompts, or
-does I/O.
+nothing; `serve(policy)` arms the surface.
+
+**The gate itself never blocks, prompts, or does I/O** — `check()` calls your
+policy and returns what it returns, and that is the whole of it. This is a
+statement about agent_core, NOT a rule for your policy. Read prescriptively it
+would forbid the use case `facet_agent::set_policy` exists for: "an app that
+wants to ask its user first". Both readings of the older one-line version of
+this sentence were live, and they produce visibly different products — one
+where the first request is refused and the retry admitted, one where the request
+waits for the person to decide.
+
+**Your policy is told who is calling and what they want.** `Request` carries
+`client` — the name the caller gave in MCP's `initialize`, `""` before one
+arrives — and `method`, the verb about to run. That is what makes a legible
+prompt ("claude-code wants to press this button") and per-verb consent ("read
+freely, ask before a write") expressible at all. `client` is NOT a credential:
+a caller picks its own name. Anything unforgeable belongs in `token`.
+
+**Your policy MAY block.** It runs on the transport's serve thread, so what it
+costs is a property of the transport, and today that cost is specific and
+sharp:
+
+- `serve_fd` handles **one connection at a time**. A parked policy stalls the
+  whole surface — a second agent is not refused, it hangs. (This is a limit of
+  the current transport, not of the design; it is on the list to fix, and until
+  it is fixed a blocking policy means one agent at a time.)
+- **Nothing enforces a deadline.** A policy that never returns parks that thread
+  for the life of the process.
+- `stdlib/channel` has **no timed receive** — `receive` blocks until a value or
+  a close — so a timeout is built from `close()` plus a `services::after`
+  one-shot.
+- Parking with no main-thread hop installed **hangs forever**:
+  `services::run_on_main` is a silent no-op without a scheduler, so nothing can
+  ever answer. Guard with `services::has_main_hop()` before you park.
+- What a parked serve thread does to teardown is **not established**.
+  `settle_and_teardown` waits on jobs; whether this counts as one has not been
+  tested.
+
+The alternative shape, if none of that is acceptable: return `nothing()`
+immediately, schedule the prompt, and admit the retry. It costs the caller a
+`-32001` on the first request and requires it to know to come back — which a
+general MCP client will not.
 
 A `Grant` is a bitset of seven capabilities:
 

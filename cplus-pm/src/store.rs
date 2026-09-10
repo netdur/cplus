@@ -8,6 +8,7 @@
 //! ~/.cplus/
 //!   cache/                      # disposable git clones — safe to delete
 //!   tags/<repo>/<tag>          # first-seen commit per release tag (D8)
+//!   m2/<group>/<artifact>/…    # the local Maven repo (D18) — NOT tiered
 //!   v0.0.27/vendor/<name>/     # the store tier: one package set per line
 //! ```
 //!
@@ -87,6 +88,17 @@ impl Store {
 
 }
 
+/// The local Maven repo: `<root>/m2/`, laid out as a real Maven repo so
+/// `d8` and `aapt2` can be pointed straight at it (D18).
+///
+/// NOT tier-scoped, unlike the package set. A Maven coordinate is immutable —
+/// `androidx.core:core:1.3.2` is the same bytes to every toolchain version —
+/// so tiering it would only duplicate megabytes. Takes the root for the same
+/// reason [`tag_record`] does.
+pub fn m2_dir(root: &std::path::Path) -> PathBuf {
+    root.join("m2")
+}
+
 /// The first-seen commit record for a release tag (D8):
 /// `<root>/tags/<repo>/<tag>`. Lives beside the tiers, not in `cache/`, so
 /// deleting the cache does not forget what a tag pointed at. Takes the root
@@ -123,5 +135,8 @@ mod tests {
             tag_record(&s.root, "github.com/netdur/cplus", "v0.0.27"),
             PathBuf::from("/tmp/home/tags/github.com_netdur_cplus/v0.0.27")
         );
+        // The Maven repo hangs off the ROOT, not the tier: coordinates are
+        // immutable, so every tier reads the same bytes.
+        assert_eq!(m2_dir(&s.root), PathBuf::from("/tmp/home/m2"));
     }
 }

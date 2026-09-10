@@ -34,6 +34,7 @@ const P_TEXT_TRANSFORM: u64 = 8192u64;
 const P_TEXT_FORMAT: u64 = 16384u64;
 const P_VERTICAL_ALIGN: u64 = 32768u64;
 const P_FORMATTED_TEXT: u64 = 65536u64;
+const P_SELECTABLE: u64 = 131072u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -57,6 +58,7 @@ fn label(
     text_transform: vocab::TextTransform = vocab::TextTransform::Default,
     text_format: vocab::TextFormat = vocab::TextFormat::Text,
     vertical_align: vocab::TextAlign = vocab::TextAlign::Center,
+    selectable: bool = false,
     take formatted_text: vocab::Spans = vocab::Spans::new(),
 ) -> core::Node {
     var p: props::LabelProps = props::LabelProps::new();
@@ -77,6 +79,7 @@ fn label(
     p.text_format = text_format;
     p.vertical_align = vertical_align;
     p.formatted_text = formatted_text;
+    p.selectable = selectable;
     return match box::new::[props::LabelProps](p) {
         option::Option[box::Box[props::LabelProps]]::Some(b) =>
             core::node_with(key, props::K_LABEL, b.into_raw(), props::release_label_props),
@@ -368,6 +371,33 @@ impl Label {
         let p: *props::LabelProps = this._props();
         if p == (0 as *props::LabelProps) { return 0 as *vocab::TextSpan; }
         return { (*p).formatted_text.at(at) };
+    }
+
+    // facet's own word. Every platform label class draws text that
+    // cannot be picked up — `labelWithString:` returns a field with
+    // `selectable = NO`, a GtkLabel is unselectable until told, a
+    // TextView answers false — and the ledger declares twenty rows about
+    // how the glyphs are DRAWN and none about taking them. So a
+    // transcript, an error, a stack trace or an id was a picture of
+    // itself, and Cmd-C had nothing to take.
+    //
+    // FALSE BY DEFAULT, and that is not caution. A selectable field takes
+    // mouse-down, so a label inside a click band stops passing the click
+    // through to the band — which is a hole in the target exactly where
+    // the eye aims. Turn it on for the text a person reads and copies,
+    // not for the label that titles a row they click.
+    fn set_selectable(this, v: bool) -> Label {
+        let p: *props::LabelProps = this._props();
+        if p == (0 as *props::LabelProps) { return this; }
+        { (*p).selectable = v };
+        core::touch(this._p, P_SELECTABLE);
+        return this;
+    }
+
+    fn is_selectable(this) -> bool {
+        let p: *props::LabelProps = this._props();
+        if p == (0 as *props::LabelProps) { return false; }
+        return { (*p).selectable };
     }
 
     // The flex node this cursor points at. The DOM division, and the

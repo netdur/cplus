@@ -1,0 +1,189 @@
+// The iOS checks — what this package cannot answer on a macOS host.
+//
+// `cpc test` builds a HOST binary, and a host binary is macOS: it has
+// AVFoundation, Photos, Contacts and EventKit, so the whole table and both maps
+// are already covered there by the `#[test]` fns next to the code. What it does
+// NOT have is UserNotifications behaving like it does on a phone, a
+// `UIApplication` to open settings through, or a TCC database a test harness
+// can drive.
+//
+// So this file is deliberately NOT a port of the host suite. It checks the four
+// things that are only true on iOS, and it is run by
+// `tools/run_ios_tests.sh` through `vendor/permissions/tests`.
+//
+// WHAT IT STILL CANNOT DO, and no amount of harness fixes it: see a prompt.
+// Every check here takes a path that shows no dialog. `xcrun simctl privacy`
+// drives the granted and revoked branches from outside the process — the
+// runner script does that — and the dialog itself belongs to a person.
+
+import "stdlib/io" as io;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "objc/runtime" as rt;
+import "permissions/permissions" as perm;
+
+static RAN: i32 = 0 as i32;
+static FAILED: i32 = 0 as i32;
+
+fn check(name: str, ok: bool) {
+    RAN = RAN + (1 as i32);
+    if ok {
+        io::eprintln(text::from_str("  ok   ${name}"));
+        return;
+    }
+    FAILED = FAILED + (1 as i32);
+    io::eprintln(text::from_str("  FAIL ${name}"));
+    return;
+}
+
+// ---- UserNotifications, which only exists properly here ----------------------
+
+fn the_notification_centre_resolves_on_a_device() -> bool {
+    // The class ships in a framework nothing links, so this exercises the
+    // dlopen path and the shared-centre accessor at once. On a macOS host the
+    // class also resolves but the centre refuses without a signed bundle,
+    // which is why this check lives here.
+    //
+    // THROUGH THE PUBLIC SURFACE, not through the backend's internals. This
+    // used to call `backend::find` and `backend::class_of` directly; the
+    // naming pass made both module-private, and rather than widen the surface
+    // for a test the check was rewritten in terms of what the package already
+    // promises. `Unsupported` is exactly "no row, or the class did not
+    // resolve", so the public verb answers the same question — and a test that
+    // can only be written against internals is usually testing the wrong
+    // thing.
+    return perm::state(of: perm::NOTIFICATIONS).to_code()
+        != perm::State::Unsupported.to_code();
+}
+
+fn a_settings_refresh_completes_and_names_a_state() -> bool {
+    // The asynchronous read: kick it off, then let the run loop turn until the
+    // completion lands. This is the one check in the package that needs a run
+    // loop, and it is why the runner spins one rather than returning straight
+    // out of main.
+    let before: u32 = perm::state(of: perm::NOTIFICATIONS).to_code();
+    if before > perm::State::Unsupported.to_code() { return false; }
+    spin(0.5f64);
+    let after: u32 = perm::state(of: perm::NOTIFICATIONS).to_code();
+    // Any nameable state is a pass. WHICH one depends on what the simulator's
+    // TCC says about this bundle, and asserting a particular one would make the
+    // check a statement about the machine rather than about the code.
+    return after <= perm::State::Unsupported.to_code();
+}
+
+fn notifications_never_read_as_blocked() -> bool {
+    // UNAuthorizationStatus has no Restricted, so nothing this domain can
+    // answer maps to `Blocked` — and an app that saw `Blocked` would offer a
+    // settings button where "ask again" was the right move.
+    spin(0.3f64);
+    return perm::state(of: perm::NOTIFICATIONS).to_code() != perm::State::Blocked.to_code();
+}
+
+// ---- the iOS settings road ---------------------------------------------------
+
+fn open_settings_takes_the_uikit_road_not_the_appkit_one() -> bool {
+    // NSWorkspace is absent here, so `open_pane` must fall through to
+    // `UIApplication`. Checked by class resolution rather than by opening
+    // anything: actually opening Settings would send the test runner to the
+    // background and the harness would never see its exit code.
+    if { rt::get_class(#str_ptr("NSWorkspace\0")) } != (0 as *u8) { return false; }
+    return { rt::get_class(#str_ptr("UIApplication\0")) } != (0 as *u8);
+}
+
+// ---- the table, against the real frameworks ----------------------------------
+
+fn every_builtin_domain_resolves_its_class_on_ios() -> bool {
+    // The same six the host suite checks, but here the frameworks are the iOS
+    // ones and the dlopen paths are inside the dyld shared cache rather than on
+    // disk. That is the part worth proving on a device: the paths are written
+    // as if they were files and are not.
+    return resolves(perm::CAMERA) && resolves(perm::MICROPHONE)
+        && resolves(perm::PHOTOS_READ) && resolves(perm::PHOTOS_ADD)
+        && resolves(perm::CONTACTS) && resolves(perm::CALENDAR)
+        && resolves(perm::NOTIFICATIONS);
+}
+
+fn resolves(name: str) -> bool {
+    return perm::state(of: name).to_code() != perm::State::Unsupported.to_code();
+}
+
+fn a_real_status_read_answers_a_known_state_on_ios() -> bool {
+    // `simctl privacy` drives this one from outside: the runner grants and
+    // revokes around a second invocation and compares. Here the bar is only
+    // that the read completes and names something.
+    let c: u32 = perm::state(of: perm::CAMERA).to_code();
+    return c <= perm::State::Unsupported.to_code();
+}
+
+// The state of one domain, as a number, for the runner's grant/revoke pass to
+// compare across two launches. Printed rather than returned, because the
+// process's exit code is already the failure count.
+fn report_state(name: str) {
+    let c: u32 = perm::state(of: name).to_code();
+    io::eprintln(text::from_str("  state ${name} = ${c}"));
+    return;
+}
+
+// ---- an unknown name is still unsupported, on this platform too --------------
+
+fn the_android_escape_hatch_is_unsupported_here() -> bool {
+    return perm::state(of: "android.permission.CAMERA").to_code()
+        == perm::State::Unsupported.to_code();
+}
+
+// ---- run loop ----------------------------------------------------------------
+//
+// `CFRunLoopRunInMode` with a deadline: the settings completion arrives on a
+// UserNotifications queue and the delivery hops to the main queue, so something
+// has to turn the main run loop or the answer is enqueued and never seen. This
+// is the one place this package needs one.
+
+#[link_name = "CFRunLoopRunInMode"]
+extern fn cf_run_loop_run_in_mode(mode: *u8, seconds: f64, return_after_source: i8) -> i32;
+
+#[link_name = "dlsym"]
+extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
+
+fn default_mode() -> *u8 {
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    let p: *u8 = { dlsym(rtld_default, #str_ptr("kCFRunLoopDefaultMode\0")) };
+    if p.is_null() { return 0 as *u8; }
+    return { *(p as **u8) };
+}
+
+fn spin(seconds: f64) {
+    let mode: *u8 = default_mode();
+    if mode.is_null() { return; }
+    let _r: i32 = { cf_run_loop_run_in_mode(mode, seconds, 0 as i8) };
+    return;
+}
+
+// ---- the runner --------------------------------------------------------------
+
+fn run_all() -> i32 {
+    FAILED = 0 as i32;
+    RAN = 0 as i32;
+    io::eprintln(text::from_str("permissions selftest (ios)"));
+
+    check("the notification centre resolves on a device",
+          the_notification_centre_resolves_on_a_device());
+    check("a settings refresh completes and names a state",
+          a_settings_refresh_completes_and_names_a_state());
+    check("notifications never read as blocked",
+          notifications_never_read_as_blocked());
+    check("open_settings takes the uikit road, not the appkit one",
+          open_settings_takes_the_uikit_road_not_the_appkit_one());
+    check("every builtin domain resolves its class on ios",
+          every_builtin_domain_resolves_its_class_on_ios());
+    check("a real status read answers a known state on ios",
+          a_real_status_read_answers_a_known_state_on_ios());
+    check("the android escape hatch is unsupported here",
+          the_android_escape_hatch_is_unsupported_here());
+
+    // For the runner's grant/revoke comparison across two launches.
+    report_state(perm::CONTACTS);
+    report_state(perm::CAMERA);
+
+    io::eprintln(text::from_str("selftest result: ${RAN} ran; ${FAILED} failed"));
+    return FAILED;
+}

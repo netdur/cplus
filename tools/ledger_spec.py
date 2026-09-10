@@ -23,10 +23,29 @@ View / InputView / ItemsView / Element / GestureElement) are reported ONCE as
 a shared section rather than duplicated per control — the Phase-2 generator
 does the per-control merge.
 
-Refresh the manifest (netstandard = the portable contract):
-  BASE=https://raw.githubusercontent.com/dotnet/row_type/main/src/Controls/src/Core/PublicAPI/netstandard
+Refresh the manifest (netstandard = the portable contract). The org/repo in
+the URL is the framework the rows are READ from and is not part of facet's
+vocabulary — but it is a real path, so unlike the prose it cannot be scrubbed.
+It was, once: a find/replace turned `dotnet/maui` into `dotnet/row_type` and
+left a 404 for anyone refreshing. Leave this line alone.
+  BASE=https://raw.githubusercontent.com/dotnet/maui/main/src/Controls/src/Core/PublicAPI/netstandard
   curl -s $BASE/PublicAPI.Shipped.txt   -o plans/facet/spec/ledger_PublicAPI.Shipped.txt
   curl -s $BASE/PublicAPI.Unshipped.txt -o plans/facet/spec/ledger_PublicAPI.Unshipped.txt
+
+REFRESHING IS NOT A ONE-STEP OPERATION, and running this alone will break the
+stage after it. The committed `plans/facet/spec/ledger-spec.json` is dated
+2026-07-31; the manifests beside it were updated in August. Regenerating from
+the current manifests produces a spec 2.2x larger, and `ledger_map.py` then
+exits 1 with **242 rows it has no rule for** — every one of which needs an
+ADOPT name or a DROP reason before the refresh can land. Budget for that, or
+leave the spec alone.
+
+The TYPE-LIST closure below is a separate gate and it is green: it was red from
+2026-08-01 (when the Core manifest arrived) until 2026-09-08, with 71
+unclassified types, which is why nobody noticed the spec had frozen.
+
+The `Core` and `Graphics` manifests still fail the closure (57 and 98 more
+types). The two-manifest invocation is the one that passes.
 
 Usage:
   python3 tools/ledger_spec.py <manifest.txt> [<manifest2.txt> ...]
@@ -92,6 +111,48 @@ CONTROLS = OrderedDict([
 # Each entry names the platform answer, so the next person reads a debt with a
 # route rather than a hole.
 UNBUILT = OrderedDict([
+    # ---- the SHAPES namespace ------------------------------------------------
+    #
+    # UNBUILT rather than DROP, and the distinction is the whole reason this
+    # bucket exists. facet draws with `canvas` — an immediate-mode RECORDING
+    # replayed into the platform's context — so a one-off rounded rectangle has
+    # an answer today. What facet has no equivalent of is a shape as a NODE:
+    # something that lives in the tree, takes flex modifiers, is found by key
+    # and mutated in place like every other control.
+    #
+    # Refusing them would be a claim nobody has argued. Recording them as debt
+    # with the route is what is true: the platform answer on AppKit is a
+    # CAShapeLayer or an NSBezierPath in a `canvas`, and the open question is
+    # whether facet grows a vector tier at all.
+    ("Shape",
+     "the base of the ledger's vector tier. facet draws with `canvas`, a "
+     "recording — it has no shape NODE that takes flex modifiers and is found "
+     "by key. Whether facet grows a vector tier is undecided"),
+    ("Path", "the shape tier — see `Shape`"),
+    ("Line", "the shape tier — see `Shape`"),
+    ("Rectangle", "the shape tier — see `Shape`"),
+    ("RoundRectangle", "the shape tier — see `Shape`"),
+    ("Ellipse", "the shape tier — see `Shape`"),
+    ("Polygon", "the shape tier — see `Shape`"),
+    ("Polyline", "the shape tier — see `Shape`"),
+    ("Geometry", "the shape tier — see `Shape`"),
+    ("GeometryGroup", "the shape tier — see `Shape`"),
+    ("GeometryHelper", "the shape tier — see `Shape`"),
+    ("PathFigure", "the shape tier — see `Shape`"),
+    ("PathGeometry", "the shape tier — see `Shape`"),
+    ("LineGeometry", "the shape tier — see `Shape`"),
+    ("EllipseGeometry", "the shape tier — see `Shape`"),
+    ("RectangleGeometry", "the shape tier — see `Shape`"),
+    ("RoundRectangleGeometry", "the shape tier — see `Shape`"),
+    ("ArcSegment", "the shape tier — see `Shape`"),
+    ("BezierSegment", "the shape tier — see `Shape`"),
+    ("QuadraticBezierSegment", "the shape tier — see `Shape`"),
+    ("PolyBezierSegment", "the shape tier — see `Shape`"),
+    ("PolyLineSegment", "the shape tier — see `Shape`"),
+    ("PolyQuadraticBezierSegment", "the shape tier — see `Shape`"),
+    ("PathSegment", "the shape tier — see `Shape`"),
+    ("LineSegment", "the shape tier — see `Shape`"),
+
     # The menu family. facet has `context_menu` (MenuFlyout) and
     # `context_menu_item` (MenuFlyoutItem) and stops there.
     ("MenuFlyoutSubItem",
@@ -208,6 +269,21 @@ ALIAS = {
     "TemplatedPage": "Page",
     "ContentView": "Border — a plain content container",
     "KnownColor": "Color",
+    # facet's own `vocab::Rect`, which the type map already carries.
+    "Rect": "Rect — facet's own vocab::Rect",
+    # The shared band moves a node as ONE matrix (`C_TRANSFORM`), so the
+    # ledger's per-axis transform TYPES are that band said five ways.
+    "Transform": "the shared band's C_TRANSFORM",
+    "Matrix": "the shared band's C_TRANSFORM",
+    "MatrixTransform": "the shared band's C_TRANSFORM",
+    "CompositeTransform": "the shared band's C_TRANSFORM",
+    "RotateTransform": "the shared band's C_TRANSFORM",
+    "ScaleTransform": "the shared band's C_TRANSFORM",
+    "SkewTransform": "the shared band's C_TRANSFORM",
+    "TranslateTransform": "the shared band's C_TRANSFORM",
+    "TransformGroup": "the shared band's C_TRANSFORM",
+    # facet says it as `content_layout` on button / icon_button.
+    "ButtonContentLayout": "button.content_layout",
     # Named so the handler floor below has an answer for them. Each is already
     # covered by an extracted type or an existing family rule in spirit; these
     # say which, rather than leaving the floor to fail on a name nobody has
@@ -268,6 +344,27 @@ DROP_TYPE_RULES = [
      f"{_ENGINE} — framework objects, not application vocabulary"),
     (re.compile(r"^I[A-Z]"),
      f"{_ENGINE} — interface surface behind a control facet already extracts"),
+    # Image DECODING is the platform's. facet takes a path and the backend
+    # hands it to NSImage / BitmapFactory.
+    (re.compile(r"^GIF\w*"),
+     f"{_ENGINE} — image decoding; facet images take a path"),
+    # The dialog PAYLOAD objects. facet says the dialogs themselves as
+    # `runtime::alert` / `prompt` / `choose`, whose answer arrives on a handler.
+    (re.compile(r"^(Prompt|Alert|ActionSheet)Arguments$"),
+     f"{_ENGINE} — dialog payload objects; facet says runtime::alert/prompt/choose"),
+    # RelativeLayout's constraint model.
+    (re.compile(r"^Constraint(Expression)?$"),
+     f"{_LAYOUT} — the constraint model; facet Nodes carry flex modifiers"),
+    (re.compile(r"^(NavigationProxy)$"),
+     f"{_MODEL} — the ledger's navigation host; facet has nav + Screen"),
+    (re.compile(r"^TableModel$"),
+     f"{_MODEL} — the ledger's cell model; facet rows are components"),
+    # Delegates, resource loading, parsers, id/name bookkeeping, profiling.
+    (re.compile(r"Delegate$|Utilit(ies|es)$|Parser$|Search$|Resolver$|"
+                r"^Resource(Loader|Loading\w*)$|^(Profile|Performance|NameScope|"
+                r"AutoId|XmlLineInfo|TypedBindingBase|EvalRequested|ContentPageEx)$|"
+                r"^NotifyCollectionChanged\w*$"),
+     f"{_ENGINE} — framework bookkeeping, not application vocabulary"),
 ]
 
 
@@ -305,7 +402,7 @@ def parse(paths):
     events = defaultdict(dict)    # type -> event -> args type ("" = plain)
     methods = defaultdict(dict)   # type -> name -> (params, ret)
     for path in paths:
-        for raw in open(path):
+        for raw in open(path, encoding="utf-8"):
             line = MODS.sub("", raw.strip())
             m = GETTER.match(line)
             if m:
@@ -364,7 +461,7 @@ def check_handler_closure(paths):
     seen = set()
     for path in paths:
         seen |= set(re.findall(r"(?<![A-Za-z])I([A-Z][A-Za-z]*)Handler\b",
-                               open(path).read()))
+                               open(path, encoding="utf-8").read()))
     unclassified = sorted(t for t in seen if classify(t) is None)
     if unclassified:
         print("UNDECIDED RENDERABLE TYPES — the ledger has a handler for each of\n"

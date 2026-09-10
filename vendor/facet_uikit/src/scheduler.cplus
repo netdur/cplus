@@ -125,6 +125,10 @@ fn tick() {
     TICKS = TICKS +% (1 as u64);
     mount::sync();
     layout_all_windows();
+    // ...and LAST, work that only wants to read a frame that is now true —
+    // the inspector's outline follows its node from here. See
+    // `core::set_frames_settled_fn`.
+    core::frames_settled();
     return;
 }
 
@@ -141,12 +145,15 @@ fn tick_now() {
 
 // ---- the layout pass ----------------------------------------------------------
 
-fn layout_all_windows() {
+// `force` rides through to the frame walk — see `geometry::relayout_root`. The
+// only caller that passes it is the display-scale change, where the layout is a
+// cache hit and the frames moved anyway.
+fn layout_all_windows(force: bool = false) {
     var i: usize = 0 as usize;
     let n: usize = app::window_count();
     while i < n {
         let root: *core::Node = app::window_root(i);
-        if root != (0 as *core::Node) { layout_window(root); }
+        if root != (0 as *core::Node) { layout_window(root, force); }
         i = i +% (1 as usize);
     }
     return;
@@ -159,7 +166,7 @@ fn layout_all_windows() {
 // answered together — where the AppKit backend has to work out what a titlebar
 // is doing. It is also the band that MATTERS on this platform: a phone screen
 // with content under the notch is broken in a way a Mac window is not.
-fn layout_window(root: *core::Node) {
+fn layout_window(root: *core::Node, force: bool = false) {
     let win: *u8 = app::window_native(root);
     if win == (0 as *u8) { return; }
     let content: *u8 = content_view_of(win);
@@ -179,7 +186,7 @@ fn layout_window(root: *core::Node) {
     let ins: ui::EdgeInsets = safe_insets(cv, root);
     let w: f64 = f.w - ins.left - ins.right;
     let h: f64 = f.h - ins.top - ins.bottom;
-    geometry::relayout_root(root, w, h, geometry::screen_scale());
+    geometry::relayout_root(root, w, h, geometry::scale_of_view(content), force);
     // GUARDED FOR THE SAME REASON THE WALK IS, and separately because the walk's
     // transaction has already committed by here. These are the frames
     // `relayout_root` does NOT write — the root's own view, or the topmost
@@ -393,9 +400,17 @@ static WATCH_SEQ: u64 = 0 as u64;
 
 // `layoutSubviews` on a watched view: super first, because the subviews have to
 // be where the layout put them before anyone is told the size changed.
+// ONE HOP UP IS NOT OUR SUPERCLASS. `scheduler` and `zoom` BOTH override
+// `layoutSubviews`, with different IMPs, on views that can be the same view: a
+// zoom canvas that is also size-watched wears two layers, and whichever
+// `object_setClass` ran second is the object's runtime class. One hop up from
+// that lands the first layer's IMP on itself — it calls itself until the stack
+// guard. `super_class_below` walks to the class that DEFINES the running IMP,
+// which is correct for any number of layers in any order and keeps our two
+// layers over this one selector chained through each other.
 fn imp_layout_subviews(self_obj: *u8, cmd: *u8) {
-    let cls: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("class\0"))) };
-    let base: *u8 = { class_get_superclass(cls) };
+    let f_self: fn(*u8, *u8) = imp_layout_subviews;
+    let base: *u8 = synth::super_class_below(self_obj, cmd, { f_self as *u8 });
     if base != (0 as *u8) {
         var sup: ObjcSuper = ObjcSuper { receiver: self_obj, class_: base };
         { msg_super_void(#addr_of(sup), rt::sel(#str_ptr("layoutSubviews\0"))) };
@@ -565,8 +580,6 @@ struct ObjcSuper { opaque receiver: *u8, opaque class_: *u8 }
 extern fn msg_super_void(sup: *ObjcSuper, sel: *u8);
 // The runtime's own names, not this module's. An extern's identifier is
 // module-scoped in C+, so the bare linker symbol has to be said outright.
-#[link_name = "class_getSuperclass"]
-extern fn class_get_superclass(cls: *u8) -> *u8;
 #[link_name = "object_setClass"]
 extern fn object_set_class(obj: *u8, cls: *u8) -> *u8;
 #[link_name = "class_addMethod"]

@@ -1,0 +1,101 @@
+// NSSharingServicePicker. macOS only.
+//
+// ---- a picker needs somewhere to point --------------------------------------
+//
+// `showRelativeToRect:ofView:preferredEdge:` is the only way to show one, and
+// it wants a view and a rectangle inside it. An app calling `share::text(...)`
+// has neither, so this anchors to the KEY WINDOW's content view and points at
+// its top edge — the place a toolbar share button would be.
+//
+// That is a guess about where the user's eye is, and it is the only guess this
+// package makes. It is here rather than in the facade because a `rect:`
+// parameter on `share::text` would make every caller answer a question about
+// AppKit geometry that has no meaning on the other two platforms.
+
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "./share" as sh;
+
+fn _key_window_view() -> *u8 {
+    let app: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                              rt::sel(#str_ptr("sharedApplication\0")));
+    if app.is_null() { return 0 as *u8; }
+    var win: *u8 = rt::msg_id(app, rt::sel(#str_ptr("keyWindow\0")));
+    if win.is_null() {
+        // A window that has never been focused is still a window worth
+        // anchoring to — `keyWindow` is nil before the app is frontmost, which
+        // is exactly when a launch-time share would fire.
+        let wins: *u8 = rt::msg_id(app, rt::sel(#str_ptr("windows\0")));
+        if wins.is_null() { return 0 as *u8; }
+        let n: i64 = rt::msg_i64(wins, rt::sel(#str_ptr("count\0")));
+        if n <= (0 as i64) { return 0 as *u8; }
+        win = rt::msg_id_i64(wins, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as i64);
+    }
+    if win.is_null() { return 0 as *u8; }
+    return rt::msg_id(win, rt::sel(#str_ptr("contentView\0")));
+}
+
+// One item, boxed into the NSArray both AppKit entry points want.
+fn _array_of(item: *u8) -> *u8 {
+    if item.is_null() { return 0 as *u8; }
+    return rt::msg_id_id(rt::get_class(#str_ptr("NSArray\0")),
+                         rt::sel(#str_ptr("arrayWithObject:\0")), item);
+}
+
+fn _show(items: *u8) -> i32 {
+    if items.is_null() { return 3; }
+    let view: *u8 = _key_window_view();
+    if view.is_null() { return 1; }
+
+    let cls: *u8 = rt::get_class(#str_ptr("NSSharingServicePicker\0"));
+    if cls.is_null() { return 1; }
+    let picker: *u8 = rt::msg_id_id(rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))),
+                                    rt::sel(#str_ptr("initWithItems:\0")), items);
+    if picker.is_null() { return 3; }
+
+    // The view's own bounds, edge 1 = NSRectEdgeMinY, which puts the popover
+    // under the top of the window rather than off-screen.
+    let bounds: rt::Rect = rt::msg_rect(view, rt::sel(#str_ptr("bounds\0")));
+    rt::msg_void_rect_id_i64(picker,
+        rt::sel(#str_ptr("showRelativeToRect:ofView:preferredEdge:\0")),
+        bounds, view, 1 as i64);
+    return 0;
+}
+
+export extern fn _c_available() -> i32 {
+    if rt::get_class(#str_ptr("NSSharingServicePicker\0")).is_null() { return 0; }
+    if _key_window_view().is_null() { return 0; }
+    return 1;
+}
+
+// SUBJECT IS DROPPED HERE, and the facade says so. AppKit carries a subject
+// only through `NSSharingService`'s own `subject` property, which means
+// choosing the service first — the opposite of showing a picker. Rather than
+// pick a service on the caller's behalf, this shares the body and lets Mail
+// fill its own subject line.
+export extern fn _c_text(body: *u8, body_len: usize,
+                         subject: *u8, subject_len: usize) -> i32 {
+    let s: *u8 = bridge::nsstring({ #str_from_raw_parts(body, body_len) });
+    if s.is_null() { return 3; }
+    return _show(_array_of(s));
+}
+
+export extern fn _c_url(link: *u8, link_len: usize) -> i32 {
+    let s: *u8 = bridge::nsstring({ #str_from_raw_parts(link, link_len) });
+    if s.is_null() { return 3; }
+    // AN NSURL, NOT A STRING. AppKit gives a real URL a different service list
+    // and a preview; a string that happens to look like a link gets neither.
+    let u: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                               rt::sel(#str_ptr("URLWithString:\0")), s);
+    if u.is_null() { return 2; }
+    return _show(_array_of(u));
+}
+
+export extern fn _c_file(path: *u8, path_len: usize) -> i32 {
+    let s: *u8 = bridge::nsstring({ #str_from_raw_parts(path, path_len) });
+    if s.is_null() { return 3; }
+    let u: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                               rt::sel(#str_ptr("fileURLWithPath:\0")), s);
+    if u.is_null() { return 2; }
+    return _show(_array_of(u));
+}

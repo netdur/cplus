@@ -63,6 +63,7 @@ Internal, listed so a reader knows where a behaviour lives.
 python3 tools/verb_coverage.py          # the summary
 python3 tools/verb_coverage.py --list   # every verb, by bucket
 python3 tools/verb_coverage.py --check  # the gate
+python3 tools/verb_coverage.py --all    # all four backends, compared
 ```
 
 The gate fails on a verb that is neither implemented nor recorded, on a verb

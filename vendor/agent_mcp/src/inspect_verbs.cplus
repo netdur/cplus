@@ -1,0 +1,108 @@
+// verbs — the names of the inspector's JSON-RPC methods, in ONE place.
+//
+// This module exists because the names were in two, and the two disagreed.
+// `f4a5a159` dropped the `inspector.` prefix — 21 verbs onto one flat
+// `tools/list`, `inspector.describe` becoming `describe_tree` — and changed the
+// server (`mcp`), the bridge (`agent_mcp`) and the suite. It did not change
+// `remote`, which is this package's OWN CLIENT for the same verbs, so every
+// remote call answered `-32601` while 702 tests stayed green.
+//
+// What that cost is worth writing down, because it is the reason this file is
+// not just tidiness: NOTHING REPORTED AN ERROR. `rpc` maps a JSON-RPC error to
+// a fault on the Remote and the verb returns an empty vector, which is
+// indistinguishable from an app whose tree really is empty. iris's Inspect tab
+// attached, switched out of its empty state, and read "0 nodes" from an app
+// answering `describe_tree` with 5.
+//
+// A package that holds BOTH ENDS of a protocol can rename one end and stay
+// green, because the name is the one thing that only matters where they meet.
+// So: one constant per verb, spelled once, referenced by the server's
+// dispatch, by its `tools/list`, and by every request the client sends. A
+// rename is now a one-line edit that the compiler propagates, and
+// `test_main`'s `every_verb_the_client_sends_is_one_the_server_answers` walks
+// the same constants through `mcp::handle` so a name that stops being answered
+// fails a test rather than a panel.
+//
+// These are the WIRE names. `describe_tree` is deliberately not a plain
+// de-prefixing of `inspector.describe`: it must not collide with the agent
+// surface's `describe_ui`, which lives in the same flat namespace.
+
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+
+// ---- read ----------------------------------------------------------------------
+
+const V_DESCRIBE_TREE: str = "describe_tree";
+const V_INSPECT: str = "inspect";
+const V_VOCABULARY: str = "vocabulary";
+const V_JOURNAL: str = "journal";
+
+// ---- write (each of these costs `edit_tree`) ------------------------------------
+
+const V_SET: str = "set";
+const V_SET_MANY: str = "set_many";
+const V_RESET: str = "reset";
+const V_NUDGE: str = "nudge";
+const V_INSERT: str = "insert";
+const V_REMOVE: str = "remove";
+const V_REPARENT: str = "reparent";
+const V_UNDO: str = "undo";
+
+// ---- the overlay ----------------------------------------------------------------
+
+const V_HIGHLIGHT: str = "highlight";
+const V_CLEAR_HIGHLIGHT: str = "clear_highlight";
+
+// ---- the routed set -------------------------------------------------------------
+
+// EVERY verb this namespace answers, and the list the bridge routes by —
+// `mcp::verb_names` returns this. It is here rather than there so that adding a
+// verb is one edit next to its own constant, and so the client half can be
+// checked against it without importing the server.
+//
+// `mcp::describe_tools` is the one list this does not collapse: a tool
+// declaration is a name, a sentence and a parameter schema, and it earns its
+// own place. `test_main`'s `every_verb_is_listed_declared_and_dispatched`
+// checks the two against each other and against `handle`.
+fn all() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _1: status::Status = v.append(V_DESCRIBE_TREE);
+    let _2: status::Status = v.append(V_INSPECT);
+    let _3: status::Status = v.append(V_SET);
+    let _4: status::Status = v.append(V_RESET);
+    let _5: status::Status = v.append(V_INSERT);
+    let _6: status::Status = v.append(V_REMOVE);
+    let _7: status::Status = v.append(V_REPARENT);
+    let _8: status::Status = v.append(V_UNDO);
+    let _9: status::Status = v.append(V_HIGHLIGHT);
+    let _10: status::Status = v.append(V_CLEAR_HIGHLIGHT);
+    let _11: status::Status = v.append(V_VOCABULARY);
+    let _12: status::Status = v.append(V_JOURNAL);
+    let _13: status::Status = v.append(V_NUDGE);
+    let _14: status::Status = v.append(V_SET_MANY);
+    return v;
+}
+
+// The ten `remote` — this package's own JSON-RPC CLIENT — can emit. A subset:
+// the client's Backend vtable has no verb for `vocabulary`, `journal`, `nudge`
+// or `set_many`, which the widget reads locally or does not use.
+//
+// THIS IS THE LIST THAT WAS WRONG. It is here beside the server's so the two
+// are read together, and `test_main`'s
+// `every_verb_the_client_sends_is_one_the_server_answers` walks it through
+// `handle` — the assertion nothing made before, which is how a rename could be
+// complete on one side and green.
+fn client_sends() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _1: status::Status = v.append(V_DESCRIBE_TREE);
+    let _2: status::Status = v.append(V_INSPECT);
+    let _3: status::Status = v.append(V_SET);
+    let _4: status::Status = v.append(V_RESET);
+    let _5: status::Status = v.append(V_HIGHLIGHT);
+    let _6: status::Status = v.append(V_CLEAR_HIGHLIGHT);
+    let _7: status::Status = v.append(V_INSERT);
+    let _8: status::Status = v.append(V_REMOVE);
+    let _9: status::Status = v.append(V_REPARENT);
+    let _10: status::Status = v.append(V_UNDO);
+    return v;
+}

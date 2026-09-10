@@ -1,0 +1,184 @@
+// The device's motion and environment sensors.
+//
+// Four kinds, one shape: start a stream, get samples, drop the handle to stop.
+// The same arrangement `location` uses, for the same reason — a sensor is a
+// radio that costs battery until something turns it off.
+
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+
+// ---- what to read ------------------------------------------------------------
+enum Kind {
+    // Linear acceleration INCLUDING gravity, m/s^2. A device flat on a table
+    // reads about 9.8 on z, not 0 — the gravity vector is what makes an
+    // orientation guess possible, and removing it is a different sensor.
+    Accelerometer,
+    // Angular velocity, radians per second, about each axis.
+    Gyroscope,
+    // The magnetic field, microtesla. Includes whatever the device itself is
+    // doing, so a compass needs calibration this package does not attempt.
+    Magnetometer,
+    // Atmospheric pressure, hectopascals. `x` carries it; `y` and `z` are 0.
+    // Fewer devices have one than have the other three.
+    Barometer,
+}
+
+impl Kind {
+    fn to_code(this) -> i32 {
+        match this {
+            Kind::Accelerometer => { return 0; }
+            Kind::Gyroscope => { return 1; }
+            Kind::Magnetometer => { return 2; }
+            Kind::Barometer => { return 3; }
+        }
+    }
+
+    fn from_code(c: i32) -> Kind {
+        if c == 1 { return Kind::Gyroscope; }
+        if c == 2 { return Kind::Magnetometer; }
+        if c == 3 { return Kind::Barometer; }
+        return Kind::Accelerometer;
+    }
+}
+
+enum Outcome {
+    Ok,
+    // No backend for this platform.
+    Unsupported,
+    // There IS a backend and this device has no such sensor. A Mac has no
+    // gyroscope; most phones have no barometer. Different from Unsupported,
+    // and an app should say something different about it.
+    Unavailable,
+    // Android 12+ gates the high-rate sensors behind HIGH_SAMPLING_RATE_SENSORS.
+    Denied,
+    Failed,
+}
+
+impl Outcome {
+    fn to_code(this) -> i32 {
+        match this {
+            Outcome::Ok => { return 0; }
+            Outcome::Unsupported => { return 1; }
+            Outcome::Unavailable => { return 2; }
+            Outcome::Denied => { return 3; }
+            Outcome::Failed => { return 4; }
+        }
+    }
+
+    fn from_code(c: i32) -> Outcome {
+        if c == 1 { return Outcome::Unsupported; }
+        if c == 2 { return Outcome::Unavailable; }
+        if c == 3 { return Outcome::Denied; }
+        if c == 4 { return Outcome::Failed; }
+        return Outcome::Ok;
+    }
+}
+
+// ---- a reading ---------------------------------------------------------------
+//
+// THREE AXES AND A CLOCK, whatever the sensor. A barometer fills only `x`,
+// which is the one accommodation made to keep this a single type: two structs
+// would mean two streams, two handlers and two stop verbs for one idea.
+#[repr(C)]
+struct Sample {
+    x: f64,
+    y: f64,
+    z: f64,
+    // Unix milliseconds. Sensors timestamp at the SOURCE, so this is when the
+    // reading was taken rather than when it was delivered.
+    timestamp_ms: i64,
+}
+
+impl Sample {
+    // The magnitude of the triple, which is the reading most apps actually
+    // want from an accelerometer: ~9.8 at rest, more when shaken.
+    fn magnitude(this) -> f64 {
+        return { _sqrt(this.x * this.x + this.y * this.y + this.z * this.z) };
+    }
+}
+
+#[link_name = "sqrt"]
+extern fn _sqrt(v: f64) -> f64;
+
+// ---- the wish ----------------------------------------------------------------
+struct Request {
+    // How often to sample. A HINT on both platforms and never a promise:
+    // Android calls it exactly that, and Apple's interval is best-effort. 0
+    // takes the platform default rather than meaning "as fast as possible".
+    //
+    // Above about 200Hz Android 12+ requires HIGH_SAMPLING_RATE_SENSORS and
+    // silently caps you at 200Hz without it, which arrives as samples that are
+    // simply slower than asked rather than as an error.
+    interval_ms: i64,
+}
+
+impl Request {
+    fn defaults() -> Request { return Request::new(0 as i64); }
+
+    fn new(interval_ms: i64 = 0 as i64) -> Request {
+        return Request { interval_ms: interval_ms };
+    }
+}
+
+// ---- asking ------------------------------------------------------------------
+
+// Does this device have one? Says nothing about permission.
+//
+// `has`, not `available`, because the call site is a phrase:
+// `sens::has(Kind::Barometer)` reads as a question and
+// `sens::available(Kind::Barometer)` reads as a noun with an argument stuck on.
+// It also matches `camera::has(Facing::Back)`, which is the same shape — a
+// per-thing query — where `location::available()` takes none and keeps its own
+// name honestly.
+fn has(kind: Kind) -> bool {
+    return { _c_available(kind.to_code()) } != (0 as i32);
+}
+
+// A running stream. STOPS ON DROP, like `location::Updates` — a sensor left
+// running is a battery drain that reports to nobody.
+struct Readings {
+    opaque _h: *u8,
+}
+
+fn updates(kind: Kind,
+           on_sample: fn(Sample, *u8),
+           ctx: *u8 = 0 as *u8,
+           request: Request = Request::defaults())
+    -> result::Result[Readings, Outcome] {
+    if on_sample.is_null() { return result::Result[Readings, Outcome]::Err(Outcome::Failed); }
+    var req: Request = request;
+    var code: i32 = 0;
+    let h: *u8 = { _c_start(kind.to_code(), #addr_of(req), on_sample, ctx, #addr_of(code)) };
+    if h.is_null() { return result::Result[Readings, Outcome]::Err(Outcome::from_code(code)); }
+    return result::Result[Readings, Outcome]::Ok(Readings { _h: h });
+}
+
+impl Readings {
+    fn kind(this) -> Kind {
+        return Kind::from_code({ _c_kind(this._h) });
+    }
+
+    fn is_running(this) -> bool {
+        return this._h.is_not_null() && { _c_running(this._h) } != (0 as i32);
+    }
+
+    fn stop(ref this) {
+        if this._h.is_null() { return; }
+        { _c_stop(this._h) };
+        this._h = 0 as *u8;
+        return;
+    }
+
+    fn drop(ref this) {
+        this.stop();
+        return;
+    }
+}
+
+// ---- the seam ----------------------------------------------------------------
+extern fn _c_available(kind: i32) -> i32;
+extern fn _c_start(kind: i32, req: *Request, on_sample: fn(Sample, *u8), ctx: *u8,
+                   out_code: *i32) -> *u8;
+extern fn _c_kind(h: *u8) -> i32;
+extern fn _c_running(h: *u8) -> i32;
+extern fn _c_stop(h: *u8);

@@ -1,0 +1,48 @@
+[package]
+name    = "permissions"
+version = "0.0.1"
+edition = "2026"
+
+# permissions — ask the platform for access, and know the answer without asking.
+#
+# ONE PACKAGE ON EVERY PLATFORM, the shape `vendor/http` proved: `permissions`
+# is the module an application imports, and the half underneath it is swapped by
+# the resolver's `_<platform>` file override. There is no `permissions_apple`
+# package; a consumer writes `permissions = "*"` and nothing else moves.
+#
+# The two halves meet at stable symbols (`cplus_permissions_*_v1`) rather than
+# through an import: the backend must import this module for `State`, and a
+# cycle back is rejected outright (E0404). Same reason http does it, same shape.
+#
+# NO `[link] frameworks`. The Apple half reaches AVFoundation, Photos, Contacts
+# and EventKit by CLASS NAME, so it `dlopen`s each one on first use instead of
+# naming it here. A domain the app never asks about is a framework that never
+# loads, and an app that only wants the camera does not pay dyld for the other
+# three. Public system frameworks, which is permitted and ship-legal.
+
+[dependencies]
+stdlib = "*"
+
+# THE APPLE HALF, and both platforms share one file: AVCaptureDevice,
+# PHPhotoLibrary, CNContactStore and EKEventStore are the same classes with the
+# same selectors on macOS and iOS. Scoped so `objc` never reaches an Android
+# link line.
+[macos.dependencies]
+objc = "*"
+
+[ios.dependencies]
+objc = "*"
+
+# THE ANDROID HALF. `facet` is here and NOT at the top level: the Activity is an
+# Activity method's receiver and `app_events::host()` is where a backend
+# publishes it, so this is the one platform where a services package needs
+# facet's core at all. The Apple half hops to the main thread with
+# `dispatch_async_f` and needs none of it.
+[android.dependencies]
+jni          = "*"
+android_view = "*"
+facet        = "*"
+# facet's transitive closure, restated: the resolver validates every import in a
+# build against ONE flat set taken from the consuming manifest.
+flex_layout  = "*"
+events       = "*"

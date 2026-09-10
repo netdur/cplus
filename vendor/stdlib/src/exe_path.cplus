@@ -32,7 +32,7 @@ fn executable_path() -> text::Text {
     let _probe: i32 = { _NSGetExecutablePath(0 as *u8, #addr_of(size)) };
     if size == (0 as u32) { size = 4096 as u32; }
     let buf: *u8 = { malloc((size as usize) + (1 as usize)) };
-    if buf == (0 as *u8) { return text::from_str(""); }
+    if buf.is_null() { return text::from_str(""); }
     let rc: i32 = { _NSGetExecutablePath(buf, #addr_of(size)) };
     if rc != (0 as i32) { free(buf); return text::from_str(""); }
     // Canonicalize; fall back to the raw (possibly symlinked) path if realpath
@@ -40,7 +40,7 @@ fn executable_path() -> text::Text {
     let canon: *u8 = { malloc(4096 as usize) };
     let rp: *u8 = { realpath(buf, canon) };
     var out: text::Text = text::from_str("");
-    if rp != (0 as *u8) {
+    if rp.is_not_null() {
         out = { #str_from_raw_parts(canon, strlen(canon)) }.to_text();
     } else {
         out = { #str_from_raw_parts(buf, strlen(buf)) }.to_text();

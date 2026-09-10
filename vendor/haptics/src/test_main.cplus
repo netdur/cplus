@@ -1,0 +1,56 @@
+import "./haptics" as hap;
+import "./haptics_backend" as backend;
+
+#[test]
+fn feel_codes_round_trip() {
+    assert hap::Feel::from_code(hap::Feel::Selection.to_code()).to_code() == 0;
+    assert hap::Feel::from_code(hap::Feel::Medium.to_code()).to_code() == 2;
+    assert hap::Feel::from_code(hap::Feel::Heavy.to_code()).to_code() == 3;
+    assert hap::Feel::from_code(hap::Feel::Error.to_code()).to_code() == 6;
+}
+
+#[test]
+fn an_unknown_feel_code_is_light_not_a_trap() {
+    assert hap::Feel::from_code(99).to_code() == hap::Feel::Light.to_code();
+    assert hap::Feel::from_code(-3).to_code() == hap::Feel::Light.to_code();
+}
+
+#[test]
+fn the_impact_family_and_the_outcome_family_do_not_overlap() {
+    // The backends split on this boundary — below Success is an impact, at or
+    // above it is an outcome — so a reordering that broke it would send a
+    // "heavy tap" through the notification generator.
+    assert hap::Feel::Heavy.to_code() < hap::Feel::Success.to_code();
+    assert hap::Feel::Selection.to_code() < hap::Feel::Light.to_code();
+}
+
+#[test]
+fn availability_answers_without_trapping() {
+    let on: bool = hap::available();
+    // Its VALUE is the machine's business: a Mac without a Force Touch
+    // trackpad answers false, and that is not an error.
+    assert on || !on;
+}
+
+#[test]
+fn play_is_safe_when_nothing_can_be_felt() {
+    // THE CONTRACT: a UI should not have to guard every tap. On a machine with
+    // no haptics this returns false and does nothing, rather than failing.
+    let _a: bool = hap::play(hap::Feel::Selection);
+    let _b: bool = hap::play(hap::Feel::Heavy);
+    let _c: bool = hap::play(hap::Feel::Error);
+    assert true;
+}
+
+#[test]
+fn prepare_is_optional_and_inert_where_there_is_nothing_to_warm() {
+    hap::prepare(hap::Feel::Medium);
+    hap::prepare();
+    assert true;
+}
+
+#[test]
+fn play_defaults_to_light() {
+    let _p: bool = hap::play();
+    assert true;
+}

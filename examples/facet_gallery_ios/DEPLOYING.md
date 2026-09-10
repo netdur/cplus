@@ -70,6 +70,64 @@ xcrun simctl launch --console-pty $DEV dev.cplus.facetgalleryios
 No signing, no account, no Xcode project. `--console-pty` gives you the app's
 stderr, which is where facet's diagnostics go.
 
+### 0a. If the app needs an entitlement
+
+Keychain, biometrics, app groups — anything with a capability. **On a simulator
+the entitlement goes in the BINARY, not in the signature**, and the ad-hoc
+signature has to stay plain. That is how Xcode builds for a simulator;
+`securityd` reads the `__TEXT,__entitlements` section the linker embeds.
+
+```
+cat > /tmp/ent.plist <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>keychain-access-groups</key>
+	<array><string>dev.cplus.yourapp</string></array>
+</dict>
+</plist>
+PLIST
+xcrun derq query -f xml -i /tmp/ent.plist -o /tmp/ent.der --raw
+
+# ...at the end of the clang line that links the app:
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker /tmp/ent.plist \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __ents_der    -Xlinker /tmp/ent.der
+
+codesign --force --sign - $S/Gallery.app      # PLAIN. no --entitlements.
+```
+
+Both sections, because Xcode embeds both: on the iOS 26.4 runtime the XML one
+alone is what the keychain honours, and the DER twin alone answers `-34018`.
+
+**`codesign --entitlements` is the trap.** A signature carrying entitlements
+makes SpringBoard refuse the launch outright, and none of the errors mention
+signing: `denied by service delegate (SBMainWorkspace)`, `Security policy
+issue` from `simctl spawn`, `had no entitlements` in the install log. It reads
+as "this needs a provisioning profile" and it is not that — **no profile, no
+device and no Xcode project are involved.** Profiles are a device concern
+(§1 onward).
+
+Two more that cost the same day:
+
+- **`simctl install` over an app whose entitlements changed keeps the OLD
+  ones**, and the launch is then refused with no process and nothing in the
+  log. `simctl uninstall` first.
+- **`simctl launch` calls a fast-exiting process a failed launch** and discards
+  its stdout. A test runner whose `main` returns rather than entering a run
+  loop always gets "denied by service delegate" even when it ran to completion
+  — the system log shows its work. Write the result into the app's container
+  and read it back with `simctl get_app_container <dev> <id> data`.
+
+`vendor/securestore/tools/run_ios_tests.sh` is the worked example. It asserts
+both halves, the second inverted, because either silently reintroduces the bug:
+
+```
+otool -s __TEXT __entitlements "$app/Bin" | grep -q "Contents of"   # section IS there
+codesign -d --entitlements - "$app" | grep -q keychain-access-groups \
+  && { echo "the SIGNATURE carries entitlements — launch will be refused"; exit 2; }
+```
+
 **What the simulator cannot tell you:** whether
 `UIApplicationMain(0, NULL, …)` works (it does — verified on device), how touch
 actually feels, or anything reached over USB. Those need the real thing.
@@ -414,16 +472,43 @@ for the two lines that turn it on and the protocol it speaks.
 
 `facet_uikit` serves it over **TCP on loopback**, not a Unix socket, because an
 app's socket lives inside its sandbox where nothing on the development machine
-can reach it — and to a device there is no shared filesystem at all. The port is
-what the app passes to `agent_mcp(...)`, default **8787**.
+can reach it — and to a device there is no shared filesystem at all.
+
+**THE PORT IS DERIVED FROM THE PID: `9000 + pid % 1000`.** It is not a number
+the app chooses and not one you configure. `agent_mcp("<name>")` takes an ID —
+the app's name, which is what `serverInfo.name` reports and what the descriptor
+is filed under — and the platform decides the address from it. A launcher that
+started the app has the pid, so it can work the port out; anything else reads
+`/tmp/mcp-<id>-<pid>.json`, which records what was actually bound.
+
+The wire is **Streamable HTTP**: one JSON-RPC object POSTed, one JSON object
+back, which is what an MCP client reaches with no bridge written for it. (The
+desktop backend serves that door too, alongside a Unix socket that still speaks
+the older line-delimited framing.)
 
 **On the simulator there is nothing to forward.** A simulator shares the Mac's
-network stack, so `127.0.0.1:8787` on the Mac IS the app's loopback:
+network stack, so `127.0.0.1:<port>` on the Mac IS the app's loopback:
 
 ```
-xcrun simctl launch $DEV dev.cplus.facetgalleryios
-tools/mcp_check.py                    # 25 checks; verified 2026-08-19
+xcrun simctl launch $DEV dev.cplus.facetgalleryios      # prints the pid
+tools/mcp_check.py $(( 9000 + PID % 1000 ))             # 28 checks
 ```
+
+and to build the app for the simulator at all, the library the Xcode project
+links has to be the simulator one:
+
+```
+cpc build --target ios-arm64-simulator
+xcodebuild -project ios/Gallery.xcodeproj -scheme Gallery \
+           -sdk iphonesimulator -configuration Debug \
+           -destination "id=$DEV" build
+```
+
+The project picks the right archives per SDK — `CPLUS_TRIPLE` and
+`CPLUS_TARGETDIR` are conditioned on `[sdk=iphonesimulator*]`, so the device
+build is untouched. Before 2026-08-30 it named the device paths unconditionally
+and a simulator build failed at the link with *"building for iOS-simulator, but
+linking in object file built for iOS"*.
 
 **On a device the port is reached over usbmuxd**, the same mechanism Flutter's
 Dart VM Service and Chrome's remote debugging use:
@@ -436,9 +521,12 @@ which is the three steps below, and says which of them your setup is missing
 rather than leaving you with a socket that times out:
 
 ```
-iproxy 8787 8787 <25-char-UDID>              # brew install libimobiledevice
-pymobiledevice3 usbmux forward 8787 8787     # or: pip install pymobiledevice3
-tools/mcp_check.py                           # the same script, unchanged
+iproxy -u <25-char-UDID> <port>:<port>        # brew install libimobiledevice
+# The positional form `iproxy <port> <port> <udid>` is the OLD syntax and now
+# fails with "Invalid listen port specified in argument" — current
+# libimobiledevice takes LOCAL:DEVICE pairs and the udid through -u.
+pymobiledevice3 usbmux forward <port> <port> # or: pip install pymobiledevice3
+tools/mcp_check.py <port>                    # the same script, unchanged
 ```
 
 Three things have to be true, none of them announce themselves, and all three
@@ -452,9 +540,13 @@ A fourth belongs only here, and it is the one that will actually mislead you.
 ### The trap that gives you a green run against the wrong app
 
 A simulator shares the Mac's network stack, so a gallery left running in one is
-**also** listening on `127.0.0.1:8787`. Start the forwarder against that and it
-cannot bind, exits, and the check connects to the SIMULATOR — twenty-five
-assertions, all green, and not one byte of it went near the device.
+**also** listening on loopback. Start the forwarder against that port and it
+cannot bind, exits, and the check connects to the SIMULATOR — every assertion
+green, and not one byte of it went near the device.
+
+Deriving the port from the pid narrows this a great deal — two instances collide
+only when their pids agree mod 1000 — but it does not close it, and the failure
+still looks exactly like success.
 
 That happened here on the first device run (2026-08-19). The only tell was a
 402pt-wide window on an 834pt iPad, and it was nearly missed.
@@ -468,10 +560,145 @@ The decisive question, if you are ever unsure which app answered: terminate it
 **on the device** and ask again. A socket that keeps answering was never the
 device's.
 
+**And derive the port from a pid you have just read, not one you read earlier.**
+A relaunch — including the one `--console` does — gives a new pid and therefore
+a new port, and the old one is refused rather than answered. usbmuxd says
+`Error connecting to device: Connection refused` in the forwarder's own log,
+while curl reports only `Recv failure: Connection reset by peer`, so the useful
+message is in the log and not in the client. That cost a wrong diagnosis here on
+2026-09-06 (the app looked suspended; it was serving on a different port).
+
 ```
 xcrun devicectl device process terminate --device <identifier> --pid <pid>
 ```
 
+### The whole device sequence, in one block
+
+Verified on a physical iPad, **2026-09-06** — iPad Pro 11-inch (3rd gen),
+iPadOS 26.6.1. Copy this; every line of it is load-bearing and three of them are
+things that were re-derived the hard way twice.
+
+```sh
+cd examples/facet_gallery_ios
+# The CoreDevice id, by PATTERN and not by column: the Name field contains a
+# space ("iPad (4)"), so $3 is the hostname and not the id.
+DEV=$(xcrun devicectl list devices | grep physical \
+      | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' | head -1)
+UDID=$(xcrun xctrace list devices | sed -n 's/.*(\([0-9]\{8\}-[0-9A-F]\{16\}\)).*/\1/p' | head -1)
+
+cpc build --target ios-arm64            # the DEVICE slice, not the simulator one
+cd ios && xcodebuild -project Gallery.xcodeproj -target Gallery \
+     -configuration Debug -destination "platform=iOS,id=$UDID" \
+     -allowProvisioningUpdates build && cd ..
+xcrun devicectl device install app --device $DEV ios/build/Debug-iphoneos/Gallery.app
+
+# LAUNCH FIRST, THEN DERIVE THE PORT. Never the other way round.
+xcrun devicectl device process launch --device $DEV --terminate-existing \
+     dev.cplus.facetgalleryios
+PID=$(xcrun devicectl device info processes --device $DEV \
+      | grep "Gallery.app/Gallery" | awk '{print $1}' | head -1)
+PORT=$(( 9000 + PID % 1000 ))
+
+pkill -f iproxy
+iproxy -u $UDID $PORT:$PORT &          # note: -u, and LOCAL:DEVICE
+curl -s -X POST http://127.0.0.1:$PORT/ -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
+```
+
+A good answer names the app, and that is how you know it is the DEVICE talking:
+
+```json
+{"result":{"serverInfo":{"name":"facet_gallery_ios","version":"0.0.27"}}}
+```
+
+**Three failures and what each one actually is.** They are easy to confuse
+because two of them produce the same message at the client.
+
+| what you see | what it is |
+|---|---|
+| `Recv failure: Connection reset by peer`, and `Error connecting to device: Connection refused` in the FORWARDER's log | nothing is listening on that device port. Either a stale pid (see below) or the app is suspended |
+| launch refused, "profile has not been explicitly trusted" | §6 — trust the certificate on the device. A re-minted profile needs it again |
+| `Invalid listen port specified in argument` | the old `iproxy <port> <port> <udid>` syntax; use `-u UDID LOCAL:DEVICE` |
+
+**The client tells you almost nothing.** `curl` reports a reset; the reason is
+in the forwarder's own log and nowhere else. Always start `iproxy` with its
+output somewhere you can read it.
+
+**A relaunch moves the port.** The port is derived from the pid, so ANY relaunch
+— including the one `--console` performs — gives a new one, and the old port is
+refused. Re-read the pid after every launch. On 2026-09-06 this read as a
+suspended app for several minutes; it was serving perfectly well on a port
+nobody was asking.
+
+**A backgrounded app REFUSES, it does not hang.** The section above says a
+suspended app hangs. Measured here it answered `Connection refused` through
+usbmuxd while `devicectl` still listed the process — the pid being alive is not
+evidence the server is. Relaunching is the reliable fix and costs a port change.
+
+### Seeing what the device is doing
+
+```sh
+xcrun devicectl device capture screenshot --device $DEV --destination /tmp/ipad.png
+```
+
+No developer disk image, no Xcode window. `idevicescreenshot` from
+libimobiledevice needs the DDI mounted and fails with *"Could not start
+screenshotr service: Invalid service"* until it is; `devicectl` does not.
+There is a `capture screen-record` beside it for the same reason.
+
+**Worth taking one even when MCP is answering.** The socket tells you what the
+app believes; the screenshot tells you what the person sees, and the two
+disagree in exactly the cases worth finding. A second window that had mounted
+its tree into the FIRST window's content view read perfectly over MCP and was a
+blank screen — the picture is what said so.
+
+It also answers a question nothing else here does: whether the app is running
+WINDOWED or full-screen on an iPad. The close/minimise/zoom pill in the corner
+is the tell, and it decides what half the window tier even means.
+
+### Driving it: what a click needs
+
+```sh
+P=$PORT
+call(){ curl -s -X POST http://127.0.0.1:$P/ -H 'Content-Type: application/json' \
+        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}"; }
+call describe_ui '{}'
+call hit_test '{"id":"row:button"}'
+call click    '{"id":"row:button"}'
+```
+
+**Click the ROW, not the label inside it** — `row:button`, not `button`. That is
+SKILL §9 trap 7 arriving through the socket: a gesture on something inside a row
+is not the list's selection.
+
+**And check `hidden` first.** A catalog row scrolled out of view reports
+`hidden: true`, and `click` on one answers `{"outcome":"allowed"}` while nothing
+happens — the call was legal, the row was not on screen. `hit_test` is the tool
+that says so before you are confused by it:
+
+```json
+{"outcome":"allowed","supported":true,"reachable":true,"covered":false}
+```
+
+A successful pick is visible in the next `describe_ui`: `g:back` stops being
+hidden, `g:title` changes, `g:catalog` hides, and the node count grows.
+
+> **Status: verified on a DEVICE, 2026-09-06.** iPad Pro 11-inch (3rd gen),
+> iPadOS 26.6.1, over usbmuxd. `initialize`, `tools/list`, `describe_ui`,
+> `describe_tree`, `hit_test` and `click` all answered; a click on `row:button`
+> drove a real navigation (title changed, catalog hid, node count 57 -> 63). The
+> root frame read **1194 x 782** — full landscape width on this iPad, so the
+> 402pt mis-size below did not recur. What this run did NOT exercise: the window
+> cursor (`window::find`) and the in-place screen stack, because the gallery
+> calls neither — it navigates by swapping its own outlet.
+>
+> **Status: verified on the SIMULATOR, 2026-08-30.** iPhone 16 Pro, iOS 18.5,
+> straight to loopback. All 28 checks pass. This run is what caught three things
+> a cross-build cannot: the app was serving on the pid-derived port while every
+> doc said 8787, the harness still spoke the retired line framing, and list rows
+> had stopped appearing in `describe_ui` when both backends moved to walking
+> facet's tree. A device run has not been repeated since.
+>
 > **Status: verified on device, 2026-08-19.** iPad Pro 11-inch (3rd gen), iOS
 > 26.6, over `pymobiledevice3 usbmux forward 8787 8787`. All 25 checks pass, and
 > the run was confirmed to be the device's by the terminate test above.

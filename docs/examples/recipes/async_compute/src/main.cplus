@@ -1,5 +1,5 @@
-// async_compute — chained `async fn` + `await` round-trip via the
-// stdlib executor's `block_on`.
+// async_compute — chained `async fn` + `await`, driven from an
+// `async fn main`.
 //
 // v0.0.3 Phase 5 Slice 5E reference recipe. Demonstrates the
 // async/await surface end to end:
@@ -7,24 +7,19 @@
 //     type is `Future[T]`.
 //   - `await EXPR` drives an inner future to completion and yields
 //     the inner T.
-//   - `executor::block_on` is the sync-context entry point — it
-//     spins the coroutine via `coro.resume` until it produces a
-//     `Ready(T)`, returns T.
+//   - `async fn main` (v0.0.31): the compiler drives the entry with
+//     the same loop `Future::wait` is — resume until done, then
+//     read the value. `f.wait()` is that loop for driving a future from
+//     other synchronous code (a handler, a worker); not needed here.
 //
-// **What this recipe does NOT cover** (deferred from v0.0.3):
-//   - True suspension on I/O. v0.0.3 ships compute-only async (no
-//     reactor; kqueue/epoll wakeup lands later). Each `await` runs
-//     its inner future to immediate completion in the same OS thread.
-//   - `executor::spawn_local` and `yield_now`. The plan calls for
-//     them in 5E.5; only `block_on` ships in v0.0.3.
-//   - Async I/O wrappers (`TcpStream::read_async`, etc.). Same
-//     reason — they need the reactor.
+// No I/O in this recipe — every `await` completes without a real
+// suspension. `async_fetch` is the one that parks on the reactor, and
+// `async_yield_demo` the one that interleaves tasks.
 //
 // Use this recipe as the syntactic and type-system reference for
-// async/await. The async-fetch story arrives when the reactor lands.
+// async/await.
 
 import "stdlib/future" as future;
-import "stdlib/executor" as executor;
 
 // Innermost coroutine: just produces a value.
 async fn step_one() -> i64 {
@@ -43,9 +38,8 @@ async fn step_three() -> i64 {
     return y +% (300 as i64);
 }
 
-fn main() -> i32 {
-    let f: future::Future[i64] = step_three();
-    let total: i64 = executor::block_on::[i64](f);
+async fn main() -> i32 {
+    let total: i64 = await step_three();
     // 100 + 200 + 300 = 600
     let expected: i64 = 600 as i64;
     if total != expected { return 1; }

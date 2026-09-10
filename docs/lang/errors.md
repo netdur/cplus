@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **193 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **151** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **195 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **152** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -234,13 +234,13 @@ fn main() -> i32 { #println(1, 2); return 0; }
 
 ### E0309 · Wrong `main` signature
 
-`main` is declared with parameters or a return type other than `fn main() -> i32`.
+`main` is declared with parameters or a return type other than `i32`. The entry is `fn main() -> i32` or `async fn main() -> i32`; an async entry is judged as the synchronous wrapper the compiler drives, so `async fn main()` with a unit return fails the same way `fn main()` does.
 
 ```cplus
 fn main() { }
 ```
 
-**Fix.** Declare it as `fn main() -> i32`.
+**Fix.** Declare it as `fn main() -> i32` (or `async fn main() -> i32`; the compiler drives an async entry).
 
 <sub>repro: checked · cplus-core/src/sema.rs:3597 · test cplus-core/src/sema.rs:main_must_return_i32_e0309</sub>
 
@@ -868,7 +868,7 @@ fn main() -> i32 {
 }
 ```
 
-**Fix.** Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths. For a `match`: bind nothing (`E::A(_)`) if you only need to test the discriminant — that form does not consume, so the binding stays matchable. For a `guard let`, reach the complement payload with `else |E::B(x)|` rather than re-matching the scrutinee in the else block.
+**Fix.** Do not read after a `take`; clone the value first, or restructure so the move and the use are on disjoint paths. For a `match`: bind nothing (`E::A(_)`) if you only need to test the discriminant — that form does not consume, so the binding stays matchable. For a `guard let`, reach the complement payload with `else E::B(x)` rather than re-matching the scrutinee in the else block.
 
 <sub>repro: checked · cplus-core/src/sema.rs:13097 · test cplus-core/src/sema.rs:phase5_implicit_non_copy_param_consumes_e0335</sub>
 
@@ -1007,13 +1007,13 @@ fn main() -> i32 {
 
 ### E0350 · `guard let` complement overlaps the success pattern
 
-The explicit complement pattern in `else |Pat|` references the same enum variant as the success pattern, so the two overlap.
+The explicit complement pattern in `else Pat` references the same enum variant as the success pattern, so the two overlap.
 
 ```cplus
 enum Maybe { Some(i32), None }
 fn main() -> i32 {
     let m: Maybe = Maybe::Some(7);
-    guard let Maybe::Some(v) = m else |Maybe::Some(_)| { return 0; };
+    guard let Maybe::Some(v) = m else Maybe::Some(_) { return 0; };
     return v;
 }
 ```
@@ -1142,7 +1142,7 @@ fn caller() {
 
 ### E0371 · Use of a possibly-moved binding
 
-A non-Copy binding is moved on some control-flow branches but not others, then read at a point where it may already be moved (its merged state is MaybePartial).
+A non-Copy binding is moved on some control-flow paths and not others, then read at a point where it may already be moved (its merged state is MaybePartial).
 
 ```cplus
 struct B { x: i32 }
@@ -1159,7 +1159,7 @@ fn caller(c: bool) {
 
 *Reported as E0335 in simple cases; E0371 specifically covers a use of a binding moved on only some control-flow paths.*
 
-**Fix.** Ensure every branch either moves or preserves the binding, or clone it before the branch: `let y_owned = y.clone();`
+**Fix.** Ensure every path either moves or preserves the binding, or clone it before the split: `let y_owned = y.clone();`. Re-initialising counts as preserving: `y = f(y)`, where `f` takes ownership and hands back a new value, leaves `y` live on that path and is not this error.
 
 <sub>repro: source · cplus-core/src/borrowck.rs:2638</sub>
 
@@ -2011,16 +2011,18 @@ fn main() -> i32 {
 
 ### E1002 · Named argument on a callee with no known parameter list
 
-Named arguments work: `lower_named_call` reorders them into positional order and splices defaults for every callee whose parameter list it can identify — free functions, methods, and associated functions. This code fires for the two callees that resolve to no single parameter list. A fn-pointer VALUE records parameter types without their names, so there is nothing to match a label against. An ambiguous method name — two types declaring `go` with the labels in different positions — cannot be resolved without the receiver's type (identical signatures are fine: every candidate yields the same order). The callee is the problem, not the feature.
+Named arguments need a callee with named parameters, and this one has none. Two shapes reach here. A fn-pointer VALUE is the common one: its type (`fn(i32, i32)`) records the parameter types and nothing else, so there is no name for a label to match — the same is true of a fn-pointer held in a struct field. The other is a method reached through a GENERIC receiver: until the generic is instantiated the receiver is not one type, so no single parameter list belongs to it. A method name shared by several concrete types is NOT this error: lowering keys candidates by bare name and cannot choose, so it leaves the call to sema, which arranges it from the receiver's own declaration.
 
 ```cplus
-fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
+fn add(a: i32, b: i32) -> i32 { return a +% b; }
+
 fn main() -> i32 {
-    return add(v: 1);  // -> E1002 on a method/other call form
-}
+    let f: fn(i32, i32) -> i32 = add;
+    return f(a: 1, b: 2);  // -> E1002: `fn(i32, i32)` has parameter types,
+}                          //    not parameter names
 ```
 
-**Fix.** Pass these particular arguments positionally. Everywhere else, named arguments and defaults are available as normal.
+**Fix.** Pass these arguments positionally. On a generic receiver, that is the only form; a fn-pointer call has no other option either, since the names were never part of the type.
 
 <sub>repro: checked · cplus-core/src/sema.rs</sub>
 
@@ -2093,6 +2095,18 @@ extern fn g(x: i32 = 0) -> i32;  // -> E1008 extern parameter cannot have a defa
 **Fix.** Remove the default; pass the argument explicitly at every call.
 
 <sub>repro: checked · cplus-core/src/lower.rs</sub>
+
+### E1009 · A default value is nested too deep
+
+A default value may itself be a call that omits ITS defaults, so one splice can produce another. A default that names its own function produces them without end, and the compiler caps the nesting at 16 rather than running out of stack.
+
+```cplus
+fn f(a: i32 = f()) -> i32 { return a; }  // -> E1009 a default value is nested more than 16 deep
+```
+
+**Fix.** A default value cannot be defined in terms of itself. Give the parameter a value that does not call back into the same function.
+
+<sub>repro: checked · cplus-core/src/lower.rs · test cplus-core/src/lower.rs:a_self_referential_default_is_refused_rather_than_looping</sub>
 
 ## Real-time contracts
 
@@ -2274,14 +2288,14 @@ An attribute that must be unique appears more than once on the same item.
 
 ### E0358 · Invalid `#[test]` function signature
 
-A `#[test]` function does not have the signature `fn() -> i32` or `fn()` — it takes parameters or returns some other type.
+A `#[test]` function does not have the signature `fn() -> i32` or `fn()` (either may be `async`) — it takes parameters or returns some other type.
 
 ```cplus
 #[test] fn t(n: i32) { return; }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Give the test function the signature `fn() -> i32` or `fn()` (no parameters).
+**Fix.** Give the test function the signature `fn() -> i32` or `fn()` (no parameters); `async` is allowed on either, and the runner drives it.
 
 <sub>repro: checked · cplus-core/src/sema.rs:4628 · test cplus-core/src/sema.rs:test_fn_with_param_rejected_e0358</sub>
 
@@ -2665,6 +2679,22 @@ objc = "*"
 **Fix.** Declare the package once, or give every declaration the same spec. Platform sections are for packages that only apply to that platform.
 
 <sub>repro: scenario · cplus-core/src/manifest.rs:459 · test cpc/tests/platform_deps.rs:conflicting_dependency_declarations_fail_with_e0869</sub>
+
+### E0877 · Invalid Maven coordinate
+
+An `[android.maven]` entry is not a `"group:artifact" = "version"` pin — the version is in the key, a half is missing, the value is a wildcard — or the table appears under a platform other than `android`. Maven artifacts are an Android ecosystem, and their versions are exact pins: there is no version solver, on purpose.
+
+```toml
+[package]
+name = "app"
+
+[android.maven]
+"com.google.android.gms:play-services-maps:19.0.0" = "19.0.0"
+```
+
+**Fix.** Write the coordinate as `"group:artifact" = "exact.version"` under `[android.maven]`. `cpc pm add . --maven group:artifact:version` writes it for you and downloads the closure.
+
+<sub>repro: scenario · cplus-core/src/manifest.rs:1097 · test cpc/tests/platform_deps.rs:malformed_maven_coordinates_fail_with_e0877</sub>
 
 ### E0914 · Relative import escapes the project directory
 

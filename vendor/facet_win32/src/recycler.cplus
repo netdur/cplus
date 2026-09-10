@@ -1,0 +1,3373 @@
+// facet_win32/recycler — `list`, `table` and `collection` over a virtualising
+// panel this package builds itself.
+//
+// ---- why there is no control to lean on ------------------------------------------
+//
+// The other three backends each had one. NSTableView asks a DATA SOURCE for a
+// view for row N; GtkListView owns a pool of GtkListItems and hands one to a
+// FACTORY to bind to a position; a RecyclerView does the Android version of the
+// same. In each case the platform owns the scrolling, the pooling and the
+// virtualisation, and the backend supplies row content.
+//
+// Win32's `SysListView32` LOOKS like the same offer and is not. Its owner-data
+// mode (`LVS_OWNERDATA`) is genuinely virtual — it asks for row N when it needs
+// to draw it — but what it asks for is TEXT, through `LVN_GETDISPINFO`, and
+// what facet has is a NODE TREE. A facet row is an arbitrary subtree with real
+// controls in it, and a list view cannot host child windows inside its rows at
+// all. `LVS_OWNERDRAWFIXED` moves the problem without solving it: WM_DRAWITEM
+// hands over a device context, which is a place to paint, not a place to put a
+// button.
+//
+// So the virtualisation is BUILT HERE, over an ordinary scrolling panel. That
+// is the one place this package does more work than its siblings rather than
+// less, and it is worth being plain about why: the platform has a virtual list
+// and facet's row model cannot fit through it.
+//
+// ---- what is borrowed anyway ------------------------------------------------------
+//
+// facet's own seam, which is the portable half of every backend's recycler:
+//
+//   `mount::realise(node, host)`   build a subtree's windows with no facet parent
+//   `mount::unrealise(node)`       the matching teardown
+//   `mount::sync_from(node)`       apply dirty bits over a subtree `sync` never reaches
+//   `props.bind(i, row, ctx)`      write row `i`'s data INTO an existing row
+//   `props.row_kind(i, ctx)`       which SHAPE row `i` has, so a pooled row is
+//                                  only reused for a row of its own shape
+//
+// A bind does the cheap thing when the application made one possible — the
+// pooled row keeps its windows and only its DATA is rewritten — and the honest
+// thing when it did not: unrealise the old subtree, build a new one, realise
+// it. `set_row_bind` is optional in the contract and its absence is not an
+// error, which is exactly what that branch is.
+
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "stdlib/box" as box;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/list" as flist;
+import "facet/gestures" as gestures;
+import "facet/tree" as ftree;
+import "facet/label" as flabel;
+import "facet/collection" as fcollection;
+import "facet/table" as ftable;
+import "facet/vocabulary" as vocab;
+import "win32/winuser" as u;
+import "./sys" as sys;
+import "./controls" as controls;
+import "./paint" as paint;
+import "./geometry" as geometry;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+
+// ---- a realised row --------------------------------------------------------------
+//
+// `row` is the DATA index this cell currently shows, or -1 when it is free.
+// `kind` is what `row_kind` answered for that index — a free cell keeps it, so
+// a cell can be reused for a row of the same shape without rebuilding.
+//
+// `node` is a BOXED subtree this module owns. It has to be boxed: `realise`
+// takes a pointer and the tree has to outlive the call, and a row built on the
+// stack would be freed the moment the builder returned.
+
+struct Cell {
+    row: i64,
+    kind: usize,
+    node: usize,
+    top: f64,
+    height: f64,
+}
+
+struct ListState {
+    cells: vec::Vec[Cell],
+    // The scroll offset in points, and the total content height. Both are
+    // derived from the row map and kept here so a scroll message can move the
+    // rows without recomputing the map.
+    scroll: f64,
+    content: f64,
+    // The prefix sums, when heights are UNEVEN. Empty when every row is the
+    // same height, which is the common case and needs no array at all — see
+    // `offset_of`.
+    //
+    // KEYED BY LINE. With one column a line is a display row and the two
+    // numbers below are equal; with `columns`, a line holds up to that many
+    // rows and `lines` is what the offsets are indexed by.
+    offsets: vec::Vec[f64],
+    uniform: f64,
+    count: i64,
+    // How many LINES the map has. Kept beside `count` rather than recomputed
+    // from the props, because `row_at` searches the MAP and the map's own
+    // length is the only honest bound for that search — a source and a state
+    // can disagree, and when they do the state is what was built.
+    lines: i64,
+    selected: i64,
+    // THE SECOND MAP. Empty for a sequence; a pre-order flattening of the
+    // expanded model for a tree. `is_tree` says which map is live, because the
+    // machinery below them cannot tell from the state alone.
+    tree_rows: vec::Vec[TreeRow],
+    is_tree: bool,
+    // Whether the refresh strip is up. Kept here rather than read from the
+    // props each paint because `begin_refresh` and `end_refresh` are
+    // imperative bits that are raised and cleared, so the props alone cannot
+    // say whether the strip is currently showing.
+    refreshing: bool,
+    // Whether the visible window is currently inside the remaining-items
+    // threshold. Kept so the handler fires on the EDGE rather than on every
+    // scroll message inside the band — see `fire_threshold`.
+    in_threshold: bool,
+    // THE DPI THE MAP WAS BUILT AT. Row heights are scaled to the DPI
+    // (`row_scale`) when the map is built, but the map is rebuilt only on a
+    // MODEL change — and the very first build happens at mount, before the
+    // viewport is parented onto its DPI-aware top window, so it can bake a
+    // stale 96. `layout_rows` compares this against the live DPI and rebuilds
+    // when they differ, which also carries a window dragged between monitors.
+    built_dpi: u32,
+    // Whether a CONTENT-SIZED source (no `row_height`, no `row_height_of` — a
+    // `collection` whose cells carry their own height) has had a probe cell laid
+    // out to learn that height. The map's `default_row_height` is wrong for such
+    // a source, so `apply_content_sizing` measures once the viewport has a width
+    // and overrides `uniform`; this flag stops it re-measuring every frame. A
+    // rebuild clears it.
+    content_measured: bool,
+}
+
+fn new_state() -> ListState {
+    return ListState {
+        cells: vec::new::[Cell](),
+        scroll: 0.0f64,
+        content: 0.0f64,
+        offsets: vec::new::[f64](),
+        uniform: 0.0f64,
+        count: 0 as i64,
+        lines: 0 as i64,
+        selected: (0 as i64) -% (1 as i64),
+        tree_rows: vec::new::[TreeRow](),
+        is_tree: false,
+        refreshing: false,
+        in_threshold: false,
+        built_dpi: 0 as u32,
+        content_measured: false,
+    };
+}
+
+fn state_of(v: *u8) -> *ListState {
+    if v == (0 as *u8) { return 0 as *ListState; }
+    return { u::GetPropA(v, sys::prop_list() as *i8) } as *ListState;
+}
+
+// ---- the row map -------------------------------------------------------------------
+//
+// TWO SHAPES, and which one is live is a property of the data rather than a
+// setting. A list whose rows are all one height needs no table: the offset is
+// `i * h` and the row at `y` is `y / h`, both O(1) and both exact. A list with
+// `row_height_of` answering differently per row needs the prefix sums, which
+// cost one array and one build per count change.
+//
+// The uneven path was NOT built as a general case that the uniform one falls
+// out of. A 20,000-row list is the case that matters and it is almost always
+// uniform; making it walk an array of 20,000 doubles to find a scroll position
+// would be paying for a generality it does not use.
+
+// A ROW HEIGHT SCALES WITH THE DPI. 24 is the logical fallback for a row whose
+// application stated no height; unscaled it was 24 PHYSICAL pixels, and on a
+// 125% display the label inside — whose font IS scaled to the DPI — is ~30 tall,
+// so the rows overlapped and the text clipped. Seen on the gallery's List and
+// Collection pages at 120 DPI. The current view's DPI is stashed by the sync and
+// layout paths before any height is asked for; a test never sets it and reads
+// the plain 24 the assertions were written against.
+static ROW_DPI: u32 = 96;
+
+fn note_row_dpi(v: *u8) {
+    if v == (0 as *u8) { return; }
+    let d: u32 = { u::GetDpiForWindow(v) };
+    if d > (0 as u32) { ROW_DPI = d; }
+    return;
+}
+
+// 1.0 at 96 DPI, 1.25 at 120, and so on — the factor a LOGICAL row height is
+// multiplied by to reach physical pixels, matching the font scaling.
+fn row_scale() -> f64 { return (ROW_DPI as f64) / (96.0 as f64); }
+
+fn default_row_height() -> f64 { return 24.0f64 * row_scale(); }
+
+// ---- the row source, read WITHOUT a cast ---------------------------------------
+//
+// THIS REPLACES A TYPE CONFUSION, and it is worth writing down because the bug
+// compiled, ran, and would have called a garbage function pointer.
+//
+// `list_props` used to accept `K_LIST`, `K_TABLE` and `K_COLLECTION` and cast
+// all three to `*ListProps`, on a comment claiming "their props structs share
+// this prefix". They do not share ANY prefix:
+//
+//   ListProps        has_uneven_rows: bool, horizontal_scroll_bars, ... count, row
+//   CollectionProps  five EMBEDDED structs, then count, row
+//   TableProps       has_uneven_rows, style, row_height — and NOTHING ELSE
+//
+// So a collection's `count` read whatever a `ScrollBars` enum and four bools
+// happened to be, and its `row` read a pointer from the middle of an embedded
+// struct AND CALLED IT. A table is worse: `TableProps` is three fields, and
+// `.count` reads past the end of the allocation.
+//
+// A TABLE IS NOT A ROW SOURCE AT ALL — that is the other half of the mistake.
+// Its children are ordinary facet nodes and `table` only imposes a row height
+// on them, which is what facet_gtk's `apply_table` does. It has no `count` and
+// no `row` because it never needed them.
+//
+// So the row verbs are resolved into a plain struct per call, by a function
+// that reads the RIGHT props for the kind. No cast survives, and a kind that is
+// not a row source answers `live: false` rather than a pointer.
+
+struct SeqSource {
+    live: bool,
+    count: i64,
+    row: fn(usize, *u8) -> flex::Node,
+    row_ctx: usize,
+    bind: fn(usize, *flex::Node, *u8),
+    row_height_of: fn(usize, *u8) -> f64,
+    row_height_of_ctx: usize,
+    row_kind: fn(usize, *u8) -> usize,
+    row_kind_ctx: usize,
+    row_height: i64,
+    // `has_uneven_rows` is the SWITCH ON THE STATED HEIGHT, not a hint: a list
+    // that says its rows differ must not have one number imposed on all of
+    // them. `table` has read this since it was written (`apply_table`); the
+    // list's own copy was gated and ignored.
+    uneven: bool,
+    selection_mode: vocab::SelectionMode,
+    selected_index: i64,
+    on_item_selected: fn(*u8, *u8),
+    on_item_selected_ctx: usize,
+    // The control half — how it scrolls, what rules its rows, and whether it
+    // can refresh. A COLLECTION ANSWERS SOME OF THESE AND NOT OTHERS, which is
+    // the whole reason they are resolved here rather than cast to: a collection
+    // has scroll bars (on its embedded `ItemsViewProps`) and has no separator
+    // and no refresh at all, so it says so with a value rather than by reading
+    // a field that is not there.
+    vertical_scroll_bars: vocab::ScrollBars,
+    horizontal_scroll_bars: vocab::ScrollBars,
+    separator: bool,
+    separator_color: vocab::Color,
+    is_refreshable: bool,
+    can_refresh: bool,
+    refresh_color: vocab::Color,
+    on_refreshing: fn(*u8, *u8),
+    on_refreshing_ctx: usize,
+    scroll_to_index: i64,
+    scroll_anchor: vocab::ScrollAnchor,
+    splice_at: i64,
+    splice_count: i64,
+    // Grouping. `group_size` and `group_header` are the application's, exactly
+    // as `row` is — this file never invents a section.
+    is_grouped: bool,
+    can_mix_groups: bool,
+    group_count: i64,
+    group_size: fn(usize, *u8) -> usize,
+    group_size_ctx: usize,
+    group_header: fn(usize, *u8) -> flex::Node,
+    group_header_ctx: usize,
+    // MORE THAN ONE ITEM PER LINE. 1 for a list, which declares no such verb;
+    // a collection's `columns`, where 0 means "not stated" and is also 1. See
+    // the grid section below for what it costs — which is less than §1
+    // estimated, because the answer was not a cell holding N items.
+    columns: i64,
+}
+
+fn no_source() -> SeqSource {
+    return SeqSource {
+        live: false, count: 0 as i64, row: props::no_row, row_ctx: 0 as usize,
+        bind: props::no_bind, row_height_of: props::no_row_height_of,
+        row_height_of_ctx: 0 as usize, row_kind: props::no_row_kind,
+        row_kind_ctx: 0 as usize, row_height: 0 as i64, uneven: false,
+        selection_mode: vocab::SelectionMode::None,
+        selected_index: (0 as i64) -% (1 as i64),
+        on_item_selected: props::no_handler, on_item_selected_ctx: 0 as usize,
+        vertical_scroll_bars: vocab::ScrollBars::Default,
+        horizontal_scroll_bars: vocab::ScrollBars::Default,
+        separator: false, separator_color: vocab::Color::clear(),
+        is_refreshable: false, can_refresh: false,
+        refresh_color: vocab::Color::clear(),
+        on_refreshing: props::no_handler, on_refreshing_ctx: 0 as usize,
+        scroll_to_index: (0 as i64) -% (1 as i64),
+        scroll_anchor: vocab::ScrollAnchor::KeepScrollOffset,
+        splice_at: (0 as i64) -% (1 as i64), splice_count: 0 as i64,
+        is_grouped: false, can_mix_groups: false, group_count: 0 as i64,
+        group_size: props::no_group_size, group_size_ctx: 0 as usize,
+        group_header: props::no_group_header, group_header_ctx: 0 as usize,
+        columns: 1 as i64,
+    };
+}
+
+fn source_of(n: *core::Node) -> SeqSource {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return no_source(); }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return no_source(); }
+    let k: u32 = { (*d).kind };
+    if k == props::K_LIST {
+        let p: *props::ListProps = raw as *props::ListProps;
+        return SeqSource {
+            live: true, count: { (*p).count }, row: { (*p).row },
+            row_ctx: { #addr((*p).row_ctx) }, bind: { (*p).bind },
+            row_height_of: { (*p).row_height_of },
+            row_height_of_ctx: { #addr((*p).row_height_of_ctx) },
+            row_kind: { (*p).row_kind },
+            row_kind_ctx: { #addr((*p).row_kind_ctx) },
+            row_height: { (*p).row_height },
+            uneven: { (*p).has_uneven_rows },
+            selection_mode: { (*p).selection_mode },
+            selected_index: { (*p).selected_index },
+            on_item_selected: { (*p).on_item_selected },
+            on_item_selected_ctx: { #addr((*p).on_item_selected_ctx) },
+            vertical_scroll_bars: { (*p).vertical_scroll_bars },
+            horizontal_scroll_bars: { (*p).horizontal_scroll_bars },
+            // `Separator::Default` MEANS "the platform's usual answer" — the
+            // enum is Default-or-None, the same shape `ScrollBars` has. On
+            // Windows that answer is NO RULE between rows: modern Windows lists
+            // (WinUI, Fluent, the classic ListView with gridlines off) do not
+            // draw one, and appkit/gtk answer `true` because ruled rows are
+            // THEIR convention, not because the enum demands it.
+            //
+            // There is a second, harder reason it must be off here. A cell's
+            // controls are OPAQUE child windows — deliberately, so a rebound
+            // label erases its old string instead of drawing the new one on top
+            // of it (see `paint::ctl_color`). A separator drawn on the viewport
+            // is BEHIND those windows, so a full-width rule survives only in the
+            // row's padding gutter, where no control covers it — a 1px sliver at
+            // the left edge that reads as a stray tick, not a line. Drawing it
+            // cleanly would need a pool of 1px line windows z-ordered above the
+            // cells; until that exists, `Default` is honestly off. `None` was
+            // already off, so only an app that asked for the default changes.
+            separator: match { (*p).separator } {
+                vocab::Separator::Default => false,
+                vocab::Separator::None => false,
+            },
+            separator_color: { (*p).separator_color },
+            is_refreshable: { (*p).is_refreshable },
+            can_refresh: { (*p).can_refresh },
+            refresh_color: { (*p).refresh_color },
+            on_refreshing: { (*p).on_refreshing },
+            on_refreshing_ctx: { #addr((*p).on_refreshing_ctx) },
+            scroll_to_index: { (*p).scroll_to_index },
+            // A `list` declares no `scroll_anchor` — it is an ItemsView verb —
+            // so it keeps the offset, which is what it has always done.
+            scroll_anchor: vocab::ScrollAnchor::KeepScrollOffset,
+            splice_at: { (*p).splice_at },
+            splice_count: { (*p).splice_count },
+            is_grouped: { (*p).is_grouped },
+            // A `list` has no `ReorderableItemsViewProps` — see §1 — so it
+            // never reorders and the answer here cannot matter.
+            can_mix_groups: false,
+            group_count: { (*p).group_count },
+            group_size: { (*p).group_size },
+            group_size_ctx: { #addr((*p).group_size_ctx) },
+            group_header: { (*p).group_header },
+            group_header_ctx: { #addr((*p).group_header_ctx) },
+            // A `list` declares no `columns`. It is a StructuredItemsView verb
+            // and a list is not one, so a list is one item per line by the
+            // contract rather than by this package's choice.
+            columns: 1 as i64,
+        };
+    }
+    if k == props::K_COLLECTION {
+        let p: *props::CollectionProps = raw as *props::CollectionProps;
+        return SeqSource {
+            live: true, count: { (*p).count }, row: { (*p).row },
+            row_ctx: { #addr((*p).row_ctx) }, bind: { (*p).bind },
+            row_height_of: { (*p).row_height_of },
+            row_height_of_ctx: { #addr((*p).row_height_of_ctx) },
+            row_kind: { (*p).row_kind },
+            row_kind_ctx: { #addr((*p).row_kind_ctx) },
+            // A collection sizes its items through `item_sizing` rather than a
+            // stated row height, so there is no single number to impose and the
+            // measured default applies.
+            row_height: 0 as i64,
+            // A COLLECTION HAS NO SUCH FIELD. It states no row height either,
+            // so there is nothing for the switch to guard.
+            uneven: false,
+            selection_mode: { (*p).selectable_items_view.selection_mode },
+            selected_index: { (*p).selected_index },
+            on_item_selected: { (*p).selectable_items_view.on_selection_changed },
+            on_item_selected_ctx:
+                { #addr((*p).selectable_items_view.on_selection_changed_ctx) },
+            vertical_scroll_bars: { (*p).items_view.vertical_scroll_bars },
+            horizontal_scroll_bars: { (*p).items_view.horizontal_scroll_bars },
+            // A COLLECTION HAS NO SEPARATOR AND NO REFRESH. Neither verb is on
+            // any of its five embedded structs — that is a real difference
+            // between the kinds, not an omission here, and answering `false`
+            // is what says so.
+            separator: false, separator_color: vocab::Color::clear(),
+            is_refreshable: false, can_refresh: false,
+            refresh_color: vocab::Color::clear(),
+            on_refreshing: props::no_handler, on_refreshing_ctx: 0 as usize,
+            scroll_to_index: { (*p).items_view.scroll_to_index },
+            scroll_anchor: { (*p).items_view.scroll_anchor },
+            splice_at: { (*p).splice_at },
+            splice_count: { (*p).splice_count },
+            is_grouped: { (*p).groupable_items_view.is_grouped },
+            can_mix_groups: { (*p).reorderable_items_view.can_mix_groups },
+            group_count: { (*p).group_count },
+            group_size: { (*p).group_size },
+            group_size_ctx: { #addr((*p).group_size_ctx) },
+            group_header: { (*p).group_header },
+            group_header_ctx: { #addr((*p).group_header_ctx) },
+            columns: { (*p).structured_items_view.columns } as i64,
+        };
+    }
+    // `table` deliberately falls through: it is not a row source. See the
+    // header, and `controls::apply_table` for what it IS.
+    return no_source();
+}
+
+// `i` is a DISPLAY index; the application's `row_height_of` takes a data one.
+// A header takes the uniform height — facet declares no `group_header_height`,
+// and asking `row_height_of` about a row that is not a row would hand it an
+// index into somebody else's data.
+fn height_of_row(p: *SeqSource, i: usize) -> f64 {
+    if grouped(p) {
+        let d: i64 = data_index(p, i);
+        if d < (0 as i64) { return default_row_height(); }
+        return height_of_data_row(p, d as usize);
+    }
+    return height_of_data_row(p, i);
+}
+
+fn height_of_data_row(p: *SeqSource, i: usize) -> f64 {
+    let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
+    if f != props::no_row_height_of {
+        let h: f64 = f(i, { (*p).row_height_of_ctx } as *u8);
+        // ZERO MEANS "NO ANSWER", not a zero-height row — facet's own props
+        // file says so at the default's declaration. A row that measured zero
+        // would be invisible and unreachable.
+        // SCALED to the DPI, like the default and like the fonts, because a
+        // stated height is a LOGICAL one and the font inside the row is not:
+        // `list(row_height: 56)` with a font that is 15px on a 125% display
+        // needs the row to be 70, not 56, or the two lines overflow it.
+        if h > (0.0 as f64) { return h * row_scale(); }
+    }
+    // UNEVEN ROWS OVERRULE A STATED HEIGHT. A list that declares its rows
+    // differ has asked to be measured, and imposing one number on all of them
+    // is the clipping bug the flag exists to prevent. `apply_table` reads its
+    // own copy the same way.
+    let stated: i64 = { (*p).row_height };
+    if stated > (0 as i64) && !{ (*p).uneven } { return (stated as f64) * row_scale(); }
+    return default_row_height();
+}
+
+// Rebuild the map from the props. Called when the count, the heights or the
+// stated row height change — never per scroll.
+// ---- grouping: sections, resolved by ARITHMETIC ---------------------------------
+//
+// A grouped sequence shows a HEADER row before each group's rows. So the
+// DISPLAY index and the DATA index stop being the same number, and everything
+// that takes a row index has to say which it means.
+//
+// THE MAP IS NOT STORED, and that is the whole design constraint. `tree_rows`
+// exists because a tree's shape cannot be computed — it depends on which
+// branches are open — but a grouped sequence's can: group `g` starts at a
+// position that is the sum of the groups before it, plus one header each. A
+// stored map would be one entry per display row, which makes memory
+// proportional to the MODEL and destroys the property this whole file exists
+// to have. `FACET_WIN32_ROWS=1` on a grouped twenty-thousand-row list must
+// still print twelve cells.
+//
+// The cost is that resolving one display index walks the groups — O(groups),
+// not O(rows) — and it is asked only for the visible window. facet_gtk's
+// `slot_at` is the same arithmetic from the same reasoning.
+
+struct Slot {
+    // A header has no data row behind it: `data` is where its group STARTS,
+    // which is what a reorder needs, and `is_header` is what everything else
+    // branches on.
+    is_header: bool,
+    group: usize,
+    data: usize,
+}
+
+fn no_group_slot() -> Slot {
+    return Slot { is_header: false, group: 0 as usize, data: 0 as usize };
+}
+
+fn group_size_at(p: *SeqSource, g: usize) -> usize {
+    let f: fn(usize, *u8) -> usize = { (*p).group_size };
+    if f == props::no_group_size { return 0 as usize; }
+    return f(g, { (*p).group_size_ctx } as *u8);
+}
+
+// Headers only exist when the application supplies a builder for them. A
+// grouped list that named no `group_header` is grouped in its ARITHMETIC — the
+// rows are still in sections for a reorder's purposes — and shows no header
+// rows, which is a real configuration rather than a mistake.
+fn has_headers(p: *SeqSource) -> bool {
+    return { (*p).group_header } != props::no_group_header;
+}
+
+fn grouped(p: *SeqSource) -> bool {
+    return { (*p).is_grouped } && { (*p).group_count } > (0 as i64);
+}
+
+// How many DISPLAY rows the whole sequence has.
+fn display_count(p: *SeqSource) -> i64 {
+    if !grouped(p) { return { (*p).count }; }
+    var total: i64 = 0 as i64;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) { total = total + (1 as i64); }
+        total = total + (group_size_at(p, g) as i64);
+        g = g +% (1 as usize);
+    }
+    return total;
+}
+
+// What display row `at` IS.
+fn slot_at(p: *SeqSource, at: usize) -> Slot {
+    if !grouped(p) {
+        return Slot { is_header: false, group: 0 as usize, data: at };
+    }
+    var seen: usize = 0 as usize;
+    var data: usize = 0 as usize;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) {
+            if seen == at {
+                return Slot { is_header: true, group: g, data: data };
+            }
+            seen = seen +% (1 as usize);
+        }
+        let size: usize = group_size_at(p, g);
+        if at < seen +% size {
+            return Slot { is_header: false, group: g, data: data +% (at -% seen) };
+        }
+        seen = seen +% size;
+        data = data +% size;
+        g = g +% (1 as usize);
+    }
+    return no_group_slot();
+}
+
+// The DATA index behind a display row, or -1 for a header. What a selection and
+// a reorder report, because those are about the application's rows and not
+// about the furniture between them.
+fn data_index(p: *SeqSource, at: usize) -> i64 {
+    if !grouped(p) { return at as i64; }
+    let slot: Slot = slot_at(p, at);
+    if slot.is_header { return (0 as i64) -% (1 as i64); }
+    return slot.data as i64;
+}
+
+// ---- the grid: MORE THAN ONE ITEM PER LINE, by arithmetic ------------------------
+//
+// MANIFEST §1 priced this as "a cell that holds N items and an item slot that
+// survives it", and that was the expensive answer to a question with a cheap
+// one. The two objections it recorded were real:
+//
+//   `bind` TAKES ONE NODE, so a row holding three items has nothing to rebind
+//   through — every scroll would rebuild instead of recycling.
+//
+//   SELECTION WOULD BE WRONG. A cell carries one item slot, so clicking the
+//   second item in a three-item cell reports the cell's row.
+//
+// Both are objections to the CELL holding several items. It does not have to:
+// a cell already is one display index, one node, one window, one item slot, and
+// a grid is what happens when those windows are placed side by side. So the
+// pool, the recycling, the binding, the hit test, the selection and the reorder
+// are all untouched — the change is that OFFSETS ARE KEYED BY LINE rather than
+// by display index, and a cell knows which column it is in.
+//
+// A LINE IS NOT A DISPLAY INDEX any more, which is the whole of the new
+// bookkeeping. Ungrouped, line `i / C` holds displays `i*C ..= i*C+C-1`.
+// Grouped, a HEADER TAKES A WHOLE LINE — a section title beside two items would
+// read as a third item — and each section's items start a fresh line, so a
+// group of four with three columns is two lines, the second holding one item.
+//
+// The map is still not stored, for the reason the grouping section states: it
+// would be one entry per display row and this file exists to not have that.
+
+fn columns_of(p: *SeqSource) -> i64 {
+    let c: i64 = { (*p).columns };
+    // ZERO IS "NOT STATED", which facet's own default is, and one column is
+    // what a collection that never asked has always drawn.
+    if c < (2 as i64) { return 1 as i64; }
+    return c;
+}
+
+fn is_grid(p: *SeqSource) -> bool { return columns_of(p) > (1 as i64); }
+
+// Lines per group of `n` items: the last one is short unless the count divides.
+fn lines_for(n: i64, c: i64) -> i64 {
+    if n <= (0 as i64) { return 0 as i64; }
+    return (n + c -% (1 as i64)) / c;
+}
+
+// How many LINES the whole sequence occupies.
+fn line_count(p: *SeqSource) -> i64 {
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return display_count(p); }
+    if !grouped(p) { return lines_for({ (*p).count }, c); }
+    var total: i64 = 0 as i64;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) { total = total + (1 as i64); }
+        total = total + lines_for(group_size_at(p, g) as i64, c);
+        g = g +% (1 as usize);
+    }
+    return total;
+}
+
+// Which line a display row sits on, and which column within it. A header
+// answers column 0 and is understood to span the line — see `span_of`.
+fn line_of(p: *SeqSource, at: usize) -> i64 {
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return at as i64; }
+    if !grouped(p) { return (at as i64) / c; }
+    var line: i64 = 0 as i64;
+    var seen: usize = 0 as usize;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) {
+            if seen == at { return line; }
+            seen = seen +% (1 as usize);
+            line = line + (1 as i64);
+        }
+        let size: usize = group_size_at(p, g);
+        if at < seen +% size {
+            return line + (((at -% seen) as i64) / c);
+        }
+        seen = seen +% size;
+        line = line + lines_for(size as i64, c);
+        g = g +% (1 as usize);
+    }
+    return if line > (0 as i64) { line -% (1 as i64) } else { 0 as i64 };
+}
+
+fn col_of(p: *SeqSource, at: usize) -> i64 {
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return 0 as i64; }
+    let slot: Slot = slot_at(p, at);
+    // A HEADER IS ALWAYS AT THE START of its own line, whatever the arithmetic
+    // would say about the display index.
+    if slot.is_header { return 0 as i64; }
+    if !grouped(p) { return (at as i64) % c; }
+    // Within its own group, because each section starts a fresh line.
+    return ((at as i64) -% group_start_display(p, slot.group)) % c;
+}
+
+// How many columns a display row covers: a header covers the line, an item
+// covers one. What makes a section title full-width without a second layout.
+fn span_of(p: *SeqSource, at: usize) -> i64 {
+    if !is_grid(p) { return 1 as i64; }
+    if slot_at(p, at).is_header { return columns_of(p); }
+    return 1 as i64;
+}
+
+// The display index a group's first ITEM has (past its header, if it has one).
+fn group_start_display(p: *SeqSource, g: usize) -> i64 {
+    var seen: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < g {
+        if has_headers(p) { seen = seen + (1 as i64); }
+        seen = seen + (group_size_at(p, i) as i64);
+        i = i +% (1 as usize);
+    }
+    if has_headers(p) { seen = seen + (1 as i64); }
+    return seen;
+}
+
+// The first and last display rows ON a line — the inverse walk, and the reason
+// the visible window can still be stated in display indices after being found
+// in lines.
+fn first_display_of_line(p: *SeqSource, line: i64) -> i64 {
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return line; }
+    if !grouped(p) { return line * c; }
+    var at: i64 = 0 as i64;
+    var l: i64 = 0 as i64;
+    var g: usize = 0 as usize;
+    while (g as i64) < { (*p).group_count } {
+        if has_headers(p) {
+            if l == line { return at; }
+            l = l + (1 as i64);
+            at = at + (1 as i64);
+        }
+        let size: i64 = group_size_at(p, g) as i64;
+        let lines: i64 = lines_for(size, c);
+        if line < l + lines { return at + ((line -% l) * c); }
+        l = l + lines;
+        at = at + size;
+        g = g +% (1 as usize);
+    }
+    return at;
+}
+
+fn last_display_of_line(p: *SeqSource, line: i64) -> i64 {
+    let first: i64 = first_display_of_line(p, line);
+    let c: i64 = columns_of(p);
+    if c == (1 as i64) { return first; }
+    if slot_at(p, first as usize).is_header { return first; }
+    var last: i64 = first;
+    var k: i64 = 1 as i64;
+    while k < c {
+        let at: i64 = first + k;
+        // OFF THE END, or into the next section — either way the line stops.
+        if at >= display_count(p) { return last; }
+        if line_of(p, at as usize) != line { return last; }
+        last = at;
+        k = k + (1 as i64);
+    }
+    return last;
+}
+
+// The offsets are keyed by LINE. With one column a line IS a display row and
+// nothing about this changed; with more, a line is up to `columns` of them and
+// its height is the TALLEST — an item shorter than its neighbour sits at the
+// top of the line rather than dragging the next line up over it.
+fn rebuild_map(s: *ListState, p: *SeqSource) {
+    // DISPLAY rows, not data rows — a grouped sequence has a header between
+    // sections — and `count` stays the display count, because every OTHER part
+    // of this file addresses cells by display index. Only the offsets are per
+    // line.
+    let count: i64 = display_count(p);
+    { (*s).count = count };
+    { (*s).built_dpi = ROW_DPI };
+    { (*s).content_measured = false };
+    { (*s).lines = 0 as i64 };
+    { (*s).offsets = vec::new::[f64]() };
+    { (*s).content = 0.0f64 };
+    { (*s).uniform = 0.0f64 };
+    if count <= (0 as i64) { return; }
+    let lines: i64 = line_count(p);
+    { (*s).lines = lines };
+    let n: usize = lines as usize;
+    let first: f64 = height_of_row(p, 0 as usize);
+    // Is every row the same height? Asked by SAMPLING rather than by walking:
+    // a `row_height_of` that is absent is uniform by construction, and one that
+    // is present is asked for every row anyway when it turns out not to be.
+    let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
+    if f == props::no_row_height_of {
+        { (*s).uniform = first };
+        { (*s).content = first * (n as f64) };
+        return;
+    }
+    var total: f64 = 0.0f64;
+    var even: bool = true;
+    var i: usize = 0 as usize;
+    while i < n {
+        let h: f64 = line_height(p, i as i64);
+        if h != first { even = false; }
+        let _e: status::Status = { (*s).offsets.append(total) };
+        total = total + h;
+        i = i +% (1 as usize);
+    }
+    { (*s).content = total };
+    if even {
+        // The application answered per row and every answer was the same. Drop
+        // the array: it is a second copy of one number.
+        { (*s).uniform = first };
+        { (*s).offsets = vec::new::[f64]() };
+    }
+    return;
+}
+
+// The tallest thing on a line, which with one column is just that row's own
+// height and costs the same call it always did.
+fn line_height(p: *SeqSource, line: i64) -> f64 {
+    let first: i64 = first_display_of_line(p, line);
+    var h: f64 = height_of_row(p, first as usize);
+    if !is_grid(p) { return h; }
+    let last: i64 = last_display_of_line(p, line);
+    var at: i64 = first + (1 as i64);
+    while at <= last {
+        let other: f64 = height_of_row(p, at as usize);
+        if other > h { h = other; }
+        at = at + (1 as i64);
+    }
+    return h;
+}
+
+// `i` is a LINE. Every caller that holds a display index goes through
+// `line_of` first — which is the one rule the grid adds to this file.
+fn offset_of(s: *ListState, i: usize) -> f64 {
+    if { (*s).uniform } > (0.0 as f64) { return { (*s).uniform } * (i as f64); }
+    return match { (*s).offsets.at(i) } {
+        option::Option[f64]::Some(o) => o,
+        option::Option[f64]::None => 0.0f64,
+    };
+}
+
+// `p` IS ONLY REACHED ON THE UNEVEN PATH, which a tree never takes — a tree
+// states one height for every row, so `rebuild_tree_map` always sets `uniform`
+// and this returns before looking at the props. That is what makes it safe to
+// call with the null a tree has for `ListProps`, and it is stated because it
+// is otherwise luck.
+fn height_at(s: *ListState, i: usize, p: *SeqSource) -> f64 {
+    if { (*s).uniform } > (0.0 as f64) { return { (*s).uniform }; }
+    return line_height(p, i as i64);
+}
+
+// The first LINE whose bottom is past `y`. Binary search on the uneven path;
+// arithmetic on the uniform one.
+//
+// It answers a line and not a display row, and with one column those are the
+// same number — which is why every existing caller and every existing test
+// still reads correctly. A caller that wants rows asks
+// `first_display_of_line` / `last_display_of_line` for the ends.
+//
+// Same contract as `height_at` about `p`: the uniform path answers first, and a
+// tree is always uniform.
+fn row_at(s: *ListState, y: f64, p: *SeqSource) -> i64 {
+    // THE MAP'S OWN LENGTH, not the source's. `row_at` searches what was
+    // built, and a tree fills the same field from a different builder — so
+    // this needs no branch on `is_tree` and cannot be told a line count by
+    // props that have moved on since the map was made.
+    let total: i64 = { (*s).lines };
+    if total <= (0 as i64) { return 0 as i64; }
+    if y <= (0.0 as f64) { return 0 as i64; }
+    let uni: f64 = { (*s).uniform };
+    if uni > (0.0 as f64) {
+        let idx: i64 = (y / uni) as i64;
+        if idx >= total { return total -% (1 as i64); }
+        return idx;
+    }
+    var lo: i64 = 0 as i64;
+    var hi: i64 = total -% (1 as i64);
+    while lo < hi {
+        let mid: i64 = lo + (hi -% lo) / (2 as i64);
+        let top: f64 = offset_of(s, mid as usize);
+        let bot: f64 = top + height_at(s, mid as usize, p);
+        if bot <= y { lo = mid + (1 as i64); } else { hi = mid; }
+    }
+    return lo;
+}
+
+// ---- the cell pool -------------------------------------------------------------------
+
+fn free_cell_of_kind(s: *ListState, kind: usize) -> i64 {
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).cells.count() };
+    while i < n {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => {
+                if { (*c).row } < (0 as i64) && { (*c).kind } == kind {
+                    return i as i64;
+                }
+            }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return (0 as i64) -% (1 as i64);
+}
+
+// The WINDOW of a pooled cell, which is what a row-lifecycle handler is handed
+// as its sender. A cell holds the row's NODE; the window is the node's view.
+fn view_of_cell(s: *ListState, i: usize) -> *u8 {
+    return match { (*s).cells.at_ptr(i) } {
+        option::Option[*Cell]::Some(c) => {
+            let rp: *core::Node = { (*c).node } as *core::Node;
+            if rp == (0 as *core::Node) { 0 as *u8 } else { core::view_of(rp) }
+        }
+        option::Option[*Cell]::None => 0 as *u8,
+    };
+}
+
+fn cell_showing(s: *ListState, row: i64) -> i64 {
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).cells.count() };
+    while i < n {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => { if { (*c).row } == row { return i as i64; } }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return (0 as i64) -% (1 as i64);
+}
+
+// The POOL a cell comes from. A header is its own shape — pooling it with data
+// rows would rebind a header's subtree as a row and vice versa, which is the
+// type confusion `SeqSource` exists to prevent, arriving by another door.
+fn header_shape() -> usize { return 0xFFFFFFFF as usize; }
+
+fn kind_of_row(p: *SeqSource, i: usize) -> usize {
+    if grouped(p) {
+        let slot: Slot = slot_at(p, i);
+        if slot.is_header { return header_shape(); }
+        return kind_of_data_row(p, slot.data);
+    }
+    return kind_of_data_row(p, i);
+}
+
+fn kind_of_data_row(p: *SeqSource, i: usize) -> usize {
+    let f: fn(usize, *u8) -> usize = { (*p).row_kind };
+    if f == props::no_row_kind { return 0 as usize; }
+    return f(i, { (*p).row_kind_ctx } as *u8);
+}
+
+// Build row `i`'s subtree, box it, realise it into the viewport, and hand back
+// the boxed pointer.
+//
+// THE INDEX IS WRITTEN ONTO THE ROOT before the realise. `component::
+// item_index_of(sender)` walks up from whatever was clicked looking for a node
+// carrying one, so a row that never got an index reports None and the
+// application's handler cannot tell which row fired.
+// `i` is a DISPLAY index. A header comes from `group_header` and a data row
+// from `row`, and which one this is comes from the arithmetic rather than from
+// a flag the caller passed — so no caller can get it wrong.
+fn build_row(v: *u8, p: *SeqSource, i: usize) -> *core::Node {
+    if grouped(p) {
+        let slot: Slot = slot_at(p, i);
+        if slot.is_header { return build_header(v, p, i, slot.group); }
+        return build_data_row(v, p, i, slot.data);
+    }
+    return build_data_row(v, p, i, i);
+}
+
+fn build_header(v: *u8, p: *SeqSource, display: usize, group: usize) -> *core::Node {
+    let f: fn(usize, *u8) -> flex::Node = { (*p).group_header };
+    if f == props::no_group_header { return 0 as *core::Node; }
+    var n: core::Node = f(group, { (*p).group_header_ctx } as *u8);
+    let rp: *core::Node = match box::new::[core::Node](n) {
+        option::Option[box::Box[core::Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp == (0 as *core::Node) { return 0 as *core::Node; }
+    // THE ITEM SLOT IS THE DISPLAY INDEX, as it is for a data row — it is what
+    // the cell is keyed by, and `on_row_click` turns it back into a data index
+    // (or refuses, for a header) through the same arithmetic.
+    core::set_item_index(rp, display);
+    let _view: *u8 = mount::realise(rp, controls::document_host(v));
+    return rp;
+}
+
+fn build_data_row(v: *u8, p: *SeqSource, display: usize, data: usize) -> *core::Node {
+    let f: fn(usize, *u8) -> flex::Node = { (*p).row };
+    if f == props::no_row { return 0 as *core::Node; }
+    // THE APPLICATION'S BUILDER TAKES A DATA INDEX. Handing it the display one
+    // would build row 4 where row 3 belongs the moment a header appears above.
+    var n: core::Node = f(data, { (*p).row_ctx } as *u8);
+    let rp: *core::Node = match box::new::[core::Node](n) {
+        option::Option[box::Box[core::Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp == (0 as *core::Node) { return 0 as *core::Node; }
+    core::set_item_index(rp, display);
+    let _view: *u8 = mount::realise(rp, controls::document_host(v));
+    return rp;
+}
+
+// WRITTEN INTO `Data.key` DIRECTLY, and that is worth a word because facet
+// exposes no setter for it. `key` is an owned `text::Text` — facet's own
+// comment records that it used to be a `str` and was changed precisely because
+// a computed key is a use-after-free otherwise — so the Text `row_id` returns
+// is MOVED in rather than viewed. There is no interning: facet considered it
+// for this field and rejected it.
+//
+// A `core::set_key` would be the better door and facet should grow one; until
+// it does, this is the only way a backend can name a row it did not build, and
+// an unnamed row is one `describe_ui` cannot see and an agent cannot click.
+fn name_row(rp: *core::Node, item: *ftree::TreeNode, p: *ftree::TreeProps) {
+    let d: *core::Data = core::node_data(rp);
+    if d == (0 as *core::Data) { return; }
+    // A row the application already keyed keeps that key: `row_id` names rows
+    // the builder left anonymous, it does not override a stated address.
+    if { (*d).key.view() } != "" { return; }
+    let f: fn(*ftree::TreeNode, *u8) -> text::Text = { (*p).row_id };
+    if f != ftree::no_row_id {
+        let t: text::Text = f(item, { (*p).row_id_ctx });
+        if t.view() != "" { { (*d).key = t }; return; }
+    }
+    { (*d).key = { (*item).id }.clone() };
+    return;
+}
+
+fn drop_row(rp: *core::Node) {
+    if rp == (0 as *core::Node) { return; }
+    mount::unrealise(rp);
+    let _gone: box::Box[core::Node] = box::from_raw::[core::Node](rp as *u8);
+    return;
+}
+
+// ---- content-sized rows: a cell that carries its OWN height ----
+//
+// A `collection` states no `row_height` and supplies no `row_height_of`; its
+// `source_of` sets `row_height: 0` with the comment "the measured default
+// applies." But `height_of_data_row` has no cell to measure and falls back to
+// the fixed 24-point `default_row_height` — so a cell that states `.height(72)`
+// (the gallery's card does) is packed into a 30px row and every one overlaps its
+// neighbour. The fix is to lay a probe cell out and read the height the cell
+// itself asks for.
+
+fn is_content_sized(p: *SeqSource) -> bool {
+    return { (*p).row_height } == (0 as i64)
+        && { (*p).row_height_of } == props::no_row_height_of;
+}
+
+// Build one probe cell, lay it out at the column width with its height
+// UNCONSTRAINED so the cell's own stated (or natural) height wins, read that,
+// and throw the cell away. Returns a PHYSICAL height to match `uniform`, or 0
+// when there is nothing to measure yet (no viewport width, no rows).
+fn measured_uniform(v: *u8, s: *ListState, n: *core::Node, p: *SeqSource) -> f64 {
+    if { (*s).count } <= (0 as i64) { return 0.0f64; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return 0.0f64; }
+    let scale: f64 = sys::dpi_scale(v);
+    let vw: f64 = ((vr.right -% vr.left) as f64) / scale;   // logical viewport
+    if vw <= (0.0 as f64) { return 0.0f64; }
+    let cols: f64 = columns_of(p) as f64;
+    let cw: f64 = if cols > (0.0 as f64) { vw / cols } else { vw };
+    let rp: *core::Node = make_row(v, s, n, 0 as usize);
+    if rp == (0 as *core::Node) { return 0.0f64; }
+    // Width constrained to the column, height left to the cell.
+    { (*rp).calculate_layout(width: cw) };
+    let h: f64 = { (*rp).frame() }.height;   // logical
+    drop_row(rp);
+    if h <= (0.0 as f64) { return 0.0f64; }
+    return h * scale;   // to physical, as `uniform` is
+}
+
+// Once per rebuild, for a content-sized source, replace the default `uniform`
+// with the height the cell actually wants. Gated on `content_measured` so the
+// probe is built once — the first frame the viewport has a width — and not on
+// every scroll. A rebuild clears the flag.
+fn apply_content_sizing(v: *u8, s: *ListState, n: *core::Node) {
+    if { (*s).content_measured } { return; }
+    if { (*s).is_tree } { return; }
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    let p: *SeqSource = #addr_of(src);
+    if !is_content_sized(p) { { (*s).content_measured = true }; return; }
+    let mu: f64 = measured_uniform(v, s, n, p);
+    if mu <= (0.0 as f64) { return; }   // viewport not ready — try again next frame
+    { (*s).uniform = mu };
+    { (*s).content = mu * ({ (*s).lines } as f64) };
+    { (*s).offsets = vec::new::[f64]() };
+    { (*s).content_measured = true };
+    return;
+}
+
+// Point a free cell at row `i`. Cheap when the application supplied a `bind`
+// and the shapes match; a rebuild otherwise.
+fn fill_cell(v: *u8, s: *ListState, p: *SeqSource, slot: usize, i: usize) {
+    let kind: usize = kind_of_row(p, i);
+    match { (*s).cells.at_ptr(slot) } {
+        option::Option[*Cell]::Some(c) => {
+            let bind: fn(usize, *flex::Node, *u8) = { (*p).bind };
+            let same: bool = { (*c).kind } == kind && { (*c).node } != (0 as usize);
+            // A HEADER IS NEVER REBOUND. `bind` writes row `i` into an existing
+            // subtree and the application's binder knows nothing about section
+            // headers — it would write a data row's content into the header's
+            // shape. A header cell is rebuilt, which is what the shape mismatch
+            // below already does for any cell whose kind changed.
+            let is_header: bool = kind == header_shape();
+            if bind != props::no_bind && same && !is_header {
+                let rp: *core::Node = { (*c).node } as *core::Node;
+                // `bind` SHARES `row_ctx` — `set_row_bind` writes the ctx it was
+                // given into that same slot, because a row builder and a row
+                // binder are two verbs of one object and facet gave them one
+                // context rather than two that could disagree.
+                // THE BINDER TAKES A DATA INDEX, as the builder does.
+                bind(data_index(p, i) as usize, rp, { (*p).row_ctx } as *u8);
+                core::set_item_index(rp, i);
+                // THE ROW IS NOT IN A WINDOW, so the ordinary sync will never
+                // reach it — `sync_from` is the door facet opened for exactly
+                // this. Without it a bound row keeps showing the previous
+                // row's data, with every dirty bit set and nobody to carry it.
+                mount::sync_from(rp);
+                { (*c).row = i as i64 };
+                return;
+            }
+            // No bind, or a different shape: tear the old subtree down and
+            // build the new one. Honest rather than cheap, and the contract
+            // says `set_row_bind` is optional.
+            drop_row({ (*c).node } as *core::Node);
+            let rp: *core::Node = build_row(v, p, i);
+            { (*c).node = { #addr(rp as *u8) } };
+            { (*c).kind = kind };
+            { (*c).row = i as i64 };
+        }
+        option::Option[*Cell]::None => { }
+    }
+    return;
+}
+
+// Hide every window a freed cell owns. A cell whose ROOT is a real window (a
+// `box` row) is hidden by hiding that one — its children are child windows of it
+// and go with it. But a BARE CONTAINER (a `column` row, the common case) has no
+// window of its own: `place_row`'s else-branch realised its children straight
+// into the VIEWPORT, so each of THEIR windows has to be hidden here, and a nested
+// container's the same way down. Without this a freed bare-container cell leaves
+// its labels on the viewport and the next row draws over the ghost — seen when a
+// scrolled list showed the top row's old binding behind its new one.
+fn hide_cell_windows(rp: *core::Node) {
+    if rp == (0 as *core::Node) { return; }
+    let view: *u8 = core::view_of(rp);
+    if view != (0 as *u8) {
+        let _s: i32 = { u::ShowWindow(view, sys::sw_hide()) };
+        return;
+    }
+    let count: usize = core::child_count_of(rp);
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(rp, i) {
+            option::Option[*core::Node]::Some(c) => { hide_cell_windows(c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn free_cell(s: *ListState, slot: usize) {
+    match { (*s).cells.at_ptr(slot) } {
+        option::Option[*Cell]::Some(c) => {
+            // THE SUBTREE IS KEPT, which is the whole of what pooling is: a
+            // freed cell holds its windows and its shape, and the next row of
+            // that shape rebinds into it rather than rebuilding.
+            { (*c).row = (0 as i64) -% (1 as i64) };
+            // Off-screen rather than destroyed. A hidden window costs nothing
+            // to keep and everything to rebuild.
+            let rp: *core::Node = { (*c).node } as *core::Node;
+            hide_cell_windows(rp);
+        }
+        option::Option[*Cell]::None => { }
+    }
+    return;
+}
+
+
+// ---- the two maps meet the one machine -------------------------------------------
+//
+// Three questions differ between a sequence and a tree, and only three: what
+// SHAPE a row has, how to BUILD one, and how to REBIND a pooled cell to a
+// different row. Everything else the machine does — which rows are visible,
+// where they sit, which cell is free, when to release — is answered from
+// `ListState` alone and never asks what kind of map filled it.
+//
+// So the fork is here, in three functions, rather than in `layout_rows`. That
+// is what keeps the second map from being a second recycler.
+
+fn row_shape(s: *ListState, n: *core::Node, i: usize) -> usize {
+    if { (*s).is_tree } {
+        // A tree has no `row_kind`: every row is one shape, which is what one
+        // reuse pool means. A tree that wanted per-depth shapes would say so
+        // through the same verb a list uses, and it does not have one.
+        return 0 as usize;
+    }
+    var src: SeqSource = source_of(n);
+    if !src.live { return 0 as usize; }
+    return kind_of_row(#addr_of(src), i);
+}
+
+fn make_row(v: *u8, s: *ListState, n: *core::Node, i: usize) -> *core::Node {
+    if { (*s).is_tree } {
+        let tp: *ftree::TreeProps = tree_props(n);
+        if tp == (0 as *ftree::TreeProps) { return 0 as *core::Node; }
+        return build_tree_row(v, s, tp, i);
+    }
+    var src: SeqSource = source_of(n);
+    if !src.live { return 0 as *core::Node; }
+    return build_row(v, #addr_of(src), i);
+}
+
+fn rebind_cell(v: *u8, s: *ListState, n: *core::Node, slot: usize, i: usize) {
+    if { (*s).is_tree } {
+        // A TREE'S BIND TAKES THE NODE, and its argument order differs from a
+        // list's — `(node, ctx, row)` against `(index, row, ctx)`. Two verbs
+        // that mean the same thing and do not share a signature, so they cannot
+        // share a call.
+        let tp: *ftree::TreeProps = tree_props(n);
+        if tp == (0 as *ftree::TreeProps) { return; }
+        let item: *ftree::TreeNode = tree_node_at(s, i);
+        if item == (0 as *ftree::TreeNode) { return; }
+        match { (*s).cells.at_ptr(slot) } {
+            option::Option[*Cell]::Some(c) => {
+                let bind: fn(*ftree::TreeNode, *u8, *flex::Node) = { (*tp).bind };
+                let rp: *core::Node = { (*c).node } as *core::Node;
+                if bind != ftree::no_bind && rp != (0 as *core::Node) {
+                    bind(item, { (*tp).bind_ctx }, rp);
+                    core::set_item_index(rp, i);
+                    mount::sync_from(rp);
+                    { (*c).row = i as i64 };
+                    return;
+                }
+                drop_row(rp);
+                let fresh: *core::Node = build_tree_row(v, s, tp, i);
+                { (*c).node = { #addr(fresh as *u8) } };
+                { (*c).row = i as i64 };
+            }
+            option::Option[*Cell]::None => { }
+        }
+        return;
+    }
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    fill_cell(v, s, #addr_of(src), slot, i);
+    return;
+}
+
+// Which model is live, for the parts of `layout_rows` that only need to know
+// whether there is one at all.
+fn has_model(s: *ListState, n: *core::Node) -> bool {
+    if { (*s).is_tree } { return tree_props(n) != (0 as *ftree::TreeProps); }
+    return source_of(n).live;
+}
+// ---- the visible window ----------------------------------------------------------------
+
+// Realise what is on screen, free what is not, and place both. The one function
+// that does the work; everything else here is bookkeeping for it.
+fn layout_rows(v: *u8, n: *core::Node) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    note_row_dpi(v);
+    // EITHER MAP will do — see `row_shape` / `make_row` / `rebind_cell`. The
+    // visible-window arithmetic below reads `ListState` alone and never asks
+    // which one filled it.
+    if !has_model(s, n) { return; }
+    // Resolved once for the whole pass. A tree answers `live: false` here and
+    // never reaches the row verbs — its heights come from `uniform`, which
+    // `rebuild_tree_map` always sets.
+    var src: SeqSource = source_of(n);
+    let p: *SeqSource = #addr_of(src);
+    // THE MAP CAN BE STALE ON DPI. Row heights are scaled to the DPI when the
+    // map is built, but the map is rebuilt only on a model change — and the
+    // first build is at mount, before the viewport is on its DPI-aware top
+    // window, so it can bake a stale 96. Rebuild when the live DPI no longer
+    // matches; this also carries a window dragged between monitors. See
+    // `built_dpi`.
+    if { (*s).built_dpi } != ROW_DPI {
+        if { (*s).is_tree } {
+            let tp: *ftree::TreeProps = tree_props(n);
+            if tp != (0 as *ftree::TreeProps) { rebuild_tree_map(s, tp); }
+        } else {
+            rebuild_map(s, p);
+        }
+        // AND THE LIVE CELLS ARE STALE TOO. A pooled cell was built and had its
+        // fonts measured at the old DPI; the new map alone would place those old
+        // windows. Releasing them makes the fill loop below build fresh ones at
+        // the live DPI — the same release `apply_sequence` does on a model change.
+        release_all(s);
+    }
+    // A CONTENT-SIZED SOURCE gets the height its cell asks for, not the fixed
+    // default the map baked. Measured once the viewport has a width (which it
+    // may not have had when the map was first built), then cached. See
+    // `apply_content_sizing`.
+    apply_content_sizing(v, s, n);
+    let count: i64 = { (*s).count };
+
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return; }
+    let vw: f64 = (vr.right -% vr.left) as f64;
+    // THE REFRESH STRIP TAKES ROOM FROM THE ROWS. It cannot be an overlay: the
+    // rows are child windows and a child is painted OVER its parent, so a strip
+    // drawn in the viewport's WM_PAINT would be covered by the first row. So
+    // the rows start below it while it is up, and the visible-window arithmetic
+    // is done against the reduced height — otherwise the last row is built and
+    // then placed off the bottom.
+    let strip: f64 = strip_height(s);
+    let vh: f64 = ((vr.bottom -% vr.top) as f64) - strip;
+    if vh <= (0.0 as f64) { return; }
+
+    // Clamp the scroll: a count that shrank under a scrolled list would
+    // otherwise leave the viewport past the end, showing nothing at all.
+    var top: f64 = { (*s).scroll };
+    let max_scroll: f64 = if { (*s).content } > vh { { (*s).content } - vh } else { 0.0f64 };
+    if top > max_scroll { top = max_scroll; }
+    if top < (0.0 as f64) { top = 0.0f64; }
+    { (*s).scroll = top };
+
+    var first: i64 = 0 as i64;
+    var last: i64 = (0 as i64) -% (1 as i64);
+    if count > (0 as i64) {
+        // FOUND IN LINES, then stated in display rows. With one column the two
+        // are the same number and this is the arithmetic it always was; with
+        // more, a line holds up to `columns` cells and all of them have to be
+        // realised together or half a line is missing.
+        var first_line: i64 = row_at(s, top, p);
+        var last_line: i64 = row_at(s, top + vh, p);
+        // ONE LINE OF SLACK either side. A row scrolled halfway in is a row
+        // that has to already exist, and building it on the frame it becomes
+        // visible is the stutter every list of this shape has.
+        if first_line > (0 as i64) { first_line = first_line -% (1 as i64); }
+        let lines: i64 = { (*s).lines };
+        if last_line < (lines -% (1 as i64)) { last_line = last_line + (1 as i64); }
+        if { (*s).is_tree } {
+            first = first_line;
+            last = last_line;
+        } else {
+            first = first_display_of_line(p, first_line);
+            last = last_display_of_line(p, last_line);
+        }
+        if last > (count -% (1 as i64)) { last = count -% (1 as i64); }
+    }
+
+    // FREE FIRST, then fill — so a row leaving the window releases its cell
+    // before a row entering asks for one. The other order needs twice the pool.
+    var i: usize = 0 as usize;
+    let cells: usize = { (*s).cells.count() };
+    while i < cells {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => {
+                let r: i64 = { (*c).row };
+                if r >= (0 as i64) && (r < first || r > last) {
+                    // BEFORE the cell is freed, while it still points at the
+                    // row that is leaving — after `free_cell` there is nothing
+                    // to hand the handler.
+                    fire_item_visibility(n, view_of_cell(s, i), false);
+                    free_cell(s, i);
+                }
+            }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+
+    var r: i64 = first;
+    while r <= last {
+        if cell_showing(s, r) < (0 as i64) {
+            let kind: usize = row_shape(s, n, r as usize);
+            var slot: i64 = free_cell_of_kind(s, kind);
+            if slot < (0 as i64) {
+                // No pooled cell of this shape: grow the pool by one. It grows
+                // to the number of rows the viewport can hold PLUS the slack,
+                // and then stops — which is the property that makes a
+                // 20,000-row list cost the same as a 50-row one.
+                let rp: *core::Node = make_row(v, s, n, r as usize);
+                let _e: status::Status = { (*s).cells.append(Cell {
+                    row: r, kind: kind, node: { #addr(rp as *u8) },
+                    top: 0.0f64, height: 0.0f64,
+                }) };
+            } else {
+                rebind_cell(v, s, n, slot as usize, r as usize);
+            }
+            // Both paths, for the reason `fire_item_visibility` states: firing
+            // only on the fresh build would report an item appearing exactly
+            // when the list was too slow to recycle.
+            let made: i64 = cell_showing(s, r);
+            if made >= (0 as i64) {
+                fire_item_visibility(n, view_of_cell(s, made as usize), true);
+            }
+        }
+        r = r + (1 as i64);
+    }
+
+    // Place every live cell against the viewport, with the scroll taken off.
+    var j: usize = 0 as usize;
+    let live: usize = { (*s).cells.count() };
+    while j < live {
+        match { (*s).cells.at_ptr(j) } {
+            option::Option[*Cell]::Some(c) => {
+                let rr: i64 = { (*c).row };
+                if rr >= (0 as i64) {
+                    let rp: *core::Node = { (*c).node } as *core::Node;
+                    if rp != (0 as *core::Node) {
+                        // THE LINE carries the offset, and the COLUMN carries
+                        // the x. With one column `line_of` is the identity and
+                        // the column is zero, so this is the placement it was.
+                        let line: i64 = if { (*s).is_tree } { rr }
+                                        else { line_of(p, rr as usize) };
+                        let y: f64 = offset_of(s, line as usize) - top + strip;
+                        let h: f64 = height_at(s, line as usize, p);
+                        var x: f64 = 0.0f64;
+                        var w: f64 = vw;
+                        if !{ (*s).is_tree } && is_grid(p) {
+                            let c: f64 = columns_of(p) as f64;
+                            let cw: f64 = vw / c;
+                            // A HEADER SPANS THE LINE — a section title beside
+                            // two items would read as a third item.
+                            let span: f64 = span_of(p, rr as usize) as f64;
+                            x = (col_of(p, rr as usize) as f64) * cw;
+                            w = cw * span;
+                        }
+                        { (*c).top = y };
+                        { (*c).height = h };
+                        place_row(v, rp, x, y, w, h);
+                    }
+                }
+            }
+            option::Option[*Cell]::None => { }
+        }
+        j = j +% (1 as usize);
+    }
+    sync_scrollbar(v, s, vh);
+    trace_rows(s, first, last);
+    fire_threshold(v, n, last, count);
+    return;
+}
+
+// A row's own layout, then its windows.
+//
+// THE ROW IS LAID OUT AT THE VIEWPORT'S WIDTH, not at whatever flex last gave
+// it. A row built off-screen has no frame, and `calculate_layout` is what turns
+// its tree into positions — so the row is a little layout root of its own,
+// which is exactly what `realise` made it.
+fn place_row(v: *u8, rp: *core::Node, x: f64, y: f64, width: f64, height: f64) {
+    // THE RECYCLER COUNTS IN PIXELS; A ROW LAYS OUT IN POINTS. Everything the
+    // list does with rows — the viewport, the scroll offset, the row heights
+    // (`row_scale` already made those physical) — is in pixels, so `x`, `y`,
+    // `width`, `height` arrive here in pixels. But a row is its own little layout
+    // root and `measure` now answers in points, so the row is laid out at the
+    // POINT size and `place` multiplies it straight back to the pixels it came in
+    // as. This is the ONE seam where the recycler meets the scaled world; nothing
+    // else in this file changed unit.
+    let scale: f64 = sys::dpi_scale(v);
+    let lx: f64 = x / scale;
+    let ly: f64 = y / scale;
+    let lw: f64 = width / scale;
+    let lh: f64 = height / scale;
+    { (*rp).calculate_layout(width: lw, height: lh) };
+    { (*rp).round_to_pixel(scale) };
+    let view: *u8 = core::view_of(rp);
+    let host: *u8 = controls::document_host(v);
+    let own: flex::Frame = { (*rp).frame() };
+    if view != (0 as *u8) {
+        let _s: i32 = { u::ShowWindow(view, sys::sw_show()) };
+        geometry::place(host, view, rp, lx, ly, lw, lh);
+        // The row IS the host for its own children, so their absolute frames
+        // are relative to the row's own origin — which is what passing the
+        // row's frame subtracts.
+        geometry::reposition_children(rp, controls::document_host(view), own);
+    } else {
+        // A row whose root is a bare container has no window of its own, so its
+        // children go into the VIEWPORT and have to carry the row's offset
+        // themselves. A host frame with `top` pushed back by `y` is how that is
+        // said: `reposition_children` subtracts it, so every child lands `y`
+        // lower than its own frame. In points, since the child frames are.
+        var shifted: flex::Frame = own;
+        shifted.left = 0.0f64 - lx;
+        shifted.top = 0.0f64 - ly;
+        geometry::reposition_children(rp, host, shifted);
+    }
+    return;
+}
+
+// ---- scroll bar ------------------------------------------------------------------------
+
+fn sb_vert() -> i32 { return 1 as i32; }
+
+// SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL
+fn sif_all() -> u32 { return 0x17 as u32; }
+
+// SCROLLINFO is six DWORDs and an int: cbSize, fMask, nMin, nMax, nPage, nPos,
+// nTrackPos — 28 bytes, all 4-byte fields, no inline arrays. Laid out by hand
+// because `cpc-bindgen` did not carry it and it is the one struct this file
+// needs.
+fn scrollinfo_bytes() -> usize { return 28 as usize; }
+
+extern fn SetScrollInfo(hwnd: *u8, bar: i32, info: *u8, redraw: i32) -> i32;
+extern fn GetScrollInfo(hwnd: *u8, bar: i32, info: *u8) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, v: i32, n: usize) -> *u8;
+
+fn put_u32(p: *u8, at: usize, v: u32) {
+    let q: *u32 = { (p + at) } as *u32;
+    { *q = v };
+    return;
+}
+
+fn get_i32(p: *u8, at: usize) -> i32 {
+    let q: *i32 = { (p + at) } as *i32;
+    return { *q };
+}
+
+fn sync_scrollbar(v: *u8, s: *ListState, viewport_h: f64) {
+    let info: *u8 = { malloc(scrollinfo_bytes()) };
+    if info.is_null() { return; }
+    let _z: *u8 = { memset(info, 0 as i32, scrollinfo_bytes()) };
+    put_u32(info, 0 as usize, scrollinfo_bytes() as u32);
+    put_u32(info, 4 as usize, sif_all());
+    put_u32(info, 8 as usize, 0 as u32);
+    // nMax is INCLUSIVE and nPage is subtracted from it by the control, which
+    // is why the range is the whole content and not the content minus a page.
+    // Getting this wrong scrolls to a stop one page early, every time.
+    put_u32(info, 12 as usize, { (*s).content } as u32);
+    put_u32(info, 16 as usize, viewport_h as u32);
+    put_u32(info, 20 as usize, { (*s).scroll } as u32);
+    let _r: i32 = { SetScrollInfo(v, sb_vert(), info, 1 as i32) };
+    { free(info) };
+    return;
+}
+
+// SB_LINEUP 0, SB_LINEDOWN 1, SB_PAGEUP 2, SB_PAGEDOWN 3, SB_THUMBTRACK 5,
+// SB_TOP 6, SB_BOTTOM 7.
+fn on_vscroll(v: *u8, n: *core::Node, code: u32) -> bool {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    let _g: i32 = { u::GetClientRect(v, #addr_of(vr)) };
+    let page: f64 = (vr.bottom -% vr.top) as f64;
+    let line: f64 = if { (*s).uniform } > (0.0 as f64) { { (*s).uniform } }
+                    else { default_row_height() };
+    var to: f64 = { (*s).scroll };
+    if code == (0 as u32) { to = to - line; }
+    if code == (1 as u32) { to = to + line; }
+    if code == (2 as u32) { to = to - page; }
+    if code == (3 as u32) { to = to + page; }
+    if code == (6 as u32) { to = 0.0f64; }
+    if code == (7 as u32) { to = { (*s).content }; }
+    if code == (5 as u32) || code == (4 as u32) {
+        // THE THUMB POSITION IS READ FROM THE CONTROL, not from the message.
+        // wParam's high word is 16 bits, so a list taller than 65,535 points
+        // reports a truncated position and the thumb jumps to the wrong place
+        // on every drag past that. `SIF_TRACKPOS` has the full value.
+        let info: *u8 = { malloc(scrollinfo_bytes()) };
+        if info.is_null() { return false; }
+        let _z: *u8 = { memset(info, 0 as i32, scrollinfo_bytes()) };
+        put_u32(info, 0 as usize, scrollinfo_bytes() as u32);
+        put_u32(info, 4 as usize, 0x10 as u32);   // SIF_TRACKPOS
+        if { GetScrollInfo(v, sb_vert(), info) } != (0 as i32) {
+            to = get_i32(info, 24 as usize) as f64;
+        }
+        { free(info) };
+    }
+    { (*s).scroll = to };
+    layout_rows(v, n);
+    fire_scrolled(v, n);
+    return true;
+}
+
+// ---- the contract's verbs ------------------------------------------------------------
+
+fn create_sequence(n: *core::Node) -> *u8 {
+    let v: *u8 = controls::make_child(sys::panel_class(), controls::empty_title(),
+                                      sys::ws_clipchildren() | sys::ws_vscroll(),
+                                      0 as u32);
+    if v == (0 as *u8) { return 0 as *u8; }
+    match box::new::[ListState](new_state()) {
+        option::Option[box::Box[ListState]]::Some(b) => {
+            let _r: i32 = { u::SetPropA(v, sys::prop_list() as *i8,
+                                        b.into_raw() as *u8) };
+        }
+        option::Option[box::Box[ListState]]::None => { }
+    }
+    return v;
+}
+
+// The bits that change WHAT IS SHOWN, as against how it looks. Any of them
+// rebuilds the map and re-lays the window.
+fn model_bits() -> u64 {
+    // `row_height_of` and `row_kind` have no bits of their own — the generated
+    // setters raise P_ROW, because all three describe how a row is BUILT and a
+    // change to any of them invalidates the same thing.
+    return flist::P_COUNT | flist::P_ROW | flist::P_ROW_HEIGHT
+         | flist::P_HAS_UNEVEN_ROWS | flist::P_INVALIDATE_ROW
+         | flist::P_SPLICE_ROWS
+         // GROUPING CHANGES WHICH ROWS EXIST, not merely how they look: a
+         // section appearing inserts a header above every row after it, so
+         // every display index shifts and the whole map is stale.
+         | flist::P_IS_GROUPED | flist::P_GROUP_COUNT | flist::P_GROUP;
+}
+
+// ---- THE BITS ARE PER KIND, and this file read one kind's for both ---------------
+//
+// A generated module numbers its `P_` constants from 1 in DECLARATION order, so
+// two kinds that declare the same verbs number them differently:
+//
+//     list::P_COUNT           32768        collection::P_COUNT          2048
+//     list::P_SELECTED_INDEX  524288       collection::P_SELECTED_INDEX 32768
+//
+// `list::P_COUNT` IS `collection::P_SELECTED_INDEX`. `apply_sequence` tested
+// the list's numbers against every sequence, so a collection's `set_count`
+// raised a bit nothing here was looking for — a collection has never rebuilt
+// its map — and its `set_selected_index` looked like a list's count change and
+// rebuilt the whole thing.
+//
+// Found by putting a grouped collection in the probe and watching `[map]` never
+// mention it. The same trap as `fonts::font_bits`, which was per-kind for
+// exactly this reason; a comment there says so and this file did not read it.
+fn collection_model_bits() -> u64 {
+    // A collection declares no `row_height` and no `has_uneven_rows` — it sizes
+    // items through `item_sizing` instead, which is why the two bit lists are
+    // not merely renumbered but a different shape.
+    return fcollection::P_COUNT | fcollection::P_ROW
+         | fcollection::P_INVALIDATE_ROW | fcollection::P_SPLICE_ROWS
+         | fcollection::P_IS_GROUPED | fcollection::P_GROUP_COUNT
+         | fcollection::P_GROUP
+         // COLUMNS CHANGE WHICH LINE EVERY ITEM IS ON, so the offsets are
+         // stale in the same way a new group count makes them stale — this is
+         // a map rebuild and not a re-place.
+         | fcollection::P_COLUMNS;
+}
+
+// One row of the table per verb this file acts on, so the two numbering schemes
+// are resolved in ONE place instead of at every test site.
+struct SeqBits {
+    model: u64,
+    selected_index: u64,
+    selection_mode: u64,
+    scroll_bars: u64,
+    scroll_to: u64,
+    threshold: u64,
+    mix_groups: u64,
+    reorder_gate: u64,
+    anchor: u64,
+    separator: u64,
+    refreshing: u64,
+    begin_refresh: u64,
+    end_refresh: u64,
+    refreshable: u64,
+}
+
+fn bits_for(n: *core::Node) -> SeqBits {
+    if core::kind_of(n) == props::K_COLLECTION {
+        return SeqBits {
+            model: collection_model_bits(),
+            selected_index: fcollection::P_SELECTED_INDEX,
+            selection_mode: fcollection::P_SELECTION_MODE,
+            scroll_bars: fcollection::P_VERTICAL_SCROLL_BARS
+                       | fcollection::P_HORIZONTAL_SCROLL_BARS,
+            scroll_to: fcollection::P_SCROLL_TO,
+            threshold: fcollection::P_REMAINING_THRESHOLD,
+            mix_groups: fcollection::P_CAN_MIX_GROUPS,
+            reorder_gate: fcollection::P_CAN_REORDER_ITEMS,
+            anchor: fcollection::P_SCROLL_ANCHOR,
+            // A COLLECTION HAS NEITHER, and zero is the honest answer: a bit
+            // that is never set can never match, so the branch is simply never
+            // taken rather than taken on some other verb's bit.
+            separator: 0 as u64,
+            refreshing: 0 as u64,
+            begin_refresh: 0 as u64,
+            end_refresh: 0 as u64,
+            refreshable: 0 as u64,
+        };
+    }
+    return SeqBits {
+        model: model_bits(),
+        selected_index: flist::P_SELECTED_INDEX,
+        selection_mode: flist::P_SELECTION_MODE,
+        scroll_bars: flist::P_VERTICAL_SCROLL_BARS | flist::P_HORIZONTAL_SCROLL_BARS,
+        scroll_to: flist::P_SCROLL_TO,
+        // A `list` declares neither — the threshold is an ItemsView verb and
+        // the mix rule a Reorderable one, and a list embeds neither struct.
+        threshold: 0 as u64,
+        mix_groups: 0 as u64,
+        reorder_gate: 0 as u64,
+        // A `list` declares no scroll anchor — it is an ItemsView verb.
+        anchor: 0 as u64,
+        separator: flist::P_SEPARATOR | flist::P_SEPARATOR_COLOR,
+        refreshing: flist::P_IS_REFRESHING,
+        begin_refresh: flist::P_BEGIN_REFRESH,
+        end_refresh: flist::P_END_REFRESH,
+        refreshable: flist::P_IS_REFRESHABLE | flist::P_CAN_REFRESH
+                   | flist::P_REFRESH_COLOR,
+    };
+}
+
+fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    note_row_dpi(v);
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    let p: *SeqSource = #addr_of(src);
+    let b: SeqBits = bits_for(n);
+    if (dirty & b.model) != (0 as u64) {
+        // WHERE THE VIEWPORT WAS, before the model moves under it. `scroll_anchor`
+        // is answered by adjusting the offset AFTER the rebuild, and both the
+        // "was at the bottom" test and the "how much came in above" sum need the
+        // OLD map to be meaningful.
+        let anchor: vocab::ScrollAnchor = { (*p).scroll_anchor };
+        let was_at_end: bool = at_end(v, s);
+        let before: f64 = inserted_above(s, p);
+        rebuild_map(s, p);
+        apply_scroll_anchor(v, s, p, anchor, was_at_end, before);
+        // EVERY LIVE CELL IS RELEASED when the model changes. A cell still
+        // pointing at row 40 of a list that now has 12 rows is showing data
+        // that is gone, and `fill_cell` would rebind it only if it happened to
+        // fall inside the new visible window.
+        release_all(s);
+        layout_rows(v, n);
+        return;
+    }
+    if (dirty & b.selected_index) != (0 as u64) {
+        { (*s).selected = { (*p).selected_index } };
+    }
+    // SWITCHING TO `None` CLEARS THE SELECTION. A list that stops being
+    // selectable while a row is highlighted would keep drawing the highlight,
+    // and nothing the application can do would clear it.
+    if (dirty & b.selection_mode) != (0 as u64) {
+        let selectable: bool = match { (*p).selection_mode } {
+            vocab::SelectionMode::None => false,
+            vocab::SelectionMode::Single => true,
+            vocab::SelectionMode::Multiple => true,
+        };
+        if !selectable {
+            { (*s).selected = (0 as i64) -% (1 as i64) };
+            write_selected(n, (0 as i64) -% (1 as i64));
+            let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+        }
+    }
+    if (dirty & b.scroll_bars) != (0 as u64) {
+        apply_bars(v, { (*p).vertical_scroll_bars }, { (*p).horizontal_scroll_bars });
+    }
+    // A CHANGED THRESHOLD IS RE-EVALUATED AGAINST THE CURRENT WINDOW. An
+    // application that raises it while already near the end means the list is
+    // now inside the band, and waiting for the next scroll to notice would be
+    // one screenful late. Same reasoning as `controls::apply_carousel`'s.
+    if b.threshold != (0 as u64) && (dirty & b.threshold) != (0 as u64) {
+        { (*s).in_threshold = false };
+        layout_rows(v, n);
+    }
+    // THE RULE CHANGED MID-GESTURE. `can_mix_groups` decides whether a drag may
+    // cross a section boundary, and it is read at the DROP — so an application
+    // that tightens it while a row is in flight would have the drop judged by
+    // the new rule after the user began under the old one. The drag is
+    // cancelled instead, which is the answer that cannot surprise anyone.
+    if b.mix_groups != (0 as u64) && (dirty & b.mix_groups) != (0 as u64) {
+        if reorder_host() == v { cancel_reorder(); }
+    }
+    // THE CAPABILITY WITHDRAWN MID-DRAG stops the drag, for the same reason
+    // and more bluntly: an application that sets `can_reorder_items` false
+    // while a row is in flight has said reordering is not allowed, and
+    // reporting the move it was in the middle of would be reporting one it
+    // just forbade.
+    if b.reorder_gate != (0 as u64) && (dirty & b.reorder_gate) != (0 as u64) {
+        if reorder_host() == v && !reorders(n) { cancel_reorder(); }
+    }
+    // SETTING THE ANCHOR TAKES EFFECT AT ONCE for the one mode that names a
+    // position rather than a rule. An application that says "keep the last item
+    // in view" while scrolled halfway means it NOW, not at the next insert —
+    // waiting would leave the list somewhere the anchor says it should not be
+    // until something unrelated happened. The other two modes describe what to
+    // do WHEN the model moves and have nothing to do until it does.
+    if b.anchor != (0 as u64) && (dirty & b.anchor) != (0 as u64) {
+        if match { (*p).scroll_anchor } {
+            vocab::ScrollAnchor::KeepLastItemInView => true,
+            vocab::ScrollAnchor::KeepItemsInView => false,
+            vocab::ScrollAnchor::KeepScrollOffset => false,
+        } {
+            apply_scroll_anchor(v, s, p, { (*p).scroll_anchor }, true, 0.0f64);
+            layout_rows(v, n);
+        }
+    }
+    if (dirty & b.scroll_to) != (0 as u64) {
+        scroll_to_row(v, n, { (*p).scroll_to_index });
+    }
+    if b.separator != (0 as u64) && (dirty & b.separator) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    // The imperative pair wins over the state bit, which is why they are read
+    // after it: `begin_refresh` says start regardless of what `is_refreshing`
+    // held a moment ago.
+    if b.refreshing != (0 as u64) && (dirty & b.refreshing) != (0 as u64) {
+        set_refreshing(v, n, refreshing_of(n));
+    }
+    if b.begin_refresh != (0 as u64) && (dirty & b.begin_refresh) != (0 as u64) { set_refreshing(v, n, true); }
+    if b.end_refresh != (0 as u64) && (dirty & b.end_refresh) != (0 as u64) { set_refreshing(v, n, false); }
+    if b.refreshable != (0 as u64) && (dirty & b.refreshable) != (0 as u64) {
+        // Permission and colour are both read at the moment they are used —
+        // see `refresh_requested` and `draw_refresh_bar` — so all an apply
+        // owes them is the repaint.
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    }
+    return;
+}
+
+fn refreshing_of(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    if { (*d).kind } != props::K_LIST { return false; }
+    return { (*(raw as *props::ListProps)).is_refreshing };
+}
+
+// Was the viewport resting at the bottom? Asked BEFORE the rebuild, because
+// afterwards the content has changed height and the question is unanswerable.
+//
+// A POINT OF SLACK. A list scrolled to the end sits at exactly `content - vh`,
+// but an uneven-row list recomputes its heights on rebuild and can land a
+// fraction off; requiring exact equality would make "keep the last item in
+// view" fail on precisely the lists that need it.
+fn at_end(v: *u8, s: *ListState) -> bool {
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return false; }
+    let vh: f64 = (r.bottom -% r.top) as f64;
+    if { (*s).content } <= vh { return true; }
+    return { (*s).scroll } >= ({ (*s).content } - vh - (1.0 as f64));
+}
+
+// How much height a pending splice ADDS ABOVE the viewport. Rows inserted below
+// what is showing do not move it; rows inserted above push everything down by
+// their height, which is what `KeepItemsInView` has to undo.
+//
+// The splice is described in DATA rows and the offsets are in DISPLAY rows, so
+// this measures with the map that is still current — which is the whole reason
+// it is taken before the rebuild.
+fn inserted_above(s: *ListState, p: *SeqSource) -> f64 {
+    let at: i64 = { (*p).splice_at };
+    let n: i64 = { (*p).splice_count };
+    if at < (0 as i64) || n == (0 as i64) { return 0.0f64; }
+    let first: i64 = first_display_of_line(p, row_at(s, { (*s).scroll }, p));
+    if at > first { return 0.0f64; }
+    let h: f64 = if { (*s).uniform } > (0.0 as f64) { { (*s).uniform } }
+                 else { default_row_height() };
+    return (n as f64) * h;
+}
+
+// Put the viewport back where the anchor says it belongs.
+fn apply_scroll_anchor(v: *u8, s: *ListState, p: *SeqSource,
+                       anchor: vocab::ScrollAnchor, was_at_end: bool,
+                       above: f64) {
+    match anchor {
+        // The DEFAULT, and what this file did before there was an anchor at
+        // all: the pixel offset is kept and the content moves under it.
+        vocab::ScrollAnchor::KeepScrollOffset => { }
+        // The same ITEMS stay under the eye. Rows inserted above the viewport
+        // would otherwise push what the user was reading off the top.
+        vocab::ScrollAnchor::KeepItemsInView => {
+            if above != (0.0 as f64) { { (*s).scroll = { (*s).scroll } + above }; }
+        }
+        // A list that was pinned to the bottom stays pinned — the chat-window
+        // rule, and the one anchor whose absence is noticed immediately.
+        vocab::ScrollAnchor::KeepLastItemInView => {
+            if was_at_end {
+                var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                                 right: 0 as i32, bottom: 0 as i32 };
+                if { u::GetClientRect(v, #addr_of(r)) } != (0 as i32) {
+                    let vh: f64 = (r.bottom -% r.top) as f64;
+                    var to: f64 = { (*s).content } - vh;
+                    if to < (0.0 as f64) { to = 0.0f64; }
+                    { (*s).scroll = to };
+                }
+            }
+        }
+    }
+    return;
+}
+
+fn release_all(s: *ListState) {
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).cells.count() };
+    while i < n {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => { free_cell(s, i); }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- selection ---------------------------------------------------------------------------
+//
+// A ROW'S CLICK IS THE LIST'S SELECTION, which is facet's own rule and not this
+// package's invention: the control owns the mouse inside its own rows, so a
+// `.gesture(on_click:)` on something in a row is a handler nothing will deliver
+// to. The index comes from the row root's item slot, which `build_row` wrote.
+fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    // A TREE SELECTS BY IDENTITY, not by row: its handler is handed the node and
+    // its `selected` is an id, because a flattened index changes the moment a
+    // branch above it expands.
+    if { (*s).is_tree } { return on_tree_row_click(v, n, index); }
+    var src: SeqSource = source_of(n);
+    if !src.live { return false; }
+    let mode: vocab::SelectionMode = src.selection_mode;
+    let selectable: bool = match mode {
+        vocab::SelectionMode::None => false,
+        vocab::SelectionMode::Single => true,
+        vocab::SelectionMode::Multiple => true,
+    };
+    // A HEADER IS NOT A ROW. Clicking a section title must not select, tap, or
+    // report anything — it is furniture, and `data_index` answers -1 for it.
+    let data: i64 = data_index(#addr_of(src), index);
+    if data < (0 as i64) { return false; }
+    // A TAP IS NOT A SELECTION. `on_item_tapped` fires for every click on a
+    // row — including one in a list whose `selection_mode` is None, which is
+    // the case that makes the two verbs different rather than redundant. So it
+    // is reported before the selectable gate.
+    fire_item_tapped(v, n, index);
+    if !selectable { return false; }
+    // A CLICK ON THE SELECTED ROW CHANGED NOTHING, and `on_selection_changed`
+    // is named for the change rather than for the click. Firing it on a
+    // re-click makes an application re-select what it already had — and where
+    // the handler rebuilds a pane, that is a whole pane rebuilt for nothing.
+    // facet_gtk records the same rule and notes that AppKit never had the
+    // problem, because `outlineViewSelectionDidChange:` is not posted for a
+    // click on the selected row. This backend used to fire every time.
+    let already: bool = src.selected_index == data;
+    { (*s).selected = index as i64 };
+    // THE SELECTION IS WRITTEN BACK THROUGH THE REAL PROPS, not through the
+    // resolved copy — `SeqSource` is a snapshot for reading and writing to it
+    // would update nothing the application can see.
+    // THE APPLICATION IS TOLD THE DATA INDEX. `selected_index` is a position in
+    // its own sequence; handing it a display index would name a different row
+    // in any grouped list, and the wrong one by a growing margin.
+    write_selected(n, data);
+    if already { return true; }
+    let h: fn(*u8, *u8) = src.on_item_selected;
+    if h == props::no_handler { return false; }
+    // THE ROW'S WINDOW IS THE SENDER, not the list's — which is what lets a
+    // handler ask `component::item_index_of(sender)` which row it is on, and
+    // what facet_gtk passes. Handing it the list gave every handler a sender
+    // with no item slot above it, so the reader answered None and an
+    // application reading its click that way was told nothing at all. The same
+    // contract `fire_item_tapped` next door already used.
+    h(row_view_at(v, n, index), src.on_item_selected_ctx as *u8);
+    return true;
+}
+
+fn fire_item_tapped(v: *u8, n: *core::Node, index: usize) {
+    let p: *props::ListProps = controls::props_of(n, props::K_LIST) as *props::ListProps;
+    if p == (0 as *props::ListProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_item_tapped };
+    if h == props::no_handler { return; }
+    // The ROW's window is the sender, so `component::item_index_of` can read
+    // which row it was — the same contract `fire_item_visibility` uses.
+    h(row_view_at(v, n, index), { (*p).on_item_tapped_ctx });
+    return;
+}
+
+fn row_view_at(v: *u8, n: *core::Node, index: usize) -> *u8 {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return v; }
+    let at: i64 = cell_showing(s, index as i64);
+    if at < (0 as i64) { return v; }
+    let w: *u8 = view_of_cell(s, at as usize);
+    if w == (0 as *u8) { return v; }
+    return w;
+}
+
+fn selected_of(v: *u8) -> i64 {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return (0 as i64) -% (1 as i64); }
+    return { (*s).selected };
+}
+
+fn holds_rows(n: *core::Node) -> bool {
+    let k: u32 = core::kind_of(n);
+    if k == ftree::K_TREE { return true; }
+    // NOT `table` — it is not a row source; see `controls::apply_table`.
+    return k == props::K_LIST || k == props::K_COLLECTION;
+}
+
+#[test]
+fn a_uniform_list_needs_no_offset_table() {
+    // The 20,000-row case, and the reason the two shapes are separate: an
+    // offset array for a list whose rows are all one height is a second copy of
+    // one number, walked instead of multiplied.
+    var s: ListState = new_state();
+    s.uniform = 20.0f64;
+    s.count = 20000 as i64;
+    assert offset_of(#addr_of(s), 0 as usize) == (0.0 as f64);
+    assert offset_of(#addr_of(s), 100 as usize) == (2000.0 as f64);
+    assert s.offsets.count() == (0 as usize);
+    return;
+}
+
+#[test]
+fn the_row_at_a_scroll_position_is_arithmetic_when_uniform() {
+    var s: ListState = new_state();
+    s.uniform = 20.0f64;
+    s.count = 100 as i64;
+    // ONE COLUMN, so a line is a display row and the map is a hundred lines
+    // deep. `row_at` searches the MAP, so the map's length is what it is told.
+    s.lines = 100 as i64;
+    var empty: SeqSource = no_source();
+    let p: *SeqSource = #addr_of(empty);
+    assert row_at(#addr_of(s), 0.0f64, p) == (0 as i64);
+    assert row_at(#addr_of(s), 25.0f64, p) == (1 as i64);
+    // Past the end clamps to the last row rather than running off it.
+    assert row_at(#addr_of(s), 99999.0f64, p) == (99 as i64);
+    return;
+}
+
+#[test]
+fn a_negative_scroll_reads_as_the_top() {
+    var s: ListState = new_state();
+    s.uniform = 20.0f64;
+    s.count = 10 as i64;
+    s.lines = 10 as i64;
+    var empty: SeqSource = no_source();
+    let p: *SeqSource = #addr_of(empty);
+    assert row_at(#addr_of(s), 0.0f64 - 50.0f64, p) == (0 as i64);
+    return;
+}
+
+#[test]
+fn an_empty_list_answers_row_zero_and_not_a_crash() {
+    var s: ListState = new_state();
+    var empty: SeqSource = no_source();
+    let p: *SeqSource = #addr_of(empty);
+    assert row_at(#addr_of(s), 10.0f64, p) == (0 as i64);
+    return;
+}
+
+
+// ================================================================================
+// THE SECOND MAP — a tree
+// ================================================================================
+//
+// TWO SLOT MAPS, ONE MACHINE. Everything below the map — the cells, the pool,
+// the visible window, the scroll bar, the placement — is the sequence's, used
+// unchanged. What differs is only how a row INDEX becomes a row: a sequence
+// answers `row(i)` and a tree answers `row(node)` after a walk.
+//
+// facet_gtk's recycler says why they cannot be one protocol, and it is worth
+// repeating rather than re-deriving: "a list is count plus index and a tree is
+// parent → children plus expansion plus stable identity". Flattening a tree
+// into a count is exactly what this map does, but the flattening has to be
+// redone whenever the EXPANSION changes, which a sequence has no equivalent of.
+//
+// THE WALK IS PRE-ORDER AND SKIPS COLLAPSED SUBTREES. A branch that is not
+// expanded contributes one row — itself — and none of its children, which is
+// what makes a tree of a million nodes cost the same as its visible depth.
+
+struct TreeRow {
+    node: usize,
+    depth: usize,
+}
+
+// Flatten the expanded model into the row list. Called when the root, the
+// expansion set or the row builder changes — never per scroll.
+fn rebuild_tree_map(s: *ListState, p: *ftree::TreeProps) {
+    { (*s).built_dpi = ROW_DPI };
+    { (*s).tree_rows = vec::new::[TreeRow]() };
+    { (*s).offsets = vec::new::[f64]() };
+    let root: *ftree::TreeNode = #addr_of((*p).root);
+    // THE ROOT ITSELF IS NOT A ROW. It is the container the model hangs from,
+    // and a tree that showed it would put an unnamed parent above every real
+    // item. Its CHILDREN are the top level.
+    walk_children(s, p, root, 0 as usize);
+    let n: usize = { (*s).tree_rows.count() };
+    { (*s).count = n as i64 };
+    // A TREE IS ONE ROW PER LINE. It declares no `columns` — the verb is a
+    // StructuredItemsView's — so its map is the shape it always was.
+    { (*s).lines = n as i64 };
+    let h: f64 = tree_row_height(p);
+    { (*s).uniform = h };
+    { (*s).content = h * (n as f64) };
+    return;
+}
+
+fn walk_children(s: *ListState, p: *ftree::TreeProps, parent: *ftree::TreeNode,
+                 depth: usize) {
+    var i: usize = 0 as usize;
+    let n: usize = { (*parent).child_count() };
+    while i < n {
+        match { (*parent).child_ptr(i) } {
+            option::Option[*ftree::TreeNode]::Some(c) => {
+                let _e: status::Status = { (*s).tree_rows.append(
+                    TreeRow { node: { #addr(c as *u8) }, depth: depth }) };
+                // DESCEND ONLY INTO AN EXPANDED BRANCH. `is_branch` says a node
+                // may have children — it is true BEFORE they exist, which is
+                // what makes lazy loading expressible — so the question asked
+                // here is the expansion set, not the child count.
+                if is_expanded_id(p, { (*c).id }.view()) {
+                    walk_children(s, p, c, depth +% (1 as usize));
+                }
+            }
+            option::Option[*ftree::TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn is_expanded_id(p: *ftree::TreeProps, id: str) -> bool {
+    let set: *vocab::TextList = #addr_of((*p).expanded);
+    var i: usize = 0 as usize;
+    let n: usize = { (*set).count() };
+    while i < n {
+        if { (*set).at(i) } == id { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// A tree states one height for every row; `0` means "let the backend decide",
+// which here is the same default a list falls back to.
+fn tree_row_height(p: *ftree::TreeProps) -> f64 {
+    let h: f64 = { (*p).row_height };
+    if h > (0.0 as f64) { return h; }
+    return default_row_height();
+}
+
+fn tree_props(n: *core::Node) -> *ftree::TreeProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *ftree::TreeProps; }
+    if { (*d).kind } != ftree::K_TREE { return 0 as *ftree::TreeProps; }
+    return { (*d).props } as *ftree::TreeProps;
+}
+
+fn tree_node_at(s: *ListState, i: usize) -> *ftree::TreeNode {
+    return match { (*s).tree_rows.at_ptr(i) } {
+        option::Option[*TreeRow]::Some(r) => { (*r).node } as *ftree::TreeNode,
+        option::Option[*TreeRow]::None => 0 as *ftree::TreeNode,
+    };
+}
+
+// Build row `i` of a tree. The sequence's `build_row` with one substitution —
+// the builder takes the NODE rather than the index — and the same reason for
+// boxing and for writing the index onto the root before realising.
+// How far one level of nesting indents, and how much room the triangle takes.
+// Both are facet_gtk's numbers, and they agree for the reason `swipe`'s action
+// width does: an application that lays out around a tree should not have to ask
+// which desktop it is on.
+fn indent_step() -> f64 { return 16.0f64; }
+fn disclosure_width() -> f64 { return 16.0f64; }
+
+fn tree_depth_at(s: *ListState, i: usize) -> usize {
+    return match { (*s).tree_rows.at_ptr(i) } {
+        option::Option[*TreeRow]::Some(r) => { (*r).depth },
+        option::Option[*TreeRow]::None => 0 as usize,
+    };
+}
+
+fn is_expanded_node(p: *ftree::TreeProps, item: *ftree::TreeNode) -> bool {
+    return is_expanded_id(p, { (*item).id }.view());
+}
+
+// THE ROW A TREE DRAWS WHEN THE APPLICATION DRAWS NOTHING.
+//
+// `build_tree_row` used to answer NULL when `row` was `no_row`, so a tree
+// built without a row builder realised no rows at all — a viewport with a
+// scroll bar and nothing in it. That is not what the verb means: `row` is how
+// an application REPLACES the row's content, and a tree that states none still
+// has a label, a depth and a disclosure triangle to draw. The gallery's whole
+// navigation pane was empty for this reason, and the tree in the probe hid it
+// by passing a builder.
+//
+// So the row is COMPOSED, exactly as facet_gtk composes it: a disclosure cell,
+// then the content — the application's builder when it gave one, and the model
+// node's own label when it did not.
+fn compose_tree_row(item: *ftree::TreeNode, p: *ftree::TreeProps,
+                    depth: usize, h: f64) -> core::Node {
+    var cells: core::Builder = core::Builder::new();
+    cells.add(disclosure_cell(item, p, h));
+    cells.add(content_cell(item, p));
+    var row: core::Node = core::row(cells, key: "");
+    { row.set_height(flex::StyleLength::points(h)) };
+    // INDENTATION IS LAYOUT, so it is flex's — a leading pad rather than a
+    // gutter this package draws. facet_gtk says the same about its own.
+    { row.set_padding(flex::Edge::Left,
+                      flex::StyleLength::points((depth as f64) * indent_step())) };
+    { row.set_align(flex::Align::Center) };
+    return row;
+}
+
+// A branch gets a triangle; a leaf gets the same width of nothing, so every
+// row's content starts at the same x whatever its depth.
+fn disclosure_cell(item: *ftree::TreeNode, p: *ftree::TreeProps, h: f64) -> core::Node {
+    let w: f64 = disclosure_width();
+    if !{ (*item).is_branch } {
+        var pad: core::Node = core::column(core::Builder::new(), key: "");
+        { pad.set_width(flex::StyleLength::points(w)) };
+        return pad;
+    }
+    // THE TRIANGLES ARE U+25BE / U+25B8, which every Windows UI font has and
+    // which go out through `sys::to_wide` like all other text here. An ASCII
+    // `v` and `>` were the first build's, and they read as characters rather
+    // than as a control.
+    let glyph: str = if is_expanded_node(p, item) { "▾" } else { "▸" };
+    var b: core::Builder = core::Builder::new();
+    b.add(flabel::label(glyph, key: "", font_size: 9.0f64));
+    var cell: core::Node = core::column(b, key: "");
+    { cell.set_width(flex::StyleLength::points(w)) };
+    { cell.set_justify(flex::Justify::Center) };
+    { cell.set_align(flex::Align::Center) };
+    // CLICKING THE TRIANGLE TOGGLES THE BRANCH, which is the backend's job and
+    // not the application's: `on_select` reports a SELECTION, and the gallery —
+    // like every tree — returns early for a branch. Without this a tree can be
+    // built expanded and never opened again.
+    core::set_item(#addr_of(cell), item as *u8);
+    // Through a typed binding, which is how a fn's ADDRESS is taken here.
+    let click: gestures::Handler = toggle_branch;
+    return cell.gesture(on_click: click);
+}
+
+// Toggle the branch whose triangle was clicked.
+//
+// IN THIS FILE rather than in `input`, and the import graph is why: `input`
+// imports `recycler`, so the arrow cannot run the other way. Everything needed
+// is here anyway — the walk up to the tree's viewport is `GetParent` plus the
+// node property, which is what `input::list_above` does one level out.
+fn toggle_branch(sender: *u8, ctx: *u8) -> bool {
+    if sender == (0 as *u8) { return false; }
+    let cell: *core::Node = node_of_view(sender);
+    if cell == (0 as *core::Node) { return false; }
+    let item: *ftree::TreeNode = core::item_of(cell) as *ftree::TreeNode;
+    if item == (0 as *ftree::TreeNode) { return false; }
+    let host: *u8 = tree_above(sender);
+    if host == (0 as *u8) { return false; }
+    let n: *core::Node = node_of_view(host);
+    if n == (0 as *core::Node) { return false; }
+    let p: *ftree::TreeProps = tree_props(n);
+    if p == (0 as *ftree::TreeProps) { return false; }
+    let id: str = { (*item).id }.view();
+    if is_expanded_id(p, id) { collapse_id(p, id); }
+    else { let _s: status::Status = { (*p).expanded.add(id) }; }
+    // The ordinary route: the tree's own `apply` re-flattens the map and
+    // re-lays the rows, exactly as it does when an application expands one.
+    core::touch(n, ftree::P_EXPANDED);
+    return true;
+}
+
+// `Tree::collapse` rebuilds the list without the id, and this is that with a
+// props pointer instead of a live handle — the handle needs a `find`, and the
+// node is already in hand.
+fn collapse_id(p: *ftree::TreeProps, id: str) {
+    var kept: vocab::TextList = vocab::TextList::new();
+    var i: usize = 0 as usize;
+    let n: usize = { (*p).expanded.count() };
+    while i < n {
+        let e: str = { (*p).expanded.at(i) };
+        if e != id { let _s: status::Status = kept.add(e); }
+        i = i +% (1 as usize);
+    }
+    { (*p).expanded = kept };
+    return;
+}
+
+fn node_of_view(v: *u8) -> *core::Node {
+    if v == (0 as *u8) { return 0 as *core::Node; }
+    return { u::GetPropA(v, sys::prop_node() as *i8) } as *core::Node;
+}
+
+fn tree_above(v: *u8) -> *u8 {
+    var cur: *u8 = v;
+    while cur != (0 as *u8) {
+        let s: *ListState = state_of(cur);
+        if s != (0 as *ListState) {
+            if { (*s).is_tree } { return cur; }
+        }
+        cur = { u::GetParent(cur) };
+    }
+    return 0 as *u8;
+}
+
+fn content_cell(item: *ftree::TreeNode, p: *ftree::TreeProps) -> core::Node {
+    let f: fn(*ftree::TreeNode, *u8) -> flex::Node = { (*p).row };
+    var content: core::Node = if f != ftree::no_row {
+        f(item, { (*p).row_ctx })
+    } else {
+        flabel::label({ (*item).label }.view(), key: "")
+    };
+    var b: core::Builder = core::Builder::new();
+    b.add(content);
+    var cell: core::Node = core::column(b, key: "");
+    { cell.set_flex_grow(1.0f64) };
+    { cell.set_justify(flex::Justify::Center) };
+    return cell;
+}
+
+fn build_tree_row(v: *u8, s: *ListState, p: *ftree::TreeProps, i: usize) -> *core::Node {
+    let item: *ftree::TreeNode = tree_node_at(s, i);
+    if item == (0 as *ftree::TreeNode) { return 0 as *core::Node; }
+    var n: core::Node = compose_tree_row(item, p, tree_depth_at(s, i),
+                                         tree_row_height(p));
+    let rp: *core::Node = match box::new::[core::Node](n) {
+        option::Option[box::Box[core::Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp == (0 as *core::Node) { return 0 as *core::Node; }
+    core::set_item_index(rp, i);
+    // THE ROW'S NAME ON THE AGENT SURFACE. A row the application's `row`
+    // builder gave no key to is invisible to `describe_ui` and cannot be
+    // clicked over the socket — which is a tree nobody can drive. `row_id` is
+    // the verb for it, and a tree that states none falls back to the model
+    // node's own id. facet_gtk names its rows the same way.
+    name_row(rp, item, p);
+    let _view: *u8 = mount::realise(rp, controls::document_host(v));
+    return rp;
+}
+
+fn create_tree(n: *core::Node) -> *u8 { return create_sequence(n); }
+
+// The bits that change WHAT THE TREE SHOWS. `P_EXPANDED` is the one a sequence
+// has no counterpart for: expanding a branch changes which rows exist without
+// changing the model at all.
+fn tree_model_bits() -> u64 {
+    return ftree::P_ROOT | ftree::P_ROW | ftree::P_ROW_HEIGHT | ftree::P_EXPANDED;
+}
+
+fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    let p: *ftree::TreeProps = tree_props(n);
+    if p == (0 as *ftree::TreeProps) { return; }
+    { (*s).is_tree = true };
+    if (dirty & tree_model_bits()) != (0 as u64) {
+        rebuild_tree_map(s, p);
+        release_all(s);
+        layout_rows(v, n);
+    }
+    return;
+}
+
+// A click on a tree row. The index is the FLATTENED one, which is what the
+// cells carry; the handler is handed the node it stands for.
+fn on_tree_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    let p: *ftree::TreeProps = tree_props(n);
+    if p == (0 as *ftree::TreeProps) { return false; }
+    let item: *ftree::TreeNode = tree_node_at(s, index);
+    if item == (0 as *ftree::TreeNode) { return false; }
+    { (*s).selected = index as i64 };
+    { (*p).selected = { (*item).id }.clone() };
+    let f: fn(*ftree::TreeNode, *u8) = { (*p).on_select };
+    if f == ftree::no_select { return false; }
+    f(item, { (*p).on_select_ctx });
+    return true;
+}
+// ---- FACET_WIN32_ROWS=1 -----------------------------------------------------------
+//
+// HOW MANY CELLS A LIST IS HOLDING, printed once per layout pass. The one
+// number that says whether this file is doing its job: a 20,000-row list and a
+// 50-row list must hold the SAME handful, and if the count tracks the model
+// then nothing here is virtualising and every row is live.
+//
+// facet_gtk's handoff ends on exactly this measurement — "GtkListView keeps 205
+// cells for a viewport that holds seven" — and records that guessing at it from
+// outside did not help. A number is the only thing that settles it.
+static ROWS_READ: bool = false;
+static ROWS_ON: bool = false;
+
+fn tracing_rows() -> bool {
+    if !ROWS_READ { ROWS_READ = true; ROWS_ON = env::has_var("FACET_WIN32_ROWS"); }
+    return ROWS_ON;
+}
+
+fn trace_rows(s: *ListState, first: i64, last: i64) {
+    if !tracing_rows() { return; }
+    var live: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).cells.count() };
+    while i < n {
+        match { (*s).cells.at_ptr(i) } {
+            option::Option[*Cell]::Some(c) => { if { (*c).row } >= (0 as i64) { live = live +% (1 as usize); } }
+            option::Option[*Cell]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let count: i64 = { (*s).count };
+    io::eprintln("[rows] model=${count} visible=${first}..${last} cells=${n} live=${live}");
+    return;
+}
+
+// Scroll by `lines` rows, positive being downward — the door the wheel uses.
+// A list with nothing to scroll answers false, so the wheel falls through to
+// whatever is behind rather than being swallowed.
+fn scroll_by(v: *u8, n: *core::Node, lines: f64) -> bool {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return false; }
+    let vh: f64 = (vr.bottom -% vr.top) as f64;
+    if { (*s).content } <= vh { return false; }
+    let step: f64 = if { (*s).uniform } > (0.0 as f64) { { (*s).uniform } }
+                    else { default_row_height() };
+    { (*s).scroll = { (*s).scroll } + lines * step };
+    // `layout_rows` clamps — a wheel past either end settles at the end rather
+    // than running off it, and the clamp lives there because the scroll bar
+    // needs the same one.
+    layout_rows(v, n);
+    // REPORTED FROM THE TWO SCROLL DOORS, not from `layout_rows`. That function
+    // is the common bottom of both, but it is also called by every model
+    // change — and a rebuild is not a scroll.
+    fire_scrolled(v, n);
+    return true;
+}
+
+// Write the selection back into whichever props struct the kind really has.
+// The counterpart to `source_of`, and separate for the same reason: there is no
+// shared layout to cast to.
+fn write_selected(n: *core::Node, index: i64) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let k: u32 = { (*d).kind };
+    if k == props::K_LIST { { (*(raw as *props::ListProps)).selected_index = index }; return; }
+    if k == props::K_COLLECTION {
+        { (*(raw as *props::CollectionProps)).selected_index = index };
+    }
+    return;
+}
+
+// ---- the list's remaining verbs ------------------------------------------------------
+//
+// Everything above this line is about WHICH ROWS EXIST and where they sit.
+// These are about the list as a control: how it scrolls, what separates its
+// rows, and what it does while it is refreshing.
+
+// `scroll_to` names a ROW, not an offset — so it resolves through the same map
+// the layout uses, which is what makes it correct on the uneven path too. A row
+// past the end clamps rather than being ignored: an application scrolling to
+// the last row of a list that just shrank means "the end".
+fn scroll_to_row(v: *u8, n: *core::Node, at: i64) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    var i: i64 = at;
+    if i < (0 as i64) { i = 0 as i64; }
+    let n_rows: i64 = row_count(s);
+    if n_rows == (0 as i64) { return; }
+    if i >= n_rows { i = n_rows -% (1 as i64); }
+    // THE ROW'S LINE, which with one column is the row. A grid scrolls to the
+    // line the item is on — there is nowhere else to put it.
+    var src: SeqSource = source_of(n);
+    let line: i64 = if { (*s).is_tree } || !src.live { i }
+                    else { line_of(#addr_of(src), i as usize) };
+    { (*s).scroll = offset_of(s, line as usize) };
+    // `layout_rows` clamps to the content, so a scroll_to near the end lands at
+    // the end rather than past it.
+    layout_rows(v, n);
+    return;
+}
+
+fn strip_height(s: *ListState) -> f64 {
+    if { (*s).refreshing } { return refresh_bar_height() as f64; }
+    return 0.0f64;
+}
+
+fn row_count(s: *ListState) -> i64 {
+    if { (*s).is_tree } { return { (*s).tree_rows.count() } as i64; }
+    return { (*s).count };
+}
+
+// The two scroll-bar verbs. A viewport's bars are STYLE BITS, the same as
+// `scroll`'s own — and the horizontal one is worth a word: this recycler lays
+// rows out at the viewport's full width, so a horizontal bar has nothing to
+// scroll to. Setting the style is still right, because the application asked
+// for the bar and the alternative is to silently disagree; what it will not do
+// is make a row wider than its viewport.
+fn apply_bars(v: *u8, vertical: vocab::ScrollBars, horizontal: vocab::ScrollBars) {
+    var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
+    style = style & ~(sys::ws_vscroll() | sys::ws_hscroll());
+    if controls::bars_shown(vertical) { style = style | sys::ws_vscroll(); }
+    if controls::bars_shown(horizontal) { style = style | sys::ws_hscroll(); }
+    let _o: i64 = { u::SetWindowLongPtrA(v, sys::gwl_style(), style as i64) };
+    return;
+}
+
+// ---- separators ----------------------------------------------------------------------
+//
+// A HAIRLINE BETWEEN ROWS, drawn by the VIEWPORT rather than by the rows. The
+// rows are child windows and a child cannot draw outside itself — a separator
+// belonging to row N would have to paint on row N+1's first pixel, which it
+// does not own. The viewport owns the whole column, so it draws them all.
+//
+// That also makes the line survive recycling: a cell rebound to a different row
+// does not have to remember whether it drew one.
+fn draw_separators(v: *u8, n: *core::Node, hdc: *u8) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    if !src.separator { return; }
+    var has: bool = false;
+    var c: u32 = paint::resolve(src.separator_color, #addr_of(has));
+    // COLOR_3DLIGHT — a hairline, not a rule. An unstated separator colour that
+    // came out as window text would draw a black grid.
+    if !has { c = { u::GetSysColor(22 as i32) }; }
+    let brush: *u8 = paint::brush_for(c);
+    if brush == (0 as *u8) { return; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return; }
+    let n_rows: i64 = row_count(s);
+    let p: *SeqSource = #addr_of(src);
+    var i: i64 = 0 as i64;
+    while i < n_rows {
+        // The line sits at the row's BOTTOM, which is the next row's top, and
+        // the last row has none — a trailing rule under the final row reads as
+        // an empty row rather than as a separator.
+        let bottom: f64 = offset_of(s, i as usize)
+                        + height_at(s, i as usize, p) - { (*s).scroll }
+                        + strip_height(s);
+        if bottom > (0.0 as f64) && bottom < ((vr.bottom -% vr.top) as f64) {
+            if i < (n_rows -% (1 as i64)) {
+                var line: u::tagRECT = u::tagRECT {
+                    left: vr.left, top: bottom as i32,
+                    right: vr.right, bottom: (bottom as i32) +% (1 as i32),
+                };
+                let _f: i32 = { u::FillRect(hdc, #addr_of(line), brush) };
+            }
+        }
+        i = i +% (1 as i64);
+    }
+    return;
+}
+
+// ---- refresh -------------------------------------------------------------------------
+//
+// PULL-TO-REFRESH IS A TOUCH GESTURE and a desktop mouse cannot make it: there
+// is no overscroll to pull against, and a wheel past the top is not a gesture,
+// it is the end of the list. So `is_refreshable` and `can_refresh` are honoured
+// as PERMISSION rather than as an affordance — they gate whether a refresh can
+// be started at all — and the gesture that starts one is F5, which is what a
+// Windows application means by refresh.
+//
+// The STATE half is real and drawn: `is_refreshing` puts a marquee strip across
+// the top of the viewport, which is the same barber's pole a `spinner` is here.
+// `begin_refresh` and `end_refresh` are the imperative pair that set it.
+fn refresh_bar_height() -> i32 { return 4 as i32; }
+
+fn set_refreshing(v: *u8, n: *core::Node, on: bool) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    if { (*s).refreshing } == on { return; }
+    { (*s).refreshing = on };
+    write_refreshing(n, on);
+    // The strip is inside the viewport, so the rows move down by its height
+    // while it is up — otherwise it draws over the first row.
+    layout_rows(v, n);
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return;
+}
+
+fn write_refreshing(n: *core::Node, on: bool) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    if { (*d).kind } != props::K_LIST { return; }
+    { (*(raw as *props::ListProps)).is_refreshing = on };
+    return;
+}
+
+// The strip itself. Not animated — an animated one would want a timer per
+// list, and `anim` holds one tween for the whole process. A static bar in the
+// refresh colour says "refreshing" without claiming progress it does not have.
+fn draw_refresh_bar(v: *u8, n: *core::Node, hdc: *u8) {
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    if !{ (*s).refreshing } { return; }
+    var src: SeqSource = source_of(n);
+    if !src.live { return; }
+    var has: bool = false;
+    var c: u32 = paint::resolve(src.refresh_color, #addr_of(has));
+    if !has { c = { u::GetSysColor(13 as i32) }; }        // COLOR_HIGHLIGHT
+    let brush: *u8 = paint::brush_for(c);
+    if brush == (0 as *u8) { return; }
+    var vr: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                      right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(vr)) } == (0 as i32) { return; }
+    var bar: u::tagRECT = u::tagRECT {
+        left: vr.left, top: vr.top,
+        right: vr.right, bottom: vr.top +% refresh_bar_height(),
+    };
+    let _f: i32 = { u::FillRect(hdc, #addr_of(bar), brush) };
+    return;
+}
+
+// F5 on a list that allows it. `is_refreshable` is the kind's permission and
+// `can_refresh` is the momentary one — an application that is already loading
+// sets `can_refresh` false, and both have to be true for the key to do
+// anything.
+fn refresh_requested(v: *u8, n: *core::Node) -> bool {
+    var src: SeqSource = source_of(n);
+    if !src.live { return false; }
+    if !src.is_refreshable { return false; }
+    if !src.can_refresh { return false; }
+    set_refreshing(v, n, true);
+    let h: fn(*u8, *u8) = src.on_refreshing;
+    if h == props::no_handler { return true; }
+    h(v, src.on_refreshing_ctx as *u8);
+    return true;
+}
+
+// ---- the list's control half ---------------------------------------------------------
+
+#[test]
+fn a_collection_says_it_has_no_separator_rather_than_reading_one() {
+    // THE POINT OF `SeqSource`. `CollectionProps` has no `separator` and no
+    // refresh at all — they are not on any of its five embedded structs. The
+    // old code cast a collection to `*ListProps` and would have read whichever
+    // bytes happened to sit at the separator's offset.
+    var c: core::Node = fcollection::collection(key: "c");
+    let src: SeqSource = source_of(#addr_of(c));
+    assert src.live;
+    assert !src.separator;
+    assert !src.is_refreshable;
+    assert !src.can_refresh;
+    assert src.on_refreshing == props::no_handler;
+    return;
+}
+
+#[test]
+fn a_list_reads_its_separator_and_refresh_from_its_own_props() {
+    var l: core::Node = flist::list(key: "l", refreshable: true, refresh: true);
+    let src: SeqSource = source_of(#addr_of(l));
+    assert src.live;
+    // `Separator::Default` is the unstated value; on Windows the platform's
+    // usual answer is NO rule between rows, so it resolves to false here (see
+    // the source's own note for the second, rendering reason). The refresh
+    // fields below are what prove the source READS the list's own props rather
+    // than reading a collection's absent ones — the point this test guards.
+    assert !src.separator;
+    assert src.is_refreshable;
+    assert src.can_refresh;
+    return;
+}
+
+#[test]
+fn a_table_is_still_not_a_row_source() {
+    // The type confusion this struct replaced. A `TableProps` is three fields;
+    // reading `.count` off it goes past the end of the allocation.
+    var t: core::Node = ftable::table(key: "t");
+    let src: SeqSource = source_of(#addr_of(t));
+    assert !src.live;
+    return;
+}
+
+#[test]
+fn the_refresh_strip_takes_room_only_while_it_is_up() {
+    // The rows start below the strip, because a child window paints OVER its
+    // parent and an overlay would be covered by the first row.
+    var s: ListState = new_state();
+    assert strip_height(#addr_of(s)) == (0.0 as f64);
+    { s.refreshing = true };
+    assert strip_height(#addr_of(s)) == (refresh_bar_height() as f64);
+    return;
+}
+
+#[test]
+fn scrolling_to_a_row_past_the_end_lands_on_the_last_one() {
+    // An application scrolling to the last row of a list that just shrank means
+    // "the end", not "nowhere".
+    var s: ListState = new_state();
+    { s.count = 10 as i64 };
+    { s.uniform = 20.0f64 };
+    assert row_count(#addr_of(s)) == (10 as i64);
+    assert offset_of(#addr_of(s), 9 as usize) == (180.0 as f64);
+    return;
+}
+
+#[test]
+fn scroll_to_on_a_dead_window_is_quiet() {
+    // `apply` runs on nodes whose create failed, so every one of these has to
+    // survive a null window rather than assume one.
+    var l: core::Node = flist::list(key: "l");
+    scroll_to_row(0 as *u8, #addr_of(l), 3 as i64);
+    draw_separators(0 as *u8, #addr_of(l), 0 as *u8);
+    draw_refresh_bar(0 as *u8, #addr_of(l), 0 as *u8);
+    assert !refresh_requested(0 as *u8, #addr_of(l));
+    return;
+}
+
+#[test]
+fn refresh_needs_both_permissions() {
+    // `is_refreshable` is the kind's permission and `can_refresh` the momentary
+    // one — an application already loading sets the second false, and F5 must
+    // then do nothing.
+    var a: core::Node = flist::list(key: "a", refreshable: true, refresh: false);
+    let sa: SeqSource = source_of(#addr_of(a));
+    assert sa.is_refreshable;
+    assert !sa.can_refresh;
+    var b: core::Node = flist::list(key: "b", refreshable: false, refresh: true);
+    let sb: SeqSource = source_of(#addr_of(b));
+    assert !sb.is_refreshable;
+    return;
+}
+
+// ---- the row lifecycle, and the scroll observer --------------------------------------
+//
+// This recycler is the one place that knows exactly when a row enters and
+// leaves the visible window, because it is the thing that decides. The other
+// three backends have to infer it from a factory callback; here it is the
+// free-then-fill loop in `layout_rows`.
+//
+// BOTH THE REBIND AND THE FRESH BUILD COUNT AS APPEARING. Firing only when a
+// new cell is made would report an item appearing exactly when the list was too
+// slow to recycle, which is the opposite of the truth. facet_gtk states the
+// same rule from its side.
+//
+// The sender is the ROW'S window, not the list's: a handler that wants to know
+// which row it was is holding the thing it was given, and `item_of` reads the
+// index off it.
+fn fire_item_visibility(n: *core::Node, host: *u8, appearing: bool) {
+    if n == (0 as *core::Node) { return; }
+    // ONLY `list` DECLARES THESE TWO. `props_of` answers null for any other
+    // kind, so a collection, a table or a tree — which share this recycler and
+    // do NOT have the verbs — falls out here rather than reading another
+    // kind's block. That is the same discipline `SeqSource` exists for.
+    let p: *props::ListProps = controls::props_of(n, props::K_LIST) as *props::ListProps;
+    if p == (0 as *props::ListProps) { return; }
+    if appearing {
+        let h: fn(*u8, *u8) = { (*p).on_item_appearing };
+        if h != props::no_handler { h(host, { (*p).on_item_appearing_ctx }); }
+        return;
+    }
+    let h: fn(*u8, *u8) = { (*p).on_item_disappearing };
+    if h != props::no_handler { h(host, { (*p).on_item_disappearing_ctx }); }
+    return;
+}
+
+// `observe_scrolled` on the list itself and on its embedded `ItemsViewProps`.
+// A list has BOTH — its own and the items-view one — and a collection has only
+// the second, which is why this reads the kind rather than a resolved copy.
+fn fire_scrolled(v: *u8, n: *core::Node) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let k: u32 = { (*d).kind };
+    if k == props::K_LIST {
+        let p: *props::ListProps = raw as *props::ListProps;
+        let h: fn(*u8, *u8) = { (*p).observe_scrolled };
+        if h != props::no_handler { h(v, { (*p).observe_scrolled_ctx }); }
+        return;
+    }
+    if k == props::K_COLLECTION {
+        let p: *props::CollectionProps = raw as *props::CollectionProps;
+        let h: fn(*u8, *u8) = { (*p).items_view.observe_scrolled };
+        if h != props::no_handler { h(v, { (*p).items_view.observe_scrolled_ctx }); }
+    }
+    return;
+}
+
+// THE THRESHOLD FIRES ON THE EDGE, not on every frame past it. `ItemsView`'s
+// contract is "tell me when I am within N of the end so I can load more", and
+// an application that loads on every scroll message inside that band issues one
+// request per pixel.
+fn fire_threshold(v: *u8, n: *core::Node, last: i64, count: i64) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    if { (*d).kind } != props::K_COLLECTION { return; }
+    let p: *props::CollectionProps = raw as *props::CollectionProps;
+    let want: i64 = { (*p).items_view.remaining_threshold };
+    // A threshold of zero is OFF, which is the default and what an application
+    // that never asked for this means.
+    if want <= (0 as i64) { return; }
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return; }
+    let inside: bool = (count -% (1 as i64) -% last) <= want;
+    if inside == { (*s).in_threshold } { return; }
+    { (*s).in_threshold = inside };
+    if !inside { return; }
+    let h: fn(*u8, *u8) = { (*p).items_view.on_remaining_items_threshold_reached };
+    if h != props::no_handler {
+        h(v, { (*p).items_view.on_remaining_items_threshold_reached_ctx });
+    }
+    return;
+}
+
+// ---- reordering, by dragging a row -----------------------------------------------
+//
+// `can_reorder_items` is the ledger's `ReorderableItemsView`, and this is the
+// ONE place in this file where the backend writes into the props:
+// `reorder_from` and `reorder_to` are read-only to the application — writing
+// them would be describing a move that did not happen — and
+// `on_reorder_completed` is how it learns a move happened at all.
+//
+// THE DATA IS NOT TOUCHED, and that is the contract rather than a shortcut.
+// facet's sequence is a count plus a builder, so the ORDER belongs to the
+// application: this reports the move, the application reorders its own data and
+// writes `count` or `row` back. A backend that shuffled rows itself would be
+// shuffling a view of data it does not own, and the next rebuild would put them
+// back. facet_gtk states the same rule in the same words.
+//
+// NO OLE DRAG-DROP HERE. facet_gtk uses GTK's own drag machinery because a row
+// is both a source and a target there; on Win32 the equivalent is COM, and this
+// is an INTRA-APPLICATION move that never leaves the window — mouse capture
+// answers it exactly, and `dnd.cplus`'s note about the COM price does not
+// apply.
+
+static REORDER_LIST: usize = 0;
+static REORDER_FROM: i64 = (0 as i64) -% (1 as i64);
+static REORDER_TO: i64 = (0 as i64) -% (1 as i64);
+static REORDER_MOVED: bool = false;
+static REORDER_Y: i32 = 0;
+
+fn reorders(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    // ONLY A COLLECTION REORDERS, and that is facet's shape rather than this
+    // package's choice. `ReorderableItemsViewProps` — which carries
+    // `can_reorder_items` and `on_reorder_completed` — is embedded in
+    // `CollectionProps` and in nothing else. A `list` has `reorder_from` and
+    // `reorder_to` to read, but no way to ASK for reordering and no handler to
+    // hear it, so a drag there would be a gesture with no contract behind it.
+    // facet_gtk reorders `CollectionProps` and only that, for the same reason.
+    if { (*d).kind } != props::K_COLLECTION { return false; }
+    return { (*(raw as *props::CollectionProps)).reorderable_items_view.can_reorder_items };
+}
+
+// A press on row `index` of the list at `v`. Answers false when this list does
+// not reorder, so the press falls through to selection as before.
+fn begin_reorder(v: *u8, n: *core::Node, index: usize, y: i32) -> bool {
+    if !reorders(n) { return false; }
+    REORDER_LIST = { #addr(v) };
+    REORDER_FROM = index as i64;
+    REORDER_TO = (0 as i64) -% (1 as i64);
+    REORDER_MOVED = false;
+    REORDER_Y = y;
+    return true;
+}
+
+// The viewport's own width, which a grid needs to know how wide one column is.
+// Zero when the window is gone, and every caller treats that as "no columns to
+// resolve" rather than dividing by it.
+fn viewport_width(v: *u8) -> f64 {
+    if v == (0 as *u8) { return 0.0f64; }
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } == (0 as i32) { return 0.0f64; }
+    return (r.right -% r.left) as f64;
+}
+
+// PAST THE SLOP, or it is not a drag. Every click jitters a pixel between down
+// and up; without this every click on a reorderable row is also a reorder onto
+// itself.
+fn reorder_slop() -> i32 { return 4 as i32; }
+
+fn drag_reorder(v: *u8, y: i32) -> bool {
+    if REORDER_LIST == (0 as usize) { return false; }
+    var dy: i32 = y -% REORDER_Y;
+    if dy < (0 as i32) { dy = (0 as i32) -% dy; }
+    if !REORDER_MOVED && dy < reorder_slop() { return false; }
+    REORDER_MOVED = true;
+    return true;
+}
+
+// The release. `x` and `y` are in the VIEWPORT's coordinates — the caller
+// converts, because the release may land on a different row's window than the
+// press did and each has its own origin.
+//
+// `x` MATTERS ONLY IN A GRID, and it is what makes a drop there land on an
+// item rather than on a line: with three columns, `y` alone names three
+// possible destinations and picking the first would move a row to the start of
+// whatever line it was dropped anywhere on.
+fn end_reorder(n: *core::Node, x: i32, y: i32) -> bool {
+    let v: *u8 = REORDER_LIST as *u8;
+    let from: i64 = REORDER_FROM;
+    let moved: bool = REORDER_MOVED;
+    REORDER_LIST = 0 as usize;
+    REORDER_FROM = (0 as i64) -% (1 as i64);
+    REORDER_MOVED = false;
+    if v == (0 as *u8) { return false; }
+    // A PRESS THAT NEVER MOVED IS A CLICK, not a reorder onto the same row.
+    if !moved { return false; }
+    let s: *ListState = state_of(v);
+    if s == (0 as *ListState) { return false; }
+    var src: SeqSource = source_of(n);
+    if !src.live { return false; }
+    let p: *SeqSource = #addr_of(src);
+    // Where the pointer let go, in CONTENT coordinates — the scroll offset has
+    // to come back on, or dropping onto a scrolled list reports the row that
+    // happens to be at that screen position in an unscrolled one.
+    let at: f64 = (y as f64) + { (*s).scroll } - strip_height(s);
+    let line: i64 = row_at(s, at, p);
+    var to: i64 = first_display_of_line(p, line);
+    if is_grid(p) {
+        // Which item ON that line: the pointer's x over the column width, held
+        // to the line's own last item so a drop in the empty tail of a short
+        // final line lands on its last item rather than past it.
+        let cw: f64 = viewport_width(v) / (columns_of(p) as f64);
+        if cw > (0.0 as f64) {
+            var col: i64 = ((x as f64) / cw) as i64;
+            if col < (0 as i64) { col = 0 as i64; }
+            to = to + col;
+            let last: i64 = last_display_of_line(p, line);
+            if to > last { to = last; }
+        }
+    }
+    let count: i64 = row_count(s);
+    if count <= (0 as i64) { return false; }
+    if to < (0 as i64) { to = 0 as i64; }
+    if to >= count { to = count -% (1 as i64); }
+    if to == from { return false; }
+    // BOTH ENDS ARE DISPLAY INDICES and the application's are DATA ones. A
+    // header is not a destination — dropping on a section title reports
+    // nothing rather than the row that happens to follow it.
+    let from_data: i64 = data_index(p, from as usize);
+    let to_data: i64 = data_index(p, to as usize);
+    if from_data < (0 as i64) || to_data < (0 as i64) { return false; }
+    // `can_mix_groups` — whether a reorder may CROSS a section boundary. False
+    // is the default and the stricter answer, so a grouped collection that
+    // never mentioned it cannot have a row dragged out of its section.
+    if grouped(p) && !{ (*p).can_mix_groups } {
+        if slot_at(p, from as usize).group != slot_at(p, to as usize).group {
+            return false;
+        }
+    }
+    if to_data == from_data { return false; }
+    REORDER_TO = to_data;
+    return report_reorder(v, n, from_data, to_data);
+}
+
+fn report_reorder(v: *u8, n: *core::Node, from: i64, to: i64) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    if { (*d).kind } != props::K_COLLECTION { return false; }
+    let p: *props::CollectionProps = raw as *props::CollectionProps;
+    // THE BACKEND WRITES THESE TWO and nothing else does — they are read-only
+    // to the application, because writing them would describe a move that did
+    // not happen.
+    { (*p).reorder_from = from };
+    { (*p).reorder_to = to };
+    // AND THE BIT, so a cursor watching the node learns a move happened. The
+    // handler is one way to hear it and `reorder_from`/`reorder_to` are the
+    // other; an application that polls rather than subscribes has nothing to
+    // poll ON without this.
+    core::touch(n, fcollection::P_REORDER);
+    let h: fn(*u8, *u8) = { (*p).reorderable_items_view.on_reorder_completed };
+    if h == props::no_handler { return true; }
+    h(v, { (*p).reorderable_items_view.on_reorder_completed_ctx });
+    return true;
+}
+
+// Drop the drag without reporting anything. Used when the rule the drop would
+// be judged by changes underneath it.
+fn cancel_reorder() {
+    REORDER_LIST = 0 as usize;
+    REORDER_FROM = (0 as i64) -% (1 as i64);
+    REORDER_MOVED = false;
+    return;
+}
+
+fn reorder_active() -> bool { return REORDER_LIST != (0 as usize); }
+fn reorder_host() -> *u8 { return REORDER_LIST as *u8; }
+
+#[test]
+fn a_list_that_did_not_ask_to_reorder_does_not() {
+    // The gate. Without it every press on every row would begin a drag and the
+    // release would report a move the application never allowed.
+    // A LIST NEVER REORDERS — it has no way to ask. See `reorders`.
+    var l: core::Node = flist::list(key: "l");
+    assert !reorders(#addr_of(l));
+    var c: core::Node = fcollection::collection(key: "c");
+    assert !reorders(#addr_of(c));
+    assert !begin_reorder(0 as *u8, #addr_of(l), 0 as usize, 0 as i32);
+    assert !reorder_active();
+    return;
+}
+
+#[test]
+fn a_press_that_never_moved_is_a_click_and_not_a_reorder() {
+    // Every click jitters a pixel between down and up. Reporting a reorder for
+    // one would fire `on_reorder_completed` for a move the user did not make —
+    // and the application would then rewrite its data.
+    var l: core::Node = fcollection::collection(key: "c", reorder_items: true);
+    assert reorders(#addr_of(l));
+    assert begin_reorder(4321 as *u8, #addr_of(l), 2 as usize, 100 as i32);
+    assert reorder_active();
+    // Two pixels is jitter, not a drag.
+    assert !drag_reorder(4321 as *u8, 102 as i32);
+    // And the release then reports nothing.
+    assert !end_reorder(#addr_of(l), 0 as i32, 102 as i32);
+    assert !reorder_active();
+    return;
+}
+
+#[test]
+fn a_click_on_the_selected_row_is_not_a_selection_change() {
+    // `on_selection_changed` is named for the CHANGE. A re-click on the row
+    // that is already selected changed nothing, and firing makes an
+    // application re-select what it had — a whole pane rebuilt for nothing
+    // where the handler rebuilds one. facet_gtk records the same rule.
+    //
+    // Asserted through the props rather than through a click, because a click
+    // needs a window: the gate is `selected_index` already holding the data
+    // index, which is what `on_row_click` compares before it fires.
+    var c: core::Node = fcollection::collection(key: "c",
+                                                selection_mode: vocab::SelectionMode::Single);
+    let p: *props::CollectionProps =
+        controls::props_of(#addr_of(c), props::K_COLLECTION) as *props::CollectionProps;
+    { (*p).count = 5 as i64 };
+    { (*p).row = a_data_row };
+    { (*p).selected_index = 2 as i64 };
+    var src: SeqSource = source_of(#addr_of(c));
+    assert src.selected_index == (2 as i64);
+    assert data_index(#addr_of(src), 2 as usize) == (2 as i64);
+    // A DIFFERENT row is a change; the same one is not.
+    assert data_index(#addr_of(src), 3 as usize) != src.selected_index;
+    return;
+}
+
+// ---- the grid ---------------------------------------------------------------------
+
+#[test]
+fn one_column_is_the_arithmetic_it_always_was() {
+    // The property that makes the grid safe to add to a file every list in the
+    // package already goes through: with one column a LINE IS A DISPLAY ROW,
+    // and every conversion is the identity.
+    var src: SeqSource = no_source();
+    src.count = 50 as i64;
+    let p: *SeqSource = #addr_of(src);
+    assert columns_of(p) == (1 as i64);
+    assert !is_grid(p);
+    assert line_count(p) == (50 as i64);
+    var i: i64 = 0 as i64;
+    while i < (50 as i64) {
+        assert line_of(p, i as usize) == i;
+        assert col_of(p, i as usize) == (0 as i64);
+        assert first_display_of_line(p, i) == i;
+        assert last_display_of_line(p, i) == i;
+        i = i + (1 as i64);
+    }
+    return;
+}
+
+#[test]
+fn a_stated_column_count_under_two_is_one_column() {
+    // ZERO IS FACET'S DEFAULT — "not stated" — and one column is what a
+    // collection that never asked has always drawn. Reading zero as a column
+    // count would divide the viewport by nothing.
+    var src: SeqSource = no_source();
+    src.count = 9 as i64;
+    src.columns = 0 as i64;
+    assert columns_of(#addr_of(src)) == (1 as i64);
+    src.columns = 1 as i64;
+    assert columns_of(#addr_of(src)) == (1 as i64);
+    src.columns = 3 as i64;
+    assert columns_of(#addr_of(src)) == (3 as i64);
+    assert is_grid(#addr_of(src));
+    return;
+}
+
+#[test]
+fn a_grid_wraps_every_n_items_and_the_last_line_is_short() {
+    // Ten items in three columns: four lines, the last holding one.
+    var src: SeqSource = no_source();
+    src.count = 10 as i64;
+    src.columns = 3 as i64;
+    let p: *SeqSource = #addr_of(src);
+    assert line_count(p) == (4 as i64);
+    assert line_of(p, 0 as usize) == (0 as i64);
+    assert line_of(p, 2 as usize) == (0 as i64);
+    assert line_of(p, 3 as usize) == (1 as i64);
+    assert line_of(p, 9 as usize) == (3 as i64);
+    assert col_of(p, 0 as usize) == (0 as i64);
+    assert col_of(p, 2 as usize) == (2 as i64);
+    assert col_of(p, 3 as usize) == (0 as i64);
+    assert first_display_of_line(p, 1) == (3 as i64);
+    assert last_display_of_line(p, 1) == (5 as i64);
+    // THE SHORT LAST LINE stops at the item it has, not at the column count —
+    // otherwise the visible window would ask for row 10 of a ten-row model.
+    assert first_display_of_line(p, 3) == (9 as i64);
+    assert last_display_of_line(p, 3) == (9 as i64);
+    return;
+}
+
+#[test]
+fn a_section_starts_a_fresh_line_and_its_header_takes_a_whole_one() {
+    // Two groups of two, with headers, in three columns:
+    //
+    //     line 0   H(group 0)
+    //     line 1   a  b
+    //     line 2   H(group 1)
+    //     line 3   c  d
+    //
+    // The alternative — packing display rows three at a time — would put a
+    // section title beside two items and start the next group in whatever
+    // column the previous one ran out on.
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 2 as i64, true);
+    let cp: *props::CollectionProps =
+        controls::props_of(#addr_of(c), props::K_COLLECTION) as *props::CollectionProps;
+    { (*cp).structured_items_view.columns = 3 as usize };
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert columns_of(p) == (3 as i64);
+    assert display_count(p) == (6 as i64);
+    assert line_count(p) == (4 as i64);
+
+    assert line_of(p, 0 as usize) == (0 as i64);   // the first header
+    assert line_of(p, 1 as usize) == (1 as i64);   // a
+    assert line_of(p, 2 as usize) == (1 as i64);   // b, beside it
+    assert line_of(p, 3 as usize) == (2 as i64);   // the second header
+    assert line_of(p, 4 as usize) == (3 as i64);   // c
+    assert line_of(p, 5 as usize) == (3 as i64);   // d
+
+    // A header is at the start of its line whatever the arithmetic would say,
+    // and it SPANS the line — a title one third of the way across a row reads
+    // as a mislaid item.
+    assert col_of(p, 0 as usize) == (0 as i64);
+    assert col_of(p, 3 as usize) == (0 as i64);
+    assert span_of(p, 3 as usize) == (3 as i64);
+    assert span_of(p, 4 as usize) == (1 as i64);
+    // ...and each group's columns are counted from its OWN start, not from the
+    // display index, which the header before it has already shifted.
+    assert col_of(p, 4 as usize) == (0 as i64);
+    assert col_of(p, 5 as usize) == (1 as i64);
+
+    assert first_display_of_line(p, 1) == (1 as i64);
+    assert last_display_of_line(p, 1) == (2 as i64);
+    assert first_display_of_line(p, 2) == (3 as i64);
+    // A HEADER'S LINE ENDS AT THE HEADER, so the visible window does not ask
+    // for the two items after it as though they shared its line.
+    assert last_display_of_line(p, 2) == (3 as i64);
+    assert first_display_of_line(p, 3) == (4 as i64);
+    assert last_display_of_line(p, 3) == (5 as i64);
+    return;
+}
+
+#[test]
+fn a_grid_is_as_tall_as_its_lines_not_its_items() {
+    // The content height is what the scroll bar is built from: ten items in
+    // three columns is FOUR rows of height, not ten. Getting this wrong scrolls
+    // past the end by more than a screen.
+    var c: core::Node = fcollection::collection(key: "c");
+    let cp: *props::CollectionProps =
+        controls::props_of(#addr_of(c), props::K_COLLECTION) as *props::CollectionProps;
+    { (*cp).count = 10 as i64 };
+    { (*cp).row = a_data_row };
+    { (*cp).structured_items_view.columns = 3 as usize };
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    var s: ListState = new_state();
+    rebuild_map(#addr_of(s), p);
+    // `count` stays the DISPLAY count — every other part of this file addresses
+    // cells by display index, and only the offsets are per line.
+    assert s.count == (10 as i64);
+    assert s.uniform == default_row_height();
+    assert s.content == (default_row_height() * (4.0 as f64));
+    // And the same model in one column is ten lines deep.
+    { (*cp).structured_items_view.columns = 1 as usize };
+    var one: SeqSource = source_of(#addr_of(c));
+    rebuild_map(#addr_of(s), #addr_of(one));
+    assert s.content == (default_row_height() * (10.0 as f64));
+    return;
+}
+
+// ---- grouping arithmetic ---------------------------------------------------------
+
+#[test]
+fn an_ungrouped_sequence_is_its_own_display() {
+    // The fast path, and the one every existing list takes: display index IS
+    // data index, and nothing walks anything.
+    var src: SeqSource = no_source();
+    src.count = 50 as i64;
+    let p: *SeqSource = #addr_of(src);
+    assert display_count(p) == (50 as i64);
+    assert data_index(p, 7 as usize) == (7 as i64);
+    assert !slot_at(p, 7 as usize).is_header;
+    return;
+}
+
+#[test]
+fn a_header_sits_above_each_group_and_is_not_a_row() {
+    // Two groups of two, with headers: H a b H c d — six display rows over
+    // four data rows. Getting this off by one puts every row under the wrong
+    // heading.
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 2 as i64, true);
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert grouped(p);
+    assert has_headers(p);
+    assert display_count(p) == (6 as i64);
+
+    assert slot_at(p, 0 as usize).is_header;
+    assert data_index(p, 0 as usize) == ((0 as i64) -% (1 as i64));
+    assert data_index(p, 1 as usize) == (0 as i64);
+    assert data_index(p, 2 as usize) == (1 as i64);
+    // ...the second group's header, then its rows continue the DATA numbering.
+    assert slot_at(p, 3 as usize).is_header;
+    assert slot_at(p, 3 as usize).group == (1 as usize);
+    assert data_index(p, 4 as usize) == (2 as i64);
+    assert data_index(p, 5 as usize) == (3 as i64);
+    return;
+}
+
+#[test]
+fn grouping_without_a_header_builder_shows_no_headers() {
+    // A real configuration rather than a mistake: the rows are still in
+    // sections for a reorder's purposes, and nothing is drawn between them.
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 2 as i64, false);
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert grouped(p);
+    assert !has_headers(p);
+    assert display_count(p) == (4 as i64);
+    assert data_index(p, 0 as usize) == (0 as i64);
+    assert data_index(p, 3 as usize) == (3 as i64);
+    // The groups are still there, which is what `can_mix_groups` reads.
+    assert slot_at(p, 1 as usize).group == (0 as usize);
+    assert slot_at(p, 2 as usize).group == (1 as usize);
+    return;
+}
+
+#[test]
+fn a_header_gets_its_own_cell_pool() {
+    // Pooling a header with data rows would rebind a header's subtree as a row
+    // — the same type confusion `SeqSource` exists to prevent, arriving by
+    // another door.
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 1 as i64, true);
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert kind_of_row(p, 0 as usize) == header_shape();
+    assert kind_of_row(p, 1 as usize) != header_shape();
+    return;
+}
+
+#[test]
+fn an_index_past_the_end_answers_nothing_rather_than_walking_off() {
+    var c: core::Node = fcollection::collection(key: "c");
+    grouped_props(#addr_of(c), 1 as i64, true);
+    var src: SeqSource = source_of(#addr_of(c));
+    let p: *SeqSource = #addr_of(src);
+    assert display_count(p) == (3 as i64);
+    let past: Slot = slot_at(p, 99 as usize);
+    assert !past.is_header;
+    assert past.data == (0 as usize);
+    return;
+}
+
+// The grouping verbs are cursor SETTERS on `collection`, not constructor
+// arguments, and a cursor needs a mounted tree. The props are written directly
+// here because what is under test is this file's arithmetic, not facet's
+// argument list.
+fn grouped_props(n: *core::Node, groups: i64, headers: bool) {
+    let p: *props::CollectionProps =
+        controls::props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return; }
+    { (*p).groupable_items_view.is_grouped = true };
+    { (*p).group_count = groups };
+    { (*p).group_size = two_per_group };
+    { (*p).count = groups *% (2 as i64) };
+    { (*p).row = a_data_row };
+    if headers { { (*p).group_header = a_header }; }
+    return;
+}
+
+fn two_per_group(g: usize, ctx: *u8) -> usize { return 2 as usize; }
+fn a_data_row(i: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); }
+// NOT byte-identical to `props::no_group_header`, and that is load-bearing
+// rather than incidental. That sentinel is
+//
+//     fn no_group_header(group: usize, ctx: *u8) -> flex::Node {
+//         return flex::Node::new();
+//     }
+//
+// and a test double with the same body gets FOLDED ONTO IT by the linker —
+// lld does identical-code folding on COMDAT sections — so `has_headers`, which
+// compares against the sentinel, answered false for a header builder that was
+// plainly set. Three tests failed and the implementation was right.
+//
+// A real backend never hits this: an application's `group_header` builds
+// something. A test double has to be made distinguishable on purpose.
+static HEADERS_BUILT: i64 = 0;
+
+fn a_header(g: usize, ctx: *u8) -> flex::Node {
+    HEADERS_BUILT = HEADERS_BUILT + (1 as i64);
+    return flex::Node::new();
+}
+
+#[test]
+fn the_two_kinds_number_their_bits_differently() {
+    // THE BUG THIS FILE SHIPPED WITH. A generated module numbers its `P_`
+    // constants from 1 in declaration order, so the same verb is a different
+    // bit on each kind — and `list::P_COUNT` is exactly
+    // `collection::P_SELECTED_INDEX`. `apply_sequence` tested the list's
+    // numbers against every sequence, so a collection never rebuilt its map
+    // and its selection change rebuilt everything.
+    //
+    // Asserted rather than described, so a renumber on either side fails here
+    // instead of in a probe.
+    assert flist::P_COUNT == fcollection::P_SELECTED_INDEX;
+    assert flist::P_COUNT != fcollection::P_COUNT;
+    assert flist::P_SELECTED_INDEX != fcollection::P_SELECTED_INDEX;
+    return;
+}
+
+#[test]
+fn each_kind_gets_its_own_bits() {
+    var l: core::Node = flist::list(key: "l");
+    var c: core::Node = fcollection::collection(key: "c");
+    let lb: SeqBits = bits_for(#addr_of(l));
+    let cb: SeqBits = bits_for(#addr_of(c));
+    // A collection's model bits must contain ITS count, not the list's.
+    assert (cb.model & fcollection::P_COUNT) != (0 as u64);
+    assert (lb.model & flist::P_COUNT) != (0 as u64);
+    // A COLLECTION HAS NO SEPARATOR AND NO REFRESH, and zero is the honest
+    // answer: a bit that is never set can never match, so the branch is not
+    // taken rather than taken on some other verb's bit.
+    assert cb.separator == (0 as u64);
+    assert cb.refreshing == (0 as u64);
+    assert lb.separator != (0 as u64);
+    return;
+}
+
+// ---- the scroll anchor -----------------------------------------------------------
+
+#[test]
+fn keeping_the_offset_is_the_default_and_moves_nothing() {
+    // What this file did before there was an anchor at all, and what a `list`
+    // still gets — the offset is kept and the content moves under it.
+    var st: ListState = new_state();
+    { st.scroll = 40.0f64 };
+    { st.content = 500.0f64 };
+    var src: SeqSource = no_source();
+    apply_scroll_anchor(0 as *u8, #addr_of(st), #addr_of(src),
+                        vocab::ScrollAnchor::KeepScrollOffset, true, 120.0f64);
+    assert st.scroll == (40.0 as f64);
+    return;
+}
+
+#[test]
+fn keeping_items_in_view_undoes_what_was_inserted_above() {
+    // Rows inserted ABOVE the viewport push what the user was reading off the
+    // top. The offset moves by exactly their height so the same items stay
+    // under the eye.
+    var st: ListState = new_state();
+    { st.scroll = 200.0f64 };
+    var src: SeqSource = no_source();
+    apply_scroll_anchor(0 as *u8, #addr_of(st), #addr_of(src),
+                        vocab::ScrollAnchor::KeepItemsInView, false, 60.0f64);
+    assert st.scroll == (260.0 as f64);
+    // Nothing above means nothing to undo — an insert BELOW the viewport does
+    // not move it, which is the case that would otherwise jump the list.
+    { st.scroll = 200.0f64 };
+    apply_scroll_anchor(0 as *u8, #addr_of(st), #addr_of(src),
+                        vocab::ScrollAnchor::KeepItemsInView, false, 0.0f64);
+    assert st.scroll == (200.0 as f64);
+    return;
+}
+
+#[test]
+fn a_splice_below_the_viewport_moves_nothing() {
+    // `inserted_above` is the measurement `KeepItemsInView` acts on, and it has
+    // to answer ZERO for rows added below what is showing — otherwise a chat
+    // window appending a message would scroll away from it.
+    var st: ListState = new_state();
+    { st.count = 100 as i64 };
+    { st.uniform = 20.0f64 };
+    { st.content = 2000.0f64 };
+    { st.scroll = 0.0f64 };
+    var src: SeqSource = no_source();
+    { src.splice_at = 90 as i64 };
+    { src.splice_count = 5 as i64 };
+    assert inserted_above(#addr_of(st), #addr_of(src)) == (0.0 as f64);
+    // ...and a non-zero answer for rows added at the very top.
+    { src.splice_at = 0 as i64 };
+    { st.scroll = 400.0f64 };
+    assert inserted_above(#addr_of(st), #addr_of(src)) == (100.0 as f64);
+    return;
+}
+
+#[test]
+fn a_splice_that_is_not_pending_measures_nothing() {
+    // `splice_at` is -1 when there is no pending splice, and `splice_count` is
+    // zero. Either alone has to mean "nothing moved" — reading -1 as a row
+    // index would measure the whole list.
+    var st: ListState = new_state();
+    { st.uniform = 20.0f64 };
+    var src: SeqSource = no_source();
+    assert inserted_above(#addr_of(st), #addr_of(src)) == (0.0 as f64);
+    { src.splice_at = 0 as i64 };
+    { src.splice_count = 0 as i64 };
+    assert inserted_above(#addr_of(st), #addr_of(src)) == (0.0 as f64);
+    return;
+}

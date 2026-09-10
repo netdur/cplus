@@ -90,6 +90,14 @@ struct UiNode {
     // user for permission, and one seeing private knows not to bother.
     tier: u32,
     readable: bool,
+    // The parent's INDEX IN THE ARRAY THIS NODE ARRIVED IN — not a NodeId, and
+    // not an index into any other snapshot. Both describe paths prune (the full
+    // one drops the synthetic app root, the exposed one drops every unexposed
+    // node), so a backend that forwards its registry's numbering here is
+    // pointing every consumer at a different node than it means. Nothing about
+    // a wrong index looks wrong on arrival: it resolves, it just resolves to
+    // the wrong node, and a consumer walking the chain to a root can walk
+    // forever (demo_11/bugs/001). Rebase when you build the array.
     parent: option::Option[usize],
 }
 
@@ -115,7 +123,8 @@ struct Backend {
     describe: fn(*u8, auth::Grant) -> vec::Vec[UiNode],
     // The CURATED snapshot: only developer-exposed nodes, lean fields (id,
     // role, name-as-text, actionable, parent re-parented to the nearest
-    // exposed ancestor) — identity::Registry.describe() over the wire. The
+    // exposed ancestor AND renumbered into this array — identity::Registry
+    // .describe() over the wire, forwarded verbatim. The
     // MCP client picks per request (describe_ui mode param); "exposed" is
     // the default view, `describe` above is the opt-in full tree.
     describe_exposed: fn(*u8, auth::Grant) -> vec::Vec[UiNode],
