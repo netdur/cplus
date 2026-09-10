@@ -10872,12 +10872,23 @@ impl<'a> FnState<'a> {
                     // G-044: when the destination is a typed array, build the
                     // literal with the declared element type so the aggregate's
                     // type matches the slot (else `[N x i32]` vs `[N x i64]`).
+                    // A FILL-ARRAY INITIALISER IS WRITTEN IN PLACE, for the
+                    // reason `gen_array_fill_at` gives: `let b: [u8; 65536] =
+                    // [0u8; 65536];` otherwise loads 64 KiB into an SSA value
+                    // and stores it back, and LLVM's x86 ISel crashes on an
+                    // aggregate that size.
+                    if let (ExprKind::ArrayFill { fill, count, .. }, Ty::Array(elem, _)) =
+                        (&init_expr.kind, &var_ty)
+                    {
+                        let elem = Some((**elem).clone());
+                        let _ = self.gen_array_fill_into(fill, *count, elem, &slot);
+                        self.register_value_drop(&name.name, &slot, &var_ty, true);
+                        self.bind(&name.name, slot, var_ty);
+                        return;
+                    }
                     let (val, _) = match (&init_expr.kind, &var_ty) {
                         (ExprKind::ArrayLit { elements }, Ty::Array(elem, _)) => {
                             self.gen_array_lit(elements, Some((**elem).clone()))
-                        }
-                        (ExprKind::ArrayFill { fill, count, .. }, Ty::Array(elem, _)) => {
-                            self.gen_array_fill(fill, *count, Some((**elem).clone()))
                         }
                         // TEXT.R1: `let s: Text = "literal";` constructs an owned
                         // heap copy as the named struct aggregate. Scoped to the
@@ -12225,11 +12236,30 @@ impl<'a> FnState<'a> {
     /// or a tight SIMD store loop. For other shapes we emit an N-iteration
     /// LLVM loop — small N could be unrolled by an inliner pass but isn't
     /// here. The result mirrors `gen_array_lit`'s aggregate-load tail.
-    fn gen_array_fill(
+    /// Fill `count` copies of `fill` into `dest`, or into a fresh slot when
+    /// `dest` is `None`. Answers the POINTER that was filled and the array's
+    /// type — never a loaded value, which is the whole point.
+    ///
+    /// WHY DESTINATION-PASSING. The value-producing wrapper below ends in a
+    /// load of the whole array, which turns `[0u8; 65536]` into a 64 KiB SSA
+    /// aggregate. The memset fast path here already kept 65536 STORES out of
+    /// the IR, and the load-back put an object of the same size straight back
+    /// in — LLVM's SelectionDAG then crashed outright (`ReplaceAllUsesWith`,
+    /// x86 ISel) on `vendor/static-arena`'s 64K arena. Instructive that the
+    /// fast path and the bug were four lines apart: the cost was never the
+    /// stores, it was the VALUE. A caller that has somewhere to put the array —
+    /// a `let` slot, a struct-literal field — passes it and never makes one.
+    ///
+    /// THE FILL EXPRESSION IS EVALUATED EXACTLY ONCE, before the slot exists,
+    /// which is why this takes `dest` as an Option rather than being two
+    /// functions: the element type is not known until `fill` has been generated,
+    /// and `[f(); N]` must not call `f` twice.
+    fn gen_array_fill_at(
         &mut self,
         fill: &Expr,
         count: u32,
         expected_elem: Option<Ty>,
+        dest: Option<&str>,
     ) -> (String, Ty) {
         // G-044: same expected-element-type rule as `gen_array_lit` — a typed
         // destination (`let a: [i64; N] = [1; N]`) coerces the bare fill
@@ -12239,7 +12269,10 @@ impl<'a> FnState<'a> {
         let array_ty = Ty::Array(Box::new(elem_ty.clone()), count);
         let llvm_arr = self.lty(&array_ty);
         let _ = self.lty(&elem_ty);
-        let slot = self.alloca_anon(array_ty.clone());
+        let slot = match dest {
+            Some(d) => d.to_string(),
+            None => self.alloca_anon(array_ty.clone()),
+        };
 
         // Fast path: zero-byte fill (`[0u8; N]`) lowers to llvm.memset.
         // This is the hot case for static-arena's buffer init — N can be
@@ -12281,7 +12314,32 @@ impl<'a> FnState<'a> {
             self.emit_terminator(&format!("br label %{head_lbl}"));
             self.open_block(&exit_lbl);
         }
+        (slot, array_ty)
+    }
 
+    /// Fill straight into a destination the caller already has. Returns the
+    /// array's type so a caller that also needs it does not recompute it.
+    fn gen_array_fill_into(
+        &mut self,
+        fill: &Expr,
+        count: u32,
+        expected_elem: Option<Ty>,
+        dest: &str,
+    ) -> Ty {
+        let (_, ty) = self.gen_array_fill_at(fill, count, expected_elem, Some(dest));
+        ty
+    }
+
+    /// The value-producing form, for a context with nowhere to fill — an
+    /// argument, a `return`. Every caller that HAS a destination should use
+    /// `gen_array_fill_into`; see `gen_array_fill_at` for what the load costs.
+    fn gen_array_fill(
+        &mut self,
+        fill: &Expr,
+        count: u32,
+        expected_elem: Option<Ty>,
+    ) -> (String, Ty) {
+        let (slot, array_ty) = self.gen_array_fill_at(fill, count, expected_elem, None);
         let v = self.next_tmp();
         self.gen_load(&v, &array_ty, &slot);
         (v, array_ty)
@@ -12401,6 +12459,26 @@ impl<'a> FnState<'a> {
         let slot = self.alloca_anon(struct_ty.clone());
         for f in fields {
             let field_ty = info.field_type(&f.name.name);
+            let idx = info.field_index(&f.name.name);
+            // A FILL-ARRAY FIELD IS WRITTEN IN PLACE. `StaticArena64K { _buf:
+            // [0u8; 65536], .. }` would otherwise load 64 KiB into an SSA value
+            // only to store it straight back, and LLVM's x86 ISel crashes on an
+            // aggregate that size (`gen_array_fill_at` has the detail). The
+            // bitfield branch below cannot host an array, so this is checked
+            // first and returns early.
+            if let ExprKind::ArrayFill { fill, count, .. } = &f.value.kind {
+                if matches!(field_ty, Ty::Array(..))
+                    && self.bitfield_place(id, idx as usize).is_none()
+                {
+                    let elem = match &field_ty {
+                        Ty::Array(e, _) => Some((**e).clone()),
+                        _ => None,
+                    };
+                    let (ptr, _) = self.field_addr(id, idx as usize, &slot);
+                    let _ = self.gen_array_fill_into(fill, *count, elem, &ptr);
+                    continue;
+                }
+            }
             // TEXT.R1c: a string literal for a `Text`-typed field constructs an
             // owned Text (matches the sema struct-lit field coercion).
             let val = match &f.value.kind {
@@ -12409,7 +12487,6 @@ impl<'a> FnState<'a> {
                 }
                 _ => self.gen_expr(&f.value).expect("field init has value").0,
             };
-            let idx = info.field_index(&f.name.name);
             // v0.0.28: a bitfield member is written by read-modify-write into
             // the storage unit it shares — the slot is zeroed first, so the
             // neighbours it preserves are the ones already initialized here.
@@ -26457,6 +26534,69 @@ fn main() -> i32 {\n\
         assert!(
             ir.contains("i32 @add(i32 noundef") && !ir.contains("@add(i64"),
             "scalar-only export must not coerce, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn a_fill_array_field_is_written_in_place_not_loaded_back() {
+        // `gen_array_fill` used to end in a load of the WHOLE array, so a
+        // struct literal holding `[0u8; 65536]` memset a slot and then hauled
+        // 64 KiB back out as an SSA value to store it again. LLVM's x86 ISel
+        // crashed outright on the aggregate (`ReplaceAllUsesWith`), and
+        // `vendor/static-arena` could not be compiled at all.
+        //
+        // The field must be filled through its own address, with no `load` of
+        // the array type anywhere in the constructor.
+        let ir = gen_src(
+            "struct Buf { data: [u8; 4096], used: usize }\n\
+             fn make() -> Buf { return Buf { data: [0u8; 4096], used: 0 as usize }; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("call void @llvm.memset.p0.i64(ptr %t") && ir.contains("i64 4096,"),
+            "a zero fill must lower to one memset, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("load [4096 x i8]"),
+            "the array must never be materialised as a value, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn a_fill_array_let_initializer_is_written_in_place() {
+        // The same hazard at a `let`: the initializer has a destination
+        // already, so filling it through a temporary and storing the whole
+        // array back is pure cost.
+        let ir = gen_src(
+            "fn main() -> i32 { var z: [u8; 2048] = [0u8; 2048]; z[0] = 1 as u8; return 0; }",
+        );
+        assert!(
+            ir.contains("i64 2048,"),
+            "the fill must memset the binding's own slot, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("load [2048 x i8]"),
+            "the array must never be materialised as a value, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn a_nonzero_fill_still_stores_every_element_once() {
+        // The memset fast path only covers a zero BYTE fill. A non-zero or
+        // non-byte element takes the loop, which must still write through the
+        // destination rather than through a temporary — and must evaluate the
+        // fill expression exactly once, which is why the destination is an
+        // Option rather than there being two functions.
+        let ir = gen_src(
+            "fn main() -> i32 { var a: [i64; 300] = [42 as i64; 300]; return 0; }",
+        );
+        assert!(
+            !ir.contains("load [300 x i64]"),
+            "the array must never be materialised as a value, got:\n{ir}"
+        );
+        assert!(
+            ir.matches("icmp ult i64").count() >= 1,
+            "a non-zero fill lowers to a counted store loop, got:\n{ir}"
         );
     }
 
