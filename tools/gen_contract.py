@@ -315,6 +315,14 @@ HAND_ENUMS = {
     "FontWeight": ["Default", "UltraLight", "Thin", "Light", "Regular",
                    "Medium", "Semibold", "Bold", "Heavy", "Black"],
     "Keyboard": ["Default", "Plain", "Chat", "Email", "Numeric", "Telephone", "Url", "Text"],
+    # WHERE IN THE BAR, and `Sidebar` is the one the ledger has no word for.
+    # A window with a `PaneRole::Sidebar` pane has TWO regions in its title
+    # band — the part over the sidebar and the part over the content — and an
+    # item has to say which it belongs to. It is what puts a "new" button at
+    # the top of the sidebar, above the list, the way the system's own apps do.
+    # Backends without a sidebar read it as "leading", which is what it means
+    # everywhere else.
+    "ToolbarPlacement": ["Default", "Primary", "Secondary", "Sidebar"],
     "SafeArea": ["Default", "None", "Container", "Content", "All"],
     "ContentLayout": ["ImageLeft", "ImageTop", "ImageRight", "ImageBottom"],
     # WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT. Not in either manifest —
@@ -359,7 +367,7 @@ def read_enums():
     out = {}
     # Enums whose facet shape deliberately DIVERGES from the ledger members —
     # the hand list is the contract, the manifest is only provenance.
-    hand_wins = {"FontWeight"}
+    hand_wins = {"FontWeight", "ToolbarPlacement"}
     for row_type, facet in ledger_map.ENUMS.items():
         # The map is keyed by the BARE type name; the manifest spells whatever
         # namespace declared it, so match the tail rather than the whole path.

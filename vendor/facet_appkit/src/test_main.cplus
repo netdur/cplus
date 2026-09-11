@@ -14357,3 +14357,76 @@ fn a_write_takes_ownership_so_the_previous_string_is_gone() {
         option::Option[text::Text]::None => { assert false; }
     }
 }
+
+#[test]
+fn a_lists_scroll_view_does_not_paint_over_what_is_behind_it() {
+    // An NSScrollView draws an opaque background by default, and this was the
+    // one scroll host in the package that kept it — `create_scroll` and
+    // `create_sequence_host` both clear it. In a `PaneRole::Sidebar` pane
+    // AppKit puts the list inside an NSContainerConcentricGlassEffectView, and
+    // an opaque scroll view sits on the glass and hides it: the pane keeps its
+    // shape, inset and window buttons and loses the material. Measured
+    // `FacetScrollView drawsBackground=1 opaque=1` filling the glass.
+    backend::install();
+    var n: core::Node = ui::list(key: "rows");
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert v.is_not_null();
+    assert ak::ScrollView::from_raw(v).draws_background() == false;
+    views::view_release(v);
+    backend::uninstall();
+}
+
+#[test]
+fn a_sidebar_placed_toolbar_item_sorts_first_and_will_not_collapse_into_the_overflow() {
+    // Leftmost, because the sidebar's half of the band is the left half — the
+    // tracking separator goes after these and everything else is to its right.
+    assert controls::placement_rank(vocab::ToolbarPlacement::Sidebar)
+         < controls::placement_rank(vocab::ToolbarPlacement::Primary);
+    assert controls::placement_rank(vocab::ToolbarPlacement::Primary)
+         < controls::placement_rank(vocab::ToolbarPlacement::Default);
+    // High visibility: the room a sidebar item needs is the sidebar's own
+    // width, not whatever is left of the bar, so it must not be pushed into
+    // the overflow menu when the content side fills up.
+    assert controls::visibility_priority(vocab::ToolbarPlacement::Sidebar)
+         > controls::visibility_priority(vocab::ToolbarPlacement::Default);
+}
+
+#[test]
+fn a_sidebar_window_marks_where_the_sidebars_half_of_the_toolbar_ends() {
+    // `NSTrackingSeparatorToolbarItem` splits the band in two and follows the
+    // divider. Items before it draw over the sidebar; the flexible space ahead
+    // of them is what keeps them against the divider rather than packed next
+    // to the window buttons. Both are added ONLY when the tree has a sidebar.
+    backend::install();
+    app::reset_default_for_tests();
+    var panes: core::Builder = core::Builder::new();
+    panes.add(core::column(core::Builder::new(), key: "side"));
+    panes.add(core::column(core::Builder::new(), key: "main"));
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::toolbar_item("New", key: "new",
+                           placement: vocab::ToolbarPlacement::Sidebar,
+                           icon: "square.and.pencil"));
+    b.add(split::split(panes, key: "sp", position: 220.0f64,
+                       role_leading: split::PaneRole::Sidebar));
+    var root: core::Node = b.finish();
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "sb", width: 820.0f64, height: 520.0f64, bar: screen::Bar::Blended));
+    let w: ak::Window = ak::Window::from_raw(win);
+    match w.toolbar() {
+        option::Option[ak::Toolbar]::Some(tb) => {
+            // flexible space, the item, then the separator.
+            assert tb.items().count() == (3 as usize);
+            // ICON ONLY: the default stacks a word under every button and
+            // makes the band tall enough to push the sidebar down the window.
+            match tb.display_mode() {
+                ak::ToolbarDisplayMode::IconOnly => { }
+                _other => { assert false; }
+            }
+        }
+        option::Option[ak::Toolbar]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}

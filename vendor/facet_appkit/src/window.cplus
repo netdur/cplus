@@ -399,6 +399,17 @@ fn open_window(root: *core::Node, take chrome: Chrome,
             }
         }
         win.set_toolbar_style(ak::WindowToolbarStyle::Unified);
+        // ICON ONLY. AppKit's default is icon-AND-label, which stacks a word
+        // under every button and makes the band tall enough to push the
+        // sidebar down the window. The system's own sidebar apps — Reminders,
+        // Finder, Notes — show the icon alone, and the item's text stays as
+        // its accessibility label and its overflow-menu entry.
+        match win.toolbar() {
+            option::Option[ak::Toolbar]::Some(tb) => {
+                tb.set_display_mode(ak::ToolbarDisplayMode::IconOnly);
+            }
+            option::Option[ak::Toolbar]::None => { }
+        }
         // ...AND THE TITLEBAR GOES BACK TO BEING AppKit's.
         //
         // `Bar::Blended` makes the titlebar transparent so an app's own content
@@ -946,10 +957,77 @@ fn install_toolbar(win: ak::Window, root: *core::Node) {
         rt::release(map);
         return;
     }
+    insert_sidebar_separator(root, ids, map);
     let tb: ak::Toolbar = akx::make_toolbar(ids, map);
     win.set_toolbar(tb);
     rt::release(ids);
     rt::release(map);
+}
+
+// WHERE THE SIDEBAR'S HALF OF THE BAND ENDS.
+//
+// A window with a sidebar has two regions in its title band, and a toolbar
+// item belongs to one of them. AppKit splits them with a tracking separator:
+// identifiers BEFORE it are drawn over the sidebar, the rest over the content,
+// and the separator follows the divider as it is dragged. So a
+// `ToolbarPlacement::Sidebar` item — which `placement_rank` already sorts
+// first — is what puts a "new" button at the top of the sidebar.
+//
+// `NSTrackingSeparatorToolbarItem` is given the split view EXPLICITLY. The
+// automatic `NSToolbarSidebarTrackingSeparatorItemIdentifier` would need the
+// window's `contentViewController` to be the split view controller, which
+// facet deliberately does not do (see `open_window`) — this form needs
+// nothing but the view, so the two decisions stay independent.
+//
+// Nothing is inserted when the tree has no sidebar: a separator with no
+// sidebar to track is a gap in the middle of an ordinary toolbar.
+fn insert_sidebar_separator(root: *core::Node, ids: *u8, map: *u8) {
+    let ctrl: *u8 = geom::spine_sidebar_controller(root);
+    if ctrl.is_null() { return; }
+    let sv: *u8 = geom::split_view_of(
+        ak::SplitViewController::from_raw(ctrl).as_view_controller().view().raw());
+    if sv.is_null() { return; }
+    let ident: str = "facet.sidebar.separator";
+    let sep: ak::TrackingSeparatorToolbarItem =
+        ak::TrackingSeparatorToolbarItem::tracking_separator_toolbar_item_with_identifier(
+            ident, ak::SplitView::from_raw(sv), 0 as i64);
+    if sep.raw().is_null() { return; }
+    let key: *u8 = bridge::nsstring(ident);
+    { rt::msg_void_id_id(map, rt::sel(#str_ptr("setObject:forKey:\0")), sep.raw(), key) };
+    var at: u64 = sidebar_item_count(root);
+    // FLEXIBLE SPACE FIRST, so the sidebar's items sit against the DIVIDER
+    // rather than against the window buttons. A toolbar packs from the left,
+    // which put a lone `+` in the middle of the sidebar — the system's own
+    // apps (Reminders, Notes) keep theirs at the sidebar's right edge, next to
+    // where the content begins. AppKit supplies the item for this identifier
+    // itself; the delegate is never asked for it.
+    if at > (0 as u64) {
+        { rt::msg_void_id_u64(ids, rt::sel(#str_ptr("insertObject:atIndex:\0")),
+                              bridge::nsstring("NSToolbarFlexibleSpaceItem"), 0 as u64) };
+        at = at +% (1 as u64);
+    }
+    { rt::msg_void_id_u64(ids, rt::sel(#str_ptr("insertObject:atIndex:\0")), key, at) };
+    return;
+}
+
+// How many items sit over the sidebar — the index the separator goes at.
+// Counted from the TREE rather than the built array so it agrees with
+// `placement_rank`, which is the one place that decides the order.
+fn sidebar_item_count(root: *core::Node) -> u64 {
+    var found: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    collect_toolbar_nodes(root, #addr_of(found));
+    var n: u64 = 0 as u64;
+    var i: usize = 0 as usize;
+    while i < found.count() {
+        match found.at(i) {
+            option::Option[*core::Node]::Some(c) => {
+                if controls::is_sidebar_placed(c) { n = n +% (1 as u64); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return n;
 }
 
 // Two passes, because ORDER is a property of the whole bar and the walk that

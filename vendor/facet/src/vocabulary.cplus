@@ -234,11 +234,12 @@ enum TextTransform {
     Uppercase,
 }
 
-// ToolbarItemOrder
+// ToolbarItemOrder (authored: no manifest source)
 enum ToolbarPlacement {
     Default,
     Primary,
     Secondary,
+    Sidebar,
 }
 
 // ---- value types the contract carries by name -------------------------------

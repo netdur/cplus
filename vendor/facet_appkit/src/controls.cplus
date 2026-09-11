@@ -5274,6 +5274,11 @@ fn visibility_priority(pl: vocab::ToolbarPlacement) -> i64 {
         vocab::ToolbarPlacement::Default => 0 as i64,
         vocab::ToolbarPlacement::Primary => 1000 as i64,
         vocab::ToolbarPlacement::Secondary => -1000 as i64,
+        // HIGH, because a sidebar item is not a convenience that can be
+        // dropped into the overflow menu: it sits over the sidebar, and the
+        // room it needs is the sidebar's own width rather than what is left of
+        // the bar. AppKit reads this when the bar runs out of space.
+        vocab::ToolbarPlacement::Sidebar => 1000 as i64,
     };
 }
 
@@ -5281,9 +5286,24 @@ fn visibility_priority(pl: vocab::ToolbarPlacement) -> i64 {
 // number above is the one AppKit reads when the bar runs out of room.
 fn placement_rank(pl: vocab::ToolbarPlacement) -> i64 {
     return match pl {
+        // FIRST, because it is leftmost: `Sidebar` items sit in the band over
+        // the sidebar, which ends where the tracking separator goes — see
+        // `window::install_toolbar`. Everything else is in the content region
+        // to its right, in the order it already had.
+        vocab::ToolbarPlacement::Sidebar => 0 as i64 - (1 as i64),
         vocab::ToolbarPlacement::Primary => 0 as i64,
         vocab::ToolbarPlacement::Default => 1 as i64,
         vocab::ToolbarPlacement::Secondary => 2 as i64,
+    };
+}
+
+// Is this node's item pinned to the sidebar's half of the band?
+fn is_sidebar_placed(c: *core::Node) -> bool {
+    let p: *props::ToolbarItemProps = props_of(c, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+    if p.is_null() { return false; }
+    return match { (*p).placement } {
+        vocab::ToolbarPlacement::Sidebar => true,
+        _other => false,
     };
 }
 
