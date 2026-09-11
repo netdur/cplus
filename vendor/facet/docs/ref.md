@@ -220,10 +220,30 @@ runtime::run_component(App::new(), title: "Notes",
 
 The two spellings differ, and both are legal:
 
-| | |
-|---|---|
-| `Bar::Blended` + a `Sidebar` pane | the sidebar runs the window's full height and the window buttons sit inside it — what the system's own apps do |
-| `Bar::Native` + a `Sidebar` pane | the pane still gets the platform's sidebar treatment, and the title bar stays a separate strip above it with the buttons in it |
+**The role and the bar are independent, and switching is one argument each.**
+Nothing else in the tree changes between them — same panes, same `position`,
+`min_leading`, `max_leading`, `on_move`, same keys, same handlers:
+
+```cplus
+role_leading: split::PaneRole::Sidebar   // delete the line -> facet's own split
+bar: screen::Bar::Blended                // -> Bar::Native for a plain title bar
+```
+
+All four combinations are legal. Measured on macOS 26, one source built four
+ways, only those two arguments changed:
+
+| role | bar | what you get |
+|---|---|---|
+| `Sidebar` | `Blended` | the system's own sidebar — glass running the window's full height, the window buttons sitting on it, no title strip. What Finder does. |
+| `Sidebar` | `Native` | the same glass sidebar with an ordinary title strip above it. The window grows to make room for the band. |
+| — | `Blended` | facet's own split, no glass, and your content runs under a transparent title bar. |
+| — | `Native` | an ordinary window with an ordinary split. What every facet window was before roles existed. |
+
+Reading down the columns: the ROLE alone decides the sidebar — it is what
+turns facet's `FacetSplitView` into the platform's own split with the
+platform's glass — and the BAR alone decides the window chrome. Neither
+depends on the other, and a backend with no sidebar concept renders an
+ordinary pane and is not wrong.
 
 The pane must be on the window's SPINE to get the window-level treatment: the
 tree's root, or reached from it through nodes that hold nothing beside it. A

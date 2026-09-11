@@ -10,6 +10,20 @@
 // which is what lets the sidebar reach the top of the window and the window
 // buttons sit inside it.
 //
+// TO SEE ALL FOUR COMBINATIONS WITHOUT EDITING, this demo reads the two
+// switches from the environment. In your own app you write the value you want
+// — `role_leading: split::PaneRole::Sidebar` and `bar: screen::Bar::Blended`
+// — and there is nothing to configure.
+//
+//   ./sidebar_demo                             sidebar + blended (Finder's)
+//   SIDEBAR_DEMO_NATIVE_BAR=1 ./sidebar_demo   sidebar + ordinary title bar
+//   SIDEBAR_DEMO_NO_ROLE=1 ./sidebar_demo      facet's own split, blended bar
+//   SIDEBAR_DEMO_NO_ROLE=1 SIDEBAR_DEMO_NATIVE_BAR=1 ./sidebar_demo   ordinary
+//
+// The role and the bar are INDEPENDENT: the role decides whether the pane is
+// the platform's sidebar (its glass, its item), the bar decides the window's
+// chrome. All four are legal.
+//
 // TO GET AN ORDINARY WINDOW, take either one away:
 //
 //   * drop the `role_leading` argument and the split is facet's own — same
@@ -21,6 +35,7 @@
 // point: a role is a hint, not a different tree.
 
 import "stdlib/option" as option;
+import "stdlib/env" as env;
 import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/elements" as ui;
@@ -31,6 +46,7 @@ import "facet/label" as label;
 import "facet/screen" as screen;
 import "facet/vocabulary" as vocab;
 import "facet_runtime/runtime" as runtime;
+import "flex_layout/flex_layout" as flex;
 
 const NAV: str = "nav";
 const TITLE: str = "title";
@@ -84,14 +100,41 @@ fn on_nav_selected(sender: *u8, ctx: *u8) {
 
 // ---- the two panes ------------------------------------------------------------
 
-// A sidebar row. NOTHING here paints a background: the glass is behind the
-// pane, and an opaque row would sit on top of it and hide it.
+fn section_icon(i: usize) -> str {
+    if i == (0 as usize) { return "square.grid.2x2"; }
+    if i == (1 as usize) { return "clock"; }
+    if i == (2 as usize) { return "doc"; }
+    if i == (3 as usize) { return "arrow.down.circle"; }
+    return "folder";
+}
+
+// A sidebar row: an SF Symbol, a gap, then the name — the shape Finder's rows
+// have. Built WITHOUT an `@ui` block on purpose: a block finishes as a
+// grouping, and the list places the node it is handed, so a row must BE the
+// row rather than a wrapper around one.
+//
+// NOTHING here paints a background. The glass is behind the pane, and an
+// opaque row would sit on top of it and hide it — the same way the list's own
+// scroll view did until `create_recycling_list` stopped drawing one.
 fn nav_row(i: usize, ctx: *u8) -> core::Node {
-    return ui::label(section_name(i), font_size: 13.0f64).padding(6.0f64);
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::image(section_icon(i))
+          .width(17.0f64)
+          .height(17.0f64));
+    b.add(ui::label(section_name(i), font_size: 13.0f64)
+          .grow(1.0f64));
+    return ui::row(b)
+        .align(flex::Align::Center)
+        .gap(8.0f64)
+        .padding(7.0f64);
 }
 
 fn sidebar() -> core::Node {
+    // `row_height` is answered WITHOUT building the row, so the list can size
+    // ten thousand of them without making one. 32pt is the system's own
+    // sidebar row: enough for a 17pt symbol with room to breathe.
     var l: core::Node = ui::list(key: NAV,
+                                 row_height: 32 as i64,
                                  selection_mode: vocab::SelectionMode::Single,
                                  separator: vocab::Separator::None,
                                  on_item_selected: on_nav_selected);
@@ -103,7 +146,10 @@ fn sidebar() -> core::Node {
         }
         option::Option::None => { }
     }
-    return l;
+    // The list inset from the glass edge, the way a sidebar's content is.
+    var w: core::Builder = core::Builder::new();
+    w.add(l.grow(1.0f64).shrink(1.0f64));
+    return ui::column(w, key: "sidebar").padding(8.0f64);
 }
 
 fn content() -> core::Node {
@@ -113,6 +159,41 @@ fn content() -> core::Node {
     b.add(ui::label(section_body(0 as usize), key: BODY, font_size: 13.0f64)
           .padding(4.0f64));
     return ui::column(b, key: "content").padding(24.0f64);
+}
+
+// ---- the sidebar's own button -------------------------------------------------
+// A `toolbar_item` placed `Sidebar` sits in the band OVER the sidebar rather
+// than over the content — top-left is where the window buttons already are, so
+// this lands top-right of the panel, which is where the system's own apps put
+// a "new" button. `icon` is an SF Symbol name.
+
+fn on_new_clicked(sender: *u8, ctx: *u8) {
+    write_label(TITLE, "New");
+    write_label(BODY, "The compose button at the top of the sidebar is a toolbar_item with placement: ToolbarPlacement::Sidebar. AppKit draws it over the sidebar because a tracking separator marks where the sidebar's half of the title band ends.");
+    return;
+}
+
+// ---- the two switches ---------------------------------------------------------
+// Read from the environment ONLY so one binary can show all four combinations.
+// An app writes the value it wants, inline, where these are called.
+
+fn pane_role() -> split::PaneRole {
+    if env::has_var("SIDEBAR_DEMO_NO_ROLE") { return split::PaneRole::Content; }
+    return split::PaneRole::Sidebar;
+}
+
+fn window_bar() -> screen::Bar {
+    if env::has_var("SIDEBAR_DEMO_NATIVE_BAR") { return screen::Bar::Native; }
+    return screen::Bar::Blended;
+}
+
+fn window_title() -> str {
+    if env::has_var("SIDEBAR_DEMO_NO_ROLE") {
+        if env::has_var("SIDEBAR_DEMO_NATIVE_BAR") { return "No role + Bar::Native"; }
+        return "No role + Bar::Blended";
+    }
+    if env::has_var("SIDEBAR_DEMO_NATIVE_BAR") { return "Sidebar + Bar::Native"; }
+    return "Sidebar + Bar::Blended";
 }
 
 // ---- the component ------------------------------------------------------------
@@ -126,12 +207,21 @@ impl Demo {
 impl Demo: component::Component {
     fn build(ref this) -> core::Node {
         return @ui {
+            toolbar_item("New",
+                         key: "new",
+                         placement: vocab::ToolbarPlacement::Sidebar,
+                         // COMPOSE, not add. "New" makes a new thing — the
+                         // system spells that `square.and.pencil`, the way
+                         // Notes and Mail do. `plus` means add-to-this-list.
+                         icon: "square.and.pencil",
+                         on_clicked: on_new_clicked)
             split(key: "main",
                   position: 220.0f64,
                   min_leading: 180.0f64,
                   max_leading: 320.0f64,
-                  // (1) THE ROLE. Delete this one line for an ordinary split.
-                  role_leading: split::PaneRole::Sidebar) {
+                  // (1) THE ROLE. Write `split::PaneRole::Sidebar` here; this
+                  // demo defers to the environment so one binary shows both.
+                  role_leading: pane_role()) {
                 sidebar()
                 content()
             }
@@ -145,10 +235,11 @@ impl Demo: component::Lifecycle {
 }
 
 fn main() -> i32 {
-    // (2) THE BAR. `Bar::Native` here gives the same tree an ordinary title
-    // bar, with the sidebar pane still native and still glass.
-    runtime::run_component(Demo::new(), title: "Sidebar Demo",
+    // (2) THE BAR. Write `screen::Bar::Blended` here; `Bar::Native` gives the
+    // same tree an ordinary title bar, with the sidebar pane still native and
+    // still glass. The title names the combination so a screenshot says which.
+    runtime::run_component(Demo::new(), title: window_title(),
                            width: 820.0f64, height: 520.0f64,
-                           bar: screen::Bar::Blended);
+                           bar: window_bar());
     return 0;
 }
