@@ -1673,6 +1673,42 @@ fn is_grouping(n: *Node) -> bool {
 // The author wrote no grouping and should not have to defeat one, so the fill
 // passes through to the first thing that will actually draw. A grouping with
 // SIBLINGS is a column the author did write, and is left alone.
+// A node that DECLARES rather than occupies. A `menu`, a `menu_item`, a
+// `toolbar_item`, a context-menu row, a `span`, a `swipe_item`: each lives in
+// the tree because that is where an app describes it — `install_toolbar` and
+// `install_menu_bar` read them back out of it — and none of them is a box.
+// They are not siblings in the layout sense, whatever the child count says.
+fn is_declaration(n: *Node) -> bool {
+    let k: u32 = kind_of(n);
+    return k == props::K_MENU || k == props::K_MENU_ITEM
+        || k == props::K_TOOLBAR_ITEM
+        || k == props::K_CONTEXT_MENU || k == props::K_CONTEXT_MENU_ITEM
+        || k == props::K_SPAN || k == props::K_SWIPE_ITEM;
+}
+
+// The one child that takes part in the layout, or None when there is not
+// exactly one. `@ui { toolbar_item(…) split(…) { } }` describes ONE box and a
+// window decoration, not a two-row column.
+fn only_layout_child(n: *Node) -> option::Option[*Node] {
+    var found: *Node = 0 as *Node;
+    var i: usize = 0 as usize;
+    let count: usize = { (*n).child_count() };
+    while i < count {
+        match child_of(n, i) {
+            option::Option[*Node]::Some(c) => {
+                if !is_declaration(c) {
+                    if found.is_not_null() { return option::Option[*Node]::None; }
+                    found = c;
+                }
+            }
+            option::Option[*Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if found.is_null() { return option::Option[*Node]::None; }
+    return option::Option[*Node]::Some(found);
+}
+
 fn fill_as_window_root(n: *Node) {
     var cur: *Node = n;
     var depth: usize = 0 as usize;
@@ -1686,8 +1722,7 @@ fn fill_as_window_root(n: *Node) {
         { (*cur).set_flex_grow(1.0f64) };
         { (*cur).set_flex_shrink(1.0f64) };
         if !is_grouping(cur) { return; }
-        if { (*cur).child_count() } != (1 as usize) { return; }
-        match child_of(cur, 0 as usize) {
+        match only_layout_child(cur) {
             option::Option[*Node]::Some(k) => { cur = k; }
             option::Option[*Node]::None => { return; }
         }

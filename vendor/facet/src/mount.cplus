@@ -2033,3 +2033,75 @@ fn a_keyed_root_is_the_window_itself_and_the_fill_stops_there() {
     }
     uninstall();
 }
+
+#[test]
+fn a_declaration_beside_the_content_is_not_a_sibling_and_the_fill_still_passes() {
+    // `@ui { toolbar_item(…) split(…) { } }` is ONE box and a window
+    // decoration, not a two-row column. Counting the `toolbar_item` as a
+    // sibling stopped the fill dead: the split content-sized to 104pt in a
+    // 520pt window the moment the demo grew a "New" button, and
+    // `geometry::spine_sidebar_controller` — which walks the same spine —
+    // stopped finding the sidebar at all, so the window silently lost its
+    // unified band, its icon-only toolbar and its opaque titlebar together.
+    fr_reset();
+    install(fr_renderer());
+    var kids: core::Builder = core::Builder::new();
+    kids.add(fr_leaf("pane"));
+    var b: core::Builder = core::Builder::new();
+    b.add(core::node_with("tb", props::K_TOOLBAR_ITEM, 0 as *u8, core::no_release));
+    b.add(core::column(kids, key: "content"));
+    var root: core::Node = b.finish();
+    assert mount(#addr_of(root));
+    root.calculate_layout(width: 820.0f64, height: 520.0f64);
+    match core::find_in(#addr_of(root), "content") {
+        option::Option[*core::Node]::Some(c) => {
+            assert core::height_of(c) == 520.0f64;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    uninstall();
+}
+
+// A node of `kind`, asked whether it declares. A helper because `#addr_of`
+// takes a PLACE — a named binding, not a call result.
+fn declares(kind: u32) -> bool {
+    var n: core::Node = core::node_with("x", kind, 0 as *u8, core::no_release);
+    return core::is_declaration(#addr_of(n));
+}
+
+#[test]
+fn every_declaration_kind_answers_is_declaration_and_a_box_does_not() {
+    // The list is the contract: a kind missing from it becomes a phantom
+    // sibling that collapses whatever it sits beside.
+    assert declares(props::K_MENU);
+    assert declares(props::K_MENU_ITEM);
+    assert declares(props::K_TOOLBAR_ITEM);
+    assert declares(props::K_CONTEXT_MENU);
+    assert declares(props::K_CONTEXT_MENU_ITEM);
+    assert declares(props::K_SPAN);
+    assert declares(props::K_SWIPE_ITEM);
+    // ...and a box is not one, however it is spelled.
+    assert declares(props::K_LABEL) == false;
+    var col: core::Node = core::column(core::Builder::new(), key: "col");
+    assert core::is_declaration(#addr_of(col)) == false;
+}
+
+#[test]
+fn two_boxes_beside_a_declaration_are_still_two_and_the_fill_stops() {
+    // The negative: skipping declarations must not turn a real column into a
+    // single child. Two boxes and a toolbar item is still a column.
+    fr_reset();
+    install(fr_renderer());
+    var b: core::Builder = core::Builder::new();
+    b.add(core::node_with("tb", props::K_TOOLBAR_ITEM, 0 as *u8, core::no_release));
+    b.add(core::column(core::Builder::new(), key: "top").height(40.0f64));
+    b.add(core::column(core::Builder::new(), key: "bottom").height(40.0f64));
+    var root: core::Node = b.finish();
+    assert mount(#addr_of(root));
+    root.calculate_layout(width: 820.0f64, height: 520.0f64);
+    match core::find_in(#addr_of(root), "top") {
+        option::Option[*core::Node]::Some(c) => { assert core::height_of(c) == 40.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    uninstall();
+}

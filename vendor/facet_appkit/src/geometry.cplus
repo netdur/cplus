@@ -258,8 +258,14 @@ fn spine_sidebar_controller(root: *core::Node) -> *u8 {
     while n.is_not_null() && depth < (8 as usize) {
         let c: *u8 = controller_of_split(core::view_of(n));
         if c.is_not_null() { return c; }
-        if core::child_count_of(n) != (1 as usize) { return 0 as *u8; }
-        match core::child_of(n, 0 as usize) {
+        // THE ONE CHILD THAT IS A BOX, not the one child. A `toolbar_item`
+        // beside the split is a window decoration described where the app
+        // describes it — counting it as a sibling ended the spine walk, and
+        // the window then lost every piece of its sidebar dressing at once:
+        // no unified style, no icon-only band, a titlebar left transparent,
+        // and the root inset by 66pt under a band it was supposed to reach
+        // through. Same rule `core::fill_as_window_root` follows.
+        match core::only_layout_child(n) {
             option::Option[*core::Node]::Some(k) => { n = k; }
             option::Option[*core::Node]::None => { return 0 as *u8; }
         }
