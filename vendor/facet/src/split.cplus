@@ -214,11 +214,20 @@ fn split(
     max_trailing: f64 = 0.0f64,
     divider_color: vocab::Color = vocab::Color::separator(),
     divider_thickness: f64 = 1.0f64,
+    // What each pane IS — see `PaneRole`. Here rather than only on the cursor
+    // because a role is decided when the split is written, not later: reaching
+    // for `split::from(#addr_of(n))` to say one word about a node you are
+    // holding is a cursor doing a constructor's job, and it does not compose
+    // inside an `@ui` block at all.
+    role_leading: PaneRole = PaneRole::Content,
+    role_trailing: PaneRole = PaneRole::Content,
     on_move: fn(*u8, *u8) = no_move,
     ctx: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: SplitProps = SplitProps::new();
     p.axis = axis;
+    p.role_leading = role_leading;
+    p.role_trailing = role_trailing;
     // CLAMPED HERE TOO, by the same rule `set_position` applies, so the two
     // doors into a position agree. `split(position: 900, max_leading: 400)`
     // storing 900 would make `position()` answer a number the very next layout

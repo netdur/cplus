@@ -129,6 +129,8 @@ fn split(
     max_trailing: f64 = 0.0f64,
     divider_color: vocab::Color = vocab::Color::separator(),
     divider_thickness: f64 = 1.0f64,
+    role_leading: m_split::PaneRole = m_split::PaneRole::Content,
+    role_trailing: m_split::PaneRole = m_split::PaneRole::Content,
     on_move: fn(*u8, *u8) = m_split::no_move,
     ctx: *u8 = 0 as *u8,
 ) -> core::Node {
@@ -137,6 +139,8 @@ fn split(
                           max_leading: max_leading, max_trailing: max_trailing,
                           divider_color: divider_color,
                           divider_thickness: divider_thickness,
+                          role_leading: role_leading,
+                          role_trailing: role_trailing,
                           on_move: on_move, ctx: ctx);
 }
 

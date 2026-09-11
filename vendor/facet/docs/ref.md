@@ -173,23 +173,36 @@ pushed past a far bound can be dragged back; one pinned at zero width cannot.
 
 ### A sidebar, and an ordinary window
 
-A pane can say what it is FOR, not only where it sits:
+A pane can say what it is FOR, not only where it sits. A role is decided when
+the split is written, so it is a constructor parameter and composes inside an
+`@ui` block:
 
 ```cplus
-var root: core::Node = split::split(panes, key: "main", position: 220.0f64);
-match split::from(#addr_of(root) as *core::Node) {
-    option::Option[split::Split]::Some(s) => {
-        let _r: split::Split = s.set_role(split::Pane::Leading,
-                                          split::PaneRole::Sidebar);
+return @ui {
+    split(key: "workspace:split",
+          position: 220.0f64,
+          min_leading: 180.0f64,
+          max_leading: 320.0f64,
+          role_leading: split::PaneRole::Sidebar) {
+        column(key: "workspace:sidebar") { }
+            .grow(1.0f64)
+        column(key: "workspace:main") { }
+            .grow(1.0f64)
+            .shrink(1.0f64)
     }
-    _ => { }
-}
+};
 ```
 
 `PaneRole` is `Content` or `Sidebar`. `Content` is the default and is what
-every split was before roles existed. The role is per pane, because a window
-can have a navigation sidebar leading and an inspector trailing; `role(pane)`
-reads one back and `has_role()` answers whether either pane set one.
+every split was before roles existed. `role_leading` and `role_trailing` are
+separate because a window can have a navigation sidebar leading and an
+inspector trailing.
+
+A split you are already holding can be told later through its cursor —
+`s.set_role(split::Pane::Leading, split::PaneRole::Sidebar)`, with `role(pane)`
+and `has_role()` reading back — but prefer the parameters. Reaching for a
+cursor to say one word about a node you just wrote is a cursor doing a
+constructor's job.
 
 Setting a role changes no geometry here. It is a hint in the sense `Chrome`
 already establishes — facet offers the field, a backend honours what it can —
@@ -211,6 +224,22 @@ The two spellings differ, and both are legal:
 |---|---|
 | `Bar::Blended` + a `Sidebar` pane | the sidebar runs the window's full height and the window buttons sit inside it — what the system's own apps do |
 | `Bar::Native` + a `Sidebar` pane | the pane still gets the platform's sidebar treatment, and the title bar stays a separate strip above it with the buttons in it |
+
+The pane must be on the window's SPINE to get the window-level treatment: the
+tree's root, or reached from it through nodes that hold nothing beside it. A
+sidebar sitting next to something else is one pane among several, and the
+window stays an ordinary window.
+
+**You do not have to ask the outermost element to fill the window.** A screen
+fills its window, and the fill passes through the container an `@ui { }` block
+finishes as — so a `split` whose panes are empty placeholders still gets the
+whole window rather than collapsing to its content height. Write `.grow()` on
+a pane to divide the space inside the split, not to claim the window.
+
+**The window keeps being a window.** Dragging the title strip, double-clicking
+it to zoom, the green button, and the resize edges all behave as they do on any
+other window. If one of them stops working, that is a bug in facet and worth
+reporting — none of it is traded away for the sidebar look.
 
 **An ordinary window needs none of this.** Leave the roles alone and a split is
 the split it always was: facet's own divider, the same panes, the same
