@@ -1,6 +1,6 @@
 use cplus_core::codegen::BuildMode;
 use cplus_core::diagnostics::{self as diag, Diagnostic, LineMap, Severity};
-use cplus_core::target::{self, Handoff, TargetSpec};
+use cplus_core::target::{self, Handoff, ObjectFormat, TargetSpec};
 use cplus_core::{
     attrs, borrowck, codegen, doctest, fmt as cpfmt, lexer, lower, manifest, monomorphize, parser,
     resolver, sema,
@@ -5962,6 +5962,54 @@ fn run_clang(
         cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
         // Better stack traces in sanitizer reports.
         cmd.arg("-fno-omit-frame-pointer");
+    }
+    // DEAD-STRIP THE EXECUTABLE. Every caller of this function links a
+    // program (the library path builds its `.o` with `clang -c` and its
+    // dylib through a separate command), so this is only ever applied to a
+    // final binary.
+    //
+    // A dependency is compiled into ONE object file per package — `stdlib.o`
+    // inside `libstdlib.a` — and a static archive is pulled in at
+    // object-file granularity. Referencing a single function therefore drags
+    // in the whole package, `#[test]` bodies included: 38.7% of stdlib's
+    // compiled text is test functions, and nothing downstream could remove
+    // them. `prune.rs` cannot either — it runs per module, before the
+    // archive exists, and only ever deletes `internal` definitions, while a
+    // library's API is deliberately `weak_odr` so the archive exports it.
+    //
+    // The linker is the one place that sees the whole program at once, so it
+    // is the right place to answer the question. Measured on
+    // examples/ray_tracer: 515,736 -> 34,552 bytes, a 14.9x reduction, with
+    // a byte-identical rendered image. On examples/facet_gallery (AppKit,
+    // 174 modules): 13,187,072 -> 4,162,928. Link time is unchanged.
+    //
+    // Safe against the two things that look like they should break. ObjC
+    // classes are built at RUNTIME here (`objc_allocateClassPair`), not from
+    // static metadata, and every IMP is referenced by the registering call.
+    // An app-defined C hook (`export extern fn`) is called by a vendor
+    // package that statically references it, which is what makes it a root.
+    // Symbols reached only through `dlsym` would be the real exposure; the
+    // ones in vendor/ resolve system frameworks, never C+ symbols.
+    match target::active_target().object_format {
+        // ld64 dead-strips at ATOM granularity, so it reaches inside that
+        // single object file. Roots are the entry point and anything marked
+        // no-dead-strip; a global symbol is not itself a root in an
+        // executable, which is exactly what makes this effective.
+        ObjectFormat::MachO => {
+            cmd.arg("-Wl,-dead_strip");
+        }
+        // GNU ld/lld collect whole SECTIONS, so the object has to be
+        // compiled one-section-per-function first or `--gc-sections` has
+        // nothing to drop. Both flags have to be here: the `.ll` is compiled
+        // and linked by this one invocation.
+        ObjectFormat::Elf => {
+            cmd.arg("-ffunction-sections")
+                .arg("-fdata-sections")
+                .arg("-Wl,--gc-sections");
+        }
+        // link.exe/lld-link already imply `/OPT:REF` when optimizing, and
+        // wasm-ld strips unreachable functions by default.
+        ObjectFormat::Coff | ObjectFormat::Wasm => {}
     }
     // Debug escape hatch: `CPC_CLANG_EXTRA="-mllvm -foo"` appends
     // whitespace-separated flags to the clang invocation. There is otherwise no
