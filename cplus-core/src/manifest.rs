@@ -163,6 +163,39 @@ pub struct LinkSpec {
     pub search_paths: Vec<String>,
 }
 
+/// One `[link]`-shaped table resolved against the manifest directory: `${VAR}`
+/// expansion, extra objects and search paths made absolute. Shared by `[link]`
+/// and `[<platform>.link]` so the two cannot drift.
+fn resolve_link_spec(
+    rl: RawLinkSpec,
+    root: &std::path::Path,
+    manifest_path: &std::path::Path,
+) -> Result<LinkSpec, ManifestError> {
+    // v0.0.20: expand `${VAR}` / `${VAR:-default}` in path entries before
+    // resolving, so a vendor binding can point at an external SDK via the
+    // environment instead of a hardcoded absolute path.
+    //
+    // Existence is NOT checked here — that happens at link time (E0864) so the
+    // diagnostic carries the full link context.
+    let extra_objects: Vec<PathBuf> = expand_link_entries(rl.extra_objects, manifest_path)?
+        .into_iter()
+        .map(|p| root.join(p))
+        .collect();
+    // `join` is a no-op for absolute inputs (the common case — system SDK dirs
+    // like /usr/local/cuda/lib64), so this only rewrites relative entries.
+    let search_paths: Vec<String> = expand_link_entries(rl.search_paths, manifest_path)?
+        .into_iter()
+        .map(|p| root.join(p).to_string_lossy().into_owned())
+        .collect();
+    Ok(LinkSpec {
+        frameworks: rl.frameworks,
+        libs: rl.libs,
+        bundled: rl.bundled,
+        extra_objects,
+        search_paths,
+    })
+}
+
 /// Phase 2 (v0.0.2) — one entry in `[dependencies]` or a
 /// `[<platform>.dependencies]` section. Carries (name, version-string,
 /// platforms). Resolution is presence-check only: `cpc build` verifies
@@ -719,10 +752,11 @@ struct RawManifest {
     wasm: Option<RawPlatformSection>,
 }
 
-/// One `[<platform>.*]` table: an optional `entry` override plus scoped
-/// `dependencies`. `deny_unknown_fields` reserves the rest of the namespace
-/// (a future `[<platform>.link]` arrives as a feature, not a
-/// silently-ignored key).
+/// One `[<platform>.*]` table: an optional `entry` override, scoped
+/// `dependencies`, `[android.maven]`, and a scoped `link`.
+/// `deny_unknown_fields` reserves the rest of the namespace — a
+/// silently-dropped table is a missing library at runtime rather than at
+/// build time.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawPlatformSection {
@@ -734,6 +768,22 @@ struct RawPlatformSection {
     /// anywhere else is E0877.
     #[serde(default)]
     maven: std::collections::BTreeMap<String, String>,
+    /// `[<platform>.link]` — the same table as `[link]`, for one target.
+    ///
+    /// WHY IT HAS TO EXIST. A top-level `[link]` reaches the linker for EVERY
+    /// target that declares the package, so a Linux-only `-lcurl` in it is
+    /// handed to the macOS and Windows link lines too. That left two packages
+    /// working around it rather than linking: `vendor/http` has no Linux
+    /// transport at all because libcurl's `curl_easy_setopt` is variadic and
+    /// therefore cannot be reached through `dlsym` on AAPCS64, and
+    /// `vendor/securestore` opens libsecret with `dlopen` for the same reason
+    /// this key was missing rather than because runtime binding is better.
+    ///
+    /// Merged into the effective `LinkSpec` at load, for the ACTIVE platform
+    /// only — so every consumer of `Manifest::link` gets it without knowing
+    /// this key exists.
+    #[serde(default)]
+    link: Option<RawLinkSpec>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -836,7 +886,7 @@ pub fn load(manifest_path: &Path) -> Result<Manifest, ManifestError> {
 }
 
 pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError> {
-    let raw: RawManifest = toml::from_str(text).map_err(|e| ManifestError::Parse {
+    let mut raw: RawManifest = toml::from_str(text).map_err(|e| ManifestError::Parse {
         path: manifest_path.to_path_buf(),
         message: e.to_string(),
     })?;
@@ -1026,25 +1076,41 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             // path relative to the manifest directory. We don't check
             // file existence at parse time — that happens at link time
             // (E0864) so the diagnostic carries the full link context.
-            let extra_objects: Vec<PathBuf> = expand_link_entries(rl.extra_objects, manifest_path)?
-                .into_iter()
-                .map(|p| root.join(p))
-                .collect();
-            // Resolve each search path against the manifest dir. `join` is
-            // a no-op for absolute inputs (the common case — system SDK
-            // dirs like /usr/local/cuda/lib64), so this only rewrites
-            // relative entries.
-            let search_paths: Vec<String> = expand_link_entries(rl.search_paths, manifest_path)?
-                .into_iter()
-                .map(|p| root.join(p).to_string_lossy().into_owned())
-                .collect();
-            Some(LinkSpec {
-                frameworks: rl.frameworks,
-                libs: rl.libs,
-                bundled: rl.bundled,
-                extra_objects,
-                search_paths,
-            })
+            Some(resolve_link_spec(rl, &root, manifest_path)?)
+        }
+    };
+
+    // `[<platform>.link]` for the platform being built, folded in. The base
+    // table stays first on the link line and the platform's entries follow,
+    // which is the order a reader of the manifest would expect and the order
+    // GNU ld wants when the platform table names something the base one
+    // depends on.
+    let active = crate::target::active_platform();
+    let platform_link: Option<RawLinkSpec> = match active {
+        "macos" => raw.macos.as_mut().and_then(|s| s.link.take()),
+        "linux" => raw.linux.as_mut().and_then(|s| s.link.take()),
+        "windows" => raw.windows.as_mut().and_then(|s| s.link.take()),
+        "ios" => raw.ios.as_mut().and_then(|s| s.link.take()),
+        "android" => raw.android.as_mut().and_then(|s| s.link.take()),
+        "esp32" => raw.esp32.as_mut().and_then(|s| s.link.take()),
+        "wasm" => raw.wasm.as_mut().and_then(|s| s.link.take()),
+        _ => None,
+    };
+    let link = match platform_link {
+        None => link,
+        Some(rl) => {
+            let scoped = resolve_link_spec(rl, &root, manifest_path)?;
+            match link {
+                None => Some(scoped),
+                Some(mut base) => {
+                    base.frameworks.extend(scoped.frameworks);
+                    base.libs.extend(scoped.libs);
+                    base.bundled.extend(scoped.bundled);
+                    base.extra_objects.extend(scoped.extra_objects);
+                    base.search_paths.extend(scoped.search_paths);
+                    Some(base)
+                }
+            }
         }
     };
 
@@ -2001,16 +2067,71 @@ mod tests {
     }
 
     #[test]
-    fn platform_section_keys_other_than_dependencies_are_reserved() {
-        // `[macos.link]` is future work; today it must fail loudly rather
-        // than be ignored (a silently-dropped link table means missing
-        // frameworks at runtime, not build time).
+    fn a_platform_link_table_is_merged_for_the_active_platform_only() {
+        // `[<platform>.link]` used to be reserved and is a feature now. The
+        // rule it implements: a top-level `[link]` reaches EVERY target, so a
+        // Linux-only `-lcurl` in it is handed to the macOS and Windows link
+        // lines too.
         let text = r#"
             [package]
             name = "app"
 
+            [link]
+            libs = ["everywhere"]
+
+            [linux.link]
+            libs = ["only-on-linux"]
+
             [macos.link]
             frameworks = ["AppKit"]
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).expect("parses");
+        let link = m.link.expect("a link table");
+        // The base table is always there and comes FIRST — GNU ld is a
+        // single pass and the platform table may name something it depends on.
+        assert_eq!(link.libs.first().map(String::as_str), Some("everywhere"));
+        let host = crate::target::active_platform();
+        if host == "linux" {
+            assert!(link.libs.iter().any(|l| l == "only-on-linux"));
+            // AND NOT THE OTHER PLATFORM'S — the whole point of the key.
+            assert!(link.frameworks.is_empty(), "got: {:?}", link.frameworks);
+        } else if host == "macos" {
+            assert_eq!(link.frameworks, vec!["AppKit".to_string()]);
+            assert!(!link.libs.iter().any(|l| l == "only-on-linux"));
+        }
+    }
+
+    #[test]
+    fn a_platform_link_table_needs_no_base_table() {
+        let text = r#"
+            [package]
+            name = "app"
+
+            [linux.link]
+            libs = ["curl"]
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).expect("parses");
+        if crate::target::active_platform() == "linux" {
+            assert_eq!(
+                m.link.expect("a link table").libs,
+                vec!["curl".to_string()]
+            );
+        } else {
+            assert!(m.link.is_none());
+        }
+    }
+
+    #[test]
+    fn an_unknown_platform_section_key_is_still_reserved() {
+        // `deny_unknown_fields` is what keeps the rest of the namespace
+        // closed: a silently-dropped table is a missing library at runtime
+        // rather than at build time.
+        let text = r#"
+            [package]
+            name = "app"
+
+            [macos.frameworks]
+            AppKit = "*"
         "#;
         let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
         assert!(matches!(err, ManifestError::Parse { .. }), "got: {err:?}");

@@ -586,9 +586,29 @@ fn send_reports_an_empty_url_as_a_transport_error() {
 }
 
 // ---- integration: these need the internet --------------------------------
+//
+// AND A TRANSPORT, which is not the same requirement. Every platform in this
+// package compiles, but Linux has no client behind the seam yet — its
+// `transport_linux.cplus` refuses every request with -3001 and says why. A
+// suite that went red for that would be reporting a documented absence as a
+// regression, and would hide the day a real network failure appeared.
+//
+// The probe is a request to a port nothing listens on: a built transport
+// answers a connection error in microseconds without leaving the machine, and
+// an unbuilt one answers -3001 without doing anything at all.
+const _NOT_BUILT: i64 = 0 - 3001;
+
+fn _transport_is_built() -> bool {
+    return match get("http://127.0.0.1:1/") {
+        result::Result[Response, Error]::Ok(_r) => true,
+        result::Result[Response, Error]::Err(e) => e.code != _NOT_BUILT,
+    };
+}
+
 
 #[test]
 fn net_get_reads_a_real_response() {
+    if !_transport_is_built() { return; }
     guard let result::Result[Response, Error]::Ok(r) =
         get("https://hn.algolia.com/api/v1/search?tags=front_page") else {
         assert false;
@@ -612,6 +632,7 @@ fn net_get_reads_a_real_response() {
 // not have to tell it apart from a dead network.
 #[test]
 fn net_a_404_is_a_response_not_an_error() {
+    if !_transport_is_built() { return; }
     guard let result::Result[Response, Error]::Ok(r) =
         get("https://hn.algolia.com/api/v1/definitely_not_a_route") else {
         assert false;
@@ -625,6 +646,7 @@ fn net_a_404_is_a_response_not_an_error() {
 // echoes the method, the headers and the body back as JSON.
 #[test]
 fn net_post_sends_the_method_headers_and_body() {
+    if !_transport_is_built() { return; }
     var req: Request = Request::new("https://postman-echo.com/post", method: Method::Post, timeout_seconds: 20.0);
     let _a: status::Status = req.set_header("Content-Type", to: "application/json");
     let _b: status::Status = req.set_header("X-Cplus-Probe", to: "http-package");

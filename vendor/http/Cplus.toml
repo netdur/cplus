@@ -31,3 +31,11 @@ jni = "*"
 # the link line rather than a C+ package, so there is no dependency to declare
 # here — this section exists to say that deliberately, next to the two that do
 # carry one.
+
+# libcurl, LINKED rather than opened — `curl_easy_setopt` and
+# `curl_easy_getinfo` are variadic, and a variadic function reached through a
+# fixed-arity pointer puts its arguments in registers on AAPCS64 where the
+# callee looks for them on the stack. See the header of
+# `src/transport_linux.cplus`.
+[linux.link]
+libs = ["curl"]

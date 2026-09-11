@@ -10,6 +10,24 @@ edition = "2026"
 # Reproduce: cpc-bindgen --cpackage --out vendor/sqlite_ffi --header …/sqlite3.h
 #            --clib sqlite3 -- -isysroot $SDK
 
+# NOT PREBUILT, and that is about what a generated binding IS rather than about
+# build times. These bindings were generated from ONE platform's `sqlite3.h`
+# (Apple's), and SQLite's API is partly COMPILE-TIME OPTIONAL: `sqlite3_snapshot_*`
+# needs SQLITE_ENABLE_SNAPSHOT, `sqlite3_stmt_scanstatus*` needs
+# SQLITE_ENABLE_STMT_SCANSTATUS, `sqlite3_normalized_sql` needs
+# SQLITE_ENABLE_NORMALIZE. Apple's build enables them; Ubuntu's does not, and
+# its libsqlite3 exports none of the ten.
+#
+# A PREBUILT ARCHIVE IS MONOLITHIC: pulling in any member drags every wrapper
+# with it, so a consumer that never mentions a snapshot still had to resolve
+# `sqlite3_snapshot_get`, and `vendor/sqlite` did not link on Linux at all.
+# Compiled from source the wrappers are `internal` and unreachable, `prune`
+# drops them, and nothing references a symbol the platform does not have. A
+# caller that DOES want an optional API still gets the honest answer — an
+# undefined symbol naming exactly the function it asked for.
+[build]
+prebuild = false
+
 [dependencies]
 stdlib = "*"
 

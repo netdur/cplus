@@ -21,7 +21,7 @@ Same methods on both. Need another size: copy a shape and change `N`
 
 ## vs heap `arena`
 
-| | `static-arena` | `arena` |
+| | `static_arena` | `arena` |
 |---|---|---|
 | Backing | in-struct array | heap chunks |
 | Growth | never | new chunks |
@@ -86,7 +86,7 @@ than `used()` because of align gaps.
 ### Sibling package name
 
 Import path uses the hyphenated package name:
-`import "static-arena/static-arena" as sa`.
+`import "static_arena/static_arena" as sa`.
 
 ## When to pick which
 

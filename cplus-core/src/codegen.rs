@@ -3168,6 +3168,55 @@ fn ty_carries_view_rec(ty: &Ty, t: &TypeTable, visiting: &mut Vec<(bool, u32)>) 
 /// branch — `effective_move` (below) rewrites it to `move_`, so it is value-passed
 /// like an explicit `take x: T`. `take x: T` stays value-passed (the value is the
 /// transfer; the caller's drop flag flip suppresses the caller-side drop).
+/// Past this many bytes an aggregate stops being something a target can keep in
+/// registers and becomes a memcpy — and a first-class LLVM aggregate load or
+/// store of one is expanded ELEMENT BY ELEMENT by SelectionDAG.
+///
+/// WHAT THAT COSTS, measured: `vendor/static-arena` is a bump allocator whose
+/// whole point is a 16K or 64K buffer INSIDE the struct, and its by-value
+/// methods (`capacity(this)`, `used(this)`, `new() -> Self`) put
+/// `{[16384 x i8], i64}` in a `%T %0` parameter. clang never finished. Not
+/// slowly — `cpc build` of that package had no time limit at which it
+/// succeeded, and the same IR handed to `clang -c` directly spins past two
+/// minutes on 2253 lines. The package could not be built or tested at all.
+///
+/// 128 IS THE BOUND AND IT IS DELIBERATELY GENEROUS. The reason the by-value
+/// path exists is the one written above `self_by_ptr`: pointer-passing a
+/// 12-byte `V3` forces alloca/store/load at every call site and blocks SROA and
+/// the SLP vectorizer from seeing field-parallel arithmetic. Everything that
+/// argument is about — a vector, a colour, a rect, a 72-byte parameter block —
+/// is far below this, and nothing above it was ever going to be scalarized. The
+/// C ABI would have sent all of it indirectly at 16 bytes anyway, so no
+/// correctness rests on the window; only the optimiser's view does.
+const MAX_BY_VALUE_AGGREGATE: u64 = 128;
+
+fn aggregate_too_big_for_registers(ty: &Ty, types: &TypeTable) -> bool {
+    match static_layout(ty, types) {
+        Some((size, _align)) => size > MAX_BY_VALUE_AGGREGATE,
+        None => false,
+    }
+}
+
+/// Does a method receiver cross by POINTER rather than by value?
+///
+/// ONE PLACE, because it was six. The same expression was written out at every
+/// definition, declaration and call-site emitter, and the call site has to agree
+/// with the definition or the callee reads its receiver out of the wrong place —
+/// a mismatch with no diagnostic. A helper is what keeps the seventh copy from
+/// being written differently.
+fn receiver_passes_by_ptr(struct_ty: &Ty, rcv: Receiver, types: &TypeTable) -> bool {
+    // `ref this` / `take this` stay pointer-passed on every type: the language
+    // treats a mutation through `ref this` as a write-through to the caller's
+    // place.
+    if !matches!(rcv, Receiver::Read) {
+        return true;
+    }
+    if !is_copy_ty(struct_ty, types) {
+        return true;
+    }
+    aggregate_too_big_for_registers(struct_ty, types)
+}
+
 fn param_passes_by_ptr(p: &ParamAbi, t: &TypeTable) -> bool {
     let ty = &p.ty;
     if p.mode.is_take() {
@@ -3184,7 +3233,9 @@ fn param_passes_by_ptr(p: &ParamAbi, t: &TypeTable) -> bool {
     }
     // A bare `x: T` is a read-only (shared) borrow: pointer-passed for non-Copy
     // aggregates (the borrow ABI), value-passed (a plain copy) for Copy types.
-    matches!(ty, Ty::Struct(_)) && !is_copy_ty(ty, t)
+    // A Copy struct is value-passed, EXCEPT when it is too big for that to be a
+    // copy rather than an element-wise expansion — see MAX_BY_VALUE_AGGREGATE.
+    matches!(ty, Ty::Struct(_)) && (!is_copy_ty(ty, t) || aggregate_too_big_for_registers(ty, t))
 }
 
 /// v0.0.12: the v0.0.10 "non-Copy moves by default" rule, wired through to
@@ -3932,6 +3983,14 @@ fn return_passes_by_sret_widened(ty: &Ty, types: &TypeTable) -> bool {
         // constructs the only value there is and hands it over, and a `return
         // f;` moves out of a local whose drop is already suppressed.
         if !def.is_copy && !def.is_lang_future {
+            return true;
+        }
+        // A COPY STRUCT TOO BIG TO RETURN IN REGISTERS goes through sret for
+        // the same reason a receiver that size goes through a pointer: the
+        // first-class aggregate return is expanded element by element. A
+        // future is `{ ptr }` and is nowhere near this, so the ramp emitters'
+        // hand-written signatures are untouched.
+        if aggregate_too_big_for_registers(ty, types) {
             return true;
         }
     }
@@ -7762,7 +7821,7 @@ fn gen_async_method(
         // v0.0.8 fix A: same Copy+Read by-value rule as `gen_method` so
         // the call-site lowering in `gen_method_call` (which doesn't
         // distinguish async/gen/sync) matches this signature.
-        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = receiver_passes_by_ptr(&struct_ty, rcv, types);
         let attrs = param_attrs(&recv_sig, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
@@ -7842,7 +7901,7 @@ fn gen_async_method(
     let mut next_idx: u32 = 0;
     if let Some(rcv) = sig.receiver {
         let self_by_ptr =
-            !is_copy_ty(&Ty::Struct(struct_id), types) || !matches!(rcv, Receiver::Read);
+            receiver_passes_by_ptr(&Ty::Struct(struct_id), rcv, types);
         if self_by_ptr {
             let recv_name = format!("%{}", next_idx);
             state.bind("self", recv_name, Ty::Struct(struct_id));
@@ -8009,7 +8068,7 @@ fn gen_gen_method(
         // v0.0.8 fix A: same Copy+Read by-value rule as `gen_method` so
         // the call-site lowering in `gen_method_call` (which doesn't
         // distinguish gen/sync) matches this signature.
-        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = receiver_passes_by_ptr(&struct_ty, rcv, types);
         let attrs = param_attrs(&recv_sig, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
@@ -8081,7 +8140,7 @@ fn gen_gen_method(
     // `this.x` keeps its place shape.
     if let Some(rcv) = sig.receiver {
         let self_by_ptr =
-            !is_copy_ty(&Ty::Struct(struct_id), types) || !matches!(rcv, Receiver::Read);
+            receiver_passes_by_ptr(&Ty::Struct(struct_id), rcv, types);
         if self_by_ptr {
             let recv_name = format!("%{}", next_idx);
             state.bind("self", recv_name, Ty::Struct(struct_id));
@@ -9400,7 +9459,7 @@ fn gen_method(
         // mutations through `ref this` as write-through to the caller's
         // place (see `phase7_generic_typed_impl_mut_self_runs` e2e test:
         // `b.set(42); b.get()` must observe the write).
-        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = receiver_passes_by_ptr(&struct_ty, rcv, types);
         let attrs = param_attrs(&recv_sig, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
@@ -9473,7 +9532,7 @@ fn gen_method(
     // non-receiver param path below. Must match the signature decision
     // above.
     if let Some(rcv) = sig.receiver {
-        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = receiver_passes_by_ptr(&struct_ty, rcv, types);
         if self_by_ptr {
             let recv_name = format!("%{}", next_idx);
             state.bind("self", recv_name.clone(), struct_ty.clone());
@@ -10055,6 +10114,10 @@ struct FnState<'a> {
     /// ever under-claim — which is always sound, where over-claiming is the
     /// misaligned access itself.
     ptr_align: std::collections::HashMap<String, u64>,
+    /// The most recent big-aggregate load, and where in `body` it sits:
+    /// (temp, source pointer, size, offset before the load, offset after it).
+    /// See `gen_load`.
+    pending_big_load: Option<(String, String, u64, usize, usize)>,
     /// v0.0.28: temporaries `gen_place` handed back in place of a bitfield's
     /// (nonexistent) address, mapped to the field they are a copy of.
     ///
@@ -10116,6 +10179,7 @@ impl<'a> FnState<'a> {
             coro_promise: None,
             field_load_cache: std::collections::HashMap::new(),
             ptr_align: std::collections::HashMap::new(),
+            pending_big_load: None,
             bitfield_slots: std::collections::HashMap::new(),
             ensures: Vec::new(),
         }
@@ -10209,9 +10273,55 @@ impl<'a> FnState<'a> {
 
     // ---- block / instruction emission ----
 
+    /// `store %T %v, ptr %dst` immediately after `%v = load %T, ptr %src` →
+    /// the `memcpy` that pair always meant, with the dead load removed.
+    /// `None` for anything else — see `gen_load` for why adjacency is the
+    /// condition rather than a lookup by name.
+    fn rewrite_big_aggregate_store(&mut self, s: &str) -> Option<String> {
+        let (tmp, src, size, before, after) = self.pending_big_load.clone()?;
+        // Anything emitted since the load breaks the argument: `src` could
+        // have been written, or the value could have been consumed.
+        if self.body.len() != after {
+            self.pending_big_load = None;
+            return None;
+        }
+        let line = s.trim_start();
+        let rest = line.strip_prefix("store ")?;
+        // "<ty> <val>, ptr <dst>[, ...]" — the value is the token before the
+        // first comma, the destination the one after ", ptr ".
+        let (head, tail) = rest.split_once(", ptr ")?;
+        if head.rsplit_once(' ')?.1 != tmp {
+            return None;
+        }
+        let dst = tail
+            .split(|c| c == ',' || c == ' ')
+            .next()
+            .filter(|d| !d.is_empty())?
+            .to_string();
+        self.body.truncate(before);
+        self.pending_big_load = None;
+        let us = usize_llvm_ty();
+        let cpy = self.next_tmp();
+        Some(format!(
+            "{cpy} = call ptr @memcpy(ptr {dst}, ptr {src}, {us} {size})"
+        ))
+    }
+
     fn emit(&mut self, s: &str) {
         if self.terminated {
             return;
+        }
+        // THE LAST DOOR for a big aggregate, and it is here rather than in
+        // `gen_store` because a store is written out by half a dozen lowerers
+        // and only some of them go through that helper. Every instruction goes
+        // through `emit`, so the rewrite cannot be missed by the next one
+        // somebody adds — and being missed means silent corruption, not a
+        // diagnostic. See `gen_load`.
+        if self.pending_big_load.is_some() {
+            if let Some(rewritten) = self.rewrite_big_aggregate_store(s) {
+                self.emit(&rewritten);
+                return;
+            }
         }
         // The field-read memo holds values LOADED since the last instruction
         // that could have written memory. Every earlier invalidation site
@@ -10352,12 +10462,48 @@ impl<'a> FnState<'a> {
     /// Sphere mixed-field hot loop) don't alias. Aggregate types get
     /// no tag — `tbaa_tag_for` returns `None` for those and LLVM
     /// falls back to may-alias-anything, the conservative default.
+    /// A BIG AGGREGATE COPY IS A MEMCPY, and this is not an optimisation — it
+    /// is a miscompile that has to be avoided.
+    ///
+    /// clang 19.1.1 at -O0, handed `%v = load %T, ptr %src` where `%T` is
+    /// `{ [65536 x i8], i64 }`, lowers the load to sixty-five thousand
+    /// `movb N(%rsp), %cl` — every byte into the SAME register, each
+    /// overwriting the last — and the paired `store` then writes nothing that
+    /// came from the source. The copy is silently DROPPED.
+    /// `vendor/static-arena`'s `let a = StaticArena64K::new()` produced an
+    /// arena whose `_used` field was a leftover stack address, and six of its
+    /// tests failed with values in the hundreds of millions. It is also why
+    /// `cpc build` of that package never finished: sixty-five thousand dead
+    /// instructions per copy.
+    ///
+    /// So a big load is REMEMBERED as well as emitted, and `emit` folds it
+    /// into a `memcpy` when the very next instruction is the store that
+    /// consumes it — which is the shape of every copy: `let a = f()`,
+    /// `return x`, a struct assignment.
+    ///
+    /// ADJACENCY IS THE WHOLE SAFETY ARGUMENT, and it is why this is not a
+    /// map keyed by temp. `memcpy(dst, src)` is only the same thing as
+    /// load-then-store while nothing has written through `src` in between,
+    /// and while nothing ELSE has consumed the loaded value — a `take`
+    /// parameter of a 1656-byte `flex_layout::Node` is passed by value and
+    /// reads exactly such a temp. If anything at all intervenes the pair is
+    /// left alone: correct, and merely slow.
     fn gen_load(&mut self, tmp: &str, ty: &Ty, ptr: &str) {
         let lty = self.lty(ty);
         let al = self.reduced_align(ty, ptr);
+        let big = aggregate_too_big_for_registers(ty, self.types);
+        let before = self.body.len();
         match self.md.tbaa_tag_for(ty, self.types) {
             Some(id) => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}{al}, !tbaa !{id}")),
             None => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}{al}")),
+        }
+        self.pending_big_load = None;
+        if big {
+            if let Some((size, _align)) = static_layout(ty, self.types) {
+                let after = self.body.len();
+                self.pending_big_load =
+                    Some((tmp.to_string(), ptr.to_string(), size, before, after));
+            }
         }
     }
 
@@ -11698,12 +11844,23 @@ impl<'a> FnState<'a> {
                     // G-044: when the destination is a typed array, build the
                     // literal with the declared element type so the aggregate's
                     // type matches the slot (else `[N x i32]` vs `[N x i64]`).
+                    // A FILL-ARRAY INITIALISER IS WRITTEN IN PLACE, for the
+                    // reason `gen_array_fill_at` gives: `let b: [u8; 65536] =
+                    // [0u8; 65536];` otherwise loads 64 KiB into an SSA value
+                    // and stores it back, and LLVM's x86 ISel crashes on an
+                    // aggregate that size.
+                    if let (ExprKind::ArrayFill { fill, count, .. }, Ty::Array(elem, _)) =
+                        (&init_expr.kind, &var_ty)
+                    {
+                        let elem = Some((**elem).clone());
+                        let _ = self.gen_array_fill_into(fill, *count, elem, &slot);
+                        self.register_value_drop(&name.name, &slot, &var_ty, true);
+                        self.bind(&name.name, slot, var_ty);
+                        return;
+                    }
                     let (val, _) = match (&init_expr.kind, &var_ty) {
                         (ExprKind::ArrayLit { elements }, Ty::Array(elem, _)) => {
                             self.gen_array_lit(elements, Some((**elem).clone()))
-                        }
-                        (ExprKind::ArrayFill { fill, count, .. }, Ty::Array(elem, _)) => {
-                            self.gen_array_fill(fill, *count, Some((**elem).clone()))
                         }
                         // TEXT.R1: `let s: Text = "literal";` constructs an owned
                         // heap copy as the named struct aggregate. Scoped to the
@@ -13077,11 +13234,30 @@ impl<'a> FnState<'a> {
     /// or a tight SIMD store loop. For other shapes we emit an N-iteration
     /// LLVM loop — small N could be unrolled by an inliner pass but isn't
     /// here. The result mirrors `gen_array_lit`'s aggregate-load tail.
-    fn gen_array_fill(
+    /// Fill `count` copies of `fill` into `dest`, or into a fresh slot when
+    /// `dest` is `None`. Answers the POINTER that was filled and the array's
+    /// type — never a loaded value, which is the whole point.
+    ///
+    /// WHY DESTINATION-PASSING. The value-producing wrapper below ends in a
+    /// load of the whole array, which turns `[0u8; 65536]` into a 64 KiB SSA
+    /// aggregate. The memset fast path here already kept 65536 STORES out of
+    /// the IR, and the load-back put an object of the same size straight back
+    /// in — LLVM's SelectionDAG then crashed outright (`ReplaceAllUsesWith`,
+    /// x86 ISel) on `vendor/static-arena`'s 64K arena. Instructive that the
+    /// fast path and the bug were four lines apart: the cost was never the
+    /// stores, it was the VALUE. A caller that has somewhere to put the array —
+    /// a `let` slot, a struct-literal field — passes it and never makes one.
+    ///
+    /// THE FILL EXPRESSION IS EVALUATED EXACTLY ONCE, before the slot exists,
+    /// which is why this takes `dest` as an Option rather than being two
+    /// functions: the element type is not known until `fill` has been generated,
+    /// and `[f(); N]` must not call `f` twice.
+    fn gen_array_fill_at(
         &mut self,
         fill: &Expr,
         count: u32,
         expected_elem: Option<Ty>,
+        dest: Option<&str>,
     ) -> (String, Ty) {
         // G-044: same expected-element-type rule as `gen_array_lit` — a typed
         // destination (`let a: [i64; N] = [1; N]`) coerces the bare fill
@@ -13091,7 +13267,10 @@ impl<'a> FnState<'a> {
         let array_ty = Ty::Array(Box::new(elem_ty.clone()), count);
         let llvm_arr = self.lty(&array_ty);
         let _ = self.lty(&elem_ty);
-        let slot = self.alloca_anon(array_ty.clone());
+        let slot = match dest {
+            Some(d) => d.to_string(),
+            None => self.alloca_anon(array_ty.clone()),
+        };
 
         // Fast path: zero-byte fill (`[0u8; N]`) lowers to llvm.memset.
         // This is the hot case for static-arena's buffer init — N can be
@@ -13133,7 +13312,32 @@ impl<'a> FnState<'a> {
             self.emit_terminator(&format!("br label %{head_lbl}"));
             self.open_block(&exit_lbl);
         }
+        (slot, array_ty)
+    }
 
+    /// Fill straight into a destination the caller already has. Returns the
+    /// array's type so a caller that also needs it does not recompute it.
+    fn gen_array_fill_into(
+        &mut self,
+        fill: &Expr,
+        count: u32,
+        expected_elem: Option<Ty>,
+        dest: &str,
+    ) -> Ty {
+        let (_, ty) = self.gen_array_fill_at(fill, count, expected_elem, Some(dest));
+        ty
+    }
+
+    /// The value-producing form, for a context with nowhere to fill — an
+    /// argument, a `return`. Every caller that HAS a destination should use
+    /// `gen_array_fill_into`; see `gen_array_fill_at` for what the load costs.
+    fn gen_array_fill(
+        &mut self,
+        fill: &Expr,
+        count: u32,
+        expected_elem: Option<Ty>,
+    ) -> (String, Ty) {
+        let (slot, array_ty) = self.gen_array_fill_at(fill, count, expected_elem, None);
         let v = self.next_tmp();
         self.gen_load(&v, &array_ty, &slot);
         (v, array_ty)
@@ -13253,6 +13457,26 @@ impl<'a> FnState<'a> {
         let slot = self.alloca_anon(struct_ty.clone());
         for f in fields {
             let field_ty = info.field_type(&f.name.name);
+            let idx = info.field_index(&f.name.name);
+            // A FILL-ARRAY FIELD IS WRITTEN IN PLACE. `StaticArena64K { _buf:
+            // [0u8; 65536], .. }` would otherwise load 64 KiB into an SSA value
+            // only to store it straight back, and LLVM's x86 ISel crashes on an
+            // aggregate that size (`gen_array_fill_at` has the detail). The
+            // bitfield branch below cannot host an array, so this is checked
+            // first and returns early.
+            if let ExprKind::ArrayFill { fill, count, .. } = &f.value.kind {
+                if matches!(field_ty, Ty::Array(..))
+                    && self.bitfield_place(id, idx as usize).is_none()
+                {
+                    let elem = match &field_ty {
+                        Ty::Array(e, _) => Some((**e).clone()),
+                        _ => None,
+                    };
+                    let (ptr, _) = self.field_addr(id, idx as usize, &slot);
+                    let _ = self.gen_array_fill_into(fill, *count, elem, &ptr);
+                    continue;
+                }
+            }
             // TEXT.R1c: a string literal for a `Text`-typed field constructs an
             // owned Text (matches the sema struct-lit field coercion).
             let val = match &f.value.kind {
@@ -13261,7 +13485,6 @@ impl<'a> FnState<'a> {
                 }
                 _ => self.gen_expr(&f.value).expect("field init has value").0,
             };
-            let idx = info.field_index(&f.name.name);
             // v0.0.28: a bitfield member is written by read-modify-write into
             // the storage unit it shares — the slot is zeroed first, so the
             // neighbours it preserves are the ones already initialized here.
@@ -17997,7 +18220,7 @@ impl<'a> FnState<'a> {
         // Copy types so writes propagate to the caller's place.
         // v0.0.8 fix B (finish): on the pointer-passed receiver, mirror
         // the callee's receiver attrs at the call site.
-        let recv_by_value = is_copy_ty(&recv_ty, self.types) && matches!(rcv, Receiver::Read);
+        let recv_by_value = !receiver_passes_by_ptr(&recv_ty, rcv, self.types);
         let recv_arg = if recv_by_value {
             let v = self.next_tmp();
             self.gen_load(&v, &recv_ty, &recv_ptr);
@@ -21483,8 +21706,15 @@ mod tests {
             .unwrap_or_else(|| panic!("no call to @inner:\n{ir}"));
         // The premise: this build really does pass the struct indirectly.
         // Without that the test would pass for the wrong reason.
+        //
+        // TWO SPELLINGS OF INDIRECT. AArch64 hands over a bare `ptr %a2`;
+        // x86-64 SysV puts a 72-byte aggregate in the MEMORY class and LLVM
+        // writes that as `ptr byval(%Color) align 8 %a2`. Both are a pointer
+        // into the caller's frame, which is the whole hazard this test is
+        // about — checking only for `ptr %` failed the premise on x86-64 and
+        // took the test with it.
         assert!(
-            call.contains("ptr %"),
+            call.contains("ptr %") || call.contains("ptr byval("),
             "expected an indirect (pointer) argument, got `{call}`"
         );
         assert!(
@@ -27836,6 +28066,69 @@ fn main() -> i32 {\n\
     }
 
     #[test]
+    fn a_fill_array_field_is_written_in_place_not_loaded_back() {
+        // `gen_array_fill` used to end in a load of the WHOLE array, so a
+        // struct literal holding `[0u8; 65536]` memset a slot and then hauled
+        // 64 KiB back out as an SSA value to store it again. LLVM's x86 ISel
+        // crashed outright on the aggregate (`ReplaceAllUsesWith`), and
+        // `vendor/static-arena` could not be compiled at all.
+        //
+        // The field must be filled through its own address, with no `load` of
+        // the array type anywhere in the constructor.
+        let ir = gen_src(
+            "struct Buf { data: [u8; 4096], used: usize }\n\
+             fn make() -> Buf { return Buf { data: [0u8; 4096], used: 0 as usize }; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("call void @llvm.memset.p0.i64(ptr %t") && ir.contains("i64 4096,"),
+            "a zero fill must lower to one memset, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("load [4096 x i8]"),
+            "the array must never be materialised as a value, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn a_fill_array_let_initializer_is_written_in_place() {
+        // The same hazard at a `let`: the initializer has a destination
+        // already, so filling it through a temporary and storing the whole
+        // array back is pure cost.
+        let ir = gen_src(
+            "fn main() -> i32 { var z: [u8; 2048] = [0u8; 2048]; z[0] = 1 as u8; return 0; }",
+        );
+        assert!(
+            ir.contains("i64 2048,"),
+            "the fill must memset the binding's own slot, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("load [2048 x i8]"),
+            "the array must never be materialised as a value, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn a_nonzero_fill_still_stores_every_element_once() {
+        // The memset fast path only covers a zero BYTE fill. A non-zero or
+        // non-byte element takes the loop, which must still write through the
+        // destination rather than through a temporary — and must evaluate the
+        // fill expression exactly once, which is why the destination is an
+        // Option rather than there being two functions.
+        let ir = gen_src(
+            "fn main() -> i32 { var a: [i64; 300] = [42 as i64; 300]; return 0; }",
+        );
+        assert!(
+            !ir.contains("load [300 x i64]"),
+            "the array must never be materialised as a value, got:\n{ir}"
+        );
+        assert!(
+            ir.matches("icmp ult i64").count() >= 1,
+            "a non-zero fill lowers to a counted store loop, got:\n{ir}"
+        );
+    }
+
+    #[test]
     fn coerced_return_memset_covers_full_coerce_size() {
         // A 12-byte struct return coerces to a 16-byte two-register class
         // ([2 x i64] on aarch64, `{ i64, i64 }` on x86_64-sysv). The staging
@@ -28610,9 +28903,20 @@ fn main() -> i32 {\n\
             !ir.contains("call %Size @objc_msgSend"),
             "struct return must not be by-value across objc_msgSend; IR:\n{ir}"
         );
+        // THE SYMBOL IS THE ARCH'S, not one name with two ABIs. An indirect
+        // struct return goes through `objc_msgSend_stret` on x86-64, where the
+        // sret pointer is a real first argument the runtime has to forward;
+        // arm64 passes it in x8 and has no `_stret` variant at all, so the
+        // ordinary `objc_msgSend` carries it. Asserting the arm64 spelling on
+        // an x86-64 host failed a codegen that was correct.
+        let sret_call = if active_target().arch == TargetArch::X86_64 {
+            "call void @objc_msgSend_stret("
+        } else {
+            "call void @objc_msgSend("
+        };
         let call_idx = ir
-            .find("call void @objc_msgSend(")
-            .unwrap_or_else(|| panic!("expected void sret msgSend call; IR:\n{ir}"));
+            .find(sret_call)
+            .unwrap_or_else(|| panic!("expected {sret_call} in IR:\n{ir}"));
         let call_line = &ir[call_idx..call_idx + ir[call_idx..].find('\n').unwrap()];
         assert!(
             call_line.contains("sret(%Size)"),
@@ -28641,9 +28945,20 @@ fn main() -> i32 {\n\
             !ir.contains("call %Pt @objc_msgSend"),
             "small struct return must coerce, not pass by value; IR:\n{ir}"
         );
+        // TWO ABIS, TWO COERCIONS, and both are "in FP registers, not sret".
+        // AArch64 calls a 2xf64 struct an HFA and coerces it to `[2 x double]`;
+        // x86-64 SysV classifies both eightbytes SSE and returns them in
+        // xmm0/xmm1, which LLVM spells `{ double, double }`. The assertion is
+        // that it coerced at all — pinning arm64's spelling failed a correct
+        // x86-64 codegen.
+        let coerced = if active_target().arch == TargetArch::X86_64 {
+            "call { double, double } @objc_msgSend("
+        } else {
+            "call [2 x double] @objc_msgSend("
+        };
         assert!(
-            ir.contains("call [2 x double] @objc_msgSend("),
-            "2xf64 HFA return must coerce to [2 x double]; IR:\n{ir}"
+            ir.contains(coerced),
+            "a 2xf64 return must coerce to {coerced}; IR:\n{ir}"
         );
     }
 

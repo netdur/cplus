@@ -565,18 +565,65 @@ fn a_pinned_tier_survives_and_reads_back() {
 // `visibility = false` is a password field — reading its text and handing it
 // to a language model is the same defect as printing it to the log.
 #[test]
-fn a_password_entry_is_private_without_being_asked() {
+fn a_password_entry_is_secure_by_class_without_changing_its_tier() {
     if !has_display() { return; }
     let secret: *u8 = { gtk_entry_new() };
     { gtk_entry_set_visibility(secret, 0 as i32) };
-    assert agent::effective_policy(secret) == identity::policy_private();
-    // An ordinary entry is not.
+    // SECURE CLASS AND TIER ARE SEPARATE AXES, which is the whole of the
+    // 2026-09-09 change this test used to contradict. A password field is
+    // secure by CLASS — its value reads back masked — and its TIER is still
+    // whatever the application declared, which for an unpinned field is
+    // nothing. Making it `policy_private` instead cost the field its WRITE,
+    // because a private node needs `cap_act_private` and no ordinary grant
+    // carries it: an agent could not fill in a password box at all.
+    assert agent::is_secure_by_class(secret);
+    assert !agent::has_explicit_policy(secret);
+    assert agent::effective_policy(secret) == identity::policy_none();
+    // An ordinary entry is neither.
     let plain: *u8 = { gtk_entry_new() };
+    assert !agent::is_secure_by_class(plain);
     assert agent::effective_policy(plain) == identity::policy_none();
     // ...and an EXPLICIT pin still wins, because an application that
-    // deliberately opened one has said so.
+    // deliberately marked one has said so. Pinning `policy_none` is not a
+    // no-op: the pin itself is what `has_explicit_policy` reads, and it takes
+    // the field out of the masking rule.
     agent::set_agent_policy(secret, identity::policy_none());
+    assert agent::has_explicit_policy(secret);
     assert agent::effective_policy(secret) == identity::policy_none();
+}
+
+// The other half, end to end: the value a password field hands an agent is
+// MASKED, not blanked. Blanked was the old behaviour and it told the agent the
+// box was empty — so it would type into a field it thought was untouched.
+#[test]
+fn a_password_fields_text_reads_back_masked_rather_than_empty() {
+    if !has_display() { return; }
+    let secret: *u8 = { gtk_entry_new() };
+    { gtk_entry_set_visibility(secret, 0 as i32) };
+    { gtk_editable_set_text(secret, #str_ptr("hunter2 ")) };
+    let win: *u8 = fixture(secret, #str_ptr("login:password "));
+    var s: agent::Surface = agent::open(win);
+    let nodes: vec::Vec[agent::GtkNode] = s.describe(auth::operator());
+    var seen: bool = false;
+    var i: usize = 0 as usize;
+    let n: usize = nodes.count();
+    while i < n {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::GtkNode]::Some(g) => {
+                if { (*g).id.view() } == "login:password" {
+                    seen = true;
+                    // READABLE, unlike a private node — the tier did not move.
+                    assert { (*g).readable };
+                    // The secret is not there, and the LENGTH is, so an agent
+                    // can tell a filled box from an empty one.
+                    assert { (*g).text.view() } == "*******";
+                }
+            }
+            option::Option[*agent::GtkNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert seen;
 }
 
 // END TO END, which is the assertion that matters: a private node's text must

@@ -53,6 +53,33 @@ objc         = "*"
 appkit       = "*"
 quartzcore   = "*"
 
+# The Linux half, and it exists for the reason the macOS block above states
+# rather than for a file of this package's own: `facet_agent/agent` resolves to
+# its Linux facade, whose `inspect_platform_linux.cplus` imports `gtk4/gtk4` for
+# the highlight — and the flat set the resolver checks every import against is
+# taken from the ROOT package's manifest, so a transitive dependency of a
+# dependency is still this file's to name. Without these the build stops at
+# `E0852: first segment gtk4 is not a declared dependency`, naming an import in
+# a package that does declare it.
+[linux.dependencies]
+facet_gtk   = "*"
+agent_gtk   = "*"
+agent_inapp = "*"
+gtk4        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gio         = "*"
+glib        = "*"
+cairo       = "*"
+gdk         = "*"
+gdkpixbuf   = "*"
+graphene    = "*"
+gsk         = "*"
+harfbuzz    = "*"
+pango       = "*"
+pangocairo  = "*"
+gmodule     = "*"
+
 # The iOS half. `uikit.cplus` is only ever compiled by a build that imports it —
 # an iOS entry — so these are named for that build rather than for this
 # package's own, which is macOS and never reaches the file.

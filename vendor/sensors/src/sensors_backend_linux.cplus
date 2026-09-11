@@ -1,0 +1,110 @@
+// sensors_backend_linux — Linux has an API for this; this machine has no
+// sensors and this build does not read them.
+//
+// THIS FILE EXISTS SO A LINUX BUILD LINKS. `sensors.cplus` declares five stable
+// symbols and something has to define them on every platform the package claims
+// to build for; without it the resolver falls through to the CoreMotion backend
+// and the failure is `objc/runtime is not available on platform linux`.
+//
+// ---- the Linux answer, written down rather than rediscovered ----------------
+//
+// It is IIO — the kernel's Industrial I/O subsystem, at
+// `/sys/bus/iio/devices/iio:deviceN`. An accelerometer appears as
+// `in_accel_{x,y,z}_raw` plus `in_accel_scale`, a gyroscope as `in_anglvel_*`,
+// a magnetometer as `in_magn_*`, a barometer as `in_pressure_*`. Reading one is
+// sysfs reads and a multiply; sampling is a timer over the same, or the buffer
+// interface and a poll on `/dev/iio:deviceN` when a real rate is wanted.
+//
+// So this is NOT `haptics`, where the facility does not exist. It exists and it
+// is unusually simple. It is unbuilt for one reason:
+//
+// THERE IS NO IIO ON THIS MACHINE AT ALL — `/sys/bus/iio` does not exist, so
+// the subsystem is not even loaded. Every line of an implementation would be
+// written blind: the sysfs names, the scale conventions, which axis sign
+// convention a driver uses, whether a laptop reports its accelerometer at all.
+// The first person with a sensor would be its first tester, and a sensor
+// backend that silently reports the wrong axis is worse than one that says it
+// has nothing — a level indicator that leans the wrong way looks like it works.
+//
+// ---- what the answers mean ---------------------------------------------------
+//
+// `available()` is false for EVERY kind, and `Unavailable` is the outcome —
+// which is the same code the Darwin backend gives for a device that genuinely
+// lacks a sensor, so a caller already handles it without a platform branch.
+//
+// NOT `Unsupported` and NOT `Denied`. `Denied` would say permission was
+// refused, sending someone to a settings pane; `Unsupported` reads as "this
+// platform will never do this", which IIO makes untrue.
+
+import "./sensors" as sens;
+
+export extern fn _c_available(kind: i32) -> i32 {
+    return 0 as i32;
+}
+
+// No handle, and `Unavailable` in `out_code` — the shape the Darwin backend
+// uses for a device with no such sensor, so `sensors.cplus` needs no branch.
+export extern fn _c_start(kind: i32, req: *sens::Request,
+                          on_sample: fn(sens::Sample, *u8), ctx: *u8,
+                          out_code: *i32) -> *u8 {
+    if out_code.is_not_null() { { *out_code = sens::Outcome::Unavailable.to_code() }; }
+    return 0 as *u8;
+}
+
+// Nothing hands out a handle, so these are only ever reached with a null one —
+// written out rather than omitted, because the point of a shadow file is that
+// the surface matches.
+export extern fn _c_kind(h: *u8) -> i32 {
+    return 0 as i32;
+}
+
+export extern fn _c_running(h: *u8) -> i32 {
+    return 0 as i32;
+}
+
+export extern fn _c_stop(h: *u8) {
+    return;
+}
+
+// ---- tests -------------------------------------------------------------------
+
+#[test]
+fn no_kind_is_available() {
+    // Every kind, because a backend that answered for one and not another would
+    // be the surprising kind of wrong.
+    var k: i32 = 0 as i32;
+    while k < (8 as i32) {
+        assert { _c_available(k) } == (0 as i32);
+        k = k +% (1 as i32);
+    }
+}
+
+#[test]
+fn starting_answers_unavailable_and_hands_back_no_handle() {
+    var code: i32 = 0 -% 1;
+    let cb: fn(sens::Sample, *u8) = _sink;
+    let h: *u8 = { _c_start(0 as i32, 0 as *sens::Request, cb, 0 as *u8, #addr_of(code)) };
+    assert h.is_null();
+    assert code == sens::Outcome::Unavailable.to_code();
+}
+
+fn _sink(_s: sens::Sample, _ctx: *u8) { return; }
+
+#[test]
+fn unavailable_is_not_denied_and_not_unsupported() {
+    // `Denied` would send someone to a permission pane that will not help;
+    // `Unsupported` would claim Linux can never do this, which IIO makes untrue.
+    let u: i32 = sens::Outcome::Unavailable.to_code();
+    assert u != sens::Outcome::Denied.to_code();
+    assert u != sens::Outcome::Unsupported.to_code();
+    assert u != sens::Outcome::Ok.to_code();
+}
+
+#[test]
+fn a_null_handle_answers_rather_than_traps() {
+    // Nothing here hands one out, so every accessor is only ever called this
+    // way; each must answer instead of dereferencing.
+    assert { _c_kind(0 as *u8) } == (0 as i32);
+    assert { _c_running(0 as *u8) } == (0 as i32);
+    { _c_stop(0 as *u8) };
+}

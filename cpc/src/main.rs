@@ -2374,6 +2374,37 @@ fn prebuild_fingerprint(
 
     let mut h = DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut h);
+    // THE COMPILER ITSELF IS AN INPUT, and leaving it out is how a green suite
+    // comes to link a mismatched ABI.
+    //
+    // The version string alone is right for a RELEASED compiler and wrong for
+    // a working tree: it does not move between two `cargo build`s, so a codegen
+    // change that alters how a struct is passed leaves every cached `.a` in
+    // place. The call sites are recompiled with the new convention, the archive
+    // still has the old one, and the mismatch is a SEGFAULT with nothing in the
+    // output naming a stale artifact. Measured, 2026-09-10: bounding by-value
+    // aggregates by size changed `agent_core::Backend` (152 bytes) from
+    // by-value to by-pointer, and `vendor/inspector` died on signal 11 inside a
+    // prebuilt archive from an hour earlier while its own suite and
+    // `agent_core`'s were both green.
+    //
+    // Size and mtime rather than a content hash: this runs once per package per
+    // build, and any rebuild of `cpc` moves both.
+    //
+    // WHAT IT COSTS is a rebuild of every prebuilt dependency after every
+    // `cargo build` of the compiler. That is the honest price of the cache
+    // being a cache of THIS compiler's output, and it is cheaper than the hour
+    // the alternative costs the first time it bites.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Ok(md) = std::fs::metadata(&exe) {
+            md.len().hash(&mut h);
+            if let Ok(t) = md.modified() {
+                if let Ok(d) = t.duration_since(std::time::UNIX_EPOCH) {
+                    d.as_nanos().hash(&mut h);
+                }
+            }
+        }
+    }
     link_triple.hash(&mut h);
     matches!(build_mode, BuildMode::Release).hash(&mut h);
     // THE SANITIZER SET IS PART OF WHAT A SLICE IS. Without it a `--tsan`

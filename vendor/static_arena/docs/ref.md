@@ -1,9 +1,9 @@
 # Reference
 
-Manual for the `static-arena` package. Signatures and behavior only.
+Manual for the `static_arena` package. Signatures and behavior only.
 
 ```cplus
-import "static-arena/static-arena" as sa;
+import "static_arena/static_arena" as sa;
 ```
 
 Two fixed-size types share the same method set. Documented once below;
@@ -96,8 +96,8 @@ Identical API to `StaticArena16K` with capacity **65536**.
 
 | | |
 |---|---|
-| Package name | `static-arena` |
-| Module path | `static-arena/static-arena` |
+| Package name | `static_arena` |
+| Module path | `static_arena/static_arena` |
 | Dependencies | `stdlib` (`option`) |
-| Tests | `cpc test` (`src/static-arena.cplus`) |
+| Tests | `cpc test` (`src/static_arena.cplus`) |
 | Sibling | `arena` — growing heap chunks |

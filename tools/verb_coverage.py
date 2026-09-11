@@ -69,12 +69,22 @@ Four things this has to get right, and simpler versions got each of them wrong:
   python3 tools/verb_coverage.py --all              # the comparison table
   python3 tools/verb_coverage.py --all --check      # the gate, every backend
 
-FOUR BACKENDS, one comparable column. LIVE is read out of the code and means
-the same thing everywhere. The other buckets are read out of the backend's own
-MANIFEST ledgers, and only facet_appkit has written any — so uikit, gtk and
-android report their whole non-live surface as debt, including the verbs
-appkit has already argued are host-rendered or by design. The `argued
-elsewhere` column in the table is how much of each debt figure that is.
+FIVE BACKENDS, one comparable column. LIVE is read out of the code and means
+the same thing everywhere: the apply body gates on the dirty bit, so a later
+write lands. Every other bucket is read out of the backend's own MANIFEST
+ledgers, which is why the two halves of the table must be read together.
+
+A BACKEND WITH NO LEDGER REPORTS ITS WHOLE NON-LIVE SURFACE AS DEBT, including
+verbs another backend has already argued are host-rendered or by design. The
+`argued elsewhere` column is how much of each debt figure that is. This used to
+say only facet_appkit had written ledgers; four of the five have now (measured
+2026-09-11: appkit 40 rows, uikit 51, android 54, win32 72, gtk 0), so a low
+LIVE count next to a high ledger count is a backend that has DECIDED, not one
+that is behind — and a high LIVE count next to an empty ledger is the reverse.
+
+READ THE TWO COLUMNS TOGETHER OR THE TABLE LIES. On 2026-09-11 gtk had the
+HIGHEST live count of any backend (351/363, 96%) and was one of the two the
+gate failed, because its remaining fourteen are written down nowhere.
 """
 import glob
 import os

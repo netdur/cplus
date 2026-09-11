@@ -1,4 +1,4 @@
-// vendor/static-arena/src/static-arena.cplus — fixed-size stack arena.
+// vendor/static_arena/src/static_arena.cplus — fixed-size stack arena.
 //
 // A bump-pointer arena whose buffer lives entirely on the stack (or
 // in `static` storage). No `malloc`, no `free`. Composes with the

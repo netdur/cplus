@@ -1,0 +1,54 @@
+// haptics_backend_linux — the honest Linux answer, which is "no haptics".
+//
+// THIS FILE EXISTS SO A LINUX BUILD LINKS. `haptics.cplus` declares three
+// stable symbols and something has to define them on every platform the package
+// claims to build for; without it the failure is `objc/runtime is not available
+// on platform linux`, because the resolver falls through to the AppKit backend.
+//
+// WHY THERE IS NOTHING TO CALL. A UI haptic is a short, precisely-timed tap
+// through a dedicated actuator, and the desktop Linux stack has no such device
+// and no API that names one. What the kernel does expose is `evdev`
+// FORCE FEEDBACK (`FF_RUMBLE`, `FF_PERIODIC`) — and that is a genuinely
+// different thing: it drives the rumble motors of a GAME CONTROLLER, needs the
+// device opened for writing, and belongs to whichever pad is plugged in rather
+// than to the machine the UI is running on. Playing a "selection changed" tap
+// on someone's gamepad because they clicked a list row would be a worse answer
+// than none.
+//
+// A laptop touchpad has no actuator to drive at all: Force Touch is Apple
+// hardware, and the Linux drivers for the handful of haptic touchpads that
+// exist (Framework, some Dell) expose them as ordinary input devices with no
+// output path.
+//
+// `available()` ANSWERS FALSE, and that is the whole contract working. An
+// application asks first and skips the tap; nothing degrades and nothing lies.
+// `play` returning 0 says the same thing to a caller that did not ask.
+
+export extern fn _c_available() -> i32 {
+    return 0 as i32;
+}
+
+// 0, never 1. A caller that skipped `available()` still learns that nothing
+// happened, rather than being told a tap it never felt was delivered.
+export extern fn _c_play(feel: i32) -> i32 {
+    return 0 as i32;
+}
+
+// Warming up an actuator that does not exist. Void on every platform — the
+// Darwin body is a `return;` too, because AppKit has no prepare step either.
+export extern fn _c_prepare(feel: i32) {
+    return;
+}
+
+#[test]
+fn nothing_is_available_and_nothing_claims_to_have_played() {
+    assert { _c_available() } == (0 as i32);
+    // Every Feel, because a backend that answered for one and not another would
+    // be the surprising kind of wrong.
+    var f: i32 = 0 as i32;
+    while f < (8 as i32) {
+        assert { _c_play(f) } == (0 as i32);
+        { _c_prepare(f) };
+        f = f +% (1 as i32);
+    }
+}

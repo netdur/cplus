@@ -847,3 +847,31 @@ shape and was the same mistake.
   window can confirm — which is what `examples/facet_gtk_probe` is for.
 - **Every unimplemented kind is a bare container.** It is in the right place at
   the right size and honours the band; it does not look like a carousel.
+
+### The runtime-seam ledger
+
+`window::WindowHost` is a struct of function pointers facet keeps in a static
+and a backend fills at install. An unfilled slot is NOT a compile error — the
+struct is zero-initialised — so a backend that never assigns a field ships a
+null and the facade silently falls back or answers nothing. `tools/host_coverage.py`
+is the gate, and this block is how it tells a decision from a gap.
+
+The four observers are left empty on purpose, and the reason is scope rather
+than effort. GTK's `notify::is-active` watches whatever window was up when the
+handler was registered, and the resize observation is a GdkSurface property —
+neither is scoped to the window the CALLER named. Filling a per-window slot
+with a process-wide observation is exactly the defect the window cursor exists
+to remove: two windows would each report the other's activation. They answer
+`Cancellable::none()` until GTK's side is per-window.
+
+WHAT STILL WORKS. `app::observe_window_size` and `app::observe_window_active`
+are unchanged and process-wide by declaration, so an application with one
+window — which is most of them — loses nothing. What is refused is the
+per-window form, and only because GTK cannot honestly answer it.
+
+```host-ledger
+observe_resize — GdkSurface property, process-wide; not scoped to the named window
+observe_active — notify::is-active on whichever window was up at registration
+observe_inactive — the same signal as observe_active, and the same scope problem
+observe_density — scale-factor changes arrive per-surface, not per facet window
+```

@@ -1,0 +1,627 @@
+// facet_agent/inspect_platform — the Linux half.
+//
+// `inspect_platform.cplus` is the macOS base: it imports `objc`, `appkit` and
+// `quartzcore` unconditionally, and those are declared for `macos, ios` only.
+// So every non-Apple platform needs a sibling, which is what this is — the
+// Windows and Android files are the same shape from their own side.
+//
+// Three hooks, and `install` at the bottom is the whole of what `agent.cplus`
+// asks for:
+//
+//   `run_on_main_sync`  the inspector's RPC arrives on a SOCKET THREAD and the
+//                       facet tree is main-thread-owned. Every verb hops.
+//   `highlight`         mark the node the inspector selected.
+//   `native_props`      what the PLATFORM says about this node, as against what
+//                       facet's own vocabulary already said.
+//
+// ---- the highlight is CSS, not a window -------------------------------------
+//
+// The other three backends float something over the node: a CALayer, a layered
+// popup, a View added to the host. None of those shapes survives here.
+//
+// A GTK 4 client CANNOT PLACE A TOP-LEVEL. Under Wayland — the default session
+// on every current desktop — a surface has no global coordinates and there is
+// no call that puts one at a screen position, so the popup the Win32 half uses
+// has nowhere to be. Under X11 it would work, which is exactly the trap: the
+// highlight would appear for one developer and silently not for the next.
+//
+// So the frame is drawn BY THE TOOLKIT, as a style class on the widget itself.
+// It needs no coordinates, cannot be occluded, survives a redraw (which is the
+// failure the Win32 note explains at length), and follows the widget when the
+// window moves or the layout reflows — none of which a positioned overlay does.
+//
+// A NODE WITH NO WIDGET OF ITS OWN still gets its own rectangle. A span, a menu
+// row, anything facet draws INSIDE an ancestor, has no widget to put a class
+// on — so for those the frame is a small `GtkBox` placed at the node's computed
+// rect inside the ancestor. Every container facet_gtk builds is a `GtkFixed`
+// (`controls::create_box`), which is what makes an absolute placement available
+// without restructuring anyone's hierarchy.
+//
+// `can-target = false` on it, so the frame never takes a click — the
+// application underneath stays usable while the inspector points at it. Two
+// mechanisms rather than one because they answer different questions: a class
+// on a real widget FOLLOWS it through a reflow and a scroll, which a positioned
+// box does not, so the box is used only where there is no widget to follow.
+
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/atomic" as atomic;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/platform_sys" as platform_sys;
+import "agent_core/inspect" as insp;
+import "./inspect_tree" as tree;
+import "agent_mcp/inspect" as mcp;
+import "gtk4/gtk4" as gtk;
+
+// Not in the binding: the display-wide provider registration, and the one call
+// that names a GObject's class without going through a GType dance.
+#[link_name = "gtk_style_context_add_provider_for_display"]
+extern fn gtk_style_context_add_provider_for_display(display: *u8, provider: *u8, priority: u32);
+#[link_name = "gtk_widget_get_display"]
+extern fn gtk_widget_get_display(widget: *u8) -> *u8;
+#[link_name = "g_type_name_from_instance"]
+extern fn g_type_name_from_instance(instance: *u8) -> *u8;
+#[link_name = "gtk_fixed_put"]
+extern fn gtk_fixed_put(fixed: *u8, child: *u8, x: f64, y: f64);
+#[link_name = "gtk_fixed_move"]
+extern fn gtk_fixed_move(fixed: *u8, child: *u8, x: f64, y: f64);
+#[link_name = "gtk_widget_unparent"]
+extern fn gtk_widget_unparent(widget: *u8);
+#[link_name = "gtk_widget_get_parent"]
+extern fn gtk_widget_get_parent(widget: *u8) -> *u8;
+#[link_name = "gtk_widget_set_can_target"]
+extern fn gtk_widget_set_can_target(widget: *u8, can_target: i32);
+#[link_name = "gtk_widget_set_size_request"]
+extern fn gtk_widget_set_size_request(widget: *u8, width: i32, height: i32);
+#[link_name = "gtk_widget_set_visible"]
+extern fn gtk_widget_set_visible(widget: *u8, visible: i32);
+#[link_name = "gtk_scrolled_window_get_child"]
+extern fn gtk_scrolled_window_get_child(sw: *u8) -> *u8;
+#[link_name = "gtk_viewport_get_child"]
+extern fn gtk_viewport_get_child(vp: *u8) -> *u8;
+#[link_name = "g_object_ref_sink"]
+extern fn g_object_ref_sink(obj: *u8) -> *u8;
+
+// ---- the main-thread hop ---------------------------------------------------------
+//
+// `services::run_on_main` is FIRE AND FORGET — it hands work to the scheduler
+// and returns — and this hook has to be SYNCHRONOUS, because the caller is an
+// RPC that must have an answer before it replies. So the async hop is used and
+// then waited on.
+//
+// The wait is a spin with a yield, and that is the same deliberate choice the
+// Win32 half writes down: the UI thread is running a main loop and will pick
+// the work up on its next turn, the waiter is a socket thread with nothing else
+// to do, and an inspector verb happens when a human clicks.
+//
+// ON THE UI THREAD ALREADY, it just runs — hopping would deadlock, because the
+// thread that must drain the queue is the one blocking on it.
+struct Hop { work: fn(*u8), opaque ctx: *u8, done: u64 }
+
+static HOP: Hop = #zero::[Hop]();
+
+fn hop_trampoline(_ctx: *u8) {
+    let f: fn(*u8) = HOP.work;
+    if f.is_not_null() { f(HOP.ctx); }
+    // RELEASE, so the waiter that sees `done` also sees everything the work
+    // wrote. Linux runs on ARM64 too, where a plain store here races.
+    atomic::store_u64(#addr_of(HOP.done), 1 as u64, atomic::Ordering::Release);
+    return;
+}
+
+fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
+    if core::on_ui_thread() { work(ctx); return; }
+    // NO SCHEDULER MEANS NO HOP. Running the work here is wrong on a worker and
+    // it is the only thing left that is not "answer nothing at all" — which for
+    // an RPC would be a reply that is silently a lie. Both other halves make
+    // the same call for the same reason.
+    if !services::has_main_hop() { work(ctx); return; }
+    // ONE HOP AT A TIME. The inspector is one connection issuing one verb at a
+    // time; two socket threads would need a queue, and there is no second
+    // thread to want one.
+    HOP.work = work;
+    HOP.ctx = ctx;
+    atomic::store_u64(#addr_of(HOP.done), 0 as u64, atomic::Ordering::Release);
+    services::run_on_main(hop_trampoline, 0 as *u8);
+    while atomic::load_u64(#addr_of(HOP.done), atomic::Ordering::Acquire) == (0 as u64) {
+        platform_sys::yield_once();
+    }
+    return;
+}
+
+// ---- the style class ---------------------------------------------------------------
+
+fn highlight_class() -> str { return "facet-inspect-highlight"; }
+
+// GTK_STYLE_PROVIDER_PRIORITY_USER. Above an application's own stylesheet on
+// purpose: an app that themes its buttons must not be able to theme the
+// inspector's frame away.
+fn provider_priority() -> u32 { return 800 as u32; }
+
+// `outline` RATHER THAN `border`, because a border participates in layout:
+// giving a widget one moves everything inside it, and the inspector would then
+// be reporting a geometry it caused. An outline is drawn outside the box and
+// changes nothing. `outline-offset` pulls it back inside so the frame stays
+// visible on a widget flush against the window edge.
+fn overlay_class() -> str { return "facet-inspect-overlay"; }
+
+fn highlight_css() -> str {
+    return ".facet-inspect-highlight { outline: 2px solid #2278ff; outline-offset: -2px; background-image: linear-gradient(rgba(34,120,255,0.18), rgba(34,120,255,0.18)); } .facet-inspect-overlay { outline: 2px solid #2278ff; outline-offset: -2px; background-color: rgba(34,120,255,0.18); }";
+}
+
+// The widget currently wearing the class, as a plain address: the widget is
+// owned by the backend that mounted it and this module must not hold a
+// reference that outlives it. Cleared before anything else is marked.
+static MARKED: usize = 0;
+// Per display, and there is realistically one — but a second `add_provider` for
+// the same display would stack a second copy of the same rules.
+static PROVIDED: usize = 0;
+
+fn ensure_provider(widget: *u8) -> bool {
+    let display: *u8 = { gtk_widget_get_display(widget) };
+    if display == (0 as *u8) { return false; }
+    if PROVIDED == { #addr(display) } { return true; }
+    let p: gtk::CssProvider = gtk::CssProvider::new();
+    if p.raw() == (0 as *u8) { return false; }
+    { p.load_from_string(highlight_css()) };
+    { gtk_style_context_add_provider_for_display(display, p.raw(), provider_priority()) };
+    // THE PROVIDER IS NOT RELEASED. `add_provider_for_display` takes its own
+    // reference and the rules must outlive this frame; dropping the last one
+    // here would take the highlight's stylesheet with it.
+    PROVIDED = { #addr(display) };
+    return true;
+}
+
+// ---- finding the widget --------------------------------------------------------------
+//
+// `place` is the shape all three other halves have and the suite calls by name:
+// a node's own view when it has one, else the nearest ancestor that does — the
+// widget that actually draws it — with the node's rectangle inside that
+// widget's coordinate space.
+//
+// THE RECTANGLE IS CARRIED EVEN THOUGH THE HIGHLIGHT DOES NOT USE IT. The
+// inspector reads it, and a future highlight that can place itself precisely
+// would need exactly this; computing it here keeps the answer identical across
+// the four backends and keeps `found` meaning the same thing everywhere.
+//
+// NO DPI FACTOR TO APPLY, unlike the Win32 sibling. GTK 4 lays out in logical
+// pixels and the compositor scales the surface, so flex's own units already are
+// the widget's — there is nothing to convert.
+struct Rect { x: f64, y: f64, w: f64, h: f64 }
+
+// `view` is BORROWED, exactly as the other halves document: the backend that
+// mounted it owns it, and this struct is a short-lived answer rather than a
+// second owner.
+struct Placed {
+    opaque view: *u8,
+    rect: Rect,
+    found: bool,
+    // Whether the view is the node's OWN. `native_props` reports the
+    // difference rather than smoothing it — see the header.
+    own: bool,
+}
+
+fn nothing_placed() -> Placed {
+    return Placed {
+        view: 0 as *u8,
+        rect: Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        found: false,
+        own: false,
+    };
+}
+
+fn place(n: *core::Node) -> Placed {
+    if n == (0 as *core::Node) { return nothing_placed(); }
+
+    let own: *u8 = core::view_of(n);
+    if own != (0 as *u8) {
+        let f0: flex::Frame = core::frame_of(n);
+        return Placed {
+            view: own,
+            rect: Rect { x: 0.0f64, y: 0.0f64, w: f0.width, h: f0.height },
+            found: true,
+            own: true,
+        };
+    }
+
+    let f: flex::Frame = core::frame_of(n);
+    var x: f64 = f.left;
+    var y: f64 = f.top;
+    let w: f64 = f.width;
+    let h: f64 = f.height;
+
+    var cur: *core::Node = n;
+    // Bounded by the tree's own depth; a parent link always goes up.
+    var steps: usize = 0 as usize;
+    while steps < (256 as usize) {
+        let p: *core::Node = match mount::parent_of(cur) {
+            option::Option[*core::Node]::Some(q) => q,
+            option::Option::None => 0 as *core::Node,
+        };
+        if p == (0 as *core::Node) { return nothing_placed(); }
+        let pv: *u8 = core::view_of(p);
+        if pv != (0 as *u8) {
+            return Placed {
+                view: pv,
+                rect: Rect { x: x, y: y, w: w, h: h },
+                found: true,
+                own: false,
+            };
+        }
+        let pf: flex::Frame = core::frame_of(p);
+        x = x + pf.left;
+        y = y + pf.top;
+        cur = p;
+        steps = steps +% (1 as usize);
+    }
+    return nothing_placed();
+}
+
+// ---- the frame for a node with no widget -------------------------------------------
+//
+// ONE OVERLAY, reparented as the selection moves. A fresh widget per highlight
+// would leak one into every container the inspector ever pointed at, and GTK 4
+// has no destroy — an unparented widget with no reference is finalised, which
+// is what `clear_overlay` relies on.
+static OVERLAY: usize = 0;
+
+fn type_is(widget: *u8, name: str) -> bool {
+    if widget == (0 as *u8) { return false; }
+    let p: *u8 = { g_type_name_from_instance(widget) };
+    if p == (0 as *u8) { return false; }
+    var n: usize = 0 as usize;
+    while { *(p + n) } != (0 as u8) {
+        n = n +% (1 as usize);
+        if n > (128 as usize) { return false; }
+    }
+    return { #str_from_raw_parts(p, n) } == name;
+}
+
+// The GtkFixed a rect inside `view` can actually be placed in. A container is
+// one already; a scroll keeps its document in one, and the flex offsets a
+// viewless node accumulates are relative to that document rather than to the
+// scroll. Anything else has nowhere absolute to put a box, and says so.
+fn fixed_host(view: *u8) -> *u8 {
+    if view == (0 as *u8) { return 0 as *u8; }
+    if type_is(view, "GtkFixed") { return view; }
+    if type_is(view, "GtkScrolledWindow") {
+        var doc: *u8 = { gtk_scrolled_window_get_child(view) };
+        // A GtkFixed IS NOT SCROLLABLE, so GTK 4 wraps it in a GtkViewport of
+        // its own and that viewport is what the scroll's child is. Stopping at
+        // the wrapper puts the frame in a widget with no absolute placement at
+        // all, so it is stepped through.
+        if type_is(doc, "GtkViewport") { doc = { gtk_viewport_get_child(doc) }; }
+        if type_is(doc, "GtkFixed") { return doc; }
+    }
+    return 0 as *u8;
+}
+
+fn overlay_widget() -> *u8 {
+    if OVERLAY != (0 as usize) { return { OVERLAY as *u8 }; }
+    let b: gtk::Box = gtk::Box::new(0 as i32, 0 as i32);
+    if b.raw() == (0 as *u8) { return 0 as *u8; }
+    let w: gtk::Widget = gtk::Widget::from_raw(b.raw());
+    { w.add_css_class(overlay_class()) };
+    // NEVER TAKES A CLICK. The application underneath has to stay usable while
+    // the inspector is pointing at it — an overlay that swallowed events would
+    // change the very state the inspector is reporting.
+    { gtk_widget_set_can_target(b.raw(), 0 as i32) };
+    // Owned here, not by whatever container it is sitting in this second:
+    // reparenting drops the parent's reference and a floating widget would be
+    // finalised on the first move.
+    OVERLAY = { #addr({ g_object_ref_sink(b.raw()) }) };
+    return { OVERLAY as *u8 };
+}
+
+fn clear_overlay() {
+    if OVERLAY == (0 as usize) { return; }
+    let w: *u8 = { OVERLAY as *u8 };
+    if { gtk_widget_get_parent(w) } != (0 as *u8) { { gtk_widget_unparent(w) }; }
+    { gtk_widget_set_visible(w, 0 as i32) };
+}
+
+// Answers whether the rect could be placed. False leaves the caller to fall
+// back to marking the whole widget, which is worse than a precise frame and far
+// better than none.
+fn place_overlay(view: *u8, rect: Rect) -> bool {
+    let host: *u8 = fixed_host(view);
+    if host == (0 as *u8) { return false; }
+    let w: *u8 = overlay_widget();
+    if w == (0 as *u8) { return false; }
+    // A ZERO-SIZED FRAME IS NOT A FRAME. A node laid out to nothing — a
+    // collapsed row, a node measured before the first layout pass — would draw
+    // a two-pixel dot somewhere in the corner, which reads as a bug in the
+    // inspector rather than as an empty node.
+    if rect.w <= (0.0f64) || rect.h <= (0.0f64) { return false; }
+    let parent: *u8 = { gtk_widget_get_parent(w) };
+    if parent != host {
+        if parent != (0 as *u8) { { gtk_widget_unparent(w) }; }
+        { gtk_fixed_put(host, w, rect.x, rect.y) };
+    } else {
+        { gtk_fixed_move(host, w, rect.x, rect.y) };
+    }
+    { gtk_widget_set_size_request(w, { rect.w as i32 }, { rect.h as i32 }) };
+    { gtk_widget_set_visible(w, 1 as i32) };
+    return true;
+}
+
+fn clear_highlight(_s: *u8) {
+    clear_overlay();
+    if MARKED == (0 as usize) { return; }
+    let w: gtk::Widget = gtk::Widget::from_raw({ MARKED as *u8 });
+    { w.remove_css_class(highlight_class()) };
+    MARKED = 0 as usize;
+    return;
+}
+
+fn highlight(s: *u8, h: insp::Handle) {
+    // A REQUEST THAT CANNOT BE ANSWERED TAKES THE HIGHLIGHT DOWN rather than
+    // leaving it on the last node — a frame around something the inspector is
+    // no longer pointing at is worse than no frame.
+    if !h.is_live() { clear_highlight(s); return; }
+    let n: *core::Node = tree::node_of(h);
+    if n == (0 as *core::Node) { clear_highlight(s); return; }
+    let f: Placed = place(n);
+    if !f.found { clear_highlight(s); return; }
+    clear_highlight(s);
+    if !ensure_provider(f.view) { return; }
+    // A NODE WITH ITS OWN WIDGET WEARS THE CLASS, because that frame follows it
+    // through a reflow and a scroll and a positioned box does not. Only a node
+    // drawn by an ancestor needs the box, and then it gets its own rect rather
+    // than the ancestor's bounds.
+    if f.own {
+        let w: gtk::Widget = gtk::Widget::from_raw(f.view);
+        { w.add_css_class(highlight_class()) };
+        MARKED = { #addr(f.view) };
+        return;
+    }
+    if place_overlay(f.view, f.rect) { return; }
+    // Nowhere absolute to put a frame — an ancestor that is not a Fixed. The
+    // whole widget is the honest fallback and `native_props` already says the
+    // node is drawn by it.
+    let w: gtk::Widget = gtk::Widget::from_raw(f.view);
+    { w.add_css_class(highlight_class()) };
+    MARKED = { #addr(f.view) };
+    return;
+}
+
+// ---- what the platform says about a node -----------------------------------------
+//
+// The facet vocabulary already told the inspector what the node IS. This says
+// what GTK made of it, which is the question you ask when the two disagree — a
+// `toggle` that reports `GtkButton` is not the switch the vocabulary claimed,
+// and a node with no widget at all was drawn by an ancestor.
+fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
+    var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
+    let f: Placed = place(n);
+    if !f.found || !f.own {
+        // Not an absence of information — a fact about the node, and the one
+        // that explains why the highlight sits on something bigger. The Windows
+        // and Android siblings say this in the same words, deliberately.
+        let _a: status::Status = out.append(insp::Prop::read_only(
+            "native_class", insp::Value::Str(text::from_str("(drawn by an ancestor)"))));
+        return out;
+    }
+    let _c: status::Status = out.append(insp::Prop::read_only(
+        "native_class", insp::Value::Str(class_name_of(f.view))));
+    let w: gtk::Widget = gtk::Widget::from_raw(f.view);
+    // THE ALLOCATION, not the flex frame. When these disagree the layout did
+    // not take, and that disagreement is the single most useful thing this
+    // panel can show — flex says one thing, GTK gave the widget another.
+    let _s: status::Status = out.append(insp::Prop::read_only(
+        "native_size", insp::Value::Str(size_text({ w.get_allocated_width() },
+                                                  { w.get_allocated_height() }))));
+    // MAPPED AND VISIBLE ARE DIFFERENT QUESTIONS. `visible` is the flag the
+    // application set; `mapped` is whether GTK actually put it on screen. A
+    // widget that is visible and not mapped is inside a collapsed parent, which
+    // is the answer to "I set it visible and nothing happened".
+    let _v: status::Status = out.append(insp::Prop::read_only(
+        "native_visible", insp::Value::Bool({ w.is_visible() })));
+    let _m: status::Status = out.append(insp::Prop::read_only(
+        "native_mapped", insp::Value::Bool({ w.get_mapped() })));
+    return out;
+}
+
+// `g_type_name_from_instance` reads the class straight off the instance, which
+// is what `G_OBJECT_TYPE_NAME` expands to. The string is STATIC — owned by the
+// type system for the life of the process — so it is copied rather than freed.
+fn class_name_of(v: *u8) -> text::Text {
+    let p: *u8 = { g_type_name_from_instance(v) };
+    if p == (0 as *u8) { return text::from_str("(unnamed)"); }
+    var n: usize = 0 as usize;
+    while { *(p + n) } != (0 as u8) {
+        n = n +% (1 as usize);
+        if n > (256 as usize) { return text::from_str("(unnamed)"); }
+    }
+    if n == (0 as usize) { return text::from_str("(unnamed)"); }
+    return text::from_str({ #str_from_raw_parts(p, n) });
+}
+
+fn size_text(w: i32, h: i32) -> text::Text {
+    var out: text::Text = { w as i64 }.to_text();
+    let _x: status::Status = out.append("x");
+    let _h: status::Status = out.append({ h as i64 }.to_text().view());
+    return out;
+}
+
+fn install() {
+    tree::install_platform(highlight, clear_highlight);
+    tree::set_native_fn(native_props);
+    mcp::set_marshal(run_on_main_sync);
+    return;
+}
+
+// ---- tests ---------------------------------------------------------------------
+//
+// WHAT CANNOT BE ASSERTED HERE is a frame on a screen. `cpc test` mounts no
+// window, so the two hooks that need one — `highlight` and the allocation half
+// of `native_props` — are exercised by the GTK probe under `playground/`, the
+// same way every other visual behaviour in this tree is.
+//
+// What IS pinned is the part that goes wrong silently: a node with no widget
+// resolving to nothing rather than to a stale pointer, the class name the CSS
+// and the stylesheet agree on, and every entry point surviving a null node.
+
+#[test]
+fn the_stylesheet_names_the_class_the_widget_is_given() {
+    // ONE SPELLING, two uses. A rename in the CSS that missed `add_css_class`
+    // would compile, run, and simply never draw — which is indistinguishable
+    // from a highlight that could not be placed.
+    let cls: str = highlight_class();
+    var found: bool = false;
+    let css: str = highlight_css();
+    let n: usize = #str_len(css);
+    let m: usize = #str_len(cls);
+    var i: usize = 0 as usize;
+    while i +% m <= n {
+        if { #str_from_raw_parts(#str_ptr(css) + i, m) } == cls { found = true; break; }
+        i = i +% (1 as usize);
+    }
+    assert found;
+}
+
+#[test]
+fn the_frame_is_an_outline_because_a_border_would_move_the_layout() {
+    // The rule this file's own note gives for choosing `outline`. A future edit
+    // that reaches for `border` changes the geometry the inspector reports,
+    // which is the one thing an inspector must not do.
+    let css: str = highlight_css();
+    var has_outline: bool = false;
+    let want: str = "outline:";
+    let n: usize = #str_len(css);
+    let m: usize = #str_len(want);
+    var i: usize = 0 as usize;
+    while i +% m <= n {
+        if { #str_from_raw_parts(#str_ptr(css) + i, m) } == want { has_outline = true; break; }
+        i = i +% (1 as usize);
+    }
+    assert has_outline;
+}
+
+#[test]
+fn a_node_that_is_not_there_resolves_to_no_widget() {
+    let f: Placed = place(0 as *core::Node);
+    assert !f.found;
+    assert f.view == (0 as *u8);
+    assert !f.own;
+}
+
+#[test]
+fn native_props_of_a_viewless_node_says_who_draws_it() {
+    // The exact contract the Windows and Android halves state: one property,
+    // naming the fact rather than leaving the panel blank.
+    let props: vec::Vec[insp::Prop] = native_props(0 as *core::Node);
+    assert props.count() == (1 as usize);
+}
+
+#[test]
+fn clearing_a_highlight_that_was_never_set_is_a_no_op() {
+    MARKED = 0 as usize;
+    clear_highlight(0 as *u8);
+    assert MARKED == (0 as usize);
+}
+
+#[test]
+fn a_size_reads_as_width_by_height() {
+    assert size_text(320 as i32, 240 as i32).view() == "320x240";
+    assert size_text(0 as i32, 0 as i32).view() == "0x0";
+}
+
+// ---- the overlay's own tests -------------------------------------------------------
+//
+// These need a display, because every one of them makes a real widget —
+// `gtk_init_check` answers false on a machine without one rather than aborting
+// the way `gtk_init` does, which would take the whole suite with it.
+
+#[link_name = "gtk_init_check"]
+extern fn gtk_init_check() -> i32;
+
+fn gtk_here() -> bool { return { gtk_init_check() } != (0 as i32); }
+
+fn a_rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
+    return Rect { x: x, y: y, w: w, h: h };
+}
+
+#[test]
+fn a_widgets_type_is_read_off_the_instance() {
+    if !gtk_here() { return; }
+    let f: gtk::Fixed = gtk::Fixed::new();
+    assert type_is(f.raw(), "GtkFixed");
+    assert !type_is(f.raw(), "GtkBox");
+    // A null instance is not a type error, it is no widget.
+    assert !type_is(0 as *u8, "GtkFixed");
+}
+
+#[test]
+fn a_scrolls_document_is_where_its_childrens_rects_are() {
+    if !gtk_here() { return; }
+    // A container IS the host.
+    let f: gtk::Fixed = gtk::Fixed::new();
+    assert fixed_host(f.raw()) == f.raw();
+    // A SCROLL IS NOT, and this is the one that would be wrong silently: the
+    // flex offsets a viewless node accumulates are relative to the DOCUMENT,
+    // so putting the frame in the scroll itself would misplace it by exactly
+    // the scroll offset — right at rest and wrong the moment anyone scrolls.
+    //
+    // AND THERE IS A VIEWPORT IN BETWEEN. A GtkFixed is not scrollable, so
+    // GTK 4 wraps it — `get_child` answers the wrapper, not the document, and
+    // a host that stopped there would have nowhere absolute to place anything.
+    let doc: gtk::Fixed = gtk::Fixed::new();
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::new();
+    { sw.set_child(gtk::Widget::from_raw(doc.raw())) };
+    assert fixed_host(sw.raw()) == doc.raw();
+    // Anything else has nowhere absolute to put a box.
+    let lbl: gtk::Label = gtk::Label::new("x");
+    assert fixed_host(lbl.raw()) == (0 as *u8);
+    assert fixed_host(0 as *u8) == (0 as *u8);
+}
+
+#[test]
+fn an_overlay_is_placed_moved_and_reparented_rather_than_remade() {
+    if !gtk_here() { return; }
+    clear_overlay();
+    let a: gtk::Fixed = gtk::Fixed::new();
+    let b: gtk::Fixed = gtk::Fixed::new();
+    assert place_overlay(a.raw(), a_rect(10.0f64, 20.0f64, 30.0f64, 40.0f64));
+    let w: *u8 = overlay_widget();
+    assert w != (0 as *u8);
+    assert { gtk_widget_get_parent(w) } == a.raw();
+    // A second placement in the SAME host moves it — a second `put` would be a
+    // GTK warning and a widget parented twice.
+    assert place_overlay(a.raw(), a_rect(1.0f64, 2.0f64, 3.0f64, 4.0f64));
+    assert overlay_widget() == w;
+    assert { gtk_widget_get_parent(w) } == a.raw();
+    // A different host reparents the SAME widget: one overlay for the whole
+    // session, or the inspector leaks one into every container it visits.
+    assert place_overlay(b.raw(), a_rect(5.0f64, 6.0f64, 7.0f64, 8.0f64));
+    assert overlay_widget() == w;
+    assert { gtk_widget_get_parent(w) } == b.raw();
+    clear_overlay();
+    assert { gtk_widget_get_parent(w) } == (0 as *u8);
+}
+
+#[test]
+fn a_node_laid_out_to_nothing_gets_no_frame() {
+    if !gtk_here() { return; }
+    clear_overlay();
+    let f: gtk::Fixed = gtk::Fixed::new();
+    // A collapsed row, or a node measured before the first layout pass. A
+    // two-pixel dot in the corner reads as a bug in the inspector rather than
+    // as an empty node.
+    assert !place_overlay(f.raw(), a_rect(0.0f64, 0.0f64, 0.0f64, 0.0f64));
+    assert !place_overlay(f.raw(), a_rect(4.0f64, 4.0f64, 12.0f64, 0.0f64));
+    // And a host with nowhere absolute to put it refuses rather than guessing.
+    let lbl: gtk::Label = gtk::Label::new("x");
+    assert !place_overlay(lbl.raw(), a_rect(0.0f64, 0.0f64, 10.0f64, 10.0f64));
+}
+
+#[test]
+fn clearing_an_overlay_that_was_never_placed_is_a_no_op() {
+    clear_overlay();
+    clear_overlay();
+}

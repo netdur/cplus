@@ -780,9 +780,10 @@ extern fn sigc_notify(instance: *u8, detailed_signal: *u8,
                       handler: fn(*u8, *u8, *u8),
                       data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
 
-// Observe a property of the window that is up. Answers 0 — an inert handle —
-// when there is no window, which is the honest reading of "there is nothing to
-// observe yet".
+// Observe a property of the window that is up — or, when there is no window
+// yet, CLAIM A SLOT and connect it when one opens. This used to answer 0 and
+// call that honest; it is not, because setup is where an application registers
+// and a dropped registration says nothing. See `defer_observer` below.
 fn observe_window_property(detailed: *u8, cb: fn(*u8), ctx: *u8) -> u64 {
     let w: *u8 = any_window();
     if w == (0 as *u8) { return defer_observer(OBS_TARGET_WINDOW, detailed, cb, ctx); }

@@ -1,0 +1,1115 @@
+// terminal/backend — the Linux half: a real GTK 4 terminal pane.
+//
+// THIS FILE EXISTS SO A LINUX BUILD LINKS, and so the screen-model tests can
+// run here at all. `widget.cplus` is the portable facade and names this module
+// as its backend; without a `_linux` sibling the build falls back to
+// `backend.cplus` — the AppKit half — and stops at `import "objc/runtime"`.
+// That single import is what kept the WHOLE package off Linux, screen model
+// included, and the model is 1700 lines of grid arithmetic that never touches a
+// native view.
+//
+// ---- and unlike the Windows sibling, this one is real ------------------------
+//
+// `backend_windows.cplus` refuses, and its reason is worth restating because it
+// does not apply here: it says a terminal widget with nothing to talk to would
+// be a window drawing an empty grid, since `pty_windows.cplus` refuses too —
+// Windows has no `forkpty`. Linux HAS `forkpty`, `pty.cplus` is the POSIX file
+// and it works here, so the other half is present and a widget has a shell to
+// drive. The two land together, and on this platform they land.
+//
+// ---- what it is, and what the AppKit half has that it does not ---------------
+//
+// A `GtkScrolledWindow` around a non-editable monospace `GtkTextView`, a
+// `GtkEventControllerKey` turning keys into bytes on the pty, and a
+// `g_timeout_add` pump that reads the master fd into the screen model and
+// re-renders when something arrived.
+//
+// PLAIN TEXT, NOT ATTRIBUTED. The AppKit half renders `terminal::Screen`'s
+// cells with per-run colour and a cursor layer; this renders `screen.view()`,
+// the same grid as text. Colour and a drawn cursor are the two things missing
+// and both are additive — the model already carries the attributes, so a future
+// pass sets tags on the buffer without changing anything here. Saying that is
+// better than a half-built tag path that gets colours subtly wrong.
+//
+// THE PUMP IS A TIMER, not a read source. GTK has no dispatch-source
+// equivalent that is worth reaching for here: the master fd is non-blocking
+// (`pty::make_nonblocking`), so a 16ms tick costs one `read` that returns
+// EAGAIN and keeps every touch of the screen model and the widget on the GTK
+// main thread — which is the thread GTK requires and the thread the facade's
+// handlers are documented to run on.
+
+import "./terminal" as terminal;
+import "./pty" as pty;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "gtk4/gtk4" as gtk;
+import "glib/glib" as glib;
+import "gobject_gir/gobject_gir" as gobject_gir;
+import "stdlib/status" as status_;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, v: i32, n: usize) -> *u8;
+
+// Not in the binding: the GObject signal door, the text-buffer calls, and the
+// two GDK helpers. The generator skips anything taking a callback type it has
+// no mapping for, which is every `g_signal_connect`.
+#[link_name = "g_signal_connect_data"]
+extern fn g_signal_connect_data(instance: *u8, detailed_signal: *u8,
+                                handler: fn(*u8, u32, u32, u32, *u8) -> i32,
+                                data: *u8, destroy: *u8, flags: i32) -> u64;
+#[link_name = "g_timeout_add"]
+extern fn g_timeout_add(interval_ms: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
+#[link_name = "g_source_remove"]
+extern fn g_source_remove(tag: u32) -> i32;
+#[link_name = "g_object_ref"]
+extern fn g_object_ref(obj: *u8) -> *u8;
+#[link_name = "g_object_ref_sink"]
+extern fn g_object_ref_sink(obj: *u8) -> *u8;
+#[link_name = "g_object_unref"]
+extern fn g_object_unref(obj: *u8);
+#[link_name = "gtk_text_view_get_buffer"]
+extern fn gtk_text_view_get_buffer(tv: *u8) -> *u8;
+#[link_name = "gtk_text_buffer_set_text"]
+extern fn gtk_text_buffer_set_text(buffer: *u8, text: *u8, len: i32);
+#[link_name = "gtk_text_buffer_get_insert"]
+extern fn gtk_text_buffer_get_insert(buffer: *u8) -> *u8;
+#[link_name = "gtk_text_view_scroll_to_mark"]
+extern fn gtk_text_view_scroll_to_mark(tv: *u8, mark: *u8, within_margin: f64,
+                                       use_align: i32, xalign: f64, yalign: f64);
+// ---- the cursor's door -----------------------------------------------------------
+#[link_name = "gtk_text_buffer_get_tag_table"]
+extern fn gtk_text_buffer_get_tag_table(buffer: *u8) -> *u8;
+#[link_name = "gtk_text_tag_table_lookup"]
+extern fn gtk_text_tag_table_lookup(table: *u8, name: *u8) -> *u8;
+#[link_name = "gtk_text_tag_table_add"]
+extern fn gtk_text_tag_table_add(table: *u8, tag: *u8) -> i32;
+#[link_name = "gtk_text_tag_new"]
+extern fn gtk_text_tag_new(name: *u8) -> *u8;
+#[link_name = "gtk_text_buffer_get_iter_at_offset"]
+extern fn gtk_text_buffer_get_iter_at_offset(buffer: *u8, iter: *u8, offset: i32);
+#[link_name = "gtk_text_buffer_get_start_iter"]
+extern fn gtk_text_buffer_get_start_iter(buffer: *u8, iter: *u8);
+#[link_name = "gtk_text_buffer_get_end_iter"]
+extern fn gtk_text_buffer_get_end_iter(buffer: *u8, iter: *u8);
+#[link_name = "gtk_text_buffer_apply_tag"]
+extern fn gtk_text_buffer_apply_tag(buffer: *u8, tag: *u8, start: *u8, end: *u8);
+#[link_name = "gtk_text_buffer_remove_all_tags"]
+extern fn gtk_text_buffer_remove_all_tags(buffer: *u8, start: *u8, end: *u8);
+#[link_name = "gtk_text_buffer_get_char_count"]
+extern fn gtk_text_buffer_get_char_count(buffer: *u8) -> i32;
+// GdkRGBA out-parameter: four 32-bit floats.
+#[link_name = "gtk_widget_get_color"]
+extern fn gtk_widget_get_color(widget: *u8, rgba: *u8);
+#[link_name = "gtk_text_iter_has_tag"]
+extern fn gtk_text_iter_has_tag(iter: *u8, tag: *u8) -> i32;
+#[link_name = "gtk_style_context_add_provider_for_display"]
+extern fn gtk_style_context_add_provider_for_display(display: *u8, provider: *u8, priority: u32);
+#[link_name = "gtk_widget_get_display"]
+extern fn gtk_widget_get_display(widget: *u8) -> *u8;
+#[link_name = "gdk_keyval_to_unicode"]
+extern fn gdk_keyval_to_unicode(keyval: u32) -> u32;
+#[link_name = "gtk_init_check"]
+extern fn gtk_init_check() -> i32;
+extern fn usleep(us: u32) -> i32;
+
+// ---- the session behind the pane ------------------------------------------------
+
+struct Ctx {
+    session: pty::Session,
+    screen: terminal::Screen,
+    opaque scroll: *u8,     // GtkScrolledWindow, owned: ref_sink'd at creation
+    opaque view: *u8,       // GtkTextView, borrowed — the scroll window's child
+    timer: u32,
+    stopped: bool,
+    // Command completions already delivered. The pump compares this against the
+    // ledger so the handler fires once per command rather than once per tick
+    // that happens to see the mark.
+    delivered: u64,
+    exit_delivered: bool,
+    on_command_end: fn(*u8),
+    opaque on_command_end_ctx: *u8,
+    has_command_handler: bool,
+    on_exit: fn(*u8),
+    opaque on_exit_ctx: *u8,
+    has_exit_handler: bool,
+}
+
+struct Widget {
+    opaque _scroll: *u8,
+    opaque _ctx: *Ctx,
+}
+
+fn supported() -> bool { return true; }
+
+fn no_handler(_ctx: *u8) { }
+
+// The facade hands this to `facet::adopt_native` unconditionally, so it has to
+// exist and has to be safe on a null. It drops the reference `native_handle`
+// took — never the widget's own.
+fn release_view(view: *u8) {
+    if view == (0 as *u8) { return; }
+    { g_object_unref(view) };
+}
+
+// ---- the font ---------------------------------------------------------------------
+//
+// GTK takes a font from CSS, not from a setter, so a requested size becomes a
+// style class and a rule to go with it. ONE PROVIDER PER SIZE rather than one
+// per widget: a display-wide provider is the only kind GTK 4 still offers
+// without the deprecated per-context call, and two panes at 13pt must not
+// install the same rule twice.
+static SIZES: [i32; 8] = [0; 8];
+static SIZE_COUNT: usize = 0;
+
+fn font_class(points: i32) -> text::Text {
+    var t: text::Text = text::from_str("cplus-term-");
+    let _a: status::Status = t.append({ points as i64 }.to_text().view());
+    return t;
+}
+
+fn ensure_font_rule(widget: *u8, points: i32) -> text::Text {
+    let cls: text::Text = font_class(points);
+    var i: usize = 0 as usize;
+    while i < SIZE_COUNT {
+        if SIZES[i] == points { return cls; }
+        i = i +% (1 as usize);
+    }
+    if SIZE_COUNT >= (8 as usize) { return cls; }
+    let display: *u8 = { gtk_widget_get_display(widget) };
+    if display == (0 as *u8) { return cls; }
+    let p: gtk::CssProvider = gtk::CssProvider::new();
+    if p.raw() == (0 as *u8) { return cls; }
+    var css: text::Text = text::from_str(".");
+    let _a: status::Status = css.append(cls.view());
+    let _b: status::Status = css.append(" { font-family: monospace; font-size: ");
+    let _c: status::Status = css.append({ points as i64 }.to_text().view());
+    let _d: status::Status = css.append("pt; }");
+    { p.load_from_string(css.view()) };
+    // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION. The pane's font is the
+    // application's business, not the theme's, but a user stylesheet still wins.
+    { gtk_style_context_add_provider_for_display(display, p.raw(), 600 as u32) };
+    SIZES[SIZE_COUNT] = points;
+    SIZE_COUNT = SIZE_COUNT +% (1 as usize);
+    return cls;
+}
+
+// ---- rendering ----------------------------------------------------------------------
+
+// ---- the cursor ------------------------------------------------------------------
+//
+// FOCUSED: the cell in reverse video — a solid block, the way a terminal draws
+// it, meaning "type and it lands here". UNFOCUSED: a thick underline under the
+// same cell — the position is still legible and it plainly is not taking keys.
+//
+// THE TWO STATES DIFFER IN SHAPE, NOT SHADE, and the AppKit half says why at
+// length: dimming the block would encode focus as a colour difference alone,
+// which is unreadable to anyone who cannot separate close colours and washes
+// out on a light theme besides. Filled block against underline survives any
+// palette and any vision.
+//
+// A TAG, not a drawn overlay. The pane is a GtkTextView and its buffer already
+// carries a tag table; painting into the widget instead would be erased by the
+// next redraw, and would not move when the view scrolls.
+//
+// ONE COLOUR QUERY, and the other is derived. `gtk_widget_get_color` gives the
+// pane's foreground under the live theme; the block wants that as its
+// BACKGROUND, and its text then has to be whatever the pane's background is.
+// There is no `get_background`, so it is taken as black or white by the
+// foreground's luminance — which is right in both directions, because a pane
+// whose text is light has a dark ground and the reverse. Guessing here is
+// cheap and self-correcting; looking up a theme colour by name is deprecated
+// and answers nothing on a theme that does not define it.
+
+fn g_type_boolean() -> usize { return 20 as usize; }
+fn g_type_int() -> usize { return 24 as usize; }
+fn g_type_string() -> usize { return 64 as usize; }
+
+fn set_bool_prop(obj: *u8, name: str, v: bool) {
+    var storage: [u8; 32] = [0u8; 32];
+    let val: gobject_gir::Value =
+        gobject_gir::Value::from_raw(#addr_of(storage) as *u8).init(g_type_boolean());
+    val.set_boolean(v);
+    gobject_gir::Object::from_raw(obj).set_property(name, val);
+    val.unset();
+}
+
+fn set_int_prop(obj: *u8, name: str, v: i32) {
+    var storage: [u8; 32] = [0u8; 32];
+    let val: gobject_gir::Value =
+        gobject_gir::Value::from_raw(#addr_of(storage) as *u8).init(g_type_int());
+    val.set_int(v);
+    gobject_gir::Object::from_raw(obj).set_property(name, val);
+    val.unset();
+}
+
+fn set_str_prop(obj: *u8, name: str, v: str) {
+    var storage: [u8; 32] = [0u8; 32];
+    let val: gobject_gir::Value =
+        gobject_gir::Value::from_raw(#addr_of(storage) as *u8).init(g_type_string());
+    val.set_string(v);
+    gobject_gir::Object::from_raw(obj).set_property(name, val);
+    val.unset();
+}
+
+fn hex_digit(n: u32) -> str {
+    if n == (0 as u32) { return "0"; }   if n == (1 as u32) { return "1"; }
+    if n == (2 as u32) { return "2"; }   if n == (3 as u32) { return "3"; }
+    if n == (4 as u32) { return "4"; }   if n == (5 as u32) { return "5"; }
+    if n == (6 as u32) { return "6"; }   if n == (7 as u32) { return "7"; }
+    if n == (8 as u32) { return "8"; }   if n == (9 as u32) { return "9"; }
+    if n == (10 as u32) { return "a"; }  if n == (11 as u32) { return "b"; }
+    if n == (12 as u32) { return "c"; }  if n == (13 as u32) { return "d"; }
+    if n == (14 as u32) { return "e"; }
+    return "f";
+}
+
+fn hex_byte(v: u32) -> text::Text {
+    var t: text::Text = text::from_str(hex_digit((v / (16 as u32)) & (15 as u32)));
+    let _a: status_::Status = t.append(hex_digit(v & (15 as u32)));
+    return t;
+}
+
+// A 0..1 float channel as a 0..255 byte, clamped — a theme may hand back a
+// value outside the range and a wrap would flip the colour.
+fn channel_byte(v: f32) -> u32 {
+    let f: f64 = { v as f64 };
+    if f <= (0.0 as f64) { return 0 as u32; }
+    if f >= (1.0 as f64) { return 255 as u32; }
+    return { (f * (255.0 as f64)) as u32 };
+}
+
+fn rgb_text(r: u32, g: u32, b: u32) -> text::Text {
+    var t: text::Text = text::from_str("#");
+    let _a: status_::Status = t.append(hex_byte(r).view());
+    let _b: status_::Status = t.append(hex_byte(g).view());
+    let _c: status_::Status = t.append(hex_byte(b).view());
+    return t;
+}
+
+struct CursorColours { fg: text::Text, bg: text::Text }
+
+fn cursor_colours(widget: *u8) -> CursorColours {
+    var rgba: [u8; 16] = [0u8; 16];
+    let p: *u8 = { #addr_of(rgba) as *u8 };
+    { gtk_widget_get_color(widget, p) };
+    let r: u32 = channel_byte({ *(p as *f32) });
+    let g: u32 = channel_byte({ *((p + (4 as usize)) as *f32) });
+    let b: u32 = channel_byte({ *((p + (8 as usize)) as *f32) });
+    return CursorColours { fg: rgb_text(r, g, b), bg: contrast_for(r, g, b) };
+}
+
+// Black on a light foreground, white on a dark one. Split out so the rule can
+// be asserted without a widget to ask.
+fn contrast_for(r: u32, g: u32, b: u32) -> text::Text {
+    // Rec. 601 luma, the same weighting a terminal's own reverse video uses.
+    let luma: u32 = ((299 as u32) *% r +% (587 as u32) *% g +% (114 as u32) *% b) / (1000 as u32);
+    if luma > (127 as u32) { return rgb_text(0 as u32, 0 as u32, 0 as u32); }
+    return rgb_text(255 as u32, 255 as u32, 255 as u32);
+}
+
+fn block_tag_name() -> str { return "cplus-term-cursor-block"; }
+fn under_tag_name() -> str { return "cplus-term-cursor-under"; }
+
+// The tag, made once per buffer and found by name after that.
+fn tag_named(buffer: *u8, name: str) -> *u8 {
+    let table: *u8 = { gtk_text_buffer_get_tag_table(buffer) };
+    if table == (0 as *u8) { return 0 as *u8; }
+    let c: text::CString = match text::from_str(name).c_str() {
+        option::Option[text::CString]::Some(v) => v,
+        option::Option[text::CString]::None => { return 0 as *u8; }
+    };
+    let found: *u8 = { gtk_text_tag_table_lookup(table, c.as_ptr()) };
+    if found != (0 as *u8) { return found; }
+    let made: *u8 = { gtk_text_tag_new(c.as_ptr()) };
+    if made == (0 as *u8) { return 0 as *u8; }
+    let _added: i32 = { gtk_text_tag_table_add(table, made) };
+    // The table owns it now; this frame's reference is spent.
+    { g_object_unref(made) };
+    return { gtk_text_tag_table_lookup(table, c.as_ptr()) };
+}
+
+// UTF-8 bytes to CHARACTERS. `Screen::cursor()` answers a byte offset into
+// `view()` and a GtkTextBuffer counts characters, so a prompt with one accented
+// letter in it puts the block a cell to the right of where it belongs — which
+// is the same class of bug the AppKit half's UTF-16 conversion exists for.
+fn char_offset_of(s: str, byte: usize) -> i32 {
+    let p: *u8 = #str_ptr(s);
+    let n: usize = if byte > #str_len(s) { #str_len(s) } else { byte };
+    var i: usize = 0 as usize;
+    var chars: i32 = 0 as i32;
+    while i < n {
+        // Continuation bytes are 0b10xxxxxx and belong to the character before.
+        if ({ *(p + i) } & (0xC0 as u8)) != (0x80 as u8) { chars = chars +% (1 as i32); }
+        i = i +% (1 as usize);
+    }
+    return chars;
+}
+
+fn paint_cursor(c: *Ctx, buffer: *u8, at: i32) {
+    var start: [u8; 80] = [0u8; 80];
+    var end: [u8; 80] = [0u8; 80];
+    let sp: *u8 = { #addr_of(start) as *u8 };
+    let ep: *u8 = { #addr_of(end) as *u8 };
+
+    // A CLEAN SLATE EVERY PASS. A tag left on a cell the cursor has moved off
+    // is a second block, and by the tenth render the line is a row of them.
+    { gtk_text_buffer_get_start_iter(buffer, sp) };
+    { gtk_text_buffer_get_end_iter(buffer, ep) };
+    { gtk_text_buffer_remove_all_tags(buffer, sp, ep) };
+
+    if !{ (*c).screen.cursor_visible() } { return; }
+    let chars: i32 = { gtk_text_buffer_get_char_count(buffer) };
+    if chars <= (0 as i32) { return; }
+    var pos: i32 = at;
+    if pos >= chars { pos = chars -% (1 as i32); }
+    if pos < (0 as i32) { pos = 0 as i32; }
+
+    let view: *u8 = { (*c).view };
+    let focused: bool = { gtk::Widget::from_raw(view).has_focus() };
+    let tag: *u8 = tag_named(buffer, if focused { block_tag_name() } else { under_tag_name() });
+    if tag == (0 as *u8) { return; }
+
+    // WRITTEN EVERY PASS, not only at creation: a theme can change under a
+    // running pane, and GtkTextTag keeps a `-set` flag beside each value, so
+    // "no colour" has to be written as `background-set: false` rather than
+    // left alone.
+    let cols: CursorColours = cursor_colours(view);
+    if focused {
+        set_str_prop(tag, "background", cols.fg.view());
+        set_str_prop(tag, "foreground", cols.bg.view());
+        set_int_prop(tag, "underline", 0 as i32);          // PANGO_UNDERLINE_NONE
+    } else {
+        set_bool_prop(tag, "background-set", false);
+        set_bool_prop(tag, "foreground-set", false);
+        // PANGO_UNDERLINE_DOUBLE — the thickest rule Pango draws, and the
+        // counterpart of AppKit's NSUnderlineStyleThick.
+        set_int_prop(tag, "underline", 2 as i32);
+    }
+
+    { gtk_text_buffer_get_iter_at_offset(buffer, sp, pos) };
+    { gtk_text_buffer_get_iter_at_offset(buffer, ep, pos +% (1 as i32)) };
+    { gtk_text_buffer_apply_tag(buffer, tag, sp, ep) };
+}
+
+fn render(c: *Ctx) {
+    if c == (0 as *Ctx) { return; }
+    let tv: *u8 = { (*c).view };
+    if tv == (0 as *u8) { return; }
+    let buffer: *u8 = { gtk_text_view_get_buffer(tv) };
+    if buffer == (0 as *u8) { return; }
+    // THE CURSOR NEEDS A CELL TO SIT ON. The screen drops the blanks a shell
+    // leaves under it — that is what makes `\b space \b` read as an erase — so
+    // they are padded back for display only. Without this the block has
+    // nothing to occupy at the end of a line, which is where it spends most of
+    // its time.
+    let cursor_byte: usize = { (*c).screen.cursor() };
+    var display: text::Text = text::from_str({ (*c).screen.view() });
+    while display.count() <= cursor_byte {
+        let _pad: status_::Status = display.append(" ");
+    }
+    let s: str = display.view();
+    { gtk_text_buffer_set_text(buffer, #str_ptr(s), { #str_len(s) as i32 }) };
+    paint_cursor(c, buffer, char_offset_of(s, cursor_byte));
+    // FOLLOW THE TAIL. `set_text` leaves the insert mark at the end, so
+    // scrolling to it is what makes new output visible without the user
+    // dragging — the behaviour every terminal has and the one whose absence
+    // reads as "the pane stopped working".
+    let mark: *u8 = { gtk_text_buffer_get_insert(buffer) };
+    if mark == (0 as *u8) { return; }
+    { gtk_text_view_scroll_to_mark(tv, mark, 0.0f64, 1 as i32, 0.0f64, 1.0f64) };
+}
+
+// ---- the pump ------------------------------------------------------------------------
+
+fn tick(data: *u8) -> i32 {
+    let c: *Ctx = { data as *Ctx };
+    if c == (0 as *Ctx) { return 0 as i32; }
+    if { (*c).stopped } { { (*c).timer = 0 as u32 }; return 0 as i32; }
+
+    var buf: [u8; 4096] = [0 as u8; 4096];
+    var fed: bool = false;
+    // A BOUNDED DRAIN. A build printing megabytes would otherwise keep this
+    // callback inside the loop and freeze the UI it is meant to be updating;
+    // sixteen chunks is a quarter-megabyte a tick, which no shell outruns.
+    var rounds: i32 = 0 as i32;
+    var closed: bool = false;
+    while rounds < (16 as i32) {
+        match { (*c).session.read_into(#addr_of(buf) as *u8, 4096 as usize) } {
+            pty::ReadResult::Data(k) => {
+                { (*c).screen.feed({ #str_from_raw_parts(#addr_of(buf) as *u8, k) }) };
+                fed = true;
+            }
+            pty::ReadResult::WouldBlock => { break; }
+            pty::ReadResult::Closed => { closed = true; break; }
+            pty::ReadResult::Failed => { closed = true; break; }
+        }
+        rounds = rounds +% (1 as i32);
+    }
+    if fed { render(c); }
+
+    // ONE CALL PER COMMAND. The ledger counts completions; this delivers the
+    // difference, so a tick that saw three marks fires three times and a tick
+    // that saw none fires not at all.
+    let finished: u64 = { (*c).screen.finished_count() };
+    while { (*c).delivered } < finished {
+        { (*c).delivered = { (*c).delivered } +% (1 as u64) };
+        if { (*c).has_command_handler } {
+            let f: fn(*u8) = { (*c).on_command_end };
+            if !f.is_null() { f({ (*c).on_command_end_ctx }); }
+        }
+    }
+
+    if closed && !{ (*c).exit_delivered } {
+        { (*c).exit_delivered = true };
+        if { (*c).has_exit_handler } {
+            let f: fn(*u8) = { (*c).on_exit };
+            if !f.is_null() { f({ (*c).on_exit_ctx }); }
+        }
+        // THE SOURCE ENDS ITSELF, so `stop` must not also remove it — the tag
+        // is cleared first for exactly that reason. A double remove is the
+        // "Source ID N was not found" critical.
+        { (*c).timer = 0 as u32 };
+        { (*c).stopped = true };
+        return 0 as i32;
+    }
+    return 1 as i32;
+}
+
+// ---- keys ------------------------------------------------------------------------------
+//
+// A terminal's keyboard is a byte protocol, not a text field. GTK hands a
+// keyval and a modifier mask; what goes down the pty is what a VT sends.
+
+fn gdk_control_mask() -> u32 { return 4 as u32; }
+
+fn send_bytes(c: *Ctx, bytes: str) {
+    if c == (0 as *Ctx) { return; }
+    if { (*c).stopped } { return; }
+    let _n: isize = { (*c).session.write(bytes) };
+}
+
+// The named keys, as the sequences a VT-100 and its descendants send. `""` for
+// a keyval this table does not name, which sends the key's own character
+// instead.
+fn sequence_for(keyval: u32) -> str {
+    if keyval == (0xff0d as u32) { return "\r"; }        // Return
+    if keyval == (0xff8d as u32) { return "\r"; }        // KP_Enter
+    if keyval == (0xff08 as u32) { return "\x7f"; }      // BackSpace — DEL, not BS
+    if keyval == (0xff09 as u32) { return "\t"; }        // Tab
+    if keyval == (0xff1b as u32) { return "\x1b"; }      // Escape
+    if keyval == (0xff52 as u32) { return "\x1b[A"; }    // Up
+    if keyval == (0xff54 as u32) { return "\x1b[B"; }    // Down
+    if keyval == (0xff53 as u32) { return "\x1b[C"; }    // Right
+    if keyval == (0xff51 as u32) { return "\x1b[D"; }    // Left
+    if keyval == (0xff50 as u32) { return "\x1b[H"; }    // Home
+    if keyval == (0xff57 as u32) { return "\x1b[F"; }    // End
+    if keyval == (0xff55 as u32) { return "\x1b[5~"; }   // Page_Up
+    if keyval == (0xff56 as u32) { return "\x1b[6~"; }   // Page_Down
+    if keyval == (0xffff as u32) { return "\x1b[3~"; }   // Delete
+    return "";
+}
+
+fn on_key(_controller: *u8, keyval: u32, _keycode: u32, state: u32, data: *u8) -> i32 {
+    let c: *Ctx = { data as *Ctx };
+    if c == (0 as *Ctx) { return 0 as i32; }
+
+    let named: str = sequence_for(keyval);
+    if #str_len(named) > (0 as usize) { send_bytes(c, named); return 1 as i32; }
+
+    // CONTROL FIRST, because `gdk_keyval_to_unicode` on Ctrl-C answers 'c' and
+    // sending 'c' is how a terminal that cannot be interrupted happens.
+    if (state & gdk_control_mask()) != (0 as u32) {
+        if keyval >= (97 as u32) && keyval <= (122 as u32) {
+            var one: [u8; 1] = [0 as u8; 1];
+            one[0] = { (keyval -% (96 as u32)) as u8 };
+            send_bytes(c, { #str_from_raw_parts(#addr_of(one) as *u8, 1 as usize) });
+            return 1 as i32;
+        }
+        if keyval >= (65 as u32) && keyval <= (90 as u32) {
+            var one: [u8; 1] = [0 as u8; 1];
+            one[0] = { (keyval -% (64 as u32)) as u8 };
+            send_bytes(c, { #str_from_raw_parts(#addr_of(one) as *u8, 1 as usize) });
+            return 1 as i32;
+        }
+    }
+
+    let cp: u32 = { gdk_keyval_to_unicode(keyval) };
+    if cp == (0 as u32) { return 0 as i32; }
+    var out: [u8; 4] = [0 as u8; 4];
+    let p: *u8 = { #addr_of(out) as *u8 };
+    let n: usize = utf8_encode(p, cp);
+    if n == (0 as usize) { return 0 as i32; }
+    send_bytes(c, { #str_from_raw_parts(p, n) });
+    // HANDLED, so the TextView does not also try to move its own caret — it is
+    // not editable, but it still owns the key and would scroll on an arrow.
+    return 1 as i32;
+}
+
+fn utf8_encode(into: *u8, cp: u32) -> usize {
+    if cp < (0x80 as u32) {
+        { *(into + (0 as usize)) = { cp as u8 } };
+        return 1 as usize;
+    }
+    if cp < (0x800 as u32) {
+        { *(into + (0 as usize)) = { ((cp / (64 as u32)) | (0xC0 as u32)) as u8 } };
+        { *(into + (1 as usize)) = { ((cp & (0x3F as u32)) | (0x80 as u32)) as u8 } };
+        return 2 as usize;
+    }
+    if cp < (0x10000 as u32) {
+        { *(into + (0 as usize)) = { ((cp / (4096 as u32)) | (0xE0 as u32)) as u8 } };
+        { *(into + (1 as usize)) = { (((cp / (64 as u32)) & (0x3F as u32)) | (0x80 as u32)) as u8 } };
+        { *(into + (2 as usize)) = { ((cp & (0x3F as u32)) | (0x80 as u32)) as u8 } };
+        return 3 as usize;
+    }
+    if cp < (0x110000 as u32) {
+        { *(into + (0 as usize)) = { ((cp / (262144 as u32)) | (0xF0 as u32)) as u8 } };
+        { *(into + (1 as usize)) = { (((cp / (4096 as u32)) & (0x3F as u32)) | (0x80 as u32)) as u8 } };
+        { *(into + (2 as usize)) = { (((cp / (64 as u32)) & (0x3F as u32)) | (0x80 as u32)) as u8 } };
+        { *(into + (3 as usize)) = { ((cp & (0x3F as u32)) | (0x80 as u32)) as u8 } };
+        return 4 as usize;
+    }
+    return 0 as usize;
+}
+
+// ---- starting and stopping ---------------------------------------------------------------
+
+fn stop_pump(c: *Ctx) {
+    if c == (0 as *Ctx) { return; }
+    let t: u32 = { (*c).timer };
+    if t != (0 as u32) {
+        // CLEARED BEFORE THE REMOVE, so a `tick` that runs in between does not
+        // remove the same tag a second time.
+        { (*c).timer = 0 as u32 };
+        let _r: i32 = { g_source_remove(t) };
+    }
+}
+
+fn destroy_context(c: *Ctx) {
+    if c == (0 as *Ctx) { return; }
+    stop_pump(c);
+    { (*c).session.close() };
+    let sw: *u8 = { (*c).scroll };
+    if sw != (0 as *u8) { { (*c).scroll = 0 as *u8 }; { g_object_unref(sw) }; }
+    { free(c as *u8) };
+}
+
+fn start(
+    shell: str = "/bin/zsh",
+    cwd: str = "",
+    max_scrollback: usize = 1048576 as usize,
+    font_size: f64 = 13.0f64,
+    save_history: bool = false,
+) -> option::Option[Widget] {
+    // NO WIDGETS WITHOUT GTK. `gtk_init_check` answers false on a machine with
+    // no display rather than aborting the way `gtk_init` does, which is what
+    // makes this safe to call from a test runner and from a headless service
+    // that merely imported the package.
+    if { gtk_init_check() } == (0 as i32) { return option::Option[Widget]::None; }
+
+    var session: pty::Session = match pty::start(shell, cwd: cwd, save_history: save_history) {
+        option::Option[pty::Session]::Some(s) => s,
+        option::Option[pty::Session]::None => { return option::Option[Widget]::None; }
+    };
+
+    let tv: gtk::TextView = gtk::TextView::new();
+    { tv.set_editable(false) };
+    { tv.set_monospace(true) };
+    { tv.set_cursor_visible(false) };
+    // NO WRAP. A terminal's line breaks are the terminal's; the screen model
+    // has already decided where they fall, and letting GTK add its own would
+    // put a wrapped line where the grid says there is none.
+    { tv.set_wrap_mode(0 as i32) };
+    let tvw: gtk::Widget = gtk::Widget::from_raw(tv.raw());
+    { tvw.set_can_focus(true) };
+    let points: i32 = { font_size as i32 };
+    let cls: text::Text = ensure_font_rule(tv.raw(), if points > (0 as i32) { points } else { 13 as i32 });
+    { tvw.add_css_class(cls.view()) };
+
+    let scroll: gtk::ScrolledWindow = gtk::ScrolledWindow::new();
+    // Automatic both ways: 1 is GTK_POLICY_AUTOMATIC.
+    { scroll.set_policy(1 as i32, 1 as i32) };
+    { scroll.set_child(tvw) };
+    // OWNED FROM HERE. A freshly constructed GTK widget carries a FLOATING
+    // reference, which the first container to take it would consume — and this
+    // one is handed to facet through `native_handle` rather than parented, so
+    // without the sink it would belong to nobody and be destroyed by the first
+    // `unref` anyone did.
+    let owned: *u8 = { g_object_ref_sink(scroll.raw()) };
+
+    let c: *Ctx = { malloc(#size_of::[Ctx]()) as *Ctx };
+    if c == (0 as *Ctx) {
+        session.close();
+        { g_object_unref(owned) };
+        return option::Option[Widget]::None;
+    }
+    { memset(c as *u8, 0 as i32, #size_of::[Ctx]()) };
+    { *c = Ctx {
+        session: session,
+        screen: terminal::new(max_scrollback: max_scrollback),
+        scroll: owned,
+        view: tv.raw(),
+        timer: 0 as u32,
+        stopped: false,
+        delivered: 0 as u64,
+        exit_delivered: false,
+        on_command_end: no_handler,
+        on_command_end_ctx: 0 as *u8,
+        has_command_handler: false,
+        on_exit: no_handler,
+        on_exit_ctx: 0 as *u8,
+        has_exit_handler: false,
+    } };
+
+    let keys: gtk::EventControllerKey = gtk::EventControllerKey::new();
+    let _h: u64 = { g_signal_connect_data(keys.raw(), #str_ptr("key-pressed\0"),
+                                          on_key, c as *u8, 0 as *u8, 0 as i32) };
+    { tvw.add_controller(gtk::EventController::from_raw(keys.raw())) };
+
+    { (*c).timer = { g_timeout_add(16 as u32, tick, c as *u8) } };
+    return option::Option[Widget]::Some(Widget { _scroll: owned, _ctx: c });
+}
+
+impl Widget {
+    // +1 for the caller. facet's `adopt_native` owns what it is given and hands
+    // it back through `release_view`; the widget keeps its own reference so a
+    // node that is unmounted does not take the pane with it.
+    fn native_handle(this) -> *u8 {
+        if this._scroll == (0 as *u8) { return 0 as *u8; }
+        return { g_object_ref(this._scroll) };
+    }
+
+    fn send(this, bytes: str) { send_bytes(this._ctx, bytes); }
+
+    fn focus(this) -> bool {
+        let c: *Ctx = this._ctx;
+        if c == (0 as *Ctx) { return false; }
+        let v: *u8 = { (*c).view };
+        if v == (0 as *u8) { return false; }
+        // FALSE UNTIL IT IS ON SCREEN, which is the same answer the AppKit half
+        // gives and for the same reason: a widget with no window has nothing to
+        // hold the keyboard, and `grab_focus` says so rather than pretending.
+        return { gtk::Widget::from_raw(v).grab_focus() };
+    }
+
+    fn has_focus(this) -> bool {
+        let c: *Ctx = this._ctx;
+        if c == (0 as *Ctx) { return false; }
+        let v: *u8 = { (*c).view };
+        if v == (0 as *u8) { return false; }
+        return { gtk::Widget::from_raw(v).has_focus() };
+    }
+
+    fn text(this) -> text::Text {
+        if this._ctx == (0 as *Ctx) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.view() });
+    }
+
+    fn is_running(this) -> bool {
+        return this._ctx != (0 as *Ctx) && !{ (*this._ctx).stopped };
+    }
+
+    fn stop(this) {
+        let c: *Ctx = this._ctx;
+        if c == (0 as *Ctx) { return; }
+        if { (*c).stopped } { return; }
+        { (*c).stopped = true };
+        stop_pump(c);
+        { (*c).session.close() };
+    }
+
+    // ---- driving commands -------------------------------------------------------
+    //
+    // Byte-for-byte the AppKit half's logic, and deliberately so: which marks to
+    // send and when is a property of the SHELL, not of the toolkit. The comment
+    // there explains why `expects_marks` is consulted alongside the screen —
+    // the first command of a pane is routinely sent before the shell has drawn
+    // its first prompt, and reading that silence as "no integration" opens a
+    // second command on top of the shim's.
+    fn run(this, command: str) -> u64 {
+        let c: *Ctx = this._ctx;
+        if c == (0 as *Ctx) || { (*c).stopped } { return 0 as u64; }
+        if { (*c).screen.command_state() } == terminal::CommandState::Running { return 0 as u64; }
+        let next: u64 = { (*c).screen.command_id() } +% (1 as u64);
+        if { (*c).screen.has_integration() } || { (*c).session.expects_marks() } {
+            send_bytes(c, command);
+            send_bytes(c, "\r");
+        } else {
+            send_bytes(c, "printf '\\033]133;C\\007'\r");
+            send_bytes(c, command);
+            send_bytes(c, "\r");
+            send_bytes(c, "printf '\\033]133;D;%d\\007' \"$?\"\r");
+        }
+        return next;
+    }
+
+    fn interrupt(this) { send_bytes(this._ctx, "\x03"); }
+
+    // Empty the pane — the visible screen AND the scrollback. NOTHING GOES DOWN
+    // THE PTY, exactly as on macOS: the shell is not asked to print anything and
+    // is not interrupted, so the next thing on screen is whatever the host sends
+    // next. That is the whole difference between this and running `clear`.
+    fn clear(this) {
+        let c: *Ctx = this._ctx;
+        if c == (0 as *Ctx) { return; }
+        { (*c).screen.clear() };
+        render(c);
+    }
+
+    fn has_integration(this) -> bool {
+        if this._ctx == (0 as *Ctx) { return false; }
+        return { (*this._ctx).screen.has_integration() };
+    }
+
+    fn command_state(this) -> terminal::CommandState {
+        if this._ctx == (0 as *Ctx) { return terminal::CommandState::Idle; }
+        return { (*this._ctx).screen.command_state() };
+    }
+
+    fn command_id(this) -> u64 {
+        if this._ctx == (0 as *Ctx) { return 0 as u64; }
+        return { (*this._ctx).screen.command_id() };
+    }
+
+    fn command_line(this) -> text::Text {
+        if this._ctx == (0 as *Ctx) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.command_line() });
+    }
+
+    fn exit_code(this) -> option::Option[i32] {
+        if this._ctx == (0 as *Ctx) { return option::Option[i32]::None; }
+        if { (*this._ctx).screen.command_state() } == terminal::CommandState::Running {
+            return option::Option[i32]::None;
+        }
+        let code: i32 = { (*this._ctx).screen.exit_code() };
+        if code < (0 as i32) { return option::Option[i32]::None; }
+        return option::Option[i32]::Some(code);
+    }
+
+    fn finished_count(this) -> u64 {
+        if this._ctx == (0 as *Ctx) { return 0 as u64; }
+        return { (*this._ctx).screen.finished_count() };
+    }
+
+    fn output(this) -> text::Text {
+        if this._ctx == (0 as *Ctx) { return text::new(); }
+        return { (*this._ctx).screen.output() };
+    }
+
+    fn cwd(this) -> text::Text {
+        if this._ctx == (0 as *Ctx) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.cwd() });
+    }
+
+    fn title(this) -> text::Text {
+        if this._ctx == (0 as *Ctx) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.title() });
+    }
+
+    fn alternate_screen(this) -> bool {
+        if this._ctx == (0 as *Ctx) { return false; }
+        return { (*this._ctx).screen.alternate_screen() };
+    }
+
+    fn on_command_end(this, handler: fn(*u8), ctx: *u8 = 0 as *u8) {
+        let c: *Ctx = this._ctx;
+        if c == (0 as *Ctx) { return; }
+        { (*c).on_command_end = handler };
+        { (*c).on_command_end_ctx = ctx };
+        { (*c).has_command_handler = true };
+    }
+
+    fn on_exit(this, handler: fn(*u8), ctx: *u8 = 0 as *u8) {
+        let c: *Ctx = this._ctx;
+        if c == (0 as *Ctx) { return; }
+        { (*c).on_exit = handler };
+        { (*c).on_exit_ctx = ctx };
+        { (*c).has_exit_handler = true };
+    }
+
+    fn shell_exit_code(this) -> option::Option[i32] {
+        if this._ctx == (0 as *Ctx) { return option::Option[i32]::None; }
+        return { (*this._ctx).session.poll_exit() };
+    }
+
+    fn drop(ref this) {
+        let c: *Ctx = this._ctx;
+        this._ctx = 0 as *Ctx;
+        this._scroll = 0 as *u8;
+        if c == (0 as *Ctx) { return; }
+        destroy_context(c);
+    }
+}
+
+// ---- tests ---------------------------------------------------------------------
+//
+// THE KEY TABLE AND THE ENCODER run everywhere: they are pure functions and
+// they are where a terminal quietly goes wrong — a Backspace that sends BS
+// instead of DEL, or a Ctrl-C that sends 'c'.
+//
+// THE WIDGET ITSELF needs a display, so those tests ask `gtk_init_check` first
+// and skip when there is none. That is the same call `start` makes, and for the
+// same reason: `gtk_init` ABORTS the process on a headless machine, which would
+// take the whole suite with it rather than failing one test.
+//
+// `/bin/sh` throughout, never the `/bin/zsh` default: this is the widget's
+// half, and a machine without zsh must still be able to prove the pane opens.
+
+fn gtk_here() -> bool { return { gtk_init_check() } != (0 as i32); }
+
+#[test]
+fn the_linux_backend_has_a_widget_unlike_the_windows_one() {
+    assert supported();
+}
+
+#[test]
+fn releasing_a_view_that_was_never_made_is_safe() {
+    release_view(0 as *u8);
+}
+
+#[test]
+fn backspace_sends_delete_because_that_is_what_a_terminal_expects() {
+    // THE CLASSIC. A pty that receives 0x08 shows `^H` at the prompt and never
+    // erases anything; every terminal emulator sends 0x7f for the Backspace key.
+    assert sequence_for(0xff08 as u32) == "\x7f";
+    assert sequence_for(0xff0d as u32) == "\r";
+    assert sequence_for(0xff8d as u32) == "\r";
+    assert sequence_for(0xff09 as u32) == "\t";
+    assert sequence_for(0xff1b as u32) == "\x1b";
+}
+
+#[test]
+fn the_arrows_are_the_sequences_a_shell_reads_as_history() {
+    assert sequence_for(0xff52 as u32) == "\x1b[A";
+    assert sequence_for(0xff54 as u32) == "\x1b[B";
+    assert sequence_for(0xff53 as u32) == "\x1b[C";
+    assert sequence_for(0xff51 as u32) == "\x1b[D";
+    assert sequence_for(0xff55 as u32) == "\x1b[5~";
+    assert sequence_for(0xff56 as u32) == "\x1b[6~";
+    assert sequence_for(0xffff as u32) == "\x1b[3~";
+}
+
+#[test]
+fn an_ordinary_letter_is_not_in_the_table() {
+    // "" is how the table says "this one is a character, encode it" — a letter
+    // that leaked into the table would be sent twice.
+    assert sequence_for(97 as u32) == "";
+    assert sequence_for(65 as u32) == "";
+    assert sequence_for(32 as u32) == "";
+}
+
+#[test]
+fn utf8_encodes_each_width_the_way_the_wire_wants_it() {
+    var b: [u8; 4] = [0 as u8; 4];
+    let p: *u8 = { #addr_of(b) as *u8 };
+    assert utf8_encode(p, 65 as u32) == (1 as usize);
+    assert { *(p + (0 as usize)) } == (65 as u8);
+    // U+00E9 e-acute -> C3 A9
+    assert utf8_encode(p, 0xE9 as u32) == (2 as usize);
+    assert { *(p + (0 as usize)) } == (0xC3 as u8);
+    assert { *(p + (1 as usize)) } == (0xA9 as u8);
+    // U+20AC euro -> E2 82 AC
+    assert utf8_encode(p, 0x20AC as u32) == (3 as usize);
+    assert { *(p + (0 as usize)) } == (0xE2 as u8);
+    assert { *(p + (1 as usize)) } == (0x82 as u8);
+    assert { *(p + (2 as usize)) } == (0xAC as u8);
+    // U+1F600 -> F0 9F 98 80
+    assert utf8_encode(p, 0x1F600 as u32) == (4 as usize);
+    assert { *(p + (0 as usize)) } == (0xF0 as u8);
+    assert { *(p + (1 as usize)) } == (0x9F as u8);
+    assert { *(p + (2 as usize)) } == (0x98 as u8);
+    assert { *(p + (3 as usize)) } == (0x80 as u8);
+    // Beyond Unicode is refused rather than truncated into something valid.
+    assert utf8_encode(p, 0x110000 as u32) == (0 as usize);
+}
+
+#[test]
+fn a_font_size_becomes_a_class_named_for_it() {
+    assert font_class(13 as i32).view() == "cplus-term-13";
+    assert font_class(9 as i32).view() == "cplus-term-9";
+}
+
+#[test]
+fn a_pane_opens_a_shell_and_gives_it_back() {
+    if !gtk_here() { return; }
+    match start(shell: "/bin/sh") {
+        option::Option[Widget]::Some(w) => {
+            assert w.is_running();
+            // The handle is a real GObject and is handed out at +1 — the node
+            // that adopts it owns that reference, not the widget's own.
+            let h: *u8 = w.native_handle();
+            assert h != (0 as *u8);
+            release_view(h);
+            // OFF SCREEN, so the keyboard cannot be taken: there is no window
+            // to hold it, and the honest answer is false rather than a silent
+            // yes the caller would trust.
+            assert !w.has_focus();
+            assert w.command_state() == terminal::CommandState::Idle;
+            assert w.command_id() == (0 as u64);
+            assert w.finished_count() == (0 as u64);
+            assert !w.alternate_screen();
+            assert match w.exit_code() {
+                option::Option[i32]::Some(_c) => false,
+                option::Option[i32]::None => true,
+            };
+            // Clearing an empty pane is a no-op rather than a fault, and it
+            // must not need a window either.
+            w.clear();
+            assert w.text().view() == "";
+            w.stop();
+            assert !w.is_running();
+            // Every verb stays answerable after the session is gone.
+            w.send("ignored");
+            w.interrupt();
+            assert !w.focus();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+#[test]
+fn a_pane_that_cannot_start_a_shell_is_none_rather_than_an_empty_window() {
+    if !gtk_here() { return; }
+    // A widget with nothing to talk to is exactly what the Windows sibling
+    // refuses to be. `forkpty` succeeds and the child fails to exec, so the
+    // only honest signal is that the pty closes at once — which is what the
+    // pump reports and what `is_running` then answers.
+    match start(shell: "/definitely/not/a/shell") {
+        option::Option[Widget]::Some(w) => {
+            // The session opened; the shell did not. Nothing here may fault.
+            let _t: text::Text = w.text();
+            w.stop();
+            assert !w.is_running();
+        }
+        option::Option[Widget]::None => { }
+    };
+}
+
+#[test]
+fn the_pump_carries_the_shell_to_the_screen() {
+    if !gtk_here() { return; }
+    // THE WHOLE CHAIN, with no window: `g_timeout_add` fires on the default
+    // main context, `tick` reads the non-blocking master, the screen model
+    // eats the bytes and `render` writes them into the buffer. Driving the
+    // context by hand is what a mounted application's own loop does; nothing
+    // here needs a surface.
+    //
+    // It is also the only assertion in this package that the Linux `ptysys`
+    // numbers are right: with Darwin's O_NONBLOCK the master would stay
+    // blocking and this would hang, and with Darwin's EAGAIN the first idle
+    // read would be reported as `Failed` and the pump would stop before a
+    // single byte arrived.
+    match start(shell: "/bin/sh") {
+        option::Option[Widget]::Some(w) => {
+            let ctxt: glib::MainContext = glib::main_context_default();
+            w.send("printf 'PUMPED\\n'\n");
+            var spins: i32 = 0 as i32;
+            var seen: bool = false;
+            while spins < (400 as i32) {
+                while { ctxt.iteration(false) } { }
+                if w.text().view().contains("PUMPED") { seen = true; break; }
+                let _u: i32 = { usleep(5000 as u32) };
+                spins = spins +% (1 as i32);
+            }
+            assert seen;
+            w.stop();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}
+
+// ---- the cursor's own tests ------------------------------------------------------
+
+#[test]
+fn a_byte_offset_becomes_a_character_offset() {
+    // THE BUG THIS PREVENTS: `Screen::cursor()` counts BYTES and a
+    // GtkTextBuffer counts CHARACTERS, so one accented letter in a prompt puts
+    // the block a cell to the right of where it belongs — and a prompt with an
+    // emoji in it puts it three cells right.
+    assert char_offset_of("abc", 0 as usize) == (0 as i32);
+    assert char_offset_of("abc", 3 as usize) == (3 as i32);
+    // "é" is two bytes, one character.
+    assert char_offset_of("é!", 3 as usize) == (2 as i32);
+    assert char_offset_of("aéb", 4 as usize) == (3 as i32);
+    // A four-byte scalar is still one cell.
+    assert char_offset_of("x😀y", 6 as usize) == (3 as i32);
+    // Past the end clamps rather than walking off the string.
+    assert char_offset_of("ab", 99 as usize) == (2 as i32);
+}
+
+#[test]
+fn a_colour_channel_is_clamped_rather_than_wrapped() {
+    assert channel_byte(0.0f32) == (0 as u32);
+    assert channel_byte(1.0f32) == (255 as u32);
+    assert channel_byte(0.5f32) == (127 as u32);
+    // A theme may hand back a value outside 0..1; a wrap here flips the colour.
+    assert channel_byte(0.0f32 - 3.0f32) == (0 as u32);
+    assert channel_byte(9.0f32) == (255 as u32);
+}
+
+#[test]
+fn the_block_takes_its_text_colour_from_the_foregrounds_luminance() {
+    // A pane with light text has a dark ground, so the block — which paints the
+    // text colour as its BACKGROUND — needs black text. And the reverse.
+    assert contrast_for(255 as u32, 255 as u32, 255 as u32).view() == "#000000";
+    assert contrast_for(0 as u32, 0 as u32, 0 as u32).view() == "#ffffff";
+    // Green and blue at the SAME numeric value land on opposite sides, which
+    // is what separates luma from a plain average: green carries 587 parts of
+    // the perceived brightness and blue 114. Full green reads as light...
+    assert contrast_for(0 as u32, 255 as u32, 0 as u32).view() == "#000000";
+    // ...and full blue reads as dark.
+    assert contrast_for(0 as u32, 0 as u32, 255 as u32).view() == "#ffffff";
+}
+
+#[test]
+fn a_colour_is_six_hex_digits() {
+    assert rgb_text(0 as u32, 0 as u32, 0 as u32).view() == "#000000";
+    assert rgb_text(255 as u32, 16 as u32, 1 as u32).view() == "#ff1001";
+    assert rgb_text(171 as u32, 205 as u32, 239 as u32).view() == "#abcdef";
+}
+
+#[test]
+fn exactly_one_cell_wears_the_cursor() {
+    if !gtk_here() { return; }
+    // THE WHOLE POINT, and the failure it guards: the tag is removed from the
+    // buffer every pass, so a cursor that has moved leaves nothing behind. The
+    // first version of this drew a block and never cleared it, and by the tenth
+    // render the line was a row of them.
+    match start(shell: "/bin/sh") {
+        option::Option[Widget]::Some(w) => {
+            let ctxt: glib::MainContext = glib::main_context_default();
+            w.send("printf 'CURSOR\\n'\n");
+            var spins: i32 = 0 as i32;
+            while spins < (400 as i32) {
+                while { ctxt.iteration(false) } { }
+                if w.text().view().contains("CURSOR") { break; }
+                let _u: i32 = { usleep(5000 as u32) };
+                spins = spins +% (1 as i32);
+            }
+            let c: *Ctx = w._ctx;
+            assert c != (0 as *Ctx);
+            let buffer: *u8 = { gtk_text_view_get_buffer({ (*c).view }) };
+            assert buffer != (0 as *u8);
+            // Unmounted, so the pane does not hold the keyboard — which is the
+            // UNDERLINE state, and the one a headless suite can actually reach.
+            let tag: *u8 = tag_named(buffer, under_tag_name());
+            assert tag != (0 as *u8);
+            var it: [u8; 80] = [0u8; 80];
+            let ip: *u8 = { #addr_of(it) as *u8 };
+            let n: i32 = { gtk_text_buffer_get_char_count(buffer) };
+            var tagged: i32 = 0 as i32;
+            var i: i32 = 0 as i32;
+            while i < n {
+                { gtk_text_buffer_get_iter_at_offset(buffer, ip, i) };
+                if { gtk_text_iter_has_tag(ip, tag) } != (0 as i32) {
+                    tagged = tagged +% (1 as i32);
+                }
+                i = i +% (1 as i32);
+            }
+            assert tagged == (1 as i32);
+            w.stop();
+        }
+        option::Option[Widget]::None => { assert false; }
+    };
+}

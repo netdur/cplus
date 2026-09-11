@@ -1,0 +1,776 @@
+// location_backend_linux — GeoClue2, the desktop's own location service.
+//
+// A REAL BACKEND. `org.freedesktop.GeoClue2` is on the system bus, it is what
+// GNOME's own weather and timezone panels use, and its shape is close enough to
+// what this facade describes that the mapping is mostly naming: a client object
+// per request, a requested accuracy level, a distance threshold, and a
+// `LocationUpdated` signal carrying the path of a fresh Location object.
+//
+// ---- the flow, which is four calls -------------------------------------------
+//
+//   Manager.GetClient()                     -> o  (a client object of our own)
+//   Client.DesktopId = "..."                       (required before Start)
+//   Client.RequestedAccuracyLevel = <level>
+//   Client.DistanceThreshold = <metres>
+//   Client.Start()
+//   ... Client.LocationUpdated(o old, o new)
+//   Properties.GetAll(new, "…GeoClue2.Location") -> a{sv}
+//
+// DESKTOPID IS NOT DECORATION: geoclue refuses `Start` without one, and it is
+// also the name the authorization agent shows a person and the key
+// `/etc/geoclue/geoclue.conf` matches an `allowed=` entry against. So a
+// nameless client is a client that never runs.
+//
+// THE SIGNAL NEEDS A RUNNING MAIN LOOP, the same caveat `filepicker`'s Linux
+// half carries: `g_dbus_connection_signal_subscribe` delivers on the
+// thread-default main context, so a facet application gets its fixes on the
+// main thread exactly as the facade promises, and a program with no loop never
+// gets called back at all.
+//
+// ---- raw g_dbus rather than the GDBusProxy binding ----------------------------
+//
+// gio's generated `call_sync` passes NULL for the GError, so a failed call
+// answers NULL with no reason attached. That is exactly the distinction this
+// facade insists on keeping: an agent that said no is `Denied` and needs the
+// person told something, while a broken bus is `Failed` and does not. So the
+// calls here go through `g_dbus_connection_call_sync` with a real GError and
+// read `g_dbus_error_get_remote_error`. The binding is still used for building
+// parameters, where there is no error to lose.
+//
+// ---- what this platform does not have ----------------------------------------
+//
+// NO VERTICAL ACCURACY. GeoClue reports an altitude but no estimate of how
+// wrong it is, so `altitude_accuracy_m` is always negative here — which the
+// facade already defines as "the device cannot measure vertical accuracy, which
+// also means `altitude_m` is a guess". Inventing a number from the horizontal
+// accuracy would read as a measurement, and it would not be one.
+//
+// NO PER-APP PERMISSION TO READ. Authorization on Linux is decided when a
+// client starts, by an agent that may or may not be running, and there is no
+// call that asks "what would you say". So `_c_permission` answers `Unknown` —
+// which the facade defines as "not yet asked OR not yet resolved" and warns
+// against treating as denied. The answer arrives from the verb, or from
+// `Updates::permission()` once a stream is up.
+//
+// NO SYSTEM CACHE. GeoClue keeps no last-known position an app can read
+// without starting a client, so `_c_last_known` answers the last fix THIS
+// PROCESS received and `None` before the first one. That is weaker than
+// CoreLocation's, and it is the value the facade describes using — free, and
+// possibly stale.
+//
+// ---- accuracy is a tier here and a tier there, but not the same tiers --------
+//
+// GCLUE_ACCURACY_LEVEL: NONE 0, COUNTRY 1, CITY 4, NEIGHBORHOOD 5, STREET 6,
+// EXACT 8. `Navigation` has no counterpart — geoclue has no "and keep the GPS
+// hot" tier — so it requests EXACT like `Fine` and reads back as `Fine`. The
+// facade's rule is that a read-back reports what ARRIVED, so the tier is
+// derived from the accuracy in metres of the fix that actually came, not
+// echoed from the request.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "gio/gio" as gio;
+import "glib/glib" as glib;
+import "./location" as loc;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+extern fn strlen(p: *u8) -> usize;
+
+// Not in the binding: a seven-argument callback shape the generator skips.
+#[link_name = "g_dbus_connection_signal_subscribe"]
+extern fn g_dbus_connection_signal_subscribe(
+    connection: *u8, sender: *u8, interface_name: *u8, member: *u8,
+    object_path: *u8, arg0: *u8, flags: i32,
+    callback: fn(*u8, *u8, *u8, *u8, *u8, *u8, *u8),
+    user_data: *u8, user_data_free_func: *u8) -> u32;
+#[link_name = "g_dbus_connection_signal_unsubscribe"]
+extern fn g_dbus_connection_signal_unsubscribe(connection: *u8, id: u32);
+// The binding's `call_sync` drops the GError — see the header.
+#[link_name = "g_dbus_connection_call_sync"]
+extern fn g_dbus_connection_call_sync(
+    connection: *u8, bus_name: *u8, object_path: *u8, interface_name: *u8,
+    method_name: *u8, parameters: *u8, reply_type: *u8, flags: i32,
+    timeout_msec: i32, cancellable: *u8, error: *u8) -> *u8;
+#[link_name = "g_dbus_error_get_remote_error"]
+extern fn g_dbus_error_get_remote_error(error: *u8) -> *u8;
+#[link_name = "g_error_free"]
+extern fn g_error_free(e: *u8);
+#[link_name = "g_free"]
+extern fn g_free(p: *u8);
+#[link_name = "g_variant_get_child_value"]
+extern fn g_variant_get_child_value(value: *u8, index: usize) -> *u8;
+#[link_name = "g_variant_lookup_value"]
+extern fn g_variant_lookup_value(dict: *u8, key: *u8, expected: *u8) -> *u8;
+#[link_name = "g_variant_unref"]
+extern fn g_variant_unref(value: *u8);
+// SourceFunc is unmapped in the binding, so the timer is declared here.
+#[link_name = "g_timeout_add"]
+extern fn g_timeout_add(interval_ms: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
+#[link_name = "g_source_remove"]
+extern fn g_source_remove(tag: u32) -> i32;
+
+fn geoclue() -> *u8 { return #str_ptr("org.freedesktop.GeoClue2\0"); }
+fn manager_path() -> *u8 { return #str_ptr("/org/freedesktop/GeoClue2/Manager\0"); }
+fn manager_iface() -> *u8 { return #str_ptr("org.freedesktop.GeoClue2.Manager\0"); }
+fn client_iface() -> *u8 { return #str_ptr("org.freedesktop.GeoClue2.Client\0"); }
+fn location_iface() -> *u8 { return #str_ptr("org.freedesktop.GeoClue2.Location\0"); }
+fn props_iface() -> *u8 { return #str_ptr("org.freedesktop.DBus.Properties\0"); }
+fn bus_type_system() -> i32 { return 1 as i32; }
+
+// `location.cplus`'s own ladder: 0 Ok, 1 Denied, 2 Unsupported, 3 Disabled,
+// 4 Timeout, 5 Failed. Spelled as numbers because the codes are what cross the
+// seam, and copied wrong once already in this tree — see filepicker's note.
+fn _ok() -> i32 { return 0 as i32; }
+fn _denied() -> i32 { return 1 as i32; }
+fn _unsupported() -> i32 { return 2 as i32; }
+fn _disabled() -> i32 { return 3 as i32; }
+fn _failed() -> i32 { return 5 as i32; }
+
+// `Accuracy::to_code` on the facade side.
+fn _acc_coarse() -> i32 { return 0 as i32; }
+fn _acc_balanced() -> i32 { return 1 as i32; }
+fn _acc_fine() -> i32 { return 2 as i32; }
+
+// GCLUE_ACCURACY_LEVEL for a requested tier — see the header for the table.
+fn level_for(acc: i32) -> u32 {
+    if acc == _acc_coarse() { return 4 as u32; }        // CITY
+    if acc == _acc_balanced() { return 5 as u32; }      // NEIGHBORHOOD
+    return 8 as u32;                                    // EXACT
+}
+
+// What ARRIVED, from the radius the fix reported. The thresholds are the tiers'
+// own documented meanings read backwards: Coarse is "city-level, ~1-3km",
+// Balanced is "neighbourhood, ~100m", Fine is "best the device can do".
+fn tier_from_metres(m: f64) -> i32 {
+    if m < (0.0 as f64) { return _acc_fine(); }
+    if m <= (150.0 as f64) { return _acc_fine(); }
+    if m <= (3000.0 as f64) { return _acc_balanced(); }
+    return _acc_coarse();
+}
+
+// `once` with `timeout_ms: 0` takes this. An unbounded wait indoors is a hang,
+// which is the facade's own reason for not letting 0 mean forever.
+fn default_timeout_ms() -> i64 { return 20000 as i64; }
+
+// GeoClue's "unknown" for altitude is -G_MAXDOUBLE rather than a negative
+// sentinel, so anything this far below sea level is the absence, not a reading.
+fn altitude_is_unknown(v: f64) -> bool { return v < -1.0e300f64; }
+
+// ---- small C-string helpers ----------------------------------------------------
+
+fn dup_cstr(s: str) -> *u8 {
+    let n: usize = #str_len(s);
+    let p: *u8 = { malloc(n +% (1 as usize)) };
+    if p == (0 as *u8) { return 0 as *u8; }
+    if n > (0 as usize) { { memcpy(p, #str_ptr(s), n) }; }
+    { *(p + n) = 0 as u8 };
+    return p;
+}
+
+fn cstr_view(p: *u8) -> str {
+    if p == (0 as *u8) { return ""; }
+    return { #str_from_raw_parts(p, { strlen(p) }) };
+}
+
+// ---- one call, with its reason -------------------------------------------------
+//
+// Answers the reply variant, or 0 with `out` set to the outcome the facade
+// should report. THE ERROR IS THE POINT: `AccessDenied` from geoclue is a
+// person or a policy saying no, and it is the failure an app must handle
+// differently from a bus that is not there.
+fn call(conn: *u8, path: *u8, iface: *u8, method: *u8, params: *u8,
+        ref out: i32) -> *u8 {
+    var err: *u8 = 0 as *u8;
+    let r: *u8 = { g_dbus_connection_call_sync(
+        conn, geoclue(), path, iface, method, params, 0 as *u8,
+        0 as i32, 5000 as i32, 0 as *u8, #addr_of(err) as *u8) };
+    if r != (0 as *u8) { out = _ok(); return r; }
+    out = _failed();
+    if err == (0 as *u8) { return 0 as *u8; }
+    let name: *u8 = { g_dbus_error_get_remote_error(err) };
+    if name != (0 as *u8) {
+        let n: str = cstr_view(name);
+        if n == "org.freedesktop.DBus.Error.AccessDenied" { out = _denied(); }
+        if n == "org.freedesktop.DBus.Error.ServiceUnknown" { out = _unsupported(); }
+        { g_free(name) };
+    }
+    { g_error_free(err) };
+    return 0 as *u8;
+}
+
+// `(ss)` — the shape both Properties.Get and Properties.GetAll take.
+fn two_strings(a: str, b: str) -> glib::Variant {
+    var v: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("(ss)"));
+    v.add_value(glib::Variant::new_string(a));
+    v.add_value(glib::Variant::new_string(b));
+    return v.end();
+}
+
+// `(ssv)` — Properties.Set.
+fn set_prop(conn: *u8, path: *u8, name: str, value: glib::Variant) -> bool {
+    var b: glib::VariantBuilder = glib::VariantBuilder::new(glib::VariantType::new("(ssv)"));
+    b.add_value(glib::Variant::new_string("org.freedesktop.GeoClue2.Client"));
+    b.add_value(glib::Variant::new_string(name));
+    b.open(glib::VariantType::new("v"));
+    b.add_value(value);
+    b.close();
+    var code: i32 = 0 as i32;
+    let r: *u8 = call(conn, path, props_iface(), #str_ptr("Set\0"), b.end().raw(), code);
+    if r == (0 as *u8) { return false; }
+    { g_variant_unref(r) };
+    return true;
+}
+
+// ---- the manager ----------------------------------------------------------------
+
+fn connection() -> *u8 {
+    return { gio::bus_get_sync(bus_type_system(), gio::Cancellable::from_raw(0 as *u8)).raw() };
+}
+
+// Manager.AvailableAccuracyLevel, or 0 when geoclue cannot be reached — which
+// is the same answer, since NONE means it has no source to answer with.
+fn available_level(conn: *u8) -> u32 {
+    if conn == (0 as *u8) { return 0 as u32; }
+    var code: i32 = 0 as i32;
+    let reply: *u8 = call(conn, manager_path(), props_iface(), #str_ptr("Get\0"),
+                          two_strings("org.freedesktop.GeoClue2.Manager",
+                                      "AvailableAccuracyLevel").raw(), code);
+    if reply == (0 as *u8) { return 0 as u32; }
+    // `(v)` — unwrap the tuple, then the variant.
+    let boxed: *u8 = { g_variant_get_child_value(reply, 0 as usize) };
+    { g_variant_unref(reply) };
+    if boxed == (0 as *u8) { return 0 as u32; }
+    let inner: *u8 = { g_variant_get_child_value(boxed, 0 as usize) };
+    { g_variant_unref(boxed) };
+    if inner == (0 as *u8) { return 0 as u32; }
+    let lvl: u32 = { glib::Variant::from_raw(inner).get_uint32() };
+    { g_variant_unref(inner) };
+    return lvl;
+}
+
+// ---- the last fix this process saw ----------------------------------------------
+
+static LAST_VALID: bool = false;
+static LAST_LAT: f64 = 0.0;
+static LAST_LON: f64 = 0.0;
+static LAST_ACC: f64 = 0.0;
+static LAST_ALT: f64 = 0.0;
+static LAST_SPEED: f64 = 0.0;
+static LAST_COURSE: f64 = 0.0;
+static LAST_TS: i64 = 0;
+
+// ---- a running client -----------------------------------------------------------
+
+struct Stream {
+    opaque conn: *u8,        // the system bus; owned by gio's singleton, not by us
+    opaque path: *u8,        // the client object path, NUL-terminated, malloc'd
+    on_fix: fn(loc::Fix, *u8),
+    opaque ctx: *u8,
+    sub: u32,
+    timer: u32,
+    once: bool,
+    running: bool,
+    delivered: bool,
+    status: i32,             // the code `Updates::permission` decodes
+    tier: i32,               // what arrived, or the request until something does
+}
+
+fn invalid_fix() -> loc::Fix {
+    // NEGATIVE ACCURACY IS THE FACADE'S "no fix": `Fix::is_valid` is the check
+    // it tells callers to make, and a timeout has to arrive at the handler
+    // rather than as a return value.
+    return loc::Fix {
+        latitude: 0.0 as f64, longitude: 0.0 as f64,
+        accuracy_m: -1.0f64,
+        altitude_m: 0.0 as f64,
+        altitude_accuracy_m: -1.0f64,
+        speed_mps: -1.0f64,
+        course_deg: -1.0f64,
+        timestamp_ms: 0 as i64,
+    };
+}
+
+fn dict_double(dict: *u8, key: *u8, dflt: f64) -> f64 {
+    let v: *u8 = { g_variant_lookup_value(dict, key, 0 as *u8) };
+    if v == (0 as *u8) { return dflt; }
+    let d: f64 = { glib::Variant::from_raw(v).get_double() };
+    { g_variant_unref(v) };
+    return d;
+}
+
+// Timestamp is `(tt)`: whole seconds and microseconds since the epoch.
+fn dict_timestamp_ms(dict: *u8) -> i64 {
+    let v: *u8 = { g_variant_lookup_value(dict, #str_ptr("Timestamp\0"), 0 as *u8) };
+    if v == (0 as *u8) { return 0 as i64; }
+    let secs_v: *u8 = { g_variant_get_child_value(v, 0 as usize) };
+    let usec_v: *u8 = { g_variant_get_child_value(v, 1 as usize) };
+    var ms: i64 = 0 as i64;
+    if secs_v != (0 as *u8) {
+        ms = { { glib::Variant::from_raw(secs_v).get_uint64() } as i64 } *% (1000 as i64);
+        { g_variant_unref(secs_v) };
+    }
+    if usec_v != (0 as *u8) {
+        ms = ms +% ({ { glib::Variant::from_raw(usec_v).get_uint64() } as i64 } / (1000 as i64));
+        { g_variant_unref(usec_v) };
+    }
+    { g_variant_unref(v) };
+    return ms;
+}
+
+// Read every property of a Location object in one round trip. A proxy per fix
+// would be a second round trip and an object to release for a struct that is
+// read once and copied out.
+fn read_fix(conn: *u8, path: *u8, ref got: bool) -> loc::Fix {
+    got = false;
+    var code: i32 = 0 as i32;
+    let reply: *u8 = call(conn, path, props_iface(), #str_ptr("GetAll\0"),
+                          two_strings("org.freedesktop.GeoClue2.Location", "").raw(), code);
+    if reply == (0 as *u8) { return invalid_fix(); }
+    let dict: *u8 = { g_variant_get_child_value(reply, 0 as usize) };
+    { g_variant_unref(reply) };
+    if dict == (0 as *u8) { return invalid_fix(); }
+
+    let lat: f64 = dict_double(dict, #str_ptr("Latitude\0"), 0.0 as f64);
+    let lon: f64 = dict_double(dict, #str_ptr("Longitude\0"), 0.0 as f64);
+    let acc: f64 = dict_double(dict, #str_ptr("Accuracy\0"), -1.0f64);
+    let alt_raw: f64 = dict_double(dict, #str_ptr("Altitude\0"), 0.0 as f64);
+    // GeoClue spells an unknown speed or heading as -1, which is already this
+    // facade's own spelling — so they pass through untouched.
+    let spd: f64 = dict_double(dict, #str_ptr("Speed\0"), -1.0f64);
+    let hdg: f64 = dict_double(dict, #str_ptr("Heading\0"), -1.0f64);
+    let ts: i64 = dict_timestamp_ms(dict);
+    { g_variant_unref(dict) };
+
+    let alt: f64 = if altitude_is_unknown(alt_raw) { 0.0 as f64 } else { alt_raw };
+    got = acc >= (0.0 as f64);
+    return loc::Fix {
+        latitude: lat, longitude: lon, accuracy_m: acc,
+        altitude_m: alt,
+        // Always negative — GeoClue measures no vertical accuracy. See header.
+        altitude_accuracy_m: -1.0f64,
+        speed_mps: spd, course_deg: hdg, timestamp_ms: ts,
+    };
+}
+
+fn remember(f: loc::Fix) {
+    LAST_VALID = true;
+    LAST_LAT = f.latitude;
+    LAST_LON = f.longitude;
+    LAST_ACC = f.accuracy_m;
+    LAST_ALT = f.altitude_m;
+    LAST_SPEED = f.speed_mps;
+    LAST_COURSE = f.course_deg;
+    LAST_TS = f.timestamp_ms;
+    return;
+}
+
+// Tear the client down: stop the timer, drop the subscription, tell geoclue to
+// release the client. Safe to call twice — `_c_updates_stop` and the one-shot
+// path both reach it, and the facade's `Updates::drop` calls `stop` again.
+fn shutdown(s: *Stream) {
+    if s == (0 as *Stream) { return; }
+    let t: u32 = { (*s).timer };
+    if t != (0 as u32) {
+        { (*s).timer = 0 as u32 };
+        let _r: i32 = { g_source_remove(t) };
+    }
+    let sub: u32 = { (*s).sub };
+    if sub != (0 as u32) {
+        { (*s).sub = 0 as u32 };
+        { g_dbus_connection_signal_unsubscribe({ (*s).conn }, sub) };
+    }
+    if { (*s).running } {
+        { (*s).running = false };
+        var code: i32 = 0 as i32;
+        let r: *u8 = call({ (*s).conn }, { (*s).path }, client_iface(),
+                          #str_ptr("Stop\0"), 0 as *u8, code);
+        if r != (0 as *u8) { { g_variant_unref(r) }; }
+    }
+    return;
+}
+
+fn release(s: *Stream) {
+    if s == (0 as *Stream) { return; }
+    shutdown(s);
+    let p: *u8 = { (*s).path };
+    if p != (0 as *u8) { { (*s).path = 0 as *u8 }; { free(p) }; }
+    { free(s as *u8) };
+    return;
+}
+
+// Hand one fix to the caller's handler. ONE-SHOT STREAMS ARE DONE HERE: the
+// facade promises `once`'s handler runs exactly once, so the guard is on the
+// stream rather than on the caller.
+fn deliver(s: *Stream, f: loc::Fix) {
+    if s == (0 as *Stream) { return; }
+    if { (*s).once } && { (*s).delivered } { return; }
+    { (*s).delivered = true };
+    let cb: fn(loc::Fix, *u8) = { (*s).on_fix };
+    let ctx: *u8 = { (*s).ctx };
+    if !cb.is_null() { cb(f, ctx); }
+    return;
+}
+
+fn on_location_updated(_conn: *u8, _sender: *u8, _path: *u8, _iface: *u8,
+                       _signal: *u8, params: *u8, user: *u8) {
+    let s: *Stream = { user as *Stream };
+    if s == (0 as *Stream) { return; }
+    if params == (0 as *u8) { return; }
+    // LocationUpdated(o old, o new). The old path is already dead by the time
+    // this arrives; the new one is what carries the reading.
+    let newp: *u8 = { g_variant_get_child_value(params, 1 as usize) };
+    if newp == (0 as *u8) { return; }
+    var len: usize = 0 as usize;
+    let path: text::Text = { glib::Variant::from_raw(newp).get_string(len) };
+    { g_variant_unref(newp) };
+    let c: *u8 = dup_cstr(path.view());
+    if c == (0 as *u8) { return; }
+    var got: bool = false;
+    let f: loc::Fix = read_fix({ (*s).conn }, c, got);
+    { free(c) };
+    if !got { return; }
+
+    // A FIX PROVES THE ANSWER WAS YES. There is no other moment on this
+    // platform at which authorization is knowable — see the header.
+    { (*s).status = 3 as i32 };
+    { (*s).tier = tier_from_metres(f.accuracy_m) };
+    remember(f);
+    let one: bool = { (*s).once };
+    deliver(s, f);
+    if one { release(s); }
+    return;
+}
+
+// G_SOURCE_REMOVE. The tag is cleared BEFORE the source ends: `shutdown` would
+// otherwise call `g_source_remove` on an id GLib has already reclaimed, which
+// is the "Source ID N was not found" critical rather than a silent no-op.
+fn on_timeout(user: *u8) -> i32 {
+    let s: *Stream = { user as *Stream };
+    if s == (0 as *Stream) { return 0 as i32; }
+    { (*s).timer = 0 as u32 };
+    deliver(s, invalid_fix());
+    release(s);
+    return 0 as i32;
+}
+
+// ---- starting -------------------------------------------------------------------
+
+fn start(req: *loc::Request, on_fix: fn(loc::Fix, *u8), ctx: *u8, once: bool,
+         ref out_code: i32) -> *Stream {
+    out_code = _failed();
+    let conn: *u8 = connection();
+    if conn == (0 as *u8) { out_code = _unsupported(); return 0 as *Stream; }
+    if available_level(conn) == (0 as u32) {
+        out_code = _unsupported();
+        return 0 as *Stream;
+    }
+    // The desktop's own switch, checked BEFORE a client is made: an app told
+    // `Denied` when the person merely has location switched off would send them
+    // to the wrong settings page.
+    if !system_location_enabled() { out_code = _disabled(); return 0 as *Stream; }
+
+    var code: i32 = 0 as i32;
+    let reply: *u8 = call(conn, manager_path(), manager_iface(),
+                          #str_ptr("GetClient\0"), 0 as *u8, code);
+    if reply == (0 as *u8) { out_code = code; return 0 as *Stream; }
+    let pv: *u8 = { g_variant_get_child_value(reply, 0 as usize) };
+    { g_variant_unref(reply) };
+    if pv == (0 as *u8) { return 0 as *Stream; }
+    var len: usize = 0 as usize;
+    let path_t: text::Text = { glib::Variant::from_raw(pv).get_string(len) };
+    { g_variant_unref(pv) };
+    let path: *u8 = dup_cstr(path_t.view());
+    if path == (0 as *u8) { return 0 as *Stream; }
+
+    let s: *Stream = { malloc(#size_of::[Stream]()) as *Stream };
+    if s == (0 as *Stream) { { free(path) }; return 0 as *Stream; }
+    { memset(s as *u8, 0 as i32, #size_of::[Stream]()) };
+    { (*s).conn = conn };
+    { (*s).path = path };
+    { (*s).on_fix = on_fix };
+    { (*s).ctx = ctx };
+    { (*s).once = once };
+    { (*s).tier = { (*req).accuracy.to_code() } };
+    { (*s).status = 0 as i32 };
+
+    // SUBSCRIBED BEFORE START, for the reason the portal half writes down: the
+    // first LocationUpdated can be emitted from inside the Start call, and a
+    // subscription taken afterwards misses it.
+    { (*s).sub = { g_dbus_connection_signal_subscribe(
+        conn, geoclue(), client_iface(), #str_ptr("LocationUpdated\0"),
+        path, 0 as *u8, 0 as i32, on_location_updated, s as *u8, 0 as *u8) } };
+
+    // DesktopId first — geoclue refuses Start without it.
+    if !set_prop(conn, path, "DesktopId", glib::Variant::new_string("cplus")) {
+        release(s);
+        out_code = _failed();
+        return 0 as *Stream;
+    }
+    let _a: bool = set_prop(conn, path, "RequestedAccuracyLevel",
+                            glib::Variant::new_uint32(level_for({ (*req).accuracy.to_code() })));
+    var d: f64 = { (*req).distance_filter_m };
+    if d < (0.0 as f64) { d = 0.0 as f64; }
+    let _b: bool = set_prop(conn, path, "DistanceThreshold",
+                            glib::Variant::new_uint32({ d as u32 }));
+
+    var start_code: i32 = 0 as i32;
+    let started: *u8 = call(conn, path, client_iface(), #str_ptr("Start\0"),
+                            0 as *u8, start_code);
+    if started == (0 as *u8) {
+        // AccessDenied here is the agent, or `geoclue.conf`, saying no.
+        if start_code == _denied() { { (*s).status = 2 as i32 }; }
+        release(s);
+        out_code = start_code;
+        return 0 as *Stream;
+    }
+    { g_variant_unref(started) };
+    { (*s).running = true };
+    out_code = _ok();
+    return s;
+}
+
+// The desktop's location switch. GNOME's Settings writes
+// `org.gnome.system.location enabled`, and its geoclue agent is what enforces
+// it — geoclue itself has no such switch.
+//
+// THE SCHEMA IS LOOKED UP RATHER THAN OPENED. `g_settings_new` on a schema that
+// is not installed does not fail, it ABORTS THE PROCESS, so a desktop without
+// GNOME's schemas would take the application down on a call that asks a
+// question. On such a desktop there is no switch to consult and the answer is
+// "on".
+fn system_location_enabled() -> bool {
+    return match gio::settings_schema_source_get_default() {
+        option::Option[gio::SettingsSchemaSource]::Some(src) => {
+            match { src.lookup("org.gnome.system.location", true) } {
+                option::Option[gio::SettingsSchema]::Some(_sch) => {
+                    { gio::Settings::new("org.gnome.system.location").get_boolean("enabled") }
+                }
+                option::Option[gio::SettingsSchema]::None => true,
+            }
+        }
+        option::Option[gio::SettingsSchemaSource]::None => true,
+    };
+}
+
+// ---- the seam --------------------------------------------------------------------
+
+export extern fn _c_permission() -> i32 {
+    // 0 = Unknown. Linux settles authorization when a client starts, and there
+    // is no call that asks in advance — see the header.
+    return 0 as i32;
+}
+
+export extern fn _c_available() -> i32 {
+    let conn: *u8 = connection();
+    if conn == (0 as *u8) { return 0 as i32; }
+    if available_level(conn) == (0 as u32) { return 0 as i32; }
+    return 1 as i32;
+}
+
+export extern fn _c_enabled() -> i32 {
+    if system_location_enabled() { return 1 as i32; }
+    return 0 as i32;
+}
+
+export extern fn _c_last_known(into: *loc::Fix) -> i32 {
+    if into == (0 as *loc::Fix) { return 0 as i32; }
+    if !LAST_VALID { return 0 as i32; }
+    { (*into) = loc::Fix {
+        latitude: LAST_LAT, longitude: LAST_LON, accuracy_m: LAST_ACC,
+        altitude_m: LAST_ALT,
+        altitude_accuracy_m: -1.0f64,
+        speed_mps: LAST_SPEED, course_deg: LAST_COURSE, timestamp_ms: LAST_TS,
+    } };
+    return 1 as i32;
+}
+
+export extern fn _c_once(req: *loc::Request, on_fix: fn(loc::Fix, *u8), ctx: *u8) -> i32 {
+    var code: i32 = 0 as i32;
+    let s: *Stream = start(req, on_fix, ctx, true, code);
+    if s == (0 as *Stream) { return code; }
+    // The give-up is a TIMER, not a return value: the facade says a request
+    // that never answers reaches the handler as an invalid fix.
+    var ms: i64 = { (*req).timeout_ms };
+    if ms <= (0 as i64) { ms = default_timeout_ms(); }
+    { (*s).timer = { g_timeout_add({ ms as u32 }, on_timeout, s as *u8) } };
+    return _ok();
+}
+
+export extern fn _c_updates_start(req: *loc::Request, on_fix: fn(loc::Fix, *u8),
+                                  ctx: *u8, out_code: *i32) -> *u8 {
+    var code: i32 = 0 as i32;
+    let s: *Stream = start(req, on_fix, ctx, false, code);
+    if out_code != (0 as *i32) { { (*out_code) = code }; }
+    if s == (0 as *Stream) { return 0 as *u8; }
+    return s as *u8;
+}
+
+export extern fn _c_updates_accuracy(h: *u8) -> i32 {
+    if h == (0 as *u8) { return _acc_fine(); }
+    let s: *Stream = { h as *Stream };
+    return { (*s).tier };
+}
+
+export extern fn _c_updates_status(h: *u8) -> i32 {
+    if h == (0 as *u8) { return 0 as i32; }
+    let s: *Stream = { h as *Stream };
+    return { (*s).status };
+}
+
+export extern fn _c_updates_running(h: *u8) -> i32 {
+    if h == (0 as *u8) { return 0 as i32; }
+    let s: *Stream = { h as *Stream };
+    if { (*s).running } { return 1 as i32; }
+    return 0 as i32;
+}
+
+export extern fn _c_updates_stop(h: *u8) {
+    if h == (0 as *u8) { return; }
+    release({ h as *Stream });
+    return;
+}
+
+// ---- tests ---------------------------------------------------------------------
+//
+// WHAT CANNOT BE ASSERTED HERE is a coordinate. GeoClue on this machine has
+// geoclue's own sources and no test harness can make one produce a reading —
+// there is no GPS, and the network source depends on a service outside the
+// build. A suite that asserted a latitude would be asserting the weather.
+//
+// So what is pinned is everything BETWEEN the facade and the reading: the code
+// ladder, the tier mapping in both directions, the sentinels, and the handle
+// lifecycle — including that a `once` with a short timeout calls its handler
+// exactly once with an invalid fix, which is the contract the facade states and
+// the one a caller writes an `if !f.is_valid()` against.
+
+#[test]
+fn a_requested_tier_maps_to_geoclues_own_levels() {
+    assert level_for(_acc_coarse()) == (4 as u32);      // CITY
+    assert level_for(_acc_balanced()) == (5 as u32);    // NEIGHBORHOOD
+    assert level_for(_acc_fine()) == (8 as u32);        // EXACT
+    // Navigation has no counterpart and asks for the best there is.
+    assert level_for(3 as i32) == (8 as u32);
+}
+
+#[test]
+fn the_tier_read_back_comes_from_the_radius_that_arrived() {
+    assert tier_from_metres(12.0f64) == _acc_fine();
+    assert tier_from_metres(900.0f64) == _acc_balanced();
+    assert tier_from_metres(20000.0f64) == _acc_coarse();
+    // No radius at all is not a claim about accuracy; the request stands.
+    assert tier_from_metres(-1.0f64) == _acc_fine();
+}
+
+#[test]
+fn an_absent_fix_is_spelled_the_way_the_facade_checks_for_it() {
+    let f: loc::Fix = invalid_fix();
+    assert !f.is_valid();
+    assert !f.has_speed();
+    assert !f.has_course();
+    assert !f.has_altitude();
+}
+
+#[test]
+fn geoclues_unknown_altitude_is_not_a_reading() {
+    // -G_MAXDOUBLE, which is what geoclue writes when it has no altitude.
+    assert altitude_is_unknown(-1.7976931348623157e308f64);
+    assert !altitude_is_unknown(0.0f64);
+    assert !altitude_is_unknown(-400.0f64);   // the Dead Sea is a place
+}
+
+#[test]
+fn last_known_is_none_until_something_has_arrived() {
+    // The statics start empty and nothing in this suite fills them: there is no
+    // system cache on this platform to borrow one from.
+    var f: loc::Fix = #zero::[loc::Fix]();
+    if !LAST_VALID {
+        assert { _c_last_known(#addr_of(f)) } == (0 as i32);
+    }
+}
+
+#[test]
+fn a_null_handle_answers_rather_than_faulting() {
+    assert { _c_updates_running(0 as *u8) } == (0 as i32);
+    assert { _c_updates_status(0 as *u8) } == (0 as i32);
+    assert { _c_updates_accuracy(0 as *u8) } == _acc_fine();
+    { _c_updates_stop(0 as *u8) };
+}
+
+#[test]
+fn permission_is_unknown_because_this_platform_cannot_be_asked() {
+    assert { _c_permission() } == (0 as i32);
+}
+
+// ---- and what CAN be exercised against the real service -------------------------
+//
+// Starting a client is not a reading, and it does not need one: GetClient,
+// DesktopId, RequestedAccuracyLevel, DistanceThreshold, Start and Stop are six
+// round trips that either work or do not, and they are where every mistake in
+// this file would land — a wrong interface name, a property geoclue rejects, a
+// signal subscribed on the wrong path. Skipped when geoclue is not reachable,
+// so the suite stays green on a machine without it.
+
+static T_CALLS: i32 = 0;
+static T_VALID: bool = false;
+
+fn t_handler(f: loc::Fix, _ctx: *u8) {
+    T_CALLS = T_CALLS +% (1 as i32);
+    T_VALID = f.is_valid();
+    return;
+}
+
+fn geoclue_here() -> bool {
+    if { _c_available() } == (0 as i32) { return false; }
+    return { _c_enabled() } != (0 as i32);
+}
+
+#[test]
+fn a_stream_really_starts_and_stops_against_geoclue() {
+    if !geoclue_here() { return; }
+    var req: loc::Request = loc::Request::new(loc::Accuracy::Balanced, 25.0f64, 0 as i64);
+    var code: i32 = 9 as i32;
+    let h: *u8 = { _c_updates_start(#addr_of(req), t_handler, 0 as *u8, #addr_of(code)) };
+    assert code == _ok();
+    assert h != (0 as *u8);
+    assert { _c_updates_running(h) } == (1 as i32);
+    // Nothing has arrived, so the read-backs are still the request's own tier
+    // and an unresolved permission — which is what the facade warns callers to
+    // expect at start-up.
+    assert { _c_updates_accuracy(h) } == _acc_balanced();
+    assert { _c_updates_status(h) } == (0 as i32);
+    { _c_updates_stop(h) };
+    // STOPPED MEANS RELEASED: the handle is gone, and the facade's `Updates`
+    // clears its own pointer, so nothing reads it again.
+}
+
+#[test]
+fn once_gives_up_through_the_handler_rather_than_the_return_value() {
+    if !geoclue_here() { return; }
+    T_CALLS = 0 as i32;
+    T_VALID = true;
+    var req: loc::Request = loc::Request::new(loc::Accuracy::Coarse, 0.0f64, 200 as i64);
+    // The return value says the request was ACCEPTED. Whether a position ever
+    // arrives is told to the handler — that is the facade's contract and this
+    // is the machine where it is exercised, because nothing arrives here.
+    assert { _c_once(#addr_of(req), t_handler, 0 as *u8) } == _ok();
+    // Drive the default main context until the give-up timer fires. Bounded, so
+    // a machine whose sources DO answer ends the loop on the fix instead.
+    let ctxt: glib::MainContext = glib::main_context_default();
+    var spins: i32 = 0 as i32;
+    while T_CALLS == (0 as i32) && spins < (400 as i32) {
+        let _b: bool = { ctxt.iteration(true) };
+        spins = spins +% (1 as i32);
+    }
+    assert T_CALLS == (1 as i32);
+    // EXACTLY ONCE. A second delivery would mean the timer and a late fix both
+    // ran, which is the bug the `delivered` guard exists to prevent.
+    var more: i32 = 0 as i32;
+    while more < (20 as i32) {
+        if !{ ctxt.iteration(false) } { break; }
+        more = more +% (1 as i32);
+    }
+    assert T_CALLS == (1 as i32);
+}

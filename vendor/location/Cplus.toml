@@ -23,6 +23,15 @@ edition = "2026"
 stdlib      = "*"
 permissions = "*"
 
+# GeoClue2 over D-Bus, which `gio` already binds — so this adds no dependency a
+# Linux desktop application was not already carrying.
+[linux.dependencies]
+gio         = "*"
+glib        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gmodule     = "*"
+
 [macos.dependencies]
 objc         = "*"
 corelocation = "*"

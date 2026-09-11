@@ -38,6 +38,11 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
+// `hold_ui` below writes the handoff slot with a release store; without this
+// the module named `atomic::` and did not import it, so facet_runtime did not
+// compile on Linux at all.
+import "stdlib/atomic" as atomic;
+import "stdlib/thread" as thread;
 import "stdlib/box" as box;
 import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
@@ -1113,6 +1118,37 @@ fn close_probe_timer(s: f64, cb: fn(*u8), ctx: *u8) -> u64 {
     return 31 as u64;
 }
 
+// Release the hold from another thread, after long enough that a teardown which
+// did NOT wait would already have returned. Copied from the macOS sibling with
+// the test that uses it.
+fn release_after_a_moment(take p: *u64) -> i32 {
+    var i: i64 = 0 as i64;
+    var acc: i32 = 0;
+    while i < (60000000 as i64) { acc = acc + (1 as i32); i = i +% (1 as i64); }
+    atomic::store_u64(p, 0 as u64, atomic::Ordering::Release);
+    return acc;
+}
+
+// A job that stays in `run` until told to stop, so "is a worker still in it"
+// has a knowable answer at the moment teardown is asked. Copied from the macOS
+// sibling, which is where the tests below came from — they arrived here without
+// it, so this file did not compile at all.
+struct HeldService {
+    hold: u64,
+    ran: i32,
+}
+
+impl HeldService: services::Job {
+    fn run(ref this) {
+        let p: *u64 = { #addr_of(this.hold) };
+        while atomic::load_u64(p, atomic::Ordering::Acquire) != (0 as u64) {
+            services::sched_yield_once();
+        }
+        this.ran = this.ran + 1;
+    }
+    fn apply(ref this) { return; }
+}
+
 #[test]
 fn a_close_defers_the_free_while_a_worker_is_in_the_screen() {
     var sch: services::Scheduler = services::scheduler_none();
@@ -1347,16 +1383,30 @@ fn observe_stopped_is_inert_and_says_so_by_answering_nothing() {
 fn rt_noop_observer(ctx: *u8) { return; }
 
 #[test]
-fn an_observer_registered_with_no_window_up_is_inert() {
-    // Every observation here is a `notify::` on a WINDOW, so there is nothing
-    // to connect to before one exists. An inert handle is the honest answer;
-    // a live-looking one that never fires is not.
+fn an_observer_registered_with_no_window_up_is_pending_not_refused() {
+    // Every observation here is a `notify::` on a WINDOW, and BEFORE THE WINDOW
+    // OPENS IS WHERE AN APPLICATION NATURALLY REGISTERS — beside every other
+    // service it wires in setup. So the backend CLAIMS A SLOT and arms it when
+    // the first window opens, rather than handing back an inert handle that
+    // silently drops the registration. The same line works on AppKit, where
+    // NSNotificationCenter is process-wide and never had the question.
+    //
+    // This test used to assert the opposite and was pinning the bug.
     app::reset_default_for_tests();
     var a: services::Cancellable = observe_window_active(rt_noop_observer);
-    assert !a.pending();
+    assert a.pending();
     var b: services::Cancellable = observe_window_size(rt_noop_observer);
-    assert !b.pending();
+    assert b.pending();
     var d: services::Cancellable = observe_display_density(rt_noop_observer);
+    assert d.pending();
+    // A PENDING SLOT IS CANCELLABLE, and that is the half that matters: a
+    // caller that lets a registration go must not have it arm itself on the
+    // next window the application opens.
+    a.cancel();
+    b.cancel();
+    d.cancel();
+    assert !a.pending();
+    assert !b.pending();
     assert !d.pending();
 }
 

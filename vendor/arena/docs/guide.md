@@ -1,6 +1,6 @@
 # Guide
 
-How the heap bump arena works, when to use it vs `static-arena`, and the
+How the heap bump arena works, when to use it vs `static_arena`, and the
 lifetime / OOM contracts. Fast start: [tutorial.md](tutorial.md). API:
 [ref.md](ref.md).
 
@@ -13,15 +13,15 @@ lifetime / OOM contracts. Fast start: [tutorial.md](tutorial.md). API:
 Typical uses: parse trees, per-request scratch, compiler IR for one
 function — many small objects, one lifetime.
 
-## Arena vs static-arena
+## Arena vs static_arena
 
-| | `arena` | `static-arena` |
+| | `arena` | `static_arena` |
 |---|---|---|
 | Storage | heap chunks via `malloc` | in-struct buffer (stack / `static`) |
 | Growth | new chunks as needed | fixed 16 KiB or 64 KiB |
 | OOM | null `*u8` / `*T` (or `Option` variants) | always `Option` / `None` |
 | `#[no_alloc]` | no | yes (no heap) |
-| Import | `arena/arena` | `static-arena/static-arena` |
+| Import | `arena/arena` | `static_arena/static_arena` |
 
 Same call shape: `alloc_bytes`, `alloc[T]`, `alloc_str`, `reset`.
 
