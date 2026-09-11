@@ -45,11 +45,13 @@
 // native frame is simply `child.frame - host.frame` in origin.
 
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/bands" as bands;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
+import "objc/synthesis" as synth;
 
 type Node = flex::Node;
 
@@ -220,8 +222,69 @@ fn max_z_of(node: *core::Node, count: usize) -> i64 {
     return hi;
 }
 
+// ---- the controller behind a roled split -------------------------------------
+//
+// These three live HERE, at the bottom of the backend, rather than beside the
+// rest of the split code in `controls`. Two callers need them and they sit on
+// opposite sides of an import edge: `controls` creates the controller,
+// `geometry` and `views` have to ask where a pane's children go, and
+// `controls` already imports `text_input`, so anything importing `controls`
+// from down here closes a cycle (measured: text_input -> scheduler ->
+// geometry -> controls -> text_input). The association key is plumbing, so
+// plumbing is where it goes.
+fn split_controller_key() -> *u8 { return { 29067 as *u8 }; }
+
+fn controller_of_split(v: *u8) -> *u8 {
+    if v.is_null() { return 0 as *u8; }
+    return { synth::get_associated(v, split_controller_key()) };
+}
+
+// The NSSplitView behind a split node's view.
+//
+// A plain split IS its view. A controller-backed one is NOT: an
+// `NSSplitViewController`'s `view` is a plain `NSView` WRAPPING its split
+// view, which the whole of `apply_split` / `settle_split` learned the hard way
+// — `-[NSView setVertical:]: unrecognized selector`, raised on the first
+// mount. Everything that wants to talk to the split itself comes through here.
+fn split_view_of(node_view: *u8) -> *u8 {
+    let c: *u8 = controller_of_split(node_view);
+    if c.is_null() { return node_view; }
+    return ak::SplitViewController::from_raw(c).split_view().as_view().raw();
+}
+
+// Where a pane's children actually go when the split is controller-backed:
+// the item's view controller's view, not the split view. Answers 0 for every
+// split that set no role, which is the gate the callers read.
+fn split_pane_host(split_view: *u8, slot: usize) -> *u8 {
+    let c: *u8 = controller_of_split(split_view);
+    if c.is_null() { return 0 as *u8; }
+    let items: vec::Vec[ak::SplitViewItem] =
+        ak::SplitViewController::from_raw(c).split_view_items();
+    match items.at_ptr(slot) {
+        option::Option[*ak::SplitViewItem]::Some(it) => {
+            return { (*it).view_controller().view().raw() };
+        }
+        option::Option[*ak::SplitViewItem]::None => { return 0 as *u8; }
+    }
+}
+
 fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
     apply_z_order(node);
+    // A CONTROLLER-BACKED SPLIT OWNS ITS PANES' GEOMETRY, and this is the one
+    // place that has to step back for it.
+    //
+    // Every other host in facet is a plain view this walk positions children
+    // inside. An `NSSplitViewController` is not: it wraps each pane in its own
+    // item view and arranges those itself — that is what earns the sidebar its
+    // inset, its full height and the system's own drag behaviour. A pane's
+    // view therefore sits inside a wrapper AppKit has already placed, so
+    // subtracting the SPLIT's origin (what the general path does) offsets it
+    // twice and the content marches right.
+    //
+    // So the pane view fills its wrapper, and the recursion carries the pane's
+    // FLEX frame as the origin its own children measure from. flex still lays
+    // the pane's contents out; it just no longer decides where the pane is.
+    let split_v: *u8 = core::view_of(node);
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(node);
     while i < count {
@@ -229,6 +292,16 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
             option::Option[*core::Node]::Some(c) => {
                 let cf: flex::Frame = { (*c).frame() };
                 let v: *u8 = core::view_of(c);
+                let pane_host: *u8 = split_pane_host(split_v, i);
+                if pane_host.is_not_null() && v.is_not_null() {
+                    let b: rt::Rect = ak::View::from_raw(pane_host).bounds();
+                    ak::View::from_raw(v).set_hidden(core::is_hidden(c));
+                    set_view_frame(v, rt::Rect { x: 0.0f64, y: 0.0f64,
+                                                 w: { b.w }, h: { b.h } });
+                    reposition_children(c, cf);
+                    i = i +% (1 as usize);
+                    continue;
+                }
                 // `Display::None` takes the node out of LAYOUT — flex gives it
                 // a zero frame — but AppKit does not clip a view to its bounds,
                 // so its subviews went on drawing at the frames they last had.

@@ -71,6 +71,7 @@ import "facet/swipeable" as swipeable;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
+import "./geometry" as geom;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "quartzcore/quartzcore" as quartz;
@@ -2518,17 +2519,184 @@ fn split_view_class() -> *u8 {
 #[link_name = "class_addMethod"]
 extern fn add_method_f64_0id(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> f64, types: *u8) -> i8;
 
+// ---- pane roles: the glass a sidebar is made of ------------------------------
+//
+// `split::PaneRole::Sidebar` says a pane is the window's navigation surface.
+// On macOS 26 that surface is GLASS, and this is what puts it there.
+//
+// THE BACKING GOES INSIDE THE PANE, not around it, and that is the design
+// decision worth recording. AppKit's own sidebar is an `NSSplitViewItem` on an
+// `NSSplitViewController`, so a controller is the obvious route — and a
+// hierarchy dump of one (2026-09-11) shows the item's view sitting under
+// `NSContainerConcentricGlassEffectView`, i.e. the material IS
+// `NSGlassEffectView` either way. What a controller ALSO brings is its own
+// authority over pane thickness, and `settle_split` below carries the scars of
+// two authorities over one number: "the walk and the split view were two
+// authorities over one number and the walk always spoke last", 68,954 settles
+// in four idle seconds. A glass view INSIDE the pane, autoresized to fill it,
+// adds no authority at all — flex sizes the pane exactly as it did before and
+// the glass follows it.
+//
+// What that costs is the rest of what a real sidebar item brings: the traffic
+// lights moving onto the sidebar, the automatic collapse behaviours. Those are
+// a separate and much larger change, and they are not what makes a window look
+// like glass.
+fn glass_backing_key() -> *u8 { return { 29066 as *u8 }; }
+
+// `NSGlassEffectView` is macOS 26. The class is LOOKED UP rather than assumed,
+// the same way `setSubtitle:` is in window.cplus: an older system gets a plain
+// pane instead of no window.
+fn glass_available() -> bool {
+    return rt::get_class(#str_ptr("NSGlassEffectView\0")).is_not_null();
+}
+
+// Idempotent in both directions: this runs from `settle_split_inner`, which
+// runs after every layout walk, so it must do NOTHING when the pane already
+// agrees with its role. That is the same rule `is_points` exists for.
+fn set_pane_glass(pane_view: *u8, want: bool) {
+    if pane_view.is_null() { return; }
+    let have: *u8 = { synth::get_associated(pane_view, glass_backing_key()) };
+    if want && have.is_not_null() { return; }
+    if !want && have.is_null() { return; }
+    if !want {
+        ak::View::from_raw(have).remove_from_superview();
+        synth::set_associated(pane_view, glass_backing_key(), 0 as *u8);
+        return;
+    }
+    if !glass_available() { return; }
+    let host: ak::View = ak::View::from_raw(pane_view);
+    let g: ak::GlassEffectView = ak::GlassEffectView::new_with_frame(host.bounds());
+    // Concentric with the window's own corner, which is what the system's
+    // sidebar looks like; a square-cornered slab reads as a panel, not glass.
+    g.set_corner_radius(12.0f64);
+    g.as_view().set_autoresizing_mask(
+        ak::autoresizing_mask_options_n_s_view_width_sizable
+        | ak::autoresizing_mask_options_n_s_view_height_sizable);
+    // BELOW every existing subview: the pane's content draws on the glass, not
+    // under it. A nil `relativeTo` is AppKit's "below everything".
+    host.add_subview_positioned(g.as_view(), ak::WindowOrderingMode::NSWindowBelow,
+                                ak::View::from_raw(0 as *u8));
+    synth::set_associated(pane_view, glass_backing_key(), g.as_view().raw());
+}
+
+// Read both panes' roles off the props and make the views agree.
+//
+// Called from the settle path rather than from `apply_split`, because at apply
+// time the split's children may not be mounted yet — their views do not exist
+// until the walk reaches them. Settle runs after every layout walk, so the
+// first walk that has the panes is the one that dresses them.
+fn apply_pane_roles(n: *core::Node) {
+    if n.is_null() { return; }
+    let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
+    if p.is_null() { return; }
+    // A CONTROLLER-BACKED SPLIT NEEDS NONE OF THIS. Its sidebar item is a real
+    // `NSSplitViewItem`, and AppKit puts the glass under it itself — a
+    // hierarchy dump shows the item's view sitting inside
+    // `NSContainerConcentricGlassEffectView`. Adding our own backing inside
+    // the pane would be a SECOND pane of glass over the first.
+    //
+    // So this is the fallback, and it is still reachable: a split can carry a
+    // role on a platform or OS version where the controller route is not
+    // taken, and then the material is all that is on offer.
+    if geom::controller_of_split(core::view_of(n)).is_not_null() { return; }
+    // `core::child_of` directly rather than `Split::pane`, which is reached
+    // through a module-private constructor. Slot 0 is leading, slot 1 trailing
+    // — the same two slots `pane` reads.
+    match core::child_of(n, 0 as usize) {
+        option::Option[*core::Node]::Some(pn) => {
+            set_pane_glass(core::view_of(pn), is_sidebar({ (*p).role_leading }));
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    match core::child_of(n, 1 as usize) {
+        option::Option[*core::Node]::Some(pn) => {
+            set_pane_glass(core::view_of(pn), is_sidebar({ (*p).role_trailing }));
+        }
+        option::Option[*core::Node]::None => { }
+    }
+}
+
+fn is_sidebar(r: split::PaneRole) -> bool {
+    return match r {
+        split::PaneRole::Sidebar => { true },
+        split::PaneRole::Content => { false },
+    };
+}
+
+// The controller behind a roled split, kept alive by the view it owns.
+//
+// `NSSplitViewController.view` IS its `NSSplitView` — confirmed from a
+// hierarchy dump, where the controller's view sits directly under its host
+// with no wrapper — so everything in this file that does
+// `ak::SplitView::from_raw(node_view)` keeps working unchanged. What differs
+// is only WHERE children go: an item's view controller, not the split view.
+// One item, holding a flipped view for facet to mount into. Flipped because
+// everything below a facet host is top-left origin — the same reason
+// `open_window` makes the content view flipped.
+fn make_pane_item(sidebar: bool) -> ak::SplitViewItem {
+    let vc: ak::ViewController = ak::ViewController::from_raw(
+        rt::alloc_init(#str_ptr("NSViewController\0")));
+    vc.set_view(akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64,
+                                                 w: 100.0f64, h: 100.0f64 }));
+    if sidebar { return ak::SplitViewItem::sidebar_with_view_controller(vc); }
+    return ak::SplitViewItem::split_view_item_with_view_controller(vc);
+}
+
 fn create_split(n: *core::Node) -> *u8 {
+    let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
+    if p.is_not_null() && (is_sidebar({ (*p).role_leading })
+                           || is_sidebar({ (*p).role_trailing })) {
+        let c: ak::SplitViewController = ak::SplitViewController::from_raw(
+            rt::alloc_init(#str_ptr("NSSplitViewController\0")));
+        c.add_split_view_item(make_pane_item(is_sidebar({ (*p).role_leading })));
+        c.add_split_view_item(make_pane_item(is_sidebar({ (*p).role_trailing })));
+        let v: *u8 = c.as_view_controller().view().raw();
+        synth::set_associated(v, split_view_node_key(), n as *u8);
+        // The controller owns the items and the items own the panes; nothing
+        // else holds it, so the view it vends keeps it alive.
+        synth::set_associated(v, geom::split_controller_key(), rt::retain(c.raw()));
+        return rt::retain(v);
+    }
     let s: ak::SplitView = ak::SplitView::from_raw(synth::alloc_init_class(split_view_class()));
     s.set_divider_style(ak::SplitViewDividerStyle::Thin);
     synth::set_associated(s.as_view().raw(), split_view_node_key(), n as *u8);
     return rt::retain(s.as_view().raw());
 }
 
+
+// A pane's minimum and maximum, written where a controller-backed split keeps
+// them: on the item, not on a delegate. Zero is "no bound" in facet's props
+// (see `SplitProps.max_leading`), and AppKit spells an absent maximum
+// `CGFLOAT_MAX` — so an unset cap must not be written through as 0, which
+// would pin the pane shut.
+fn apply_item_thickness(ctrl: *u8, p: *split::SplitProps) {
+    let items: vec::Vec[ak::SplitViewItem] =
+        ak::SplitViewController::from_raw(ctrl).split_view_items();
+    set_item_bounds(items, 0 as usize, { (*p).min_leading }, { (*p).max_leading });
+    set_item_bounds(items, 1 as usize, { (*p).min_trailing }, { (*p).max_trailing });
+}
+
+fn set_item_bounds(items: vec::Vec[ak::SplitViewItem], slot: usize, lo: f64, hi: f64) {
+    match items.at_ptr(slot) {
+        option::Option[*ak::SplitViewItem]::Some(it) => {
+            let item: ak::SplitViewItem = ak::SplitViewItem::from_raw({ (*it).raw() });
+            if lo > 0.0f64 { item.set_minimum_thickness(lo); }
+            if hi > 0.0f64 { item.set_maximum_thickness(hi); }
+        }
+        option::Option[*ak::SplitViewItem]::None => { }
+    }
+}
+
 fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
     if p.is_null() { return; }
-    let s: ak::SplitView = ak::SplitView::from_raw(v);
+    let s: ak::SplitView = ak::SplitView::from_raw(geom::split_view_of(v));
+    // A CONTROLLER OWNS ITS SPLIT VIEW'S DELEGATE SEAT, and says so by
+    // raising: "A SplitView managed by a SplitViewController cannot have its
+    // delegate modified". So the two routes below are genuinely exclusive —
+    // this is the two-authorities line the rest of this file was already
+    // drawn along, enforced by AppKit rather than discovered in a drag.
+    let ctrl: *u8 = geom::controller_of_split(v);
     if (dirty & split::P_AXIS) != (0 as u64) {
         s.set_vertical(is_vertical_divider({ (*p).axis }));
     }
@@ -2536,11 +2704,21 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     // delegate where a divider may go, and tells it after one moved. Installed
     // on the first apply rather than at create, because a split with neither a
     // minimum nor a handler should not pay for a delegate at all.
-    if (dirty & (split::P_MIN_LEADING | split::P_MIN_TRAILING
-                 | split::P_MAX_LEADING | split::P_MAX_TRAILING
-                 | props::C_HANDLERS)) != (0 as u64)
-        || dirty == paint::all_bits() {
-        text_input::install_split(v, n);
+    if ctrl.is_null()
+       && ((dirty & (split::P_MIN_LEADING | split::P_MIN_TRAILING
+                     | split::P_MAX_LEADING | split::P_MAX_TRAILING
+                     | props::C_HANDLERS)) != (0 as u64)
+           || dirty == paint::all_bits()) {
+        text_input::install_split(geom::split_view_of(v), n);
+    }
+    // The controller's half of the same facts. An item carries its own
+    // thickness bounds, which is where a sidebar's minimum has to live when
+    // the delegate seat is taken.
+    if ctrl.is_not_null()
+       && ((dirty & (split::P_MIN_LEADING | split::P_MIN_TRAILING
+                     | split::P_MAX_LEADING | split::P_MAX_TRAILING)) != (0 as u64)
+           || dirty == paint::all_bits()) {
+        apply_item_thickness(ctrl, p);
     }
     // The divider is REGISTERED, and settled after every layout walk against
     // the props' current position — not queued once with a captured value.
@@ -2574,8 +2752,9 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
         // Thickness is geometry, not just colour: the panes have to be laid out
         // again around a divider that changed width, and AppKit only re-asks
         // for it when it arranges.
-        { rt::msg_void(v, rt::sel(#str_ptr("adjustSubviews\0"))) };
-        { rt::msg_void_i8(v, rt::sel(#str_ptr("setNeedsDisplay:\0")), true as i8) };
+        let sv: *u8 = geom::split_view_of(v);
+        { rt::msg_void(sv, rt::sel(#str_ptr("adjustSubviews\0"))) };
+        { rt::msg_void_i8(sv, rt::sel(#str_ptr("setNeedsDisplay:\0")), true as i8) };
     }
 }
 
@@ -2612,9 +2791,13 @@ fn settle_split(n: *core::Node) {
 fn settle_split_inner(n: *core::Node) {
     let v: *u8 = core::view_of(n);
     if v.is_null() { return; }
+    // Roles are dressed here rather than at apply: the panes' views do not
+    // exist until the walk reaches them. Idempotent, so running every settle
+    // costs a pointer read per pane.
+    apply_pane_roles(n);
     let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
     if p.is_null() { return; }
-    let s: ak::SplitView = ak::SplitView::from_raw(v);
+    let s: ak::SplitView = ak::SplitView::from_raw(geom::split_view_of(v));
     let f: rt::Rect = s.as_view().frame();
     let extent: f64 = if s.is_vertical() { { f.w } } else { { f.h } };
     if extent <= 0.0f64 { return; }

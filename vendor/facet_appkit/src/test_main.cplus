@@ -91,6 +91,7 @@ import "./zoom" as zoom;
 import "./scheduler" as scheduler;
 import "./window" as window;
 import "./facet_appkit" as backend;
+import "./geometry" as geom;
 
 #[link_name = "objc_msgSend"]
 extern fn msg_size_of(recv: *u8, sel: *u8) -> rt::Size;
@@ -12901,6 +12902,173 @@ fn a_collapsed_split_pane_comes_back_where_it_was() {
         }
         option::Option[split::Split]::None => { assert false; }
     }
+}
+
+// ---- pane roles: the glass a sidebar is made of ------------------------------
+//
+// What CANNOT be asserted here is whether it looks right — an agent has no
+// eyes, and vibrancy is composited by the window server. What can be asserted
+// is the contract the rest of the machinery depends on: exactly one backing,
+// installed for a Sidebar pane and not a Content one, idempotent in both
+// directions. That last part is not a nicety. `apply_pane_roles` runs from
+// `settle_split_inner`, which runs after EVERY layout walk, so a version that
+// installed unconditionally would stack a glass view per frame — the same
+// shape as the 68,954-settles bug the file above it documents.
+
+fn glass_backings_in(v: *u8) -> usize {
+    var seen: usize = 0 as usize;
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(v).subviews();
+    var i: usize = 0 as usize;
+    while i < subs.count() {
+        match subs.at_ptr(i) {
+            option::Option[*ak::View]::Some(sv) => {
+                if views::is_kind_of({ (*sv).raw() }, #str_ptr("NSGlassEffectView\0")) {
+                    seen = seen +% (1 as usize);
+                }
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return seen;
+}
+
+// Is the item at `slot` a REAL sidebar — `NSSplitViewItemBehavior.Sidebar`,
+// the thing AppKit dresses in glass — rather than an ordinary pane?
+fn item_is_sidebar(ctrl: *u8, slot: usize) -> bool {
+    if ctrl.is_null() { return false; }
+    let items: vec::Vec[ak::SplitViewItem] =
+        ak::SplitViewController::from_raw(ctrl).split_view_items();
+    match items.at_ptr(slot) {
+        option::Option[*ak::SplitViewItem]::Some(it) => {
+            return match ak::SplitViewItem::from_raw({ (*it).raw() }).behavior() {
+                ak::SplitViewItemBehavior::Sidebar => { true },
+                _ => { false },
+            };
+        }
+        option::Option[*ak::SplitViewItem]::None => { return false; }
+    }
+}
+
+#[test]
+fn a_roled_split_is_backed_by_a_controller_with_a_real_sidebar_item() {
+    // The structural assertion, and the one that matters: the glass is not
+    // something facet paints, it is what AppKit puts under an
+    // `NSSplitViewItem` whose behavior is Sidebar. Asserting the behavior
+    // asserts the material without needing eyes.
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "side").width(200.0f64));
+    b.add(core::column(core::Builder::new(), key: "main").width(400.0f64));
+    var root: core::Node = split::split(b, key: "sp", position: 200.0f64);
+    let rp: *core::Node = #addr_of(root);
+    match split::from(rp) {
+        option::Option[split::Split]::Some(s) => {
+            let _r: split::Split = s.set_role(split::Pane::Leading,
+                                              split::PaneRole::Sidebar);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    assert mount::mount(rp);
+    let ctrl: *u8 = geom::controller_of_split(core::view_of(rp));
+    assert ctrl.is_not_null();
+    assert item_is_sidebar(ctrl, 0 as usize);
+    // The pane that asked for nothing stays an ordinary pane.
+    assert item_is_sidebar(ctrl, 1 as usize) == false;
+    // And the panes' own views live INSIDE the items, which is what keeps the
+    // frame walk from offsetting them twice.
+    match core::child_of(rp, 0 as usize) {
+        option::Option[*core::Node]::Some(pn) => {
+            let host: *u8 = geom::split_pane_host(core::view_of(rp), 0 as usize);
+            assert host.is_not_null();
+            match ak::View::from_raw(core::view_of(pn)).superview() {
+                option::Option[ak::View]::Some(sv) => { assert sv.raw() == host; }
+                option::Option[ak::View]::None => { assert false; }
+            }
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_split_with_no_role_takes_the_path_it_always_took() {
+    // The control that keeps every existing tree out of this: no role, no
+    // controller, and the delegate seat stays facet's.
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "l").width(200.0f64));
+    b.add(core::column(core::Builder::new(), key: "r").width(400.0f64));
+    var root: core::Node = split::split(b, key: "sp", position: 200.0f64);
+    let rp: *core::Node = #addr_of(root);
+    assert mount::mount(rp);
+    assert geom::controller_of_split(core::view_of(rp)).is_null();
+    assert split_delegate_of(core::view_of(rp)).is_not_null();
+}
+
+#[test]
+fn a_sidebar_pane_is_backed_by_glass_and_a_content_pane_is_not() {
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "side").width(200.0f64));
+    b.add(core::column(core::Builder::new(), key: "main").width(400.0f64));
+    var root: core::Node = split::split(b, key: "sp", position: 200.0f64);
+    let rp: *core::Node = #addr_of(root);
+    match split::from(rp) {
+        option::Option[split::Split]::Some(s) => {
+            let _r: split::Split = s.set_role(split::Pane::Leading,
+                                              split::PaneRole::Sidebar);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    assert mount::mount(rp);
+    // The FALLBACK path, reached when the controller route is not taken. It is
+    // driven directly here because a mounted roled split now gets a
+    // controller, and `apply_pane_roles` correctly declines to double-glass
+    // one — so the only honest way to test the fallback is to ask for it.
+    match core::child_of(rp, 0 as usize) {
+        option::Option[*core::Node]::Some(pn) => {
+            controls::set_pane_glass(core::view_of(pn), true);
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+
+    match core::child_of(rp, 0 as usize) {
+        option::Option[*core::Node]::Some(pn) => {
+            // Only on a system that HAS the class: the lookup is guarded, so
+            // an older macOS gets a plain pane and this asserts the guard
+            // rather than the material.
+            let want: usize = if controls::glass_available() { 1 as usize } else { 0 as usize };
+            assert glass_backings_in(core::view_of(pn)) == want;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    match core::child_of(rp, 1 as usize) {
+        option::Option[*core::Node]::Some(pn) => {
+            assert glass_backings_in(core::view_of(pn)) == (0 as usize);
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn dressing_a_pane_twice_leaves_one_backing_and_undressing_removes_it() {
+    // The settle path calls this after every layout walk. Installing per call
+    // would stack one glass view per frame.
+    backend::install();
+    if !controls::glass_available() { return; }
+    let host: ak::View = akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 400.0f64 });
+    controls::set_pane_glass(host.raw(), true);
+    assert glass_backings_in(host.raw()) == (1 as usize);
+    controls::set_pane_glass(host.raw(), true);
+    controls::set_pane_glass(host.raw(), true);
+    assert glass_backings_in(host.raw()) == (1 as usize);
+    // A role taken back off takes the backing with it.
+    controls::set_pane_glass(host.raw(), false);
+    assert glass_backings_in(host.raw()) == (0 as usize);
+    // ...and off twice is not an error either.
+    controls::set_pane_glass(host.raw(), false);
+    assert glass_backings_in(host.raw()) == (0 as usize);
 }
 
 // ---- a pane's MAXIMUM, at the delegate that enforces it ------------------------

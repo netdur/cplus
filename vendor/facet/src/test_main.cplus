@@ -76,6 +76,15 @@ import "./bands" as bands;
 // The delegate fan-out: a third-party SDK's share of the app's own callbacks.
 import "./app_events" as app_events;
 
+// `PaneRole::Content`, as a bool — an enum compares by `match`, and the role
+// tests below ask this often enough to be worth a name.
+fn is_content(r: split::PaneRole) -> bool {
+    return match r {
+        split::PaneRole::Content => { true },
+        split::PaneRole::Sidebar => { false },
+    };
+}
+
 fn approx(a: f64, b: f64) -> bool {
     let d: f64 = a - b;
     if d < 0.0f64 { return (0.0f64 - d) < 0.0001f64; }
@@ -2555,6 +2564,53 @@ fn a_split_holds_two_panes_and_a_position() {
                 option::Option[*facet::Node]::Some(n) => { assert { (*n).key() } == "R"; }
                 option::Option[*facet::Node]::None => { assert false; }
             }
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// The default, and the reason roles are safe to add: every split that existed
+// before them reads back exactly as it did.
+#[test]
+fn a_pane_is_content_until_something_says_otherwise() {
+    // The default, and the reason this is safe to add: every split that
+    // existed before roles reads back exactly as it did.
+    var root: facet::Node = split::split(two_panes(), key: "s");
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert is_content(x.role(split::Pane::Leading));
+            assert is_content(x.role(split::Pane::Trailing));
+            assert x.has_role() == false;
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_role_is_recorded_per_pane_and_changes_no_geometry() {
+    // Per pane, because a window can have a navigation sidebar leading AND an
+    // inspector trailing. And setting one must not disturb the other, nor the
+    // position/min/max the split already carries — the role is read by the
+    // backend, it is not layout.
+    var root: facet::Node = split::split(two_panes(), key: "s", position: 300.0f64,
+                                         min_leading: 180.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            let _a: split::Split = x.set_role(split::Pane::Leading, split::PaneRole::Sidebar);
+            assert is_content(x.role(split::Pane::Leading)) == false;
+            assert is_content(x.role(split::Pane::Trailing));
+            assert x.has_role();
+            assert approx(x.position(), 300.0f64);
+            assert approx(x.min(split::Pane::Leading), 180.0f64);
+            // The trailing pane takes a role of its own without clearing the
+            // leading one.
+            let _b: split::Split = x.set_role(split::Pane::Trailing, split::PaneRole::Sidebar);
+            assert is_content(x.role(split::Pane::Leading)) == false;
+            assert is_content(x.role(split::Pane::Trailing)) == false;
+            // And a role can be taken back off.
+            let _c: split::Split = x.set_role(split::Pane::Leading, split::PaneRole::Content);
+            assert is_content(x.role(split::Pane::Leading));
+            assert x.has_role();
         }
         option::Option[split::Split]::None => { assert false; }
     }

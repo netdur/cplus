@@ -38,6 +38,7 @@ import "facet/tree" as tree;
 import "facet/window_chrome" as chrome;
 import "facet/text_field" as text_field;
 import "./controls" as controls;
+import "./geometry" as geom;
 
 type Node = flex::Node;
 
@@ -710,6 +711,15 @@ fn insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
     if controls::tab_strip_of(host) != (0 as *u8) {
         controls::tabs_add_pane(host, child,
             ak::Accessibility::from_raw(child).accessibility_identifier().view());
+        return;
+    }
+    // A controller-backed split routes by SLOT: pane 0 to the first item's
+    // view controller, pane 1 to the second. `host_for` cannot answer this —
+    // it is handed only the host — which is why it goes here beside the tabs
+    // hook rather than there beside the scroll one.
+    let pane_host: *u8 = geom::split_pane_host(host, slot);
+    if pane_host.is_not_null() {
+        ak::View::from_raw(pane_host).add_subview(ak::View::from_raw(child));
         return;
     }
     let h: ak::View = ak::View::from_raw(host_for(host));

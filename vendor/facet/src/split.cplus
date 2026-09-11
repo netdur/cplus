@@ -28,6 +28,7 @@ const P_COLLAPSED: u64 = 16u64;
 const P_DIVIDER: u64 = 32u64;
 const P_MAX_LEADING: u64 = 64u64;
 const P_MAX_TRAILING: u64 = 128u64;
+const P_ROLE: u64 = 256u64;
 
 // Which way the panes sit. Named for the RESULT, not for the divider: a
 // boolean `vertical` reads as a question about the wrong object every time.
@@ -43,6 +44,27 @@ enum SplitAxis {
 enum Pane {
     Leading,
     Trailing,
+}
+
+// What a pane IS, as opposed to where it sits.
+//
+// `Content` is an ordinary pane and the default — what every split was before
+// this existed. `Sidebar` says the pane is the window's NAVIGATION surface,
+// which is a distinction every platform draws and facet could not express:
+// AppKit has `NSSplitViewItem sidebar`, Windows has `NavigationView`,
+// libadwaita has a navigation split, Android has the drawer. Each gives its
+// sidebar a look and a set of behaviours an ordinary pane does not get — on
+// macOS 26 that is the translucent inset panel the rest of the system uses,
+// and the reason a facet window looked flat beside Finder.
+//
+// It is a HINT, in the sense §`Chrome` already established: facet offers the
+// field, a backend honours what it can, and a backend with no sidebar concept
+// renders an ordinary pane and is not wrong. Nothing about the tree changes —
+// the pane holds the same children either way — so an application that sets it
+// still runs everywhere.
+enum PaneRole {
+    Content,
+    Sidebar,
 }
 
 struct SplitProps {
@@ -73,6 +95,11 @@ struct SplitProps {
     // So the maximum lives here, where the extent already is.
     max_leading: f64,
     max_trailing: f64,
+    // Per pane rather than "which pane is the sidebar", because a window can
+    // have two: a navigation sidebar leading and an inspector trailing, and
+    // both are non-Content. Same reason `min` and `max` are per pane.
+    role_leading: PaneRole,
+    role_trailing: PaneRole,
     // A pane collapsed to nothing. The position is remembered, so restoring
     // puts the divider back where the user left it.
     //
@@ -96,6 +123,15 @@ struct SplitProps {
 }
 
 fn no_move(sender: *u8, ctx: *u8) { return; }
+
+// `role == Content`, as a function: an enum compares by `match`, and asking
+// this in three places reads better than three matches.
+fn matches_content(r: PaneRole) -> bool {
+    return match r {
+        PaneRole::Content => { true },
+        PaneRole::Sidebar => { false },
+    };
+}
 
 // ---- the maximum, as the two clamps the minimums already use ------------------
 //
@@ -149,6 +185,8 @@ impl SplitProps {
             min_trailing: 240.0f64,
             max_leading: 0.0f64,
             max_trailing: 0.0f64,
+            role_leading: PaneRole::Content,
+            role_trailing: PaneRole::Content,
             divider_color: vocab::Color::separator(),
             divider_thickness: 1.0f64,
             collapsed_leading: false,
@@ -373,6 +411,41 @@ impl Split {
             Pane::Leading => { (*p).max_leading },
             Pane::Trailing => { (*p).max_trailing },
         };
+    }
+
+    // Declare what a pane is FOR. See `PaneRole`.
+    //
+    // Setting it changes no geometry here: the role is read by the backend,
+    // which decides what a sidebar looks like on its platform. A backend that
+    // has no sidebar concept reads it and does nothing, so this is safe to set
+    // in a cross-platform tree.
+    fn set_role(this, pane: Pane, v: PaneRole) -> Split {
+        let p: *SplitProps = this._props();
+        if p.is_null() { return this; }
+        match pane {
+            Pane::Leading => { { (*p).role_leading = v }; }
+            Pane::Trailing => { { (*p).role_trailing = v }; }
+        }
+        core::touch(this._p, P_ROLE);
+        return this;
+    }
+
+    fn role(this, pane: Pane) -> PaneRole {
+        let p: *SplitProps = this._props();
+        if p.is_null() { return PaneRole::Content; }
+        return match pane {
+            Pane::Leading => { (*p).role_leading },
+            Pane::Trailing => { (*p).role_trailing },
+        };
+    }
+
+    // Whether either pane asked to be something other than an ordinary pane.
+    // The backend's gate: a split with no roles set takes exactly the path it
+    // always took, which is what keeps this change invisible to every tree
+    // that does not use it.
+    fn has_role(this) -> bool {
+        return !matches_content(this.role(Pane::Leading))
+            || !matches_content(this.role(Pane::Trailing));
     }
 
     // Collapse a pane to nothing. The position is REMEMBERED, so uncollapsing
