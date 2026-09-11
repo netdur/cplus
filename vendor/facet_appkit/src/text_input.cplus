@@ -63,6 +63,7 @@ import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
+import "./geometry" as geom;
 import "./input" as input;
 import "./scheduler" as scheduler;
 
@@ -1050,6 +1051,41 @@ fn split_settled_key() -> *u8 { return { 29062 as *u8 }; }
 fn split_resized_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     let n: *core::Node = split_node_of(self_obj);
     if n.is_null() { return; }
+    split_resized_for(n, { rt::msg_id(note, rt::sel(#str_ptr("object\0"))) });
+}
+
+// The OBSERVER route to the same body, for a controller-backed split.
+//
+// AppKit refuses a delegate on a split view an `NSSplitViewController`
+// manages ("cannot have its delegate modified" — it raises), so the
+// `splitViewDidResizeSubviews:` above can never be installed there. But the
+// split view POSTS `NSSplitViewDidResizeSubviewsNotification` whatever its
+// delegate is, so the same work hangs off the notification instead. The
+// context is the node's own view (the controller's wrapper), which carries
+// the node the way the delegate object does; the split view is resolved from
+// it. Idempotent the way `install_split` is: the node is re-associated every
+// apply, the observer is made once and pinned to the view.
+fn split_observer_pin_key() -> *u8 { return { 29068 as *u8 }; }
+
+fn split_notified(ctx: *u8) {
+    let n: *core::Node = { synth::get_associated(ctx, split_node_key()) as *core::Node };
+    if n.is_null() { return; }
+    split_resized_for(n, geom::split_view_of(ctx));
+}
+
+fn install_split_observer(view: *u8, n: *core::Node) {
+    if view.is_null() { return; }
+    synth::set_associated(view, split_node_key(), n as *u8);
+    if { synth::get_associated(view, split_observer_pin_key()) }.is_not_null() { return; }
+    akx::observe_notification("NSSplitViewDidResizeSubviewsNotification",
+                              geom::split_view_of(view), split_notified, view,
+                              view, split_observer_pin_key());
+}
+
+// What a divider move means for the props and the tree, given the node and
+// the NSSplitView that moved. Reached from the delegate on a plain split and
+// from the notification on a controller-backed one.
+fn split_resized_for(n: *core::Node, sv: *u8) {
     let p: *split::SplitProps = split_props_of(n);
     if p.is_null() { return; }
     // A COLLAPSED pane's geometry is not a position the user chose. Writing it
@@ -1057,13 +1093,18 @@ fn split_resized_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     // nothing to restore — the whole reason `saved_position` exists is that
     // this notification fires during the collapse itself.
     if { (*p).collapsed_leading } || { (*p).collapsed_trailing } { return; }
-    let sv: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("object\0"))) };
     if sv.is_not_null() {
         let s: ak::SplitView = ak::SplitView::from_raw(sv);
         // The leading pane's own frame IS the divider position — read off the
         // view rather than computed, so a drag that AppKit clamped reports
         // where the divider actually landed.
-        let first: *u8 = { rt::msg_id_u64({ rt::msg_id(sv, rt::sel(#str_ptr("subviews\0"))) },
+        // `arrangedSubviews`, not `subviews`: under an `NSSplitViewController`
+        // the first plain subview is whichever item wrapper AppKit put first
+        // in z-order — measured as the CONTENT item, 820 wide because it runs
+        // under the floating sidebar — plus title-bar and shadow views. The
+        // arranged list is the panes in item order. Identical for a plain
+        // split, whose panes are all it arranges.
+        let first: *u8 = { rt::msg_id_u64({ rt::msg_id(sv, rt::sel(#str_ptr("arrangedSubviews\0"))) },
                                           rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
         if first.is_not_null() {
             let fr: rt::Rect = ak::View::from_raw(first).frame();

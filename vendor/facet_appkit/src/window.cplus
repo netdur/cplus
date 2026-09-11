@@ -39,6 +39,7 @@ import "./controls" as controls;
 import "./scheduler" as scheduler;
 import "./geometry" as geometry;
 import "./zoom" as zoom;
+import "./geometry" as geom;
 
 type Node = flex::Node;
 type Chrome = screen::Chrome;
@@ -340,14 +341,55 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // (mount::mount calls app::open_window), so the native handle can be
     // recorded against it immediately after.
     let mounted: bool = mount::mount(root);
+    // A ROOT SPLIT WITH A SIDEBAR BECOMES THE WINDOW'S CONTENT CONTROLLER.
+    //
+    // The documented recipe puts the sidebar in an `NSSplitViewController` and
+    // the window in `fullSizeContentView`; what it leaves implicit is that the
+    // controller has to be the WINDOW's, not a controller hosted somewhere
+    // inside it. Measured: nesting one inside an ordinary content view still
+    // gets the glass MATERIAL — the view hierarchy is identical either way —
+    // and gets none of the treatment that makes a sidebar read as one: the
+    // inset, the full height, the window controls sitting on top of it.
+    //
+    // So when the tree's root IS such a split, hand its controller to the
+    // window. Everything else keeps working: the controller's view is the
+    // split view facet already mounted into, and the frame walk measures from
+    // the root's own frame either way.
+    //
+    // From that point the controller's view IS the content view, and every
+    // step below that used to address `content` has to address it instead.
+    // The first version of this set the controller and then let
+    // `add_root_views(content, root)` run as before — which re-parented the
+    // window's new content view under the OLD, now-detached flipped view.
+    // The window came up empty: a title bar, traffic lights, and nothing.
+    var host_content: ak::View = content;
+    var root_is_content: bool = false;
+    let root_ctrl: *u8 = geom::controller_of_split(core::view_of(root));
+    if root_ctrl.is_not_null() {
+        win.set_content_view_controller(
+            ak::SplitViewController::from_raw(root_ctrl).as_view_controller());
+        // Setting a content view controller RESIZES THE WINDOW to the
+        // controller's view, and that view is at its constraint minimum when
+        // it arrives here (measured: 408x100 for an 820x520 Chrome). The
+        // Chrome's size is the one that was asked for; put it back, and
+        // re-centre because the shrink moved the origin.
+        win.set_content_size(rt::Size { w: width, h: height });
+        win.center();
+        match win.content_view() {
+            option::Option[ak::View]::Some(cv) => { host_content = cv; root_is_content = true; }
+            option::Option[ak::View]::None => { }
+        }
+    }
     app::set_window_native(root, win.raw());
     OPEN_WINDOWS = OPEN_WINDOWS +% (1 as i64);
     install_window_host(win, root, should_close, should_close_ctx,
                         will_close, will_close_ctx);
 
     // The root's own view was inserted nowhere by the walk — the facade puts
-    // it in the window, which is here.
-    if mounted { add_root_views(content, root); }
+    // it in the window, which is here. Unless the root's view already IS the
+    // window's content, in which case there is nothing to add and adding it
+    // would take it back out.
+    if mounted && !root_is_content { add_root_views(host_content, root); }
 
     // Pinch-to-zoom, if the Chrome asked for it. On the CONTENT view, because
     // magnifying is a bounds change and the content view is the one view that
@@ -356,17 +398,41 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // Chrome has carried these three since the runtime tier landed and nothing
     // read them: a window saying `zoomable: true` simply did not zoom. See
     // zoom.cplus for why neither gate noticed.
-    if wants_zoom { zoom::install(content.raw(), zoom_lo, zoom_hi); }
+    if wants_zoom { zoom::install(host_content.raw(), zoom_lo, zoom_hi); }
 
     // System light/dark flips reach the app through theme::on_appearance_change:
     // an invisible sentinel subview's viewDidChangeEffectiveAppearance forwards
     // the signal, which is the only hook AppKit offers.
-    akx::add_appearance_observer(content, fire_appearance_change, 0 as *u8);
+    akx::add_appearance_observer(host_content, fire_appearance_change, 0 as *u8);
 
     // The toolbar is read from the TREE, so it can only be built once the
     // tree is mounted — and before the window is shown, or it appears empty
     // and then fills in.
     install_toolbar(win, root);
+    // A SIDEBAR IMPLIES A TOOLBAR. The documented full-height layout puts the
+    // window controls INSIDE the sidebar's glass and runs the glass to the
+    // window's top edge — but only when the window has a toolbar, "even an
+    // empty one" (developer.apple.com/forums/thread/653500): the toolbar is
+    // what turns the slim title band into the unified toolbar area the
+    // sidebar rises through. Without one the glass stops 32pt short and the
+    // controls sit in a bar above it — measured as
+    // `NSTitlebarBackgroundView f=(0,68,168,32)` over a glass panel that
+    // began at y=8 and ended at 488. A hand-written control with an empty
+    // unified toolbar matched Finder; the same window without one did not.
+    //
+    // So a roled root that declared no `toolbar_item` gets an empty toolbar,
+    // and either way the style is Unified, the one this layout is designed
+    // around. A roleless root is untouched: no toolbar appears that the tree
+    // did not ask for.
+    if root_is_content {
+        match win.toolbar() {
+            option::Option[ak::Toolbar]::Some(_tb) => { }
+            option::Option[ak::Toolbar]::None => {
+                win.set_toolbar(ak::Toolbar::new_with_identifier("facet.sidebar"));
+            }
+        }
+        win.set_toolbar_style(ak::WindowToolbarStyle::Unified);
+    }
     // The menu bar, read from the tree the same way — `menu` + `menu_item` are
     // The ledger's MenuBarItem and had a builder with no installer.
     install_menu_bar(root);

@@ -72,6 +72,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
 import "./geometry" as geom;
+
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "quartzcore/quartzcore" as quartz;
@@ -82,6 +83,8 @@ import "./drawing" as drawing;
 import "./input" as input;
 import "./compose" as compose;
 import "./scheduler" as scheduler;
+
+extern fn printf(fmt: *u8, ...) -> i32;
 
 // ---- reaching a node's props -------------------------------------------------
 // The generated cursors' `_props()` is module-private, so a backend reads the
@@ -2638,8 +2641,25 @@ fn make_pane_item(sidebar: bool) -> ak::SplitViewItem {
         rt::alloc_init(#str_ptr("NSViewController\0")));
     vc.set_view(akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64,
                                                  w: 100.0f64, h: 100.0f64 }));
-    if sidebar { return ak::SplitViewItem::sidebar_with_view_controller(vc); }
-    return ak::SplitViewItem::split_view_item_with_view_controller(vc);
+    if !sidebar {
+        let content: ak::SplitViewItem = ak::SplitViewItem::split_view_item_with_view_controller(vc);
+        // WWDC25 "Build an AppKit app with the new design": the CONTENT item
+        // sets this so its view extends under the floating sidebar and keeps
+        // its own content inside the safe area. It was first written on the
+        // sidebar item, which is the wrong side of the divider.
+        content.set_automatically_adjusts_safe_area_insets(true);
+        return content;
+    }
+    let item: ak::SplitViewItem = ak::SplitViewItem::sidebar_with_view_controller(vc);
+    // The documented recipe for a FULL-HEIGHT sidebar (WWDC20 "Adopt the new
+    // look of macOS", carried forward by WWDC25 "Build an AppKit app with the
+    // new design"): an `NSSplitViewController`, an item with the sidebar
+    // behavior, the window's `fullSizeContentView` mask, and safe-area
+    // layout. Full height is then the DEFAULT — `allowsFullHeightLayout` is
+    // the OPT-OUT — so both of these are written to say we want the default
+    // rather than to turn something on.
+    item.set_allows_full_height_layout(true);
+    return item;
 }
 
 fn create_split(n: *core::Node) -> *u8 {
@@ -2719,6 +2739,12 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
                      | split::P_MAX_LEADING | split::P_MAX_TRAILING)) != (0 as u64)
            || dirty == paint::all_bits()) {
         apply_item_thickness(ctrl, p);
+    }
+    // ...and its half of `on_move` / the reflow after a drag, which rode on
+    // the delegate and needs the notification route here.
+    if ctrl.is_not_null()
+       && ((dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits()) {
+        text_input::install_split_observer(v, n);
     }
     // The divider is REGISTERED, and settled after every layout walk against
     // the props' current position — not queued once with a captured value.
@@ -2904,7 +2930,15 @@ fn settle_split_inner(n: *core::Node) {
         core::set_gap(n, gap);
     }
 
-    let panes: u64 = { rt::msg_u64({ rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) },
+    // ARRANGED subviews of the SPLIT VIEW, on both counts. `v` is the node's
+    // view, which for a controller-backed split is the wrapper whose one
+    // subview is the split view itself — counting THAT gave 1, so the position
+    // was never asserted and `settled` never written (measured: `settled=0` on
+    // every resize notification, so no drag could ever be recorded). For a
+    // plain split `v` IS the split view and its panes are all it arranges, so
+    // nothing there changes.
+    let sv: *u8 = s.as_view().raw();
+    let panes: u64 = { rt::msg_u64({ rt::msg_id(sv, rt::sel(#str_ptr("arrangedSubviews\0"))) },
                                    rt::sel(#str_ptr("count\0"))) };
     if panes >= (2 as u64) {
         s.set_position(want, 0 as i64);
@@ -2914,15 +2948,22 @@ fn settle_split_inner(n: *core::Node) {
         // split had not reached its final size recorded an early clamped value
         // as though a user had chosen it: a probe asked 200 at attach and kept
         // 195.5 forever. Ask the geometry instead of assuming.
-        let first: *u8 = { rt::msg_id_u64({ rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) },
+        let first: *u8 = { rt::msg_id_u64({ rt::msg_id(sv, rt::sel(#str_ptr("arrangedSubviews\0"))) },
                                           rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
         if first.is_not_null() {
             let lf: rt::Rect = ak::View::from_raw(first).frame();
             let landed: f64 = if s.is_vertical() { { lf.w } } else { { lf.h } };
+            if scheduler::debug_on() {
+                { printf(#str_ptr("[dragdbg] settle panes=%llu want=%.1f landed=%.1f extent=%.1f\n\0"),
+                         panes, want, landed, extent) };
+            }
             var off: f64 = landed - want;
             if off < 0.0f64 { off = 0.0f64 - off; }
             if off <= 0.5f64 {
-                synth::set_associated(v, text_input::split_settled_key(), 1 as *u8);
+                // On the SPLIT VIEW, which is what the resize path reads it
+                // from — the same object as `v` for a plain split, the inner
+                // view for a controller-backed one.
+                synth::set_associated(geom::split_view_of(v), text_input::split_settled_key(), 1 as *u8);
             }
         }
     }

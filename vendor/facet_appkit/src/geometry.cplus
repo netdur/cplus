@@ -294,10 +294,17 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                 let v: *u8 = core::view_of(c);
                 let pane_host: *u8 = split_pane_host(split_v, i);
                 if pane_host.is_not_null() && v.is_not_null() {
-                    let b: rt::Rect = ak::View::from_raw(pane_host).bounds();
+                    // The item's SAFE AREA, not its bounds. With
+                    // `automaticallyAdjustsSafeAreaInsets` the content item's
+                    // view extends under the floating sidebar and under the
+                    // title-bar band, and AppKit reports the part a person can
+                    // actually see as `safeAreaRect`. facet places by frame, so
+                    // the safe area has to be applied here or the content
+                    // pane's first column sits under the sidebar (measured:
+                    // labels at x=0 in an 820-wide window with a 220 sidebar).
+                    let b: rt::Rect = ak::View::from_raw(pane_host).safe_area_rect();
                     ak::View::from_raw(v).set_hidden(core::is_hidden(c));
-                    set_view_frame(v, rt::Rect { x: 0.0f64, y: 0.0f64,
-                                                 w: { b.w }, h: { b.h } });
+                    set_view_frame(v, b);
                     reposition_children(c, cf);
                     i = i +% (1 as usize);
                     continue;

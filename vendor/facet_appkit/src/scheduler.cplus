@@ -514,7 +514,15 @@ fn layout_window(root: *core::Node, force: bool = false) {
             // nowhere (the facade did), so the frame walk never sizes it.
             let rv: *u8 = core::view_of(root);
             if rv.is_not_null() {
-                geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
+                // A root whose view IS the window's content view (a sidebar
+                // split handed to the window as its content controller) is
+                // sized by the window, and its frame is in the FRAME VIEW's
+                // unflipped coordinates — writing a flipped, inset rect onto it
+                // moves the whole window content. The frame walk above still
+                // ran; only this one write is the window's, not ours.
+                if rv != content.raw() {
+                    geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
+                }
                 resettle_splits();
                 drain_place_jobs();
                 paint::end_assert();

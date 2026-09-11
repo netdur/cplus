@@ -12990,6 +12990,146 @@ fn a_roled_split_is_backed_by_a_controller_with_a_real_sidebar_item() {
     }
 }
 
+// A roled root split's controller must be the WINDOW's content controller —
+// the documented recipe leaves this implicit, and a controller hosted inside
+// facet's own content view gets the glass material and none of the treatment
+// (inset, full height, window controls on the sidebar). Two regressions ride
+// along: setting a content view controller resizes the window to the
+// controller's view (measured 408x100 for an 820x520 Chrome), and the old
+// `add_root_views` re-parented the new content view under the detached one
+// (an empty window).
+#[test]
+fn a_root_sidebar_split_becomes_the_windows_content_controller_at_the_chromes_size() {
+    backend::install();
+    app::reset_default_for_tests();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "side"));
+    b.add(core::column(core::Builder::new(), key: "main"));
+    var root: core::Node = split::split(b, key: "sp", position: 220.0f64);
+    let rp: *core::Node = #addr_of(root);
+    match split::from(rp) {
+        option::Option[split::Split]::Some(s) => {
+            let _r: split::Split = s.set_role(split::Pane::Leading, split::PaneRole::Sidebar);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "glass", width: 820.0f64, height: 520.0f64, bar: screen::Bar::Blended));
+    let w: ak::Window = ak::Window::from_raw(win);
+    let ctrl: *u8 = geom::controller_of_split(core::view_of(rp));
+    assert ctrl.is_not_null();
+    // The controller is the window's, and its view is the content view.
+    assert w.content_view_controller().raw() == ctrl;
+    // A sidebar implies a unified toolbar — that is what moves the window
+    // controls into the sidebar's glass and runs it to the top edge.
+    match w.toolbar() {
+        option::Option[ak::Toolbar]::Some(_tb) => { }
+        option::Option[ak::Toolbar]::None => { assert false; }
+    }
+    match w.toolbar_style() {
+        ak::WindowToolbarStyle::Unified => { }
+        _ => { assert false; }
+    }
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => {
+            assert cv.raw() == core::view_of(rp);
+            // ...and it is still in the window, at the size that was asked for.
+            let f: rt::Rect = cv.frame();
+            assert f.w > 819.0f64 && f.w < 821.0f64;
+            assert f.h > 519.0f64 && f.h < 521.0f64;
+            match cv.superview() {
+                option::Option[ak::View]::Some(_sv) => { }
+                option::Option[ak::View]::None => { assert false; }
+            }
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+static SIDEBAR_MOVES: i64 = 0 as i64;
+fn on_sidebar_moved(sender: *u8, ctx: *u8) { SIDEBAR_MOVES = SIDEBAR_MOVES + (1 as i64); return; }
+
+// `on_move` rode on the split view's delegate, and AppKit refuses a delegate on
+// a controller-managed split view. The notification route has to carry the
+// same two facts a drag carries on a plain split: the props learn the new
+// position, and the handler fires. `setPosition:ofDividerAtIndex:` posts the
+// same notification a drag does.
+#[test]
+fn a_controller_split_reports_a_divider_move_and_records_the_position() {
+    backend::install();
+    app::reset_default_for_tests();
+    SIDEBAR_MOVES = 0 as i64;
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "side"));
+    b.add(core::column(core::Builder::new(), key: "main"));
+    let h: fn(*u8, *u8) = on_sidebar_moved;
+    var root: core::Node = split::split(b, key: "sp", position: 220.0f64, on_move: h);
+    let rp: *core::Node = #addr_of(root);
+    match split::from(rp) {
+        option::Option[split::Split]::Some(s) => {
+            let _r: split::Split = s.set_role(split::Pane::Leading, split::PaneRole::Sidebar);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "glass", width: 820.0f64, height: 520.0f64, bar: screen::Bar::Blended));
+    // A real layout pass, so the split has an extent and its position has
+    // landed — before that a resize notification is AppKit's own division and
+    // is rightly ignored.
+    scheduler::layout_window(rp);
+    let sv: *u8 = geom::split_view_of(core::view_of(rp));
+    assert sv.is_not_null();
+    rt::msg_void_f64_i64(sv, rt::sel(#str_ptr("setPosition:ofDividerAtIndex:\0")), 400.0f64, 0 as i64);
+    assert SIDEBAR_MOVES >= (1 as i64);
+    match split::from(rp) {
+        option::Option[split::Split]::Some(s) => {
+            let at: f64 = s.position();
+            assert at > 390.0f64 && at < 410.0f64;
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// The control: a root with no role opens exactly as every window did before —
+// facet's own flipped content view, with the root's view INSIDE it.
+#[test]
+fn a_roleless_root_leaves_the_windows_content_view_alone() {
+    backend::install();
+    app::reset_default_for_tests();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "l"));
+    b.add(core::column(core::Builder::new(), key: "r"));
+    var root: core::Node = split::split(b, key: "sp", position: 220.0f64);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "plain", width: 820.0f64, height: 520.0f64));
+    assert geom::controller_of_split(core::view_of(rp)).is_null();
+    // ...and no toolbar the tree did not declare.
+    match ak::Window::from_raw(win).toolbar() {
+        option::Option[ak::Toolbar]::Some(_tb) => { assert false; }
+        option::Option[ak::Toolbar]::None => { }
+    }
+    match ak::Window::from_raw(win).content_view() {
+        option::Option[ak::View]::Some(cv) => {
+            assert cv.raw() != core::view_of(rp);
+            match ak::View::from_raw(core::view_of(rp)).superview() {
+                option::Option[ak::View]::Some(sv) => { assert sv.raw() == cv.raw(); }
+                option::Option[ak::View]::None => { assert false; }
+            }
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
 #[test]
 fn a_split_with_no_role_takes_the_path_it_always_took() {
     // The control that keeps every existing tree out of this: no role, no
