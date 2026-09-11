@@ -16980,7 +16980,7 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
 #[cfg(target_os = "macos")]
 fn c_consumer_reference_example_runs_clean() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     // CARGO_MANIFEST_DIR for this crate is `cpc/`. The reference example
     // lives at `<repo>/docs/examples/c_consumer/`.
     let example_root = manifest_dir
@@ -27831,4 +27831,530 @@ fn a_label_that_only_fits_another_type_is_an_error_not_a_value() {
         all.contains("E0308") && all.contains("`v`"),
         "expected a missing-argument error naming A's own parameter, got: {all}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 2026-09-11 memory-model review closures. The unit tests in
+// `cplus-core/src/borrowck.rs` exercise these rules on mocks; these run them
+// against the REAL stdlib shapes the reports were written from, because the
+// mock and the shipped `Vec` / `HashMap` / `Future` resolve through different
+// paths (a generic impl, a `#[keeps(this)]` on a `take T` position, a
+// coroutine frame) and a rule can hold for one and miss the other.
+// ---------------------------------------------------------------------------
+
+/// Build a one-module package that depends on stdlib, and report whether it
+/// compiled plus everything the compiler said. `cpc check` is not enough for
+/// the shapes below: a generic method's keeps flags resolve through the
+/// instantiated receiver type, which only a real build produces.
+fn try_build_stdlib_project(name: &str, main_src: &str) -> (bool, String) {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        format!("[package]\nname = \"{name}\"\n\n[dependencies]\nstdlib = \"*\"\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    symlink_dir(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/main.cplus"), main_src).unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    (out.status.success(), all)
+}
+
+const MM_IMPORTS: &str = "import \"stdlib/io\" as io;\n\
+     import \"stdlib/text\" as text;\n\
+     import \"stdlib/str\" as _;\n\
+     import \"stdlib/vec\" as vec;\n\
+     import \"stdlib/hash_map\" as hash_map;\n\
+     import \"stdlib/status\" as status;\n\
+     import \"stdlib/option\" as option;\n";
+
+/// bugs/temp-view-kept-by-callee.md — `names.append("item ${i}")` is the most
+/// common list-building line in the language and it was a heap-use-after-free:
+/// the interpolation's `Text` is a statement temporary, `Vec[str]` keeps the
+/// view it coerces to, and the tie site collects PLACES, which a temporary
+/// does not have.
+#[test]
+fn temporary_kept_by_a_stdlib_container_rejected_e0513() {
+    for (name, body) in [
+        (
+            "vec_of_str_interpolation",
+            "var names: vec::Vec[str] = vec::new::[str]();\n\
+             for i in 0..3 { let _s: status::Status = names.append(\"item ${i}\"); }\n",
+        ),
+        (
+            "vec_of_str_rvalue_text",
+            "let t: text::Text = \"item\".to_text();\n\
+             var names: vec::Vec[str] = vec::new::[str]();\n\
+             let _s: status::Status = names.append(t.clone());\n",
+        ),
+        (
+            "map_key_interpolation",
+            "var m: hash_map::HashMap[str, i32] = hash_map::new::[str, i32]();\n\
+             for i in 0..3 { let _s: status::Status = m.insert(\"k ${i}\", i); }\n",
+        ),
+    ] {
+        let (ok, out) = try_build_stdlib_project(
+            "mmtemp",
+            &format!("{MM_IMPORTS}fn main() -> i32 {{\n{body}return 0;\n}}\n"),
+        );
+        assert!(!ok, "[{name}] expected E0513, compiled instead:\n{out}");
+        assert!(
+            out.contains("E0513"),
+            "[{name}] expected E0513, got:\n{out}"
+        );
+    }
+}
+
+/// The same lines written the two sanctioned ways must keep compiling — a rule
+/// that rejects both spellings of a list has taken the feature away rather
+/// than fixed it.
+#[test]
+fn the_owned_and_named_spellings_of_a_kept_argument_still_build() {
+    for (name, body) in [
+        // Own the element: the `Text` is moved into the vec, nothing borrows.
+        (
+            "vec_of_text_owns_the_temporary",
+            "var names: vec::Vec[text::Text] = vec::new::[text::Text]();\n\
+             for i in 0..3 { let _s: status::Status = names.append(\"item ${i}\".to_text()); }\n\
+             io::println(\"${names.count()}\");\n",
+        ),
+        // Name the owner and keep it alive alongside the borrower.
+        (
+            "named_owner_outlives_the_vec",
+            "let t: text::Text = \"item\".to_text();\n\
+             var names: vec::Vec[str] = vec::new::[str]();\n\
+             let _s: status::Status = names.append(t.view());\n\
+             io::println(\"${names.count()}\");\n",
+        ),
+        // A literal's bytes are 'static; it may be kept by anything.
+        (
+            "literal_is_static_bytes",
+            "var names: vec::Vec[str] = vec::new::[str]();\n\
+             let _s: status::Status = names.append(\"item\");\n\
+             io::println(\"${names.count()}\");\n",
+        ),
+        // A temporary at a READING position is still fine — that exemption is
+        // what makes `println(\"x = ${n}\")` work and it must survive.
+        (
+            "temporary_at_a_reading_position",
+            "let n: i32 = 1;\n\
+             io::println(\"n = ${n}\");\n",
+        ),
+    ] {
+        let (ok, out) = try_build_stdlib_project(
+            "mmclean",
+            &format!("{MM_IMPORTS}fn main() -> i32 {{\n{body}return 0;\n}}\n"),
+        );
+        assert!(ok, "[{name}] must still compile, got:\n{out}");
+    }
+}
+
+/// bugs/tied-binding-returned-past-its-owner.md — "build a list of views over
+/// a local, return the list". The call-site tie was recorded; the RETURN sink
+/// read a different table and saw nothing.
+#[test]
+fn a_container_of_views_over_a_local_cannot_be_returned_e0513() {
+    for (name, body) in [
+        (
+            "vec_of_views_over_a_local",
+            "fn words() -> vec::Vec[str] {\n\
+             let t: text::Text = \"alpha beta\".to_text();\n\
+             var v: vec::Vec[str] = vec::new::[str]();\n\
+             let _s: status::Status = v.append(t.view());\n\
+             return v;\n\
+             }\n",
+        ),
+        (
+            "map_keyed_by_views_over_a_local",
+            "fn keys() -> hash_map::HashMap[str, i32] {\n\
+             let t: text::Text = \"alpha\".to_text();\n\
+             var m: hash_map::HashMap[str, i32] = hash_map::new::[str, i32]();\n\
+             let _s: status::Status = m.insert(t.view(), 1);\n\
+             return m;\n\
+             }\n",
+        ),
+    ] {
+        let (ok, out) = try_build_stdlib_project(
+            "mmret",
+            &format!("{MM_IMPORTS}{body}fn main() -> i32 {{ return 0; }}\n"),
+        );
+        assert!(!ok, "[{name}] expected E0513, compiled instead:\n{out}");
+        assert!(out.contains("E0513"), "[{name}] expected E0513, got:\n{out}");
+    }
+}
+
+/// The twin that must keep compiling: the same function whose owner is a bare
+/// PARAMETER. The caller guarantees those bytes past the return, and the
+/// caller's own tie to the result is what keeps that honest — refusing this
+/// would make "borrow from a parameter and hand back views" impossible.
+#[test]
+fn a_container_of_views_over_a_parameter_still_returns() {
+    let (ok, out) = try_build_stdlib_project(
+        "mmretok",
+        &format!(
+            "{MM_IMPORTS}fn words(t: text::Text) -> vec::Vec[str] {{\n\
+             var v: vec::Vec[str] = vec::new::[str]();\n\
+             let _s: status::Status = v.append(t.view());\n\
+             return v;\n\
+             }}\n\
+             fn main() -> i32 {{\n\
+             let owner: text::Text = \"alpha\".to_text();\n\
+             let v: vec::Vec[str] = words(owner);\n\
+             io::println(\"${{v.count()}}\");\n\
+             return 0;\n\
+             }}\n"
+        ),
+    );
+    assert!(ok, "must still compile, got:\n{out}");
+}
+
+/// bugs/async-borrow-gate-misses-receivers-and-bare-params.md — E0900 is a
+/// parameter-SHAPE gate, so it never saw the two by-pointer positions that
+/// are not parameters of the shapes it lists: a `this` / `ref this` receiver,
+/// and a bare non-Copy parameter. Both put a pointer to the caller's storage
+/// in a coroutine frame that outlives the call.
+#[test]
+fn a_future_returned_past_its_borrowed_storage_rejected_e0513() {
+    for (name, body) in [
+        // stdlib's own `TcpStream::read_async(ref this, ..)` has this shape.
+        (
+            "ref_this_receiver",
+            "struct C { n: i32 }\n\
+             impl C {\n\
+             async fn bump(ref this) -> i32 { await time::sleep(1); this.n = this.n + 1; return this.n; }\n\
+             }\n\
+             fn mk() -> future::Future[i32] { var c: C = C { n: 41 }; return c.bump(); }\n",
+        ),
+        (
+            "bare_non_copy_param",
+            "async fn show(t: text::Text) -> usize { await time::sleep(1); return t.count(); }\n\
+             fn mk() -> future::Future[usize] { let t: text::Text = \"abc\".to_text(); return show(t); }\n",
+        ),
+    ] {
+        let (ok, out) = try_build_stdlib_project(
+            "mmasync",
+            &format!(
+                "{MM_IMPORTS}import \"stdlib/time\" as time;\n\
+                 import \"stdlib/future\" as future;\n\
+                 {body}fn main() -> i32 {{ return 0; }}\n"
+            ),
+        );
+        assert!(!ok, "[{name}] expected E0513, compiled instead:\n{out}");
+        assert!(out.contains("E0513"), "[{name}] expected E0513, got:\n{out}");
+    }
+}
+
+/// The tie is a lifetime constraint, not a ban. Awaiting in the owner's own
+/// frame — the normal way every async program is written — must still build
+/// AND run, and moving or dropping the owner under a live future must be the
+/// ordinary borrow diagnostics rather than silence.
+#[test]
+fn an_async_borrow_is_tied_at_the_caller_not_forbidden() {
+    let (ok, out) = try_build_stdlib_project(
+        "mmasyncok",
+        &format!(
+            "{MM_IMPORTS}import \"stdlib/time\" as time;\n\
+             import \"stdlib/future\" as future;\n\
+             struct C {{ n: i32 }}\n\
+             impl C {{\n\
+             async fn bump(ref this) -> i32 {{ await time::sleep(1); this.n = this.n + 1; return this.n; }}\n\
+             }}\n\
+             async fn main() -> i32 {{\n\
+             var c: C = C {{ n: 41 }};\n\
+             let r: i32 = await c.bump();\n\
+             io::println(\"r = ${{r}}\");\n\
+             var d: C = C {{ n: 1 }};\n\
+             let f: future::Future[i32] = d.bump();\n\
+             let r2: i32 = await f;\n\
+             io::println(\"r2 = ${{r2}}\");\n\
+             return 0;\n\
+             }}\n"
+        ),
+    );
+    assert!(ok, "the in-frame await must still compile, got:\n{out}");
+
+    for (name, body, code) in [
+        (
+            "move_under_a_live_future",
+            "async fn show(t: text::Text) -> usize { await time::sleep(1); return t.count(); }\n\
+             fn consume(take t: text::Text) { return; }\n\
+             async fn main() -> i32 {\n\
+             let t: text::Text = \"abc\".to_text();\n\
+             let f: future::Future[usize] = show(t);\n\
+             consume(t);\n\
+             let r: usize = await f;\n\
+             io::println(\"r = ${r}\");\n\
+             return 0;\n\
+             }\n",
+            "E0372",
+        ),
+        (
+            "owner_dies_before_the_future",
+            "async fn show(t: text::Text) -> usize { await time::sleep(1); return t.count(); }\n\
+             async fn main() -> i32 {\n\
+             var f: future::Future[usize] = show(\"seed\".to_text());\n\
+             {\n\
+             let t: text::Text = \"abc\".to_text();\n\
+             f = show(t);\n\
+             }\n\
+             let r: usize = await f;\n\
+             io::println(\"r = ${r}\");\n\
+             return 0;\n\
+             }\n",
+            "E0514",
+        ),
+    ] {
+        let (ok, out) = try_build_stdlib_project(
+            "mmasyncbad",
+            &format!(
+                "{MM_IMPORTS}import \"stdlib/time\" as time;\n\
+                 import \"stdlib/future\" as future;\n\
+                 {body}"
+            ),
+        );
+        assert!(!ok, "[{name}] expected {code}, compiled instead:\n{out}");
+        assert!(out.contains(code), "[{name}] expected {code}, got:\n{out}");
+    }
+}
+
+/// bugs/headers-drop-computed-keeps-flows.md — a §5 keeps flow COMPUTED from a
+/// method body is not text, so stripping the body deleted it. The same program
+/// reported E0514 through `src/` and built clean (then dangled) through
+/// `lib/include/`, which is the normal path: vendor packages are consumed from
+/// `~/.cplus` store copies that carry headers.
+///
+/// The consumer is built, not just checked, because keeping a body in a header
+/// is only a fix if it still LINKS — the archive defines the same function.
+#[test]
+fn a_prebuilt_packages_computed_keeps_flow_survives_its_header() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+
+    // `set` keeps `s` in the receiver with no attribute — allowed in-tree
+    // because the flow pass reads the body. `get` and `new` keep nothing and
+    // must still be stripped, or this test would pass for the wrong reason.
+    const LIB: &str = "struct Label { name: str }\n\
+         fn new() -> Label { return Label { name: \"\" }; }\n\
+         impl Label {\n\
+         fn set(ref this, s: str) { this.name = s; return; }\n\
+         fn get(this) -> str { return this.name; }\n\
+         }\n";
+
+    let scaffold = |dir: &std::path::Path, main_src: &str| {
+        std::fs::create_dir_all(dir.join("vendor/kvpkg/src")).unwrap();
+        std::fs::write(
+            dir.join("vendor/kvpkg/Cplus.toml"),
+            "[package]\nname = \"kvpkg\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+             [dependencies]\nstdlib = \"*\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("vendor/kvpkg/src/label.cplus"), LIB).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("Cplus.toml"),
+            "[package]\nname = \"kvuser\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+             [dependencies]\nstdlib = \"*\"\nkvpkg = \"*\"\n",
+        )
+        .unwrap();
+        symlink_dir(
+            format!("{}/../vendor/stdlib", env!("CARGO_MANIFEST_DIR")),
+            dir.join("vendor/stdlib"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("src/main.cplus"), main_src).unwrap();
+    };
+
+    // 1. The header must carry the fact. `cpc headers` is the generator, so
+    //    ask it directly: the keeping body survives, the others do not.
+    let hdir = tempdir();
+    scaffold(&hdir, "fn main() -> i32 { return 0; }\n");
+    let out = Command::new(cpc)
+        .arg("headers")
+        .current_dir(hdir.join("vendor/kvpkg"))
+        .output()
+        .expect("invoke cpc headers");
+    assert!(
+        out.status.success(),
+        "cpc headers failed:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let header = std::fs::read_to_string(hdir.join("vendor/kvpkg/lib/include/label.cplus"))
+        .expect("read generated header");
+    assert!(
+        header.contains("fn set(ref this, s: str) { this.name = s; return; }"),
+        "the keeping body must survive — it is the only record of the flow:\n{header}"
+    );
+    assert!(
+        header.contains("fn get(this) -> str ;") && header.contains("fn new() -> Label ;"),
+        "bodies that carry no flow must still be stripped:\n{header}"
+    );
+
+    // 2. A consumer that lets the owner die under the borrow must be refused
+    //    THROUGH THE HEADER, exactly as it is through `src/`.
+    const BAD: &str = "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/str\" as _;\n\
+         import \"kvpkg/label\" as label;\n\
+         fn main() -> i32 {\n\
+         var l: label::Label = label::new();\n\
+         {\n\
+         let t: text::Text = \"item\".to_text();\n\
+         l.set(t.view());\n\
+         }\n\
+         io::println(\"name = ${l.get()}\");\n\
+         return 0;\n\
+         }\n";
+    let bdir = tempdir();
+    scaffold(&bdir, BAD);
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&bdir)
+        .output()
+        .expect("invoke cpc build");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "expected E0514 through the header:\n{all}");
+    assert!(all.contains("E0514"), "expected E0514 through the header:\n{all}");
+
+    // 3. The sound spelling must still build AND LINK. A header that keeps a
+    //    body ships a definition the archive also has; if that collided, the
+    //    fix would have traded a dangle for a duplicate symbol.
+    const GOOD: &str = "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/str\" as _;\n\
+         import \"kvpkg/label\" as label;\n\
+         fn main() -> i32 {\n\
+         let t: text::Text = \"item\".to_text();\n\
+         var l: label::Label = label::new();\n\
+         l.set(t.view());\n\
+         io::println(\"name = ${l.get()}\");\n\
+         return 0;\n\
+         }\n";
+    let gdir = tempdir();
+    scaffold(&gdir, GOOD);
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&gdir)
+        .output()
+        .expect("invoke cpc build");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "the sound spelling must build and link:\n{all}");
+}
+
+/// bugs/a-detached-future-outlives-the-storage-it-borrows.md — `spawn_local`
+/// hands the future to the reactor and returns, so the borrows the future
+/// carries have to outlive every frame. The tie an async call establishes is
+/// released when the future MOVES, which is right for `Future::wait(take
+/// this)` and wrong for a consumer that detaches; nothing distinguished them.
+#[test]
+fn a_detached_task_borrowing_a_local_rejected_e0513() {
+    const IMPORTS: &str = "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/str\" as _;\n\
+         import \"stdlib/time\" as time;\n\
+         import \"stdlib/future\" as future;\n\
+         import \"stdlib/executor\" as executor;\n\
+         async fn borrows(t: text::Text) -> usize { await time::sleep(1); return t.count(); }\n";
+
+    for (name, body) in [
+        (
+            "temporary_future",
+            "async fn main() -> i32 {\n\
+             {\n\
+             let t: text::Text = \"abc\".to_text();\n\
+             executor::spawn_local::[usize](borrows(t));\n\
+             }\n\
+             await time::sleep(20);\n\
+             return 0;\n\
+             }\n",
+        ),
+        (
+            "named_future",
+            "async fn main() -> i32 {\n\
+             {\n\
+             let t: text::Text = \"abc\".to_text();\n\
+             let f: future::Future[usize] = borrows(t);\n\
+             executor::spawn_local::[usize](f);\n\
+             }\n\
+             await time::sleep(20);\n\
+             return 0;\n\
+             }\n",
+        ),
+        // The fixpoint half: `facet::spawn_ui` is this shape, so a user
+        // wrapper has to inherit the fact or the check stops at stdlib's edge.
+        (
+            "through_a_user_wrapper",
+            "fn spawn_ui[T: Send](take f: future::Future[T]) { executor::spawn_local::[T](f); return; }\n\
+             async fn main() -> i32 {\n\
+             {\n\
+             let t: text::Text = \"abc\".to_text();\n\
+             spawn_ui::[usize](borrows(t));\n\
+             }\n\
+             await time::sleep(20);\n\
+             return 0;\n\
+             }\n",
+        ),
+    ] {
+        let (ok, out) = try_build_stdlib_project("mmdetach", &format!("{IMPORTS}{body}"));
+        assert!(!ok, "[{name}] expected E0513, compiled instead:\n{out}");
+        assert!(out.contains("E0513"), "[{name}] expected E0513, got:\n{out}");
+    }
+}
+
+/// The controls. A task that OWNS what it touches is the whole point of
+/// `spawn_local`, and a wrapper forwarding a `take` parameter is a move, not
+/// an escape — the first draft of this rule rejected `facet::spawn_ui` itself.
+#[test]
+fn a_detached_task_that_owns_its_data_still_builds_and_runs() {
+    let (ok, out) = try_build_stdlib_project(
+        "mmdetachok",
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/str\" as _;\n\
+         import \"stdlib/time\" as time;\n\
+         import \"stdlib/future\" as future;\n\
+         import \"stdlib/executor\" as executor;\n\
+         async fn owns(take t: text::Text) -> usize {\n\
+         await time::sleep(30);\n\
+         let v: str = t.view();\n\
+         io::println(\"saw = ${v}\");\n\
+         return v.count();\n\
+         }\n\
+         async fn nothing() -> i32 { await time::sleep(10); return 1; }\n\
+         fn spawn_ui[T: Send](take f: future::Future[T]) { executor::spawn_local::[T](f); return; }\n\
+         async fn main() -> i32 {\n\
+         {\n\
+         let t: text::Text = \"abcdefgh\".to_text();\n\
+         spawn_ui::[usize](owns(t));\n\
+         }\n\
+         executor::spawn_local::[i32](nothing());\n\
+         let filler: text::Text = \"ZZZZZZZZZZZZZZZZ\".to_text();\n\
+         io::println(\"filler = ${filler.view()}\");\n\
+         await time::sleep(120);\n\
+         io::println(\"done\");\n\
+         return 0;\n\
+         }\n",
+    );
+    assert!(ok, "the owned spelling must still compile:\n{out}");
 }

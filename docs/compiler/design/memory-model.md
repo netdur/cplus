@@ -71,6 +71,51 @@ view (`Sink{key} → box::new → into_raw() -> *u8`). `#[keeps(nothing)]`
 opts out, and a fn whose computed flow is empty (a copying constructor)
 ties nothing, no declaration needed.
 
+**A DETACHING ARGUMENT is a third sink** (2026-09-11). §3.1 listed two places
+a view can escape to — a `static` and a `ref` target — and both are WRITE
+targets with a type to inspect. `executor::spawn_local(take f)` is neither: it
+hands the value to the reactor and returns, so the value outlives every frame
+from there to the end of the program, and the escape happens at an ARGUMENT.
+Nor does the escaping value look like a borrow — a `Future[T]` is a
+raw-pointer struct that happens to hold everything its `async fn` took by
+pointer, so no type-driven rule sees it.
+
+This needs no declaration. `spawn_local`'s body is readable; it just ends at
+`#reactor_spawn_local`, an intrinsic the flow pass treated as neutral. Knowing
+what its own intrinsics do with an argument is the compiler's job, the same
+way it already knows their signatures, so `computed_detaches` is computed like
+every other flow — and transitively, because `facet::spawn_ui` forwards to
+`spawn_local` and its callers have to be checked too.
+
+What it is NOT is "moving a borrower into a `take` position escapes":
+`Future::wait(take this)` is a `take` position and is how every future is
+normally consumed. Nor does a forward count — a wrapper handing on the `take`
+parameter it owns is a move, judged by the same moved-out filter `check_return`
+applies to `return out;`.
+
+**`cpc headers` is one, and the list above did not name it** (2026-09-11).
+Header generation replaces a concrete module's bodies with `;`. A DECLARED
+`#[keeps(this)]` is text and survives; a COMPUTED flow is not, so it was
+deleted — a consumer resolving the package through `lib/include/` computed an
+empty flow and tied nothing, while the same consumer resolving it through
+`src/` reported E0514. Since vendor packages are consumed from `~/.cplus`
+store copies that carry headers, that was the normal path.
+
+The resolution is not a new declaration but the rule the generator already
+applies to generics and coroutines: **when a body is the only record of a
+fact, the body ships.** `cpc headers` keeps the body of any item whose
+computed flow lands on a position that is actually a borrow — a view-typed or
+`ref` parameter — and strips everything else as before. This is cheap because
+such sites are rare: across the 166 modules of stdlib, facet, facet_appkit,
+terminal and events there are none. What the flow pass finds in bulk is Copy
+values stored into a receiver (`grow_to(ref this, new_cap: usize)`), which tie
+nothing and are filtered out.
+
+Translating the flow into an attribute instead is not available today:
+`#[keeps(...)]` takes only `this` or `nothing`, so it cannot name WHICH
+parameter is kept, and it has no free-function form for the
+`(src → ref dst)` flows at all.
+
 ## 4. Out of contract
 
 Tracking stops, by design, at three boundaries. Code behind them is the

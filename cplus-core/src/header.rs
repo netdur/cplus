@@ -95,12 +95,18 @@ fn bodies_must_ship(p: &Program) -> bool {
 
 /// Text replacements turning the module into its header form, as
 /// `(start, end, text)` half-open byte ranges, sorted and non-overlapping.
-fn replacements(src: &str, p: &Program) -> Vec<(usize, usize, &'static str)> {
+fn replacements(
+    src: &str,
+    p: &Program,
+    keep_bodies_at: &std::collections::BTreeSet<u32>,
+) -> Vec<(usize, usize, &'static str)> {
     let mut out = Vec::new();
     for item in &p.items {
         match &item.kind {
             ItemKind::Function(f) => {
-                if f.is_extern && f.is_pub && !f.is_declaration {
+                if keep_bodies_at.contains(&f.name.span.start) {
+                    // A body that CARRIES A FACT — see `generate_with_flows`.
+                } else if f.is_extern && f.is_pub && !f.is_declaration {
                     // `export extern fn X(...) { body }` — a C-ABI export
                     // DEFINITION. Its header form is the import declaration
                     // `extern fn X(...);`: the consumer must call the
@@ -125,7 +131,7 @@ fn replacements(src: &str, p: &Program) -> Vec<(usize, usize, &'static str)> {
             }
             ItemKind::Impl(b) => {
                 for m in &b.methods {
-                    if !m.is_declaration {
+                    if !m.is_declaration && !keep_bodies_at.contains(&m.name.span.start) {
                         out.push((m.body.span.start as usize, m.body.span.end as usize, ";"));
                     }
                 }
@@ -172,6 +178,39 @@ fn export_kw_span(src: &str, name_start: usize) -> Option<(usize, usize)> {
 ///
 /// Returns the header text and which rule was applied.
 pub fn generate(src: &str) -> Result<(String, HeaderKind), HeaderError> {
+    generate_with_flows(src, &std::collections::BTreeSet::new())
+}
+
+/// `generate`, plus the byte offsets of item NAMES whose bodies must survive
+/// because they carry a memory-model fact nothing else records.
+///
+/// The contract (docs/compiler/design/memory-model.md §3, §5) says a §5 flow
+/// is COMPUTED from the body where the body is readable and must be DECLARED
+/// where it is not. `cpc headers` creates an opaque boundary that was not on
+/// that list: a declared `#[keeps(this)]` is text and survives the strip, but
+/// a computed flow is not text, and the generator had no notion of one. A
+/// consumer compiling against `lib/include/` therefore saw a body-less
+/// declaration, computed an empty flow, and tied nothing — the same program
+/// built against `src/` reported E0514 and the header build was clean and
+/// dangled. bugs/headers-drop-computed-keeps-flows.md
+///
+/// The fix is the one the module already uses for generics and coroutines:
+/// when a body is the only place a fact lives, the body ships. The
+/// alternative — translating the flow into an attribute — cannot be written
+/// down today: `#[keeps(...)]` takes only `this` or `nothing`, so it cannot
+/// say WHICH parameter is kept, and has no free-function form at all for the
+/// `(src -> ref dst)` flows.
+///
+/// It is cheap because the sites are rare: across all 166 modules of stdlib,
+/// facet, facet_appkit, terminal and events, ZERO methods compute a keep at a
+/// position that is actually a borrow (measured 2026-09-11). What the flow
+/// pass does find in bulk is Copy values stored into a receiver —
+/// `grow_to(ref this, new_cap: usize)` — and those tie nothing, which is why
+/// `computed_flow_sites` filters to view-typed and `ref` positions.
+pub fn generate_with_flows(
+    src: &str,
+    keep_bodies_at: &std::collections::BTreeSet<u32>,
+) -> Result<(String, HeaderKind), HeaderError> {
     let toks = tokenize(src).map_err(|e| HeaderError::Lex(format!("{e:?}")))?;
     let program = parse(toks).map_err(|e| HeaderError::Parse(format!("{e:?}")))?;
 
@@ -179,7 +218,7 @@ pub fn generate(src: &str) -> Result<(String, HeaderKind), HeaderError> {
         return Ok((src.to_string(), HeaderKind::VerbatimGeneric));
     }
 
-    let spans = replacements(src, &program);
+    let spans = replacements(src, &program, keep_bodies_at);
     if spans.is_empty() {
         return Ok((src.to_string(), HeaderKind::Stripped));
     }
@@ -255,6 +294,41 @@ mod tests {
     }
 
     // Generics cannot cross a precompiled boundary, so their bodies must ship.
+    #[test]
+    fn a_body_that_carries_a_computed_flow_is_kept_and_its_siblings_are_not() {
+        // bugs/headers-drop-computed-keeps-flows.md. The generator is handed
+        // the sites by the driver (which computes them package-wide); what is
+        // pinned here is that a listed site keeps its body, an unlisted one
+        // does not, and the result still parses back as a module.
+        let src = "struct Label { name: str }\n             impl Label {\n             fn set(ref this, s: str) { this.name = s; return; }\n             fn get(this) -> str { return this.name; }\n             }\n";
+        let set_at = src.find("set(").unwrap() as u32;
+        let sites: std::collections::BTreeSet<u32> = [set_at].into_iter().collect();
+        let (out, kind) = generate_with_flows(src, &sites).expect("generate");
+        assert_eq!(kind, HeaderKind::Stripped);
+        assert!(
+            out.contains("fn set(ref this, s: str) { this.name = s; return; }"),
+            "the flow-carrying body must survive: {out}"
+        );
+        assert!(
+            out.contains("fn get(this) -> str ;"),
+            "a body that carries no flow must still be stripped: {out}"
+        );
+        let toks = tokenize(&out).expect("header lexes");
+        parse(toks).expect("header parses");
+    }
+
+    #[test]
+    fn with_no_flow_sites_the_output_is_the_plain_stripped_header() {
+        // The control: `generate` is `generate_with_flows` with an empty set,
+        // so every existing caller must be byte-for-byte unchanged.
+        let src = "struct Label { name: str }\n             impl Label {\n             fn set(ref this, s: str) { this.name = s; return; }\n             }\n";
+        let (plain, _) = generate(src).expect("generate");
+        let (empty, _) =
+            generate_with_flows(src, &std::collections::BTreeSet::new()).expect("generate");
+        assert_eq!(plain, empty);
+        assert!(plain.contains("fn set(ref this, s: str) ;"), "{plain}");
+    }
+
     #[test]
     fn a_module_with_a_gen_fn_is_emitted_verbatim() {
         // A coroutine ramp is emitted with INTERNAL linkage, so a body-less

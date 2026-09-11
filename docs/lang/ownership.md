@@ -79,6 +79,18 @@ are the highest-traffic borrow in the language, with three rules:
    f("x = ${n}");                   // an ARGUMENT's temp outlives its call — fine
    ```
 
+   "Fine at an argument" holds while the callee only **reads**. A callee that
+   **keeps** what it is handed stores a pointer into that temporary, and the
+   temporary is freed at the `;`:
+
+   ```cplus
+   let _s = names.append("item ${i}");   // E0513 — Vec[str] keeps the view
+   let owner: Text = "item ${i}".to_text();
+   let _s = names.append(owner.view());  // name the owner…
+   var names: Vec[Text] = vec::new::[Text]();
+   let _s = names.append("item ${i}".to_text());   // …or own the element
+   ```
+
 2. **While a view lives, the owner is write-locked.** Reads stay fine;
    mutating, moving, or dropping the owner is rejected. The borrow ends at
    the view's **last use**, not scope end, so use-then-append compiles:

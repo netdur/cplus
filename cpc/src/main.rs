@@ -4481,6 +4481,76 @@ struct HeaderRun {
     verbatim: usize,
 }
 
+/// The item names in each module whose BODY has to survive header generation
+/// because it is the only record of a memory-model §5 flow.
+///
+/// Answered twice and unioned. The per-file pass is exact for a flow whose
+/// whole path is inside one module. The merged pass parses every module of
+/// the package into one program, which is what lets a wrapper reach a keeping
+/// method in a SIBLING module: names are still unqualified there, and
+/// `base_type_name` drops the `other::` prefix off a declared type, so the
+/// receiver resolves. The merge can collide two same-named items from
+/// different modules, and the union is why that can only ever ADD a kept
+/// body, never remove one the per-file pass found.
+///
+/// A file that fails to lex or parse contributes nothing and is left to the
+/// real compile to report.
+fn package_flow_sites(
+    entries: &[PathBuf],
+) -> std::collections::BTreeMap<PathBuf, std::collections::BTreeSet<u32>> {
+    use cplus_core::lexer::{intern_file, tokenize, tokenize_with_file};
+    let mut out: std::collections::BTreeMap<PathBuf, std::collections::BTreeSet<u32>> =
+        std::collections::BTreeMap::new();
+
+    // Pass 1 — each module on its own. Spans carry no file id here, which is
+    // fine: the answer is already scoped to the file it came from.
+    for path in entries {
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(toks) = tokenize(&src) else { continue };
+        let Ok(prog) = cplus_core::parser::parse(toks) else {
+            continue;
+        };
+        let sites: std::collections::BTreeSet<u32> =
+            cplus_core::borrowck::computed_flow_sites(&prog)
+                .into_iter()
+                .map(|s| s.start)
+                .collect();
+        if !sites.is_empty() {
+            out.entry(path.clone()).or_default().extend(sites);
+        }
+    }
+
+    // Pass 2 — the whole package as one program, with file-stamped spans so
+    // each site can be attributed back to the module it came from.
+    let mut merged = cplus_core::ast::Program {
+        imports: Vec::new(),
+        items: Vec::new(),
+    };
+    let mut by_id: std::collections::BTreeMap<u32, PathBuf> = std::collections::BTreeMap::new();
+    for path in entries {
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
+        };
+        let id = intern_file(&path.to_string_lossy());
+        let Ok(toks) = tokenize_with_file(&src, id) else {
+            continue;
+        };
+        let Ok(prog) = cplus_core::parser::parse(toks) else {
+            continue;
+        };
+        by_id.insert(id, path.clone());
+        merged.items.extend(prog.items);
+    }
+    for span in cplus_core::borrowck::computed_flow_sites(&merged) {
+        if let Some(path) = by_id.get(&span.file) {
+            out.entry(path.clone()).or_default().insert(span.start);
+        }
+    }
+    out
+}
+
 /// Generate `lib/include/` from `src/` for the package rooted at `root`.
 ///
 /// Split out of `run_headers` because `prebuild` needs the same pass: an
@@ -4502,11 +4572,15 @@ fn generate_headers_for(root: &Path) -> Result<HeaderRun, String> {
         .collect();
     entries.sort();
 
+    let keep_sites = package_flow_sites(&entries);
+    let empty = std::collections::BTreeSet::new();
+
     let (mut stripped, mut verbatim) = (0usize, 0usize);
     for path in &entries {
         let src =
             fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-        let (text, kind) = cplus_core::header::generate(&src)
+        let sites = keep_sites.get(path).unwrap_or(&empty);
+        let (text, kind) = cplus_core::header::generate_with_flows(&src, sites)
             .map_err(|e| format!("{}: {e}", path.display()))?;
         let Some(name) = path.file_name() else {
             continue;

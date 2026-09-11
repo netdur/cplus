@@ -1443,7 +1443,7 @@ fn main() -> i32 { return 0; }
 
 ### E0513 · Returning a `str` / `T[]` view of a local that drops
 
-A `str` / `T[]` view is rooted at storage with no lifetime long enough for it. Two shapes. (1) The owner is a function-local non-Copy value and the view escapes the frame — returned directly, returned inside an aggregate (a struct with a `str` field CARRIES the view's borrow, including when built through a call like `store(local.view(), ..)` or returned via an alias), or stored into a place that outlives the frame (a `static`, or a `ref` target); the local is freed at return, so the escaped view would dangle. (2) The owner is a TEMPORARY nothing names — `let s: str = mk().view();`, the `Text`->`str` coercion of an rvalue (`let s: str = t.clone();`, `let s: str = "x ${i}";`), or either of those captured into an aggregate a binding keeps (`Slot { s: mk().view() }`). A temporary is an anonymous slot of the statement; a binding that outlives it has nothing to borrow from. The same temporary at an ARGUMENT position is fine — it outlives the call.
+A `str` / `T[]` view is rooted at storage with no lifetime long enough for it. Two shapes. (1) The owner is a function-local non-Copy value and the view escapes the frame — returned directly, returned inside an aggregate (a struct with a `str` field CARRIES the view's borrow, including when built through a call like `store(local.view(), ..)` or returned via an alias), or stored into a place that outlives the frame (a `static`, or a `ref` target); the local is freed at return, so the escaped view would dangle. (2) The owner is a TEMPORARY nothing names — `let s: str = mk().view();`, the `Text`->`str` coercion of an rvalue (`let s: str = t.clone();`, `let s: str = "x ${i}";`), or either of those captured into an aggregate a binding keeps (`Slot { s: mk().view() }`). A temporary is an anonymous slot of the statement; a binding that outlives it has nothing to borrow from. A temporary at an ARGUMENT position is fine only while the callee READS it: a callee that KEEPS the position — `#[keeps(this)]` like `Vec[str]::append` / `HashMap[str, _]::insert`, a computed store flow, or a wrapper storing through a `ref` parameter — stores a pointer into a slot the statement frees at the `;`. (3) The value is handed to a callee that DETACHES it — `executor::spawn_local`, which gives the future to the reactor and returns — and it borrows storage this frame frees. A `Future[T]` holds whatever its `async fn` took by pointer, so this one is not visible in the type at all.
 
 ```cplus
 extern fn malloc(n: usize) -> *u8;
@@ -1460,9 +1460,9 @@ fn bad() -> str {
 }
 ```
 
-**Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. For a temporary owner, give it a name first — `let owner: Text = mk(); let s: str = owner.view();` — or keep the binding owned. Literal-backed views ('static bytes) escape freely.
+**Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. For a temporary owner, give it a name first — `let owner: Text = mk(); let s: str = owner.view();` — or keep the binding owned. At a kept argument the same two spellings apply: name the owner (`let owner: Text = "item ${i}".to_text(); names.append(owner.view());`) or own the element (`Vec[Text]` rather than `Vec[str]`). Literal-backed views ('static bytes) escape freely.
 
-<sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules: check_return / flag_view_leaves / check_view_of_temp / check_view_of_rvalue_owner / check_captured_view_of_temp / check_store_escape) · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
+<sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules: check_return / flag_view_leaves / check_view_of_temp / check_view_of_rvalue_owner / check_captured_view_of_temp / check_store_escape / check_kept_arg_is_not_a_temporary / check_detached_arg) · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
 
 ### E0514 · Owner goes out of scope while a view of it is still live
 
@@ -2117,6 +2117,8 @@ An `async fn` parameter is borrow-shaped (`str` / `T[]`) or a `ref`-bound non-Co
 ```cplus
 struct Future[T] { opaque handle: *u8 } async fn fetch(url: str) -> i32 { return 0 as i32; }
 ```
+
+*Two by-pointer positions this gate does NOT refuse are a BARE non-Copy parameter and a `this` / `ref this` receiver. Those stay legal because they are ties rather than errors: the coroutine frame borrows the caller's storage, so the caller must keep the owner alive for as long as it holds the future. Moving the owner is E0372, letting it die first is E0514, and returning the future past it is E0513.*
 
 **Fix.** Use `Text` / `Vec[T]` instead of `str` / `T[]`, or `take` ownership in / bind locally instead of `ref`.
 
