@@ -81,9 +81,11 @@ fn wrap(take tree: core::Node, key: str) -> core::Node {
     // The screen does not have to ask for this and must not have to: filling
     // the window is what being the window's screen MEANS. An app that wants
     // less says so inside its own tree.
+    // Through the DSL's own grouping node, not only onto it: `@ui { … }`
+    // finishes as an unkeyed bare container, and stopping here left the
+    // screen's actual content sized to itself. See `core::fill_as_window_root`.
     var filled: core::Node = tree;
-    filled.set_grow(1.0f64);
-    filled.set_shrink(1.0f64);
+    core::fill_as_window_root(#addr_of(filled));
     b.add(filled);
     var w: core::Node = core::column(b, key: key);
     w.set_grow(1.0f64);
@@ -892,5 +894,28 @@ fn a_screen_that_wants_the_safe_area_still_gets_it() {
     var host_node: core::Node = open_base(screen_root);
     assert host_node.safe_area() == want;
     assert core::honours_safe_area(#addr_of(host_node));
+    st_reset();
+}
+
+#[test]
+fn open_base_fills_through_a_dsl_grouping_to_the_screens_own_content() {
+    // The App route's half of the same rule. `wrap` set grow on whatever the
+    // screen returned, which under `@ui { … }` is the DSL's unkeyed grouping —
+    // so the wrapper filled and the screen's actual content still sized itself.
+    // A llama workspace whose `build()` returns a split this way had a sidebar
+    // that never reached the bottom of the window.
+    st_reset();
+    var kids: flex::Builder = flex::Builder::new();
+    kids.add(core::column(flex::Builder::new(), key: "workspace:split"));
+    var screen_root: core::Node = kids.finish();
+    var host_node: core::Node = open_base(screen_root);
+    host_node.calculate_layout(width: 1120.0f64, height: 740.0f64);
+    match core::find_in(#addr_of(host_node), "workspace:split") {
+        option::Option[*core::Node]::Some(c) => {
+            assert core::height_of(c) == 740.0f64;
+            assert core::width_of(c) == 1120.0f64;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
     st_reset();
 }

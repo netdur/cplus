@@ -297,6 +297,11 @@ fn drain_detach_queue(ref q: vec::Vec[*core::Node]) {
 fn mount(root: *core::Node) -> bool {
     if !installed() { return false; }
     if root.is_null() { return false; }
+    // A window's root fills its window, and so does the first thing inside it
+    // that draws — `run_component` hands the component's tree straight here,
+    // so this is the only place that holds for every host. See
+    // `core::fill_as_window_root`.
+    core::fill_as_window_root(root);
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     let _slots: usize = mount_walk(root, 0 as *u8, 0 as usize, q);
     app::open_window(root);
@@ -1959,4 +1964,72 @@ fn realise_is_inert_with_no_backend() {
     assert realise(#addr_of(n)) == (0 as *u8);
     assert realise(0 as *core::Node) == (0 as *u8);
     unrealise(0 as *core::Node);
+}
+
+#[test]
+fn a_grouping_root_passes_the_windows_fill_to_what_is_inside_it() {
+    // `@ui { … }` finishes as an UNKEYED bare container — a grouping, which no
+    // backend gives a view — so the window hosts what is INSIDE it, and flex
+    // was then sizing that to its own content. A split holding placeholder
+    // panes has no content, so it came out 0 tall in a 520pt window: measured
+    // on macOS 26 as an NSSplitView at (0,-66,820,66) with AppKit warning of
+    // "an ambiguous layout", and reported as a sidebar not taking full height.
+    fr_reset();
+    install(fr_renderer());
+    var kids: core::Builder = core::Builder::new();
+    kids.add(fr_leaf("pane"));
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(kids, key: "content"));
+    var root: core::Node = b.finish();
+    assert core::is_grouping(#addr_of(root));
+    assert mount(#addr_of(root));
+    root.calculate_layout(width: 820.0f64, height: 520.0f64);
+    match core::find_in(#addr_of(root), "content") {
+        option::Option[*core::Node]::Some(c) => {
+            assert core::height_of(c) == 520.0f64;
+            assert core::width_of(c) == 820.0f64;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    uninstall();
+}
+
+#[test]
+fn a_grouping_holding_siblings_is_a_column_the_author_wrote_and_keeps_their_sizes() {
+    // The fill passes through a grouping because the author did not write it.
+    // Two children means they DID write a column, and stretching both to the
+    // window would halve a window the app meant to stack things down.
+    fr_reset();
+    install(fr_renderer());
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "top").height(40.0f64));
+    b.add(core::column(core::Builder::new(), key: "bottom").height(40.0f64));
+    var root: core::Node = b.finish();
+    assert mount(#addr_of(root));
+    root.calculate_layout(width: 820.0f64, height: 520.0f64);
+    match core::find_in(#addr_of(root), "top") {
+        option::Option[*core::Node]::Some(c) => { assert core::height_of(c) == 40.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    uninstall();
+}
+
+#[test]
+fn a_keyed_root_is_the_window_itself_and_the_fill_stops_there() {
+    // A root the author keyed IS backed, so the window hosts it directly and
+    // there is nothing to pass through: its children keep the sizes they asked
+    // for, exactly as they did before the grouping rule existed.
+    fr_reset();
+    install(fr_renderer());
+    var kids: core::Builder = core::Builder::new();
+    kids.add(core::column(core::Builder::new(), key: "inner").height(30.0f64));
+    var root: core::Node = core::column(kids, key: "root");
+    assert core::is_grouping(#addr_of(root)) == false;
+    assert mount(#addr_of(root));
+    root.calculate_layout(width: 820.0f64, height: 520.0f64);
+    match core::find_in(#addr_of(root), "inner") {
+        option::Option[*core::Node]::Some(c) => { assert core::height_of(c) == 30.0f64; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    uninstall();
 }

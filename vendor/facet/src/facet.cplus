@@ -1647,6 +1647,55 @@ fn child_of(n: *Node, at: usize) -> option::Option[*Node] {
     return { (*n).child_ptr(at) };
 }
 
+// A GROUPING, not a box: a bare container carrying no key. `@ui { … }`
+// finishes as exactly this — `Builder::finish` hands back the block's own
+// node, and the block never names itself — and no backend gives one a view
+// (facet_appkit/views.cplus `has_body`: a K_NODE is backed only once it is
+// keyed, or asks for pixels, input or a menu). It exists to hold children.
+fn is_grouping(n: *Node) -> bool {
+    if n.is_null() { return false; }
+    return kind_of(n) == K_NODE && { (*n).key() } == "";
+}
+
+// THE FILL A WINDOW ROOT OWES ITS CONTENT, pushed past the groupings on the
+// way down.
+//
+// `stack::wrap` already states the rule one level up: filling the window is
+// what being the window's screen MEANS, and a screen must not have to ask for
+// it. The DSL put a node in between. A tree written `@ui { split(…) { … } }`
+// arrives as grouping(split), the window hosts the split — the grouping has no
+// view to host — and flex then sizes the split as that grouping's column
+// child: its content height. Panes that are placeholders have no content, so
+// the split came out 0 tall in a 520pt window. Measured (0,0,820,0), with
+// AppKit warning that the NSSplitView inside it had "an ambiguous layout",
+// which is what a sidebar reported as "not taking full height".
+//
+// The author wrote no grouping and should not have to defeat one, so the fill
+// passes through to the first thing that will actually draw. A grouping with
+// SIBLINGS is a column the author did write, and is left alone.
+fn fill_as_window_root(n: *Node) {
+    var cur: *Node = n;
+    var depth: usize = 0 as usize;
+    // The flex style DIRECTLY, not through `set_grow`/`set_shrink`: those mark
+    // the node dirty for a sync, and this runs before the tree has a backend
+    // to sync to. The dirty bit survived the mount walk and the next sync then
+    // applied a node nothing had written — caught by
+    // `mount::touch_requests_sync_and_sync_applies_only_dirty`, which counts
+    // exactly how many nodes a sync touches.
+    while cur.is_not_null() && depth < (16 as usize) {
+        { (*cur).set_flex_grow(1.0f64) };
+        { (*cur).set_flex_shrink(1.0f64) };
+        if !is_grouping(cur) { return; }
+        if { (*cur).child_count() } != (1 as usize) { return; }
+        match child_of(cur, 0 as usize) {
+            option::Option[*Node]::Some(k) => { cur = k; }
+            option::Option[*Node]::None => { return; }
+        }
+        depth = depth +% (1 as usize);
+    }
+    return;
+}
+
 // ---- what the platform learns first -----------------------------------------
 // facet declares the read; a backend writes it. These three setters are the
 // write path back into a node's state, and the only ones a backend needs.
