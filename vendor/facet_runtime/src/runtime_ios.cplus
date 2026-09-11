@@ -265,6 +265,15 @@ fn run_component[C: component::Component + component::Lifecycle](
     zoomable: bool = false,
     min_zoom: f64 = 1.0f64,
     max_zoom: f64 = 4.0f64,
+    // The BAR, forwarded for the same reason as the zoom trio above and
+    // discovered the same way. A `split` whose leading pane is
+    // `PaneRole::Sidebar` only looks like the platform's own sidebar when the
+    // window is full-size-content with its title hidden — on macOS that is
+    // what puts the sidebar against the top of the window and the traffic
+    // lights on top of it. `Bar::Blended` already says exactly that, and
+    // `run_component` could not reach it, so the simple entry could ask for a
+    // sidebar and never get the thing that makes one look right.
+    bar: screen::Bar = screen::Bar::Native,
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> C {
     backend::install();
