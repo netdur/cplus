@@ -239,6 +239,35 @@ fn controller_of_split(v: *u8) -> *u8 {
     return { synth::get_associated(v, split_controller_key()) };
 }
 
+// The controller of a sidebar split that IS this window's content, found down
+// the tree's SPINE.
+//
+// `run_component` hands its component's node straight to the window, so the
+// split is the root. The App/route path wraps every screen in a stack host so
+// `nav::push` has somewhere to push (`stack::open_base`), and wraps the screen
+// again inside it — so the same split is two levels down. Both are the window's
+// content; only the spelling differs.
+//
+// The walk descends only through a node with EXACTLY ONE child. That is what
+// makes it a spine: a split sharing a parent with siblings is a pane of
+// something else, not the window's content, and must not take the window's
+// chrome with it.
+fn spine_sidebar_controller(root: *core::Node) -> *u8 {
+    var n: *core::Node = root;
+    var depth: usize = 0 as usize;
+    while n.is_not_null() && depth < (8 as usize) {
+        let c: *u8 = controller_of_split(core::view_of(n));
+        if c.is_not_null() { return c; }
+        if core::child_count_of(n) != (1 as usize) { return 0 as *u8; }
+        match core::child_of(n, 0 as usize) {
+            option::Option[*core::Node]::Some(k) => { n = k; }
+            option::Option[*core::Node]::None => { return 0 as *u8; }
+        }
+        depth = depth +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
 // The NSSplitView behind a split node's view.
 //
 // A plain split IS its view. A controller-backed one is NOT: an

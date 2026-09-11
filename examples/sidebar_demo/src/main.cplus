@@ -1,0 +1,154 @@
+// sidebar_demo — a window with the platform's own sidebar.
+//
+// WHAT MAKES IT A SIDEBAR, and it is all of it:
+//
+//   1. the leading pane of a `split` declares `role_leading: PaneRole::Sidebar`
+//   2. the window asks for `Bar::Blended`
+//
+// (1) is portable vocabulary: every backend reads the role and honours what it
+// can, so this tree runs anywhere. (2) lets content run under the title bar,
+// which is what lets the sidebar reach the top of the window and the window
+// buttons sit inside it.
+//
+// TO GET AN ORDINARY WINDOW, take either one away:
+//
+//   * drop the `role_leading` argument and the split is facet's own — same
+//     panes, same divider, same `position` / `min` / `max` / `on_move`;
+//   * keep the role but pass `Bar::Native` and the pane still gets the
+//     platform's sidebar treatment, with the title bar left as a strip above.
+//
+// Nothing else in this file changes between those spellings, which is the
+// point: a role is a hint, not a different tree.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/split" as split;
+import "facet/list" as list;
+import "facet/label" as label;
+import "facet/screen" as screen;
+import "facet/vocabulary" as vocab;
+import "facet_runtime/runtime" as runtime;
+
+const NAV: str = "nav";
+const TITLE: str = "title";
+const BODY: str = "body";
+
+// ---- the content, keyed by row ------------------------------------------------
+
+fn section_name(i: usize) -> str {
+    if i == (0 as usize) { return "Overview"; }
+    if i == (1 as usize) { return "Recents"; }
+    if i == (2 as usize) { return "Documents"; }
+    if i == (3 as usize) { return "Downloads"; }
+    return "Workspace";
+}
+
+fn section_body(i: usize) -> str {
+    if i == (0 as usize) {
+        return "The pane on the left is PaneRole::Sidebar. AppKit realises it as an NSSplitViewItem with the sidebar behaviour, and supplies the glass itself.";
+    }
+    if i == (1 as usize) {
+        return "Selecting a row does not rebuild the tree. The handler finds the two keyed labels and writes them — facet has no re-render.";
+    }
+    if i == (2 as usize) {
+        return "Drag the divider. The panes resize and this text reflows with them, because the backend hears the move and asks for a layout pass.";
+    }
+    if i == (3 as usize) {
+        return "The sidebar keeps its own minimum. Try dragging the divider all the way left: it stops where min_leading says.";
+    }
+    return "Take the role_leading argument out of build() and this is an ordinary split in an ordinary window, with everything else unchanged.";
+}
+
+fn write_label(key: str, v: str) {
+    match label::find(key) {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(v); }
+        option::Option::None => { }
+    }
+}
+
+fn on_nav_selected(sender: *u8, ctx: *u8) {
+    match list::find(NAV) {
+        option::Option[list::List]::Some(l) => {
+            let i: i64 = l.selected_index();
+            if i < (0 as i64) { return; }
+            write_label(TITLE, section_name(i as usize));
+            write_label(BODY, section_body(i as usize));
+        }
+        option::Option::None => { }
+    }
+    return;
+}
+
+// ---- the two panes ------------------------------------------------------------
+
+// A sidebar row. NOTHING here paints a background: the glass is behind the
+// pane, and an opaque row would sit on top of it and hide it.
+fn nav_row(i: usize, ctx: *u8) -> core::Node {
+    return ui::label(section_name(i), font_size: 13.0f64).padding(6.0f64);
+}
+
+fn sidebar() -> core::Node {
+    var l: core::Node = ui::list(key: NAV,
+                                 selection_mode: vocab::SelectionMode::Single,
+                                 separator: vocab::Separator::None,
+                                 on_item_selected: on_nav_selected);
+    match list::from(#addr_of(l) as *core::Node) {
+        option::Option[list::List]::Some(h) => {
+            let a: list::List = h.set_count(5 as usize);
+            let b: list::List = a.set_row(nav_row);
+            let _c: list::List = b.set_selected_index(0 as i64);
+        }
+        option::Option::None => { }
+    }
+    return l;
+}
+
+fn content() -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label(section_name(0 as usize), key: TITLE, font_size: 22.0f64)
+          .padding(4.0f64));
+    b.add(ui::label(section_body(0 as usize), key: BODY, font_size: 13.0f64)
+          .padding(4.0f64));
+    return ui::column(b, key: "content").padding(24.0f64);
+}
+
+// ---- the component ------------------------------------------------------------
+
+struct Demo { _x: i32 }
+
+impl Demo {
+    fn new() -> Demo { return Demo { _x: 0 }; }
+}
+
+impl Demo: component::Component {
+    fn build(ref this) -> core::Node {
+        return @ui {
+            split(key: "main",
+                  position: 220.0f64,
+                  min_leading: 180.0f64,
+                  max_leading: 320.0f64,
+                  // (1) THE ROLE. Delete this one line for an ordinary split.
+                  role_leading: split::PaneRole::Sidebar) {
+                sidebar()
+                content()
+            }
+        };
+    }
+}
+
+impl Demo: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+
+fn main() -> i32 {
+    // (2) THE BAR. `Bar::Native` here gives the same tree an ordinary title
+    // bar, with the sidebar pane still native and still glass.
+    runtime::run_component(Demo::new(), title: "Sidebar Demo",
+                           width: 820.0f64, height: 520.0f64,
+                           bar: screen::Bar::Blended);
+    return 0;
+}

@@ -182,7 +182,7 @@ fn tick() {
 // walk would reproduce the pre-drag division for one pass and snap the
 // divider back under the pointer.
 fn service_split_drag() {
-    resettle_splits();
+    resettle_splits(mount::mounted_root());
     SYNC_PENDING = true;
     tick();
 }
@@ -369,15 +369,51 @@ fn forget_split(n: *core::Node) {
     }
 }
 
-fn resettle_splits() {
+// Is `want` a node of the tree under `n`? A POINTER COMPARISON at every step
+// — nothing here dereferences `want`, which is the whole point: it may be a
+// registry entry whose node is gone.
+fn tree_contains(n: *core::Node, want: *core::Node) -> bool {
+    if n.is_null() { return false; }
+    if n == want { return true; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if tree_contains(c, want) { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// Settle every registered split THAT IS IN THIS TREE.
+//
+// The registry is append-only by design — `register_split` dedupes and there
+// was no removal — so an entry outlives the node it names. That was invisible
+// while only one window ever held a split: nothing walked a dead entry. A
+// second window walks the first one's, and `settle_split` dereferences it.
+// Measured as a SIGSEGV in `view_of` reading `0x100000001`.
+//
+// `view_release` now calls `forget_split`, which covers a window that closes
+// properly. This is the belt: a tree that was mounted and abandoned (every
+// headless test does it, and so does any teardown that skips the view
+// release) leaves an entry nothing will ever remove, and the containment test
+// costs a pointer walk of a tree this pass is about to walk anyway.
+fn resettle_splits(root: *core::Node) {
     let f: fn(*core::Node) = SPLIT_SETTLE_FN;
     if f.is_null() { return; }
+    if root.is_null() { return; }
     let reg: *vec::Vec[*core::Node] = { #addr_of(SPLIT_NODES) };
     var i: usize = 0 as usize;
     let count: usize = { (*reg).count() };
     while i < count {
         match { (*reg).at(i) } {
-            option::Option[*core::Node]::Some(p) => { f(p); }
+            option::Option[*core::Node]::Some(p) => {
+                if tree_contains(root, p) { f(p); }
+            }
             option::Option[*core::Node]::None => { }
         }
         i = i +% (1 as usize);
@@ -514,16 +550,8 @@ fn layout_window(root: *core::Node, force: bool = false) {
             // nowhere (the facade did), so the frame walk never sizes it.
             let rv: *u8 = core::view_of(root);
             if rv.is_not_null() {
-                // A root whose view IS the window's content view (a sidebar
-                // split handed to the window as its content controller) is
-                // sized by the window, and its frame is in the FRAME VIEW's
-                // unflipped coordinates — writing a flipped, inset rect onto it
-                // moves the whole window content. The frame walk above still
-                // ran; only this one write is the window's, not ours.
-                if rv != content.raw() {
-                    geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
-                }
-                resettle_splits();
+                geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
+                resettle_splits(root);
                 drain_place_jobs();
                 paint::end_assert();
                 return;
@@ -533,7 +561,7 @@ fn layout_window(root: *core::Node, force: bool = false) {
             // are the views the inset has to move, or a DSL-authored screen
             // ignores the safe area that a keyed one honours.
             if ins.left != 0.0f64 || ins.top != 0.0f64 { offset_root_views(root, ins.left, ins.top); }
-            resettle_splits();
+            resettle_splits(root);
             drain_place_jobs();
             paint::end_assert();
         }
@@ -543,6 +571,16 @@ fn layout_window(root: *core::Node, force: bool = false) {
 
 // The insets this root wants kept clear, or zero when it opts out.
 fn safe_insets(content: ak::View, root: *core::Node) -> ak::EdgeInsets {
+    // A SIDEBAR OWNS THE SAFE AREA ITSELF, so the window must not inset the
+    // root as well. The whole point of the layout is that the sidebar reaches
+    // the window's top edge and the buttons sit on it; insetting the root
+    // below the title band puts the sidebar back under a bar and undoes it.
+    // AppKit still applies the inset, one level down — each split item reports
+    // its own `safeAreaRect`, which is what `reposition_children` places panes
+    // at, so content clears both the sidebar and the toolbar band.
+    if geometry::spine_sidebar_controller(root).is_not_null() {
+        return ak::EdgeInsets { top: 0.0f64, left: 0.0f64, bottom: 0.0f64, right: 0.0f64 };
+    }
     if !core::honours_safe_area(root) {
         return ak::EdgeInsets { top: 0.0f64, left: 0.0f64, bottom: 0.0f64, right: 0.0f64 };
     }

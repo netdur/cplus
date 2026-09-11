@@ -39,6 +39,7 @@ import "facet/window_chrome" as chrome;
 import "facet/text_field" as text_field;
 import "./controls" as controls;
 import "./geometry" as geom;
+import "./scheduler" as scheduler;
 
 type Node = flex::Node;
 
@@ -862,5 +863,20 @@ fn view_release(v: *u8) {
     // observer has to be removed BEFORE its object goes — a stale registration
     // is a dangling pointer the next scroll walks into.
     scrolling::uninstall(v);
+    // A SPLIT LEAVES THE SETTLE REGISTRY WITH ITS VIEW, for the same reason
+    // the scroll observer above leaves with its object: `SPLIT_NODES` holds
+    // raw node pointers and `resettle_splits` dereferences every one of them
+    // on the next layout. `scheduler::forget_split` was written with that in
+    // its doc comment ("so a registry entry cannot outlive the node it points
+    // at") and never called, so the entry always outlived the node — a second
+    // window containing a split walked the first window's dead one. Latent
+    // until something opened two: `nav::push` does, and so does any app that
+    // closes a window and opens another.
+    //
+    // The node comes off the view's own association, which is where
+    // `create_split` put it, so this costs one lookup for every other kind.
+    let n: *core::Node = { synth::get_associated(geom::split_view_of(v),
+                                                 controls::split_view_node_key()) as *core::Node };
+    if n.is_not_null() { scheduler::forget_split(n); }
     { rt::release(v) };
 }

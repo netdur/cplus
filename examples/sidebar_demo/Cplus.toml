@@ -1,0 +1,33 @@
+[package]
+name    = "sidebar_demo"
+version = "0.0.1"
+edition = "2026"
+
+# sidebar_demo — the platform's own sidebar, and the plain window beside it.
+#
+# The whole recipe is two lines of application code:
+#
+#   s.set_role(split::Pane::Leading, split::PaneRole::Sidebar)
+#   run_component(..., bar: screen::Bar::Blended)
+#
+# Run it next to Finder and the window chrome should match. Comment out either
+# line and the same tree is an ordinary window — see the comments in main.cplus.
+#
+#   cd examples/sidebar_demo && cpc build && ./target/debug/sidebar_demo
+
+[macos]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib        = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+
+[macos.dependencies]
+facet_appkit = "*"
+objc         = "*"
+appkit       = "*"
+quartzcore   = "*"
+webkit       = "*"

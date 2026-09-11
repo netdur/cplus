@@ -2953,10 +2953,6 @@ fn settle_split_inner(n: *core::Node) {
         if first.is_not_null() {
             let lf: rt::Rect = ak::View::from_raw(first).frame();
             let landed: f64 = if s.is_vertical() { { lf.w } } else { { lf.h } };
-            if scheduler::debug_on() {
-                { printf(#str_ptr("[dragdbg] settle panes=%llu want=%.1f landed=%.1f extent=%.1f\n\0"),
-                         panes, want, landed, extent) };
-            }
             var off: f64 = landed - want;
             if off < 0.0f64 { off = 0.0f64 - off; }
             if off <= 0.5f64 {

@@ -152,26 +152,49 @@ behavior, held by an `NSSplitViewController`. The glass under it is AppKit's,
 not something this package paints — the item's view sits inside an
 `NSContainerConcentricGlassEffectView` that the framework supplies.
 
-When such a split is the TREE'S ROOT, two more things happen, and neither is
-optional:
+When such a split is on the window's SPINE — the root, or reached from it
+through nodes that hold nothing beside it — the window is dressed for it:
 
-- its controller becomes the window's `contentViewController`. A controller
-  nested inside an ordinary content view gets the material and none of the
-  layout — no inset, no full height, no window buttons on the sidebar;
-- the window gets an empty unified `NSToolbar` if the tree declared no
-  `toolbar_item`. The toolbar is what turns the slim title band into the
-  unified band a sidebar rises through. Measured in an 820x520 window:
-  without one the glass is 480pt tall and stops below a 32pt title band, with
-  the window buttons in that band; with one it is 504pt — 8pt from the top
-  edge — and the 66pt band is drawn OVER the sidebar, which is what puts the
-  buttons inside it.
+- it gets an empty unified `NSToolbar` if the tree declared no `toolbar_item`.
+  The toolbar is what turns the slim title band into the unified band a
+  sidebar rises through. Measured in an 820x520 window: without one the glass
+  is 480pt tall and stops below a 32pt title band, with the window buttons in
+  that band; with one it is 504pt — 8pt from the top edge — and the 66pt band
+  is drawn OVER the sidebar, which is what puts the buttons inside it;
+- `titlebarAppearsTransparent` is turned back OFF, even under `Bar::Blended`.
+  See below — it is the one that bites.
 
-Setting the content view controller also RESIZES the window to that
-controller's view, so the Chrome's size is written back afterwards.
+The controller is NOT handed to `setContentViewController:`. That also
+produces the layout, and was how this worked first, but it takes the window's
+content view with it and orphans anything facet put above the split — which on
+the App route is the stack host `nav::push` needs. It is not required:
+measured with two identical windows, one with the controller as
+`contentViewController` and one with its view merely FILLING an ordinary
+content view, the glass is `(8,8,220,504)` in both and the band is drawn over
+the sidebar in both. What the layout actually needs is the Chrome's
+`fullSizeContentView`, a unified toolbar, and the split view reaching the
+window's edges.
 
-A roled split below the root still gets the native sidebar item and its
-material. It does not get the window-level treatment, because that belongs to
-the window.
+**Why the titlebar goes opaque.** `Bar::Blended` sets
+`titlebarAppearsTransparent`, and that is right for a Blended window in
+general — it is what lets an app's own content show through the bar. A
+transparent titlebar also hands the whole title strip to the content view:
+`NSThemeFrame hitTest:` in the strip answers facet's `FlexFlippedView` instead
+of `NSTitlebarView`. AppKit zooms on a double-click only when the click
+reaches the titlebar view, so the strip keeps window DRAGGING —
+`mouseDownCanMoveWindow` is YES on any background view — and silently loses
+double-click-to-zoom.
+
+A sidebar does not need the flag. Measured both ways in an 820x520 window: the
+glass is `(8,8,212,504)` and the split `(0,0,820,520)`, identical. The
+full-height look comes from the sidebar item and the unified toolbar, which is
+why Apple's own sidebar windows do not set it either. A `Bar::Blended` window
+WITHOUT a sidebar keeps the transparent titlebar, because that is what asking
+for `Blended` means.
+
+A roled split with a SIBLING gets the native sidebar item and its material but
+no window-level treatment, because a window whose sidebar is one of several
+things on screen is not a sidebar window.
 
 The full-height layout needs `fullSizeContentView`, which comes from the
 Chrome's bar — `Bar::Blended`, `Hidden` or `Custom`. Under `Bar::Native` the

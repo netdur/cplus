@@ -12999,7 +12999,7 @@ fn a_roled_split_is_backed_by_a_controller_with_a_real_sidebar_item() {
 // `add_root_views` re-parented the new content view under the detached one
 // (an empty window).
 #[test]
-fn a_root_sidebar_split_becomes_the_windows_content_controller_at_the_chromes_size() {
+fn a_root_sidebar_split_gets_the_windows_unified_toolbar_and_the_whole_content() {
     backend::install();
     app::reset_default_for_tests();
     var b: core::Builder = core::Builder::new();
@@ -13018,10 +13018,9 @@ fn a_root_sidebar_split_becomes_the_windows_content_controller_at_the_chromes_si
     let w: ak::Window = ak::Window::from_raw(win);
     let ctrl: *u8 = geom::controller_of_split(core::view_of(rp));
     assert ctrl.is_not_null();
-    // The controller is the window's, and its view is the content view.
-    assert w.content_view_controller().raw() == ctrl;
     // A sidebar implies a unified toolbar — that is what moves the window
-    // controls into the sidebar's glass and runs it to the top edge.
+    // controls into the sidebar's glass and runs it to the top edge. An empty
+    // one does it, so a tree with no `toolbar_item` still gets one.
     match w.toolbar() {
         option::Option[ak::Toolbar]::Some(_tb) => { }
         option::Option[ak::Toolbar]::None => { assert false; }
@@ -13030,20 +13029,44 @@ fn a_root_sidebar_split_becomes_the_windows_content_controller_at_the_chromes_si
         ak::WindowToolbarStyle::Unified => { }
         _ => { assert false; }
     }
+    // The window keeps its own content view — handing it the controller would
+    // orphan anything facet put above the split, which is what the App route's
+    // stack host is.
     match w.content_view() {
-        option::Option[ak::View]::Some(cv) => {
-            assert cv.raw() == core::view_of(rp);
-            // ...and it is still in the window, at the size that was asked for.
-            let f: rt::Rect = cv.frame();
-            assert f.w > 819.0f64 && f.w < 821.0f64;
-            assert f.h > 519.0f64 && f.h < 521.0f64;
-            match cv.superview() {
-                option::Option[ak::View]::Some(_sv) => { }
-                option::Option[ak::View]::None => { assert false; }
-            }
-        }
+        option::Option[ak::View]::Some(cv) => { assert cv.raw() != core::view_of(rp); }
         option::Option[ak::View]::None => { assert false; }
     }
+    // And the root is NOT inset by the window's safe area: the sidebar reaches
+    // the top edge and each split item reports its own inset one level down.
+    scheduler::layout_window(rp);
+    let rf: rt::Rect = ak::View::from_raw(core::view_of(rp)).frame();
+    assert rf.x < 0.5f64 && rf.y < 0.5f64;
+    // AND THE TITLEBAR IS AppKit's, not transparent. A transparent one hands
+    // the whole title strip to the content view, and AppKit zooms on a
+    // double-click only when the click reaches NSTitlebarView — so `Blended`
+    // plus a sidebar silently cost the window double-click-to-zoom.
+    assert w.titlebar_appears_transparent() == false;
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// The other half: a Blended window with NO sidebar still gets the transparent
+// titlebar, which is the whole point of asking for `Bar::Blended` — content
+// showing through the bar. The sidebar is the exception, not the new rule.
+#[test]
+fn a_blended_window_without_a_sidebar_keeps_its_transparent_titlebar() {
+    backend::install();
+    app::reset_default_for_tests();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "only"));
+    var root: core::Node = core::column(b, key: "plain");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "blended", width: 820.0f64, height: 520.0f64, bar: screen::Bar::Blended));
+    let w: ak::Window = ak::Window::from_raw(win);
+    assert geom::spine_sidebar_controller(rp).is_null();
+    assert w.titlebar_appears_transparent();
     window::close_window(win);
     backend::uninstall();
     app::reset_default_for_tests();
@@ -13090,6 +13113,76 @@ fn a_controller_split_reports_a_divider_move_and_records_the_position() {
             assert at > 390.0f64 && at < 410.0f64;
         }
         option::Option[split::Split]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// THE APP ROUTE'S SHAPE. `run_component` hands its node straight to the
+// window; `App::run` wraps every screen in a stack host so `nav::push` has
+// somewhere to push, and wraps it again inside that — so the same split is two
+// levels down and the first version of this found nothing. Measured against a
+// real app (llama): sidebar material, no toolbar, buttons in a band above it.
+#[test]
+fn a_sidebar_split_below_a_pass_through_wrapper_still_dresses_the_window() {
+    backend::install();
+    app::reset_default_for_tests();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "side"));
+    b.add(core::column(core::Builder::new(), key: "main"));
+    var inner: core::Node = split::split(b, key: "sp", position: 220.0f64);
+    match split::from(#addr_of(inner) as *core::Node) {
+        option::Option[split::Split]::Some(s) => {
+            let _r: split::Split = s.set_role(split::Pane::Leading, split::PaneRole::Sidebar);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    // Two single-child wrappers above it, the shape `stack::open_base` builds.
+    var midb: core::Builder = core::Builder::new();
+    midb.add(inner);
+    var mid: core::Node = core::column(midb, key: "@screen:base");
+    var outb: core::Builder = core::Builder::new();
+    outb.add(mid);
+    var root: core::Node = core::column(outb, key: "@screen:stack");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "wrapped", width: 820.0f64, height: 520.0f64, bar: screen::Bar::Blended));
+    match ak::Window::from_raw(win).toolbar() {
+        option::Option[ak::Toolbar]::Some(_tb) => { }
+        option::Option[ak::Toolbar]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
+// ...and a split that merely SHARES a parent is a pane of something else. The
+// spine walk stops at a node with siblings, so it takes no window chrome.
+#[test]
+fn a_sidebar_split_beside_a_sibling_takes_no_window_chrome() {
+    backend::install();
+    app::reset_default_for_tests();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "side"));
+    b.add(core::column(core::Builder::new(), key: "main"));
+    var inner: core::Node = split::split(b, key: "sp", position: 220.0f64);
+    match split::from(#addr_of(inner) as *core::Node) {
+        option::Option[split::Split]::Some(s) => {
+            let _r: split::Split = s.set_role(split::Pane::Leading, split::PaneRole::Sidebar);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    var outb: core::Builder = core::Builder::new();
+    outb.add(core::column(core::Builder::new(), key: "banner"));
+    outb.add(inner);
+    var root: core::Node = core::column(outb, key: "outer");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "sibling", width: 820.0f64, height: 520.0f64, bar: screen::Bar::Blended));
+    match ak::Window::from_raw(win).toolbar() {
+        option::Option[ak::Toolbar]::Some(_tb) => { assert false; }
+        option::Option[ak::Toolbar]::None => { }
     }
     window::close_window(win);
     backend::uninstall();
