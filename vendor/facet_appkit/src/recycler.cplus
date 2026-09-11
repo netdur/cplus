@@ -1127,6 +1127,18 @@ fn row_removed_imp(self_obj: *u8, cmd: *u8, tv: *u8, rowview: *u8, row: i64) {
 fn create_recycling_list(n: *core::Node) -> *u8 {
     let scroll: ak::ScrollView = akx::new_scroll_view(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }, false);
+    // A LIST DOES NOT PAINT WHAT IS BEHIND IT. An NSScrollView draws an opaque
+    // background by default, and this was the one scroll host in the package
+    // that kept it — `create_scroll` and `create_sequence_host` both clear it.
+    //
+    // It shows up as a flat slab wherever the window has a material of its own.
+    // In a `PaneRole::Sidebar` pane AppKit puts the list inside an
+    // NSContainerConcentricGlassEffectView, and an opaque scroll view sits on
+    // top of the glass and hides it: the pane keeps the sidebar's shape, inset
+    // and window buttons, and loses the material entirely. Measured
+    // `FacetScrollView drawsBackground=1 opaque=1 f=(0,58,212,446)` filling the
+    // glass, with the table inside it already transparent.
+    scroll.set_draws_background(false);
     let tv: *u8 = synth::alloc_init_class(facet_table_class());
     if tv.is_null() { return rt::retain(scroll.as_view().raw()); }
 
