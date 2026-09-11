@@ -600,8 +600,8 @@ fn a_password_fields_text_reads_back_masked_rather_than_empty() {
     if !has_display() { return; }
     let secret: *u8 = { gtk_entry_new() };
     { gtk_entry_set_visibility(secret, 0 as i32) };
-    { gtk_editable_set_text(secret, #str_ptr("hunter2 ")) };
-    let win: *u8 = fixture(secret, #str_ptr("login:password "));
+    { gtk_editable_set_text(secret, #str_ptr("hunter2\0")) };
+    let win: *u8 = fixture(secret, #str_ptr("login:password\0"));
     var s: agent::Surface = agent::open(win);
     let nodes: vec::Vec[agent::GtkNode] = s.describe(auth::operator());
     var seen: bool = false;
