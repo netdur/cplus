@@ -171,6 +171,54 @@ cursor, and the drag ends wherever the last write landed.
 When a minimum and a maximum contradict each other, the minimum wins. A divider
 pushed past a far bound can be dragged back; one pinned at zero width cannot.
 
+### A sidebar, and an ordinary window
+
+A pane can say what it is FOR, not only where it sits:
+
+```cplus
+var root: core::Node = split::split(panes, key: "main", position: 220.0f64);
+match split::from(#addr_of(root) as *core::Node) {
+    option::Option[split::Split]::Some(s) => {
+        let _r: split::Split = s.set_role(split::Pane::Leading,
+                                          split::PaneRole::Sidebar);
+    }
+    _ => { }
+}
+```
+
+`PaneRole` is `Content` or `Sidebar`. `Content` is the default and is what
+every split was before roles existed. The role is per pane, because a window
+can have a navigation sidebar leading and an inspector trailing; `role(pane)`
+reads one back and `has_role()` answers whether either pane set one.
+
+Setting a role changes no geometry here. It is a hint in the sense `Chrome`
+already establishes — facet offers the field, a backend honours what it can —
+so a tree that sets one still runs everywhere, and a backend with no sidebar
+concept renders an ordinary pane and is not wrong.
+
+**Pair it with a bar.** Where a platform does have a sidebar, it is the
+window's navigation surface and wants the title bar out of its way:
+
+```cplus
+runtime::run_component(App::new(), title: "Notes",
+                       width: 820.0f64, height: 520.0f64,
+                       bar: screen::Bar::Blended);
+```
+
+The two spellings differ, and both are legal:
+
+| | |
+|---|---|
+| `Bar::Blended` + a `Sidebar` pane | the sidebar runs the window's full height and the window buttons sit inside it — what the system's own apps do |
+| `Bar::Native` + a `Sidebar` pane | the pane still gets the platform's sidebar treatment, and the title bar stays a separate strip above it with the buttons in it |
+
+**An ordinary window needs none of this.** Leave the roles alone and a split is
+the split it always was: facet's own divider, the same panes, the same
+`position`, `min`, `max`, `collapse` and `on_move`. `Chrome`'s bar already
+defaults to `Bar::Native`, so a window that says nothing gets the plain title
+bar it always got. Nothing about the default path changed when roles arrived,
+and nothing appears in a window that the tree did not ask for.
+
 ## Cursors — reaching a built control
 
 Each control module offers the same two entry points:
@@ -258,7 +306,9 @@ Zero means unconstrained for the size fields, on each axis independently.
 
 `Bar` is `Native`, `Blended`, `Hidden` or `Custom`. `Custom` hides the standard
 buttons so `window_buttons()` can supply its own; pair it with `.window_drag()`
-on the surface that should move the window.
+on the surface that should move the window. `Blended`, `Hidden` and `Custom`
+all let content run under the title bar, which is what a full-height sidebar
+needs — see [A sidebar, and an ordinary window](#a-sidebar-and-an-ordinary-window).
 
 `AppMenu` and `MenuItem` describe the menu bar. A `MenuItem` carries a title, a
 key equivalent, and either an `on_click` or a named `action` from the
@@ -291,7 +341,10 @@ only the import path moved.)
 | `run(initial, arg:) -> Status` | run the loop |
 
 `run_component(c)` and `run_screen(s, menu:)` are smaller hosts for one
-component or one screen.
+component or one screen. `run_component` also takes `title`, `width`,
+`height`, the zoom trio (`zoomable`, `min_zoom`, `max_zoom`) and `bar` — the
+Chrome fields a one-component app is most likely to want without adopting
+`Screen` to get at them.
 
 Window and app readers: `display_density`, `observe_display_density`,
 `is_window_active`, `observe_window_size`, `observe_backgrounding`,

@@ -145,6 +145,61 @@ application once.
 `z_index` orders siblings in the frame walk. AppKit paints subviews in array
 order, so ordering is the implementation.
 
+### A sidebar pane
+
+`PaneRole::Sidebar` becomes a real `NSSplitViewItem` with the sidebar
+behavior, held by an `NSSplitViewController`. The glass under it is AppKit's,
+not something this package paints — the item's view sits inside an
+`NSContainerConcentricGlassEffectView` that the framework supplies.
+
+When such a split is the TREE'S ROOT, two more things happen, and neither is
+optional:
+
+- its controller becomes the window's `contentViewController`. A controller
+  nested inside an ordinary content view gets the material and none of the
+  layout — no inset, no full height, no window buttons on the sidebar;
+- the window gets an empty unified `NSToolbar` if the tree declared no
+  `toolbar_item`. The toolbar is what turns the slim title band into the
+  unified band a sidebar rises through. Measured in an 820x520 window:
+  without one the glass is 480pt tall and stops below a 32pt title band, with
+  the window buttons in that band; with one it is 504pt — 8pt from the top
+  edge — and the 66pt band is drawn OVER the sidebar, which is what puts the
+  buttons inside it.
+
+Setting the content view controller also RESIZES the window to that
+controller's view, so the Chrome's size is written back afterwards.
+
+A roled split below the root still gets the native sidebar item and its
+material. It does not get the window-level treatment, because that belongs to
+the window.
+
+The full-height layout needs `fullSizeContentView`, which comes from the
+Chrome's bar — `Bar::Blended`, `Hidden` or `Custom`. Under `Bar::Native` the
+pane is still a sidebar and still has the material; the title bar just stays a
+separate strip above it.
+
+Panes are placed at their item's `safeAreaRect` rather than its bounds,
+because the content item extends under the floating sidebar and under the
+toolbar band. `automaticallyAdjustsSafeAreaInsets` is set on the content item
+and `allowsFullHeightLayout` on the sidebar item — the latter is an opt-OUT in
+AppKit, so setting it true asks for the default rather than turning something
+on.
+
+AppKit refuses `setDelegate:` on a split view its controller manages, and that
+delegate is where this package carries a split's bounds and `on_move`. So a
+controller-backed split puts its bounds on the items'
+`minimumThickness`/`maximumThickness` and hears drags through
+`NSSplitViewDidResizeSubviewsNotification` instead. Both routes end in the
+same body. Two consequences worth knowing if you read that code: under a
+floating sidebar the split view's `subviews[0]` is the CONTENT wrapper (it
+runs the full width, under the sidebar), so the divider position is read from
+`arrangedSubviews`; and the node's view is the controller's wrapper, not the
+split view, so anything addressing the split itself goes through
+`geometry::split_view_of`.
+
+A split with no role takes exactly the path it always took: this package's own
+`FacetSplitView`, its delegate, and no toolbar the tree did not ask for.
+
 Pinch zoom is a BOUNDS change on the content view. A view's bounds are its own
 coordinate space, so shrinking them magnifies everything drawn in them with no
 layout pass and no view touched but the host.
