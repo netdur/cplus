@@ -310,8 +310,15 @@ impl Chrome {
         subtitle: str = "",
         width: f64 = 480.0f64,
         height: f64 = 360.0f64,
-        min_width: f64 = 0.0f64,
-        min_height: f64 = 0.0f64,
+        // A WINDOW HAS A FLOOR BY DEFAULT. Unconstrained, a window can be
+        // dragged narrower than its own contents can be satisfied — a split
+        // whose two panes declare minimums has nowhere left to put them, and
+        // the layout thrashes for as long as the mouse is down rather than
+        // simply stopping. 800x600 is the floor a desktop window is designed
+        // against; an app that wants less says so, and `0.0` still means
+        // unconstrained on that axis.
+        min_width: f64 = 800.0f64,
+        min_height: f64 = 600.0f64,
         bar: Bar = Bar::Native,
         maximizable: bool = true,
         minimizable: bool = true,
@@ -707,7 +714,11 @@ fn chrome_defaults_and_overrides() {
     assert d.title() == "facet";
     assert sc_approx(d.width, 480.0f64);
     assert sc_approx(d.height, 360.0f64);
-    assert sc_approx(d.min_width, 0.0f64);
+    // The floor a window gets without asking. NOTE the interaction with the
+    // default SIZE above: 480x360 is below it, so `Chrome::new()` with no size
+    // describes a window the platform will open at the floor instead.
+    assert sc_approx(d.min_width, 800.0f64);
+    assert sc_approx(d.min_height, 600.0f64);
     match d.bar { Bar::Native => { } Bar::Blended => { assert false; } Bar::Hidden => { assert false; } Bar::Custom => { assert false; } }
     assert d.maximizable;
     assert d.minimizable;
