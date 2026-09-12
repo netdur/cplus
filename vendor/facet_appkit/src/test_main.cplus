@@ -15451,9 +15451,22 @@ fn an_uneven_relist_measures_every_row() {
 
 // ---- a measured height that survives a reload --------------------------------
 
-// A timeline's rows: id 1000+n, and every one a different height, which is what
-// makes the identity worth keeping.
-fn tl_row(i: usize, ctx: *u8) -> core::Node {
+// A timeline's rows: every one a different height, which is what makes an
+// identity worth keeping — and KEYED with the entry's own id, which is how the
+// row says who it is. There is no second `row_id` callback: the builder
+// already names the row, because that key is also what `mount::find` resolves
+// and what the agent surface sees.
+fn tl_row_keyed(i: usize, ctx: *u8) -> core::Node {
+    RLB = RLB + (1 as i64);
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("t", key: ""));
+    let extra: f64 = ((i % (3 as usize)) as f64) * 7.0f64;
+    let id: text::Text = "tweet:${i}";
+    return core::column(b, key: id.view()).padding(6.0 + extra);
+}
+
+// The same rows, unkeyed — nothing to identify them by.
+fn tl_row_bare(i: usize, ctx: *u8) -> core::Node {
     RLB = RLB + (1 as i64);
     var b: core::Builder = core::Builder::new();
     b.add(label::label("t", key: ""));
@@ -15461,18 +15474,16 @@ fn tl_row(i: usize, ctx: *u8) -> core::Node {
     return core::column(b, key: "").padding(6.0 + extra);
 }
 
-fn tl_id(i: usize, ctx: *u8) -> u64 { return (1000 as u64) + (i as u64); }
-
-fn tl_relist(ref rows: obs_vec::ObsVec[RLEntry], key: str, with_id: bool) -> core::Node {
-    if with_id {
-        return relist::relist(rows, key: key, builder: tl_row, row_id: tl_id,
+fn tl_relist(ref rows: obs_vec::ObsVec[RLEntry], key: str, keyed: bool) -> core::Node {
+    if keyed {
+        return relist::relist(rows, key: key, builder: tl_row_keyed,
                               uneven_rows: true);
     }
-    return relist::relist(rows, key: key, builder: tl_row, uneven_rows: true);
+    return relist::relist(rows, key: key, builder: tl_row_bare, uneven_rows: true);
 }
 
 #[test]
-fn a_named_identity_keeps_a_measured_height_across_a_reload() {
+fn a_keyed_row_keeps_its_measured_height_across_a_reload() {
     backend::install();
     // THE TIMELINE CASE. A refresh reloads, and a reload throws away a cache
     // keyed by POSITION — after one, row 40 may be a different row. Most of
@@ -15501,19 +15512,24 @@ fn a_named_identity_keeps_a_measured_height_across_a_reload() {
 
     // The heights come back without building anything: the identities did not
     // change, so neither did what was measured against them.
-    RLB = 0 as i64;
+    // The heights come back, and come back WITHOUT REALISING anything — which
+    // is the claim. Not "without building": identifying a row means building
+    // it, because its identity is the key its builder gives it. The build is
+    // the cheap half (~5us); the realise it skips is ~300us.
+    recycler::reset_measure_realises();
     assert recycler::height_of_row(v, 0 as i64) == h0;
     assert recycler::height_of_row(v, 1 as i64) == h1;
     assert recycler::height_of_row(v, 2 as i64) == h2;
-    assert RLB == (0 as i64);
+    assert recycler::measure_realises() == (0 as i64);
 }
 
 #[test]
-fn without_an_identity_a_reload_costs_the_measurements() {
+fn an_unkeyed_row_pays_for_its_measurement_again() {
     backend::install();
     // THE NEGATIVE HALF, and the measurement that says the feature does
-    // anything: the SAME list with no `row_id` re-measures after the reload,
-    // because position is all it had and a reload invalidates position.
+    // anything: the SAME rows with NO KEY re-measure after the reload, because
+    // position is all they had and a reload invalidates position. This is also
+    // the case that warns.
     var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
     var i: i32 = 0;
     while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
@@ -15527,9 +15543,10 @@ fn without_an_identity_a_reload_costs_the_measurements() {
     rows.note_reload();
     views::apply(0 as *u8, np);
 
-    RLB = 0 as i64;
+    recycler::reset_measure_realises();
     assert recycler::height_of_row(v, 0 as i64) == h0;
-    assert RLB > (0 as i64);
+    // Realised again, because nothing identified it.
+    assert recycler::measure_realises() > (0 as i64);
 }
 
 #[test]
@@ -15553,8 +15570,8 @@ fn a_row_whose_content_changed_does_not_keep_its_old_height() {
     let _s: status::Status = rows.set(RLEntry { n: 99 }, at: 0 as usize);
     views::apply(0 as *u8, np);
 
-    RLB = 0 as i64;
+    recycler::reset_measure_realises();
     let _again: f64 = recycler::height_of_row(v, 0 as i64);
-    // Built again rather than answered from the identity cache.
-    assert RLB > (0 as i64);
+    // Realised again rather than answered from the identity cache.
+    assert recycler::measure_realises() > (0 as i64);
 }
