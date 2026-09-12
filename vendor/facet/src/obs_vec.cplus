@@ -28,6 +28,7 @@ import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "events/events" as events;
+import "stdlib/text" as text;
 
 // WHAT happened. A position and a run length mean different things per kind,
 // and `Reload` ignores both.
@@ -132,13 +133,21 @@ impl ObsVec[T] {
     }
 
     fn remove(ref this, at: usize) -> option::Option[T] {
+        // ASK THE COUNT, NOT THE OPTION. This used to be
+        // `match gone { Some(_v) => emit }`, which MOVES the payload out of
+        // the option to bind it — so the arm's binding dropped the element and
+        // the caller dropped it again. For an element with a destructor that
+        // is a double free: `EXC_BREAKPOINT` in `mfm_free` under `Text::drop`,
+        // found by the first real app to hold anything but an integer, because
+        // every test here used `ObsVec[i32]` and a Copy element cannot show it.
+        //
+        // The count answers the same question — did a row go away — without
+        // touching what came back.
+        let before: usize = this._v.count();
         let gone: option::Option[T] = this._v.remove(at);
-        match gone {
-            option::Option[T]::Some(_v) => {
-                this.changed.emit(Change { kind: ChangeKind::Removed,
-                                           at: at, count: 1 as usize });
-            }
-            option::Option[T]::None => { }
+        if this._v.count() < before {
+            this.changed.emit(Change { kind: ChangeKind::Removed,
+                                       at: at, count: 1 as usize });
         }
         return gone;
     }
@@ -347,4 +356,26 @@ fn a_collection_with_no_listener_still_works() {
         option::Option[i32]::Some(v) => { assert v == 2; }
         option::Option[i32]::None => { assert false; }
     }
+}
+
+#[test]
+fn removing_an_element_that_OWNS_something_frees_it_once() {
+    // REDUCED FROM A CRASH in a real app: `EXC_BREAKPOINT` in `mfm_free`, via
+    // `Text::drop` under `ObsVec::remove`. Every test above uses `ObsVec[i32]`,
+    // which is Copy and has no destructor — so a double free was invisible to
+    // all of them. The first element type with a destructor found it in
+    // seconds.
+    _reset();
+    var o: ObsVec[text::Text] = ObsVec[text::Text]::new();
+    let _a: status::Status = o.append("alpha".to_text());
+    let _b: status::Status = o.append("beta".to_text());
+    let _s: events::SignalSubscription[Change] = o.changed.on(_watch);
+
+    let gone: option::Option[text::Text] = o.remove(0 as usize);
+    match gone {
+        option::Option[text::Text]::Some(t) => { assert t.view() == "alpha"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    assert o.count() == (1 as usize);
+    assert SEEN.last_kind == (2 as i64);
 }
