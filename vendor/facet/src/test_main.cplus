@@ -75,6 +75,7 @@ import "./stack" as stack;
 import "./bands" as bands;
 // The delegate fan-out: a third-party SDK's share of the app's own callbacks.
 import "./app_events" as app_events;
+import "./obs_vec" as obs_vec;
 
 // `PaneRole::Content`, as a bool — an enum compares by `match`, and the role
 // tests below ask this often enough to be worth a name.
