@@ -491,7 +491,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     // The SAME table a list gets — `create_recycling_list` is table plumbing
     // and reads no props at all. The two controls differ in how they are
     // filled, not in what they are.
-    if kind == relist::K_RELIST { return recycler::create_recycling_list(n); }
+    if kind == relist::K_RELIST { return recycler::create_relist_view(n); }
     if kind == props::K_CANVAS { return controls::create_canvas(n); }
     if kind == props::K_WEB { return web::create_web(n); }
     if kind == props::K_HYBRID_WEB { return web::create_hybrid_web(n); }

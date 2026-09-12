@@ -119,6 +119,9 @@ struct RowSuper { opaque receiver: *u8, opaque super_class: *u8 }
 #[link_name = "objc_msgSendSuper"]
 extern fn msg_super_id_id(s: *RowSuper, sel: *u8, a: *u8) -> *u8;
 
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_i8_2id(s: *RowSuper, sel: *u8, a: *u8, b: *u8) -> i8;
+
 #[link_name = "objc_msgSend"]
 extern fn msg_point_point_id(recv: *u8, sel: *u8, a: rt::Point, b: *u8) -> rt::Point;
 
@@ -183,6 +186,58 @@ fn imp_row_menu_for_event(self_obj: *u8, cmd: *u8, event: *u8) -> *u8 {
     return inherited;
 }
 
+// A CONTROL INSIDE A FACET ROW ANSWERS THE WAY IT WOULD OUTSIDE ONE.
+//
+// `validateProposedFirstResponder:forEvent:` is the question a control asks the
+// responder chain in its OWN `mouseDown:`, before it does anything else —
+// NSTextField asks it, and so does every other control that can be typed into.
+// NSTableView answers NO for a view in a row that is not selected, so that a
+// click on a cell selects the row and only a later one starts editing.
+//
+// That rule is about ITS cell views. A facet row is not one: it is an ordinary
+// node with ordinary children, and a gesture on it has to fire wherever the row
+// is clicked — which is exactly what the same row does when it is built outside
+// a list. The table is an implementation detail of recycling and the
+// application never asked for it.
+//
+// MEASURED in `examples/sidebar_demo`, on the row the bug was reported against:
+//
+//   over the free space  hits FacetInput00  table validates it: 1   fired
+//   over the LABEL       hits NSTextField   table validates it: 0   nothing
+//
+// Free space lands on the armed view, which is not a control and never asks.
+// The label is an NSTextField, which asks — and on the NO its press went to the
+// table's own tracking loop, which consumes the release, so the `on_click` that
+// is reported on the way UP never ran. Identical row, identical gesture, one
+// ancestor's answer between them.
+//
+// Scoped to what is inside a `FacetRowCell` so the table keeps its own rule for
+// the controls IT makes — an outline view's disclosure triangle among them.
+fn imp_validate_first_responder(self_obj: *u8, cmd: *u8, who: *u8, event: *u8) -> i8 {
+    if in_facet_row(who) { return 1 as i8; }
+    let f_self: fn(*u8, *u8, *u8, *u8) -> i8 = imp_validate_first_responder;
+    let target: *u8 = synth::super_class_below(self_obj, cmd, { f_self as *u8 });
+    if target.is_null() { return 1 as i8; }
+    let sup: RowSuper = RowSuper { receiver: self_obj, super_class: target };
+    return { msg_super_i8_2id(#addr_of(sup), cmd, who, event) };
+}
+
+// Is this responder part of a row THIS package built? A responder is not
+// always a view — the chain carries window controllers and the application —
+// so the kind is asked before the walk rather than assumed.
+fn in_facet_row(who: *u8) -> bool {
+    if !geometry::is_kind_of(who, #str_ptr("NSView\0")) { return false; }
+    var cur: *u8 = who;
+    while cur.is_not_null() {
+        if geometry::is_kind_of(cur, #str_ptr("FacetRowCell\0")) { return true; }
+        // Reaching the table first means the view hangs off the table itself
+        // and not off one of our rows.
+        if geometry::is_kind_of(cur, #str_ptr("NSTableView\0")) { return false; }
+        cur = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
+    }
+    return false;
+}
+
 // One IMP, two hosts. `list` is an NSTableView and `tree` an NSOutlineView, and
 // the interception is identical in both because it belongs to NSTableView,
 // which the outline view inherits.
@@ -194,6 +249,10 @@ fn row_menu_class(base: *u8, name: *u8) -> *u8 {
     let ok: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("menuForEvent:\0")),
                                           imp_row_menu_for_event, #str_ptr("@@:@\0"));
     let _ = ok;
+    let ok2: i8 = synth::add_method_i8_2id(
+        cls, rt::sel(#str_ptr("validateProposedFirstResponder:forEvent:\0")),
+        imp_validate_first_responder, #str_ptr("c@:@@\0"));
+    let _ = ok2;
     synth::register_class_pair(cls);
     return cls;
 }
@@ -320,6 +379,29 @@ struct RowSource {
     frame_obs: u64,
     // `has_uneven_rows == false`: measure ONE row and answer with it for all.
     uniform: bool,
+    // WHAT APPKIT HAS ACTUALLY BEEN TOLD this holds — the collection view's
+    // half of the splice guard, kept here because the view cannot be asked.
+    //
+    // `numberOfItems` on a table is AppKit's own cached number and answers what
+    // it believed BEFORE the change. A collection view's `reloadData` is LAZY:
+    // it does not load until something makes it, and the first question re-asks
+    // the DATA SOURCE — which by then is the application's collection, already
+    // holding the new row. Measured: two rows, one appended, and the view
+    // answered 3 to the question "what did you have before this?", so every
+    // append failed its own arithmetic and reloaded. That threw away every
+    // measurement on the list, which is precisely what a splice exists to keep.
+    //
+    // So it is mirrored instead: set from the view at reload — where a forced
+    // load makes the two agree — and moved by hand on every splice, which is
+    // the only other thing that changes it.
+    told: i64,
+    // WHICH RECYCLER this source is driving. `list` and `tree` are an
+    // NSTableView and an NSOutlineView; `relist` is an NSCollectionView, and
+    // the two disagree about exactly three things — how wide a row is, how the
+    // tail is scrolled to, and which messages splice. Everything else in this
+    // file is shared, and the flag is what keeps it that way rather than a
+    // second copy of the machinery.
+    grid: bool,
     // ---- grouping -------------------------------------------------------
     // A grouped table is the SAME flat sequence with headers interleaved, so
     // `row` is untouched and every table index is translated on the way in.
@@ -492,6 +574,20 @@ fn build_row(s: *RowSource, i: i64) -> core::Node {
 fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
     let s: *RowSource = source_of(tv);
     if s.is_null() { return 1.0f64; }
+    return height_of(s, row, column_width(tv));
+}
+
+// THE HEIGHT ITSELF, against a width the caller names.
+//
+// Split out of `height_imp` because the width is the only thing the two
+// recycling backends disagree about: a table measures against its COLUMN,
+// which AppKit insets, and a collection view against the item width its layout
+// hands out. Everything below — the caches, the identity probe, the stated
+// answers, the realising measurement — is the same question either way, and
+// having one copy of it is what keeps `relist` on a collection view from
+// quietly measuring differently than `list` on a table.
+fn height_of(s: *RowSource, row: i64, w: f64) -> f64 {
+    if s.is_null() { return 1.0f64; }
     // Uniform rows: answer without building anything. The cheapest a list can
     // be, and the whole reason `row_height` is in the contract.
     //
@@ -512,7 +608,6 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
     let hof: fn(usize, *u8) -> f64 = { (*s).row_height_of };
     if fh >= 1.0f64 && hof == props::no_row_height_of { return fh; }
 
-    let w: f64 = column_width(tv);
     let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
     // A HEIGHT BELONGS TO A WIDTH whatever it is keyed by, so a real width
     // change clears the identity cache as well. Checked against its OWN width:
@@ -970,7 +1065,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
         mount::sync_from(existing);
         // The row's own size can change with its data, so it is re-laid out
         // and re-placed — the cheap half of what a rebuild did.
-        return place_row(cell, existing, w, row_h: stated_row_height(s, row));
+        return place_into(s, cell, existing, w, row);
     }
     if existing.is_not_null() { release_cell_row(cell); }
     var placed: f64 = 0.0f64;
@@ -991,12 +1086,61 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
             bind_into(s, row, np);
             set_row_item_index(s, row, np);
             mount::sync_from(np);
-            placed = place_row(cell, np, w, row_h: stated_row_height(s, row));
+            placed = place_into(s, cell, np, w, row);
             synth::set_associated(cell, cell_node_key(), np as *u8);
         }
         option::Option[box::Box[core::Node]]::None => { }
     }
     return placed;
+}
+
+// PLACE A ROW IN ITS CELL, for whichever recycler owns the cell's position.
+//
+// A TABLE positions the row view and the cell fills it, so `place_row` frames
+// the cell as well as its content — which is right there and WRONG under a
+// collection view, where the item's view frame IS its position in the list.
+// Writing (0, 0, w, h) onto it puts every row at the top of the scroller: the
+// layout was correct, the items were vended and visible, and all five sat on top
+// of each other at y=0 with only the last one reachable. Measured — the layout
+// said row 2 was at y=74 and the view it had placed there answered (0,0,220,37).
+//
+// So under a collection view only the CONTENT is laid out, and the frame is left
+// to the layout that computed it.
+fn place_into(s: *RowSource, cell: *u8, np: *core::Node, w: f64, row: i64) -> f64 {
+    if { (*s).grid } {
+        // THE HEIGHT IS ALREADY KNOWN and must not be asked for again: the
+        // layout measured this row before vending its item, and asking a second
+        // time through `height_of` can BUILD the row — which a fill is not
+        // allowed to do. `a_relist_builds_no_row_until_the_table_asks` caught
+        // exactly that: one fill, two builds.
+        //
+        // The collection view has already written the item's size onto the
+        // cell, so that is the first answer; the measurement cache is the
+        // second, for a cell being filled before it has been framed.
+        var h: f64 = { rt::msg_rect(cell, rt::sel(#str_ptr("frame\0"))) }.h;
+        if h < 1.0f64 { h = cached_height(s, row); }
+        if h < 1.0f64 {
+            // Neither knows yet — lay the row out and take its own height,
+            // which is what it would have measured to anyway.
+            { (*np).calculate_layout(width: w) };
+            h = { (*np).frame().height };
+        }
+        if h < 1.0f64 { h = 1.0f64; }
+        place_row_content(cell, np, w, h);
+        return h;
+    }
+    return place_row(cell, np, w, row_h: stated_row_height(s, row));
+}
+
+// What row `row` last measured, or 0 for "not measured" — the cache read on its
+// own, without the build a miss would otherwise provoke.
+fn cached_height(s: *RowSource, row: i64) -> f64 {
+    if row < (0 as i64) { return 0.0f64; }
+    let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
+    return match { (*hp).at(row as usize) } {
+        option::Option[f64]::Some(v) => v,
+        option::Option[f64]::None => 0.0f64,
+    };
 }
 
 // NO IMPLICIT ANIMATION WHILE A ROW IS PLACED.
@@ -1543,14 +1687,549 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
     return rt::retain(scroll.as_view().raw());
 }
 
+
+// ==============================================================================
+// relist — a recycling NSCollectionView
+// ==============================================================================
+//
+// WHY NOT THE TABLE, which is where this started.
+//
+// NSTableView OVERRIDES `validateProposedFirstResponder:forEvent:` and answers
+// NO for any view inside a row that is not selected. That is the question a
+// control asks the responder chain inside its OWN `mouseDown:` — NSTextField
+// asks it — so a press over a row's label was refused and handed to the table's
+// selection tracking, which consumes the release. A click is reported on the
+// way UP, so it never fired at all. Measured in `examples/sidebar_demo`, one
+// row, two places on it:
+//
+//   over the free space  hits FacetInput00  table validates it: 1   fired
+//   over the LABEL       hits NSTextField   table validates it: 0   nothing
+//
+// Free space works because it lands on the row's own armed view, which is not a
+// control and never asks. That is the whole of the difference, and it is not
+// something a facet row can answer from inside: the rule is about NSTableView's
+// cell views and their editing model, and a facet row is not one.
+//
+// A relist row is an ordinary node. A gesture on it has to fire wherever the row
+// is clicked, exactly as it does when the same row is built outside a list —
+// which is the contract, and the backend's choice of recycler is not the
+// application's problem.
+//
+// NSCollectionView never takes that question. Checked against the runtime
+// rather than assumed — `playground/nscv_probe` compares the IMP each class
+// resolves for the selector against NSResponder's:
+//
+//   NSTableView       OVERRIDDEN
+//   NSOutlineView     OVERRIDDEN
+//   NSCollectionView  INHERITED
+//
+// It has no cell views, no select-first click model, and its items are plain
+// NSViews. `relist` also has no selection verb at all — by design, see
+// `plans/facet/relist.md` — so nothing is given up by leaving the table.
+//
+// `list` and `tree` STAY. A tree needs NSOutlineView's disclosure and
+// indentation; a list's `on_item_selected` IS NSTableView's selection. Both are
+// asking for what the table is, and neither is this.
+//
+// WHAT IS SHARED, and it is nearly all of it: `RowSource`, the height caches by
+// position and by identity, `build_row`, `measure_row`, `height_of`,
+// `fill_cell`, `place_row` and `FacetRowCell` are the same code the table path
+// runs. Only four things differ — vending, sizing, splicing and the width.
+
+// `FACET_TRACE=1` turns on a line per layout pass and a line per resize reload.
+// Off by default and one bool read when it is — the alternative is asking a user
+// to describe what a pointer did, which is not a way to find a bug.
+static RTRACE_READ: bool = false;
+static RTRACE_ON: bool = false;
+
+fn tracing() -> bool {
+    if !RTRACE_READ {
+        RTRACE_READ = true;
+        RTRACE_ON = env::has_var("FACET_TRACE");
+    }
+    return RTRACE_ON;
+}
+
+// The NSCollectionView inside a relist's scroll view. Same shape as `table_of`,
+// named apart so a reader can see which recycler a call belongs to.
+fn grid_of(v: *u8) -> *u8 {
+    if v.is_null() { return 0 as *u8; }
+    return { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+}
+
+// THE WIDTH AN ITEM GETS. A collection view has no columns to inset a row, so
+// this is its own content width — and it is read from the CLIP VIEW rather than
+// the collection view, because a vertical flow layout grows the collection
+// view's height to fit its content while the width that matters is the
+// viewport's.
+fn grid_width(cv: *u8) -> f64 {
+    // THE VIEWPORT FIRST, not the collection view's own frame. Measured during
+    // a divider drag they agree at every step, so this is not load-bearing
+    // against a lag — it is simply the width a row is meant to fill, asked of
+    // the thing that defines it.
+    let esv: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+    if esv.is_not_null() {
+        let clip: *u8 = { rt::msg_id(esv, rt::sel(#str_ptr("contentView\0"))) };
+        if clip.is_not_null() {
+            let w: f64 = { rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))) }.w;
+            if w >= 1.0f64 { return w; }
+        }
+    }
+    // No viewport to ask — a list that is not in a scroll view yet, which is
+    // every headless test. The collection view's own frame is then the only
+    // width there is, and it is the one the suite sets.
+    let fw: f64 = { rt::msg_rect(cv, rt::sel(#str_ptr("frame\0"))) }.w;
+    if fw >= 1.0f64 { return fw; }
+    return 1.0f64;
+}
+
+#[link_name = "class_addMethod"]
+extern fn add_method_i64_1id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> i64,
+                                 types: *u8) -> i8;
+
+// ONE SECTION, so an item index and a row index are the same number. facet has
+// no section vocabulary — a relist is a flat sequence, and grouping is a row the
+// builder chooses to build.
+fn grid_index_path(item: i64) -> *u8 {
+    return { rt::msg_id_i64_i64(rt::get_class(#str_ptr("NSIndexPath\0")),
+                         rt::sel(#str_ptr("indexPathForItem:inSection:\0")),
+                         item, 0 as i64) };
+}
+
+fn grid_row_of_path(ip: *u8) -> i64 {
+    if ip.is_null() { return -1 as i64; }
+    return { rt::msg_i64(ip, rt::sel(#str_ptr("item\0"))) };
+}
+
+// A set of `n` index paths from `at`. The collection view's insert, delete and
+// reload all take a SET rather than a range, so this is the translation and the
+// only place it happens.
+fn grid_paths(at: i64, n: i64) -> *u8 {
+    let set: *u8 = { rt::alloc_init(#str_ptr("NSMutableSet\0")) };
+    if set.is_null() { return 0 as *u8; }
+    var k: i64 = 0 as i64;
+    while k < n {
+        let ip: *u8 = grid_index_path(at +% k);
+        if ip.is_not_null() { { rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), ip) }; }
+        k = k +% (1 as i64);
+    }
+    return rt::autorelease(set);
+}
+
+// ---- the item ----------------------------------------------------------------
+//
+// AN ITEM IS A VIEW CONTROLLER. NSCollectionViewItem inherits NSViewController,
+// whose `loadView` looks for a NIB and raises when there is none — so the view
+// is made here instead.
+//
+// The view it makes is a `FacetRowCell`, the very cell the table path realises
+// rows into, which is what lets `fill_cell`, `place_row` and the whole
+// measurement path run unchanged across both backends.
+fn grid_item_load_view_imp(self_obj: *u8, cmd: *u8) {
+    let cell: *u8 = new_row_cell(rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 1.0f64 });
+    if cell.is_null() { return; }
+    { rt::msg_void_id(self_obj, rt::sel(#str_ptr("setView:\0")), cell) };
+}
+
+fn grid_item_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetGridItem\0"));
+    if existing.is_not_null() { return existing; }
+    let base: *u8 = rt::get_class(#str_ptr("NSCollectionViewItem\0"));
+    let cls: *u8 = synth::allocate_class_pair(base, #str_ptr("FacetGridItem\0"), 0 as usize);
+    if cls.is_null() { return base; }
+    synth::add_method_v_0id(cls, rt::sel(#str_ptr("loadView\0")),
+                            grid_item_load_view_imp, #str_ptr("v@:\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// ---- the reuse pools ---------------------------------------------------------
+//
+// ONE POOL PER ROW SHAPE, the same rule the table path states in
+// `row_identity`: `makeItemWithIdentifier:` hands back whatever item last
+// scrolled off under that identifier, so one identity for every row lets a row
+// built for one shape be handed a cell built for another.
+//
+// An identifier must be REGISTERED before it is asked for, and registering the
+// same one twice replaces the registration — which would throw the pool away on
+// every vend. So the identifiers seen so far are remembered on the collection
+// view itself, and each is registered exactly once.
+fn grid_register_key() -> *u8 { return { 29038 as *u8 }; }
+
+fn grid_registered(cv: *u8) -> *u8 {
+    var set: *u8 = { synth::get_associated(cv, grid_register_key()) };
+    if set.is_not_null() { return set; }
+    set = { rt::alloc_init(#str_ptr("NSMutableSet\0")) };
+    if set.is_null() { return 0 as *u8; }
+    synth::retain_associated(cv, grid_register_key(), set);
+    rt::release(set);
+    return set;
+}
+
+fn grid_ensure_registered(cv: *u8, ident: str) {
+    let seen: *u8 = grid_registered(cv);
+    if seen.is_null() { return; }
+    let name: *u8 = bridge::nsstring(ident);
+    if { rt::msg_i8_id(seen, rt::sel(#str_ptr("containsObject:\0")), name) } != (0 as i8) { return; }
+    { rt::msg_void_id_id(cv, rt::sel(#str_ptr("registerClass:forItemWithIdentifier:\0")),
+                   grid_item_class(), name) };
+    { rt::msg_void_id(seen, rt::sel(#str_ptr("addObject:\0")), name) };
+}
+
+// ---- the data source and the layout delegate ---------------------------------
+
+fn grid_count_imp(self_obj: *u8, cmd: *u8, cv: *u8, section: i64) -> i64 {
+    let s: *RowSource = source_of(cv);
+    if s.is_null() { return 0 as i64; }
+    return table_row_count(s);
+}
+
+// THE VEND. `makeItemWithIdentifier:forIndexPath:` is the recycler — it returns
+// a used item where there is one and builds from the registered class where
+// there is not — and `fill_cell` puts the row into whichever it got, tearing
+// down what the item held before. Exactly what `view_for_row_imp` does for the
+// table, through the same function.
+fn grid_item_imp(self_obj: *u8, cmd: *u8, cv: *u8, ip: *u8) -> *u8 {
+    let s: *RowSource = source_of(cv);
+    if s.is_null() { return 0 as *u8; }
+    let row: i64 = grid_row_of_path(ip);
+    if row < (0 as i64) { return 0 as *u8; }
+
+    let ident: text::Text = row_identity(s, resolve_row(s, row));
+    let id: str = ident;
+    grid_ensure_registered(cv, id);
+    let item: *u8 = { rt::msg_id_id_id(cv, rt::sel(#str_ptr("makeItemWithIdentifier:forIndexPath:\0")),
+                                 bridge::nsstring(id), ip) };
+    if item.is_null() { return 0 as *u8; }
+    let cell: *u8 = { rt::msg_id(item, rt::sel(#str_ptr("view\0"))) };
+    if cell.is_null() { return item; }
+    let _h: f64 = fill_cell(s, cell, row, grid_width(cv));
+    return item;
+}
+
+fn grid_source_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetGridSource\0"));
+    if existing.is_not_null() { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
+                                              #str_ptr("FacetGridSource\0"), 0 as usize);
+    if cls.is_null() { return 0 as *u8; }
+    add_method_i64_1id_i64(cls, rt::sel(#str_ptr("collectionView:numberOfItemsInSection:\0")),
+                           grid_count_imp, #str_ptr("q@:@q\0"));
+    synth::add_method_id_2id(
+        cls, rt::sel(#str_ptr("collectionView:itemForRepresentedObjectAtIndexPath:\0")),
+        grid_item_imp, #str_ptr("@@:@@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+
+// ---- the layout --------------------------------------------------------------
+//
+// A LIST IS NOT A FLOW, and NSCollectionViewFlowLayout is emphatic about it.
+//
+// A flow lays items along a line and wraps, and a FULL-WIDTH row is the one
+// shape it refuses: an item must be STRICTLY NARROWER than the view minus its
+// insets, and it says so once per invalidation —
+//
+//   the behavior of the UICollectionViewFlowLayout is not defined because:
+//   the item width must be less than the width of the UICollectionView minus
+//   the section insets left and right values
+//
+// Measured on a divider drag with the insets read back as ZERO and the item
+// width equal to the view's: 11 complaints for one drag, and a layout Apple
+// calls undefined. The only way to satisfy the rule inside a flow layout is to
+// make every row a point narrower than the list it is in — a sliver of dead
+// space down the right edge of every row, under every selection highlight.
+//
+// So the layout is ours: rows full width, stacked top to bottom, at the heights
+// the source has already measured. That is all a list has ever been, and it is
+// LESS arithmetic than the flow layout was doing on our behalf — no wrapping,
+// no line breaking, no interitem spacing to zero out.
+//
+// The heights come from `height_of`, the same function the table backend asks,
+// so a row cannot measure one height and be placed at another.
+
+#[link_name = "class_addMethod"]
+extern fn add_method_size_0id(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> rt::Size,
+                              types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_id_1rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect) -> *u8,
+                              types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_i8_1rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect) -> i8,
+                              types: *u8) -> i8;
+
+// The collection view a layout belongs to, and the source behind it.
+fn layout_source(self_obj: *u8) -> *RowSource {
+    let cv: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("collectionView\0"))) };
+    if cv.is_null() { return 0 as *RowSource; }
+    return source_of(cv);
+}
+
+fn layout_width(self_obj: *u8) -> f64 {
+    let cv: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("collectionView\0"))) };
+    if cv.is_null() { return 1.0f64; }
+    return grid_width(cv);
+}
+
+// WHERE ROW `row` STARTS, by walking the rows above it.
+//
+// Linear, and deliberately so: the heights are cached, so this is an addition
+// per row above — microseconds across thousands — and it keeps the layout
+// STATELESS. A cached table of offsets would be a third cache to invalidate
+// alongside the two the source already keeps, and the splice that forgot to
+// move it would put every row below the splice at the wrong y with nothing to
+// say so.
+fn row_top(s: *RowSource, row: i64, w: f64) -> f64 {
+    var y: f64 = 0.0f64;
+    var r: i64 = 0 as i64;
+    while r < row {
+        y = y + height_of(s, r, w);
+        r = r +% (1 as i64);
+    }
+    return y;
+}
+
+fn attrs_for(row: i64, y: f64, w: f64, h: f64) -> *u8 {
+    let ip: *u8 = grid_index_path(row);
+    if ip.is_null() { return 0 as *u8; }
+    let a: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionViewLayoutAttributes\0")),
+                                 rt::sel(#str_ptr("layoutAttributesForItemWithIndexPath:\0")), ip) };
+    if a.is_null() { return 0 as *u8; }
+    { msg_void_rect(a, rt::sel(#str_ptr("setFrame:\0")),
+                    rt::Rect { x: 0.0f64, y: y, w: w, h: h }) };
+    return a;
+}
+
+fn layout_content_size_imp(self_obj: *u8, cmd: *u8) -> rt::Size {
+    let w: f64 = layout_width(self_obj);
+    let s: *RowSource = layout_source(self_obj);
+    if s.is_null() { return rt::Size { w: w, h: 0.0f64 }; }
+    let n: i64 = table_row_count(s);
+    let h: f64 = row_top(s, n, w);
+    if tracing() {
+        let cvv: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("collectionView\0"))) };
+        let cf: rt::Rect = { rt::msg_rect(cvv, rt::sel(#str_ptr("frame\0"))) };
+        let cfw: f64 = cf.w; let cfh: f64 = cf.h;
+        io::eprintln("[relist] content size: rows measured at ${w}, view ${cfw}x${cfh}, content height ${h}");
+    }
+    return rt::Size { w: w, h: h };
+}
+
+fn layout_attrs_for_item_imp(self_obj: *u8, cmd: *u8, ip: *u8) -> *u8 {
+    let s: *RowSource = layout_source(self_obj);
+    if s.is_null() { return 0 as *u8; }
+    let row: i64 = grid_row_of_path(ip);
+    if row < (0 as i64) || row >= table_row_count(s) { return 0 as *u8; }
+    let w: f64 = layout_width(self_obj);
+    return attrs_for(row, row_top(s, row, w), w, height_of(s, row, w));
+}
+
+// EVERY ROW THAT TOUCHES `rect`, which is how a collection view asks what is on
+// screen. Walked from the top and stopped as soon as the rows are past it —
+// the rows below are never measured, which is what keeps a long list lazy.
+fn layout_attrs_in_rect_imp(self_obj: *u8, cmd: *u8, rect: rt::Rect) -> *u8 {
+    let out: *u8 = { rt::alloc_init(#str_ptr("NSMutableArray\0")) };
+    if out.is_null() { return 0 as *u8; }
+    let s: *RowSource = layout_source(self_obj);
+    if s.is_null() { return rt::autorelease(out); }
+    let w: f64 = layout_width(self_obj);
+    let n: i64 = table_row_count(s);
+    let top: f64 = rect.y;
+    let bottom: f64 = rect.y + rect.h;
+    var y: f64 = 0.0f64;
+    var r: i64 = 0 as i64;
+    while r < n {
+        let h: f64 = height_of(s, r, w);
+        if y > bottom { break; }
+        if (y + h) >= top {
+            let a: *u8 = attrs_for(r, y, w, h);
+            if a.is_not_null() { { rt::msg_void_id(out, rt::sel(#str_ptr("addObject:\0")), a) }; }
+        }
+        y = y + h;
+        r = r +% (1 as i64);
+    }
+    return rt::autorelease(out);
+}
+
+// A WIDTH CHANGE RE-WRAPS EVERY ROW; a height change moves the viewport and
+// nothing else. Answering YES to both would re-lay out the whole list on every
+// scroll, which is the flow layout's default and wrong for a list.
+fn layout_should_invalidate_imp(self_obj: *u8, cmd: *u8, new_bounds: rt::Rect) -> i8 {
+    let cv: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("collectionView\0"))) };
+    if cv.is_null() { return 0 as i8; }
+    let now: f64 = { rt::msg_rect(cv, rt::sel(#str_ptr("bounds\0"))) }.w;
+    if new_bounds.w != now { return 1 as i8; }
+    return 0 as i8;
+}
+
+// The layout's own answer for how tall the list is, for the suite to assert
+// against the rows it laid out.
+fn grid_content_size(layout: *u8) -> rt::Size {
+    return layout_content_size_imp(layout, 0 as *u8);
+}
+
+fn list_layout_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetListLayout\0"));
+    if existing.is_not_null() { return existing; }
+    let base: *u8 = rt::get_class(#str_ptr("NSCollectionViewLayout\0"));
+    let cls: *u8 = synth::allocate_class_pair(base, #str_ptr("FacetListLayout\0"), 0 as usize);
+    if cls.is_null() { return base; }
+    add_method_size_0id(cls, rt::sel(#str_ptr("collectionViewContentSize\0")),
+                        layout_content_size_imp, #str_ptr("{CGSize=dd}@:\0"));
+    synth::add_method_id_1id(cls, rt::sel(#str_ptr("layoutAttributesForItemAtIndexPath:\0")),
+                             layout_attrs_for_item_imp, #str_ptr("@@:@\0"));
+    add_method_id_1rect(cls, rt::sel(#str_ptr("layoutAttributesForElementsInRect:\0")),
+                        layout_attrs_in_rect_imp,
+                        #str_ptr("@@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"));
+    add_method_i8_1rect(cls, rt::sel(#str_ptr("shouldInvalidateLayoutForBoundsChange:\0")),
+                        layout_should_invalidate_imp,
+                        #str_ptr("c@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// ---- create ------------------------------------------------------------------
+
+fn create_relist_view(n: *core::Node) -> *u8 {
+    let scroll: ak::ScrollView = akx::new_scroll_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }, false);
+    // A LIST DOES NOT PAINT WHAT IS BEHIND IT — the same rule the table path
+    // states at length, and for the same reason: in a `PaneRole::Sidebar` pane
+    // an opaque scroll view sits on top of AppKit's glass and hides it.
+    scroll.set_draws_background(false);
+
+    let cv: *u8 = { rt::alloc_init(#str_ptr("NSCollectionView\0")) };
+    if cv.is_null() { return rt::retain(scroll.as_view().raw()); }
+
+    // OUR OWN LAYOUT — see `list_layout_class` for why a flow layout cannot lay
+    // out a list of full-width rows.
+    let lay: *u8 = synth::alloc_init_class(list_layout_class());
+    if lay.is_not_null() {
+        { rt::msg_void_id(cv, rt::sel(#str_ptr("setCollectionViewLayout:\0")), lay) };
+        rt::release(lay);
+    }
+
+    // NO SELECTION. `relist` has no selection verb — selection is the
+    // application's own state plus a gesture on the row — so the collection
+    // view is told not to have one either, which also keeps its `mouseDown:`
+    // from doing anything with a press that a row declined.
+    { rt::msg_void_i8(cv, rt::sel(#str_ptr("setSelectable:\0")), 0 as i8) };
+    // ...and it must not paint a background over the window's material either.
+    let clear: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSColor\0")),
+                                  rt::sel(#str_ptr("clearColor\0"))) };
+    let colors: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSArray\0")),
+                                      rt::sel(#str_ptr("arrayWithObject:\0")), clear) };
+    if colors.is_not_null() {
+        { rt::msg_void_id(cv, rt::sel(#str_ptr("setBackgroundColors:\0")), colors) };
+    }
+    // The item width follows the viewport, so the collection view has to follow
+    // it too — NSViewWidthSizable.
+    { rt::msg_void_u64(cv, rt::sel(#str_ptr("setAutoresizingMask:\0")), 2 as u64) };
+
+    let agent: *u8 = synth::alloc_init_class(grid_source_class());
+    if agent.is_not_null() {
+        { rt::msg_void_id(cv, rt::sel(#str_ptr("setDataSource:\0")), agent) };
+        { rt::msg_void_id(cv, rt::sel(#str_ptr("setDelegate:\0")), agent) };
+        synth::retain_associated(cv, agent_pin_key(), agent);
+        rt::release(agent);
+    }
+    scroll.set_document_view(ak::View::from_raw(cv));
+    rt::release(cv);
+    return rt::retain(scroll.as_view().raw());
+}
+
+// ---- what the collection view believes, and how it is told otherwise ---------
+
+// The collection view's OWN count, which is what it validates a splice against
+// — the same distinction `table_row_belief` draws, and the same reason: a write
+// through `as_vec_ptr` moves the collection without announcing it, and only
+// AppKit's cached number says what AppKit thinks it has.
+fn grid_belief(s: *RowSource) -> i64 {
+    if s.is_null() { return -1 as i64; }
+    return { (*s).told };
+}
+
+fn grid_reload(cv: *u8, s: *RowSource) {
+    { (*s).heights.remove_all() };
+    { (*s).heights_width = 0.0f64 };
+    { rt::msg_void(cv, rt::sel(#str_ptr("reloadData\0"))) };
+    // ASK, AND THE ANSWER IS THE LOAD. A reload is lazy; this question is what
+    // makes it happen, and what it answers is then what AppKit really holds —
+    // so the mirror starts true rather than assuming the count it was given.
+    { (*s).told = { rt::msg_i64_i64(cv, rt::sel(#str_ptr("numberOfItemsInSection:\0")),
+                                    0 as i64) } };
+}
+
+// INSERT OR DELETE, with the height cache moved to match. Positions below an
+// insert shift down, so a measurement kept against a position would describe the
+// row that used to be there — the table path does the same bookkeeping in
+// `splice_rows`, and 0 is how a row that was never measured already reads.
+fn grid_splice(cv: *u8, s: *RowSource, at: i64, delta: i64) {
+    if at < (0 as i64) || delta == (0 as i64) { return; }
+    let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
+    if delta > (0 as i64) {
+        var k: i64 = 0 as i64;
+        while k < delta {
+            if (at as usize) <= { (*hp).count() } {
+                let _e: status::Status = { (*hp).insert(0.0f64, at: at as usize) };
+            }
+            k = k +% (1 as i64);
+        }
+        let paths: *u8 = grid_paths(at, delta);
+        if paths.is_null() { return; }
+        { rt::msg_void_id(cv, rt::sel(#str_ptr("insertItemsAtIndexPaths:\0")), paths) };
+        { (*s).told = { (*s).told } +% delta };
+        return;
+    }
+    let gone: i64 = 0 as i64 -% delta;
+    var k: i64 = 0 as i64;
+    while k < gone {
+        if (at as usize) < { (*hp).count() } {
+            let _r: option::Option[f64] = { (*hp).remove(at: at as usize) };
+        }
+        k = k +% (1 as i64);
+    }
+    let paths: *u8 = grid_paths(at, gone);
+    if paths.is_null() { return; }
+    { rt::msg_void_id(cv, rt::sel(#str_ptr("deleteItemsAtIndexPaths:\0")), paths) };
+    { (*s).told = { (*s).told } -% gone };
+}
+
+// Re-ask a SPAN without disturbing the rest — relist's `Changed`. The sequence
+// did not move, so nothing above or below is re-measured and the scroll position
+// is untouched. Inclusive both ends, in DATA indices.
+fn grid_invalidate(cv: *u8, s: *RowSource, lo_d: i64, hi_d: i64) {
+    if lo_d < (0 as i64) || hi_d < lo_d { return; }
+    let n: i64 = { (*s).count };
+    if n <= (0 as i64) || lo_d >= n { return; }
+    var hi_c: i64 = hi_d;
+    if hi_c >= n { hi_c = n -% (1 as i64); }
+    // Drop OUR measurements for exactly those rows first, so the layout's next
+    // size question rebuilds them and nothing else. A relist is never grouped,
+    // so its data indices ARE its item indices and there is nothing to
+    // translate.
+    forget_measurements(s, lo_d, hi_c);
+    let paths: *u8 = grid_paths(lo_d, hi_c -% lo_d +% (1 as i64));
+    if paths.is_null() { return; }
+    // THE LAYOUT HAS TO BE ASKED AGAIN TOO. `reloadItemsAtIndexPaths:` re-vends
+    // the items but keeps the sizes the layout already computed, so a row that
+    // changed HEIGHT would be re-filled into a frame of its old size.
+    let lay: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("collectionViewLayout\0"))) };
+    if lay.is_not_null() { { rt::msg_void(lay, rt::sel(#str_ptr("invalidateLayout\0"))) }; }
+    { rt::msg_void_id(cv, rt::sel(#str_ptr("reloadItemsAtIndexPaths:\0")), paths) };
+}
+
 // ---- relist ------------------------------------------------------------------
 //
-// The same NSTableView as `list`, filled from a different contract: `list` is
-// told a count and hands over a builder; `relist` is handed the COLLECTION and
-// reads the count out of it. One table, two ways of describing what is in it.
+// The contract half. `list` is told a count and hands over a builder; `relist`
+// is handed the COLLECTION and reads the count out of it — there is no
+// `set_count` anywhere, which is the whole difference between them.
 //
-// It creates through `create_recycling_list` unchanged — that function is
-// entirely table plumbing and touches `ListProps` nowhere.
+// Everything below is the sequence arithmetic, and it is the same arithmetic
+// the table path does: take the pending change, check it against what AppKit
+// believes it has, and splice or reload. Only the four messages at the end are
+// the collection view's rather than the table's.
 //
 // NO BIND. `relist` builds a row fresh per index, which is the recycler's
 // no-`bind` path, and that is a deliberate trade measured in
@@ -1558,11 +2237,11 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
 // an order of magnitude, because both paths end in the same `place_row` and
 // the forced layout is the dominant cost either way.
 fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
-    let tv: *u8 = table_of(v);
-    if tv.is_null() { return; }
+    let cv: *u8 = grid_of(v);
+    if cv.is_null() { return; }
     let p: *relist::RelistProps = relist::props_of(n);
     if p.is_null() { return; }
-    let s: *RowSource = row_source_for(tv, n);
+    let s: *RowSource = row_source_for(cv, n);
     if s.is_null() { return; }
 
     // THE ELEMENT LEARNS WHICH NODE IT IS, here and on every pass. The change
@@ -1574,6 +2253,11 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
         option::Option[relist::Relist]::Some(h) => { let _b: relist::Relist = h.bind_node(); }
         option::Option[relist::Relist]::None => { }
     }
+
+    // THIS SOURCE DRIVES A COLLECTION VIEW. Read by the handful of places that
+    // cannot be written once for both — the width a row is measured at, and how
+    // the tail is scrolled to after a resize.
+    { (*s).grid = true };
 
     // The builder IS the row source's builder — same signature, no adapter.
     { (*s).row = { (*p).builder } };
@@ -1611,7 +2295,7 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
     // moved, so there is no splice to make — but every cell in hand was built
     // by the old builder, and a reload is what re-vends them.
     if (dirty & relist::P_BUILDER) != (0 as u64) && creating == false {
-        relist_reload(tv, s);
+        grid_reload(cv, s);
         return;
     }
 
@@ -1632,22 +2316,21 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
         option::Option[relist::Relist]::None => { }
     }
 
-    // THE CREATE PASS RELOADS, and it has to: `reloadData` is what tells
-    // NSTableView how many rows it has, and until it is called the table
-    // believes it has none. Splicing row 2 into a table that thinks it is
-    // empty is an NSTableViewException, not a no-op —
-    // `NSTableView error inserting/removing/moving row 2 (numberOfRows: 0)`.
+    // THE CREATE PASS RELOADS, and it has to: `reloadData` is what tells the
+    // collection view how many items it has, and until it is called it believes
+    // it has none. Splicing item 2 into a view that thinks it is empty is an
+    // exception, not a no-op — the same trap the table path documents, in the
+    // collection view's words.
     //
-    // It costs nothing here for the same reason `list`'s create-pass reload
-    // costs nothing: the table's style is Automatic, which cannot resolve
-    // until it joins a view hierarchy, so the height pass waits for the first
-    // real layout rather than building every row now. That is the lazy create
-    // the contract promises, and it is measured by
+    // It costs nothing here: a collection view lays out from its layout object,
+    // which cannot run until the view has a size, so the size pass waits for the
+    // first real layout rather than measuring every row now. That is the lazy
+    // create the contract promises, and it is measured by
     // `a_relist_builds_no_row_until_the_table_asks`.
     //
     // The pending change was TAKEN above rather than peeked, so it is consumed
     // by this reload rather than left to fire again on the next pass.
-    if creating { relist_reload(tv, s); return; }
+    if creating { grid_reload(cv, s); return; }
 
     // A COUNT THAT MOVED WITHOUT A CHANGE TO EXPLAIN IT is a reload. The
     // collection is the truth and it disagrees with the table; a splice would
@@ -1655,23 +2338,23 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
     // `as_vec_ptr` and forgets to say so, which is exactly the case that hatch
     // is documented to owe a `note_reload()`.
     if kind < (0 as i64) {
-        if now != was { relist_reload(tv, s); }
+        if now != was { grid_reload(cv, s); }
         return;
     }
     // Reload 0, Inserted 1, Removed 2, Changed 3.
-    if kind == (0 as i64) { relist_reload(tv, s); return; }
+    if kind == (0 as i64) { grid_reload(cv, s); return; }
     var delta: i64 = 0 as i64;
     if kind == (1 as i64) { delta = run; }
     if kind == (2 as i64) { delta = 0 as i64 -% run; }
 
     // THE ARITHMETIC HAS TO HOLD, and AppKit checks it itself — by RAISING.
-    // `NSTableView error inserting/removing/moving row 3 (numberOfRows: 1)` is
-    // an uncaught NSException, which takes the application down rather than
-    // drawing something wrong, so this is not a defensive nicety.
+    // An insert or delete whose arithmetic disagrees with the data source is an
+    // uncaught NSException, which takes the application down rather than drawing
+    // something wrong, so this is not a defensive nicety.
     //
-    // The invariant is the table's OWN count, plus what this change moves,
-    // against the collection's count now. Comparing the table against what the
-    // element last told it is NOT the same test and does not catch this: a
+    // The invariant is APPKIT'S OWN count, plus what this change moves, against
+    // the collection's count now. Comparing it against what the element last
+    // told it is NOT the same test and does not catch this: a
     // write through `as_vec_ptr` moves the collection without announcing
     // anything, so the next real append describes a one-row insert three rows
     // beyond anything the table has heard of — and both sides of that weaker
@@ -1679,12 +2362,12 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
     //
     // When it does not hold the element does not know what moved, and the
     // honest answer is the one the collection itself gives for that: reload.
-    if table_row_belief(tv) +% delta != now { relist_reload(tv, s); return; }
+    if grid_belief(s) +% delta != now { grid_reload(cv, s); return; }
 
-    if kind == (1 as i64) { splice_rows(tv, s, at, run); return; }
-    if kind == (2 as i64) { splice_rows(tv, s, at, delta); return; }
+    if kind == (1 as i64) { grid_splice(cv, s, at, run); return; }
+    if kind == (2 as i64) { grid_splice(cv, s, at, delta); return; }
     // Changed: the sequence did not move, so only these rows are re-measured.
-    invalidate_rows(tv, s, at, at +% run -% (1 as i64));
+    grid_invalidate(cv, s, at, at +% run -% (1 as i64));
 }
 
 // WHAT THE TABLE BELIEVES its row count is, which is not always what the
@@ -1693,12 +2376,6 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
 fn table_row_belief(tv: *u8) -> i64 {
     if tv.is_null() { return -1 as i64; }
     return { rt::msg_i64(tv, rt::sel(#str_ptr("numberOfRows\0"))) };
-}
-
-fn relist_reload(tv: *u8, s: *RowSource) {
-    { (*s).heights.remove_all() };
-    { (*s).heights_width = 0.0f64 };
-    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
 }
 
 // FIND OR CREATE THE ROW SOURCE FOR THIS TABLE, and re-read the node it backs.
@@ -1736,6 +2413,8 @@ fn row_source_for(tv: *u8, n: *core::Node) -> *RowSource {
         heights_by_id: hash_map::new::[u64, f64](),
         ids_width: 0.0f64,
         warned_no_key: false,
+        told: 0 as i64,
+        grid: false,
         last_width: 0.0f64,
         follow_tail: false,
         table: tv,
@@ -2142,6 +2821,39 @@ fn apply_invalidation(tv: *u8, s: *RowSource, p: *props::ListProps) {
 // THE INVALIDATION ITSELF, props-free — `relist`'s `Changed` is this, and its
 // whole point is that the SEQUENCE did not move, so nothing above or below
 // needs re-measuring. Inclusive on both ends, in DATA indices.
+// FORGET WHAT THESE ROWS MEASURED — by position AND by identity, in TABLE rows.
+//
+// Shared by both recyclers, and it has to be: the position cache is the obvious
+// half and the identity cache is the one that bites, because it is designed to
+// OUTLIVE a reload. A row whose content changed would otherwise keep the height
+// its old content had, and no amount of reloading would shift it. Written once
+// here after the collection-view path was drafted with only the first half and
+// the invalidation test caught it: the row was re-vended at its stale height and
+// nothing was re-measured at all.
+//
+// 0 is "not measured", the same answer a fresh row and an absent entry both
+// give, so this invalidates without a `remove` the map does not have.
+fn forget_measurements(s: *RowSource, lo: i64, hi: i64) {
+    let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
+    var r: i64 = lo;
+    while r <= hi {
+        if (r as usize) < { (*hp).count() } { set_height(hp, r as usize, 0.0f64); }
+        // Costs a build per invalidated row, to learn the key — so it is
+        // skipped entirely unless there is an identity cache to invalidate. A
+        // list that states its heights, or a uniform one, never populates that
+        // map and must not pay a build to find out.
+        var id: u64 = 0 as u64;
+        if uniform_off(s) && { (*s).heights_by_id.count() } > (0 as usize) {
+            var probe_row: core::Node = build_row(s, r);
+            id = identity_of_node(#addr_of(probe_row));
+        }
+        if id != (0 as u64) {
+            let _e: status::Status = { (*s).heights_by_id.insert(id, 0.0f64) };
+        }
+        r = r +% (1 as i64);
+    }
+}
+
 fn invalidate_rows(tv: *u8, s: *RowSource, lo_d: i64, hi_d: i64) {
     if lo_d < (0 as i64) || hi_d < lo_d { return; }
     let n: i64 = { (*s).count };
@@ -2153,32 +2865,7 @@ fn invalidate_rows(tv: *u8, s: *RowSource, lo_d: i64, hi_d: i64) {
     let lo: i64 = table_row_of(s, lo_d);
     let hi: i64 = table_row_of(s, hi_c);
     if lo < (0 as i64) || hi < lo { return; }
-    // Drop OUR cache for those rows. 0 is "not measured", the same answer a
-    // fresh row has, so the next height question rebuilds exactly these.
-    let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
-    var r: i64 = lo;
-    while r <= hi {
-        if (r as usize) < { (*hp).count() } { set_height(hp, r as usize, 0.0f64); }
-        // AND BY IDENTITY, or a row whose content changed keeps the height its
-        // OLD content had — which is exactly what a cache that outlives a
-        // reload would otherwise guarantee. 0 is "not measured", the same
-        // answer an absent entry gives, so this invalidates without a `remove`
-        // the map does not have.
-        //
-        // Costs a build per invalidated row, to learn the key — so it is
-        // skipped entirely unless there is an identity cache to invalidate.
-        // A list that states its heights, or a uniform one, never populates
-        // that map and must not pay a build to find out.
-        var id: u64 = 0 as u64;
-        if uniform_off(s) && { (*s).heights_by_id.count() } > (0 as usize) {
-            var probe_row: core::Node = build_row(s, r);
-            id = identity_of_node(#addr_of(probe_row));
-        }
-        if id != (0 as u64) {
-            let _e: status::Status = { (*s).heights_by_id.insert(id, 0.0f64) };
-        }
-        r = r +% (1 as i64);
-    }
+    forget_measurements(s, lo, hi);
     let span: *u8 = { msg_id_range(rt::get_class(#str_ptr("NSIndexSet\0")),
                                    rt::sel(#str_ptr("indexSetWithIndexesInRange:\0")),
                                    rt::Range { location: lo as u64,
@@ -2356,6 +3043,17 @@ fn debug_dump(tag: str) {
 // Is the viewport within 60pt of the bottom? Read BEFORE a reload changes the
 // geometry. A list with no enclosing scroll view counts as at-bottom, because
 // there is nowhere else it could be.
+// THE WIDTH A ROW IS LAID OUT AT, whichever recycler is asking. A table
+// measures against its COLUMN, which AppKit insets below the table's own frame;
+// a collection view has no columns and `tableColumns` is not a message it
+// answers — sending it would not be a miss, it would be a crash.
+fn row_width(s: *RowSource) -> f64 {
+    let v: *u8 = { (*s).table };
+    if v.is_null() { return 1.0f64; }
+    if { (*s).grid } { return grid_width(v); }
+    return column_width(v);
+}
+
 fn is_near_bottom(tv: *u8) -> bool {
     let esv: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
     if esv.is_null() { return true; }
@@ -2370,6 +3068,21 @@ fn scroll_to_bottom(tv: *u8) {
     let rows: i64 = { rt::msg_i64(tv, rt::sel(#str_ptr("numberOfRows\0"))) };
     if rows <= (0 as i64) { return; }
     { rt::msg_void_i64(tv, rt::sel(#str_ptr("scrollRowToVisible:\0")), rows - (1 as i64)) };
+}
+
+// The same, for a collection view: it counts ITEMS and scrolls to an index
+// path, and answers neither of the two messages above.
+fn grid_scroll_to_bottom(cv: *u8, s: *RowSource) {
+    let items: i64 = { (*s).count };
+    if items <= (0 as i64) { return; }
+    let ip: *u8 = grid_index_path(items -% (1 as i64));
+    if ip.is_null() { return; }
+    let set: *u8 = { rt::alloc_init(#str_ptr("NSMutableSet\0")) };
+    if set.is_null() { return; }
+    { rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), ip) };
+    { msg_void_id_u64(cv, rt::sel(#str_ptr("scrollToItemsAtIndexPaths:scrollPosition:\0")),
+                      set, 8 as u64) };     // NSCollectionViewScrollPositionBottom
+    rt::release(set);
 }
 
 // The table's frame changed. A width change is the only one that matters — a
@@ -2431,7 +3144,7 @@ fn reload_job(ctx: *u8) {
     // pass NOW, insets and all; headless — where nothing defers — it is a
     // no-op, which is why the suite's simulated widths stay authoritative.
     layout_enclosing_scroll(tv);
-    let w: f64 = column_width(tv);
+    let w: f64 = row_width(s);
     let dbg: bool = scheduler::debug_on();
     // A height change moves the viewport, not the rows — nothing re-wraps.
     if w == { (*s).last_width } {
@@ -2442,6 +3155,28 @@ fn reload_job(ctx: *u8) {
     if dbg { { printf(#str_ptr("[dragdbg c%llu] reload at col=%.1f (was %.1f)\n\0"),
                       scheduler::debug_cycle(), w, { (*s).last_width }) }; }
     { (*s).last_width = w };
+    if tracing() {
+        // WHO HOLDS WHICH WIDTH. The reload widths cycle 188 -> 187 -> 183 ->
+        // 180 -> 188 for as long as a window resize is held, which is two
+        // parties overwriting each other rather than anything the mouse did.
+        // This says which two.
+        let esv: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+        var clipw: f64 = -1.0f64;
+        var scrollw: f64 = -1.0f64;
+        var hostw: f64 = -1.0f64;
+        if esv.is_not_null() {
+            scrollw = { rt::msg_rect(esv, rt::sel(#str_ptr("frame\0"))) }.w;
+            let clip: *u8 = { rt::msg_id(esv, rt::sel(#str_ptr("contentView\0"))) };
+            if clip.is_not_null() { clipw = { rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))) }.w; }
+            let host: *u8 = { rt::msg_id(esv, rt::sel(#str_ptr("superview\0"))) };
+            if host.is_not_null() { hostw = { rt::msg_rect(host, rt::sel(#str_ptr("frame\0"))) }.w; }
+        }
+        let cvw: f64 = { rt::msg_rect(tv, rt::sel(#str_ptr("frame\0"))) }.w;
+        var live: i8 = 2 as i8;
+        let win: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("window\0"))) };
+        if win.is_not_null() { live = { rt::msg_i8(win, rt::sel(#str_ptr("inLiveResize\0"))) }; }
+        io::eprintln("[relist] reload w=${w} | host ${hostw} scroll ${scrollw} clip ${clipw} cv ${cvw} live=${live}");
+    }
     // Whether we were at the bottom is read BEFORE anything moves: a narrower
     // width re-wraps rows taller, so the content grows under the viewport and
     // "at the bottom" stops being true by the time the reload has run.
@@ -2450,7 +3185,10 @@ fn reload_job(ctx: *u8) {
     { (*s).heights.remove_all() };
     { (*s).heights_width = 0.0f64 };
     { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
-    if { (*s).follow_tail } { scroll_to_bottom(tv); }
+    if { (*s).follow_tail } {
+        if { (*s).grid } { grid_scroll_to_bottom(tv, s); }
+        else { scroll_to_bottom(tv); }
+    }
     // ...and the SELECTION is the other piece of table state `reloadData`
     // destroys. The scroll position above is read before and restored after
     // for exactly this reason; the selection had no such restore, so a window
@@ -2496,6 +3234,16 @@ fn notify_resized(v: *u8) {
 fn set_column_width(v: *u8, w: f64) {
     let tv: *u8 = table_of(v);
     if tv.is_null() { return; }
+    // A COLLECTION VIEW HAS NO COLUMNS. Its rows are the width of the view, so
+    // that is what the suite sets — the same simulated width, said the way this
+    // recycler measures it.
+    let s: *RowSource = source_of(tv);
+    if s.is_not_null() && { (*s).grid } {
+        let f: rt::Rect = { rt::msg_rect(tv, rt::sel(#str_ptr("frame\0"))) };
+        { rt::msg_void_rect(tv, rt::sel(#str_ptr("setFrame:\0")),
+                            rt::Rect { x: f.x, y: f.y, w: w, h: f.h }) };
+        return;
+    }
     let cols: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("tableColumns\0"))) };
     if cols.is_null() { return; }
     let n: u64 = { rt::msg_u64(cols, rt::sel(#str_ptr("count\0"))) };
@@ -2606,7 +3354,16 @@ fn tree_last_width_of(v: *u8) -> f64 {
 fn column_width_of(v: *u8) -> f64 {
     let tv: *u8 = table_of(v);
     if tv.is_null() { return 0.0f64; }
-    return column_width(tv);
+    let s: *RowSource = source_of(tv);
+    if s.is_null() { return column_width(tv); }
+    return row_width(s);
+}
+
+// WHAT APPKIT BELIEVES a relist holds, which is not always what the element
+// last told it — the number a splice is validated against. The suite's way to
+// see the disagreement that decides between a splice and a reload.
+fn item_belief_of(v: *u8) -> i64 {
+    return grid_belief(source_of(grid_of(v)));
 }
 
 fn row_count_of(v: *u8) -> i64 {
@@ -2625,12 +3382,23 @@ fn fixed_height_of(v: *u8) -> f64 {
 fn height_of_row(v: *u8, row: i64) -> f64 {
     let tv: *u8 = table_of(v);
     if tv.is_null() { return 0.0f64; }
-    return height_imp(0 as *u8, 0 as *u8, tv, row);
+    let s: *RowSource = source_of(tv);
+    if s.is_null() { return 0.0f64; }
+    return height_of(s, row, row_width(s));
 }
 
 fn view_for_row(v: *u8, row: i64) -> *u8 {
     let tv: *u8 = table_of(v);
     if tv.is_null() { return 0 as *u8; }
+    let s: *RowSource = source_of(tv);
+    if s.is_not_null() && { (*s).grid } {
+        // The item is the view controller; the row lives in its view, which is
+        // the same `FacetRowCell` the table path hands back.
+        let ip: *u8 = grid_index_path(row);
+        let item: *u8 = grid_item_imp(0 as *u8, 0 as *u8, tv, ip);
+        if item.is_null() { return 0 as *u8; }
+        return { rt::msg_id(item, rt::sel(#str_ptr("view\0"))) };
+    }
     return view_for_row_imp(0 as *u8, 0 as *u8, tv, 0 as *u8, row);
 }
 
@@ -2654,13 +3422,15 @@ fn fill_into(v: *u8, cell: *u8, row: i64) {
     if tv.is_null() { return; }
     let s: *RowSource = source_of(tv);
     if s.is_null() { return; }
-    fill_cell(s, cell, row, column_width(tv));
+    let _h: f64 = fill_cell(s, cell, row, row_width(s));
 }
 
 fn make_cell(v: *u8) -> *u8 {
     let tv: *u8 = table_of(v);
     if tv.is_null() { return 0 as *u8; }
-    return new_cell("facet.row", column_width(tv));
+    let s: *RowSource = source_of(tv);
+    if s.is_null() { return 0 as *u8; }
+    return new_cell("facet.row", row_width(s));
 }
 
 // ==============================================================================

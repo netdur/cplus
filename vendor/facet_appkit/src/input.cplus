@@ -324,7 +324,34 @@ fn imp_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
     }
     var took: bool = fire_of(self_obj, { (*g).on_press }, { (*g).on_press_ctx });
     if took { return; }
+    // KEEP THE PRESS when this node answers something that completes on the way
+    // UP. Declining hands the event to super, and a super that runs its OWN
+    // mouse-tracking loop consumes the release — NSTableView does exactly that
+    // for row selection. The node then sees a mouseDown and never a mouseUp,
+    // and a click is reported on the up, so it never fires at all.
+    //
+    // Measured in `examples/sidebar_demo`: a relist row armed correctly, took 8
+    // mouseDowns and ZERO mouseUps, and `on_click` never ran. The row is an
+    // ordinary facet node and an ordinary NSView; a gesture that works on it
+    // outside a list has to work on it inside one, and the backend's choice of
+    // NSTableView is not the application's problem.
+    //
+    // Only for the handlers that NEED the release. A node with just `on_hover`
+    // or `on_press` still declines, so nothing that was passing the press on
+    // before starts holding it now.
+    if awaits_release(g) { return; }
     decline(self_obj, cmd, event, imp_mouse_down);
+}
+
+// Does this node answer anything that is completed on the way UP? Those are the
+// handlers whose event is lost if the press is declined to a super that tracks.
+fn awaits_release(g: *gestures::Gestures) -> bool {
+    if g.is_null() { return false; }
+    if { (*g).on_click } != gestures::no_gesture { return true; }
+    if { (*g).on_double_click } != gestures::no_gesture { return true; }
+    if { (*g).on_release } != gestures::no_gesture { return true; }
+    if { (*g).on_long_press } != gestures::no_gesture { return true; }
+    return false;
 }
 
 fn long_press_fired(ctx: *u8) {

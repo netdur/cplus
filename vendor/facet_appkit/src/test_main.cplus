@@ -15771,3 +15771,346 @@ fn a_merged_invalidation_keeps_the_older_span_too() {
     let _h15: f64 = recycler::height_of_row(v, 15 as i64);
     assert recycler::measure_realises() == (0 as i64);
 }
+
+// ---- what a row's gesture costs, and how long it lives -----------------------
+
+static GST_BUILDS: i64 = 0 as i64;
+static GST_FIRES: i64 = 0 as i64;
+
+fn gst_click(sender: *u8, ctx: *u8) -> bool { GST_FIRES = GST_FIRES + (1 as i64); return true; }
+
+fn gst_row(i: usize, ctx: *u8) -> core::Node {
+    GST_BUILDS = GST_BUILDS + (1 as i64);
+    let h: fn(*u8, *u8) -> bool = gst_click;
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("r", key: ""));
+    let id: text::Text = "g:${i}";
+    return core::column(b, key: id.view()).gesture(on_click: h);
+}
+
+#[test]
+fn a_gesture_is_attached_per_VENDED_row_not_per_model_row() {
+    backend::install();
+    // A 5000-row list does not register 5000 callbacks. The builder runs only
+    // when the table asks for a row, and the gesture is attached to the node
+    // that builder returns — so the count is "rows vended", not "rows in the
+    // model".
+    GST_BUILDS = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 5000 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "g", builder: gst_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    assert recycler::row_count_of(v) == (5000 as i64);
+    // Nothing vended yet, so nothing carries a gesture.
+    assert GST_BUILDS < (5000 as i64);
+
+    let before: i64 = GST_BUILDS;
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 0 as i64);
+    // Exactly one more row built, so exactly one more gesture attached.
+    assert GST_BUILDS == before + (1 as i64);
+}
+
+#[test]
+fn a_recycled_cell_does_not_accumulate_gestures() {
+    backend::install();
+    // A row that scrolls away is TORN DOWN — `release_cell_row` unrealises the
+    // node and drops the box, and the node's Data drops its Gestures with it.
+    // A row that comes back is a NEW node with ONE gesture, not the old one
+    // with two.
+    //
+    // The property is checked at the node: the cell holds exactly one row node
+    // at a time, and it is a different node after the cell is refilled.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 50 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "g2", builder: gst_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    GST_BUILDS = 0 as i64;
+    GST_FIRES = 0 as i64;
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 0 as i64);
+    assert GST_BUILDS == (1 as i64);
+
+    // Scroll away and back: the same cell is refilled with another row.
+    recycler::fill_into(v, cell, 7 as i64);
+    // ONE more build, so ONE more gesture attached — the old row was torn down
+    // rather than left holding a second one.
+    assert GST_BUILDS == (2 as i64);
+
+    // NOT a pointer comparison. `release_cell_row` frees the old node and the
+    // allocator is free to hand the same block straight back, so `old != new`
+    // proves nothing — it passed or failed by luck, which is how the first
+    // version of this test was written and why it was flaky.
+    let live: *core::Node = { synth::get_associated(cell, recycler::cell_node_key())
+                              as *core::Node };
+    assert live.is_not_null();
+    assert gestures::has_gestures(live);
+
+    // And the live row's handler fires ONCE.
+    let g: *gestures::Gestures = gestures::gestures_of(live);
+    assert g.is_not_null();
+    let f: fn(*u8, *u8) -> bool = { (*g).on_click };
+    let _r: bool = f(0 as *u8, 0 as *u8);
+    assert GST_FIRES == (1 as i64);
+}
+
+#[test]
+fn attaching_a_gesture_twice_replaces_rather_than_stacks() {
+    backend::install();
+    // The other half of "is it registered twice": even on ONE node, a second
+    // `.gesture()` replaces the first — `_attach` releases what was there. So
+    // a click is one call, not one per attachment.
+    GST_FIRES = 0 as i64;
+    let h: fn(*u8, *u8) -> bool = gst_click;
+    var b: core::Builder = core::Builder::new();
+    var node: core::Node = core::column(b, key: "twice")
+        .gesture(on_click: h)
+        .gesture(on_click: h);
+    assert gestures::has_gestures(#addr_of(node));
+    let g: *gestures::Gestures = gestures::gestures_of(#addr_of(node));
+    assert g.is_not_null();
+    let f: fn(*u8, *u8) -> bool = { (*g).on_click };
+    let _r: bool = f(0 as *u8, 0 as *u8);
+    // One handler stored, so one call.
+    assert GST_FIRES == (1 as i64);
+}
+
+// ---- a gesture inside a relist is the same gesture outside one ---------------
+//
+// THE INVARIANT, and it is the application's to state: a row is an ordinary
+// node and a gesture on it fires wherever the row is clicked. Which recycler
+// the backend reaches for is not the application's problem, so a row inside a
+// list has to behave exactly as the same row does outside one.
+//
+// It did not. `examples/sidebar_demo` has both — the same icon, the same label,
+// the same `.gesture(on_click:)` — and the one inside the relist fired only
+// over the row's free space. Measured, in a running window:
+//
+//   over the free space  hits FacetInput00  table validates it: 1   fired
+//   over the LABEL       hits NSTextField   table validates it: 0   nothing
+//
+// NSTextField asks the responder chain for permission inside its own
+// `mouseDown:`, and NSTableView answers NO for a view in an unselected row.
+
+fn rlc_list(count: usize) -> core::Node {
+    var n: core::Node = list::list(key: "rlc");
+    let p: *core::Node = #addr_of(n);
+    match list::find("rlc", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(rlc_row);
+            let _b: list::List = a.set_count(count);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return n;
+}
+
+fn rlc_row(index: usize, ctx: *u8) -> core::Node {
+    // THE ROW THE BUG WAS REPORTED AGAINST, as `examples/sidebar_demo` builds
+    // it: an icon and a label inside a row that carries the gesture.
+    var b: core::Builder = core::Builder::new();
+    b.add(symbol::system_symbol("folder", key: "row:icon", size: 19.0f64));
+    b.add(ui::label("Workspace", key: "row:name", font_size: 13.0f64).grow(1.0f64));
+    var n: core::Node = ui::row(b, key: "r${index}")
+        .align(flex::Align::Center)
+        .gap(6.0f64)
+        .padding_edge(flex::Edge::Vertical, 7.0f64)
+        .padding_edge(flex::Edge::Horizontal, 8.0f64)
+        .gesture(on_click: h_took());
+    n.set_corner_radius(vocab::Corners::all(6.0f64));
+    return n;
+}
+
+// The first NSTextField under `v` — the view a click over the row's TEXT lands
+// on, because `imp_hit_test` defers to children and the label wins.
+fn rlc_text_field(v: *u8) -> *u8 {
+    if v.is_null() { return 0 as *u8; }
+    if geometry::is_kind_of(v, #str_ptr("NSTextField\0")) { return v; }
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    let cnt: i64 = { rt::msg_i64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: i64 = 0 as i64;
+    while i < cnt {
+        let s: *u8 = { rt::msg_id_i64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        let hit: *u8 = rlc_text_field(s);
+        if hit.is_not_null() { return hit; }
+        i = i + (1 as i64);
+    }
+    return 0 as *u8;
+}
+
+fn rlc_validates(host: *u8, who: *u8) -> bool {
+    return { rt::msg_i8_id_id(host,
+                              rt::sel(#str_ptr("validateProposedFirstResponder:forEvent:\0")),
+                              who, 0 as *u8) } != (0 as i8);
+}
+
+// Which class actually answers a selector, for asserting that one of ours takes
+// a question its superclass would otherwise have answered.
+extern fn class_getInstanceMethod(cls: *u8, sel: *u8) -> *u8;
+extern fn method_getImplementation(m: *u8) -> *u8;
+
+fn rlc_imp_for(class_name: *u8, sel_name: *u8) -> *u8 {
+    let cls: *u8 = { rt::get_class(class_name) };
+    if cls.is_null() { return 0 as *u8; }
+    let m: *u8 = { class_getInstanceMethod(cls, rt::sel(sel_name)) };
+    if m.is_null() { return 0 as *u8; }
+    return { method_getImplementation(m) };
+}
+
+#[test]
+fn a_relist_recycles_on_a_view_that_does_not_take_the_first_responder_question() {
+    backend::install();
+    // WHY `relist` IS NOT ON A TABLE, pinned so it cannot drift back by
+    // accident.
+    //
+    // `validateProposedFirstResponder:forEvent:` is what a control asks the
+    // responder chain inside its own `mouseDown:`. NSTableView OVERRIDES it and
+    // answers NO for a view in a row that is not selected, so a press over a
+    // row's LABEL was refused and went to the table's selection tracking, which
+    // consumes the release — and a click is reported on the release. Measured in
+    // a running `examples/sidebar_demo`, one row, two places on it:
+    //
+    //   over the free space  hits FacetInput00  table validates it: 1   fired
+    //   over the LABEL       hits NSTextField   table validates it: 0   nothing
+    //
+    // THAT MEASUREMENT CANNOT BE REPRODUCED HEADLESS — asked of a table with no
+    // window the answer is 1 either way, which is how a first draft of this test
+    // came to pass without its fix and assert nothing. What CAN be asserted is
+    // the structural fact the switch rests on, and it is the fact that matters:
+    // the class under a relist never takes the question at all.
+    let sel_v: *u8 = #str_ptr("validateProposedFirstResponder:forEvent:\0");
+    let base: *u8 = rlc_imp_for(#str_ptr("NSResponder\0"), sel_v);
+    assert base.is_not_null();
+    // THE CONTROL, and without it this test says nothing: the class relist left
+    // does take the question, so "inherited" below is a real difference and not
+    // a property every class happens to have.
+    assert rlc_imp_for(#str_ptr("NSTableView\0"), sel_v) != base;
+    assert rlc_imp_for(#str_ptr("NSOutlineView\0"), sel_v) != base;
+    assert rlc_imp_for(#str_ptr("NSCollectionView\0"), sel_v) == base;
+
+    // ...and that a relist really is recycled by that class.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    var n: core::Node = relist::relist(rows, key: "nocv", builder: rlc_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    assert v.is_not_null();
+    core::set_view(np, v, views::view_release);
+    let doc: *u8 = recycler::grid_of(v);
+    assert doc.is_not_null();
+    assert geometry::is_kind_of(doc, #str_ptr("NSCollectionView\0"));
+    // Not a table by another name: NSTableView is not in that class's chain.
+    assert geometry::is_kind_of(doc, #str_ptr("NSTableView\0")) == false;
+}
+
+#[test]
+fn a_table_backed_list_answers_the_first_responder_question_itself() {
+    backend::install();
+    // `list` and `tree` STAY on NSTableView — a tree needs its disclosure, and a
+    // list's `on_item_selected` IS the table's selection — so they still carry
+    // the rule the table would otherwise impose on a row's children, and this is
+    // what says the override is installed.
+    //
+    // STRUCTURAL, for the reason above: the behaviour it buys shows up only in a
+    // window, so what is pinned here is that `FacetTableView` takes the question
+    // rather than leaving NSTableView to answer it.
+    let sel_v: *u8 = #str_ptr("validateProposedFirstResponder:forEvent:\0");
+    let _force: *u8 = recycler::facet_table_class();
+    let ours: *u8 = rlc_imp_for(#str_ptr("FacetTableView\0"), sel_v);
+    assert ours.is_not_null();
+    assert ours != rlc_imp_for(#str_ptr("NSTableView\0"), sel_v);
+    // The outline view is the same interception and gets the same answer.
+    let _force2: *u8 = recycler::facet_outline_class();
+    let theirs: *u8 = rlc_imp_for(#str_ptr("FacetOutlineView\0"), sel_v);
+    assert theirs.is_not_null();
+    assert theirs != rlc_imp_for(#str_ptr("NSOutlineView\0"), sel_v);
+    // And it answers YES for a view inside a facet row, which is what a plain
+    // view hierarchy answers and therefore what a row inside a list must get.
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "listclick", width: 300.0f64, height: 400.0f64));
+    let host: ak::View = akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 400.0f64 });
+    w.set_content_view(host);
+    var n: core::Node = rlc_list(3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 300.0f64);
+    host.add_subview(ak::View::from_raw(v));
+    let tv: *u8 = recycler::table_of(v);
+    assert tv.is_not_null();
+    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+    let cell: *u8 = { rt::msg_id_i64_i64_i8(tv,
+                          rt::sel(#str_ptr("viewAtColumn:row:makeIfNecessary:\0")),
+                          0 as i64, 0 as i64, 1 as i8) };
+    assert cell.is_not_null();
+    let lbl: *u8 = rlc_text_field(cell);
+    assert lbl.is_not_null();
+    assert rlc_validates(tv, lbl);
+    w.close();
+}
+
+#[test]
+fn a_relist_stacks_its_rows_at_full_width() {
+    backend::install();
+    // WHAT THE LAYOUT IS FOR, and both halves of it were wrong once.
+    //
+    // A flow layout refuses a full-width row — it requires an item strictly
+    // NARROWER than the view minus its insets, and complains once per
+    // invalidation that its behaviour is undefined. Measured on a divider drag:
+    // 11 complaints, with the insets read back as zero. So the layout is ours,
+    // and what it owes is exactly this: every row the width of the list, each
+    // one starting where the last one ended.
+    //
+    // The stacking half is not hypothetical either. Before it, the cell was
+    // framed by `place_row` — right for a table, where the table positions the
+    // row — and every item answered (0, 0, w, h): five rows on top of each
+    // other at the top of the scroller.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    let _b: status::Status = rows.append(RLEntry { n: 2 });
+    let _c: status::Status = rows.append(RLEntry { n: 3 });
+    var n: core::Node = relist::relist(rows, key: "stack", builder: rlc_row,
+                                       uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    assert v.is_not_null();
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 260.0f64);
+
+    let cv: *u8 = recycler::grid_of(v);
+    assert cv.is_not_null();
+    let lay: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("collectionViewLayout\0"))) };
+    assert lay.is_not_null();
+
+    var y: f64 = 0.0f64;
+    var r: i64 = 0 as i64;
+    while r < (3 as i64) {
+        let ip: *u8 = { rt::msg_id_i64_i64(rt::get_class(#str_ptr("NSIndexPath\0")),
+                                           rt::sel(#str_ptr("indexPathForItem:inSection:\0")),
+                                           r, 0 as i64) };
+        let at: *u8 = { rt::msg_id_id(lay,
+                            rt::sel(#str_ptr("layoutAttributesForItemAtIndexPath:\0")), ip) };
+        assert at.is_not_null();
+        let f: rt::Rect = { rt::msg_rect(at, rt::sel(#str_ptr("frame\0"))) };
+        // FULL WIDTH — the thing a flow layout would not allow.
+        assert f.w == 260.0f64;
+        assert f.h > 0.0f64;
+        // ...and starting exactly where the row above ended: no overlap, no gap.
+        assert f.y == y;
+        y = y + f.h;
+        r = r +% (1 as i64);
+    }
+    // The content is as tall as its rows, so the scroller knows how far it goes.
+    let size: rt::Size = { recycler::grid_content_size(lay) };
+    assert size.h == y;
+    assert size.w == 260.0f64;
+}
+
