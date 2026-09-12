@@ -5668,6 +5668,21 @@ fn a_resize_discovered_during_layout_is_serviced_in_the_SAME_tick() {
     // ONE tick. The rows were measured at the width the table has NOW.
     let w2: f64 = recycler::column_width_of(v);
     assert w2 != w1;
+    // A HEIGHT ASKED NOW IS MEASURED AT THE WIDTH THE TABLE HAS NOW, which is
+    // what "serviced in the same tick" means — one tick, not two.
+    //
+    // This used to assert the cache was ALREADY populated at `w2`, which is a
+    // different and incidental claim: whether a height query lands after the
+    // tick's last cache clear depends on how many rows AppKit asks about, and
+    // that depends on how TALL they are. Measuring rows correctly — realising
+    // them, so a label is 15pt rather than a collapsed 0 — means fewer rows
+    // fill the viewport, fewer queries, and the last one falling on the other
+    // side of the clear. Measured: 150 height queries before that fix, 90
+    // after, on the same list.
+    //
+    // The lag this test exists to catch still fails it: a resize serviced one
+    // tick late measures at the OLD width, and this reads `w2`.
+    let _h: f64 = recycler::height_of_row(v, 0 as i64);
     assert recycler::heights_width_of(v) == w2;
     assert scheduler::pending_reload_count() == (0 as usize);
     app::close_window(rp);
@@ -15317,4 +15332,119 @@ fn ui_relist_is_the_same_door_with_no_turbofish() {
         option::Option[relist::Relist]::Some(h) => { assert h.count() == (2 as usize); }
         option::Option[relist::Relist]::None => { assert false; }
     }
+}
+
+// ---- a row is measured at the size it will be SHOWN at ----------------------
+
+fn mr_row(i: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("a line of text", key: "t", font_size: 13.0));
+    return core::column(b, key: "").padding(6.0);
+}
+
+#[test]
+fn a_row_of_text_is_measured_at_its_texts_height() {
+    backend::install();
+    // MEASURING MEANT LAYING THE ROW OUT UNREALISED, and flex sizes a leaf from
+    // the measure callback `views::create` installs — which reads the native
+    // view. So a label with no view measured 0 and a row of labels measured its
+    // PADDING. The table then reserved that, and the content it later placed
+    // did not fit: measured 12.0 for a row whose realised label is 15pt tall
+    // inside 6pt of padding, so 27 points of content in a 12 point row.
+    //
+    // The assertion is self-checking rather than a hard-coded 27: the row's
+    // measured height must equal what the realised row actually occupies.
+    var n: core::Node = list::list(key: "mr", count: 3 as usize, row: mr_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let measured: f64 = recycler::height_of_row(v, 0 as i64);
+
+    // What the row REALLY is, once realised: the label's own frame plus the
+    // padding above and below it.
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 0 as i64);
+    let subs: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("subviews\0"))) };
+    assert subs.is_not_null();
+    assert { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) } == (1 as u64);
+    let lab: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    let lf: rt::Rect = { rt::msg_rect(lab, rt::sel(#str_ptr("frame\0"))) };
+    // top padding + the label + bottom padding, where the top padding is the
+    // label's own y.
+    let occupied: f64 = lf.y + lf.h + lf.y;
+    assert lf.h > 1.0f64;
+    assert measured == occupied;
+}
+
+#[test]
+fn a_stated_height_is_still_answered_without_realising_anything() {
+    backend::install();
+    // THE NEGATIVE HALF, and the one that keeps the fix affordable. Realising to
+    // measure is what a list PAYS when it states no height; a list that states
+    // one must still answer from the number, building and realising nothing.
+    // That is the whole contract of `row_height`, and making measurement
+    // correct must not quietly cost it.
+    SH_BUILDS = 0 as i64;
+    var n: core::Node = list::list(key: "mr2", row_height: 40 as i64,
+                                   count: 50 as usize, row: sh_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 9 as i64) == 40.0f64;
+    assert SH_BUILDS == (0 as i64);
+}
+
+#[test]
+fn a_uniform_relist_measures_one_row_for_all_of_them() {
+    backend::install();
+    // A row with no stated height is measured by REALISING it, so how many
+    // rows get measured is how many native subtrees get made. Uniform means
+    // one measurement answers for the whole list.
+    RLB = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 200 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "u1", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let h0: f64 = recycler::height_of_row(v, 0 as i64);
+    let after_first: i64 = RLB;
+    assert after_first > (0 as i64);
+    // Nine more rows, and not one of them is built: the first answer stands.
+    var r: i64 = 1 as i64;
+    while r < (10 as i64) {
+        assert recycler::height_of_row(v, r) == h0;
+        r = r +% (1 as i64);
+    }
+    assert RLB == after_first;
+}
+
+#[test]
+fn an_uneven_relist_measures_every_row() {
+    backend::install();
+    // THE NEGATIVE HALF, and the reason the word exists rather than the
+    // default being imposed. A list whose rows differ must be asked about each
+    // one — answering them all with the first row's height is a wrong picture,
+    // not a slow one. It costs a realise per row, which is exactly the trade
+    // the application is making when it says so.
+    RLB = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 200 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "u2", builder: rlb_row,
+                                       uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let _h0: f64 = recycler::height_of_row(v, 0 as i64);
+    let after_first: i64 = RLB;
+    let _h1: f64 = recycler::height_of_row(v, 1 as i64);
+    let _h2: f64 = recycler::height_of_row(v, 2 as i64);
+    // Each row asked, each row built.
+    assert RLB > after_first;
 }

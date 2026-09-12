@@ -273,6 +273,17 @@ struct RowSource {
     // table for the rest of the table's life — and nothing cleared it when
     // that node went away. See `release_row_source`, which is the other half.
     opaque node: *core::Node,
+    // A CELL USED ONLY FOR MEASURING, kept for the life of the table.
+    //
+    // A row has to be REALISED to measure honestly: flex sizes a leaf from the
+    // measure callback `views::create` installs, and that callback needs the
+    // view. Laying out an unrealised row therefore measures every label as
+    // ZERO — a two-label card reported its padding and nothing else.
+    //
+    // Reused rather than made per row, and that is what makes this affordable:
+    // with a `bind` the subtree is built ONCE and every later measurement
+    // writes into it, which is the same trade the vending path already makes.
+    opaque measure_cell: *u8,
     // The frame observation, kept so it can be CANCELLED. `observe_named` does
     // not pin its observer to the view — it holds it in a registry keyed by
     // this id — so an uncancelled observation survives the view it watches,
@@ -530,16 +541,25 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
     // gets asked first.
     if fh >= 1.0f64 { return fh; }
 
-    // Measuring means building the row and laying it out. No views: this is a
-    // pure flex measurement, so nothing is realised and nothing has to be torn
-    // down afterwards.
+    // MEASURING MEANS REALISING, and it did not, which is the bug this comment
+    // used to describe as a feature: "no views: this is a pure flex
+    // measurement, so nothing is realised". Flex sizes a LEAF from the measure
+    // callback `views::create` installs on it, and that callback reads the
+    // native view — so an unrealised label measures 0 and a row of labels
+    // measures its padding. Measured: a row of one 13pt label inside
+    // `padding(6)` answered 12.0 here while the realised row placed that label
+    // 15pt tall at y=6, so the table reserved 12 points for content needing 27.
     //
-    // With a bind, the SHAPE is built once and this row's data written into it
-    // — so measuring a thousand rows builds one subtree, not a thousand.
-    var node: core::Node = build_row(s, row);
-    bind_into(s, row, #addr_of(node));
-    node.calculate_layout(width: w);
-    var h: f64 = { node.frame().height };
+    // So the row is realised into a cell kept for exactly this, laid out, and
+    // asked. Reusing ONE cell is what keeps it affordable — and with a `bind`
+    // the subtree is built once and every later measurement writes into it,
+    // which is the same trade the vending path makes.
+    //
+    // It is also the same code path that vends, so a measured height and a
+    // placed height cannot drift apart.
+    let mc: *u8 = measure_cell_of(s, w);
+    if mc.is_null() { return 1.0f64; }
+    var h: f64 = measure_row(s, mc, row, w);
     if h < 1.0f64 { h = 1.0f64; }
     if row >= (0 as i64) {
         let idx: usize = row as usize;
@@ -595,7 +615,65 @@ fn view_for_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, col: *u8, row: i64) -> *u8
         cell = new_cell(id, w);
         if cell.is_null() { return 0 as *u8; }
     }
-    fill_cell(s, cell, row, w);
+    let _h: f64 = fill_cell(s, cell, row, w);
+    return cell;
+}
+
+// MEASURE ROW `row` BY REALISING IT, and by doing NOTHING ELSE.
+//
+// This is `fill_cell` without `place_row`, and the difference is the whole
+// reason it exists separately. `place_row` writes frames onto the cell and its
+// content, which is right for a row being SHOWN and wrong for one being asked
+// about: the frame writes perturb the table's own layout and provoke a reload,
+// which throws away the very measurements this pass is taking. Measured — with
+// `place_row` in here the height cache ended every tick empty
+// (`a_resize_discovered_during_layout_is_serviced_in_the_SAME_tick` went red,
+// with 5 cache-clears against 3 fills).
+//
+// Realising is not optional: flex sizes a leaf from the measure callback
+// `views::create` installs, and that callback reads the native view.
+//
+// WITH A BIND the subtree is built once and every later row writes into it, so
+// measuring a thousand rows realises one. Without one, each measured row is
+// built and realised — which is what `row_height` and `row_height_of` exist to
+// let an application avoid.
+fn measure_row(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
+    let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
+    if has_bind(s) && existing.is_not_null() {
+        bind_into(s, row, existing);
+        mount::sync_from(existing);
+        { (*existing).calculate_layout(width: w) };
+        return { (*existing).frame().height };
+    }
+    if existing.is_not_null() { release_cell_row(cell); }
+    var node: core::Node = build_row(s, row);
+    return match box::new::[core::Node](node) {
+        option::Option[box::Box[core::Node]]::Some(b) => {
+            let np: *core::Node = { b.into_raw() } as *core::Node;
+            empty_cell(cell);
+            let _rv: *u8 = mount::realise(np, cell);
+            bind_into(s, row, np);
+            mount::sync_from(np);
+            { (*np).calculate_layout(width: w) };
+            synth::set_associated(cell, cell_node_key(), np as *u8);
+            { (*np).frame().height }
+        }
+        option::Option[box::Box[core::Node]]::None => 0.0f64,
+    };
+}
+
+// THE CELL ROWS ARE MEASURED IN. One per table, made on first use and kept.
+//
+// Deliberately NOT vended through `makeViewWithIdentifier:` and never handed to
+// AppKit: it is not in the view hierarchy, so realising into it costs the views
+// and nothing else — no display, no tiling, no animation.
+fn measure_cell_of(s: *RowSource, w: f64) -> *u8 {
+    let existing: *u8 = { (*s).measure_cell };
+    if existing.is_not_null() { return existing; }
+    let cell: *u8 = rt::retain(new_row_cell(rt::Rect { x: 0.0f64, y: 0.0f64,
+                                                       w: w, h: 1.0f64 }));
+    if cell.is_null() { return 0 as *u8; }
+    { (*s).measure_cell = cell };
     return cell;
 }
 
@@ -748,7 +826,7 @@ fn cell_resize_imp(self_obj: *u8, cmd: *u8, old: rt::Size) {
 // Factored out of the delegate because it is the half worth testing on its
 // own: a headless table never fills its reuse queue, so `makeViewWithIdentifier`
 // always answers nil and the reuse branch would never run under test.
-fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
+fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
     let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
     if has_bind(s) && existing.is_not_null() {
         bind_into(s, row, existing);
@@ -760,10 +838,10 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
         mount::sync_from(existing);
         // The row's own size can change with its data, so it is re-laid out
         // and re-placed — the cheap half of what a rebuild did.
-        let _h: f64 = place_row(cell, existing, w, row_h: stated_row_height(s, row));
-        return;
+        return place_row(cell, existing, w, row_h: stated_row_height(s, row));
     }
     if existing.is_not_null() { release_cell_row(cell); }
+    var placed: f64 = 0.0f64;
 
     var node: core::Node = build_row(s, row);
     match box::new::[core::Node](node) {
@@ -780,11 +858,12 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
             // data of whichever row happened to build its cell.
             bind_into(s, row, np);
             mount::sync_from(np);
-            let _h: f64 = place_row(cell, np, w, row_h: stated_row_height(s, row));
+            placed = place_row(cell, np, w, row_h: stated_row_height(s, row));
             synth::set_associated(cell, cell_node_key(), np as *u8);
         }
         option::Option[box::Box[core::Node]]::None => { }
     }
+    return placed;
 }
 
 // NO IMPLICIT ANIMATION WHILE A ROW IS PLACED.
@@ -1347,6 +1426,14 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
     { (*s).row_ctx = { (*p).builder_ctx } };
     { (*s).bind = props::no_bind };
 
+    // ONE MEASUREMENT FOR ALL ROWS, unless the application says its rows
+    // differ. This is `list`'s `has_uneven_rows` under relist's own word, and
+    // it is not a micro-optimisation: since a row is measured by REALISING it,
+    // an uneven list realises a row per measurement, and measured on 5000 rows
+    // that is 646 realises to show a list against 46 — and 3 dropped frames in
+    // 60 under a hard flick against none.
+    { (*s).uniform = { (*p).uneven_rows } == false };
+
     // THE COUNT IS READ, NOT STORED. Through the erased reader, so `T` is the
     // element's business and never the backend's. This is the whole difference
     // from `list`: there is no count to have forgotten to update.
@@ -1496,6 +1583,7 @@ fn row_source_for(tv: *u8, n: *core::Node) -> *RowSource {
         follow_tail: false,
         table: tv,
         node: n,
+        measure_cell: 0 as *u8,
         frame_obs: 0 as u64,
         uniform: false,
         groups: 0 as i64,
@@ -1567,6 +1655,9 @@ fn release_row_source(v: *u8) {
     if s.is_null() { return; }
     akx::cancel_observe_frame({ (*s).frame_obs });
     scheduler::forget_reload(s as *u8);
+    // The measuring cell is retained by this source and by nothing else.
+    let mc: *u8 = { (*s).measure_cell };
+    if mc.is_not_null() { release_cell_row(mc); rt::release(mc); }
     synth::set_associated(tv, source_key(), 0 as *u8);
     // `heights` is a `Vec` the source owns, so this is a drop and not just a
     // free — `from_raw` re-adopts the box `into_raw` surrendered, and the
