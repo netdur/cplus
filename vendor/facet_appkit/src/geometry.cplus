@@ -340,7 +340,45 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     let b: rt::Rect = ak::View::from_raw(pane_host).safe_area_rect();
                     ak::View::from_raw(v).set_hidden(core::is_hidden(c));
                     set_view_frame(v, b);
-                    reposition_children(c, cf);
+                    // A CONTROLLER-BACKED PANE IS THE SIZE APPKIT GIVES IT, and
+                    // that is not the size flex guessed.
+                    //
+                    // flex divides the split by the divider position; AppKit
+                    // then insets a SIDEBAR item for the material it draws
+                    // around it, and takes a point for the divider. Measured at
+                    // rest, every pass:
+                    //
+                    //   pane 0: flex says 220, AppKit gives 212
+                    //   pane 1: flex says 599, AppKit gives 600
+                    //
+                    // The pane's VIEW was placed at AppKit's rect above, so
+                    // laying its children out against flex's frame builds the
+                    // pane's contents 8pt wider than the pane they are in.
+                    //
+                    // That overflow is not cosmetic. A relist inside the sidebar
+                    // takes the 8pt as its own width, AppKit settles it back to
+                    // the pane's, facet writes it again on the next pass — and
+                    // during a live window resize the two overwrite each other
+                    // for as long as the mouse is down. Measured: the reload
+                    // width cycling 188 -> 187 -> 183 -> 180 -> 188 with the
+                    // host reading 180 throughout, which is the sidebar
+                    // flashing on and off while the window is dragged.
+                    //
+                    // So the pane's subtree is laid out at the size it really
+                    // has. Nothing else in the walk needs to know: the pane node
+                    // becomes its own root, and its children are placed relative
+                    // to it exactly as they are under any other host.
+                    // The pane's own flex size has to be told as well, not just
+                    // the layout call: `apply_split` PINS the leading pane's
+                    // width to the divider position so flex can divide the
+                    // split, and that pin wins over a width passed to
+                    // `calculate_layout` — measured, asking for 212 and getting
+                    // 220 back. For a controller-backed split that pin describes
+                    // a division AppKit is making itself, so the honest value
+                    // for it is the rect AppKit landed on.
+                    core::set_width(c, b.w);
+                    core::set_height(c, b.h);
+                    relayout_root(c, b.w, b.h, backing_scale_of(v), force: true);
                     i = i +% (1 as usize);
                     continue;
                 }
