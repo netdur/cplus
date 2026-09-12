@@ -4076,6 +4076,29 @@ fn window_buttons(
     return m_window_chrome::window_buttons(key: key, style: style,
                                            spacing: spacing);
 }
+
+// THE ONE GENERIC FORWARD. Every other control in this file is a concrete
+// signature; `relist` is handed the application's own collection, so `T` rides
+// through. The forward is generic too and infers `T` from the same bare place
+// the caller wrote — `ui::relist(this.rows, ...)` with no turbofish, exactly
+// as `relist::relist` does.
+fn relist[T](
+    ref rows: m_obs_vec::ObsVec[T],
+    key: str = "",
+    builder: fn(usize, *u8) -> flex::Node = m_relist::no_builder,
+    builder_ctx: *u8 = 0 as *u8,
+) -> core::Node {
+    // TURBOFISH, and it is not optional here. Inference DOES read `T` off a
+    // bare `ref rows: ObsVec[T]` place when the caller's collection is
+    // concrete — that is what lets an application write
+    // `ui::relist(this.rows, ...)`. It does not when the argument's own type
+    // is itself a parameter, which is every generic-to-generic forward: E0500,
+    // "cannot infer type parameter `T`; supply `::[T]` turbofish or use `T` in
+    // an argument position". So the forward names it and the call site does
+    // not have to.
+    return m_relist::relist::[T](rows, key: key,
+                                 builder: builder, builder_ctx: builder_ctx);
+}
 """
 
 
@@ -4096,6 +4119,8 @@ def emit_elements(rows_by_control):
          'import "./text_button" as m_text_button;\n',
          'import "./split" as m_split;\n',
          'import "./tree" as m_tree;\n',
+         'import "./relist" as m_relist;\n',
+         'import "./obs_vec" as m_obs_vec;\n',
          'import "./window_chrome" as m_window_chrome;\n']
     for row_type in rows_by_control:
         mod = MODULE[row_type]

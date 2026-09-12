@@ -1357,6 +1357,23 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
 
     let creating: bool = dirty == paint::all_bits();
 
+    // GATED ON THE BITS, like every other apply body in this package. Acting
+    // unconditionally would re-read the collection and re-check the table on
+    // every unrelated write in the window — a text field two panes over would
+    // walk this list. The element raises `P_ROWS` from its change handler and
+    // `P_BUILDER` from `set_builder`; nothing else here is a reason to touch
+    // the table.
+    let row_band: u64 = relist::P_ROWS | relist::P_BUILDER;
+    if (dirty & row_band) == (0 as u64) && creating == false { return; }
+
+    // A NEW BUILDER IS A NEW SHAPE FOR EVERY ROW. Nothing about the sequence
+    // moved, so there is no splice to make — but every cell in hand was built
+    // by the old builder, and a reload is what re-vends them.
+    if (dirty & relist::P_BUILDER) != (0 as u64) && creating == false {
+        relist_reload(tv, s);
+        return;
+    }
+
     // A PENDING CHANGE IS A COMMAND, taken rather than read: applied twice, a
     // splice moves the sequence twice and every row below is one out.
     var kind: i64 = -1 as i64;

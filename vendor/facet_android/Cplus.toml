@@ -41,3 +41,8 @@ jni          = "*"
 android_view = "*"
 flex_layout  = "*"
 facet        = "*"
+# TRANSITIVE: `relist` reads its collection's change signal out of
+# `events::Signal`, and `elements.cplus` forwards `relist` — so every consumer
+# that compiles facet in source mode compiles that import (E0852 is a manifest
+# line, not a bug).
+events      = "*"

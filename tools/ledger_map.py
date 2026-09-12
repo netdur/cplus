@@ -703,6 +703,24 @@ FACET_ORIGIN = [
      "leaked them for the life of the application. Recycled underneath on "
      "every platform, but not `list`: count+index and parent->children are "
      "different protocols"),
+    ("relist", "relist(rows, builder:) + ObsVec[T]",
+     "a recycled list over an observable collection",
+     "the ledger binds ItemsSource to a DataTemplate and Stage 1 dropped both as "
+     "MODEL; `list` replaced them with a count plus a builder the application "
+     "keeps in step BY HAND, which is a second copy of the truth and drifts",
+     "SHIPPED 2026-09-12 — hand-written vendor/facet/src/relist.cplus + "
+     "obs_vec.cplus. GENERIC over the element type, and the only generic "
+     "forward in elements.cplus: the app passes its collection as a bare place "
+     "and `T` is inferred from it (a generic-to-generic forward needs the "
+     "turbofish, a concrete call site does not). The collection is erased "
+     "behind `*u8` plus a monomorphized reader whose ADDRESS the props hold, "
+     "so the backend never sees `T`. `ObsVec` carries a `Change` — kind, "
+     "position, run — rather than a bare notification, which is what lets the "
+     "backend splice instead of reload. Selection, sections, headers, "
+     "pagination, reorder and delete are deliberately NOT on the element: each "
+     "is the app's own state plus a gesture, a row the builder chooses to "
+     "build, or a wrapper. `list` grew all of them as props and that is why it "
+     "has three height mechanisms with no precedence rule"),
     ("split", "split(b, axis:, position:) + Pane verbs", "a draggable divider",
      "behaviour, not layout — flex cannot own it because the divider is a "
      "control the USER drags, unlike spacer and zstack which are pure "

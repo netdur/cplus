@@ -41,6 +41,11 @@ prebuild = false
 stdlib      = "*"
 flex_layout = "*"
 facet       = "*"
+# TRANSITIVE: `relist` reads its collection's change signal out of
+# `events::Signal`, and `elements.cplus` forwards `relist` — so every consumer
+# that compiles facet in source mode compiles that import (E0852 is a manifest
+# line, not a bug).
+events      = "*"
 # GTK 4 typed binding + its transitive stack (flat-vendor: the closure the
 # build touches must be declared here, resolved from sibling vendor/ dirs).
 gtk4        = "*"

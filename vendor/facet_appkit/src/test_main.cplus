@@ -15228,8 +15228,9 @@ fn a_relist_that_changed_nothing_is_not_reloaded() {
     let cached_at: f64 = recycler::heights_width_of(v);
     assert cached_at > 0.0f64;
 
+    // An apply with NOTHING in the row band — the shape of every unrelated
+    // write in the window reaching this node's sync walk.
     core::clear_dirty(np);
-    core::touch(np, relist::P_BUILDER);
     views::apply(0 as *u8, np);
     assert recycler::heights_width_of(v) == cached_at;
 }
@@ -15292,4 +15293,28 @@ fn a_splice_against_a_table_that_disagrees_reloads_instead() {
 
     // Reloaded rather than spliced, and still alive to say so.
     assert recycler::row_count_of(v) == (4 as i64);
+}
+
+#[test]
+fn ui_relist_is_the_same_door_with_no_turbofish() {
+    backend::install();
+    // THE APPLICATION'S SPELLING. `ui::` is the one import an app has, and a
+    // control that could only be reached through its own module would be a
+    // control apps do not use. The forward is generic — the only one in
+    // `elements.cplus` — and it infers `T` from the same bare place, so
+    // nothing at the call site says what `T` is.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    let _b: status::Status = rows.append(RLEntry { n: 2 });
+    var n: core::Node = ui::relist(rows, key: "uirl", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    assert v.is_not_null();
+    core::set_view(np, v, views::view_release);
+    assert recycler::row_count_of(v) == (2 as i64);
+    // ...and it is a real relist, not a lookalike.
+    match relist::from(np) {
+        option::Option[relist::Relist]::Some(h) => { assert h.count() == (2 as usize); }
+        option::Option[relist::Relist]::None => { assert false; }
+    }
 }
