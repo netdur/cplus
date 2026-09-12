@@ -53,6 +53,11 @@ fn no_builder(index: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); 
 
 fn no_count(rows: *u8) -> usize { return 0 as usize; }
 
+// NO STABLE IDENTITY. 0 means "this row has no id", which is the answer for
+// every row until an application says otherwise — and the answer a single row
+// may give when its identity is not known yet.
+fn no_row_id(index: usize, ctx: *u8) -> u64 { return 0 as u64; }
+
 struct RelistProps {
     // The application's collection, erased. `opaque`: the APP owns it, this is
     // a borrow that must not outlive it — which is the contract the element
@@ -79,6 +84,30 @@ struct RelistProps {
     // common case of one edit per frame, not a promise to track every case.
     pending: obs_vec::Change,
     has_pending: bool,
+    // A ROW'S STABLE IDENTITY, for keeping its measured height across a
+    // reload.
+    //
+    // WHY IT EXISTS: heights are cached BY POSITION, and a reload throws the
+    // whole cache away because position is all it has — after a reload, row
+    // 40 may be a different row. For an UNEVEN list that means re-measuring
+    // every visible row, and since measuring realises one, that is the
+    // expensive kind of re-measure. A timeline that refreshes is the case: most
+    // of what comes back was already there and already measured, at heights
+    // that have not changed.
+    //
+    // Keyed on a `u64` rather than a string: a measurement happens per row per
+    // pass, so an identity that ALLOCATES would cost more than the measurement
+    // it saves. A timeline's ids are already integers; an application whose
+    // are not hashes its own, because it knows what in its data is stable.
+    //
+    // 0 MEANS NO IDENTITY and falls back to position, so a list that says
+    // nothing behaves exactly as before and a list that can identify only some
+    // of its rows still gets the benefit for those.
+    //
+    // Irrelevant to a UNIFORM list, which caches one height for everything —
+    // there is nothing for an identity to preserve.
+    row_id: fn(usize, *u8) -> u64,
+    opaque row_id_ctx: *u8,
     // DO THIS LIST'S ROWS DIFFER IN HEIGHT?
     //
     // `false` — they are all the same — is the default and the fast path, and
@@ -112,6 +141,8 @@ impl RelistProps {
             node: 0 as *core::Node,
             pending: obs_vec::Change::reload(),
             has_pending: false,
+            row_id: no_row_id,
+            row_id_ctx: 0 as *u8,
             uneven_rows: false,
             sub: events::SignalSubscription[obs_vec::Change]::none(),
         };
@@ -175,6 +206,8 @@ fn relist[T](
     key: str = "",
     builder: fn(usize, *u8) -> flex::Node = no_builder,
     builder_ctx: *u8 = 0 as *u8,
+    row_id: fn(usize, *u8) -> u64 = no_row_id,
+    row_id_ctx: *u8 = 0 as *u8,
     uneven_rows: bool = false,
 ) -> core::Node {
     var p: RelistProps = RelistProps::new();
@@ -182,6 +215,8 @@ fn relist[T](
     p.count_of = _count_of::[T];
     p.builder = builder;
     p.builder_ctx = builder_ctx;
+    p.row_id = row_id;
+    p.row_id_ctx = row_id_ctx;
     p.uneven_rows = uneven_rows;
     return match box::new::[RelistProps](p) {
         option::Option[box::Box[RelistProps]]::Some(b) => {
@@ -256,6 +291,26 @@ impl Relist {
         { (*p).builder_ctx = ctx };
         core::touch(this._p, P_BUILDER);
         return this;
+    }
+
+    // Name what makes a row itself. See `RelistProps.row_id`: it buys a
+    // measured height that survives a reload, and only for an uneven list.
+    fn set_row_id(this, f: fn(usize, *u8) -> u64, ctx: *u8 = 0 as *u8) -> Relist {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return this; }
+        { (*p).row_id = f };
+        { (*p).row_id_ctx = ctx };
+        core::touch(this._p, P_ROWS);
+        return this;
+    }
+
+    // The identity of row `at`, or 0 if this list does not name one.
+    fn row_id_of(this, at: usize) -> u64 {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return 0 as u64; }
+        let f: fn(usize, *u8) -> u64 = { (*p).row_id };
+        if f == no_row_id { return 0 as u64; }
+        return f(at, { (*p).row_id_ctx });
     }
 
     fn set_uneven_rows(this, v: bool) -> Relist {

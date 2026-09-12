@@ -15448,3 +15448,113 @@ fn an_uneven_relist_measures_every_row() {
     // Each row asked, each row built.
     assert RLB > after_first;
 }
+
+// ---- a measured height that survives a reload --------------------------------
+
+// A timeline's rows: id 1000+n, and every one a different height, which is what
+// makes the identity worth keeping.
+fn tl_row(i: usize, ctx: *u8) -> core::Node {
+    RLB = RLB + (1 as i64);
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("t", key: ""));
+    let extra: f64 = ((i % (3 as usize)) as f64) * 7.0f64;
+    return core::column(b, key: "").padding(6.0 + extra);
+}
+
+fn tl_id(i: usize, ctx: *u8) -> u64 { return (1000 as u64) + (i as u64); }
+
+fn tl_relist(ref rows: obs_vec::ObsVec[RLEntry], key: str, with_id: bool) -> core::Node {
+    if with_id {
+        return relist::relist(rows, key: key, builder: tl_row, row_id: tl_id,
+                              uneven_rows: true);
+    }
+    return relist::relist(rows, key: key, builder: tl_row, uneven_rows: true);
+}
+
+#[test]
+fn a_named_identity_keeps_a_measured_height_across_a_reload() {
+    backend::install();
+    // THE TIMELINE CASE. A refresh reloads, and a reload throws away a cache
+    // keyed by POSITION — after one, row 40 may be a different row. Most of
+    // what came back was already there at a height that has not changed, and
+    // re-measuring it means realising a subtree per row.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "tl", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    // Measure a few rows, at their several heights.
+    let h0: f64 = recycler::height_of_row(v, 0 as i64);
+    let h1: f64 = recycler::height_of_row(v, 1 as i64);
+    let h2: f64 = recycler::height_of_row(v, 2 as i64);
+    assert h0 != h1;
+    assert h1 != h2;
+    let built: i64 = RLB;
+    assert built > (0 as i64);
+
+    // A RELOAD — what a refresh takes.
+    rows.note_reload();
+    views::apply(0 as *u8, np);
+
+    // The heights come back without building anything: the identities did not
+    // change, so neither did what was measured against them.
+    RLB = 0 as i64;
+    assert recycler::height_of_row(v, 0 as i64) == h0;
+    assert recycler::height_of_row(v, 1 as i64) == h1;
+    assert recycler::height_of_row(v, 2 as i64) == h2;
+    assert RLB == (0 as i64);
+}
+
+#[test]
+fn without_an_identity_a_reload_costs_the_measurements() {
+    backend::install();
+    // THE NEGATIVE HALF, and the measurement that says the feature does
+    // anything: the SAME list with no `row_id` re-measures after the reload,
+    // because position is all it had and a reload invalidates position.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "tl2", false);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let h0: f64 = recycler::height_of_row(v, 0 as i64);
+    let _h1: f64 = recycler::height_of_row(v, 1 as i64);
+    rows.note_reload();
+    views::apply(0 as *u8, np);
+
+    RLB = 0 as i64;
+    assert recycler::height_of_row(v, 0 as i64) == h0;
+    assert RLB > (0 as i64);
+}
+
+#[test]
+fn a_row_whose_content_changed_does_not_keep_its_old_height() {
+    backend::install();
+    // THE HAZARD THE IDENTITY CACHE CREATES, and the reason an invalidation
+    // has to reach it. A cache that outlives reloads would otherwise guarantee
+    // that an EDITED row keeps the height its old content had — a tweet that
+    // gains an image staying the height it was without one.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "tl3", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let _h0: f64 = recycler::height_of_row(v, 0 as i64);
+    // That row's data changed, which is a `Changed` — the sequence did not
+    // move, so only this row is re-measured.
+    let _s: status::Status = rows.set(RLEntry { n: 99 }, at: 0 as usize);
+    views::apply(0 as *u8, np);
+
+    RLB = 0 as i64;
+    let _again: f64 = recycler::height_of_row(v, 0 as i64);
+    // Built again rather than answered from the identity cache.
+    assert RLB > (0 as i64);
+}

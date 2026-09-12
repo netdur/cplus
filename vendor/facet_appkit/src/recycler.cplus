@@ -51,6 +51,7 @@ import "facet/list" as list;
 import "facet/vocabulary" as vocab;
 import "facet/tree" as tree;
 import "facet/relist" as relist;
+import "stdlib/hash_map" as hash_map;
 import "facet/obs_vec" as obs_vec;
 import "./controls" as controls;
 import "./paint" as paint;
@@ -251,6 +252,32 @@ struct RowSource {
     // The width those measurements were taken at. A different width re-wraps
     // every row, so the whole cache is worth nothing.
     heights_width: f64,
+    // ---- heights that survive a reload ----------------------------------
+    //
+    // `heights` above is keyed by POSITION, so a reload throws it away: after
+    // one, row 40 may be a different row and the number cached against 40 is
+    // a claim about nothing. For an UNEVEN list that means re-measuring every
+    // visible row, and a measurement realises a subtree.
+    //
+    // Keyed by the row's own identity, the measurement outlives the reload —
+    // which is the case a refreshing timeline is made of: most of what comes
+    // back was already there, at a height that has not changed.
+    //
+    // Cleared with `heights` on a WIDTH change, because a height belongs to a
+    // width whatever it is keyed by. NOT cleared on a reload — that is the
+    // whole point of it.
+    //
+    // Empty and unused unless the application names `row_id`.
+    heights_by_id: hash_map::HashMap[u64, f64],
+    // The width the IDENTITY cache was taken at, tracked apart from
+    // `heights_width` — and that separation is the whole of making this work.
+    // A reload sets `heights_width` to 0 to say "the positions are worthless",
+    // so comparing against it would clear the identity cache on every reload,
+    // which is precisely the event it exists to survive. This only moves when
+    // the width really does.
+    ids_width: f64,
+    row_id: fn(usize, *u8) -> u64,
+    opaque row_id_ctx: *u8,
     // ---- the resize pass ------------------------------------------------
     // A live drag changes the width on every frame, and every change
     // invalidates every measurement. Reloading on each one re-measures the
@@ -486,6 +513,38 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
 
     let w: f64 = column_width(tv);
     let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
+    // A HEIGHT BELONGS TO A WIDTH whatever it is keyed by, so a real width
+    // change clears the identity cache as well. Checked against its OWN width:
+    // a reload zeroes `heights_width` to say the positions are worthless, and
+    // reading that as a width change would throw away the identities on every
+    // reload — the one event they exist to survive. Replaced rather than
+    // emptied, because `HashMap` has no `clear` and its drop frees what it
+    // held.
+    if w != { (*s).ids_width } {
+        { (*s).heights_by_id = hash_map::new::[u64, f64]() };
+        { (*s).ids_width = w };
+    }
+    let uniform: bool = { (*s).uniform };
+    // BY IDENTITY FIRST, and OUTSIDE the positional cache's width check — which
+    // is the whole point and was the bug in the first version of this. A reload
+    // zeroes `heights_width`, so a probe nested under `w == heights_width`
+    // never runs on the pass right after a reload: exactly the pass the
+    // identity cache exists for.
+    //
+    // Not consulted for a UNIFORM list: that one caches a single height for
+    // every row, so there is nothing an identity could preserve, and asking
+    // would cost a call per row to answer what slot 0 already knows.
+    if uniform == false && row >= (0 as i64) {
+        let id: u64 = row_identity_of(s, row);
+        if id != (0 as u64) {
+            match { (*s).heights_by_id.get(id) } {
+                option::Option[f64]::Some(known) => {
+                    if known > 0.0f64 { return known; }
+                }
+                option::Option[f64]::None => { }
+            }
+        }
+    }
     if w != { (*s).heights_width } {
         { (*hp).remove_all() };
         { (*s).heights_width = w };
@@ -498,7 +557,6 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
         // and a grouped list collapsed to header height throughout unless the
         // application stated `row_height`. NSTableView asks from row 0 down,
         // so the header always won the slot.
-        let uniform: bool = { (*s).uniform };
         if uniform && !is_header_row(s, row) { probe = first_data_row(s) as usize; }
         match { (*hp).at(probe) } {
             option::Option[f64]::Some(cached) => { if cached > 0.0f64 { return cached; } }
@@ -565,8 +623,26 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
         let idx: usize = row as usize;
         while { (*hp).count() } <= idx { append_zero(hp); }
         set_height(hp, idx, h);
+        // ...and against the row's own identity, so the next reload does not
+        // throw this measurement away with the positions.
+        let id: u64 = row_identity_of(s, row);
+        if id != (0 as u64) {
+            let _e: status::Status = { (*s).heights_by_id.insert(id, h) };
+        }
     }
     return h;
+}
+
+// THE ROW'S OWN IDENTITY, asked of the DATA index — the same `i` the builder
+// means — and 0 for a header, which has no data index, or for a list that
+// names no identity at all.
+fn row_identity_of(s: *RowSource, row: i64) -> u64 {
+    let f: fn(usize, *u8) -> u64 = { (*s).row_id };
+    if f == relist::no_row_id { return 0 as u64; }
+    if row < (0 as i64) { return 0 as u64; }
+    let at: i64 = resolve_row(s, row);
+    if at < (0 as i64) { return 0 as u64; }
+    return f(at as usize, { (*s).row_id_ctx });
 }
 
 fn append_zero(hp: *vec::Vec[f64]) {
@@ -1433,6 +1509,8 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
     // that is 646 realises to show a list against 46 — and 3 dropped frames in
     // 60 under a hard flick against none.
     { (*s).uniform = { (*p).uneven_rows } == false };
+    { (*s).row_id = { (*p).row_id } };
+    { (*s).row_id_ctx = { (*p).row_id_ctx } };
 
     // THE COUNT IS READ, NOT STORED. Through the erased reader, so `T` is the
     // element's business and never the backend's. This is the whole difference
@@ -1579,6 +1657,10 @@ fn row_source_for(tv: *u8, n: *core::Node) -> *RowSource {
         fixed_height: 0.0f64,
         heights: vec::new::[f64](),
         heights_width: 0.0f64,
+        heights_by_id: hash_map::new::[u64, f64](),
+        ids_width: 0.0f64,
+        row_id: relist::no_row_id,
+        row_id_ctx: 0 as *u8,
         last_width: 0.0f64,
         follow_tail: false,
         table: tv,
@@ -2002,6 +2084,15 @@ fn invalidate_rows(tv: *u8, s: *RowSource, lo_d: i64, hi_d: i64) {
     var r: i64 = lo;
     while r <= hi {
         if (r as usize) < { (*hp).count() } { set_height(hp, r as usize, 0.0f64); }
+        // AND BY IDENTITY, or a row whose content changed keeps the height its
+        // OLD content had — which is exactly what a cache that outlives a
+        // reload would otherwise guarantee. 0 is "not measured", the same
+        // answer an absent entry gives, so this invalidates without a `remove`
+        // the map does not have.
+        let id: u64 = row_identity_of(s, r);
+        if id != (0 as u64) {
+            let _e: status::Status = { (*s).heights_by_id.insert(id, 0.0f64) };
+        }
         r = r +% (1 as i64);
     }
     let span: *u8 = { msg_id_range(rt::get_class(#str_ptr("NSIndexSet\0")),

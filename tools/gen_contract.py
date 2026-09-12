@@ -4087,6 +4087,8 @@ fn relist[T](
     key: str = "",
     builder: fn(usize, *u8) -> flex::Node = m_relist::no_builder,
     builder_ctx: *u8 = 0 as *u8,
+    row_id: fn(usize, *u8) -> u64 = m_relist::no_row_id,
+    row_id_ctx: *u8 = 0 as *u8,
     uneven_rows: bool = false,
 ) -> core::Node {
     // TURBOFISH, and it is not optional here. Inference DOES read `T` off a
@@ -4099,6 +4101,7 @@ fn relist[T](
     // not have to.
     return m_relist::relist::[T](rows, key: key,
                                  builder: builder, builder_ctx: builder_ctx,
+                                 row_id: row_id, row_id_ctx: row_id_ctx,
                                  uneven_rows: uneven_rows);
 }
 """
