@@ -15575,3 +15575,49 @@ fn a_row_whose_content_changed_does_not_keep_its_old_height() {
     // Realised again rather than answered from the identity cache.
     assert recycler::measure_realises() > (0 as i64);
 }
+
+#[test]
+fn a_growing_row_costs_only_itself_and_then_settles() {
+    backend::install();
+    // THE STREAMING TRANSCRIPT. One message is still arriving: every token
+    // changes that row's content and nothing else. The failure this guards
+    // against is the one the recycler was rebuilt for — an 87-row transcript
+    // re-measuring all 87 of itself on every token — which here would cost a
+    // realise per row per token rather than one.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 30 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "chat", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    // Settle: every row measured once.
+    var r: i64 = 0 as i64;
+    while r < (30 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+
+    // Now the last row grows, five times.
+    recycler::reset_measure_realises();
+    var t: i32 = 0;
+    while t < 5 {
+        let _s: status::Status = rows.set(RLEntry { n: 900 + t }, at: 29 as usize);
+        views::apply(0 as *u8, np);
+        let _h: f64 = recycler::height_of_row(v, 29 as i64);
+        t = t +% 1;
+    }
+    // ONE realise per token, not one per row per token. The 29 settled rows
+    // above keep the heights they were measured at.
+    assert recycler::measure_realises() == (5 as i64);
+
+    // ...AND THEN IT STOPS. A finished message is an ordinary settled row:
+    // asking again costs nothing, or a transcript pays for its history forever.
+    recycler::reset_measure_realises();
+    var q: i64 = 0 as i64;
+    while q < (5 as i64) {
+        let _a: f64 = recycler::height_of_row(v, 29 as i64);
+        let _b: f64 = recycler::height_of_row(v, 0 as i64);
+        let _c: f64 = recycler::height_of_row(v, 15 as i64);
+        q = q +% (1 as i64);
+    }
+    assert recycler::measure_realises() == (0 as i64);
+}
