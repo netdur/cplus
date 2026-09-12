@@ -1206,6 +1206,7 @@ fn check_with_files_inner(
         assoc_free_fn_dispatches: HashMap::new(),
         assoc_method_dispatches: std::collections::HashSet::new(),
         struct_generic_templates: HashMap::new(),
+        rejected_generic_impls: std::collections::HashSet::new(),
         struct_template_origins: HashMap::new(),
         enum_template_origins: HashMap::new(),
         copy_flags_settled: false,
@@ -1865,6 +1866,20 @@ struct SemaCx<'a> {
     /// name-collection time. A lazily-synthesized instantiation (`Vec[i32]`)
     /// inherits this as its `origin_file` so cross-file `_`-field privacy fires
     /// for generic types exactly as it does for concrete ones.
+    /// Impl blocks already refused by E0387 (a generic impl away from its
+    /// template's file), keyed by the target's span — which is unique per
+    /// block and survives into `propagate_body_instantiations`.
+    ///
+    /// A refused block is still an `ItemKind::Impl` in the program, and the
+    /// body-propagation pass indexes impls by target name WITHOUT asking
+    /// whether they were accepted. Worse, `impl Vec[i32]` records the concrete
+    /// argument as a generic PARAMETER named `i32`, so the block matches every
+    /// one-argument instantiation of `Vec` and is walked with a substitution
+    /// that binds nothing the template's own bodies mention. That walk is
+    /// where the four E0303s inside stdlib came from: errors in a file the
+    /// user did not write and cannot edit, with nothing saying they were
+    /// consequences of the one error that was real.
+    rejected_generic_impls: std::collections::HashSet<ByteSpan>,
     struct_template_origins: HashMap<String, Option<String>>,
     /// EXT.1 mirror of `struct_template_origins` for generic ENUM templates,
     /// so the generic-impl same-file guard (E0387) can name both kinds.
@@ -5713,6 +5728,10 @@ impl SemaCx<'_> {
                 .flatten()
         };
         if template_origin != self.current_file {
+            // Recorded BEFORE the error, so the body-propagation pass can skip
+            // this block rather than walk a template whose extension was just
+            // refused. Without it one bad `impl` reports six errors.
+            self.rejected_generic_impls.insert(b.target.span);
             self.err(
                 "E0387",
                 format!(
@@ -19596,7 +19615,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let mut fn_items_by_name: HashMap<String, usize> = HashMap::new();
         for (i, item) in program.items.iter().enumerate() {
             match &item.kind {
-                ItemKind::Impl(b) if !b.target_generic_params.is_empty() => {
+                // A REFUSED IMPL IS NOT A TEMPLATE. E0387 already rejected the
+                // block; indexing it here walks its methods — and, for
+                // `impl Vec[i32]`, matches every one-argument `Vec`
+                // instantiation, because the concrete argument was recorded as
+                // a parameter named `i32`. The bodies then resolve against a
+                // substitution that binds no `T`, and the E0303s land inside
+                // the template's own file.
+                ItemKind::Impl(b)
+                    if !b.target_generic_params.is_empty()
+                        && !self.rejected_generic_impls.contains(&b.target.span) =>
+                {
                     impls_by_target
                         .entry(b.target.name.clone())
                         .or_default()
@@ -24597,6 +24626,59 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
         assert!(
             codes.contains(&"E0387"),
             "a generic impl away from its template file is E0387; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ext_refused_generic_impl_reports_nothing_inside_the_template() {
+        // THE CASCADE, which is the part that cost the time. E0387 is correct,
+        // first and well-worded — and the build then reported four MORE errors
+        // inside the template's own file, which for a real program is a
+        // vendored dependency the user did not write and cannot edit. The
+        // first instinct on seeing errors in `vec.cplus` is that stdlib is
+        // broken; the mistake is one line in the user's own module.
+        //
+        // MECHANISM, and it is narrower than "a refused block gets walked".
+        // `propagate_body_instantiations` indexes impls by target name without
+        // asking whether they were accepted, and `impl Holder[i32]` records the
+        // CONCRETE argument as a generic parameter named `i32`. The
+        // METHOD-LEVEL generic arm then reads that index with `idxs.first()`
+        // to learn the template's parameter names — so it bound `i32` instead
+        // of `T`, and every mention of `T` inside the method's body resolved
+        // to nothing. In the report that was `option::Option[*T]` in
+        // `Vec::fold_ref` and `Vec::each_ref`: two methods, two instantiations,
+        // the four E0303s and their duplicates.
+        //
+        // So the test needs ALL of it: a method-level generic, a body that
+        // mentions the TEMPLATE's parameter, and the refused impl indexed
+        // FIRST — which is why `acme.src.b` is listed before the template.
+        // Two earlier drafts without the method-level generic passed with the
+        // fix ablated.
+        let diags = check_multifile_src(
+            "acme.src.b",
+            &[
+                (
+                    "acme.src.b",
+                    "impl Holder[i32] { fn twice(this) -> i32 { return 2; } }\n                     fn main() -> i32 {\n                       var h: Holder[i32] = Holder[i32] { v: 1 };\n                       return h.fold::[i32](0);\n                     }\n",
+                ),
+                (
+                    "acme.src.a",
+                    "enum Opt[T] { Some(T), None }\n                     struct Holder[T] { v: T }\n                     impl Holder[T] {\n                       fn get(this) -> T { return this.v; }\n                       fn fold[A](this, init: A) -> A {\n                         match Opt[*T]::None {\n                           Opt[*T]::Some(p) => { return init; }\n                           Opt[*T]::None => { return init; }\n                         }\n                       }\n                     }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(
+            codes.contains(&"E0387"),
+            "the refused impl is still E0387; got {codes:?}"
+        );
+        // THE NEGATIVE HALF, and the whole point: nothing from inside the
+        // template. `T` is bound wherever the template is legitimately walked,
+        // so an unknown-type error there means a refused block was read for
+        // the template's parameter names.
+        assert!(
+            !codes.contains(&"E0303"),
+            "a refused impl must not name the template's parameters; got {codes:?}"
         );
     }
 
