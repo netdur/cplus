@@ -3278,7 +3278,7 @@ fn default_row_height() -> f64 { return 28.0f64; }
 fn disclosure_width() -> f64 { return 16.0f64; }
 
 fn row_height_of(p: *tree::TreeProps) -> f64 {
-    let h: f64 = { (*p).row_height };
+    let h: f64 = { (*p).row_height } as f64;
     if h >= (1.0 as f64) { return h; }
     return default_row_height();
 }

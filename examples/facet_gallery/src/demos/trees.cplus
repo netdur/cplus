@@ -1,7 +1,7 @@
 // Reference: tree
 //   var root = TreeNode::new("", "root", is_branch: true);
 //   root.add_child(TreeNode::new("Leaf", id: "a"));
-//   ui::tree(root, key: "t", on_select: this.on_select, row_height: 26.0)
+//   ui::tree(root, key: "t", on_select: this.on_select, row_height: 26)
 
 import "facet/facet" as core;
 import "facet/elements" as ui;
@@ -67,7 +67,7 @@ impl Trees: component::Component {
             sample_tree(),
             key: "tr:demo",
             on_select: this.on_select,
-            row_height: 26.0,
+            row_height: 26,
         ).height(220.0).grow(1.0));
         body.add(ui::label("selected: (none)", key: "tr:status",
             font_size: 13.0, text_color: vocab::Color::ink(0.7)));

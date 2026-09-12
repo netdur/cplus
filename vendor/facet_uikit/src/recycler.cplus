@@ -143,9 +143,14 @@ fn fill_cell(cell: *u8, n: *core::Node, i: usize) {
             // fills a RECYCLED row rather than building a new one. facet
             // declares both, so both are called — build, then bind.
             let bind: fn(usize, *flex::Node, *u8) = { (*p).bind };
-            // `bind` shares `row`'s context: facet gives the pair one, because they
-            // are two halves of the same callback.
-            if bind != (0 as fn(usize, *flex::Node, *u8)) { bind(i, root, { (*p).row_ctx }); }
+            // `bind` has its OWN context, falling back to the row builder's when
+            // the application named only one — which is every call site that
+            // builds shape and data from the same object. It used to share
+            // `row_ctx` outright, and `set_row_bind` wrote that same slot, so
+            // naming a bind NULLed the builder's context.
+            if bind != (0 as fn(usize, *flex::Node, *u8)) {
+                bind(i, root, props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx }));
+            }
             // `realise` ANSWERS THE ROOT'S VIEW, AND 0 IS NOT FAILURE.
             //
             // A row built as `ui::row(...)` is an unkeyed pure-layout node and
@@ -1081,7 +1086,7 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     let p: *tree::TreeProps = props_of(n, tree::K_TREE) as *tree::TreeProps;
     if p == (0 as *tree::TreeProps) { return; }
     if (dirty & tree::P_ROW_HEIGHT) != (0 as u64) {
-        let h: f64 = { (*p).row_height };
+        let h: f64 = { (*p).row_height } as f64;
         if h > 0.0f64 { { rt::msg_void_f64(v, rt::sel(#str_ptr("setRowHeight:\0")), h) }; }
     }
     // The model or the open set changed: the flattening is what the table reads,

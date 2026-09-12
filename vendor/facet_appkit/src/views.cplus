@@ -878,5 +878,17 @@ fn view_release(v: *u8) {
     let n: *core::Node = { synth::get_associated(geom::split_view_of(v),
                                                  controls::split_view_node_key()) as *core::Node };
     if n.is_not_null() { scheduler::forget_split(n); }
+    // A LIST OR TREE LEAVES ITS ROW SOURCE WITH ITS VIEW, for the third time in
+    // this function and the same reason both times above: the row source is
+    // named by a frame observation the notification centre does not retain, by
+    // a queued reload job the tick will dereference, and by an association the
+    // delegate reads on every callback — and it names a facet node it does not
+    // own. Nothing unwound any of that, so a released table left a live job
+    // pointing at a dead source pointing at a dead node.
+    //
+    // Both are no-ops for every other kind: the source is found through the
+    // view's `documentView`, asked for only of a view that answers to it.
+    recycler::release_row_source(v);
+    recycler::release_tree_source(v);
     { rt::release(v) };
 }

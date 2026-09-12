@@ -807,6 +807,7 @@ extern fn msg_void_rect_rect_u64_f64(recv: *u8, sel: *u8, a: rt::Rect, b: rt::Re
 
 fn strip_key() -> *u8 { return { 29086 as *u8 }; }
 fn spinner_key() -> *u8 { return { 29087 as *u8 }; }
+fn strip_obs_key() -> *u8 { return { 29088 as *u8 }; }
 fn refresh_handler_key() -> *u8 { return { 29088 as *u8 }; }
 fn refresh_ctx_key() -> *u8 { return { 29089 as *u8 }; }
 
@@ -827,6 +828,53 @@ fn refresh_clicked(sender: *u8, ctx: *u8) {
 
 // Idempotent. The strip is built once and then only its STATE changes, because
 // a scroll view's floating subview list is not something to churn per apply.
+// THE STRIP IS SIZED FROM BOUNDS THE HOST HAS, WHICH AT INSTALL IT DOES NOT.
+//
+// facet creates a view before anything lays it out, so `bounds` answers 0 on
+// the create pass and the strip, its button and its spinner were all framed
+// 0 wide — a clipped `arrow.clockwise` glyph pinned to the top-left corner of
+// the list, over the first row.
+//
+// The autoresizing mask does not rescue it, and that was MEASURED rather than
+// assumed: a refreshable list in a 500pt window reports `host bounds w=500`
+// and `strip frame w=0` after a full tick. Autoresizing distributes a DELTA in
+// proportion to the flexible parts, and a view that starts at zero width has
+// no proportion to grow from — the same shape as the spring-layout trap
+// recorded in `facet_gtk`'s tree resize. The mask is kept because it is right
+// once the width is non-zero; it is simply not enough on its own.
+//
+// So the geometry is re-derived from the host whenever the host has a size:
+// at install, on every `apply_refresh`, and from the host's own frame
+// notification — which is the only one of the three that fires for the FIRST
+// layout, which is the case that was broken.
+fn size_refresh_strip(host: *u8) {
+    let strip: *u8 = refresh_strip_of(host);
+    if strip.is_null() { return; }
+    let box: rt::Rect = { rt::msg_rect(host, rt::sel(#str_ptr("bounds\0"))) };
+    if box.w < 1.0f64 { return; }
+    ak::View::from_raw(strip).set_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: box.w, h: strip_height() });
+    let button: *u8 = refresh_button_of(strip);
+    if button.is_not_null() {
+        ak::View::from_raw(button).set_frame(
+            rt::Rect { x: 0.0f64, y: 0.0f64, w: box.w, h: strip_height() });
+    }
+    let spinner: *u8 = refresh_spinner_of(host);
+    if spinner.is_not_null() {
+        ak::View::from_raw(spinner).set_frame(
+            rt::Rect { x: (box.w - strip_height()) / 2.0f64, y: 0.0f64,
+                       w: strip_height(), h: strip_height() });
+    }
+    return;
+}
+
+// The host changed size, so the strip across its top did too. Registered once
+// per strip and cancelled with it.
+fn on_refresh_host_resized(ctx: *u8) {
+    size_refresh_strip(ctx);
+    return;
+}
+
 fn install_refresh_strip(host: *u8) -> *u8 {
     let existing: *u8 = refresh_strip_of(host);
     if existing.is_not_null() { return existing; }
@@ -873,12 +921,25 @@ fn install_refresh_strip(host: *u8) -> *u8 {
     }
     synth::set_associated(host, strip_key(), strip.raw());
     synth::set_associated(host, spinner_key(), pv.raw());
+    // WATCH THE HOST. The frame notification is what carries the first layout,
+    // which is the pass that gives the host a width at all — the create pass
+    // above ran before it and saw zero. The id is kept so `remove_refresh_strip`
+    // can cancel it: `observe_named` holds its observer in a registry rather
+    // than pinning it to the view, so an uncancelled observation outlives the
+    // host it watches.
+    { rt::msg_void_i8(host, rt::sel(#str_ptr("setPostsFrameChangedNotifications:\0")),
+                      1 as i8) };
+    let obs: u64 = akx::observe_frame(ak::View::from_raw(host), on_refresh_host_resized, host);
+    synth::set_associated(host, strip_obs_key(), { obs as *u8 });
+    size_refresh_strip(host);
     return strip.raw();
 }
 
 fn remove_refresh_strip(host: *u8) {
     let strip: *u8 = refresh_strip_of(host);
     if strip.is_null() { return; }
+    akx::cancel_observe_frame({ synth::get_associated(host, strip_obs_key()) } as u64);
+    synth::set_associated(host, strip_obs_key(), 0 as *u8);
     { rt::msg_void(strip, rt::sel(#str_ptr("removeFromSuperview\0"))) };
     synth::set_associated(host, strip_key(), 0 as *u8);
     synth::set_associated(host, spinner_key(), 0 as *u8);
@@ -896,6 +957,9 @@ fn apply_refresh(host: *u8, enabled: bool, refreshing: bool, allowed: bool,
     }
     let strip: *u8 = install_refresh_strip(host);
     if strip.is_null() { return; }
+    // ...and re-derive its geometry, in case this apply is the first pass that
+    // finds the host with a width.
+    size_refresh_strip(host);
     synth::set_associated(strip, refresh_handler_key(), { h as *u8 });
     synth::set_associated(strip, refresh_ctx_key(), ctx);
     let spinner: *u8 = refresh_spinner_of(host);

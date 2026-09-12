@@ -4245,7 +4245,7 @@ fn rebind_rows(n: *core::Node, p: *props::CollectionProps) -> bool {
             option::Option[*core::Node]::Some(c) => {
                 let data: i64 = data_index_of(n, i as i64);
                 if data >= (0 as i64) {
-                    f(data as usize, c, { (*p).row_ctx });
+                    f(data as usize, c, props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx }));
                     // A bind WRITES PROPS, which marks nodes dirty and touches
                     // nothing native. `sync_from` is the walk that carries
                     // those writes across, rooted at the row — the same call
@@ -4935,7 +4935,7 @@ fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
     let h: f64 = stated_or_default_tree_row_h(p);
     // Whether `h` came from the APPLICATION or from this file's default — the
     // wrap treats the two differently, see `center_in_tree_row`.
-    let stated: bool = p.is_not_null() && { (*p).row_height } >= 1.0f64;
+    let stated: bool = p.is_not_null() && { (*p).row_height } >= (1 as i64);
     if f != tree::no_row {
         // A custom row that does not fill the stated height sits at the TOP of
         // the cell while AppKit centres the disclosure triangle in the full
@@ -4978,7 +4978,7 @@ const TREE_PLAIN_LABEL_H: f64 = 18.0f64;
 
 fn stated_or_default_tree_row_h(p: *tree::TreeProps) -> f64 {
     if p.is_null() { return DEFAULT_TREE_ROW_H; }
-    let h: f64 = { (*p).row_height };
+    let h: f64 = { (*p).row_height } as f64;
     if h >= 1.0f64 { return h; }
     return DEFAULT_TREE_ROW_H;
 }

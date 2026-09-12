@@ -59,6 +59,13 @@ fn toolbar_props(n: *core::Node) -> *props::ToolbarItemProps {
 // Primary, then Default, then Secondary — the rank an item is SORTED by.
 fn placement_rank(pl: vocab::ToolbarPlacement) -> i64 {
     return match pl {
+        // FIRST, because it is leftmost. GTK's header bar has no split title
+        // band — there is no tracking separator to end the sidebar's half at —
+        // so a `Sidebar` item cannot be pinned over the sidebar the way AppKit
+        // pins it. What survives the translation is the ORDER: it leads, ahead
+        // of Primary, which is where the sidebar's own controls belong on a
+        // bar that is one region.
+        vocab::ToolbarPlacement::Sidebar => 0 as i64 - (1 as i64),
         vocab::ToolbarPlacement::Primary => 0 as i64,
         vocab::ToolbarPlacement::Default => 1 as i64,
         vocab::ToolbarPlacement::Secondary => 2 as i64,

@@ -350,6 +350,12 @@ fn show_as_action(n: *core::Node) -> i32 {
         controls::props_of(n, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
     if p == (0 as *props::ToolbarItemProps) { return 1 as i32; }
     return match { (*p).placement } {
+        // ON THE BAR, never in the overflow. Android's app bar is one region,
+        // so a `Sidebar` item cannot be placed over a sidebar — but the reason
+        // AppKit gives it HIGH visibility priority translates exactly: it is
+        // not a convenience that can be dropped into a menu, so
+        // `SHOW_AS_ACTION_IF_ROOM` rather than `NEVER`.
+        vocab::ToolbarPlacement::Sidebar => 1 as i32,
         vocab::ToolbarPlacement::Secondary => 0 as i32,
         vocab::ToolbarPlacement::Primary => 1 as i32,
         vocab::ToolbarPlacement::Default => 1 as i32,

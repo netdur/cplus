@@ -705,6 +705,12 @@ fn toolbar_side(n: *core::Node) -> i64 {
         controls::props_of(n, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
     if p == (0 as *props::ToolbarItemProps) { return 1 as i64; }
     return match { (*p).placement } {
+        // THE LEADING SIDE, with the navigation. A `Sidebar` item names the
+        // half of a title band that sits over the sidebar, and a navigation
+        // bar has no such half — but leading is where the sidebar is when
+        // there is one (a split view controller's primary column), so the side
+        // is the part of the meaning that survives.
+        vocab::ToolbarPlacement::Sidebar => 0 as i64,
         vocab::ToolbarPlacement::Secondary => 0 as i64,
         vocab::ToolbarPlacement::Primary => 1 as i64,
         vocab::ToolbarPlacement::Default => 1 as i64,

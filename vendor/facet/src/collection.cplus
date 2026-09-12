@@ -61,6 +61,13 @@ fn collection(
     on_selection_changed_ctx: *u8 = 0 as *u8,
     on_reorder_completed: fn(*u8, *u8) = props::no_handler,
     on_reorder_completed_ctx: *u8 = 0 as *u8,
+    count: usize = 0 as usize,
+    row: fn(usize, *u8) -> core::Node = props::no_row,
+    row_ctx: *u8 = 0 as *u8,
+    bind: fn(usize, *core::Node, *u8) = props::no_bind,
+    bind_ctx: *u8 = 0 as *u8,
+    selected_index: i64 = -1 as i64,
+    selection_highlight: vocab::SelectionHighlight = vocab::SelectionHighlight::Default,
 ) -> core::Node {
     var p: props::CollectionProps = props::CollectionProps::new();
     p.items_view.horizontal_scroll_bars = horizontal_scroll_bars;
@@ -81,6 +88,13 @@ fn collection(
     p.selectable_items_view.on_selection_changed_ctx = on_selection_changed_ctx;
     p.reorderable_items_view.on_reorder_completed = on_reorder_completed;
     p.reorderable_items_view.on_reorder_completed_ctx = on_reorder_completed_ctx;
+    p.count = count as i64;
+    p.row = row;
+    p.row_ctx = row_ctx;
+    p.bind = bind;
+    p.bind_ctx = bind_ctx;
+    p.selected_index = selected_index;
+    p.selection_highlight = selection_highlight;
     return match box::new::[props::CollectionProps](p) {
         option::Option[box::Box[props::CollectionProps]]::Some(b) =>
             core::node_with(key, props::K_COLLECTION, b.into_raw(), props::release_collection_props),
@@ -356,7 +370,7 @@ impl Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return this; }
         { (*p).bind = f };
-        { (*p).row_ctx = ctx };
+        { (*p).bind_ctx = ctx };
         core::touch(this._p, P_ROW);
         return this;
     }
@@ -647,6 +661,45 @@ impl Collection {
         let p: *props::CollectionProps = this._props();
         if p == (0 as *props::CollectionProps) { return -1 as i64; }
         return { (*p).selected_index };
+    }
+
+    // ...and whether the PLATFORM draws that selection, which is a
+    // separate question `selection_mode` never asked. A row that
+    // draws its own selected state wants `None`, or the platform's
+    // full-row highlight is a second answer behind the first. A row
+    // that is an icon and a name — a sidebar row — wants `Platform`,
+    // because then the highlight IS the feedback. `Default` keeps
+    // whatever this control already did.
+    fn set_selection_highlight(this, v: vocab::SelectionHighlight) -> Collection {
+        let p: *props::CollectionProps = this._props();
+        if p == (0 as *props::CollectionProps) { return this; }
+        { (*p).selection_highlight = v };
+        core::touch(this._p, P_SELECTION_MODE);
+        return this;
+    }
+
+    fn selection_highlight(this) -> vocab::SelectionHighlight {
+        let p: *props::CollectionProps = this._props();
+        if p == (0 as *props::CollectionProps) { return vocab::SelectionHighlight::Default; }
+        return { (*p).selection_highlight };
+    }
+
+    // ---- the selection, asked the way `tree` asks it --------------
+    // `tree` has `has_selection()` and `deselect()`; these made the
+    // caller compare against -1 and write it back by hand. Same
+    // question, spelled as arithmetic.
+    //
+    // The KEY is still an index here and an id on `tree`, and that
+    // difference is kept: a tree row has no stable index, because
+    // expanding anything above it moves it.
+    fn has_selection(this) -> bool {
+        let p: *props::CollectionProps = this._props();
+        if p == (0 as *props::CollectionProps) { return false; }
+        return { (*p).selected_index } >= (0 as i64);
+    }
+
+    fn deselect(this) -> Collection {
+        return this.set_selected_index(-1 as i64);
     }
 
     // ---- what a completed reorder moved --------------------------

@@ -16,6 +16,20 @@ fn no_row(index: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); }
 // The absent bind. Compared against by name, NOT against null: the
 // default has to BE a function, and a null check would never be false.
 fn no_bind(index: usize, row: *flex::Node, ctx: *u8) { return; }
+
+// WHICH CONTEXT THE BIND GETS. Its own when the application named one,
+// the row builder's otherwise — a list whose shape and data come from the
+// same object names one context and means it for both, which is every
+// call site in the tree today. Lifted from `tree.cplus`, whose `_ctx_or`
+// is the same three lines and was written for the same bug.
+//
+// Resolved on READ so the two setters compose in either order: writing it
+// through at `set_row_bind` time would capture whatever `row_ctx` happened
+// to hold then, and a later `set_row` would leave the bind behind.
+fn bind_ctx_of(own: *u8, row: *u8) -> *u8 {
+    if own.is_not_null() { return own; }
+    return row;
+}
 // The two halves of a group, absent until an application names them.
 // A group with no size holds no rows, so an ungrouped sequence and a
 // grouped one that was never described render the same.
@@ -709,6 +723,7 @@ struct CollectionProps {
     row: fn(usize, *u8) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
     bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
+    opaque bind_ctx: *u8,
     row_height_of: fn(usize, *u8) -> f64,    // facet — the height of row `i`, answered WITHOUT building it
     opaque row_height_of_ctx: *u8,
     row_kind: fn(usize, *u8) -> usize,    // facet — which SHAPE row `i` has, so cells pool per shape
@@ -719,6 +734,7 @@ struct CollectionProps {
     group_header: fn(usize, *u8) -> flex::Node,    // facet — builds the header row for group `g`
     opaque group_header_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
+    selection_highlight: vocab::SelectionHighlight,    // facet — whether the PLATFORM draws the selection
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1
     reorder_to: i64,    // facet — where it moved to, or -1
     invalidate_lo: i64,    // facet — first data row of the pending invalidation, or -1
@@ -739,6 +755,7 @@ impl CollectionProps {
             row: no_row,
             row_ctx: 0 as *u8,
             bind: no_bind,
+            bind_ctx: 0 as *u8,
             row_height_of: no_row_height_of,
             row_height_of_ctx: 0 as *u8,
             row_kind: no_row_kind,
@@ -749,6 +766,7 @@ impl CollectionProps {
             group_header: no_group_header,
             group_header_ctx: 0 as *u8,
             selected_index: -1 as i64,
+            selection_highlight: vocab::SelectionHighlight::Default,
             reorder_from: -1 as i64,
             reorder_to: -1 as i64,
             invalidate_lo: -1 as i64,
@@ -1197,6 +1215,7 @@ struct ListProps {
     row: fn(usize, *u8) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
     bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
+    opaque bind_ctx: *u8,
     row_height_of: fn(usize, *u8) -> f64,    // facet — the height of row `i`, answered WITHOUT building it
     opaque row_height_of_ctx: *u8,
     row_kind: fn(usize, *u8) -> usize,    // facet — which SHAPE row `i` has, so cells pool per shape
@@ -1207,6 +1226,7 @@ struct ListProps {
     group_header: fn(usize, *u8) -> flex::Node,    // facet — builds the header row for group `g`
     opaque group_header_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
+    selection_highlight: vocab::SelectionHighlight,    // facet — whether the PLATFORM draws the selection
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1
     reorder_to: i64,    // facet — where it moved to, or -1
     invalidate_lo: i64,    // facet — first data row of the pending invalidation, or -1
@@ -1247,6 +1267,7 @@ impl ListProps {
             row: no_row,
             row_ctx: 0 as *u8,
             bind: no_bind,
+            bind_ctx: 0 as *u8,
             row_height_of: no_row_height_of,
             row_height_of_ctx: 0 as *u8,
             row_kind: no_row_kind,
@@ -1257,6 +1278,7 @@ impl ListProps {
             group_header: no_group_header,
             group_header_ctx: 0 as *u8,
             selected_index: -1 as i64,
+            selection_highlight: vocab::SelectionHighlight::Default,
             reorder_from: -1 as i64,
             reorder_to: -1 as i64,
             invalidate_lo: -1 as i64,

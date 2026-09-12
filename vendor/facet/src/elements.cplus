@@ -153,12 +153,15 @@ fn tree(
     on_select_ctx: *u8 = 0 as *u8,
     row_id: fn(*m_tree::TreeNode, *u8) -> text::Text = m_tree::no_row_id,
     row_id_ctx: *u8 = 0 as *u8,
+    row_kind: fn(*m_tree::TreeNode, *u8) -> usize = m_tree::no_row_kind,
+    row_kind_ctx: *u8 = 0 as *u8,
     ctx: *u8 = 0 as *u8,
-    row_height: f64 = 0.0f64,
+    row_height: i64 = 0 as i64,
 ) -> core::Node {
     return m_tree::tree(root, key: key, row: row, row_ctx: row_ctx,
                         on_select: on_select, on_select_ctx: on_select_ctx,
                         row_id: row_id, row_id_ctx: row_id_ctx,
+                        row_kind: row_kind, row_kind_ctx: row_kind_ctx,
                         ctx: ctx, row_height: row_height);
 }
 
@@ -723,6 +726,13 @@ fn collection(
     on_selection_changed_ctx: *u8 = 0 as *u8,
     on_reorder_completed: fn(*u8, *u8) = props::no_handler,
     on_reorder_completed_ctx: *u8 = 0 as *u8,
+    count: usize = 0 as usize,
+    row: fn(usize, *u8) -> core::Node = props::no_row,
+    row_ctx: *u8 = 0 as *u8,
+    bind: fn(usize, *core::Node, *u8) = props::no_bind,
+    bind_ctx: *u8 = 0 as *u8,
+    selected_index: i64 = -1 as i64,
+    selection_highlight: vocab::SelectionHighlight = vocab::SelectionHighlight::Default,
 ) -> core::Node {
     return m_collection::collection(
         key: key,
@@ -744,6 +754,13 @@ fn collection(
         on_selection_changed_ctx: on_selection_changed_ctx,
         on_reorder_completed: on_reorder_completed,
         on_reorder_completed_ctx: on_reorder_completed_ctx,
+        count: count,
+        row: row,
+        row_ctx: row_ctx,
+        bind: bind,
+        bind_ctx: bind_ctx,
+        selected_index: selected_index,
+        selection_highlight: selection_highlight,
     );
 }
 
@@ -773,6 +790,13 @@ fn list(
     on_refreshing_ctx: *u8 = 0 as *u8,
     observe_scrolled: fn(*u8, *u8) = props::no_handler,
     observe_scrolled_ctx: *u8 = 0 as *u8,
+    count: usize = 0 as usize,
+    row: fn(usize, *u8) -> core::Node = props::no_row,
+    row_ctx: *u8 = 0 as *u8,
+    bind: fn(usize, *core::Node, *u8) = props::no_bind,
+    bind_ctx: *u8 = 0 as *u8,
+    selected_index: i64 = -1 as i64,
+    selection_highlight: vocab::SelectionHighlight = vocab::SelectionHighlight::Default,
 ) -> core::Node {
     return m_list::list(
         key: key,
@@ -800,6 +824,13 @@ fn list(
         on_refreshing_ctx: on_refreshing_ctx,
         observe_scrolled: observe_scrolled,
         observe_scrolled_ctx: observe_scrolled_ctx,
+        count: count,
+        row: row,
+        row_ctx: row_ctx,
+        bind: bind,
+        bind_ctx: bind_ctx,
+        selected_index: selected_index,
+        selection_highlight: selection_highlight,
     );
 }
 

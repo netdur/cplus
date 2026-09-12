@@ -234,6 +234,11 @@ struct RowSource {
     row: fn(usize, *u8) -> core::Node,
     bind: fn(usize, *core::Node, *u8),
     opaque row_ctx: *u8,
+    // The BIND's context, which is not always the row builder's. Resolved by
+    // `props::bind_ctx_of` when it is copied in, so a list that names one
+    // context still feeds it to both — see `set_row_bind`, which used to write
+    // `row_ctx` and NULL the builder's.
+    opaque bind_ctx: *u8,
     count: i64,
     // `row_height` from the contract: 0 means measure, anything else means the
     // rows are uniform and nothing needs measuring at all.
@@ -260,7 +265,18 @@ struct RowSource {
     // The node this table backs. Handlers are read out of its props at fire
     // time rather than captured, so a swapped handler needs no re-install.
     // `opaque`: the TREE owns the node; this is a borrow that never outlives it.
+    //
+    // WHICH IS A CLAIM THE CODE HAS TO KEEP, and it did not. Written once at
+    // construction and never again, it named whatever node first mounted this
+    // table for the rest of the table's life — and nothing cleared it when
+    // that node went away. See `release_row_source`, which is the other half.
     opaque node: *core::Node,
+    // The frame observation, kept so it can be CANCELLED. `observe_named` does
+    // not pin its observer to the view — it holds it in a registry keyed by
+    // this id — so an uncancelled observation survives the view it watches,
+    // with `s` still in it. Discarding the id (`let _obs: u64 = ...`) left no
+    // way to stop one.
+    frame_obs: u64,
     // `has_uneven_rows == false`: measure ONE row and answer with it for all.
     uniform: bool,
     // ---- grouping -------------------------------------------------------
@@ -437,8 +453,23 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
     if s.is_null() { return 1.0f64; }
     // Uniform rows: answer without building anything. The cheapest a list can
     // be, and the whole reason `row_height` is in the contract.
+    //
+    // THE MORE SPECIFIC ANSWER WINS. This used to short-circuit on
+    // `fixed_height` alone, so a list that stated BOTH a flat `row_height` and
+    // a per-row `row_height_of` never consulted the second one — the specific
+    // answer was silently discarded by the general one, and `uneven_rows` did
+    // not enter the decision at all. The two compose without a precedence rule
+    // because a 0 answer from `row_height_of` already means "I cannot compute
+    // this one": ask it first, and fall back to the flat height below when it
+    // declines or when the row is a header, which has no data index to ask
+    // about.
+    //
+    // The fast path survives intact for the list it exists for: one that
+    // states only `row_height` has no `row_height_of` to ask, so it returns
+    // here having built nothing.
     let fh: f64 = { (*s).fixed_height };
-    if fh >= 1.0f64 { return fh; }
+    let hof: fn(usize, *u8) -> f64 = { (*s).row_height_of };
+    if fh >= 1.0f64 && hof == props::no_row_height_of { return fh; }
 
     let w: f64 = column_width(tv);
     let hp: *vec::Vec[f64] = { #addr_of((*s).heights) };
@@ -469,7 +500,6 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
     // measured by building rebuilds the whole model on every frame of a drag.
     // A 0 answer means "I cannot compute this one", and it falls through to
     // the build below — so a partial answer is a legal answer.
-    let hof: fn(usize, *u8) -> f64 = { (*s).row_height_of };
     if hof != props::no_row_height_of && row >= (0 as i64) {
         // THE DATA INDEX, not the table row — `row_height_of(i)` means the same
         // `i` that `row(i)` means, and a grouped table's table rows are offset
@@ -489,6 +519,14 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
             }
         }
     }
+
+    // THE FLAT HEIGHT IS THE FALLBACK, reached only by a list that states one
+    // AND a `row_height_of` that declined this row — or by a header, which has
+    // no data index for the per-row answer to be about. Still free: a stated
+    // height answers without building, which is the contract `row_height`
+    // makes, and it is kept here rather than at the top so the specific answer
+    // gets asked first.
+    if fh >= 1.0f64 { return fh; }
 
     // Measuring means building the row and laying it out. No views: this is a
     // pure flex measurement, so nothing is realised and nothing has to be torn
@@ -720,7 +758,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
         mount::sync_from(existing);
         // The row's own size can change with its data, so it is re-laid out
         // and re-placed — the cheap half of what a rebuild did.
-        let _h: f64 = place_row(cell, existing, w, row_h: { (*s).fixed_height });
+        let _h: f64 = place_row(cell, existing, w, row_h: stated_row_height(s, row));
         return;
     }
     if existing.is_not_null() { release_cell_row(cell); }
@@ -740,7 +778,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
             // data of whichever row happened to build its cell.
             bind_into(s, row, np);
             mount::sync_from(np);
-            let _h: f64 = place_row(cell, np, w, row_h: { (*s).fixed_height });
+            let _h: f64 = place_row(cell, np, w, row_h: stated_row_height(s, row));
             synth::set_associated(cell, cell_node_key(), np as *u8);
         }
         option::Option[box::Box[core::Node]]::None => { }
@@ -815,6 +853,18 @@ fn place_row(cell: *u8, np: *core::Node, w: f64, floor_h: f64 = 1.0f64,
     // Prefer natural content height when a fixed row_h is given, so a short
     // plain label can be centred in the row (disclosure alignment). Full-height
     // builders (center_in_tree_row wrap) still measure at row_h and fill it.
+    //
+    // CONTENT TALLER THAN ITS ROW IS CLIPPED, and that was MEASURED rather than
+    // reasoned about. A guard was written here to skip the re-layout when
+    // `natural > row_h`, on the theory that laying a 54pt card out inside 38pt
+    // leaves 14 points after padding and a gap and shrinks both labels to
+    // zero — an invisible row. It does not: a padded two-label card at
+    // `row_height: 12` reports its labels at y=10 h=15 and y=29 h=15 either
+    // way, identical to the point. flex does not shrink them, the node's frame
+    // height changes and nothing else does, and both paths end at `vh = h`.
+    // The guard was a no-op with a test that could not fail, so it was
+    // reverted. What the rows in the report were actually missing was the
+    // PRECEDENCE fix above them.
     if row_h >= 1.0f64 {
         { (*np).calculate_layout(width: w) };
         var natural: f64 = { (*np).frame().height };
@@ -898,6 +948,33 @@ fn place_row_content(cell: *u8, np: *core::Node, w: f64, h: f64) {
     PLACING_ROW = false;
 }
 
+// THE HEIGHT THIS ROW IS BEING GIVEN, which is not the same question as "what
+// height did the list state". `place_row` needs the row's own height to lay its
+// content out in, and both call sites used to hand it `fixed_height` — the
+// LIST's flat height, identical for every row. A list stating a flat height
+// and a per-row `row_height_of` therefore laid every row out at the flat one,
+// including the rows the table had already been told were taller.
+//
+// Asked WITHOUT building: `row_height_of` if it answers, the flat height
+// otherwise. The measure-by-building answer is deliberately not reached — a
+// row with no stated height is laid out at its content's height, which is
+// exactly what a 0 here means to `place_row`, and building it a second time to
+// discover a number that the layout below is about to recompute buys nothing.
+//
+// A HEADER has no data index, so `row_height_of` is not asked about it; it
+// takes the flat height, which is what it took before.
+fn stated_row_height(s: *RowSource, row: i64) -> f64 {
+    let hof: fn(usize, *u8) -> f64 = { (*s).row_height_of };
+    if hof != props::no_row_height_of && row >= (0 as i64) {
+        let at: i64 = resolve_row(s, row);
+        if at >= (0 as i64) {
+            let stated: f64 = hof(at as usize, { (*s).row_height_of_ctx });
+            if stated >= 1.0f64 { return stated; }
+        }
+    }
+    return { (*s).fixed_height };
+}
+
 fn has_bind(s: *RowSource) -> bool {
     return { (*s).bind } != props::no_bind;
 }
@@ -924,7 +1001,7 @@ fn bind_into(s: *RowSource, row: i64, into: *core::Node) {
     if f == props::no_bind { return; }
     let at: i64 = resolve_row(s, row);
     if at < (0 as i64) { return; }
-    f(at as usize, into, { (*s).row_ctx });
+    f(at as usize, into, { (*s).bind_ctx });
 }
 
 // THE CELL FOLLOWS THE COLUMN'S WIDTH — and nothing else does.
@@ -1105,8 +1182,41 @@ fn suppress_row_highlight(rowview: *u8) {
                        0 as i64 - (1 as i64)) };
 }
 
+// Let the platform draw it: Regular is the row view's own default, and inside
+// a sidebar `NSTableViewStyleAutomatic` resolves that to the source-list look
+// — the rounded highlight, the accent-tinted glyph and label that Finder has.
+fn allow_row_highlight(rowview: *u8) {
+    if rowview.is_null() { return; }
+    // REGULAR (0) — which is the row view's own default and means "draw the
+    // selection", not "draw the emphasized one". WHAT it draws is the table's
+    // `style`; see `apply_selection_highlight`. Writing the deprecated
+    // SourceList value (1) here instead paints the emphasized accent-filled
+    // row, which is the picture this was trying to avoid.
+    { rt::msg_void_i64(rowview, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")),
+                       0 as i64) };
+}
+
+// WHETHER THE PLATFORM DRAWS THIS LIST'S SELECTION. `Default` is what this
+// control always did — suppress, because a facet row is a card that draws its
+// own selected state and the platform's full-row highlight behind it is a
+// second answer to the same question. A row that draws no such thing says
+// `Platform` and gets the feedback back.
+fn platform_draws_selection(n: *core::Node) -> bool {
+    let p: *props::ListProps = props_of_list(n);
+    if p.is_null() { return false; }
+    return match { (*p).selection_highlight } {
+        vocab::SelectionHighlight::Platform => true,
+        vocab::SelectionHighlight::None => false,
+        vocab::SelectionHighlight::Default => false,
+    };
+}
+
 fn row_added_imp(self_obj: *u8, cmd: *u8, tv: *u8, rowview: *u8, row: i64) {
-    suppress_row_highlight(rowview);
+    if platform_draws_selection(list_node_of(tv)) {
+        allow_row_highlight(rowview);
+    } else {
+        suppress_row_highlight(rowview);
+    }
     let n: *core::Node = list_node_of(tv);
     if n.is_null() { return; }
     let p: *props::ListProps = props_of_list(n);
@@ -1204,6 +1314,70 @@ fn table_of(v: *u8) -> *u8 {
     return { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
 }
 
+// The same question asked of a view that may be ANY kind. `view_release` runs
+// for every view facet ever made, and `documentView` is a scroll view's word —
+// sending it to a button is not a miss, it is a crash.
+fn document_view_of(v: *u8) -> *u8 {
+    if v.is_null() { return 0 as *u8; }
+    let sel: *u8 = rt::sel(#str_ptr("documentView\0"));
+    if { rt::msg_i8_id(v, rt::sel(#str_ptr("respondsToSelector:\0")), sel) } == (0 as i8) {
+        return 0 as *u8;
+    }
+    return { rt::msg_id(v, sel) };
+}
+
+// ---- the row source leaves with its view -------------------------------------
+//
+// A `RowSource` is a boxed allocation reachable from three places that all
+// outlive a naive teardown, and until this existed NONE of them was unwound:
+//
+//   * the association on the table view — `source_of`, read by every delegate
+//     callback AppKit makes;
+//   * the frame observation, which `observe_named` keeps in a registry rather
+//     than pinned to the view, so it survives the view and still holds `s`;
+//   * a queued reload job, which `drain_reload_jobs` will dereference on the
+//     next tick whether or not the table is still there.
+//
+// And the source itself holds `node`, a borrow of a facet node it does not own.
+// A table released while a reload was queued therefore left a job naming a
+// dead source naming a dead node, and the tick walked all three. That is the
+// SEGV at `0x100000031` — `props_of_list` reading `Data` off a `node` whose
+// storage had been reused, non-null so every `is_null` guard passed.
+//
+// Ordered so nothing can reach the source after it is freed: cancel the
+// observation, drop the queued job, clear the association, then free.
+fn release_row_source(v: *u8) {
+    let tv: *u8 = document_view_of(v);
+    if tv.is_null() { return; }
+    let s: *RowSource = source_of(tv);
+    if s.is_null() { return; }
+    akx::cancel_observe_frame({ (*s).frame_obs });
+    scheduler::forget_reload(s as *u8);
+    synth::set_associated(tv, source_key(), 0 as *u8);
+    // `heights` is a `Vec` the source owns, so this is a drop and not just a
+    // free — `from_raw` re-adopts the box `into_raw` surrendered, and the
+    // binding's own scope-end drop is what runs it. NOT an explicit `.drop()`:
+    // `Box::drop` does not null `_p`, so calling it by hand and then falling
+    // out of scope frees the same block twice, which libmalloc reports as
+    // POINTER BEING FREED WAS NOT ALLOCATED.
+    let _b: box::Box[RowSource] = box::from_raw::[RowSource](s as *u8);
+}
+
+// The tree's copy of the same unwind. `TreeSource` has no queued reload — the
+// tree reloads inline — but the observation and the association are the same
+// two dangling references, and `forget_items` is a third: the item map holds
+// raw node addresses from a model that is going away with this view.
+fn release_tree_source(v: *u8) {
+    let ov: *u8 = document_view_of(v);
+    if ov.is_null() { return; }
+    let s: *TreeSource = tree_source_of(ov);
+    if s.is_null() { return; }
+    akx::cancel_observe_frame({ (*s).frame_obs });
+    forget_items(ov);
+    synth::set_associated(ov, tree_source_key(), 0 as *u8);
+    let _b: box::Box[TreeSource] = box::from_raw::[TreeSource](s as *u8);
+}
+
 // Install or update the row source, then reload. The builder and the count are
 // ONE question: either changing replaces the whole sequence, and a partial
 // answer would leave rows from two models mixed.
@@ -1239,6 +1413,7 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             row: { (*p).row },
             bind: { (*p).bind },
             row_ctx: { (*p).row_ctx },
+            bind_ctx: props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx }),
             count: { (*p).count },
             fixed_height: 0.0f64,
             heights: vec::new::[f64](),
@@ -1247,6 +1422,7 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             follow_tail: false,
             table: tv,
             node: n,
+            frame_obs: 0 as u64,
             uniform: false,
             groups: 0 as i64,
             group_size: props::no_group_size,
@@ -1261,13 +1437,20 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             option::Option[box::Box[RowSource]]::Some(b) => {
                 s = { b.into_raw() } as *RowSource;
                 synth::set_associated(tv, source_key(), s as *u8);
-                // The resize pass. Observed once, for the life of the table.
-                let _obs: u64 = akx::observe_frame(ak::View::from_raw(tv),
-                                                   on_table_resized, s as *u8);
+                // The resize pass. Observed once, for the life of the table —
+                // and the id is KEPT, because "the life of the table" is a
+                // promise only `release_row_source` can keep.
+                { (*s).frame_obs = akx::observe_frame(ak::View::from_raw(tv),
+                                                      on_table_resized, s as *u8) };
             }
             option::Option[box::Box[RowSource]]::None => { return; }
         }
     }
+    // THE NODE IS RE-READ EVERY PASS, which `apply_recycling_tree` has always
+    // done (`{ (*s).node = n }`, one line after its own construction) and this
+    // never did. A table that is re-applied for a different node — a re-mount,
+    // a rebuilt subtree at a fresh address — went on naming the first one.
+    { (*s).node = n };
     // The refresh band. `list` carries the same seven verbs RefreshView does,
     // and the same answer: a click path, not a gesture — on a scroll view the
     // strip is AppKit's own floating subview, pinned to the top of the content.
@@ -1295,6 +1478,7 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     { (*s).row = { (*p).row } };
     { (*s).bind = { (*p).bind } };
     { (*s).row_ctx = { (*p).row_ctx } };
+    { (*s).bind_ctx = props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx }) };
     { (*s).count = { (*p).count } };
     // The stated height rides the ROW band — `set_row_height_of` raises
     // P_ROW — so it is copied beside `row`, unconditionally. It sat inside
@@ -1365,6 +1549,20 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & list::P_SELECTION_MODE) != (0 as u64) && creating == false {
         apply_selection_mode(tv, { (*p).selection_mode });
     }
+    // THE STYLE IS WRITTEN ON THE CREATE PASS TOO, unlike everything else in
+    // this band. A list describes its selection in `build()`, before mount, so
+    // the create pass is the ONLY pass that ever sees the bit — skipping it
+    // there means the style never lands at all, and the rows keep AppKit's
+    // emphasized selection forever rather than for one frame.
+    //
+    // It costs the laziness this band is gated to protect, but only for a list
+    // that ASKED: `apply_selection_highlight` sends nothing unless the app
+    // named `Platform`, so a list that never asks is not touched and does not
+    // tile. A list that does ask is a sidebar's nav list, which is small by
+    // nature — that is the shape the word exists for.
+    if (dirty & list::P_SELECTION_MODE) != (0 as u64) {
+        apply_selection_highlight(tv, { (*p).selection_highlight });
+    }
     if (dirty & (list::P_SEPARATOR | list::P_SEPARATOR_COLOR)) != (0 as u64) && creating == false {
         apply_separator(tv, { (*p).separator }, { (*p).separator_color });
     }
@@ -1396,8 +1594,23 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     // application counts items and the table counts rows, and a grouped table's
     // third item is not its third row. After the reload, or it indexes a table
     // that has not been told the sequence changed.
-    if (dirty & (list::P_SELECTED_INDEX | list::P_COUNT | list::P_ROW)) != (0 as u64)
-        && creating == false {
+    //
+    // THE CREATE PASS COUNTS HERE TOO, for the same reason the style does: a
+    // list that names `selected_index:` at construction sets it on the props
+    // BEFORE mount, so the create pass is the only pass that will ever see the
+    // bit, and skipping it means the value never reaches the table at all.
+    // `l.selected_index()` then answers the row the app asked for while
+    // nothing is drawn selected — the props held it and AppKit was never told.
+    //
+    // Laziness survives because a create-pass selection is only sent when
+    // there IS one. A table that was just created has no selection, so the
+    // default -1 has nothing to say and the `deselectAll:` that would say it
+    // is skipped; a list that names no selection is not messaged at all. The
+    // gate is on the VALUE rather than the bit because on the create pass
+    // every bit is set.
+    let selecting: bool = (dirty & (list::P_SELECTED_INDEX | list::P_COUNT | list::P_ROW))
+        != (0 as u64);
+    if selecting && (creating == false || { (*p).selected_index } >= (0 as i64)) {
         select_data_row(tv, s, { (*p).selected_index });
     }
     // `scroll_to` is a COMMAND: act on the bit, and the sync walk clears it.
@@ -1542,6 +1755,39 @@ fn select_data_row(tv: *u8, s: *RowSource, data: i64) {
 #[link_name = "objc_msgSend"]
 extern fn msg_void_id_i8(recv: *u8, sel: *u8, a: *u8, b: i8);
 
+// SOURCE LIST IS A STYLE, NOT A HIGHLIGHT STYLE.
+//
+// The two spell different pictures and it is easy to get the emphasized one by
+// accident. `selectionHighlightStyle` Regular fills the whole row with the
+// accent and turns its content white; the SOURCE LIST appearance — a quiet
+// rounded rect with the glyph and label TINTED accent, which is what Finder's
+// sidebar has — comes from `NSTableView.style`.
+//
+// `NSTableViewStyleAutomatic` is documented to resolve to source list inside a
+// sidebar split item and measurably does not here, so an app that asks for
+// `Platform` gets it named outright. Values: Automatic 0, FullWidth 1,
+// Inset 2, SourceList 3, Plain 4.
+//
+// Naming a style makes the table tile at CREATE — `reloadData` runs the height
+// pass immediately — which is why `create_recycling_list` leaves it Automatic
+// and why eight contract tests went red the last time a style was hard-coded.
+// So this is written only when an app opts in, on the apply pass rather than
+// the create pass, and a list that never asks keeps the lazy path whole.
+fn apply_selection_highlight(tv: *u8, h: vocab::SelectionHighlight) {
+    match h {
+        vocab::SelectionHighlight::Platform => {
+            { rt::msg_void_i64(tv, rt::sel(#str_ptr("setStyle:\0")), 3 as i64) };
+            // ...and Regular (0) beside it, so the STYLE draws the picture.
+            // The deprecated SourceList highlight style (1) would override it
+            // with the emphasized fill.
+            { rt::msg_void_i64(tv, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")),
+                               0 as i64) };
+        }
+        vocab::SelectionHighlight::None => { }
+        vocab::SelectionHighlight::Default => { }
+    }
+}
+
 fn apply_selection_mode(tv: *u8, m: vocab::SelectionMode) {
     let multi: bool = match m {
         vocab::SelectionMode::Multiple => true,
@@ -1562,9 +1808,14 @@ fn apply_selection_mode(tv: *u8, m: vocab::SelectionMode) {
     // DRAWING that selection, and that is suppressed one layer down, on the row
     // view — see `row_added_imp`. The two are separable there and are not
     // separable here.
-    // NSTableViewSelectionHighlightStyleRegular = 1, None = -1.
+    // NSTableViewSelectionHighlightStyle: None -1, Regular 0, SourceList 1.
+    // This said "Regular = 1", which is the DEPRECATED SourceList value and
+    // not Regular at all — and that legacy path paints the emphasized
+    // accent-filled row whatever the modern `style` says. Measured
+    // `style=3 selectionHighlightStyle=1` drawing a solid blue row where
+    // source list should have drawn a quiet one.
     var hl: i64 = 0 as i64 - (1 as i64);
-    if selectable { hl = 1 as i64; }
+    if selectable { hl = 0 as i64; }
     { rt::msg_void_i64(tv, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")), hl) };
     if selectable == false { { rt::msg_void(tv, rt::sel(#str_ptr("deselectAll:\0"))) }; }
 }
@@ -1745,6 +1996,23 @@ fn reload_job(ctx: *u8) {
     { (*s).heights_width = 0.0f64 };
     { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
     if { (*s).follow_tail } { scroll_to_bottom(tv); }
+    // ...and the SELECTION is the other piece of table state `reloadData`
+    // destroys. The scroll position above is read before and restored after
+    // for exactly this reason; the selection had no such restore, so a window
+    // resize — or one frame of a divider drag, since this job runs live on the
+    // tick — silently dropped the highlight while `l.selected_index()` went on
+    // answering the row that was picked. facet's props are what did not
+    // change, so they are what it is read back from.
+    //
+    // `select_data_row` and not a raw row index: a grouped list's third item
+    // is not its third row, and `table_row_of` is the translation. A negative
+    // index means nothing is selected, and a table that has just reloaded has
+    // no selection either — so that case is left alone rather than spending a
+    // `deselectAll:` to confirm it.
+    let p: *props::ListProps = props_of_list({ (*s).node });
+    if p.is_not_null() && { (*p).selected_index } >= (0 as i64) {
+        select_data_row(tv, s, { (*p).selected_index });
+    }
 }
 
 
@@ -1973,6 +2241,9 @@ fn item_node_key() -> *u8 { return { 29035 as *u8 }; }
 struct TreeSource {
     opaque node: *core::Node,      // the facet tree node, for props
     opaque outline: *u8,
+    // The frame observation, kept so `release_tree_source` can cancel it. See
+    // `RowSource.frame_obs` for why discarding the id is not enough.
+    frame_obs: u64,
     // The width the rows in hand were laid out at. A tree had NO resize path at
     // all — the list observed its own frame and re-placed its rows, the tree
     // observed nothing — so a materialized tree row was never re-laid out for a
@@ -2165,7 +2436,7 @@ fn tree_height_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> f64 {
 fn tree_height_body(ov: *u8, item: *u8) -> f64 {
     let p: *tree::TreeProps = props_for(ov);
     if p.is_null() { return outline_default_row_height(ov); }
-    let fh: f64 = { (*p).row_height };
+    let fh: f64 = { (*p).row_height } as f64;
     if fh >= 1.0f64 { return fh; }
     let n: *tree::TreeNode = unbox_item(item);
     if n.is_null() { return outline_default_row_height(ov); }
@@ -2271,7 +2542,7 @@ fn tree_trace(ov: *u8, where_: str) {
 
 fn stated_tree_row_height(p: *tree::TreeProps) -> f64 {
     if p.is_null() { return 0.0f64; }
-    let h: f64 = { (*p).row_height };
+    let h: f64 = { (*p).row_height } as f64;
     if h >= 1.0f64 { return h; }
     return 0.0f64;
 }
@@ -2328,6 +2599,26 @@ fn tag_tree_row(ov: *u8, item: *u8, cell: *u8) {
     ak::Accessibility::from_raw(cell).set_accessibility_identifier(id.view());
 }
 
+// ONE REUSE POOL PER ROW SHAPE, the tree's copy of `row_identity`.
+//
+// This was hard-coded to `"facet.item"` for every row, which made
+// `set_row_bind` unsound the moment a tree drew two shapes: the bind writes
+// this item's data into whatever subtree last scrolled off, and with one pool
+// that can be a cell built for something else. `list` was given `row_kind` for
+// exactly this and `tree` was never told — see
+// `bugs/closed/a-tree-binds-a-wrong-shape-cell.md`.
+//
+// Unnamed, the kind is 0 and the identity is the bare `"facet.item"` every
+// existing tree already uses — so a single-shape tree keeps its pool, its
+// recycling and its behaviour to the character.
+fn tree_row_identity(p: *tree::TreeProps, n: *tree::TreeNode) -> text::Text {
+    let f: fn(*tree::TreeNode, *u8) -> usize = { (*p).row_kind };
+    if f == tree::no_row_kind { return "facet.item".to_text(); }
+    let k: usize = f(n, { (*p).row_kind_ctx });
+    if k == (0 as usize) { return "facet.item".to_text(); }
+    return "facet.item.${k}";
+}
+
 fn tree_view_for_item_body(ov: *u8, item: *u8) -> *u8 {
     let p: *tree::TreeProps = props_for(ov);
     if p.is_null() { return 0 as *u8; }
@@ -2335,8 +2626,10 @@ fn tree_view_for_item_body(ov: *u8, item: *u8) -> *u8 {
     if n.is_null() { return 0 as *u8; }
     let w: f64 = column_width(ov);
 
+    let ident: text::Text = tree_row_identity(p, n);
+    let id: str = ident;
     var cell: *u8 = { msg_id_id_i64(ov, rt::sel(#str_ptr("makeViewWithIdentifier:owner:\0")),
-                                    bridge::nsstring("facet.item"), 0 as i64) };
+                                    bridge::nsstring(id), 0 as i64) };
     var fresh: bool = false;
     if cell.is_null() {
         // A `FacetRowCell`, like the list's — an outline cell is the one that
@@ -2345,7 +2638,7 @@ fn tree_view_for_item_body(ov: *u8, item: *u8) -> *u8 {
         cell = rt::retain(new_row_cell(rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }));
         if cell.is_null() { return 0 as *u8; }
         { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")),
-                          bridge::nsstring("facet.item")) };
+                          bridge::nsstring(id)) };
         rt::autorelease(cell);
         fresh = true;
     }
@@ -2703,6 +2996,7 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     var s: *TreeSource = tree_source_of(ov);
     if s.is_null() {
         match box::new::[TreeSource](TreeSource { node: n, outline: ov,
+                                                 frame_obs: 0 as u64,
                                                  last_width: 0.0f64,
                                                  in_delegate: false,
                                                  expanded_by_user: false,
@@ -2712,8 +3006,8 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
                 synth::set_associated(ov, tree_source_key(), s as *u8);
                 // The resize pass, the same one the list has had. Observed once,
                 // for the life of the outline view.
-                let _obs: u64 = akx::observe_frame(ak::View::from_raw(ov),
-                                                   on_tree_resized, s as *u8);
+                { (*s).frame_obs = akx::observe_frame(ak::View::from_raw(ov),
+                                                      on_tree_resized, s as *u8) };
             }
             option::Option[box::Box[TreeSource]]::None => { return; }
         }
@@ -3055,6 +3349,25 @@ fn tree_item_is_expandable(v: *u8, row: i64) -> bool {
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
     if item.is_null() { return false; }
     return { rt::msg_i8_id(ov, rt::sel(#str_ptr("isExpandable:\0")), item) } != (0 as i8);
+}
+
+// WHICH POOL tree row `row` WAS ACTUALLY VENDED FROM — the tree's copy of
+// `identity_of_row`, and for the same reason: a headless outline view never
+// fills its reuse queue, so asking it for a recycled cell always answers nil
+// and the identity a cell would have been taken under is invisible from
+// outside.
+//
+// THIS GOES THROUGH THE REAL PATH and reads the identifier off the cell that
+// came back. An earlier version called `tree_row_identity` directly, which
+// answers what the identity WOULD be and proves nothing about what
+// `tree_view_for_item_body` did with it — the tests built on it passed with
+// the vending reverted to its single hard-coded pool.
+fn tree_identity_of_row(v: *u8, row: i64) -> text::Text {
+    let cell: *u8 = tree_view_for_row(v, row);
+    if cell.is_null() { return text::new(); }
+    let ns: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("identifier\0"))) };
+    if ns.is_null() { return text::new(); }
+    return bridge::to_text(ns);
 }
 
 fn tree_view_for_row(v: *u8, row: i64) -> *u8 {

@@ -2140,7 +2140,7 @@ fn a_stated_row_height_is_used_as_given() {
     backend::install();
     var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
     let _a: status::Status = root.add_child(tree::TreeNode::new("gamma", id: "gamma"));
-    var t: core::Node = tree::tree(root, key: "th3", row_height: 31.0f64);
+    var t: core::Node = tree::tree(root, key: "th3", row_height: 31 as i64);
     let tp: *core::Node = #addr_of(t);
     let v: *u8 = views::create(0 as *u8, tp);
     core::set_view(tp, v, views::view_release);
@@ -4422,7 +4422,7 @@ fn a_stated_row_height_is_the_height_the_content_is_laid_out_IN() {
     // comfortable height got no benefit from stating one.
     var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
     let _a: status::Status = root.add_child(tree::TreeNode::new("main.cplus", id: "f"));
-    var t: core::Node = tree::tree(root, key: "va", row: tall_row, row_height: 34.0f64);
+    var t: core::Node = tree::tree(root, key: "va", row: tall_row, row_height: 34 as i64);
     let tp: *core::Node = #addr_of(t);
     let v: *u8 = views::create(0 as *u8, tp);
     core::set_view(tp, v, views::view_release);
@@ -7723,7 +7723,15 @@ fn a_multi_select_list_says_so_to_the_table() {
     // selection is the only way a table row is clicked. What a facet row does
     // not want — the platform DRAWING that selection — is suppressed on the
     // row view instead. See `a_row_view_never_draws_the_platforms_selection`.
-    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectionHighlightStyle\0"))) } == (1 as i64);
+    //
+    // REGULAR IS 0. This asserted 1, which is
+    // `NSTableViewSelectionHighlightStyleSourceList` — deprecated in macOS 12
+    // and NOT Regular, whatever the name in the old comment said
+    // (`NSTableView.h`: None -1, Regular 0, SourceList 1). The legacy value
+    // paints the emphasized accent-filled row whatever the modern
+    // `NSTableView.style` asks for, so the test was pinning the picture the
+    // list is trying not to draw.
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectionHighlightStyle\0"))) } == (0 as i64);
 }
 
 #[test]
@@ -7749,8 +7757,10 @@ fn a_row_view_never_draws_the_platforms_selection() {
     core::touch(lp, list::P_SELECTION_MODE);
     views::apply(0 as *u8, lp);
     let tv: *u8 = recycler::table_of(v);
-    // The table still says it selects — the click depends on that.
-    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectionHighlightStyle\0"))) } == (1 as i64);
+    // The table still says it selects — the click depends on that. REGULAR (0),
+    // not the deprecated SourceList (1) this asserted; see the note in
+    // `a_multi_select_list_says_so_to_the_table`.
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectionHighlightStyle\0"))) } == (0 as i64);
 
     // The row view AppKit just made draws nothing.
     // NSTableViewSelectionHighlightStyleNone = -1.
@@ -14429,4 +14439,625 @@ fn a_sidebar_window_marks_where_the_sidebars_half_of_the_toolbar_ends() {
     window::close_window(win);
     backend::uninstall();
     app::reset_default_for_tests();
+}
+
+// ---- the selection a list DESCRIBES, and the paths that lose it ---------------
+//
+// Four bugs with one shape between them: the table's selection is written only
+// from the dirty-bit pass in `apply_recycling_list`, and it is destroyed by
+// paths that raise no dirty bit. Create is one, `reloadData` from a resize is
+// the other.
+
+fn sel_list(count: usize, selected: i64) -> core::Node {
+    return list::list(key: "sel", selection_mode: vocab::SelectionMode::Single,
+                      count: count, row: rl_row, selected_index: selected);
+}
+
+fn selected_row_of(v: *u8) -> i64 {
+    let tv: *u8 = recycler::table_of(v);
+    if tv.is_null() { return -2 as i64; }
+    return { rt::msg_i64(tv, rt::sel(#str_ptr("selectedRow\0"))) };
+}
+
+#[test]
+fn a_selected_index_named_at_construction_reaches_the_table() {
+    backend::install();
+    // A list describes its selection in `build()`, BEFORE mount, so the props
+    // carry it into the create pass and no later write ever raises
+    // `P_SELECTED_INDEX` again. The create pass was the one the selection band
+    // skipped, so the value sat in the props for the life of the list:
+    // `l.selected_index()` answered the row the app asked for while the table
+    // had never been told. `views::create` IS the create pass — it configures
+    // with every bit set — so this is the whole path.
+    var n: core::Node = sel_list(4 as usize, 2 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert v.is_not_null();
+    assert selected_row_of(v) == (2 as i64);
+    views::view_release(v);
+}
+
+#[test]
+fn a_list_that_names_no_selection_comes_up_with_none() {
+    backend::install();
+    // The negative half, and the one that decides HOW the create pass is let
+    // in. The default is -1 and `select_data_row` answers a negative index with
+    // `deselectAll:` — so gating the create pass on the BIT would send that
+    // message to every list ever built, which is the laziness this band exists
+    // to protect. Gated on the VALUE instead: nothing to select, nothing sent,
+    // and a fresh table has no selection to begin with.
+    var n: core::Node = sel_list(4 as usize, -1 as i64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    assert selected_row_of(v) == (0 as i64 - (1 as i64));
+
+    // ...and the APPLY pass with the same default, which is where
+    // `select_data_row` actually runs with a negative index: -1 must reach
+    // `deselectAll:` and stay -1, not be clamped onto row 0. The create pass
+    // alone cannot see that — it is gated on the value, so it sends nothing.
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    core::touch(p, list::P_SELECTED_INDEX);
+    views::apply(0 as *u8, p);
+    assert selected_row_of(v) == (0 as i64 - (1 as i64));
+}
+
+#[test]
+fn a_resize_reload_puts_the_selection_back() {
+    backend::install();
+    // `reloadData` drops NSTableView's selection, and the resize path reaches
+    // it from `NSViewFrameDidChangeNotification` — entirely outside the
+    // props-sync walk, so no dirty bit is raised and nothing re-asserted it.
+    // The scroll position was already read before and restored after for
+    // exactly this reason (`follow_tail`); the selection had no such restore.
+    //
+    // Live on the tick, so in a real window the highlight blinked out on the
+    // FIRST FRAME of a divider drag, not on mouse-up.
+    var n: core::Node = sel_list(6 as usize, 3 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert selected_row_of(v) == (3 as i64);
+
+    // A width the table did not have, then the notification that follows it.
+    recycler::set_column_width(v, 137.0f64);
+    recycler::notify_resized(v);
+    scheduler::tick();
+    assert recycler::column_width_of(v) == 137.0f64;
+
+    // facet's props never changed, so neither did the answer.
+    assert selected_row_of(v) == (3 as i64);
+    views::view_release(v);
+}
+
+#[test]
+fn a_resize_does_not_invent_a_selection() {
+    backend::install();
+    // The negative half: restoring must read the props, which say -1, and a
+    // restore that indexed the table directly would put row 0 under the
+    // highlight for a list that never had one.
+    var n: core::Node = sel_list(6 as usize, -1 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert selected_row_of(v) == (0 as i64 - (1 as i64));
+    recycler::set_column_width(v, 211.0f64);
+    recycler::notify_resized(v);
+    scheduler::tick();
+    assert selected_row_of(v) == (0 as i64 - (1 as i64));
+    views::view_release(v);
+}
+
+// ---- the three height mechanisms, and which one wins --------------------------
+
+static PH_BUILDS: i64 = 0 as i64;
+
+// A row whose content is TALLER than the flat height below it: two stacked
+// labels, which is what a card row is.
+fn ph_row(i: usize, ctx: *u8) -> core::Node {
+    PH_BUILDS = PH_BUILDS + (1 as i64);
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("title", key: ""));
+    b.add(label::label("subtitle", key: ""));
+    // PADDING AND A GAP are what make this a CARD, and they are also what turn
+    // "too short" into "invisible": 10+10+4 of a 38pt row is gone before the
+    // labels are asked, so a re-layout into 38 has 14 points for two labels
+    // that want 15 each and shrinks both to nothing.
+    return core::column(b, key: "").padding(10.0f64).gap(4.0f64);
+}
+
+// Every fifth row is a taller card; the rest take the flat height.
+fn ph_height(i: usize, ctx: *u8) -> f64 {
+    if (i % (5 as usize)) == (0 as usize) { return 72.0f64; }
+    return 0.0f64;
+}
+
+#[test]
+fn a_per_row_height_beats_the_lists_flat_one() {
+    backend::install();
+    // A list may state BOTH a flat `row_height` and a per-row `row_height_of`,
+    // and the flat one used to short-circuit first: `row_height_of` was never
+    // consulted at all, and `uneven_rows` did not enter the decision. The more
+    // specific answer wins, and 0 from `row_height_of` already means "I cannot
+    // compute this one" — so the two compose with no precedence rule to state.
+    PH_BUILDS = 0 as i64;
+    var n: core::Node = list::list(key: "ph", uneven_rows: true, row_height: 38 as i64,
+                                   count: 10 as usize, row: ph_row);
+    let p: *core::Node = #addr_of(n);
+    match list::find("ph", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _a: list::List = x.set_row_height_of(ph_height);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    // The card rows answer what they stated...
+    assert recycler::height_of_row(v, 0 as i64) == 72.0f64;
+    assert recycler::height_of_row(v, 5 as i64) == 72.0f64;
+    // ...and a row that declines falls back to the flat height, still without
+    // building anything: a stated height is free either way.
+    assert recycler::height_of_row(v, 1 as i64) == 38.0f64;
+    assert recycler::height_of_row(v, 7 as i64) == 38.0f64;
+    assert PH_BUILDS == (0 as i64);
+    views::view_release(v);
+}
+
+#[test]
+fn a_flat_row_height_alone_is_still_answered_without_building() {
+    backend::install();
+    // THE NEGATIVE HALF, and the one the fast path exists for: a list that
+    // states only `row_height` has no `row_height_of` to ask, so it must return
+    // the flat height having built nothing. Moving the per-row question ahead
+    // of the short-circuit must not cost this.
+    PH_BUILDS = 0 as i64;
+    var n: core::Node = list::list(key: "ph2", row_height: 38 as i64,
+                                   count: 10 as usize, row: ph_row);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert recycler::height_of_row(v, 0 as i64) == 38.0f64;
+    assert recycler::height_of_row(v, 4 as i64) == 38.0f64;
+    assert PH_BUILDS == (0 as i64);
+    views::view_release(v);
+}
+
+#[test]
+fn a_row_is_laid_out_at_ITS_height_not_the_lists() {
+    backend::install();
+    // `place_row` was handed `fixed_height` at both call sites — the LIST's
+    // flat height, identical for every row — so a card row the table had
+    // already been told was 72 tall was laid out inside 38. Padding and a gap
+    // took most of that, flex shrank both labels to nothing, and the row drew
+    // EMPTY: not clipped, not overlapping, absent. An empty row reads as a
+    // missing row, which points nowhere near the height that caused it.
+    var n: core::Node = list::list(key: "ph3", uneven_rows: true, row_height: 38 as i64,
+                                   count: 10 as usize, row: ph_row);
+    let p: *core::Node = #addr_of(n);
+    match list::find("ph3", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _a: list::List = x.set_row_height_of(ph_height);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    let cell: *u8 = recycler::make_cell(v);
+    assert cell.is_not_null();
+
+    // Row 0 is a card: the cell takes the height the delegate answered for it,
+    // not the list's flat one.
+    recycler::fill_into(v, cell, 0 as i64);
+    let card: rt::Rect = { rt::msg_rect(cell, rt::sel(#str_ptr("frame\0"))) };
+    assert card.h == 72.0f64;
+
+    // ...and the content inside it is REAL: two labels that still have size.
+    // This is the assertion the bug would have failed — the row was 38 tall and
+    // its children were zero.
+    let inner: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("subviews\0"))) };
+    assert inner.is_not_null();
+    assert { rt::msg_u64(inner, rt::sel(#str_ptr("count\0"))) } == (2 as u64);
+    // ...at their natural sizes inside it. MEASURED both ways: the card's two
+    // labels report y=10 h=15 and y=29 h=15 whether the row is given 72 or 38,
+    // so a row that is too short CLIPS its content and does not crush it. The
+    // cell height above is the assertion with teeth.
+    let first: *u8 = { rt::msg_id_u64(inner, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    assert { rt::msg_rect(first, rt::sel(#str_ptr("frame\0"))) }.h == 15.0f64;
+    views::view_release(v);
+}
+
+// ---- a row source leaves with its view ---------------------------------------
+
+#[test]
+fn releasing_a_list_cancels_its_resize_observation() {
+    backend::install();
+    // `observe_named` does NOT pin its observer to the view — it keeps it in a
+    // registry keyed by an id — so an observation that is never cancelled
+    // survives the view it watches, with a pointer to the row source still in
+    // it. The id used to be discarded (`let _obs: u64 = ...`), which left no
+    // way to stop one.
+    let before: usize = akx::frame_obs_pending_count();
+    var n: core::Node = rl_list(5 as usize, 20 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert akx::frame_obs_pending_count() == before +% (1 as usize);
+    views::view_release(v);
+    assert akx::frame_obs_pending_count() == before;
+}
+
+#[test]
+fn releasing_a_list_drops_the_reload_it_had_queued() {
+    backend::install();
+    // THE CRASH. A queued reload names the row source by raw pointer and
+    // `drain_reload_jobs` dereferences every one of them on the next tick, so a
+    // table released between the queue and the tick left a job pointing at a
+    // freed source — which in turn pointed at a facet node that was also gone.
+    // Non-null garbage, so every `is_null` guard passed, and it landed as a
+    // SEGV at `0x100000031` inside `props_of_list`, roughly one suite run in
+    // four.
+    var n: core::Node = rl_list(5 as usize, 20 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    recycler::set_column_width(v, 180.0f64);
+    recycler::notify_resized(v);
+    assert scheduler::pending_reload_count() == (1 as usize);
+    views::view_release(v);
+    assert scheduler::pending_reload_count() == (0 as usize);
+    // The tick that would have walked it finds nothing to walk.
+    scheduler::tick();
+}
+
+// ---- a context per callback ---------------------------------------------------
+
+static BC_ROW_SAW: u64 = 0 as u64;
+static BC_BIND_SAW: u64 = 0 as u64;
+
+fn bc_row(i: usize, ctx: *u8) -> core::Node {
+    BC_ROW_SAW = { ctx as u64 };
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("r", key: ""));
+    return core::column(b, key: "");
+}
+
+fn bc_bind(i: usize, n: *core::Node, ctx: *u8) {
+    BC_BIND_SAW = { ctx as u64 };
+    return;
+}
+
+#[test]
+fn set_row_bind_does_not_clobber_the_context_set_row_was_given() {
+    backend::install();
+    // `set_row_bind` wrote `row_ctx` — the SAME field `set_row` writes — so the
+    // second call silently retargeted the first callback. With the `ctx`
+    // parameter defaulted to 0, the natural spelling
+    // `l.set_row(build, mine); l.set_row_bind(bind);` handed `build` a NULL
+    // context, and with a bound method that is a wrong-receiver crash inside
+    // an application's own row builder with nothing pointing back here.
+    //
+    // `tree.cplus` found this in its own copy and fixed it with a context per
+    // callback; the generated pair never learned. Order-dependent and silent,
+    // which is why it survived: every call site in the tree passes the same
+    // receiver to both, so nothing was ever observably wrong.
+    BC_ROW_SAW = 0 as u64;
+    BC_BIND_SAW = 0 as u64;
+    var n: core::Node = list::list(key: "bc", count: 1 as usize);
+    let np: *core::Node = #addr_of(n);
+    match list::find("bc", within: np) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(bc_row, ctx: 0x1111 as *u8);
+            let _b: list::List = a.set_row_bind(bc_bind);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, np);
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 0 as i64);
+    // The builder still has the context it was given...
+    assert BC_ROW_SAW == (0x1111 as u64);
+    // ...and the bind, which named none, falls back to it rather than to 0.
+    assert BC_BIND_SAW == (0x1111 as u64);
+    views::view_release(v);
+}
+
+#[test]
+fn a_bind_that_names_its_own_context_keeps_it() {
+    backend::install();
+    // The other half: the two are now separable, which is what the constructor
+    // has promised since `bind_ctx:` was added to it. Reversing the order must
+    // hold too — the fallback is resolved on READ (`props::bind_ctx_of`), not
+    // written through at set time, so neither setter can capture the other's
+    // value at the wrong moment.
+    BC_ROW_SAW = 0 as u64;
+    BC_BIND_SAW = 0 as u64;
+    var n: core::Node = list::list(key: "bc2", count: 1 as usize);
+    let np: *core::Node = #addr_of(n);
+    match list::find("bc2", within: np) {
+        option::Option[list::List]::Some(x) => {
+            // Bind FIRST, builder second.
+            let a: list::List = x.set_row_bind(bc_bind, ctx: 0x2222 as *u8);
+            let _b: list::List = a.set_row(bc_row, ctx: 0x1111 as *u8);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, np);
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 0 as i64);
+    assert BC_ROW_SAW == (0x1111 as u64);
+    assert BC_BIND_SAW == (0x2222 as u64);
+    views::view_release(v);
+}
+
+#[test]
+fn a_list_can_name_both_contexts_at_construction() {
+    backend::install();
+    // The constructor grew `bind_ctx:` in the same change that made the row
+    // source namable at construction, and it resolved to `row_ctx` — so
+    // `row: f, row_ctx: A, bind: g, bind_ctx: B` handed `f` the value `B`.
+    BC_ROW_SAW = 0 as u64;
+    BC_BIND_SAW = 0 as u64;
+    var n: core::Node = list::list(key: "bc3", count: 1 as usize,
+                                   row: bc_row, row_ctx: 0x1111 as *u8,
+                                   bind: bc_bind, bind_ctx: 0x2222 as *u8);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 0 as i64);
+    assert BC_ROW_SAW == (0x1111 as u64);
+    assert BC_BIND_SAW == (0x2222 as u64);
+    views::view_release(v);
+}
+
+
+// ---- the refresh strip is sized from bounds the host HAS ----------------------
+
+#[test]
+fn a_refresh_strip_takes_the_width_its_host_actually_has() {
+    backend::install();
+    // The strip, its button and its spinner were framed from `host.bounds` AT
+    // INSTALL, and facet creates a view before anything lays it out — so all
+    // three were 0 wide. On screen that is a clipped `arrow.clockwise` glyph
+    // pinned to the list's top-left corner, over the first row.
+    //
+    // The autoresizing mask does not rescue it, which is the measurement that
+    // decided the fix: WidthSizable distributes a size DELTA in proportion to
+    // the flexible parts, and a view that starts at zero width has no
+    // proportion to grow from. Before this, a refreshable list in a 500pt
+    // window reported `host bounds w=500` and `strip frame w=0` after a full
+    // tick — the mask had had its chance and taken it.
+    var b: core::Builder = core::Builder::new();
+    b.add(list::list(key: "rs", refreshable: true, count: 5 as usize, row: rl_row));
+    var root: core::Node = core::column(b, key: "host").align(flex::Align::Stretch);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "strip",
+                                                               width: 500.0f64,
+                                                               height: 300.0f64));
+    assert win.is_not_null();
+    scheduler::tick();
+
+    let lp: *core::Node = match core::child_of(rp, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => c,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+    assert lp.is_not_null();
+    let v: *u8 = core::view_of(lp);
+    assert v.is_not_null();
+    let hostw: f64 = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) }.w;
+    assert hostw > 1.0f64;
+
+    let strip: *u8 = compose::refresh_strip_of(v);
+    assert strip.is_not_null();
+    assert { rt::msg_rect(strip, rt::sel(#str_ptr("frame\0"))) }.w == hostw;
+    let button: *u8 = compose::refresh_button_of(strip);
+    assert button.is_not_null();
+    assert { rt::msg_rect(button, rt::sel(#str_ptr("frame\0"))) }.w == hostw;
+
+    // ...and the OTHER half of the report, which the measurement settled: the
+    // spinner is hidden and nothing is animating. `refreshing` is false and
+    // nothing set it, so "half visible and keeps going" was a description of
+    // the static clipped glyph, not of a loading indicator that never stopped.
+    let spinner: *u8 = compose::refresh_spinner_of(v);
+    assert spinner.is_not_null();
+    assert { rt::msg_i8(spinner, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+    app::close_window(rp);
+}
+
+#[test]
+fn a_host_with_no_bounds_yet_leaves_the_strip_alone() {
+    backend::install();
+    // THE NEGATIVE HALF. A host that has never been laid out has no width to
+    // take, and the sizing pass must not invent one — writing a frame from a
+    // zero `bounds` is exactly the bug. Nothing is asserted about the strip
+    // beyond its existence: what matters is that this path does not crash and
+    // does not fabricate a size.
+    var l: core::Node = list::list(key: "rs2", refreshable: true,
+                                   count: 5 as usize, row: rl_row);
+    let p: *core::Node = #addr_of(l);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    assert { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) }.w == 0.0f64;
+    let strip: *u8 = compose::refresh_strip_of(v);
+    assert strip.is_not_null();
+    assert { rt::msg_rect(strip, rt::sel(#str_ptr("frame\0"))) }.w == 0.0f64;
+}
+
+// ---- one reuse pool per row shape, for the TREE ------------------------------
+
+// Two shapes: a branch row is a label, a leaf row is a label and a badge. The
+// SHAPE is what matters, not what is in it — a bind into the wrong one writes
+// the right data into a subtree that is not the row.
+fn tk_row(n: *tree::TreeNode, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("title", key: ""));
+    if { (*n).child_count() } == (0 as usize) {
+        b.add(label::label("badge", key: ""));
+    }
+    return core::column(b, key: "");
+}
+
+fn tk_bind(n: *tree::TreeNode, ctx: *u8, row: *core::Node) { return; }
+
+// A BRANCH is kind 1, a LEAF is kind 2. The numbers mean nothing beyond being
+// different from each other.
+fn tk_kind(n: *tree::TreeNode, ctx: *u8) -> usize {
+    if { (*n).child_count() } == (0 as usize) { return 2 as usize; }
+    return 1 as usize;
+}
+
+fn tk_tree(kinded: bool) -> core::Node {
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    var branch: tree::TreeNode = tree::TreeNode::new("branch", id: "branch");
+    let _c: status::Status = branch.add_child(tree::TreeNode::new("child", id: "child"));
+    let _b: status::Status = root.add_child(branch);
+    let _l: status::Status = root.add_child(tree::TreeNode::new("leaf", id: "leaf"));
+    if kinded {
+        return tree::tree(root, key: "tk", row: tk_row, row_kind: tk_kind);
+    }
+    return tree::tree(root, key: "tk", row: tk_row);
+}
+
+#[test]
+fn a_tree_that_names_row_kinds_vends_a_pool_for_each() {
+    backend::install();
+    // `tree_view_for_item_body` hard-coded ONE identifier, `"facet.item"`, for
+    // every row — and `tree` accepts `set_row_bind`, which is the promise that
+    // makes one pool unsound. `makeViewWithIdentifier:` hands back whatever
+    // cell last scrolled off under that name, so a two-shape tree binds this
+    // item's data into a subtree built for the other shape, and nothing catches
+    // it. The identical hole was found and fixed on `list`; `tree` was never
+    // told.
+    var t: core::Node = tk_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    assert v.is_not_null();
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_row_count_of(v) == (2 as i64);
+
+    // Row 0 is the branch, row 1 the leaf — two shapes, and they must not share
+    // a pool.
+    let branch: text::Text = recycler::tree_identity_of_row(v, 0 as i64);
+    let leaf: text::Text = recycler::tree_identity_of_row(v, 1 as i64);
+    assert branch.view() == "facet.item.1";
+    assert leaf.view() == "facet.item.2";
+    assert branch.view() != leaf.view();
+}
+
+#[test]
+fn a_tree_that_names_no_kind_keeps_the_single_pool_it_had() {
+    backend::install();
+    // THE NEGATIVE HALF, and the property that makes this safe to add: a tree
+    // that says nothing must vend the exact identifier every tree used before
+    // `row_kind` existed. A new scheme that renamed the unnamed pool would
+    // cost every single-shape tree its recycling — the cells in flight at the
+    // moment of the change answer to a name nothing asks for any more.
+    var t: core::Node = tk_tree(false);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_identity_of_row(v, 0 as i64).view() == "facet.item";
+    assert recycler::tree_identity_of_row(v, 1 as i64).view() == "facet.item";
+}
+
+#[test]
+fn a_tree_kind_of_zero_is_the_unnamed_pool() {
+    backend::install();
+    // 0 means "the ordinary row", exactly as it does on `list`: an application
+    // that kinds SOME of its rows and answers 0 for the rest must get the
+    // default pool for those, not a third one called `facet.item.0`.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("plain", id: "plain"));
+    var t: core::Node = tree::tree(root, key: "tz", row: tk_row, row_kind: tz_zero_kind);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_identity_of_row(v, 0 as i64).view() == "facet.item";
+}
+
+fn tz_zero_kind(n: *tree::TreeNode, ctx: *u8) -> usize { return 0 as usize; }
+
+#[test]
+fn a_trees_row_kind_reads_back_through_the_cursor() {
+    backend::install();
+    // The contract half: `row_kind_of` answers what the backend will vend by,
+    // so an application can check its own model without a view — and a tree
+    // that named no kind answers 0 rather than guessing.
+    var t: core::Node = tk_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    match tree::find("tk", within: tp) {
+        option::Option[tree::Tree]::Some(h) => {
+            // The root's own children are the model, reached through the cursor.
+            let rp: *tree::TreeNode = h.root();
+            assert rp.is_not_null();
+            match { (*rp).child_ptr(0 as usize) } {
+                option::Option[*tree::TreeNode]::Some(branch) => {
+                    assert h.row_kind_of(branch) == (1 as usize);
+                }
+                option::Option[*tree::TreeNode]::None => { assert false; }
+            }
+            match { (*rp).child_ptr(1 as usize) } {
+                option::Option[*tree::TreeNode]::Some(leaf) => {
+                    assert h.row_kind_of(leaf) == (2 as usize);
+                }
+                option::Option[*tree::TreeNode]::None => { assert false; }
+            }
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+}
+
+// ---- the selection, asked the way `tree` asks it ------------------------------
+
+#[test]
+fn a_list_answers_has_selection_and_deselect() {
+    backend::install();
+    // `tree` has had `has_selection()` and `deselect()` since it was written;
+    // `list` and `collection` made the caller compare against -1 and write it
+    // back by hand — the same question spelled as arithmetic. Additive, so
+    // nothing that already reads `selected_index()` changes.
+    var n: core::Node = sel_list(4 as usize, 2 as i64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    match list::find("sel", within: p) {
+        option::Option[list::List]::Some(h) => {
+            assert h.has_selection();
+            assert h.selected_index() == (2 as i64);
+            // `deselect` is `set_selected_index(-1)` said once, and it must
+            // reach the table like any other selection write.
+            let _d: list::List = h.deselect();
+            assert h.has_selection() == false;
+            assert h.selected_index() == (0 as i64 - (1 as i64));
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert selected_row_of(v) == (0 as i64 - (1 as i64));
+}
+
+#[test]
+fn a_list_with_nothing_selected_says_so() {
+    backend::install();
+    // THE NEGATIVE HALF. -1 is "nothing selected" and 0 is a real row, so a
+    // `has_selection` written as `!= 0` — the obvious wrong spelling — would
+    // call row 0 nothing and an empty selection something.
+    var n: core::Node = sel_list(4 as usize, -1 as i64);
+    let p: *core::Node = #addr_of(n);
+    match list::find("sel", within: p) {
+        option::Option[list::List]::Some(h) => {
+            assert h.has_selection() == false;
+            // ...and row 0 IS a selection, which is the half that catches `!= 0`.
+            let _s: list::List = h.set_selected_index(0 as i64);
+            assert h.has_selection();
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_collection_answers_the_same_two_words() {
+    backend::install();
+    // The pair is generated, so `collection` gets it for free — which is the
+    // point of fixing it in `gen_contract.py` rather than in one control.
+    var n: core::Node = collection::collection(key: "cs", count: 3 as usize,
+                                               selected_index: 1 as i64);
+    let p: *core::Node = #addr_of(n);
+    match collection::find("cs", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            assert h.has_selection();
+            let _d: collection::Collection = h.deselect();
+            assert h.has_selection() == false;
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
 }

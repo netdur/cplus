@@ -115,6 +115,10 @@ struct Sequence {
     row: fn(usize, *u8) -> flex::Node,
     opaque row_ctx: *u8,
     bind: fn(usize, *flex::Node, *u8),
+    // The BIND's own context, resolved against `row_ctx` when it is copied in.
+    // `set_row_bind` used to write `row_ctx`, so naming a binder NULLed the
+    // builder's context.
+    opaque bind_ctx: *u8,
     row_kind: fn(usize, *u8) -> usize,
     opaque row_kind_ctx: *u8,
     row_height_of: fn(usize, *u8) -> f64,
@@ -161,6 +165,7 @@ fn empty_sequence() -> Sequence {
     return Sequence {
         count: 0 as i64, row: props::no_row, row_ctx: 0 as *u8,
         bind: props::no_bind,
+        bind_ctx: 0 as *u8,
         row_kind: props::no_row_kind, row_kind_ctx: 0 as *u8,
         row_height_of: props::no_row_height_of, row_height_of_ctx: 0 as *u8,
         is_grouped: false, group_count: 0 as i64,
@@ -188,6 +193,7 @@ fn sequence_of_list(p: *props::ListProps) -> Sequence {
     s.row = { (*p).row };
     s.row_ctx = { (*p).row_ctx };
     s.bind = { (*p).bind };
+    s.bind_ctx = props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx });
     s.row_kind = { (*p).row_kind };
     s.row_kind_ctx = { (*p).row_kind_ctx };
     s.row_height_of = { (*p).row_height_of };
@@ -217,6 +223,7 @@ fn sequence_of_collection(p: *props::CollectionProps) -> Sequence {
     s.row = { (*p).row };
     s.row_ctx = { (*p).row_ctx };
     s.bind = { (*p).bind };
+    s.bind_ctx = props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx });
     s.row_kind = { (*p).row_kind };
     s.row_kind_ctx = { (*p).row_kind_ctx };
     s.row_height_of = { (*p).row_height_of };
@@ -658,7 +665,7 @@ fn bind_at(n: *core::Node, v: *u8, at: usize, row: *core::Node) {
         return;
     }
     let s: Sequence = sequence_of(n);
-    s.bind(slot_data_index(s, at) as usize, row, s.row_ctx);
+    s.bind(slot_data_index(s, at) as usize, row, s.bind_ctx);
     return;
 }
 

@@ -433,7 +433,7 @@ impl Gallery: component::Component {
             catalog_model(),
             key: "gallery:nav",
             on_select: this.on_nav_select,
-            row_height: 28.0,
+            row_height: 28,
         ).grow(1.0));
 
         var sidebar: core::Node = core::column(side).grow(1.0);

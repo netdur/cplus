@@ -176,6 +176,13 @@ enum ScrollBars {
     Never,
 }
 
+// hand (authored: no manifest source)
+enum SelectionHighlight {
+    Default,
+    None,
+    Platform,
+}
+
 // SelectionMode
 enum SelectionMode {
     Multiple,

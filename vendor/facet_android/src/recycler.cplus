@@ -372,6 +372,9 @@ struct RowModel {
     row: fn(usize, *u8) -> flex::Node,
     opaque row_ctx: *u8,
     bind: fn(usize, *flex::Node, *u8),
+    // The BIND's own context, resolved against `row_ctx` when the model is
+    // read out of the props.
+    opaque bind_ctx: *u8,
     // A STATED height, or 0 for "ask the content". A collection has none —
     // its cells are sized by the column count — so it answers zero.
     height: f64,
@@ -401,6 +404,7 @@ impl RowModel {
             count: 0 as i64,
             row: 0 as fn(usize, *u8) -> flex::Node,
             row_ctx: 0 as *u8,
+            bind_ctx: 0 as *u8,
             bind: props::no_bind,
             height: 0.0f64,
             height_of: props::no_row_height_of,
@@ -431,7 +435,8 @@ fn model_of(n: *core::Node) -> RowModel {
         var h: f64 = 0.0f64;
         if { (*p).row_height } > (0 as i64) { h = { { (*p).row_height } as f64 }; }
         return RowModel { count: { (*p).count }, row: { (*p).row },
-                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind }, height: h,
+                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind },
+                          bind_ctx: props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx }), height: h,
                           height_of: { (*p).row_height_of },
                           height_of_ctx: { (*p).row_height_of_ctx },
                           kind_of: { (*p).row_kind },
@@ -451,7 +456,8 @@ fn model_of(n: *core::Node) -> RowModel {
         // column width cannot do. MANIFEST §1 records that; this is where the
         // record becomes behaviour.
         return RowModel { count: { (*p).count }, row: { (*p).row },
-                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind }, height: 0.0f64,
+                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind },
+                          bind_ctx: props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx }), height: 0.0f64,
                           height_of: { (*p).row_height_of },
                           height_of_ctx: { (*p).row_height_of_ctx },
                           kind_of: { (*p).row_kind },
@@ -690,13 +696,15 @@ fn build_row(m: RowModel, row: usize) -> core::Node {
     return f(row, m.row_ctx);
 }
 
-// `bind` carries no ctx of its own: it shares `row_ctx` with the builder, which
-// is right — the two are halves of one thing and an app that needed different
-// context for them would be describing two lists.
+// `bind` HAS a ctx of its own, falling back to `row_ctx` when the application
+// named only one — which is every call site that builds shape and data from the
+// same object, and what this comment used to claim was the whole design. It was
+// not: `set_row_bind` wrote `row_ctx`, so naming a binder after a builder NULLed
+// the builder's context. Resolved into the model by `props::bind_ctx_of`.
 fn bind_into(m: RowModel, row: usize, n: *core::Node) {
     if !m.has_bind() { return; }
     let f: fn(usize, *flex::Node, *u8) = m.bind;
-    f(row, n, m.row_ctx);
+    f(row, n, m.bind_ctx);
     return;
 }
 
@@ -1035,7 +1043,7 @@ fn has_tree_bind(p: *tree::TreeProps) -> bool {
 }
 
 fn tree_fixed_height(p: *tree::TreeProps) -> f64 {
-    let h: f64 = { (*p).row_height };
+    let h: f64 = { (*p).row_height } as f64;
     if h <= 0.0f64 { return 0.0f64; }
     return h;
 }

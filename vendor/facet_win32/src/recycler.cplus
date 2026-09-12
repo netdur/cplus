@@ -227,6 +227,9 @@ struct SeqSource {
     row: fn(usize, *u8) -> flex::Node,
     row_ctx: usize,
     bind: fn(usize, *flex::Node, *u8),
+    // The BIND's own context, resolved against `row_ctx` when the source is
+    // read out of the props.
+    bind_ctx: usize,
     row_height_of: fn(usize, *u8) -> f64,
     row_height_of_ctx: usize,
     row_kind: fn(usize, *u8) -> usize,
@@ -279,7 +282,8 @@ struct SeqSource {
 fn no_source() -> SeqSource {
     return SeqSource {
         live: false, count: 0 as i64, row: props::no_row, row_ctx: 0 as usize,
-        bind: props::no_bind, row_height_of: props::no_row_height_of,
+        bind: props::no_bind, bind_ctx: 0 as usize,
+        row_height_of: props::no_row_height_of,
         row_height_of_ctx: 0 as usize, row_kind: props::no_row_kind,
         row_kind_ctx: 0 as usize, row_height: 0 as i64, uneven: false,
         selection_mode: vocab::SelectionMode::None,
@@ -312,6 +316,7 @@ fn source_of(n: *core::Node) -> SeqSource {
         return SeqSource {
             live: true, count: { (*p).count }, row: { (*p).row },
             row_ctx: { #addr((*p).row_ctx) }, bind: { (*p).bind },
+            bind_ctx: { #addr(props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx })) },
             row_height_of: { (*p).row_height_of },
             row_height_of_ctx: { #addr((*p).row_height_of_ctx) },
             row_kind: { (*p).row_kind },
@@ -377,6 +382,7 @@ fn source_of(n: *core::Node) -> SeqSource {
         return SeqSource {
             live: true, count: { (*p).count }, row: { (*p).row },
             row_ctx: { #addr((*p).row_ctx) }, bind: { (*p).bind },
+            bind_ctx: { #addr(props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx })) },
             row_height_of: { (*p).row_height_of },
             row_height_of_ctx: { #addr((*p).row_height_of_ctx) },
             row_kind: { (*p).row_kind },
@@ -1065,12 +1071,14 @@ fn fill_cell(v: *u8, s: *ListState, p: *SeqSource, slot: usize, i: usize) {
             let is_header: bool = kind == header_shape();
             if bind != props::no_bind && same && !is_header {
                 let rp: *core::Node = { (*c).node } as *core::Node;
-                // `bind` SHARES `row_ctx` — `set_row_bind` writes the ctx it was
-                // given into that same slot, because a row builder and a row
-                // binder are two verbs of one object and facet gave them one
-                // context rather than two that could disagree.
+                // `bind` HAS ITS OWN CONTEXT, and falls back to `row_ctx` when
+                // the application named only one — which is what this comment
+                // used to describe as the design. It was not: `set_row_bind`
+                // wrote `row_ctx`, so naming a binder after a builder NULLed
+                // the builder's context. `bind_ctx_of` is the fallback, and
+                // `tree.cplus` has had it since its own copy of this bug.
                 // THE BINDER TAKES A DATA INDEX, as the builder does.
-                bind(data_index(p, i) as usize, rp, { (*p).row_ctx } as *u8);
+                bind(data_index(p, i) as usize, rp, { (*p).bind_ctx } as *u8);
                 core::set_item_index(rp, i);
                 // THE ROW IS NOT IN A WINDOW, so the ordinary sync will never
                 // reach it — `sync_from` is the door facet opened for exactly
@@ -2087,7 +2095,7 @@ fn is_expanded_id(p: *ftree::TreeProps, id: str) -> bool {
 // A tree states one height for every row; `0` means "let the backend decide",
 // which here is the same default a list falls back to.
 fn tree_row_height(p: *ftree::TreeProps) -> f64 {
-    let h: f64 = { (*p).row_height };
+    let h: f64 = { (*p).row_height } as f64;
     if h > (0.0 as f64) { return h; }
     return default_row_height();
 }

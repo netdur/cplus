@@ -518,6 +518,34 @@ fn drain_reload_jobs() {
     }
 }
 
+// A QUEUED RELOAD CANNOT OUTLIVE WHAT IT NAMES. `p` is a raw pointer to the
+// backend's row source, and `drain_reload_jobs` dereferences every one of them
+// on the next tick — so a table released between the job being queued and the
+// tick running leaves a job pointing at freed memory. The same shape as
+// `forget_split` above, and the same fix: the teardown says so.
+//
+// Measured, not argued: the suite's tables were never released, so their row
+// sources accumulated with their queued jobs and a later test drained a job
+// whose node pointer named a stack slot that test had already returned from —
+// a SEGV at `0x100000031` inside `props_of_list`, one run in four.
+fn forget_reload(p: *u8) {
+    if p.is_null() { return; }
+    let jobs: *vec::Vec[ReloadJob] = { #addr_of(RELOAD_JOBS) };
+    var i: usize = 0 as usize;
+    while i < { (*jobs).count() } {
+        match { (*jobs).at(i) } {
+            option::Option[ReloadJob]::Some(j) => {
+                if { j.p } == p {
+                    let _g: option::Option[ReloadJob] = { (*jobs).swap_remove(i) };
+                    return;
+                }
+            }
+            option::Option[ReloadJob]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+
 fn pending_reload_count() -> usize { return { RELOAD_JOBS.count() }; }
 
 // `force` rides through to the frame walk — see `geometry::relayout_root`. The

@@ -315,6 +315,11 @@ HAND_ENUMS = {
     "FontWeight": ["Default", "UltraLight", "Thin", "Light", "Regular",
                    "Medium", "Semibold", "Bold", "Heavy", "Black"],
     "Keyboard": ["Default", "Plain", "Chat", "Email", "Numeric", "Telephone", "Url", "Text"],
+    # Beside `SelectionMode`, which says whether a row can be PICKED and
+    # nothing about whether the platform should DRAW that. `Default` is
+    # "whatever this control already does", so adding the word changes nothing
+    # until an app uses it.
+    "SelectionHighlight": ["Default", "None", "Platform"],
     # WHERE IN THE BAR, and `Sidebar` is the one the ledger has no word for.
     # A window with a `PaneRole::Sidebar` pane has TWO regions in its title
     # band — the part over the sidebar and the part over the content — and an
@@ -2332,6 +2337,16 @@ ROW_SOURCE_FIELDS = [
     ("opaque row_ctx", "*u8", "0 as *u8", None),
     ("bind", "fn(usize, *flex::Node, *u8)", "no_bind",
      "facet — writes row `i` INTO an existing row, for recycling"),
+    # ONE CONTEXT PER CALLBACK, which `tree.cplus` has had since its own copy
+    # of this bug and the generated pair never learned. `set_row_bind` wrote
+    # `row_ctx`, so `set_row(build, mine)` followed by `set_row_bind(bind)`
+    # silently NULLed the context `build` was given — and with a bound method
+    # that is a wrong-receiver crash inside an application's own row builder,
+    # with nothing pointing back here.
+    #
+    # Unset means "share the row's", resolved by `bind_ctx_of` at READ time
+    # rather than at write time, so the two setters compose in either order.
+    ("opaque bind_ctx", "*u8", "0 as *u8", None),
     # A row's height WITHOUT building it. `row_height` is one number for every
     # row; this is one per row, and it exists because the alternative is to
     # build. A recycling table asks for the height of EVERY row whenever its
@@ -2373,6 +2388,17 @@ ROW_SOURCE_FIELDS = [
     # "nothing selected", which is what an empty selection is.
     ("selected_index", "i64", "-1 as i64",
      "facet — which row is selected, or -1 for none"),
+    # WHETHER THE PLATFORM DRAWS THE SELECTION, which `selection_mode` never
+    # said. A LIST row in iris is a card that draws its own selected state, so
+    # the platform's full-row highlight behind it is a second answer to the
+    # same question; a TREE row, or a sidebar row that is an icon and a name,
+    # draws no such thing and the platform's highlight IS the feedback. The
+    # backend hard-coded opposite answers per control and its own comment said
+    # that was the wrong shape. `Default` keeps each control's own answer, so
+    # nothing that never asks changes.
+    ("selection_highlight", "vocab::SelectionHighlight",
+     "vocab::SelectionHighlight::Default",
+     "facet — whether the PLATFORM draws the selection"),
     # `ReorderCompleted` tells an application a drag finished and nothing else:
     # the ledger's reorder mutates the bound ItemsSource, so the app reads the answer
     # off its own data. facet's sequence is a count plus a builder — the
@@ -2624,6 +2650,19 @@ def emit_props(rows_by_control, by_type):
            "// The absent bind. Compared against by name, NOT against null: the\n"
            "// default has to BE a function, and a null check would never be false.\n"
            "fn no_bind(index: usize, row: *flex::Node, ctx: *u8) { return; }\n",
+           "\n// WHICH CONTEXT THE BIND GETS. Its own when the application named one,\n"
+           "// the row builder's otherwise — a list whose shape and data come from the\n"
+           "// same object names one context and means it for both, which is every\n"
+           "// call site in the tree today. Lifted from `tree.cplus`, whose `_ctx_or`\n"
+           "// is the same three lines and was written for the same bug.\n"
+           "//\n"
+           "// Resolved on READ so the two setters compose in either order: writing it\n"
+           "// through at `set_row_bind` time would capture whatever `row_ctx` happened\n"
+           "// to hold then, and a later `set_row` would leave the bind behind.\n"
+           "fn bind_ctx_of(own: *u8, row: *u8) -> *u8 {\n"
+           "    if own.is_not_null() { return own; }\n"
+           "    return row;\n"
+           "}\n",
            "// The two halves of a group, absent until an application names them.\n"
            "// A group with no size holds no rows, so an ungrouped sequence and a\n"
            "// grouped one that was never described render the same.\n"
@@ -2948,9 +2987,25 @@ def ctor_params(row_type, writes, reads, events, owned=()):
         params.append((verb, "fn(*u8, *u8)", "props::no_handler"))
         params.append((verb + "_ctx", "*u8", "0 as *u8"))
     # facet's own words on `tabs` are a WRITE and an EVENT like any other, so
-    # they are namable at construction like any other. The row-source fields are
-    # not: a count and a builder are set through the cursor because a list is
-    # filled after it is described, not while.
+    # they are namable at construction like any other.
+    #
+    # SO ARE THE ROW-SOURCE FIELDS, now. This used to read "a count and a
+    # builder are set through the cursor because a list is filled after it is
+    # described, not while" — which is true of a list whose contents arrive
+    # later and false of the many that are written out whole. A sidebar's nav
+    # list is five rows known at the call site, and saying so cost four lines
+    # and a raw address:
+    #
+    #     var l: core::Node = ui::list(key: "nav", …);
+    #     match list::from(#addr_of(l) as *core::Node) {
+    #         option::Option[list::List]::Some(h) => { … set_count … set_row … }
+    #         option::Option::None => { }
+    #     }
+    #
+    # That is the shape `role_leading` was added to `split` to end, and the
+    # same one the owned collections below already ended for popup items. The
+    # cursor stays the door for filling a list later; it is no longer the only
+    # door for describing one.
     if MODULE.get(row_type) in BUTTONS:
         params.append(("toggles", "bool", "false"))
         params.append(("on", "bool", "false"))
@@ -2961,6 +3016,15 @@ def ctor_params(row_type, writes, reads, events, owned=()):
         params.append(("on_tab_changed_ctx", "*u8", "0 as *u8"))
     if MODULE.get(row_type) in SELECTABLE_TEXT:
         params.append(("selectable", "bool", "false"))
+    if MODULE.get(row_type) in ROW_SOURCE:
+        params.append(("count", "usize", "0 as usize"))
+        params.append(("row", "fn(usize, *u8) -> core::Node", "props::no_row"))
+        params.append(("row_ctx", "*u8", "0 as *u8"))
+        params.append(("bind", "fn(usize, *core::Node, *u8)", "props::no_bind"))
+        params.append(("bind_ctx", "*u8", "0 as *u8"))
+        params.append(("selected_index", "i64", "-1 as i64"))
+        params.append(("selection_highlight", "vocab::SelectionHighlight",
+                       "vocab::SelectionHighlight::Default"))
     # Owned collections are namable at construction too. They were cursor-only,
     # which forced `from(#addr_of(n))` on anyone who wanted a popup WITH its
     # items — three lines and a raw address to say one thing, and an
@@ -3058,6 +3122,18 @@ def emit_control(row_type, merged):
         o.append("    p.selected_index = selected_index;\n")
         o.append("    p.on_tab_changed = on_tab_changed;\n")
         o.append("    p.on_tab_changed_ctx = on_tab_changed_ctx;\n")
+    if mod in ROW_SOURCE:
+        o.append("    p.count = count as i64;\n")
+        o.append("    p.row = row;\n")
+        o.append("    p.row_ctx = row_ctx;\n")
+        o.append("    p.bind = bind;\n")
+        # ITS OWN FIELD. This used to be `if bind_ctx.is_not_null() { p.row_ctx
+        # = bind_ctx; }` — a fourth pass at what `_ctx_or` already does two
+        # files away, and one that handed `row:` the value `bind_ctx:` when an
+        # app named both. `bind_ctx_of` resolves the fallback on read.
+        o.append("    p.bind_ctx = bind_ctx;\n")
+        o.append("    p.selected_index = selected_index;\n")
+        o.append("    p.selection_highlight = selection_highlight;\n")
     if mod in SELECTABLE_TEXT:
         o.append("    p.selectable = selectable;\n")
     keep = "    var n: core::Node = match" if carries_param(row_type) else "    return match"
@@ -3491,7 +3567,7 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
         o.append("        { (*p).bind = f };\n")
-        o.append("        { (*p).row_ctx = ctx };\n")
+        o.append("        { (*p).bind_ctx = ctx };\n")
         o.append("        core::touch(this._p, P_ROW);\n")
         o.append("        return this;\n    }\n")
         o.append("\n    // THE HEIGHT OF ROW `at`, WITHOUT BUILDING IT.\n")
@@ -3747,6 +3823,50 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return -1 as i64; }}\n")
         o.append("        return { (*p).selected_index };\n    }\n")
+        o.append("\n    // ...and whether the PLATFORM draws that selection, which is a\n")
+        o.append("    // separate question `selection_mode` never asked. A row that\n")
+        o.append("    // draws its own selected state wants `None`, or the platform's\n")
+        o.append("    // full-row highlight is a second answer behind the first. A row\n")
+        o.append("    // that is an icon and a name — a sidebar row — wants `Platform`,\n")
+        o.append("    // because then the highlight IS the feedback. `Default` keeps\n")
+        o.append("    // whatever this control already did.\n")
+        o.append(f"    fn set_selection_highlight(this, v: vocab::SelectionHighlight) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).selection_highlight = v };\n")
+        o.append("        core::touch(this._p, P_SELECTION_MODE);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    fn selection_highlight(this) -> vocab::SelectionHighlight {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return vocab::SelectionHighlight::Default; }}\n")
+        o.append("        return { (*p).selection_highlight };\n    }\n")
+        # ---- the two readers `tree` has and these did not -------------------
+        #
+        # `tree` answers "is anything selected" and "stop selecting" with
+        # `has_selection()` and `deselect()`; `list` and `collection` made the
+        # caller compare against -1 and write it back, which is the same
+        # question spelled as arithmetic. Three controls recycle rows and no two
+        # of them answered it the same way — see
+        # `bugs/three-row-source-vocabularies-that-disagree.md`.
+        #
+        # ADDITIVE, and deliberately only the READERS. The KEY stays different:
+        # a list selects by index, a tree by id, and a tree row has no stable
+        # index because expansion moves it. Converging that would be a
+        # downgrade, not a unification.
+        o.append("\n    // ---- the selection, asked the way `tree` asks it --------------\n")
+        o.append("    // `tree` has `has_selection()` and `deselect()`; these made the\n")
+        o.append("    // caller compare against -1 and write it back by hand. Same\n")
+        o.append("    // question, spelled as arithmetic.\n")
+        o.append("    //\n")
+        o.append("    // The KEY is still an index here and an id on `tree`, and that\n")
+        o.append("    // difference is kept: a tree row has no stable index, because\n")
+        o.append("    // expanding anything above it moves it.\n")
+        o.append("    fn has_selection(this) -> bool {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return false; }}\n")
+        o.append("        return { (*p).selected_index } >= (0 as i64);\n    }\n")
+        o.append(f"\n    fn deselect(this) -> {cur} {{\n")
+        o.append("        return this.set_selected_index(-1 as i64);\n    }\n")
         o.append("\n    // ---- what a completed reorder moved --------------------------\n")
         o.append("    // the ledger's ReorderCompleted mutates the bound ItemsSource and the\n")
         o.append("    // application reads the answer off its own data. facet's sequence\n")
@@ -3936,12 +4056,15 @@ fn tree(
     on_select_ctx: *u8 = 0 as *u8,
     row_id: fn(*m_tree::TreeNode, *u8) -> text::Text = m_tree::no_row_id,
     row_id_ctx: *u8 = 0 as *u8,
+    row_kind: fn(*m_tree::TreeNode, *u8) -> usize = m_tree::no_row_kind,
+    row_kind_ctx: *u8 = 0 as *u8,
     ctx: *u8 = 0 as *u8,
-    row_height: f64 = 0.0f64,
+    row_height: i64 = 0 as i64,
 ) -> core::Node {
     return m_tree::tree(root, key: key, row: row, row_ctx: row_ctx,
                         on_select: on_select, on_select_ctx: on_select_ctx,
                         row_id: row_id, row_id_ctx: row_id_ctx,
+                        row_kind: row_kind, row_kind_ctx: row_kind_ctx,
                         ctx: ctx, row_height: row_height);
 }
 
