@@ -961,6 +961,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
     let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
     if has_bind(s) && existing.is_not_null() {
         bind_into(s, row, existing);
+        set_row_item_index(s, row, existing);
         // A bind WRITES PROPS, which marks nodes dirty and touches nothing
         // native. A realised row is outside the window walk, so nothing would
         // ever carry those writes across — `sync_from` is that walk, rooted
@@ -988,6 +989,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
             // then responsible for SHAPE ONLY, and a row can never show the
             // data of whichever row happened to build its cell.
             bind_into(s, row, np);
+            set_row_item_index(s, row, np);
             mount::sync_from(np);
             placed = place_row(cell, np, w, row_h: stated_row_height(s, row));
             synth::set_associated(cell, cell_node_key(), np as *u8);
@@ -1185,6 +1187,27 @@ fn stated_row_height(s: *RowSource, row: i64) -> f64 {
         }
     }
     return { (*s).fixed_height };
+}
+
+// THE INDEX A ROW WAS GIVEN, written onto the row's own node so a handler
+// shared by every row can ask which one it is
+// (`component::item_index_of(sender)`).
+//
+// facet's contract has had this seam since it was written and `facet_win32`
+// has always filled it; this backend never did, so on macOS the answer was
+// always `None` and an application had to recover the row some other way —
+// scanning its model for the row's key, which is O(rows) per click and needs
+// the key to be unique for a reason it does not otherwise have.
+//
+// THE DATA INDEX, not the table row: it is the same `i` the builder was given,
+// so a grouped list's third item is the third item and not the third row. A
+// HEADER has no data index and is left without one, which reads back as `None`
+// rather than as row zero.
+fn set_row_item_index(s: *RowSource, row: i64, np: *core::Node) {
+    if np.is_null() { return; }
+    let at: i64 = resolve_row(s, row);
+    if at < (0 as i64) { return; }
+    core::set_item_index(np, at as usize);
 }
 
 fn has_bind(s: *RowSource) -> bool {

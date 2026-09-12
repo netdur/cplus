@@ -75,44 +75,24 @@ impl Demo {
         return screen::screen_box::[Demo](Demo::new());
     }
 
-    fn at(ref this, i: usize) -> Section {
-        return match { this.sections.at(i) } {
-            option::Option[Section]::Some(s) => s,
-            option::Option[Section]::None => Section { name: "", icon: "", body: "" },
-        };
-    }
-
-    fn index_of(ref this, key: str) -> i64 {
-        var i: usize = 0 as usize;
-        while i < { this.sections.count() } {
-            if this.at(i).name == key { return i as i64; }
-            i = i +% (1 as usize);
-        }
-        return -1 as i64;
-    }
-
-    fn write(key: str, v: str) {
-        match label::find(key) {
-            option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(v); }
-            option::Option::None => { }
-        }
-        return;
-    }
-
 
     fn row(ref this, i: usize) -> core::Node {
-        let s: Section = this.at(i);
+        guard let option::Option[*Section]::Some(e) = { this.sections.at_ptr(i) } else {
+            return core::spacer();
+        };
+        let name: str = { (*e).name };
+        let icon: str = { (*e).icon };
         let chosen: bool = i == this.selected;
         var ink: vocab::Color = vocab::Color::text();
         if chosen { ink = vocab::Color::accent(); }
 
         var b: core::Builder = core::Builder::new();
-        b.add(symbol::system_symbol(s.icon, key: this.row_icon, size: 19.0f64,
+        b.add(symbol::system_symbol(icon, key: this.row_icon, size: 19.0f64,
                                     color: ink));
-        b.add(ui::label(s.name, key: this.row_name, font_size: 13.0f64,
+        b.add(ui::label(name, key: this.row_name, font_size: 13.0f64,
                         text_color: ink)
               .grow(1.0f64));
-        var n: core::Node = ui::row(b, key: s.name)
+        var n: core::Node = ui::row(b, key: name)
             .align(flex::Align::Center)
             .gap(6.0f64)
             .padding_edge(flex::Edge::Vertical, 7.0f64)
@@ -129,27 +109,22 @@ impl Demo {
     }
 
     fn on_row_click(ref this, sender: *u8) -> bool {
-        let k: text::Text = component::key_of(sender);
-        let i: i64 = this.index_of(k.view());
-        if i < (0 as i64) { return false; }
+        guard let option::Option[usize]::Some(i) = component::item_index_of(sender) else {
+            return false;
+        };
         let was: usize = this.selected;
-        this.selected = i as usize;
-        this.sections.note_changed(was);
-        this.sections.note_changed(this.selected);
-        this.show_selected();
+        this.selected = i;
+        match relist::find(this.nav) {
+            option::Option[relist::Relist]::Some(l) => {
+                let _a: relist::Relist = l.invalidate(was);
+                let _b: relist::Relist = l.invalidate(this.selected);
+            }
+            option::Option[relist::Relist]::None => { }
+        }
         return true;
     }
 
-    fn show_selected(ref this) {
-        let s: Section = this.at(this.selected);
-        Demo::write(this.title_key, s.name);
-        Demo::write(this.body_key, s.body);
-        return;
-    }
-
-    fn compose(ref this, sender: *u8) {
-        Demo::write(this.title_key, "New");
-        Demo::write(this.body_key, "The compose button sits in the band over the sidebar: a toolbar_item with placement ToolbarPlacement::Sidebar, kept against the divider by a tracking separator.");
+    fn on_compose_click(ref this, sender: *u8) {
         return;
     }
 
@@ -163,7 +138,7 @@ impl Demo: component::Component {
                          key: "new",
                          placement: vocab::ToolbarPlacement::Sidebar,
                          icon: "square.and.pencil",
-                         on_clicked: this.compose)
+                         on_clicked: this.on_compose_click)
             split(key: "main",
                   position: 220.0f64,
                   min_leading: 180.0f64,
@@ -203,11 +178,7 @@ impl Demo: screen::Screen {
 }
 
 impl Demo: component::Lifecycle {
-    fn on_attach(ref this, why: component::Attach) {
-        if why != component::Attach::Mount { return; }
-        this.show_selected();
-        return;
-    }
+    fn on_attach(ref this, why: component::Attach) { return; }
     fn on_detach(ref this, why: component::Detach) { return; }
 }
 

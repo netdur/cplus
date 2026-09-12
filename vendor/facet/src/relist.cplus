@@ -146,14 +146,12 @@ fn _signal_of[T](rows: *u8) -> *events::Signal[obs_vec::Change] {
 // `ctx` is the PROPS, which are boxed and therefore have an address that is
 // stable from the moment they exist — unlike the node, which is still a value
 // on the caller's stack when this subscription is made.
-fn _on_change(c: obs_vec::Change, ctx: *u8) {
-    let p: *RelistProps = { ctx as *RelistProps };
+// RECORD A CHANGE AGAINST THIS ELEMENT, from wherever it came — the
+// collection's signal, or the application saying a row draws differently now.
+fn _note(p: *RelistProps, c: obs_vec::Change) {
     if p.is_null() { return; }
     if { (*p).has_pending } {
-        // A SECOND CHANGE BEFORE THE FIRST WAS APPLIED. Two precise changes do
-        // not compose into one, so the pair becomes a reload rather than a
-        // guess — an insert at 2 followed by a remove at 5 describes neither.
-        { (*p).pending = obs_vec::Change::reload() };
+        { (*p).pending = _merge({ (*p).pending }, c) };
     } else {
         { (*p).pending = c };
         { (*p).has_pending = true };
@@ -165,6 +163,36 @@ fn _on_change(c: obs_vec::Change, ctx: *u8) {
     // early on a null node would drop every edit made between construction and
     // mount, which is exactly where an app fills a list it just described.
     core::touch({ (*p).node }, P_ROWS);
+    return;
+}
+
+// TWO CHANGES BETWEEN ONE APPLY.
+//
+// Two CHANGED spans compose: the sequence did not move either time, so the
+// range covering both is a true statement about what needs re-measuring. It
+// says a little more than happened — the rows between two selected ones are
+// re-measured for nothing — and that is a cost, not a lie.
+//
+// Nothing else composes. An insert at 2 followed by a remove at 5 describes
+// neither, and splicing the second against the first sequence leaves the table
+// one row out from then on, so the pair becomes a reload rather than a guess.
+fn _merge(a: obs_vec::Change, b: obs_vec::Change) -> obs_vec::Change {
+    let a_changed: bool = change_kind_num(a.kind) == (3 as i64);
+    let b_changed: bool = change_kind_num(b.kind) == (3 as i64);
+    if a_changed == false || b_changed == false { return obs_vec::Change::reload(); }
+    var lo: usize = a.at;
+    if b.at < lo { lo = b.at; }
+    var a_hi: usize = a.at +% a.count;
+    var b_hi: usize = b.at +% b.count;
+    var hi: usize = a_hi;
+    if b_hi > hi { hi = b_hi; }
+    return obs_vec::Change { kind: obs_vec::ChangeKind::Changed,
+                             at: lo, count: hi -% lo };
+}
+
+fn _on_change(c: obs_vec::Change, ctx: *u8) {
+    let p: *RelistProps = { ctx as *RelistProps };
+    _note(p, c);
     return;
 }
 
@@ -255,6 +283,25 @@ impl Relist {
         { (*p).builder = f };
         { (*p).builder_ctx = ctx };
         core::touch(this._p, P_BUILDER);
+        return this;
+    }
+
+    // THESE ROWS DRAW DIFFERENTLY NOW, though the collection did not change.
+    //
+    // Selection is the clearest case and the one this exists for: which row is
+    // chosen is the APPLICATION's state, not a fact about its data, so saying
+    // it through the collection would be using the model as a message bus —
+    // `sections.note_changed(i)` claims a section changed when none did.
+    // Address the list instead.
+    //
+    // A CHANGED span, so the sequence has not moved: the backend re-measures
+    // these rows and leaves every other row's height and cell alone. Two of
+    // these between one apply compose into the range covering both.
+    fn invalidate(this, at: usize, count: usize = 1 as usize) -> Relist {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return this; }
+        _note(p, obs_vec::Change { kind: obs_vec::ChangeKind::Changed,
+                                   at: at, count: count });
         return this;
     }
 

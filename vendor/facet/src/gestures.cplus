@@ -806,3 +806,5 @@ fn a_bound_handler_and_a_free_one_share_a_set() {
     assert fire_right_click(p);
     assert BM_CTX == (#addr_of(owner) as *u8);
 }
+
+

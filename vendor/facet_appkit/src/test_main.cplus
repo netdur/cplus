@@ -15621,3 +15621,153 @@ fn a_growing_row_costs_only_itself_and_then_settles() {
     }
     assert recycler::measure_realises() == (0 as i64);
 }
+
+#[test]
+fn a_vended_row_carries_the_index_it_was_built_for() {
+    backend::install();
+    // `component::item_index_of(sender)` is how a handler shared by every row
+    // asks which row it is, and facet's contract has had that seam since it was
+    // written. `facet_win32` has always filled it; this backend never did, so
+    // on macOS the answer was always None and an application had to recover the
+    // row by scanning its model for the row's key — O(rows) per click, and it
+    // forces the key to be unique for a reason it does not otherwise have.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 6 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "ix", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 4 as i64);
+    let built: *core::Node = { synth::get_associated(cell, recycler::cell_node_key())
+                               as *core::Node };
+    assert built.is_not_null();
+    match core::item_index_of(built) {
+        option::Option[usize]::Some(at) => { assert at == (4 as usize); }
+        option::Option[usize]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_row_that_was_never_vended_carries_no_index() {
+    backend::install();
+    // THE NEGATIVE HALF, and why `item_index_of` answers an Option rather than
+    // a number: `None` means "this node carries no index", which is a different
+    // fact from "row zero". A handler that read 0 for an untagged node would
+    // act on the first row every time.
+    var b: core::Builder = core::Builder::new();
+    var plain: core::Node = core::column(b, key: "plain");
+    match core::item_index_of(#addr_of(plain)) {
+        option::Option[usize]::Some(_at) => { assert false; }
+        option::Option[usize]::None => { }
+    }
+}
+
+#[test]
+fn a_relist_can_be_told_rows_draw_differently_without_the_collection_changing() {
+    backend::install();
+    // SELECTION IS THE APPLICATION'S STATE, not a fact about its data. Saying
+    // "these rows look different now" through the collection —
+    // `rows.note_changed(i)` — claims an entry changed when none did, and uses
+    // the model as a message bus to reach the view. The element is what the app
+    // addresses.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "inv", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    var r: i64 = 0 as i64;
+    while r < (20 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+
+    recycler::reset_measure_realises();
+    match relist::from(np) {
+        option::Option[relist::Relist]::Some(l) => {
+            let _a: relist::Relist = l.invalidate(3 as usize);
+        }
+        option::Option[relist::Relist]::None => { assert false; }
+    }
+    views::apply(0 as *u8, np);
+    let _h3: f64 = recycler::height_of_row(v, 3 as i64);
+    // Row 3 was re-measured...
+    assert recycler::measure_realises() == (1 as i64);
+    // ...and nothing else was: the sequence did not move.
+    recycler::reset_measure_realises();
+    let _h0: f64 = recycler::height_of_row(v, 0 as i64);
+    let _h9: f64 = recycler::height_of_row(v, 9 as i64);
+    assert recycler::measure_realises() == (0 as i64);
+}
+
+#[test]
+fn two_invalidations_compose_into_the_range_covering_both() {
+    backend::install();
+    // Two CHANGED spans DO compose, unlike an insert and a remove: neither
+    // moved the sequence, so the range covering both is a true statement about
+    // what needs re-measuring. Degrading them to a reload — which is what
+    // every other pair does — would throw away every other row's height for a
+    // selection moving between two rows, which is the commonest pair there is.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "inv2", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    var r: i64 = 0 as i64;
+    while r < (20 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+    let cached_at: f64 = recycler::heights_width_of(v);
+    assert cached_at > 0.0f64;
+
+    match relist::from(np) {
+        option::Option[relist::Relist]::Some(l) => {
+            let _a: relist::Relist = l.invalidate(2 as usize);
+            let _b: relist::Relist = l.invalidate(4 as usize);
+        }
+        option::Option[relist::Relist]::None => { assert false; }
+    }
+    views::apply(0 as *u8, np);
+    // NOT a reload: the height cache survived, so rows outside 2..4 kept their
+    // measurements.
+    assert recycler::heights_width_of(v) == cached_at;
+}
+
+#[test]
+fn a_merged_invalidation_keeps_the_older_span_too() {
+    backend::install();
+    // THE HALF A NAIVE MERGE DROPS. Two invalidations compose into the range
+    // COVERING both — not into the newer one. Keeping only the newer leaves
+    // the first row still holding the height its old content had, which for a
+    // moving selection is the row being deselected: it would keep drawing as
+    // selected until something else disturbed it.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "inv3", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    var r: i64 = 0 as i64;
+    while r < (20 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+
+    match relist::from(np) {
+        option::Option[relist::Relist]::Some(l) => {
+            let _a: relist::Relist = l.invalidate(2 as usize);
+            let _b: relist::Relist = l.invalidate(8 as usize);
+        }
+        option::Option[relist::Relist]::None => { assert false; }
+    }
+    views::apply(0 as *u8, np);
+
+    // BOTH ends of the range were invalidated, so both re-measure.
+    recycler::reset_measure_realises();
+    let _h2: f64 = recycler::height_of_row(v, 2 as i64);
+    let _h8: f64 = recycler::height_of_row(v, 8 as i64);
+    assert recycler::measure_realises() == (2 as i64);
+    // ...and a row outside the range kept its measurement.
+    recycler::reset_measure_realises();
+    let _h15: f64 = recycler::height_of_row(v, 15 as i64);
+    assert recycler::measure_realises() == (0 as i64);
+}
