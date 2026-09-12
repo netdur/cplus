@@ -182,6 +182,18 @@ fn relist[T](
     };
 }
 
+// The change kind as a number, for a backend that wants to switch on it
+// without re-deriving the mapping. Kept HERE so the numbering has one owner —
+// a backend that wrote its own would drift the moment a kind is added.
+fn change_kind_num(k: obs_vec::ChangeKind) -> i64 {
+    return match k {
+        obs_vec::ChangeKind::Reload => 0 as i64,
+        obs_vec::ChangeKind::Inserted => 1 as i64,
+        obs_vec::ChangeKind::Removed => 2 as i64,
+        obs_vec::ChangeKind::Changed => 3 as i64,
+    };
+}
+
 // ---- the cursor --------------------------------------------------------------
 
 struct Relist {
@@ -294,15 +306,6 @@ fn _row(index: usize, ctx: *u8) -> flex::Node {
     return flex::Node::new();
 }
 
-fn _kind_num(k: obs_vec::ChangeKind) -> i64 {
-    return match k {
-        obs_vec::ChangeKind::Reload => 0 as i64,
-        obs_vec::ChangeKind::Inserted => 1 as i64,
-        obs_vec::ChangeKind::Removed => 2 as i64,
-        obs_vec::ChangeKind::Changed => 3 as i64,
-    };
-}
-
 #[test]
 fn a_relist_counts_the_collection_it_was_handed() {
     // The element holds no count of its own. That is the whole difference from
@@ -366,7 +369,7 @@ fn an_append_reaches_the_element_as_a_pending_change() {
             let _b: status::Status = rows.append(_Entry { n: 2 });
             assert h.has_pending();
             let c: obs_vec::Change = h.take_pending();
-            assert _kind_num(c.kind) == (1 as i64);     // Inserted
+            assert change_kind_num(c.kind) == (1 as i64);     // Inserted
             assert c.at == (1 as usize);                // ...at the end, which was 1
             // TAKEN, not peeked: a change applied twice splices a sequence twice.
             assert h.has_pending() == false;
@@ -391,7 +394,7 @@ fn two_changes_before_one_apply_become_a_reload() {
             let _c: status::Status = rows.append(_Entry { n: 3 });
             assert h.has_pending();
             let c: obs_vec::Change = h.take_pending();
-            assert _kind_num(c.kind) == (0 as i64);     // Reload, not Inserted
+            assert change_kind_num(c.kind) == (0 as i64);     // Reload, not Inserted
         }
         option::Option[Relist]::None => { assert false; }
     }

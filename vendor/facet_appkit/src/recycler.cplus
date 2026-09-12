@@ -50,6 +50,8 @@ import "facet/mount" as mount;
 import "facet/list" as list;
 import "facet/vocabulary" as vocab;
 import "facet/tree" as tree;
+import "facet/relist" as relist;
+import "facet/obs_vec" as obs_vec;
 import "./controls" as controls;
 import "./paint" as paint;
 import "./compose" as compose;
@@ -1308,6 +1310,201 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
     return rt::retain(scroll.as_view().raw());
 }
 
+// ---- relist ------------------------------------------------------------------
+//
+// The same NSTableView as `list`, filled from a different contract: `list` is
+// told a count and hands over a builder; `relist` is handed the COLLECTION and
+// reads the count out of it. One table, two ways of describing what is in it.
+//
+// It creates through `create_recycling_list` unchanged — that function is
+// entirely table plumbing and touches `ListProps` nowhere.
+//
+// NO BIND. `relist` builds a row fresh per index, which is the recycler's
+// no-`bind` path, and that is a deliberate trade measured in
+// `plans/facet/relist.md`: rebuilding costs 41% more per row than binding, not
+// an order of magnitude, because both paths end in the same `place_row` and
+// the forced layout is the dominant cost either way.
+fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
+    let tv: *u8 = table_of(v);
+    if tv.is_null() { return; }
+    let p: *relist::RelistProps = relist::props_of(n);
+    if p.is_null() { return; }
+    let s: *RowSource = row_source_for(tv, n);
+    if s.is_null() { return; }
+
+    // THE ELEMENT LEARNS WHICH NODE IT IS, here and on every pass. The change
+    // handler runs on the application's stack and needs a node to mark dirty;
+    // it cannot capture one at construction, because the node is returned by
+    // value and moved into the tree. Same discipline as `(*s).node = n` above,
+    // for the same reason, one layer up.
+    match relist::from(n) {
+        option::Option[relist::Relist]::Some(h) => { let _b: relist::Relist = h.bind_node(); }
+        option::Option[relist::Relist]::None => { }
+    }
+
+    // The builder IS the row source's builder — same signature, no adapter.
+    { (*s).row = { (*p).builder } };
+    { (*s).row_ctx = { (*p).builder_ctx } };
+    { (*s).bind = props::no_bind };
+
+    // THE COUNT IS READ, NOT STORED. Through the erased reader, so `T` is the
+    // element's business and never the backend's. This is the whole difference
+    // from `list`: there is no count to have forgotten to update.
+    let count_of: fn(*u8) -> usize = { (*p).count_of };
+    let was: i64 = { (*s).count };
+    let now: i64 = count_of({ (*p).rows }) as i64;
+    { (*s).count = now };
+
+    let creating: bool = dirty == paint::all_bits();
+
+    // A PENDING CHANGE IS A COMMAND, taken rather than read: applied twice, a
+    // splice moves the sequence twice and every row below is one out.
+    var kind: i64 = -1 as i64;
+    var at: i64 = 0 as i64;
+    var run: i64 = 0 as i64;
+    match relist::from(n) {
+        option::Option[relist::Relist]::Some(h) => {
+            if h.has_pending() {
+                let c: obs_vec::Change = h.take_pending();
+                kind = relist::change_kind_num(c.kind);
+                at = c.at as i64;
+                run = c.count as i64;
+            }
+        }
+        option::Option[relist::Relist]::None => { }
+    }
+
+    // THE CREATE PASS RELOADS, and it has to: `reloadData` is what tells
+    // NSTableView how many rows it has, and until it is called the table
+    // believes it has none. Splicing row 2 into a table that thinks it is
+    // empty is an NSTableViewException, not a no-op —
+    // `NSTableView error inserting/removing/moving row 2 (numberOfRows: 0)`.
+    //
+    // It costs nothing here for the same reason `list`'s create-pass reload
+    // costs nothing: the table's style is Automatic, which cannot resolve
+    // until it joins a view hierarchy, so the height pass waits for the first
+    // real layout rather than building every row now. That is the lazy create
+    // the contract promises, and it is measured by
+    // `a_relist_builds_no_row_until_the_table_asks`.
+    //
+    // The pending change was TAKEN above rather than peeked, so it is consumed
+    // by this reload rather than left to fire again on the next pass.
+    if creating { relist_reload(tv, s); return; }
+
+    // A COUNT THAT MOVED WITHOUT A CHANGE TO EXPLAIN IT is a reload. The
+    // collection is the truth and it disagrees with the table; a splice would
+    // be guessing which rows moved. Reached when an app writes through
+    // `as_vec_ptr` and forgets to say so, which is exactly the case that hatch
+    // is documented to owe a `note_reload()`.
+    if kind < (0 as i64) {
+        if now != was { relist_reload(tv, s); }
+        return;
+    }
+    // Reload 0, Inserted 1, Removed 2, Changed 3.
+    if kind == (0 as i64) { relist_reload(tv, s); return; }
+    var delta: i64 = 0 as i64;
+    if kind == (1 as i64) { delta = run; }
+    if kind == (2 as i64) { delta = 0 as i64 -% run; }
+
+    // THE ARITHMETIC HAS TO HOLD, and AppKit checks it itself — by RAISING.
+    // `NSTableView error inserting/removing/moving row 3 (numberOfRows: 1)` is
+    // an uncaught NSException, which takes the application down rather than
+    // drawing something wrong, so this is not a defensive nicety.
+    //
+    // The invariant is the table's OWN count, plus what this change moves,
+    // against the collection's count now. Comparing the table against what the
+    // element last told it is NOT the same test and does not catch this: a
+    // write through `as_vec_ptr` moves the collection without announcing
+    // anything, so the next real append describes a one-row insert three rows
+    // beyond anything the table has heard of — and both sides of that weaker
+    // comparison still read 1. Measured, by writing the weaker one first.
+    //
+    // When it does not hold the element does not know what moved, and the
+    // honest answer is the one the collection itself gives for that: reload.
+    if table_row_belief(tv) +% delta != now { relist_reload(tv, s); return; }
+
+    if kind == (1 as i64) { splice_rows(tv, s, at, run); return; }
+    if kind == (2 as i64) { splice_rows(tv, s, at, delta); return; }
+    // Changed: the sequence did not move, so only these rows are re-measured.
+    invalidate_rows(tv, s, at, at +% run -% (1 as i64));
+}
+
+// WHAT THE TABLE BELIEVES its row count is, which is not always what the
+// element last told it. `numberOfRows` is AppKit's own cached number and the
+// one it validates a splice against.
+fn table_row_belief(tv: *u8) -> i64 {
+    if tv.is_null() { return -1 as i64; }
+    return { rt::msg_i64(tv, rt::sel(#str_ptr("numberOfRows\0"))) };
+}
+
+fn relist_reload(tv: *u8, s: *RowSource) {
+    { (*s).heights.remove_all() };
+    { (*s).heights_width = 0.0f64 };
+    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+}
+
+// FIND OR CREATE THE ROW SOURCE FOR THIS TABLE, and re-read the node it backs.
+//
+// ONE creation site on purpose. A row source is reachable from an association
+// and a frame observation, and `release_row_source` unwinds exactly those two —
+// a second place that installed either would drift from the teardown and leave
+// the half it forgot pointing at freed memory. That is the shape of the SEGV
+// this file already paid for once
+// (`bugs/closed/a-table-row-callback-reads-a-node-that-is-gone.md`).
+//
+// Created EMPTY. Every field a control cares about is written by its own apply
+// band afterwards — `list` from its props, `relist` from its collection — so
+// the two controls share the table and share nothing else.
+//
+// The node is re-read on every call, which `apply_recycling_tree` has always
+// done and the list did not: a table re-applied for a different node — a
+// re-mount, a rebuilt subtree at a fresh address — went on naming the first one.
+fn row_source_for(tv: *u8, n: *core::Node) -> *RowSource {
+    if tv.is_null() { return 0 as *RowSource; }
+    var s: *RowSource = source_of(tv);
+    if s.is_not_null() {
+        { (*s).node = n };
+        return s;
+    }
+    match box::new::[RowSource](RowSource {
+        row: props::no_row,
+        bind: props::no_bind,
+        row_ctx: 0 as *u8,
+        bind_ctx: 0 as *u8,
+        count: 0 as i64,
+        fixed_height: 0.0f64,
+        heights: vec::new::[f64](),
+        heights_width: 0.0f64,
+        last_width: 0.0f64,
+        follow_tail: false,
+        table: tv,
+        node: n,
+        frame_obs: 0 as u64,
+        uniform: false,
+        groups: 0 as i64,
+        group_size: props::no_group_size,
+        group_header: props::no_group_header,
+        row_height_of: props::no_row_height_of,
+        row_height_of_ctx: 0 as *u8,
+        row_kind: props::no_row_kind,
+        row_kind_ctx: 0 as *u8,
+        group_size_ctx: 0 as *u8,
+        group_header_ctx: 0 as *u8,
+    }) {
+        option::Option[box::Box[RowSource]]::Some(b) => {
+            s = { b.into_raw() } as *RowSource;
+            synth::set_associated(tv, source_key(), s as *u8);
+            // The resize pass. Observed once, for the life of the table — and
+            // the id is KEPT, because "the life of the table" is a promise only
+            // `release_row_source` can keep.
+            { (*s).frame_obs = akx::observe_frame(ak::View::from_raw(tv),
+                                                  on_table_resized, s as *u8) };
+            return s;
+        }
+        option::Option[box::Box[RowSource]]::None => { return 0 as *RowSource; }
+    }
+}
+
 // The NSTableView inside a list's scroll view.
 fn table_of(v: *u8) -> *u8 {
     if v.is_null() { return 0 as *u8; }
@@ -1407,50 +1604,8 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ListProps = props_of_list(n);
     if p.is_null() { return; }
 
-    var s: *RowSource = source_of(tv);
-    if s.is_null() {
-        match box::new::[RowSource](RowSource {
-            row: { (*p).row },
-            bind: { (*p).bind },
-            row_ctx: { (*p).row_ctx },
-            bind_ctx: props::bind_ctx_of({ (*p).bind_ctx }, { (*p).row_ctx }),
-            count: { (*p).count },
-            fixed_height: 0.0f64,
-            heights: vec::new::[f64](),
-            heights_width: 0.0f64,
-            last_width: 0.0f64,
-            follow_tail: false,
-            table: tv,
-            node: n,
-            frame_obs: 0 as u64,
-            uniform: false,
-            groups: 0 as i64,
-            group_size: props::no_group_size,
-            group_header: props::no_group_header,
-            row_height_of: props::no_row_height_of,
-            row_height_of_ctx: 0 as *u8,
-            row_kind: props::no_row_kind,
-            row_kind_ctx: 0 as *u8,
-            group_size_ctx: 0 as *u8,
-            group_header_ctx: 0 as *u8,
-        }) {
-            option::Option[box::Box[RowSource]]::Some(b) => {
-                s = { b.into_raw() } as *RowSource;
-                synth::set_associated(tv, source_key(), s as *u8);
-                // The resize pass. Observed once, for the life of the table —
-                // and the id is KEPT, because "the life of the table" is a
-                // promise only `release_row_source` can keep.
-                { (*s).frame_obs = akx::observe_frame(ak::View::from_raw(tv),
-                                                      on_table_resized, s as *u8) };
-            }
-            option::Option[box::Box[RowSource]]::None => { return; }
-        }
-    }
-    // THE NODE IS RE-READ EVERY PASS, which `apply_recycling_tree` has always
-    // done (`{ (*s).node = n }`, one line after its own construction) and this
-    // never did. A table that is re-applied for a different node — a re-mount,
-    // a rebuilt subtree at a fresh address — went on naming the first one.
-    { (*s).node = n };
+    let s: *RowSource = row_source_for(tv, n);
+    if s.is_null() { return; }
     // The refresh band. `list` carries the same seven verbs RefreshView does,
     // and the same answer: a click path, not a gesture — on a scroll view the
     // strip is AppKit's own floating subview, pinned to the top of the content.
@@ -1639,6 +1794,16 @@ fn apply_splice(tv: *u8, s: *RowSource, p: *props::ListProps) {
     let delta: i64 = { (*p).splice_count };
     { (*p).splice_at = -1 as i64 };
     { (*p).splice_count = 0 as i64 };
+    splice_rows(tv, s, at, delta);
+}
+
+// THE SPLICE ITSELF, with no props in it. `list` reads the position and the
+// delta out of two prop fields it then clears; `relist` gets them from the
+// change its collection announced. Same work, two callers, and the arithmetic
+// on the height cache is the part worth not writing twice.
+//
+// `delta` is signed: positive inserts, negative removes.
+fn splice_rows(tv: *u8, s: *RowSource, at: i64, delta: i64) {
     if at < (0 as i64) || delta == (0 as i64) { return; }
     if { (*s).groups } > (0 as i64) {
         // The same reload a count write takes, measurements and all — the
@@ -1706,6 +1871,13 @@ fn apply_invalidation(tv: *u8, s: *RowSource, p: *props::ListProps) {
     let hi_d: i64 = { (*p).invalidate_hi };
     { (*p).invalidate_lo = -1 as i64 };
     { (*p).invalidate_hi = -1 as i64 };
+    invalidate_rows(tv, s, lo_d, hi_d);
+}
+
+// THE INVALIDATION ITSELF, props-free — `relist`'s `Changed` is this, and its
+// whole point is that the SEQUENCE did not move, so nothing above or below
+// needs re-measuring. Inclusive on both ends, in DATA indices.
+fn invalidate_rows(tv: *u8, s: *RowSource, lo_d: i64, hi_d: i64) {
     if lo_d < (0 as i64) || hi_d < lo_d { return; }
     let n: i64 = { (*s).count };
     // Rows the list does not have are not an error — a count can have shrunk

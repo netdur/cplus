@@ -35,6 +35,7 @@ import "facet/symbol" as symbol;
 import "facet/text_button" as text_button;
 import "facet/split" as split;
 import "facet/tree" as tree;
+import "facet/relist" as relist;
 import "facet/window_chrome" as chrome;
 import "facet/text_field" as text_field;
 import "./controls" as controls;
@@ -487,6 +488,10 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_TABLE { return controls::create_table(n); }
     if kind == props::K_CAROUSEL { return controls::create_carousel(n); }
     if kind == tree::K_TREE { return recycler::create_recycling_tree(n); }
+    // The SAME table a list gets — `create_recycling_list` is table plumbing
+    // and reads no props at all. The two controls differ in how they are
+    // filled, not in what they are.
+    if kind == relist::K_RELIST { return recycler::create_recycling_list(n); }
     if kind == props::K_CANVAS { return controls::create_canvas(n); }
     if kind == props::K_WEB { return web::create_web(n); }
     if kind == props::K_HYBRID_WEB { return web::create_hybrid_web(n); }
@@ -576,6 +581,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }
     if kind == props::K_CAROUSEL { controls::apply_carousel(v, n, dirty); return; }
     if kind == tree::K_TREE { recycler::apply_recycling_tree(v, n, dirty); return; }
+    if kind == relist::K_RELIST { recycler::apply_relist(v, n, dirty); return; }
     if kind == props::K_CANVAS { controls::apply_canvas(v, n, dirty); return; }
     if kind == props::K_WEB { web::apply_web(v, n, dirty); return; }
     if kind == props::K_HYBRID_WEB { web::apply_hybrid_web(v, n, dirty); return; }
@@ -612,7 +618,7 @@ fn has_body(kind: u32) -> bool {
         || kind == props::K_TABLE || kind == props::K_CAROUSEL
         || kind == props::K_CANVAS
         || kind == symbol::K_SYMBOL || kind == text_button::K_TEXT_BUTTON
-        || kind == tree::K_TREE
+        || kind == tree::K_TREE || kind == relist::K_RELIST
         || kind == props::K_REFRESHABLE || kind == props::K_SWIPEABLE
         || kind == split::K_SPLIT || kind == chrome::K_WINDOW_BUTTONS;
 }

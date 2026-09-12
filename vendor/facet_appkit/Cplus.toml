@@ -50,4 +50,8 @@ quartzcore  = "*"
 appkit      = "*"
 flex_layout = "*"
 facet       = "*"
+# TRANSITIVE, and it has to be named anyway: `relist` reads its collection's
+# change signal out of `events::Signal`, so a consumer that compiles facet in
+# source mode compiles that import too (E0852 is a manifest line, not a bug).
+events      = "*"
 webkit      = "*"

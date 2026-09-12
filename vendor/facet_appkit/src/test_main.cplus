@@ -53,6 +53,8 @@ import "facet/swipeable" as swipeable;
 import "facet/swipe_item" as swipe_item;
 import "facet/list" as list;
 import "facet/tree" as tree;
+import "facet/relist" as relist;
+import "facet/obs_vec" as obs_vec;
 import "facet/table" as table;
 import "facet/collection" as collection;
 import "facet/menu" as menu;
@@ -15060,4 +15062,234 @@ fn a_collection_answers_the_same_two_words() {
         }
         option::Option[collection::Collection]::None => { assert false; }
     }
+}
+
+// ---- relist, on the table ----------------------------------------------------
+
+struct RLEntry { n: i32 }
+
+static RLB: i64 = 0 as i64;
+
+fn rlb_row(index: usize, ctx: *u8) -> core::Node {
+    RLB = RLB + (1 as i64);
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("row", key: ""));
+    return core::column(b, key: "");
+}
+
+#[test]
+fn a_relist_reports_the_collection_it_was_handed() {
+    backend::install();
+    // The whole difference from `list`: no `set_count` anywhere. The element
+    // reads the collection through its erased reader and the table asks the
+    // element.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    let _b: status::Status = rows.append(RLEntry { n: 2 });
+    let _c: status::Status = rows.append(RLEntry { n: 3 });
+
+    var n: core::Node = relist::relist(rows, key: "rl", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    assert v.is_not_null();
+    core::set_view(np, v, views::view_release);
+    assert recycler::row_count_of(v) == (3 as i64);
+}
+
+#[test]
+fn a_relist_builds_no_row_until_the_table_asks() {
+    backend::install();
+    // The promise every recycling list makes. Ten thousand rows in the
+    // collection, zero builds until something asks for one.
+    RLB = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 10000 {
+        let _a: status::Status = rows.append(RLEntry { n: i });
+        i = i +% 1;
+    }
+    var n: core::Node = relist::relist(rows, key: "rl2", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    assert recycler::row_count_of(v) == (10000 as i64);
+    assert RLB == (0 as i64);
+    // ...and asking for one builds exactly one.
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 4 as i64);
+    assert RLB == (1 as i64);
+}
+
+#[test]
+fn an_append_after_mount_reaches_the_table_with_no_one_telling_it() {
+    backend::install();
+    // The app writes to its own collection. Nothing calls into the list.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    var n: core::Node = relist::relist(rows, key: "rl3", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    assert recycler::row_count_of(v) == (1 as i64);
+
+    let _b: status::Status = rows.append(RLEntry { n: 2 });
+    let _c: status::Status = rows.append(RLEntry { n: 3 });
+    // The write raised the bit; the sync walk is what acts on it.
+    views::apply(0 as *u8, np);
+    assert recycler::row_count_of(v) == (3 as i64);
+}
+
+#[test]
+fn one_insert_splices_rather_than_reloading() {
+    backend::install();
+    // THE REASON THE SIGNAL CARRIES A POSITION. A splice keeps every
+    // measurement the list already paid for; a reload throws them away and
+    // re-measures the model. `heights_width` is the discriminator — the reload
+    // path zeroes it, the splice path does not touch it.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    let _b: status::Status = rows.append(RLEntry { n: 2 });
+    var n: core::Node = relist::relist(rows, key: "rl4", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    // Pay for a measurement, so there is something to lose.
+    let h: f64 = recycler::height_of_row(v, 0 as i64);
+    assert h > 0.0f64;
+    let cached_at: f64 = recycler::heights_width_of(v);
+    assert cached_at > 0.0f64;
+
+    let _c: status::Status = rows.append(RLEntry { n: 3 });
+    views::apply(0 as *u8, np);
+    assert recycler::row_count_of(v) == (3 as i64);
+    // The cache survived: this was a splice.
+    assert recycler::heights_width_of(v) == cached_at;
+}
+
+#[test]
+fn two_appends_between_applies_reload_rather_than_guess() {
+    backend::install();
+    // THE NEGATIVE HALF of the line above, and the one that keeps it honest.
+    // Two precise changes do not compose into one; splicing the second against
+    // the first sequence leaves the table one row out from then on. The
+    // element coalesces to `Reload`, and here that is visible as the cache
+    // being dropped.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    var n: core::Node = relist::relist(rows, key: "rl5", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    let _h: f64 = recycler::height_of_row(v, 0 as i64);
+    assert recycler::heights_width_of(v) > 0.0f64;
+
+    let _b: status::Status = rows.append(RLEntry { n: 2 });
+    let _c: status::Status = rows.append(RLEntry { n: 3 });
+    views::apply(0 as *u8, np);
+    assert recycler::row_count_of(v) == (3 as i64);
+    // Reloaded, so the measurements went with it.
+    assert recycler::heights_width_of(v) == 0.0f64;
+}
+
+#[test]
+fn a_replacement_does_not_move_the_sequence() {
+    backend::install();
+    // `Changed` is the one write that costs a single row. The count must not
+    // move and the table must not be spliced — a `set` reported as an insert
+    // would leave the table one row longer than the collection.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    let _b: status::Status = rows.append(RLEntry { n: 2 });
+    var n: core::Node = relist::relist(rows, key: "rl6", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    assert recycler::row_count_of(v) == (2 as i64);
+
+    let _s: status::Status = rows.set(RLEntry { n: 99 }, at: 0 as usize);
+    views::apply(0 as *u8, np);
+    assert recycler::row_count_of(v) == (2 as i64);
+}
+
+#[test]
+fn a_relist_that_changed_nothing_is_not_reloaded() {
+    backend::install();
+    // THE LAZINESS. An apply with no pending change and a count that did not
+    // move must leave the table alone — otherwise every unrelated write in the
+    // window re-measures the list. The cache surviving is the proof.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    var n: core::Node = relist::relist(rows, key: "rl7", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    let _h: f64 = recycler::height_of_row(v, 0 as i64);
+    let cached_at: f64 = recycler::heights_width_of(v);
+    assert cached_at > 0.0f64;
+
+    core::clear_dirty(np);
+    core::touch(np, relist::P_BUILDER);
+    views::apply(0 as *u8, np);
+    assert recycler::heights_width_of(v) == cached_at;
+}
+
+#[test]
+fn a_write_behind_the_elements_back_is_still_noticed() {
+    backend::install();
+    // `as_vec_ptr` is the documented escape hatch and nothing can observe a
+    // write through it — so the count moves with no change to explain it. The
+    // backend reloads rather than guessing which rows appeared, which is the
+    // one honest answer. An app that wants the fast path owes a `note_*`.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    var n: core::Node = relist::relist(rows, key: "rl8", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    assert recycler::row_count_of(v) == (1 as i64);
+
+    // Straight into the Vec: no signal fires.
+    let raw: *vec::Vec[RLEntry] = rows.as_vec_ptr();
+    let _e: status::Status = { (*raw).append(RLEntry { n: 2 }) };
+    assert rows.count() == (2 as usize);
+
+    core::clear_dirty(np);
+    core::touch(np, relist::P_ROWS);
+    views::apply(0 as *u8, np);
+    assert recycler::row_count_of(v) == (2 as i64);
+}
+
+#[test]
+fn a_splice_against_a_table_that_disagrees_reloads_instead() {
+    backend::install();
+    // APPKIT RAISES ON A SPLICE WHOSE ARITHMETIC DOES NOT HOLD, and an
+    // uncaught NSException takes the application down rather than drawing
+    // something wrong — `NSTableView error inserting/removing/moving row 2
+    // (numberOfRows: 0)`. So the element checks that the table agrees about
+    // where the sequence started before it splices, and reloads when it does
+    // not.
+    //
+    // The disagreement is reachable without contrivance: two rows added
+    // through `as_vec_ptr` are invisible to the signal, so the next real
+    // append announces an insert at a position the table has never heard of.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    let _a: status::Status = rows.append(RLEntry { n: 1 });
+    var n: core::Node = relist::relist(rows, key: "rl9", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    assert recycler::row_count_of(v) == (1 as i64);
+
+    // Behind the element's back: the table still believes there is one row.
+    let raw: *vec::Vec[RLEntry] = rows.as_vec_ptr();
+    let _b: status::Status = { (*raw).append(RLEntry { n: 2 }) };
+    let _c: status::Status = { (*raw).append(RLEntry { n: 3 }) };
+
+    // ...and now a real append announces an insert at 3.
+    let _d: status::Status = rows.append(RLEntry { n: 4 });
+    views::apply(0 as *u8, np);
+
+    // Reloaded rather than spliced, and still alive to say so.
+    assert recycler::row_count_of(v) == (4 as i64);
 }
