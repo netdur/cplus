@@ -16114,3 +16114,54 @@ fn a_relist_stacks_its_rows_at_full_width() {
     assert size.w == 260.0f64;
 }
 
+fn sb_split_with_sidebar() -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::column(core::Builder::new(), key: "side"));
+    b.add(ui::column(core::Builder::new(), key: "main"));
+    return split::split(b, key: "sbsplit", min_leading: 170.0f64,
+                        role_leading: split::PaneRole::Sidebar);
+}
+
+#[test]
+fn a_sidebar_does_not_collapse_from_a_window_resize() {
+    backend::install();
+    // A SIDEBAR COLLAPSES FROM THE DIVIDER, NOT FROM THE WINDOW. AppKit's
+    // sidebar behaviour turns both on; the second one flashes — held at the
+    // width where the pane wants to go away, a window resize collapses and
+    // uncollapses it for as long as the mouse is down.
+    //
+    // NSSplitViewItem keeps the two apart on purpose, so dragging the divider
+    // past the minimum still hides the sidebar and only the resize path is off.
+    var n: core::Node = sb_split_with_sidebar();
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    assert v.is_not_null();
+    core::set_view(np, v, views::view_release);
+
+    let ctrl: *u8 = geom::controller_of_split(v);
+    assert ctrl.is_not_null();
+    let items: vec::Vec[ak::SplitViewItem] =
+        ak::SplitViewController::from_raw(ctrl).split_view_items();
+    match items.at_ptr(0 as usize) {
+        option::Option[*ak::SplitViewItem]::Some(it) => {
+            let item: ak::SplitViewItem = ak::SplitViewItem::from_raw({ (*it).raw() });
+            // It is a real sidebar...
+            assert match item.behavior() {
+                ak::SplitViewItemBehavior::Sidebar => { true },
+                _ => { false },
+            };
+            // ...that does not collapse, from the divider or from a resize.
+            // The two are separate flags and both are off; the order they are
+            // written in is load-bearing, because setting `canCollapse` on a
+            // sidebar RESETS the resize flag to whatever it was just given.
+            assert item.can_collapse() == false;
+            assert item.can_collapse_from_window_resize() == false;
+        }
+        option::Option[*ak::SplitViewItem]::None => { assert false; }
+    }
+    // ...and below the pane's own minimum AppKit would swap the sidebar for an
+    // overlay, which is a second thing that can change under a resize. It is
+    // told the minimum the application stated rather than a constant.
+    assert ak::SplitViewController::from_raw(ctrl)
+        .minimum_thickness_for_inline_sidebars() == 170.0f64;
+}

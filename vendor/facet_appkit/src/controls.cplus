@@ -2659,6 +2659,24 @@ fn make_pane_item(sidebar: bool) -> ak::SplitViewItem {
     // the OPT-OUT — so both of these are written to say we want the default
     // rather than to turn something on.
     item.set_allows_full_height_layout(true);
+    // A SIDEBAR DOES NOT COLLAPSE.
+    //
+    // `canCollapse` covers the divider — drag past the minimum and the pane
+    // goes away, the way Finder's does. `canCollapseFromWindowResize` covers
+    // the window, and AppKit keeps them apart on purpose: "This can differ
+    // from `canCollapse`, to allow divider collapsing but not window resize
+    // collapsing or vice versa."
+    //
+    // ORDER MATTERS, and the header is explicit: "Setting `canCollapse` for
+    // sidebars will reset this value to that new value." So `canCollapse` is
+    // written FIRST and the resize flag after it, or the second write is the
+    // one that survives.
+    //
+    // Both are off: held at the width where the pane wants to go away, a window
+    // resize collapsed and uncollapsed it for as long as the mouse was down.
+    //
+    item.set_can_collapse(false);
+    item.set_can_collapse_from_window_resize(false);
     return item;
 }
 
@@ -2694,6 +2712,18 @@ fn apply_item_thickness(ctrl: *u8, p: *split::SplitProps) {
         ak::SplitViewController::from_raw(ctrl).split_view_items();
     set_item_bounds(items, 0 as usize, { (*p).min_leading }, { (*p).max_leading });
     set_item_bounds(items, 1 as usize, { (*p).min_trailing }, { (*p).max_trailing });
+    // BELOW THIS THE SIDEBAR STOPS BEING A PANE and becomes an overlay AppKit
+    // slides in over the content. That switch is a second place the layout can
+    // change under a resize, so it is told the same number the pane's own
+    // minimum uses — the application's `min_leading`, not a constant, so the
+    // threshold and the minimum cannot drift apart.
+    let ctl: ak::SplitViewController = ak::SplitViewController::from_raw(ctrl);
+    if is_sidebar({ (*p).role_leading }) && { (*p).min_leading } > 0.0f64 {
+        ctl.set_minimum_thickness_for_inline_sidebars({ (*p).min_leading });
+    }
+    if is_sidebar({ (*p).role_trailing }) && { (*p).min_trailing } > 0.0f64 {
+        ctl.set_minimum_thickness_for_inline_sidebars({ (*p).min_trailing });
+    }
 }
 
 fn set_item_bounds(items: vec::Vec[ak::SplitViewItem], slot: usize, lo: f64, hi: f64) {
