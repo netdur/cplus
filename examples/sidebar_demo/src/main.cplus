@@ -28,14 +28,7 @@ struct Demo {
     body_key: str,
     row_icon: str,
     row_name: str,
-    // THE SELECTION IS THE APPLICATION'S. `relist` has none — a row is a node
-    // the app builds, so which one is chosen is a fact about the app's state,
-    // not about the list. `list` owns a selection because the ledger's
-    // ListView does; this element deliberately does not.
     selected: usize,
-    // OBSERVABLE. The list is handed this and nothing else about the data:
-    // there is no `set_count` anywhere below, and adding a section here would
-    // show up without a line of list code.
     sections: obs_vec::ObsVec[Section],
 }
 
@@ -89,10 +82,6 @@ impl Demo {
         };
     }
 
-    // THE ROW'S IDENTITY, and the app's own way back from a click. A row is
-    // keyed with the section's name; the backend reads that key to remember
-    // what the row measured, and the click handler reads it to learn which row
-    // was hit. One fact, named once.
     fn index_of(ref this, key: str) -> i64 {
         var i: usize = 0 as usize;
         while i < { this.sections.count() } {
@@ -111,18 +100,6 @@ impl Demo {
     }
 
 
-
-    // ONE BUILDER, where `list` needed two. `row` described a shape with empty
-    // strings in it and `bind` filled them in afterwards, because a bound row
-    // is built once and rewritten many times. A `relist` row is built for its
-    // index and reads the model right then, so the shape and the data are the
-    // same act — and the row reads the SELECTION the same way, because that is
-    // just more of the app's state.
-    //
-    // KEYED with the section's name. That key does three jobs: `mount::find`
-    // resolves the row, the agent surface addresses it, and the backend
-    // remembers what it measured against it — so a row that scrolls away and
-    // back is not re-measured. Without it an uneven list warns.
     fn row(ref this, i: usize) -> core::Node {
         let s: Section = this.at(i);
         let chosen: bool = i == this.selected;
@@ -130,66 +107,39 @@ impl Demo {
         if chosen { ink = vocab::Color::accent(); }
 
         var b: core::Builder = core::Builder::new();
-        // The colour is named at CONSTRUCTION, where `bind` used to reach in
-        // and write it after the fact.
         b.add(symbol::system_symbol(s.icon, key: this.row_icon, size: 19.0f64,
                                     color: ink));
         b.add(ui::label(s.name, key: this.row_name, font_size: 13.0f64,
                         text_color: ink)
               .grow(1.0f64));
-        // `set_background_color` and `set_corner_radius` are unit-returning
-        // MUTATORS, so they are statements here rather than links in the
-        // chain. Inside an `@ui` block the desugar threads them for you; this
-        // is an ordinary expression and has to say it.
-        // THE HANDLER GOES THROUGH A `fn`-TYPED BINDING. `gesture`'s parameter
-        // is declared with facet's `Handler` type ALIAS, and a function name
-        // cannot be taken as a value against an imported alias — E0312, plus a
-        // cascade of the same error against `gestures.cplus`'s own defaults.
-        // Filed; this is the spelling that works today.
-        let click: fn(*u8, *u8) -> bool = sb_row_clicked;
         var n: core::Node = ui::row(b, key: s.name)
             .align(flex::Align::Center)
             .gap(6.0f64)
             .padding_edge(flex::Edge::Vertical, 7.0f64)
             .padding_edge(flex::Edge::Horizontal, 8.0f64)
-            .gesture(on_click: click, on_click_ctx: #addr_of(this) as *u8);
+            .gesture(on_click: this.on_row_click);
         n.set_background_color(this.row_fill(chosen));
         n.set_corner_radius(vocab::Corners::all(6.0f64));
         return n;
     }
 
-    // THE SELECTED LOOK IS DRAWN BY THE ROW, which is what it costs to have no
-    // selection in the element. `list` could say
-    // `selection_highlight: Platform` and get AppKit's source-list highlight;
-    // here the row paints its own. One function decides it, so the builder and
-    // the handler cannot disagree about what selected looks like.
     fn row_fill(ref this, chosen: bool) -> vocab::Color {
         if chosen { return vocab::Color::rgba(0.0f64, 0.48f64, 1.0f64, 0.16f64); }
         return vocab::Color::clear();
     }
 
-    // WHICH ROW WAS CLICKED, asked of the sender rather than captured. A
-    // handler that closed over an index would be wrong the moment the sequence
-    // moved; the row's key is the one thing that stays true.
     fn on_row_click(ref this, sender: *u8) -> bool {
         let k: text::Text = component::key_of(sender);
         let i: i64 = this.index_of(k.view());
         if i < (0 as i64) { return false; }
         let was: usize = this.selected;
         this.selected = i as usize;
-        // ONLY THE TWO ROWS THAT CHANGED. The collection did not move — the
-        // same sections in the same order — so this is not a reload: it is two
-        // rows whose content now draws differently. `note_changed` is how an
-        // app says that about data the collection cannot see itself.
         this.sections.note_changed(was);
         this.sections.note_changed(this.selected);
         this.show_selected();
         return true;
     }
 
-    // Reads the app's own selection. There is no list to ask — and nothing to
-    // invalidate here either: `on_row_click` already said which two rows draw
-    // differently, and this only writes the content pane.
     fn show_selected(ref this) {
         let s: Section = this.at(this.selected);
         Demo::write(this.title_key, s.name);
@@ -206,28 +156,8 @@ impl Demo {
 
 }
 
-fn sb_build_row(i: usize, ctx: *u8) -> core::Node {
-    let d: *Demo = { ctx as *Demo };
-    if d.is_null() { return core::spacer(); }
-    return { (*d).row(i) };
-}
-
-fn sb_row_clicked(sender: *u8, ctx: *u8) -> bool {
-    let d: *Demo = { ctx as *Demo };
-    if d.is_null() { return false; }
-    return { (*d).on_row_click(sender) };
-}
-
 impl Demo: component::Component {
     fn build(ref this) -> core::Node {
-        // EVERY OTHER USE OF `this` IS READ OUT FIRST. `relist` takes the
-        // collection as a bare place, which is a borrow of ONE field of `this`
-        // — and a bound method like `builder: this.row` borrows ALL of it, so
-        // the two in one call are E0374, "partial-place conflict on `self`".
-        // Hoisting the siblings out leaves the call with a single use.
-        let nav_key: str = this.nav;
-        let me: *u8 = { #addr_of(this) as *u8 };
-        let build_row: fn(usize, *u8) -> core::Node = sb_build_row;
         return @ui {
             toolbar_item("New",
                          key: "new",
@@ -240,14 +170,9 @@ impl Demo: component::Component {
                   max_leading: 320.0f64,
                   role_leading: split::PaneRole::Sidebar) {
                 column(key: "sidebar") {
-                    // A COLLECTION, A BUILDER AND A KEY. No count, no row
-                    // height, no selection, no bind — and nothing in this file
-                    // tells the list when the sections change, because the
-                    // collection tells it.
                     relist(this.sections,
-                           key: nav_key,
-                           builder: build_row,
-                           builder_ctx: me)
+                           key: this.nav,
+                           builder: this.row)
                         .grow(1.0f64)
                         .shrink(1.0f64)
                 }

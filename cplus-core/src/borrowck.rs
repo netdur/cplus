@@ -3134,9 +3134,27 @@ fn scan_overlapping_places(
             *found = Some((o, expr.span));
             return;
         }
-        // Even when this expression has its own place, it may still
-        // contain sub-expressions (e.g. `arr[i]` where `i` is itself
-        // a place). Fall through to walk children.
+        // DISJOINT, and the parts that SPELL the place are not separate
+        // reads of it. `this` in `this.name` is not a read of `self` — it is
+        // how `self.name` is written — so recursing into the receiver found
+        // the root `self`, called it Contains against a `ref` borrow of
+        // `self.items`, and rejected `f(this.items, this.name)`: two disjoint
+        // fields, reported as a partial-place conflict on `self`.
+        //
+        // That cost `relist(this.rows, key: this.nav, builder: this.row)` —
+        // the shape a component naturally writes — and forced every sibling to
+        // be hoisted into a local first, including a raw `#addr_of(this)`.
+        //
+        // An INDEX is different and still walked: `arr[i]` reads `i` as a
+        // place in its own right, independently of `arr`.
+        match &expr.kind {
+            ExprKind::Field { .. } => return,
+            ExprKind::Index { index, .. } => {
+                scan_overlapping_places(index, primary, found);
+                return;
+            }
+            _ => {}
+        }
     }
     // Recurse into children. We only care about places — operators,
     // calls, struct lits, etc. are walked for their sub-expressions.
@@ -12459,6 +12477,67 @@ fn caller() {
         assert!(
             codes.iter().any(|c| c == "E0374"),
             "expected E0374 in {codes:?}"
+        );
+    }
+
+    #[test]
+    fn e0374_does_not_fire_on_disjoint_sibling_fields_in_one_call() {
+        // `f(this.items, this.name)` — a `ref` borrow of ONE field beside a
+        // read of a DIFFERENT one. Disjoint places, so admissible.
+        //
+        // It used to be E0374, "partial-place conflict on `self`". The scanner
+        // correctly found `self.name` disjoint from `self.items` and then fell
+        // through to walk the expression's children — where the receiver of
+        // `this.name` is `this`, whose place is the ROOT `self`, which of
+        // course contains `self.items`. The receiver is not a separate read of
+        // `self`; it is how `self.name` is spelled.
+        //
+        // What it cost: `relist(this.rows, key: this.nav, builder: this.row)`
+        // — the shape a component naturally writes — forced every sibling into
+        // a local first, including a raw `#addr_of(this)` for the builder's
+        // context, which is the ergonomics that element exists to avoid.
+        let src = "\
+struct Inner { v: i32 }
+impl Inner { fn drop(ref this) { return; } }
+struct Holder { name: Inner, items: Inner }
+impl Holder { fn drop(ref this) { return; } }
+fn take_one(ref a: Inner, b: i32) { return; }
+impl Holder {
+  fn go(ref this) {
+    take_one(this.items, this.name.v);
+    return;
+  }
+}
+fn caller() { return; }";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0374"),
+            "disjoint sibling fields must not conflict; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn e0374_still_fires_when_a_sibling_reads_the_borrowed_field() {
+        // THE NEGATIVE HALF of the fix above, and the line it must not cross:
+        // the sibling reads the SAME field that is borrowed, so the early
+        // return must not reach it.
+        let src = "\
+struct Inner { v: i32 }
+impl Inner { fn drop(ref this) { return; } }
+struct Holder { name: Inner, items: Inner }
+impl Holder { fn drop(ref this) { return; } }
+fn take_one(ref a: Inner, b: i32) { return; }
+impl Holder {
+  fn go(ref this) {
+    take_one(this.items, this.items.v);
+    return;
+  }
+}
+fn caller() { return; }";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0374"),
+            "a sibling reading the borrowed field is still E0374; got {codes:?}"
         );
     }
 
