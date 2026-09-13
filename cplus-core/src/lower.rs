@@ -2324,13 +2324,13 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
                             span: m.span,
                         });
                     }
-                    BuilderModifierKind::Call(args) => {
+                    BuilderModifierKind::Call { args, labels } => {
                         let call = Expr {
                             kind: ExprKind::Call {
                                 callee: Box::new(place),
                                 args,
                                 type_args: Vec::new(),
-                                arg_labels: Vec::new(),
+                                arg_labels: labels,
                             },
                             span: m.span,
                         };
@@ -5008,6 +5008,48 @@ fn main() -> i32 { return 0; }\n";
         };
         assert_eq!(args.len(), 2, "builder + one positional arg");
         assert!(arg_labels.is_empty(), "no labels anywhere stays empty");
+    }
+
+    #[test]
+    fn builder_modifier_with_labels_lowers_to_a_labeled_call() {
+        // A modifier line is a call, so its labels ride into the call it
+        // lowers to: `.gesture(on_click: h)` becomes
+        // `__item = __item.gesture(on_click: h)`, labels aligned with args.
+        // Without this a handler pair could not be passed by name from a
+        // block, and the second handler of two would land in the first
+        // one's ctx slot.
+        let src = "fn main() -> i32 {\n    let v = @view {\n        text(1)\n            .gesture(on_click: h, on_right_click: m)\n            .pad(8)\n    };\n    return 0;\n}\n";
+        let b = desugared_builder(src);
+        // stmts: [0] var __b, [1] var __item = text(1), [2] __item = __item.gesture(..),
+        // [3] __item = __item.pad(8), [4] __b.add(__item)
+        let StmtKind::Expr(assign) = &b.stmts[2].kind else {
+            panic!("expected the modifier assignment, got {:?}", b.stmts[2].kind);
+        };
+        let ExprKind::Assign { value, .. } = &assign.kind else {
+            panic!("modifier must lower to `__item = __item.m(..)`, got {:?}", assign.kind);
+        };
+        let ExprKind::Call {
+            args, arg_labels, ..
+        } = &value.kind
+        else {
+            panic!("modifier RHS must be a call, got {:?}", value.kind);
+        };
+        assert_eq!(args.len(), 2);
+        assert_eq!(arg_labels.len(), 2, "labels align with args");
+        assert_eq!(arg_labels[0].as_ref().unwrap().name, "on_click");
+        assert_eq!(arg_labels[1].as_ref().unwrap().name, "on_right_click");
+        // The positional modifier that follows keeps the Call invariant:
+        // an empty label vec, not a vec of Nones.
+        let StmtKind::Expr(assign) = &b.stmts[3].kind else {
+            panic!("expected the second modifier assignment");
+        };
+        let ExprKind::Assign { value, .. } = &assign.kind else {
+            panic!("second modifier must lower to an assignment");
+        };
+        let ExprKind::Call { arg_labels, .. } = &value.kind else {
+            panic!("second modifier RHS must be a call");
+        };
+        assert!(arg_labels.is_empty());
     }
 
     #[test]

@@ -3694,18 +3694,17 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.bump();
-                let mut args = Vec::new();
-                while !self.at(&TokenKind::RParen) {
-                    args.push(self.in_delimited(|p| p.parse_expr())?);
-                    if !self.eat(&TokenKind::Comma) {
-                        break;
-                    }
-                }
+                // The ordinary call-argument grammar, labels included:
+                // `.gesture(on_click: this.open)` is a call like any other,
+                // and a handler pair is passed BY NAME (the ctx slot follows
+                // its handler positionally, so a positional-only modifier
+                // line could never bind a second handler).
+                let (args, labels) = self.parse_call_args()?;
                 let end = self.expect(&TokenKind::RParen, "`)`")?.span;
                 let span = dot_span.merge(end);
                 Ok(BuilderModifier {
                     name,
-                    kind: BuilderModifierKind::Call(args),
+                    kind: BuilderModifierKind::Call { args, labels },
                     span,
                 })
             }
@@ -6818,15 +6817,43 @@ fn main() -> i32 { guard let v = pick() else { return 1; } return v; }\n";
         assert_eq!(modifiers[1].name.name, "color");
         assert!(matches!(modifiers[1].kind, BuilderModifierKind::Assign(_)));
         assert_eq!(modifiers[2].name.name, "on_click");
-        let BuilderModifierKind::Call(args) = &modifiers[2].kind else {
+        let BuilderModifierKind::Call { args, labels } = &modifiers[2].kind else {
             panic!("expected call modifier");
         };
         assert_eq!(args.len(), 1);
+        assert!(labels.is_empty(), "an all-positional call carries no labels");
         // The second item carries no modifiers.
         let BuilderEntry::Item { modifiers, .. } = &body.entries[1] else {
             panic!("expected item entry");
         };
         assert!(modifiers.is_empty());
+    }
+
+    #[test]
+    fn builder_block_modifier_call_takes_labeled_arguments() {
+        // A modifier line is a call, so it takes the call's argument
+        // grammar — labels included. This is what lets a handler pair be
+        // passed by name from a block: `.gesture(on_click: this.open)`.
+        let (_, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        text(\"title\")\n            .gesture(on_click: this.open, on_right_click: this.menu)\n            .pad(8)\n    };\n    0\n}",
+        );
+        let BuilderEntry::Item { modifiers, .. } = &body.entries[0] else {
+            panic!("expected item entry");
+        };
+        assert_eq!(modifiers.len(), 2);
+        let BuilderModifierKind::Call { args, labels } = &modifiers[0].kind else {
+            panic!("expected call modifier");
+        };
+        assert_eq!(args.len(), 2);
+        assert_eq!(labels.len(), 2, "one label slot per argument once any is labeled");
+        assert_eq!(labels[0].as_ref().map(|l| l.name.as_str()), Some("on_click"));
+        assert_eq!(labels[1].as_ref().map(|l| l.name.as_str()), Some("on_right_click"));
+        // A positional modifier on the same item still carries no labels.
+        let BuilderModifierKind::Call { args, labels } = &modifiers[1].kind else {
+            panic!("expected call modifier");
+        };
+        assert_eq!(args.len(), 1);
+        assert!(labels.is_empty());
     }
 
     #[test]

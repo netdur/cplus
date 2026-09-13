@@ -1321,9 +1321,14 @@ pub struct BuilderModifier {
 pub enum BuilderModifierKind {
     /// `.field = value` — a field assignment on the current item.
     Assign(Expr),
-    /// `.method(args)` — a method call on the current item; the result
-    /// is discarded.
-    Call(Vec<Expr>),
+    /// `.method(args)` — a method call on the current item. `labels` is
+    /// empty for an all-positional call and otherwise one entry per
+    /// argument, exactly as `ExprKind::Call::arg_labels` — a modifier line
+    /// takes the same argument syntax as the call it lowers to.
+    Call {
+        args: Vec<Expr>,
+        labels: Vec<Option<Ident>>,
+    },
 }
 
 /// One operand of a Tier 2 `#asm`. `name` is the `{name}` placeholder; `dir`
@@ -1776,9 +1781,10 @@ fn walk_builder_entry<R: ExprRewriter + ?Sized>(e: &BuilderEntry, r: &mut R) -> 
                         BuilderModifierKind::Assign(v) => {
                             BuilderModifierKind::Assign(walk_expr(v, r))
                         }
-                        BuilderModifierKind::Call(args) => BuilderModifierKind::Call(
-                            args.iter().map(|a| walk_expr(a, r)).collect(),
-                        ),
+                        BuilderModifierKind::Call { args, labels } => BuilderModifierKind::Call {
+                            args: args.iter().map(|a| walk_expr(a, r)).collect(),
+                            labels: labels.clone(),
+                        },
                     },
                     span: m.span,
                 })

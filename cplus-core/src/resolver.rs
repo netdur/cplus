@@ -3061,7 +3061,7 @@ fn contextualize_entries(
                         BuilderModifierKind::Assign(v) => {
                             contextualize_builder_idents(v, context, &locals, ctx)
                         }
-                        BuilderModifierKind::Call(args) => {
+                        BuilderModifierKind::Call { args, .. } => {
                             for a in args {
                                 contextualize_builder_idents(a, context, &locals, ctx);
                             }

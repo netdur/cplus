@@ -2299,7 +2299,7 @@ impl<'a> Resolver<'a> {
                     for m in modifiers {
                         match &m.kind {
                             BuilderModifierKind::Assign(v) => self.walk_expr(v),
-                            BuilderModifierKind::Call(args) => {
+                            BuilderModifierKind::Call { args, .. } => {
                                 for a in args {
                                     self.walk_expr(a);
                                 }
