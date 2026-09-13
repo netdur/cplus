@@ -2364,17 +2364,30 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
                 };
             }
             // __b.add(__i);
+            //
+            // The add call gets a span DISTINCT from the item's, collapsed to
+            // the item's end. sema keys `call_monos` (a generic call's inferred
+            // type args) by span alone, so two generic calls sharing one span
+            // silently overwrite each other: with `Builder::add` generic, a
+            // generic item like `relist(rows, ..)` recorded `[Row]` at
+            // `item_span` and the add then overwrote it with `[Node]`, leaving
+            // codegen to look up an uninstantiated `elements.relist` and panic
+            // ("sema validated function exists"). A user expression is never
+            // zero-width, and two items cannot end at the same byte, so an
+            // end-collapsed span cannot collide with anything.
+            let add_span =
+                crate::lexer::Span::in_file(item_span.file, item_span.end, item_span.end);
             out.push(Stmt {
                 kind: StmtKind::Expr(method_call(
                     b_name,
                     "add",
                     vec![Expr {
                         kind: ExprKind::Ident(i_name),
-                        span: item_span,
+                        span: add_span,
                     }],
-                    item_span,
+                    add_span,
                 )),
-                span: item_span,
+                span: add_span,
             });
         }
         // `if COND { ... } [else { ... }]` — branches add into the same __b.
@@ -5008,6 +5021,49 @@ fn main() -> i32 { return 0; }\n";
         };
         assert_eq!(args.len(), 2, "builder + one positional arg");
         assert!(arg_labels.is_empty(), "no labels anywhere stays empty");
+    }
+
+    #[test]
+    fn builder_add_call_gets_a_span_distinct_from_its_item() {
+        // sema keys `call_monos` — a generic call's inferred type args — by
+        // SPAN ALONE, so two generic calls sharing a span overwrite each
+        // other. The item and its `__b.add(item)` are two different calls, and
+        // both can be generic (`relist(rows, ..)` into a generic `add`). When
+        // they shared `item_span` the item's instantiation was lost and
+        // codegen panicked with "sema validated function exists: missing
+        // `facet.src.elements.relist`". Distinct spans is the whole fix.
+        let src = "fn main() -> i32 {\n    let v = @view {\n        text(\"a\")\n        text(\"b\")\n    };\n    return 0;\n}\n";
+        let b = desugared_builder(src);
+        let mut item_spans = Vec::new();
+        let mut add_spans = Vec::new();
+        for st in &b.stmts {
+            match &st.kind {
+                StmtKind::Let { name, .. } if name.name.starts_with("__builder_item") => {
+                    item_spans.push(st.span);
+                }
+                StmtKind::Expr(e) => {
+                    // `__b.add(x)` lowers to Call{callee: Field{..,"add"}}.
+                    if let ExprKind::Call { callee, .. } = &e.kind {
+                        if let ExprKind::Field { name, .. } = &callee.kind {
+                            if name.name == "add" {
+                                add_spans.push(e.span);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(item_spans.len(), 2, "two items expected");
+        assert_eq!(add_spans.len(), 2, "one add per item");
+        // No add call may share a span with ANY item — that is the collision.
+        for a in &add_spans {
+            for i in &item_spans {
+                assert_ne!(a, i, "an add call must not reuse its item's span");
+            }
+        }
+        // Nor with each other: two items with different types would collide.
+        assert_ne!(add_spans[0], add_spans[1], "each add needs its own span");
     }
 
     #[test]
