@@ -584,16 +584,16 @@ has to stay a scroll view.
 `examples/facet_gallery_ios`'s Responsive demo reads the real width through it.
 The desktop gallery's equivalent simulates the width with three buttons.
 
-### The facade refuses nothing
+### Application facade and presentation
 
-`runtime_ios.cplus` had twelve entries that printed "not yet" and returned
-false. It now has none:
+The application API distinguishes window management, content navigation, and
+dialogs. Native capabilities can refuse operations:
 
 | verb | what it is here |
 |---|---|
 | `alert` / `choose` / `prompt` | `UIAlertController`, presented on the topmost controller. NOT blocking — iOS has no nested modal loop, and the answer arrives in a handler |
-| `nav::push` / `nav::pop` | a `UINavigationController` at the window root. The back button and the SWIPE-BACK gesture come with the stack rather than being drawn |
-| `present_window` | a modal sheet. A push is a journey and has a back button; a presentation is an interruption and is dismissed — facet's two verbs mean that difference, so they get the two UIKit shapes |
+| `w.nav().push` / `w.nav().pop` | retained content navigation inside the addressed window, through `facet/navigation` |
+| `app.open_window` | create or activate a name/key window instance; additional scenes require explicit multiple-scene support |
 | `observe_backgrounding` / `observe_resumed` / `observe_stopped` | `UIApplicationDidEnterBackground` / `WillEnterForeground` / `WillTerminate`, through `notify::observe_named` |
 | `observe_window_active` / `observe_window_inactive` | `UIApplicationDidBecomeActive` / `WillResignActive` — the same question a desktop asks of a window, asked of the app |
 | `observe_window_size` | `services::observe_size` over the window's root node |
@@ -613,9 +613,8 @@ structurally the same as facet_appkit, which answers the same five verbs through
 Two notes worth keeping. `observe_stopped` rides
 `UIApplicationWillTerminateNotification`, which iOS does NOT guarantee — a
 backgrounded app is usually killed without it, so an app that must save state
-should save it on BACKGROUNDING. And `present_window`'s `width` / `height` are
-read and ignored: a sheet is sized by its presentation style and has no size of
-its own.
+should save it on BACKGROUNDING. Window opening and dialog presentation are
+separate APIs; the former standalone `present_window` facade is removed.
 
 ### The app-events fan-out
 
@@ -1041,10 +1040,8 @@ touch screen more than to a trackpad. The touch reading was never considered.
 `set_zoom` is the programmatic path, and it is not optional: an agent has no
 hands, so a pinch-only feature would be a feature no agent could reach.
 
-`run_component` now forwards the trio too. It built a Chrome naming only
-title/width/height, so magnification was unreachable from the simple entry on
-BOTH platforms — an app had to adopt `screen::Screen` to ask for something that
-has nothing to do with screens.
+Set the zoom trio in `app.window(..., chrome: screen::Chrome::new(...))`.
+Window settings belong to registration; `Screen` no longer declares chrome.
 
 `bar` maps onto `UISceneWindowingControlStyle`: `Blended` and `Custom` →
 `unified`, `Native` and `Hidden` → `minimal`, and nothing → `automatic`.
@@ -1078,23 +1075,21 @@ the object `requestGeometryUpdate` takes — carries `interfaceOrientations` and
 nothing else on iOS. An app that wants a fixed size sets `min_*` and `max_*` to
 the same value.
 
-### `nav::push` / `nav::pop` are a UINavigationController stack
+### Content navigation belongs to the window
 
-This section used to say they were refused. They are not, and have not been
-since `window.cplus` grew the stack: `push_screen` pushes a view controller and
-`pop_screen` pops one, so the back button and the swipe-back gesture come with
-the platform rather than being drawn. A pop is reported through
-`didShowViewController` by reading the LIVE stack, which is what makes a swipe
-and a `nav::pop` the same event instead of two paths that must agree.
+`facet/navigation` owns each window's routes, chronological history, retained
+screen instances, and slot targets. `w.nav().push(...)` keeps the native window;
+`app.open_window(...)` explicitly requests a window. There is no `Show` mode or
+fallback from unsupported window creation to a content push.
 
-`nav::push`'s `show:` argument is accepted and ignored here, and that is the
-rule working rather than a gap: `Show::Window` asks for a peer window "where the
-platform has room", and an iPhone has one window, so the room is a stack entry.
-An iPad that opts into multiple scenes is where the two would diverge — see
-WINDOWING.md and plans/nav-windows.md step 7.
+UIKit's lower-level `push_screen` / `pop_screen` controller machinery predates
+this design. Its previous gesture tests do not establish native interactive
+Back support for the shared engine. Screen-driven Back uses the navigator;
+interactive gestures and iPad restoration need separate validation. See
+[the navigation guide](../facet/docs/navigation.md#desktop-and-mobile).
 
-`alert`, `prompt`, `choose` and `present_window` are still the modal tier and
-still refused.
+`alert`, `prompt`, and `choose` remain dialog APIs. The standalone
+`present_window` application facade is removed.
 
 ---
 

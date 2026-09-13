@@ -26,6 +26,10 @@ entry = "src/main.cplus"
 stdlib      = "*"
 facet       = "*"
 flex_layout = "*"
+# TRANSITIVE, and named here because a consumer names them too: `facet/relist`
+# imports `events/events`, so the runner that links facet has to declare it or
+# the build stops at E0852 before a single check runs.
+events      = "*"
 
 [ios.dependencies]
 facet_uikit = "*"

@@ -124,7 +124,9 @@ export fn probe_emit(name_ptr: *u8, name_len: usize) {
 }
 
 export extern fn app_main() -> i32 {   // an app entry the platform shell calls
-    runtime::run_component(App::new());
+    let app = runtime::App::new("Example");
+    app.window("main", main_screen);
+    let _run = app.run("main");
     return 0;
 }
 ```

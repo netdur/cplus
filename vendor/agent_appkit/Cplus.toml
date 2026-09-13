@@ -14,4 +14,5 @@ agent_core  = "*"
 # views reported AppKit's wrappers as though the developer had written them.
 # agent_android has always done it this way; this is macOS catching up.
 facet       = "*"
+events      = "*"
 flex_layout = "*"

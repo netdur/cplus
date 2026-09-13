@@ -117,6 +117,7 @@ To be a truly great community, C+ needs to welcome developers from all walks of 
 
 ## Learning More
 
+- Build a GUI with the [Facet tutorial](vendor/facet/docs/tutorial.md) and [apps, windows, and navigation guide](vendor/facet/docs/navigation.md).
 - Read [`docs/lang/spec.md`](docs/lang/spec.md) — the normative language specification (syntax, semantics, ownership model, the builder-block DSL, error-code catalog).
 - Check the [`docs/`](docs/) directory — the language docs in [`docs/lang/`](docs/lang/) (including [`docs/lang/skill.md`](docs/lang/skill.md), a dense reference for LLMs writing C+), runnable [`docs/examples/`](docs/examples/), and compiler internals + design deep-dives in [`docs/compiler/`](docs/compiler/).
 - See the [`vendor/`](vendor/) directory to explore how major language features (stdlib, SIMD, GPU, AppKit, GTK, JNI) are implemented purely through the package system.

@@ -18,7 +18,7 @@ import "../shell" as shell;
 
 fn dot(fill: vocab::Color, key: str) -> core::Node {
     return shell::painted(
-        ui::column(flex::Builder::new(), key: key).width(56.0).height(56.0),
+        ui::column(core::Builder::new(), key: key).width(56.0).height(56.0),
         fill, 28.0);
 }
 
@@ -38,13 +38,13 @@ fn hidden_dot(fill: vocab::Color, key: str) -> core::Node {
 // steps by 180°, and a square at 180° is a square. So the target carries a bar
 // at its top, which ends up at the bottom, which is the whole point.
 fn pointer(fill: vocab::Color, key: str) -> core::Node {
-    var inner: flex::Builder = flex::Builder::new();
+    var inner: core::Builder = core::Builder::new();
     // A LITERAL, not `Color::on(fill)`. `on()` answers a derived ink for a
     // THEME ROLE — primary, secondary, surface — and `Color::none()` for
     // anything else, and a system colour is anything else. An unset colour
     // paints nothing, which is what this bar did on its first run.
     inner.add(shell::painted(
-        ui::column(flex::Builder::new()).width(22.0).height(8.0),
+        ui::column(core::Builder::new()).width(22.0).height(8.0),
         vocab::Color::rgba(1.0, 1.0, 1.0, 1.0), 4.0));
     var n: core::Node = ui::column(inner, key: key)
         .width(56.0)
@@ -57,7 +57,7 @@ fn pointer(fill: vocab::Color, key: str) -> core::Node {
 }
 
 fn stage(take control: core::Node, take target: core::Node) -> core::Node {
-    var row: flex::Builder = flex::Builder::new();
+    var row: core::Builder = core::Builder::new();
     row.add(target);
     row.add(control);
     return ui::row(row).gap(16.0).align(flex::Align::Center);
@@ -88,8 +88,8 @@ impl Fade {
 
 impl Fade: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var f: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var f: core::Builder = core::Builder::new();
         f.add(stage(ui::button("Fade", on_click: this.go).height(44.0),
                     dot(vocab::Color::system_blue(), "m:fader")));
         f.add(shell::caption("`animate_opacity` drives the layer's own opacity through an explicit CABasicAnimation rather than through UIView's block API — the same call the AppKit backend makes."));
@@ -129,8 +129,8 @@ impl Spin {
 
 impl Spin: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var s: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var s: core::Builder = core::Builder::new();
         s.add(stage(ui::button("Half turn", on_click: this.go).height(44.0),
                     pointer(vocab::Color::system_orange(), "m:spinner")));
         s.add(shell::caption("Half a turn, not a whole one: the matrix for 360° IS the matrix for 0°, so a full revolution has no path between its ends and plays nothing."));
@@ -186,8 +186,8 @@ fn unpop(ctx: *u8) {
 
 impl Pop: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var p: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var p: core::Builder = core::Builder::new();
         p.add(stage(ui::button("Pop", on_click: this.go).height(44.0),
                     dot(vocab::Color::system_green(), "m:popper")));
         p.add(shell::caption("Up, then back on a TIMER. A main-queue hop would be drained in the same run-loop turn as the tap, ahead of the sync, and the two writes would collapse into one apply."));
@@ -219,9 +219,9 @@ fn fade_in(n: *core::Node) {
 
 impl Entrance: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var e: flex::Builder = flex::Builder::new();
-        var erow: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var e: core::Builder = core::Builder::new();
+        var erow: core::Builder = core::Builder::new();
         erow.add(hidden_dot(vocab::Color::system_purple(), "m:entrance"));
         e.add(ui::row(erow).gap(16.0).align(flex::Align::Center));
         e.add(shell::caption("Built at opacity 0 and animated from on_attach. The start value gets its own apply in the mount walk, which is the whole of why this works. Leave the demo and come back to see it again."));
@@ -267,8 +267,8 @@ impl DeadSnap {
 
 impl DeadSnap: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var d: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var d: core::Builder = core::Builder::new();
         d.add(stage(ui::button("Dead snap", on_click: this.go).height(44.0),
                     dot(vocab::Color::system_red(), "m:dead")));
         d.add(shell::caption("Deliberately wrong: set_opacity(0) and animate_opacity(1) in ONE handler. There is one field per property and one apply per tick, so the second write wins and the animation travels from where the view already is to where it already is. Nothing moves, and facet says why on stderr."));

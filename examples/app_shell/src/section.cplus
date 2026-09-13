@@ -1,0 +1,48 @@
+import "stdlib/vec" as vec;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/nav" as nav;
+import "facet/screen" as screen;
+import "flex_layout/flex_layout" as flex;
+
+struct Section { context: nav::Context }
+
+impl Section {
+    fn new() -> Section { return Section { context: nav::Context::none() }; }
+    fn boxed() -> screen::ScreenBox {
+        return screen::screen_box::[Section](Section::new());
+    }
+}
+
+impl Section: component::Component {
+    fn build(ref this) -> core::Node {
+        var title: str = this.context.param("title");
+        if title == "" { title = "Overview"; }
+        let body: str = this.context.param("body");
+        return @ui {
+            column(key: "section:root") {
+                label("${title}", key: "section:title", font_size: 22.0f64)
+                    .padding(4.0f64)
+                label("${body}", key: "section:body", font_size: 13.0f64)
+                    .padding(4.0f64)
+            }
+                .padding(24.0f64)
+        };
+    }
+}
+
+impl Section: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+
+impl Section: screen::Screen {
+    fn on_context(ref this, c: nav::Context) { this.context = c; }
+
+
+
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
+        return vec::new::[screen::MenuItem]();
+    }
+}

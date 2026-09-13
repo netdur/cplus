@@ -964,6 +964,77 @@ fn install_toolbar(win: ak::Window, root: *core::Node) {
     rt::release(map);
 }
 
+// ---- the live half of the window's furniture ----------------------------------
+// mount's third routing case lands here (`core::is_window_declaration`): a
+// declaration node was written to after the window opened, and its answer is
+// drawn by the WINDOW rather than by any view above it, so re-applying the
+// nearest backed ancestor — what a viewless node's bits are normally routed to
+// — re-renders a content view and leaves the bar exactly as it was.
+//
+// `which` is the point of the parameter. A toolbar refresh is invisible; a menu
+// bar rebuild closes a menu the user has pulled down, so it happens only when a
+// menu node is what changed.
+//
+// A root with no native window is not an error and not a bug: `mount::sync_from`
+// roots a walk wherever its caller says, and a realised list row is in no
+// window at all.
+fn redeclare(ctx: *u8, root: *core::Node, which: u32) {
+    if root.is_null() { return; }
+    if (which & core::D_MENU) != 0u32 { install_menu_bar(root); }
+    if (which & core::D_TOOLBAR) != 0u32 { refresh_toolbar(root); }
+    return;
+}
+
+// REFRESHED IN PLACE, never rebuilt. `setToolbar:` on a live window throws the
+// bar away and builds another — a visible flicker, and it discards whatever the
+// user rearranged — so the NSToolbarItem that is already installed is found and
+// written to.
+//
+// Found through the identifier -> NSToolbarItem dictionary `akx::make_toolbar`
+// pinned to the toolbar when it built it. That dictionary holds the very
+// objects the delegate vended, which are the objects NSToolbar installed, so a
+// write through it lands on what is on screen. Going through the map rather
+// than scanning `[toolbar items]` also means the lookup is by KEY — the order
+// of the bar is the user's to change, and matching on it would write the wrong
+// item the first time someone customised the toolbar.
+fn refresh_toolbar(root: *core::Node) {
+    let w: *u8 = app::window_native(root);
+    if w.is_null() { return; }
+    let tb: *u8 = { rt::msg_id(w, rt::sel(#str_ptr("toolbar\0"))) };
+    if tb.is_null() { return; }
+    let ids: *u8 = { synth::get_associated(tb, akx::toolbar_ids_pin_key()) };
+    if ids.is_null() { return; }
+    let map: *u8 = { synth::get_associated(ids, akx::toolbar_map_key()) };
+    if map.is_null() { return; }
+    var found: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    collect_toolbar_nodes(root, #addr_of(found));
+    var i: usize = 0 as usize;
+    let n: usize = found.count();
+    while i < n {
+        match found.at(i) {
+            option::Option[*core::Node]::Some(node) => { refresh_toolbar_node(map, node); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// One node's installed item, written to. Nothing happens for a node whose item
+// is not in this bar: a `toolbar_item` added to the tree AFTER the window
+// opened has no NSToolbarItem yet, and building one here would append it to the
+// end of the bar rather than place it in its declared order — a worse answer
+// than the create-only one the ledger already gives for `placement`.
+fn refresh_toolbar_node(map: *u8, node: *core::Node) {
+    let key: str = { (*node).key() };
+    if key == "" { return; }
+    let item: *u8 = { rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")),
+                                    bridge::nsstring(key)) };
+    if item.is_null() { return; }
+    controls::refresh_toolbar_item(item, node);
+    return;
+}
+
 // WHERE THE SIDEBAR'S HALF OF THE BAND ENDS.
 //
 // A window with a sidebar has two regions in its title band, and a toolbar

@@ -493,22 +493,9 @@ impl Gallery: component::Lifecycle {
 }
 
 impl Gallery: screen::Screen {
-    fn chrome(this) -> screen::Chrome {
-        return screen::Chrome::new(
-            title: "Facet Gallery",
-            width: 1000.0,
-            height: 680.0,
-            min_width: 720.0,
-            min_height: 480.0,
-            // Pinch to magnify — the same flag the iOS gallery sets. Zoom is a
-            // SCALE on the content view, never a relayout: the tree keeps its
-            // sizes and the magnification rides on top, so a zoomed gallery is
-            // the same tree bigger, not a reflowed one.
-            zoomable: true,
-            min_zoom: 1.0,
-            max_zoom: 3.0,
-        );
-    }
+
+
+
     fn menu_items(this) -> vec::Vec[screen::MenuItem] {
         return vec::new::[screen::MenuItem]();
     }

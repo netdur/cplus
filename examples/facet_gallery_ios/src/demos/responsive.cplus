@@ -100,7 +100,7 @@ fn reclassify(ctx: *u8) {
 }
 
 fn pane(title: str, body: str, fill: vocab::Color, key: str) -> core::Node {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label(title, font_size: 15.0,
                     font_weight: vocab::FontWeight::Semibold));
     b.add(ui::label(body, font_size: 13.0,
@@ -115,7 +115,7 @@ fn pane(title: str, body: str, fill: vocab::Color, key: str) -> core::Node {
 }
 
 fn tab_pane(title: str, body: str) -> core::Node {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label(title, font_size: 17.0,
                     font_weight: vocab::FontWeight::Semibold));
     b.add(ui::label(body, font_size: 14.0, max_lines: 3,
@@ -143,9 +143,9 @@ fn tab_picked(v: *u8, ctx: *u8) {
 
 impl Responsive: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
 
-        var live: flex::Builder = flex::Builder::new();
+        var live: core::Builder = core::Builder::new();
         live.add(ui::label("measuring…", key: "rp:mode", font_size: 17.0,
                            font_weight: vocab::FontWeight::Semibold));
         live.add(shell::caption("Rotate the simulator with ⌘← / ⌘→. This is the band the layout below was actually given, and the width it was measured from — not a guess, and not a button pretending to be one."));
@@ -153,26 +153,26 @@ impl Responsive: component::Component {
 
         // The rules live on the nodes they govern. Everything below is
         // declarative: nothing re-runs it, and nothing has to remember to.
-        var cards: flex::Builder = flex::Builder::new();
+        var cards: core::Builder = core::Builder::new();
         cards.add(pane("A", "Always here.", vocab::Color::system_teal(), "rp:a"));
         cards.add(pane("B", "Gone on a phone upright.", vocab::Color::system_indigo(), "rp:b")
                     .hide("tiny").hide("compact"));
         cards.add(pane("C", "Tablet-width and up.", vocab::Color::system_purple(), "rp:c")
                     .hide("tiny").hide("compact").hide("medium"));
 
-        var group: flex::Builder = flex::Builder::new();
+        var group: core::Builder = core::Builder::new();
         group.add(ui::row(cards, key: "rp:cards").gap(10.0).height(150.0));
         group.add(pane("Side rail", "Tablet-width and up — an iPad has room for it and a phone does not.",
                        vocab::Color::fill(), "rp:rail")
                     .hide("tiny").hide("compact").hide("medium"));
         body.add(shell::card("THE LAYOUT", group));
 
-        var note: flex::Builder = flex::Builder::new();
+        var note: core::Builder = core::Builder::new();
         note.add(shell::caption("A band is a NAMED box constraint — `compact` is 300–600pt wide — defined once in `facet/bands` and referenced by name everywhere. That indirection is the point: a threshold written at the place it is used drifts, and two screens end up disagreeing about where a phone stops being a phone."));
         // ---- tabs -----------------------------------------------------------
         // THE PANES ARE THE CHILDREN and each pane's KEY is its title: a tab
         // needs a title, and every addressable node already has one.
-        var tb: flex::Builder = flex::Builder::new();
+        var tb: core::Builder = core::Builder::new();
         var deck: core::Node = ui::tabs(key: "r:tabs",
                                         bar_text_color: vocab::Color::ink(0.55),
                                         selected_tab_color: vocab::Color::system_teal(),
@@ -189,13 +189,13 @@ impl Responsive: component::Component {
 
         body.add(shell::card("WHAT A BAND IS", note));
 
-        var how: flex::Builder = flex::Builder::new();
+        var how: core::Builder = core::Builder::new();
         how.add(shell::caption("The rule is measured against the nearest ancestor whose size does not depend on its own contents — never the window. Hiding a child inside a content-sized box would shrink it, which would un-hide the child, forever; refusing those boxes is what makes one extra layout pass enough to settle."));
         body.add(shell::card("WHICH BOX IT ASKS", how));
 
         // The observer is still here for the readout and the axis flip, so how
         // it works on this backend is still worth knowing.
-        var seam: flex::Builder = flex::Builder::new();
+        var seam: core::Builder = core::Builder::new();
         seam.add(shell::caption("`observe_size` was one of the seams this backend left empty — AppKit posts a frame notification and UIKit posts nothing. What UIKit does is CALL a method, so the observer is `layoutSubviews` added to the observed view's own class, one subclass per observed view through `object_setClass`. That is why a scroll view stays a scroll view."));
         body.add(shell::card("HOW IT KNOWS", seam));
 

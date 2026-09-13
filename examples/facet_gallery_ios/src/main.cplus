@@ -1,3 +1,4 @@
+import "facet/screen" as screen;
 // facet_gallery_ios — the entry point Xcode calls.
 //
 // `export extern fn` gives the symbol a stable, unmangled C name and puts it in
@@ -5,7 +6,7 @@
 // A `fn main` would not do: an iOS target produces a STATICLIB, and a library
 // has no entry the system knows to call.
 //
-// `run_component` does not return on iOS — `UIApplicationMain` takes the
+// `App::run` does not return on iOS — `UIApplicationMain` takes the
 // process — so the `return 0` below is unreachable in a running app. It is
 // there because the signature is the same one the desktop gallery's `main` has,
 // and a reader comparing the two should see the same shape.
@@ -21,17 +22,11 @@ export extern fn facet_gallery_ios_main() -> i32 {
     // The same two tokens the desktop gallery sets, so the two apps are the
     // same palette on both platforms — which is the point of a theme being
     // facet's rather than a backend's.
-    theme::set_theme(theme::Theme::new(
-        primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
-        surface: vocab::Color::adaptive(
-            light: vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
-            dark: vocab::Color::rgba(0.11, 0.11, 0.13, 1.0),
-        ),
-    ));
+
 
     // The agent surface, served over MCP. Two lines, and they are ordered:
     // `enable` installs the hooks facet calls, and the window attach happens
-    // inside facet_uikit's `attach_root` — which `run_component` reaches below
+    // inside facet_uikit's `attach_root` — which `App::run` reaches below
     // — so the hooks have to be in place BEFORE the tree is built, or the
     // first screen would never be walked into the surface.
     //
@@ -53,16 +48,22 @@ export extern fn facet_gallery_ios_main() -> i32 {
     // Width and height describe nothing on a phone — the screen is the window
     // — but the parameters are the facade's shape on both platforms and the
     // backend drops them. See facet_uikit/MANIFEST.md §6.
-    runtime::run_component(
-        app::Gallery::new(),
-        title: "facet gallery",
-        width: 390.0,
-        height: 844.0,
-        // Pinch to magnify, which this backend recorded as absent until it was
-        // pointed out that a pinch belongs to a touch screen more than to a
-        // trackpad. The desktop gallery can turn the same flag on.
-        zoomable: true,
-        max_zoom: 3.0,
-    );
+    let mobile = runtime::App::new("facet_gallery_ios");
+    mobile.on_launch(configure_theme);
+    mobile.window("main", main_window, chrome: screen::Chrome::new(
+        title: "Facet Gallery", zoomable: true, max_zoom: 3.0));
+    let _run = mobile.run("main");
     return 0;
+}
+
+fn main_window() -> screen::ScreenBox { return screen::screen_box(app::Gallery::new()); }
+
+fn configure_theme(ctx: *u8) {
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
+        surface: vocab::Color::adaptive(
+            light: vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
+            dark: vocab::Color::rgba(0.11, 0.11, 0.13, 1.0),
+        ),
+    ));
 }

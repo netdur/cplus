@@ -23,9 +23,9 @@ import "../shell" as shell;
 // The row builder the list calls. It is called for the rows on screen and for
 // no others, which is the whole point of the tier.
 fn gap_row(i: usize, ctx: *u8) -> core::Node {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label("Row ${i}", font_size: 16.0));
-    b.add(ui::column(flex::Builder::new()).grow(1.0));
+    b.add(ui::column(core::Builder::new()).grow(1.0));
     b.add(ui::label("recycled", font_size: 13.0,
                     text_color: vocab::Color::ink(0.45)));
     return ui::row(b).padding(12.0).gap(8.0).align(flex::Align::Center);
@@ -34,7 +34,7 @@ fn gap_row(i: usize, ctx: *u8) -> core::Node {
 // A GRID cell. Same shape of callback as a row — the collection differs in the
 // LAYOUT, not in how the content is asked for.
 fn tile(i: usize, ctx: *u8) -> core::Node {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label("${i}", font_size: 22.0));
     b.add(ui::label("cell", font_size: 11.0,
                     text_color: vocab::Color::ink(0.5)));
@@ -81,7 +81,7 @@ fn next_page(v: *u8, ctx: *u8) {
 }
 
 fn page(title: str, tint: vocab::Color) -> core::Node {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label(title, font_size: 20.0));
     b.add(ui::label("swipe sideways", font_size: 12.0,
                     text_color: vocab::Color::ink(0.55)));
@@ -173,9 +173,9 @@ static LOADED: usize = 8;
 static ROUNDS: i64 = 0;
 
 fn refresh_row(i: usize, ctx: *u8) -> core::Node {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label("Item ${i}", font_size: 16.0));
-    b.add(ui::column(flex::Builder::new()).grow(1.0));
+    b.add(ui::column(core::Builder::new()).grow(1.0));
     b.add(ui::label("loaded", font_size: 13.0,
                     text_color: vocab::Color::ink(0.45)));
     return ui::row(b).padding(12.0).gap(8.0).align(flex::Align::Center);
@@ -223,9 +223,9 @@ impl Refresh {
 
 impl Refresh: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
 
-        var r: flex::Builder = flex::Builder::new();
+        var r: core::Builder = core::Builder::new();
         var host: core::Node = ui::list(key: "r:list", row_height: 48,
                                         refreshable: true,
                                         on_refreshing: this.on_pull)
@@ -243,7 +243,7 @@ impl Refresh: component::Component {
         r.add(shell::caption("Pull down and let go. The spinner is UIKit's; being TOLD is facet's, and `end_refresh` is what stops it. Each pull adds four rows."));
         body.add(shell::card("PULL DOWN", r));
 
-        var note: flex::Builder = flex::Builder::new();
+        var note: core::Builder = core::Builder::new();
         note.add(shell::caption("The AppKit backend records pull-to-refresh as decided-absent: macOS has no pull, so a `refreshable` there shows its content and never pulls. This is one of the few places facet's vocabulary is wider than the desktop rather than narrower."));
         note.add(shell::caption("It was also wired and dead until an hour ago: the UIRefreshControl was created and armed, and `on_refreshing` was never called — so the spinner span and nothing ever asked for data. `fire_value_changed` had no arm for the list's kind."));
         body.add(shell::card("A TOUCH IDIOM", note));
@@ -267,9 +267,9 @@ impl ListDemo { fn new() -> ListDemo { return ListDemo { _unused: 0 }; } }
 
 impl ListDemo: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
 
-        var rec: flex::Builder = flex::Builder::new();
+        var rec: core::Builder = core::Builder::new();
         var host: core::Node = ui::list(key: "g:list", row_height: 48)
             .height(320.0);
         match list::find("g:list", within: #addr_of(host)) {
@@ -283,7 +283,7 @@ impl ListDemo: component::Component {
         rec.add(shell::caption("Two hundred rows over a real UITableView with a real data source. Two hundred nodes were never built — the callback runs for the dozen on screen, and the cells come back as you scroll."));
         body.add(shell::card("200 ROWS, ~12 CELLS", rec));
 
-        var grid: flex::Builder = flex::Builder::new();
+        var grid: core::Builder = core::Builder::new();
         var g: core::Node = ui::collection(key: "g:grid", columns: 3,
                                            selection_mode: vocab::SelectionMode::Single,
                                            on_selection_changed: cell_picked)
@@ -301,7 +301,7 @@ impl ListDemo: component::Component {
         grid.add(shell::caption("The same count-and-callback the list takes, laid out in three columns instead of one. The cells recycle the same way."));
         body.add(shell::card("A GRID", grid));
 
-        var car: flex::Builder = flex::Builder::new();
+        var car: core::Builder = core::Builder::new();
         var deck: core::Node = ui::carousel(key: "g:pages",
                                             on_position_changed: page_changed)
             .height(160.0);
@@ -310,10 +310,10 @@ impl ListDemo: component::Component {
         let _p3: status::Status = deck.add_child(page("Three", vocab::Color::rgba(0.20, 0.38, 0.34)));
         let _p4: status::Status = deck.add_child(page("Four", vocab::Color::rgba(0.42, 0.28, 0.20)));
         car.add(deck);
-        var line: flex::Builder = flex::Builder::new();
+        var line: core::Builder = core::Builder::new();
         line.add(ui::label("page 0 of 4", key: "g:page", font_size: 13.0,
                            text_color: vocab::Color::ink(0.7)));
-        line.add(ui::column(flex::Builder::new()).grow(1.0));
+        line.add(ui::column(core::Builder::new()).grow(1.0));
         line.add(ui::button("next ›", key: "g:next", on_click: next_page));
         car.add(ui::row(line).align(flex::Align::Center).gap(8.0));
         car.add(shell::caption("Four pages, one per screen. The pages are the node's CHILDREN — built once, not asked for — which is what separates a carousel from the list above it."));
@@ -324,7 +324,7 @@ impl ListDemo: component::Component {
         // is an Xcode project whose resource list this source cannot add to.
         // facet_uikit builds the kind; the gallery has nowhere to put its page.
         if #platform() == "android" {
-            var hy: flex::Builder = flex::Builder::new();
+            var hy: core::Builder = core::Builder::new();
             hy.add(shell::painted(
                 ui::hybrid_web(key: "g:hy", hybrid_root: "web",
                                default_file: "index.html",
@@ -345,7 +345,7 @@ impl ListDemo: component::Component {
             body.add(shell::card("HYBRID WEB", hy));
         }
 
-        var kin: flex::Builder = flex::Builder::new();
+        var kin: core::Builder = core::Builder::new();
         kin.add(shell::caption("`table` is the same view with three verbs of its own — its style, its row height, and whether the rows size themselves. `tree` is the same table over the flattened OPEN rows, re-flattened whenever the model or the expansion changes. `collection` and `carousel` are UICollectionView with a flow layout."));
         body.add(shell::card("THE REST OF THE TIER", kin));
 

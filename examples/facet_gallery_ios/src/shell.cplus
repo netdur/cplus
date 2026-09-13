@@ -56,8 +56,8 @@ fn shadowed(take node: core::Node, dy: f64, blur: f64, alpha: f64) -> core::Node
 
 // A titled group: a surface, a radius and a shadow — the shortest exercise of
 // three shared-band verbs at once, on every page.
-fn card(title: str, take body: flex::Builder) -> core::Node {
-    var inner: flex::Builder = flex::Builder::new();
+fn card(title: str, take body: core::Builder) -> core::Node {
+    var inner: core::Builder = core::Builder::new();
     inner.add(ui::label(title, font_size: 13.0,
                         font_weight: vocab::FontWeight::Semibold,
                         character_spacing: 1.0,
@@ -71,9 +71,9 @@ fn card(title: str, take body: flex::Builder) -> core::Node {
 // A label + control pair, laid out the way a settings row is: the label takes
 // what it needs, the control takes the rest, and the row is a tap target.
 fn field(name: str, take control: core::Node) -> core::Node {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label(name, font_size: 16.0, text_color: vocab::Color::ink()));
-    b.add(ui::column(flex::Builder::new()).grow(1.0));
+    b.add(ui::column(core::Builder::new()).grow(1.0));
     b.add(control);
     return ui::row(b)
         .gap(12.0)
@@ -85,8 +85,8 @@ fn field(name: str, take control: core::Node) -> core::Node {
 // content someone wants on it. A scroll takes its content through
 // `set_content` rather than a builder — the same shape the desktop gallery
 // uses, so the two shells stay comparable.
-fn page(title: str, intro: str, take body: flex::Builder, key: str) -> core::Node {
-    var col: flex::Builder = flex::Builder::new();
+fn page(title: str, intro: str, take body: core::Builder, key: str) -> core::Node {
+    var col: core::Builder = core::Builder::new();
     col.add(heading(title));
     col.add(blurb(intro));
     col.add(ui::column(body).gap(16.0));

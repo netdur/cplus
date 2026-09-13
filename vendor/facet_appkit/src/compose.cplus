@@ -1218,8 +1218,13 @@ fn set_group_alpha(host: *u8, a: f64) {
     }
 }
 
-fn hover_in_imp(self_obj: *u8, cmd: *u8, event: *u8) { set_group_alpha(self_obj, 1.0f64); return; }
+fn hover_in_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    akx::wb_set_hovered(self_obj, true);
+    set_group_alpha(self_obj, 1.0f64);
+    return;
+}
 fn hover_out_imp(self_obj: *u8, cmd: *u8, event: *u8) {
+    akx::wb_set_hovered(self_obj, false);
     if { synth::get_associated(self_obj, hover_alpha_key()) } == (0 as *u8) { return; }
     set_group_alpha(self_obj, 0.0f64);
 }

@@ -1921,13 +1921,86 @@ fn window_perform_zoom(sender: *u8) {
 // takes window.standardWindowButton(close/miniaturize/zoom), unhides them,
 // removeFromSuperview + addSubview into itself, and lays them out (leading 4,
 // 14pt gaps, vertically centered). AppKit re-creates/re-lays the buttons on
-// full-screen transitions and live-resize end, so it re-attaches on those
-// notifications (plus a delayed pass to catch the settle). All native behavior
-// survives — the buttons' actions still target the window. Their natural extent
-// is reported via `fittingSize` so facet measures the leaf correctly.
+// full-screen transitions and live resize. The host observes each button's
+// frame so it can restore placement during resizing, and re-attaches after
+// transitions. It also supplies the group hover tracking the native titlebar
+// used to own. The buttons' actions still target the window. Their natural
+// extent is reported via `fittingSize` so facet measures the leaf correctly.
 
 fn wb_observed_key() -> *u8 { return { 28731 as *u8 }; }
 fn wb_spacing_key() -> *u8 { return { 28732 as *u8 }; }
+fn wb_laying_out_key() -> *u8 { return { 28733 as *u8 }; }
+fn wb_hovered_key() -> *u8 { return { 28734 as *u8 }; }
+fn wb_tracking_key() -> *u8 { return { 28735 as *u8 }; }
+
+// Native widget cells ask their containing view whether the pointer is inside
+// the button group. Reparenting the buttons leaves the titlebar's tracking
+// behind, so the content host must provide both tracking and this AppKit hook.
+// Keep the real buttons: their actions and the green button's tiling menu stay
+// native. `_mouseInGroup:` is an AppKit compatibility seam, not a public API.
+fn wb_mouse_in_group_imp(self_obj: *u8, cmd: *u8, button: *u8) -> i8 {
+    if synth::get_associated(self_obj, wb_hovered_key()).is_not_null() { return 1 as i8; }
+    return 0 as i8;
+}
+
+fn wb_set_hovered(self_obj: *u8, hovered: bool) {
+    var flag: *u8 = 0 as *u8;
+    if hovered { flag = 1 as *u8; }
+    if synth::get_associated(self_obj, wb_hovered_key()) == flag { return; }
+    synth::set_associated(self_obj, wb_hovered_key(), flag);
+    let children = ak::View::from_raw(self_obj).subviews();
+    var i: usize = 0 as usize;
+    while i < children.count() {
+        match children.at_ptr(i) {
+            option::Option[*ak::View]::Some(v) => {
+                let button = (*v).raw();
+                // Modern AppKit widgets cache their visual state. Merely
+                // setting needsDisplay repaints the old state without asking
+                // _mouseInGroup: again; the public control refresh does both.
+                let cell = rt::msg_id(button, rt::sel(#str_ptr("cell\0")));
+                rt::msg_void_id(button, rt::sel(#str_ptr("updateCell:\0")), cell);
+                (*v).set_needs_display(true);
+            }
+            option::Option[*ak::View]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+
+fn wb_entered_imp(self_obj: *u8, cmd: *u8, event: *u8) { wb_set_hovered(self_obj, true); }
+fn wb_exited_imp(self_obj: *u8, cmd: *u8, event: *u8) { wb_set_hovered(self_obj, false); }
+
+fn wb_install_tracking(self_obj: *u8) {
+    if synth::get_associated(self_obj, wb_tracking_key()).is_not_null() { return; }
+    let allocated = rt::msg_id(rt::get_class(#str_ptr("NSTrackingArea\0")), rt::sel(#str_ptr("alloc\0")));
+    // MouseEnteredAndExited | ActiveAlways | InVisibleRect. Geometry follows
+    // the host automatically, including movement without a change in size.
+    let area = msg_init_tracking(allocated, rt::sel(#str_ptr("initWithRect:options:owner:userInfo:\0")),
+                                rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+                                641 as u64, self_obj, 0 as *u8);
+    if area.is_null() { return; }
+    rt::msg_void_id(self_obj, rt::sel(#str_ptr("addTrackingArea:\0")), area);
+    synth::set_associated(self_obj, wb_tracking_key(), 1 as *u8);
+    rt::release(area);
+}
+
+// AppKit can rewrite button frames while the host's own size stays unchanged.
+// Repair that write immediately, including inside its live-resize run loop.
+fn wb_button_frame_changed_imp(self_obj: *u8, cmd: *u8, notification: *u8) {
+    let button = rt::msg_id(notification, rt::sel(#str_ptr("object\0")));
+    if rt::msg_id(button, rt::sel(#str_ptr("superview\0"))) == self_obj { wb_layout(self_obj); }
+}
+
+fn wb_observe_button(self_obj: *u8, button: *u8) {
+    let nc = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")), rt::sel(#str_ptr("defaultCenter\0")));
+    let name = bridge::nsstring("NSViewFrameDidChangeNotification");
+    // A fullscreen transition may re-adopt the same button; do not duplicate
+    // its observation. Selector observers are removed when the host dies.
+    rt::msg_void_id_id_id(nc, rt::sel(#str_ptr("removeObserver:name:object:\0")), self_obj, name, button);
+    rt::msg_void_id_id_id_id(nc, rt::sel(#str_ptr("addObserver:selector:name:object:\0")), self_obj,
+                            rt::sel(#str_ptr("cplusWBButtonFrameChanged:\0")), name, button);
+    rt::msg_void_i8(button, rt::sel(#str_ptr("setPostsFrameChangedNotifications:\0")), 1 as i8);
+}
 
 // The gap between buttons, in points. AppKit's own is 14 and that is what this
 // view drew unconditionally until 2026-09-07 — `window_chrome.spacing` was a
@@ -1964,8 +2037,10 @@ fn wb_spacing(self_obj: *u8) -> f64 {
 // three buttons in `self`: leading inset 4, `wb_spacing()` between button
 // edges, centered.
 fn wb_layout(self_obj: *u8) {
+    if synth::get_associated(self_obj, wb_laying_out_key()).is_not_null() { return; }
     let win: *u8 = rt::msg_id(self_obj, rt::sel(#str_ptr("window\0")));
     if win == { 0 as *u8 } { return; }
+    synth::set_associated(self_obj, wb_laying_out_key(), 1 as *u8);
     let self_h: f64 = { rt::msg_rect(self_obj, rt::sel(#str_ptr("bounds\0"))).h };
     let std_sel: *u8 = rt::sel(#str_ptr("standardWindowButton:\0"));
     let gap: f64 = wb_spacing(self_obj);
@@ -1980,13 +2055,17 @@ fn wb_layout(self_obj: *u8) {
             if sv != self_obj {
                 rt::msg_void(btn, rt::sel(#str_ptr("removeFromSuperview\0")));
                 rt::msg_void_id(self_obj, rt::sel(#str_ptr("addSubview:\0")), btn);
+                wb_observe_button(self_obj, btn);
             }
             let y: f64 = (self_h - bf.h) / 2.0f64;
-            rt::msg_void_point(btn, rt::sel(#str_ptr("setFrameOrigin:\0")), rt::Point { x: x, y: y });
+            if bf.x != x || bf.y != y {
+                rt::msg_void_point(btn, rt::sel(#str_ptr("setFrameOrigin:\0")), rt::Point { x: x, y: y });
+            }
             x = x + bf.w + gap;
         }
         i = i +% (1 as i64);
     }
+    synth::set_associated(self_obj, wb_laying_out_key(), 0 as *u8);
     return;
 }
 
@@ -1997,6 +2076,7 @@ fn wb_reattach_imp(self_obj: *u8, cmd: *u8, notif: *u8) { wb_layout(self_obj); r
 fn wb_did_move_to_window_imp(self_obj: *u8, cmd: *u8) {
     let win: *u8 = rt::msg_id(self_obj, rt::sel(#str_ptr("window\0")));
     if win == { 0 as *u8 } { return; }
+    wb_install_tracking(self_obj);
     wb_layout(self_obj);
     // Register the re-attach observers once, then a delayed pass for the settle.
     if synth::get_associated(self_obj, wb_observed_key()) == { 0 as *u8 } {
@@ -2007,6 +2087,7 @@ fn wb_did_move_to_window_imp(self_obj: *u8, cmd: *u8) {
         rt::msg_void_id_id_id_id(nc, add_sel, self_obj, re_sel, bridge::nsstring("NSWindowDidEnterFullScreenNotification"), win);
         rt::msg_void_id_id_id_id(nc, add_sel, self_obj, re_sel, bridge::nsstring("NSWindowDidExitFullScreenNotification"), win);
         rt::msg_void_id_id_id_id(nc, add_sel, self_obj, re_sel, bridge::nsstring("NSWindowDidEndLiveResizeNotification"), win);
+        rt::msg_void_id_id_id_id(nc, add_sel, self_obj, re_sel, bridge::nsstring("NSWindowDidResizeNotification"), win);
     }
     wb_perform_after(self_obj, rt::sel(#str_ptr("cplusWBReattach:\0")), 0 as *u8, 0.15f64);
     return;
@@ -2060,6 +2141,10 @@ fn window_buttons_view_class() -> *u8 {
         let b: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("cplusWBReattach:\0")), wb_reattach_imp, #str_ptr("v@:@\0"));
         let c: i8 = wb_add_void_size(cls, rt::sel(#str_ptr("setFrameSize:\0")), wb_set_frame_size_imp, #str_ptr("v@:{CGSize=dd}\0"));
         let d: i8 = wb_add_size0(cls, rt::sel(#str_ptr("fittingSize\0")), wb_fitting_size_imp, #str_ptr("{CGSize=dd}@:\0"));
+        synth::add_method_i8_1id(cls, rt::sel(#str_ptr("_mouseInGroup:\0")), wb_mouse_in_group_imp, #str_ptr("c@:@\0"));
+        synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseEntered:\0")), wb_entered_imp, #str_ptr("v@:@\0"));
+        synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseExited:\0")), wb_exited_imp, #str_ptr("v@:@\0"));
+        synth::add_method_v_1id(cls, rt::sel(#str_ptr("cplusWBButtonFrameChanged:\0")), wb_button_frame_changed_imp, #str_ptr("v@:@\0"));
         synth::register_class_pair(cls);
     }
     return cls;

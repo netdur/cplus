@@ -133,21 +133,23 @@ the surface compiling and refuses loudly.
 cd vendor/facet && cpc check --target ios-arm64     # facet + this backend
 ```
 
-### One structural difference an app author must know
+### Application lifetime and navigation
 
-`UIApplicationMain` **does not return**. `[NSApp run]` does, and the macOS
-facade is built on that — `run_component` blocks and then hands the component's
-final state back, `App::run` loops (open a window, block, close, read the nav
-intent, open the next).
+`App::run` registers the initial window with UIKit and enters the OS-owned
+loop. It does not return on iOS. Window content and navigation are retained by
+that window's session; there are no standalone component/screen host APIs.
 
-So on iOS:
+Content commands use the window's navigator, changing its whole content or a
+named slot. An explicit window-opening request never becomes a content push.
+Additional iPad windows require an app that opts into multiple scenes. Shared
+screens can be used by separate desktop and mobile app compositions.
 
-- `run_component` / `run_screen` keep their signatures and never return, so the
-  value they promise never arrives. The component lives in the frame that
-  entered the loop, which is the process's bottom frame forever.
-- `App::run` shows the initial screen and enters the loop. **Navigation is a
-  swap**: `nav::go` builds the next screen into the same window, because a phone
-  has one window and closing it is not something an app may do.
-- `on_quit` never fires and nothing is torn down. That is what iOS termination
-  is — apps are killed, they do not wind down. `observe_backgrounding` is the
-  hook the platform actually gives for saving state.
+Save persistent state on backgrounding rather than relying on `on_quit` or
+process-exit cleanup. Closing an additional scene has its own window teardown;
+process termination does not guarantee a final callback.
+
+The current shared navigation engine supports screen-driven Back. The older
+UIKit controller stack's swipe behavior does not validate interactive gestures
+or scene restoration through the redesigned navigator. See the
+[navigation guide](../facet/docs/navigation.md#desktop-and-mobile) for the
+current validation limits and API.

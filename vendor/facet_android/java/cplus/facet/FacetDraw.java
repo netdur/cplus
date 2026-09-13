@@ -332,7 +332,8 @@ public final class FacetDraw {
     // `android` package. A name that is neither leaves the item text-only,
     // which is what an ActionBar item without an icon already is.
     public static void optionsMenuAdd(android.view.Menu menu, int id, String title,
-                                      String icon, int showAs, int tint, boolean tinted) {
+                                      String icon, int showAs, int tint, boolean tinted,
+                                      boolean enabled) {
         CharSequence label = title == null ? "" : title;
         if (tinted) {
             android.text.SpannableString s = new android.text.SpannableString(label);
@@ -356,6 +357,17 @@ public final class FacetDraw {
             } catch (Throwable ignored) { }
             if (rid != 0) it.setIcon(rid);
         }
+        // THE SHARED BAND'S `is_enabled`. Set unconditionally rather than only
+        // when false: the menu is rebuilt from scratch on every
+        // `invalidateOptionsMenu`, so a re-enable has to be able to say so.
+        it.setEnabled(enabled);
+    }
+
+    // RE-READ THE TREE. Android caches the options menu, so a write to a
+    // `toolbar_item` after the bar is up lands only when the menu is
+    // invalidated — this is the ask `onCreateOptionsMenu` is waiting for.
+    public static void invalidateMenu(android.app.Activity a) {
+        if (a != null) a.invalidateOptionsMenu();
     }
 
     // A LINK NEEDS A MOVEMENT METHOD, or a URLSpan draws as a link and does

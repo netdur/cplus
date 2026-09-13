@@ -22,7 +22,8 @@ agent_appkit = "*"      # agent_uikit on ios, agent_android on android
 
 ## Serve
 
-Three lines, before the host:
+Enable serving before `App::run`. This example assumes `Home::boxed` returns
+a `screen::ScreenBox`:
 
 ```cplus
 import "facet_runtime/runtime" as runtime;
@@ -31,7 +32,9 @@ import "facet_agent/agent" as agent;
 fn run() -> i32 {
     agent::enable();                    // fill the serving seam
     runtime::agent_mcp("myapp");        // serve under this NAME
-    runtime::run_screen(Home::new());
+    let app = runtime::App::new("myapp");
+    app.window("main", Home::boxed);
+    let _run = app.run("main");
     return 0 as i32;
 }
 ```

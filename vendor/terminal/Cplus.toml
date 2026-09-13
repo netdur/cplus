@@ -23,6 +23,7 @@ edition = "2026"
 stdlib      = "*"
 flex_layout = "*"
 facet       = "*"
+events      = "*"
 
 [macos.dependencies]
 objc       = "*"

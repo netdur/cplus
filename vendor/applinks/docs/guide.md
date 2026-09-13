@@ -154,26 +154,33 @@ produced by this repo, and neither can be tested from a simulator.
 
 ## Routing: this package hands you a string and stops
 
-There is no route table here, and that is a decision rather than an omission.
-`facet_runtime` already has one — `register_screen` / `has_screen` /
-`push_screen` — and a second registry mapping URL patterns to screens would be
-a parallel routing authority whose disagreements with the real one look like a
-link opening the wrong screen.
-
-The recipe is three lines:
+There is no route table here. The application chooses which window a link
+addresses; that window's definition supplies its content routes. This example
+assumes `main` is open and its definition registered the link's route:
 
 ```cplus
 fn opened(u: str, ctx: *u8) {
     match url::parse(u) {
         option::Option[url::Url]::Some(p) => {
-            let route: str = p.segment(0 as usize);
-            if runtime::has_screen(route) { nav::go(route, arg: p.segment(1 as usize)); }
+            match runtime::app().find_window("main") {
+                option::Option[window::Window]::Some(w) => {
+                    let changed = w.nav().push(p.segment(0 as usize), arg: p.segment(1 as usize));
+                    if changed { let _activated = w.activate(); }
+                }
+                option::Option[window::Window]::None => { }
+            }
         }
-        option::Option::None => { }
+        option::Option[url::Url]::None => { }
     }
-    return;
 }
 ```
+
+Import `facet/window` as `window` for the handle type. An unknown route is
+refused by `push`; there is no global route registry or implicit destination.
+If a link should open a document window instead, explicitly call
+`app.open_window("note", key: document_path)`. Keep startup links pending until
+the destination window has mounted; navigation during construction is refused.
+See [Facet navigation](../../facet/docs/navigation.md).
 
 It also keeps this package usable from something with no facet runtime at all.
 

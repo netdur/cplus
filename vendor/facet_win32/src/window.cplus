@@ -97,6 +97,18 @@ fn slot_of_window(w: *u8) -> usize {
     return MAX_WINDOWS;
 }
 
+// mount's third routing case: a `toolbar_item` was written to after the strip
+// was built. `which` names the furniture so a toolbar write does not also
+// rebuild the menu bar, which is `menus.cplus`'s and is left alone here.
+fn redeclare(ctx: *u8, root: *core::Node, which: u32) {
+    if root == (0 as *core::Node) { return; }
+    if (which & core::D_TOOLBAR) == (0u32) { return; }
+    let slot: usize = slot_of_root(root);
+    if slot >= MAX_WINDOWS { return; }
+    toolbar::relabel(WINDOWS[slot] as *u8, root);
+    return;
+}
+
 fn slot_of_root(r: *core::Node) -> usize {
     var i: usize = 0 as usize;
     while i < MAX_WINDOWS {

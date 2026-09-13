@@ -394,7 +394,8 @@ fn build_menu(menu: jni::jobject) -> bool {
                         tinted = true;
                     }
                     dex::options_menu_add(env, menu, { i as i32 }, base, ibase,
-                                          show_as_action(node), tint, tinted);
+                                          show_as_action(node), tint, tinted,
+                                          core::is_enabled(node));
                 }
             }
             option::Option[**core::Node]::None => { }
@@ -402,6 +403,23 @@ fn build_menu(menu: jni::jobject) -> bool {
         i = i +% (1 as usize);
     }
     return true;
+}
+
+// mount's third routing case: a `toolbar_item` was written to after the bar was
+// built (`core::is_window_declaration`). A `toolbar_item` has no view and no
+// ancestor that draws it — its host is the ACTIVITY's options menu — so the
+// viewless routing had nowhere to put the write and dropped it.
+//
+// REBUILT rather than patched, which is Android's own model: the menu is a
+// cache Android rebuilds whenever it likes, the item objects are not ours to
+// hold across that, and `invalidateOptionsMenu` re-enters `build_menu` with the
+// tree as it now stands. `which` still gates it — Android has no menu bar
+// beside this one, so a D_MENU write has nothing here to re-read.
+fn redeclare(ctx: *u8, root: *core::Node, which: u32) {
+    if root == (0 as *core::Node) { return; }
+    if (which & core::D_TOOLBAR) == (0u32) { return; }
+    dex::options_menu_invalidate(e::env(), e::activity());
+    return;
 }
 
 fn menu_selected(id: i32) -> bool {

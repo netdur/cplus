@@ -58,6 +58,13 @@ fn set_root(take n: core::Node) {
     return;
 }
 
+// A routed window owns its root. The Activity borrows it across recreation.
+fn set_window_root(n: *core::Node) -> bool {
+    if n.is_null() || ROOT != (0 as usize) { return false; }
+    ROOT = { #addr(n) };
+    return true;
+}
+
 // THE COMPONENT'S `on_attach`, which nothing else can fire.
 //
 // `component::Lifecycle` is the COMPONENT's hook, not a node's — the mount walk

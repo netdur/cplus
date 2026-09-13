@@ -59,6 +59,7 @@ fn renderer() -> mount::Renderer {
         insert: views::insert,
         remove: views::remove,
         schedule: scheduler::schedule,
+        redeclare: window::redeclare,
     };
 }
 

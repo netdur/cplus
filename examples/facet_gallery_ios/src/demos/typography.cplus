@@ -27,9 +27,9 @@ impl Type {
 
 impl Type: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
 
-        var type_: flex::Builder = flex::Builder::new();
+        var type_: core::Builder = core::Builder::new();
         type_.add(ui::label("Display", font_size: 34.0,
                             font_weight: vocab::FontWeight::Bold));
         type_.add(ui::label("Title", font_size: 22.0,
@@ -41,7 +41,7 @@ impl Type: component::Component {
                             text_color: vocab::Color::ink(0.5)));
         body.add(shell::card("SCALE", type_));
 
-        var align: flex::Builder = flex::Builder::new();
+        var align: core::Builder = core::Builder::new();
         align.add(ui::label("Start — follows the writing direction",
                             font_size: 15.0, text_align: vocab::TextAlign::Start));
         align.add(ui::label("Center", font_size: 15.0,
@@ -55,7 +55,7 @@ impl Type: component::Component {
         // ONE LABEL, MANY STYLES. `formatted_text` is a run list that carries
         // its own text, so writing it replaces what the label reads — the
         // second, more specific way to say the same thing `text` says.
-        var rich: flex::Builder = flex::Builder::new();
+        var rich: core::Builder = core::Builder::new();
         var runs: vocab::Spans = vocab::Spans::new();
         let _r1: status::Status = runs.add(vocab::TextSpan::of("One label, ",
                                                                font_size: 16.0));
@@ -154,9 +154,9 @@ fn caret_moved(v: *u8, ctx: *u8) {
 
 impl Fields: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
 
-        var fields: flex::Builder = flex::Builder::new();
+        var fields: core::Builder = core::Builder::new();
         fields.add(ui::text_field("", key: "t:name", placeholder: "Your name",
                                   clear_button: vocab::ClearButton::WhileEditing,
                                   return_key: vocab::ReturnKey::Done,
@@ -170,7 +170,7 @@ impl Fields: component::Component {
         fields.add(shell::caption("`secure` is a PROPERTY on iOS. On macOS it names a different class, and the AppKit backend carries a whole live-reclass path for that one prop."));
         body.add(shell::card("TEXT FIELDS", fields));
 
-        var area: flex::Builder = flex::Builder::new();
+        var area: core::Builder = core::Builder::new();
         var editor: core::Node = ui::text_area("let x = 42; // and a note",
                                                key: "t:area",
                                                placeholder: "A longer note…")
@@ -226,9 +226,9 @@ impl Keyboards {
 
 impl Keyboards: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
 
-        var keys: flex::Builder = flex::Builder::new();
+        var keys: core::Builder = core::Builder::new();
         keys.add(ui::text_field("", key: "t:email", placeholder: "Email",
                                 keyboard: vocab::Keyboard::Email,
                                 return_key: vocab::ReturnKey::Next).height(44.0));

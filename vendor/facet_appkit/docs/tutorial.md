@@ -13,6 +13,8 @@ its own tutorial is the place to learn the tree.
 [dependencies]
 stdlib      = "*"
 facet       = "*"
+facet_runtime = "*"
+events      = "*"
 flex_layout = "*"
 
 [macos.dependencies]
@@ -29,40 +31,36 @@ runtime, AppKit, Core Animation, and WebKit for `web` / `hybrid_web`.
 Under `[macos.dependencies]` so the same package builds on a target with no
 backend. There, facet's verbs become no-ops that say so once on stderr.
 
-## 2. Install it
+## 2. Register a window
 
-One call, before anything else:
+Applications enter through `facet_runtime/runtime`. `App::run` installs the
+AppKit backend; an application does not need its own `backend::install()` call.
+`main_screen` below is a factory returning `screen::ScreenBox`.
 
 ```cplus
-import "facet_appkit/facet_appkit" as backend;
+import "facet_runtime/runtime" as runtime;
+import "facet/screen" as screen;
+import "stdlib/status" as status;
 
 fn main() -> i32 {
-    backend::install();
-    ...
+    let app = runtime::App::new("hello");
+    app.window("main", main_screen, chrome: screen::Chrome::new(title: "hello"));
+    match app.run("main") {
+        status::Status::Ok => { return 0; }
+        _other => { return 1; }
+    }
 }
 ```
 
-`install` fills the five seam structs facet declares, sets the two theme
-slots, arms the sync tick, and installs the async pump. It is idempotent: a
-facade doing belt-and-braces registration will not double-arm anything.
+## 3. Run the application
 
-Nothing else registers. If a hook is not in one of those structs, it is not
-part of the seam.
+`App::run` opens the registered window, mounts its content, and runs AppKit's
+loop. Register content routes on the returned window definition and navigate
+through a live window's `nav()` handle. Opening a peer window is an explicit
+`app.open_window` call. See [Facet navigation](../../facet/docs/navigation.md).
 
-## 3. Run a screen
-
-The rest is facet's API, unchanged:
-
-```cplus
-var app: runtime::App = runtime::App::new("hello");
-app.screen("main", main_screen);
-match app.run("main") {
-    status::Status::Ok => { return 0 as i32; }
-    _other => { return 1 as i32; }
-}
-```
-
-`App::run` opens the window, mounts the tree, and runs AppKit's loop.
+Direct backend installation and mounting are the lower-level embedding seam;
+they are not a second application startup API.
 
 ## 4. Watch it update
 

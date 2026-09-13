@@ -2,7 +2,8 @@
 
 What facet is, the model it commits to, and what a backend has to fill. Fast
 start: [tutorial.md](tutorial.md). API: [ref.md](ref.md). Every declared verb:
-[contract.md](contract.md).
+[contract.md](contract.md). App/window ownership and migration:
+[navigation.md](navigation.md).
 
 ## What it is
 
@@ -145,11 +146,16 @@ statics in the model.
 `Lifecycle` adds `on_attach` and `on_detach`, fired by the mount walk after the
 tree is in place and before it comes down.
 
-`Screen` adds `chrome()` (the window) and `menu_items()` (this screen's
-contribution to the app menu, merged each time the screen is shown).
+`Screen` receives its instance's `nav::Context` before build and `nav::State`
+after mount and committed navigation. It also supplies `menu_items()`. Window
+chrome is supplied at window registration. Scope control lookups to the
+screen's `context.root()` when several windows can show the same keys.
 
-`App` holds named routes and runs the loop. `nav::go`, `nav::push`, `nav::pop`
-and `nav::quit` are the intents it acts on.
+`App` registers windows and runs the application. Each window definition can
+register routes; its live handle's `nav()` pushes, replaces, and traverses
+content history. There is no history across windows, and opening never becomes a content push.
+A product can explicitly compose separate desktop and mobile apps with shared
+screens. Flex handles wide/narrow layout. See [apps and navigation](navigation.md).
 
 ## The mount seam
 

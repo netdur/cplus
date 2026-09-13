@@ -1,0 +1,176 @@
+import "stdlib/status" as status;
+import "stdlib/option" as option;
+import "facet/icon_button" as icon_button;
+import "facet/label" as label;
+import "facet/window_chrome" as window_chrome;
+import "facet/relist" as relist;
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/split" as split;
+import "facet/screen" as screen;
+import "facet/vocabulary" as vocab;
+import "facet/nav" as nav;
+import "flex_layout/flex_layout" as flex;
+import "./sidebar" as sidebar;
+
+struct Home { context: nav::Context }
+
+impl Home {
+    fn new() -> Home {
+        return Home { context: nav::Context::none() };
+    }
+
+    fn boxed() -> screen::ScreenBox {
+        return screen::screen_box::[Home](Home::new());
+    }
+
+    fn on_section_chosen(ref this, i: usize, s: sidebar::Section) {
+        var p: nav::Params = nav::params_new();
+        let _t: status::Status = p.insert(text::from_str("title"),
+                                          text::from_str(s.name));
+        let _b: status::Status = p.insert(text::from_str("body"),
+                                          text::from_str(s.body));
+        let _pushed: bool = this.context.navigator().push("section", params: p, into: "detail");
+        return;
+    }
+
+    fn selected_name(this) -> str {
+        match this.context.navigator().current(into: "detail") {
+            option::Option[nav::Context]::Some(c) => {
+                if c.param("title") != "" { return c.param("title"); }
+            }
+            option::Option[nav::Context]::None => { }
+        }
+        return "Overview";
+    }
+
+    // Keep names available to assistive technology and hover help while the
+    // visible toolbar contains only icons.
+    fn toolbar_button(this, icon: str, title: str, key: str,
+                      on_clicked: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> core::Node {
+        var n = ui::icon_button(icon, key: key, bordered: false,
+                                on_clicked: on_clicked, on_clicked_ctx: ctx)
+            .width(28.0f64)
+            .height(28.0f64)
+            .shrink(0.0f64);
+        n.set_accessibility_label(title);
+        n.set_tooltip(title);
+        return n;
+    }
+
+    fn on_compose_click(ref this, sender: *u8) {
+        return;
+    }
+
+    fn on_back_click(ref this, sender: *u8) {
+        this.context.navigator().pop();
+    }
+
+    fn on_forward_click(ref this, sender: *u8) {
+        this.context.navigator().forward();
+    }
+}
+
+impl Home: component::Component {
+    fn build(ref this) -> core::Node {
+        var root = @ui {
+            split(key: "main",
+                  position: 220.0f64,
+                  min_leading: 180.0f64,
+                  max_leading: 320.0f64,
+                  role_leading: split::PaneRole::Content) {
+                column(key: "sidebar:pane") {
+                    row(key: "sidebar:header") {
+                        window_buttons(key: "bar:window-buttons")
+                        spacer().grow(1.0f64)
+                    }
+                        .height(52.0f64)
+                        .shrink(0.0f64)
+                        .align(flex::Align::Center)
+                        .padding_edge(flex::Edge::Horizontal, 16.0f64)
+                        .window_drag()
+                    sidebar::sidebar(
+                        on_select: this.on_section_chosen,
+                        selection: this.selected_name
+                    )
+                }
+                    .grow(1.0f64)
+                    .shrink(1.0f64)
+                    .set_background_color(vocab::Color::sunken())
+                column(key: "detail:pane") {
+                    row(key: "bar") {
+                        this.toolbar_button("chevron.left", "Back", "bar:back",
+                                            this.on_back_click)
+                        this.toolbar_button("chevron.right", "Forward", "bar:forward",
+                                            this.on_forward_click)
+                        label(this.selected_name(), key: "bar:title",
+                              font_size: 13.0f64,
+                              font_weight: vocab::FontWeight::Semibold)
+                            .shrink(1.0f64)
+                        spacer().grow(1.0f64)
+                        this.toolbar_button("square.and.pencil", "New", "new",
+                                            this.on_compose_click)
+                    }
+                        .height(52.0f64)
+                        .shrink(0.0f64)
+                        .align(flex::Align::Center)
+                        .gap(6.0f64)
+                        .padding_edge(flex::Edge::Horizontal, 12.0f64)
+                        .window_drag()
+                    slot("detail", route: "section") {
+                        label("Select a section", key: "detail:empty",
+                              font_size: 13.0f64)
+                            .grow(1.0f64)
+                            .shrink(1.0f64)
+                            .justify(flex::Justify::Center)
+                            .align(flex::Align::Center)
+                    }
+                        .grow(1.0f64)
+                        .shrink(1.0f64)
+                }
+                    .grow(1.0f64)
+                    .shrink(1.0f64)
+                    .set_background_color(vocab::Color::surface())
+            }
+                .grow(1.0f64)
+                .shrink(1.0f64)
+        };
+        root.set_safe_area(vocab::SafeArea::None);
+        return root;
+    }
+}
+
+impl Home: screen::Screen {
+    fn on_context(ref this, c: nav::Context) { this.context = c; }
+    fn on_navigation(ref this, state: nav::State) {
+        let root = this.context.root();
+        match icon_button::find("bar:back", within: root) {
+            option::Option[icon_button::IconButton]::Some(b) => { b.set_enabled(state.can_pop()); }
+            option::Option[icon_button::IconButton]::None => { }
+        }
+        match icon_button::find("bar:forward", within: root) {
+            option::Option[icon_button::IconButton]::Some(b) => { b.set_enabled(state.can_forward()); }
+            option::Option[icon_button::IconButton]::None => { }
+        }
+        match label::find("bar:title", within: root) {
+            option::Option[label::Label]::Some(title) => { title.set_text(this.selected_name()); }
+            option::Option[label::Label]::None => { }
+        }
+        match relist::find("nav", within: root) {
+            option::Option[relist::Relist]::Some(rows) => { rows.invalidate(0 as usize, rows.count()); }
+            option::Option[relist::Relist]::None => { }
+        }
+    }
+
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
+        return vec::new::[screen::MenuItem]();
+    }
+}
+
+impl Home: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}

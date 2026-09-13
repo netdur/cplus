@@ -16,6 +16,7 @@ import "./text_button" as m_text_button;
 import "./split" as m_split;
 import "./tree" as m_tree;
 import "./relist" as m_relist;
+import "./navigation" as m_navigation;
 import "./obs_vec" as m_obs_vec;
 import "./window_chrome" as m_window_chrome;
 import "./label" as m_label;
@@ -57,7 +58,9 @@ import "./context_menu" as m_context_menu;
 import "./context_menu_item" as m_context_menu_item;
 import "./toolbar_item" as m_toolbar_item;
 
-type Builder = flex::Builder;
+// facet's own Builder, not flex's — it takes `IntoNode`, so a
+// component can be an item in `@ui` beside a plain node.
+type Builder = core::Builder;
 
 // ---- containers (facet core owns these) --------------------------------
 fn column(take b: Builder, key: str = "") -> core::Node { return core::column(b, key: key); }
@@ -67,6 +70,21 @@ fn vstack(take b: Builder, key: str = "") -> core::Node { return core::vstack(b,
 fn screen(take b: Builder, key: str = "") -> core::Node { return core::screen(b, key: key); }
 fn card(take b: Builder, key: str = "") -> core::Node { return core::card(b, key: key); }
 fn zstack(take b: Builder, key: str = "") -> core::Node { return core::zstack(b, key: key); }
+
+// A NAMED HOLE IN THE TREE. `slot("detail") { ... }` is an ordinary
+// container that also has an address, so anything can fill it: a
+// `window.nav().push(into: "detail")`, a `mount::set_content`, or the app's own
+// `add_child`. Its key is `slot:<name>`, which is what a push looks for.
+//
+// It holds whatever the block built as its BASE, so "put something here"
+// and "take it away again" are the same pair of operations the window's
+// own screen stack uses — see stack.cplus for why a host needs a base.
+// `route` is the slot's DEFAULT SCREEN — what it shows when nothing is
+// pushed into it, the way `App::run(route)` names the window's. It is
+// not a stack entry: a pop that empties the slot reveals it again, and
+// nothing can pop it away. A route nothing registered falls back to
+// whatever the block built.
+fn slot(take b: Builder, name: str, route: str = "") -> core::Node { return m_navigation::slot(b, name, route: route); }
 fn spacer(key: str = "") -> core::Node { return core::spacer(key: key); }
 
 // ---- facet-origin controls (hand-written modules; forwards mirrored here,

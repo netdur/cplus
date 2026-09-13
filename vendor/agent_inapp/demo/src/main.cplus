@@ -13,15 +13,13 @@ import "facet/facet" as facet;
 import "facet/elements" as elements;
 import "facet/component" as component;
 import "facet/screen" as screen;
-import "facet/nav" as nav;
-import "facet/runtime" as runtime;
-import "facet/agent" as agent;
+import "facet_runtime/runtime" as runtime;
+import "facet_agent/agent" as agent;
 import "facet/services" as services;
 import "agent_inapp/agent_inapp" as inapp;
 import "agent_core/auth" as auth;
 import "agent_core/backend" as backend;
 import "agent_core/surface" as surface;
-import "stdlib/result" as result;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/vec" as vec;
@@ -33,17 +31,6 @@ static SAW_ADA: bool = false;
 static SET_ALLOWED: bool = false;
 static CLICK_ALLOWED: bool = false;
 static DENIED_STOPPED_CALL: bool = false;
-
-fn inapp_only(req: auth::Request) -> auth::Decision {
-    return match req.channel {
-        auth::Channel::InApp => auth::Decision::Allow,
-        auth::Channel::External => auth::Decision::Reject,
-    };
-}
-
-fn deny_all(req: auth::Request) -> auth::Decision {
-    return auth::Decision::Reject;
-}
 
 fn tree_has(nodes: vec::Vec[backend::UiNode], id: str, value: str) -> bool {
     var i: usize = 0 as usize;
@@ -64,47 +51,17 @@ fn tree_has(nodes: vec::Vec[backend::UiNode], id: str, value: str) -> bool {
 // Queued by on_attach so the application run loop is active before the agent
 // closes the window at the end of the spike.
 fn run_agent(ctx: *u8) {
-    // A denied in-app policy is checked before the backend is touched.
-    let denied: inapp::Session = agent::in_app(deny_all);
-    match denied.click("profile:save") {
-        result::Result[surface::Outcome, inapp::Error]::Ok(_o) => {}
-        result::Result[surface::Outcome, inapp::Error]::Err(_e) => {
-            DENIED_STOPPED_CALL = SAVES == (0 as i32);
-        }
-    }
+    let denied = agent::in_app_with_grant(auth::nothing());
+    let refused = denied.click("profile:save");
+    DENIED_STOPPED_CALL = !surface::outcome_eq(refused, surface::Outcome::Allowed)
+        && SAVES == (0 as i32);
 
-    let session: inapp::Session = agent::in_app(inapp_only);
-    match session.describe_ui() {
-        result::Result[vec::Vec[backend::UiNode], inapp::Error]::Ok(nodes) => {
-            SAW_DRAFT = tree_has(nodes, "profile:name", "draft");
-        }
-        result::Result[vec::Vec[backend::UiNode], inapp::Error]::Err(_e) => {}
-    }
-
-    match session.set_text("profile:name", "Ada") {
-        result::Result[surface::Outcome, inapp::Error]::Ok(o) => {
-            SET_ALLOWED = surface::outcome_eq(o, surface::Outcome::Allowed);
-        }
-        result::Result[surface::Outcome, inapp::Error]::Err(_e) => {}
-    }
-
-    // Re-describe after an action: the surface refreshes from the live UI.
-    match session.describe_ui() {
-        result::Result[vec::Vec[backend::UiNode], inapp::Error]::Ok(nodes) => {
-            SAW_ADA = tree_has(nodes, "profile:name", "Ada");
-        }
-        result::Result[vec::Vec[backend::UiNode], inapp::Error]::Err(_e) => {}
-    }
-
-    match session.click("profile:save") {
-        result::Result[surface::Outcome, inapp::Error]::Ok(o) => {
-            CLICK_ALLOWED = surface::outcome_eq(o, surface::Outcome::Allowed);
-        }
-        result::Result[surface::Outcome, inapp::Error]::Err(_e) => {}
-    }
-
-    nav::quit();
-    return;
+    let session = agent::in_app_with_grant(auth::operator());
+    SAW_DRAFT = tree_has(session.describe_ui(), "profile:name", "draft");
+    SET_ALLOWED = surface::outcome_eq(session.set_text("profile:name", "Ada"), surface::Outcome::Allowed);
+    SAW_ADA = tree_has(session.describe_ui(), "profile:name", "Ada");
+    CLICK_ALLOWED = surface::outcome_eq(session.click("profile:save"), surface::Outcome::Allowed);
+    let _quit = runtime::app().quit();
 }
 
 struct Home {
@@ -142,9 +99,9 @@ impl Home: component::Lifecycle {
 }
 
 impl Home: screen::Screen {
-    fn chrome(this) -> screen::Chrome {
-        return screen::Chrome::new(title: "In-app agent spike", width: 420.0f64, height: 220.0f64);
-    }
+
+
+
 
     fn menu_items(this) -> vec::Vec[screen::MenuItem] {
         return vec::new::[screen::MenuItem]();
@@ -158,7 +115,7 @@ fn make_home() -> screen::ScreenBox {
 fn main() -> i32 {
     agent::enable();
     var app: runtime::App = runtime::App::new("facet in-app agent");
-    app.screen("home", make_home);
+    app.window("home", make_home, chrome: screen::Chrome::new(title: "In-app agent spike", width: 420.0f64, height: 220.0f64));
     let run_status: status::Status = app.run("home");
 
     let ok: bool = run_status.is_ok()

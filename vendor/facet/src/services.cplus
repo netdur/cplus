@@ -631,6 +631,14 @@ fn free_when_settled(f: fn(*u8), p: *u8) {
     arm_reclaim();
 }
 
+// A native close callback still borrows its root until it returns. Unlike
+// free_when_settled, always defer even when there are no jobs in flight.
+fn free_next_turn(f: fn(*u8), p: *u8) {
+    if f.is_null() || p.is_null() { return; }
+    let _a = PENDING_FREES.append(PendingFree { free: f, p: p, turns: 0 as i64 });
+    arm_reclaim();
+}
+
 // Free everything parked, if and only if nothing is in flight. Answers how
 // many are still parked, so a caller can say whether it drained.
 //

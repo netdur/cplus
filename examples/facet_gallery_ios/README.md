@@ -128,7 +128,7 @@ that string WAS the port. After the address became derived, the same call kept
 building and kept serving — with "8787" as the app's id, on a port nobody was
 looking at.)
 
-Ordering matters and is why both lines are before `run_component`: the window
+Ordering matters and is why both lines are before `App::run`: the window
 walk happens inside `facet_uikit`'s `attach_root`, so the hooks have to be
 installed before the tree is built.
 

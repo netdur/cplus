@@ -330,7 +330,7 @@ fn imp_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
     // for row selection. The node then sees a mouseDown and never a mouseUp,
     // and a click is reported on the up, so it never fires at all.
     //
-    // Measured in `examples/sidebar_demo`: a relist row armed correctly, took 8
+    // Measured in `examples/app_shell_glass`: a relist row armed correctly, took 8
     // mouseDowns and ZERO mouseUps, and `on_click` never ran. The row is an
     // ordinary facet node and an ordinary NSView; a gesture that works on it
     // outside a list has to work on it inside one, and the backend's choice of
@@ -1282,11 +1282,40 @@ fn superview_of(v: *u8) -> *u8 {
 fn key_of(sender: *u8) -> text::Text {
     var v: *u8 = sender_view(sender);
     while v.is_not_null() {
-        let ns: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
-        if ns.is_not_null() {
-            let len: u64 = { rt::msg_u64_u64(ns, rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0")),
-                                             bridge::ns_utf8()) };
-            if len > (0 as u64) { return bridge::to_text(ns); }
+        // GUARDED, for the reason `superview_of` below records at length: a
+        // sender is not always a view. An NSToolbarItem is the sender of a
+        // toolbar action and does NOT respond to `accessibilityIdentifier`, so
+        // the bare send raised `NSInvalidArgumentException` — an ObjC
+        // exception, which is an abort — from inside the one line every app
+        // with more than one toolbar button writes:
+        //
+        //     fn on_bar_click(ref this, sender: *u8) {
+        //         let which: text::Text = component::key_of(sender);
+        //
+        // The same lesson as the menu-item case one function down, missed on
+        // this send because the menu fix only guarded the walk and not the read.
+        if synth::class_responds(synth::object_class(v),
+                                 rt::sel(#str_ptr("accessibilityIdentifier\0"))) != (0 as i8) {
+            let ns: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
+            if ns.is_not_null() {
+                let len: u64 = { rt::msg_u64_u64(ns, rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0")),
+                                                 bridge::ns_utf8()) };
+                if len > (0 as u64) { return bridge::to_text(ns); }
+            }
+        }
+        // A TOOLBAR ITEM CARRIES ITS KEY AS ITS `itemIdentifier`, which is not
+        // an accident: `build_toolbar_item` sets the identifier FROM the node's
+        // key, because NSToolbar addresses items by identifier and facet
+        // addresses nodes by key. So the answer exists, it was just being asked
+        // for by a name this object does not know.
+        if synth::class_responds(synth::object_class(v),
+                                 rt::sel(#str_ptr("itemIdentifier\0"))) != (0 as i8) {
+            let ident: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("itemIdentifier\0"))) };
+            if ident.is_not_null() {
+                let ilen: u64 = { rt::msg_u64_u64(ident, rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0")),
+                                                  bridge::ns_utf8()) };
+                if ilen > (0 as u64) { return bridge::to_text(ident); }
+            }
         }
         v = superview_of(v);
     }

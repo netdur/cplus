@@ -61,6 +61,7 @@ prebuild = false
 stdlib      = "*"
 flex_layout = "*"
 facet       = "*"
+events      = "*"
 # The Win32 binding: the curated facade plus the generated SDK surface
 # (winuser / wingdi / commctrl), which is where this package gets its typed
 # structs — tagWNDCLASSEXA, tagMSG, tagPAINTSTRUCT — rather than laying them

@@ -5,7 +5,10 @@ import "flex_layout/flex_layout" as flex;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
+import "stdlib/vec" as vec;
+import "stdlib/string_map" as smap;
 import "./facet" as facet;
+import "./navigation" as navigation;
 import "./props" as props;
 import "./vocabulary" as vocab;
 // Every module the generator emits, so the gate compiles the whole contract
@@ -71,7 +74,7 @@ import "./theme" as theme;
 import "./mount" as mount;
 import "./application" as app;
 import "./window" as window;
-import "./stack" as stack;
+import "./nav_model" as nav_model;
 import "./bands" as bands;
 // The delegate fan-out: a third-party SDK's share of the app's own callbacks.
 import "./app_events" as app_events;
@@ -4474,4 +4477,53 @@ fn turning_secure_on_after_the_fact_still_masks() {
         }
         option::Option[*facet::Node]::None => { assert false; }
     }
+}
+
+// The generated DSL and the window navigation engine share a slot contract.
+struct SlotProbe { }
+impl SlotProbe: component::Component {
+    fn build(ref this) -> facet::Node {
+        return @ui { column {
+            label::label("header", key: "header")
+            slot("detail") { label::label("nothing selected", key: "empty") }
+        } };
+    }
+}
+impl SlotProbe: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { }
+    fn on_detach(ref this, why: component::Detach) { }
+}
+impl SlotProbe: screen::Screen {
+
+
+
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+fn slot_probe_box() -> screen::ScreenBox { return screen::screen_box(SlotProbe {}); }
+#[test]
+fn a_slot_written_in_ui_is_a_push_target() {
+    let owner = app::new_instance("DSL slot");
+    app::make_current(owner);
+    let registry = nav_model::registry(owner);
+    let factory: fn() -> screen::ScreenBox = slot_probe_box;
+    var routes = vec::new::[nav_model::Route]();
+    let _r = routes.append(nav_model::Route { name: text::from_str("detail"), factory: factory as *u8 });
+    let _d = (*registry).definitions.append(nav_model::Definition {
+        id: 1 as u64, name: text::from_str("workspace"), factory: factory as *u8, routes: routes, settings: 0 as *u8 });
+    let n = navigation::prepare(owner, 1 as u64, "");
+    let root = navigation::root(n);
+    let _o = app::open_window(root);
+    let _m = mount::mount(root);
+    navigation::attached(n);
+    assert n.push("detail", into: "detail");
+    assert n.depth() == (1 as usize);
+    match n.current(into: "detail") {
+        option::Option[nav_model::Context]::Some(c) => { assert c.root() != root; }
+        option::Option[nav_model::Context]::None => { assert false; }
+    }
+    assert !n.push("detail", into: "missing");
+    assert n.pop();
+    assert n.depth() == (0 as usize);
+    navigation::test_close(n);
+    app::release_current();
 }

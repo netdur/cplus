@@ -35,6 +35,7 @@ facet       = "*"
 facet_runtime = "*"
 facet_agent = "*"
 flex_layout = "*"
+events = "*"
 
 # The backend and its transitive closure. The resolver validates every import
 # in the build against ONE flat set taken from THIS manifest — it does not read
@@ -62,4 +63,3 @@ agent_core    = "*"
 agent_mcp     = "*"
 agent_inapp   = "*"
 json          = "*"
-events        = "*"

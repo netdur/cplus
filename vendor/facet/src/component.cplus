@@ -11,6 +11,7 @@ import "./vocabulary" as vocab;
 import "./application" as app;
 import "./app_events" as ev;
 import "stdlib/status" as status;
+import "stdlib/box" as box;
 
 type Node = flex::Node;
 
@@ -322,7 +323,245 @@ fn lc_detach_tramp[C: Lifecycle](p: *u8) {
     { (*q).on_detach(Detach::Unmount) };
 }
 
+// ---- a component as an item in `@ui` ----------------------------------------
+// `child` is what lets a STATEFUL component be written inline in a container,
+// beside plain elements:
+//
+//     @ui { column { label("hi") switch_row(key: "sound", title: "Sound") } }
+//
+// The problem it solves is ownership. `build` binds handlers by taking the
+// ADDRESS of the receiver, so a factory that builds from a component it does
+// not outlive hands back a node pointing at freed stack — which is why
+// `SwitchRow::new(..).build()` is rejected (E0365) rather than miscompiled.
+// Here the component is TAKEN, boxed, and the returned node owns the box: the
+// instance lives exactly as long as the node that shows it.
+//
+// A component reaches `@ui` by naming this from its own `IntoNode`:
+//
+//     impl SwitchRow: core::IntoNode {
+//         fn into_node(take this) -> core::Node {
+//             return component::child(this, key: this.key);
+//         }
+//     }
+fn child[C: Component + Lifecycle](take c: C, key: str = "") -> Node {
+    match box::new::[C](c) {
+        option::Option[box::Box[C]]::Some(b) => {
+            // The box surrenders its pointer; from here the NODE owns it and
+            // `child_detach_tramp` is the only thing that frees it.
+            let p: *u8 = b.into_raw();
+            let q: *C = { p as *C };
+            var tree: Node = { (*q).build() };
+            // Only when asked. `build` usually keys its own root, and a
+            // default `key: ""` must not blank it.
+            let d: *core::Data = core::ensure_data(#addr_of(tree));
+            if d.is_not_null() && #str_len(key) > (0 as usize) {
+                { (*d).key = text::from_str(key) };
+            }
+            // WHICH node carries the record matters. `@ui { x }` finishes as a
+            // WRAPPER whose only child is `x`, so a component whose build is
+            // `@ui { column(key: "sidebar") { .. } }` returns an UNKEYED root
+            // with the author's keyed node inside it. Recording on the root
+            // there makes `component_at("sidebar")` answer None — it resolves
+            // the key, lands on the child, and finds no component. So the
+            // record goes on the node that actually carries the key. The tree
+            // is left alone: unwrapping instead would silently drop anything
+            // applied to the block's own value (`@ui { .. }.grow(1.0)`).
+            let holder: *core::Node = record_holder(#addr_of(tree));
+            // Node teardown and eviction both fire this — notify, then free.
+            core::set_presented(holder, p, child_detach_tramp::[C]);
+            // NOT called here. A mutator during `mount`'s tree walk reflows a
+            // tree the backend has not stored yet; the node-level attach queue
+            // drains AFTER the walk, which is the one safe moment.
+            core::set_on_attach(holder, child_attach_tramp::[C], p);
+            return tree;
+        }
+        option::Option[box::Box[C]]::None => {
+            // Allocation failed: an empty container keeps the tree shaped and
+            // the key addressable rather than returning a null node.
+            return core::column(core::Builder::new(), key: key);
+        }
+    }
+}
+
+// The node a component's record belongs on: `n` itself when it is keyed, and
+// otherwise the single child of a bare `@ui` wrapper when THAT is keyed. Falls
+// back to `n`, so a component that keys nothing is recorded on its root and
+// simply is not addressable by key — which is what it asked for.
+fn record_holder(n: *core::Node) -> *core::Node {
+    let d: *core::Data = { (*n).data() };
+    if d.is_null() { return n; }
+    if #str_len({ (*d).key.view() }) > (0 as usize) { return n; }
+    if core::child_count_of(n) != (1 as usize) { return n; }
+    guard let option::Option[*core::Node]::Some(c) = core::child_of(n, 0 as usize) else {
+        return n;
+    };
+    let cd: *core::Data = { (*c).data() };
+    if cd.is_null() { return n; }
+    if #str_len({ (*cd).key.view() }) == (0 as usize) { return n; }
+    return c;
+}
+
+// `Attach::Mount` for a boxed child, fired off the node's attach queue. The
+// component rides in the ctx slot, which is the box pointer `child` stored.
+fn child_attach_tramp[C: Lifecycle](sender: *u8, ctx: *u8) {
+    let q: *C = { ctx as *C };
+    { (*q).on_attach(Attach::Mount) };
+}
+
+// Detach AND free — the half that makes the node the owner. Reclaiming the box
+// and letting it fall out of scope runs Drop once; calling `.drop()` explicitly
+// would free twice, because `Box::drop` does not null its pointer.
+fn child_detach_tramp[C: Lifecycle](p: *u8) {
+    let q: *C = { p as *C };
+    { (*q).on_detach(Detach::Unmount) };
+    let _b: box::Box[C] = box::from_raw::[C](p);
+}
+
 // ---- tests ------------------------------------------------------------------
+
+// Counts detaches from a FREED component — `child_detach_tramp` frees the box,
+// so the struct cannot be read after it fires. A static is the only channel
+// that outlives the instance.
+static CH_DETACHED: i32 = 0;
+// Proves the BOX was reclaimed: a leak fires on_detach just the same, so the
+// free needs its own witness. A destructor is a plain inherent `drop`.
+static CH_DROPPED: i32 = 0;
+
+struct ChTestComp {
+    tag: i32,
+    attached: i32,
+}
+
+impl ChTestComp {
+    fn drop(ref this) { CH_DROPPED = CH_DROPPED + 1; return; }
+}
+
+impl ChTestComp: Component {
+    fn build(ref this) -> Node {
+        var b: core::Builder = core::Builder::new();
+        b.add(core::column(core::Builder::new(), key: "ch:inner"));
+        return core::column(b, key: "ch:built");
+    }
+}
+
+// `Builder::finish()` IS what `@ui { x }` lowers to: an unkeyed wrapper whose
+// only child is `x`. Built by hand here so the test needs no `elements` import.
+struct ChWrapComp {
+    tag: i32
+}
+
+impl ChWrapComp: Component {
+    fn build(ref this) -> Node {
+        var outer: core::Builder = core::Builder::new();
+        outer.add(core::column(core::Builder::new(), key: "ch:wrapped"));
+        return outer.finish();
+    }
+}
+
+impl ChWrapComp: Lifecycle {
+    fn on_attach(ref this, why: Attach) { return; }
+    fn on_detach(ref this, why: Detach) { return; }
+}
+
+impl ChTestComp: Lifecycle {
+    fn on_attach(ref this, why: Attach) { this.attached = this.attached + 1; return; }
+    fn on_detach(ref this, why: Detach) { CH_DETACHED = CH_DETACHED + 1; return; }
+}
+
+#[test]
+fn child_returns_the_components_own_tree() {
+    // The node `child` hands back is what `build` made, not a wrapper: the
+    // child it added is there, and the root keeps the key `build` gave it.
+    var n: Node = child::[ChTestComp](ChTestComp { tag: 7, attached: 0 });
+    assert core::child_count_of(#addr_of(n)) == (1 as usize);
+    let k: str = { (*core::ensure_data(#addr_of(n))).key.view() };
+    assert k == "ch:built";
+}
+
+#[test]
+fn child_key_overrides_the_built_key_only_when_given() {
+    // A stated key addresses the component's root; the default must not blank
+    // the key `build` set.
+    var named: Node = child::[ChTestComp](ChTestComp { tag: 1, attached: 0 },
+                                          key: "ch:asked");
+    let a: str = { (*core::ensure_data(#addr_of(named))).key.view() };
+    assert a == "ch:asked";
+    var bare: Node = child::[ChTestComp](ChTestComp { tag: 1, attached: 0 });
+    let b: str = { (*core::ensure_data(#addr_of(bare))).key.view() };
+    assert b == "ch:built";
+}
+
+#[test]
+fn child_boxes_the_component_so_it_outlives_the_call() {
+    // The whole point. `build` binds handlers by taking the receiver's ADDRESS,
+    // so the instance must outlive the function that built it. The box is
+    // reachable through the node's presented slot, and its state is intact —
+    // a stack temporary would read as garbage or fault here.
+    var n: Node = child::[ChTestComp](ChTestComp { tag: 42, attached: 0 });
+    let p: *u8 = core::presented_of(#addr_of(n));
+    assert p.is_not_null();
+    let q: *ChTestComp = { p as *ChTestComp };
+    assert { (*q).tag } == 42;
+}
+
+#[test]
+fn child_records_on_the_keyed_node_inside_a_ui_wrapper() {
+    // `@ui { x }` finishes as a WRAPPER whose only child is `x`, so the
+    // author's keyed node is one level down. `component_at(key)` resolves the
+    // KEY and reads the record off whatever it lands on — so the record must
+    // live there too, or every lookup by the component's own key answers None
+    // while the component is plainly mounted.
+    var n: Node = child::[ChWrapComp](ChWrapComp { tag: 5 });
+    let d: *core::Data = { (*#addr_of(n)).data() };
+    // The wrapper is real and unkeyed — this is the shape being guarded.
+    assert #str_len({ (*d).key.view() }) == (0 as usize);
+    assert core::child_count_of(#addr_of(n)) == (1 as usize);
+    // The record is NOT on the wrapper...
+    assert core::presented_of(#addr_of(n)).is_null();
+    // ...it is on the keyed node the author wrote.
+    guard let option::Option[*core::Node]::Some(c) = core::child_of(#addr_of(n), 0 as usize) else {
+        assert false;
+        return;
+    };
+    let cd: *core::Data = { (*c).data() };
+    assert { (*cd).key.view() } == "ch:wrapped";
+    assert core::presented_of(c).is_not_null();
+}
+
+#[test]
+fn child_defers_on_attach_until_the_node_attaches() {
+    // Two halves, and the second is the one that matters. A mutator during
+    // the mount walk reflows a tree the backend has not stored yet, so `child`
+    // fires nothing while building — but "nothing happened" is also what a
+    // MISSING registration looks like. So drive the hook the walk drives and
+    // assert the attach actually lands.
+    var n: Node = child::[ChTestComp](ChTestComp { tag: 0, attached: 0 });
+    let p: *u8 = core::presented_of(#addr_of(n));
+    let q: *ChTestComp = { p as *ChTestComp };
+    assert { (*q).attached } == 0;
+    core::fire_attach_handler(#addr_of(n));
+    assert { (*q).attached } == 1;
+}
+
+#[test]
+fn child_detach_fires_on_detach_and_frees_the_box() {
+    // Eviction is the node saying it no longer shows this component: the
+    // typed on_detach runs, then the box is reclaimed. Counted in a static
+    // because the instance is gone by the time the assert runs.
+    CH_DETACHED = 0;
+    CH_DROPPED = 0;
+    var n: Node = child::[ChTestComp](ChTestComp { tag: 3, attached: 0 });
+    assert core::presented_of(#addr_of(n)).is_not_null();
+    assert CH_DROPPED == 0;
+    let _e: bool = core::evict_presented(#addr_of(n));
+    assert CH_DETACHED == 1;
+    // The box was RECLAIMED, not merely forgotten — a leak would fire
+    // on_detach identically and never run the destructor.
+    assert CH_DROPPED == 1;
+    // Evicted means no second free when the node itself drops.
+    assert core::presented_of(#addr_of(n)).is_null();
+}
+
 
 // Each reason counted separately, so a test can tell which arrived.
 struct AlTestComp {

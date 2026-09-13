@@ -67,6 +67,12 @@ struct Renderer {
     insert: fn(*u8, *u8, *u8, usize),   // (ctx, host view, child view, slot)
     remove: fn(*u8, *u8, *u8),          // (ctx, host view, child view)
     schedule: fn(*u8),
+    // The window's DECLARATIONS changed — a `toolbar_item` or a menu row was
+    // written to after mount. Not `apply`: the thing that has to be re-read is
+    // the window's own furniture, and the node it hangs off has no view for
+    // `apply` to write to. Null is a legal answer (a backend that installs no
+    // toolbar and no menu bar), and then the write is inert rather than lost.
+    redeclare: fn(*u8, *core::Node, u32),
 }
 
 fn no_view_release(p: *u8) { return; }
@@ -80,6 +86,7 @@ fn renderer_none() -> Renderer {
         insert: 0 as fn(*u8, *u8, *u8, usize),
         remove: 0 as fn(*u8, *u8, *u8),
         schedule: 0 as fn(*u8),
+        redeclare: 0 as fn(*u8, *core::Node, u32),
     };
 }
 
@@ -488,7 +495,13 @@ fn sync() {
 }
 
 fn sync_walk(n: *core::Node) {
-    let _absorbed: bool = sync_subtree(n);
+    var declared: u32 = 0u32;
+    let _absorbed: bool = sync_subtree(n, declared);
+    // ONCE per walk, however many items changed. Re-reading a window's
+    // furniture is a whole-bar operation — the order of a toolbar is a property
+    // of all its items at once — so doing it per dirty node would rebuild the
+    // bar N times for one navigation.
+    if declared != 0u32 { redeclare_now(n, declared); }
 }
 
 // Apply every dirty node, and route the ones that have no view of their own.
@@ -506,15 +519,31 @@ fn sync_walk(n: *core::Node) {
 // child's change affects — a label reads its spans while rendering its text,
 // and there is no bit for "a run changed".
 //
+// And the case that rule does not cover, because "an ancestor draws it" is not
+// true of every viewless node: a `toolbar_item` is drawn by the WINDOW and a
+// `menu` by the application. `core::is_window_declaration` names those three,
+// and they raise `declared` instead of `pending` — the nearest backed ancestor
+// is a content view that does not own the bar, so absorbing them there was a
+// re-render of the wrong thing and a silently dropped write.
+//
 // Returns whether a viewless descendant changed and has not yet been absorbed
 // by a backed ancestor. The root absorbing nothing is correct: a viewless root
 // has no one to draw it, so there is nothing to re-apply.
-fn sync_subtree(n: *core::Node) -> bool {
+fn sync_subtree(n: *core::Node, ref declared: u32) -> bool {
     let backed: bool = core::view_of(n) != (0 as *u8);
     let d: u64 = core::dirty_of(n);
     var pending: bool = false;
     if d != (0 as u64) {
-        if backed { apply_now(n); } else { pending = true; }
+        // Three cases, not two. The third is `core::is_window_declaration`: a
+        // node with no view whose answer is not drawn by any ANCESTOR either,
+        // because its host is the window's toolbar or the application's menu
+        // bar. Routing it to the nearest backed ancestor re-applies a content
+        // view that does not own the bar — the write is cleared and nothing on
+        // screen moves, which is the failure the second case was written to
+        // stop and did not reach this far.
+        if backed { apply_now(n); }
+        else if core::is_window_declaration(n) { declared = declared | core::window_declaration_of(n); }
+        else { pending = true; }
         core::clear_dirty(n);
     }
     var i: usize = 0 as usize;
@@ -522,8 +551,10 @@ fn sync_subtree(n: *core::Node) -> bool {
     while i < count {
         match core::child_of(n, i) {
             // A BACKED child absorbs its own subtree's viewless changes, so
-            // this only ever carries what belongs to THIS host.
-            option::Option[*core::Node]::Some(c) => { if sync_subtree(c) { pending = true; } }
+            // this only ever carries what belongs to THIS host. `declared` is
+            // NOT absorbed that way — no view hosts a toolbar — so it rides all
+            // the way out to the walk's root.
+            option::Option[*core::Node]::Some(c) => { if sync_subtree(c, declared) { pending = true; } }
             option::Option[*core::Node]::None => { }
         }
         i = i +% (1 as usize);
@@ -543,6 +574,16 @@ fn apply_now(n: *core::Node) {
     if ap.is_not_null() { ap(RENDERER.ctx, n); }
 }
 
+// Tell the backend a window's declarations changed. `n` is the walk's root,
+// which for `sync` is a window root and for `sync_from` is wherever the caller
+// rooted it — the backend resolves the window from it and answers nothing when
+// there is none, so a realised row that somehow holds a declaration is inert
+// rather than a crash.
+fn redeclare_now(n: *core::Node, which: u32) {
+    let rd: fn(*u8, *core::Node, u32) = RENDERER.redeclare;
+    if rd.is_not_null() { rd(RENDERER.ctx, n, which); }
+}
+
 // ---- tests ------------------------------------------------------------------
 // The fake renderer is the portable conformance test: pure-C+ stubs behind
 // the same struct a real backend fills, so the whole description→views
@@ -557,6 +598,8 @@ static FR_SCHEDULES: i32 = 0;
 static FR_INS_HOSTS: vec::Vec[u64] = #zero::[vec::Vec[u64]]();
 static FR_INS_SLOTS: vec::Vec[u64] = #zero::[vec::Vec[u64]]();
 static FR_REMOVES: i32 = 0;
+static FR_REDECLARES: i32 = 0;
+static FR_DECLARED: u32 = 0u32;
 
 fn fr_reset() {
     app::reset_default_for_tests();
@@ -568,12 +611,21 @@ fn fr_reset() {
     FR_INS_HOSTS.truncate(0 as usize);
     FR_INS_SLOTS.truncate(0 as usize);
     FR_REMOVES = 0;
+    FR_REDECLARES = 0;
+    FR_DECLARED = 0u32;
 }
 
 fn fr_create(ctx: *u8, n: *core::Node) -> *u8 {
     let kind: u32 = core::kind_of(n);
     let keyed: bool = { (*n).key() } != "";
     if kind == (0 as u32) && !keyed { return 0 as *u8; }
+    // THE WINDOW DECLARATIONS GET NO VIEW, which is what every real backend
+    // answers (`wants_view` is false for all three) and what the fake used to
+    // get wrong. Backing them here made the conformance test disagree with the
+    // thing it stands in for, and hid the routing below: a `toolbar_item` with
+    // a view takes the `backed` branch and applies itself, which is a path no
+    // backend has.
+    if core::is_window_declaration(n) { return 0 as *u8; }
     FR_CREATES = FR_CREATES + 1;
     FR_NEXT = FR_NEXT +% (1 as u64);
     return FR_NEXT as *u8;
@@ -589,6 +641,11 @@ fn fr_insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
 
 fn fr_remove(ctx: *u8, host: *u8, child: *u8) { FR_REMOVES = FR_REMOVES + 1; return; }
 fn fr_schedule(ctx: *u8) { FR_SCHEDULES = FR_SCHEDULES + 1; return; }
+fn fr_redeclare(ctx: *u8, root: *core::Node, which: u32) {
+    FR_REDECLARES = FR_REDECLARES + 1;
+    FR_DECLARED = which;
+    return;
+}
 
 fn fr_renderer() -> Renderer {
     return Renderer {
@@ -599,6 +656,7 @@ fn fr_renderer() -> Renderer {
         insert: fr_insert,
         remove: fr_remove,
         schedule: fr_schedule,
+        redeclare: fr_redeclare,
     };
 }
 
@@ -2059,6 +2117,160 @@ fn a_declaration_beside_the_content_is_not_a_sibling_and_the_fill_still_passes()
         }
         option::Option[*core::Node]::None => { assert false; }
     }
+    uninstall();
+}
+
+// ---- the window declarations' own routing --------------------------------------
+
+// A root carrying one declaration of `kind` beside an ordinary control. Returned
+// BY VALUE because a view needs a named owner, and the test's own frame is the
+// one that outlives the window.
+fn declared_root(kind: u32) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(core::node_with("decl", kind, 0 as *u8, core::no_release));
+    b.add(fr_leaf("content"));
+    return core::column(b, key: "root");
+}
+
+fn declared_node(root: *core::Node) -> *core::Node {
+    return match core::find_in(root, "decl") {
+        option::Option[*core::Node]::Some(p) => p,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+}
+
+#[test]
+fn the_fake_gives_a_window_declaration_no_view_the_way_every_backend_does() {
+    fr_reset();
+    install(fr_renderer());
+    var root: core::Node = declared_root(props::K_TOOLBAR_ITEM);
+    assert mount(#addr_of(root));
+    sync();
+    let tb: *core::Node = declared_node(#addr_of(root));
+    assert tb.is_not_null();
+    // No view, so the routing below is the only thing that can carry a write.
+    assert core::view_of(tb) == (0 as *u8);
+    // ...and the ordinary control beside it still gets one, so this is a rule
+    // about declarations and not the fake declining everything.
+    match core::find_in(#addr_of(root), "content") {
+        option::Option[*core::Node]::Some(c) => { assert core::view_of(c).is_not_null(); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    uninstall();
+}
+
+#[test]
+fn a_dirty_toolbar_item_redeclares_the_window_instead_of_re_applying_an_ancestor() {
+    // THE BUG THIS EXISTS FOR. `set_enabled` on a toolbar item reached the tree,
+    // had its bit cleared by the walk, and changed nothing on screen — because
+    // the nearest backed ancestor is a content view that owns no toolbar, so
+    // re-applying it re-rendered the wrong thing.
+    fr_reset();
+    install(fr_renderer());
+    var root: core::Node = declared_root(props::K_TOOLBAR_ITEM);
+    assert mount(#addr_of(root));
+    // Drain whatever mounting raised, so the counters below measure the WRITE.
+    sync();
+    let tb: *core::Node = declared_node(#addr_of(root));
+    assert tb.is_not_null();
+    let applies: i32 = FR_APPLIES;
+    let redeclares: i32 = FR_REDECLARES;
+    core::set_enabled(tb, false);
+    sync();
+    // The window was told, exactly once...
+    assert FR_REDECLARES == redeclares + 1;
+    assert FR_DECLARED == core::D_TOOLBAR;
+    // ...and NOTHING was re-applied. An ancestor re-render here is the old
+    // behaviour: wasted work that never reaches the bar.
+    assert FR_APPLIES == applies;
+    // The bit is cleared either way — which is why the old failure was silent.
+    assert core::dirty_of(tb) == (0 as u64);
+    uninstall();
+}
+
+#[test]
+fn a_menu_row_says_menu_so_a_toolbar_write_never_rebuilds_the_bar() {
+    // The two are re-read differently: a toolbar item is refreshed in place and
+    // is invisible, a menu bar is REBUILT and closes a menu the user has pulled
+    // down. A backend told only "something changed" would have to do both.
+    fr_reset();
+    install(fr_renderer());
+    var root: core::Node = declared_root(props::K_MENU_ITEM);
+    assert mount(#addr_of(root));
+    sync();
+    let mi: *core::Node = declared_node(#addr_of(root));
+    assert mi.is_not_null();
+    core::set_enabled(mi, false);
+    sync();
+    assert FR_DECLARED == core::D_MENU;
+    assert (FR_DECLARED & core::D_TOOLBAR) == (0u32);
+    uninstall();
+}
+
+#[test]
+fn one_redeclare_per_walk_however_many_items_changed() {
+    // Re-reading a window's furniture is a WHOLE-BAR operation — the order of a
+    // toolbar is a property of all its items at once — so a navigation that
+    // greys three buttons must not rebuild the bar three times.
+    fr_reset();
+    install(fr_renderer());
+    var b: core::Builder = core::Builder::new();
+    b.add(core::node_with("a", props::K_TOOLBAR_ITEM, 0 as *u8, core::no_release));
+    b.add(core::node_with("b", props::K_TOOLBAR_ITEM, 0 as *u8, core::no_release));
+    b.add(core::node_with("c", props::K_TOOLBAR_ITEM, 0 as *u8, core::no_release));
+    var root: core::Node = core::column(b, key: "root");
+    assert mount(#addr_of(root));
+    sync();
+    let redeclares: i32 = FR_REDECLARES;
+    var touched: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(#addr_of(root));
+    while i < count {
+        match core::child_of(#addr_of(root), i) {
+            option::Option[*core::Node]::Some(c) => {
+                core::set_enabled(c, false);
+                touched = touched +% (1 as usize);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert touched == (3 as usize);
+    sync();
+    assert FR_REDECLARES == redeclares + 1;
+    uninstall();
+}
+
+#[test]
+fn a_viewless_box_still_makes_its_host_re_apply() {
+    // THE NEGATIVE, and the rule the new branch must not have swallowed. A node
+    // with no view that is NOT a window declaration is still drawn by an
+    // ancestor, and that ancestor still has to be told — this is the `span`
+    // routing, which the third case sits beside rather than replaces.
+    fr_reset();
+    install(fr_renderer());
+    var inner: core::Builder = core::Builder::new();
+    inner.add(fr_leaf("leaf"));
+    var b: core::Builder = core::Builder::new();
+    // Keyless and kind 0: the fake declines it, so it is viewless.
+    b.add(core::column(inner));
+    var root: core::Node = core::column(b, key: "root");
+    assert mount(#addr_of(root));
+    sync();
+    let applies: i32 = FR_APPLIES;
+    let redeclares: i32 = FR_REDECLARES;
+    match core::child_of(#addr_of(root), 0 as usize) {
+        option::Option[*core::Node]::Some(c) => {
+            assert core::view_of(c) == (0 as *u8);
+            core::set_enabled(c, false);
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    sync();
+    // The HOST re-applied — the old path, untouched...
+    assert FR_APPLIES > applies;
+    // ...and the window was not told anything, because no furniture changed.
+    assert FR_REDECLARES == redeclares;
     uninstall();
 }
 

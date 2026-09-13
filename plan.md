@@ -1,5 +1,10 @@
 # The agent surface has two front doors
 
+> Historical notes: the standalone host APIs discussed below were removed on
+> 2026-09-13. The current application model is documented in
+> [Facet navigation](vendor/facet/docs/navigation.md).
+
+
 Working notes, 2026-08-29. Scope: `agent_mcp`, `inspector`, `facet_agent`, and
 the `cpc init` scaffold. Everything below was checked against the tree at
 `f4f0a29`; where a claim is reasoned rather than run, it says so.

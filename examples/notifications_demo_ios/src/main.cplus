@@ -1,10 +1,11 @@
+import "facet/screen" as screen;
 // notifications_demo_ios — one permission, and a button per kind of
 // notification this package can post, on a phone.
 //
 // The same demo as examples/notifications_demo. Two differences, both of them
 // the platform's rather than the demo's: the entry is an `export extern fn`
 // because an iOS binary's `main` is ObjC and calls in, and the window is sized
-// by the device rather than by `run_component`.
+// by the device rather than by `App::run`.
 //
 // The permission row is first because nothing below it works until it says
 // Granted: both platforms accept a notification from an unauthorised app and
@@ -507,12 +508,24 @@ impl Demo: component::Lifecycle {
 }
 
 export extern fn notifications_demo_ios_main() -> i32 {
+
+    // The size arguments are ignored on a phone — the window is the screen —
+    // and passed anyway so this file stays readable next to its macOS twin.
+    let app = runtime::App::new("notifications_demo_ios");
+    app.on_launch(configure_theme);
+    app.window("main", main_window, chrome: screen::Chrome::new(
+        title: "Notifications", width: 560.0, height: 560.0));
+    let _run = app.run("main");
+    return 0;
+}
+
+impl Demo: screen::Screen {
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+fn main_window() -> screen::ScreenBox { return screen::screen_box(Demo::new()); }
+
+fn configure_theme(ctx: *u8) {
     theme::set_theme(theme::Theme::new(
         primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
     ));
-    // The size arguments are ignored on a phone — the window is the screen —
-    // and passed anyway so this file stays readable next to its macOS twin.
-    runtime::run_component(Demo::new(), title: "Notifications",
-                           width: 390.0, height: 844.0);
-    return 0;
 }

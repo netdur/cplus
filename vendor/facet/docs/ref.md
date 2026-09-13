@@ -213,9 +213,9 @@ concept renders an ordinary pane and is not wrong.
 window's navigation surface and wants the title bar out of its way:
 
 ```cplus
-runtime::run_component(App::new(), title: "Notes",
-                       width: 820.0f64, height: 520.0f64,
-                       bar: screen::Bar::Blended);
+app.window("main", home_factory, chrome: screen::Chrome::new(
+    title: "Notes", width: 820.0f64, height: 520.0f64,
+    bar: screen::Bar::Blended));
 ```
 
 The two spellings differ, and both are legal:
@@ -339,7 +339,10 @@ Backends: AppKit and UIKit answer. GTK has no probe installed and answers
 
 ```cplus
 interface Component { fn build(ref this) -> Node; }
-interface Lifecycle { fn on_attach(ref this); fn on_detach(ref this); }
+interface Lifecycle {
+    fn on_attach(ref this, why: component::Attach);
+    fn on_detach(ref this, why: component::Detach);
+}
 ```
 
 `item_of(sender)` answers what a node stands for, when the application set one
@@ -351,7 +354,9 @@ with `set_item`. Borrowed: facet never frees it.
 `height`, `min_width`, `min_height`, `max_width`, `max_height`, `bar`,
 `maximizable`, `minimizable`, `zoomable`, `min_zoom`, `max_zoom`.
 
-Zero means unconstrained for the size fields, on each axis independently.
+Pass chrome to `app.window(name, factory, chrome:)`. It belongs to the native
+window definition, not to routed screen content. Minimum dimensions default
+to 800×600; zero disables a minimum or maximum constraint on that axis.
 
 `Bar` is `Native`, `Blended`, `Hidden` or `Custom`. `Custom` hides the standard
 buttons so `window_buttons()` can supply its own; pair it with `.window_drag()`
@@ -366,7 +371,8 @@ rename itself when the menu opens.
 
 ```cplus
 interface Screen {
-    fn chrome(this) -> Chrome;
+    fn on_context(ref this, context: nav::Context) { }
+    fn on_navigation(ref this, state: nav::State) { }
     fn menu_items(this) -> vec::Vec[MenuItem];
 }
 ```
@@ -375,25 +381,36 @@ interface Screen {
 
 ## facet_runtime/runtime
 
-(Moved out of facet, 2026-08-17: the boot facade is its own package —
-see `vendor/facet_runtime/README.md`. The surface below is unchanged;
-only the import path moved.)
+The application facade is its own package: [facet_runtime](../../facet_runtime/README.md).
+The signatures below describe the window-owned navigation API.
+
+`runtime::app() -> App` retrieves the running app from a screen or component
+action. For example, `runtime::app().open_window("model_library")` opens or
+activates a registered window without app-specific global storage or an
+`install(app)` helper. `App::new(...)` creates a separate app instead.
+`runtime::app_running() -> bool` reports whether an app is running. Without
+one, `app()` returns the process default handle and opening a window is refused.
+The Windows facade does not yet expose `app()`; see
+[accessing the running app](navigation.md#access-the-running-app-from-a-screen).
 
 `App::new(name)` then:
 
 | | |
 |---|---|
-| `screen(name, factory)` | register a named route |
+| `window(name, factory, chrome:)` | register a window definition; returns a definition handle |
+| `definition.route(name, factory) -> bool` | register a content route for that definition |
+| `open_window(name, key:, params:)` | create or activate a name/key instance; returns `Option[window::Window]` |
+| `find_window(name, key:)` | retrieve an instance without activation; returns `Option[window::Window]` |
+| `quit() -> bool` | request application shutdown where supported |
 | `menu(build)` | the app menu |
 | `on_launch(f, ctx:)` `on_quit(f)` | process hooks |
-| `agent_mcp(path)` | serve the agent surface on a Unix socket |
-| `run(initial, arg:) -> Status` | run the loop |
+| `agent_mcp(id)` | name the agent surface; transport is platform-specific |
+| `run(initial, key:) -> Status` | run the loop |
 
-`run_component(c)` and `run_screen(s, menu:)` are smaller hosts for one
-component or one screen. `run_component` also takes `title`, `width`,
-`height`, the zoom trio (`zoomable`, `min_zoom`, `max_zoom`) and `bar` — the
-Chrome fields a one-component app is most likely to want without adopting
-`Screen` to get at them.
+`App::run` is the sole application host. Register routes on a window definition,
+then use `app.open_window` / `app.find_window` to obtain the instance and
+`w.nav()` to navigate it. Window chrome comes from registration. See the
+[ownership and navigation guide](navigation.md).
 
 Window and app readers: `display_density`, `observe_display_density`,
 `is_window_active`, `observe_window_size`, `observe_backgrounding`,
@@ -444,14 +461,48 @@ reimplemented — the panel is the sandbox door. **They also BLOCK**, so an app
 that must stay answerable while one is open should not use them; an application
 that needs an agent to choose a file has to offer a path some other way.
 
-## facet/nav
+## facet/window and facet/nav
 
-`go(route, arg:)` replaces the current screen. `push(route, arg:)` opens one
-alongside. `pop()` closes the newest. `quit()` ends the loop. `arg()` reads
-what the caller passed.
+`window::Window` is a handle to one instance. It exposes `name()`, `key()`,
+`is_live()`, `activate()`, `close()`, `request_close()`, `root()`, and `nav()`.
+Closing one registered window leaves handles to other registered windows live.
+A closed handle cannot address a replacement instance with the same name/key.
 
-Outside a running `App` these answer false or no-op: that is the portable
-posture, not a failure.
+Content commands use `w.nav()` or a retained screen context's `navigator()`:
+
+| Navigator method | Meaning |
+|---|---|
+| `push(route, arg:, params:, into:, key:) -> bool` | Show a new entry; omitted `into:` targets the whole content area |
+| `replace(route, arg:, params:, into:, key:) -> bool` | Replace the target while preserving its history position |
+| `pop() -> bool` | Undo this window's most recent push |
+| `forward() -> bool` | Restore an undone instance, retaining its local state |
+| `can_pop()` / `can_forward()` | Read available Back/Forward history |
+| `depth() -> usize` | Back entries, excluding base screens |
+| `current(into:) -> Option[nav::Context]` | Active screen in that target |
+| `state() -> nav::State` | Navigation snapshot with counts and revision |
+
+`slot(name, route:)` supplies a target with optional default route content.
+Back traverses one chronological history across the window's targets. Missing
+or ambiguous targets and unknown routes return false. Layout visibility does
+not redirect a slot. A failed command preserves history; a successful new
+navigation discards the Forward branch.
+
+`nav::Context` exposes `arg()`, `param(name)`, `window_name()`, `window_key()`,
+`root()`, `navigator()`, and `is_live()`. It arrives through `Screen::on_context`
+before build; mounted controls are available after mounting. `nav::State`
+arrives through `on_navigation` after mount and committed transitions, including
+on the surrounding screen when slots change. Its `can_pop()` and
+`can_forward()` methods support enabled/disabled controls. Reentrant commands
+during delivery are refused.
+
+`nav::Params` is an owning string-to-Text map, created by `nav::params_new()`.
+Navigation arguments belong to the screen instance, not to a global current
+screen. `screen::find(navigator, key)`, `screen::top(navigator, into:)`, and
+`screen::stack(navigator)` provide window-scoped screen inspection.
+
+There is no global content-navigation destination. `nav::pop` / `set_pop_fn`
+remain only for the native Android Back adapter. See [navigation.md](navigation.md)
+for a complete screen example and the removed-API migration table.
 
 ## facet/services
 
@@ -630,8 +681,7 @@ phone. Both are keyed on this process's pid, so a launcher that spawned the app
 can compute the address without being told; the app also reports it on stderr
 and writes it to `/tmp/mcp-<id>-<pid>.json`. An id containing `/` is refused.
 
-It is a free function on every host tier — `run`, `run_component`, `run_screen`
-and `App::run` alike — and `App::agent_mcp(id)` forwards to it, defaulting to
+It is available before application startup, and `App::agent_mcp(id)` forwards to it, defaulting to
 the app's own name when called with no argument. There is ONE address per
 process. **No `agent_mcp` call, no server**: nothing outside the program can
 turn one on.

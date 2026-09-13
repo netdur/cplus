@@ -3,6 +3,17 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## Unreleased — Facet navigation redesign
+
+- Applications register windows with `app.window(name, factory, chrome:)` and
+  start through `App::run`. Window instances are addressed by name and key.
+- Each window owns routes, default slots, and retained Back/Forward history.
+  Screens receive instance arguments and navigation-state hooks. Window opening
+  never falls back to content navigation on another platform.
+- Removed `app.screen`, `Screen::chrome`, the standalone runtime hosts and
+  `runtime::Window`, global content navigation, and `nav::Show` modes.
+  See the [migration table](vendor/facet/docs/navigation.md#migration-from-the-previous-api).
+
 ## v0.0.27 — 2026-08-14
 
 > From v0.0.26 (~677 commits, 2026-07-02 → 2026-08-11). Three strands: the

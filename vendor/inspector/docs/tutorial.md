@@ -14,6 +14,12 @@ inspector = "*"
 ```cplus
 import "inspector/widget" as panel;
 import "facet_agent/inspect_tree" as itree;
+import "facet/component" as component;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/screen" as screen;
+import "facet_runtime/runtime" as runtime;
+import "stdlib/vec" as vec;
 ```
 
 ## A panel beside your app
@@ -36,23 +42,34 @@ impl Probe: component::Component {
 }
 ```
 
-facet fires `Lifecycle` for the component the runtime owns, not for one nested
-inside another's tree — so the host runs the panel's two hooks:
+This example calls the field's `build()` directly, so the host forwards Mount
+and Unmount to it explicitly. A child mounted through `component::child` has
+its lifecycle managed automatically; do not also forward hooks in that case:
 
 ```cplus
 impl Probe: component::Lifecycle {
-    fn on_attach(ref this) { panel::attach(#addr_of(this.panel)); return; }
-    fn on_detach(ref this) { panel::detach(#addr_of(this.panel)); return; }
+    fn on_attach(ref this, why: component::Attach) {
+        if why == component::Attach::Mount { panel::attach(#addr_of(this.panel)); }
+    }
+    fn on_detach(ref this, why: component::Detach) {
+        if why == component::Detach::Unmount { panel::detach(#addr_of(this.panel)); }
+    }
 }
 ```
 
 ```cplus
+impl Probe: screen::Screen {
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+fn probe_window() -> screen::ScreenBox {
+    return screen::screen_box(Probe { panel: panel::embedded() });
+}
 fn main() -> i32 {
-    iplatform::install();
-    let probe: Probe = Probe { panel: panel::embedded() };
-    let _final: Probe = runtime::run_component(probe, title: "probe",
-                                               width: 1320.0f64, height: 680.0f64);
-    return 0;
+    let app = runtime::App::new("probe");
+    app.window("main", probe_window, chrome: screen::Chrome::new(
+        title: "probe", width: 1320.0f64, height: 680.0f64));
+    if app.run("main").is_ok() { return 0; }
+    return 1;
 }
 ```
 
@@ -111,8 +128,8 @@ Then `describe_tree`, `set`, `insert`, … See
 
 ## Day-one rules
 
-- **Install the platform module** before serving over a socket. Without it a
-  write from the server's thread trips facet's main-thread assertion.
+- **Start through `App::run`** so the runtime installs the platform backend.
+  Custom embedding code must install its backend before serving or mounting.
 - **Any removal invalidates every `Handle`** — describe again. Inserts do not.
 - **Tier 3 needs a key.** `text`, `title` and `on` go through generated typed
   handles, which resolve by key; an unkeyed node answers `Unsupported`.

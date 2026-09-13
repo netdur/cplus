@@ -22,6 +22,7 @@ import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/vec" as vec;
 import "facet/facet" as core;
+import "facet/application" as app;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
 import "facet/toolbar_item" as toolbar_item;
@@ -212,6 +213,10 @@ fn build_toolbar_button(item: *core::Node) -> *u8 {
     if { (*mi).is_destructive } { b.upcast().add_css_class("destructive-action"); }
     let name: str = { (*item).key() };
     if name != "" { b.upcast().set_name(name); }
+    // The shared band's `is_enabled`. GTK's word for it is SENSITIVITY, and an
+    // insensitive widget is greyed and takes no click — answered at the widget,
+    // so nothing undoes it later.
+    b.upcast().set_sensitive(core::is_enabled(item));
     g::set_data(b.raw(), item_node_key(), item as *u8);
     let _s: u64 = b.connect_clicked(toolbar_clicked, item as *u8);
     return b.upcast().raw();
@@ -271,6 +276,45 @@ fn next_sibling_raw(v: *u8) -> *u8 {
 // Pack a window's header bar from the toolbar items in its tree. Idempotent:
 // both sides are emptied and refilled, so a screen that edits its bar gets the
 // bar it now describes rather than that bar appended to the old one.
+// ---- the live half of the bar --------------------------------------------------
+// The header's buttons are built once, when the chrome is applied, and the nodes
+// they were built from go on being written to. mount routes a dirty
+// `toolbar_item` here rather than to the nearest backed ancestor, which is a
+// content widget that owns no header — see `core::is_window_declaration`.
+//
+// The node rides on its button already (`item_node_key`, which the click
+// callback reads), and the side boxes are OURS and therefore walkable — the
+// whole reason `side_box` exists rather than packing into the header directly.
+fn refresh_side(bx: *u8) {
+    if bx == (0 as *u8) { return; }
+    var cur: *u8 = first_child_raw(bx);
+    while cur != (0 as *u8) {
+        let n: *core::Node = g::get_data(cur, item_node_key()) as *core::Node;
+        if n != (0 as *core::Node) {
+            gtk::Widget::from_raw(cur).set_sensitive(core::is_enabled(n));
+        }
+        cur = next_sibling_raw(cur);
+    }
+    return;
+}
+
+// `which` names the furniture, so a toolbar write does not also rebuild the
+// menu — GTK's is the application's `GMenu` and is left alone here.
+fn redeclare(ctx: *u8, root: *core::Node, which: u32) {
+    if root == (0 as *core::Node) { return; }
+    if (which & core::D_TOOLBAR) == (0u32) { return; }
+    let w: *u8 = app::window_native(root);
+    if w == (0 as *u8) { return; }
+    match gtk::Window::from_raw(w).get_titlebar() {
+        option::Option[gtk::Widget]::Some(h) => {
+            refresh_side(g::get_data(h.raw(), leading_box_key()));
+            refresh_side(g::get_data(h.raw(), trailing_box_key()));
+        }
+        option::Option[gtk::Widget]::None => { }
+    }
+    return;
+}
+
 fn install_toolbar(header: *u8, root: *core::Node) {
     if header == (0 as *u8) { return; }
     if root == (0 as *core::Node) { return; }

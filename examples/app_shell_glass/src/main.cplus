@@ -1,0 +1,18 @@
+import "facet/screen" as screen;
+import "stdlib/status" as status;
+import "facet_runtime/runtime" as runtime;
+import "./home" as home;
+import "./section" as section;
+
+fn main() -> i32 {
+    let app: runtime::App = runtime::App::new("app_shell_glass");
+    let main = app.window("main", home::Home::boxed, chrome: screen::Chrome::new(title: "App Shell Glass",
+                                   width: 820.0f64,
+                                   height: 520.0f64,
+                                   bar: screen::Bar::Blended));
+    main.route("section", section::Section::boxed);
+    if app.run("main") == status::Status::Ok {
+        return 0;
+    }
+    return 1;
+}

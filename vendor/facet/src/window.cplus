@@ -1,34 +1,7 @@
-// facet window — the cursor over one of the app's windows. HAND-WRITTEN.
-//
-// The tier facet described and could not address. `application.cplus` has held
-// a per-window record since the start, and said at length why it is per-window
-// rather than a `CURRENT_WIN` static — and then every reader above it reached
-// its window through `app::newest_window_root()`, which is that static under
-// another name. It answers the SHEET while a sheet is up and the pushed screen
-// while one is pushed, because both are real mounts and therefore real windows
-// of the app. A screen saving its own frame on close saved the sheet's.
-//
-// So a window is addressed the way everything else in facet is addressed: by
-// KEY, through `find`, answering a typed cursor with the verbs on it.
-//
-//     match window::find("camera:front") {
-//         option::Option[window::Window]::Some(w) => {
-//             let f: vocab::Rect = w.frame();
-//             let _c: bool = w.close();
-//         }
-//         option::Option::None => { }
-//     }
-//
-// A key names a window only where the platform gave that screen one — on a
-// phone `nav::push("settings")` is a stack push and there is no settings
-// window, so this answers None. That is the honest answer rather than handing
-// back the one window there is.
-//
-// WHAT THIS IS NOT: a door into another component's fields. `root()` is here so
-// the tree can be READ — the agent surface, tests, and `within:` on the typed
-// finds, which is how one screen drives another's controls the same way an
-// agent does. Reaching past the tree for a component's state is the thing
-// SKILL §9 trap 8 names.
+// Handles for explicitly registered window instances. The app owns window
+// lifetime; a window's Navigator owns its content history. Public identity is
+// (definition name, instance key), and a closed handle never targets a new
+// instance at that name/key. Tree reads support scoped control lookup.
 
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -38,6 +11,7 @@ import "./facet" as core;
 import "./vocabulary" as vocab;
 import "./application" as app;
 import "./services" as services;
+import "./nav_model" as navigation;
 
 // ---- the platform seam --------------------------------------------------------
 // Same shape as `app::install_agent`: ONE struct, ONE install, so a hook
@@ -59,6 +33,7 @@ struct WindowHost {
     title: fn(*flex::Node) -> text::Text,
     set_title: fn(*flex::Node, str),
     close: fn(*flex::Node),
+    can_close: fn(*flex::Node) -> bool,
     // Ask before closing. A backend that has no such question leaves it null
     // and `request_close` falls back to `close`.
     request_close: fn(*flex::Node) -> bool,
@@ -83,27 +58,51 @@ fn uninstall_host() { HOST = #zero::[WindowHost](); return; }
 
 // ---- the cursor ---------------------------------------------------------------
 
-// Copy, like every other facet cursor, and stale-detectable the same way: the
-// node cursors capture `flex::removal_count()`, this captures
-// `app::window_removal_count()`. Conservative — any window closing invalidates
-// every window cursor — and that is deliberate. Comparing the root pointer
-// instead would call a cursor live after its window closed and the next window
-// was allocated at the same address, which is the failure a dashboard holding
-// a camera window's handle would actually hit.
+// Registered windows use stable session ids. Bare backend mounts retain the
+// conservative removal counter used by other tree cursors.
 struct Window {
+    navigation: navigation::Navigator,
     opaque _root: *flex::Node,
     _seen: u64,
 }
 
 impl Window {
     fn _of(root: *flex::Node) -> Window {
-        return Window { _root: root, _seen: app::window_removal_count() };
+        let r = navigation::registry(app::current());
+        if r.is_not_null() {
+            var i: usize = 0 as usize;
+            while i < (*r).sessions.count() {
+                match (*r).sessions.at_ptr(i) {
+                    option::Option[**navigation::Session]::Some(p) => {
+                        if (**p).root == root && !(**p).closing {
+                            return Window::of_navigation(navigation::Navigator { owner: app::current(), id: (**p).id });
+                        }
+                    }
+                    option::Option[**navigation::Session]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+        }
+        return Window { navigation: navigation::Navigator::none(), _root: root, _seen: app::window_removal_count() };
     }
 
-    // False once any window has closed since this cursor was made. Every verb
-    // below checks it, so a stale cursor is inert rather than a trap — the
-    // dashboard-holds-a-closed-camera-window case.
+    fn of_navigation(n: navigation::Navigator) -> Window {
+        let s = navigation::session(n.owner, n.id);
+        var root: *flex::Node = 0 as *flex::Node;
+        if s.is_not_null() { root = (*s).root; }
+        return Window { navigation: n, _root: root, _seen: app::window_removal_count() };
+    }
+    fn nav(this) -> navigation::Navigator { return this.navigation; }
+    fn name(this) -> str {
+        let s = navigation::session(this.navigation.owner, this.navigation.id);
+        if s.is_null() { return ""; }
+        return (*s).name.view();
+    }
+
+    // False once this registered instance closes. Closing another registered
+    // window does not invalidate this handle.
     fn is_live(this) -> bool {
+        if this.navigation.id != (0 as u64) { return this.navigation.is_live(); }
         if this._seen != app::window_removal_count() { return false; }
         return app::has_window_root(this._root);
     }
@@ -111,6 +110,8 @@ impl Window {
     // The name this window is open under, "" for one nothing named.
     fn key(this) -> str {
         if !this.is_live() { return ""; }
+        let s = navigation::session(this.navigation.owner, this.navigation.id);
+        if s.is_not_null() { return (*s).key.view(); }
         return app::window_key_of(this._root);
     }
 
@@ -180,7 +181,7 @@ impl Window {
     // backend seam, no native window, or the cursor is stale.
     fn activate(this) -> bool {
         if !this.is_live() { return false; }
-        return app::activate_window(this.key());
+        return app::activate_window(app::window_key_of(this._root));
     }
 
     // Close it, no questions asked. The window's own teardown still runs — on
@@ -189,11 +190,16 @@ impl Window {
     // takes.
     fn close(this) -> bool {
         if !this.is_live() { return false; }
+        let s = navigation::session(this.navigation.owner, this.navigation.id);
+        if s.is_not_null() && (*s).busy { return false; }
+        let allowed = HOST.can_close;
+        if allowed.is_not_null() && !allowed(this._root) { return false; }
         let f: fn(*flex::Node) = HOST.close;
         if f.is_not_null() { f(this._root); return true; }
+        if s.is_not_null() { return false; }
         // No backend: the record is still the app's to keep straight, so the
         // headless answer is to drop the window from the list.
-        return app::close_window_keyed(this.key());
+        return app::close_window_keyed(app::window_key_of(this._root));
     }
 
     // ASK, and honour a refusal. A screen with unsaved work answers false, puts
@@ -206,6 +212,10 @@ impl Window {
     // platform that cannot ask has nobody to refuse.
     fn request_close(this) -> bool {
         if !this.is_live() { return false; }
+        let s = navigation::session(this.navigation.owner, this.navigation.id);
+        if s.is_not_null() && (*s).busy { return false; }
+        let allowed = HOST.can_close;
+        if allowed.is_not_null() && !allowed(this._root) { return false; }
         let f: fn(*flex::Node) -> bool = HOST.request_close;
         if f.is_null() { return this.close(); }
         return f(this._root);
@@ -250,8 +260,13 @@ impl Window {
 // THE one window open under `key`, or None. Not "the first of several": a key
 // already open is refused a second time (`app::open_window`), so a live key
 // names exactly one window.
-fn find(key: str) -> option::Option[Window] {
-    let r: *flex::Node = app::window_for_key(key);
+fn find(name: str, key: str = "") -> option::Option[Window] {
+    match find_in(app::current(), name, key) {
+        option::Option[Window]::Some(w) => { return option::Option[Window]::Some(w); }
+        option::Option[Window]::None => { }
+    }
+    if key != "" { return option::Option[Window]::None; }
+    let r: *flex::Node = app::window_for_key(name);
     if r.is_null() { return option::Option[Window]::None; }
     return option::Option[Window]::Some(Window::_of(r));
 }
@@ -264,6 +279,25 @@ fn primary() -> option::Option[Window] {
     let r: *flex::Node = app::primary_window_root();
     if r.is_null() { return option::Option[Window]::None; }
     return option::Option[Window]::Some(Window::_of(r));
+}
+
+fn find_in(owner: *app::Application, name: str, key: str = "") -> option::Option[Window] {
+    let r = navigation::registry(owner);
+    if r.is_null() { return option::Option[Window]::None; }
+    var i: usize = 0 as usize;
+    while i < (*r).sessions.count() {
+        match (*r).sessions.at_ptr(i) {
+            option::Option[**navigation::Session]::Some(p) => {
+                if !(**p).closing && (**p).name.view() == name && (**p).key.view() == key {
+                    return option::Option[Window]::Some(Window::of_navigation(
+                        navigation::Navigator { owner: owner, id: (**p).id }));
+                }
+            }
+            option::Option[**navigation::Session]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[Window]::None;
 }
 
 // Every window of the running app, in OPEN order. Unnamed windows are in the

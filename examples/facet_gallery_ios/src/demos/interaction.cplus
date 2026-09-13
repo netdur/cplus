@@ -73,14 +73,14 @@ fn draw_badge(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
 
 impl Canvas: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var cv: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var cv: core::Builder = core::Builder::new();
         cv.add(ui::canvas(key: "t:canvas", drawable: vocab::Drawable::of(draw_badge))
                    .height(120.0));
         cv.add(shell::caption("Every shape above was RECORDED by a function that names no platform, then replayed — against Core Graphics on iOS and against android.graphics on Android. The same list, the same replay loop and the same arc convention; the reader is the only part that differs."));
         body.add(shell::card("A RECORDED DRAWING", cv));
 
-        var note: flex::Builder = flex::Builder::new();
+        var note: core::Builder = core::Builder::new();
         note.add(shell::caption("A UIView SCALES the drawing it already has when its bounds change; an NSView is asked to draw again. A canvas whose first display happened at zero size has nothing to scale, so this one asks for contentMode Redraw and re-invalidates from the layout pass. Without both it was blank on every launch."));
         body.add(shell::card("THE ONE THING THAT DIFFERS", note));
 
@@ -116,10 +116,10 @@ fn say(what: str) {
 
 impl Swipe: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var sw: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var sw: core::Builder = core::Builder::new();
 
-        var row_body: flex::Builder = flex::Builder::new();
+        var row_body: core::Builder = core::Builder::new();
         row_body.add(ui::label("Meeting notes", key: "t:title", font_size: 15.0,
                                font_weight: vocab::FontWeight::Medium));
         row_body.add(ui::label("Drag me to the left", key: "t:sub",
@@ -143,7 +143,7 @@ impl Swipe: component::Component {
         // no frame, and the platform decides what opens it. macOS right-clicks,
         // Android long-presses, iOS does neither — which is why the swipe above
         // exists.
-        var menu_body: flex::Builder = flex::Builder::new();
+        var menu_body: core::Builder = core::Builder::new();
         menu_body.add(ui::label("Long-press me", font_size: 16.0));
         menu_body.add(ui::label("the same two actions, as a menu", font_size: 13.0,
                                 text_color: vocab::Color::ink(0.55)));
@@ -181,8 +181,8 @@ impl Radio { fn new() -> Radio { return Radio { _unused: 0 }; } }
 
 impl Radio: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var rd: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var rd: core::Builder = core::Builder::new();
         rd.add(ui::radio(true, key: "t:r1", text: "Every hour", group: "when",
                          font_size: 16.0));
         rd.add(ui::radio(false, key: "t:r2", text: "Every day", group: "when",
@@ -192,7 +192,7 @@ impl Radio: component::Component {
         rd.add(shell::caption("Tap one and the others turn off. Nothing in UIKit does that, so facet's group name is walked over the mounted tree — the only place the siblings can be found."));
         body.add(shell::card("ONE GROUP, THREE MEMBERS", rd));
 
-        var why: flex::Builder = flex::Builder::new();
+        var why: core::Builder = core::Builder::new();
         why.add(shell::caption("A radio was a UISwitch here until this pass, honouring 3 of its 14 props. A switch has nowhere to put a title, a font, a border or a radius — and a radio has all four — so it is a UIButton carrying `circle` / `inset.filled.circle` images, which is the shape iOS uses for an exclusive choice. `isSelected` is the state the two images are set for, so the dot is UIKit's to draw."));
         body.add(shell::card("WHY NOT A SWITCH", why));
 
@@ -247,12 +247,12 @@ impl Split { fn new() -> Split { return Split { _unused: 0 }; } }
 
 impl Split: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var sp: flex::Builder = flex::Builder::new();
-        var panes: flex::Builder = flex::Builder::new();
-        panes.add(shell::painted(ui::column(flex::Builder::new()),
+        var body: core::Builder = core::Builder::new();
+        var sp: core::Builder = core::Builder::new();
+        var panes: core::Builder = core::Builder::new();
+        panes.add(shell::painted(ui::column(core::Builder::new()),
                                  vocab::Color::system_teal(), 8.0));
-        panes.add(shell::painted(ui::column(flex::Builder::new()),
+        panes.add(shell::painted(ui::column(core::Builder::new()),
                                  vocab::Color::system_indigo(), 8.0));
         sp.add(ui::split(panes, key: "t:split", axis: m_split::SplitAxis::Rows,
                          position: 44.0, min_leading: 20.0,
@@ -261,7 +261,7 @@ impl Split: component::Component {
         sp.add(shell::caption("The divider sits at `position` 44, clamped by both minimums, with the hairline drawn in the gap between the panes. The leading pane takes a fixed main-axis size and the trailing one takes the remainder from a zero basis — all of it flex, none of it UIKit."));
         body.add(shell::card("TWO PANES", sp));
 
-        var no: flex::Builder = flex::Builder::new();
+        var no: core::Builder = core::Builder::new();
         no.add(ui::label("position 44", key: "t:pos", font_size: 13.0,
                          text_color: vocab::Color::ink(0.7)));
         no.add(shell::caption(drag_note()));

@@ -7490,7 +7490,8 @@ fn run_init(args: &[OsString]) -> ExitCode {
              stdlib        = \"*\"\n\
              facet         = \"*\"\n\
              facet_runtime = \"*\"\n\
-             flex_layout   = \"*\"\n{closures}"
+             flex_layout   = \"*\"\n\
+             events        = \"*\"\n{closures}"
         )
     } else {
         format!(
@@ -7590,16 +7591,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   fn on_detach(ref this, why: component::Detach) {{ }}\n\
          }}\n\n\
          impl Home: screen::Screen {{\n\
-         \x20   fn chrome(this) -> screen::Chrome {{\n\
-         \x20       // Width and height describe nothing on a phone — the screen IS the\n\
-         \x20       // window — but they are the same facade on both platforms and the\n\
-         \x20       // iOS backend drops them.\n\
-         \x20       return screen::Chrome::new(title: \"{proj_name}\",\n\
-         \x20                                  width: 390.0, height: 844.0);\n\
-         \x20   }}\n\
-         \x20   fn menu_items(this) -> vec::Vec[screen::MenuItem] {{\n\
-         \x20       return vec::new::[screen::MenuItem]();\n\
-         \x20   }}\n\
+         \x20   fn menu_items(this) -> vec::Vec[screen::MenuItem] {{ return vec::new::[screen::MenuItem](); }}\n\
          }}\n\n\
          // WHAT A ROUTE REGISTERS: a plain factory, so the registry is one shape\n\
          // whatever the screens are. It builds a FRESH screen each time the route\n\
@@ -7607,22 +7599,8 @@ fn run_init(args: &[OsString]) -> ExitCode {
          fn home_boxed() -> screen::ScreenBox {{\n\
          \x20   return screen::screen_box::[Home](Home::new());\n\
          }}\n\n\
-         // Every entry — macOS, iOS and Android alike — comes through here.\n\
-         //\n\
-         // `runtime::App` is the tier, and all three backends implement it now.\n\
-         // A screen is registered under a NAME and `run` shows one of them, so\n\
-         // the second screen costs one line rather than a rewrite:\n\
-         //\n\
-         //     app.screen(\"settings\", settings::boxed);\n\
-         //     nav::push(\"settings\");            // a window where there is room,\n\
-         //                                        // a stack entry where there is not\n\
-         //     nav::go(\"workspace\");             // REPLACE this screen; no way back\n\
-         //\n\
-         // This used to scaffold `run_screen` — the one-screen tier — because\n\
-         // Android's `App::run` refused and an app built on it came up to a\n\
-         // blank Activity. That was fixed on 2026-09-06 and verified on a\n\
-         // device, so the scaffold starts where an app is going rather than\n\
-         // where it can get stuck.\n\
+         // Each app explicitly registers its windows. Routes and history belong\n\
+         // to a window; opening a window never becomes a content push.\n\
          fn run() -> i32 {{\n\
          \x20   // DRIVEABLE BY AN AGENT, and by the IDE that launched it. Two\n\
          \x20   // lines, each saying what it does:\n\
@@ -7654,7 +7632,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   // loop: an App the caller owned would be dropped the moment\n\
          \x20   // `main` unwound.)\n\
          \x20   let app: runtime::App = runtime::App::new(\"{proj_name}\");\n\
-         \x20   app.screen(\"home\", home_boxed);\n\
+         \x20   app.window(\"home\", home_boxed, chrome: screen::Chrome::new(title: \"{proj_name}\"));\n\
          \x20   // No id: it defaults to the app's own name.\n\
          \x20   app.agent_mcp();\n\n\
          \x20   // The route `run` shows first. An unregistered name is refused\n\

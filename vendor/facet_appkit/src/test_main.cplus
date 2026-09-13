@@ -10175,6 +10175,132 @@ fn a_destructive_toolbar_item_carries_a_red_button() {
     rt::release(map);
 }
 
+// ---- a toolbar item's enabled state ------------------------------------------
+// `set_enabled` on a toolbar item did nothing for as long as this tier existed,
+// and it took THREE separate faults to make that true: the item was built
+// without ever reading the bit, no write could reach it afterwards because an
+// NSToolbarItem is not a view, and AppKit would have undone a `setEnabled:NO`
+// anyway. Each of the three is asserted below, because fixing two of them still
+// leaves the verb dead.
+
+fn tb_enabled(item: *u8) -> bool {
+    return { rt::msg_i8(item, rt::sel(#str_ptr("isEnabled\0"))) } != (0 as i8);
+}
+
+fn tb_label(item: *u8) -> text::Text {
+    return bridge::to_text({ rt::msg_id(item, rt::sel(#str_ptr("label\0"))) });
+}
+
+#[test]
+fn a_toolbar_item_is_built_with_the_nodes_enabled_state_and_never_revalidates() {
+    backend::install();
+    var on: core::Node = toolbar_item::toolbar_item("On", key: "tb:on");
+    var off: core::Node = toolbar_item::toolbar_item("Off", key: "tb:off");
+    core::set_enabled(#addr_of(off), false);
+    let a: *u8 = controls::build_toolbar_item(#addr_of(on));
+    let b: *u8 = controls::build_toolbar_item(#addr_of(off));
+    assert a.is_not_null();
+    assert b.is_not_null();
+    // The bit is READ at build. It was not, so an item declared disabled came
+    // up live.
+    assert tb_enabled(a);
+    assert tb_enabled(b) == false;
+    // AUTOVALIDATION IS OFF on both. An NSToolbarItem whose target responds to
+    // its action re-enables ITSELF on every `validateVisibleItems` pass, so
+    // leaving this on would undo the line above before the bar is next drawn —
+    // the same trap `disable_last_popup_item` names for NSPopUpButton.
+    assert { rt::msg_i8(a, rt::sel(#str_ptr("autovalidates\0"))) } == (0 as i8);
+    assert { rt::msg_i8(b, rt::sel(#str_ptr("autovalidates\0"))) } == (0 as i8);
+}
+
+#[test]
+fn a_write_after_the_bar_is_built_lands_on_the_item_that_is_already_in_it() {
+    // THE LIVE HALF. The NSToolbarItem is built once, when the window opens, so
+    // a `set_enabled` from a navigation handler has to find the item that is
+    // already installed and write to it — which is what `window::redeclare`
+    // routes to, through the identifier map the bar was built from.
+    backend::install();
+    var b: core::Builder = core::Builder::new();
+    b.add(toolbar_item::toolbar_item("Back", key: "tb:back", icon: "chevron.left"));
+    var root: core::Node = core::column(b, key: "lvroot");
+    let ids: *u8 = { rt::alloc_init(#str_ptr("NSMutableArray\0")) };
+    let map: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    window::collect_toolbar_items(#addr_of(root), ids, map);
+    let item: *u8 = { rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")),
+                                    bridge::nsstring("tb:back")) };
+    assert item.is_not_null();
+    assert tb_enabled(item);
+    // The node is written to the way an application writes it...
+    match toolbar_item::find("tb:back", within: #addr_of(root)) {
+        option::Option[toolbar_item::ToolbarItem]::Some(c) => {
+            c.set_enabled(false);
+            c.set_text("Backwards");
+        }
+        option::Option[toolbar_item::ToolbarItem]::None => { assert false; }
+    }
+    // ...and the item on the bar has not moved yet, which is the whole failure:
+    // the tree took the write and the screen did not.
+    assert tb_enabled(item);
+    // The routing, with the node found by KEY rather than by the bar's order —
+    // a user may rearrange a toolbar, and matching on position would write the
+    // wrong item the first time they did.
+    match core::find_in(#addr_of(root), "tb:back") {
+        option::Option[*core::Node]::Some(np) => { window::refresh_toolbar_node(map, np); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    assert tb_enabled(item) == false;
+    assert tb_label(item).view() == "Backwards";
+    rt::release(ids);
+    rt::release(map);
+}
+
+#[test]
+fn a_destructive_items_button_is_greyed_with_it() {
+    // A destructive item is an NSButton wearing an item's identifier, and the
+    // click lands on the BUTTON — the item was never given a target — so greying
+    // only the item would grey nothing that can be pressed.
+    //
+    // NSToolbarItem forwards `setEnabled:` to a view that answers it, so this
+    // needs no second write. It DOES need the order: the forward happens at the
+    // moment of the write, so an item greyed before `setView:` keeps a live
+    // button. That is what this pins, and it is why `build_toolbar_item` applies
+    // the live half last.
+    backend::install();
+    var n: core::Node = toolbar_item::toolbar_item("Erase", key: "tb:gone",
+                                                   destructive: true);
+    core::set_enabled(#addr_of(n), false);
+    let item: *u8 = controls::build_toolbar_item(#addr_of(n));
+    assert item.is_not_null();
+    let v: *u8 = { rt::msg_id(item, rt::sel(#str_ptr("view\0"))) };
+    assert v.is_not_null();
+    assert { rt::msg_i8(v, rt::sel(#str_ptr("isEnabled\0"))) } == (0 as i8);
+}
+
+#[test]
+fn a_refresh_that_cannot_find_its_item_or_its_props_does_nothing() {
+    // THE NEGATIVES, both of which a live app reaches. A `toolbar_item` added to
+    // the tree after the window opened has no NSToolbarItem, and a node that is
+    // not a toolbar item at all can be handed in by a walk that got it wrong.
+    backend::install();
+    let map: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    var late: core::Node = toolbar_item::toolbar_item("Late", key: "tb:late");
+    // Not in the map: nothing built, nothing raised.
+    window::refresh_toolbar_node(map, #addr_of(late));
+    // A keyless item cannot be addressed at all, and must not match whatever
+    // the empty string happens to look up.
+    var keyless: core::Node = toolbar_item::toolbar_item("No key");
+    window::refresh_toolbar_node(map, #addr_of(keyless));
+    // A null item, and a node that is not a toolbar item, both answer nothing.
+    var plain: core::Node = core::column(core::Builder::new(), key: "tb:plain");
+    controls::refresh_toolbar_item(0 as *u8, #addr_of(plain));
+    let item: *u8 = controls::build_toolbar_item(#addr_of(late));
+    assert item.is_not_null();
+    controls::refresh_toolbar_item(item, #addr_of(plain));
+    // Untouched — a wrong-kind node must not blank the label of a real item.
+    assert tb_label(item).view() == "Late";
+    rt::release(map);
+}
+
 // ---- grouping and selection, the two carriers facet did not have --------------
 // `IsGrouped` and `SelectionMode` each had a carrier for the SWITCH and nothing
 // for what it switches on: the ledger binds a list of lists and a SelectedItem, and
@@ -15651,6 +15777,38 @@ fn a_vended_row_carries_the_index_it_was_built_for() {
 }
 
 #[test]
+fn a_vended_row_stamps_the_index_on_the_cell_a_sender_climbs_to() {
+    backend::install();
+    // THE VIEW HALF, and the one that makes the seam actually readable.
+    // `a_vended_row_carries_the_index_it_was_built_for` asserts the NODE's
+    // index — but `component::item_index_of(sender)` never reads a node. It
+    // climbs SUPERVIEWS to the nearest tagged view, so the index has to reach
+    // a view or the read answers None with the node perfectly tagged.
+    //
+    // It did. A row root is viewless — `fill_cell` says so, and `@ui { .. }`
+    // guarantees it, since a block finishes as a bare wrapper around the node
+    // the builder wrote. Stamping the root marked it C_HANDLERS-dirty and the
+    // sync walk skipped it for want of a view, so a gesture inside the row
+    // climbed past it to the cell and found nothing. Every click in a relist
+    // answered None. The cell is the row's host view; the index lives there
+    // too now.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 6 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "ixv", builder: rlb_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let cell: *u8 = recycler::make_cell(v);
+    recycler::fill_into(v, cell, 4 as i64);
+    // `set_item_index` stores index+1, so 0 can mean "carries none".
+    let tagged: *u8 = { synth::get_associated(cell, input::item_key()) };
+    assert tagged.is_not_null();
+    assert { tagged as usize } == (5 as usize);
+}
+
+#[test]
 fn a_row_that_was_never_vended_carries_no_index() {
     backend::install();
     // THE NEGATIVE HALF, and why `item_index_of` answers an Option rather than
@@ -15889,7 +16047,7 @@ fn attaching_a_gesture_twice_replaces_rather_than_stacks() {
 // the backend reaches for is not the application's problem, so a row inside a
 // list has to behave exactly as the same row does outside one.
 //
-// It did not. `examples/sidebar_demo` has both — the same icon, the same label,
+// It did not. `examples/app_shell_glass` has both — the same icon, the same label,
 // the same `.gesture(on_click:)` — and the one inside the relist fired only
 // over the row's free space. Measured, in a running window:
 //
@@ -15913,7 +16071,7 @@ fn rlc_list(count: usize) -> core::Node {
 }
 
 fn rlc_row(index: usize, ctx: *u8) -> core::Node {
-    // THE ROW THE BUG WAS REPORTED AGAINST, as `examples/sidebar_demo` builds
+    // THE ROW THE BUG WAS REPORTED AGAINST, as `examples/app_shell_glass` builds
     // it: an icon and a label inside a row that carries the gesture.
     var b: core::Builder = core::Builder::new();
     b.add(symbol::system_symbol("folder", key: "row:icon", size: 19.0f64));
@@ -15975,7 +16133,7 @@ fn a_relist_recycles_on_a_view_that_does_not_take_the_first_responder_question()
     // answers NO for a view in a row that is not selected, so a press over a
     // row's LABEL was refused and went to the table's selection tracking, which
     // consumes the release — and a click is reported on the release. Measured in
-    // a running `examples/sidebar_demo`, one row, two places on it:
+    // a running `examples/app_shell_glass`, one row, two places on it:
     //
     //   over the free space  hits FacetInput00  table validates it: 1   fired
     //   over the LABEL       hits NSTextField   table validates it: 0   nothing
@@ -16164,4 +16322,135 @@ fn a_sidebar_does_not_collapse_from_a_window_resize() {
     // told the minimum the application stated rather than a constant.
     assert ak::SplitViewController::from_raw(ctrl)
         .minimum_thickness_for_inline_sidebars() == 170.0f64;
+}
+
+#[test]
+fn a_toolbar_items_sender_answers_its_key() {
+    // WHAT A HANDLER SHARED BY SEVERAL TOOLBAR ITEMS ASKS. `on_clicked` gets
+    // the NSToolbarItem as its sender, and the one-handler-many-buttons shape
+    // an app writes is `component::key_of(sender)` to find out which fired.
+    var ti: core::Node = toolbar_item::toolbar_item("Back", key: "bar:back",
+                                                    on_clicked: tbk_noop);
+    let tb: *u8 = controls::build_toolbar_item(#addr_of(ti));
+    assert tb.is_not_null();
+    assert bridge::to_text({ rt::msg_id(tb, rt::sel(#str_ptr("itemIdentifier\0"))) }).view()
+        == "bar:back";
+    // The question the app actually asks:
+    let seen: text::Text = input::key_of(tb);
+    assert seen.view() == "bar:back";
+}
+
+fn tbk_noop(sender: *u8, ctx: *u8) { return; }
+
+// The app_shell header reparents the native controls. Hover belongs to their
+// group, while AppKit can reset their frames without resizing that group.
+#[test]
+fn window_buttons_restore_frames_before_live_resize_finishes() {
+    backend::install();
+    let w = window::make_shell_window(screen::Chrome::new(
+        title: "button geometry", bar: screen::Bar::Blended));
+    let host = akx::new_window_buttons_view();
+    host.set_frame(rt::Rect { x: 16.0f64, y: 20.0f64, w: 100.0f64, h: 32.0f64 });
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(host); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    akx::wb_set_spacing(host.raw(), 22.0f64);
+    var i: i64 = 0 as i64;
+    var expected_x: f64 = 4.0f64;
+    while i < (3 as i64) {
+        let button = rt::msg_id_i64(w.raw(), rt::sel(#str_ptr("standardWindowButton:\0")), i);
+        assert button.is_not_null();
+        assert rt::msg_id(button, rt::sel(#str_ptr("superview\0"))) == host.raw();
+        let before = rt::msg_rect(button, rt::sel(#str_ptr("frame\0")));
+        assert before.x == expected_x;
+        assert before.y == (32.0f64 - before.h) / 2.0f64;
+        // AppKit's live-resize write, while the host remains the same size.
+        // No explicit reattach call or end-live-resize notification follows.
+        rt::msg_void_point(button, rt::sel(#str_ptr("setFrameOrigin:\0")),
+                           rt::Point { x: 9.0f64, y: 3.0f64 });
+        let after = rt::msg_rect(button, rt::sel(#str_ptr("frame\0")));
+        assert after.x == before.x;
+        assert after.y == before.y;
+        assert rt::msg_id_i64(w.raw(), rt::sel(#str_ptr("standardWindowButton:\0")), i) == button;
+        expected_x = expected_x + before.w + 22.0f64;
+        i = i +% (1 as i64);
+    }
+    // A larger header still centers the same native controls.
+    host.set_frame_size(rt::Size { w: 100.0f64, h: 52.0f64 });
+    let close = rt::msg_id_i64(w.raw(), rt::sel(#str_ptr("standardWindowButton:\0")), 0 as i64);
+    let frame = rt::msg_rect(close, rt::sel(#str_ptr("frame\0")));
+    assert frame.y == (52.0f64 - frame.h) / 2.0f64;
+    w.close();
+}
+
+static WB_CONTROL_REFRESHES: i32 = 0;
+static WB_REFRESH_HOVERED: bool = false;
+
+// Observe the public control-refresh boundary without needing a key window.
+// In a real active window updateCell: makes the native widget re-read its group
+// state. An inactive/headless test window may skip that native drawing work.
+fn wb_test_control_refresh(self_obj: *u8, cmd: *u8, cell: *u8) {
+    WB_CONTROL_REFRESHES = WB_CONTROL_REFRESHES + 1;
+    let host = rt::msg_id(self_obj, rt::sel(#str_ptr("superview\0")));
+    WB_REFRESH_HOVERED = rt::msg_i8_id(host, rt::sel(#str_ptr("_mouseInGroup:\0")), self_obj) != (0 as i8);
+}
+
+fn wb_test_observe_refresh(host: ak::View) {
+    let name = #str_ptr("FacetTestWindowButtonRefresh\0");
+    var cls = rt::get_class(name);
+    if cls.is_null() {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSButton\0")), name, 0 as usize);
+        synth::add_method_v_1id(cls, rt::sel(#str_ptr("updateCell:\0")),
+                                wb_test_control_refresh, #str_ptr("v@:@\0"));
+        synth::register_class_pair(cls);
+    }
+    let allocated = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let button = rt::msg_id_rect(allocated, rt::sel(#str_ptr("initWithFrame:\0")),
+                                 rt::Rect { x: 0.0f64, y: 0.0f64, w: 14.0f64, h: 14.0f64 });
+    host.add_subview(ak::View::from_raw(rt::autorelease(button)));
+}
+
+#[test]
+fn window_buttons_track_native_group_hover_after_reparenting() {
+    backend::install();
+    let w = window::make_shell_window(screen::Chrome::new(title: "button hover"));
+    let host = akx::new_window_buttons_view();
+    match w.content_view() {
+        option::Option[ak::View]::Some(cv) => { cv.add_subview(host); }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    let close = rt::msg_id_i64(w.raw(), rt::sel(#str_ptr("standardWindowButton:\0")), 0 as i64);
+    let group = rt::sel(#str_ptr("_mouseInGroup:\0"));
+    let areas = rt::msg_id(host.raw(), rt::sel(#str_ptr("trackingAreas\0")));
+    assert rt::msg_u64(areas, rt::sel(#str_ptr("count\0"))) == (1 as u64);
+    assert rt::msg_i8_id(host.raw(), group, close) == (0 as i8);
+    wb_test_observe_refresh(host);
+    WB_CONTROL_REFRESHES = 0;
+    rt::msg_void_id(host.raw(), rt::sel(#str_ptr("mouseEntered:\0")), 0 as *u8);
+    assert WB_CONTROL_REFRESHES > 0;
+    assert WB_REFRESH_HOVERED;
+    assert rt::msg_i8_id(host.raw(), group, close) != (0 as i8);
+    WB_CONTROL_REFRESHES = 0;
+    rt::msg_void_id(host.raw(), rt::sel(#str_ptr("mouseExited:\0")), 0 as *u8);
+    assert WB_CONTROL_REFRESHES > 0;
+    assert !WB_REFRESH_HOVERED;
+    assert rt::msg_i8_id(host.raw(), group, close) == (0 as i8);
+    // Reattachment does not accumulate tracking areas.
+    rt::msg_void(host.raw(), rt::sel(#str_ptr("viewDidMoveToWindow\0")));
+    let again = rt::msg_id(host.raw(), rt::sel(#str_ptr("trackingAreas\0")));
+    assert rt::msg_u64(again, rt::sel(#str_ptr("count\0"))) == (1 as u64);
+    w.close();
+}
+
+#[test]
+fn window_buttons_hover_reveal_keeps_native_group_feedback() {
+    backend::install();
+    let host = akx::new_window_buttons_view();
+    compose::apply_hover_reveal(host.raw(), true);
+    let group = rt::sel(#str_ptr("_mouseInGroup:\0"));
+    rt::msg_void_id(host.raw(), rt::sel(#str_ptr("mouseEntered:\0")), 0 as *u8);
+    assert rt::msg_i8_id(host.raw(), group, 0 as *u8) != (0 as i8);
+    rt::msg_void_id(host.raw(), rt::sel(#str_ptr("mouseExited:\0")), 0 as *u8);
+    assert rt::msg_i8_id(host.raw(), group, 0 as *u8) == (0 as i8);
 }

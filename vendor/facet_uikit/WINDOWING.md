@@ -1,5 +1,12 @@
 # The iPad is a window manager, and facet_uikit is not talking to it
 
+> API update (2026-09-13): the measurements below describe the earlier backend
+> work. Applications now register windows with `app.window`, open them with
+> `app.open_window`, and navigate through `w.nav()`. Window requests never fall
+> back to content pushes. These historical scene tests do not validate cold
+> restoration through the new navigator. See [the current guide](../facet/docs/navigation.md).
+
+
 Written against a physical iPad running iPadOS 26.6 and the iOS 26.1 simulator.
 Every symptom below was photographed on the device before it was explained, and
 every API quoted is from the iPhoneOS26.5 SDK headers on this machine rather
@@ -404,7 +411,7 @@ with nothing behind it — the controls are in the menu bar there. It keys on
 being in a window now, and `windowScene:didUpdateEffectiveGeometry:` re-marks
 the trees when that changes, so the gap arrives with the controls.
 
-**One thing had to be added to make it real.** `run_screen` calls `build()`
+**In the implementation measured here**, the former standalone screen host called `build()`
 before `open_window`, and the tree is mounted and laid out inside
 `didFinishLaunching` — all before any scene exists. A `window_buttons` node
 measured then answers 0, correctly, because at that instant the app genuinely
@@ -454,7 +461,7 @@ connect took the slot — and UIKit never promised that order.
 
 It is wrong on exactly the launch that matters. iPadOS persists scene sessions
 and reconnects them on the next cold start, and it reconnects **the one it is
-about to show**, which after a `nav::push(show: Show::Window)` is the SECOND
+about to show**, which after the secondary-window request in that implementation was the SECOND
 window. Measured, iPad Pro 13-inch simulator, iOS 26.4, 2026-09-08:
 
     facet scene willConnect: key=[panel:one] primary_taken=false scenes=1

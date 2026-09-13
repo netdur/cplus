@@ -1,3 +1,4 @@
+import "facet/screen" as screen;
 // notifications_demo — one permission, and a button per kind of notification
 // this package can post.
 //
@@ -503,10 +504,22 @@ impl Demo: component::Lifecycle {
 }
 
 fn main() -> i32 {
+
+    let app = runtime::App::new("notifications_demo");
+    app.on_launch(configure_theme);
+    app.window("main", main_window, chrome: screen::Chrome::new(
+        title: "Notifications", width: 560.0, height: 560.0));
+    let _run = app.run("main");
+    return 0;
+}
+
+impl Demo: screen::Screen {
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+fn main_window() -> screen::ScreenBox { return screen::screen_box(Demo::new()); }
+
+fn configure_theme(ctx: *u8) {
     theme::set_theme(theme::Theme::new(
         primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
     ));
-    runtime::run_component(Demo::new(), title: "Notifications",
-                           width: 560.0, height: 560.0);
-    return 0;
 }

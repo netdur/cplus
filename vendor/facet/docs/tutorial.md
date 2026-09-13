@@ -1,6 +1,7 @@
 # Tutorial
 
-A first screen, from an empty file to a window you can click. Concepts:
+A first screen, from an empty file to a window you can click. Combine the
+steps in `src/main.cplus`, keeping all imports at the top of the file. Concepts:
 [guide.md](guide.md). API: [ref.md](ref.md). Every declared verb:
 [contract.md](contract.md).
 
@@ -17,13 +18,11 @@ name    = "hello"
 version = "0.0.1"
 edition = "2026"
 
-[[bin]]
-name = "hello"
-path = "src/main.cplus"
-
 [dependencies]
 stdlib      = "*"
 facet       = "*"
+facet_runtime = "*"
+events      = "*"
 flex_layout = "*"
 
 [macos.dependencies]
@@ -68,32 +67,27 @@ item inside it. A block may hold two, so it always holds them.
 
 ## 3. State and handlers
 
-State lives in a struct. A handler is `fn(sender, ctx)`, and `ctx` is whatever
-the tree bound: usually the component itself.
+State lives in a struct. A bound handler such as `this.bump` receives that
+instance automatically. Retain the screen context to scope lookups to its root.
 
 ```cplus
 import "facet/component" as component;
+import "facet/nav" as nav;
 import "facet/label" as label;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/text" as text;
 
-struct Counter {
-    clicks: i64,
-}
-
-fn bump(sender: *u8, ctx: *u8) {
-    let st: *Counter = ctx as *Counter;
-    { (*st).clicks = { (*st).clicks } + (1 as i64) };
-    match label::find("count") {
-        option::Option[label::Label]::Some(l) => {
-            var msg: text::Text = text::from_str("clicked ");
-            let _a: status::Status = msg.append({ (*st).clicks }.to_text().view());
-            let _l: label::Label = l.set_text(msg.view());
+struct Counter { clicks: i64, context: nav::Context }
+impl Counter {
+    fn bump(ref this, sender: *u8) {
+        this.clicks = this.clicks + (1 as i64);
+        let count = this.clicks;
+        match label::find("count", within: this.context.root()) {
+            option::Option[label::Label]::Some(l) => { let _l = l.set_text("clicked ${count}"); }
+            option::Option[label::Label]::None => { }
         }
-        option::Option[label::Label]::None => { }
     }
-    return;
 }
 ```
 
@@ -102,47 +96,45 @@ the tree is visited, compared, or rebuilt. That is the whole update model.
 
 ## 4. A component
 
-`Component` supplies the tree. `#addr_of(this)` is the ctx every handler gets,
-which is what keeps the file free of statics.
+`Component` supplies the tree. Binding `this.bump` connects the handler to
+this retained instance, so state needs no module static.
 
 ```cplus
 impl Counter: component::Component {
     fn build(ref this) -> core::Node {
-        let me: *u8 = #addr_of(this) as *u8;
         return @ui {
             vstack(key: "body") {
                 label("clicked 0", key: "count")
-                button("click me", key: "go", on_click: bump, on_click_ctx: me)
+                button("click me", key: "go", on_click: this.bump)
             }
         };
     }
 }
 
 impl Counter: component::Lifecycle {
-    fn on_attach(ref this) { return; }
-    fn on_detach(ref this) { return; }
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
 }
 ```
 
 ## 5. A screen and a window
 
-`Screen` adds the window's chrome and its menu contribution.
+`Screen` receives navigation context and contributes menu items. Window chrome
+belongs to the app's window registration.
 
 ```cplus
 import "facet/screen" as screen;
 import "stdlib/vec" as vec;
 
 impl Counter: screen::Screen {
-    fn chrome(this) -> screen::Chrome {
-        return screen::Chrome::new(title: "hello", width: 360.0f64, height: 200.0f64);
-    }
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
     fn menu_items(this) -> vec::Vec[screen::MenuItem] {
         return vec::new::[screen::MenuItem]();
     }
 }
 
 fn counter_screen() -> screen::ScreenBox {
-    return screen::screen_box(Counter { clicks: 0 as i64 });
+    return screen::screen_box(Counter { clicks: 0 as i64, context: nav::Context::none() });
 }
 ```
 
@@ -151,12 +143,11 @@ fn counter_screen() -> screen::ScreenBox {
 ```cplus
 import "facet_runtime/runtime" as runtime;
 import "stdlib/status" as status;
-import "facet_appkit/facet_appkit" as backend;
 
 fn main() -> i32 {
-    backend::install();
     var app: runtime::App = runtime::App::new("hello");
-    app.screen("counter", counter_screen);
+    app.window("counter", counter_screen, chrome: screen::Chrome::new(
+        title: "hello", width: 360.0f64, height: 200.0f64));
     match app.run("counter") {
         status::Status::Ok => { return 0 as i32; }
         _other => { return 1 as i32; }
@@ -168,20 +159,22 @@ fn main() -> i32 {
 
 ## 7. Theme
 
-Colours resolve through roles, so one call restyles every control that named a
-role rather than a literal:
+Colours resolve through roles. Configure the theme after this app becomes
+current: add `app.on_launch(configure_theme)` before `app.run(...)`, with:
 
 ```cplus
 import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
 
-theme::set_theme(theme::Theme::new(
-    primary: vocab::Color::rgba(0.30f64, 0.42f64, 0.85f64, 1.0f64),
-    surface: vocab::Color::adaptive(
-        light: vocab::Color::rgba(0.97f64, 0.97f64, 0.98f64, 1.0f64),
-        dark: vocab::Color::rgba(0.11f64, 0.11f64, 0.13f64, 1.0f64),
-    ),
-));
+fn configure_theme(ctx: *u8) {
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.30f64, 0.42f64, 0.85f64, 1.0f64),
+        surface: vocab::Color::adaptive(
+            light: vocab::Color::rgba(0.97f64, 0.97f64, 0.98f64, 1.0f64),
+            dark: vocab::Color::rgba(0.11f64, 0.11f64, 0.13f64, 1.0f64),
+        ),
+    ));
+}
 ```
 
 `adaptive` carries both sides. The backend picks by the current appearance and
@@ -212,3 +205,13 @@ no-op.
 
 For what the macOS backend does with each verb, including where it deviates,
 read `vendor/facet_appkit/MANIFEST.md`.
+
+## Next: multiple windows and navigation
+
+`App::run` installs the backend. To add another native window, register another
+window definition and call `app.open_window`. To change content inside a window,
+register routes on its definition and use its `nav()` handle. There is no
+history across windows.
+
+The [navigation guide](navigation.md) covers keyed instances, default slots,
+Back/Forward state, screen arguments, and explicit desktop/mobile composition.

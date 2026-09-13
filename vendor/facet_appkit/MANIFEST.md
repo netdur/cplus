@@ -324,6 +324,21 @@ They are live. What makes them live is the HOST re-applying, so they are listed
 apart from the verbs that are gated directly, and a reader can tell which
 mechanism answers a given verb.
 
+TWO KINDS OF HOST, and the second one was missing until 2026-09-13. A `span`'s
+host is an ancestor VIEW, which the viewless routing can reach. A
+`toolbar_item`'s host is the WINDOW — there is no view above it that draws a
+toolbar — so routing it to the nearest backed ancestor re-rendered a content
+view and left the bar untouched. Every write to a toolbar item after the window
+opened was silently dropped, `set_enabled` included, which from the outside
+looks exactly like the verb not existing.
+
+`core::is_window_declaration` names that third case (`menu`, `menu_item`,
+`toolbar_item`) and `mount` routes it to the renderer's `redeclare` hook rather
+than to an ancestor. `window::redeclare` answers it here: the toolbar's items
+are refreshed IN PLACE, found through the identifier map `akx::make_toolbar`
+pinned to the bar — never rebuilt, because `setToolbar:` on a live window
+flickers and throws away whatever the user rearranged.
+
 ```host-rendered
 span.text                       a run in its label's attributed string
 span.text_color                 as span.text
@@ -340,8 +355,8 @@ menu_item.text                  a row in its menu's NSMenu
 menu_item.icon                  as menu_item.text
 context_menu_item.text          a row in its view's NSMenu
 context_menu_item.icon          as context_menu_item.text
-toolbar_item.text               an item in the window's NSToolbar
-toolbar_item.icon               as toolbar_item.text
+toolbar_item.text               an item in the window's NSToolbar, refreshed in place
+toolbar_item.icon               as toolbar_item.text — the window is the host
 context_menu_item.shortcut      the key equivalent on its NSMenuItem
 menu_item.is_destructive        a red title on its NSMenuItem
 context_menu_item.is_destructive  as menu_item.is_destructive
@@ -375,6 +390,11 @@ item's placement is worse than the verb being create-only.
 
 They are listed so the bucket is accountable — an unlisted create-only verb is
 debt, the same rule the cannot ledger follows, and the tool counts it as such.
+
+The three toolbar rows below are the placement half only. `text`, `icon` and the
+shared band's `is_enabled` DO land on an item that is already in the bar — see
+the host-rendered ledger above. What stays create-only is the bar's ORDER, which
+is a property of every item at once and cannot be changed without rebuilding it.
 
 ```create-only
 list.row_height                 the table's row height is read when its source is built
@@ -576,6 +596,36 @@ verb. Both substitutes above ARE that click path. Neither simulates a swipe.
 
 Neither kind is in the cannot-ledger, and neither takes the unimplemented-kind
 warning path. `decided_absent` returns false for every kind on this backend.
+
+### A toolbar item's enabled state, and the validation that undid it
+
+`is_enabled` is on the shared band, so `toolbar_item` answers it like every other
+control — and for as long as this tier existed it answered it by doing nothing.
+Three faults, each on its own enough to kill the verb, and fixing two of them
+would still have left it dead:
+
+1. `build_toolbar_item` never read the bit. An item declared disabled came up
+   live.
+2. Nothing could reach the item afterwards, because an NSToolbarItem is not a
+   view and the viewless routing had no case for a window-hosted node. See the
+   host-rendered ledger above.
+3. AUTOVALIDATION. An NSToolbarItem whose target responds to its action
+   re-enables ITSELF on every `validateVisibleItems` pass, so even a correct
+   `setEnabled:NO` was undone before the bar was next drawn.
+
+The third is the same trap `disable_last_popup_item` names for NSPopUpButton one
+control up, and it is switched off unconditionally here rather than
+conditionally there: facet answers this question in every case, because
+`is_enabled` is a node prop the application writes and not a responder-chain
+question AppKit is better placed to answer.
+
+One further fact, measured rather than assumed: NSToolbarItem FORWARDS
+`setEnabled:` to a view that answers the selector, so a destructive item's
+NSButton — which is what takes the click, the item having no target — greys with
+it and needs no second write. That forwarding happens at the moment of the
+write, so the live half is applied at the END of `build_toolbar_item`, after
+`setView:`. Moving it earlier leaves a live button on a disabled item; there is
+a test that fails when it is moved.
 
 ### The toolbar's colours and height
 
@@ -1372,34 +1422,22 @@ these two are on `gestures`, which `verb_coverage.py` does not census at all
 (`NOT_CONTROLS`). A row naming them would read as stale and fail the gate. That
 is a gap in the tool, not in the decision — see the blind-spot report.
 
-### What a window host is asked, and what it no longer is
+### Application startup and window ownership
 
-`Window` required `should_close`, `will_close` and `component_context` of every
-implementor and called none of them: `run` uses the `should_close_callback` /
-`will_close_callback` pair, which is what a backend can actually store on a
-window. Three methods every hand-written host had to write and none of them ran.
-Removed — a redundant requirement is a tax, and the callback pair is the one
-with a consumer.
+`App::run` is the public application host. Apps register window factories and
+chrome, then explicitly open or find name/key instances. The old standalone
+hosts and `runtime::Window` interface are removed. Native `open_window` and
+its close callbacks remain backend seams, not alternate application entry points.
+The app supplies its menu; initial screen contributions are merged by the runtime.
 
-`has_app_menu` / `app_menu` were dead the OTHER way and are now wired.
-`install_app_menu` reached `run_component`, `run_screen` and `App::run` but not
-`run[W: Window]`, so a hand-written window answering `has_app_menu() == true`
-built its items for nothing and opened with no menu bar.
+### Closing a window and navigating Back
 
-### A pushed screen cannot refuse its dismissal
+`app.quit()` consults `on_should_quit`; `on_quit` reports desktop shutdown after
+the loop returns. A window handle exposes explicit `close()` and
+`request_close()` operations, with native close-query support where installed.
+The application can decide when to issue an explicit close after saving work.
 
-`Window.ModalPopping` / `PopCanceled` are recorded implemented, and the scope
-is worth stating because guard 5b's one-line reason cannot hold it.
-
-They are answered for the WINDOW tier — `run[W: Window]` carries
-`should_close_callback` / `will_close_callback`, and a window built that way
-can refuse to close. A screen pushed with `nav::push` cannot: `push_screen`
-passes `default_should_close`, and `Screen` declares no `should_close` for it
-to pass instead.
-
-Left that way deliberately. Adding one would make it a REQUIRED method on every
-screen an application writes — the same tax three `Window` methods were just
-removed for — in exchange for a verb whose only use is refusing a dismissal the
-application itself initiated. If a consumer ever needs it, the shape is a
-`ScreenBox` trampoline like the `chrome` and `menu_items` ones, not a new
-interface requirement.
+A content `pop()` retains the screen for Forward and does not close its window.
+`Screen` has no dismissal-veto hook. The removed standalone Window interface's
+callback contract must not be inferred as a capability of every routed screen.
+See [Facet navigation](../facet/docs/navigation.md).

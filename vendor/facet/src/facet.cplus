@@ -1686,6 +1686,41 @@ fn is_declaration(n: *Node) -> bool {
         || k == props::K_SPAN || k == props::K_SWIPE_ITEM;
 }
 
+// The declarations whose host is the WINDOW rather than an ancestor view — the
+// subset the viewless routing in `mount::sync_subtree` cannot carry.
+//
+// Every OTHER declaration is drawn by something that has a view: a `span` is a
+// run in its label's attributed string, a `context_menu_item` a row in its
+// view's menu, a `swipe_item` a row in the menu its swipeable reveals. Each has
+// a backed ancestor that can be told to re-apply, which is exactly what a
+// viewless node's dirty bits are routed to.
+//
+// These three have no such ancestor. A `toolbar_item` is installed on the
+// WINDOW's toolbar and a `menu` on the application's menu bar, so the nearest
+// backed ancestor is a content view that does not own either — re-applying it
+// re-renders the content and leaves the bar exactly as it was. That is not a
+// hypothetical: `set_enabled` on a toolbar item reached the tree, had its bit
+// cleared by the walk, and changed nothing on screen, which looks from the
+// outside like the verb not existing.
+// WHICH piece of furniture, because the two are re-read differently and a
+// backend told only "something changed" would have to do both. Refreshing a
+// toolbar item in place is invisible; rebuilding the menu bar closes a menu the
+// user has pulled down. Doing the second one because the first one happened is
+// a bug waiting for someone to disable a toolbar button from a timer.
+const D_TOOLBAR: u32 = 1u32;
+const D_MENU: u32 = 2u32;
+
+fn window_declaration_of(n: *Node) -> u32 {
+    let k: u32 = kind_of(n);
+    if k == props::K_TOOLBAR_ITEM { return D_TOOLBAR; }
+    if k == props::K_MENU || k == props::K_MENU_ITEM { return D_MENU; }
+    return 0u32;
+}
+
+fn is_window_declaration(n: *Node) -> bool {
+    return window_declaration_of(n) != 0u32;
+}
+
 // The one child that takes part in the layout, or None when there is not
 // exactly one. `@ui { toolbar_item(…) split(…) { } }` describes ONE box and a
 // window decoration, not a two-row column.
@@ -2444,7 +2479,50 @@ fn find_in(n: *Node, key: str) -> option::Option[*Node] {
 // box, and the HIG spacing constants. facet does not reimplement them, it
 // re-exports them so an application imports facet alone.
 
-type Builder = flex::Builder;
+// A container's children, collected. Was `type Builder = flex::Builder`; it is
+// facet's own type now so that `add` can take anything that KNOWS how to become
+// a node — a plain `Node`, or a component that owns itself (see `IntoNode`).
+// flex stays underneath and learns nothing: the inner builder is flex's, and
+// every container still finishes through it.
+struct Builder {
+    inner: flex::Builder
+}
+
+impl Builder {
+    fn new() -> Builder { return { inner: flex::Builder::new() }; }
+
+    // The one widening. `A` is inferred from the argument, so every existing
+    // `b.add(node)` call site is unchanged: `Node` implements `IntoNode` as
+    // the identity.
+    fn add[A: IntoNode](ref this, take item: A) {
+        this.inner.add(item.into_node());
+        return;
+    }
+
+    fn finish(take this) -> Node {
+        let Builder { inner } = this;
+        return inner.finish();
+    }
+
+    // The seam for facet's own containers that build through flex directly
+    // (split, stack). A pattern cannot destructure a QUALIFIED type, so a
+    // sibling module cannot write `let core::Builder { inner } = b`.
+    fn into_flex(take this) -> flex::Builder {
+        let Builder { inner } = this;
+        return inner;
+    }
+}
+
+// What may appear as an item inside a container. `Node` is the identity case;
+// a component implements this by boxing itself and building (`component::child`),
+// which is what lets a stateful component be written inline in `@ui`.
+interface IntoNode {
+    fn into_node(take this) -> Node;
+}
+
+impl flex::Node: IntoNode {
+    fn into_node(take this) -> Node { return this; }
+}
 
 // flex builds the node; facet attaches its Data. Both halves are required: a
 // container that carries no Data answers no shared-band verb and takes no
@@ -2456,15 +2534,15 @@ fn _own(take n: Node, key: str) -> Node {
     return m;
 }
 
-fn column(take b: Builder, key: str = "") -> Node { return _own(flex::column(b), key); }
-fn row(take b: Builder, key: str = "") -> Node { return _own(flex::row(b), key); }
-fn hstack(take b: Builder, key: str = "") -> Node { return _own(flex::hstack(b), key); }
-fn vstack(take b: Builder, key: str = "") -> Node { return _own(flex::vstack(b), key); }
-fn screen(take b: Builder, key: str = "") -> Node { return _own(flex::screen(b), key); }
-fn card(take b: Builder, key: str = "") -> Node { return _own(flex::card(b), key); }
+fn column(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::column(inner), key); }
+fn row(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::row(inner), key); }
+fn hstack(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::hstack(inner), key); }
+fn vstack(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::vstack(inner), key); }
+fn screen(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::screen(inner), key); }
+fn card(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::card(inner), key); }
 
 fn spacer(key: str = "") -> Node { return _own(flex::spacer(), key); }
-fn zstack(take b: Builder, key: str = "") -> Node { return _own(flex::zstack(b), key); }
+fn zstack(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::zstack(inner), key); }
 
 #[test]
 fn touch_all_re_reads_every_fact_and_issues_no_verb() {

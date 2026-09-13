@@ -1,0 +1,25 @@
+[package]
+name    = "app_shell"
+version = "0.0.1"
+edition = "2026"
+
+# app_shell — Legacy layout with a full-height split and blended window chrome.
+#
+#   cd examples/app_shell && cpc build && ./target/debug/app_shell
+
+[macos]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib        = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+
+[macos.dependencies]
+facet_appkit = "*"
+objc         = "*"
+appkit       = "*"
+quartzcore   = "*"
+webkit       = "*"

@@ -1,0 +1,206 @@
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/io" as io;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/relist" as relist;
+import "facet/gestures" as gestures;
+import "facet/obs_vec" as obs_vec;
+import "facet/symbol" as symbol;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+
+fn no_selection(i: usize, s: Section, ctx: *u8) { return; }
+fn no_selection_name(ctx: *u8) -> str { return ""; }
+
+struct Section {
+    name: str,
+    icon: str,
+    body: str
+}
+
+struct Sidebar {
+    nav: str,
+    row_icon: str,
+    row_name: str,
+    selected: usize,
+    sections: obs_vec::ObsVec[Section],
+    on_select: fn(usize, Section, *u8),
+    opaque on_select_ctx: *u8,
+    selection: fn(*u8) -> str,
+    opaque selection_ctx: *u8,
+    announced: bool
+}
+
+impl Sidebar {
+    fn new(on_select: fn(usize, Section, *u8) = no_selection,
+           on_select_ctx: *u8 = 0 as *u8,
+           selection: fn(*u8) -> str = no_selection_name,
+           selection_ctx: *u8 = 0 as *u8) -> Sidebar {
+        var v = obs_vec::ObsVec[Section]::new();
+        let _a1: status::Status = v.append(Section {
+            name: "Overview",
+            icon: "square.grid.2x2",
+            body: "Choose a section from the sidebar to open it here. Use Back and Forward to revisit sections.",
+        });
+        let _a2: status::Status = v.append(Section {
+            name: "Recents",
+            icon: "clock",
+            body: "Your recent sections appear in the navigation history. The selected row follows the section you are viewing.",
+        });
+        let _a3: status::Status = v.append(Section {
+            name: "Documents",
+            icon: "doc",
+            body: "Drag the divider to resize the sidebar and detail pane. This text reflows with the available space.",
+        });
+        let _a4: status::Status = v.append(Section {
+            name: "Downloads",
+            icon: "arrow.down.circle",
+            body: "The sidebar keeps a useful width as you resize it. Drag the divider left or right to try its limits.",
+        });
+        let _a5: status::Status = v.append(Section {
+            name: "Workspace",
+            icon: "folder",
+            body: "This workspace uses a classic window layout, with a full-height sidebar and an icon toolbar above the detail pane.",
+        });
+        return Sidebar {
+            nav: "nav",
+            row_icon: "row:icon",
+            row_name: "row:name",
+            selected: 0 as usize,
+            sections: v,
+            on_select: on_select,
+            on_select_ctx: on_select_ctx,
+            selection: selection,
+            selection_ctx: selection_ctx,
+            announced: false
+        };
+    }
+
+    fn set_on_select(ref this, h: fn(usize, Section, *u8), h_ctx: *u8 = 0 as *u8) {
+        this.on_select = h;
+        this.on_select_ctx = h_ctx;
+        return;
+    }
+
+    fn selected(ref this) -> usize { return this.selected; }
+
+    fn title_at(ref this, i: usize) -> str {
+        guard let option::Option[*Section]::Some(e) = { this.sections.at_ptr(i) } else {
+            return "";
+        };
+        return (*e).name;
+    }
+
+    fn body_at(ref this, i: usize) -> str {
+        guard let option::Option[*Section]::Some(e) = { this.sections.at_ptr(i) } else {
+            return "";
+        };
+        return (*e).body;
+    }
+
+    fn row_fill(ref this, chosen: bool) -> vocab::Color {
+        if chosen { return vocab::Color::rgba(0.0f64, 0.48f64, 1.0f64, 0.16f64); }
+        return vocab::Color::clear();
+    }
+
+    fn row(ref this, i: usize) -> core::Node {
+        guard let option::Option[*Section]::Some(e) = { this.sections.at_ptr(i) } else {
+            return core::spacer();
+        };
+        let name: str = (*e).name;
+        let icon: str = (*e).icon;
+        let get_selected = this.selection;
+        let chosen: bool = name == get_selected(this.selection_ctx);
+        var ink: vocab::Color = vocab::Color::text();
+        if chosen {
+            ink = vocab::Color::accent();
+        }
+        let fill: vocab::Color = this.row_fill(chosen);
+        return @ui {
+            row(key: name) {
+                symbol::system_symbol(icon, key: this.row_icon, size: 19.0f64,
+                                      color: ink)
+                label(name, key: this.row_name, font_size: 13.0f64,
+                      text_color: ink)
+                    .grow(1.0f64)
+            }
+                .align(flex::Align::Center)
+                .gap(6.0f64)
+                .padding_edge(flex::Edge::Vertical, 7.0f64)
+                .padding_edge(flex::Edge::Horizontal, 8.0f64)
+                .gesture(on_click: this.on_row_click)
+                .set_background_color(fill)
+                .set_corner_radius(vocab::Corners::all(6.0f64))
+        };
+    }
+
+    fn on_row_click(ref this, sender: *u8) -> bool {
+        guard let option::Option[usize]::Some(i) = component::item_index_of(sender) else {
+            return false;
+        };
+        let h = this.on_select;
+        h(i, this.section_at(i), this.on_select_ctx);
+        return true;
+    }
+
+    fn section_at(ref this, i: usize) -> Section {
+        guard let option::Option[*Section]::Some(e) = { this.sections.at_ptr(i) } else {
+            return Section { name: "", icon: "", body: "" };
+        };
+        return Section { name: (*e).name, icon: (*e).icon, body: (*e).body };
+    }
+
+    fn fire_on_select(ref this, was: usize) {
+        if was == this.selected { return; }
+        let h = this.on_select;
+        if h != no_selection { h(this.selected, this.section_at(this.selected), this.on_select_ctx); }
+    }
+}
+
+impl Sidebar: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) {
+        // The parent declares the default route and owns selection state.
+        return;
+    }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+
+impl Sidebar: component::Component {
+    fn build(ref this) -> core::Node {
+        return @ui {
+            column(key: "sidebar") {
+                relist(this.sections,
+                       key: this.nav,
+                       builder: this.row)
+                    .grow(1.0f64)
+                    .shrink(1.0f64)
+            }
+                .padding_edge(flex::Edge::Vertical, 8.0f64)
+                .padding_edge(flex::Edge::Horizontal, 8.0f64)
+                .grow(1.0f64)
+                .shrink(1.0f64)
+        };
+    }
+}
+
+impl Sidebar: core::IntoNode {
+    fn into_node(take this) -> core::Node {
+        // The component's @ui block adds an outer layout wrapper. It must
+        // grow too, so the list fills the space below the window controls.
+        return component::child::[Sidebar](this)
+            .grow(1.0f64)
+            .shrink(1.0f64);
+    }
+}
+
+fn sidebar(
+    on_select: fn(usize, Section, *u8) = no_selection,
+    on_select_ctx: *u8 = 0 as *u8,
+    selection: fn(*u8) -> str = no_selection_name,
+    selection_ctx: *u8 = 0 as *u8
+) -> Sidebar {
+    return Sidebar::new(on_select: on_select, on_select_ctx: on_select_ctx,
+                        selection: selection, selection_ctx: selection_ctx);
+}

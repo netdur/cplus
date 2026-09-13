@@ -1837,7 +1837,7 @@ impl Inspector: component::Component {
             row: tree_row_view,
             row_id: tree_row_id,
             on_select: on_tree_select, on_select_ctx: me,
-            row_height: ROW_H,
+            row_height: ROW_H as i64,
         ).width(260.0);
 
         // property pane

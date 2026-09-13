@@ -378,15 +378,9 @@ impl Probe: component::Lifecycle {
 }
 
 impl Probe: screen::Screen {
-    fn chrome(this) -> screen::Chrome {
-        return screen::Chrome::new(
-            title: "theme probe",
-            subtitle: "facet_uikit",
-            width: 390.0f64,
-            height: 844.0f64,
-            bar: screen::Bar::Native,
-        );
-    }
+
+
+
     fn menu_items(this) -> vec::Vec[screen::MenuItem] {
         return vec::new::[screen::MenuItem]();
     }
@@ -397,6 +391,16 @@ export extern fn facet_uikit_themeprobe_main() -> i32 {
     // colour, so the readings are about the flip and the repaint walk and not
     // about how a theme role resolved. The theme tier gets its own probe when
     // requirement 1 has a design to check.
-    let _p: Probe = runtime::run_screen(Probe { n: 0 });
+    let app = runtime::App::new("themeprobe");
+    app.window("main", main_window, chrome: screen::Chrome::new(
+            title: "theme probe",
+            subtitle: "facet_uikit",
+            width: 390.0f64,
+            height: 844.0f64,
+            bar: screen::Bar::Native,
+        ));
+    let _run = app.run("main");
     return 0;
 }
+
+fn main_window() -> screen::ScreenBox { return screen::screen_box(Probe { n: 0 }); }

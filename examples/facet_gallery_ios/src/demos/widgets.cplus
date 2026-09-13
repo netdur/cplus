@@ -51,15 +51,15 @@ fn share_glyph() -> str {
 
 impl Buttons: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var taps: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var taps: core::Builder = core::Builder::new();
         taps.add(ui::button("Tap me", key: "c:button", on_click: this.on_tap)
                  .height(44.0));
         taps.add(ui::label("tapped 0×", key: "c:taps", font_size: 15.0,
                            text_color: vocab::Color::ink(0.6)));
         body.add(shell::card("TAP TARGET", taps));
 
-        var styles: flex::Builder = flex::Builder::new();
+        var styles: core::Builder = core::Builder::new();
         styles.add(ui::button("Bordered", key: "c:b2", bordered: true,
                               border_width: 1.0,
                               border_color: vocab::Color::accent(),
@@ -135,8 +135,8 @@ impl Values {
 
 impl Values: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var vals: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var vals: core::Builder = core::Builder::new();
         vals.add(shell::field("Slider",
             ui::slider(0.35, key: "c:slider", minimum: 0.0, maximum: 1.0,
                        on_value_changed: this.on_slide).width(180.0)));
@@ -147,7 +147,7 @@ impl Values: component::Component {
         vals.add(shell::caption("Drag the slider: the percentage and the bar under it are both written from the handler, which read the value back out of facet's props rather than off the control."));
         body.add(shell::card("SLIDER → PROGRESS", vals));
 
-        var st: flex::Builder = flex::Builder::new();
+        var st: core::Builder = core::Builder::new();
         st.add(shell::field("Stepper",
             ui::stepper(3.0, key: "c:stepper", minimum: 0.0, maximum: 10.0,
                         increment: 1.0, on_value_changed: this.on_step)));
@@ -215,8 +215,8 @@ fn on_pick(v: *u8, ctx: *u8) {
 
 impl Switches: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var sw: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var sw: core::Builder = core::Builder::new();
         sw.add(shell::field("Switch",
             ui::toggle(true, key: "c:toggle", on_toggled: this.on_switch)));
         sw.add(shell::field("Reads",
@@ -231,7 +231,7 @@ impl Switches: component::Component {
         // picker the same font verbs a label has; the platform gives it a list
         // whose rows it inflates itself, so the styling lands on the row rather
         // than on the control.
-        var pick: flex::Builder = flex::Builder::new();
+        var pick: core::Builder = core::Builder::new();
         var teas: vocab::TextList = vocab::TextList::new();
         let _t1: status::Status = teas.add("Sencha");
         let _t2: status::Status = teas.add("Gyokuro");
@@ -271,8 +271,8 @@ impl Indicators {
 
 impl Indicators: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
-        var busy: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
+        var busy: core::Builder = core::Builder::new();
         busy.add(shell::field("Spinner",
             ui::spinner(vocab::Color::accent(), key: "c:spinner", running: true)));
         busy.add(shell::field("Page dots",

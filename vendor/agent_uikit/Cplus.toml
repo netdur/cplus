@@ -24,4 +24,5 @@ json       = "*"
 # THE TREE. The walk is over facet's own nodes; UIKit is one realisation of
 # them. See the walk in src/ for why, and agent_android for the precedent.
 facet       = "*"
+events      = "*"
 flex_layout = "*"

@@ -48,6 +48,7 @@ import "./views" as views;
 import "./paint" as paint;
 import "./scheduler" as scheduler;
 import "./window" as window;
+import "./chrome" as chrome;
 
 fn renderer() -> mount::Renderer {
     return mount::Renderer {
@@ -58,6 +59,7 @@ fn renderer() -> mount::Renderer {
         insert: views::insert,
         remove: views::remove,
         schedule: scheduler::schedule,
+        redeclare: chrome::redeclare,
     };
 }
 

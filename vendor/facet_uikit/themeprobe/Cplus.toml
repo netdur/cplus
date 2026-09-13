@@ -26,6 +26,7 @@ stdlib        = "*"
 facet         = "*"
 facet_runtime = "*"
 flex_layout   = "*"
+events        = "*"
 
 # facet_uikit's OWN closure is named here too, not just what this file imports.
 # The resolver validates every import against ONE flat set taken from THIS

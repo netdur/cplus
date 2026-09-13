@@ -1,0 +1,179 @@
+// Shared application/window composition. Platform facades install only the
+// native window operations; routes and history stay in facet/navigation.
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "stdlib/box" as box;
+import "facet/application" as application;
+import "facet/nav_model" as model;
+import "facet/navigation" as engine;
+import "facet/window" as window;
+import "facet/screen" as screen;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/services" as services;
+
+struct Driver {
+    open: fn(model::Navigator) -> bool,
+    run: fn(),
+    // Mobile entry returns to an OS-owned loop; desktop run returns at exit.
+    external_loop: bool,
+    single_window: bool,
+}
+static DRIVER: Driver = #zero::[Driver]();
+fn install(d: Driver) { DRIVER = d; engine::install(); }
+
+struct Definition { opaque owner: *application::Application, id: u64 }
+impl Definition {
+    fn route(this, name: str, factory: fn() -> screen::ScreenBox) -> bool {
+        let d = model::definition(this.owner, this.id);
+        if d.is_null() || name == "" || factory.is_null() { return false; }
+        var i: usize = 0 as usize;
+        while i < (*d).routes.count() {
+            match (*d).routes.at_ptr(i) {
+                option::Option[*model::Route]::Some(r) => { if (*r).name.view() == name { return false; } }
+                option::Option[*model::Route]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return (*d).routes.append(model::Route {
+            name: text::from_str(name), factory: factory as *u8 }) == status::Status::Ok;
+    }
+    fn is_valid(this) -> bool { return model::definition(this.owner, this.id).is_not_null(); }
+}
+struct App { opaque _p: *application::Application }
+impl App {
+    fn of(owner: *application::Application) -> App { return App { _p: owner }; }
+    fn new(name: str = "facet") -> App { return App { _p: application::new_instance(name) }; }
+    fn window(this, name: str, factory: fn() -> screen::ScreenBox,
+              take chrome: screen::Chrome = default_chrome()) -> Definition {
+        let r = model::registry(this._p);
+        if r.is_null() || name == "" || factory.is_null() || model::definition_named(this._p, name).is_not_null() {
+            return Definition { owner: this._p, id: 0 as u64 };
+        }
+        let settings: *u8 = match box::new::[screen::Chrome](chrome) {
+            option::Option[box::Box[screen::Chrome]]::Some(b) => b.into_raw(),
+            option::Option[box::Box[screen::Chrome]]::None => 0 as *u8,
+        };
+        if settings.is_null() { return Definition { owner: this._p, id: 0 as u64 }; }
+        (*r).next_definition = (*r).next_definition +% (1 as u64);
+        let id = (*r).next_definition;
+        let result = (*r).definitions.append(model::Definition { id: id,
+            name: text::from_str(name), factory: factory as *u8, settings: settings, routes: vec::new::[model::Route]() });
+        if result != status::Status::Ok {
+            let _c = box::from_raw::[screen::Chrome](settings);
+            return Definition { owner: this._p, id: 0 as u64 };
+        }
+        return Definition { owner: this._p, id: id };
+    }
+    fn find_window(this, name: str, key: str = "") -> option::Option[window::Window] {
+        return window::find_in(this._p, name, key);
+    }
+    fn open_window(this, name: str, key: str = "", take params: model::Params = model::params_new()) -> option::Option[window::Window] {
+        if !application::has_current() || application::current() != this._p { return option::Option[window::Window]::None; }
+        match this.find_window(name, key) {
+            option::Option[window::Window]::Some(w) => { let _a = w.activate(); return option::Option[window::Window]::Some(w); }
+            option::Option[window::Window]::None => { }
+        }
+        let d = model::definition_named(this._p, name);
+        let f = DRIVER.open;
+        if d.is_null() || f.is_null() { return option::Option[window::Window]::None; }
+        let r = model::registry(this._p);
+        if DRIVER.single_window {
+            var si: usize = 0 as usize;
+            while si < (*r).sessions.count() {
+                match (*r).sessions.at_ptr(si) {
+                    option::Option[**model::Session]::Some(p) => {
+                        if !(**p).closing { return option::Option[window::Window]::None; }
+                    }
+                    option::Option[**model::Session]::None => { }
+                }
+                si = si +% (1 as usize);
+            }
+        }
+        let n = engine::prepare(this._p, (*d).id, key, params);
+        if !n.is_live() { engine::release(n); return option::Option[window::Window]::None; }
+        if !f(n) {
+            engine::dispose(n);
+            engine::release(n);
+            return option::Option[window::Window]::None;
+        }
+        return option::Option[window::Window]::Some(window::Window::of_navigation(n));
+    }
+    fn run(this, initial: str, key: str = "") -> status::Status {
+        if application::has_current() { return status::Status::InvalidInput; }
+        if model::definition_named(this._p, initial).is_null() { return status::Status::InvalidInput; }
+        application::make_current(this._p);
+        let launch = (*this._p).on_launch_fn;
+        if launch.is_not_null() { launch((*this._p).hook_ctx); }
+        var opened = false;
+        match this.open_window(initial, key) {
+            option::Option[window::Window]::Some(_) => { opened = true; }
+            option::Option[window::Window]::None => { }
+        }
+        if !opened { application::release_current(); return status::Status::InvalidInput; }
+        let run = DRIVER.run;
+        if run.is_not_null() { run(); }
+        if !DRIVER.external_loop {
+            let _r = services::reclaim_settled();
+            application::release_current();
+            let quit = (*this._p).on_quit_fn;
+            if quit.is_not_null() { quit((*this._p).hook_ctx); }
+        }
+        return status::Status::Ok;
+    }
+}
+
+fn quit(owner: *application::Application) -> bool {
+    if DRIVER.external_loop || owner != application::current() { return false; }
+    let ask = (*owner).on_should_quit_fn;
+    if ask.is_not_null() && !ask((*owner).hook_ctx) { return false; }
+    let r = model::registry(owner);
+    if r.is_null() { return false; }
+    var i = (*r).sessions.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match (*r).sessions.at_ptr(i) {
+            option::Option[**model::Session]::Some(p) => {
+                let w = window::Window::of_navigation(model::Navigator { owner: owner, id: (**p).id });
+                if w.is_live() && !w.close() { return false; }
+            }
+            option::Option[**model::Session]::None => { }
+        }
+    }
+    return true;
+}
+
+// Called by platform will-close hooks while the views still exist. The native
+// backend unmounts after this returns; release must therefore be deferred to a
+// later loop turn, even when no background job is running.
+fn closing(ctx: *u8) {
+    if ctx.is_null() { return; }
+    let s = ctx as *model::Session;
+    let n = model::Navigator { owner: (*s).owner, id: (*s).id };
+    engine::dispose(n);
+    services::free_next_turn(release_session, ctx);
+}
+fn release_session(ctx: *u8) {
+    let s = ctx as *model::Session;
+    engine::release(model::Navigator { owner: (*s).owner, id: (*s).id });
+}
+fn named(n: model::Navigator) {
+    // Backend-facing addressing uses a collision-free instance id. Public
+    // lookup keeps the registered name and key as separate fields.
+    let id = n.id;
+    let key: text::Text = "@window:${id}";
+    let _named = application::set_window_key(engine::root(n), key.view());
+    engine::attached(n);
+}
+
+fn chrome(n: model::Navigator) -> screen::Chrome {
+    let s = model::session(n.owner, n.id);
+    if s.is_null() { return screen::Chrome::new(); }
+    let d = model::definition(n.owner, (*s).definition);
+    if d.is_null() || (*d).settings.is_null() { return screen::Chrome::new(); }
+    return (*((*d).settings as *screen::Chrome)).copy();
+}
+
+fn default_chrome() -> screen::Chrome { return screen::Chrome::new(); }

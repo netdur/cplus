@@ -4122,16 +4122,33 @@ def emit_elements(rows_by_control):
          'import "./split" as m_split;\n',
          'import "./tree" as m_tree;\n',
          'import "./relist" as m_relist;\n',
+         'import "./navigation" as m_navigation;\n',
          'import "./obs_vec" as m_obs_vec;\n',
          'import "./window_chrome" as m_window_chrome;\n']
     for row_type in rows_by_control:
         mod = MODULE[row_type]
         o.append(f'import "./{mod}" as m_{mod};\n')
-    o.append("\ntype Builder = flex::Builder;\n\n")
+    o.append("\n// facet's own Builder, not flex's — it takes `IntoNode`, so a\n// component can be an item in `@ui` beside a plain node.\ntype Builder = core::Builder;\n\n")
     o.append("// ---- containers (facet core owns these) --------------------------------\n")
     for c in CONTAINER_FORWARDS:
         o.append(f"fn {c}(take b: Builder, key: str = \"\") -> core::Node "
                  f"{{ return core::{c}(b, key: key); }}\n")
+    o.append(
+        "\n// A NAMED HOLE IN THE TREE. `slot(\"detail\") { ... }` is an ordinary\n"
+        "// container that also has an address, so anything can fill it: a\n"
+        "// `window.nav().push(into: \"detail\")`, a `mount::set_content`, or the app's own\n"
+        "// `add_child`. Its key is `slot:<name>`, which is what a push looks for.\n"
+        "//\n"
+        "// It holds whatever the block built as its BASE, so \"put something here\"\n"
+        "// and \"take it away again\" are the same pair of operations the window's\n"
+        "// own screen stack uses — see stack.cplus for why a host needs a base.\n"
+        "// `route` is the slot's DEFAULT SCREEN — what it shows when nothing is\n"
+        "// pushed into it, the way `App::run(route)` names the window's. It is\n"
+        "// not a stack entry: a pop that empties the slot reveals it again, and\n"
+        "// nothing can pop it away. A route nothing registered falls back to\n"
+        "// whatever the block built.\n"
+        "fn slot(take b: Builder, name: str, route: str = \"\") -> core::Node "
+        "{ return m_navigation::slot(b, name, route: route); }\n")
     o.append("fn spacer(key: str = \"\") -> core::Node "
              "{ return core::spacer(key: key); }\n\n")
     o.append(FACET_ORIGIN_FORWARDS)

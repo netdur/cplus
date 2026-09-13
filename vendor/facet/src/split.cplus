@@ -251,9 +251,10 @@ fn split(
 
     // flex builds the container and holds the panes; facet's Data rides on it,
     // exactly as it does for column and row.
+    let inner: flex::Builder = b.into_flex();
     var n: core::Node = match axis {
-        SplitAxis::Columns => flex::row(b),
-        SplitAxis::Rows => flex::column(b),
+        SplitAxis::Columns => flex::row(inner),
+        SplitAxis::Rows => flex::column(inner),
     };
     let d: *core::Data = core::ensure_data(#addr_of(n));
     if d.is_not_null() {

@@ -1,0 +1,745 @@
+// Retained content navigation, owned by one live window instance.
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/box" as box;
+import "stdlib/status" as status;
+import "./nav_model" as model;
+import "./application" as app;
+import "./facet" as core;
+import "./mount" as mount;
+import "./screen" as screen;
+import "./component" as component;
+import "./services" as services;
+
+fn install() { model::install(model::Host { push: navigate, back: travel }); }
+fn navigator(s: *model::Session) -> model::Navigator {
+    return model::Navigator { owner: (*s).owner, id: (*s).id };
+}
+fn wrapper(take tree: core::Node, key: str) -> core::Node {
+    var content = tree;
+    let safe = content.safe_area();
+    core::fill_as_window_root(#addr_of(content));
+    var b = core::Builder::new();
+    b.add(content);
+    var n = core::column(b, key: key);
+    n.set_grow(1.0f64);
+    n.set_shrink(1.0f64);
+    n.set_safe_area(safe);
+    return n;
+}
+
+fn create_entry(s: *model::Session, factory: *u8, route: str, key: str,
+                slot: str, parent: u64, base: bool, take params: model::Params) -> u64 {
+    if factory.is_null() { return 0 as u64; }
+    let f = factory as fn() -> screen::ScreenBox;
+    var sb = f();
+    if !sb.valid() { return 0 as u64; }
+    let p: *u8 = match box::new::[screen::ScreenBox](sb) {
+        option::Option[box::Box[screen::ScreenBox]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[screen::ScreenBox]]::None => 0 as *u8,
+    };
+    if p.is_null() { return 0 as u64; }
+    (*s).next_entry = (*s).next_entry +% (1 as u64);
+    let id = (*s).next_entry;
+    let w: text::Text = "@nav:entry:${id}";
+    let result = (*s).entries.append(model::Entry { id: id, parent: parent,
+        route: text::from_str(route), key: text::from_str(key),
+        slot: text::from_str(slot), wrapper: w, params: params,
+        screen: p, root: 0 as *core::Node, host: 0 as *core::Node,
+        base: base, attached: false, active: true });
+    if result != status::Status::Ok { free_screen(p); return 0 as u64; }
+    (*(p as *screen::ScreenBox)).set_context(model::Context {
+        navigation: navigator(s), entry_id: id });
+    return id;
+}
+fn build_entry(s: *model::Session, id: u64) -> core::Node {
+    let e = model::entry(s, id);
+    let p = (*e).screen as *screen::ScreenBox;
+    let key = text::from_str((*e).wrapper.view());
+    var tree = (*p).build();
+    return wrapper(tree, key.view());
+}
+fn prepare(owner: *app::Application, definition: u64, key: str,
+           take params: model::Params = model::params_new()) -> model::Navigator {
+    install();
+    let r = model::registry(owner);
+    let d = model::definition(owner, definition);
+    if r.is_null() || d.is_null() { return model::Navigator::none(); }
+    (*r).next_session = (*r).next_session +% (1 as u64);
+    let id = (*r).next_session;
+    let value = model::Session { owner: owner, id: id, definition: definition,
+        name: text::from_str((*d).name.view()), key: text::from_str(key),
+        root: 0 as *core::Node, entries: vec::new::[model::Entry](),
+        history: vec::new::[u64](), future: vec::new::[u64](),
+        pending: model::params_new(), next_entry: 0 as u64,
+        revision: 0 as u64, busy: true, ready: false, closing: false };
+    let s: *model::Session = match box::new::[model::Session](value) {
+        option::Option[box::Box[model::Session]]::Some(b) => b.into_raw() as *model::Session,
+        option::Option[box::Box[model::Session]]::None => 0 as *model::Session,
+    };
+    if s.is_null() { return model::Navigator::none(); }
+    let added = (*r).sessions.append(s);
+    if added != status::Status::Ok {
+        let _b = box::from_raw::[model::Session](s as *u8);
+        return model::Navigator::none();
+    }
+    let n = navigator(s);
+    let first = create_entry(s, (*d).factory, "", "", "", 0 as u64, true, params);
+    if first == (0 as u64) { dispose(n); release(n); return model::Navigator::none(); }
+    var b = core::Builder::new();
+    var first_tree = build_entry(s, first);
+    let safe = first_tree.safe_area();
+    b.add(first_tree);
+    var tree = core::column(b, key: "@nav:window");
+    tree.set_grow(1.0f64);
+    tree.set_shrink(1.0f64);
+    tree.set_safe_area(safe);
+    (*s).root = match box::new::[core::Node](tree) {
+        option::Option[box::Box[core::Node]]::Some(bx) => bx.into_raw() as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if (*s).root.is_null() { dispose(n); release(n); return model::Navigator::none(); }
+    locate(s);
+    return n;
+}
+
+fn root(n: model::Navigator) -> *core::Node {
+    let s = model::session(n.owner, n.id);
+    if s.is_null() { return 0 as *core::Node; }
+    return (*s).root;
+}
+
+
+
+fn primary_box(n: model::Navigator) -> *screen::ScreenBox {
+    let e = model::entry(model::session(n.owner, n.id), 1 as u64);
+    if e.is_null() { return 0 as *screen::ScreenBox; }
+    return (*e).screen as *screen::ScreenBox;
+}
+
+// Defaults are built in the owning screen's construction context. Their
+// records are attached only after their trees have actually been mounted.
+fn slot(take b: core::Builder, name: str, route: str = "") -> core::Node {
+    let c = model::building_context();
+    let s = model::session(c.navigation.owner, c.navigation.id);
+    var inner = core::column(b);
+    var key = text::from_str("@nav:base");
+    if s.is_not_null() && route != "" {
+        let f = model::route_factory(s, route);
+        let id = create_entry(s, f, route, "", name, c.entry_id, true, model::params_new());
+        if id != (0 as u64) {
+            let e = model::entry(s, id);
+            key = text::from_str((*e).wrapper.view());
+            inner = (*((*e).screen as *screen::ScreenBox)).build();
+        }
+    }
+    var out = core::Builder::new();
+    out.add(wrapper(inner, key.view()));
+    let slot_key: text::Text = "slot:${name}";
+    var host = core::column(out, key: slot_key.view());
+    host.set_grow(1.0f64);
+    host.set_shrink(1.0f64);
+    return host;
+}
+
+fn locate_walk(s: *model::Session, node: *core::Node, parent: *core::Node) {
+    if node.is_null() { return; }
+    var i: usize = 0 as usize;
+    while i < (*s).entries.count() {
+        match (*s).entries.at_ptr(i) {
+            option::Option[*model::Entry]::Some(e) => {
+                if (*node).key() == (*e).wrapper.view() { (*e).root = node; (*e).host = parent; }
+            }
+            option::Option[*model::Entry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    i = 0 as usize;
+    while i < core::child_count_of(node) {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(ch) => { locate_walk(s, ch, node); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+fn locate(s: *model::Session) { locate_walk(s, (*s).root, 0 as *core::Node); }
+fn contains(node: *core::Node, sought: *core::Node) -> bool {
+    if node.is_null() { return false; }
+    if node == sought { return true; }
+    var i: usize = 0 as usize;
+    while i < core::child_count_of(node) {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(ch) => { if contains(ch, sought) { return true; } }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+fn parked(s: *model::Session, node: *core::Node) -> bool {
+    var i: usize = 0 as usize;
+    while i < (*s).entries.count() {
+        match (*s).entries.at_ptr(i) {
+            option::Option[*model::Entry]::Some(e) => { if (*e).root == node { return !(*e).active; } }
+            option::Option[*model::Entry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+fn find_slot(s: *model::Session, node: *core::Node, key: str, ref count: usize) -> *core::Node {
+    if node.is_null() || parked(s, node) { return 0 as *core::Node; }
+    var hit: *core::Node = 0 as *core::Node;
+    if (*node).key() == key { count = count +% (1 as usize); hit = node; }
+    var i: usize = 0 as usize;
+    while i < core::child_count_of(node) {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(ch) => {
+                let p = find_slot(s, ch, key, count);
+                if p.is_not_null() { hit = p; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return hit;
+}
+fn target(s: *model::Session, name: str) -> *core::Node {
+    if name == "" { return (*s).root; }
+    let key: text::Text = "slot:${name}";
+    var count: usize = 0 as usize;
+    let p = find_slot(s, (*s).root, key.view(), count);
+    if count != (1 as usize) { return 0 as *core::Node; }
+    return p;
+}
+fn shown(s: *model::Session, host: *core::Node) -> u64 {
+    var i = (*s).entries.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match (*s).entries.at_ptr(i) {
+            option::Option[*model::Entry]::Some(e) => {
+                if (*e).host == host && (*e).active { return (*e).id; }
+            }
+            option::Option[*model::Entry]::None => { }
+        }
+    }
+    return 0 as u64;
+}
+fn set_active(s: *model::Session, id: u64, active: bool) {
+    let e = model::entry(s, id);
+    if e.is_null() || (*e).active == active { return; }
+    (*e).active = active;
+    if !(*e).attached { return; }
+    let sb = (*e).screen as *screen::ScreenBox;
+    if active { (*sb).on_attach(component::Attach::Active); }
+    else { (*sb).on_detach(component::Detach::Inactive); }
+}
+fn attach_entries(s: *model::Session) {
+    var i: usize = 0 as usize;
+    while i < (*s).entries.count() {
+        match (*s).entries.at_ptr(i) {
+            option::Option[*model::Entry]::Some(e) => {
+                if !(*e).attached && (*e).root.is_not_null() {
+                    (*e).attached = true;
+                    let p = (*e).screen as *screen::ScreenBox;
+                    let _b = component::bind_app_lifecycle::[screen::ScreenBox](p);
+                    (*p).on_attach(component::Attach::Mount);
+                }
+            }
+            option::Option[*model::Entry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+fn notify(s: *model::Session) {
+    (*s).revision = (*s).revision +% (1 as u64);
+    let state = navigator(s).state();
+    var i: usize = 0 as usize;
+    while i < (*s).entries.count() {
+        match (*s).entries.at_ptr(i) {
+            option::Option[*model::Entry]::Some(e) => {
+                if (*e).attached { (*((*e).screen as *screen::ScreenBox)).navigation_changed(state); }
+            }
+            option::Option[*model::Entry]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+fn attached(n: model::Navigator) {
+    let s = model::session(n.owner, n.id);
+    if s.is_null() || (*s).ready { return; }
+    locate(s);
+    (*s).ready = true;
+    attach_entries(s);
+    notify(s);
+    (*s).busy = false;
+}
+
+fn last(v: vec::Vec[u64]) -> u64 {
+    if v.count() == (0 as usize) { return 0 as u64; }
+    return match v.at_ptr(v.count() -% (1 as usize)) {
+        option::Option[*u64]::Some(p) => *p,
+        option::Option[*u64]::None => 0 as u64,
+    };
+}
+fn navigate(n: model::Navigator, route: str, key: str, into: str, mode: u32) -> bool {
+    let s = model::session(n.owner, n.id);
+    if s.is_null() || (*s).busy || !(*s).ready { return false; }
+    let h = target(s, into);
+    let factory = model::route_factory(s, route);
+    if h.is_null() || factory.is_null() { return false; }
+    (*s).busy = true;
+    let old = shown(s, h);
+    let mark = (*s).next_entry;
+    var args = model::copy_params((*s).pending);
+    (*s).pending = model::params_new();
+    var parent: u64 = 0 as u64;
+    var pi: usize = 0 as usize;
+    while pi < (*s).entries.count() {
+        match (*s).entries.at_ptr(pi) {
+            option::Option[*model::Entry]::Some(pe) => {
+                if (*pe).active && contains((*pe).root, h) && (*pe).id > parent { parent = (*pe).id; }
+            }
+            option::Option[*model::Entry]::None => { }
+        }
+        pi = pi +% (1 as usize);
+    }
+    let id = create_entry(s, factory, route, key, into, parent, false, args);
+    if id == (0 as u64) { (*s).busy = false; return false; }
+    var tree = build_entry(s, id);
+    if !mount::add_child(h, tree) {
+        discard_since(s, mark);
+        (*s).busy = false;
+        return false;
+    }
+    locate(s);
+    // Reserve history before committing. A failed append leaves the old
+    // presentation and its forward branch intact.
+    let added = (*s).history.append(id);
+    if added != status::Status::Ok {
+        discard_since(s, mark);
+        (*s).busy = false;
+        return false;
+    }
+    discard_future(s);
+    set_active(s, old, false);
+    let e = model::entry(s, id);
+    let _shown = mount::switch_to(h, (*e).wrapper.view());
+    if mode == (1 as u32) && old != (0 as u64) {
+        // Preserve the base/non-base status, so replacing a base remains a
+        // base and replacing a pushed screen preserves its previous back path.
+        let previous = model::entry(s, old);
+        let was_base = (*previous).base;
+        (*e).base = was_base;
+        // Replacement keeps the old position in the chronological history.
+        // Another slot may have been navigated more recently.
+        let _reserved = (*s).history.remove(at: (*s).history.count() -% (1 as usize));
+        var hi: usize = 0 as usize;
+        while hi < (*s).history.count() {
+            match (*s).history.at_ptr(hi) {
+                option::Option[*u64]::Some(p) => { if *p == old { *p = id; } }
+                option::Option[*u64]::None => { }
+            }
+            hi = hi +% (1 as usize);
+        }
+        discard(s, old);
+    }
+    attach_entries(s);
+    notify(s);
+    (*s).busy = false;
+    return true;
+}
+fn travel(n: model::Navigator, forward: bool) -> bool {
+    let s = model::session(n.owner, n.id);
+    if s.is_null() || (*s).busy || !(*s).ready { return false; }
+    var id = last((*s).history);
+    if forward { id = last((*s).future); }
+    let e = model::entry(s, id);
+    if e.is_null() || !contains((*s).root, (*e).host) { return false; }
+    let h = (*e).host;
+    (*s).busy = true;
+    if forward {
+        let added = (*s).history.append(id);
+        if added != status::Status::Ok { (*s).busy = false; return false; }
+        let _gone = (*s).future.remove(at: (*s).future.count() -% (1 as usize));
+        set_active(s, shown(s, h), false);
+        let _show = mount::switch_to(h, (*e).wrapper.view());
+        set_active(s, id, true);
+    } else {
+        let added = (*s).future.append(id);
+        if added != status::Status::Ok { (*s).busy = false; return false; }
+        let _gone = (*s).history.remove(at: (*s).history.count() -% (1 as usize));
+        set_active(s, id, false);
+        var below: u64 = 0 as u64;
+        var i = (*s).history.count();
+        while i > (0 as usize) {
+            i = i -% (1 as usize);
+            match (*s).history.at_ptr(i) {
+                option::Option[*u64]::Some(p) => {
+                    let candidate = model::entry(s, *p);
+                    if candidate.is_not_null() && (*candidate).host == h { below = *p; break; }
+                }
+                option::Option[*u64]::None => { }
+            }
+        }
+        if below == (0 as u64) {
+            i = 0 as usize;
+            while i < (*s).entries.count() {
+                match (*s).entries.at_ptr(i) {
+                    option::Option[*model::Entry]::Some(candidate) => {
+                        if (*candidate).base && (*candidate).host == h { below = (*candidate).id; break; }
+                    }
+                    option::Option[*model::Entry]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+        }
+        let previous = model::entry(s, below);
+        if previous.is_not_null() {
+            let _show = mount::switch_to(h, (*previous).wrapper.view());
+            set_active(s, below, true);
+        } else {
+            let _show = mount::switch_to(h, "@nav:base");
+        }
+    }
+    notify(s);
+    (*s).busy = false;
+    return true;
+}
+fn remove_history(s: *model::Session, id: u64) {
+    var i = (*s).history.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match (*s).history.at_ptr(i) {
+            option::Option[*u64]::Some(p) => { if *p == id { let _r = (*s).history.remove(at: i); } }
+            option::Option[*u64]::None => { }
+        }
+    }
+}
+fn discard_future(s: *model::Session) {
+    // Descendants have larger ids. Remove newest first so their slot hosts
+    // remain alive during teardown, irrespective of the order of Back calls.
+    loop {
+        var largest: u64 = 0 as u64;
+        var i: usize = 0 as usize;
+        while i < (*s).future.count() {
+            match (*s).future.at_ptr(i) {
+                option::Option[*u64]::Some(p) => { if *p > largest { largest = *p; } }
+                option::Option[*u64]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        if largest == (0 as u64) { break; }
+        discard(s, largest);
+        i = (*s).future.count();
+        while i > (0 as usize) {
+            i = i -% (1 as usize);
+            match (*s).future.at_ptr(i) {
+                option::Option[*u64]::Some(p) => { if *p == largest { let _r = (*s).future.remove(at: i); } }
+                option::Option[*u64]::None => { }
+            }
+        }
+    }
+}
+fn discard_since(s: *model::Session, mark: u64) {
+    var id = (*s).next_entry;
+    while id > mark { discard(s, id); id = id -% (1 as u64); }
+}
+fn free_screen(p: *u8) { let _b = box::from_raw::[screen::ScreenBox](p); }
+struct Retired { tree: option::Option[core::Node], opaque screen: *u8 }
+fn free_retired(p: *u8) {
+    let screen = (*(p as *Retired)).screen;
+    { let _b = box::from_raw::[Retired](p); }
+    free_screen(screen);
+}
+fn discard(s: *model::Session, id: u64) {
+    // Default routes nested inside this entry share its lifetime.
+    var child = (*s).next_entry;
+    while child > id {
+        let e = model::entry(s, child);
+        if e.is_not_null() && (*e).parent == id { discard(s, child); }
+        child = child -% (1 as u64);
+    }
+    let e = model::entry(s, id);
+    if e.is_null() { return; }
+    let p = (*e).screen;
+    if (*e).attached {
+        let _u = component::unbind_app_lifecycle::[screen::ScreenBox](p as *screen::ScreenBox);
+        (*(p as *screen::ScreenBox)).on_detach(component::Detach::Unmount);
+    }
+    let h = (*e).host;
+    let root = (*e).root;
+    var tree: option::Option[core::Node] = option::Option[core::Node]::None;
+    if h.is_not_null() && contains((*s).root, h) {
+        var i = core::child_count_of(h);
+        while i > (0 as usize) {
+            i = i -% (1 as usize);
+            match core::child_of(h, i) {
+                option::Option[*core::Node]::Some(ch) => {
+                    if ch == root { tree = mount::remove_child(h, i); break; }
+                }
+                option::Option[*core::Node]::None => { }
+            }
+        }
+    }
+    var i = (*s).entries.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match (*s).entries.at_ptr(i) {
+            option::Option[*model::Entry]::Some(found) => {
+                if (*found).id == id { let _gone = (*s).entries.remove(at: i); break; }
+            }
+            option::Option[*model::Entry]::None => { }
+        }
+    }
+    remove_history(s, id);
+    i = (*s).future.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match (*s).future.at_ptr(i) {
+            option::Option[*u64]::Some(value) => { if *value == id { let _r = (*s).future.remove(at: i); } }
+            option::Option[*u64]::None => { }
+        }
+    }
+    match box::new::[Retired](Retired { tree: tree, screen: p }) {
+        option::Option[box::Box[Retired]]::Some(b) => { services::free_when_settled(free_retired, b.into_raw()); }
+        option::Option[box::Box[Retired]]::None => { services::free_when_settled(free_screen, p); }
+    }
+}
+fn dispose(n: model::Navigator) {
+    let s = model::session(n.owner, n.id);
+    if s.is_null() { return; }
+    (*s).busy = true;
+    discard_since(s, 0 as u64);
+    (*s).closing = true;
+    // The backend may still be unwinding a close callback over the root.
+    // Runtime calls release after unmount, through its deferred cleanup seam.
+}
+fn release(n: model::Navigator) {
+    let r = model::registry(n.owner);
+    if r.is_null() { return; }
+    var i = (*r).sessions.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match (*r).sessions.at_ptr(i) {
+            option::Option[**model::Session]::Some(p) => {
+                let s = *p;
+                if (*s).id == n.id {
+                    let root = (*s).root;
+                    let _r = (*r).sessions.remove(at: i);
+                    if root.is_not_null() { let _tree = box::from_raw::[core::Node](root as *u8); }
+                    let _session = box::from_raw::[model::Session](s as *u8);
+                    return;
+                }
+            }
+            option::Option[**model::Session]::None => { }
+        }
+    }
+}
+
+// ---- navigation contract tests ---------------------------------------------
+static TEST_DROPS: i32 = 0;
+static TEST_MOUNTS: i32 = 0;
+static TEST_UNMOUNTS: i32 = 0;
+struct TestScreen { context: model::Context, shell: bool, edits: i32, changes: usize }
+impl TestScreen { fn drop(ref this) { TEST_DROPS = TEST_DROPS + 1; } }
+impl TestScreen: component::Component {
+    fn build(ref this) -> core::Node {
+        var b = core::Builder::new();
+        if this.shell {
+            b.add(slot(core::Builder::new(), "details", "page"));
+            b.add(slot(core::Builder::new(), "other"));
+        }
+        return core::column(b, key: "content");
+    }
+}
+impl TestScreen: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) {
+        if why == component::Attach::Mount { TEST_MOUNTS = TEST_MOUNTS + 1; }
+    }
+    fn on_detach(ref this, why: component::Detach) {
+        if why == component::Detach::Unmount { TEST_UNMOUNTS = TEST_UNMOUNTS + 1; }
+    }
+}
+impl TestScreen: screen::Screen {
+
+
+
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+    fn on_context(ref this, c: model::Context) { this.context = c; }
+    fn on_navigation(ref this, state: model::State) { this.changes = this.changes +% (1 as usize); }
+}
+fn test_shell() -> screen::ScreenBox {
+    return screen::screen_box(TestScreen { context: model::Context::none(), shell: true, edits: 0, changes: 0 as usize });
+}
+fn test_page() -> screen::ScreenBox {
+    return screen::screen_box(TestScreen { context: model::Context::none(), shell: false, edits: 0, changes: 0 as usize });
+}
+fn test_open(owner: *app::Application, key: str) -> model::Navigator {
+    let r = model::registry(owner);
+    if (*r).definitions.count() == (0 as usize) {
+        let pf: fn() -> screen::ScreenBox = test_page;
+        let sf: fn() -> screen::ScreenBox = test_shell;
+        var routes = vec::new::[model::Route]();
+        let _r = routes.append(model::Route { name: text::from_str("page"), factory: pf as *u8 });
+        let _d = (*r).definitions.append(model::Definition { id: 1 as u64,
+            name: text::from_str("main"), factory: sf as *u8, routes: routes, settings: 0 as *u8 });
+    }
+    let n = prepare(owner, 1 as u64, key);
+    assert n.is_live();
+    let _registered = app::open_window(root(n));
+    let _mounted = mount::mount(root(n));
+    attached(n);
+    return n;
+}
+fn test_close(n: model::Navigator) {
+    let r = root(n);
+    dispose(n);
+    mount::unmount(r);
+    release(n);
+}
+fn test_screen(n: model::Navigator, id: u64) -> *TestScreen {
+    let e = model::entry(model::session(n.owner, n.id), id);
+    if e.is_null() { return 0 as *TestScreen; }
+    return (*((*e).screen as *screen::ScreenBox)).instance() as *TestScreen;
+}
+#[test]
+fn independent_windows_keep_routes_arguments_history_and_handles() {
+    let owner = app::new_instance("navigation test");
+    app::make_current(owner);
+    let a = test_open(owner, "one");
+    let b = test_open(owner, "two");
+    let pushed = a.push("page", arg: "A", into: "details");
+    assert pushed;
+    assert b.depth() == (0 as usize);
+    assert b.push("page", arg: "B", into: "details");
+    let sa = model::session(owner, a.id);
+    let sb = model::session(owner, b.id);
+    let ca = (*test_screen(a, last((*sa).history))).context;
+    let cb = (*test_screen(b, last((*sb).history))).context;
+    assert ca.arg() == "A";
+    assert cb.arg() == "B";
+    assert ca.window_key() == "one";
+    let popped = a.pop();
+    assert popped;
+    assert b.depth() == (1 as usize);
+    assert cb.arg() == "B";
+    test_close(a);
+    assert !a.is_live();
+    assert !ca.is_live();
+    assert b.is_live();
+    assert b.pop();
+    test_close(b);
+    app::release_current();
+}
+#[test]
+fn back_forward_preserve_edits_and_failed_navigation_preserves_history() {
+    let owner = app::new_instance("navigation test");
+    app::make_current(owner);
+    let n = test_open(owner, "");
+    assert n.push("page", into: "details");
+    let s = model::session(owner, n.id);
+    let id = last((*s).history);
+    let p = test_screen(n, id);
+    (*p).edits = 42;
+    assert n.pop();
+    assert n.can_forward();
+    assert !n.push("missing", into: "details");
+    assert !n.push("page", into: "missing");
+    assert n.can_forward();
+    assert n.forward();
+    assert test_screen(n, id) == p;
+    assert (*p).edits == 42;
+    assert !n.can_forward();
+    assert n.pop();
+    assert n.push("page", into: "other");
+    assert !n.can_forward();
+    assert test_screen(n, id).is_null();
+    test_close(n);
+    app::release_current();
+}
+#[test]
+fn window_teardown_unmounts_and_releases_defaults_and_history_once() {
+    TEST_DROPS = 0;
+    TEST_MOUNTS = 0;
+    TEST_UNMOUNTS = 0;
+    let owner = app::new_instance("navigation test");
+    app::make_current(owner);
+    let n = test_open(owner, "");
+    assert TEST_MOUNTS == 2;
+    assert n.push("page", into: "details");
+    assert n.push("page");
+    assert n.pop();
+    assert TEST_MOUNTS == 4;
+    test_close(n);
+    assert TEST_UNMOUNTS == 4;
+    assert TEST_DROPS == 4;
+    app::release_current();
+}
+
+#[test]
+fn replacement_preserves_other_slots_history_order() {
+    let owner = app::new_instance("replacement");
+    app::make_current(owner);
+    let n = test_open(owner, "");
+    assert n.push("page", into: "details", arg: "first");
+    assert n.push("page", into: "other", arg: "second");
+    assert n.replace("page", into: "details", arg: "replacement");
+    assert n.depth() == (2 as usize);
+    assert n.pop();
+    match n.current(into: "details") {
+        option::Option[model::Context]::Some(c) => { assert c.arg() == "replacement"; }
+        option::Option[model::Context]::None => { assert false; }
+    }
+    assert n.pop();
+    assert !n.can_pop();
+    assert n.forward();
+    assert n.forward();
+    test_close(n);
+    app::release_current();
+}
+
+#[test]
+fn replacing_base_disposes_nested_history_and_stale_contexts() {
+    let owner = app::new_instance("replacement");
+    app::make_current(owner);
+    let n = test_open(owner, "");
+    assert n.push("page", into: "details", key: "editor");
+    let old = match screen::find(n, "editor") {
+        option::Option[screen::Cursor]::Some(c) => c,
+        option::Option[screen::Cursor]::None => { assert false; return; },
+    };
+    assert n.replace("page");
+    assert !old.is_live();
+    assert n.depth() == (0 as usize);
+    assert !n.can_forward();
+    assert !n.push("page", into: "details");
+    assert n.is_live();
+    test_close(n);
+    app::release_current();
+}
+
+#[test]
+fn window_shell_receives_initial_and_committed_navigation_state() {
+    let owner = app::new_instance("events");
+    app::make_current(owner);
+    let n = test_open(owner, "");
+    let shell = test_screen(n, 1 as u64);
+    assert (*shell).changes == (1 as usize);
+    assert n.state().revision == (1 as u64);
+    assert !n.push("missing");
+    assert (*shell).changes == (1 as usize);
+    assert n.push("page", into: "details");
+    assert (*shell).changes == (2 as usize);
+    assert n.state().can_pop();
+    assert n.pop();
+    assert (*shell).changes == (3 as usize);
+    assert !n.state().can_pop();
+    assert n.state().can_forward();
+    assert n.forward();
+    assert (*shell).changes == (4 as usize);
+    test_close(n);
+    app::release_current();
+}

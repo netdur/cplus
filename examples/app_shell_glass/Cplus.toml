@@ -1,0 +1,25 @@
+[package]
+name    = "app_shell_glass"
+version = "0.0.1"
+edition = "2026"
+
+# app_shell_glass — Liquid Glass window with a native sidebar and blended chrome.
+#
+#   cd examples/app_shell_glass && cpc build && ./target/debug/app_shell_glass
+
+[macos]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib        = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+
+[macos.dependencies]
+facet_appkit = "*"
+objc         = "*"
+appkit       = "*"
+quartzcore   = "*"
+webkit       = "*"

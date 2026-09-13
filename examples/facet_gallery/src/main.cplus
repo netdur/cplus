@@ -1,3 +1,4 @@
+import "facet/screen" as screen;
 // Facet Gallery — single window, sidebar + main pane.
 
 import "facet/theme" as theme;
@@ -10,16 +11,24 @@ import "facet_agent/agent" as agent;
 import "./gallery" as gallery;
 
 fn main() -> i32 {
-    theme::set_theme(theme::Theme::new(
-        primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
-        surface: vocab::Color::adaptive(
-            light: vocab::Color::rgba(0.94, 0.94, 0.96, 1.0),
-            dark: vocab::Color::rgba(0.09, 0.09, 0.11, 1.0),
-        ),
-    ));
+
 
     var app: runtime::App = runtime::App::new("Facet Gallery");
-    app.screen("gallery", gallery::screen_box);
+    app.on_launch(configure_theme);
+    app.window("gallery", gallery::screen_box, chrome: screen::Chrome::new(
+            title: "Facet Gallery",
+            width: 1000.0,
+            height: 680.0,
+            min_width: 720.0,
+            min_height: 480.0,
+            // Pinch to magnify — the same flag the iOS gallery sets. Zoom is a
+            // SCALE on the content view, never a relayout: the tree keeps its
+            // sizes and the magnification rides on top, so a zoomed gallery is
+            // the same tree bigger, not a reflowed one.
+            zoomable: true,
+            min_zoom: 1.0,
+            max_zoom: 3.0,
+        ));
 
     // FACET_GALLERY_AGENT=1 — serve the agent surface on a Unix socket.
     //
@@ -42,4 +51,14 @@ fn main() -> i32 {
         status::Status::Ok => { return 0; }
         _other => { return 1; }
     }
+}
+
+fn configure_theme(ctx: *u8) {
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
+        surface: vocab::Color::adaptive(
+            light: vocab::Color::rgba(0.94, 0.94, 0.96, 1.0),
+            dark: vocab::Color::rgba(0.09, 0.09, 0.11, 1.0),
+        ),
+    ));
 }

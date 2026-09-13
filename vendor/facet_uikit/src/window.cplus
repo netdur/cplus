@@ -783,8 +783,84 @@ fn make_bar_item(n: *core::Node) -> *u8 {
         { rt::msg_void_id(item, rt::sel(#str_ptr("setTintColor:\0")),
                           ui::Color::system_red_color().raw()) };
     }
+    // The shared band's `is_enabled`, read at build and again by
+    // `refresh_bar_item` every time the node is written to afterwards. No
+    // autovalidation to defeat here — that is NSToolbarItem's trap and it is
+    // AppKit's alone; a UIBarButtonItem keeps the flag it is given.
+    { rt::msg_void_i8(item, rt::sel(#str_ptr("setEnabled:\0")), core::is_enabled(n) as i8) };
     input::bind_node(item, n);
     return item;
+}
+
+// ---- the live half of the bar --------------------------------------------------
+// The bar is built once, when the root is attached, and the nodes it was built
+// from go on being written to — so mount routes a dirty `toolbar_item` here
+// rather than to the nearest backed ancestor, which is a content view that owns
+// no bar. See `core::is_window_declaration`.
+//
+// The node rides on its UIBarButtonItem already (`input::bind_node`, which the
+// click path reads), so the walk is the navigation item's own two lists and
+// there is no second table to keep in step.
+fn refresh_bar_item(item: *u8, n: *core::Node) {
+    let p: *props::ToolbarItemProps =
+        controls::props_of(n, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+    if p == (0 as *props::ToolbarItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    { rt::msg_void_i8(item, rt::sel(#str_ptr("setEnabled:\0")), core::is_enabled(n) as i8) };
+    // AN ICON WINS OVER A TITLE, the same order `make_bar_item` chose — writing
+    // a title onto an item built from a symbol would put text where the
+    // description asked for a glyph.
+    let icon: str = { (*mi).icon.view() };
+    if icon != "" {
+        match controls::symbol_image(icon, 0.0f64) {
+            option::Option[ui::Image]::Some(img) => {
+                { rt::msg_void_id(item, rt::sel(#str_ptr("setImage:\0")), img.raw()) };
+            }
+            option::Option[ui::Image]::None => { }
+        }
+    } else {
+        { rt::msg_void_id(item, rt::sel(#str_ptr("setTitle:\0")),
+                          bridge::nsstring({ (*mi).text.view() })) };
+    }
+    return;
+}
+
+fn refresh_bar_items(list: *u8) {
+    if list == (0 as *u8) { return; }
+    let n: u64 = { rt::msg_u64(list, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let item: *u8 = { rt::msg_id_u64(list, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        let node: *core::Node = input::node_of(item);
+        if node != (0 as *core::Node) { refresh_bar_item(item, node); }
+        i = i +% (1 as u64);
+    }
+    return;
+}
+
+// `which` names the furniture: the menu half is `menus.cplus`'s and is left
+// alone here rather than rebuilt as a side effect of a toolbar write.
+fn redeclare(ctx: *u8, root: *core::Node, which: u32) {
+    if root == (0 as *core::Node) { return; }
+    if (which & core::D_TOOLBAR) == (0u32) { return; }
+    let win: *u8 = app::window_native(root);
+    if win == (0 as *u8) { return; }
+    let si: usize = scene_index_for_window(win);
+    if si >= SCENES.count() { return; }
+    match SCENES.at_ptr(si) {
+        option::Option[*SceneWin]::Some(e) => {
+            let nav_item: *u8 = { rt::msg_id({ (*e).base },
+                                             rt::sel(#str_ptr("navigationItem\0"))) };
+            if nav_item != (0 as *u8) {
+                refresh_bar_items({ rt::msg_id(nav_item,
+                    rt::sel(#str_ptr("leftBarButtonItems\0"))) });
+                refresh_bar_items({ rt::msg_id(nav_item,
+                    rt::sel(#str_ptr("rightBarButtonItems\0"))) });
+            }
+        }
+        option::Option[*SceneWin]::None => { }
+    }
+    return;
 }
 
 fn install_toolbar(vc: *u8, root: *core::Node, navc: *u8) {
@@ -2405,6 +2481,14 @@ fn wh_close(root: *core::Node) {
     return;
 }
 
+fn wh_can_close(root: *core::Node) -> bool {
+    if !device::supports_multiple_scenes() { return false; }
+    return match SCENES.at_ptr(scene_index_for_root(root)) {
+        option::Option[*SceneWin]::Some(e) => (*e).key.view() != "" && (*e).scene.is_not_null(),
+        option::Option[*SceneWin]::None => false,
+    };
+}
+
 // A window's size changes exactly when the device rotates, and
 // `services::observe_size` over the root is the machinery that already reports
 // it: the root IS the window's content, so watching one is watching the other.
@@ -2422,6 +2506,7 @@ fn window_host() -> app_window::WindowHost {
     h.title = wh_title;
     h.set_title = wh_set_title;
     h.close = wh_close;
+    h.can_close = wh_can_close;
     h.observe_resize = wh_observe_resize;
     return h;
 }

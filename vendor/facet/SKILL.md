@@ -9,8 +9,9 @@ assuming otherwise — and because facet's API is permissive, **those mistakes
 compile**. The compiler cannot catch a design error. This file is the part
 `cpc build` will never tell you.
 
-Backends: `facet_appkit` (macOS), `facet_uikit` (iOS), `facet_gtk` (Linux). Your
-screens are portable; the entry installs one backend.
+Backends include `facet_appkit` (macOS), `facet_uikit` (iOS), `facet_gtk` (Linux),
+`facet_win32` (Windows), and `facet_android` (Android). `App::run` installs the
+target backend; app compositions can share screens.
 
 ---
 
@@ -117,9 +118,6 @@ impl Counter: component::Lifecycle {
 }
 
 impl Counter: screen::Screen {
-    fn chrome(this) -> screen::Chrome {
-        return screen::Chrome::new(title: "Counter", width: 380.0f64, height: 420.0f64);
-    }
     fn menu_items(this) -> vec::Vec[screen::MenuItem] {
         return vec::new::[screen::MenuItem]();
     }
@@ -791,110 +789,93 @@ asking twice is two flights for one answer.
 
 ---
 
-## 10. Screens, chrome, nav
+## 10. Apps, windows, and navigation
 
-A screen is a component that also implements `screen::Screen`:
+Full API, lifecycle rules, mobile behavior, and migration examples:
+[Apps, windows, and navigation](docs/navigation.md).
 
-```cplus
-impl Welcome: screen::Screen {
-    fn chrome(this) -> screen::Chrome {
-        return screen::Chrome::new(
-            title: "Iris",
-            width: 800.0f64, height: 500.0f64,
-            min_width: 640.0f64, min_height: 400.0f64,
-            bar: screen::Bar::Blended,
-            maximizable: false, minimizable: false, zoomable: true,
-        );
-    }
-    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
-        return vec::new::[screen::MenuItem]();
-    }
-}
+Inside a screen or component action, `runtime::app()` retrieves the running
+app. Use `runtime::app().open_window("model_library")` to open or activate a
+registered window, or `runtime::app().find_window(name, key: path)` to retrieve
+one before calling its `nav()`. Do not add global app storage or an
+`install(app)` helper for this. `App::new(...)` creates a separate app.
+Without a running app, the accessor returns the process default and window
+opening is refused; `runtime::app_running()` checks that lifetime. The Windows
+facade does not yet expose `runtime::app()`. Use the screen's retained
+`context.navigator()` for navigation within its own window.
 
-fn boxed() -> screen::ScreenBox { return screen::screen_box(Welcome::new()); }
-```
-
-The app registers screens by route and runs one:
+An app registers window definitions and starts through `App::run`. Window
+settings belong to the definition. A screen is content and implements
+`Component`, `Lifecycle`, and `Screen`; navigation hooks have defaults.
 
 ```cplus
-fn run() -> i32 {
-    var app: runtime::App = runtime::App::new("iris");
-    app.screen("welcome", welcome::boxed);
-    app.screen("workspace", workspace::boxed);
-    match app.run("welcome") {
-        status::Status::Ok => { return 0 as i32; }
-        _other => { return 1 as i32; }
+impl Home: screen::Screen {
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+    fn on_context(ref this, context: nav::Context) { this.context = context; }
+    fn on_navigation(ref this, state: nav::State) {
+        // Update controls inside this.context.root() from state.can_pop()
+        // and state.can_forward().
     }
 }
-```
-
-Navigation is `nav::go(route, arg)` / `nav::push` / `nav::pop` / `nav::quit`,
-read back with `nav::arg()` and `nav::param(key)`. A screen that navigates away
-is **parked, not destroyed** — attach/detach only notify (`on_attach`/
-`on_detach`); the views and state survive, so coming back restores scroll
-position and half-typed input for free.
-
-`push` means **show this next, with whatever room the platform has**: a peer
-window on a desktop, a stack entry on a phone. One intent, rendered as each
-platform renders it — so an app that says nothing gets the right shape on both.
-Say `show: nav::Show::Screen` to narrow it to a drill-down in the current
-window, which is the same everywhere.
-
-```cplus
-nav::push("settings");                              // window on desktop, stack on phone
-nav::push("camera", arg: "front");                  // addressable as "camera:front"
-nav::push("step2", show: nav::Show::Screen);        // in place, with a back path
-nav::pop();                                         // the stack only — never closes a window
-```
-
-A pushed window is keyed by its route, or `route:arg` when one was given, so two
-cameras get two addresses without you inventing them. Pushing a key already open
-**activates** it rather than opening a second.
-
-`pop` is the stack and nothing else. A window is closed by name:
-
-```cplus
-match window::find("camera:front") {
-    option::Option[window::Window]::Some(w) => { let _c: bool = w.close(); }
-    option::Option::None => { }
-}
-```
-
-Which is the rule the two tiers follow: **a key always names a screen; it names
-a window only where the platform gave that screen one.** `screen::find` answers
-on a phone where `window::find` does not, and neither lies about the other.
-
-The app itself is a handle to an instance the runtime owns, so it survives
-`main` returning — which is what a platform whose loop belongs to the OS needs.
-It carries the app's own environment: facts about the app, written by C+, by
-facet, and by you.
-
-```cplus
-let a: runtime::App = runtime::app();     // the running app, always answers
-a.env("@platform");                       // "macos" / "ios" / "android" / "linux"
-a.env("@backend");                        // "facet_appkit", "facet_android", ...
-a.set_env("last_project", path);
-a.set_env_flag("licensed", true);
-a.windows();  a.screens();
-```
-
-`@` keys are C+'s and facet's and `set_env` refuses them, so an app cannot claim
-a platform or version it is not running on. There is deliberately **no change
-channel** — if the UI must update when a value changes, that value belongs in a
-`resource`. And it is not `stdlib::env`: one is the OS's environment, the other
-is the app's.
-
-The entry module installs a backend and calls `run`:
-
-```cplus
-import "./app" as app;
-import "facet_appkit/facet_appkit" as backend;
+fn boxed() -> screen::ScreenBox { return screen::screen_box(Home::new()); }
 
 fn main() -> i32 {
-    backend::install();
-    return app::run();
+    let app = runtime::App::new("Notes");
+    let main = app.window("main", boxed, chrome: screen::Chrome::new(
+        title: "Notes", width: 820.0f64, height: 600.0f64,
+        bar: screen::Bar::Blended));
+    main.route("editor", editor::boxed);
+    match app.run("main") {
+        status::Status::Ok => { return 0; }
+        _other => { return 1; }
+    }
 }
 ```
+
+`App::run` installs the backend. Configure app-specific themes in `on_launch`,
+when that app is current. Independent apps can share screens, but only one app
+runs at once. Explicit desktop and mobile compositions own their own windows.
+
+`app.open_window("note", key: path)` returns `Option[window::Window]`. It
+activates an existing name/key instance or creates one. `find_window` retrieves
+without activating. A window handle exposes `activate`, `close`, and `nav`.
+Closing ends the instance; a stale handle cannot address its replacement.
+
+Navigation belongs to that window:
+
+```cplus
+w.nav().push("editor", arg: path, into: "details");
+w.nav().pop();
+w.nav().forward();
+w.nav().replace("editor", arg: another_path, into: "details");
+```
+
+Omit `into:` to replace the entire content area while keeping the native window.
+Declare a slot default with `slot("details", route: "overview")`. Back undoes
+the latest push in this window, across its slots and whole-content transitions.
+Back/Forward retain instances and edits. A successful new navigation discards
+the forward branch; failures leave history intact. Replacement keeps the
+replaced entry's history position; replacing base content adds no Back entry.
+Replacing a parent disposes its nested screens and their history.
+
+`on_context` runs before build. Read arguments from that context (`arg`,
+`param`) throughout the screen's lifetime. `on_navigation` runs after mount
+and committed transitions, including on the surrounding window screen when a
+slot changes. Commands during an unfinished transition are refused. A pending
+native window handle cannot navigate until it mounts.
+
+Slot lookup stays within the addressed window. Missing or ambiguous slots
+fail. Flex owns responsive layout; navigation never redirects based on width.
+Phone window-opening limitations are explicit failures, never implicit pushes.
+
+Use `App::run` as the sole public startup API. The former free `run`,
+`run_component`, `run_screen`, `present_window`, and `runtime::Window` interface
+are removed. `Screen::chrome` and global content navigation (`nav::go`,
+`nav::push`) are removed. Native backend mounting remains internal.
+
+The app handle also carries app metadata (`env`, `set_env`, `set_env_flag`),
+menus, agent setup, and launch/quit hooks. `@` environment keys are reserved;
+reactive UI data belongs in a resource.
 
 ---
 

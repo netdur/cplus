@@ -21,9 +21,9 @@ impl Cannot { fn new() -> Cannot { return Cannot { _unused: 0 }; } }
 
 impl Cannot: component::Component {
     fn build(ref this) -> core::Node {
-        var body: flex::Builder = flex::Builder::new();
+        var body: core::Builder = core::Builder::new();
 
-        var font: flex::Builder = flex::Builder::new();
+        var font: core::Builder = core::Builder::new();
         font.add(ui::date_picker(vocab::Date { year: 2026, month: 8,
                                                day: 16 },
                                  key: "g:date", font_size: 28.0,
@@ -33,11 +33,11 @@ impl Cannot: component::Component {
         font.add(shell::caption("The picker above asks for a 28pt bold Georgia. It is drawn in the system font, because UIDatePicker has no font property of ANY kind — the class has twenty-odd methods and every one of them is about dates. Six verbs on `date_picker` and six on `time_picker`, with no public way to reach any of them."));
         body.add(shell::card("A PICKER'S FONT — 12 VERBS", font));
 
-        var two: flex::Builder = flex::Builder::new();
+        var two: core::Builder = core::Builder::new();
         two.add(shell::caption("A `table`'s STYLE is fixed by initWithFrame:style: and has no setter, so it is read at create and honoured there; a style changed after the table is mounted has nowhere to land. And `window_chrome` names close / minimise / zoom buttons an iOS window does not have — an iOS window is the screen."));
         body.add(shell::card("THE OTHER TWO", two));
 
-        var count: flex::Builder = flex::Builder::new();
+        var count: core::Builder = core::Builder::new();
         count.add(shell::caption("305 of the 318 props facet_appkit implements are implemented here — 95%. The thirteen above are the whole difference, and `tools/parity.py` measures it rather than asserting it. Anything that tool prints must appear in MANIFEST.md §1."));
         body.add(shell::card("THE NUMBER", count));
 

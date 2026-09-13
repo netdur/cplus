@@ -11,6 +11,7 @@ import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 import "./component" as component;
 import "./application" as app;
+import "./nav_model" as navigation;
 
 type Node = flex::Node;
 
@@ -346,19 +347,26 @@ impl Chrome {
         };
     }
 
+    fn copy(this) -> Chrome {
+        return Chrome::new(title: this.title(), subtitle: this.subtitle(),
+            width: this.width, height: this.height, min_width: this.min_width,
+            min_height: this.min_height, bar: this.bar, maximizable: this.maximizable,
+            minimizable: this.minimizable, max_width: this.max_width, max_height: this.max_height,
+            zoomable: this.zoomable, min_zoom: this.min_zoom, max_zoom: this.max_zoom);
+    }
     fn title(this) -> str { return this.title_text.view(); }
     fn subtitle(this) -> str { return this.subtitle_text.view(); }
 }
 
-// The screen conformance: presentation metadata, read by the host each time it
-// shows the screen. A screen also conforms to Component and Lifecycle; the
-// hosts (`run_screen`, `App`) bound all three.
+// Content in a window or slot. Context precedes build; navigation events
+// follow mounting and committed transitions. Window chrome is registered
+// on the window definition.
 interface Screen {
-    fn chrome(this) -> Chrome;
-    // The items this screen contributes to the app menu, merged additively by
-    // the runtime each time the screen is shown (see AppMenu::extend). A screen
-    // with nothing to add returns an empty Vec — C+ interfaces carry no default
-    // bodies, so the empty case is written out rather than inherited.
+    // Context arrives before build; navigation state arrives after
+    // mounting and after every committed transition in this window.
+    fn on_context(ref this, context: navigation::Context) { }
+    fn on_navigation(ref this, state: navigation::State) { }
+    // Optional app-menu contribution from this content.
     fn menu_items(this) -> vec::Vec[MenuItem];
 }
 
@@ -371,6 +379,9 @@ interface Screen {
 // slot key — a handler self-locates its subtree through it, exactly as
 // under `run_component`.
 struct ScreenBox {
+    _context: navigation::Context,
+    _set_context: fn(*u8, navigation::Context),
+    _navigation: fn(*u8, navigation::State),
     opaque _p: *u8,
     _build: fn(*u8) -> Node,
     // THE REASON TRAVELS. These were `fn(*u8)` and the trampolines hard-coded
@@ -383,7 +394,7 @@ struct ScreenBox {
     // was kept and the reason dropped.
     _attach: fn(*u8, component::Attach),
     _detach: fn(*u8, component::Detach),
-    _chrome: fn(*u8) -> Chrome,
+
     _menu_items: fn(*u8) -> vec::Vec[MenuItem],
     _drop: fn(*u8),
 }
@@ -391,11 +402,14 @@ struct ScreenBox {
 fn screen_box[S: component::Component + component::Lifecycle + Screen](take s: S) -> ScreenBox {
     return match box::new::[S](s) {
         option::Option[box::Box[S]]::Some(b) => ScreenBox {
+            _context: navigation::Context::none(),
+            _set_context: sb_context_tramp::[S],
+            _navigation: sb_navigation_tramp::[S],
             _p: b.into_raw(),
             _build: sb_build_tramp::[S],
             _attach: sb_attach_tramp::[S],
             _detach: sb_detach_tramp::[S],
-            _chrome: sb_chrome_tramp::[S],
+
             _menu_items: sb_menu_items_tramp::[S],
             _drop: sb_drop_tramp::[S],
         },
@@ -412,6 +426,9 @@ fn sb_build_tramp[S: component::Component](p: *u8) -> Node {
     return { (*q).build() };
 }
 
+fn sb_context_tramp[S: Screen](p: *u8, c: navigation::Context) { (*(p as *S)).on_context(c); }
+fn sb_navigation_tramp[S: Screen](p: *u8, s: navigation::State) { (*(p as *S)).on_navigation(s); }
+
 fn sb_attach_tramp[S: component::Lifecycle](p: *u8, why: component::Attach) {
     let q: *S = p as *S;
     { (*q).on_attach(why) };
@@ -422,10 +439,8 @@ fn sb_detach_tramp[S: component::Lifecycle](p: *u8, why: component::Detach) {
     { (*q).on_detach(why) };
 }
 
-fn sb_chrome_tramp[S: Screen](p: *u8) -> Chrome {
-    let q: *S = p as *S;
-    return { (*q).chrome() };
-}
+
+
 
 fn sb_menu_items_tramp[S: Screen](p: *u8) -> vec::Vec[MenuItem] {
     let q: *S = p as *S;
@@ -442,11 +457,14 @@ impl ScreenBox {
     // no-ops, `valid` reads false.
     fn invalid() -> ScreenBox {
         return ScreenBox {
+            _context: navigation::Context::none(),
+            _set_context: 0 as fn(*u8, navigation::Context),
+            _navigation: 0 as fn(*u8, navigation::State),
             _p: 0 as *u8,
             _build: 0 as fn(*u8) -> Node,
             _attach: 0 as fn(*u8, component::Attach),
             _detach: 0 as fn(*u8, component::Detach),
-            _chrome: 0 as fn(*u8) -> Chrome,
+
             _menu_items: 0 as fn(*u8) -> vec::Vec[MenuItem],
             _drop: 0 as fn(*u8),
         };
@@ -461,14 +479,29 @@ impl ScreenBox {
     fn build(this) -> Node {
         if !this.valid() { return core::column(core::Builder::new()); }
         let f: fn(*u8) -> Node = this._build;
-        return f(this._p);
+        let previous = navigation::building_context();
+        navigation::set_building_context(this._context);
+        var root = f(this._p);
+        navigation::set_building_context(previous);
+        return root;
     }
 
-    fn chrome(this) -> Chrome {
-        if !this.valid() { return Chrome::new(); }
-        let f: fn(*u8) -> Chrome = this._chrome;
-        return f(this._p);
+    fn set_context(ref this, c: navigation::Context) {
+        this._context = c;
+        if this.valid() && this._set_context.is_not_null() {
+            let f = this._set_context;
+            f(this._p, c);
+        }
     }
+    fn navigation_changed(this, s: navigation::State) {
+        if this.valid() && this._navigation.is_not_null() {
+            let f = this._navigation;
+            f(this._p, s);
+        }
+    }
+
+
+
 
     // The boxed screen's menu contribution. Empty for an invalid box, so the
     // host merges nothing rather than special-casing.
@@ -702,9 +735,9 @@ impl SbtScreen: component::Lifecycle {
 }
 
 impl SbtScreen: Screen {
-    fn chrome(this) -> Chrome {
-        return Chrome::new(title: "sbt", width: 300.0f64, height: 200.0f64, zoomable: true, max_zoom: 3.0f64);
-    }
+
+
+
     fn menu_items(this) -> vec::Vec[MenuItem] { return vec::new::[MenuItem](); }
 }
 
@@ -746,13 +779,6 @@ fn screen_box_drives_the_erased_screen() {
         assert sb.valid();
         assert sb.instance() != (0 as *u8);
 
-        // chrome reaches the real conformance through the trampoline.
-        let c: Chrome = sb.chrome();
-        assert c.title() == "sbt";
-        assert sc_approx(c.width, 300.0f64);
-        assert c.zoomable;
-        assert sc_approx(c.max_zoom, 3.0f64);
-
         // build / lifecycle reach the real methods.
         var root: Node = sb.build();
         root.calculate_layout(width: 100.0f64, height: 100.0f64);
@@ -780,8 +806,6 @@ fn screen_box_invalid_noops() {
         root.calculate_layout(width: 100.0f64, height: 100.0f64);
         sb.on_attach(component::Attach::Mount);
         sb.on_detach(component::Detach::Unmount);
-        let c: Chrome = sb.chrome();
-        assert c.title() == "facet";
     }
     assert SBT_BUILDS == 0;
     assert SBT_ATTACHES == 0;
@@ -820,141 +844,93 @@ impl ScreenBox: component::Lifecycle {
     }
 }
 
-// ---- the screen cursor ---------------------------------------------------------
-// The other half of the two-tier model. A WINDOW is the platform container and
-// `window::find` addresses it; a SCREEN is the unit of presentation living in
-// one, and this addresses that.
-//
-// The rule the pair follows, and the reason both exist:
-//
-//     A key always names a screen. It names a window only where the platform
-//     gave that screen a window.
-//
-// `nav::push("settings")` on a phone puts a screen on the stack and opens no
-// window, so `screen::find("settings")` answers and `window::find("settings")`
-// does not. On a Mac both answer. Neither lies about the other's tier.
-//
-// NAMED `Cursor` because `Screen` in this module is the INTERFACE a component
-// adopts. Two different things — one is what an application implements, the
-// other is a handle to one that is currently up.
-
-// Copy, and stale-detectable the same way every other facet cursor is: the node
-// cursors compare `flex::removal_count()`, the window cursor
-// `app::window_removal_count()`, this one `app::screen_removal_count()`.
-struct Cursor {
-    opaque _sbp: *u8,
-    _seen: u64,
-}
-
+// Screen inspection is scoped to a window. Context ids survive Back/Forward;
+// replacing, discarding a forward branch, or closing invalidates that entry.
+struct Cursor { context: navigation::Context }
 impl Cursor {
-    fn _of(sbp: *u8) -> Cursor {
-        return Cursor { _sbp: sbp, _seen: app::screen_removal_count() };
+    fn is_live(this) -> bool { return this.context.is_live(); }
+    fn _entry(this) -> *navigation::Entry {
+        let n = this.context.navigator();
+        return navigation::entry(navigation::session(n.owner, n.id), this.context.entry_id);
     }
-
-    // False once any screen has been popped since this cursor was made. A
-    // popped screen's box is freed on a deferred schedule, so "is something at
-    // this address" is not a safe question to ask instead.
-    fn is_live(this) -> bool {
-        if this._seen != app::screen_removal_count() { return false; }
-        return this._index() < app::screen_stack_count();
-    }
-
-    fn _index(this) -> usize {
-        let n: usize = app::screen_stack_count();
-        var i: usize = 0 as usize;
-        while i < n {
-            if app::screen_stack_sbp(i) == this._sbp { return i; }
-            i = i +% (1 as usize);
-        }
-        return n;   // not found — one past the end, which `is_live` reads as gone
-    }
-
-    // The name it was pushed under: the route, or `route:arg` when an argument
-    // was given, or whatever `key:` overrode both with.
     fn key(this) -> str {
-        if !this.is_live() { return ""; }
-        return app::screen_stack_key(this._index());
+        let e = this._entry(); if e.is_null() { return ""; } return (*e).key.view();
     }
-
-    // The route it came from. Two pushes of one route are two screens with two
-    // keys and this one route.
     fn route(this) -> str {
-        if !this.is_live() { return ""; }
-        return app::screen_stack_route(this._index());
+        let e = this._entry(); if e.is_null() { return ""; } return (*e).route.view();
     }
-
-    // How deep it sits: 0 is the screen directly over the primary.
-    fn depth(this) -> usize {
-        if !this.is_live() { return 0 as usize; }
-        return this._index();
-    }
-
-    // Is this the one the user is looking at?
     fn is_top(this) -> bool {
-        if !this.is_live() { return false; }
-        let n: usize = app::screen_stack_count();
-        if n == (0 as usize) { return false; }
-        return this._index() == (n -% (1 as usize));
+        let e = this._entry(); if e.is_null() { return false; }
+        let n = this.context.navigator();
+        return (*e).active && navigation::ancestors_active(navigation::session(n.owner, n.id), (*e).parent);
     }
+    fn root(this) -> *core::Node { return this.context.root(); }
 
-    // Its tree, for READING — the same contract `window::Window::root` carries.
-    // Driving another screen's controls through it is the ACI door; reaching
-    // for its component's fields is the thing SKILL §9 trap 8 names.
-    fn root(this) -> *core::Node {
-        if !this.is_live() { return 0 as *core::Node; }
-        return app::screen_stack_root(this._index());
-    }
 
-    // Its chrome, as the screen itself declares it.
-    fn chrome(this) -> Chrome {
-        if !this.is_live() { return Chrome::new(); }
-        return { (*(this._sbp as *ScreenBox)).chrome() };
-    }
 
-    // The window it is in. On a desktop that is the window the primary screen
-    // opened — an in-place stack lives in ONE window, which is what makes it
-    // in-place. None when nothing has named that window.
-    fn window_key(this) -> str {
-        if !this.is_live() { return ""; }
-        return app::window_key_of(app::stack_host_root());
-    }
+    fn window_key(this) -> str { return this.context.window_key(); }
 }
-
-// THE screen pushed under `key`, or None. Keys are unique per push, so this
-// answers one screen rather than the first of several.
-//
-// The PRIMARY screen is not addressable here: it is the App loop's, not the
-// stack's, and it has no key of its own. `window::primary()` is the handle to
-// what it is showing.
-fn find(key: str) -> option::Option[Cursor] {
-    let n: usize = app::screen_stack_count();
-    var i: usize = 0 as usize;
-    while i < n {
-        if app::screen_stack_key(i) == key {
-            return option::Option[Cursor]::Some(Cursor::_of(app::screen_stack_sbp(i)));
+fn find(n: navigation::Navigator, key: str) -> option::Option[Cursor] {
+    let s = navigation::session(n.owner, n.id);
+    if s.is_null() { return option::Option[Cursor]::None; }
+    var i = (*s).entries.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match (*s).entries.at_ptr(i) {
+            option::Option[*navigation::Entry]::Some(e) => {
+                if (*e).key.view() == key {
+                    return option::Option[Cursor]::Some(Cursor { context: navigation::Context { navigation: n, entry_id: (*e).id } });
+                }
+            }
+            option::Option[*navigation::Entry]::None => { }
         }
-        i = i +% (1 as usize);
     }
     return option::Option[Cursor]::None;
 }
-
-// The screen the user is looking at, or None when the primary is showing.
-fn top() -> option::Option[Cursor] {
-    let n: usize = app::screen_stack_count();
-    if n == (0 as usize) { return option::Option[Cursor]::None; }
-    return option::Option[Cursor]::Some(Cursor::_of(app::screen_stack_sbp(n -% (1 as usize))));
+fn top(n: navigation::Navigator, into: str = "") -> option::Option[Cursor] {
+    return match n.current(into) {
+        option::Option[navigation::Context]::Some(c) => option::Option[Cursor]::Some(Cursor { context: c }),
+        option::Option[navigation::Context]::None => option::Option[Cursor]::None,
+    };
 }
-
-// Every pushed screen, bottom to top.
-fn stack() -> vec::Vec[Cursor] {
-    var out: vec::Vec[Cursor] = vec::new::[Cursor]();
-    let n: usize = app::screen_stack_count();
+// All retained screens, including base screens and Forward entries.
+fn stack(n: navigation::Navigator) -> vec::Vec[Cursor] {
+    var out = vec::new::[Cursor]();
+    let s = navigation::session(n.owner, n.id);
+    if s.is_null() { return out; }
     var i: usize = 0 as usize;
-    while i < n {
-        out.append(Cursor::_of(app::screen_stack_sbp(i)));
+    while i < (*s).entries.count() {
+        match (*s).entries.at_ptr(i) {
+            option::Option[*navigation::Entry]::Some(e) => {
+                let _a = out.append(Cursor { context: navigation::Context { navigation: n, entry_id: (*e).id } });
+            }
+            option::Option[*navigation::Entry]::None => { }
+        }
         i = i +% (1 as usize);
     }
     return out;
 }
-
-fn depth() -> usize { return app::screen_stack_count(); }
+fn all(owner: *app::Application) -> vec::Vec[Cursor] {
+    var out = vec::new::[Cursor]();
+    let r = navigation::registry(owner);
+    if r.is_null() { return out; }
+    var i: usize = 0 as usize;
+    while i < (*r).sessions.count() {
+        match (*r).sessions.at_ptr(i) {
+            option::Option[**navigation::Session]::Some(p) => {
+                var entries = stack(navigation::Navigator { owner: owner, id: (**p).id });
+                var j: usize = 0 as usize;
+                while j < entries.count() {
+                    match entries.at_ptr(j) {
+                        option::Option[*Cursor]::Some(c) => { let _a = out.append(*c); }
+                        option::Option[*Cursor]::None => { }
+                    }
+                    j = j +% (1 as usize);
+                }
+            }
+            option::Option[**navigation::Session]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}

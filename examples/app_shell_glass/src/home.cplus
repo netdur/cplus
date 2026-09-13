@@ -1,0 +1,136 @@
+import "stdlib/status" as status;
+import "stdlib/option" as option;
+import "facet/toolbar_item" as toolbar_item;
+import "facet/relist" as relist;
+import "stdlib/vec" as vec;
+import "stdlib/io" as io;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/split" as split;
+import "facet/screen" as screen;
+import "facet/vocabulary" as vocab;
+import "facet/nav" as nav;
+import "flex_layout/flex_layout" as flex;
+import "./sidebar" as sidebar;
+
+struct Home { context: nav::Context }
+
+impl Home {
+    fn new() -> Home {
+        return Home { context: nav::Context::none() };
+    }
+
+    fn boxed() -> screen::ScreenBox {
+        return screen::screen_box::[Home](Home::new());
+    }
+
+    fn on_section_chosen(ref this, i: usize, s: sidebar::Section) {
+        var p: nav::Params = nav::params_new();
+        let _t: status::Status = p.insert(text::from_str("title"),
+                                          text::from_str(s.name));
+        let _b: status::Status = p.insert(text::from_str("body"),
+                                          text::from_str(s.body));
+        let _pushed: bool = this.context.navigator().push("section", params: p, into: "detail");
+        return;
+    }
+
+    fn selected_name(this) -> str {
+        match this.context.navigator().current(into: "detail") {
+            option::Option[nav::Context]::Some(c) => {
+                if c.param("title") != "" { return c.param("title"); }
+            }
+            option::Option[nav::Context]::None => { }
+        }
+        return "Overview";
+    }
+
+    fn on_compose_click(ref this, sender: *u8) {
+        return;
+    }
+
+    fn on_back_click(ref this, sender: *u8) {
+        this.context.navigator().pop();
+    }
+
+    fn on_forward_click(ref this, sender: *u8) {
+        this.context.navigator().forward();
+    }
+}
+
+impl Home: component::Component {
+    fn build(ref this) -> core::Node {
+        return @ui {
+            toolbar_item("New",
+                         key: "new",
+                         placement: vocab::ToolbarPlacement::Sidebar,
+                         icon: "square.and.pencil",
+                         on_clicked: this.on_compose_click)
+            toolbar_item("Back",
+                         key: "bar:back",
+                         placement: vocab::ToolbarPlacement::Primary,
+                         priority: 0 as i64,
+                         icon: "chevron.left",
+                         on_clicked: this.on_back_click)
+            toolbar_item("Forward",
+                         key: "bar:forward",
+                         placement: vocab::ToolbarPlacement::Primary,
+                         priority: 1 as i64,
+                         icon: "chevron.right",
+                         on_clicked: this.on_forward_click)
+            split(key: "main",
+                  position: 220.0f64,
+                  min_leading: 180.0f64,
+                  max_leading: 320.0f64,
+                  role_leading: split::PaneRole::Sidebar) {
+                sidebar::sidebar(
+                    on_select: this.on_section_chosen,
+                    selection: this.selected_name
+                )
+                slot("detail", route: "section") {
+                    label("Select a section", key: "detail:empty",
+                          font_size: 13.0f64)
+                        .grow(1.0f64)
+                        .shrink(1.0f64)
+                        .justify(flex::Justify::Center)
+                        .align(flex::Align::Center)
+                }
+            }
+        };
+    }
+}
+
+impl Home: screen::Screen {
+    fn on_context(ref this, c: nav::Context) { this.context = c; }
+    fn on_navigation(ref this, state: nav::State) {
+        io::println("on_navigation");
+        io::println("can_pop: ${state.can_pop()}");
+        io::println("can_forward: ${state.can_forward()}");
+        let root = this.context.root();
+        match toolbar_item::find("bar:back", within: root) {
+            option::Option[toolbar_item::ToolbarItem]::Some(b) => { b.set_enabled(state.can_pop()); }
+            option::Option[toolbar_item::ToolbarItem]::None => { }
+        }
+        match toolbar_item::find("bar:forward", within: root) {
+            option::Option[toolbar_item::ToolbarItem]::Some(b) => { b.set_enabled(state.can_forward()); }
+            option::Option[toolbar_item::ToolbarItem]::None => { }
+        }
+        match relist::find("nav", within: root) {
+            option::Option[relist::Relist]::Some(rows) => { rows.invalidate(0 as usize, rows.count()); }
+            option::Option[relist::Relist]::None => { }
+        }
+    }
+
+
+
+
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
+        return vec::new::[screen::MenuItem]();
+    }
+}
+
+impl Home: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}

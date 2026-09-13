@@ -10,39 +10,42 @@ interactive; dropping it hangs the shell up.
 ```cplus
 import "terminal/widget" as terminal;
 import "facet/facet" as facet;
+import "facet/component" as component;
+import "facet/screen" as screen;
 import "facet_runtime/runtime" as runtime;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 
-struct Console {
-    term: terminal::Widget,
-}
-
-impl Console: facet::Component {
+struct Console { term: terminal::Widget }
+impl Console: component::Component {
     fn build(ref this) -> facet::Node {
-        var col: facet::Builder = facet::Builder::new();
+        var col = facet::Builder::new();
         col.add(this.term.node().grow(1.0f64));
-        return facet::vstack(col);
+        return facet::column(col);
     }
 }
-
-impl Console: facet::Lifecycle {
-    fn on_attach(ref this) {
-        let _focused: bool = this.term.focus();
-        return;
+impl Console: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) {
+        if why == component::Attach::Mount { let _focused = this.term.focus(); }
     }
-    fn on_detach(ref this) {
-        this.term.stop();
-        return;
+    fn on_detach(ref this, why: component::Detach) {
+        if why == component::Detach::Unmount { this.term.stop(); }
     }
 }
-
-fn main() -> i32 {
-    var console: Console = match terminal::start() {
-        option::Option[terminal::Widget]::Some(w) => Console { term: w },
-        option::Option[terminal::Widget]::None => { return 1; }
+impl Console: screen::Screen {
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+fn console_window() -> screen::ScreenBox {
+    return match terminal::start() {
+        option::Option[terminal::Widget]::Some(w) => screen::screen_box(Console { term: w }),
+        option::Option[terminal::Widget]::None => screen::ScreenBox::invalid(),
     };
-    let _final: Console = runtime::run_component(console, title: "console");
-    return 0;
+}
+fn main() -> i32 {
+    let app = runtime::App::new("console");
+    app.window("main", console_window, chrome: screen::Chrome::new(title: "console"));
+    if app.run("main").is_ok() { return 0; }
+    return 1;
 }
 ```
 
@@ -51,7 +54,10 @@ of a tree: put it in a split, give it a toolbar, size it with `grow` or
 `frame`. The node holds its own retain on the native view, but the widget is
 what owns the session.
 
-Create, use, and drop the widget on the AppKit main thread.
+Create, use, and drop the widget on the AppKit main thread. The window factory
+owns the widget through its screen. Stop it on `Unmount`, not on `Inactive`:
+Back/Forward can park content while preserving its state. See
+[Facet navigation](../../facet/docs/navigation.md).
 
 ## Typing
 
@@ -64,9 +70,8 @@ because the view is read-only.
 Focus is the application's decision, so it is an explicit call:
 
 ```cplus
-fn on_attach(ref this) {
-    let focused: bool = this.term.focus();   // false: not on screen yet
-    return;
+fn on_attach(ref this, why: component::Attach) {
+    if why == component::Attach::Mount { let _focused = this.term.focus(); }
 }
 ```
 

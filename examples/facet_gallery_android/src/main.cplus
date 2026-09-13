@@ -1,8 +1,10 @@
+import "stdlib/vec" as vec;
+import "facet/screen" as screen;
 // Facet Gallery on Android.
 //
 // THERE IS NO JAVA IN THIS APP, and no Android-shaped code either. The entry
 // below is the same shape the iOS gallery's is: set a theme, call
-// `run_component`, return. `facet_android`'s Activity finds this function by
+// `App::run`, return. `facet_android`'s Activity finds this function by
 // NAME — `cplus.facet.main` in AndroidManifest.xml — and the Android facade
 // stores the tree instead of entering a loop, because onCreate returns.
 //
@@ -38,6 +40,20 @@ impl Gallery: component::Lifecycle {
 }
 
 export extern fn facet_gallery_android_main() -> i32 {
+
+    let app = runtime::App::new("facet_gallery_android");
+    app.on_launch(configure_theme);
+    app.window("main", main_window, chrome: screen::Chrome::new(title: "Facet Gallery"));
+    let _run = app.run("main");
+    return 0;
+}
+
+impl Gallery: screen::Screen {
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] { return vec::new::[screen::MenuItem](); }
+}
+fn main_window() -> screen::ScreenBox { return screen::screen_box(Gallery::new()); }
+
+fn configure_theme(ctx: *u8) {
     theme::set_theme(theme::Theme::new(
         primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
         surface: vocab::Color::adaptive(
@@ -45,7 +61,4 @@ export extern fn facet_gallery_android_main() -> i32 {
             dark: vocab::Color::rgba(0.11, 0.11, 0.13, 1.0),
         ),
     ));
-    runtime::run_component(Gallery::new(), title: "Facet Gallery",
-                           width: 390.0, height: 844.0);
-    return 0;
 }

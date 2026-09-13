@@ -5242,16 +5242,18 @@ fn build_toolbar_item(c: *core::Node) -> *u8 {
     let item: *u8 = { rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithItemIdentifier:\0")),
                                     bridge::nsstring(ident)) };
     if item.is_null() { return 0 as *u8; }
-    { rt::msg_void_id(item, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring({ (*mi).text.view() })) };
-    let icon: str = { (*mi).icon.view() };
-    if icon != "" {
-        match resolve_image(icon) {
-            option::Option[ak::Image]::Some(img) => {
-                { rt::msg_void_id(item, rt::sel(#str_ptr("setImage:\0")), img.raw()) };
-            }
-            option::Option[ak::Image]::None => { }
-        }
-    }
+    // AUTOVALIDATION OFF, before a single write — the same trap
+    // `disable_last_popup_item` names one control up, and the reason
+    // `set_enabled` on a toolbar item did nothing for as long as the tier has
+    // existed. An NSToolbarItem whose target responds to its action re-enables
+    // ITSELF on every `validateVisibleItems` pass, so a `setEnabled:NO` is
+    // undone before the bar is next drawn.
+    //
+    // Switched off unconditionally, unlike the popup's, because facet answers
+    // this question in every case: `is_enabled` is a node prop the application
+    // writes, not a responder-chain question AppKit is better placed to answer.
+    // An item nobody writes stays enabled, which is the default either way.
+    { rt::msg_void_i8(item, rt::sel(#str_ptr("setAutovalidates:\0")), false as i8) };
     let h: fn(*u8, *u8) = { (*mi).on_clicked };
     if h != props::no_handler {
         { rt::msg_void_id(item, rt::sel(#str_ptr("setTarget:\0")),
@@ -5295,7 +5297,48 @@ fn build_toolbar_item(c: *core::Node) -> *u8 {
     // place that can see all the items at once.
     { rt::msg_void_i64(item, rt::sel(#str_ptr("setVisibilityPriority:\0")),
                        visibility_priority({ (*p).placement })) };
+    // LAST, AFTER `setView:`, because NSToolbarItem forwards `setEnabled:` to
+    // the view it is carrying and a destructive item's button is what takes the
+    // click — greying it earlier would grey an item with nothing in it yet.
+    // Every write an item can still take once it is in the bar is made here and
+    // only here, so build and `window::redeclare` call the same function and the
+    // initial state cannot disagree with a later one about what a verb means.
+    refresh_toolbar_item(item, c);
     return item;
+}
+
+// The writes an NSToolbarItem accepts AFTER it is installed: the LIVE half of
+// `build_toolbar_item`, split out because the item is built exactly once (when
+// the window opens) and the node it came from goes on being written to.
+//
+// The three verbs an existing item can answer. `placement` and `priority` are
+// not among them and stay on the create-only ledger — both are properties of
+// the WHOLE bar's order, which only a rebuild can change.
+fn refresh_toolbar_item(item: *u8, c: *core::Node) {
+    if item.is_null() { return; }
+    let p: *props::ToolbarItemProps = props_of(c, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
+    if p.is_null() { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    { rt::msg_void_id(item, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring({ (*mi).text.view() })) };
+    let icon: str = { (*mi).icon.view() };
+    if icon != "" {
+        match resolve_image(icon) {
+            option::Option[ak::Image]::Some(img) => {
+                { rt::msg_void_id(item, rt::sel(#str_ptr("setImage:\0")), img.raw()) };
+            }
+            option::Option[ak::Image]::None => { }
+        }
+    }
+    // ONE WRITE, and it reaches a destructive item's button too. That item is an
+    // NSButton wearing an item's identifier, and the click lands on the BUTTON
+    // rather than the item — so greying only the item would grey nothing that
+    // can be pressed. Forwarding it by hand is unnecessary: NSToolbarItem passes
+    // `setEnabled:` down to a view that answers the selector, measured by
+    // ablating the extra write and watching the test still pass. What that DOES
+    // depend on is the order — see the call at the end of `build_toolbar_item`,
+    // which runs after `setView:` so there is a view to forward to.
+    { rt::msg_void_i8(item, rt::sel(#str_ptr("setEnabled:\0")), core::is_enabled(c) as i8) };
+    return;
 }
 
 // NSToolbarItemVisibilityPriority{Low,Standard,High}.

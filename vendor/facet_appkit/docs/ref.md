@@ -167,7 +167,7 @@ through nodes that hold nothing beside it — the window is dressed for it:
 The controller is NOT handed to `setContentViewController:`. That also
 produces the layout, and was how this worked first, but it takes the window's
 content view with it and orphans anything facet put above the split — which on
-the App route is the stack host `nav::push` needs. It is not required:
+the registered window is the content host its navigator needs. It is not required:
 measured with two identical windows, one with the controller as
 `contentViewController` and one with its view merely FILLING an ordinary
 content view, the glass is `(8,8,220,504)` in both and the band is drawn over

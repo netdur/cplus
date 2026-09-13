@@ -12,11 +12,14 @@ facet_agent = "*"
 
 ```cplus
 import "facet_agent/agent" as agent;
+import "facet_runtime/runtime" as runtime;
 
 fn run() -> i32 {
     agent::enable();                 // register the serving hooks
-    runtime::agent_mcp("myapp");     // serve under this NAME, on any tier
-    runtime::run_screen(Home::new());
+    runtime::agent_mcp("myapp");     // serve under this NAME, before startup
+    let app = runtime::App::new("myapp");
+    app.window("main", Home::boxed);
+    let _run = app.run("main");
     return 0 as i32;
 }
 ```

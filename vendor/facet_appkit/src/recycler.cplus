@@ -54,6 +54,7 @@ import "facet/relist" as relist;
 import "stdlib/hash_map" as hash_map;
 import "facet/obs_vec" as obs_vec;
 import "./controls" as controls;
+import "./input" as input;
 import "./paint" as paint;
 import "./compose" as compose;
 import "./geometry" as geometry;
@@ -200,7 +201,7 @@ fn imp_row_menu_for_event(self_obj: *u8, cmd: *u8, event: *u8) -> *u8 {
 // a list. The table is an implementation detail of recycling and the
 // application never asked for it.
 //
-// MEASURED in `examples/sidebar_demo`, on the row the bug was reported against:
+// MEASURED in `examples/app_shell_glass`, on the row the bug was reported against:
 //
 //   over the free space  hits FacetInput00  table validates it: 1   fired
 //   over the LABEL       hits NSTextField   table validates it: 0   nothing
@@ -1056,7 +1057,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
     let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
     if has_bind(s) && existing.is_not_null() {
         bind_into(s, row, existing);
-        set_row_item_index(s, row, existing);
+        set_row_item_index(s, row, existing, cell);
         // A bind WRITES PROPS, which marks nodes dirty and touches nothing
         // native. A realised row is outside the window walk, so nothing would
         // ever carry those writes across — `sync_from` is that walk, rooted
@@ -1084,7 +1085,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
             // then responsible for SHAPE ONLY, and a row can never show the
             // data of whichever row happened to build its cell.
             bind_into(s, row, np);
-            set_row_item_index(s, row, np);
+            set_row_item_index(s, row, np, cell);
             mount::sync_from(np);
             placed = place_into(s, cell, np, w, row);
             synth::set_associated(cell, cell_node_key(), np as *u8);
@@ -1347,11 +1348,22 @@ fn stated_row_height(s: *RowSource, row: i64) -> f64 {
 // so a grouped list's third item is the third item and not the third row. A
 // HEADER has no data index and is left without one, which reads back as `None`
 // rather than as row zero.
-fn set_row_item_index(s: *RowSource, row: i64, np: *core::Node) {
+fn set_row_item_index(s: *RowSource, row: i64, np: *core::Node, cell: *u8) {
     if np.is_null() { return; }
     let at: i64 = resolve_row(s, row);
     if at < (0 as i64) { return; }
     core::set_item_index(np, at as usize);
+    // AND ONTO THE CELL, which is the half that makes the read work.
+    // `item_of(sender)` climbs SUPERVIEWS to the nearest tagged view, so the
+    // index has to live on a view. A row root is usually viewless — the
+    // comment in `fill_cell` says so, and `@ui { .. }` guarantees it, because
+    // a block finishes as a bare wrapper around the node the builder wrote.
+    // Writing the index onto that node marks it C_HANDLERS-dirty and the sync
+    // walk then skips it for want of a view, so the climb from a gesture
+    // inside the row ran past it to the cell and found nothing: every
+    // `component::item_index_of(sender)` answered None. The cell is the row's
+    // host view and every descendant sits under it.
+    input::bind_item(cell, np);
 }
 
 fn has_bind(s: *RowSource) -> bool {
@@ -1699,7 +1711,7 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
 // control asks the responder chain inside its OWN `mouseDown:` — NSTextField
 // asks it — so a press over a row's label was refused and handed to the table's
 // selection tracking, which consumes the release. A click is reported on the
-// way UP, so it never fired at all. Measured in `examples/sidebar_demo`, one
+// way UP, so it never fired at all. Measured in `examples/app_shell_glass`, one
 // row, two places on it:
 //
 //   over the free space  hits FacetInput00  table validates it: 1   fired

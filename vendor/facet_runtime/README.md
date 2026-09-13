@@ -1,48 +1,49 @@
 # facet_runtime
 
-The boot facade for facet apps: one import starts the app, and the platform
-override picks the backend — app code never names a platform.
-
-```toml
-[dependencies]
-facet         = "*"
-facet_runtime = "*"
-# plus the platform backend's closure — `cpc pm add . facet_runtime` writes it
-```
+Facet's application entry point. `App::run` installs the target backend;
+apps register windows and each window definition can register content routes.
 
 ```cplus
 import "facet_runtime/runtime" as runtime;
+import "facet/screen" as screen;
 
 fn main() -> i32 {
-    var app: runtime::App = runtime::App::new("MyApp");
-    app.screen("home", home_factory);
-    let _s = app.run("home");
-    return 0;
+    let app = runtime::App::new("Notes");
+    let main = app.window("main", home_factory,
+        chrome: screen::Chrome::new(title: "Notes"));
+    main.route("editor", editor_factory);
+    let result = app.run("main");
+    if result.is_ok() { return 0; }
+    return 1;
 }
 ```
 
-`import "facet_runtime/runtime"` resolves by filename override:
-`runtime_macos.cplus` on a macOS target (installs facet_appkit),
-`runtime_linux.cplus` on Linux (facet_gtk), `runtime_ios.cplus` on iOS
-(facet_uikit), the neutral `runtime.cplus` anywhere else — which renders
-nothing and says so, never some other platform's toolkit. The facade installs
-the backend into facet's seams; facet itself knows no backend.
+Factories return `screen::ScreenBox`. Window title, size, and controls come
+from registration; screens receive `nav::Context` and `nav::State` hooks.
 
-A facade is a COPY of another facade, not a fresh file: ~1100 of
-`runtime_linux.cplus`'s lines are `runtime_macos.cplus`'s verbatim, because
-almost all of the facade is about facet's own tiers (App, routes, nav, screens,
-teardown) and not about a toolkit. Three regions differ and each says so where
-it sits: the imports, the lifecycle observers, and the quit seam.
+From a screen or component action, use `runtime::app()` to retrieve the running
+app: `runtime::app().open_window("model_library")`. Register that window during
+setup. No global app storage or `windows::install(app)` helper is needed.
+`App::new(...)` creates another app; it does not retrieve the current one.
+See [app access and platform availability](../facet/docs/navigation.md#access-the-running-app-from-a-screen).
 
-This package exists so every dependency arrow points down (2026-08-17):
-apps → facet_runtime → backend → facet. The old facet ↔ facet_appkit cycle
-lived exactly here — the one file in facet that named a platform — and
-moving it out is what made the family's dependency graph acyclic. The full
-runtime surface (App, routes, windows, alerts, menus) is documented in
-`vendor/facet/docs/ref.md` under "facet_runtime/runtime"; only the import
-path moved.
+`open_window(name, key:)` creates or activates a window instance;
+`find_window(name, key:)` retrieves it without activation. Both return
+`Option[window::Window]`. `w.nav()` owns that instance's routes and history.
+Closing a window disposes its content and history. Opening another window
+never becomes content navigation. Desktop and mobile apps explicitly compose
+shared screens for their platform.
 
-Tests: `cd vendor/facet_runtime && cpc test`. The suite's load-bearing line
-is `test_main.cplus`'s `import "./runtime"` — it compiles the ACTIVE
-platform's facade and backend, so a backend that does not build turns this
-package red.
+The alternate `run`, `run_component`, `run_screen`, and `present_window`
+functions and the `runtime::Window` interface have been removed. Use
+`app.window(...)` and `app.run(...)` for demos as well as applications.
+
+`runtime_macos`, `runtime_linux`, `runtime_windows`, `runtime_ios`, and
+`runtime_android` install their backends. The neutral runtime reports no
+backend. Shared window ownership lives in `windows.cplus`; retained content
+navigation lives in `facet/navigation`.
+
+See the [navigation guide and migration table](../facet/docs/navigation.md)
+and the [API reference](../facet/docs/ref.md#facet_runtimeruntime).
+Run `cpc test --filter facet_runtime` from this package to test the active
+platform facade and native window ownership.
