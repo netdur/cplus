@@ -30,6 +30,8 @@ import "facet/list" as list;
 import "facet/collection" as collection;
 import "facet/refreshable" as refreshable;
 import "facet/tree" as tree;
+import "facet/relist" as relist;
+import "facet/obs_vec" as obs_vec;
 import "facet/elements" as ui;
 import "facet/vocabulary" as vocab;
 import "stdlib/vec" as vec;
@@ -469,7 +471,128 @@ fn model_of(n: *core::Node) -> RowModel {
                           group_header: props::no_group_header,
                           group_header_ctx: 0 as *u8 };
     }
+    if kind == relist::K_RELIST {
+        // THE COUNT IS READ, NOT STORED — through the erased reader, so `T` is
+        // the element's business and never this file's. The whole difference
+        // from `list`: there is no count an application can have forgotten to
+        // update.
+        //
+        // NO BIND, no kinds, no groups, no stated height. `relist` builds a row
+        // fresh per index and the builder is ONE function, so every row shares
+        // a pool and the height is whatever the row measures to.
+        let p: *relist::RelistProps = relist::props_of(n);
+        if p == (0 as *relist::RelistProps) { return RowModel::none(); }
+        let count_of: fn(*u8) -> usize = { (*p).count_of };
+        return RowModel { count: count_of({ (*p).rows }) as i64,
+                          row: { (*p).builder },
+                          row_ctx: { (*p).builder_ctx },
+                          bind: props::no_bind,
+                          bind_ctx: 0 as *u8,
+                          height: 0.0f64,
+                          height_of: props::no_row_height_of,
+                          height_of_ctx: 0 as *u8,
+                          kind_of: props::no_row_kind,
+                          kind_ctx: 0 as *u8,
+                          grouped: false,
+                          group_count: 0 as i64,
+                          group_size: props::no_group_size,
+                          group_size_ctx: 0 as *u8,
+                          group_header: props::no_group_header,
+                          group_header_ctx: 0 as *u8 };
+    }
     return RowModel::none();
+}
+
+// ---- relist ------------------------------------------------------------------
+
+// THE WIDGET IS CHOSEN BY THE COLUMN COUNT, and it is chosen ONCE.
+//
+// One column is a ListView, which is what `list` uses and what every relist
+// that never mentions the verb means. More than one is a GridView, which is the
+// same adapter, the same token and the same tap listener — `create_collection`
+// below is that wiring already, so this picks between two shapes rather than
+// growing a third.
+//
+// AND IT CANNOT CHANGE AFTER MOUNT. A ListView does not become a GridView; the
+// view would have to be replaced, and the view is mount's rather than this
+// module's. `set_columns` from 2 to 3 works — that is `setNumColumns` on a grid
+// — but crossing the 1/N boundary at runtime does not, the same way
+// UITableViewStyle cannot be changed after `initWithFrame:style:`. Said here
+// rather than left to be discovered.
+fn create_relist(n: *core::Node) -> *u8 {
+    if relist_columns(n) > (1 as usize) { return create_collection(n); }
+    return create_list_view(n);
+}
+
+fn relist_columns(n: *core::Node) -> usize {
+    return match relist::from(n) {
+        option::Option[relist::Relist]::Some(h) => h.columns(),
+        option::Option[relist::Relist]::None => 1 as usize,
+    };
+}
+
+fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(n) else { return; };
+    // THE ELEMENT LEARNS WHICH NODE IT IS, here and on every pass: the change
+    // handler runs on the application's stack and needs a node to mark dirty,
+    // and it cannot capture one at construction because the node is returned by
+    // value and moved into the tree.
+    let _b: relist::Relist = h.bind_node();
+    let env: rt::Env = e::env();
+    let creating: bool = dirty == paint::all_bits();
+
+    let row_band: u64 = relist::P_ROWS | relist::P_BUILDER;
+    if (dirty & row_band) != (0 as u64) || creating {
+        // ANDROID HAS NO SPLICE, and that is a simplification rather than a
+        // shortfall. `notifyDataSetChanged` makes the ListView re-read the
+        // count and re-vend what is on screen; there is no insert/delete pair
+        // whose arithmetic can disagree with the data source, which is the trap
+        // both other backends have to guard against by raising.
+        //
+        // So the pending change is TAKEN rather than read — a command left
+        // behind would fire again on the next unrelated pass — and every kind
+        // of change gets the same answer.
+        if h.has_pending() { let _c: obs_vec::Change = h.take_pending(); }
+        // AND THE REALISED SET IS LEFT ALONE, which is the opposite of what the
+        // UIKit backend does on a reload. UITableView's `reloadData` discards
+        // its cells without walking them out, so the element has to be told
+        // wholesale; `notifyDataSetChanged` KEEPS the cells and re-vends each
+        // one through `getView` with its convertView — which goes through
+        // `release_cell_row`, so the set corrects itself row by row. Clearing
+        // it here would unregister rows that are still on screen.
+        let a: jni::jobject = adapter_of(env, v);
+        if a != (0 as jni::jobject) {
+            dex::rows_changed(env, a);
+            env.delete_local_ref(a);
+        }
+    }
+
+    // A REGRID WITHIN GRID MODE. `setNumColumns` is a live setter; the 1/N
+    // boundary is not — see `create_relist`.
+    if (dirty & relist::P_COLUMNS) != (0 as u64) || creating {
+        let cols: usize = relist_columns(n);
+        if cols > (1 as usize) {
+            var gv: w::GridView = w::GridView::from_global(env, env.new_global_ref(v));
+            gv.set_num_columns({ cols as i32 });
+            let _k: *u8 = gv.into_raw();
+        }
+    }
+    // LAST, AND WHATEVER THE ROWS DID: scrolling to row 40 before the change
+    // that makes row 40 exist asks the adapter for a position it does not have.
+    if (dirty & relist::P_SCROLL_TO) != (0 as u64) {
+        // TAKEN, not read: a command carried out twice scrolls a list nobody
+        // asked to move.
+        let at: i64 = h.take_scroll_to();
+        if at >= (0 as i64) {
+            let m: RowModel = model_of(n);
+            if at < m.count {
+                var av: w::AbsListView = w::AbsListView::from_global(env, env.new_global_ref(v));
+                av.smooth_scroll_to_position_i({ at as i32 });
+                let _k: *u8 = av.into_raw();
+            }
+        }
+    }
+    return;
 }
 
 // A POINTER IN A TAG. A keyed tag holds an Object, so a raw pointer travels as
@@ -511,6 +634,32 @@ fn set_cell_node(env: rt::Env, cell: jni::jobject, n: *core::Node) {
     return;
 }
 
+// THE ONE PLACE A ROW NODE DIES — and until 2026-09-14 it did not die at all.
+//
+// Every recycled cell called `mount::unrealise` on the row it held and then
+// overwrote the tag with the new one. `unrealise` fires on_detach and clears
+// attach state; it does NOT free the node, and nothing else did either, so the
+// box `row_view` made stayed on the heap for the life of the process. A scroll
+// through a few thousand rows leaked a few thousand subtrees. The AppKit and
+// UIKit backends have always had this function; this one never grew it.
+//
+// `owner` is the ELEMENT whose realised set the row belongs to, or 0 for a
+// control that keeps none — `tree` passes 0. The note goes BEFORE the drop:
+// after it, the pointer it removes is the freed one it exists to keep out.
+fn release_cell_row(env: rt::Env, cell: jni::jobject, owner: *core::Node) {
+    if cell == (0 as jni::jobject) { return; }
+    let np: *core::Node = cell_node(env, cell);
+    if np == (0 as *core::Node) { return; }
+    relist::note_released(owner, np);
+    mount::unrealise(np);
+    set_cell_node(env, cell, 0 as *core::Node);
+    // Reclaiming the box and letting it fall out of scope runs Drop once.
+    // NOT an explicit `.drop()`: `Box::drop` does not null its pointer, so
+    // calling it by hand and then falling out of scope frees twice.
+    let _gone: box::Box[core::Node] = box::from_raw::[core::Node]({ np as *u8 });
+    return;
+}
+
 // The row ListView asked for, in a cell it may have handed back.
 // A GROUP'S HEADER, built the way a row is and recycled in its own pool (view
 // type 0). It is not a row: `row` builds bodies and `group_header` builds these,
@@ -524,10 +673,7 @@ fn header_view(env: rt::Env, n: *core::Node, m: RowModel, group: i64,
         return new_cell(env, convert);
     }
     let width: f64 = cell_width(env, n, core::view_of(n));
-    if convert != (0 as jni::jobject) {
-        let existing: *core::Node = cell_node(env, convert);
-        if existing != (0 as *core::Node) { mount::unrealise(existing); }
-    }
+    if convert != (0 as jni::jobject) { release_cell_row(env, convert, n); }
     let cell: jni::jobject = new_cell(env, convert);
     if cell == (0 as jni::jobject) { return 0 as jni::jobject; }
     match box::new::[core::Node]({ m.group_header(group as usize, m.group_header_ctx) }) {
@@ -576,7 +722,7 @@ fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobje
             return convert;
         }
         // No bind, or an empty cell: tear the old row down before reusing it.
-        if existing != (0 as *core::Node) { mount::unrealise(existing); }
+        release_cell_row(env, convert, n);
     }
 
     let cell: jni::jobject = new_cell(env, convert);
@@ -596,6 +742,13 @@ fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobje
             mount::sync_from(np);
             place_row(env, cell, np, width, row_height(env, n, m, row));
             set_cell_node(env, cell, np);
+            // WHICH ROW THIS IS. `core::item_index_of` reads it back, and the
+            // agent surface orders the realised rows by it.
+            core::set_item_index(np, row);
+            // THE ROW NOW EXISTS, so the element can answer for it: a row is
+            // never a child of the list, and this is what gives
+            // `core::find_in` a path to it. A no-op for `list` and `tree`.
+            relist::note_realised(n, np);
         }
         option::Option[box::Box[core::Node]]::None => { }
     }
@@ -633,7 +786,14 @@ fn cell_width(env: rt::Env, n: *core::Node, v: *u8) -> f64 {
     let lf: flex::Frame = core::frame_of(n);
     var width: f64 = lf.width;
     if width <= 0.0f64 { width = scheduler::width(); }
-    if core::kind_of(n) != props::K_COLLECTION { return width; }
+    // A GRID CELL IS ONE COLUMN OF THE WIDTH — true of a `collection` and of a
+    // `relist` that asked for columns. Laying a grid cell out at the full width
+    // makes every cell measure as wide as the grid, and the widget then fits one
+    // per line: a three-column grid renders as a one-column list.
+    let k: u32 = core::kind_of(n);
+    let gridded: bool = k == props::K_COLLECTION
+        || (k == relist::K_RELIST && relist_columns(n) > (1 as usize));
+    if !gridded { return width; }
     if v == (0 as *u8) { return width; }
     var gv: w::GridView = w::GridView::from_global(env, env.new_global_ref(v));
     let cols: i32 = gv.get_num_columns();
@@ -1000,7 +1160,10 @@ fn tree_row_view(n: *core::Node, position: i32, convert: jni::jobject) -> jni::j
             tag_row_identity(env, convert, n, position);
             return convert;
         }
-        if existing != (0 as *core::Node) { mount::unrealise(existing); }
+        // The tree keeps no realised set — its rows are not keyed by the
+        // application — so it passes no owner. The FREE is the same, and it
+        // leaked here exactly as it did on the list path.
+        release_cell_row(env, convert, 0 as *core::Node);
     }
 
     let cell: jni::jobject = new_cell(env, convert);
