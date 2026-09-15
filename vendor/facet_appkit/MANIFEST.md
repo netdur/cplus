@@ -71,7 +71,31 @@ set_group_count(usize)                            how many groups
 set_group_size(size:size_ctx:)                    how big each one is
 set_group_header(header:header_ctx:)              what its header looks like
 set_selected_index(i64)  / selected_index()       which row, or -1
+set_selection(take IndexList)                     EVERY selected row
+selection_count() / selection_at(at:)             ...read back
+is_selected(at:)                                  ...asked per row
 ```
+
+**The plural took a second pass, and `SelectionMode` was only half-answered
+until it landed (2026-09-15).** `SelectedItem` was dropped as MODEL and
+`set_selected_index` replaced it; `SelectedItems` — the PLURAL, on the same
+ledger row — was dropped with it and nothing replaced that. So the switch had a
+third position, `Multiple`, that this backend armed on the table
+(`setAllowsMultipleSelection:`) and the model could not hold: a user
+shift-clicking five rows had four of them selected on screen and absent from
+`selected_index`, which reads `selectedRow` — the LAST row of a multiple
+selection, not the first.
+
+The pair is ONE STATE. `selection` is the selection and `selected_index` is its
+FIRST row, -1 exactly when empty; every writer moves both. That is what makes
+the plural additive rather than a second source of truth, and it is why
+`note_selection` (props, no dirty bit — a write-back must not schedule the
+reload that would clear it) and `set_selection` (cursor, raises the bit) are
+different doors rather than the same verb.
+
+`tree` carries the same set keyed by ID, along with the `selection_mode` and
+`selection_highlight` it had never had — an NSOutlineView inherits both switches
+from NSTableView, so `apply_selection_mode` is shared with the list.
 
 The size and the header are TWO CALLS, one slot each. They were one
 (`set_group(size:header:ctx:)`) on the argument that half a group description

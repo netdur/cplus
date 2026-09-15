@@ -838,8 +838,8 @@ OVERLAY = {
 
     # `object`-typed rows that ARE vocabulary: a subtree, or a selection index.
     ("Picker", "SelectedItem"): ("DROP", "", MODEL + " — the selection is an index; set_selected_index carries it"),
-    ("ListView", "SelectedItem"): ("DROP", "", MODEL + " — the selection is an index"),
-    ("SelectableItemsView", "SelectedItem"): ("DROP", "", MODEL + " — the selection is an index"),
+    ("ListView", "SelectedItem"): ("DROP", "", MODEL + " — the selection is a SET OF INDICES; set_selection carries it and set_selected_index names its first row"),
+    ("SelectableItemsView", "SelectedItem"): ("DROP", "", MODEL + " — the selection is a SET OF INDICES; set_selection carries it and set_selected_index names its first row"),
     ("RadioButton", "Value"): ("DROP", "", MODEL + " — the binding-era group value; a radio's identity is its key"),
     # `Content` is typed `object` and the mechanical rule read that as a
     # subtree. It is not one: every the ledger handler renders it through

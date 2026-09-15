@@ -703,9 +703,11 @@ impl List {
 
     // ---- the selection -------------------------------------------
     // `selection_mode` says whether a row CAN be picked; this says
-    // which one was. The ledger carries SelectedItem and Stage 1 dropped it
-    // as MODEL — "the selection is an index" — and then no index was
-    // declared, so the switch had nothing to switch. -1 is none.
+    // WHICH — and it is the FIRST row of the set below, not the
+    // whole of it. The ledger carries SelectedItem and SelectedItems
+    // and Stage 1 dropped both as MODEL, so the switch had a third
+    // position (`Multiple`) and nothing to hold what it switched on.
+    // -1 is none, and writing it empties the set but for that row.
     fn set_selected_index(this, v: i64) -> List {
         let p: *props::ListProps = this._props();
         if p == (0 as *props::ListProps) { return this; }
