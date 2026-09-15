@@ -1467,7 +1467,7 @@ fn paint_selection(n: *core::Node, sel: *vocab::IndexList,
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
-                let v: *u8 = core::view_of(c);
+                let v: *u8 = first_viewed(c);
                 if v.is_not_null() {
                     dress_selected_row(v, sel.is_not_null() && { (*sel).has(i) }, h);
                 }
@@ -1497,6 +1497,47 @@ fn paint_selection(n: *core::Node, sel: *vocab::IndexList,
 // the rest of the sidebar, which a static `selectedContentBackgroundColor` fill
 // cannot do. It is also what NSTableView's source-list style draws with, so the
 // two controls end up showing the same thing by the same means.
+// THE ROW UNDER THE WRAPPER.
+//
+// `@ui { row(...) { ... } }` does not answer the row — it answers a WRAPPER
+// holding it, and a wrapper has no native view of its own. So a collection
+// built the ordinary way (`row: this.sidebar_row`, the builder returning an
+// `@ui` block) has viewless children, and painting `core::view_of(child)`
+// painted nothing at all: a sidebar whose selection never appeared, with every
+// verb on the model answering correctly.
+//
+// MEASURED, three shapes through one collection (2026-09-15):
+//
+//   core::row(builder, key:)          has a view     painted
+//   ...with a background colour       has a view     painted
+//   @ui { row(...) { ... } }          NO VIEW        nothing happened
+//
+// This is the same wrapper that has bitten a child's record and a relist row's
+// index. `item_index_of` answers it by CLIMBING views to find the row; this is
+// the same walk inverted — descend to the first descendant that has one.
+//
+// Depth-first and first-hit: the wrapper holds the row, the row has the view,
+// and its label and symbol are below it. Stopping at the first view found is
+// what makes the row rather than its label the thing that gets the highlight.
+fn first_viewed(n: *core::Node) -> *u8 {
+    if n.is_null() { return 0 as *u8; }
+    let own: *u8 = core::view_of(n);
+    if own.is_not_null() { return own; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let hit: *u8 = first_viewed(c);
+                if hit.is_not_null() { return hit; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
 fn dress_selected_row(v: *u8, on: bool, h: vocab::SelectionHighlight) {
     let wants_material: bool = on && match h {
         vocab::SelectionHighlight::Platform => true,

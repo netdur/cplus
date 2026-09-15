@@ -17684,3 +17684,116 @@ fn the_material_moves_with_the_selection_and_is_never_doubled() {
     assert material_under(row_view_of(p, 2 as usize)).is_not_null();
     mount::unmount(p);
 }
+
+// ---- a row built as a `@ui` block is painted THROUGH its wrapper ------------
+//
+// `@ui { row(...) { ... } }` does not answer the row — it answers a WRAPPER
+// holding it, and a wrapper has no native view. A collection built the ordinary
+// way (`row: this.sidebar_row`, the builder returning an `@ui` block) therefore
+// has VIEWLESS children, and painting `core::view_of(child)` painted nothing:
+// a sidebar whose selection never appeared while every verb on the model
+// answered correctly. Found in a real app, 2026-09-15.
+//
+// Measured through one collection, three shapes:
+//
+//   core::row(builder, key:)     a view      painted
+//   ...plus a background         a view      painted
+//   @ui { row(...) { ... } }     NO VIEW     nothing happened
+//
+// `relist` has the same trap and the same answer one door over
+// (`a_row_built_as_a_ui_block_is_found_through_its_wrapper`): the wrapper is
+// walked THROUGH rather than treated as the row.
+
+fn wrapped_click(sender: *u8, ctx: *u8) -> bool { return true; }
+
+// Shaped like a real sidebar row: keyed, a corner radius, an icon and a label,
+// and its OWN click handler — which is what an agent-addressable row needs.
+fn wrapped_sidebar_row(i: usize, ctx: *u8) -> flex::Node {
+    return @ui {
+        row(key: "wrapped:row") {
+            label("Library", key: "wrapped:row:label", font_size: 13.0f64)
+                .grow(1.0f64)
+        }
+        .height(31.0f64)
+            .padding_edge(flex::Edge::Horizontal, 10.0f64)
+            .align(flex::Align::Center)
+            .rounded(7.0f64)
+            .gesture(on_click: wrapped_click)
+    };
+}
+
+fn plain_sidebar_row(i: usize, ctx: *u8) -> flex::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label("Library", key: "", font_size: 13.0f64));
+    return core::row(b, key: "plain:row").height(31.0f64);
+}
+
+fn selection_view_of(p: *core::Node, at: usize) -> *u8 {
+    return match core::child_of(p, at) {
+        option::Option[*core::Node]::Some(c) => compose::first_viewed(c),
+        option::Option[*core::Node]::None => 0 as *u8,
+    };
+}
+
+fn collection_of_rows(p: *core::Node, f: fn(usize, *u8) -> flex::Node) {
+    match collection::find("cshape", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(f, ctx: 0 as *u8);
+            let b: collection::Collection = a.set_count(3 as usize);
+            let d: collection::Collection =
+                b.set_selection_mode(vocab::SelectionMode::Single);
+            let _e: collection::Collection =
+                d.set_selection_highlight(vocab::SelectionHighlight::Platform);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 200.0f64, 200.0f64, 1.0f64);
+    views::apply(0 as *u8, p);
+    match collection::find("cshape", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let _a: collection::Collection = x.set_selected_index(0 as i64);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    return;
+}
+
+#[test]
+fn a_row_built_as_a_ui_block_is_painted_through_its_wrapper() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "cshape");
+    let p: *core::Node = #addr_of(c);
+    collection_of_rows(p, wrapped_sidebar_row);
+
+    // The child IS the wrapper, and it has no view of its own — the fact that
+    // made this silent. If this ever starts answering a view, the `@ui` block
+    // has stopped wrapping and this test is measuring the wrong thing.
+    assert core::view_of(match core::child_of(p, 0 as usize) {
+        option::Option[*core::Node]::Some(k) => k,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    }).is_null();
+
+    // ...and the row underneath it wears the selection anyway
+    assert material_under(selection_view_of(p, 0 as usize)).is_not_null();
+    assert material_under(selection_view_of(p, 1 as usize)).is_null();
+    mount::unmount(p);
+}
+
+#[test]
+fn a_row_that_is_its_own_view_is_painted_directly() {
+    backend::install();
+    // The other half, so the descent cannot quietly stop working for the shape
+    // that never needed it.
+    var c: core::Node = collection::collection(key: "cshape");
+    let p: *core::Node = #addr_of(c);
+    collection_of_rows(p, plain_sidebar_row);
+    assert core::view_of(match core::child_of(p, 0 as usize) {
+        option::Option[*core::Node]::Some(k) => k,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    }).is_not_null();
+    assert material_under(selection_view_of(p, 0 as usize)).is_not_null();
+    assert material_under(selection_view_of(p, 2 as usize)).is_null();
+    mount::unmount(p);
+}
