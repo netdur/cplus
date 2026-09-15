@@ -768,6 +768,34 @@ struct RawPlatformSection {
     /// anywhere else is E0877.
     #[serde(default)]
     maven: std::collections::BTreeMap<String, String>,
+    /// `[<platform>.build]` — the same table as `[build]`, for one target.
+    ///
+    /// WHY IT HAS TO EXIST, and it is the same shape of reason `[<platform>.link]`
+    /// has: `prebuild` is a whole-package answer to a question that is not the
+    /// same on every platform.
+    ///
+    /// The case that forced it: `facet_android` is SOURCE MODE by decision, and
+    /// `facet_runtime` — prebuilt — depends on it, so prebuilding the runtime
+    /// for Android compiled 831 facet_android symbols INTO that archive. An app
+    /// must also declare `facet_android` (the runtime's own header imports it,
+    /// so the flat-set rule requires it) and declaring a source-mode package
+    /// compiles it in again. Three `export extern fn` JNI entry points then
+    /// existed in two archives, and a JNI entry point cannot be weak — Java
+    /// finds it by name — so the link failed on a duplicate symbol.
+    ///
+    /// `[android.build] prebuild = false` says the facade is source mode THERE
+    /// and stays prebuilt everywhere else, which is the honest answer: a facade
+    /// above a source-mode backend cannot really be prebuilt on that platform.
+    ///
+    /// It is also the smaller-package answer generally. Prebuilding buys back
+    /// compile time on a large package and COSTS it on a small one, which is a
+    /// per-package-per-platform judgement rather than a global one.
+    ///
+    /// Merged into the effective `BuildSpec` at load, for the ACTIVE platform
+    /// only — so every consumer of `Manifest::build` gets it without knowing
+    /// this key exists.
+    #[serde(default)]
+    build: Option<RawBuildSpec>,
     /// `[<platform>.link]` — the same table as `[link]`, for one target.
     ///
     /// WHY IT HAS TO EXIST. A top-level `[link]` reaches the linker for EVERY
@@ -937,8 +965,23 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         });
     }
 
-    let build = raw
-        .build
+    // `[<platform>.build]` WINS OVER `[build]` for the active target, whole —
+    // not field-by-field. A platform that states the table is answering the
+    // question for itself, and a half-merged answer would make
+    // `[android.build] prebuild = false` silently inherit a top-level
+    // `dev = true`.
+    let platform_build: Option<RawBuildSpec> = match crate::target::active_platform() {
+        "macos" => raw.macos.as_mut().and_then(|s| s.build.take()),
+        "linux" => raw.linux.as_mut().and_then(|s| s.build.take()),
+        "windows" => raw.windows.as_mut().and_then(|s| s.build.take()),
+        "ios" => raw.ios.as_mut().and_then(|s| s.build.take()),
+        "android" => raw.android.as_mut().and_then(|s| s.build.take()),
+        "esp32" => raw.esp32.as_mut().and_then(|s| s.build.take()),
+        "wasm" => raw.wasm.as_mut().and_then(|s| s.build.take()),
+        _ => None,
+    };
+    let build = platform_build
+        .or(raw.build)
         .map(|b| BuildSpec {
             prebuild: b.prebuild,
             dev: b.dev,
@@ -1464,6 +1507,45 @@ mod tests {
         assert!(!p.deny_block);
         assert!(!p.deny_unknown_extern);
         assert_eq!(p.stack_limit, None);
+    }
+
+    /// `[<platform>.build]` — the per-target answer to `prebuild`.
+    ///
+    /// `facet_runtime` is the case that forced it: prebuilt everywhere, and on
+    /// Android it embedded a SOURCE-MODE dependency (`facet_android`), so its
+    /// JNI entry points ended up in two archives and the link failed on a
+    /// duplicate symbol. It is also the smaller-package answer generally —
+    /// prebuilding buys compile time on a large package and costs it on a
+    /// small one.
+    #[test]
+    fn a_platform_build_table_overrides_prebuild_for_the_active_platform_only() {
+        let host = crate::target::active_platform();
+        // The table for the ACTIVE platform wins over `[build]`.
+        let text = format!(
+            "[package]\nname = \"p\"\n\n[build]\nprebuild = true\n\n[{host}.build]\nprebuild = false\n"
+        );
+        let m = parse_in(&fresh_dir("pbuild-active"), &text).unwrap();
+        assert!(
+            !m.build.prebuild,
+            "the active platform's table is what `prebuild` means here"
+        );
+
+        // A table for some OTHER platform is inert — the base answer stands.
+        let other = if host == "wasm" { "esp32" } else { "wasm" };
+        let text = format!(
+            "[package]\nname = \"p\"\n\n[build]\nprebuild = true\n\n[{other}.build]\nprebuild = false\n"
+        );
+        let m = parse_in(&fresh_dir("pbuild-other"), &text).unwrap();
+        assert!(
+            m.build.prebuild,
+            "another platform's table must not reach this build"
+        );
+
+        // With no `[build]` at all, the platform table still answers — and the
+        // default it overrides is TRUE, so this is the real-world shape.
+        let text = format!("[package]\nname = \"p\"\n\n[{host}.build]\nprebuild = false\n");
+        let m = parse_in(&fresh_dir("pbuild-only"), &text).unwrap();
+        assert!(!m.build.prebuild);
     }
 
     /// A fresh directory under the system temp dir, for tests that need

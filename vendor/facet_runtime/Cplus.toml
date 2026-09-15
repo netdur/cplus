@@ -58,6 +58,30 @@ uikit       = "*"
 quartzcore  = "*"
 webkit      = "*"
 
+# SOURCE MODE ON ANDROID, and it is a PREFERENCE — measured, not assumed.
+#
+# It used to be forced. `facet_android` is source mode by its own decision, so
+# prebuilding this facade for Android compiled 831 facet_android symbols INTO a
+# single-object `libfacet_runtime.a`; an app must also declare `facet_android`
+# (the header imports `facet_android/log`, and the flat-set rule requires it),
+# so its three `export extern fn` JNI entry points existed in two archives, and
+# a JNI entry point cannot be weak because Java finds it by NAME. Every Android
+# app failed to link on a duplicate symbol.
+#
+# That forcing is gone: a package archives one object per module now
+# (cplus-core/src/split.rs), and a prebuilt facade verified to link, install and
+# run on the emulator — the archive member holding the entry points is simply
+# never pulled in, because the app's own copy already satisfies every reference.
+#
+# What remains is the reason this key exists at all: prebuilding buys compile
+# time on a LARGE package and costs it on a small one, which is a per-platform
+# judgement rather than a global one. On Android this facade is small and
+# changes with its backend, so it compiles in.
+#
+# History: `bugs/closed/the-android-gallery-cannot-link-three-pre-existing-blockers.md`.
+[android.build]
+prebuild = false
+
 [android.dependencies]
 facet_android = "*"
 android_view  = "*"

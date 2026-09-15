@@ -21,10 +21,16 @@ rm -rf out && mkdir -p out/lib/arm64-v8a
 
 "$CPC" build --target android-arm64
 
-# facet and facet_android are source-mode, so they are already inside the app's
-# archive; the prebuilt ones are named here.
-DEPS="$V/facet_runtime/lib/$T/libfacet_runtime.a \
-      $V/android_view/lib/$T/libandroid_view.a \
+# facet, facet_android and facet_runtime are source-mode on Android, so they are
+# already inside the app's archive; the prebuilt ones are named here.
+#
+# `facet_runtime` joined that list when it gained `[android.build] prebuild =
+# false`. It had to: prebuilding a facade that depends on a SOURCE-MODE backend
+# compiles the backend into the facade's archive, and the app compiles it again
+# — so the JNI entry points existed twice and the link failed on a duplicate
+# symbol. Naming a `.a` that is no longer produced is the other half of the
+# same change.
+DEPS="$V/android_view/lib/$T/libandroid_view.a \
       $V/jni/lib/$T/libjni.a \
       $V/flex_layout/lib/$T/libflex_layout.a \
       $V/events/lib/$T/libevents.a \
@@ -44,6 +50,13 @@ DEPS="$V/facet_runtime/lib/$T/libfacet_runtime.a \
 # it, rebuild, install, launch, and get the next one. With this flag the linker
 # names them all at once, at build time. Two rounds of that (`_NSGetExecutablePath`,
 # then `CC_SHA256`) is what prompted it.
+# API 24 — the target's own floor. This line said 28 for a day (2026-09-14):
+# `libstdlib.a` was ONE object, so any use of stdlib dragged in `process` and
+# `pty`, whose `posix_spawn` family bionic introduced at 28. The archive has
+# one member per module now, and this link loads thirteen of stdlib's
+# forty-nine — neither of those among them. Measured: the same link against a
+# one-object stdlib fails at 24 on exactly the eight `posix_spawn*` symbols
+# (bugs/closed/a-package-is-one-object-so-a-consumer-links-all-of-it.md).
 "$CC" -target aarch64-linux-android24 -shared \
     -Wl,--whole-archive target/android-arm64/debug/libfacet_gallery_android.a \
     -Wl,--no-whole-archive $DEPS -llog -lm \

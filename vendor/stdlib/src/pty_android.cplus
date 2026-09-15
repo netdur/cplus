@@ -1,0 +1,392 @@
+// stdlib/pty_android.cplus — bionic variant of pty.cplus.
+//
+// Android IS Linux and the resolver falls back to `_linux` for it, so this file
+// exists for the same reason `netsys_android.cplus` does — and for one more.
+//
+//  1. ERRNO. glibc publishes the thread's errno slot as `__errno_location`;
+//     bionic calls it `__errno`. Without this the link fails naming
+//     `__errno_location` in a build that never mentioned errno.
+//
+//  2. THE WORKING DIRECTORY. glibc has `posix_spawn_file_actions_addchdir_np`;
+//     bionic has it too, but only from API 34 — and DECLARING it would raise
+//     this package's Android floor to Android 14 for every app, including the
+//     overwhelming majority that never spawn anything. So it is reached
+//     through `dlsym`, the same instrument this file already uses for
+//     `environ`: real support on API 34 and up, and an honest refusal below
+//     it rather than a child silently started in the wrong directory.
+//
+// Everything else is `pty_linux.cplus` unchanged — the constants are the
+// kernel's, not the libc's.
+//
+// WHY IT MATTERED AT ALL, given no facet app spawns a process: `libstdlib.a`
+// used to be ONE object, so any use of stdlib dragged every module in, and the
+// glibc-only spawn path reached every Android link and failed it. The archive
+// has one member per module now (cplus-core/src/split.rs), so this module is
+// linked only by an app that opens a pty — and that app still needs every line
+// above.
+
+import "./text" as text;
+import "./option" as option;
+import "./vec" as vec;
+import "./status" as status;
+
+extern fn posix_openpt(flags: i32) -> i32;
+extern fn grantpt(fd: i32) -> i32;
+extern fn unlockpt(fd: i32) -> i32;
+extern fn ptsname_r(fd: i32, buf: *u8, buflen: usize) -> i32;
+extern fn open(path: *u8, flags: i32, ...) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn waitpid(pid: i32, status: *i32, options: i32) -> i32;
+extern fn kill(pid: i32, sig: i32) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+// bionic errno location: `volatile int *__errno(void)`.
+extern fn __errno() -> *i32;
+extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
+// VARIADIC in libc — a fixed-arity declaration passes the third argument in a
+// register the callee never reads.
+extern fn ioctl(fd: i32, request: u64, ...) -> i32;
+extern fn posix_spawn_file_actions_init(fa: *u8) -> i32;
+extern fn posix_spawn_file_actions_destroy(fa: *u8) -> i32;
+extern fn posix_spawn_file_actions_adddup2(fa: *u8, fd: i32, newfd: i32) -> i32;
+extern fn posix_spawn_file_actions_addopen(fa: *u8, fd: i32, path: *u8, oflag: i32, mode: u32) -> i32;
+extern fn posix_spawn_file_actions_addclose(fa: *u8, fd: i32) -> i32;
+extern fn posix_spawnattr_init(attr: *u8) -> i32;
+extern fn posix_spawnattr_destroy(attr: *u8) -> i32;
+extern fn posix_spawnattr_setflags(attr: *u8, flags: i16) -> i32;
+extern fn posix_spawnp(pid: *i32, file: *u8, file_actions: *u8, attrp: *u8, argv: *u8, envp: *u8) -> i32;
+
+fn e_intr() -> i32 { return 4 as i32; }
+fn sig_int() -> i32 { return 2 as i32; }        // Ctrl-C
+fn sig_term() -> i32 { return 15 as i32; }
+fn sig_kill() -> i32 { return 9 as i32; }
+fn o_rdwr() -> i32 { return 2 as i32; }
+// O_NOCTTY (0400): the PARENT must not pick the pty up as its own controlling
+// terminal while allocating it. The child opens the slave WITHOUT this flag,
+// which is exactly how it acquires the terminal.
+fn o_noctty() -> i32 { return 0x100 as i32; }
+
+// POSIX_SPAWN_SETSID on glibc. Darwin's is 1024 — see the header for what
+// carrying that value across would have cost.
+fn spawn_setsid() -> i16 { return 0x80 as i16; }
+
+// TIOCSWINSZ on Linux — a plain number, where Darwin encodes direction and
+// size into the request.
+fn tiocswinsz() -> u64 { return 21524 as u64; }
+
+// glibc struct sizes, measured with `sizeof` on this host.
+fn file_actions_bytes() -> usize { return 80 as usize; }
+fn spawnattr_bytes() -> usize { return 336 as usize; }
+
+fn errno_value() -> i32 { return { *{ __errno() } }; }
+
+fn supported() -> bool { return true; }
+
+fn decode_status(status_word: i32) -> i32 {
+    if (status_word & (0x7f as i32)) == (0 as i32) {
+        return (status_word >> (8 as i32)) & (0xff as i32);
+    }
+    return (128 as i32) + (status_word & (0x7f as i32));
+}
+
+// `struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; }` —
+// ROWS FIRST. The same layout on Linux and Darwin.
+fn winsize_new(cols: u16, rows: u16) -> *u8 {
+    let w: *u8 = { malloc(8 as usize) };
+    if w.is_null() { return 0 as *u8; }
+    { *((w + (0 as usize)) as *u16) = rows; }
+    { *((w + (2 as usize)) as *u16) = cols; }
+    { *((w + (4 as usize)) as *u16) = 0 as u16; }
+    { *((w + (6 as usize)) as *u16) = 0 as u16; }
+    return w;
+}
+
+// The parent's LIVE environment. See `process_linux.cplus`: `environ` is a data
+// symbol, C+ has no `extern` for one, and /proc's copy is the exec-time
+// snapshot rather than the current environment.
+fn environ_ptr() -> *u8 {
+    let slot: *u8 = { dlsym(0 as *u8, #str_ptr("environ\0")) };
+    if slot.is_null() { return 0 as *u8; }
+    return { *(slot as **u8) };
+}
+
+struct PtyChild {
+    _pid: i32,
+    _master: i32,
+}
+
+// Start `argv[0]` (searched on PATH) under a new pty of `cols` x `rows`, in
+// working directory `cwd` ("" inherits). `None` if argv is empty, a string holds
+// an interior NUL, the pty cannot be allocated, or the spawn fails.
+fn spawn(argv: vec::Vec[text::Text], cwd: str, cols: u16, rows: u16) -> option::Option[PtyChild] {
+    let argc: usize = argv.count();
+    if argc == (0 as usize) { return option::Option[PtyChild]::None; }
+
+    var cstrs: vec::Vec[text::CString] = vec::new::[text::CString]();
+    var cargv: vec::Vec[*u8] = vec::new::[*u8]();
+    var i: usize = 0 as usize;
+    while i < argc {
+        match argv.at_ptr(i) {
+            option::Option[*text::Text]::Some(tp) => {
+                match { (*tp).c_str() } {
+                    option::Option[text::CString]::Some(cs) => {
+                        let _p: status::Status = cargv.append(cs.as_ptr());
+                        let _a: status::Status = cstrs.append(cs);
+                    }
+                    option::Option[text::CString]::None => { return option::Option[PtyChild]::None; }
+                }
+            }
+            option::Option[*text::Text]::None => { return option::Option[PtyChild]::None; }
+        }
+        i = i +% (1 as usize);
+    }
+    let _nul: status::Status = cargv.append(0 as *u8);
+
+    var cwd_cs: option::Option[text::CString] = option::Option[text::CString]::None;
+    var cwd_ptr: *u8 = 0 as *u8;
+    if cwd != "" {
+        match text::from_str(cwd).c_str() {
+            option::Option[text::CString]::Some(cs) => { cwd_ptr = cs.as_ptr(); cwd_cs = option::Option[text::CString]::Some(cs); }
+            option::Option[text::CString]::None => { return option::Option[PtyChild]::None; }
+        }
+    }
+
+    let arr: *u8 = match cargv.at_ptr(0 as usize) {
+        option::Option[**u8]::Some(base) => base as *u8,
+        option::Option[**u8]::None => 0 as *u8,
+    };
+    let arg0: *u8 = { *(arr as **u8) };
+
+    // ---- allocate the pty, the POSIX way ------------------------------------
+    // `grantpt` then `unlockpt` before the slave can be opened at all; skipping
+    // `unlockpt` makes the child's open fail with EIO and the pane comes up
+    // dead.
+    let master: i32 = { posix_openpt(o_rdwr() | o_noctty()) };
+    if master < (0 as i32) { return option::Option[PtyChild]::None; }
+    if { grantpt(master) } != (0 as i32) { { close(master) }; return option::Option[PtyChild]::None; }
+    if { unlockpt(master) } != (0 as i32) { { close(master) }; return option::Option[PtyChild]::None; }
+
+    let name: *u8 = { malloc(128 as usize) };
+    if name.is_null() { { close(master) }; return option::Option[PtyChild]::None; }
+    if { ptsname_r(master, name, 128 as usize) } != (0 as i32) {
+        free(name); { close(master) };
+        return option::Option[PtyChild]::None;
+    }
+
+    // The size is set on the MASTER here; Darwin passes it to `openpty`, which
+    // this route has no equivalent of.
+    let ws: *u8 = winsize_new(cols, rows);
+    if ws.is_not_null() {
+        let _rs: i32 = { ioctl(master, tiocswinsz(), ws) };
+        free(ws);
+    }
+
+    // The parent holds a slave fd only until the spawn returns. Without it there
+    // is a window where the child has not opened its end yet and a read on the
+    // master answers EOF — a pane that closes the instant it opens.
+    let slave: i32 = { open(name, o_rdwr() | o_noctty(), 0 as i32) };
+
+    let fa: *u8 = { malloc(file_actions_bytes()) };
+    let attr: *u8 = { malloc(spawnattr_bytes()) };
+    if fa.is_null() || attr.is_null() {
+        { close(master) };
+        if slave >= (0 as i32) { { close(slave) }; }
+        free(name);
+        if fa.is_not_null() { free(fa); }
+        if attr.is_not_null() { free(attr); }
+        return option::Option[PtyChild]::None;
+    }
+    let _fi: i32 = { posix_spawn_file_actions_init(fa) };
+    let _ai: i32 = { posix_spawnattr_init(attr) };
+    // SETSID first: the child leads a new session, and only a session leader can
+    // take a terminal. Then it opens the slave BY PATH as fd 0 — without
+    // O_NOCTTY, which is the act that makes the pty its controlling terminal. A
+    // dup2 of an already-open fd would not do it.
+    let _af: i32 = { posix_spawnattr_setflags(attr, spawn_setsid()) };
+    // A WORKING DIRECTORY, WHERE ANDROID HAS ONE.
+    //
+    // bionic gained `posix_spawn_file_actions_addchdir_np` at API 34.
+    // DECLARING it would raise this package's Android floor to 14 for every
+    // app, including the overwhelming majority that never spawn anything — so
+    // it is reached through `dlsym` instead, the same instrument this file
+    // already uses for `environ`. The `posix_spawn` family itself is bionic
+    // API 28 — a floor paid only by an app that imports `process`, now that a
+    // package archives one object per module.
+    //
+    // Present (API 34+): the child starts where the caller asked.
+    // Absent (below 34): the spawn REFUSES. Ignoring the request would start
+    // the child in the wrong directory, which is a bug that surfaces far from
+    // its cause; `spawn` already answers an Option, so refusing is expressible.
+    if cwd_ptr.is_not_null() {
+        let sym: *u8 = { dlsym(0 as *u8, #str_ptr("posix_spawn_file_actions_addchdir_np\0")) };
+        if sym.is_null() {
+            let _fd: i32 = { posix_spawn_file_actions_destroy(fa) };
+            let _ad: i32 = { posix_spawnattr_destroy(attr) };
+            { free(fa) };
+            { free(attr) };
+            { close(master) };
+            if slave >= (0 as i32) { { close(slave) }; }
+            free(name);
+            return option::Option[PtyChild]::None;
+        }
+        let addchdir: fn(*u8, *u8) -> i32 = { sym as fn(*u8, *u8) -> i32 };
+        let _cd: i32 = { addchdir(fa, cwd_ptr) };
+    }
+    let _c0: i32 = { posix_spawn_file_actions_addclose(fa, master) };
+    if slave >= (0 as i32) { let _c1: i32 = { posix_spawn_file_actions_addclose(fa, slave) }; }
+    let _o0: i32 = { posix_spawn_file_actions_addopen(fa, 0 as i32, name, o_rdwr(), 0 as u32) };
+    let _d1: i32 = { posix_spawn_file_actions_adddup2(fa, 0 as i32, 1 as i32) };
+    let _d2: i32 = { posix_spawn_file_actions_adddup2(fa, 0 as i32, 2 as i32) };
+
+    let pid_buf: *u8 = { malloc(4 as usize) };
+    if pid_buf.is_null() {
+        { close(master) };
+        if slave >= (0 as i32) { { close(slave) }; }
+        free(name); free(fa); free(attr);
+        return option::Option[PtyChild]::None;
+    }
+    { *(pid_buf as *i32) = 0 as i32; }
+    let envp: *u8 = environ_ptr();
+    let rc: i32 = { posix_spawnp(pid_buf as *i32, arg0, fa, attr, arr, envp) };
+    let pid: i32 = { *(pid_buf as *i32) };
+    free(pid_buf);
+    let _fd: i32 = { posix_spawn_file_actions_destroy(fa) };
+    let _ad: i32 = { posix_spawnattr_destroy(attr) };
+    free(fa); free(attr); free(name);
+
+    if slave >= (0 as i32) { { close(slave) }; }
+    if rc != (0 as i32) { { close(master) }; return option::Option[PtyChild]::None; }
+    return option::Option[PtyChild]::Some(PtyChild { _pid: pid, _master: master });
+}
+
+impl PtyChild {
+    fn pid(ref this) -> i32 { return this._pid; }
+    fn read_fd(ref this) -> i32 { return this._master; }
+    fn take_fd(ref this) -> i32 { let fd: i32 = this._master; this._master = -1 as i32; return fd; }
+
+    fn write(ref this, data: str) -> isize {
+        if this._master < (0 as i32) { return -1 as isize; }
+        let p: *u8 = #str_ptr(data);
+        let total: usize = #str_len(data);
+        var off: usize = 0 as usize;
+        while off < total {
+            let k: isize = { write(this._master, p + off, total -% off) };
+            if k > (0 as isize) { off = off +% (k as usize); continue; }
+            if k < (0 as isize) && errno_value() == e_intr() { continue; }
+            if off > (0 as usize) { return off as isize; }
+            return -1 as isize;
+        }
+        return off as isize;
+    }
+
+    fn read(ref this, buf: *u8, count: usize) -> isize {
+        if this._master < (0 as i32) { return -1 as isize; }
+        loop {
+            let k: isize = { read(this._master, buf, count) };
+            if k < (0 as isize) && errno_value() == e_intr() { continue; }
+            return k;
+        }
+        return -1 as isize;
+    }
+
+    fn resize(ref this, cols: u16, rows: u16) -> bool {
+        if this._master < (0 as i32) { return false; }
+        let w: *u8 = winsize_new(cols, rows);
+        if w.is_null() { return false; }
+        let rc: i32 = { ioctl(this._master, tiocswinsz(), w) };
+        free(w);
+        return rc == (0 as i32);
+    }
+
+    fn signal(ref this, sig: i32) -> bool {
+        if this._pid <= (0 as i32) { return false; }
+        return { kill(this._pid, sig) } == (0 as i32);
+    }
+    fn interrupt(ref this) -> bool { return this.signal(sig_int()); }
+    fn terminate(ref this) -> bool { return this.signal(sig_term()); }
+    fn kill_now(ref this) -> bool { return this.signal(sig_kill()); }
+
+    fn wait(ref this) -> i32 {
+        if this._pid <= (0 as i32) { return -1 as i32; }
+        let st: *u8 = { malloc(4 as usize) };
+        if st.is_null() { return -1 as i32; }
+        { *(st as *i32) = 0 as i32; }
+        var rc: i32 = 0 as i32;
+        loop {
+            rc = { waitpid(this._pid, st as *i32, 0 as i32) };
+            if rc >= (0 as i32) { break; }
+            if errno_value() != e_intr() { break; }
+        }
+        let status_word: i32 = { *(st as *i32) };
+        free(st);
+        if rc < (0 as i32) { return -1 as i32; }
+        this._pid = -1 as i32;
+        return decode_status(status_word);
+    }
+
+    fn drop(ref this) {
+        if this._master >= (0 as i32) { let _c: i32 = { close(this._master) }; this._master = -1 as i32; }
+    }
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+//
+// NOTHING HERE SPAWNS: a child spawned from inside the test driver deadlocks it,
+// which `process.cplus` records. The spawn path is verified by a standalone
+// binary.
+
+#[test]
+fn winsize_is_packed_rows_then_cols() {
+    let w: *u8 = winsize_new(80 as u16, 24 as u16);
+    assert w.is_not_null();
+    assert { *((w + (0 as usize)) as *u16) } == (24 as u16);   // rows first
+    assert { *((w + (2 as usize)) as *u16) } == (80 as u16);
+    free(w);
+}
+
+#[test]
+fn tiocswinsz_is_the_LINUX_encoding_not_the_darwin_one() {
+    assert tiocswinsz() == (21524 as u64);       // 0x5414
+    assert tiocswinsz() != (2148037735 as u64);  // Darwin's 0x80087467
+}
+
+#[test]
+fn setsid_is_the_GLIBC_flag_not_the_darwin_one() {
+    // THE BUG THIS GUARDS was sitting in the stub: it carried Darwin's 1024
+    // while refusing every call, so nothing noticed. Ported across unchanged it
+    // would set some other flag bit, leave the child in the parent's session,
+    // and the pty would never become its controlling terminal — no job control,
+    // and Ctrl-C reaching nobody. Which is the entire reason to use a pty.
+    assert spawn_setsid() == (0x80 as i16);
+    assert spawn_setsid() != (1024 as i16);
+}
+
+#[test]
+fn the_spawn_structs_are_the_glibc_sizes() {
+    // Darwin's are pointer-sized and the shared body mallocs 8 for each; glibc's
+    // are structs. `_init` on an 8-byte allocation corrupts the heap.
+    assert file_actions_bytes() == (80 as usize);
+    assert spawnattr_bytes() == (336 as usize);
+}
+
+#[test]
+fn ptys_are_supported_here_now() {
+    assert supported();
+}
+
+#[test]
+fn decode_status_reads_exit_code_and_signal() {
+    assert decode_status(0x0500 as i32) == (5 as i32);
+    assert decode_status(15 as i32) == (143 as i32);
+}
+
+#[test]
+fn empty_argv_is_none() {
+    let empty: vec::Vec[text::Text] = vec::new::[text::Text]();
+    match spawn(empty, "", 80 as u16, 24 as u16) {
+        option::Option[PtyChild]::Some(c) => { assert false; }
+        option::Option[PtyChild]::None => { assert true; }
+    }
+}
