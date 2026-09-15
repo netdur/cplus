@@ -1,0 +1,203 @@
+// relist — a recycled list over a collection the APPLICATION owns.
+//
+// The screen next door shows `list`: a COUNT and a row factory, which the
+// application keeps in step with its own data by hand. `relist` is handed the
+// collection itself, so there is nothing to keep in step — `Add` below appends
+// to `this.rows` and says nothing to the list at all.
+//
+// It also shows the two things a recycled row could not do before. A row is
+// built here, KEYED here, and carries its own handlers, so:
+//
+//   * `mount::find(id)` resolves a realised row, and `Find` demonstrates the
+//     contract that goes with it — a row nobody has scrolled to has no node,
+//     and `Scroll to` is how one is made;
+//   * the star is an ORDINARY icon button inside a row, with its own key and
+//     its own handler. On `list` that button belongs to the platform's cell and
+//     the row is the one node an application cannot key.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/mount" as mount;
+import "facet/component" as component;
+import "facet/relist" as relist;
+import "facet/obs_vec" as obs_vec;
+import "facet/label" as label;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "../shell" as shell;
+
+struct Entry { n: i32, starred: bool }
+
+struct Relists {
+    rows: obs_vec::ObsVec[Entry],
+    columns: usize,
+}
+
+impl Relists {
+    fn new() -> Relists {
+        var v: obs_vec::ObsVec[Entry] = obs_vec::ObsVec[Entry]::new();
+        var i: i32 = 0;
+        while i < 200 {
+            let _a: status::Status = v.append(Entry { n: i, starred: false });
+            i = i +% 1;
+        }
+        return Relists { rows: v, columns: 1 as usize };
+    }
+
+    // A ROW IS KEYED WITH THE ENTRY'S OWN ID — the token that makes it
+    // findable, addressable and visible to the agent surface, all at once.
+    fn row(ref this, index: usize) -> core::Node {
+        guard let option::Option[*Entry]::Some(e) = { this.rows.at_ptr(index) } else {
+            return core::spacer();
+        };
+        let n: i32 = (*e).n;
+        let on: bool = (*e).starred;
+        let star_key: text::Text = "row:${n}:star";
+        var b: core::Builder = core::Builder::new();
+        // `toggles` is the button's own pressed state; the ROW shows whether the
+        // entry is starred, because that is the application's data rather than
+        // the control's.
+        b.add(ui::icon_button("star", key: star_key.view(), toggles: true,
+                              on_clicked: this.on_star));
+        var text_col: core::Builder = core::Builder::new();
+        text_col.add(ui::label("Entry ${n}", font_size: 14.0,
+                               font_weight: vocab::FontWeight::Medium,
+                               text_color: vocab::Color::ink()));
+        text_col.add(ui::label("built fresh, never bound", font_size: 12.0,
+                               text_color: vocab::Color::ink(0.6)));
+        b.add(core::column(text_col).gap(2.0).grow(1.0));
+        var fill: vocab::Color = vocab::Color::clear();
+        if on { fill = vocab::Color::rgba(0.98f64, 0.80f64, 0.25f64, 0.18f64); }
+        let id: text::Text = "row:${n}";
+        // A PAINT SETTER IS A UNIT MUTATOR, so it does not chain outside `@ui`
+        // — the block's desugar is what threads those. Here the node is named
+        // and written, which is the same thing said longhand.
+        var row_node: core::Node = core::row(b, key: id.view())
+            .align(flex::Align::Center)
+            .gap(10.0)
+            .padding(12.0);
+        core::set_background_color(#addr_of(row_node), fill);
+        return row_node;
+    }
+
+    // THE STAR IS AN ORDINARY BUTTON. Its handler asks the sender which row it
+    // is in — the index the backend stamped on the row it sits inside.
+    fn on_star(ref this, sender: *u8) {
+        guard let option::Option[usize]::Some(i) = component::item_index_of(sender) else {
+            note("the star could not say which row it is in");
+            return;
+        };
+        guard let option::Option[*Entry]::Some(e) = { this.rows.at_ptr(i) } else { return; };
+        let now: bool = !{ (*e).starred };
+        { (*e).starred = now };
+        // The collection changed in place, so the list is TOLD — `at_ptr` is
+        // the door nothing can observe, and this is the named hatch for it.
+        this.rows.note_changed(i);
+        note("row ${i} starred: ${now}");
+    }
+
+    fn on_add(ref this, sender: *u8) {
+        let at: usize = this.rows.count();
+        let _a: status::Status = this.rows.append(Entry { n: at as i32, starred: false });
+        note("appended entry ${at} — the list was told nothing");
+    }
+
+    fn on_find(ref this, sender: *u8) { report("row:12"); }
+    fn on_find_far(ref this, sender: *u8) { report("row:120"); }
+
+    fn on_scroll(ref this, sender: *u8) {
+        match relist::find("rel:list") {
+            option::Option[relist::Relist]::Some(r) => {
+                let _s: relist::Relist = r.scroll_to(120 as usize);
+                note("scrolled to 120 — now try Find row 120");
+            }
+            option::Option[relist::Relist]::None => { note("no list"); }
+        }
+    }
+
+    // ONE COLUMN IS A LIST, THREE IS A GRID, and the rows are the same rows.
+    fn on_regrid(ref this, sender: *u8) {
+        var next: usize = 3 as usize;
+        if this.columns == (3 as usize) { next = 1 as usize; }
+        this.columns = next;
+        match relist::find("rel:list") {
+            option::Option[relist::Relist]::Some(r) => {
+                let _c: relist::Relist = r.set_columns(next);
+                note("columns: ${next}");
+            }
+            option::Option[relist::Relist]::None => { }
+        }
+    }
+}
+
+fn note(s: str) {
+    match label::find("rel:echo") {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
+        option::Option::None => { }
+    }
+}
+
+// `find` over the WHOLE tree, exactly as an application writes it — no scope
+// and no list-specific verb. The row answers because the element answers for it.
+fn report(key: str) {
+    var realised: usize = 0 as usize;
+    match relist::find("rel:list") {
+        option::Option[relist::Relist]::Some(r) => { realised = r.realised_count(); }
+        option::Option[relist::Relist]::None => { }
+    }
+    match mount::find(key) {
+        option::Option[*core::Node]::Some(_n) => {
+            note("${key}: FOUND  (${realised} rows realised)");
+        }
+        option::Option[*core::Node]::None => {
+            note("${key}: not realised  (${realised} rows realised)");
+        }
+    }
+}
+
+impl Relists: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+        body.add(shell::caption("relist  ·  a collection + a builder"));
+        body.add(ui::label(
+            "The list is handed the collection, not a count. Rows are keyed, so `find` resolves the ones on screen — and the star is an ordinary button inside a row.",
+            key: "rel:note",
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.65),
+            max_lines: 3,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+        body.add(ui::label("(nothing yet)", key: "rel:echo", font_size: 13.0,
+                           text_color: vocab::Color::ink(0.75)));
+
+        var bar: core::Builder = core::Builder::new();
+        bar.add(ui::button("Add a row", key: "rel:add", on_click: this.on_add));
+        bar.add(ui::button("Find row 12", key: "rel:find", on_click: this.on_find));
+        bar.add(ui::button("Find row 120", key: "rel:far", on_click: this.on_find_far));
+        bar.add(ui::button("Scroll to 120", key: "rel:scroll", on_click: this.on_scroll));
+        bar.add(ui::button("1 / 3 columns", key: "rel:grid", on_click: this.on_regrid));
+        body.add(core::row(bar).gap(8.0));
+
+        body.add(ui::relist(this.rows, key: "rel:list", builder: this.row)
+                     .height(320.0)
+                     .grow(1.0));
+
+        return shell::panel(
+            "relist",
+            "A recycled list over an observable collection: the app owns the data, the rows are real keyed nodes.",
+            core::column(body).gap(12.0),
+            howto: "relist(this.rows, key: \"inbox\", builder: this.row)\n    .grow(1.0)\n\n// the app appends; the list already knows\nthis.rows.append(entry);",
+        );
+    }
+}
+
+impl Relists: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) {
+        if why != component::Attach::Mount { return; } return; }
+    fn on_detach(ref this, why: component::Detach) {
+        if why != component::Detach::Unmount { return; } return; }
+}

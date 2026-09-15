@@ -42,6 +42,7 @@ const NAV_SWIPE: str = "swipe";
 const NAV_RADIO: str = "radio";
 const NAV_SPLIT: str = "split";
 const NAV_LIST: str = "list";
+const NAV_RELIST: str = "relist";
 const NAV_REFRESH: str = "refresh";
 const NAV_RESPONSIVE: str = "responsive";
 const NAV_CANNOT: str = "cannot";
@@ -80,6 +81,7 @@ const DEMO_SWIPE: i64 = 18;
 const DEMO_RADIO: i64 = 19;
 const DEMO_SPLIT: i64 = 20;
 const DEMO_LIST: i64 = 21;
+const DEMO_RELIST: i64 = 22;
 const DEMO_CANNOT: i64 = 22;
 const DEMO_REFRESH: i64 = 23;
 const DEMO_RESPONSIVE: i64 = 24;
@@ -107,6 +109,7 @@ fn demo_for(id: str) -> i64 {
     if id == NAV_RADIO { return DEMO_RADIO; }
     if id == NAV_SPLIT { return DEMO_SPLIT; }
     if id == NAV_LIST { return DEMO_LIST; }
+    if id == NAV_RELIST { return DEMO_RELIST; }
     if id == NAV_CANNOT { return DEMO_CANNOT; }
     if id == NAV_REFRESH { return DEMO_REFRESH; }
     if id == NAV_RESPONSIVE { return DEMO_RESPONSIVE; }
@@ -185,6 +188,7 @@ fn model() -> tree::TreeNode {
 
     var c: tree::TreeNode = section("Collections", SEC_COLLECTIONS);
     let _c1: status::Status = c.add_child(leaf("List", NAV_LIST));
+    let _cr: status::Status = c.add_child(leaf("relist", NAV_RELIST));
     let _c2: status::Status = c.add_child(leaf("Pull to refresh", NAV_REFRESH));
     let _cs: status::Status = root.add_child(c);
 

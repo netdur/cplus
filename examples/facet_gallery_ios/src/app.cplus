@@ -66,6 +66,7 @@ struct Gallery {
     radio: interaction::Radio,
     split: interaction::Split,
     list: collections::ListDemo,
+    relist: collections::RelistDemo,
     cannot: notes::Cannot,
     refresh: collections::Refresh,
     responsive: responsive::Responsive,
@@ -97,6 +98,7 @@ impl Gallery {
             radio: interaction::Radio::new(),
             split: interaction::Split::new(),
             list: collections::ListDemo::new(),
+            relist: collections::RelistDemo::new(),
             cannot: notes::Cannot::new(),
             refresh: collections::Refresh::new(),
             responsive: responsive::Responsive::new(),
@@ -156,6 +158,7 @@ impl Gallery {
                 else if d == catalog::DEMO_RADIO { let _o: bool = mount::set_content(out, this.radio); }
                 else if d == catalog::DEMO_SPLIT { let _o: bool = mount::set_content(out, this.split); }
                 else if d == catalog::DEMO_LIST { let _o: bool = mount::set_content(out, this.list); }
+                else if d == catalog::DEMO_RELIST { let _o: bool = mount::set_content(out, this.relist); }
                 else if d == catalog::DEMO_CANNOT { let _o: bool = mount::set_content(out, this.cannot); }
                 else if d == catalog::DEMO_REFRESH { let _o: bool = mount::set_content(out, this.refresh); }
                 else if d == catalog::DEMO_RESPONSIVE { let _o: bool = mount::set_content(out, this.responsive); }

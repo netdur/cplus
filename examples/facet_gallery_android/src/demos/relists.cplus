@@ -1,0 +1,153 @@
+// relist — a recycled list over a collection the APPLICATION owns.
+//
+// The difference from `lists.cplus` next door is what the list is told. A
+// `list` is given a COUNT and a builder, and the application keeps that count in
+// step with its own data by hand — append to your Vec, then remember to say
+// `set_count`. A `relist` is handed the collection itself, so there is nothing
+// to keep in step: `Add a row` below appends to `this.rows` and says nothing to
+// the list at all.
+//
+// It also answers the thing a recycled row could never do. A row is built by
+// this file, KEYED by this file, and realised into a cell the platform owns —
+// so it is not a child of the list and a tree walk cannot reach it. The element
+// keeps the rows that exist and `find` asks it, which is what `Find row 12`
+// demonstrates: a row on screen resolves, a row nobody has scrolled to does not,
+// and `Scroll to 120` is how one is made.
+
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/elements" as ui;
+import "facet/label" as label;
+import "facet/relist" as relist;
+import "facet/obs_vec" as obs_vec;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "../shell" as shell;
+
+struct Entry { n: i32 }
+
+// THE COMPONENT OWNS THE COLLECTION, which is the whole shape of this element:
+// the list borrows it for the life of the tree and never copies it.
+struct Relists {
+    rows: obs_vec::ObsVec[Entry],
+}
+
+impl Relists {
+    fn new() -> Relists {
+        var v: obs_vec::ObsVec[Entry] = obs_vec::ObsVec[Entry]::new();
+        var i: i32 = 0;
+        while i < 200 { let _a: status::Status = v.append(Entry { n: i }); i = i +% 1; }
+        return Relists { rows: v };
+    }
+
+    // A ROW IS KEYED WITH THE ENTRY'S OWN ID. That key is what makes it
+    // findable while it is realised, and it is the same token everywhere else
+    // in facet — an address, an agent id, and the platform's a11y id.
+    fn row(ref this, index: usize) -> core::Node {
+        guard let option::Option[*Entry]::Some(e) = { this.rows.at_ptr(index) } else {
+            return core::spacer();
+        };
+        let n: i32 = (*e).n;
+        var b: core::Builder = core::Builder::new();
+        b.add(ui::label("Entry ${n}", font_size: 17.0));
+        b.add(ui::label("built fresh, never bound", font_size: 13.0,
+                        text_color: vocab::Color::rgba(0.42, 0.42, 0.47)));
+        let id: text::Text = "row:${n}";
+        return core::column(b, key: id.view()).gap(2.0).padding(14.0);
+    }
+
+    // NOTHING TELLS THE LIST. The collection's own change signal does.
+    fn on_add(ref this, sender: *u8) {
+        let at: usize = this.rows.count();
+        let _a: status::Status = this.rows.append(Entry { n: at as i32 });
+        note("appended entry ${at} — the list was told nothing");
+    }
+
+    // ONLY REALISED ROWS ANSWER, and that is the contract rather than a
+    // shortfall: a list of two hundred holds a dozen nodes, and the rest have
+    // no node to find.
+    fn on_find(ref this, sender: *u8) { report("row:12"); }
+
+    fn on_find_far(ref this, sender: *u8) { report("row:120"); }
+
+    // ...and this is how a row is made real.
+    fn on_scroll(ref this, sender: *u8) {
+        match relist::find("relists:list") {
+            option::Option[relist::Relist]::Some(r) => {
+                let _s: relist::Relist = r.scroll_to(120 as usize);
+                note("scrolled to 120 — now try Find row 120");
+            }
+            option::Option[relist::Relist]::None => { note("no list"); }
+        }
+    }
+}
+
+fn note(s: str) {
+    match label::find("relists:echo") {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
+        option::Option::None => { }
+    }
+}
+
+// `find` over the WHOLE tree, exactly as an application writes it — no scope,
+// no list-specific verb. The row answers because the element answers for it.
+fn report(key: str) {
+    var realised: usize = 0 as usize;
+    match relist::find("relists:list") {
+        option::Option[relist::Relist]::Some(r) => { realised = r.realised_count(); }
+        option::Option[relist::Relist]::None => { }
+    }
+    match mount::find(key) {
+        option::Option[*core::Node]::Some(_n) => {
+            note("${key}: FOUND (${realised} rows realised)");
+        }
+        option::Option[*core::Node]::None => {
+            note("${key}: not realised (${realised} rows realised)");
+        }
+    }
+}
+
+impl Relists: component::Component {
+    fn build(ref this) -> core::Node {
+        var b: core::Builder = core::Builder::new();
+        b.add(shell::title("relist"));
+        b.add(shell::body("200 entries in a collection this screen owns. The list is handed the collection, not a count."));
+        b.add(ui::label("(nothing yet)", key: "relists:echo", font_size: 15.0,
+                        text_color: vocab::Color::rgba(0.35, 0.35, 0.40)));
+
+        var bar: core::Builder = core::Builder::new();
+        bar.add(ui::button("Add a row", key: "relists:add", on_click: this.on_add));
+        bar.add(ui::button("Find row 12", key: "relists:find", on_click: this.on_find));
+        b.add(core::row(bar).gap(8.0));
+
+        var bar2: core::Builder = core::Builder::new();
+        bar2.add(ui::button("Find row 120", key: "relists:far", on_click: this.on_find_far));
+        bar2.add(ui::button("Scroll to 120", key: "relists:scroll", on_click: this.on_scroll));
+        b.add(core::row(bar2).gap(8.0));
+
+        var page: core::Builder = core::Builder::new();
+        page.add(core::column(b).gap(shell::GAP).padding(shell::PAD));
+        // HEIGHT AND GROW, the same idiom the list demo uses: a list has no
+        // intrinsic size — it is a viewport over rows it has not built — so
+        // `grow` alone leaves it at zero.
+        page.add(ui::relist(this.rows, key: "relists:list", builder: this.row)
+                     .height(320.0).grow(1.0));
+        return core::column(page, key: "demo:relists").grow(1.0);
+    }
+}
+
+impl Relists: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+
+impl Relists: core::IntoNode {
+    fn into_node(take this) -> core::Node {
+        return component::child::[Relists](this).grow(1.0);
+    }
+}
+
+fn build() -> Relists { return Relists::new(); }

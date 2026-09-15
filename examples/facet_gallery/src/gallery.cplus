@@ -34,6 +34,7 @@ import "./demos/layout/splits" as splits;
 import "./demos/layout/zstacks" as zstacks;
 import "./demos/layout/responsive" as responsive;
 import "./demos/lists" as lists;
+import "./demos/relists" as relists;
 import "./demos/collections" as collections;
 import "./demos/trees" as trees;
 import "./demos/page_dots_demo" as page_dots_demo;
@@ -87,6 +88,7 @@ const ID_CLIP: i32 = 31;
 const ID_GRID: i32 = 32;
 const ID_PLACEMENT: i32 = 33;
 const ID_A11Y: i32 = 34;
+const ID_RELIST: i32 = 35;
 
 const NAV_OVERVIEW: str = "overview";
 const NAV_BUTTON: str = "button";
@@ -106,6 +108,7 @@ const NAV_SPLIT: str = "split";
 const NAV_ZSTACK: str = "zstack";
 const NAV_RESPONSIVE: str = "responsive";
 const NAV_LIST: str = "list";
+const NAV_RELIST: str = "relist";
 const NAV_COLLECTION: str = "collection";
 const NAV_TREE: str = "tree";
 const NAV_PAGE_DOTS: str = "page_dots";
@@ -151,6 +154,7 @@ struct Gallery {
     zstacks: zstacks::ZStacks,
     responsive: responsive::Responsive,
     lists: lists::Lists,
+    relists: relists::Relists,
     collections: collections::Collections,
     trees: trees::Trees,
     page_dots: page_dots_demo::PageDotsDemo,
@@ -189,6 +193,7 @@ fn demo_id_for(nav_id: str) -> i32 {
     if nav_id == NAV_ZSTACK { return ID_ZSTACK; }
     if nav_id == NAV_RESPONSIVE { return ID_RESPONSIVE; }
     if nav_id == NAV_LIST { return ID_LIST; }
+    if nav_id == NAV_RELIST { return ID_RELIST; }
     if nav_id == NAV_COLLECTION { return ID_COLLECTION; }
     if nav_id == NAV_TREE { return ID_TREE; }
     if nav_id == NAV_PAGE_DOTS { return ID_PAGE_DOTS; }
@@ -249,6 +254,7 @@ fn catalog_model() -> tree::TreeNode {
 
     var cols: tree::TreeNode = section("Collections", SEC_COLLECTIONS);
     let _li: status::Status = cols.add_child(leaf("List", NAV_LIST));
+    let _rl: status::Status = cols.add_child(leaf("relist", NAV_RELIST));
     let _co: status::Status = cols.add_child(leaf("Collection", NAV_COLLECTION));
     let _tr: status::Status = cols.add_child(leaf("Tree", NAV_TREE));
     let _pd: status::Status = cols.add_child(leaf("Page dots", NAV_PAGE_DOTS));
@@ -301,6 +307,7 @@ impl Gallery {
             zstacks: zstacks::ZStacks::new(),
             responsive: responsive::Responsive::new(),
             lists: lists::Lists::new(),
+            relists: relists::Relists::new(),
             collections: collections::Collections::new(),
             trees: trees::Trees::new(),
             page_dots: page_dots_demo::PageDotsDemo::new(),
@@ -361,6 +368,8 @@ impl Gallery {
                     let _ok: bool = mount::set_content(out, this.responsive);
                 } else if id == ID_LIST {
                     let _ok: bool = mount::set_content(out, this.lists);
+                } else if id == ID_RELIST {
+                    let _ok: bool = mount::set_content(out, this.relists);
                 } else if id == ID_COLLECTION {
                     let _ok: bool = mount::set_content(out, this.collections);
                 } else if id == ID_TREE {
