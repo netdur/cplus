@@ -5,7 +5,11 @@
 // every result rides home on; `after` is the one time-driven verb, with
 // `Cancellable` owning the pending-callback lifetime; `spawn_ui` drives
 // async tasks on the UI thread; `on_worker` bridges CPU-blocking work;
-// `Job`/`run_job` is the one-screen-one-job pattern iris uses.
+// `Job`/`run_job` is the one-screen-one-job pattern iris uses. WHERE the job
+// lives is the app's choice and a separate one: in a component field it dies
+// with the screen, as a module `static` it is a SERVICE that outlives every
+// screen and answers through a signal it owns (see the probe at the end of
+// this file, and SKILL §8).
 // The backend installs the primitives (`set_run_on_main_fn`, `set_after_fn`,
 // ...); with none installed every verb is the portable no-op — work is
 // dropped, timers never fire and return already-cancelled handles.
@@ -24,6 +28,7 @@ import "stdlib/net" as net;
 import "stdlib/atomic" as atomic;
 import "stdlib/io" as io;
 import "stdlib/status" as status;
+import "events/events" as events;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 import "./platform_sys" as platform_sys;
@@ -1298,4 +1303,120 @@ fn queued_apply_is_counted_and_settles() {
     assert jobs_settled();
     assert j2.ran == 1;
     assert j2.applied == 0;
+}
+
+// ---- a SERVICE: the same two methods, living longer than any component -------
+//
+// PROBE (2026-09-15) — pins the shape §8 of the SKILL documents. A job is an
+// app struct reached through its address, and nothing in `run_job` says that
+// struct must be a component field. Held as a module `static` it outlives
+// every screen, which removes the whole deferred-free problem for it: the
+// address never dies.
+//
+// The half that is NOT free is the notification. `then:` binds the CALLER's
+// address, so a long-lived service answering a dead component is the same
+// use-after-free with the pointer at the other end. A signal the SERVICE owns
+// is what makes it safe: the subscription handle owns the registration and
+// cancels on drop, so a component's field unsubscribes when the component
+// dies.
+
+struct Indexed { hits: i64 }
+
+struct Indexer {
+    word: text::Text,                    // main-thread input
+    staged: i64,                         // `run` writes ONLY here
+    hits: i64,                           // main-thread truth
+    changes: events::Signal[Indexed],    // the channel the service owns
+    _live: u64,
+}
+
+static INDEXER: Indexer = #zero::[Indexer]();
+
+// A zeroed static is made live on first touch — the SHARED_BUS idiom, the
+// same three lines `resource::_ensure` is.
+fn idx_ensure() {
+    if INDEXER._live == (0 as u64) {
+        INDEXER.changes = events::Signal[Indexed]::new();
+        INDEXER._live = 1 as u64;
+    }
+    return;
+}
+
+impl Indexer: Job {
+    fn run(ref this) { this.staged = { this.word.count() } as i64; return; }
+    fn apply(ref this) {
+        this.hits = this.staged;
+        this.changes.emit(Indexed { hits: this.hits });
+        return;
+    }
+}
+
+// THE APP SURFACE IS THE MODULE, NOT THE STRUCT — components never name the
+// static.
+fn index(w: str) -> bool {
+    idx_ensure();
+    INDEXER.word = w.to_text();
+    return run_job::[Indexer](INDEXER);
+}
+
+fn watch_index(f: fn(Indexed, *u8), ctx: *u8 = 0 as *u8)
+        -> events::SignalSubscription[Indexed] {
+    idx_ensure();
+    return { INDEXER.changes.on(f, ctx: ctx) };
+}
+
+static IDX_SEEN: i64 = 0 as i64;
+static IDX_LAST: i64 = 0 as i64;
+
+fn idx_record(e: Indexed, ctx: *u8) {
+    IDX_SEEN = IDX_SEEN +% (1 as i64);
+    IDX_LAST = e.hits;
+    return;
+}
+
+#[test]
+fn a_static_service_broadcasts_from_apply() {
+    var sch: Scheduler = scheduler_none();
+    sch.run_on_main = sj_inline_hop;
+    install_scheduler(sch);
+    IDX_SEEN = 0 as i64;
+    IDX_LAST = 0 as i64;
+
+    var sub: events::SignalSubscription[Indexed] = watch_index(idx_record);
+    assert index("hello");
+    wait_for_jobs();
+    while !jobs_settled() { job_spin(1000 as i64); }
+
+    assert IDX_SEEN == (1 as i64);
+    assert IDX_LAST == (5 as i64);
+    assert INDEXER.hits == (5 as i64);
+
+    let _c: bool = sub.cancel();
+    uninstall_scheduler();
+}
+
+#[test]
+fn a_dropped_subscription_stops_delivery_to_a_dead_watcher() {
+    // The safety half. A component that dies takes its subscription field
+    // with it; the service stays alive and must not reach the corpse.
+    var sch: Scheduler = scheduler_none();
+    sch.run_on_main = sj_inline_hop;
+    install_scheduler(sch);
+    IDX_SEEN = 0 as i64;
+
+    {
+        var sub: events::SignalSubscription[Indexed] = watch_index(idx_record);
+        assert index("ab");
+        wait_for_jobs();
+        while !jobs_settled() { job_spin(1000 as i64); }
+        assert IDX_SEEN == (1 as i64);
+    }   // sub drops here — the registration goes with it
+
+    assert index("abcd");
+    wait_for_jobs();
+    while !jobs_settled() { job_spin(1000 as i64); }
+
+    assert IDX_SEEN == (1 as i64);          // nothing delivered to the dead watcher
+    assert INDEXER.hits == (4 as i64);      // but the service still ran
+    uninstall_scheduler();
 }

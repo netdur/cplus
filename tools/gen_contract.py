@@ -1025,6 +1025,19 @@ impl TextList {
             option::Option[*text::Text]::None => "",
         };
     }
+    // The membership question, which every caller of this type was asking by
+    // hand — `tree::is_expanded` walked the list itself, and so did the second
+    // one that wanted it (`tree::is_selected`). Linear, because these lists are
+    // a handful of ids.
+    fn has(this, s: str) -> bool {
+        var i: usize = 0 as usize;
+        while i < this._v.count() {
+            if this.at(i) == s { return true; }
+            i = i +% (1 as usize);
+        }
+        return false;
+    }
+    fn clear(ref this) { this._v.remove_all(); }
 }
 
 // An owned list of ROW INDICES — every selected row of a list or a collection.

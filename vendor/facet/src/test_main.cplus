@@ -4740,3 +4740,163 @@ fn a_collection_carries_the_same_selection_as_a_list() {
         option::Option[collection::Collection]::None => { assert false; }
     }
 }
+
+// ---- a tree selects more than one row too -----------------------------------
+//
+// NSOutlineView, UITableView and GtkTreeView all multi-select natively, and
+// this control held one `selected` id — so a user who shift-clicked three rows
+// had two of them highlighted on screen and absent from the model. `list` and
+// `collection` had the same hole with `selected_index`; a tree did not even
+// have the MODE to ask for it.
+//
+// The key is an ID here and an index there, and that difference stays: a tree
+// row has no stable index, because expanding anything above it moves it.
+
+fn _tree_props(n: *facet::Node) -> *tree::TreeProps {
+    let d: *facet::Data = { (*n).data() };
+    if d == (0 as *facet::Data) { return 0 as *tree::TreeProps; }
+    return { (*d).props } as *tree::TreeProps;
+}
+
+fn _alice_and_bob() -> vocab::TextList {
+    var s: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = s.add("/people/alice");
+    let _b: status::Status = s.add("/people/bob");
+    return s;
+}
+
+#[test]
+fn a_tree_selects_by_id_and_selected_is_the_first_of_them() {
+    var root: facet::Node = tree::tree(rows_identified_by_content(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            let a: tree::Tree = x.set_selection(_alice_and_bob());
+            assert a.selection_count() == (2 as usize);
+            assert a.selection_at(0 as usize) == "/people/alice";
+            assert a.selection_at(1 as usize) == "/people/bob";
+            assert a.is_selected("/people/bob");
+            assert !a.is_selected("/people/carol");
+            assert a.selected() == "/people/alice";
+            assert a.has_selection();
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+}
+
+#[test]
+fn selecting_one_tree_row_replaces_the_whole_selection() {
+    var root: facet::Node = tree::tree(rows_identified_by_content(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            let a: tree::Tree = x.set_selection(_alice_and_bob());
+            let b: tree::Tree = a.select("/people/bob");
+            assert b.selection_count() == (1 as usize);
+            assert b.is_selected("/people/bob");
+            assert !b.is_selected("/people/alice");     // the old set is GONE
+            assert b.selected() == "/people/bob";
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+}
+
+#[test]
+fn deselecting_a_tree_empties_the_selection_and_not_just_the_id() {
+    var root: facet::Node = tree::tree(rows_identified_by_content(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            let a: tree::Tree = x.set_selection(_alice_and_bob());
+            let b: tree::Tree = a.deselect();
+            assert b.selection_count() == (0 as usize);
+            assert b.selected() == "";
+            assert !b.has_selection();
+            assert !b.is_selected("/people/alice");
+            assert b.selection_at(0 as usize) == "";    // past the end, not a trap
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_tree_is_single_selection_until_it_is_asked_otherwise() {
+    // `None` here would take a behaviour away from every tree that exists: an
+    // outline view selects on click natively and `on_select` has always fired.
+    var root: facet::Node = tree::tree(rows_identified_by_content(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            assert x.selection_mode() == vocab::SelectionMode::Single;
+            assert x.selection_highlight() == vocab::SelectionHighlight::Default;
+            facet::clear_dirty(#addr_of(root));
+            let a: tree::Tree = x.set_selection_mode(vocab::SelectionMode::Multiple);
+            assert a.selection_mode() == vocab::SelectionMode::Multiple;
+            assert (facet::dirty_of(#addr_of(root)) & tree::P_SELECTION_MODE) != (0 as u64);
+            // the highlight shares the bit: a backend reading one re-reads both
+            facet::clear_dirty(#addr_of(root));
+            let b: tree::Tree = a.set_selection_highlight(vocab::SelectionHighlight::Platform);
+            assert b.selection_highlight() == vocab::SelectionHighlight::Platform;
+            assert (facet::dirty_of(#addr_of(root)) & tree::P_SELECTION_MODE) != (0 as u64);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_tree_write_back_records_the_selection_and_raises_no_dirty_bit() {
+    var root: facet::Node = tree::tree(rows_identified_by_content(), key: "t");
+    let p: *facet::Node = #addr_of(root);
+    match tree::find("t", within: p) {
+        option::Option[tree::Tree]::Some(x) => {
+            facet::clear_dirty(p);
+            tree::note_selection(_tree_props(p), _alice_and_bob());
+            assert x.selection_count() == (2 as usize);
+            assert x.selected() == "/people/alice";
+            // ...and nothing is scheduled to apply it back, which on a tree is
+            // a reload, and a reload clears the selection.
+            assert facet::dirty_of(p) == (0 as u64);
+            tree::note_selection_one(_tree_props(p), "/people/bob");
+            assert x.selection_count() == (1 as usize);
+            assert x.selected() == "/people/bob";
+            tree::note_selection_one(_tree_props(p), "");
+            assert x.selection_count() == (0 as usize);
+            assert x.selected() == "";
+            assert facet::dirty_of(p) == (0 as u64);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_tree_selection_written_from_code_raises_the_bit_a_write_back_must_not() {
+    var root: facet::Node = tree::tree(rows_identified_by_content(), key: "t");
+    let p: *facet::Node = #addr_of(root);
+    match tree::find("t", within: p) {
+        option::Option[tree::Tree]::Some(x) => {
+            facet::clear_dirty(p);
+            let _a: tree::Tree = x.set_selection(_alice_and_bob());
+            assert (facet::dirty_of(p) & tree::P_SELECTED) != (0 as u64);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_multi_selection_survives_the_rebuild_a_content_identity_survives() {
+    // The plural keeps the promise the singular makes: identity is what the
+    // selection is keyed on, so a model rebuilt with the same ids keeps every
+    // selected row, not just the first.
+    var root: facet::Node = tree::tree(rows_identified_by_content(), key: "t");
+    match tree::find("t", within: #addr_of(root)) {
+        option::Option[tree::Tree]::Some(x) => {
+            let _s: tree::Tree = x.set_selection(_alice_and_bob());
+            var next: tree::TreeNode = tree::TreeNode::new("root", "root", is_branch: true);
+            let _z: status::Status = next.add_child(tree::TreeNode::new("Zoe", "/people/zoe"));
+            let _a: status::Status = next.add_child(tree::TreeNode::new("Alice", "/people/alice"));
+            let _b: status::Status = next.add_child(tree::TreeNode::new("Bob", "/people/bob"));
+            let _r: tree::Tree = x.set_root(next);
+            assert x.selection_count() == (2 as usize);
+            assert x.is_selected("/people/alice");
+            assert x.is_selected("/people/bob");
+            assert !x.is_selected("/people/zoe");
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+}
