@@ -17495,3 +17495,192 @@ fn a_single_selection_collection_ignores_the_modifiers() {
     }
     mount::unmount(p);
 }
+
+// ---- a collection can wear the platform's own selection ---------------------
+//
+// `selection_highlight` reached `list` (NSTableView's `style`) and `tree`
+// (NSOutlineView inherits it) and stopped: a collection has no table to carry
+// the word, so it painted a flat fill whatever the application asked for — and
+// the one control that materialises its rows, which is what a sidebar is built
+// from, could not show a source-list selection at all.
+//
+// What is asserted here is the MEANS, not the look: an agent cannot see a
+// colour. The material, its emphasis and its window-active state are the three
+// facts that make the system draw a sidebar selection rather than a blue
+// rectangle, and they are readable.
+
+// THE FIRST SUBVIEW, or null. `objectAtIndex:` on an empty array is an ObjC
+// exception, and an ObjC exception unwinding through C+ frames calls
+// `std::terminate` — the suite ABORTS instead of failing one test, which is
+// what an earlier draft of this file did the moment the material went missing.
+// A crash report says nothing about which assertion was wrong.
+fn first_subview(row_view: *u8) -> *u8 {
+    if row_view.is_null() { return 0 as *u8; }
+    let subs: *u8 = { rt::msg_id(row_view, rt::sel(#str_ptr("subviews\0"))) };
+    if subs.is_null() { return 0 as *u8; }
+    if { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) } == (0 as u64) { return 0 as *u8; }
+    return { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+}
+
+fn material_under(row_view: *u8) -> *u8 {
+    if row_view.is_null() { return 0 as *u8; }
+    let subs: *u8 = { rt::msg_id(row_view, rt::sel(#str_ptr("subviews\0"))) };
+    if subs.is_null() { return 0 as *u8; }
+    let n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let v: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if geometry::is_kind_of(v, #str_ptr("NSVisualEffectView\0")) { return v; }
+        i = i +% (1 as u64);
+    }
+    return 0 as *u8;
+}
+
+fn row_view_of(n: *core::Node, at: usize) -> *u8 {
+    return match core::child_of(n, at) {
+        option::Option[*core::Node]::Some(c) => core::view_of(c),
+        option::Option[*core::Node]::None => 0 as *u8,
+    };
+}
+
+fn highlighted_collection(p: *core::Node, h: vocab::SelectionHighlight) {
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(csel_row, ctx: 0 as *u8);
+            let b: collection::Collection = a.set_count(4 as usize);
+            let c: collection::Collection =
+                b.set_selection_mode(vocab::SelectionMode::Multiple);
+            let _d: collection::Collection = c.set_selection_highlight(h);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    views::apply(0 as *u8, p);
+    return;
+}
+
+fn select_one(p: *core::Node, at: i64) {
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let _a: collection::Collection = x.set_selected_index(at);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    return;
+}
+
+#[test]
+fn a_collection_told_platform_wears_the_selection_material() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "csel");
+    let p: *core::Node = #addr_of(c);
+    highlighted_collection(p, vocab::SelectionHighlight::Platform);
+    select_one(p, 1 as i64);
+
+    let fx: *u8 = material_under(row_view_of(p, 1 as usize));
+    assert fx.is_not_null();
+    // NSVisualEffectMaterialSelection is 4 — the material a source list is
+    // made of, and not a colour we chose.
+    assert { rt::msg_i64(fx, rt::sel(#str_ptr("material\0"))) } == (4 as i64);
+    // EMPHASIZED is the accent colour rather than a grey wash...
+    assert { rt::msg_i8(fx, rt::sel(#str_ptr("isEmphasized\0"))) } != (0 as i8);
+    // ...and FollowsWindowActiveState (0) is what makes it go grey on its own
+    // when the window stops being key, which a static fill cannot do.
+    assert { rt::msg_i64(fx, rt::sel(#str_ptr("state\0"))) } == (0 as i64);
+    // BELOW the row's content: FIRST of the subviews, or the label draws under
+    // it. Asked through `first_subview`, which checks the count — an
+    // unguarded `objectAtIndex:` on an empty array RAISES, and a raise
+    // crossing these frames takes the whole test binary with it.
+    assert first_subview(row_view_of(p, 1 as usize)) == fx;
+    // and the rows that are NOT selected wear nothing
+    assert material_under(row_view_of(p, 0 as usize)).is_null();
+    assert material_under(row_view_of(p, 2 as usize)).is_null();
+    mount::unmount(p);
+}
+
+#[test]
+fn the_default_highlight_is_the_flat_fill_it_always_was() {
+    backend::install();
+    // The compatibility half. `Default` means "whatever this control already
+    // did", and what it did was paint `selectedContentBackgroundColor` itself.
+    var c: core::Node = collection::collection(key: "csel");
+    let p: *core::Node = #addr_of(c);
+    highlighted_collection(p, vocab::SelectionHighlight::Default);
+    select_one(p, 1 as i64);
+    assert material_under(row_view_of(p, 1 as usize)).is_null();
+    let v: *u8 = row_view_of(p, 1 as usize);
+    assert { rt::msg_i8(v, rt::sel(#str_ptr("wantsLayer\0"))) } != (0 as i8);
+    let layer: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("layer\0"))) };
+    assert { rt::msg_id(layer, rt::sel(#str_ptr("backgroundColor\0"))) }.is_not_null();
+    mount::unmount(p);
+}
+
+#[test]
+fn a_collection_told_none_draws_no_selection_at_all() {
+    backend::install();
+    // The negative, and the one a row that draws its OWN selected state wants:
+    // neither a material nor a fill, or the platform is a second answer behind
+    // the row's own.
+    var c: core::Node = collection::collection(key: "csel");
+    let p: *core::Node = #addr_of(c);
+    highlighted_collection(p, vocab::SelectionHighlight::None);
+    select_one(p, 1 as i64);
+    let v: *u8 = row_view_of(p, 1 as usize);
+    assert material_under(v).is_null();
+    if { rt::msg_i8(v, rt::sel(#str_ptr("wantsLayer\0"))) } != (0 as i8) {
+        let layer: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("layer\0"))) };
+        assert { rt::msg_id(layer, rt::sel(#str_ptr("backgroundColor\0"))) }.is_null();
+    }
+    mount::unmount(p);
+}
+
+fn materials_under(row_view: *u8) -> u64 {
+    if row_view.is_null() { return 0 as u64; }
+    let subs: *u8 = { rt::msg_id(row_view, rt::sel(#str_ptr("subviews\0"))) };
+    if subs.is_null() { return 0 as u64; }
+    let n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    var found: u64 = 0 as u64;
+    while i < n {
+        let v: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if geometry::is_kind_of(v, #str_ptr("NSVisualEffectView\0")) {
+            found = found +% (1 as u64);
+        }
+        i = i +% (1 as u64);
+    }
+    return found;
+}
+
+#[test]
+fn the_material_moves_with_the_selection_and_is_never_doubled() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "csel");
+    let p: *core::Node = #addr_of(c);
+    highlighted_collection(p, vocab::SelectionHighlight::Platform);
+    let v: *u8 = core::view_of(p);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert doc.is_not_null();
+
+    // THROUGH THE CLICK, not through an apply: `views::apply` re-materialises
+    // this collection's children whenever the dirty word still carries the
+    // shared band's bits, which in a test it does — so applying twice compares
+    // two different row views and says nothing about the guard. Two clicks on
+    // the same row is the case the guard exists for, and it keeps the views.
+    controls::collection_row_picked(doc, 1 as i64, 0 as u64);
+    let first: *u8 = material_under(row_view_of(p, 1 as usize));
+    assert first.is_not_null();
+    assert materials_under(row_view_of(p, 1 as usize)) == (1 as u64);
+
+    controls::collection_row_picked(doc, 1 as i64, 0 as u64);
+    assert material_under(row_view_of(p, 1 as usize)) == first;
+    assert materials_under(row_view_of(p, 1 as usize)) == (1 as u64);
+
+    // ...and the selection moving takes it OFF the old row and puts it on the new
+    controls::collection_row_picked(doc, 2 as i64, 0 as u64);
+    assert material_under(row_view_of(p, 1 as usize)).is_null();
+    assert materials_under(row_view_of(p, 1 as usize)) == (0 as u64);
+    assert material_under(row_view_of(p, 2 as usize)).is_not_null();
+    mount::unmount(p);
+}

@@ -1460,7 +1460,8 @@ fn uninstall_row_selection(doc: *u8) {
 // its third row, and the header mapping belongs to the caller that knows about
 // headers. One `i64` painted one row and cleared the rest, which is what a
 // single selection is; a multiple selection has to be asked per child.
-fn paint_selection(n: *core::Node, sel: *vocab::IndexList) {
+fn paint_selection(n: *core::Node, sel: *vocab::IndexList,
+                   h: vocab::SelectionHighlight) {
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
@@ -1468,22 +1469,102 @@ fn paint_selection(n: *core::Node, sel: *vocab::IndexList) {
             option::Option[*core::Node]::Some(c) => {
                 let v: *u8 = core::view_of(c);
                 if v.is_not_null() {
-                    let view: ak::View = ak::View::from_raw(v);
-                    if sel.is_not_null() && { (*sel).has(i) } {
-                        view.set_wants_layer(true);
-                        view.layer().set_background_color(
-                            selection_color().c_g_color());
-                    } else {
-                        if view.wants_layer() {
-                            view.layer().set_background_color(0 as *u8);
-                        }
-                    }
+                    dress_selected_row(v, sel.is_not_null() && { (*sel).has(i) }, h);
                 }
             }
             option::Option[*core::Node]::None => { }
         }
         i = i +% (1 as usize);
     }
+}
+
+// WHO DRAWS THE SELECTED ROW, which this control never asked.
+//
+// `selection_highlight` reached `list` (NSTableView's `style`) and `tree`
+// (NSOutlineView inherits it) and stopped there, because a collection has no
+// table to carry the word — it is a scroll of ordinary child views. So a
+// collection painted a flat fill whatever the application said, and the answer
+// a SIDEBAR needs was unreachable on the one control that materialises its rows.
+//
+//   Default    the flat fill this control always painted
+//   None       NOTHING — the row draws its own selected state
+//   Platform   the system's own SELECTION MATERIAL, which is what a source
+//              list is made of
+//
+// The material is the real difference and not a nicer colour: an
+// NSVisualEffectView with `material = .selection`, `emphasized` and
+// `followsWindowActiveState` tracks the window losing key and goes grey with
+// the rest of the sidebar, which a static `selectedContentBackgroundColor` fill
+// cannot do. It is also what NSTableView's source-list style draws with, so the
+// two controls end up showing the same thing by the same means.
+fn dress_selected_row(v: *u8, on: bool, h: vocab::SelectionHighlight) {
+    let wants_material: bool = on && match h {
+        vocab::SelectionHighlight::Platform => true,
+        vocab::SelectionHighlight::Default => false,
+        vocab::SelectionHighlight::None => false,
+    };
+    let wants_fill: bool = on && match h {
+        vocab::SelectionHighlight::Default => true,
+        vocab::SelectionHighlight::Platform => false,
+        vocab::SelectionHighlight::None => false,
+    };
+    set_row_selection_material(v, wants_material);
+    let view: ak::View = ak::View::from_raw(v);
+    if wants_fill {
+        view.set_wants_layer(true);
+        view.layer().set_background_color(selection_color().c_g_color());
+    } else {
+        // CLEARED, not painted: the surface colour here would be an opaque
+        // patch over whatever the row actually sits on.
+        if view.wants_layer() { view.layer().set_background_color(0 as *u8); }
+    }
+}
+
+fn selection_material_key() -> *u8 { return { 29108 as *u8 }; }
+
+// The selection material behind ONE row. Idempotent in both directions, the
+// same rule and the same shape as the sidebar's own glass backing: this runs
+// from every apply and from every click, so it must do nothing when the row
+// already agrees.
+//
+// BELOW every existing subview, so the row's content draws ON the material and
+// not under it — and autoresized, because the row is laid out by flex after
+// this runs on the first pass.
+//
+// The material fills the row's BOUNDS. A sidebar selection that is inset from
+// the edges is a row with a margin: flex has already shrunk the view to the
+// inset rect, so honouring the bounds honours the inset, and there is no second
+// inset here to disagree with the first.
+fn set_row_selection_material(v: *u8, want: bool) {
+    if v.is_null() { return; }
+    let have: *u8 = { synth::get_associated(v, selection_material_key()) };
+    if want && have.is_not_null() { return; }
+    if !want {
+        if have.is_null() { return; }
+        ak::View::from_raw(have).remove_from_superview();
+        synth::set_associated(v, selection_material_key(), 0 as *u8);
+        return;
+    }
+    let host: ak::View = ak::View::from_raw(v);
+    let fx: ak::VisualEffectView = ak::VisualEffectView::new_with_frame(host.bounds());
+    fx.set_material(ak::VisualEffectMaterial::Selection);
+    // EMPHASIZED is what makes it the accent colour rather than a grey wash —
+    // the difference between "this window's selection" and "a selection in a
+    // window that is not front".
+    fx.set_emphasized(true);
+    // ...and this is what makes it go grey on its own when the window stops
+    // being key. A colour fill has to be told; a material follows.
+    fx.set_state(ak::VisualEffectState::FollowsWindowActiveState);
+    let view: ak::View = fx.as_view();
+    view.set_wants_layer(true);
+    view.layer().set_corner_radius(6.0f64);
+    view.layer().set_masks_to_bounds(true);
+    view.set_autoresizing_mask(
+        ak::autoresizing_mask_options_n_s_view_width_sizable
+        | ak::autoresizing_mask_options_n_s_view_height_sizable);
+    host.add_subview_positioned(view, ak::WindowOrderingMode::NSWindowBelow,
+                                ak::View::from_raw(0 as *u8));
+    synth::set_associated(v, selection_material_key(), view.raw());
 }
 
 fn selection_color() -> ak::Color {

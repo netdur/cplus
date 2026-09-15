@@ -4557,7 +4557,7 @@ fn collection_row_picked(doc: *u8, child: i64, mods: u64) {
     if data < (0 as i64) { return; }
     collection::note_selection(p, selection_after_click(p, data, mods));
     var painted: vocab::IndexList = selected_children(n, p);
-    compose::paint_selection(n, #addr_of(painted));
+    compose::paint_selection(n, #addr_of(painted), { (*p).selection_highlight });
     let sel: *props::SelectableItemsViewProps = { #addr_of((*p).selectable_items_view) };
     let h: fn(*u8, *u8) = { (*sel).on_selection_changed };
     if h != props::no_handler { h(doc, { (*sel).on_selection_changed_ctx }); }
@@ -4689,10 +4689,15 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
             compose::install_row_reorder(doc, false, no_move);
         }
     }
+    // P_SELECTION_MODE IS IN THE MASK because `set_selection_highlight` raises
+    // it — the two are one question ("how is a selection shown") and share a
+    // bit, exactly as they do on `list` and `tree`. Without it, an application
+    // that asks for the platform's appearance after mount is never repainted
+    // and gets the flat fill for the life of the control.
     if (dirty & (collection::P_SELECTED_INDEX | collection::P_COUNT
-                 | collection::P_ROW)) != (0 as u64) {
+                 | collection::P_ROW | collection::P_SELECTION_MODE)) != (0 as u64) {
         var painted: vocab::IndexList = selected_children(n, p);
-        compose::paint_selection(n, #addr_of(painted));
+        compose::paint_selection(n, #addr_of(painted), { (*p).selection_highlight });
     }
     // `MeasureFirstItem` is a sizing STRATEGY, and its observable half is that
     // every item comes out the size of the first. The rows have no frames yet —
