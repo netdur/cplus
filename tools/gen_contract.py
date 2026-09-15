@@ -4121,8 +4121,8 @@ def emit_control(row_type, merged):
 # controls are forwarded from the literals below; if their signatures move,
 # the build of THIS file breaks, which is the guard.
 
-CONTAINER_FORWARDS = ["column", "row", "hstack", "vstack", "screen", "card",
-                      "zstack"]
+CONTAINER_FORWARDS = ["container", "column", "row", "hstack", "vstack",
+                      "screen", "card", "zstack"]
 
 FACET_ORIGIN_FORWARDS = """\
 // ---- facet-origin controls (hand-written modules; forwards mirrored here,

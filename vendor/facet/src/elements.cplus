@@ -63,6 +63,7 @@ import "./toolbar_item" as m_toolbar_item;
 type Builder = core::Builder;
 
 // ---- containers (facet core owns these) --------------------------------
+fn container(take b: Builder, key: str = "") -> core::Node { return core::container(b, key: key); }
 fn column(take b: Builder, key: str = "") -> core::Node { return core::column(b, key: key); }
 fn row(take b: Builder, key: str = "") -> core::Node { return core::row(b, key: key); }
 fn hstack(take b: Builder, key: str = "") -> core::Node { return core::hstack(b, key: key); }

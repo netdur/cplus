@@ -2025,13 +2025,18 @@ fn realise_is_inert_with_no_backend() {
 }
 
 #[test]
-fn a_grouping_root_passes_the_windows_fill_to_what_is_inside_it() {
-    // `@ui { … }` finishes as an UNKEYED bare container — a grouping, which no
-    // backend gives a view — so the window hosts what is INSIDE it, and flex
-    // was then sizing that to its own content. A split holding placeholder
-    // panes has no content, so it came out 0 tall in a 520pt window: measured
-    // on macOS 26 as an NSSplitView at (0,-66,820,66) with AppKit warning of
-    // "an ambiguous layout", and reported as a sidebar not taking full height.
+fn a_one_item_root_is_that_item_and_fills_the_window() {
+    // THE SHAPE THAT MADE THIS NECESSARY IS GONE. A one-item builder answers
+    // the item, so a tree written `@ui { split(…) { … } }` arrives AS the
+    // split rather than as a grouping holding one — and a window root fills
+    // its window, which is the first thing `fill_as_window_root` says.
+    //
+    // What it cost while the grouping was in the way, kept because it is the
+    // reason any of this is written down: flex sized the split as the
+    // grouping's column child, i.e. to its own content, and a split holding
+    // placeholder panes has none. Measured on macOS 26 as an NSSplitView at
+    // (0,-66,820,66), AppKit warning of "an ambiguous layout", and reported as
+    // a sidebar not taking full height.
     fr_reset();
     install(fr_renderer());
     var kids: core::Builder = core::Builder::new();
@@ -2039,7 +2044,36 @@ fn a_grouping_root_passes_the_windows_fill_to_what_is_inside_it() {
     var b: core::Builder = core::Builder::new();
     b.add(core::column(kids, key: "content"));
     var root: core::Node = b.finish();
+    // The root IS the content the author wrote — keyed, and no grouping.
+    assert core::is_grouping(#addr_of(root)) == false;
+    assert { (*#addr_of(root)).key() } == "content";
+    assert mount(#addr_of(root));
+    root.calculate_layout(width: 820.0f64, height: 520.0f64);
+    assert core::height_of(#addr_of(root)) == 520.0f64;
+    assert core::width_of(#addr_of(root)) == 820.0f64;
+    uninstall();
+}
+
+#[test]
+fn content_beside_a_declaration_is_still_a_grouping_and_still_fills() {
+    // THE DESCENT IS NOT DEAD. A one-item block answers the item, but content
+    // beside a DECLARATION — a `menu`, a `toolbar_item`, a `span` — is two
+    // entries, so the block still answers a grouping. Its only LAYOUT child is
+    // the content, which is exactly the shape `fill_as_window_root` walks:
+    // declarations are skipped by `only_layout_child`, so the fill reaches the
+    // content as if the declaration were not there.
+    //
+    // This is the common screen: a root and the app menu it contributes.
+    fr_reset();
+    install(fr_renderer());
+    var kids: core::Builder = core::Builder::new();
+    kids.add(fr_leaf("pane"));
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(kids, key: "content"));
+    b.add(core::node_with("app:menu", props::K_MENU, 0 as *u8, core::no_release));
+    var root: core::Node = b.finish();
     assert core::is_grouping(#addr_of(root));
+    assert core::child_count_of(#addr_of(root)) == (2 as usize);
     assert mount(#addr_of(root));
     root.calculate_layout(width: 820.0f64, height: 520.0f64);
     match core::find_in(#addr_of(root), "content") {

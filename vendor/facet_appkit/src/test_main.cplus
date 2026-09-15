@@ -11966,20 +11966,21 @@ fn a_dsl_authored_root_is_mounted_into_the_window() {
         }
     };
     let rp: *core::Node = #addr_of(root);
-    // The shape the DSL actually produces — keyless, one child, and by the
-    // pass-through rule it will never be backed.
-    assert { (*rp).key() } == "";
-    assert core::child_count_of(rp) == (1 as usize);
+    // THE SHAPE THE DSL PRODUCES, changed 2026-09-15: a one-item block answers
+    // the ITEM. The root is the author's keyed vstack — not a keyless wrapper
+    // holding it, and not a pass-through the window has to see past.
+    assert { (*rp).key() } == "body";
+    assert core::child_count_of(rp) == (2 as usize);
 
     let win: *u8 = window::open_window(rp, screen::Chrome::new(
         title: "dsl", width: 320.0f64, height: 240.0f64));
     assert win.is_not_null();
-    assert core::view_of(rp) == (0 as *u8);      // still a pass-through
+    assert core::view_of(rp).is_not_null();      // the root IS backed now
 
-    // The topmost BACKED node — the vstack — is what the window got.
-    match core::find_in(rp, "body") {
-        option::Option[*core::Node]::Some(b) => {
-            let bv: *u8 = core::view_of(b);
+    // ...and it is the node the window got.
+    match core::find_in(rp, "headline") {
+        option::Option[*core::Node]::Some(_h) => {
+            let bv: *u8 = core::view_of(rp);
             assert bv.is_not_null();
             match ak::View::from_raw(bv).superview() {
                 option::Option[ak::View]::Some(sv) => { assert sv.is_flipped(); }
@@ -17706,8 +17707,10 @@ fn the_material_moves_with_the_selection_and_is_never_doubled() {
 
 fn wrapped_click(sender: *u8, ctx: *u8) -> bool { return true; }
 
-// Shaped like a real sidebar row: keyed, a corner radius, an icon and a label,
-// and its OWN click handler — which is what an agent-addressable row needs.
+// A row whose block holds MORE THAN ONE item, so the builder's container is
+// what comes back and the row is one level down. A one-item block answers the
+// row itself (2026-09-15) and needs no descent; this is the shape that still
+// does — and a row plus its separator is an ordinary way to write one.
 fn wrapped_sidebar_row(i: usize, ctx: *u8) -> flex::Node {
     return @ui {
         row(key: "wrapped:row") {
@@ -17719,6 +17722,8 @@ fn wrapped_sidebar_row(i: usize, ctx: *u8) -> flex::Node {
             .align(flex::Align::Center)
             .rounded(7.0f64)
             .gesture(on_click: wrapped_click)
+        column(key: "wrapped:rule") {}
+        .height(1.0f64)
     };
 }
 
@@ -17761,15 +17766,16 @@ fn collection_of_rows(p: *core::Node, f: fn(usize, *u8) -> flex::Node) {
 }
 
 #[test]
-fn a_row_built_as_a_ui_block_is_painted_through_its_wrapper() {
+fn a_row_whose_block_holds_two_items_is_painted_through_the_grouping() {
     backend::install();
     var c: core::Node = collection::collection(key: "cshape");
     let p: *core::Node = #addr_of(c);
     collection_of_rows(p, wrapped_sidebar_row);
 
-    // The child IS the wrapper, and it has no view of its own — the fact that
-    // made this silent. If this ever starts answering a view, the `@ui` block
-    // has stopped wrapping and this test is measuring the wrong thing.
+    // The child is the GROUPING the block returned — two items, so there is
+    // one — and a grouping has no view of its own, which is the fact that made
+    // this silent. A ONE-item block answers the row directly and is covered by
+    // `a_row_that_is_its_own_view_is_painted_directly` next door.
     assert core::view_of(match core::child_of(p, 0 as usize) {
         option::Option[*core::Node]::Some(k) => k,
         option::Option[*core::Node]::None => 0 as *core::Node,

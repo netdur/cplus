@@ -2562,9 +2562,31 @@ impl Builder {
         return;
     }
 
+    // ONE ITEM IS ITS OWN RESULT.
+    //
+    // `@ui { row(…) { … } }` answers the ROW, not a container holding it. The
+    // container the builder accumulates into is scaffolding — it exists because
+    // a builder has to add somewhere — and returning it made every `@ui` block
+    // in the language one node deeper than it reads.
+    //
+    // That node was invisible by design and expensive by accident. It carries
+    // no facet Data, so no backend gives it a view; anything that walked a
+    // control's children looking for one found nothing and did nothing. It has
+    // cost a child's record, a relist row's index and a sidebar's selection
+    // highlight — three bugs, one shape — and `fill_as_window_root` exists to
+    // push a window's fill PAST it after a split came out 0 tall in a 520pt
+    // window.
+    //
+    // A BLOCK THAT NEEDS TWO THINGS AT ITS ROOT SAYS `container { … }`. The
+    // scaffolding is still what holds them, and now the author wrote it.
     fn finish(take this) -> Node {
         let Builder { inner } = this;
-        return inner.finish();
+        var n: Node = inner.finish();
+        if n.child_count() != (1 as usize) { return n; }
+        return match n.remove_child(0 as usize) {
+            option::Option[Node]::Some(only) => only,
+            option::Option[Node]::None => n,
+        };
     }
 
     // The seam for facet's own containers that build through flex directly
@@ -2597,6 +2619,18 @@ fn _own(take n: Node, key: str) -> Node {
     return m;
 }
 
+// THE ROOT THAT HOLDS SEVERAL THINGS, written by the author.
+//
+// `@ui { … }` answers ONE node — the item inside it — so a block that needs
+// two things at its root says so with this. It is what the DSL used to insert
+// silently: an unkeyed container is invisible, unbacked and layout-transparent,
+// and the difference is that now somebody WROTE it, so nothing has to guess
+// whether it was meant.
+//
+// No axis claim. `column` says "stack these down the page" and means it;
+// this says "these belong together" and takes flex's own default, which is a
+// column. Use `column` when the direction is the point.
+fn container(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::column(inner), key); }
 fn column(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::column(inner), key); }
 fn row(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::row(inner), key); }
 fn hstack(take b: Builder, key: str = "") -> Node { let Builder { inner } = b; return _own(flex::hstack(inner), key); }

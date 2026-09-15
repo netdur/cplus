@@ -505,27 +505,23 @@ fn child_boxes_the_component_so_it_outlives_the_call() {
 }
 
 #[test]
-fn child_records_on_the_keyed_node_inside_a_ui_wrapper() {
-    // `@ui { x }` finishes as a WRAPPER whose only child is `x`, so the
-    // author's keyed node is one level down. `component_at(key)` resolves the
-    // KEY and reads the record off whatever it lands on — so the record must
-    // live there too, or every lookup by the component's own key answers None
-    // while the component is plainly mounted.
+fn child_records_on_the_keyed_node_the_author_wrote() {
+    // `@ui { x }` answers `x` ITSELF — the builder's container is scaffolding
+    // and is not returned. So a component whose `build` is a one-item block IS
+    // the author's keyed node, and the record belongs on it.
+    //
+    // This test guarded the WRAPPER until 2026-09-15: `component_at(key)`
+    // resolves the KEY and reads the record off whatever it lands on, so when
+    // the block answered a wrapper the record had to be pushed one level down
+    // to the keyed child or every lookup answered None while the component was
+    // plainly mounted. With no wrapper there is no level to push past, which is
+    // the whole point of the change — but the assertion it was protecting is
+    // the same one: the record is where the KEY is.
     var n: Node = child::[ChWrapComp](ChWrapComp { tag: 5 });
-    let d: *core::Data = { (*#addr_of(n)).data() };
-    // The wrapper is real and unkeyed — this is the shape being guarded.
-    assert #str_len({ (*d).key.view() }) == (0 as usize);
-    assert core::child_count_of(#addr_of(n)) == (1 as usize);
-    // The record is NOT on the wrapper...
-    assert core::presented_of(#addr_of(n)).is_null();
-    // ...it is on the keyed node the author wrote.
-    guard let option::Option[*core::Node]::Some(c) = core::child_of(#addr_of(n), 0 as usize) else {
-        assert false;
-        return;
-    };
-    let cd: *core::Data = { (*c).data() };
-    assert { (*cd).key.view() } == "ch:wrapped";
-    assert core::presented_of(c).is_not_null();
+    let p: *core::Node = #addr_of(n);
+    let d: *core::Data = { (*p).data() };
+    assert { (*d).key.view() } == "ch:wrapped";
+    assert core::presented_of(p).is_not_null();
 }
 
 #[test]

@@ -160,6 +160,27 @@ its own file, not a helper.
 }
 ```
 
+**A block answers ONE node — the item inside it.** `@ui { row(…) { … } }` is
+the row, not a container holding it. A block that needs two things at its root
+says so:
+
+```cplus
+@ui {
+    container {                           // the author's, not the DSL's
+        toolbar_row()
+        list(key: "rows").grow(1.0f64)
+    }
+}
+```
+
+Until 2026-09-15 a block always answered a container, and that container was
+invisible: unkeyed, unbacked, layout-transparent. Anything walking a control's
+children for a VIEW found none and silently did nothing — it cost a child's
+record, a relist row's index and a sidebar's selection highlight. Content beside
+a DECLARATION (`menu`, `toolbar_item`, `span`) is still two items and still
+answers a container; the declaration is skipped by layout, so the content still
+fills.
+
 **Modifiers are line-leading dots.** A `.x` at the start of a line modifies the
 item above it; a `.x` on the same line is ordinary postfix. This is the piece
 most often missed — without it you end up building the tree and then hunting
