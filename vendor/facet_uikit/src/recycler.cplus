@@ -778,6 +778,47 @@ fn imp_cell_for_row(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> *u8 {
 
 // A grouped list numbers its rows per section; facet's callbacks are FLAT, so
 // the section's rows before this one are added back.
+// EVERY selected row, as flat indices.
+//
+// `didSelectRowAtIndexPath:` reports ONE row, which is what the write-back
+// read — so a table armed with `setAllowsMultipleSelection:` (which it has
+// been all along) reported the last row tapped and nothing about the other
+// four. `indexPathsForSelectedRows` is the whole of it.
+fn selected_rows_of(tv: *u8, p: *props::ListProps) -> vocab::IndexList {
+    var out: vocab::IndexList = vocab::IndexList::new();
+    let arr: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("indexPathsForSelectedRows\0"))) };
+    if arr == (0 as *u8) { return out; }
+    let n: u64 = { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let ip: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if ip != (0 as *u8) {
+            let _a: status::Status = out.add(flat_index(p, ip));
+        }
+        i = i +% (1 as u64);
+    }
+    return out;
+}
+
+// The same for a collection view, which has no sections in facet's model — a
+// grouped collection is still one flat sequence, and `row` is the index.
+fn selected_items_of(cv: *u8) -> vocab::IndexList {
+    var out: vocab::IndexList = vocab::IndexList::new();
+    let arr: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("indexPathsForSelectedItems\0"))) };
+    if arr == (0 as *u8) { return out; }
+    let n: u64 = { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let ip: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if ip != (0 as *u8) {
+            let row: i64 = { rt::msg_i64(ip, rt::sel(#str_ptr("row\0"))) };
+            if row >= (0 as i64) { let _a: status::Status = out.add(row as usize); }
+        }
+        i = i +% (1 as u64);
+    }
+    return out;
+}
+
 fn flat_index(p: *props::ListProps, index_path: *u8) -> usize {
     let row: i64 = { rt::msg_i64(index_path, rt::sel(#str_ptr("row\0"))) };
     if { (*p).is_grouped } == false { return row as usize; }
@@ -836,9 +877,11 @@ fn imp_did_select(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
     if n == (0 as *core::Node) { return; }
     let p: *props::ListProps = list_props(tv);
     if p == (0 as *props::ListProps) { return; }
-    let row: usize = flat_index(p, index_path);
-    // The write-back, before the handlers — the same rule every control follows.
-    { (*p).selected_index = row as i64 };
+    // The write-back, before the handlers — the same rule every control follows,
+    // and EVERY selected row rather than the one this call names. UIKit reports
+    // a multiple selection one tap at a time, so the table is the only thing
+    // that knows the whole of it.
+    list::note_selection(p, selected_rows_of(tv, p));
     let tap: fn(*u8, *u8) = { (*p).on_item_tapped };
     if tap != (0 as fn(*u8, *u8)) { tap(tv, { (*p).on_item_tapped_ctx }); }
     let sel: fn(*u8, *u8) = { (*p).on_item_selected };
@@ -854,6 +897,27 @@ fn imp_did_select(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
         { msg_void_id_i8(tv, rt::sel(#str_ptr("deselectRowAtIndexPath:animated:\0")),
                          index_path, 1 as i8) };
     }
+    return;
+}
+
+// A ROW LEFT THE SELECTION, which UIKit reports through a second delegate
+// method — and facet was not listening, so in `Multiple` a row tapped off
+// stayed in the model forever. There is no such half on AppKit: one
+// notification covers every change there.
+//
+// Both handlers fire, the way they do for a select: a deselecting tap IS a tap,
+// and the selection DID change. `on_item_selected` on this backend means "the
+// selection changed", which is what its AppKit note already says.
+fn imp_did_deselect(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
+    let n: *core::Node = input::node_of(tv);
+    if n == (0 as *core::Node) { return; }
+    let p: *props::ListProps = list_props(tv);
+    if p == (0 as *props::ListProps) { return; }
+    list::note_selection(p, selected_rows_of(tv, p));
+    let tap: fn(*u8, *u8) = { (*p).on_item_tapped };
+    if tap != (0 as fn(*u8, *u8)) { tap(tv, { (*p).on_item_tapped_ctx }); }
+    let sel: fn(*u8, *u8) = { (*p).on_item_selected };
+    if sel != (0 as fn(*u8, *u8)) { sel(tv, { (*p).on_item_selected_ctx }); }
     return;
 }
 
@@ -1137,6 +1201,9 @@ fn data_source() -> *u8 {
             let _e: i8 = synth::add_method_v_2id(cls,
                 rt::sel(#str_ptr("tableView:didSelectRowAtIndexPath:\0")),
                 imp_did_select, #str_ptr("v@:@@\0"));
+            let _e2: i8 = synth::add_method_v_2id(cls,
+                rt::sel(#str_ptr("tableView:didDeselectRowAtIndexPath:\0")),
+                imp_did_deselect, #str_ptr("v@:@@\0"));
             let _f: i8 = synth::add_method_v_3id(cls,
                 rt::sel(#str_ptr("tableView:didEndDisplayingCell:forRowAtIndexPath:\0")),
                 imp_did_end_displaying, #str_ptr("v@:@@@\0"));
@@ -1544,7 +1611,7 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
         scroll_to(v, { (*p).scroll_to_index });
     }
     if (dirty & list::P_SELECTED_INDEX) != (0 as u64) {
-        select_row(v, { (*p).selected_index });
+        select_rows(v, #addr_of((*p).selection));
     }
     return;
 }
@@ -1626,16 +1693,37 @@ fn scroll_to(v: *u8, row: i64) {
     return;
 }
 
-fn select_row(v: *u8, row: i64) {
-    if row < (0 as i64) {
-        { msg_void_id_i8_i64(v, rt::sel(#str_ptr("selectRowAtIndexPath:animated:scrollPosition:\0")),
-                             0 as *u8, 0 as i8, 0 as i64) };
-        return;
+// EVERY selected row, written to the table.
+//
+// UIKit has no "set the selection" — `selectRowAtIndexPath:` adds one — so the
+// rows that should not be selected are taken off FIRST. Each one by name and
+// not `nil`: passing nil clears a single selection, and a table in `Multiple`
+// is documented to need each path deselected.
+fn select_rows(v: *u8, sel: *vocab::IndexList) {
+    let held: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("indexPathsForSelectedRows\0"))) };
+    if held != (0 as *u8) {
+        let n: u64 = { rt::msg_u64(held, rt::sel(#str_ptr("count\0"))) };
+        var i: u64 = 0 as u64;
+        while i < n {
+            let ip: *u8 = { rt::msg_id_u64(held, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+            if ip != (0 as *u8) {
+                { msg_void_id_i8(v, rt::sel(#str_ptr("deselectRowAtIndexPath:animated:\0")),
+                                 ip, 0 as i8) };
+            }
+            i = i +% (1 as u64);
+        }
     }
-    let ip: *u8 = index_path(row, 0 as i64);
-    if ip == (0 as *u8) { return; }
-    { msg_void_id_i8_i64(v, rt::sel(#str_ptr("selectRowAtIndexPath:animated:scrollPosition:\0")),
-                         ip, 0 as i8, 0 as i64) };
+    if sel == (0 as *vocab::IndexList) { return; }
+    let count: usize = { (*sel).count() };
+    var k: usize = 0 as usize;
+    while k < count {
+        let ip: *u8 = index_path({ (*sel).at(k) }, 0 as i64);
+        if ip != (0 as *u8) {
+            { msg_void_id_i8_i64(v, rt::sel(#str_ptr("selectRowAtIndexPath:animated:scrollPosition:\0")),
+                                 ip, 0 as i8, 0 as i64) };
+        }
+        k = k +% (1 as usize);
+    }
     return;
 }
 
@@ -1888,24 +1976,81 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     // in the flattening AFTER the reload — the ordering matters, because a
     // selection applied to rows that no longer exist selects nothing.
     if (dirty & (tree::P_SELECTED | tree::P_ROOT | tree::P_EXPANDED)) != (0 as u64) {
-        select_tree_by_id(v, n, { (*p).selected.view() });
+        select_tree_by_ids(v, n, #addr_of((*p).selection));
+    }
+    // HOW a selection is allowed. A tree had no such word until now, so its
+    // table sat at UIKit's default — single, and no way to ask for anything
+    // else. The same two switches the list applies, and `None` means a row may
+    // still be tapped (`on_select` fires) and never stays selected.
+    if (dirty & tree::P_SELECTION_MODE) != (0 as u64) {
+        let any: bool = match { (*p).selection_mode } {
+            vocab::SelectionMode::None => false,
+            vocab::SelectionMode::Single => true,
+            vocab::SelectionMode::Multiple => true,
+        };
+        let many: bool = tree_multi(p);
+        { rt::msg_void_i8(v, rt::sel(#str_ptr("setAllowsSelection:\0")), bool_i8(any)) };
+        { rt::msg_void_i8(v, rt::sel(#str_ptr("setAllowsMultipleSelection:\0")), bool_i8(many)) };
     }
     return;
+}
+
+fn tree_multi(p: *tree::TreeProps) -> bool {
+    if p == (0 as *tree::TreeProps) { return false; }
+    return match { (*p).selection_mode } {
+        vocab::SelectionMode::Multiple => true,
+        vocab::SelectionMode::Single => false,
+        vocab::SelectionMode::None => false,
+    };
+}
+
+// WHAT A TAP DOES TO A TREE'S SELECTION. There are no modifiers on a touch
+// screen, so `Multiple` means what it means in Photos and in Mail's edit mode:
+// a tap TOGGLES the row. `Single` replaces, which is what every tree did before
+// the mode existed.
+fn tree_selection_after_tap(p: *tree::TreeProps, id: str) -> vocab::TextList {
+    var out: vocab::TextList = vocab::TextList::new();
+    if id == "" { return out; }
+    if !tree_multi(p) {
+        let _a: status::Status = out.add(id);
+        return out;
+    }
+    let sel: *vocab::TextList = #addr_of((*p).selection);
+    let n: usize = { (*sel).count() };
+    var i: usize = 0 as usize;
+    var held: bool = false;
+    while i < n {
+        let at: str = { (*sel).at(i) };
+        if at == id { held = true; }
+        else { let _a: status::Status = out.add(at); }
+        i = i +% (1 as usize);
+    }
+    if !held { let _b: status::Status = out.add(id); }
+    return out;
 }
 
 // The flattened row whose `row_id` matches, selected; nothing selected when the
 // id names no open row, which is the honest answer to "select something that is
 // not currently on screen".
-fn select_tree_by_id(v: *u8, n: *core::Node, id: str) {
+fn select_tree_by_ids(v: *u8, n: *core::Node, want: *vocab::TextList) {
     if TREE_OWNER != n { flatten_tree(n); }
-    if id == "" {
-        let sel: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("indexPathForSelectedRow\0"))) };
-        if sel != (0 as *u8) {
-            { msg_void_id_i8(v, rt::sel(#str_ptr("deselectRowAtIndexPath:animated:\0")),
-                             sel, 0 as i8) };
+    if want == (0 as *vocab::TextList) { return; }
+    // Everything that is selected and should not be, taken off first — UIKit
+    // has no "set the selection", only "add this one".
+    let held: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("indexPathsForSelectedRows\0"))) };
+    if held != (0 as *u8) {
+        let hn: u64 = { rt::msg_u64(held, rt::sel(#str_ptr("count\0"))) };
+        var hi: u64 = 0 as u64;
+        while hi < hn {
+            let ip: *u8 = { rt::msg_id_u64(held, rt::sel(#str_ptr("objectAtIndex:\0")), hi) };
+            if ip != (0 as *u8) {
+                { msg_void_id_i8(v, rt::sel(#str_ptr("deselectRowAtIndexPath:animated:\0")),
+                                 ip, 0 as i8) };
+            }
+            hi = hi +% (1 as u64);
         }
-        return;
     }
+    if { (*want).count() } == (0 as usize) { return; }
     let p: *tree::TreeProps = props_of(n, tree::K_TREE) as *tree::TreeProps;
     if p == (0 as *tree::TreeProps) { return; }
     let idf: fn(*tree::TreeNode, *u8) -> text::Text = { (*p).row_id };
@@ -1916,9 +2061,16 @@ fn select_tree_by_id(v: *u8, n: *core::Node, id: str) {
         match TREE_FLAT.at(i) {
             option::Option[*tree::TreeNode]::Some(node) => {
                 let this_id: text::Text = idf(node, { (*p).row_ctx });
-                if { this_id.view() } == id {
-                    select_row(v, i as i64);
-                    return;
+                // EVERY matching row, not the first: the walk is over the rows
+                // that are open, and asking each whether its id is in the set
+                // is one `has` against a handful of ids.
+                if { (*want).has({ this_id.view() }) } {
+                    let ip: *u8 = index_path(i as i64, 0 as i64);
+                    if ip != (0 as *u8) {
+                        { msg_void_id_i8_i64(v,
+                            rt::sel(#str_ptr("selectRowAtIndexPath:animated:scrollPosition:\0")),
+                            ip, 0 as i8, 0 as i64) };
+                    }
                 }
             }
             option::Option[*tree::TreeNode]::None => { }
@@ -2091,10 +2243,20 @@ fn imp_tree_select(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
             }
             let idf: fn(*tree::TreeNode, *u8) -> text::Text = { (*p).row_id };
             if idf != tree::no_row_id {
-                { (*p).selected = idf(node, { (*p).row_id_ctx }) };
+                let picked: text::Text = idf(node, { (*p).row_id_ctx });
+                tree::note_selection(p, tree_selection_after_tap(p, { picked.view() }));
             }
             let h: fn(*tree::TreeNode, *u8) = { (*p).on_select };
             if h != tree::no_select { h(node, { (*p).on_select_ctx }); }
+            // A MULTIPLE SELECTION HAS TO STAY ON THE SCREEN. The blanket
+            // deselect below is what a single-selection tree wants — the model
+            // is the record and the row draws itself — but a toggle the user
+            // cannot see is not a toggle. The write-back raises no bit, so
+            // nothing else will put it back.
+            if tree_multi(p) {
+                select_tree_by_ids(tv, n, #addr_of((*p).selection));
+                return;
+            }
         }
         option::Option[**tree::TreeNode]::None => { }
     }
@@ -2502,17 +2664,36 @@ fn imp_cv_select(self_obj: *u8, cmd: *u8, cv: *u8, index_path: *u8) {
     let n: *core::Node = input::node_of(cv);
     if n == (0 as *core::Node) { return; }
     let row: i64 = { rt::msg_i64(index_path, rt::sel(#str_ptr("row\0"))) };
+    let _unused: i64 = row;
     if core::kind_of(n) == props::K_COLLECTION {
-        let p: *props::CollectionProps = collection_props(cv);
-        if p == (0 as *props::CollectionProps) { return; }
-        { (*p).selected_index = row };
-        // Selection lives in the SELECTABLE record the collection embeds —
-        // facet splits an items view into the traits it has rather than one
-        // flat struct, and the handler is that record's.
-        let sel: *props::SelectableItemsViewProps = { #addr_of((*p).selectable_items_view) };
-        let h: fn(*u8, *u8) = { (*sel).on_selection_changed };
-        if h != (0 as fn(*u8, *u8)) { h(cv, { (*sel).on_selection_changed_ctx }); }
+        cv_selection_changed(cv);
     }
+    return;
+}
+
+// A CELL LEFT THE SELECTION. UIKit reports it through a second delegate method
+// and facet was not listening, so in `Multiple` an item tapped off stayed in the
+// model forever. The list had the same gap; there is no such half on AppKit,
+// where one notification covers every change.
+fn imp_cv_deselect(self_obj: *u8, cmd: *u8, cv: *u8, index_path: *u8) {
+    let n: *core::Node = input::node_of(cv);
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) == props::K_COLLECTION { cv_selection_changed(cv); }
+    return;
+}
+
+// EVERY selected item, then the handler — the write-back-first rule, so a
+// handler asking `selection_count()` sees the change that caused it.
+fn cv_selection_changed(cv: *u8) {
+    let p: *props::CollectionProps = collection_props(cv);
+    if p == (0 as *props::CollectionProps) { return; }
+    collection::note_selection(p, selected_items_of(cv));
+    // Selection lives in the SELECTABLE record the collection embeds — facet
+    // splits an items view into the traits it has rather than one flat struct,
+    // and the handler is that record's.
+    let sel: *props::SelectableItemsViewProps = { #addr_of((*p).selectable_items_view) };
+    let h: fn(*u8, *u8) = { (*sel).on_selection_changed };
+    if h != (0 as fn(*u8, *u8)) { h(cv, { (*sel).on_selection_changed_ctx }); }
     return;
 }
 
@@ -2639,6 +2820,9 @@ fn collection_source() -> *u8 {
             let _d: i8 = synth::add_method_v_2id(cls,
                 rt::sel(#str_ptr("collectionView:didSelectItemAtIndexPath:\0")),
                 imp_cv_select, #str_ptr("v@:@@\0"));
+            let _d2: i8 = synth::add_method_v_2id(cls,
+                rt::sel(#str_ptr("collectionView:didDeselectItemAtIndexPath:\0")),
+                imp_cv_deselect, #str_ptr("v@:@@\0"));
             let _e: i8 = add_method_i8_2id(cls,
                 rt::sel(#str_ptr("collectionView:canMoveItemAtIndexPath:\0")),
                 imp_cv_can_move, #str_ptr("c@:@@\0"));
@@ -2896,7 +3080,7 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
     // built selects nothing.
     if (dirty & (collection::P_SELECTED_INDEX | collection::P_COUNT
                  | collection::P_ROW)) != (0 as u64) {
-        cv_select(v, { (*p).selected_index });
+        cv_select_many(v, #addr_of((*p).selection));
     }
     // The anchor is read BEFORE the reload and applied after it — that is what
     // "keep the scroll offset" means, and it is the only place the prop can be
@@ -2997,6 +3181,32 @@ fn cv_scroll_to(v: *u8, index: i64, animated: bool = true) {
 
 // The selected item, or none. -1 is facet's "nothing", and UIKit's spelling of
 // that is a nil index path — the same call, with the argument left out.
+// EVERY selected item. Like the table, UIKit has no "set the selection" — so
+// what is selected and should not be comes off first, by name.
+fn cv_select_many(v: *u8, sel: *vocab::IndexList) {
+    let held: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("indexPathsForSelectedItems\0"))) };
+    if held != (0 as *u8) {
+        let n: u64 = { rt::msg_u64(held, rt::sel(#str_ptr("count\0"))) };
+        var i: u64 = 0 as u64;
+        while i < n {
+            let ip: *u8 = { rt::msg_id_u64(held, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+            if ip != (0 as *u8) {
+                { msg_void_id_i8(v, rt::sel(#str_ptr("deselectItemAtIndexPath:animated:\0")),
+                                 ip, 0 as i8) };
+            }
+            i = i +% (1 as u64);
+        }
+    }
+    if sel == (0 as *vocab::IndexList) { return; }
+    let count: usize = { (*sel).count() };
+    var k: usize = 0 as usize;
+    while k < count {
+        cv_select(v, { (*sel).at(k) });
+        k = k +% (1 as usize);
+    }
+    return;
+}
+
 fn cv_select(v: *u8, index: i64) {
     if index < (0 as i64) {
         { msg_void_id_i8_i64(v,
