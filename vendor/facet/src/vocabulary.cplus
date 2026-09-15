@@ -637,6 +637,38 @@ impl TextList {
     }
 }
 
+// An owned list of ROW INDICES — every selected row of a list or a collection.
+// The same shape as `TextList` and for the same reason: not Copy, written by
+// `take`, read one element at a time.
+//
+// `at` answers i64 because -1 is how this vocabulary has always said "no row"
+// and an out-of-range read has to answer something. The ELEMENTS are `usize`,
+// which is what `count` and `row(i)` speak.
+struct IndexList { _v: vec::Vec[usize] }
+impl IndexList {
+    fn new() -> IndexList { return IndexList { _v: vec::new::[usize]() }; }
+    fn add(ref this, v: usize) -> status::Status { return this._v.append(v); }
+    fn count(this) -> usize { return this._v.count(); }
+    fn at(this, index: usize) -> i64 {
+        return match this._v.at(index) {
+            option::Option[usize]::Some(v) => { v as i64 },
+            option::Option[usize]::None => -1 as i64,
+        };
+    }
+    // Linear, because a selection is small and an ordered scan keeps the list
+    // in the order the platform reported it. A set would sort it and a row
+    // builder asking "am I selected" would still walk something.
+    fn has(this, v: usize) -> bool {
+        var i: usize = 0 as usize;
+        while i < this._v.count() {
+            if this.at(i) == (v as i64) { return true; }
+            i = i +% (1 as usize);
+        }
+        return false;
+    }
+    fn clear(ref this) { this._v.remove_all(); }
+}
+
 struct Date { year: i64, month: i64, day: i64 }
 impl Date { fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; } }
 

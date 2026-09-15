@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-408 declared verbs over 38 controls, plus the
+410 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -133,6 +133,7 @@ shared band every element carries.
 | `set_group_count` / `group_count()` | usize | **facet's own** |
 | `set_group_size(size:size_ctx:)` / `set_group_header(header:header_ctx:)` / `group_size(at:)` / `build_group_header(at:)` | **facet's own** |
 | `set_selected_index` / `selected_index()` | i64, -1 = none | **facet's own** |
+| `set_selection` / `selection_count()` / `selection_at(at:)` / `is_selected(at:)` | vocab::IndexList — EVERY selected row, of which `selected_index` is the first | **facet's own** |
 | `reorder_from()` / `reorder_to()` | i64, read-only | **facet's own** |
 
 ## context_menu — the ledger MenuFlyout
@@ -266,6 +267,7 @@ shared band every element carries.
 | `set_group_count` / `group_count()` | usize | **facet's own** |
 | `set_group_size(size:size_ctx:)` / `set_group_header(header:header_ctx:)` / `group_size(at:)` / `build_group_header(at:)` | **facet's own** |
 | `set_selected_index` / `selected_index()` | i64, -1 = none | **facet's own** |
+| `set_selection` / `selection_count()` / `selection_at(at:)` / `is_selected(at:)` | vocab::IndexList — EVERY selected row, of which `selected_index` is the first | **facet's own** |
 | `reorder_from()` / `reorder_to()` | i64, read-only | **facet's own** |
 
 ## menu — the ledger MenuBarItem

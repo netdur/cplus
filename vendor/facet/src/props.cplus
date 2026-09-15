@@ -734,6 +734,7 @@ struct CollectionProps {
     group_header: fn(usize, *u8) -> flex::Node,    // facet — builds the header row for group `g`
     opaque group_header_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
+    selection: vocab::IndexList,    // facet — EVERY selected row; `selected_index` is its first
     selection_highlight: vocab::SelectionHighlight,    // facet — whether the PLATFORM draws the selection
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1
     reorder_to: i64,    // facet — where it moved to, or -1
@@ -766,6 +767,7 @@ impl CollectionProps {
             group_header: no_group_header,
             group_header_ctx: 0 as *u8,
             selected_index: -1 as i64,
+            selection: vocab::IndexList::new(),
             selection_highlight: vocab::SelectionHighlight::Default,
             reorder_from: -1 as i64,
             reorder_to: -1 as i64,
@@ -1226,6 +1228,7 @@ struct ListProps {
     group_header: fn(usize, *u8) -> flex::Node,    // facet — builds the header row for group `g`
     opaque group_header_ctx: *u8,
     selected_index: i64,    // facet — which row is selected, or -1 for none
+    selection: vocab::IndexList,    // facet — EVERY selected row; `selected_index` is its first
     selection_highlight: vocab::SelectionHighlight,    // facet — whether the PLATFORM draws the selection
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1
     reorder_to: i64,    // facet — where it moved to, or -1
@@ -1278,6 +1281,7 @@ impl ListProps {
             group_header: no_group_header,
             group_header_ctx: 0 as *u8,
             selected_index: -1 as i64,
+            selection: vocab::IndexList::new(),
             selection_highlight: vocab::SelectionHighlight::Default,
             reorder_from: -1 as i64,
             reorder_to: -1 as i64,

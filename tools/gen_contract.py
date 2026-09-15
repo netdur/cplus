@@ -1027,6 +1027,38 @@ impl TextList {
     }
 }
 
+// An owned list of ROW INDICES — every selected row of a list or a collection.
+// The same shape as `TextList` and for the same reason: not Copy, written by
+// `take`, read one element at a time.
+//
+// `at` answers i64 because -1 is how this vocabulary has always said "no row"
+// and an out-of-range read has to answer something. The ELEMENTS are `usize`,
+// which is what `count` and `row(i)` speak.
+struct IndexList { _v: vec::Vec[usize] }
+impl IndexList {
+    fn new() -> IndexList { return IndexList { _v: vec::new::[usize]() }; }
+    fn add(ref this, v: usize) -> status::Status { return this._v.append(v); }
+    fn count(this) -> usize { return this._v.count(); }
+    fn at(this, index: usize) -> i64 {
+        return match this._v.at(index) {
+            option::Option[usize]::Some(v) => { v as i64 },
+            option::Option[usize]::None => -1 as i64,
+        };
+    }
+    // Linear, because a selection is small and an ordered scan keeps the list
+    // in the order the platform reported it. A set would sort it and a row
+    // builder asking "am I selected" would still walk something.
+    fn has(this, v: usize) -> bool {
+        var i: usize = 0 as usize;
+        while i < this._v.count() {
+            if this.at(i) == (v as i64) { return true; }
+            i = i +% (1 as usize);
+        }
+        return false;
+    }
+    fn clear(ref this) { this._v.remove_all(); }
+}
+
 struct Date { year: i64, month: i64, day: i64 }
 impl Date { fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; } }
 
@@ -2388,6 +2420,19 @@ ROW_SOURCE_FIELDS = [
     # "nothing selected", which is what an empty selection is.
     ("selected_index", "i64", "-1 as i64",
      "facet — which row is selected, or -1 for none"),
+    # ...AND EVERY OTHER SELECTED ROW. `SelectionMode` has carried `Multiple`
+    # since the vocabulary was generated, and every backend arms its widget for
+    # it — `setAllowsMultipleSelection:` on AppKit, `allowsMultipleSelection` on
+    # UIKit, CHOICE_MODE_MULTIPLE on Android — so a user could always shift-click
+    # five rows. `selected_index` is one i64, so four of them were on screen and
+    # absent from the model: `Multiple` was a mode with no state behind it.
+    #
+    # ONE STATE, NOT TWO. This is the selection; `selected_index` is its FIRST
+    # row, and -1 exactly when this is empty. Every writer moves both together,
+    # which is the whole precedence rule and why there is no second question
+    # about which of the pair wins.
+    ("selection", "vocab::IndexList", "vocab::IndexList::new()",
+     "facet — EVERY selected row; `selected_index` is its first"),
     # WHETHER THE PLATFORM DRAWS THE SELECTION, which `selection_mode` never
     # said. A LIST row in iris is a card that draws its own selected state, so
     # the platform's full-row highlight behind it is a second answer to the
@@ -3071,7 +3116,12 @@ def emit_control(row_type, merged):
          'import "./facet" as core;\n',
          'import "./props" as props;\n',
          'import "./vocabulary" as vocab;\n',
-         'import "./mount" as mount;\n\n']
+         'import "./mount" as mount;\n']
+
+    # `status` for `IndexList::add`, which only the selection below calls. The
+    # other 36 modules would carry an unused import for it.
+    o.append('import "stdlib/status" as status;\n' if mod in ROW_SOURCE else "")
+    o.append("\n")
 
     o.append("// ---- dirty bits --------------------------------------------------------\n")
     o.append("// One bit per write, then one per owned prop and one per command. The\n")
@@ -3817,12 +3867,56 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
         o.append("        { (*p).selected_index = v };\n")
+        o.append("        // ONE STATE: naming ONE row replaces the whole selection with\n")
+        o.append("        // that row, so the pair below can never disagree.\n")
+        o.append("        var one: vocab::IndexList = vocab::IndexList::new();\n")
+        o.append("        if v >= (0 as i64) { let _a: status::Status = one.add(v as usize); }\n")
+        o.append("        { (*p).selection = one };\n")
         o.append("        core::touch(this._p, P_SELECTED_INDEX);\n")
         o.append("        return this;\n    }\n")
         o.append("\n    fn selected_index(this) -> i64 {\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return -1 as i64; }}\n")
         o.append("        return { (*p).selected_index };\n    }\n")
+        # ---- the plural, which `Multiple` never had ------------------------
+        o.append("\n    // ---- ...and every OTHER selected row -------------------------\n")
+        o.append("    // `SelectionMode::Multiple` has been in the vocabulary from the\n")
+        o.append("    // start and every backend arms its widget for it, so a user could\n")
+        o.append("    // always shift-click five rows. `selected_index` is one i64: the\n")
+        o.append("    // other four were selected on screen and absent from the model.\n")
+        o.append("    //\n")
+        o.append("    // The pair is ONE state. This is the selection; `selected_index`\n")
+        o.append("    // is its FIRST row and is -1 exactly when this is empty. Writing\n")
+        o.append("    // either moves both, which is the whole precedence rule.\n")
+        o.append("    //\n")
+        o.append("    // `take`, because the node owns the list — the same shape\n")
+        o.append("    // `set_items` and `tree`'s `set_expanded` already have.\n")
+        o.append(f"    fn set_selection(this, take v: vocab::IndexList) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).selection = v };\n")
+        o.append("        let first: i64 = { (*p).selection.at(0 as usize) };\n")
+        o.append("        { (*p).selected_index = first };\n")
+        o.append("        core::touch(this._p, P_SELECTED_INDEX);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    fn selection_count(this) -> usize {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return 0 as usize; }}\n")
+        o.append("        return { (*p).selection.count() };\n    }\n")
+        o.append("\n    // The rows in the order the platform reported them. -1 past the\n")
+        o.append("    // end, which is the same answer `selected_index` gives for none.\n")
+        o.append("    fn selection_at(this, at: usize) -> i64 {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return -1 as i64; }}\n")
+        o.append("        return { (*p).selection.at(at) };\n    }\n")
+        o.append("\n    // What a ROW BUILDER asks. A row that draws its own selected\n")
+        o.append("    // state has to ask per row, and comparing against\n")
+        o.append("    // `selected_index` is the answer that was wrong for four rows\n")
+        o.append("    // out of five.\n")
+        o.append("    fn is_selected(this, at: usize) -> bool {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return false; }}\n")
+        o.append("        return { (*p).selection.has(at) };\n    }\n")
         o.append("\n    // ...and whether the PLATFORM draws that selection, which is a\n")
         o.append("    // separate question `selection_mode` never asked. A row that\n")
         o.append("    // draws its own selected state wants `None`, or the platform's\n")
@@ -3912,6 +4006,42 @@ def emit_control(row_type, merged):
             o.append(f"    {sig} -> {ret} {{ {body}; }}\n")
     o.append("    fn frame(this) -> core::Frame { return core::frame_of(this._p); }\n")
     o.append("}\n\n")
+
+    # ---- the write-back door -----------------------------------------------
+    #
+    # A backend reporting what the USER just did must not raise a dirty bit:
+    # the apply that bit schedules would re-select the rows that are already
+    # selected, and on a recycling control an apply is a reload — the exact
+    # shape of the bug `tree`'s expansion write-back carries `expanded_by_user`
+    # to avoid. So the write-backs poke the props directly, as they always did,
+    # and this is where the invariant they have to keep is written down ONCE
+    # rather than in five backends times two controls.
+    if mod in ROW_SOURCE:
+        o.append("// ---- what a BACKEND writes when the user selects ------------------------\n")
+        o.append("//\n")
+        o.append("// NO DIRTY BIT, deliberately. A write-back records what the platform has\n")
+        o.append("// ALREADY done; raising a bit would schedule an apply to perform it a\n")
+        o.append("// second time, and on a recycling control an apply is a reload — which\n")
+        o.append("// clears the selection on the way through. `set_selection` is the verb\n")
+        o.append("// for a write that should reach the platform; these two are its mirror.\n")
+        o.append("//\n")
+        o.append("// Both halves move together: `selected_index` is the FIRST row of\n")
+        o.append("// `selection`, and -1 exactly when nothing is selected.\n\n")
+        o.append(f"fn note_selection(p: *props::{props}, take sel: vocab::IndexList) {{\n")
+        o.append(f"    if p == (0 as *props::{props}) {{ return; }}\n")
+        o.append("    { (*p).selection = sel };\n")
+        o.append("    let first: i64 = { (*p).selection.at(0 as usize) };\n")
+        o.append("    { (*p).selected_index = first };\n")
+        o.append("}\n\n")
+        o.append("// The same for a platform reporting ONE row — every backend in `Single`,\n")
+        o.append("// and the shape every write-back had before a selection was a set.\n")
+        o.append("// -1 clears it.\n\n")
+        o.append(f"fn note_selection_one(p: *props::{props}, at: i64) {{\n")
+        o.append(f"    if p == (0 as *props::{props}) {{ return; }}\n")
+        o.append("    var one: vocab::IndexList = vocab::IndexList::new();\n")
+        o.append("    if at >= (0 as i64) { let _a: status::Status = one.add(at as usize); }\n")
+        o.append("    note_selection(p, one);\n")
+        o.append("}\n\n")
 
     # ---- lookup
     o.append("// ---- lookup ------------------------------------------------------------\n")
@@ -4233,9 +4363,12 @@ def emit_manifest(rows_by_control):
                      "`build_group_header(at:)` | **facet's own** |\n")
             o.append("| `set_selected_index` / `selected_index()` | i64, -1 = none "
                      "| **facet's own** |\n")
+            o.append("| `set_selection` / `selection_count()` / `selection_at(at:)` / "
+                     "`is_selected(at:)` | vocab::IndexList — EVERY selected row, of "
+                     "which `selected_index` is the first | **facet's own** |\n")
             o.append("| `reorder_from()` / `reorder_to()` | i64, read-only "
                      "| **facet's own** |\n")
-            total += 6
+            total += 7
 
     o.append("\n## the shared band\n\n")
     o.append("Declared once on `Node` and forwarded onto every cursor, so a verb\n")

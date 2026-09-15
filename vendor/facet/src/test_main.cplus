@@ -4527,3 +4527,216 @@ fn a_slot_written_in_ui_is_a_push_target() {
     navigation::test_close(n);
     app::release_current();
 }
+
+// ---- a selection is a SET, and `selected_index` is its first row ------------
+//
+// `SelectionMode::Multiple` has been in the vocabulary since the first
+// generated contract and every backend arms its widget for it — AppKit's
+// `setAllowsMultipleSelection:`, UIKit's `allowsMultipleSelection`, Android's
+// CHOICE_MODE_MULTIPLE — so a user could always shift-click five rows. The
+// model held one i64, so four of them were selected on screen and absent from
+// it: `Multiple` was a mode with no state behind it.
+//
+// These pin the pair as ONE state, which is what makes the plural safe to add.
+// There is no precedence question if writing either moves both.
+
+// What a BACKEND sees. The write-backs take the props struct, not a cursor,
+// because raising a dirty bit is exactly what they must not do.
+fn _list_props(n: *facet::Node) -> *props::ListProps {
+    let d: *facet::Data = { (*n).data() };
+    if d == (0 as *facet::Data) { return 0 as *props::ListProps; }
+    return { (*d).props } as *props::ListProps;
+}
+
+fn _rows_2_5_7() -> vocab::IndexList {
+    var s: vocab::IndexList = vocab::IndexList::new();
+    let _a: status::Status = s.add(2 as usize);
+    let _b: status::Status = s.add(5 as usize);
+    let _c: status::Status = s.add(7 as usize);
+    return s;
+}
+
+#[test]
+fn an_index_list_reads_back_what_was_added_and_minus_one_past_the_end() {
+    var s: vocab::IndexList = vocab::IndexList::new();
+    assert s.count() == (0 as usize);
+    assert s.at(0 as usize) == (-1 as i64);
+    assert !s.has(0 as usize);
+    let _a: status::Status = s.add(4 as usize);
+    let _b: status::Status = s.add(9 as usize);
+    assert s.count() == (2 as usize);
+    assert s.at(0 as usize) == (4 as i64);
+    assert s.at(1 as usize) == (9 as i64);
+    assert s.at(2 as usize) == (-1 as i64);     // past the end, not a trap
+    assert s.has(9 as usize);
+    assert !s.has(5 as usize);
+    s.clear();
+    assert s.count() == (0 as usize);
+    assert !s.has(4 as usize);
+}
+
+#[test]
+fn a_selection_holds_every_row_in_the_order_it_was_reported() {
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_selection(_rows_2_5_7());
+            assert a.selection_count() == (3 as usize);
+            assert a.selection_at(0 as usize) == (2 as i64);
+            assert a.selection_at(1 as usize) == (5 as i64);
+            assert a.selection_at(2 as usize) == (7 as i64);
+            assert a.is_selected(5 as usize);
+            assert !a.is_selected(3 as usize);
+            // the singular is the FIRST of them, and that is the whole rule
+            assert a.selected_index() == (2 as i64);
+            assert a.has_selection();
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn naming_one_row_replaces_the_whole_selection() {
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_selection(_rows_2_5_7());
+            let b: list::List = a.set_selected_index(9 as i64);
+            assert b.selection_count() == (1 as usize);
+            assert b.is_selected(9 as usize);
+            assert !b.is_selected(2 as usize);      // the old set is GONE
+            assert b.selected_index() == (9 as i64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn deselecting_empties_the_selection_and_not_just_the_index() {
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_selection(_rows_2_5_7());
+            let b: list::List = a.deselect();
+            assert b.selection_count() == (0 as usize);
+            assert b.selected_index() == (-1 as i64);
+            assert !b.has_selection();
+            assert !b.is_selected(2 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn an_empty_selection_has_no_first_row() {
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let empty: vocab::IndexList = vocab::IndexList::new();
+            let a: list::List = x.set_selection(empty);
+            assert a.selection_count() == (0 as usize);
+            assert a.selected_index() == (-1 as i64);
+            assert !a.has_selection();
+            assert a.selection_at(0 as usize) == (-1 as i64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_row_past_the_end_of_a_selection_is_not_a_trap() {
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_selection(_rows_2_5_7());
+            assert a.selection_at(3 as usize) == (-1 as i64);
+            assert a.selection_at(99 as usize) == (-1 as i64);
+            assert !a.is_selected(99 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn writing_a_selection_from_code_raises_the_bit_a_write_back_must_not() {
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            facet::clear_dirty(p);
+            let _a: list::List = x.set_selection(_rows_2_5_7());
+            assert (facet::dirty_of(p) & list::P_SELECTED_INDEX) != (0 as u64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_write_back_records_the_selection_and_raises_no_dirty_bit() {
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            facet::clear_dirty(p);
+            list::note_selection(_list_props(p), _rows_2_5_7());
+            // the model has every row the platform reported...
+            assert x.selection_count() == (3 as usize);
+            assert x.is_selected(7 as usize);
+            assert x.selected_index() == (2 as i64);
+            // ...and NOTHING is scheduled to apply it back, which on a
+            // recycling control is a reload, and a reload clears the selection.
+            assert facet::dirty_of(p) == (0 as u64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_one_row_write_back_replaces_the_set_and_minus_one_clears_it() {
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _a: list::List = x.set_selection(_rows_2_5_7());
+            facet::clear_dirty(p);
+            list::note_selection_one(_list_props(p), 4 as i64);
+            assert x.selection_count() == (1 as usize);
+            assert x.is_selected(4 as usize);
+            assert !x.is_selected(2 as usize);
+            assert x.selected_index() == (4 as i64);
+            list::note_selection_one(_list_props(p), -1 as i64);
+            assert x.selection_count() == (0 as usize);
+            assert x.selected_index() == (-1 as i64);
+            assert facet::dirty_of(p) == (0 as u64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_collection_carries_the_same_selection_as_a_list() {
+    var root: facet::Node = collection::collection(key: "c");
+    let p: *facet::Node = #addr_of(root);
+    match collection::find("c", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_selection(_rows_2_5_7());
+            assert a.selection_count() == (3 as usize);
+            assert a.selection_at(2 as usize) == (7 as i64);
+            assert a.is_selected(5 as usize);
+            assert a.selected_index() == (2 as i64);
+            let b: collection::Collection = a.set_selected_index(1 as i64);
+            assert b.selection_count() == (1 as usize);
+            assert b.is_selected(1 as usize);
+            assert !b.is_selected(5 as usize);
+            let c: collection::Collection = b.deselect();
+            assert c.selection_count() == (0 as usize);
+            assert c.selected_index() == (-1 as i64);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+}
