@@ -185,6 +185,7 @@ text_field.vertical_align      as popup.vertical_align
 ```
 
 ```by-architecture
+tree.selection_mode           the tree's rows are facet's own widgets, so there is no widget property to write: the mode decides what a CLICK does to the selection (plain replaces, ctrl-click toggles) and the click handler reads it live. Applying a bit would have nothing to apply it to
 carousel.item_sizing           chooses between measuring every item and measuring the first — an optimisation, not a different result; this backend measures every item always, which is correct under both values
 collection.item_sizing         as carousel.item_sizing
 canvas.redraw                  `apply_canvas` repaints on ANY apply and never reads `dirty`, so the redraw command's purpose is answered without a bit to gate — see the note in §1

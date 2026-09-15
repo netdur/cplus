@@ -283,6 +283,18 @@ def handler_buckets(facet_dir, backend_dir, decided=(), blocked=()):
     return wired, dead, ruled_out
 
 
+# ONE STATE UNDER TWO NAMES. A selection is a SET — `selection` on `list`,
+# `collection` and `tree` — of which the singular field is the FIRST element:
+# writing either moves both, which is the invariant the controls document. A
+# backend that reads the set has implemented the bit, and one that reads only
+# the singular has implemented it for one row out of five. So the singular's
+# name resolves to either, and the set's to itself.
+SYNONYMS = {
+    "selected_index": ("selected_index", "selection"),
+    "selected": ("selected", "selection"),
+}
+
+
 def reads_field(read, field):
     """Does this body read `field`, directly or through its PARTS?
 
@@ -290,10 +302,16 @@ def reads_field(read, field):
     `shortcut_modifiers`, one owned field per part (see `CARRIER_TYPES` in
     gen_contract.py) — so a backend that implements the verb never names the
     whole. Looking only for the exact name calls an implemented verb absent.
+
+    A field with SYNONYMS is one state spelled more than one way; any spelling
+    counts.
     """
-    if field in read:
-        return True
-    return any(r.startswith(field + "_") for r in read)
+    for name in SYNONYMS.get(field, (field,)):
+        if name in read:
+            return True
+        if any(r.startswith(name + "_") for r in read):
+            return True
+    return False
 
 
 def declares_field(bodies, struct, field, seen=()):

@@ -1004,6 +1004,56 @@ fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
             env.delete_local_ref(a);
         }
     }
+    // WHICH ROWS CAN BE PICKED, the same three answers the list gives. A tree
+    // had no such word until now, so its ListView sat at CHOICE_MODE_NONE and
+    // nothing it drew ever said which row was chosen.
+    if (dirty & tree::P_SELECTION_MODE) != (0 as u64) {
+        let p: *tree::TreeProps = tree_props(n);
+        if p != (0 as *tree::TreeProps) {
+            var av: w::AbsListView = w::AbsListView::from_global(env, env.new_global_ref(v));
+            av.set_choice_mode(match { (*p).selection_mode } {
+                vocab::SelectionMode::Single => 1 as i32,     // CHOICE_MODE_SINGLE
+                vocab::SelectionMode::Multiple => 2 as i32,   // CHOICE_MODE_MULTIPLE
+                vocab::SelectionMode::None => 0 as i32,       // CHOICE_MODE_NONE
+            });
+            let _k: *u8 = av.into_raw();
+        }
+    }
+    // ...and WHICH rows are. By id, so it is resolved against the flattening
+    // AFTER any reindex above: a selection applied to rows that are not open
+    // checks nothing, which is the honest answer.
+    if (dirty & (tree::P_SELECTED | tree::P_ROOT | tree::P_EXPANDED)) != (0 as u64) {
+        check_tree_rows(env, v, n);
+    }
+    return;
+}
+
+// EVERY selected row of a tree, checked on the widget. One walk of the open
+// rows asking each whether its id is in the set — the same shape the other
+// backends' tree applies have, and bounded by what is open rather than by the
+// model.
+fn check_tree_rows(env: rt::Env, v: *u8, n: *core::Node) {
+    let p: *tree::TreeProps = tree_props(n);
+    if p == (0 as *tree::TreeProps) { return; }
+    var av: w::AbsListView = w::AbsListView::from_global(env, env.new_global_ref(v));
+    av.clear_choices();
+    let rows: i32 = tree_row_count(n);
+    var i: i32 = 0 as i32;
+    while i < rows {
+        match row_at(n, i) {
+            option::Option[VisibleRow]::Some(r) => {
+                let node: *tree::TreeNode = { r.node as *tree::TreeNode };
+                if node != (0 as *tree::TreeNode) {
+                    if { (*p).selection.has({ (*node).id_of() }) } {
+                        av.set_item_checked(i, true);
+                    }
+                }
+            }
+            option::Option[VisibleRow]::None => { }
+        }
+        i = i +% (1 as i32);
+    }
+    let _k: *u8 = av.into_raw();
     return;
 }
 

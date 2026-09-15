@@ -875,3 +875,20 @@ observe_active — notify::is-active on whichever window was up at registration
 observe_inactive — the same signal as observe_active, and the same scope problem
 observe_density — scale-factor changes arrive per-surface, not per facet window
 ```
+
+## a verb this backend answers another way
+
+`selection_mode` on a TREE has no widget to be written to. A GTK tree's rows
+are facet's own widgets — that is the whole design of this backend's recycler —
+so what the mode decides is not a property of a GtkWidget but what a CLICK does
+to the selection: plain replaces it, ctrl-click toggles the row. `tree_row_click`
+reads the mode live at the moment it needs it, so there is no apply to gate on a
+dirty bit and nothing an apply could write.
+
+The list and the collection are the same shape and would say the same thing,
+except that their `selection_mode` reaches the paint through `Sequence` and so
+IS read on an apply path.
+
+```by-architecture
+tree.selection_mode           the tree's rows are facet's own widgets, so there is no widget property to write: the mode decides what a CLICK does to the selection (plain replaces, ctrl-click toggles) and the click handler reads it live. Applying a bit would have nothing to apply it to
+```
