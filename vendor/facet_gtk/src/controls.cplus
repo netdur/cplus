@@ -3378,10 +3378,14 @@ fn content_cell(node: *tree::TreeNode, p: *tree::TreeProps, h: f64) -> core::Nod
     return cell;
 }
 
+// EVERY selected row, not the one `selected` names. The set is the state and
+// `selected` is its first id — asking the singular answered false for the other
+// four rows of a multiple selection, which is what painted one of five.
 fn is_selected(p: *tree::TreeProps, node: *tree::TreeNode) -> bool {
-    let sel: str = { (*p).selected.view() };
-    if sel == "" { return false; }
-    return sel == { (*node).id_of() };
+    if p == (0 as *tree::TreeProps) || node == (0 as *tree::TreeNode) { return false; }
+    let id: str = { (*node).id_of() };
+    if id == "" { return false; }
+    return { (*p).selection.has(id) };
 }
 
 // ================================================================================

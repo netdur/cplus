@@ -133,6 +133,11 @@ struct Sequence {
     group_header: fn(usize, *u8) -> flex::Node,
     opaque group_header_ctx: *u8,
     selected: i64,
+    // EVERY selected row, BORROWED from the props this snapshot was built from.
+    // A pointer and not a copy because `IndexList` is not Copy and a `Sequence`
+    // is — and the borrow is sound because a sequence is built and consumed
+    // inside one materialisation.
+    opaque selection: *vocab::IndexList,
     row_height: f64,                 // 0 = let the row measure itself
     separated: bool,
     separator_color: vocab::Color,
@@ -175,6 +180,7 @@ fn empty_sequence() -> Sequence {
         group_size: props::no_group_size, group_size_ctx: 0 as *u8,
         group_header: props::no_group_header, group_header_ctx: 0 as *u8,
         selected: (0 as i64) -% (1 as i64),
+        selection: 0 as *vocab::IndexList,
         row_height: 0.0f64, separated: false,
         separator_color: vocab::Color::clear(),
         columns: 0 as usize,
@@ -208,6 +214,7 @@ fn sequence_of_list(p: *props::ListProps) -> Sequence {
     s.group_header = { (*p).group_header };
     s.group_header_ctx = { (*p).group_header_ctx };
     s.selected = { (*p).selected_index };
+    s.selection = #addr_of((*p).selection);
     s.row_height = { (*p).row_height } as f64;
     s.separated = match { (*p).separator } {
         vocab::Separator::Default => true,
@@ -238,6 +245,7 @@ fn sequence_of_collection(p: *props::CollectionProps) -> Sequence {
     s.group_header = { (*p).group_header };
     s.group_header_ctx = { (*p).group_header_ctx };
     s.selected = { (*p).selected_index };
+    s.selection = #addr_of((*p).selection);
     s.columns = { (*p).structured_items_view.columns };
     s.h_bars = { (*p).items_view.horizontal_scroll_bars };
     s.v_bars = { (*p).items_view.vertical_scroll_bars };
@@ -431,7 +439,7 @@ fn build_row(s: Sequence, at: usize, cols: usize) -> core::Node {
     if cols > (1 as usize) {
         core::set_width_percent(#addr_of(row), (100.0 as f64) / (cols as f64));
     }
-    if s.selected >= (0 as i64) && (s.selected as usize) == at {
+    if row_is_selected(s, at) {
         row.set_background_color(vocab::Color::selected_content_background());
     }
     // 1-based underneath, so that "no index" and "row zero" are different
@@ -2473,8 +2481,18 @@ fn restyle_sequence_cell(s: Sequence, host: *u8) {
     return;
 }
 
+// EVERY selected row, not the one `selected_index` names. The set is borrowed
+// from the props the sequence was built from and read within the same
+// materialisation, so the pointer cannot outlive it.
+fn row_is_selected(s: Sequence, at: usize) -> bool {
+    if s.selection == (0 as *vocab::IndexList) {
+        return s.selected >= (0 as i64) && (s.selected as usize) == at;
+    }
+    return { (*s.selection).has(at) };
+}
+
 fn paint_selected(row: *core::Node, s: Sequence, at: usize) {
-    if s.selected >= (0 as i64) && (s.selected as usize) == at {
+    if row_is_selected(s, at) {
         { (*row).set_background_color(vocab::Color::selected_content_background()) };
     } else {
         // CLEARED, not painted: `clear()` is the unset colour, and putting the

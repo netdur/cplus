@@ -44,6 +44,7 @@
 // rather than fixed because the fix (remove_controller per band) needs the
 // controller pointer kept per widget per band, and nothing has needed it yet.
 
+import "stdlib/status" as status;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "flex_layout/flex_layout" as flex;
@@ -191,10 +192,33 @@ fn click_pressed(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
     return;
 }
 
+// THE MODIFIERS OF THE CLICK BEING DISPATCHED.
+//
+// A gesture-band handler is given the SENDER and nothing else — that is the
+// band's contract and widening it would change every handler facet has — but a
+// multi-selecting row has to know whether Ctrl was down. GTK4 answers that
+// through the CONTROLLER (`gtk_event_controller_get_current_event_state`), and
+// the controller exists exactly here, one frame above the handler.
+//
+// A STATIC, because GTK dispatches on one thread and this is written
+// immediately before the handler that reads it runs. The alternative is a
+// second parameter on every gesture handler in the framework for the benefit of
+// three of them.
+static CLICK_MODS: u32 = 0u32;
+
+// GDK_SHIFT_MASK is 1 << 0 and GDK_CONTROL_MASK is 1 << 2. Arithmetic, because
+// an integer literal wraps through i32 before `as`.
+fn mod_shift() -> u32 { return (1 as u32) << (0 as u32); }
+fn mod_control() -> u32 { return (1 as u32) << (2 as u32); }
+
+fn holding_shift() -> bool { return (CLICK_MODS & mod_shift()) != (0 as u32); }
+fn holding_control() -> bool { return (CLICK_MODS & mod_control()) != (0 as u32); }
+
 fn click_released(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
     let n: *core::Node = user as *core::Node;
     let gs: *gestures::Gestures = gestures_of_user(user);
     if gs == (0 as *gestures::Gestures) { return; }
+    CLICK_MODS = gtk::EventController::from_raw(gesture).get_current_event_state();
     var took: bool = fire_of(n, { (*gs).on_release }, { (*gs).on_release_ctx });
     if n_press >= (2 as i32) {
         if fire_of(n, { (*gs).on_double_click }, { (*gs).on_double_click_ctx }) { took = true; }
@@ -1952,11 +1976,95 @@ fn sequence_row_click(sender: *u8, ctx: *u8) -> bool {
 // `SelectionMode::None` is a list that CANNOT be selected, and a click on one
 // still taps: the ledger keeps `ItemTapped` and `ItemSelected` apart precisely
 // so a read-only list can be clicked.
+// DID THE SET MOVE. `on_item_selected` is a selection-CHANGED verb and a
+// re-click that lands on the same selection is not a change — the rule this
+// backend already had for one row, asked of a set. Order is part of it: the
+// first element is `selected_index`, so a reordering IS a change.
+// The same question for a tree, whose selection is ids.
+fn same_ids(a: *vocab::TextList, b: *vocab::TextList) -> bool {
+    if a == (0 as *vocab::TextList) || b == (0 as *vocab::TextList) { return false; }
+    let n: usize = { (*a).count() };
+    if n != { (*b).count() } { return false; }
+    var i: usize = 0 as usize;
+    while i < n {
+        if { (*a).at(i) } != { (*b).at(i) } { return false; }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+fn same_selection(a: *vocab::IndexList, b: *vocab::IndexList) -> bool {
+    if a == (0 as *vocab::IndexList) || b == (0 as *vocab::IndexList) { return false; }
+    let n: usize = { (*a).count() };
+    if n != { (*b).count() } { return false; }
+    var i: usize = 0 as usize;
+    while i < n {
+        if { (*a).at(i) } != { (*b).at(i) } { return false; }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
 fn selects(mode: vocab::SelectionMode) -> bool {
     return match mode {
         vocab::SelectionMode::None => false,
         vocab::SelectionMode::Single => true,
         vocab::SelectionMode::Multiple => true,
+    };
+}
+
+// WHAT A CLICK DOES TO A SELECTION, which before this was always "replace it
+// with this row" — so `Multiple` behaved exactly like `Single` and the mode had
+// nothing to switch. The rules are the desktop's:
+//
+//   plain          replace
+//   ctrl-click     TOGGLE that row, the rest stay
+//   shift-click    EXTEND a range to that row
+//
+// The anchor a shift extends from is the FIRST row of the current selection —
+// the same choice facet_appkit's collection makes, and for the same reason: it
+// needs no fourth piece of state.
+fn selection_after_click(cur: *vocab::IndexList, anchor: i64, at: usize,
+                         multi: bool) -> vocab::IndexList {
+    var out: vocab::IndexList = vocab::IndexList::new();
+    if !multi {
+        let _a: status::Status = out.add(at);
+        return out;
+    }
+    if holding_control() {
+        let n: usize = { (*cur).count() };
+        var i: usize = 0 as usize;
+        var held: bool = false;
+        while i < n {
+            let k: i64 = { (*cur).at(i) };
+            if k == (at as i64) { held = true; }
+            else { let _a: status::Status = out.add(k as usize); }
+            i = i +% (1 as usize);
+        }
+        if !held { let _b: status::Status = out.add(at); }
+        return out;
+    }
+    if holding_shift() {
+        var lo: i64 = anchor;
+        if lo < (0 as i64) { lo = at as i64; }
+        var hi: i64 = at as i64;
+        if lo > hi { let t: i64 = lo; lo = hi; hi = t; }
+        var k: i64 = lo;
+        while k <= hi {
+            let _a: status::Status = out.add(k as usize);
+            k = k +% (1 as i64);
+        }
+        return out;
+    }
+    let _c: status::Status = out.add(at);
+    return out;
+}
+
+fn multi_mode(mode: vocab::SelectionMode) -> bool {
+    return match mode {
+        vocab::SelectionMode::Multiple => true,
+        vocab::SelectionMode::Single => false,
+        vocab::SelectionMode::None => false,
     };
 }
 
@@ -1977,8 +2085,14 @@ fn list_row_click(owner: *core::Node, at: usize, sender: *u8) -> bool {
     // AppKit does not post for a click on the selected row, so this also
     // stops the two backends disagreeing.
     if selects({ (*p).selection_mode }) {
-        if { (*p).selected_index } != (at as i64) {
-            { (*p).selected_index = at as i64 };
+        let multi: bool = multi_mode({ (*p).selection_mode });
+        // A RE-CLICK ON THE ONLY SELECTED ROW IS STILL NOT A SELECTION, but in
+        // `Multiple` a ctrl-click on it REMOVES it, which is a change — so the
+        // question is whether the SET moved, not whether the row did.
+        let next: vocab::IndexList = selection_after_click(
+            #addr_of((*p).selection), { (*p).selected_index }, at, multi);
+        if !same_selection(#addr_of((*p).selection), #addr_of(next)) {
+            list::note_selection(p, next);
             core::touch(owner, list::P_SELECTED_INDEX);
             let sel: fn(*u8, *u8) = { (*p).on_item_selected };
             if sel != props::no_handler { sel(sender, { (*p).on_item_selected_ctx }); }
@@ -1998,8 +2112,11 @@ fn collection_row_click(owner: *core::Node, at: usize, sender: *u8) -> bool {
     // `on_selection_CHANGED` — the name says it, and a click on the row that is
     // already selected changed nothing. See `list_row_click` for the same rule
     // and why AppKit never had this.
-    if { (*p).selected_index } == (at as i64) { return true; }
-    { (*p).selected_index = at as i64 };
+    let multi: bool = multi_mode({ (*p).selectable_items_view.selection_mode });
+    let next: vocab::IndexList = selection_after_click(
+        #addr_of((*p).selection), { (*p).selected_index }, at, multi);
+    if same_selection(#addr_of((*p).selection), #addr_of(next)) { return true; }
+    collection::note_selection(p, next);
     core::touch(owner, collection::P_SELECTED_INDEX);
     let h: fn(*u8, *u8) = { (*p).selectable_items_view.on_selection_changed };
     if h != props::no_handler { h(sender, { (*p).selectable_items_view.on_selection_changed_ctx }); }
@@ -2096,9 +2213,31 @@ fn tree_row_click(sender: *u8, ctx: *u8) -> bool {
     // The EXPANSION still toggles: clicking a folder opens or closes it whether
     // or not it is the selected row, which is what every desktop does and is a
     // different question from selection.
-    let changed: bool = { (*p).selected.view() } != id;
+    // CTRL-CLICK TOGGLES in `Multiple`, which is the desktop rule and the one a
+    // tree can answer honestly. There is no shift-RANGE here: a range needs the
+    // row order and a tree is addressed by identity, so extending one would mean
+    // flattening the open rows at click time to turn two ids into a span. The
+    // outline view on AppKit gets ranges because NSOutlineView does them itself.
+    let multi: bool = multi_mode({ (*p).selection_mode });
+    var next: vocab::TextList = vocab::TextList::new();
+    if multi && holding_control() {
+        let cur: *vocab::TextList = #addr_of((*p).selection);
+        let n: usize = { (*cur).count() };
+        var i: usize = 0 as usize;
+        var held: bool = false;
+        while i < n {
+            let k: str = { (*cur).at(i) };
+            if k == id { held = true; }
+            else { let _a: status::Status = next.add(k); }
+            i = i +% (1 as usize);
+        }
+        if !held { let _b: status::Status = next.add(id); }
+    } else {
+        if id != "" { let _c: status::Status = next.add(id); }
+    }
+    let changed: bool = !same_ids(#addr_of((*p).selection), #addr_of(next));
     if changed {
-        { (*p).selected = text::from_str(id) };
+        tree::note_selection(p, next);
         core::touch(owner, tree::P_SELECTED);
     }
     if { (*tn).is_branch } {
