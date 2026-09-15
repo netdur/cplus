@@ -434,6 +434,33 @@ fn reload(ref this) {
 Fine-grained: `insert_rows(at, count)` / `remove_rows(at, count)`. Sectioned:
 `set_group_count` / `set_group_size` / `set_group_header`.
 
+### The selection is a SET
+
+`selection_mode` has three answers and `Multiple` is one of them, so a
+selection is never one row:
+
+```cplus
+// read it — in a row builder, ask PER ROW
+if l.is_selected(i) { … }                  // NOT `selected_index() == i`
+l.selection_count()                        // how many
+l.selection_at(0 as usize)                 // the rows, in the order picked
+
+// write it
+var pick: vocab::IndexList = vocab::IndexList::new();
+let _a: status::Status = pick.add(2 as usize);
+let _b: status::Status = pick.add(5 as usize);
+let _l: list::List = l.set_selection(pick);
+```
+
+`selected_index` is the FIRST row of that set and -1 exactly when it is empty;
+`set_selected_index` replaces the whole set with one row and `deselect` empties
+it. Writing either moves both — there is one state, not two, so there is no
+question of which wins. A tree is the same with ids: `set_selection(TextList)`,
+`is_selected(id)`, and `selected()` is the first of them.
+
+The modifier is the platform's: command-click on macOS, ctrl-click elsewhere,
+and a plain tap TOGGLES on iOS and Android, which have no modifiers.
+
 Five things about lists that compile wrong:
 
 1. **Say appearance AFTER mount.** `selection_mode`, separators and scroll bars
