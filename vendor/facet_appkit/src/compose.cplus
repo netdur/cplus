@@ -50,6 +50,7 @@ import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "quartzcore/quartzcore" as quartz;
 import "./paint" as paint;
+import "./input" as input;
 
 // ---- associated keys ---------------------------------------------------------
 // facet_appkit owns 29000 and up, in one block per file:
@@ -1446,11 +1447,57 @@ fn install_row_selection(doc: *u8, n: *core::Node, h: fn(*u8, i64, u64)) {
     // the same view has a new address.
     synth::set_associated(doc, select_node_key(), n as *u8);
     synth::set_associated(doc, select_hit_key(), { h as *u8 });
+    arm_rows_for_agent(n, doc, h);
 }
 
-fn uninstall_row_selection(doc: *u8) {
+// EVERY ROW GETS THE AGENT'S DOOR.
+//
+// The click a user makes is taken on the document view and resolved by
+// geometry; an agent has no pointer, so it sends `performClick:` to the row's
+// own view and that view has to answer. A plain row is not armed for input at
+// all — no gestures, no pointer verbs — so it answered nothing, and `describe`
+// reported it as not clickable.
+//
+// The application's workaround was `.gesture(on_click:)` on every row, which
+// makes the row clickable and costs the collection its selection: an armed row
+// KEEPS the press (see `awaits_release`), so the document view never sees it
+// and `on_selection_changed` never fires. Arming here is what lets an
+// application delete those handlers and let the selection do the navigating.
+//
+// Through `first_viewed`, because the row a builder returns may be a `@ui`
+// block holding it — the same descent the painting does, for the same reason.
+fn arm_rows_for_agent(n: *core::Node, doc: *u8, h: fn(*u8, i64, u64)) {
+    if n.is_null() { return; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                input::arm_as_row(first_viewed(c), c, doc, i, h);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn uninstall_row_selection(doc: *u8, n: *core::Node = 0 as *core::Node) {
     if doc.is_null() { return; }
     synth::set_associated(doc, select_hit_key(), 0 as *u8);
+    // ...and the rows stop answering the agent's door, or a sequence that has
+    // been told `SelectionMode::None` would still select when one knocked.
+    if n.is_null() { return; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { input::disarm_as_row(first_viewed(c)); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
 }
 
 // The selected row's own background. `selectedContentBackgroundColor` is what

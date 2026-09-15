@@ -17803,3 +17803,160 @@ fn a_row_that_is_its_own_view_is_painted_directly() {
     assert material_under(selection_view_of(p, 2 as usize)).is_null();
     mount::unmount(p);
 }
+
+// ---- an agent can activate a collection row ---------------------------------
+//
+// `performClick:` is the agent's only door. A plain row — a box and a label —
+// is not armed for input at all, so it answered nothing and `describe` reported
+// it as not clickable: correctly, and uselessly. The application's answer was
+// `.gesture(on_click:)` on every row, which works and costs the collection its
+// own selection, because an armed row KEEPS the press and the document view
+// never sees it.
+//
+// So a selectable sequence arms its rows with the index and the pick handler a
+// pointer would have reached, and the agent's click IS the user's selection —
+// the same answer `select_row_of` gives for a table row.
+
+static AGENT_PICKS: i64 = 0;
+
+fn on_agent_pick(sender: *u8, ctx: *u8) { AGENT_PICKS = AGENT_PICKS + (1 as i64); return; }
+
+fn plain_row_no_gesture(i: usize, ctx: *u8) -> flex::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label("row", key: "", font_size: 13.0f64));
+    return core::row(b, key: "agent:row").height(28.0f64);
+}
+
+fn gesture_row(i: usize, ctx: *u8) -> flex::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label("row", key: "", font_size: 13.0f64));
+    var r: core::Node = core::row(b, key: "agent:grow").height(28.0f64);
+    let _g: *u8 = 0 as *u8;
+    return r.gesture(on_click: wrapped_click);
+}
+
+fn answers_perform_click(v: *u8) -> bool {
+    if v.is_null() { return false; }
+    return { rt::msg_i8_id(v, rt::sel(#str_ptr("respondsToSelector:\0")),
+                           rt::sel(#str_ptr("performClick:\0"))) } != (0 as i8);
+}
+
+// GUARDED, and this is not belt-and-braces. A failed `assert` does not stop
+// the test — the next line runs with its assumption broken — and
+// `performClick:` to a view that does not answer is an ObjC RAISE, which
+// unwinds through these frames into `std::terminate`. So an ablation that
+// un-arms the rows would abort the whole binary instead of failing one test,
+// which is exactly what it did the first time this was written.
+fn agent_clicks(v: *u8) -> bool {
+    if !answers_perform_click(v) { return false; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    return true;
+}
+
+fn agent_collection(p: *core::Node, f: fn(usize, *u8) -> flex::Node,
+                    mode: vocab::SelectionMode) {
+    match collection::find("cagent", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            let a: collection::Collection = x.set_row(f, ctx: 0 as *u8);
+            let b: collection::Collection = a.set_count(3 as usize);
+            let _c: collection::Collection = b.set_selection_mode(mode);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 200.0f64, 200.0f64, 1.0f64);
+    views::apply(0 as *u8, p);
+    return;
+}
+
+#[test]
+fn a_plain_collection_row_answers_the_agents_door() {
+    backend::install();
+    AGENT_PICKS = 0 as i64;
+    var c: core::Node = collection::collection(key: "cagent",
+                                               on_selection_changed: on_agent_pick);
+    let p: *core::Node = #addr_of(c);
+    agent_collection(p, plain_row_no_gesture, vocab::SelectionMode::Single);
+
+    let v1: *u8 = selection_view_of(p, 1 as usize);
+    assert v1.is_not_null();
+    // Armed, though the row carries no gesture of its own — which is what
+    // `describe` reads to report it clickable.
+    assert answers_perform_click(v1);
+
+    assert agent_clicks(v1);
+    match collection::find("cagent", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            assert x.selected_index() == (1 as i64);
+            assert x.is_selected(1 as usize);
+            assert x.selection_count() == (1 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    // ...and the handler an application would navigate from actually ran
+    assert AGENT_PICKS == (1 as i64);
+
+    // A second row REPLACES the first, which is what a plain click means.
+    assert agent_clicks(selection_view_of(p, 2 as usize));
+    match collection::find("cagent", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            assert x.selected_index() == (2 as i64);
+            assert !x.is_selected(1 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert AGENT_PICKS == (2 as i64);
+    mount::unmount(p);
+}
+
+#[test]
+fn a_rows_own_click_handler_still_wins_over_the_selection() {
+    backend::install();
+    AGENT_PICKS = 0 as i64;
+    // The compatibility half, and the reason the fallback is AFTER `fire_click`
+    // rather than instead of it: an application that hung its own handler on
+    // the row keeps being answered by that handler alone. Firing both would
+    // navigate twice.
+    var c: core::Node = collection::collection(key: "cagent",
+                                               on_selection_changed: on_agent_pick);
+    let p: *core::Node = #addr_of(c);
+    agent_collection(p, gesture_row, vocab::SelectionMode::Single);
+    let v1: *u8 = selection_view_of(p, 1 as usize);
+    assert answers_perform_click(v1);
+    assert agent_clicks(v1);
+    match collection::find("cagent", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            assert x.selected_index() == (-1 as i64);   // the row answered it
+            assert x.selection_count() == (0 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert AGENT_PICKS == (0 as i64);
+    mount::unmount(p);
+}
+
+#[test]
+fn a_collection_that_cannot_be_selected_does_not_answer_the_door() {
+    backend::install();
+    AGENT_PICKS = 0 as i64;
+    // The negative. `SelectionMode::None` means a row cannot be picked, and an
+    // agent knocking must not pick one — the rows are disarmed when the mode
+    // says so, or a sequence told None would still select.
+    var c: core::Node = collection::collection(key: "cagent",
+                                               on_selection_changed: on_agent_pick);
+    let p: *core::Node = #addr_of(c);
+    agent_collection(p, plain_row_no_gesture, vocab::SelectionMode::None);
+    let v1: *u8 = selection_view_of(p, 1 as usize);
+    // It may or may not answer — a row armed for other reasons still would —
+    // and either way the click must select nothing.
+    let _sent: bool = agent_clicks(v1);
+    match collection::find("cagent", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            assert x.selected_index() == (-1 as i64);
+            assert x.selection_count() == (0 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert AGENT_PICKS == (0 as i64);
+    mount::unmount(p);
+}

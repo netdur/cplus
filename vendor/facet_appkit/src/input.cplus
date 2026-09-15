@@ -972,7 +972,80 @@ fn input_class_for(base: *u8) -> *u8 {
 fn imp_perform_click(self_obj: *u8, cmd: *u8, sender: *u8) {
     let n: *core::Node = node_of_view(self_obj);
     if n.is_null() { return; }
-    let _fired: bool = gestures::fire_click(n);
+    if gestures::fire_click(n) { return; }
+    // A ROW OF A SELECTABLE SEQUENCE IS CLICKED BY BEING SELECTED, which is
+    // the same answer `select_row_of` gives an agent for a table row one
+    // package over. A collection's rows are ordinary views with no table to
+    // ask, so the sequence arms each one with the index and the pick handler
+    // it would have reached by hitting the document view.
+    //
+    // AFTER the click handler, never instead of it: a row that carries its own
+    // `on_click` is answered by that, and the selection is the fallback for the
+    // row that carries none. A row with both would otherwise fire one and
+    // silently drop the other depending on the order.
+    let _picked: bool = pick_row(self_obj);
+}
+
+fn row_owner_key() -> *u8 { return { 29021 as *u8 }; }
+fn row_index_key() -> *u8 { return { 29022 as *u8 }; }
+fn row_pick_key() -> *u8 { return { 29023 as *u8 }; }
+
+// ARM A ROW FOR THE AGENT'S DOOR.
+//
+// `arm` skips a node with no gestures, no pointer verbs of its own, no focus
+// handler and no input-transparency — which is every plain row. So a sidebar
+// row built from a box and a label answered nothing when an agent sent
+// `performClick:`, and `describe` reported it as not clickable: correctly, and
+// uselessly. The application's answer was to hang `.gesture(on_click:)` on
+// every row, which works and costs the collection its own selection — the row
+// keeps the press, so the document view never sees the click.
+//
+// The index and the handler are recorded rather than looked up because a row
+// has no parent pointer to walk: facet's tree has none, and the view hierarchy
+// would have to be climbed to the document view and back down. The sequence
+// knows both at the moment it arms, which is the cheapest place either is
+// known.
+//
+// 1-BASED underneath, so "no index" and "row zero" are different answers — the
+// same trick `component::item_index_of` uses for the same reason.
+fn arm_as_row(v: *u8, n: *core::Node, doc: *u8, index: usize,
+              h: fn(*u8, i64, u64)) {
+    if v.is_null() || doc.is_null() { return; }
+    if !is_armed(v) {
+        let _old: *u8 = object_setClass(v, input_class_for(synth::object_class(v)));
+        synth::set_associated(v, armed_key(), 1 as *u8);
+        if n.is_not_null() { synth::set_associated(v, node_key(), n as *u8); }
+    }
+    synth::set_associated(v, row_owner_key(), doc);
+    synth::set_associated(v, row_index_key(), { (index +% (1 as usize)) as *u8 });
+    synth::set_associated(v, row_pick_key(), { h as *u8 });
+    return;
+}
+
+// ...and forget it, for a sequence that stops being selectable. The CLASS
+// stays: a swapped-back class would strip the input methods off a view that
+// may have been armed for its own reasons, and answering `performClick:` with
+// nothing to do is what an unwired control does anyway.
+fn disarm_as_row(v: *u8) {
+    if v.is_null() { return; }
+    synth::set_associated(v, row_owner_key(), 0 as *u8);
+    synth::set_associated(v, row_index_key(), 0 as *u8);
+    synth::set_associated(v, row_pick_key(), 0 as *u8);
+    return;
+}
+
+fn pick_row(v: *u8) -> bool {
+    if v.is_null() { return false; }
+    let doc: *u8 = { synth::get_associated(v, row_owner_key()) };
+    if doc.is_null() { return false; }
+    let raw: usize = { synth::get_associated(v, row_index_key()) as usize };
+    if raw == (0 as usize) { return false; }
+    let h: fn(*u8, i64, u64) = { synth::get_associated(v, row_pick_key()) as fn(*u8, i64, u64) };
+    if { h } == (0 as fn(*u8, i64, u64)) { return false; }
+    // NO MODIFIERS. An agent has no keyboard held down, and a plain click is
+    // the one gesture it can mean: replace the selection with this row.
+    h(doc, { (raw -% (1 as usize)) as i64 }, 0 as u64);
+    return true;
 }
 
 // Where the drop landed, in the receiving node's own space. The backend stashed

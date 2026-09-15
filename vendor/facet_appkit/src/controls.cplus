@@ -4669,7 +4669,7 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
             let f: fn(*u8, i64, u64) = collection_row_picked;
             compose::install_row_selection(doc, n, f);
         } else {
-            compose::uninstall_row_selection(doc);
+            compose::uninstall_row_selection(doc, n);
         }
     }
     // Reorder needs the same class the selection installs — a press that MOVES
