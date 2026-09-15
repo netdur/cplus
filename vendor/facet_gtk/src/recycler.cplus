@@ -73,6 +73,8 @@ import "facet/list" as list;
 import "facet/collection" as collection;
 import "facet/table" as table;
 import "facet/tree" as tree;
+import "facet/relist" as relist;
+import "facet/obs_vec" as obs_vec;
 import "gtk4/gtk4" as gtk;
 import "gio/gio" as gio;
 import "gobject/runtime" as g;
@@ -82,6 +84,7 @@ import "stdlib/text" as text;
 import "stdlib/io" as io;
 import "stdlib/env" as env;
 import "./controls" as controls;
+import "./paint" as paint;
 import "./geometry" as geometry;
 import "./input" as input;
 
@@ -266,6 +269,28 @@ fn sequence_of(n: *core::Node) -> Sequence {
             controls::props_of(n, props::K_COLLECTION) as *props::CollectionProps;
         if p == (0 as *props::CollectionProps) { return empty_sequence(); }
         return sequence_of_collection(p);
+    }
+    if kind == relist::K_RELIST {
+        // THE COUNT IS READ, NOT STORED — through the erased reader, so `T` is
+        // the element's business and never this file's. The whole difference
+        // from `list`: there is no count an application can have forgotten to
+        // update.
+        //
+        // NO BIND, no kinds, no groups, no stated height, ONE column. `relist`
+        // builds a row fresh per index from a single builder, so every slot in
+        // the map is a plain data row — which is the simplest shape the map has.
+        let p: *relist::RelistProps = relist::props_of(n);
+        if p == (0 as *relist::RelistProps) { return empty_sequence(); }
+        var s: Sequence = empty_sequence();
+        let count_of: fn(*u8) -> usize = { (*p).count_of };
+        s.count = count_of({ (*p).rows }) as i64;
+        s.row = { (*p).builder };
+        s.row_ctx = { (*p).builder_ctx };
+        // THE GRID, and this backend already knows how: the slot map turns a
+        // line into `columns` data rows, and one column is the degenerate case
+        // it has always walked.
+        s.columns = { (*p).columns };
+        return s;
     }
     return empty_sequence();
 }
@@ -973,6 +998,17 @@ fn item_bind(factory: *u8, item: *u8, user: *u8) {
     g::set_data(host, row_node_key(), boxed);
     set_row_slot(host, at);
     g::set_data(host, owner_key(), n as *u8);
+    // ...AND ON THE ITEM. `release_row` is reached from `item_teardown`, whose
+    // host is already finalised — so the owner has to be somewhere the ITEM
+    // carries, or a relist can never be told its row went away.
+    g::set_data(item, owner_key(), n as *u8);
+    // WHICH ROW THIS IS. `core::item_index_of` reads it back, and the agent
+    // surface orders the realised rows by it.
+    core::set_item_index(node, at);
+    // THE ROW NOW EXISTS, so the element can answer for it: a row is never a
+    // child of the list, and this is what gives `core::find_in` a path to it.
+    // A no-op for `list` and `collection`, whose nodes are not a relist.
+    relist::note_realised(n, node);
     arm_reorder(host, n);
     lay_row_out(n, host, node);
     fire_item_visibility(n, host, true);
@@ -1070,6 +1106,11 @@ fn item_teardown(factory: *u8, item: *u8, user: *u8) {
 fn release_row(item: *u8, host_alive: bool) {
     let raw: *u8 = g::get_data(item, row_node_key());
     if raw == (0 as *u8) { return; }
+    // BEFORE THE DROP, and this is the only place a row node dies here. The
+    // realised set holds a borrowed pointer; one left in it after this line is
+    // a freed node handed to `find`.
+    relist::note_released({ g::get_data(item, owner_key()) } as *core::Node,
+                          raw as *core::Node);
     mount::unrealise(raw as *core::Node);
     let _dropped: box::Box[core::Node] = box::from_raw::[core::Node](raw);
     if host_alive {
@@ -2028,6 +2069,53 @@ fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
         // the control offers the gesture at all, `can_refresh` whether it may be
         // used right now. A pull needs both to be true.
         input::set_pull_enabled(v, { (*p).is_refreshable } && { (*p).can_refresh });
+    }
+    return;
+}
+
+// ---- relist ------------------------------------------------------------------
+//
+// The same sequence machinery. `relist` differs from `list` in where its count
+// and its builder come from — which `sequence_of` answers — and in nothing this
+// widget can see, so create is shared outright.
+//
+// A RELOAD FOR EVERY CHANGE, deliberately. `apply_fine_grained` reads splice and
+// invalidate ranges out of the props by address, and `relist` keeps neither: it
+// carries ONE pending `Change`, taken by the pass that applies it. Turning that
+// into a `g_list_model_items_changed` range is a real optimisation and it is
+// exactly the kind of thing that must not be written blind — this backend
+// cannot be RUN on the dev machine this was written on. `refresh` is always a
+// legal answer, the way `row_height_of` answering 0 always is, so the untested
+// path is the one that does less.
+fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(n) else { return; };
+    // THE ELEMENT LEARNS WHICH NODE IT IS, here and on every pass: the change
+    // handler runs on the application's stack and needs a node to mark dirty,
+    // and it cannot capture one at construction because the node is returned by
+    // value and moved into the tree.
+    let _b: relist::Relist = h.bind_node();
+    var s: Sequence = sequence_of(n);
+
+    let creating: bool = dirty == paint::all_bits();
+    if (dirty & (relist::P_ROWS | relist::P_BUILDER)) != (0 as u64) || creating {
+        // TAKEN, not read: a command left behind fires again on the next
+        // unrelated pass. The kind is discarded because every kind gets the
+        // same answer here — see the note above.
+        if h.has_pending() { let _c: obs_vec::Change = h.take_pending(); }
+        // Every row is re-vended, and each one goes out through `release_row`,
+        // which tells the element. So the realised set corrects itself row by
+        // row and must NOT be cleared here — that would unregister rows still
+        // on screen.
+        refresh(n, v, s);
+    }
+    // LAST, AND WHATEVER THE ROWS DID: scrolling to row 40 before the change
+    // that makes row 40 exist asks the model for a position it does not have.
+    if (dirty & relist::P_SCROLL_TO) != (0 as u64) {
+        let at: i64 = h.take_scroll_to();
+        if at >= (0 as i64) && at < s.count {
+            s.scroll_to = at;
+            scroll_to_row(v, s);
+        }
     }
     return;
 }

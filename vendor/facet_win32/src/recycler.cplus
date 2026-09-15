@@ -52,6 +52,8 @@ import "facet/mount" as mount;
 import "facet/list" as flist;
 import "facet/gestures" as gestures;
 import "facet/tree" as ftree;
+import "facet/relist" as relist;
+import "facet/obs_vec" as obs_vec;
 import "facet/label" as flabel;
 import "facet/collection" as fcollection;
 import "facet/table" as ftable;
@@ -422,6 +424,28 @@ fn source_of(n: *core::Node) -> SeqSource {
             group_header_ctx: { #addr((*p).group_header_ctx) },
             columns: { (*p).structured_items_view.columns } as i64,
         };
+    }
+    if k == relist::K_RELIST {
+        // THE COUNT IS READ, NOT STORED — through the erased reader, so `T` is
+        // the element's business and never this file's. The whole difference
+        // from `list`: there is no count an application can have forgotten to
+        // update.
+        //
+        // NO BIND, no kinds, no groups, no stated height, ONE column. `relist`
+        // builds a row fresh per index from a single builder.
+        let p: *relist::RelistProps = raw as *relist::RelistProps;
+        var src: SeqSource = no_source();
+        let count_of: fn(*u8) -> usize = { (*p).count_of };
+        src.live = true;
+        src.count = count_of({ (*p).rows }) as i64;
+        src.row = { (*p).builder };
+        src.row_ctx = { #addr((*p).builder_ctx) };
+        src.uneven = { (*p).uneven_rows };
+        // THE GRID, and this backend already knows how: `is_grid`, `line_of`
+        // and `col_of` are the map's own arithmetic, and one column is the
+        // degenerate case they have always walked.
+        src.columns = { (*p).columns } as i64;
+        return src;
     }
     // `table` deliberately falls through: it is not a row source. See the
     // header, and `controls::apply_table` for what it IS.
@@ -989,8 +1013,13 @@ fn name_row(rp: *core::Node, item: *ftree::TreeNode, p: *ftree::TreeProps) {
     return;
 }
 
-fn drop_row(rp: *core::Node) {
+// `owner` is the ELEMENT whose realised set this row belongs to, or 0 for one
+// that keeps none. THE ONE PLACE A ROW NODE DIES here, so it is the only place
+// that set can be kept honest: it holds a borrowed pointer, and one left in it
+// after this line is a freed node handed to `find`.
+fn drop_row(rp: *core::Node, owner: *core::Node = 0 as *core::Node) {
     if rp == (0 as *core::Node) { return; }
+    relist::note_released(owner, rp);
     mount::unrealise(rp);
     let _gone: box::Box[core::Node] = box::from_raw::[core::Node](rp as *u8);
     return;
@@ -1091,8 +1120,14 @@ fn fill_cell(v: *u8, s: *ListState, p: *SeqSource, slot: usize, i: usize) {
             // No bind, or a different shape: tear the old subtree down and
             // build the new one. Honest rather than cheap, and the contract
             // says `set_row_bind` is optional.
-            drop_row({ (*c).node } as *core::Node);
+            drop_row({ (*c).node } as *core::Node, node_of_view(v));
             let rp: *core::Node = build_row(v, p, i);
+            // THE ROW NOW EXISTS, so the element can answer for it: a row is
+            // never a child of the list, and this is what gives `core::find_in`
+            // a path to it. Registered HERE and not in `build_data_row`, which
+            // also serves the measure pass — a row built only to be measured is
+            // torn down immediately and was never on screen.
+            relist::note_realised(node_of_view(v), rp);
             { (*c).node = { #addr(rp as *u8) } };
             { (*c).kind = kind };
             { (*c).row = i as i64 };
@@ -1623,6 +1658,25 @@ struct SeqBits {
 }
 
 fn bits_for(n: *core::Node) -> SeqBits {
+    if core::kind_of(n) == relist::K_RELIST {
+        // A RELIST DECLARES ALMOST NOTHING. Selection, grouping, separators,
+        // refresh and the threshold are all the application's or a wrapper's,
+        // so their bits are zero — a bit that is never set can never match, and
+        // the branch is simply never taken.
+        //
+        // `scroll_to` is zero HERE on purpose: the target is a command the
+        // element holds and must be TAKEN, which `apply_relist` does after this
+        // pass rather than letting the shared body read a prop that is not
+        // there.
+        return SeqBits {
+            model: relist::P_ROWS | relist::P_BUILDER,
+            selected_index: 0 as u64, selection_mode: 0 as u64,
+            scroll_bars: 0 as u64, scroll_to: 0 as u64, threshold: 0 as u64,
+            mix_groups: 0 as u64, reorder_gate: 0 as u64, anchor: 0 as u64,
+            separator: 0 as u64, refreshing: 0 as u64, begin_refresh: 0 as u64,
+            end_refresh: 0 as u64, refreshable: 0 as u64,
+        };
+    }
     if core::kind_of(n) == props::K_COLLECTION {
         return SeqBits {
             model: collection_model_bits(),
@@ -1665,6 +1719,40 @@ fn bits_for(n: *core::Node) -> SeqBits {
         refreshable: flist::P_IS_REFRESHABLE | flist::P_CAN_REFRESH
                    | flist::P_REFRESH_COLOR,
     };
+}
+
+// ---- relist ------------------------------------------------------------------
+//
+// The same sequence machinery, which `source_of` and `bits_for` already know
+// how to answer for. Only two things are the element's rather than a prop's,
+// and both are COMMANDS that have to be taken rather than read — applied twice,
+// a change splices a sequence twice and a scroll moves a list nobody asked to
+// move.
+fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(n) else { return; };
+    // THE ELEMENT LEARNS WHICH NODE IT IS, here and on every pass: the change
+    // handler runs on the application's stack and needs a node to mark dirty,
+    // and it cannot capture one at construction because the node is returned by
+    // value and moved into the tree.
+    let _b: relist::Relist = h.bind_node();
+
+    let creating: bool = dirty == paint::all_bits();
+    if (dirty & (relist::P_ROWS | relist::P_BUILDER)) != (0 as u64) || creating {
+        // TAKEN and discarded: this backend rebuilds the whole map and releases
+        // every live cell on a model change, so every kind of change gets the
+        // same answer and the detail buys nothing. `release_all` is what tells
+        // the element its rows are gone, one cell at a time, through
+        // `drop_row`.
+        if h.has_pending() { let _c: obs_vec::Change = h.take_pending(); }
+    }
+    apply_sequence(v, n, dirty);
+    // LAST, AND WHATEVER THE ROWS DID: scrolling to row 40 before the change
+    // that makes row 40 exist asks the map for a line it does not have.
+    if (dirty & relist::P_SCROLL_TO) != (0 as u64) {
+        let at: i64 = h.take_scroll_to();
+        if at >= (0 as i64) { scroll_to_row(v, n, at); }
+    }
+    return;
 }
 
 fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {

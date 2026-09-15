@@ -30,6 +30,7 @@ import "facet/split" as split;
 import "facet/window_chrome" as window_chrome;
 import "facet/toolbar_item" as toolbar_item;
 import "facet/tree" as tree;
+import "facet/relist" as relist;
 import "flex_layout/flex_layout" as flex;
 import "gtk4/gtk4" as gtk;
 import "gobject/runtime" as g;
@@ -103,6 +104,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_LIST { return recycler::create_sequence(n); }
     if kind == props::K_COLLECTION { return recycler::create_sequence(n); }
     if kind == props::K_TABLE { return recycler::create_sequence(n); }
+    if kind == relist::K_RELIST { return recycler::create_sequence(n); }
     if kind == props::K_POPUP { return controls::create_popup(n); }
     if kind == props::K_TABS { return controls::create_tabs(n); }
     if kind == props::K_DATE_PICKER { return controls::create_date_picker(n); }
@@ -144,6 +146,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == tree::K_TREE { recycler::apply_tree(v, n, dirty); return; }
     if kind == props::K_LIST { recycler::apply_list(v, n, dirty); return; }
     if kind == props::K_COLLECTION { recycler::apply_collection(v, n, dirty); return; }
+    if kind == relist::K_RELIST { recycler::apply_relist(v, n, dirty); return; }
     if kind == props::K_TABLE { recycler::apply_table(v, n, dirty); return; }
     if kind == props::K_POPUP { controls::apply_popup(v, n, dirty); return; }
     if kind == props::K_TABS { controls::apply_tabs(v, n, dirty); return; }

@@ -28,6 +28,7 @@ import "facet/symbol" as symbol;
 import "facet/split" as split;
 import "facet/tree" as tree;
 import "facet/tree" as ftree;
+import "facet/relist" as relist;
 import "facet/window_chrome" as window_chrome;
 import "win32/winuser" as u;
 import "./sys" as sys;
@@ -133,6 +134,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_LIST { return recycler::create_sequence(n); }
     if kind == props::K_TABLE { return controls::create_table(n); }
     if kind == props::K_COLLECTION { return recycler::create_sequence(n); }
+    if kind == relist::K_RELIST { return recycler::create_sequence(n); }
     if kind == ftree::K_TREE { return recycler::create_tree(n); }
     if kind == props::K_SCROLL { return controls::create_scroll(n); }
     if kind == props::K_WEB { return controls::create_web(n); }
@@ -175,6 +177,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_LIST { recycler::apply_sequence(v, n, dirty); return; }
     if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }
     if kind == props::K_COLLECTION { recycler::apply_sequence(v, n, dirty); return; }
+    if kind == relist::K_RELIST { recycler::apply_relist(v, n, dirty); return; }
     if kind == ftree::K_TREE { recycler::apply_tree(v, n, dirty); return; }
     if kind == props::K_SCROLL { controls::apply_scroll_props(v, n, dirty); return; }
     if kind == props::K_WEB { controls::apply_web(v, n, dirty); return; }
