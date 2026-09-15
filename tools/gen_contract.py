@@ -3196,6 +3196,16 @@ def emit_control(row_type, merged):
         # app named both. `bind_ctx_of` resolves the fallback on read.
         o.append("    p.bind_ctx = bind_ctx;\n")
         o.append("    p.selected_index = selected_index;\n")
+        # ...AND THE SET IT IS THE FIRST OF. The pair is one state, and a
+        # constructor writing half of it is the one place that can break the
+        # invariant without going through a verb — which is exactly what it did:
+        # a list naming `selected_index:` at construction reached the backend
+        # with an EMPTY selection, and the backend, now reading the set, drew
+        # nothing selected while `selected_index()` went on answering the row.
+        # Caught by `a_selected_index_named_at_construction_reaches_the_table`.
+        o.append("    if selected_index >= (0 as i64) {\n")
+        o.append("        let _s: status::Status = p.selection.add(selected_index as usize);\n")
+        o.append("    }\n")
         o.append("    p.selection_highlight = selection_highlight;\n")
     if mod in SELECTABLE_TEXT:
         o.append("    p.selectable = selectable;\n")

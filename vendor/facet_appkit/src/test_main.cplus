@@ -17109,3 +17109,214 @@ fn a_component_inside_a_realised_row_is_reachable_and_is_rebuilt_each_time() {
     }
     app::reset_default_for_tests();
 }
+
+// ---- a selection is a SET on this backend too --------------------------------
+//
+// `selectedRow` answers the LAST row of a multiple selection, and that was the
+// whole of what the write-backs read. Every backend arms its widget for
+// `SelectionMode::Multiple` — `setAllowsMultipleSelection:` here — so a user
+// shift-clicking three rows had two of them highlighted on screen and absent
+// from the model. These pin both directions, on the table and on the outline
+// view, and the ordering that makes `selected_index` the FIRST of the set
+// rather than AppKit's last.
+
+fn multi_list(count: usize) -> core::Node {
+    return list::list(key: "multi", selection_mode: vocab::SelectionMode::Multiple,
+                      count: count, row: rl_row);
+}
+
+fn rows_1_3_4() -> vocab::IndexList {
+    var s: vocab::IndexList = vocab::IndexList::new();
+    let _a: status::Status = s.add(1 as usize);
+    let _b: status::Status = s.add(3 as usize);
+    let _c: status::Status = s.add(4 as usize);
+    return s;
+}
+
+fn selected_rows_of(tv: *u8) -> u64 {
+    let set: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("selectedRowIndexes\0"))) };
+    if set.is_null() { return 0 as u64; }
+    return { rt::msg_u64(set, rt::sel(#str_ptr("count\0"))) };
+}
+
+fn row_is_selected(tv: *u8, row: u64) -> bool {
+    let set: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("selectedRowIndexes\0"))) };
+    if set.is_null() { return false; }
+    return { rt::msg_i8_u64(set, rt::sel(#str_ptr("containsIndex:\0")), row) } != (0 as i8);
+}
+
+fn select_rows(tv: *u8, a: u64, b: u64) {
+    let set: *u8 = { rt::alloc_init(#str_ptr("NSMutableIndexSet\0")) };
+    if set.is_null() { return; }
+    { rt::msg_void_u64(set, rt::sel(#str_ptr("addIndex:\0")), a) };
+    { rt::msg_void_u64(set, rt::sel(#str_ptr("addIndex:\0")), b) };
+    { msg_void_id_i8_t(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                       set, 0 as i8) };
+    rt::release(set);
+}
+
+#[test]
+fn every_selected_row_reaches_the_table_and_not_just_the_first() {
+    backend::install();
+    var n: core::Node = multi_list(6 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    core::set_view(p, v, views::view_release);
+    match list::find("multi", within: p) {
+        option::Option[list::List]::Some(l) => {
+            let _x: list::List = l.set_selection(rows_1_3_4());
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    let tv: *u8 = recycler::table_of(v);
+    assert tv.is_not_null();
+    assert selected_rows_of(tv) == (3 as u64);
+    assert row_is_selected(tv, 1 as u64);
+    assert row_is_selected(tv, 3 as u64);
+    assert row_is_selected(tv, 4 as u64);
+    assert !row_is_selected(tv, 0 as u64);
+}
+
+#[test]
+fn the_table_reports_every_selected_row_back_and_the_first_is_the_index() {
+    backend::install();
+    // THE ORDERING TEST. `selectedRow` answers 4 for this selection — the last
+    // row picked — and `selected_index` must answer 1, because it is the FIRST
+    // of the set and the two are one state. Reading the old way passes the
+    // count assertion and fails this one.
+    var n: core::Node = multi_list(6 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    core::set_view(p, v, views::view_release);
+    views::apply(0 as *u8, p);
+    let tv: *u8 = recycler::table_of(v);
+    assert tv.is_not_null();
+    select_rows(tv, 1 as u64, 4 as u64);
+    match list::find("multi", within: p) {
+        option::Option[list::List]::Some(l) => {
+            assert l.selection_count() == (2 as usize);
+            assert l.selection_at(0 as usize) == (1 as i64);
+            assert l.selection_at(1 as usize) == (4 as i64);
+            assert l.is_selected(4 as usize);
+            assert !l.is_selected(2 as usize);
+            assert l.selected_index() == (1 as i64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_selection_the_table_cannot_show_deselects_rather_than_half_applying() {
+    backend::install();
+    // The negative. Data rows past the end of the table have no row to select,
+    // and a half-applied selection is worse than none: `deselectAll:` is the
+    // answer `select_data_row` has always given a row that is not there.
+    var n: core::Node = multi_list(3 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    core::set_view(p, v, views::view_release);
+    views::apply(0 as *u8, p);
+    let tv: *u8 = recycler::table_of(v);
+    select_rows(tv, 0 as u64, 1 as u64);
+    assert selected_rows_of(tv) == (2 as u64);
+    match list::find("multi", within: p) {
+        option::Option[list::List]::Some(l) => {
+            var far: vocab::IndexList = vocab::IndexList::new();
+            let _a: status::Status = far.add(40 as usize);
+            let _b: status::Status = far.add(41 as usize);
+            let _x: list::List = l.set_selection(far);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert selected_rows_of(tv) == (0 as u64);
+}
+
+#[test]
+fn an_outline_view_reports_every_selected_row_back_by_id() {
+    backend::install();
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    let _b: status::Status = root.add_child(tree::TreeNode::new("beta", id: "beta"));
+    let _c: status::Status = root.add_child(tree::TreeNode::new("gamma", id: "gamma"));
+    var t: core::Node = tree::tree(root, key: "multi", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    assert v.is_not_null();
+    core::set_view(tp, v, views::view_release);
+    match tree::find("multi", within: tp) {
+        option::Option[tree::Tree]::Some(h) => {
+            let _m: tree::Tree = h.set_selection_mode(vocab::SelectionMode::Multiple);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    core::touch(tp, tree::P_ROOT);
+    views::apply(0 as *u8, tp);
+    let ov: *u8 = recycler::table_of(v);
+    assert ov.is_not_null();
+    // the mode reached the outline view — an NSOutlineView is an NSTableView
+    // and this is the switch it inherits
+    assert { rt::msg_i8(ov, rt::sel(#str_ptr("allowsMultipleSelection\0"))) } != (0 as i8);
+
+    // the user picks two rows; the model answers with both, first one first
+    select_rows(ov, 0 as u64, 2 as u64);
+    match tree::find("multi", within: tp) {
+        option::Option[tree::Tree]::Some(h) => {
+            assert h.selection_count() == (2 as usize);
+            assert h.selection_at(0 as usize) == "alpha";
+            assert h.selection_at(1 as usize) == "gamma";
+            assert h.is_selected("gamma");
+            assert !h.is_selected("beta");
+            assert h.selected() == "alpha";
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_tree_selection_written_by_id_reaches_every_matching_row() {
+    backend::install();
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    let _b: status::Status = root.add_child(tree::TreeNode::new("beta", id: "beta"));
+    let _c: status::Status = root.add_child(tree::TreeNode::new("gamma", id: "gamma"));
+    var t: core::Node = tree::tree(root, key: "multi", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    assert v.is_not_null();
+    core::set_view(tp, v, views::view_release);
+    core::touch(tp, tree::P_ROOT);
+    views::apply(0 as *u8, tp);
+    let ov: *u8 = recycler::table_of(v);
+    match tree::find("multi", within: tp) {
+        option::Option[tree::Tree]::Some(h) => {
+            let _m: tree::Tree = h.set_selection_mode(vocab::SelectionMode::Multiple);
+            var ids: vocab::TextList = vocab::TextList::new();
+            let _x: status::Status = ids.add("alpha");
+            let _y: status::Status = ids.add("gamma");
+            let _s: tree::Tree = h.set_selection(ids);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    views::apply(0 as *u8, tp);
+    assert selected_rows_of(ov) == (2 as u64);
+    assert row_is_selected(ov, 0 as u64);
+    assert !row_is_selected(ov, 1 as u64);
+    assert row_is_selected(ov, 2 as u64);
+
+    // ...and an id no row carries selects nothing rather than something
+    match tree::find("multi", within: tp) {
+        option::Option[tree::Tree]::Some(h) => {
+            var ids: vocab::TextList = vocab::TextList::new();
+            let _x: status::Status = ids.add("nobody");
+            let _s: tree::Tree = h.set_selection(ids);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    views::apply(0 as *u8, tp);
+    assert selected_rows_of(ov) == (0 as u64);
+}

@@ -1553,6 +1553,37 @@ fn fire_list(n: *core::Node, h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
     h(sender, ctx);
 }
 
+// NSNotFound — NSIntegerMax, which ends an index-set walk. Built
+// ARITHMETICALLY: an integer literal wraps through i32 before `as`, so the
+// spelled-out constant is not the number it reads as.
+fn not_found() -> u64 { return ((1 as u64) << (63 as u64)) -% (1 as u64); }
+
+// EVERY SELECTED ROW, as DATA indices.
+//
+// `selectedRow` answers the LAST row of a multiple selection, which is what
+// this read was before a selection was a set: a user shift-clicking five rows
+// left four of them highlighted and absent from the model. `selectedRowIndexes`
+// is the whole of it, walked by `indexGreaterThanIndex:` rather than enumerated
+// with a block — the selection is small and a block here would be a second
+// lifetime to reason about.
+//
+// GROUP HEADERS DROP OUT. `resolve_row` answers a negative for a header row,
+// which is not an item and cannot be one: a selection of data indices must not
+// contain -1, or `is_selected(0)` starts answering for the wrong thing.
+fn data_rows_selected(tv: *u8, s: *RowSource) -> vocab::IndexList {
+    var out: vocab::IndexList = vocab::IndexList::new();
+    let set: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("selectedRowIndexes\0"))) };
+    if set.is_null() { return out; }
+    let end: u64 = not_found();
+    var row: u64 = { rt::msg_u64(set, rt::sel(#str_ptr("firstIndex\0"))) };
+    while row != end {
+        let data: i64 = resolve_row(s, row as i64);
+        if data >= (0 as i64) { let _a: status::Status = out.add(data as usize); }
+        row = { rt::msg_u64_u64(set, rt::sel(#str_ptr("indexGreaterThanIndex:\0")), row) };
+    }
+    return out;
+}
+
 // A selection change is BOTH `on_item_selected` and `on_item_tapped` on this
 // backend, and the manifest says why: a table row is selected by click and by
 // arrow key, and macOS has no separate "tapped" moment. Firing only the first
@@ -1569,9 +1600,7 @@ fn selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     // a grouped table's fifth row may be its third item.
     let s: *RowSource = source_of(tv);
     if s.is_not_null() {
-        let picked: i64 = { rt::msg_i64(tv, rt::sel(#str_ptr("selectedRow\0"))) };
-        if picked < (0 as i64) { { (*p).selected_index = -1 as i64 }; }
-        else { { (*p).selected_index = resolve_row(s, picked) }; }
+        list::note_selection(p, data_rows_selected(tv, s));
     }
     fire_list(n, { (*p).on_item_selected }, { (*p).on_item_selected_ctx }, tv);
     fire_list(n, { (*p).on_item_tapped }, { (*p).on_item_tapped_ctx }, tv);
@@ -3024,7 +3053,7 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     let selecting: bool = (dirty & (list::P_SELECTED_INDEX | list::P_COUNT | list::P_ROW))
         != (0 as u64);
     if selecting && (creating == false || { (*p).selected_index } >= (0 as i64)) {
-        select_data_row(tv, s, { (*p).selected_index });
+        select_data_rows(tv, s, #addr_of((*p).selection));
     }
     // `scroll_to` is a COMMAND: act on the bit, and the sync walk clears it.
     if (dirty & list::P_SCROLL_TO) != (0 as u64) && creating == false {
@@ -3195,17 +3224,49 @@ fn invalidate_rows(tv: *u8, s: *RowSource, lo_d: i64, hi_d: i64) {
                          span, col0) };
 }
 
-fn select_data_row(tv: *u8, s: *RowSource, data: i64) {
-    let row: i64 = table_row_of(s, data);
-    if row < (0 as i64) {
+// EVERY selected row, written to the table in ONE message.
+//
+// One `selectRowIndexes:` and not a loop of them, because
+// `byExtendingSelection:` on a loop fires a selection-change notification per
+// row — each one a write-back that re-reads a selection only half applied.
+// An empty set deselects, which is what it means.
+//
+// A data index with no row (one past the end, or inside a collapsed group)
+// simply contributes nothing: the contract may name rows a reload has not
+// brought into being yet, and dropping them is what the single-row writer
+// this replaced always did with -1.
+fn select_data_rows(tv: *u8, s: *RowSource, sel: *vocab::IndexList) {
+    if sel.is_null() { return; }
+    let n: usize = { (*sel).count() };
+    if n == (0 as usize) {
         { rt::msg_void(tv, rt::sel(#str_ptr("deselectAll:\0"))) };
         return;
     }
-    let set: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
-                                    rt::sel(#str_ptr("indexSetWithIndex:\0")), row as u64) };
+    let set: *u8 = { rt::alloc_init(#str_ptr("NSMutableIndexSet\0")) };
     if set.is_null() { return; }
-    { msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
-                         set, 0 as i8) };
+    // The table's own extent, because `table_row_of` does NOT bound-check: an
+    // ungrouped table maps data index to row index and hands 40 straight back
+    // for a 3-row table. `selectRowIndexes:` with a row that is not there is an
+    // NSRangeException in a window and, measured headless, a selection of two
+    // rows the table does not have — a model claiming rows nothing can draw.
+    let rows: i64 = { rt::msg_i64(tv, rt::sel(#str_ptr("numberOfRows\0"))) };
+    var i: usize = 0 as usize;
+    var any: bool = false;
+    while i < n {
+        let row: i64 = table_row_of(s, { (*sel).at(i) });
+        if row >= (0 as i64) && row < rows {
+            { rt::msg_void_u64(set, rt::sel(#str_ptr("addIndex:\0")), row as u64) };
+            any = true;
+        }
+        i = i +% (1 as usize);
+    }
+    if any {
+        { msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                             set, 0 as i8) };
+    } else {
+        { rt::msg_void(tv, rt::sel(#str_ptr("deselectAll:\0"))) };
+    }
+    rt::release(set);
 }
 
 #[link_name = "objc_msgSend"]
@@ -3520,14 +3581,14 @@ fn reload_job(ctx: *u8) {
     // answering the row that was picked. facet's props are what did not
     // change, so they are what it is read back from.
     //
-    // `select_data_row` and not a raw row index: a grouped list's third item
+    // `select_data_rows` and not raw row indices: a grouped list's third item
     // is not its third row, and `table_row_of` is the translation. A negative
     // index means nothing is selected, and a table that has just reloaded has
     // no selection either — so that case is left alone rather than spending a
     // `deselectAll:` to confirm it.
     let p: *props::ListProps = props_of_list({ (*s).node });
     if p.is_not_null() && { (*p).selected_index } >= (0 as i64) {
-        select_data_row(tv, s, { (*p).selected_index });
+        select_data_rows(tv, s, #addr_of((*p).selection));
     }
 }
 
@@ -4449,22 +4510,17 @@ fn tree_selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     // write-back has had. `reloadData` CLEARS the selection, and AppKit reports
     // that clear like any other — so the reload's own side effect was writing
     // `selected = ""` into the model, destroying the very record needed to put
-    // the selection back. `select_by_id` then restored nothing, and the user
+    // the selection back. `select_by_ids` then restored nothing, and the user
     // lost the highlight to a reload they did not cause.
     if { (*s).syncing } { return; }
     let n: *core::Node = { (*s).node };
     let p: *tree::TreeProps = tree_props_of(n);
     if p.is_null() { return; }
+    // EVERY selected row, not `selectedRow` — which answers the LAST row of a
+    // multiple selection, so a user shift-clicking three rows left two of them
+    // highlighted and absent from the model.
+    tree::note_selection(p, ids_selected(ov));
     let row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
-    if row >= (0 as i64) {
-        let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-        let tn: *tree::TreeNode = unbox_item(item);
-        if tn.is_not_null() {
-            { (*p).selected = text::from_str({ (*tn).id.view() }) };
-        }
-    } else {
-        { (*p).selected = text::new() };
-    }
     // A tree's handler takes the TREE NODE, not a native sender: a row here is
     // a model item, and the item is what the application asked about.
     let h: fn(*tree::TreeNode, *u8) = { (*p).on_select };
@@ -4479,27 +4535,90 @@ fn tree_selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
 // A write to `selected` moves the outline's selection to the row with that
 // identity — the read-back's mirror image, and the reason identity has to
 // survive a model rebuild.
-fn select_by_id(ov: *u8, want: str) {
-    if want == "" {
+// EVERY selected id, written to the outline view in ONE message.
+//
+// ONE PASS OVER THE ROWS, not one pass per id: a tree's rows are the EXPANDED
+// rows, so the walk is bounded by what is on screen plus what is open, and a
+// selection of n ids over r rows would otherwise be n*r. Asking each row
+// whether it is in the set is one `has` per row against a handful of ids.
+//
+// One `selectRowIndexes:` and not a loop of them, because
+// `byExtendingSelection:` fires a selection-change notification per call —
+// each one a write-back re-reading a selection only half applied. `syncing`
+// guards that anyway; not depending on the guard is cheaper than trusting it.
+//
+// AN ID WITH NO ROW CONTRIBUTES NOTHING. A selected row inside a collapsed
+// branch has no row at all, which is why `restore` expands FIRST.
+// EVERY selected row of an outline view, as IDs.
+//
+// The mirror of `select_by_ids`, and the same walk: `selectedRowIndexes` gives
+// view rows and a tree's model is addressed by identity, so each row is turned
+// back into the id its item carries. A row whose item is not one of ours
+// contributes nothing rather than an empty id, which would read as "nothing
+// selected" sitting in the middle of a selection.
+fn ids_selected(ov: *u8) -> vocab::TextList {
+    var out: vocab::TextList = vocab::TextList::new();
+    let set: *u8 = { rt::msg_id(ov, rt::sel(#str_ptr("selectedRowIndexes\0"))) };
+    if set.is_null() { return out; }
+    let end: u64 = not_found();
+    var row: u64 = { rt::msg_u64(set, rt::sel(#str_ptr("firstIndex\0"))) };
+    while row != end {
+        let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row as i64) };
+        let tn: *tree::TreeNode = unbox_item(item);
+        if tn.is_not_null() {
+            let id: str = { (*tn).id.view() };
+            if id != "" { let _a: status::Status = out.add(id); }
+        }
+        row = { rt::msg_u64_u64(set, rt::sel(#str_ptr("indexGreaterThanIndex:\0")), row) };
+    }
+    return out;
+}
+
+// A SNAPSHOT of a selection, for the reload that is about to destroy it. The
+// props are the record the restore reads from, and `reloadData` reports its own
+// clear like any other change — so the copy is taken before, the way the
+// single-id restore has always taken one.
+fn copy_ids(sel: *vocab::TextList) -> vocab::TextList {
+    var out: vocab::TextList = vocab::TextList::new();
+    if sel.is_null() { return out; }
+    let n: usize = { (*sel).count() };
+    var i: usize = 0 as usize;
+    while i < n {
+        let _a: status::Status = out.add({ (*sel).at(i) });
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn select_by_ids(ov: *u8, sel: *vocab::TextList) {
+    if sel.is_null() { return; }
+    if { (*sel).count() } == (0 as usize) {
         { rt::msg_void(ov, rt::sel(#str_ptr("deselectAll:\0"))) };
         return;
     }
+    let set: *u8 = { rt::alloc_init(#str_ptr("NSMutableIndexSet\0")) };
+    if set.is_null() { return; }
     let rows: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
     var i: i64 = 0 as i64;
+    var any: bool = false;
     while i < rows {
         let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), i) };
         let tn: *tree::TreeNode = unbox_item(item);
         if tn.is_not_null() {
-            if { (*tn).id.view() } == want {
-                let idx: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
-                                                rt::sel(#str_ptr("indexSetWithIndex:\0")), i as u64) };
-                { rt::msg_void_id_i8(ov, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
-                                     idx, false as i8) };
-                return;
+            if { (*sel).has({ (*tn).id.view() }) } {
+                { rt::msg_void_u64(set, rt::sel(#str_ptr("addIndex:\0")), i as u64) };
+                any = true;
             }
         }
         i = i + (1 as i64);
     }
+    if any {
+        { rt::msg_void_id_i8(ov, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                             set, false as i8) };
+    } else {
+        { rt::msg_void(ov, rt::sel(#str_ptr("deselectAll:\0"))) };
+    }
+    rt::release(set);
 }
 
 fn create_recycling_tree(n: *core::Node) -> *u8 {
@@ -4618,7 +4737,20 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     // After the rows exist, or there is nothing to find the identity among.
     if (dirty & (tree::P_SELECTED | tree::P_ROOT)) != (0 as u64) {
         let p: *tree::TreeProps = tree_props_of(n);
-        if p.is_not_null() { select_by_id(ov, { (*p).selected.view() }); }
+        if p.is_not_null() { select_by_ids(ov, #addr_of((*p).selection)); }
+    }
+    // HOW a selection is allowed, and who paints it. A tree had neither word:
+    // an outline view could only ever hold one row, and it painted it whatever
+    // the row drew for itself. `apply_selection_mode` is the list's and belongs
+    // to NSTableView, which NSOutlineView inherits — so it is the same code,
+    // and the same note about why taking `selectable` away takes the click
+    // with it applies here too.
+    if (dirty & tree::P_SELECTION_MODE) != (0 as u64) {
+        let p: *tree::TreeProps = tree_props_of(n);
+        if p.is_not_null() {
+            apply_selection_mode(ov, { (*p).selection_mode });
+            apply_selection_highlight(ov, { (*p).selection_highlight });
+        }
     }
 }
 
@@ -4679,7 +4811,11 @@ fn reload_tree_keeping_selection(s: *TreeSource, ov: *u8) {
     { (*s).expanded_by_user = false };
     let pn: *tree::TreeProps = tree_props_of({ (*s).node });
     var keep: text::Text = text::new();
-    if pn.is_not_null() { keep = text::from_str({ (*pn).selected.view() }); }
+    var keep_all: vocab::TextList = vocab::TextList::new();
+    if pn.is_not_null() {
+        keep = text::from_str({ (*pn).selected.view() });
+        keep_all = copy_ids(#addr_of((*pn).selection));
+    }
     // WITHOUT IMPLICIT ANIMATION. A reload re-vends every visible row, and the
     // views it makes are layer-backed — so each one's first frame animates in
     // from wherever Core Animation thinks it was. Expanding a folder changes
@@ -4693,7 +4829,7 @@ fn reload_tree_keeping_selection(s: *TreeSource, ov: *u8) {
     { (*s).syncing = false };
     sync_expansion(ov);
     { (*s).syncing = true };
-    select_by_id(ov, keep.view());
+    select_by_ids(ov, #addr_of(keep_all));
     { (*s).syncing = false };
     without_implicit_animation_end();
     tree_reload_trace(ov, keep.view());

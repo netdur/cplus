@@ -95,6 +95,9 @@ fn collection(
     p.bind = bind;
     p.bind_ctx = bind_ctx;
     p.selected_index = selected_index;
+    if selected_index >= (0 as i64) {
+        let _s: status::Status = p.selection.add(selected_index as usize);
+    }
     p.selection_highlight = selection_highlight;
     return match box::new::[props::CollectionProps](p) {
         option::Option[box::Box[props::CollectionProps]]::Some(b) =>

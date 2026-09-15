@@ -4900,3 +4900,33 @@ fn a_multi_selection_survives_the_rebuild_a_content_identity_survives() {
         option::Option[tree::Tree]::None => { assert false; }
     }
 }
+
+#[test]
+fn a_selection_named_at_construction_is_the_whole_state_not_half_of_it() {
+    // THE ONE PLACE THAT CAN BREAK THE INVARIANT WITHOUT GOING THROUGH A VERB.
+    // A list describes its selection in `build()`, before mount, by naming
+    // `selected_index:` — and the constructor writes the field directly. It
+    // reached the backend with an EMPTY selection, so a backend reading the set
+    // drew nothing selected while `selected_index()` went on answering the row.
+    // facet_appkit's suite caught it; this is the same assertion one layer down.
+    var root: facet::Node = list::list(key: "l", count: 4 as usize, selected_index: 2 as i64);
+    match list::find("l", within: #addr_of(root)) {
+        option::Option[list::List]::Some(x) => {
+            assert x.selected_index() == (2 as i64);
+            assert x.selection_count() == (1 as usize);
+            assert x.is_selected(2 as usize);
+            assert x.selection_at(0 as usize) == (2 as i64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    // ...and a list that names none holds an EMPTY set, not one containing -1
+    var none: facet::Node = list::list(key: "n", count: 4 as usize);
+    match list::find("n", within: #addr_of(none)) {
+        option::Option[list::List]::Some(x) => {
+            assert x.selected_index() == (-1 as i64);
+            assert x.selection_count() == (0 as usize);
+            assert !x.has_selection();
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+}
