@@ -200,6 +200,7 @@ fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
         let _k: *u8 = av.into_raw();
     }
     if (dirty & list::P_SELECTED_INDEX) != (0 as u64) {
+        check_rows(env, v, #addr_of((*p).selection));
         let idx: i64 = { (*p).selected_index };
         if idx >= (0 as i64) {
             var av: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(v));
@@ -338,7 +339,9 @@ fn row_tapped(token: i64, position: i32) {
     if kind == props::K_COLLECTION {
         let p: *props::CollectionProps = collection_props(n);
         if p == (0 as *props::CollectionProps) { return; }
-        { (*p).selected_index = { position as i64 } };
+        collection::note_selection(p, tapped_selection(
+            #addr_of((*p).selection), { position as i64 },
+            multi_mode({ (*p).selectable_items_view.selection_mode })));
         let h: fn(*u8, *u8) = { (*p).selectable_items_view.on_selection_changed };
         if h != props::no_handler {
             h(core::view_of(n), { (*p).selectable_items_view.on_selection_changed_ctx });
@@ -347,7 +350,9 @@ fn row_tapped(token: i64, position: i32) {
     }
     let p: *props::ListProps = list_props(n);
     if p == (0 as *props::ListProps) { return; }
-    { (*p).selected_index = { position as i64 } };
+    list::note_selection(p, tapped_selection(
+        #addr_of((*p).selection), { position as i64 },
+        multi_mode({ (*p).selection_mode })));
     let t: fn(*u8, *u8) = { (*p).on_item_tapped };
     if t != props::no_handler { t(core::view_of(n), { (*p).on_item_tapped_ctx }); }
     let s: fn(*u8, *u8) = { (*p).on_item_selected };
@@ -1050,6 +1055,87 @@ fn tree_row_count(n: *core::Node) -> i32 {
 // A tap on a tree row means one of two things, and which is not a preference:
 // a row with children TOGGLES, a leaf SELECTS. Android has no disclosure
 // triangle of its own here — the row is ours — so the whole row is the control.
+// EVERY selected row, CHECKED on the widget.
+//
+// `setSelection` moves the focused position and is what a selection was before
+// this — one row, and on a touch device not even a visible one. The CHECKED
+// state is what CHOICE_MODE_SINGLE and CHOICE_MODE_MULTIPLE actually draw, and
+// nothing was ever writing it: facet set the mode and then never checked a row,
+// so a list told `Multiple` showed no checkmarks at all until the user tapped.
+//
+// `clearChoices` first, because `setItemChecked` only adds — the same shape
+// every other backend's apply has.
+fn check_rows(env: rt::Env, v: *u8, sel: *vocab::IndexList) {
+    var av: w::AbsListView = w::AbsListView::from_global(env, env.new_global_ref(v));
+    av.clear_choices();
+    if sel != (0 as *vocab::IndexList) {
+        let n: usize = { (*sel).count() };
+        var i: usize = 0 as usize;
+        while i < n {
+            let at: i64 = { (*sel).at(i) };
+            if at >= (0 as i64) { av.set_item_checked({ at as i32 }, true); }
+            i = i +% (1 as usize);
+        }
+    }
+    let _k: *u8 = av.into_raw();
+    return;
+}
+
+fn multi_mode(m: vocab::SelectionMode) -> bool {
+    return match m {
+        vocab::SelectionMode::Multiple => true,
+        vocab::SelectionMode::Single => false,
+        vocab::SelectionMode::None => false,
+    };
+}
+
+// WHAT A TAP DOES TO A SELECTION. There are no modifiers on a touch screen, so
+// `Multiple` means what CHOICE_MODE_MULTIPLE already means on the widget: the
+// tap TOGGLES that row. Android has toggled its own checked state by the time
+// `onItemClick` arrives, so the model toggling too is what keeps the two
+// agreeing — and before this the model kept one position, so a list armed with
+// CHOICE_MODE_MULTIPLE showed four checkmarks facet could not see.
+fn tapped_selection(cur: *vocab::IndexList, at: i64, multi: bool) -> vocab::IndexList {
+    var out: vocab::IndexList = vocab::IndexList::new();
+    if at < (0 as i64) { return out; }
+    if !multi || cur == (0 as *vocab::IndexList) {
+        let _a: status::Status = out.add(at as usize);
+        return out;
+    }
+    let n: usize = { (*cur).count() };
+    var i: usize = 0 as usize;
+    var held: bool = false;
+    while i < n {
+        let k: i64 = { (*cur).at(i) };
+        if k == at { held = true; }
+        else { let _b: status::Status = out.add(k as usize); }
+        i = i +% (1 as usize);
+    }
+    if !held { let _c: status::Status = out.add(at as usize); }
+    return out;
+}
+
+// The same for a tree, whose selection is ids.
+fn tapped_ids(cur: *vocab::TextList, id: str, multi: bool) -> vocab::TextList {
+    var out: vocab::TextList = vocab::TextList::new();
+    if id == "" { return out; }
+    if !multi || cur == (0 as *vocab::TextList) {
+        let _a: status::Status = out.add(id);
+        return out;
+    }
+    let n: usize = { (*cur).count() };
+    var i: usize = 0 as usize;
+    var held: bool = false;
+    while i < n {
+        let k: str = { (*cur).at(i) };
+        if k == id { held = true; }
+        else { let _b: status::Status = out.add(k); }
+        i = i +% (1 as usize);
+    }
+    if !held { let _c: status::Status = out.add(id); }
+    return out;
+}
+
 fn tree_row_tapped(n: *core::Node, position: i32) {
     let p: *tree::TreeProps = tree_props(n);
     if p == (0 as *tree::TreeProps) { return; }
@@ -1060,7 +1146,8 @@ fn tree_row_tapped(n: *core::Node, position: i32) {
                 toggle(p, n, node);
                 return;
             }
-            { (*p).selected = text::from_str({ (*node).id_of() }) };
+            tree::note_selection(p, tapped_ids(#addr_of((*p).selection),
+                { (*node).id_of() }, multi_mode({ (*p).selection_mode })));
             core::touch(n, tree::P_SELECTED);
             let f: fn(*tree::TreeNode, *u8) = { (*p).on_select };
             if f != tree::no_select { f(node, select_ctx(p)); }
@@ -1791,6 +1878,7 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
         let _k: *u8 = alv.into_raw();
     }
     if (dirty & collection::P_SELECTED_INDEX) != (0 as u64) {
+        check_rows(env, v, #addr_of((*p).selection));
         let idx: i64 = { (*p).selected_index };
         if idx >= (0 as i64) {
             var av: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(v));
