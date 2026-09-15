@@ -1525,7 +1525,22 @@ fn generate_inner(
             }
         }
     }
+    // A library is archived one object per MODULE (`split.rs`), and the
+    // partition needs to know which module each definition came from. The
+    // symbol name says so for `<pkg>.src.<module>.<item>` and says nothing for
+    // the rest — a blessed `impl f32` method is `f32.sqrt`, an `export extern
+    // fn` is its bare C name — so each item is preceded by a comment naming its
+    // file. A comment, so nothing else has to know: prune and the DWARF pass
+    // read `define` lines only.
+    let mut last_home: Option<&str> = None;
     for item in &program.items {
+        if is_lib {
+            let home = item.origin_file.as_deref();
+            if home != last_home {
+                crate::split::write_home_marker(&mut out, home);
+                last_home = home;
+            }
+        }
         match &item.kind {
             ItemKind::Function(f) => {
                 // Test driver replaces the user's `main`. Other functions go
@@ -1633,6 +1648,10 @@ fn generate_inner(
                 ));
             }
         }
+    }
+    // Everything from here down is compiler-synthesized and has no home.
+    if is_lib {
+        crate::split::write_home_marker(&mut out, None);
     }
     if let Some(cfg) = test_cfg {
         emit_test_driver_main(&mut out, &md, cfg.tests, cfg.json);
@@ -2287,6 +2306,30 @@ struct TypeTable {
     /// v0.0.28: keyed by (builtin type name, method name). See sema's
     /// `builtin_impl_target` — the same set, routed the same way.
     builtin_methods: HashMap<(String, String), MethodInfo>,
+    /// WHAT `Self` MEANS RIGHT HERE — the target of the `impl` block being
+    /// walked, or `None` outside one.
+    ///
+    /// Sema resolves `Self` through its own `self_type_stack` and gets this
+    /// right; codegen re-derives every type by name (the id-universe rule) and
+    /// had no answer for the magic one, so it produced `Ty::Error` and the
+    /// `llvm_ty` assertion fired — "codegen reached Ty::Error — sema should
+    /// have rejected the program", for a program sema had correctly accepted.
+    ///
+    /// Set here rather than at the call sites because `ty_from` is reached from
+    /// 35 of them — signatures, bodies, casts, turbofish — and fixing the
+    /// RESOLVER cannot miss one, where fixing callers can and would leave the
+    /// same panic behind a rarer spelling.
+    self_ty: std::cell::RefCell<Option<Ty>>,
+}
+
+/// Run `f` with `Self` bound to `ty`, restoring whatever was bound before.
+/// Impl blocks do not nest, but restoring rather than clearing costs nothing
+/// and keeps this honest if they ever do.
+fn with_self_ty<R>(types: &TypeTable, ty: Option<Ty>, f: impl FnOnce() -> R) -> R {
+    let prev = types.self_ty.replace(ty);
+    let out = f();
+    types.self_ty.replace(prev);
+    out
 }
 
 impl crate::sema::TypeShape for TypeTable {
@@ -2822,6 +2865,15 @@ fn collect_types(
         let ItemKind::Impl(b) = &item.kind else {
             continue;
         };
+        // WHAT `Self` MEANS FOR THIS BLOCK, for the whole of it — see
+        // `TypeTable.self_ty`. Bound before any type in the block is resolved,
+        // because a method SIGNATURE can name it as readily as a body can.
+        let block_self: Option<Ty> = t
+            .enum_by_name
+            .get(&b.target.name)
+            .map(|&e| Ty::Enum(e))
+            .or_else(|| t.struct_by_name.get(&b.target.name).map(|&sid| Ty::Struct(sid)));
+        let _self_guard = t.self_ty.replace(block_self);
         // v0.0.5 Phase 2C: route enum impls to enum_defs's method table.
         if let Some(&enum_id) = t.enum_by_name.get(&b.target.name) {
             for m in &b.methods {
@@ -4816,6 +4868,14 @@ fn write_struct_decls(out: &mut String, types: &TypeTable, _p: &Program) {
 
 fn ty_from(t: &Type, types: &TypeTable) -> Ty {
     let name = match &t.kind {
+        // `Self` is the impl target — see `TypeTable.self_ty`. The parser
+        // spells both `This` and `Self` as this one path name.
+        TypeKind::Path(n) if n == "Self" => {
+            if let Some(ty) = types.self_ty.borrow().clone() {
+                return ty;
+            }
+            return Ty::Error;
+        }
         TypeKind::Path(n) => n,
         TypeKind::Array { elem, len, .. } => {
             let elem_ty = ty_from(elem, types);
@@ -21354,6 +21414,53 @@ fn sanitize(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    // ---- `Self` / `This` is the impl target -------------------------------
+
+    /// `bugs/self-in-an-impl-body-panics-the-compiler.md`. The magic self-type
+    /// resolved through sema's `self_type_stack` and NOWHERE in codegen, which
+    /// re-derives every type by name (the id-universe rule). It produced
+    /// `Ty::Error`, and `llvm_ty` asserted on it — "codegen reached Ty::Error —
+    /// sema should have rejected the program", for a program sema had accepted
+    /// and stored a correct `Struct(..)` signature for.
+    ///
+    /// An unknown type errored CLEANLY (E0303) and the self-type crashed, which
+    /// is the wrong way round: the crash was not a type that does not exist but
+    /// one the compiler half-knew.
+    #[test]
+    fn the_self_type_resolves_to_the_impl_target_in_every_position() {
+        // Return position — what a CHAINING setter needs, and the reason this
+        // was found: facet's hand-written cursors cannot share a verb band
+        // without it.
+        let ir = gen_src(
+            "struct P { v: i32 }\n             impl P { fn chain(this) -> This { return this; } fn n(this) -> i32 { return this.v; } }\n             fn main() -> i32 { let p: P = P { v: 7 }; return p.chain().n(); }",
+        );
+        assert!(ir.contains("@P.chain"), "the method must be emitted:\n{ir}");
+
+        // Parameter position.
+        let ir = gen_src(
+            "struct P { v: i32 }\n             impl P { fn add(this, other: This) -> i32 { return this.v + other.v; } }\n             fn main() -> i32 { let a: P = P { v: 3 }; let b: P = P { v: 4 }; return a.add(b); }",
+        );
+        assert!(ir.contains("@P.add"), "the method must be emitted:\n{ir}");
+
+        // Local-binding position, which is reached from a different `ty_from`
+        // call site than either of the above — the reason the fix is in the
+        // RESOLVER and not at the callers.
+        let ir = gen_src(
+            "struct P { v: i32 }\n             impl P { fn twin(this) -> i32 { let t: This = this; return t.v; } }\n             fn main() -> i32 { let a: P = P { v: 5 }; return a.twin(); }",
+        );
+        assert!(ir.contains("@P.twin"), "the method must be emitted:\n{ir}");
+    }
+
+    /// An ENUM impl binds it too — the same block walk answers for both, and
+    /// getting only structs would leave the identical panic behind an enum.
+    #[test]
+    fn the_self_type_resolves_inside_an_enum_impl() {
+        let ir = gen_src(
+            "enum E { A, B }\n             impl E { fn same(this) -> This { return this; } }\n             fn main() -> i32 { let e: E = E::A; let f: E = e.same();               return match f { E::A => 9, E::B => 1 }; }",
+        );
+        assert!(ir.contains("@E.same"), "the method must be emitted:\n{ir}");
+    }
 
     // ---- body-less declarations emit `declare`, never `define` ----
 
