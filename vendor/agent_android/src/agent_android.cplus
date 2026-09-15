@@ -25,6 +25,7 @@ import "facet_android/controls" as controls;
 import "facet_android/recycler" as recycler;
 import "facet_android/mainthread" as mainthread;
 import "facet/tree" as tree;
+import "facet/relist" as frelist;
 
 // A registry index and the facet node behind it, in step by construction: the
 // walk appends to both together.
@@ -200,6 +201,11 @@ fn walk_rooted(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
 fn walk_rows(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
              n: *core::Node, parent: usize) {
     let kind: u32 = core::kind_of(n);
+    // A RELIST'S ROWS ARE REAL FACET NODES — the one row-source control where
+    // they are — so they need none of the naming below. The application built
+    // them, keyed them and wired them; `walk_rooted` takes each exactly as it
+    // takes anything else, and the row's own key is its address.
+    if kind == frelist::K_RELIST { walk_realised_rows(reg, nodes, n, parent); return; }
     if kind != props::K_LIST && kind != tree::K_TREE { return; }
     var rows: vec::Vec[recycler::RealisedRow] = recycler::realised_rows(n);
     var i: usize = 0 as usize;
@@ -229,6 +235,53 @@ fn walk_rows(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
             option::Option[*recycler::RealisedRow]::None => { }
         }
         i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The realised rows of a relist, IN ROW ORDER.
+//
+// The element keeps them in REALISATION order — scrolling up realises row 4
+// after row 9 — and an agent asking what is on screen wants what the user sees.
+// The order is recovered from `item_index_of`, which the backend stamps on every
+// row it places, by taking the lowest index above the last one taken. Quadratic
+// in the REALISED rows, which are a couple of dozen however long the list is,
+// and it runs when somebody asks rather than per frame.
+fn walk_realised_rows(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
+                      n: *core::Node, parent: usize) {
+    guard let option::Option[frelist::Relist]::Some(h) = frelist::from(n) else { return; };
+    let count: usize = h.realised_count();
+    if count == (0 as usize) { return; }
+    var taken: usize = 0 as usize;
+    var done: usize = 0 as usize;
+    var first: bool = true;
+    while done < count {
+        var best: *core::Node = 0 as *core::Node;
+        var best_at: usize = 0 as usize;
+        var found: bool = false;
+        var i: usize = 0 as usize;
+        while i < count {
+            let row: *core::Node = h.realised_at(i);
+            if row != (0 as *core::Node) {
+                match core::item_index_of(row) {
+                    option::Option[usize]::Some(at) => {
+                        let eligible: bool = first || at > taken;
+                        if eligible && (found == false || at < best_at) {
+                            best = row;
+                            best_at = at;
+                            found = true;
+                        }
+                    }
+                    option::Option[usize]::None => { }
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        if found == false { return; }
+        walk_rooted(reg, nodes, best, parent);
+        taken = best_at;
+        first = false;
+        done = done +% (1 as usize);
     }
     return;
 }

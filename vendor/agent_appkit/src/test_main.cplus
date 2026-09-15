@@ -21,6 +21,8 @@ import "stdlib/io" as io;
 import "objc/synthesis" as synth;
 import "facet/facet" as core;
 import "facet/tree" as ftree;
+import "facet/relist" as frelist;
+import "facet/obs_vec" as obs_vec;
 import "facet/application" as app;
 import "stdlib/thread" as thread;   // the off-main invoke_menu regression below needs a real second thread
 import "./agent_appkit" as agent;
@@ -2234,4 +2236,97 @@ fn a_node_that_is_not_a_cell_host_keeps_its_interior_private() {
     assert has_id(nodes, "plainbox");
     assert has_id(nodes, "row:one") == false;
     assert has_id(nodes, "row:two") == false;
+}
+
+// ---- a relist's rows on the surface -------------------------------------------
+
+struct AgEntry { n: i32 }
+
+fn ag_row(i: usize, ctx: *u8) -> core::Node {
+    return core::column(core::Builder::new());
+}
+
+#[test]
+fn a_relists_realised_rows_are_on_the_surface_in_row_order() {
+    app::reset_default_for_tests();
+    // THE CAPABILITY THE CELL WALK COULD ONLY APPROXIMATE. A relist's rows are
+    // real facet nodes with the application's own keys, so the walk takes them
+    // as it takes anything else — no native view walk, no stamped identifier.
+    //
+    // They are realised OUT OF ROW ORDER here, which is what scrolling upwards
+    // does, and the surface still reads top to bottom.
+    let win = fixture_window(300.0, 200.0);
+    let content = content_of(win);
+
+    var rows: obs_vec::ObsVec[AgEntry] = obs_vec::ObsVec[AgEntry]::new();
+    let _e: status::Status = rows.append(AgEntry { n: 1 });
+
+    let lv = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 160.0 });
+    content.add_subview(lv);
+
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    core::set_view(#addr_of(root), content.raw(), noop_release);
+    var list_node: core::Node = frelist::relist(rows, key: "inbox", builder: ag_row);
+    core::set_view(#addr_of(list_node), lv.raw(), noop_release);
+    let _c: status::Status = root.add_child(list_node);
+
+    // The node MOVED into the tree, so the realised set has to be recorded
+    // against the address it lives at now.
+    guard let option::Option[*core::Node]::Some(lp) = core::find_in(#addr_of(root), "inbox") else {
+        assert false;
+        return;
+    };
+
+    let b9 = add_button(content, "nine");
+    let b4 = add_button(content, "four");
+    var r9: core::Node = keyed("mail:9", b9.as_view().raw());
+    var r4: core::Node = keyed("mail:4", b4.as_view().raw());
+    core::set_item_index(#addr_of(r9), 9 as usize);
+    core::set_item_index(#addr_of(r4), 4 as usize);
+    frelist::note_realised(lp, #addr_of(r9));
+    frelist::note_realised(lp, #addr_of(r4));
+
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+
+    // window + root + inbox + the two rows.
+    assert nodes.count() == 5;
+    match nodes.at_ptr(2) {
+        option::Option[*agent::AppKitNode]::Some(x) => { assert { (*x).id.view() } == "inbox"; }
+        option::Option::None => { assert false; }
+    }
+    // ROW ORDER, not realisation order: 4 before 9.
+    match nodes.at_ptr(3) {
+        option::Option[*agent::AppKitNode]::Some(x) => { assert { (*x).id.view() } == "mail:4"; }
+        option::Option::None => { assert false; }
+    }
+    match nodes.at_ptr(4) {
+        option::Option[*agent::AppKitNode]::Some(x) => { assert { (*x).id.view() } == "mail:9"; }
+        option::Option::None => { assert false; }
+    }
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn a_relist_with_nothing_realised_is_a_node_with_no_rows() {
+    app::reset_default_for_tests();
+    // The empty case is not a trap, and the list itself is still on the surface
+    // — a list an agent can see and has not yet entered.
+    let win = fixture_window(300.0, 200.0);
+    let content = content_of(win);
+    var rows: obs_vec::ObsVec[AgEntry] = obs_vec::ObsVec[AgEntry]::new();
+    let lv = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 160.0 });
+    content.add_subview(lv);
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    core::set_view(#addr_of(root), content.raw(), noop_release);
+    var list_node: core::Node = frelist::relist(rows, key: "empty", builder: ag_row);
+    core::set_view(#addr_of(list_node), lv.raw(), noop_release);
+    let _c: status::Status = root.add_child(list_node);
+
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    assert nodes.count() == 3;
+    app::reset_default_for_tests();
 }

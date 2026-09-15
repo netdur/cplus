@@ -30,6 +30,7 @@ import "objc/bridge" as bridge;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/tree" as ftree;
+import "facet/relist" as frelist;
 import "facet/application" as app;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
@@ -1269,6 +1270,63 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             option::Option[*core::Node]::None => { }
         }
         i = i +% 1;
+    }
+    // A RELIST'S ROWS ARE REAL FACET NODES — the one row-source control where
+    // they are, and the reason it gets this instead of the view walk above.
+    //
+    // A row is built by the application, keyed by the application, and carries
+    // the application's own gestures; it is simply not a CHILD, because it is
+    // realised into a cell the backend owns. So the agent walks the realised
+    // rows exactly as it walks anything else and gets real keys, real roles and
+    // real handlers — where the cell walk can only offer whatever the native
+    // views happen to expose.
+    walk_realised_rows(reg, views, n, me);
+}
+
+// The realised rows of a relist, IN ROW ORDER.
+//
+// The element keeps them in REALISATION order — scrolling up realises row 4
+// after row 9 — and an agent asking what is on screen wants what the user sees.
+// The order is recovered from `item_index_of`, which the backend stamps on every
+// row it places, by taking the lowest index above the last one taken. That is
+// quadratic in the number of REALISED rows, which is a couple of dozen however
+// long the list is, and it runs when somebody asks rather than per frame.
+fn walk_realised_rows(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
+                      n: *core::Node, me: usize) {
+    guard let option::Option[frelist::Relist]::Some(h) = frelist::from(n) else { return; };
+    let count: usize = h.realised_count();
+    if count == (0 as usize) { return; }
+    var taken: usize = 0 as usize;
+    // `done` is the count of rows walked, so a row with no index cannot spin.
+    var done: usize = 0 as usize;
+    var first: bool = true;
+    while done < count {
+        var best: *core::Node = 0 as *core::Node;
+        var best_at: usize = 0 as usize;
+        var found: bool = false;
+        var i: usize = 0 as usize;
+        while i < count {
+            let row: *core::Node = h.realised_at(i);
+            if row.is_not_null() {
+                match core::item_index_of(row) {
+                    option::Option[usize]::Some(at) => {
+                        let eligible: bool = first || at > taken;
+                        if eligible && (found == false || at < best_at) {
+                            best = row;
+                            best_at = at;
+                            found = true;
+                        }
+                    }
+                    option::Option[usize]::None => { }
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        if found == false { return; }
+        walk_facet(reg, views, best, me);
+        taken = best_at;
+        first = false;
+        done = done +% (1 as usize);
     }
 }
 
