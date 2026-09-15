@@ -1795,7 +1795,7 @@ fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
         };
         if !selectable {
             { (*s).selected = (0 as i64) -% (1 as i64) };
-            write_selected(n, (0 as i64) -% (1 as i64));
+            write_selection(n, vocab::IndexList::new());
             let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
         }
     }
@@ -1990,7 +1990,18 @@ fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
     // facet_gtk records the same rule and notes that AppKit never had the
     // problem, because `outlineViewSelectionDidChange:` is not posted for a
     // click on the selected row. This backend used to fire every time.
-    let already: bool = src.selected_index == data;
+    let multi: bool = match mode {
+        vocab::SelectionMode::Multiple => true,
+        vocab::SelectionMode::Single => false,
+        vocab::SelectionMode::None => false,
+    };
+    let cur: *vocab::IndexList = selection_of(n);
+    let next: vocab::IndexList = selection_after_click(cur, src.selected_index, data, multi);
+    // A CLICK THAT LANDS ON THE SAME SELECTION CHANGED NOTHING — the rule this
+    // backend already had for one row, asked of a set. A ctrl-click that takes
+    // the last selected row OFF is a change, which asking about the row alone
+    // could not see.
+    let already: bool = same_selection(cur, #addr_of(next));
     { (*s).selected = index as i64 };
     // THE SELECTION IS WRITTEN BACK THROUGH THE REAL PROPS, not through the
     // resolved copy — `SeqSource` is a snapshot for reading and writing to it
@@ -1998,7 +2009,7 @@ fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
     // THE APPLICATION IS TOLD THE DATA INDEX. `selected_index` is a position in
     // its own sequence; handing it a display index would name a different row
     // in any grouped list, and the wrong one by a growing margin.
-    write_selected(n, data);
+    write_selection(n, next);
     if already { return true; }
     let h: fn(*u8, *u8) = src.on_item_selected;
     if h == props::no_handler { return false; }
@@ -2410,7 +2421,33 @@ fn on_tree_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
     let item: *ftree::TreeNode = tree_node_at(s, index);
     if item == (0 as *ftree::TreeNode) { return false; }
     { (*s).selected = index as i64 };
-    { (*p).selected = { (*item).id }.clone() };
+    // CTRL-CLICK TOGGLES in `Multiple`. No shift-RANGE: a range needs row order
+    // and a tree is addressed by identity, so extending one would mean
+    // flattening the open rows at click time to turn two ids into a span. The
+    // same line facet_gtk draws, and for the same reason.
+    let id: str = { { (*item).id }.view() };
+    let multi: bool = match { (*p).selection_mode } {
+        vocab::SelectionMode::Multiple => true,
+        vocab::SelectionMode::Single => false,
+        vocab::SelectionMode::None => false,
+    };
+    var next: vocab::TextList = vocab::TextList::new();
+    if multi && holding_control() {
+        let cur: *vocab::TextList = #addr_of((*p).selection);
+        let cn: usize = { (*cur).count() };
+        var i: usize = 0 as usize;
+        var held: bool = false;
+        while i < cn {
+            let k: str = { (*cur).at(i) };
+            if k == id { held = true; }
+            else { let _a: status::Status = next.add(k); }
+            i = i +% (1 as usize);
+        }
+        if !held { let _b: status::Status = next.add(id); }
+    } else {
+        if id != "" { let _c: status::Status = next.add(id); }
+    }
+    ftree::note_selection(p, next);
     let f: fn(*ftree::TreeNode, *u8) = { (*p).on_select };
     if f == ftree::no_select { return false; }
     f(item, { (*p).on_select_ctx });
@@ -2479,6 +2516,107 @@ fn scroll_by(v: *u8, n: *core::Node, lines: f64) -> bool {
 // Write the selection back into whichever props struct the kind really has.
 // The counterpart to `source_of`, and separate for the same reason: there is no
 // shared layout to cast to.
+// THE MODIFIERS OF THE CLICK BEING HANDLED.
+//
+// A row's click arrives as WM_COMMAND/BN_CLICKED, which carries no modifier
+// state — so the keyboard is asked directly. `GetKeyState` answers for the
+// message being processed rather than for right now, which is exactly the
+// question: it reads the state as of the message the queue is on.
+//
+// VK_SHIFT is 0x10 and VK_CONTROL 0x11; the high bit of the answer means down.
+// DID THE SET MOVE. Order counts: the first element is `selected_index`.
+fn same_selection(a: *vocab::IndexList, b: *vocab::IndexList) -> bool {
+    if a == (0 as *vocab::IndexList) || b == (0 as *vocab::IndexList) { return false; }
+    let n: usize = { (*a).count() };
+    if n != { (*b).count() } { return false; }
+    var i: usize = 0 as usize;
+    while i < n {
+        if { (*a).at(i) } != { (*b).at(i) } { return false; }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+fn key_down(vk: i32) -> bool {
+    let st: i16 = { u::GetKeyState(vk) };
+    let hi: i16 = (1 as i16) << (15 as i16);
+    return (st & hi) != (0 as i16);
+}
+
+fn holding_shift() -> bool { return key_down(16 as i32); }
+fn holding_control() -> bool { return key_down(17 as i32); }
+
+// WHAT A CLICK DOES TO A SELECTION, which before this was always "replace it
+// with this row" — so `Multiple` behaved exactly like `Single`. The desktop
+// rules, the same three facet_gtk and facet_appkit's collection implement, with
+// the anchor being the FIRST row of the current selection.
+fn selection_after_click(cur: *vocab::IndexList, anchor: i64, data: i64,
+                         multi: bool) -> vocab::IndexList {
+    var out: vocab::IndexList = vocab::IndexList::new();
+    if !multi || cur == (0 as *vocab::IndexList) {
+        let _a: status::Status = out.add(data as usize);
+        return out;
+    }
+    if holding_control() {
+        let n: usize = { (*cur).count() };
+        var i: usize = 0 as usize;
+        var held: bool = false;
+        while i < n {
+            let k: i64 = { (*cur).at(i) };
+            if k == data { held = true; }
+            else { let _a: status::Status = out.add(k as usize); }
+            i = i +% (1 as usize);
+        }
+        if !held { let _b: status::Status = out.add(data as usize); }
+        return out;
+    }
+    if holding_shift() {
+        var lo: i64 = anchor;
+        if lo < (0 as i64) { lo = data; }
+        var hi: i64 = data;
+        if lo > hi { let t: i64 = lo; lo = hi; hi = t; }
+        var k: i64 = lo;
+        while k <= hi {
+            let _a: status::Status = out.add(k as usize);
+            k = k +% (1 as i64);
+        }
+        return out;
+    }
+    let _c: status::Status = out.add(data as usize);
+    return out;
+}
+
+// The selection a sequence node holds, whichever of the two kinds it is.
+fn selection_of(n: *core::Node) -> *vocab::IndexList {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *vocab::IndexList; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return 0 as *vocab::IndexList; }
+    let k: u32 = { (*d).kind };
+    if k == props::K_LIST {
+        return #addr_of((*(raw as *props::ListProps)).selection);
+    }
+    if k == props::K_COLLECTION {
+        return #addr_of((*(raw as *props::CollectionProps)).selection);
+    }
+    return 0 as *vocab::IndexList;
+}
+
+// EVERY selected row, written through the real props — the plural half of
+// `write_selected`, and both halves move together inside `note_selection`.
+fn write_selection(n: *core::Node, take sel: vocab::IndexList) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let k: u32 = { (*d).kind };
+    if k == props::K_LIST { flist::note_selection(raw as *props::ListProps, sel); return; }
+    if k == props::K_COLLECTION {
+        fcollection::note_selection(raw as *props::CollectionProps, sel);
+    }
+    return;
+}
+
 fn write_selected(n: *core::Node, index: i64) {
     let d: *core::Data = core::node_data(n);
     if d == (0 as *core::Data) { return; }
