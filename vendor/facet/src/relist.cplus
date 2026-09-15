@@ -32,11 +32,14 @@
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/box" as box;
+import "stdlib/vec" as vec;
 import "flex_layout/flex_layout" as flex;
 import "events/events" as events;
 import "./facet" as core;
 import "./mount" as mount;
 import "./obs_vec" as obs_vec;
+import "./band" as band;
+import "./vocabulary" as vocab;
 
 // The next free hand-written kind. symbol 1000, tree 1001, split 1002,
 // window_buttons 1003, text_button 1004.
@@ -48,6 +51,22 @@ const K_RELIST: u32 = 1005u32;
 const P_ROWS: u64 = 1u64;
 // The builder was replaced. Every row has to be built again.
 const P_BUILDER: u64 = 2u64;
+// HOW MANY COLUMNS a line holds. One is a list, which is the default and what
+// every existing call site means.
+const P_COLUMNS: u64 = 8u64;
+
+// Bring a row into view. A COMMAND, not a state: it is consumed by the apply
+// that carries it out and the index goes back to -1, so a later unrelated
+// write does not scroll the list a second time.
+const P_SCROLL_TO: u64 = 4u64;
+
+// Zero and one both mean a single column, which is a list — the same reading
+// `collection`'s own column verb gives zero, and the same reading the contract
+// gives every numeric zero: "not asked for".
+fn _at_least_one(v: usize) -> usize {
+    if v < (1 as usize) { return 1 as usize; }
+    return v;
+}
 
 fn no_builder(index: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); }
 
@@ -100,6 +119,41 @@ struct RelistProps {
     // is stored rather than detached: a listener that outlives the props reads
     // `ctx` as a freed pointer on the next append.
     sub: events::SignalSubscription[obs_vec::Change],
+    // THE ROWS THAT EXIST RIGHT NOW — the realised set, which is what makes a
+    // row findable.
+    //
+    // A row is built, realised into a cell the backend owns, and held there. It
+    // is never a child of this node, so `core::find_in` walking `child_ptr`
+    // cannot reach it — see `core::Data.rows_probe`. This is the set it asks
+    // instead, and the element keeps it because the element outlives every
+    // backend that fills it.
+    //
+    // BORROWED, every one. The cell owns the row and frees it; an entry here is
+    // a pointer to a node somebody else's teardown will drop, which is why
+    // `note_released` has to be called from the one place that drops it. A
+    // pointer left here after its node died is a freed node handed to `find`.
+    //
+    // Unordered: it is scanned, not indexed, and a list holds ~25 realised rows
+    // however many the collection has. `swap_remove` is therefore fine and O(1).
+    live: vec::Vec[*core::Node],
+    // WHICH ROW TO BRING INTO VIEW, or -1 for none. Consumed by the apply.
+    scroll_to_index: i64,
+    // HOW MANY COLUMNS A LINE HOLDS. One is a list.
+    //
+    // ON THE ELEMENT, AND THAT NEEDS A REASON, because almost nothing else is.
+    // Selection, headers, sections and an empty state are all the application's
+    // — its own state plus a gesture, or a row the builder chooses to build —
+    // and they stay out. The test that separates them is whether the RECYCLER
+    // needs the fact to place a cell. It does here: a cell's frame is its share
+    // of a line, and nothing outside the recycler can supply that after the
+    // fact. `uneven_rows` passes the same test; almost nothing else does.
+    //
+    // ZERO IS NOT AUTO-FIT. `collection` overloads zero to mean "let the
+    // laid-out grid decide", which it can because a collection states an item
+    // width to divide by. A relist row has no stated width, so there is nothing
+    // to compute from — zero would be a promise with no mechanism. It is
+    // normalised to one instead, which is what `columns()` answers.
+    columns: usize,
 }
 
 impl RelistProps {
@@ -114,6 +168,9 @@ impl RelistProps {
             has_pending: false,
             uneven_rows: false,
             sub: events::SignalSubscription[obs_vec::Change]::none(),
+            live: vec::new::[*core::Node](),
+            scroll_to_index: -1 as i64,
+            columns: 1 as usize,
         };
     }
 }
@@ -196,6 +253,121 @@ fn _on_change(c: obs_vec::Change, ctx: *u8) {
     return;
 }
 
+// ---- the realised set --------------------------------------------------------
+//
+// THE ONE THING A KEYED ROW WAS MISSING. The key was always there — the
+// application writes `hstack(key: entry.id)` and the backend already reads it,
+// as the identity a measured height is cached under. What it did not buy was
+// `find`, because a realised row is not in any tree facet owns and the depth-
+// first walk had no path to it.
+//
+// So the element holds the rows that exist, a backend tells it when one lands
+// in a cell and when one leaves, and `core::find_in` asks. Two calls from a
+// backend, and every one of them gets `find` on a row.
+//
+// ONLY REALISED ROWS, and that is the whole contract. A list of ten thousand
+// holds twenty-five nodes; the other 9,975 rows have no node to find and asking
+// for one would mean building it, which is the cost the recycler exists to
+// avoid. `scroll_to` is how a row is made real.
+
+fn _live_index(p: *RelistProps, row: *core::Node) -> i64 {
+    var i: usize = 0 as usize;
+    let n: usize = { (*p).live.count() };
+    while i < n {
+        match { (*p).live.at(i) } {
+            option::Option[*core::Node]::Some(e) => {
+                if e == row { return i as i64; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return -1 as i64;
+}
+
+// A ROW HAS LANDED IN A CELL. Called by the backend that realised it, with the
+// list's own node — `RowSource.node` on AppKit — and the row's root.
+//
+// Idempotent. A cell refilled with the row it already held is the ordinary
+// case, and recording it twice would leave one entry behind when it is released
+// once — a pointer to a freed node, which is the worst thing this set can hold.
+fn note_realised(n: *core::Node, row: *core::Node) {
+    if row.is_null() { return; }
+    let p: *RelistProps = props_of(n);
+    if p.is_null() { return; }
+    if _live_index(p, row) >= (0 as i64) { return; }
+    let _a: status::Status = { (*p).live.append(row) };
+    return;
+}
+
+// A ROW IS ABOUT TO BE FREED. Called from the ONE place a backend drops a row
+// node, before the drop — after it, the pointer this removes is already the
+// freed one it exists to keep out.
+//
+// Removing something that is not here is not an error: a measure cell holds a
+// row that was never shown, and it goes through the same teardown.
+fn note_released(n: *core::Node, row: *core::Node) {
+    if row.is_null() { return; }
+    let p: *RelistProps = props_of(n);
+    if p.is_null() { return; }
+    let at: i64 = _live_index(p, row);
+    if at < (0 as i64) { return; }
+    // ORDER-PRESERVING, and that is load-bearing rather than tidiness: the probe
+    // reads this set BACKWARDS so the newest row wins, and `swap_remove` would
+    // move an old entry to the end and make it look like the newest. A list
+    // holds a few dozen realised rows, so the shift costs nothing against the
+    // cost of building one.
+    let _gone: option::Option[*core::Node] = { (*p).live.remove(at: at as usize) };
+    return;
+}
+
+// EVERY ROW IS GONE. A reload tears down every cell, and a backend that does it
+// wholesale says so here rather than calling `note_released` per row.
+fn note_all_released(n: *core::Node) {
+    let p: *RelistProps = props_of(n);
+    if p.is_null() { return; }
+    { (*p).live.remove_all() };
+    return;
+}
+
+// WHAT `core::find_in` ASKS. The row is searched, not just compared: a row root
+// built as `@ui { hstack(key: id) { .. } }` is a WRAPPER whose child carries the
+// key, and a control inside a row can carry one of its own. Recursing is what
+// makes both work, and it costs nothing — a row is a handful of nodes.
+//
+// NEWEST FIRST. Two live cells CAN hold rows carrying the same key — measured,
+// by vending the same row twice without the first being recycled — and the one
+// to answer with is the one realised LAST, because it is the one the list is
+// showing. Scanning forwards answered the stale row, whose views may already be
+// gone. The set is kept in realisation order for exactly this, which is why the
+// removal in `note_released` is order-preserving.
+fn _rows_probe(n: *core::Node, key: str) -> *core::Node {
+    let p: *RelistProps = props_of(n);
+    if p.is_null() { return 0 as *core::Node; }
+    var i: usize = { (*p).live.count() };
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        match { (*p).live.at(i) } {
+            option::Option[*core::Node]::Some(row) => {
+                match core::find_in(row, key) {
+                    option::Option[*core::Node]::Some(hit) => { return hit; }
+                    option::Option[*core::Node]::None => { }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+    }
+    return 0 as *core::Node;
+}
+
+// The node, with the probe already on it. Both construction paths go through
+// here so a relist can never exist without answering for its own rows.
+fn _node(key: str, pp: *u8) -> core::Node {
+    var n: core::Node = core::node_with(key, K_RELIST, pp, release_relist_props);
+    core::set_rows_probe(#addr_of(n), _rows_probe);
+    return n;
+}
+
 // ---- the element -------------------------------------------------------------
 
 fn relist[T](
@@ -204,6 +376,7 @@ fn relist[T](
     builder: fn(usize, *u8) -> flex::Node = no_builder,
     builder_ctx: *u8 = 0 as *u8,
     uneven_rows: bool = false,
+    columns: usize = 1 as usize,
 ) -> core::Node {
     var p: RelistProps = RelistProps::new();
     p.rows = { #addr_of(rows) as *u8 };
@@ -211,6 +384,7 @@ fn relist[T](
     p.builder = builder;
     p.builder_ctx = builder_ctx;
     p.uneven_rows = uneven_rows;
+    p.columns = _at_least_one(columns);
     return match box::new::[RelistProps](p) {
         option::Option[box::Box[RelistProps]]::Some(b) => {
             let pp: *RelistProps = { b.into_raw() } as *RelistProps;
@@ -223,10 +397,9 @@ fn relist[T](
             if sig.is_not_null() {
                 { (*pp).sub = { (*sig).on(_on_change, pp as *u8) } };
             }
-            core::node_with(key, K_RELIST, pp as *u8, release_relist_props)
+            _node(key, pp as *u8)
         }
-        option::Option[box::Box[RelistProps]]::None =>
-            core::node_with(key, K_RELIST, 0 as *u8, release_relist_props),
+        option::Option[box::Box[RelistProps]]::None => _node(key, 0 as *u8),
     };
 }
 
@@ -305,6 +478,83 @@ impl Relist {
         return this;
     }
 
+    // BRING ROW `at` INTO VIEW.
+    //
+    // The companion to `find`, and the reason "only realised rows can be found"
+    // is a contract rather than a shortfall: a row nothing has scrolled to has
+    // no node, and this is how one is made. Scroll to it, and the pass that
+    // carries it out realises it on the way.
+    //
+    // BY INDEX AND NOT BY KEY. A key would have to be resolved against the
+    // collection, and the element cannot read one out of it — `ObsVec[T]` holds
+    // the application's own `T` and the element has erased it. The application
+    // can: it owns the collection and already maps its own ids onto positions.
+    // Asking facet to do it would mean building every row to read its key,
+    // which is the cost a recycler exists to avoid.
+    fn scroll_to(this, at: usize) -> Relist {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return this; }
+        { (*p).scroll_to_index = at as i64 };
+        core::touch(this._p, P_SCROLL_TO);
+        return this;
+    }
+
+    // The backend's half: which row to bring into view, and -1 once it has been
+    // taken. Consumed rather than read, for the reason `take_pending` is — a
+    // command carried out twice is a list that scrolls when nothing asked it to.
+    fn take_scroll_to(this) -> i64 {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return -1 as i64; }
+        let at: i64 = { (*p).scroll_to_index };
+        { (*p).scroll_to_index = -1 as i64 };
+        return at;
+    }
+
+    // THE i-TH REALISED ROW, in REALISATION order — which is not row order. A
+    // caller that wants the rows as the user sees them reads
+    // `core::item_index_of` off each and orders by that; the agent walk does.
+    //
+    // Keeping this set sorted by row instead would put an insertion sort in the
+    // vend path, which runs per row per scroll frame, to serve a reader that
+    // runs when somebody asks what is on screen.
+    fn realised_at(this, i: usize) -> *core::Node {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return 0 as *core::Node; }
+        return match { (*p).live.at(i) } {
+            option::Option[*core::Node]::Some(row) => row,
+            option::Option[*core::Node]::None => 0 as *core::Node,
+        };
+    }
+
+    // HOW MANY ROWS EXIST RIGHT NOW — not how many the collection holds.
+    //
+    // The suite's way to state the difference, and an application's way to see
+    // it: a relist over ten thousand entries answers 25 here, and `find`
+    // resolves a key only while its row is among them.
+    fn realised_count(this) -> usize {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return 0 as usize; }
+        return { (*p).live.count() };
+    }
+
+    // HOW MANY COLUMNS A LINE HOLDS, never less than one — see the field.
+    fn columns(this) -> usize {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return 1 as usize; }
+        return _at_least_one({ (*p).columns });
+    }
+
+    // REGRID. The cells are the same rows in a different arrangement, so this
+    // is a layout change rather than a change to the sequence — no row is
+    // rebuilt on the backends that can answer it without one.
+    fn set_columns(this, v: usize) -> Relist {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return this; }
+        { (*p).columns = _at_least_one(v) };
+        core::touch(this._p, P_COLUMNS);
+        return this;
+    }
+
     fn set_uneven_rows(this, v: bool) -> Relist {
         let p: *RelistProps = this._props();
         if p.is_null() { return this; }
@@ -349,6 +599,13 @@ impl Relist {
     }
 }
 
+// THE SHARED BAND — see band.cplus. One line for the 76 verbs every GENERATED
+// cursor carries and every hand-written one lacked.
+impl Relist: band::Band {
+    fn band_node(this) -> *core::Node { return this._p; }
+}
+
+
 fn props_of(p: *core::Node) -> *RelistProps {
     if p.is_null() { return 0 as *RelistProps; }
     let d: *core::Data = { (*p).data() };
@@ -387,6 +644,411 @@ static RL_BUILT: i64 = 0 as i64;
 fn _row(index: usize, ctx: *u8) -> flex::Node {
     RL_BUILT = RL_BUILT + (1 as i64);
     return flex::Node::new();
+}
+
+// A row the way an application builds one: a keyed root with a keyed control
+// inside it. Built by hand here rather than through a builder, because these
+// tests are about the realised SET and not about who filled it.
+fn _keyed_row(id: str, inner: str) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(core::node_with(inner, 0u32, 0 as *u8, _no_release));
+    return core::column(b, key: id);
+}
+
+fn _no_release(p: *u8) { return; }
+
+// What `@ui { .. }` hands a builder back: a WRAPPER whose child 0 is the keyed
+// row. The probe has to see through it, and this is the shape that says so.
+fn _wrapped_row(id: str) -> core::Node {
+    var outer: core::Builder = core::Builder::new();
+    outer.add(_keyed_row(id, "${id}:label"));
+    return core::column(outer, key: "");
+}
+
+#[test]
+fn a_realised_row_is_found_by_its_key() {
+    // THE POINT OF ALL OF THIS. The row is not a child of the list — it never
+    // is — and `find_in` from the list still resolves it, because the list
+    // answers for the rows it has realised.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    var n: core::Node = relist(rows, key: "inbox", builder: _row);
+    let np: *core::Node = #addr_of(n);
+
+    var row: core::Node = _keyed_row("mail:7", "mail:7:subject");
+    let rp: *core::Node = #addr_of(row);
+    // It is NOT a child, and the walk alone cannot see it.
+    assert core::child_count_of(np) == (0 as usize);
+    match core::find_in(np, "mail:7") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+
+    note_realised(np, rp);
+    match core::find_in(np, "mail:7") {
+        option::Option[*core::Node]::Some(hit) => { assert hit == rp; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_key_inside_a_realised_row_is_found_too() {
+    // A row is SEARCHED, not compared. A control inside one carries its own key
+    // and is reachable by it — which is what makes a star button in a row an
+    // ordinary keyed node.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "inbox2", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    var row: core::Node = _keyed_row("mail:8", "mail:8:star");
+    note_realised(np, #addr_of(row));
+
+    match core::find_in(np, "mail:8:star") {
+        option::Option[*core::Node]::Some(hit) => {
+            assert { (*hit).key() } == "mail:8:star";
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_row_built_as_a_ui_block_is_found_through_its_wrapper() {
+    // `@ui { hstack(key: id) { .. } }` evaluates to a wrapper with no key of its
+    // own, so the row's key sits one level in. Recursing is what handles it —
+    // there is no special case for the wrapper anywhere.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "inbox3", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    var row: core::Node = _wrapped_row("mail:9");
+    let rp: *core::Node = #addr_of(row);
+    assert { (*rp).key() } == "";
+
+    note_realised(np, rp);
+    match core::find_in(np, "mail:9") {
+        option::Option[*core::Node]::Some(hit) => {
+            assert hit != rp;
+            assert { (*hit).key() } == "mail:9";
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_released_row_is_not_found() {
+    // THE HALF WITH TEETH. A row that scrolled away is freed by whoever owned
+    // its cell; an entry left behind here would hand `find` a freed node, which
+    // is worse than not finding it at all.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "inbox4", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    var row: core::Node = _keyed_row("mail:10", "mail:10:subject");
+    let rp: *core::Node = #addr_of(row);
+
+    note_realised(np, rp);
+    assert _realised(np) == (1 as usize);
+    note_released(np, rp);
+    assert _realised(np) == (0 as usize);
+    match core::find_in(np, "mail:10") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+}
+
+#[test]
+fn realising_the_same_row_twice_records_it_once() {
+    // A cell refilled with the row it already held is ordinary. Recorded twice,
+    // ONE release would leave a pointer behind — and the node it names is about
+    // to be freed.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "inbox5", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    var row: core::Node = _keyed_row("mail:11", "mail:11:subject");
+    let rp: *core::Node = #addr_of(row);
+
+    note_realised(np, rp);
+    note_realised(np, rp);
+    assert _realised(np) == (1 as usize);
+    note_released(np, rp);
+    assert _realised(np) == (0 as usize);
+    match core::find_in(np, "mail:11") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+}
+
+#[test]
+fn releasing_a_row_that_was_never_realised_changes_nothing() {
+    // The measure cell holds a row that was never shown and is torn down the
+    // same way, so this path is walked in earnest rather than defensively.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "inbox6", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    var shown: core::Node = _keyed_row("mail:12", "mail:12:subject");
+    var measured: core::Node = _keyed_row("mail:13", "mail:13:subject");
+
+    note_realised(np, #addr_of(shown));
+    note_released(np, #addr_of(measured));
+    assert _realised(np) == (1 as usize);
+    match core::find_in(np, "mail:12") {
+        option::Option[*core::Node]::Some(_x) => { }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_reload_releases_every_row_at_once() {
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "inbox7", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    var a: core::Node = _keyed_row("mail:14", "a");
+    var b: core::Node = _keyed_row("mail:15", "b");
+    note_realised(np, #addr_of(a));
+    note_realised(np, #addr_of(b));
+    assert _realised(np) == (2 as usize);
+
+    note_all_released(np);
+    assert _realised(np) == (0 as usize);
+    match core::find_in(np, "mail:14") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+}
+
+#[test]
+fn a_node_that_hosts_no_rows_is_unchanged_by_the_probe() {
+    // Every node in the tree runs through the same `find_in`. One that hosts no
+    // rows must answer exactly as it did — the probe is a null fn-ptr on it.
+    var b: core::Builder = core::Builder::new();
+    b.add(core::node_with("child", 0u32, 0 as *u8, _no_release));
+    var plain: core::Node = core::column(b, key: "parent");
+    let pp: *core::Node = #addr_of(plain);
+    assert core::has_rows_probe(pp) == false;
+    match core::find_in(pp, "child") {
+        option::Option[*core::Node]::Some(_x) => { }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    match core::find_in(pp, "absent") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+}
+
+#[test]
+fn the_realised_rows_can_be_enumerated_in_row_order() {
+    // WHAT THE AGENT SURFACE NEEDS. The set is kept in REALISATION order —
+    // scrolling up realises row 4 after row 9 — so a reader that wants what the
+    // user sees orders by the item index the backend stamped on each row.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "enum", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    var late: core::Node = _keyed_row("mail:9", "a");
+    var early: core::Node = _keyed_row("mail:4", "b");
+    core::set_item_index(#addr_of(late), 9 as usize);
+    core::set_item_index(#addr_of(early), 4 as usize);
+    // Realised out of row order, which is what a scroll upwards does.
+    note_realised(np, #addr_of(late));
+    note_realised(np, #addr_of(early));
+
+    match from(np) {
+        option::Option[Relist]::Some(h) => {
+            assert h.realised_count() == (2 as usize);
+            // Enumeration is realisation order, and says so.
+            assert h.realised_at(0 as usize) == #addr_of(late);
+            assert h.realised_at(1 as usize) == #addr_of(early);
+            // Past the end is null, not a trap.
+            assert h.realised_at(2 as usize) == (0 as *core::Node);
+            // The row order is recoverable from the nodes themselves.
+            match core::item_index_of(h.realised_at(1 as usize)) {
+                option::Option[usize]::Some(at) => { assert at == (4 as usize); }
+                option::Option[usize]::None => { assert false; }
+            }
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn the_newest_realised_row_wins_a_duplicate_key() {
+    // TWO LIVE CELLS CAN HOLD THE SAME ROW. Measured on AppKit: vending a row
+    // twice without the first being recycled leaves both in the set. The one to
+    // answer with is the one realised LAST — the older row's views may already
+    // be gone, so answering with it hands back something that is not on screen.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "dup", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    var older: core::Node = _keyed_row("mail:20", "older:inner");
+    var newer: core::Node = _keyed_row("mail:20", "newer:inner");
+    note_realised(np, #addr_of(older));
+    note_realised(np, #addr_of(newer));
+
+    match core::find_in(np, "mail:20") {
+        option::Option[*core::Node]::Some(hit) => { assert hit == #addr_of(newer); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // And when the newer one goes, the older is the answer again — the set is
+    // kept in realisation order, so removing from the middle must not reshuffle
+    // it. This is what `swap_remove` would have broken.
+    note_released(np, #addr_of(newer));
+    match core::find_in(np, "mail:20") {
+        option::Option[*core::Node]::Some(hit) => { assert hit == #addr_of(older); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn releasing_a_row_does_not_reshuffle_the_ones_left() {
+    // THE ABLATION TARGET for `remove` against `swap_remove`, and it took a
+    // specific shape to find: the O(1) removal moves the LAST entry into the
+    // hole, so releasing the FIRST row promotes the newest row to the front —
+    // and then the oldest duplicate is the one at the end, which is the one
+    // "newest wins" answers with.
+    //
+    // live = [z, old, new] -> release z
+    //   order-preserving: [old, new]  -> backwards finds `new`   (right)
+    //   swap_remove:      [new, old]  -> backwards finds `old`   (wrong)
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "ord", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    var z: core::Node = _keyed_row("mail:29", "z");
+    var older: core::Node = _keyed_row("mail:30", "older");
+    var newer: core::Node = _keyed_row("mail:30", "newer");
+    note_realised(np, #addr_of(z));
+    note_realised(np, #addr_of(older));
+    note_realised(np, #addr_of(newer));
+
+    note_released(np, #addr_of(z));
+    assert _realised(np) == (2 as usize);
+    match core::find_in(np, "mail:30") {
+        option::Option[*core::Node]::Some(hit) => { assert hit == #addr_of(newer); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_child_wins_over_a_realised_row_with_the_same_key() {
+    // The rows are asked LAST. A relist has no children in practice, but the
+    // order is a rule and a rule is worth stating: what is really in the tree
+    // answers first.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "inbox8", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    let _s: status::Status = { (*np).add_child(core::node_with("same", 0u32, 0 as *u8, _no_release)) };
+    var row: core::Node = _keyed_row("same", "row:inner");
+    note_realised(np, #addr_of(row));
+
+    match core::find_in(np, "same") {
+        option::Option[*core::Node]::Some(hit) => {
+            // The CHILD, not the row.
+            match { (*np).child_ptr(0 as usize) } {
+                option::Option[*core::Node]::Some(c) => { assert hit == c; }
+                option::Option[*core::Node]::None => { assert false; }
+            }
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_relist_is_one_column_unless_asked() {
+    // THE DEFAULT IS A LIST, and every call site written before this verb
+    // existed means exactly that. An application that never mentions columns
+    // sees no change at all.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "c1", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    match from(np) {
+        option::Option[Relist]::Some(h) => { assert h.columns() == (1 as usize); }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_grid_is_asked_for_and_zero_is_not_auto_fit() {
+    // ZERO MEANS "NOT ASKED FOR", not "decide for me". `collection` can afford
+    // auto-fit because it states an item width to divide by; a relist row has
+    // no stated width, so zero here would be a promise with no mechanism.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var three: core::Node = relist(rows, key: "c3", builder: _row, columns: 3 as usize);
+    match from(#addr_of(three)) {
+        option::Option[Relist]::Some(h) => { assert h.columns() == (3 as usize); }
+        option::Option[Relist]::None => { assert false; }
+    }
+    var zero: core::Node = relist(rows, key: "c0", builder: _row, columns: 0 as usize);
+    match from(#addr_of(zero)) {
+        option::Option[Relist]::Some(h) => { assert h.columns() == (1 as usize); }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn regridding_raises_its_own_bit_and_not_the_row_band() {
+    // A REGRID IS A LAYOUT CHANGE, not a change to the sequence. Raising the
+    // row band would make every backend rebuild rows that did not move.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "c4", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    core::clear_dirty(np);
+    match from(np) {
+        option::Option[Relist]::Some(h) => {
+            let _r: Relist = h.set_columns(4 as usize);
+            assert h.columns() == (4 as usize);
+            let d: u64 = core::dirty_of(np);
+            assert (d & P_COLUMNS) != (0 as u64);
+            assert (d & P_ROWS) == (0 as u64);
+            assert (d & P_BUILDER) == (0 as u64);
+            // ...and a regrid to zero is still a list.
+            let _z: Relist = h.set_columns(0 as usize);
+            assert h.columns() == (1 as usize);
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn scroll_to_is_a_command_and_is_taken_once() {
+    // A command, not a state. Carried out by the pass that reads it and then
+    // gone, or an unrelated later write scrolls the list a second time.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "inbox9", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    match from(np) {
+        option::Option[Relist]::Some(h) => {
+            assert h.take_scroll_to() == (-1 as i64);
+            let _r: Relist = h.scroll_to(40 as usize);
+            assert h.take_scroll_to() == (40 as i64);
+            assert h.take_scroll_to() == (-1 as i64);
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+// The realised count, through the cursor — the reading the tests above make.
+fn _realised(n: *core::Node) -> usize {
+    return match from(n) {
+        option::Option[Relist]::Some(h) => h.realised_count(),
+        option::Option[Relist]::None => 0 as usize,
+    };
+}
+
+#[test]
+fn every_hand_written_cursor_carries_the_band() {
+    // ONE LINE PER CONTROL, and the six that were second-class are not any
+    // more. Asserted on `relist` because it is the newest — a control written
+    // after the band exists should pick it up without anyone remembering to.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    var n: core::Node = relist(rows, key: "band", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    guard let option::Option[Relist]::Some(h) = from(np) else { assert false; return; };
+
+    // Chained, which is the half that needed a compiler fix — see band.cplus.
+    let _r: Relist = h.set_agent(vocab::Agent::Protected).set_tooltip("rows");
+    assert core::agent(np) == vocab::Agent::Protected;
+    assert h.tooltip() == "rows";
+
+    // A verb the cursor DOES declare is untouched: the band is exactly the set
+    // the hand-written cursors lack, because a duplicate is E0326 and not an
+    // override.
+    let _u: Relist = h.set_uneven_rows(true);
+    assert h.uneven_rows();
 }
 
 #[test]

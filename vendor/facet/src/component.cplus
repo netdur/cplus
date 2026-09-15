@@ -822,3 +822,81 @@ fn sender_verbs_default_to_the_no_backend_posture() {
     assert d.view() == "";
     assert drag_targeted(0 as *u8) == false;
 }
+
+// ---- a component reached from the live tree, the way an application writes it -
+
+struct CfSide { n: i32 }
+
+impl CfSide {
+    fn new() -> CfSide { return CfSide { n: 7 }; }
+    fn bump(ref this) { this.n = this.n + 1; return; }
+    // THE SPELLING AN APPLICATION WANTS, and it needs nothing from facet: an
+    // associated fn delegating to `component_at`, which is where the turbofish
+    // goes so the call site does not carry one. Three lines per component, and
+    // they are the three lines that make the type the caller's own word.
+    fn find(key: str) -> option::Option[*CfSide] {
+        return component_at::[CfSide](key);
+    }
+}
+
+impl CfSide: Component {
+    // The shape `@ui { .. }` produces: an unkeyed wrapper around the author's
+    // keyed node. `record_holder` is what puts the record on the inner one.
+    fn build(ref this) -> Node {
+        var b: core::Builder = core::Builder::new();
+        b.add(core::column(core::Builder::new(), key: "cf:inner"));
+        var inner: core::Node = core::column(b, key: "cf:side");
+        var outer: core::Builder = core::Builder::new();
+        outer.add(inner);
+        return core::column(outer, key: "");
+    }
+}
+
+impl CfSide: Lifecycle {
+    fn on_attach(ref this, why: Attach) { return; }
+    fn on_detach(ref this, why: Detach) { return; }
+}
+
+impl CfSide: core::IntoNode {
+    fn into_node(take this) -> core::Node {
+        return child::[CfSide](this).grow(1.0f64);
+    }
+}
+
+#[test]
+fn a_component_is_reachable_from_the_live_tree_by_its_own_key() {
+    // END TO END, the way `examples/app_shell` writes it: an `@ui` wrapper
+    // around a keyed root, reached through `IntoNode`, with a modifier applied
+    // to the block's value. Each of those three could have lost the record and
+    // none of them does — the pieces are tested apart, this is them together.
+    app::reset_default_for_tests();
+    var host: core::Builder = core::Builder::new();
+    host.add(CfSide::new());
+    var root: core::Node = core::column(host, key: "cf:root");
+    app::open_window(#addr_of(root));
+
+    // The instance is LIVE, not a copy: writing through it is the point.
+    match component_at::[CfSide]("cf:side") {
+        option::Option[*CfSide]::Some(p) => {
+            assert { (*p).n } == 7;
+            { (*p).bump() };
+        }
+        option::Option[*CfSide]::None => { assert false; }
+    }
+    match CfSide::find("cf:side") {
+        option::Option[*CfSide]::Some(p) => { assert { (*p).n } == 8; }
+        option::Option[*CfSide]::None => { assert false; }
+    }
+    // A key INSIDE the component's tree is not the component. The record sits
+    // on the node the component keyed, and nowhere else.
+    match CfSide::find("cf:inner") {
+        option::Option[*CfSide]::Some(_q) => { assert false; }
+        option::Option[*CfSide]::None => { }
+    }
+    // And a key nothing presents is None rather than a trap.
+    match CfSide::find("cf:absent") {
+        option::Option[*CfSide]::Some(_q) => { assert false; }
+        option::Option[*CfSide]::None => { }
+    }
+    app::reset_default_for_tests();
+}

@@ -144,6 +144,32 @@ struct Data {
     // on, false for a surface that cannot answer right now (an AppKit field
     // borrows its field editor and only has one while focused).
     caret_probe: fn(*u8, i64, *vocab::Rect) -> bool,
+    // WHICH NODE UNDER A RECYCLER CARRIES THIS KEY — the second thing that is a
+    // function rather than a value, and for a reason `find_in` cannot work
+    // around.
+    //
+    // A REALISED ROW IS NOT IN ANY TREE FACET OWNS. `mount::sync_from` says so
+    // in as many words: the sync walk covers the running app's windows, and a
+    // row is not one of them. A recycler's rows are built, realised into a cell
+    // the backend owns, and held there — never linked as children — so walking
+    // `child_ptr` from a window root cannot reach one, however it is keyed.
+    //
+    // That is what made a keyed row unfindable: the key was there, the backend
+    // read it (it is the height cache's identity), and `find` had no path to
+    // the node carrying it.
+    //
+    // So the host answers for its own rows. `relist` installs this on itself
+    // and keeps the realised set; a backend tells it when a row lands in a cell
+    // and when one leaves. A probe rather than a prop for the reason
+    // `caret_probe` is one — rows are vended and recycled as fast as a list
+    // scrolls, and the answer is only ever wanted at the moment it is asked.
+    //
+    // ONLY REALISED ROWS ANSWER, and that is the contract, not a shortfall: a
+    // row that has never been built has no node to find. `scroll_to` is how one
+    // is made.
+    //
+    // 0 means the node hosts no rows, which is every node but a recycler.
+    rows_probe: fn(*Node, str) -> *Node,
     // What this node STANDS FOR, from the application's side: the row's record,
     // the card's model, whatever a handler shared across many nodes needs to
     // tell them apart. BORROWED — the application owns it and outlives the
@@ -222,6 +248,7 @@ fn ensure_data(n: *Node) -> *Data {
                              window: vocab::WindowRef::none(), batch: 0 as i64,
                              gestures: 0 as *u8, gestures_release: no_release,
                              caret_probe: 0 as fn(*u8, i64, *vocab::Rect) -> bool,
+                             rows_probe: 0 as fn(*Node, str) -> *Node,
                              item: 0 as *u8 };
     match box::new::[Data](fresh) {
         option::Option[box::Box[Data]]::Some(b) => { { (*n).attach(b.into_raw(), release_data) }; }
@@ -246,6 +273,7 @@ fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
                          window: vocab::WindowRef::none(), batch: 0 as i64,
                          gestures: 0 as *u8, gestures_release: no_release,
                          caret_probe: 0 as fn(*u8, i64, *vocab::Rect) -> bool,
+                         rows_probe: 0 as fn(*Node, str) -> *Node,
                          item: 0 as *u8 };
     match box::new::[Data](d) {
         option::Option[box::Box[Data]]::Some(b) => { n.attach(b.into_raw(), release_data); }
@@ -1822,6 +1850,34 @@ fn has_caret_probe(n: *Node) -> bool {
     return { (*d).caret_probe } != (0 as fn(*u8, i64, *vocab::Rect) -> bool);
 }
 
+// ---- what else is under this node ---------------------------------------------
+// A recycler answering for rows that are realised but are not its children.
+// See `Data.rows_probe` for why they cannot be. Installed by whoever owns the
+// realised set — `relist` installs its own, so a backend that keeps the set in
+// step gets `find` with no further work.
+
+fn set_rows_probe(n: *Node, f: fn(*Node, str) -> *Node) {
+    let d: *Data = ensure_data(n);
+    if d.is_null() { return; }
+    { (*d).rows_probe = f };
+}
+
+fn has_rows_probe(n: *Node) -> bool {
+    let d: *Data = node_data(n);
+    if d.is_null() { return false; }
+    return { (*d).rows_probe } != (0 as fn(*Node, str) -> *Node);
+}
+
+// Ask the host for the node under it carrying `key`. Null when it hosts no
+// rows, or when no realised row carries the key.
+fn probe_rows(n: *Node, key: str) -> *Node {
+    let d: *Data = node_data(n);
+    if d.is_null() { return 0 as *Node; }
+    let f: fn(*Node, str) -> *Node = { (*d).rows_probe };
+    if f == (0 as fn(*Node, str) -> *Node) { return 0 as *Node; }
+    return f(n, key);
+}
+
 // The box of the character at `offset`, in THIS NODE'S own coordinate space —
 // the same space `frame()` reports the node's children in, top-left origin, so
 // a popup is positioned against it with the ordinary absolute-placement verbs
@@ -2471,6 +2527,13 @@ fn find_in(n: *Node, key: str) -> option::Option[*Node] {
         }
         i = i +% (1 as usize);
     }
+    // THE CHILDREN ARE NOT ALWAYS ALL OF IT. A recycler's rows are realised
+    // into cells the backend owns and are never linked as children, so the walk
+    // above cannot reach one — the host is asked instead, and answers for the
+    // rows it has realised. Last, so a node that really is a child always wins,
+    // and free for every node that hosts none: one null fn-ptr compare.
+    let hit: *Node = probe_rows(n, key);
+    if hit.is_not_null() { return option::Option[*Node]::Some(hit); }
     return option::Option[*Node]::None;
 }
 
