@@ -1798,7 +1798,19 @@ fn collect_dep_link_args(
                         // orphan: the compiler put it there, and the package
                         // deliberately doesn't declare it (declaring it would
                         // make a not-yet-built slice an E0860 on a fresh clone).
-                        if vm.build.prebuild && fname == prebuilt_archive_name(&dep.name) {
+                        //
+                        // NOT GATED ON `vm.build.prebuild`, and that is the
+                        // point: this loop walks EVERY triple, while `vm` is
+                        // the manifest resolved for the ACTIVE one. Since
+                        // `[<platform>.build]` exists, those disagree by
+                        // design — `facet_runtime` is prebuilt on macOS and
+                        // source mode on Android — and asking the active
+                        // platform's question about another platform's slice
+                        // called the macOS archive an orphan during an Android
+                        // build. A package prebuilt on ANY platform produces
+                        // exactly this name, and the compiler is what put it
+                        // there.
+                        if fname == prebuilt_archive_name(&dep.name) {
                             continue;
                         }
                         if !bundled.iter().any(|b| b == &fname) {
@@ -3216,6 +3228,91 @@ fn build_project(
     status
 }
 
+/// Compile each piece of a partitioned library to its own object, in
+/// parallel. `objs[i]` is where `pieces[i]` lands. The first failure is
+/// reported and returned as the exit code `clang -c` maps to; a piece clang
+/// refuses is kept as `<keep_dir>/<module>.ll`, because a rejected module is a
+/// codegen defect and the temp file is gone by the time anyone looks.
+fn compile_pieces(
+    pieces: &[(String, String)],
+    objs: &[PathBuf],
+    clang_prog: &str,
+    opt: &str,
+    tgt: &TargetSpec,
+    sanitizers: &[&str],
+    keep_dir: &Path,
+) -> Result<(), ExitCode> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    let target_args = clang_target_args(tgt);
+    let next = AtomicUsize::new(0);
+    let failures: Mutex<Vec<(String, ExitCode)>> = Mutex::new(Vec::new());
+    let jobs = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, pieces.len().max(1));
+    std::thread::scope(|s| {
+        for _ in 0..jobs {
+            s.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= pieces.len() {
+                    break;
+                }
+                let (module, ir) = &pieces[i];
+                let tmp = match make_temp_file("cpc-lib-", ".ll", ir.as_bytes()) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        failures.lock().unwrap().push((
+                            format!("writing IR for `{module}` to a temp file: {e}"),
+                            ExitCode::FAILURE,
+                        ));
+                        continue;
+                    }
+                };
+                let mut cmd = Command::new(clang_prog);
+                cmd.arg(opt).arg("-Wno-override-module").args(&target_args);
+                // Same forwarding `run_clang` does for an executable: clang
+                // owns the instrumentation pass, we name the set. Omitting it
+                // here left the object's own code uninstrumented even when the
+                // IR carried the function attributes.
+                if !sanitizers.is_empty() {
+                    cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
+                    cmd.arg("-fno-omit-frame-pointer");
+                }
+                let status = cmd.arg("-c").arg(tmp.path()).arg("-o").arg(&objs[i]).status();
+                match status {
+                    Ok(st) if st.success() => {}
+                    Ok(st) => {
+                        let kept = keep_dir.join(format!("{module}.ll"));
+                        let _ = fs::write(&kept, ir);
+                        failures.lock().unwrap().push((
+                            format!(
+                                "clang -c exited with {st} compiling module `{module}` (IR kept at {})",
+                                kept.display()
+                            ),
+                            ExitCode::from(st.code().unwrap_or(1).clamp(1, 255) as u8),
+                        ));
+                    }
+                    Err(e) => {
+                        failures
+                            .lock()
+                            .unwrap()
+                            .push((format!("failed to invoke clang: {e}"), ExitCode::FAILURE));
+                    }
+                }
+            });
+        }
+    });
+    let failures = failures.into_inner().unwrap();
+    match failures.into_iter().next() {
+        Some((msg, code)) => {
+            eprintln!("cpc: {msg}");
+            Err(code)
+        }
+        None => Ok(()),
+    }
+}
+
 /// Phase 5 Slice 5.A: library-build path. Produces `lib<name>.a` and/or
 /// `lib<name>.{dylib,so}` in `target/<mode>/`. Reached three ways: a
 /// `[library]` target, an entry-less library package, or an app entry
@@ -3224,9 +3321,11 @@ fn build_project(
 /// Pipeline (mirrors the bin path's structure):
 ///   1. Load + sema-check the lib root source (via `load_and_check_project_full`).
 ///   2. Reject `fn main` if defined (E0409) — libraries don't have entry points.
-///   3. Emit IR; write IR to temp `.ll`; run `clang -c` → `target/<mode>/<name>.o`.
-///   4. For `staticlib` / `both`: `ar rcs target/<mode>/lib<name>.a <name>.o`.
-///   5. For `cdylib`   / `both`: `clang -shared <opts> -o target/<mode>/lib<name>.<ext> <name>.o`.
+///   3. Emit IR; partition it one piece per MODULE (`split.rs`); `clang -c`
+///      each piece → `target/<mode>/<name>.objs/<module>.o`, in parallel.
+///   4. For `staticlib` / `both`: `ar rcs target/<mode>/lib<name>.a <module>.o...`
+///      — one member per module, so a consumer links the modules it reaches.
+///   5. For `cdylib`   / `both`: `clang -shared <opts> -o target/<mode>/lib<name>.<ext> <module>.o...`.
 ///   6. Manifest `frameworks` / `libs` are forwarded only at the cdylib link
 ///      step — they don't get into the static archive (consumers re-state them).
 /// `c_abi_entry` decides how the entry file's top-level names are spelled, and
@@ -3412,46 +3511,52 @@ fn build_lib_project(
         return ExitCode::FAILURE;
     }
 
-    // Step 3: IR → temp .ll → clang -c → <name>.o.
-    let tmp_ll_handle = match make_temp_file("cpc-lib-", ".ll", ir.as_bytes()) {
-        Ok(h) => h,
-        Err(e) => {
-            eprintln!("cpc: writing IR to temp file: {e}");
-            return ExitCode::FAILURE;
+    // Step 3: one object per MODULE. The IR is partitioned by the home
+    // markers codegen left in it (`cplus_core::split` says why and how), each
+    // piece is compiled on its own, and the archive gets a member per piece.
+    // An archive is pulled in a member at a time, so a consumer that imports
+    // `stdlib/vec` links `vec` and what `vec` reaches — not `process`, not
+    // `pty`, and not the `posix_spawn` API floor they carry on Android
+    // (bugs/closed/a-package-is-one-object-so-a-consumer-links-all-of-it.md).
+    // `CPC_ONE_OBJECT=1` restores the single object, for comparison.
+    let pieces: Vec<(String, String)> = if env::var_os("CPC_ONE_OBJECT").is_some() {
+        vec![(lib.name.clone(), ir)]
+    } else {
+        let split = timings::phase("split", || cplus_core::split::split_by_home(&ir, &lib.name));
+        if env::var_os("CPC_VERBOSE").is_some() {
+            for n in &split.notes {
+                eprintln!("cpc: {}: {n}", lib.name);
+            }
         }
+        split.pieces.into_iter().map(|p| (p.module, p.ir)).collect()
     };
-    let tmp_ll = tmp_ll_handle.path().to_path_buf();
-    let obj_path = target_dir.join(format!("{}.o", lib.name));
+    // Objects live in their own directory: a member per module of a
+    // fifty-module package is fifty files, and `target/<mode>/` is where the
+    // archive is looked for. Cleared first so a removed module's object cannot
+    // linger — only the pieces produced now are archived, but a stale file
+    // beside them reads as if it were.
+    let obj_dir = target_dir.join(format!("{}.objs", lib.name));
+    let _ = fs::remove_dir_all(&obj_dir);
+    // The single `<name>.o` an earlier compiler left here is not this build's
+    // output; beside the `.objs/` directory it reads as if it were.
+    let _ = fs::remove_file(target_dir.join(format!("{}.o", lib.name)));
+    if let Err(e) = fs::create_dir_all(&obj_dir) {
+        eprintln!("cpc: creating {}: {e}", obj_dir.display());
+        return ExitCode::FAILURE;
+    }
+    let objs: Vec<PathBuf> = pieces
+        .iter()
+        .map(|(module, _)| obj_dir.join(format!("{module}.o")))
+        .collect();
     let opt = match build_mode {
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O3",
     };
-    let obj_status = timings::phase("clang -c", || {
-        let mut cmd = Command::new(&clang_prog);
-        cmd.arg(opt)
-            .arg("-Wno-override-module")
-            .args(clang_target_args(&tgt));
-        // Same forwarding `run_clang` does for an executable: clang owns the
-        // instrumentation pass, we name the set. Omitting it here left the
-        // object's own code uninstrumented even when the IR carried the
-        // function attributes.
-        if !sanitizers.is_empty() {
-            cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
-            cmd.arg("-fno-omit-frame-pointer");
-        }
-        cmd.arg("-c").arg(&tmp_ll).arg("-o").arg(&obj_path).status()
+    let compiled = timings::phase("clang -c", || {
+        compile_pieces(&pieces, &objs, &clang_prog, opt, &tgt, sanitizers, &obj_dir)
     });
-    drop(tmp_ll_handle);
-    match obj_status {
-        Ok(s) if s.success() => {}
-        Ok(s) => {
-            eprintln!("cpc: clang -c exited with {s}");
-            return ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8);
-        }
-        Err(e) => {
-            eprintln!("cpc: failed to invoke clang: {e}");
-            return ExitCode::FAILURE;
-        }
+    if let Err(code) = compiled {
+        return code;
     }
 
     // Step 4 (staticlib): ar rcs libNAME.a NAME.o.
@@ -3477,7 +3582,7 @@ fn build_lib_project(
         let ar_status = Command::new(&ar_prog)
             .arg("rcs")
             .arg(&a_path)
-            .arg(&obj_path)
+            .args(&objs)
             .status();
         match ar_status {
             Ok(s) if s.success() => {}
@@ -3537,7 +3642,7 @@ fn build_lib_project(
                 cmd.arg(obj);
             }
         }
-        let dylib_status = cmd.arg(&obj_path).arg("-o").arg(&dylib_path).status();
+        let dylib_status = cmd.args(&objs).arg("-o").arg(&dylib_path).status();
         match dylib_status {
             Ok(s) if s.success() => {}
             Ok(s) => {
@@ -6042,14 +6147,13 @@ fn run_clang(
     // dylib through a separate command), so this is only ever applied to a
     // final binary.
     //
-    // A dependency is compiled into ONE object file per package — `stdlib.o`
-    // inside `libstdlib.a` — and a static archive is pulled in at
-    // object-file granularity. Referencing a single function therefore drags
-    // in the whole package, `#[test]` bodies included: 38.7% of stdlib's
-    // compiled text is test functions, and nothing downstream could remove
-    // them. `prune.rs` cannot either — it runs per module, before the
-    // archive exists, and only ever deletes `internal` definitions, while a
-    // library's API is deliberately `weak_odr` so the archive exports it.
+    // A dependency's archive has one member per MODULE (`split.rs`), and a
+    // static archive is pulled in at member granularity — so referencing one
+    // function drags in that module, `#[test]` bodies included: 38.7% of
+    // stdlib's compiled text is test functions, and nothing downstream could
+    // remove them. `prune.rs` cannot either — it runs before the archive
+    // exists and only ever deletes `internal` definitions, while a library's
+    // API is deliberately `weak_odr` so the archive exports it.
     //
     // The linker is the one place that sees the whole program at once, so it
     // is the right place to answer the question. Measured on

@@ -14,6 +14,21 @@ earlier history lives in each version's archived plan.
   `runtime::Window`, global content navigation, and `nav::Show` modes.
   See the [migration table](vendor/facet/docs/navigation.md#migration-from-the-previous-api).
 
+### Toolchain
+- **A package archives one object per module.** `lib<name>.a` used to hold a
+  single object, so resolving any symbol from a package linked every module
+  it had — a facet app on Android that imports `stdlib/vec` linked `process`
+  and `pty`, and with them a `posix_spawn` API floor of 28 for code it could
+  not reach. The library pipeline now partitions the emitted IR one piece per
+  source file, compiles the pieces in parallel and archives all of them; a
+  consumer links the modules it reaches. The Android gallery links at API 24
+  again. `CPC_ONE_OBJECT=1` restores the single object.
+- **A call to an extension method whose module is not imported reports one
+  error**: E0388 at the call site, naming the import to add. It used to be
+  preceded by an E0312 per defaulted parameter, each located inside the
+  extending module's file (`.gesture(on_click: h)` without
+  `facet/gestures`: twenty errors inside `vendor/`, the real one last).
+
 ## v0.0.27 — 2026-08-14
 
 > From v0.0.26 (~677 commits, 2026-07-02 → 2026-08-11). Three strands: the
