@@ -403,6 +403,10 @@ struct RowSource {
     // file is shared, and the flag is what keeps it that way rather than a
     // second copy of the machinery.
     grid: bool,
+    // HOW MANY COLUMNS A LINE HOLDS, for a relist that asked for a grid. One is
+    // a list and is the default; only `apply_relist_rows` ever writes it, since
+    // `list` and `tree` have no such verb and a table has no layout of ours.
+    cols: i64,
     // ---- grouping -------------------------------------------------------
     // A grouped table is the SAME flat sequence with headers interleaved, so
     // `row` is untouched and every table index is translated on the way in.
@@ -713,10 +717,17 @@ fn height_of(s: *RowSource, row: i64, w: f64) -> f64 {
 // A ROW'S IDENTITY IS THE KEY ITS BUILDER ALREADY GAVE IT.
 //
 // An application that wants its rows addressable keys the row it returns —
-// `hstack(key: entry.id)` — because that is what makes `mount::find` resolve it
-// and what the agent surface sees it under. Asking for the same fact a second
-// time through a separate `row_id` callback was redundant API and a second
-// place to get it wrong, so it was removed: the row says who it is.
+// `hstack(key: entry.id)` — because that is what makes `mount::find` resolve it.
+// Asking for the same fact a second time through a separate `row_id` callback
+// was redundant API and a second place to get it wrong, so it was removed: the
+// row says who it is.
+//
+// `find` REACHES IT THROUGH THE ELEMENT, not through this hash. A realised row
+// is not a child of the list, so the depth-first walk cannot get to one; the
+// element keeps the realised set and `core::Data.rows_probe` is what asks it.
+// `fill_cell` and `release_cell_row` are the two lines that keep that set
+// honest. The hash below is the HEIGHT CACHE\'s key and nothing else — it is a
+// hash, so it can collide, and an address must not.
 //
 // EMPTY MEANS NO IDENTITY, and falls back to caching by position.
 //
@@ -865,7 +876,7 @@ fn measure_row(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
         }
     }
 
-    if existing.is_not_null() { release_cell_row(cell); }
+    if existing.is_not_null() { release_cell_row(cell, { (*s).node }); }
     MEASURE_REALISES = MEASURE_REALISES + (1 as i64);
     return match box::new::[core::Node](node) {
         option::Option[box::Box[core::Node]]::Some(b) => {
@@ -1068,7 +1079,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
         // and re-placed — the cheap half of what a rebuild did.
         return place_into(s, cell, existing, w, row);
     }
-    if existing.is_not_null() { release_cell_row(cell); }
+    if existing.is_not_null() { release_cell_row(cell, { (*s).node }); }
     var placed: f64 = 0.0f64;
 
     var node: core::Node = build_row(s, row);
@@ -1089,6 +1100,12 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) -> f64 {
             mount::sync_from(np);
             placed = place_into(s, cell, np, w, row);
             synth::set_associated(cell, cell_node_key(), np as *u8);
+            // THE ROW NOW EXISTS, so the element can answer for it. A row is
+            // never a child of the list — it is realised into this cell — and
+            // this is what gives `core::find_in` a path to it. A no-op for
+            // `list` and `tree`, whose nodes are not a relist: the note checks
+            // the kind before it records anything.
+            relist::note_realised({ (*s).node }, np);
         }
         option::Option[box::Box[core::Node]]::None => { }
     }
@@ -1472,9 +1489,17 @@ fn empty_cell(cell: *u8) {
     }
 }
 
-fn release_cell_row(cell: *u8) {
+// `owner` is the ELEMENT whose realised set this row belongs to, or 0 for a
+// control that keeps none — `tree` does not, and passes 0.
+//
+// THE ONE PLACE A ROW NODE DIES, which is what makes it the only place the
+// realised set can be kept honest. The set holds borrowed pointers; one left in
+// it after this runs is a freed node handed to `find`, so the note goes BEFORE
+// the drop and not after.
+fn release_cell_row(cell: *u8, owner: *core::Node) {
     let np: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
     if np.is_null() { return; }
+    relist::note_released(owner, np);
     mount::unrealise(np);
     synth::set_associated(cell, cell_node_key(), 0 as *u8);
     // Dropping the box drops the node, which releases every view it owns.
@@ -1919,6 +1944,56 @@ fn grid_item_imp(self_obj: *u8, cmd: *u8, cv: *u8, ip: *u8) -> *u8 {
     return item;
 }
 
+// AN ITEM LEFT THE SCREEN, and its row is released with the element told.
+// The realised set is the element's claim about what is on screen; an item
+// in the reuse queue is not on it, and until 2026-09-15 its row stayed in the
+// set until the item was vended again — or forever, when the queue dropped
+// it. The same late-arrival guard facet_uikit keeps: the callback can come
+// after the same item was handed back out and refilled, so the cell is asked
+// whether it still holds the row that is going away, off the index the vend
+// bound on it, and a refilled cell is left alone.
+fn grid_end_display_imp(self_obj: *u8, cmd: *u8, cv: *u8, item: *u8, ip: *u8) {
+    let s: *RowSource = source_of(cv);
+    if s.is_null() || item.is_null() { return; }
+    let cell: *u8 = { rt::msg_id(item, rt::sel(#str_ptr("view\0"))) };
+    grid_release_if_holds(s, cell, grid_row_of_path(ip));
+    return;
+}
+
+fn grid_release_if_holds(s: *RowSource, cell: *u8, row: i64) {
+    if s.is_null() || cell.is_null() || row < (0 as i64) { return; }
+    // Only a relist keeps a realised set; another grid's rows are not the
+    // element's to be told about, and were never freed here before.
+    match relist::from({ (*s).node }) {
+        option::Option[relist::Relist]::Some(_h) => { }
+        option::Option[relist::Relist]::None => { return; }
+    }
+    let held: usize = { input::item_of(cell) } as usize;
+    if held == (0 as usize) { return; }
+    if (held -% (1 as usize)) != (resolve_row(s, row) as usize) { return; }
+    release_cell_row(cell, { (*s).node });
+    return;
+}
+
+// The suite's doors: UIKit's own teardown, driven, and a refill of a cell in
+// hand — a headless collection view never fills its reuse queue, so the
+// late-arrival case cannot be reached through a vend.
+fn grid_end_displaying(v: *u8, cell: *u8, row: i64) {
+    let tv: *u8 = table_of(v);
+    if tv.is_null() { return; }
+    grid_release_if_holds(source_of(tv), cell, row);
+    return;
+}
+
+fn refill_row(v: *u8, cell: *u8, row: i64) {
+    let tv: *u8 = table_of(v);
+    if tv.is_null() || cell.is_null() { return; }
+    let s: *RowSource = source_of(tv);
+    if s.is_null() { return; }
+    let _h: f64 = fill_cell(s, cell, row, grid_width(tv));
+    return;
+}
+
 fn grid_source_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("FacetGridSource\0"));
     if existing.is_not_null() { return existing; }
@@ -1930,6 +2005,9 @@ fn grid_source_class() -> *u8 {
     synth::add_method_id_2id(
         cls, rt::sel(#str_ptr("collectionView:itemForRepresentedObjectAtIndexPath:\0")),
         grid_item_imp, #str_ptr("@@:@@\0"));
+    let _e: i8 = synth::add_method_v_3id(
+        cls, rt::sel(#str_ptr("collectionView:didEndDisplayingItem:forRepresentedObjectAtIndexPath:\0")),
+        grid_end_display_imp, #str_ptr("v@:@@@\0"));
     synth::register_class_pair(cls);
     return cls;
 }
@@ -2002,6 +2080,75 @@ fn row_top(s: *RowSource, row: i64, w: f64) -> f64 {
     return y;
 }
 
+// ---- lines ---------------------------------------------------------------
+//
+// A GRID IS A LIST OF LINES. One column is the degenerate case where a line is
+// a row, and every function below collapses to what it used to be — which is
+// why there is no second layout: `cols == 1` walks the same arithmetic.
+//
+// ROW-ALIGNED, NOT STAGGERED. Every cell on a line takes the line's height, so
+// a tall item pushes its whole line down and the next line starts below it.
+// That is what a flow layout does, what `collection` does, and what a reader
+// expects of "columns". Column-packed masonry is a different control and is not
+// this.
+
+fn cols_of(s: *RowSource) -> i64 {
+    if s.is_null() { return 1 as i64; }
+    let c: i64 = { (*s).cols };
+    if c < (1 as i64) { return 1 as i64; }
+    return c;
+}
+
+// The width ONE CELL gets, which is the width every measurement is taken at.
+// Measuring a grid cell at the list's full width is not a small error: every
+// cell then measures as wide as the grid and the heights are nonsense.
+fn cell_width(w: f64, cols: i64) -> f64 {
+    if cols <= (1 as i64) { return w; }
+    return w / (cols as f64);
+}
+
+fn line_count(n: i64, cols: i64) -> i64 {
+    if cols <= (1 as i64) { return n; }
+    return (n +% cols -% (1 as i64)) / cols;
+}
+
+// THE TALLEST CELL ON THE LINE. Measured at the CELL's width, not the list's.
+fn line_height(s: *RowSource, line: i64, cols: i64, cw: f64, n: i64) -> f64 {
+    if cols <= (1 as i64) { return height_of(s, line, cw); }
+    var best: f64 = 0.0f64;
+    var k: i64 = 0 as i64;
+    while k < cols {
+        let r: i64 = line *% cols +% k;
+        if r >= n { break; }
+        let h: f64 = height_of(s, r, cw);
+        if h > best { best = h; }
+        k = k +% (1 as i64);
+    }
+    return best;
+}
+
+fn line_top(s: *RowSource, line: i64, cols: i64, cw: f64, n: i64) -> f64 {
+    if cols <= (1 as i64) { return row_top(s, line, cw); }
+    var y: f64 = 0.0f64;
+    var l: i64 = 0 as i64;
+    while l < line {
+        y = y + line_height(s, l, cols, cw, n);
+        l = l +% (1 as i64);
+    }
+    return y;
+}
+
+fn attrs_for_cell(row: i64, x: f64, y: f64, w: f64, h: f64) -> *u8 {
+    let ip: *u8 = grid_index_path(row);
+    if ip.is_null() { return 0 as *u8; }
+    let a: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSCollectionViewLayoutAttributes\0")),
+                                 rt::sel(#str_ptr("layoutAttributesForItemWithIndexPath:\0")), ip) };
+    if a.is_null() { return 0 as *u8; }
+    { msg_void_rect(a, rt::sel(#str_ptr("setFrame:\0")),
+                    rt::Rect { x: x, y: y, w: w, h: h }) };
+    return a;
+}
+
 fn attrs_for(row: i64, y: f64, w: f64, h: f64) -> *u8 {
     let ip: *u8 = grid_index_path(row);
     if ip.is_null() { return 0 as *u8; }
@@ -2018,7 +2165,9 @@ fn layout_content_size_imp(self_obj: *u8, cmd: *u8) -> rt::Size {
     let s: *RowSource = layout_source(self_obj);
     if s.is_null() { return rt::Size { w: w, h: 0.0f64 }; }
     let n: i64 = table_row_count(s);
-    let h: f64 = row_top(s, n, w);
+    let cols: i64 = cols_of(s);
+    let cw: f64 = cell_width(w, cols);
+    let h: f64 = line_top(s, line_count(n, cols), cols, cw, n);
     if tracing() {
         let cvv: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("collectionView\0"))) };
         let cf: rt::Rect = { rt::msg_rect(cvv, rt::sel(#str_ptr("frame\0"))) };
@@ -2032,9 +2181,16 @@ fn layout_attrs_for_item_imp(self_obj: *u8, cmd: *u8, ip: *u8) -> *u8 {
     let s: *RowSource = layout_source(self_obj);
     if s.is_null() { return 0 as *u8; }
     let row: i64 = grid_row_of_path(ip);
-    if row < (0 as i64) || row >= table_row_count(s) { return 0 as *u8; }
+    let n: i64 = table_row_count(s);
+    if row < (0 as i64) || row >= n { return 0 as *u8; }
     let w: f64 = layout_width(self_obj);
-    return attrs_for(row, row_top(s, row, w), w, height_of(s, row, w));
+    let cols: i64 = cols_of(s);
+    let cw: f64 = cell_width(w, cols);
+    let line: i64 = row / cols;
+    let col: i64 = row -% (line *% cols);
+    return attrs_for_cell(row, (col as f64) * cw,
+                          line_top(s, line, cols, cw, n), cw,
+                          line_height(s, line, cols, cw, n));
 }
 
 // EVERY ROW THAT TOUCHES `rect`, which is how a collection view asks what is on
@@ -2047,19 +2203,31 @@ fn layout_attrs_in_rect_imp(self_obj: *u8, cmd: *u8, rect: rt::Rect) -> *u8 {
     if s.is_null() { return rt::autorelease(out); }
     let w: f64 = layout_width(self_obj);
     let n: i64 = table_row_count(s);
+    let cols: i64 = cols_of(s);
+    let cw: f64 = cell_width(w, cols);
     let top: f64 = rect.y;
     let bottom: f64 = rect.y + rect.h;
+    // WALKED BY LINE, and stopped as soon as the lines are past the rect — the
+    // lines below are never measured, which is what keeps a long grid lazy. One
+    // column walks exactly the rows it always did.
     var y: f64 = 0.0f64;
-    var r: i64 = 0 as i64;
-    while r < n {
-        let h: f64 = height_of(s, r, w);
+    var line: i64 = 0 as i64;
+    let lines: i64 = line_count(n, cols);
+    while line < lines {
+        let h: f64 = line_height(s, line, cols, cw, n);
         if y > bottom { break; }
         if (y + h) >= top {
-            let a: *u8 = attrs_for(r, y, w, h);
-            if a.is_not_null() { { rt::msg_void_id(out, rt::sel(#str_ptr("addObject:\0")), a) }; }
+            var k: i64 = 0 as i64;
+            while k < cols {
+                let r: i64 = line *% cols +% k;
+                if r >= n { break; }
+                let a: *u8 = attrs_for_cell(r, (k as f64) * cw, y, cw, h);
+                if a.is_not_null() { { rt::msg_void_id(out, rt::sel(#str_ptr("addObject:\0")), a) }; }
+                k = k +% (1 as i64);
+            }
         }
         y = y + h;
-        r = r +% (1 as i64);
+        line = line +% (1 as i64);
     }
     return rt::autorelease(out);
 }
@@ -2162,7 +2330,77 @@ fn grid_belief(s: *RowSource) -> i64 {
     return { (*s).told };
 }
 
+// THE ROW A REGRID KEEPS: the first line under the viewport's top edge, as an
+// ITEM index. -1 when there is nothing to keep — no scroll host, or a viewport
+// already at the top, which lands at the top again on its own.
+fn grid_anchor_item(cv: *u8, s: *RowSource, cols: i64) -> i64 {
+    if cv.is_null() || s.is_null() { return -1 as i64; }
+    let esv: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+    if esv.is_null() { return -1 as i64; }
+    let vis: rt::Rect = { rt::msg_rect(esv, rt::sel(#str_ptr("documentVisibleRect\0"))) };
+    if vis.y <= 0.0f64 { return -1 as i64; }
+    let lay: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("collectionViewLayout\0"))) };
+    if lay.is_null() { return -1 as i64; }
+    let n: i64 = { (*s).count };
+    let c: i64 = if cols < (1 as i64) { 1 as i64 } else { cols };
+    let cw: f64 = cell_width(layout_width(lay), c);
+    let lines: i64 = line_count(n, c);
+    var y: f64 = 0.0f64;
+    var line: i64 = 0 as i64;
+    while line < lines {
+        let h: f64 = line_height(s, line, c, cw, n);
+        if y + h > vis.y { break; }
+        y = y + h;
+        line = line +% (1 as i64);
+    }
+    if line >= lines { return -1 as i64; }
+    return line *% c;
+}
+
+// THE DOCUMENT IS AS TALL AS ITS CONTENT before anything scrolls to it. A
+// collection view takes its frame from the layout's content size in its own
+// `layout` pass, which has not run yet right after a `reloadData` — and a
+// point past the document's frame is clamped to nothing by the clip. So the
+// frame is put right here, from the same number the pass would use; the pass
+// then finds nothing to change.
+fn grid_fit_to_content(cv: *u8) {
+    if cv.is_null() { return; }
+    let lay: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("collectionViewLayout\0"))) };
+    if lay.is_null() { return; }
+    let cs: rt::Size = { rt::msg_size(lay, rt::sel(#str_ptr("collectionViewContentSize\0"))) };
+    let f: rt::Rect = { rt::msg_rect(cv, rt::sel(#str_ptr("frame\0"))) };
+    if f.w == cs.w && f.h == cs.h { return; }
+    if cs.w <= 0.0f64 || cs.h <= 0.0f64 { return; }
+    { rt::msg_void_size(cv, rt::sel(#str_ptr("setFrameSize:\0")), cs) };
+    return;
+}
+
+// Put item `item`'s top edge at the viewport's top. Read off the layout it
+// has NOW, which is why this runs after the reload and not before.
+fn grid_show_item_at_top(cv: *u8, item: i64) {
+    if cv.is_null() || item < (0 as i64) { return; }
+    let lay: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("collectionViewLayout\0"))) };
+    if lay.is_null() { return; }
+    grid_fit_to_content(cv);
+    let ip: *u8 = grid_index_path(item);
+    if ip.is_null() { return; }
+    let at: *u8 = { rt::msg_id_id(lay, rt::sel(#str_ptr("layoutAttributesForItemAtIndexPath:\0")), ip) };
+    if at.is_null() { return; }
+    let f: rt::Rect = { rt::msg_rect(at, rt::sel(#str_ptr("frame\0"))) };
+    // `scrollPoint:` on the document view moves the clip it sits in — the
+    // plain NSView verb, which needs no window to have an effect.
+    { rt::msg_void_point(cv, rt::sel(#str_ptr("scrollPoint:\0")), rt::Point { x: 0.0f64, y: f.y }) };
+    return;
+}
+
 fn grid_reload(cv: *u8, s: *RowSource) {
+    // A RELOAD DISCARDS EVERY ITEM, and the rows in them go with it — the
+    // collection view does not walk them out through the delegate — so the
+    // element is told wholesale. Without it the realised set kept the rows of
+    // every item the reload threw away: measured on the gallery 2026-09-15, a
+    // regrid back to one column left 123, 125 … 131 "realised" beside the eight
+    // rows actually on screen. The same line facet_uikit's `reload_rows` has.
+    relist::note_all_released({ (*s).node });
     { (*s).heights.remove_all() };
     { (*s).heights_width = 0.0f64 };
     { rt::msg_void(cv, rt::sel(#str_ptr("reloadData\0"))) };
@@ -2251,6 +2489,50 @@ fn grid_invalidate(cv: *u8, s: *RowSource, lo_d: i64, hi_d: i64) {
 fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
     let cv: *u8 = grid_of(v);
     if cv.is_null() { return; }
+    apply_relist_rows(cv, n, dirty);
+    // LAST, AND ON EVERY PATH ABOVE. A scroll is not a change to the sequence
+    // and rides its own bit, but it has to happen AFTER the rows have moved:
+    // scrolling to row 40 before the splice that makes row 40 exist asks the
+    // collection view for an item it does not have, and the row band returns
+    // early down five different paths.
+    grid_apply_scroll(cv, n, dirty);
+}
+
+// BRING A ROW INTO VIEW — the companion to `find`, and what makes "only
+// realised rows are found" a contract rather than a shortfall. The pass that
+// scrolls is the pass that vends, so the row exists by the time it lands.
+fn grid_apply_scroll(cv: *u8, n: *core::Node, dirty: u64) {
+    if (dirty & relist::P_SCROLL_TO) == (0 as u64) { return; }
+    // TAKEN, not read: a command carried out twice scrolls a list that nobody
+    // asked to move.
+    var at: i64 = -1 as i64;
+    match relist::from(n) {
+        option::Option[relist::Relist]::Some(h) => { at = h.take_scroll_to(); }
+        option::Option[relist::Relist]::None => { }
+    }
+    if at < (0 as i64) { return; }
+    let s: *RowSource = source_of(cv);
+    if s.is_null() { return; }
+    // PAST THE END IS NOT AN ERROR HERE, it is a no-op — but asking the
+    // collection view for it IS: an index path outside the data source raises,
+    // and an uncaught ObjC exception takes the application down.
+    if at >= { (*s).count } { return; }
+    let paths: *u8 = grid_paths(at, 1 as i64);
+    if paths.is_null() { return; }
+    // `NearestHorizontalEdge`, AND IT IS THE VERTICAL ONE. AppKit names these
+    // for the ORIENTATION OF THE EDGE, not the axis of travel: the header says
+    // NearestHorizontalEdge is "Nearer of Top,Bottom" (1 << 9) and
+    // NearestVerticalEdge is "Nearer of Leading,Trailing" (1 << 8). A list
+    // scrolls up and down, so it wants the top-or-bottom one — which reads
+    // wrong and is right. Checked against the SDK header, not remembered.
+    //
+    // NEAREST rather than Top: scroll only as far as it takes to show the row,
+    // which is what `scrollRowToVisible:` does on the table path.
+    { rt::msg_void_id_u64(cv, rt::sel(#str_ptr("scrollToItemsAtIndexPaths:scrollPosition:\0")),
+                          paths, 512 as u64) };
+}
+
+fn apply_relist_rows(cv: *u8, n: *core::Node, dirty: u64) {
     let p: *relist::RelistProps = relist::props_of(n);
     if p.is_null() { return; }
     let s: *RowSource = row_source_for(cv, n);
@@ -2283,6 +2565,12 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
     // that is 646 realises to show a list against 46 — and 3 dropped frames in
     // 60 under a hard flick against none.
     { (*s).uniform = { (*p).uneven_rows } == false };
+    // HOW MANY COLUMNS A LINE HOLDS. One is a list, which is every relist that
+    // never mentions the verb. The count it is REPLACING is read first: a
+    // regrid keeps the first visible row, and that row is found under the
+    // old arrangement.
+    let prior_cols: i64 = cols_of(s);
+    { (*s).cols = { (*p).columns } as i64 };
 
     // THE COUNT IS READ, NOT STORED. Through the erased reader, so `T` is the
     // element's business and never the backend's. This is the whole difference
@@ -2300,6 +2588,19 @@ fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
     // walk this list. The element raises `P_ROWS` from its change handler and
     // `P_BUILDER` from `set_builder`; nothing else here is a reason to touch
     // the table.
+    // A REGRID IS A LAYOUT CHANGE, not a change to the sequence: the same rows
+    // in a different arrangement. Every measurement is keyed by the width it was
+    // taken at and the CELL width just changed, so the cache is worth nothing —
+    // which is exactly what `grid_reload` already says by zeroing it.
+    // ...AND THE FIRST VISIBLE ROW STAYS WHERE IT WAS. Items survive a regrid;
+    // lines are what it rewrites — so the anchor is an item, read under the
+    // old columns and put back at the top under the new.
+    if (dirty & relist::P_COLUMNS) != (0 as u64) && creating == false {
+        let anchor: i64 = grid_anchor_item(cv, s, prior_cols);
+        grid_reload(cv, s);
+        grid_show_item_at_top(cv, anchor);
+        return;
+    }
     let row_band: u64 = relist::P_ROWS | relist::P_BUILDER;
     if (dirty & row_band) == (0 as u64) && creating == false { return; }
 
@@ -2434,6 +2735,7 @@ fn row_source_for(tv: *u8, n: *core::Node) -> *RowSource {
         measure_cell: 0 as *u8,
         frame_obs: 0 as u64,
         uniform: false,
+        cols: 1 as i64,
         groups: 0 as i64,
         group_size: props::no_group_size,
         group_header: props::no_group_header,
@@ -2505,7 +2807,7 @@ fn release_row_source(v: *u8) {
     scheduler::forget_reload(s as *u8);
     // The measuring cell is retained by this source and by nothing else.
     let mc: *u8 = { (*s).measure_cell };
-    if mc.is_not_null() { release_cell_row(mc); rt::release(mc); }
+    if mc.is_not_null() { release_cell_row(mc, { (*s).node }); rt::release(mc); }
     synth::set_associated(tv, source_key(), 0 as *u8);
     // `heights` is a `Vec` the source owns, so this is a drop and not just a
     // free — `from_raw` re-adopts the box `into_raw` surrendered, and the
@@ -3087,14 +3389,23 @@ fn scroll_to_bottom(tv: *u8) {
 fn grid_scroll_to_bottom(cv: *u8, s: *RowSource) {
     let items: i64 = { (*s).count };
     if items <= (0 as i64) { return; }
-    let ip: *u8 = grid_index_path(items -% (1 as i64));
-    if ip.is_null() { return; }
-    let set: *u8 = { rt::alloc_init(#str_ptr("NSMutableSet\0")) };
-    if set.is_null() { return; }
-    { rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), ip) };
-    { msg_void_id_u64(cv, rt::sel(#str_ptr("scrollToItemsAtIndexPaths:scrollPosition:\0")),
-                      set, 8 as u64) };     // NSCollectionViewScrollPositionBottom
-    rt::release(set);
+    // The document sized to its content first — right after a reload the
+    // collection view's own layout pass has not run, and a scroll past the
+    // frame is clamped to nothing. See `grid_fit_to_content`.
+    grid_fit_to_content(cv);
+    // THE BOTTOM IS A NUMBER: content height less the viewport, scrolled to
+    // with the plain NSView verb. This used to go through
+    // `scrollToItemsAtIndexPaths:scrollPosition:` with 8 — which is Left, not
+    // Bottom (1 << 2; checked against the SDK header 2026-09-15) — so a grid
+    // that followed its tail across a width change scrolled to its left edge
+    // and stayed put. A point needs no constant to get wrong.
+    let esv: *u8 = { rt::msg_id(cv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+    if esv.is_null() { return; }
+    let vis: rt::Rect = { rt::msg_rect(esv, rt::sel(#str_ptr("documentVisibleRect\0"))) };
+    let doc: rt::Rect = { rt::msg_rect(cv, rt::sel(#str_ptr("frame\0"))) };
+    var y: f64 = doc.h - vis.h;
+    if y < 0.0f64 { y = 0.0f64; }
+    { rt::msg_void_point(cv, rt::sel(#str_ptr("scrollPoint:\0")), rt::Point { x: 0.0f64, y: y }) };
 }
 
 // The table's frame changed. A width change is the only one that matters — a
@@ -3243,6 +3554,16 @@ fn notify_resized(v: *u8) {
 }
 
 // Set the column width WITHOUT notifying — the other half of that ordering.
+// The suite's door to `grid_scroll_to_bottom` — what a grid that follows its
+// tail does after a width change.
+fn grid_to_bottom(v: *u8) {
+    let cv: *u8 = grid_of(v);
+    if cv.is_null() { return; }
+    let s: *RowSource = source_of(cv);
+    if s.is_null() { return; }
+    grid_scroll_to_bottom(cv, s);
+}
+
 fn set_column_width(v: *u8, w: f64) {
     let tv: *u8 = table_of(v);
     if tv.is_null() { return; }
@@ -3892,7 +4213,9 @@ fn tree_view_for_item_body(ov: *u8, item: *u8) -> *u8 {
             return cell;
         }
     }
-    if !fresh { release_cell_row(cell); }
+        // The tree keeps no realised set — its rows are not keyed by the
+    // application, so there is nothing for `find` to resolve.
+    if !fresh { release_cell_row(cell, 0 as *core::Node); }
 
     // Realise FIRST, then lay out. A node's intrinsic size comes from the
     // measure callback the backend installs while creating its native view, so

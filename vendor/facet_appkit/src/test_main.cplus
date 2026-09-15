@@ -13204,6 +13204,37 @@ fn a_root_sidebar_split_gets_the_windows_unified_toolbar_and_the_whole_content()
     app::reset_default_for_tests();
 }
 
+#[test]
+fn an_idle_sidebar_layout_does_not_schedule_itself_again() {
+    backend::install();
+    app::reset_default_for_tests();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "side"));
+    b.add(core::column(core::Builder::new(), key: "main"));
+    var root: core::Node = split::split(b, key: "sp", position: 220.0f64,
+                                        role_leading: split::PaneRole::Sidebar);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "idle", width: 820.0f64, height: 520.0f64, bar: screen::Bar::Blended));
+    assert win.is_not_null();
+
+    // Mounting asks for a tick, and AppKit's first placement can ask for one
+    // follow-up. Once those two passes have laid out the controller-backed
+    // panes, the run loop must be allowed to sleep. The old frame walk used
+    // facet's public width/height setters here; both called `touch`, so every
+    // tick armed its successor and a motionless window used a whole CPU core.
+    scheduler::tick();
+    scheduler::tick();
+    assert scheduler::sync_pending() == false;
+    let after: u64 = scheduler::ticks();
+    scheduler::tick();
+    assert scheduler::ticks() == after;
+
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+}
+
 // The other half: a Blended window with NO sidebar still gets the transparent
 // titlebar, which is the whole point of asking for `Bar::Blended` — content
 // showing through the bar. The sidebar is the exception, not the new rule.
@@ -15608,6 +15639,288 @@ fn tl_relist(ref rows: obs_vec::ObsVec[RLEntry], key: str, keyed: bool) -> core:
     return relist::relist(rows, key: key, builder: tl_row_bare, uneven_rows: true);
 }
 
+// A row with a keyed control INSIDE it — a star button, the case the design
+// left open. Its key is the row's own, extended, which is the convention
+// `catalog.cplus` already uses: the application spells the whole key and facet
+// composes nothing.
+fn tl_row_with_star(i: usize, ctx: *u8) -> core::Node {
+    RLB = RLB + (1 as i64);
+    var b: core::Builder = core::Builder::new();
+    let star: text::Text = "tweet:${i}:star";
+    b.add(label::label("*", key: star.view()));
+    let id: text::Text = "tweet:${i}";
+    return core::column(b, key: id.view());
+}
+
+#[test]
+fn a_realised_row_is_found_by_the_key_its_builder_gave_it() {
+    backend::install();
+    // WHAT THE KEY WAS MISSING. The backend has always read it — it is the
+    // identity a measured height is cached under — but `find` had no path to
+    // the node, because a row is realised into a cell and is never a child of
+    // the list. Now the list answers for the rows it has realised.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "find1", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    // Nothing is realised yet, so nothing is findable — and the list has no
+    // children, which is what makes the point.
+    assert core::child_count_of(np) == (0 as usize);
+    match core::find_in(np, "tweet:4") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+
+    // A REAL VEND, through the data source the collection view calls.
+    let cell: *u8 = recycler::view_for_row(v, 4 as i64);
+    assert cell.is_not_null();
+
+    match core::find_in(np, "tweet:4") {
+        option::Option[*core::Node]::Some(hit) => {
+            assert { (*hit).key() } == "tweet:4";
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // ...and a row nothing has scrolled to still has no node to find. That is
+    // the contract, not a shortfall: the other nineteen were never built.
+    match core::find_in(np, "tweet:11") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+}
+
+fn tl_realised(np: *core::Node) -> usize {
+    return match relist::from(np) {
+        option::Option[relist::Relist]::Some(h) => h.realised_count(),
+        option::Option[relist::Relist]::None => 0 as usize,
+    };
+}
+
+#[test]
+fn a_grid_reload_empties_the_realised_set() {
+    backend::install();
+    // A RELOAD DISCARDS EVERY ITEM and the collection view does not walk them
+    // out, so the element is told wholesale. Without it the set kept the rows
+    // of every discarded item: a regrid on the gallery left 123, 125 … 131
+    // "realised" beside the rows actually on screen.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "rl-reload", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    let c2: *u8 = recycler::view_for_row(v, 2 as i64);
+    let c7: *u8 = recycler::view_for_row(v, 7 as i64);
+    assert c2.is_not_null();
+    assert c7.is_not_null();
+    assert tl_realised(np) == (2 as usize);
+    rows.note_reload();
+    views::apply(0 as *u8, np);
+    assert tl_realised(np) == (0 as usize);
+    match core::find_in(np, "tweet:2") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+}
+
+#[test]
+fn an_item_that_ends_displaying_is_released_unless_it_was_refilled() {
+    backend::install();
+    // The realised set is what is ON SCREEN. An item in the reuse queue is not,
+    // so the delegate's end-display releases its row with the element told —
+    // and a late arrival for a row the cell no longer holds is left alone,
+    // because the vend already cleared it with the owner on the way in.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "rl-end", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    let cell: *u8 = recycler::view_for_row(v, 4 as i64);
+    assert cell.is_not_null();
+    assert tl_realised(np) == (1 as usize);
+
+    recycler::grid_end_displaying(v, cell, 4 as i64);
+    assert tl_realised(np) == (0 as usize);
+    match core::find_in(np, "tweet:4") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+
+    // The same cell refilled with row 6, then the late word about row 4.
+    recycler::refill_row(v, cell, 6 as i64);
+    assert tl_realised(np) == (1 as usize);
+    recycler::grid_end_displaying(v, cell, 4 as i64);
+    assert tl_realised(np) == (1 as usize);
+    match core::find_in(np, "tweet:6") {
+        option::Option[*core::Node]::Some(_x) => { }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // And the word about row 6, which it does hold, is honoured.
+    recycler::grid_end_displaying(v, cell, 6 as i64);
+    assert tl_realised(np) == (0 as usize);
+}
+
+#[test]
+fn a_control_inside_a_realised_row_is_found_by_its_own_key() {
+    backend::install();
+    // A row is SEARCHED, not compared — so a star button in a row is an
+    // ordinary keyed node, which is the thing `list` could never offer.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "find2", builder: tl_row_with_star);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let cell: *u8 = recycler::view_for_row(v, 3 as i64);
+    assert cell.is_not_null();
+    match core::find_in(np, "tweet:3:star") {
+        option::Option[*core::Node]::Some(hit) => {
+            assert { (*hit).key() } == "tweet:3:star";
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_cell_reused_for_another_row_forgets_the_row_it_held() {
+    backend::install();
+    // THE ONE WITH TEETH. A recycled cell tears down the row it held and frees
+    // the node. An entry left in the realised set after that is a FREED NODE
+    // handed to `find` — so the release has to reach the set, from the one
+    // place that drops the node.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "find3", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let cell: *u8 = recycler::make_cell(v);
+    assert cell.is_not_null();
+    recycler::fill_into(v, cell, 4 as i64);
+    match core::find_in(np, "tweet:4") {
+        option::Option[*core::Node]::Some(_x) => { }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    assert rl_realised(np) == (1 as usize);
+
+    // The same cell, now showing a different row.
+    recycler::fill_into(v, cell, 9 as i64);
+    assert rl_realised(np) == (1 as usize);
+    match core::find_in(np, "tweet:4") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+    match core::find_in(np, "tweet:9") {
+        option::Option[*core::Node]::Some(hit) => { assert { (*hit).key() } == "tweet:9"; }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn measuring_a_row_does_not_make_it_findable() {
+    backend::install();
+    // A MEASUREMENT REALISES A ROW into a cell kept for the purpose, and that
+    // row is torn down by the next measurement. It is not on screen and it is
+    // not addressable; the realised set is what the list is SHOWING.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "find4", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    let h: f64 = recycler::height_of_row(v, 7 as i64);
+    assert h > 0.0f64;
+    assert rl_realised(np) == (0 as usize);
+    match core::find_in(np, "tweet:7") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+}
+
+#[test]
+fn a_list_row_is_not_findable_and_the_notes_leave_it_alone() {
+    backend::install();
+    // `list` shares this cell machinery and is NOT a relist: its rows are not
+    // keyed by the application, so there is nothing to resolve and the notes
+    // record nothing. The kind check in the element is what makes the shared
+    // path safe.
+    var n: core::Node = list::list(key: "plain", count: 20 as usize);
+    let np: *core::Node = #addr_of(n);
+    match list::find("plain", within: np) {
+        option::Option[list::List]::Some(h) => { let _r: list::List = h.set_row(rlb_row_of); }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    let cell: *u8 = recycler::view_for_row(v, 2 as i64);
+    assert cell.is_not_null();
+    // The row exists, and nothing claims to find it.
+    assert core::has_rows_probe(np) == false;
+    match core::find_in(np, "plain:2") {
+        option::Option[*core::Node]::Some(_x) => { assert false; }
+        option::Option[*core::Node]::None => { }
+    }
+}
+
+#[test]
+fn scroll_to_is_carried_out_and_consumed_by_the_pass() {
+    backend::install();
+    // WHAT IS ASSERTABLE HEADLESS. A collection view with no window does not
+    // lay out, so where it ends up is not a fact this suite can read — that is
+    // a probe app's job. What IS a fact: the apply took the command, so it
+    // cannot fire again on an unrelated later pass, and an index past the end
+    // is a no-op rather than the exception AppKit raises for one.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = tl_relist(rows, "scr", true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    match relist::from(np) {
+        option::Option[relist::Relist]::Some(h) => {
+            let _r: relist::Relist = h.scroll_to(12 as usize);
+            views::apply(0 as *u8, np);
+            assert h.take_scroll_to() == (-1 as i64);
+
+            // Past the end: taken, and asks the collection view for nothing.
+            let _r2: relist::Relist = h.scroll_to(9999 as usize);
+            views::apply(0 as *u8, np);
+            assert h.take_scroll_to() == (-1 as i64);
+        }
+        option::Option[relist::Relist]::None => { assert false; }
+    }
+}
+
+// The realised count, through the cursor.
+fn rl_realised(n: *core::Node) -> usize {
+    return match relist::from(n) {
+        option::Option[relist::Relist]::Some(h) => h.realised_count(),
+        option::Option[relist::Relist]::None => 0 as usize,
+    };
+}
+
+fn rlb_row_of(index: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("row", key: ""));
+    let id: text::Text = "plain:${index}";
+    return core::column(b, key: id.view());
+}
+
 #[test]
 fn a_keyed_row_keeps_its_measured_height_across_a_reload() {
     backend::install();
@@ -16272,6 +16585,269 @@ fn a_relist_stacks_its_rows_at_full_width() {
     assert size.w == 260.0f64;
 }
 
+// A row whose height DEPENDS ON THE INDEX, so "the line takes its tallest cell"
+// is a question with a wrong answer available.
+fn rlg_row(index: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label("cell", key: "g:label", font_size: 13.0f64));
+    let pad: f64 = 4.0f64 + ((index % (3 as usize)) as f64) * 9.0f64;
+    return core::column(b, key: "g${index}").padding(pad);
+}
+
+fn rlg_layout(v: *u8) -> *u8 {
+    let cv: *u8 = recycler::grid_of(v);
+    if cv.is_null() { return 0 as *u8; }
+    return { rt::msg_id(cv, rt::sel(#str_ptr("collectionViewLayout\0"))) };
+}
+
+fn rlg_frame(lay: *u8, row: i64) -> rt::Rect {
+    let ip: *u8 = { rt::msg_id_i64_i64(rt::get_class(#str_ptr("NSIndexPath\0")),
+                                       rt::sel(#str_ptr("indexPathForItem:inSection:\0")),
+                                       row, 0 as i64) };
+    let at: *u8 = { rt::msg_id_id(lay,
+                        rt::sel(#str_ptr("layoutAttributesForItemAtIndexPath:\0")), ip) };
+    if at.is_null() { return rt::Rect { x: -1.0f64, y: -1.0f64, w: -1.0f64, h: -1.0f64 }; }
+    return { rt::msg_rect(at, rt::sel(#str_ptr("frame\0"))) };
+}
+
+fn rlg_list(ref rows: obs_vec::ObsVec[RLEntry], key: str, cols: usize) -> core::Node {
+    return relist::relist(rows, key: key, builder: rlg_row,
+                          uneven_rows: true, columns: cols);
+}
+
+#[test]
+fn a_three_column_relist_puts_three_cells_on_one_line() {
+    backend::install();
+    // THE GRID, and the arithmetic it owes: three cells side by side, each a
+    // third of the width, all at the same y — and the fourth starting a new
+    // line below them.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 9 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = rlg_list(rows, "g3", 3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    assert v.is_not_null();
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 300.0f64);
+    let lay: *u8 = rlg_layout(v);
+    assert lay.is_not_null();
+
+    let a: rt::Rect = rlg_frame(lay, 0 as i64);
+    let b: rt::Rect = rlg_frame(lay, 1 as i64);
+    let c: rt::Rect = rlg_frame(lay, 2 as i64);
+    // A THIRD OF THE WIDTH EACH, laid left to right with no gap and no overlap.
+    assert a.w == 100.0f64;
+    assert b.w == 100.0f64;
+    assert c.w == 100.0f64;
+    assert a.x == 0.0f64;
+    assert b.x == 100.0f64;
+    assert c.x == 200.0f64;
+    // ...on ONE line.
+    assert a.y == 0.0f64;
+    assert b.y == 0.0f64;
+    assert c.y == 0.0f64;
+    // ...and the fourth cell starts the next line, below the tallest of them.
+    let d: rt::Rect = rlg_frame(lay, 3 as i64);
+    assert d.x == 0.0f64;
+    assert d.y == a.h;
+    assert d.y > 0.0f64;
+}
+
+#[test]
+fn a_line_takes_the_height_of_its_tallest_cell() {
+    backend::install();
+    // ROW-ALIGNED, NOT STAGGERED. Every cell on a line is the line's height, so
+    // a tall item pushes its whole line down — which is what a flow layout does
+    // and what a reader expects of "columns". Column-packed masonry is a
+    // different control and is deliberately not this one.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 6 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = rlg_list(rows, "gh", 3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 300.0f64);
+    let lay: *u8 = rlg_layout(v);
+
+    let a: rt::Rect = rlg_frame(lay, 0 as i64);
+    let b: rt::Rect = rlg_frame(lay, 1 as i64);
+    let c: rt::Rect = rlg_frame(lay, 2 as i64);
+    // The builder pads by index, so these three are NOT naturally equal —
+    // which is what makes the assertion mean something.
+    assert a.h == b.h;
+    assert b.h == c.h;
+    // And the line is as tall as the tallest, not the first: cell 2 has the
+    // most padding of the three.
+    let single: f64 = recycler::height_of_row(v, 0 as i64);
+    assert a.h > single;
+}
+
+#[test]
+fn a_grid_is_as_tall_as_its_lines_not_its_rows() {
+    backend::install();
+    // Nine rows in three columns is THREE lines. Measuring it as nine would
+    // give the scroller three times the travel it needs.
+    //
+    // WHAT THIS ACTUALLY CATCHES is `line_top` losing its column awareness.
+    // Walking `n` lines instead of `line_count(n, cols)` does NOT fail here,
+    // because `line_height` answers 0 once the line is past the end — the sum
+    // is self-limiting. Worth knowing before trusting the name.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 9 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = rlg_list(rows, "gt", 3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 300.0f64);
+    let lay: *u8 = rlg_layout(v);
+
+    let l0: rt::Rect = rlg_frame(lay, 0 as i64);
+    let l1: rt::Rect = rlg_frame(lay, 3 as i64);
+    let l2: rt::Rect = rlg_frame(lay, 6 as i64);
+    let size: rt::Size = { recycler::grid_content_size(lay) };
+    assert size.h == l2.y + l2.h;
+    assert size.h == l0.h + l1.h + l2.h;
+    assert size.w == 300.0f64;
+}
+
+#[test]
+fn a_partial_last_line_holds_what_is_left_and_no_more() {
+    backend::install();
+    // Seven rows in three columns: two full lines and a line of one. Asking for
+    // a cell past the end must answer NOTHING rather than a frame — AppKit
+    // takes an index path outside the data source badly.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 7 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = rlg_list(rows, "gp", 3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 300.0f64);
+    let lay: *u8 = rlg_layout(v);
+
+    let last: rt::Rect = rlg_frame(lay, 6 as i64);
+    assert last.x == 0.0f64;
+    assert last.w == 100.0f64;
+    // Past the end is no attributes at all.
+    let past: rt::Rect = rlg_frame(lay, 7 as i64);
+    assert past.w == (-1.0f64);
+}
+
+#[test]
+fn a_regrid_keeps_the_first_visible_row() {
+    backend::install();
+    // A REGRID IS A LAYOUT CHANGE, and the reader was looking at something. The
+    // item under the viewport's top edge stays there: read as an item under the
+    // old columns, put back at the top under the new. Without this a regrid
+    // landed the grid at the top — measured on three backends 2026-09-15.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 60 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = rlg_list(rows, "gk", 1 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 300.0f64);
+    // A VIEWPORT, so there is a visible rect to keep: the scroll host framed.
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 }) };
+    let cv: *u8 = recycler::grid_of(v);
+    assert cv.is_not_null();
+    // Headless, the collection view never grows to its content; the app's
+    // layout pass does that in a window. Same door the anchor itself uses.
+    recycler::grid_fit_to_content(cv);
+    // Item 30 to the top.
+    let y30: f64 = rlg_frame(rlg_layout(v), 30 as i64).y;
+    assert y30 > 200.0f64;
+    { rt::msg_void_point(cv, rt::sel(#str_ptr("scrollPoint:\0")), rt::Point { x: 0.0f64, y: y30 }) };
+    let vis0: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("documentVisibleRect\0"))) };
+    assert vis0.y == y30;
+
+    // THREE COLUMNS: item 30 starts line 10, and line 10 is at the top.
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(np) else { assert false; return; };
+    let _c: relist::Relist = h.set_columns(3 as usize);
+    views::apply(0 as *u8, np);
+    let top30: f64 = rlg_frame(rlg_layout(v), 30 as i64).y;
+    let vis1: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("documentVisibleRect\0"))) };
+    assert top30 > 0.0f64;
+    assert vis1.y == top30;
+    // Not merely "somewhere below the top": the line before it is above the fold.
+    assert rlg_frame(rlg_layout(v), 27 as i64).y < vis1.y;
+
+    // AND BACK: item 30 again, at the height it had as a row.
+    let _d: relist::Relist = h.set_columns(1 as usize);
+    views::apply(0 as *u8, np);
+    let vis2: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("documentVisibleRect\0"))) };
+    assert vis2.y == rlg_frame(rlg_layout(v), 30 as i64).y;
+    assert vis2.y == y30;
+}
+
+#[test]
+fn a_grid_scrolled_to_its_bottom_shows_its_last_line() {
+    backend::install();
+    // NSCollectionViewScrollPositionBottom is 1 << 2. This path passed 8 —
+    // Left — from the day it was written, so a grid that followed its tail
+    // across a width change scrolled to its left edge and stayed where it was.
+    // Checked against the SDK header 2026-09-15; this is the check that keeps
+    // it checked.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 60 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = rlg_list(rows, "gb", 3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 300.0f64);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 }) };
+    let vis0: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("documentVisibleRect\0"))) };
+    assert vis0.y == 0.0f64;
+
+    recycler::grid_to_bottom(v);
+    let size: rt::Size = { recycler::grid_content_size(rlg_layout(v)) };
+    let vis1: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("documentVisibleRect\0"))) };
+    // The viewport's bottom edge is the content's bottom edge: the last line
+    // is on screen, and nothing below it.
+    assert size.h > 200.0f64;
+    assert vis1.y + vis1.h == size.h;
+    assert vis1.y > 0.0f64;
+}
+
+#[test]
+fn one_column_is_the_list_it_always_was() {
+    backend::install();
+    // THE REGRESSION THAT MATTERS. Every relist written before the verb existed
+    // means one column, and the line arithmetic has to collapse to exactly what
+    // it used to do: full width, stacked, no gap.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 4 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "g1", builder: rlg_row,
+                                       uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 300.0f64);
+    let lay: *u8 = rlg_layout(v);
+
+    var y: f64 = 0.0f64;
+    var r: i64 = 0 as i64;
+    while r < (4 as i64) {
+        let f: rt::Rect = rlg_frame(lay, r);
+        assert f.w == 300.0f64;
+        assert f.x == 0.0f64;
+        assert f.y == y;
+        y = y + f.h;
+        r = r +% (1 as i64);
+    }
+    let size: rt::Size = { recycler::grid_content_size(lay) };
+    assert size.h == y;
+}
+
 fn sb_split_with_sidebar() -> core::Node {
     var b: core::Builder = core::Builder::new();
     b.add(ui::column(core::Builder::new(), key: "side"));
@@ -16453,4 +17029,83 @@ fn window_buttons_hover_reveal_keeps_native_group_feedback() {
     assert rt::msg_i8_id(host.raw(), group, 0 as *u8) != (0 as i8);
     rt::msg_void_id(host.raw(), rt::sel(#str_ptr("mouseExited:\0")), 0 as *u8);
     assert rt::msg_i8_id(host.raw(), group, 0 as *u8) == (0 as i8);
+}
+
+
+// ---- a component AS A ROW, found while the row is realised -------------------
+
+struct RowComp { made_for: usize, touched: i32 }
+
+impl RowComp {
+    fn new(i: usize) -> RowComp { return RowComp { made_for: i, touched: 0 }; }
+}
+
+impl RowComp: component::Component {
+    fn build(ref this) -> core::Node {
+        var b: core::Builder = core::Builder::new();
+        b.add(label::label("r", key: ""));
+        let id: text::Text = "rowc:${this.made_for}";
+        return core::column(b, key: id.view());
+    }
+}
+
+impl RowComp: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) { return; }
+    fn on_detach(ref this, why: component::Detach) { return; }
+}
+
+fn rowc_builder(i: usize, ctx: *u8) -> core::Node {
+    return component::child::[RowComp](RowComp::new(i));
+}
+
+#[test]
+fn a_component_inside_a_realised_row_is_reachable_and_is_rebuilt_each_time() {
+    backend::install();
+    app::reset_default_for_tests();
+    // A CONSEQUENCE OF THE ROWS PROBE, and a caveat worth stating in the same
+    // test. `component_at` resolves through `core::find_in`, so a stateful
+    // component used as a row is reachable the moment the row is realised —
+    // which it never was, because a row is not a child of the list.
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 20 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "rowc", builder: rowc_builder);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    app::open_window(np);
+
+    // Not realised: not there.
+    match component::component_at::[RowComp]("rowc:3") {
+        option::Option[*RowComp]::Some(_x) => { assert false; }
+        option::Option[*RowComp]::None => { }
+    }
+
+    let cell: *u8 = recycler::view_for_row(v, 3 as i64);
+    assert cell.is_not_null();
+    match component::component_at::[RowComp]("rowc:3") {
+        option::Option[*RowComp]::Some(p) => {
+            assert { (*p).made_for } == (3 as usize);
+            { (*p).touched = 5 };
+        }
+        option::Option[*RowComp]::None => { assert false; }
+    }
+
+    // THE CAVEAT. A relist BUILDS a row fresh every time it is vended — that is
+    // what it does instead of binding — so the component is a NEW INSTANCE per
+    // build and its state does not survive the row scrolling away and back. A
+    // component is a fine row SHAPE; it is not a place to keep row state.
+    //
+    // This is also where "newest wins" earns its keep: this second vend leaves
+    // TWO live rows keyed `rowc:3`, and the answer has to be the one just made.
+    let cell2: *u8 = recycler::view_for_row(v, 3 as i64);
+    assert cell2.is_not_null();
+    match component::component_at::[RowComp]("rowc:3") {
+        option::Option[*RowComp]::Some(p) => {
+            assert { (*p).made_for } == (3 as usize);
+            assert { (*p).touched } == 0;
+        }
+        option::Option[*RowComp]::None => { assert false; }
+    }
+    app::reset_default_for_tests();
 }

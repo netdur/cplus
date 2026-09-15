@@ -376,9 +376,21 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // 220 back. For a controller-backed split that pin describes
                     // a division AppKit is making itself, so the honest value
                     // for it is the rect AppKit landed on.
-                    core::set_width(c, b.w);
-                    core::set_height(c, b.h);
+                    // Already inside the backend's layout pass: borrow the
+                    // AppKit size only for this subtree layout, then restore
+                    // the declared style. `core::set_width` / `set_height` are
+                    // UI mutations, so each one requests ANOTHER scheduler
+                    // tick. Leaving AppKit's safe-area width on the node is
+                    // also wrong: `settle_split` restores the declared divider
+                    // position before the next pass, producing a permanent
+                    // 220 -> 212 -> 220 feedback loop for a sidebar.
+                    let declared_width: flex::StyleLength = { (*c).style.width };
+                    let declared_height: flex::StyleLength = { (*c).style.height };
+                    { (*c).set_width(flex::StyleLength::points(b.w)) };
+                    { (*c).set_height(flex::StyleLength::points(b.h)) };
                     relayout_root(c, b.w, b.h, backing_scale_of(v), force: true);
+                    { (*c).set_width(declared_width) };
+                    { (*c).set_height(declared_height) };
                     i = i +% (1 as usize);
                     continue;
                 }
