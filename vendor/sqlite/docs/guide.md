@@ -3,15 +3,15 @@
 How the idiomatic layer relates to raw SQLite, and the rules that keep you
 safe. Tutorial: [tutorial.md](tutorial.md). API: [ref.md](ref.md).
 
-## Two packages
+## One package, two modules
 
-| Package | Role |
+| Module | Role |
 |---|---|
-| **`sqlite`** | App API — this package |
-| **`sqlite_ffi`** | Auto-generated C ABI (`sqlite3_*` as `*u8` / `*i8`) |
+| **`sqlite/sqlite`** | App API |
+| **`sqlite/raw`** | Auto-generated C ABI (`sqlite3_*` as `*u8` / `*i8`) |
 
-`sqlite` depends on `sqlite_ffi` and links `libsqlite3` through it. Escape
-hatch: `raw_handle()` on connection/statement for rare gen APIs.
+The package links `libsqlite3`. Escape hatch: `raw_handle()` on a connection
+or statement plus `sqlite/raw` for rare generated APIs.
 
 ## Types
 
@@ -66,7 +66,7 @@ All fallible ops return `Result[…, Error]`. Message comes from
 - Named parameters beyond `?1` (raw still works if you prepare with names)
 - Transaction helpers (`begin`/`commit` as methods) — use `execute("begin")`
 - Connection pooling, async, ORM / typed rows
-- Full surface of backup, blob streaming, hooks, FTS — use `sqlite_ffi`
+- Full surface of backup, blob streaming, hooks, FTS — use `sqlite/raw`
 
 ## Gotchas
 
@@ -87,4 +87,4 @@ you use) carefully.
 ### Not thread-safe by default
 
 Same as SQLite serialized mode defaults; multi-thread needs care and
-possibly `sqlite_ffi` config APIs.
+possibly `sqlite/raw` config APIs.

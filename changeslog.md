@@ -625,8 +625,8 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   cross-linked via `--use`.
 - **`vendor/quartzcore`** — auto-generated Core Animation binding so
   `NSView.layer()` is a real `CALayer`, not a methodless stub.
-- **`vendor/sqlite` + `sqlite_ffi`** — idiomatic SQLite package over a raw
-  bindgen base.
+- **`vendor/sqlite`** — idiomatic SQLite API and its raw bindgen module in one
+  package.
 - **ObjC block signatures** — block argument and return types are part of
   the signature (no more “probably an 8-byte integer”); AppKit regen
   fixes 43 block callbacks.

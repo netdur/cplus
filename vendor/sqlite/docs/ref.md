@@ -6,7 +6,7 @@ Manual for the idiomatic `sqlite` package.
 import "sqlite/sqlite" as sqlite;
 ```
 
-Raw symbols: `import "sqlite_ffi/sqlite" as raw`.
+Raw symbols: `import "sqlite/raw" as raw`.
 
 ---
 
@@ -120,6 +120,6 @@ Bind `at` is **1-based**. Column `at` is **0-based**.
 |---|---|
 | Package name | `sqlite` |
 | Module | `sqlite/sqlite` |
-| Dependencies | `stdlib`, `sqlite_ffi` |
-| Link | via `sqlite_ffi` → `libsqlite3` |
+| Dependencies | `stdlib` |
+| Link | `libsqlite3` |
 | Tests | `cpc test` |

@@ -74,7 +74,7 @@ loop {
 
 ## Day-one rules
 
-- Prefer **`sqlite`**, not `sqlite_ffi`.
+- Prefer **`sqlite/sqlite`**; use `sqlite/raw` only for missing advanced calls.
 - Check every `Result`; errors carry SQLite code + message `Text`.
 - Column text/blob are **owned copies** — safe after the next `step`.
 - Do not use the connection after it is dropped while statements still live

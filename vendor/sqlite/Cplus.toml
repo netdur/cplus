@@ -3,9 +3,24 @@ name    = "sqlite"
 version = "0.0.1"
 edition = "2026"
 
-# sqlite — idiomatic SQLite: Connection / Statement, Result errors, Drop.
-# Raw C ABI lives in dependency `sqlite_ffi` (bindgen). See docs/.
+# sqlite — idiomatic SQLite plus its raw C ABI in one package.
+#
+# ONE PACKAGE ON EVERY PLATFORM, the same shape as camera and http:
+# `sqlite/sqlite` is the application API, while `sqlite/raw` is the generated
+# escape hatch and implementation seam. `raw.cplus` is the native SQLite C
+# backend; a platform that needs a different bridge can shadow it with
+# `raw_<platform>.cplus` without changing callers or adding another package.
+#
+# SOURCE-BUILT DELIBERATELY. The generated binding includes SQLite APIs whose
+# availability depends on how a platform built SQLite (snapshot, scanstatus,
+# normalize). Prebuilding would make those wrappers one monolithic archive and
+# force every consumer to resolve optional symbols it never calls. Source
+# compilation lets prune remove every unused wrapper first.
+[build]
+prebuild = false
 
 [dependencies]
 stdlib = "*"
-sqlite_ffi = "*"
+
+[link]
+libs = ["sqlite3"]

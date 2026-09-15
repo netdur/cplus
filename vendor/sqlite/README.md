@@ -20,8 +20,8 @@ let _n: result::Result[i64, sqlite::Error] =
     db.execute("create table t(id integer primary key, name text)");
 ```
 
-Raw C ABI (bindgen): package **`sqlite_ffi`** — use only for advanced calls
-via `Connection.raw_handle()` / `Statement.raw_handle()`.
+Raw C ABI (bindgen): module **`sqlite/raw`** in this package — use only for
+advanced calls via `Connection.raw_handle()` / `Statement.raw_handle()`.
 
 ## Docs
 

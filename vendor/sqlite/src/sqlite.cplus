@@ -1,10 +1,10 @@
-// vendor/sqlite — idiomatic SQLite façade over `sqlite_ffi`.
+// vendor/sqlite — idiomatic SQLite façade over this package's raw backend.
 //
 // Connection + Statement with Result errors, str paths/SQL, owned column
 // text, and Drop that closes/finalizes. Raw C entry points stay in
-// sqlite_ffi for advanced use.
+// `sqlite/raw` for advanced use.
 
-import "sqlite_ffi/sqlite" as raw;
+import "./raw" as raw;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/status" as status;
@@ -224,7 +224,7 @@ impl Connection {
         return result::Result[bool, Error]::Ok(true);
     }
 
-    // Raw sqlite3* for advanced sqlite_ffi calls. Borrowed; do not close.
+    // Raw sqlite3* for advanced sqlite/raw calls. Borrowed; do not close.
     fn raw_handle(this) -> *u8 {
         return this._db;
     }
