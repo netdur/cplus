@@ -14613,6 +14613,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         owner: GateOwner,
         shown: &str,
         name: &Ident,
+        sig: Option<&MethodSig>,
         args: &[Expr],
         call_span: ByteSpan,
     ) -> Result<(), Ty> {
@@ -14634,17 +14635,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             GateOwner::NoNominal => return Ok(()),
         };
         // EXT.2: the method exists, but if another module added it, it is only
-        // in scope where that module was imported.
+        // in scope where that module was imported. The refusal is reported
+        // BEFORE the arguments are checked, so it is the first line the user
+        // reads — and the arguments are checked against the signature the
+        // call was aimed at, for the reason `check_refused_call_args` gives.
         if let Some(ext) = self.ext_out_of_scope(is_enum, owner_id, &name.name) {
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
-            return Err(self.err_ext_out_of_scope(shown, name, &ext));
+            let ty = self.err_ext_out_of_scope(shown, name, &ext);
+            self.check_refused_call_args(sig, args, call_span);
+            return Err(ty);
         }
         if self.deny_private_method(is_enum, owner_id, shown, name) {
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
+            self.check_refused_call_args(sig, args, call_span);
             return Err(Ty::Error);
         }
         // v0.0.23: a method from `impl Box[T: Copy] { fn get }` requires the
@@ -14653,6 +14654,55 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // methods.
         self.check_impl_block_bounds_at_call(origin, &name.name, call_span);
         Ok(())
+    }
+
+    /// The arguments of a call a gate refused are still checked — an error
+    /// inside one is real and the user wants it — but against the parameter
+    /// list the call was aimed at, the way an accepted call checks them.
+    ///
+    /// Checked with no expectation, a bare function name is E0312 ("used as a
+    /// value"). Lowering splices a declaration's defaults into every call that
+    /// omits them, so a refused `.gesture(on_click: h)` reported E0312 once for
+    /// `h` and once for each of the seventeen handler defaults it did not
+    /// write — every one located inside `facet/gestures.cplus`, and every one
+    /// printed ABOVE the single diagnostic that named the missing import
+    /// (bugs/closed/a-missing-import-reports-errors-inside-facet.md). The
+    /// refusal now goes first and the defaults check clean, as they do when
+    /// the call is accepted.
+    ///
+    /// A generic method's parameters mention type parameters nothing has
+    /// bound; an argument checked against `T` would report a mismatch that is
+    /// not one, so those are checked with no expectation — except what the
+    /// DECLARATION supplied. A spliced default is a closed expression from
+    /// another file, and an error in it is never this call's to report.
+    fn check_refused_call_args(
+        &mut self,
+        sig: Option<&MethodSig>,
+        args: &[Expr],
+        call_span: ByteSpan,
+    ) {
+        match sig {
+            Some(s) if s.generic_params.is_empty() => {
+                self.try_bound_method_refs(args, &s.params, call_span);
+                for (i, a) in args.iter().enumerate() {
+                    let expected = s.params.get(i).map(|p| p.ty.clone());
+                    let _ = self.check_expr(a, expected);
+                }
+            }
+            _ => {
+                let here = self
+                    .current_file
+                    .as_deref()
+                    .map(crate::lexer::intern_file);
+                for a in args {
+                    let spliced = a.span.file != 0 && here.is_some_and(|h| a.span.file != h);
+                    if spliced {
+                        continue;
+                    }
+                    let _ = self.check_expr(a, None);
+                }
+            }
+        }
     }
 
     fn check_impl_block_bounds_at_call(
@@ -15002,7 +15052,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // issue-05: `str` is a builtin with no nominal owner — see
                 // `GateOwner::NoNominal`. Stated, not skipped.
                 if let Err(ty) =
-                    self.run_method_gates(GateOwner::NoNominal, bt, name, args, call_span)
+                    self.run_method_gates(GateOwner::NoNominal, bt, name, Some(&sig), args, call_span)
                 {
                     return ty;
                 }
@@ -15082,7 +15132,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             };
             let shown = self.ty_display_named(&Ty::Enum(eid));
             if let Err(ty) =
-                self.run_method_gates(GateOwner::Enum(eid), &shown, name, args, call_span)
+                self.run_method_gates(GateOwner::Enum(eid), &shown, name, Some(&sig), args, call_span)
             {
                 return ty;
             }
@@ -15113,7 +15163,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // instantiation is created (`check_generic_bounds`).
                 let pname = pname.clone();
                 if let Err(ty) =
-                    self.run_method_gates(GateOwner::NoNominal, &pname, name, args, call_span)
+                    self.run_method_gates(GateOwner::NoNominal, &pname, name, Some(&msig), args, call_span)
                 {
                     return ty;
                 }
@@ -15159,7 +15209,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 {
                     self.text_to_str_coercion_table.insert(receiver.span);
                     if let Err(ty) =
-                        self.run_method_gates(GateOwner::NoNominal, "str", name, args, call_span)
+                        self.run_method_gates(GateOwner::NoNominal, "str", name, Some(&sig), args, call_span)
                     {
                         return ty;
                     }
@@ -15194,7 +15244,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             return Ty::Error;
         };
         let shown = self.ty_display_named(&Ty::Struct(id));
-        if let Err(ty) = self.run_method_gates(GateOwner::Struct(id), &shown, name, args, call_span)
+        if let Err(ty) = self.run_method_gates(GateOwner::Struct(id), &shown, name, Some(&sig), args, call_span)
         {
             return ty;
         }
@@ -17206,7 +17256,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             MethodOwner::Enum(id) => GateOwner::Enum(id),
         };
         if let Err(ty) =
-            self.run_method_gates(gate_owner, type_name, method_seg, args, call_span)
+            self.run_method_gates(gate_owner, type_name, method_seg, Some(sig), args, call_span)
         {
             return ty;
         }
@@ -24605,6 +24655,56 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
             codes.is_empty(),
             "an enum extension resolves where imported; got {codes:?}"
         );
+    }
+
+    #[test]
+    fn ext_refused_call_reports_the_import_and_nothing_inside_the_extending_module() {
+        // bugs/closed/a-missing-import-reports-errors-inside-facet.md. The
+        // extension defaults its handler parameters to a function name, and
+        // the call omits them, so the defaults are spliced in from the
+        // declaration. The gate refuses the call; what it must NOT do is
+        // check those defaults with no expected type — that was E0312 for
+        // every one of them, located in the extending file, printed above
+        // the one diagnostic that named the import.
+        let diags = check_multifile_src_imports(
+            "app.src.main",
+            &[
+                ("ui.src.node", "struct Node { id: i32 }\n"),
+                (
+                    "ui.src.gestures",
+                    "type Handler = fn(*u8, *u8) -> bool;\n\
+                     fn no_gesture(s: *u8, c: *u8) -> bool { return false; }\n\
+                     impl Node {\n\
+                         fn gesture(take this, ctx: *u8 = 0 as *u8,\n\
+                                    on_click: Handler = no_gesture,\n\
+                                    on_double_click: Handler = no_gesture) -> Node { return this; }\n\
+                     }\n",
+                ),
+                (
+                    "app.src.main",
+                    "fn on_click(s: *u8, c: *u8) -> bool { return true; }\n\
+                     fn main() -> i32 {\n\
+                         let n: Node = Node { id: 1 };\n\
+                         let m: Node = n.gesture(on_click: on_click);\n\
+                         return m.id;\n\
+                     }\n",
+                ),
+            ],
+            &[
+                ("ui.src.gestures", &["ui.src.node"]),
+                ("app.src.main", &["ui.src.node"]),
+            ],
+        );
+        let located: Vec<String> = diags
+            .iter()
+            .map(|d| format!("{} {}", d.code.0, d.primary.file.display()))
+            .collect();
+        assert!(
+            !located.iter().any(|l| l.contains("gestures")),
+            "nothing may be reported inside the extending module: {located:?}"
+        );
+        let codes = error_codes(diags);
+        assert_eq!(codes, vec!["E0388"], "exactly the import, first and only: {located:?}");
     }
 
     #[test]

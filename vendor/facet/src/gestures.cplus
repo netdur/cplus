@@ -341,7 +341,9 @@ fn _build(ctx: *u8, on_click: Handler, on_double_click: Handler,
 // handler that did not bring one, which is what a free function wants.
 //
 // Importing this module is what makes `.gesture(...)` exist; without it the
-// call is E0324, not a silent no-op.
+// call is E0388 at the call site, naming this module as the import to add —
+// not a silent no-op, and not (any more) a pile of E0312 against the defaults
+// below (bugs/closed/a-missing-import-reports-errors-inside-facet.md).
 impl flex::Node {
     fn gesture(
         take this,
