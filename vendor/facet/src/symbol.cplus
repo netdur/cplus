@@ -51,6 +51,7 @@ import "./facet" as core;
 import "./mount" as mount;
 import "./props" as props;
 import "./vocabulary" as vocab;
+import "./band" as band;
 
 // facet-origin controls take their kind tag from 1000 up. The 38 ledger-derived
 // modules take 1..38 from the generator, so a regeneration can never collide
@@ -316,6 +317,13 @@ impl Symbol {
     fn relayout(this) -> Symbol { core::relayout(this._p); return this; }
     fn frame(this) -> core::Frame { return core::frame_of(this._p); }
 }
+
+// THE SHARED BAND — see band.cplus. One line for the 76 verbs every GENERATED
+// cursor carries and every hand-written one lacked.
+impl Symbol: band::Band {
+    fn band_node(this) -> *core::Node { return this._p; }
+}
+
 
 // ---- lookup ------------------------------------------------------------------
 

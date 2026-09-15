@@ -45,6 +45,7 @@ import "stdlib/vec" as vec;
 import "./facet" as core;
 import "./mount" as mount;
 import "./vocabulary" as vocab;
+import "./band" as band;
 
 // facet-origin controls take their kind tag from 1000 up.
 const K_TREE: u32 = 1001u32;
@@ -593,6 +594,39 @@ impl Tree {
     fn relayout(this) -> Tree { core::relayout(this._p); return this; }
     fn frame(this) -> core::Frame { return core::frame_of(this._p); }
 }
+
+#[test]
+fn a_tree_carries_the_shared_band() {
+    // THE POINT OF band.cplus, asserted on the control that made the gap
+    // visible: `Tree` had 55 cursor verbs against `List`'s 159, and none of
+    // these. They are not new capability — every one forwards to a method
+    // `Node` already had — they are the CURSOR catching up.
+    var root: TreeNode = TreeNode::new("root", "r");
+    var n: core::Node = tree(root: root, key: "t:band");
+    let np: *core::Node = #addr_of(n);
+    guard let option::Option[Tree]::Some(t) = from(np) else { assert false; return; };
+
+    // A setter CHAINS, which is what `This` in a default body buys — without
+    // it the band could only offer unit-returning verbs and `Tree` would read
+    // differently from `List` in a second way.
+    let _t: Tree = t.set_agent(vocab::Agent::Private).set_tooltip("a tree");
+    assert core::agent(np) == vocab::Agent::Private;
+
+    // ...and a reader answers through the same door.
+    assert t.tooltip() == "a tree";
+    // A responsive rule, which a hand-written cursor could never state.
+    let _r: Tree = t.hide_in("compact");
+    assert core::rule_count_of(np) > (0 as usize);
+}
+
+// THE SHARED BAND — see band.cplus. One line, and `Tree` gains the 76 verbs
+// every GENERATED cursor has carried all along: `set_agent`, `set_shadow`,
+// `hide_in`, `begin_updates`, the animations, the accessibility pair and the
+// absolute-placement band.
+impl Tree: band::Band {
+    fn band_node(this) -> *core::Node { return this._p; }
+}
+
 
 // Narrow a node to this control, the DOM step: a node carries what EVERY
 // node has, and a checked cast adds what only this control has.

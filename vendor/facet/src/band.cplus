@@ -1,0 +1,125 @@
+// band — the shared verb band for a HAND-WRITTEN cursor.
+//
+// facet had TWO TIERS OF CONTROL and this is the bridge. A GENERATED control's
+// cursor carries the whole common band: `List` has 159 verbs. A HAND-WRITTEN
+// one carries whatever its author wrote: `Tree` has 55, and 118 of List's were
+// simply absent — no `set_agent`, no `set_shadow`, no `hide_in`, no
+// `begin_updates`. The six affected are facet's OWN inventions (tree, relist,
+// split, symbol, text_button, window_chrome), which made the words facet chose
+// for itself behave least like the rest of facet.
+//
+// THE CAPABILITY WAS NEVER MISSING. Every verb here is a method facet already
+// puts on `Node`, and `CommonProps` is on every node — so an application could
+// always reach them through `core::` on `.node()`. What was missing is the
+// CURSOR: you follow the cursor idiom until it dead-ends, then drop a level.
+//
+// ---- why an interface with default bodies -----------------------------------
+//
+// One definition, six one-line impls, and nothing to keep in step. It needed a
+// compiler fix to be possible at all: the self-type (`This`) resolved in sema
+// and NOWHERE in codegen, which re-derives every type by name, so any use of it
+// produced `Ty::Error` and crashed `llvm_ty`. See
+// `bugs/closed/self-in-an-impl-body-panics-the-compiler.md`. Without `This` a
+// default body cannot return the implementing type, and every setter here
+// chains — so the band would have had to trade one inconsistency for another.
+//
+// TWO CONSTRAINTS SHAPE WHAT IS HERE, both measured rather than assumed:
+//
+//   * a default body can call METHODS and not free functions — neither
+//     `core::set_shadow(..)` nor an unqualified local fn resolves inside one —
+//     so every verb below forwards to a method on `Node`;
+//   * a verb a cursor already declares is a DUPLICATE and a hard error
+//     (E0326), not an override. So this band is exactly the set the
+//     hand-written cursors LACK. It deliberately does not re-home
+//     `set_opacity`, `set_enabled` or the flex verbs they already carry.
+//
+// `band_node` rather than `node` for that second reason: four of the six
+// already declare `node()`.
+
+import "flex_layout/flex_layout" as flex;
+import "stdlib/text" as text;
+import "./facet" as core;
+import "./vocabulary" as vocab;
+
+interface Band {
+    // THE ONE THING AN IMPLEMENTOR OWES. Everything below is written against
+    // it, which is what makes the band one definition rather than six.
+    fn band_node(this) -> *core::Node;
+
+    fn accessibility_hint(this) -> str { return { (*this.band_node()).accessibility_hint() }; }
+    fn accessibility_label(this) -> str { return { (*this.band_node()).accessibility_label() }; }
+    fn agent(this) -> vocab::Agent { return { (*this.band_node()).agent() }; }
+    fn anchor_x(this) -> f64 { return { (*this.band_node()).anchor_x() }; }
+    fn anchor_y(this) -> f64 { return { (*this.band_node()).anchor_y() }; }
+    fn animate_opacity(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> This { { (*this.band_node()).animate_opacity(to, duration, easing) }; return this; }
+    fn animate_rotation(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> This { { (*this.band_node()).animate_rotation(to, duration, easing) }; return this; }
+    fn animate_rotation_x(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> This { { (*this.band_node()).animate_rotation_x(to, duration, easing) }; return this; }
+    fn animate_rotation_y(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> This { { (*this.band_node()).animate_rotation_y(to, duration, easing) }; return this; }
+    fn animate_scale(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> This { { (*this.band_node()).animate_scale(to, duration, easing) }; return this; }
+    fn animate_scale_x(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> This { { (*this.band_node()).animate_scale_x(to, duration, easing) }; return this; }
+    fn animate_scale_y(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> This { { (*this.band_node()).animate_scale_y(to, duration, easing) }; return this; }
+    fn animate_translation(this, x: f64, y: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> This { { (*this.band_node()).animate_translation(x, y, duration, easing) }; return this; }
+    fn background(this) -> vocab::Brush { return { (*this.band_node()).background() }; }
+    fn background_image(this) -> str { return { (*this.band_node()).background_image() }; }
+    fn begin_updates(this) -> This { { (*this.band_node()).begin_updates() }; return this; }
+    fn blur(this) -> This { { (*this.band_node()).blur() }; return this; }
+    fn cancel_animations(this) -> This { { (*this.band_node()).cancel_animations() }; return this; }
+    fn clip(this) -> vocab::Shape { return { (*this.band_node()).clip() }; }
+    fn end_updates(this) -> This { { (*this.band_node()).end_updates() }; return this; }
+    fn flow_direction(this) -> vocab::FlowDirection { return { (*this.band_node()).flow_direction() }; }
+    fn heading_level(this) -> i64 { return { (*this.band_node()).heading_level() }; }
+    fn hide_in(this, band: str) -> This { { (*this.band_node()).hide_in(band) }; return this; }
+    fn input_transparent(this) -> bool { return { (*this.band_node()).input_transparent() }; }
+    fn is_absolute(this) -> bool { return { (*this.band_node()).is_absolute() }; }
+    fn is_focused(this) -> bool { return { (*this.band_node()).is_focused() }; }
+    fn measure(this, width: f64, height: f64) -> vocab::Size { return { (*this.band_node()).measure(width, height) }; }
+    fn on_attach(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> This { { (*this.band_node()).on_attach(f, ctx) }; return this; }
+    fn on_blur(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> This { { (*this.band_node()).on_blur(f, ctx) }; return this; }
+    fn on_detach(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> This { { (*this.band_node()).on_detach(f, ctx) }; return this; }
+    fn on_focus(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> This { { (*this.band_node()).on_focus(f, ctx) }; return this; }
+    fn rotation_x(this) -> f64 { return { (*this.band_node()).rotation_x() }; }
+    fn rotation_y(this) -> f64 { return { (*this.band_node()).rotation_y() }; }
+    fn safe_area(this) -> vocab::SafeArea { return { (*this.band_node()).safe_area() }; }
+    fn scale_x(this) -> f64 { return { (*this.band_node()).scale_x() }; }
+    fn scale_y(this) -> f64 { return { (*this.band_node()).scale_y() }; }
+    fn set_absolute(this, on: bool) -> This { { (*this.band_node()).set_absolute(on) }; return this; }
+    fn set_accessibility_hint(this, v: str) -> This { { (*this.band_node()).set_accessibility_hint(v) }; return this; }
+    fn set_accessibility_label(this, v: str) -> This { { (*this.band_node()).set_accessibility_label(v) }; return this; }
+    fn set_agent(this, v: vocab::Agent) -> This { { (*this.band_node()).set_agent(v) }; return this; }
+    fn set_anchor_x(this, v: f64) -> This { { (*this.band_node()).set_anchor_x(v) }; return this; }
+    fn set_anchor_y(this, v: f64) -> This { { (*this.band_node()).set_anchor_y(v) }; return this; }
+    fn set_background(this, v: vocab::Brush) -> This { { (*this.band_node()).set_background(v) }; return this; }
+    fn set_background_image(this, v: str) -> This { { (*this.band_node()).set_background_image(v) }; return this; }
+    fn set_basis(this, v: f64) -> This { { (*this.band_node()).set_basis(v) }; return this; }
+    fn set_bottom(this, v: f64) -> This { { (*this.band_node()).set_bottom(v) }; return this; }
+    fn set_bottom_percent(this, v: f64) -> This { { (*this.band_node()).set_bottom_percent(v) }; return this; }
+    fn set_clip(this, v: vocab::Shape) -> This { { (*this.band_node()).set_clip(v) }; return this; }
+    fn set_flow_direction(this, v: vocab::FlowDirection) -> This { { (*this.band_node()).set_flow_direction(v) }; return this; }
+    fn set_heading_level(this, v: i64) -> This { { (*this.band_node()).set_heading_level(v) }; return this; }
+    fn set_input_transparent(this, v: bool) -> This { { (*this.band_node()).set_input_transparent(v) }; return this; }
+    fn set_left(this, v: f64) -> This { { (*this.band_node()).set_left(v) }; return this; }
+    fn set_left_percent(this, v: f64) -> This { { (*this.band_node()).set_left_percent(v) }; return this; }
+    fn set_max_height_percent(this, v: f64) -> This { { (*this.band_node()).set_max_height_percent(v) }; return this; }
+    fn set_max_width_percent(this, v: f64) -> This { { (*this.band_node()).set_max_width_percent(v) }; return this; }
+    fn set_min_height_percent(this, v: f64) -> This { { (*this.band_node()).set_min_height_percent(v) }; return this; }
+    fn set_min_width_percent(this, v: f64) -> This { { (*this.band_node()).set_min_width_percent(v) }; return this; }
+    fn set_right(this, v: f64) -> This { { (*this.band_node()).set_right(v) }; return this; }
+    fn set_right_percent(this, v: f64) -> This { { (*this.band_node()).set_right_percent(v) }; return this; }
+    fn set_rotation_x(this, v: f64) -> This { { (*this.band_node()).set_rotation_x(v) }; return this; }
+    fn set_rotation_y(this, v: f64) -> This { { (*this.band_node()).set_rotation_y(v) }; return this; }
+    fn set_safe_area(this, v: vocab::SafeArea) -> This { { (*this.band_node()).set_safe_area(v) }; return this; }
+    fn set_scale_x(this, v: f64) -> This { { (*this.band_node()).set_scale_x(v) }; return this; }
+    fn set_scale_y(this, v: f64) -> This { { (*this.band_node()).set_scale_y(v) }; return this; }
+    fn set_shadow(this, v: vocab::Shadow) -> This { { (*this.band_node()).set_shadow(v) }; return this; }
+    fn set_tooltip(this, v: str) -> This { { (*this.band_node()).set_tooltip(v) }; return this; }
+    fn set_top(this, v: f64) -> This { { (*this.band_node()).set_top(v) }; return this; }
+    fn set_top_percent(this, v: f64) -> This { { (*this.band_node()).set_top_percent(v) }; return this; }
+    fn set_translation_x(this, v: f64) -> This { { (*this.band_node()).set_translation_x(v) }; return this; }
+    fn set_translation_y(this, v: f64) -> This { { (*this.band_node()).set_translation_y(v) }; return this; }
+    fn shadow(this) -> vocab::Shadow { return { (*this.band_node()).shadow() }; }
+    fn show_in(this, band: str) -> This { { (*this.band_node()).show_in(band) }; return this; }
+    fn tooltip(this) -> str { return { (*this.band_node()).tooltip() }; }
+    fn translation_x(this) -> f64 { return { (*this.band_node()).translation_x() }; }
+    fn translation_y(this) -> f64 { return { (*this.band_node()).translation_y() }; }
+    fn window(this) -> vocab::WindowRef { return { (*this.band_node()).window() }; }
+}
