@@ -4408,7 +4408,7 @@ fn apply_item_sizing(n: *core::Node, mode: vocab::ItemSizing) {
 // A collection that reorders but does not select still needs the class the
 // selection installs, so it gets one with nothing behind it rather than a
 // second arming path.
-fn no_pick(doc: *u8, child: i64) { return; }
+fn no_pick(doc: *u8, child: i64, mods: u64) { return; }
 fn no_move(doc: *u8, from: i64, to: i64) { return; }
 
 // A drop landed. The child nodes move — which is what the user sees — and the
@@ -4475,15 +4475,89 @@ fn selects_rows(m: vocab::SelectionMode) -> bool {
 // A row was clicked. The write-back comes BEFORE the handler, the same rule
 // every other read follows — a handler asking `selected_index()` gets the row
 // that caused it.
-fn collection_row_picked(doc: *u8, child: i64) {
+// WHAT A CLICK DOES TO A SELECTION, which before this was always "replace it
+// with this row" — so a collection in `Multiple` behaved exactly like one in
+// `Single` and the mode had nothing to switch.
+//
+// The macOS rules, and they are the platform's rather than facet's:
+//
+//   plain            replace — the clicked row and nothing else
+//   command-click    TOGGLE that row, the rest stay as they are
+//   shift-click      EXTEND a range to that row
+//
+// THE ANCHOR A SHIFT EXTENDS FROM is `selected_index`, the FIRST row of the
+// current selection. AppKit's own anchor is the last row clicked WITHOUT a
+// modifier, which is a fourth piece of state; the first of the set needs none,
+// is already the thing every other verb here reads, and differs from AppKit
+// only after a command-click has left the selection out of order.
+fn selection_after_click(p: *props::CollectionProps, data: i64, mods: u64) -> vocab::IndexList {
+    var out: vocab::IndexList = vocab::IndexList::new();
+    let multi: bool = match { (*p).selectable_items_view.selection_mode } {
+        vocab::SelectionMode::Multiple => true,
+        vocab::SelectionMode::Single => false,
+        vocab::SelectionMode::None => false,
+    };
+    if !multi {
+        let _a: status::Status = out.add(data as usize);
+        return out;
+    }
+    let sel: *vocab::IndexList = #addr_of((*p).selection);
+    if compose::holding_command(mods) {
+        let n: usize = { (*sel).count() };
+        var i: usize = 0 as usize;
+        var held: bool = false;
+        while i < n {
+            let at: i64 = { (*sel).at(i) };
+            if at == data { held = true; }
+            else { let _a: status::Status = out.add(at as usize); }
+            i = i +% (1 as usize);
+        }
+        // Clicking the only selected row leaves NOTHING selected, which is what
+        // a toggle means and what AppKit does with `allowsEmptySelection`.
+        if !held { let _b: status::Status = out.add(data as usize); }
+        return out;
+    }
+    if compose::holding_shift(mods) {
+        var lo: i64 = { (*p).selected_index };
+        if lo < (0 as i64) { lo = data; }
+        var hi: i64 = data;
+        if lo > hi { let t: i64 = lo; lo = hi; hi = t; }
+        var k: i64 = lo;
+        while k <= hi {
+            let _a: status::Status = out.add(k as usize);
+            k = k +% (1 as i64);
+        }
+        return out;
+    }
+    let _a: status::Status = out.add(data as usize);
+    return out;
+}
+
+// The selection as CHILD indices, which is what painting speaks. A row the
+// collection has not materialised contributes nothing.
+fn selected_children(n: *core::Node, p: *props::CollectionProps) -> vocab::IndexList {
+    var out: vocab::IndexList = vocab::IndexList::new();
+    let sel: *vocab::IndexList = #addr_of((*p).selection);
+    let count: usize = { (*sel).count() };
+    var i: usize = 0 as usize;
+    while i < count {
+        let child: i64 = child_index_of(n, { (*sel).at(i) });
+        if child >= (0 as i64) { let _a: status::Status = out.add(child as usize); }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn collection_row_picked(doc: *u8, child: i64, mods: u64) {
     let n: *core::Node = { synth::get_associated(doc, compose::select_node_key()) as *core::Node };
     if n.is_null() { return; }
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
     if p.is_null() { return; }
     let data: i64 = data_index_of(n, child);
     if data < (0 as i64) { return; }
-    { (*p).selected_index = data };
-    compose::paint_selection(n, child);
+    collection::note_selection(p, selection_after_click(p, data, mods));
+    var painted: vocab::IndexList = selected_children(n, p);
+    compose::paint_selection(n, #addr_of(painted));
     let sel: *props::SelectableItemsViewProps = { #addr_of((*p).selectable_items_view) };
     let h: fn(*u8, *u8) = { (*sel).on_selection_changed };
     if h != props::no_handler { h(doc, { (*sel).on_selection_changed_ctx }); }
@@ -4592,7 +4666,7 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
                  | props::C_HANDLERS)) != (0 as u64) || dirty == paint::all_bits() {
         let doc: *u8 = document_host(v);
         if selects_rows({ (*sel).selection_mode }) {
-            let f: fn(*u8, i64) = collection_row_picked;
+            let f: fn(*u8, i64, u64) = collection_row_picked;
             compose::install_row_selection(doc, n, f);
         } else {
             compose::uninstall_row_selection(doc);
@@ -4617,7 +4691,8 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
     }
     if (dirty & (collection::P_SELECTED_INDEX | collection::P_COUNT
                  | collection::P_ROW)) != (0 as u64) {
-        compose::paint_selection(n, child_index_of(n, { (*p).selected_index }));
+        var painted: vocab::IndexList = selected_children(n, p);
+        compose::paint_selection(n, #addr_of(painted));
     }
     // `MeasureFirstItem` is a sizing STRATEGY, and its observable half is that
     // every item comes out the size of the first. The rows have no frames yet —

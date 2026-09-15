@@ -17320,3 +17320,178 @@ fn a_tree_selection_written_by_id_reaches_every_matching_row() {
     views::apply(0 as *u8, tp);
     assert selected_rows_of(ov) == (0 as u64);
 }
+
+// ---- a collection in `Multiple` behaved exactly like one in `Single` ---------
+//
+// A materialised collection takes its own clicks, so it is the only control
+// that can tell a plain click from a command-click — and it never asked. Every
+// click replaced the selection with the clicked row, which is what `Single`
+// does, so the mode had nothing to switch. These pin the three macOS rules and
+// the set they write.
+//
+// `collection_row_picked` is called directly with the modifiers a click would
+// carry. The one line not covered is `[event modifierFlags]` reaching it, which
+// needs a synthesised NSEvent; the rules are what can be wrong.
+
+fn csel_row(i: usize, ctx: *u8) -> flex::Node {
+    var b: core::Node = box_view::box(color: vocab::Color::rgba(0.3f64, 0.3f64, 0.3f64));
+    b.set_height(flex::StyleLength::points(20.0f64));
+    b.set_width(flex::StyleLength::points(100.0f64));
+    return b;
+}
+
+fn mounted_multi_collection(p: *core::Node) -> *u8 {
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(csel_row, ctx: 0 as *u8);
+            let b: collection::Collection = a.set_count(6 as usize);
+            let _c: collection::Collection = b.set_selection_mode(vocab::SelectionMode::Multiple);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    views::apply(0 as *u8, p);
+    let v: *u8 = core::view_of(p);
+    return { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+}
+
+fn picked(h: collection::Collection) -> usize { return h.selection_count(); }
+
+#[test]
+fn a_command_click_toggles_a_collection_row_and_leaves_the_rest() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "csel");
+    let p: *core::Node = #addr_of(c);
+    let doc: *u8 = mounted_multi_collection(p);
+    assert doc.is_not_null();
+    let cmd: u64 = (1 as u64) << (20 as u64);
+    controls::collection_row_picked(doc, 1 as i64, 0 as u64);      // plain
+    controls::collection_row_picked(doc, 3 as i64, cmd);           // +3
+    controls::collection_row_picked(doc, 4 as i64, cmd);           // +4
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            assert picked(h) == (3 as usize);
+            assert h.is_selected(1 as usize);
+            assert h.is_selected(3 as usize);
+            assert h.is_selected(4 as usize);
+            assert h.selected_index() == (1 as i64);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    // ...and toggling one back off leaves the other two
+    controls::collection_row_picked(doc, 3 as i64, cmd);
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            assert picked(h) == (2 as usize);
+            assert !h.is_selected(3 as usize);
+            assert h.is_selected(1 as usize);
+            assert h.is_selected(4 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    mount::unmount(p);
+}
+
+#[test]
+fn a_shift_click_extends_a_collection_selection_to_a_range() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "csel");
+    let p: *core::Node = #addr_of(c);
+    let doc: *u8 = mounted_multi_collection(p);
+    let shift: u64 = (1 as u64) << (17 as u64);
+    controls::collection_row_picked(doc, 1 as i64, 0 as u64);
+    controls::collection_row_picked(doc, 4 as i64, shift);
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            assert picked(h) == (4 as usize);          // 1,2,3,4
+            assert h.selection_at(0 as usize) == (1 as i64);
+            assert h.selection_at(3 as usize) == (4 as i64);
+            assert h.selected_index() == (1 as i64);
+            assert !h.is_selected(0 as usize);
+            assert !h.is_selected(5 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    // BACKWARDS is the same range: the anchor is the first of the selection,
+    // and a range has no direction once it is a set.
+    controls::collection_row_picked(doc, 3 as i64, 0 as u64);
+    controls::collection_row_picked(doc, 0 as i64, shift);
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            assert picked(h) == (4 as usize);          // 0,1,2,3
+            assert h.is_selected(0 as usize);
+            assert h.is_selected(3 as usize);
+            assert !h.is_selected(4 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    mount::unmount(p);
+}
+
+#[test]
+fn a_plain_click_replaces_the_whole_collection_selection() {
+    backend::install();
+    var c: core::Node = collection::collection(key: "csel");
+    let p: *core::Node = #addr_of(c);
+    let doc: *u8 = mounted_multi_collection(p);
+    let cmd: u64 = (1 as u64) << (20 as u64);
+    controls::collection_row_picked(doc, 1 as i64, cmd);
+    controls::collection_row_picked(doc, 2 as i64, cmd);
+    controls::collection_row_picked(doc, 5 as i64, 0 as u64);      // plain, no modifier
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            assert picked(h) == (1 as usize);
+            assert h.is_selected(5 as usize);
+            assert !h.is_selected(1 as usize);
+            assert h.selected_index() == (5 as i64);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    mount::unmount(p);
+}
+
+#[test]
+fn a_single_selection_collection_ignores_the_modifiers() {
+    backend::install();
+    // The negative. `Single` is not "Multiple with one row": a command-click
+    // there must not toggle and must not empty the selection, because the mode
+    // says a row is always the selection.
+    var c: core::Node = collection::collection(key: "csel");
+    let p: *core::Node = #addr_of(c);
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            let a: collection::Collection = h.set_row(csel_row, ctx: 0 as *u8);
+            let b: collection::Collection = a.set_count(6 as usize);
+            let _c: collection::Collection = b.set_selection_mode(vocab::SelectionMode::Single);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert mount::mount(p);
+    geometry::relayout_root(p, 100.0f64, 200.0f64, 1.0f64);
+    views::apply(0 as *u8, p);
+    let v: *u8 = core::view_of(p);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    let cmd: u64 = (1 as u64) << (20 as u64);
+    let shift: u64 = (1 as u64) << (17 as u64);
+    controls::collection_row_picked(doc, 1 as i64, 0 as u64);
+    controls::collection_row_picked(doc, 3 as i64, cmd);
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            assert picked(h) == (1 as usize);
+            assert h.is_selected(3 as usize);
+            assert !h.is_selected(1 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    controls::collection_row_picked(doc, 3 as i64, cmd);     // not a toggle-off
+    controls::collection_row_picked(doc, 5 as i64, shift);   // not a range
+    match collection::find("csel", within: p) {
+        option::Option[collection::Collection]::Some(h) => {
+            assert picked(h) == (1 as usize);
+            assert h.is_selected(5 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    mount::unmount(p);
+}

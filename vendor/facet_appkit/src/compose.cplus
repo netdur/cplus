@@ -1387,12 +1387,26 @@ fn select_node_key() -> *u8 { return { 29105 as *u8 }; }
 
 fn flavour_select() -> u32 { return 6 as u32; }
 
+// THE MODIFIERS RIDE WITH THE ROW. A materialised sequence takes its own
+// clicks, so it is the only thing that can tell a plain click from a
+// command-click — and without that a `Multiple` collection could only ever
+// replace its selection, which is what `Single` does. NSTableView answers this
+// question inside its own tracking loop and never had to be asked.
 fn mouse_down_imp(self_obj: *u8, cmd: *u8, event: *u8) {
     let n: *core::Node = { synth::get_associated(self_obj, select_node_key()) as *core::Node };
-    let h: fn(*u8, i64) = { synth::get_associated(self_obj, select_hit_key()) as fn(*u8, i64) };
-    if n.is_null() || { h } == (0 as fn(*u8, i64)) { return; }
-    h(self_obj, child_at_point(n, local_point(self_obj, event)));
+    let h: fn(*u8, i64, u64) = { synth::get_associated(self_obj, select_hit_key()) as fn(*u8, i64, u64) };
+    if n.is_null() || { h } == (0 as fn(*u8, i64, u64)) { return; }
+    let mods: u64 = { rt::msg_u64(event, rt::sel(#str_ptr("modifierFlags\0"))) };
+    h(self_obj, child_at_point(n, local_point(self_obj, event)), mods);
 }
+
+// NSEventModifierFlagShift and NSEventModifierFlagCommand. Built
+// arithmetically: an integer literal wraps through i32 before `as`.
+fn mod_shift() -> u64 { return (1 as u64) << (17 as u64); }
+fn mod_command() -> u64 { return (1 as u64) << (20 as u64); }
+
+fn holding_shift(mods: u64) -> bool { return (mods & mod_shift()) != (0 as u64); }
+fn holding_command(mods: u64) -> bool { return (mods & mod_command()) != (0 as u64); }
 
 #[link_name = "objc_msgSend"]
 extern fn msg_point_point_id(recv: *u8, sel: *u8, p: rt::Point, v: *u8) -> rt::Point;
@@ -1421,7 +1435,7 @@ fn child_at_point(n: *core::Node, p: rt::Point) -> i64 {
     return -1 as i64;
 }
 
-fn install_row_selection(doc: *u8, n: *core::Node, h: fn(*u8, i64)) {
+fn install_row_selection(doc: *u8, n: *core::Node, h: fn(*u8, i64, u64)) {
     if doc.is_null() { return; }
     let cls: *u8 = { synth::object_class(doc) };
     if !is_ours(cls) {
@@ -1442,7 +1456,11 @@ fn uninstall_row_selection(doc: *u8) {
 // The selected row's own background. `selectedContentBackgroundColor` is what
 // AppKit paints a selected table row with, so a selected collection row looks
 // like a selected row rather than like a coloured box.
-fn paint_selection(n: *core::Node, selected: i64) {
+// CHILD indices, not data indices: a grouped collection's fifth child may be
+// its third row, and the header mapping belongs to the caller that knows about
+// headers. One `i64` painted one row and cleared the rest, which is what a
+// single selection is; a multiple selection has to be asked per child.
+fn paint_selection(n: *core::Node, sel: *vocab::IndexList) {
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
@@ -1451,7 +1469,7 @@ fn paint_selection(n: *core::Node, selected: i64) {
                 let v: *u8 = core::view_of(c);
                 if v.is_not_null() {
                     let view: ak::View = ak::View::from_raw(v);
-                    if (i as i64) == selected {
+                    if sel.is_not_null() && { (*sel).has(i) } {
                         view.set_wants_layer(true);
                         view.layer().set_background_color(
                             selection_color().c_g_color());
