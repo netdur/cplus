@@ -839,6 +839,29 @@ fn item_of(sender: *u8) -> *u8 {
     return 0 as *u8;
 }
 
+// THE WRITE HALF of the walk above. `set_item(n, p)` — and `set_item_index`,
+// which is the same slot — is what a shared handler tells its nodes apart by,
+// and `item_of(sender)` climbs superviews to the nearest tagged VIEW; so the
+// node's item has to be put on its view, or the climb finds nothing. It never
+// was on this backend until 2026-09-15: the reader existed, `menus` wrote the
+// association for its own actions, and no view a node owned ever carried the
+// node's item — `component::item_index_of(sender)` answered None for every
+// row of every list, which the gallery's star said out loud ("could not say
+// which row it is in"). facet_appkit binds at create and on C_HANDLERS; this
+// is the same function, called from the same two places.
+//
+// Bound on every node, not only gesture-bearing ones — a button in a row wants
+// its row's item as much as a gesture does.
+fn bind_item(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) || n == (0 as *core::Node) { return; }
+    let p: *u8 = core::item_of(n);
+    if p == (0 as *u8) && { synth::get_associated(v, item_key()) } == (0 as *u8) { return; }
+    // ASSIGN, never retain: the application owns the item and outlives the
+    // node. facet stores the pointer and dereferences nothing.
+    synth::set_associated(v, item_key(), p);
+    return;
+}
+
 // Bring the keyed element to the front of its siblings, in place — the
 // no-rebuild z-order change. facet is not reactive, so the element is addressed
 // rather than re-described.

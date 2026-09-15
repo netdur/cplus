@@ -34,6 +34,10 @@ import "facet/table" as table;
 import "facet/collection" as collection;
 import "facet/carousel" as carousel;
 import "facet/tree" as tree;
+import "facet/relist" as relist;
+import "facet/obs_vec" as obs_vec;
+import "stdlib/hash_map" as hash_map;
+import "stdlib/io" as io;
 import "facet/label" as label;
 import "facet/mount" as mount;
 import "facet/vocabulary" as vocab;
@@ -105,9 +109,16 @@ fn remove_backed(n: *core::Node) {
     return;
 }
 
-fn clear_cell(cell: *u8) {
+// `owner` is the ELEMENT whose realised set this row belongs to, or 0 for a
+// control that keeps none — every caller but the relist path passes nothing.
+//
+// THE ONE PLACE A ROW NODE DIES here, and so the only place the realised set
+// can be kept honest. The note goes BEFORE the drop: after it, the pointer it
+// removes is the freed one it exists to keep out.
+fn clear_cell(cell: *u8, owner: *core::Node = 0 as *core::Node) {
     let old: *core::Node = cell_root(cell);
     if old == (0 as *core::Node) { return; }
+    relist::note_released(owner, old);
     // THE SAME BRANCH `fill_cell` TOOK, in reverse. A backed root put one view
     // in the cell and a viewless one put its backed descendants there; undoing
     // the wrong half leaves the other half behind.
@@ -129,7 +140,8 @@ fn clear_cell(cell: *u8) {
 // Build row `i` through the application's callback, mount it, and put it in the
 // cell's content view.
 fn fill_cell(cell: *u8, n: *core::Node, i: usize) {
-    clear_cell(cell);
+    clear_cell(cell, n);
+    if is_relist(n) { fill_relist_cell(cell, n, i); return; }
     let p: *props::ListProps = props_of(n, props::K_LIST) as *props::ListProps;
     if p == (0 as *props::ListProps) { return; }
     let build: fn(usize, *u8) -> flex::Node = { (*p).row };
@@ -161,17 +173,192 @@ fn fill_cell(cell: *u8, n: *core::Node, i: usize) {
             // as an empty cell with a separator under it.
             //
             // Which is what `add_backed` exists for, and it was already written.
-            let rv: *u8 = mount::realise(root);
-            if rv != (0 as *u8) {
-                ui::View::from_raw(content).add_subview(ui::View::from_raw(rv));
-            } else {
-                add_backed(ui::View::from_raw(content), root);
-            }
-            synth::set_associated(cell, cell_root_key(), root as *u8);
-            synth::set_associated(cell, cell_row_key(), (i +% (1 as usize)) as *u8);
-            layout_cell(cell, root);
+            place_built(cell, content, root, i);
         }
         option::Option[box::Box[core::Node]]::None => { }
+    }
+    return;
+}
+
+// PUT A BUILT ROW IN THE CELL. Everything from here down is the same question
+// whichever row source built it, so both go through this.
+//
+// `realise` ANSWERS THE ROOT'S VIEW, AND 0 IS NOT FAILURE — see the comment in
+// `fill_cell`; a row built as `ui::row(..)` is pure layout and has no view of
+// its own, which is the ORDINARY case.
+fn place_built(cell: *u8, content: *u8, root: *core::Node, i: usize) {
+    let rv: *u8 = mount::realise(root);
+    if rv != (0 as *u8) {
+        ui::View::from_raw(content).add_subview(ui::View::from_raw(rv));
+    } else {
+        add_backed(ui::View::from_raw(content), root);
+    }
+    synth::set_associated(cell, cell_root_key(), root as *u8);
+    synth::set_associated(cell, cell_row_key(), (i +% (1 as usize)) as *u8);
+    layout_cell(cell, root);
+    // THE ROW'S ITEM ONTO THE CELL, which is what makes
+    // `component::item_index_of(sender)` answer from a control inside a row
+    // whose root is viewless: `input::item_of` climbs superviews to the nearest
+    // tagged view, a row root is usually viewless (see above), and the climb
+    // from a gesture inside it runs up to the cell. facet_appkit's
+    // `set_row_item_index` does the same, for the same reason. A root WITH a
+    // view was tagged by `views::create` and the climb stops there first.
+    input::bind_item(cell, root);
+    return;
+}
+
+// ---- relist: the same table, a different row source --------------------------
+//
+// `list` reads its count and its builder out of `ListProps`; `relist` reads
+// them through an erased collection it was handed. Everything between the data
+// source and the row is identical, so the two share the table, the cell, the
+// placement and the teardown — the difference is which object answers three
+// questions.
+
+fn is_relist(n: *core::Node) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    return core::kind_of(n) == relist::K_RELIST;
+}
+
+// THE COUNT IS READ, NOT STORED — through the erased reader, so `T` is the
+// element's business and never this file's. The whole difference from `list`:
+// there is no count an application can have forgotten to update.
+fn relist_count(n: *core::Node) -> i64 {
+    return match relist::from(n) {
+        option::Option[relist::Relist]::Some(h) => h.count() as i64,
+        option::Option[relist::Relist]::None => 0 as i64,
+    };
+}
+
+fn relist_columns(n: *core::Node) -> usize {
+    return match relist::from(n) {
+        option::Option[relist::Relist]::Some(h) => h.columns(),
+        option::Option[relist::Relist]::None => 1 as usize,
+    };
+}
+
+// A GRID LINE IS A TABLE ROW, and that is the whole of the grid on this
+// backend.
+//
+// The obvious route was a UICollectionView, which this package already has for
+// `collection` — and it would mean teaching eight `collection_props` call sites
+// a second row source, for a layout a table can express directly. A line here
+// is one cell holding `columns` built items side by side, each taking its share
+// of the width, and FLEX does the placing: no x arithmetic, no second data
+// source, and the cell lifecycle is untouched because a line is still ONE node.
+//
+// Row-aligned, not staggered: the items on a line share a cell, so the cell is
+// as tall as the tallest of them and the next line starts below it. That is the
+// same shape the other backends give and the same shape `collection` gives.
+fn relist_lines(n: *core::Node) -> i64 {
+    let cols: i64 = relist_columns(n) as i64;
+    let count: i64 = relist_count(n);
+    if cols <= (1 as i64) { return count; }
+    return (count +% cols -% (1 as i64)) / cols;
+}
+
+fn fill_relist_cell(cell: *u8, n: *core::Node, line: usize) {
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(n) else { return; };
+    let content: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("contentView\0"))) };
+    if content == (0 as *u8) { return; }
+    let cols: usize = relist_columns(n);
+    let count: usize = h.count();
+    let first: usize = line *% cols;
+    if first >= count { return; }
+
+    // ONE COLUMN IS THE ROW ITSELF — no wrapper, so a list is exactly what it
+    // was before the verb existed and `find` lands on the node the builder
+    // keyed rather than on something this file made.
+    if cols <= (1 as usize) {
+        match box::new::[core::Node](h.build_row(first)) {
+            option::Option[box::Box[core::Node]]::Some(b) => {
+                let root: *core::Node = b.into_raw() as *core::Node;
+                // WHICH ROW THIS IS. `core::item_index_of` reads it back, and
+                // the agent surface orders the realised rows by it.
+                core::set_item_index(root, first);
+                place_built(cell, content, root, first);
+                // THE ROW NOW EXISTS, so the element can answer for it: a row
+                // is never a child of the list, and this is what gives
+                // `core::find_in` a path to it.
+                relist::note_realised(n, root);
+            }
+            option::Option[box::Box[core::Node]]::None => { }
+        }
+        return;
+    }
+
+    // A LINE. The items are children of one node, so the cell still holds a
+    // single root and every part of the lifecycle above is untouched — and
+    // `core::find_in` recurses, so each item is still findable by its own key.
+    let share: f64 = 100.0f64 / (cols as f64);
+    var b: core::Builder = core::Builder::new();
+    var k: usize = 0 as usize;
+    while k < cols {
+        let at: usize = first +% k;
+        if at >= count { break; }
+        b.add(h.build_row(at));
+        k = k +% (1 as usize);
+    }
+    match box::new::[core::Node](core::row(b)) {
+        option::Option[box::Box[core::Node]]::Some(bx) => {
+            let root: *core::Node = bx.into_raw() as *core::Node;
+            // EACH ITEM TAKES ITS SHARE and grows no further — without the
+            // second half an item that grows eats the line.
+            var j: usize = 0 as usize;
+            let kids: usize = core::child_count_of(root);
+            while j < kids {
+                match core::child_of(root, j) {
+                    option::Option[*core::Node]::Some(c) => {
+                        core::set_width_percent(c, share);
+                        core::set_grow(c, 0.0f64);
+                        core::set_item_index(c, first +% j);
+                    }
+                    option::Option[*core::Node]::None => { }
+                }
+                j = j +% (1 as usize);
+            }
+            core::set_item_index(root, first);
+            place_built(cell, content, root, line);
+            // EACH ITEM'S OWN INDEX, NOT THE LINE'S. The cell can only say
+            // where the line starts; an item whose root is viewless has to say
+            // the rest through the views it does have.
+            var q: usize = 0 as usize;
+            while q < kids {
+                match core::child_of(root, q) {
+                    option::Option[*core::Node]::Some(c) => { stamp_backed(c, core::item_of(c)); }
+                    option::Option[*core::Node]::None => { }
+                }
+                q = q +% (1 as usize);
+            }
+            relist::note_realised(n, root);
+        }
+        option::Option[box::Box[core::Node]]::None => { }
+    }
+    return;
+}
+
+// AN ITEM HAS TO SIT ON A VIEW, because `input::item_of` climbs superviews to
+// the nearest tagged one. A root with a view was tagged by `views::create`; a
+// viewless one (an unkeyed `ui::row`) has nothing to carry it, so its backed
+// descendants carry it instead, and every climb out of that item stops at one
+// of them rather than running on to the cell — which on a grid line answers
+// the line's FIRST index for all three items. A descendant with an item of its
+// own keeps it.
+fn stamp_backed(n: *core::Node, item: *u8) {
+    if n == (0 as *core::Node) || item == (0 as *u8) { return; }
+    let v: *u8 = core::view_of(n);
+    if v != (0 as *u8) {
+        if core::item_of(n) == (0 as *u8) { synth::set_associated(v, input::item_key(), item); }
+        return;
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { stamp_backed(c, item); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
     }
     return;
 }
@@ -208,6 +395,230 @@ fn layout_cell(cell: *u8, root: *core::Node) {
     return;
 }
 
+// ---- relist: measured heights ------------------------------------------------
+//
+// A relist row's height is MEASURED, not stated — the contract `list` grew
+// three props to avoid, answered here by realising the row and asking flex.
+// The same two caches facet_appkit keeps, for the same reasons: a UNIFORM list
+// (`uneven_rows: false`, the default) measures one row and answers it for
+// every row; an UNEVEN one measures per row and caches by the row's KEY, so a
+// height survives the reloads that invalidate every position. Both are keyed
+// to the width they were measured at, so a rotation forgets them all.
+//
+// A measured row is realised and torn down without ever touching the realised
+// set: it was never shown, so `find` must not see it.
+
+struct RelistMeasure {
+    width: f64,
+    uniform_h: f64,
+    by_id: hash_map::HashMap[u64, f64],
+    warned_no_key: bool,
+    // The columns the table was last laid out for — what a regrid's anchor
+    // is read under, since the element already holds the new count by then.
+    cols: usize,
+}
+
+fn measure_key() -> *u8 { return 41017 as *u8; }
+
+// One per table, made on first use and kept for the table's life.
+fn measure_of(tv: *u8) -> *RelistMeasure {
+    let existing: *RelistMeasure = { synth::get_associated(tv, measure_key()) } as *RelistMeasure;
+    if existing != (0 as *RelistMeasure) { return existing; }
+    match box::new::[RelistMeasure](RelistMeasure { width: 0.0f64, uniform_h: 0.0f64,
+                                                    by_id: hash_map::new::[u64, f64](),
+                                                    warned_no_key: false,
+                                                    cols: 0 as usize }) {
+        option::Option[box::Box[RelistMeasure]]::Some(b) => {
+            let m: *RelistMeasure = b.into_raw() as *RelistMeasure;
+            synth::set_associated(tv, measure_key(), m as *u8);
+            return m;
+        }
+        option::Option[box::Box[RelistMeasure]]::None => { return 0 as *RelistMeasure; }
+    }
+}
+
+// THE RECORD DIES WITH THE TABLE. It rides an associated raw pointer, which
+// the view's own dealloc knows nothing about — so `views::view_release` says
+// so here before it lets the view go, the way facet_appkit frees its
+// `RowSource`. Null for any view that never measured, which is every view
+// that is not a relist table.
+fn release_measure(v: *u8) {
+    if v == (0 as *u8) { return; }
+    let m: *RelistMeasure = { synth::get_associated(v, measure_key()) } as *RelistMeasure;
+    if m == (0 as *RelistMeasure) { return; }
+    synth::set_associated(v, measure_key(), 0 as *u8);
+    let _b: box::Box[RelistMeasure] = box::from_raw::[RelistMeasure](m as *u8);
+    return;
+}
+
+// The suite's question: does this view carry a measure record?
+fn has_measure(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    return { synth::get_associated(v, measure_key()) } != (0 as *u8);
+}
+
+// How many rows a measurement has realised — the suite's way to assert that a
+// uniform list measures once and a cached row is not measured twice.
+static MEASURE_REALISES: i64 = 0 as i64;
+fn measure_realises() -> i64 { return MEASURE_REALISES; }
+fn reset_measure_realises() { MEASURE_REALISES = 0 as i64; return; }
+
+fn forget_all_measurements(tv: *u8) {
+    let m: *RelistMeasure = measure_of(tv);
+    if m == (0 as *RelistMeasure) { return; }
+    { (*m).uniform_h = 0.0f64 };
+    { (*m).by_id = hash_map::new::[u64, f64]() };
+    return;
+}
+
+// The rows in `lo..=hi` CHANGED: whatever they measured is stale. Costs a
+// build per row to learn its key, so it is skipped unless there is a keyed
+// cache to invalidate — a uniform list never fills one. 0 is "not measured",
+// which is how the map forgets without a remove.
+fn forget_measurements(tv: *u8, n: *core::Node, lo: i64, hi: i64) {
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(n) else { return; };
+    if h.uneven_rows() == false { return; }
+    let m: *RelistMeasure = measure_of(tv);
+    if m == (0 as *RelistMeasure) { return; }
+    if { (*m).by_id.count() } == (0 as usize) { return; }
+    let count: i64 = h.count() as i64;
+    var r: i64 = lo;
+    while r <= hi {
+        if r >= (0 as i64) && r < count {
+            var probe: core::Node = h.build_row(r as usize);
+            let id: u64 = identity_of_row(#addr_of(probe));
+            if id != (0 as u64) { let _e: status::Status = { (*m).by_id.insert(id, 0.0f64) }; }
+        }
+        r = r +% (1 as i64);
+    }
+    return;
+}
+
+// The height cache's key: the row's own key, hashed — a `str` is a view into
+// the node's memory and the node is about to be dropped. A `@ui { }` block
+// evaluates to a wrapper whose child 0 is the keyed row, so an unkeyed root
+// looks one level in. 0 means no identity; a key that hashes to it is nudged.
+fn identity_of_row(np: *core::Node) -> u64 {
+    if np == (0 as *core::Node) { return 0 as u64; }
+    var k: str = { (*np).key() };
+    if k == "" {
+        match core::child_of(np, 0 as usize) {
+            option::Option[*core::Node]::Some(c) => { k = { (*c).key() }; }
+            option::Option[*core::Node]::None => { }
+        }
+    }
+    if k == "" { return 0 as u64; }
+    let hsh: u64 = k.hash();
+    if hsh == (0 as u64) { return 1 as u64; }
+    return hsh;
+}
+
+// Said once per table: an uneven list whose rows carry no key re-measures
+// every row on every reload, and a measurement realises a subtree.
+fn warn_rows_have_no_key(m: *RelistMeasure) {
+    if { (*m).warned_no_key } { return; }
+    { (*m).warned_no_key = true };
+    io::eprintln(text::from_str("facet relist: rows are uneven and carry no key, so a measured height cannot outlive a reload — every row is re-measured, and a measurement realises the row. Key the row your builder returns with the entry's own id, which is also what makes it findable."));
+    return;
+}
+
+// The width rows are measured at: the table's, or the screen's before the
+// table has been given one. A row with a stated height measures the same at
+// either, which is what the suite's never-laid-out tables rely on.
+fn measure_width(tv: *u8) -> f64 {
+    let b: rt::Rect = ui::View::from_raw(tv).bounds();
+    if b.w > 0.0f64 { return b.w; }
+    let screen: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIScreen\0")),
+                                   rt::sel(#str_ptr("mainScreen\0"))) };
+    if screen != (0 as *u8) {
+        let sb: rt::Rect = { rt::msg_rect(screen, rt::sel(#str_ptr("bounds\0"))) };
+        if sb.w > 0.0f64 { return sb.w; }
+    }
+    return 320.0f64;
+}
+
+// Build, realise, lay out at `w`, read, tear down. `realise` is what makes
+// flex's leaf measure answer — it reads the native view — and `unrealise` is
+// its pair, so a component in the row sees attach and detach exactly as it
+// would for a row that was shown.
+fn measure_node(take node: core::Node, w: f64) -> f64 {
+    return match box::new::[core::Node](node) {
+        option::Option[box::Box[core::Node]]::Some(b) => {
+            let np: *core::Node = b.into_raw() as *core::Node;
+            MEASURE_REALISES = MEASURE_REALISES +% (1 as i64);
+            let _rv: *u8 = mount::realise(np);
+            mount::sync_from(np);
+            { (*np).calculate_layout(width: w) };
+            let hh: f64 = { (*np).frame().height };
+            mount::unrealise(np);
+            let _b: box::Box[core::Node] = box::from_raw::[core::Node](np as *u8);
+            hh
+        }
+        option::Option[box::Box[core::Node]]::None => 0.0f64,
+    };
+}
+
+// Row `at`'s height at width `w`, from the cache when it can be.
+fn relist_row_height(tv: *u8, n: *core::Node, at: usize, w: f64) -> f64 {
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(n) else { return 0.0f64; };
+    if at >= h.count() { return 0.0f64; }
+    let m: *RelistMeasure = measure_of(tv);
+    if m == (0 as *RelistMeasure) { return 0.0f64; }
+    if { (*m).width } != w { forget_all_measurements(tv); { (*m).width = w }; }
+    let uneven: bool = h.uneven_rows();
+    if uneven == false && { (*m).uniform_h } > 0.0f64 { return { (*m).uniform_h }; }
+
+    // BUILT, SO NOW WE KNOW WHO IT IS. A hit here returns having built a node
+    // and realised nothing, which is the whole saving.
+    var node: core::Node = h.build_row(at);
+    var id: u64 = 0 as u64;
+    if uneven {
+        id = identity_of_row(#addr_of(node));
+        if id != (0 as u64) {
+            match { (*m).by_id.get(id) } {
+                option::Option[f64]::Some(known) => { if known > 0.0f64 { return known; } }
+                option::Option[f64]::None => { }
+            }
+        } else {
+            warn_rows_have_no_key(m);
+        }
+    }
+    let hh: f64 = measure_node(node, w);
+    if hh <= 0.0f64 { return 0.0f64; }
+    if uneven {
+        if id != (0 as u64) { let _e: status::Status = { (*m).by_id.insert(id, hh) }; }
+    } else {
+        { (*m).uniform_h = hh };
+    }
+    return hh;
+}
+
+// A LINE IS AS TALL AS ITS TALLEST ITEM, each measured at the cell's share of
+// the width. One column is the row itself.
+fn relist_line_height(tv: *u8, n: *core::Node, line: i64) -> f64 {
+    if line < (0 as i64) { return 0.0f64; }
+    let cols: i64 = relist_columns(n) as i64;
+    let w: f64 = measure_width(tv);
+    if cols <= (1 as i64) { return relist_row_height(tv, n, line as usize, w); }
+    let count: i64 = relist_count(n);
+    let cw: f64 = w / (cols as f64);
+    var best: f64 = 0.0f64;
+    var k: i64 = 0 as i64;
+    while k < cols {
+        let at: i64 = line *% cols +% k;
+        if at >= count { break; }
+        let hh: f64 = relist_row_height(tv, n, at as usize, cw);
+        if hh > best { best = hh; }
+        k = k +% (1 as i64);
+    }
+    return best;
+}
+
+// The suite's door to the delegate's answer.
+fn row_height_for(v: *u8, row: i64) -> f64 {
+    return imp_height_for_row(0 as *u8, 0 as *u8, v, index_path(row, 0 as i64));
+}
+
 // ---- the data source ---------------------------------------------------------------
 
 static DS_CLASS: *u8 = 0 as *u8;
@@ -229,6 +640,9 @@ fn list_props(tv: *u8) -> *props::ListProps {
 // How many sections. facet's `group_count` is the same idea, and 1 is the
 // answer for an ungrouped list.
 fn imp_number_of_sections(self_obj: *u8, cmd: *u8, tv: *u8) -> i64 {
+    // A relist is a FLAT sequence — facet has no section vocabulary for it, and
+    // grouping is a row the builder chooses to build.
+    if is_relist(input::node_of(tv)) { return 1 as i64; }
     let p: *props::ListProps = list_props(tv);
     if p == (0 as *props::ListProps) { return 1 as i64; }
     if { (*p).is_grouped } == false { return 1 as i64; }
@@ -238,6 +652,8 @@ fn imp_number_of_sections(self_obj: *u8, cmd: *u8, tv: *u8) -> i64 {
 }
 
 fn imp_rows_in_section(self_obj: *u8, cmd: *u8, tv: *u8, section: i64) -> i64 {
+    let rn: *core::Node = input::node_of(tv);
+    if is_relist(rn) { return relist_lines(rn); }
     let p: *props::ListProps = list_props(tv);
     if p == (0 as *props::ListProps) { return 0 as i64; }
     if { (*p).is_grouped } {
@@ -249,12 +665,100 @@ fn imp_rows_in_section(self_obj: *u8, cmd: *u8, tv: *u8, section: i64) -> i64 {
     return { (*p).count };
 }
 
+// ---- the cell class, and why a row needs one ---------------------------------
+//
+// A ROW IS LAID OUT AT THE CELL'S SIZE, AND THE CELL IS SIZED AFTER THE FILL.
+// `cellForRowAtIndexPath:` fills the cell at whatever bounds it has — 44 for a
+// fresh one — and the table frames it to the delegate's height on the layout
+// pass that follows. Nothing re-ran flex after that: a 58-point row was laid
+// out for 44, its star centred in the wrong height with a gap under its second
+// line (the gallery, 2026-09-15), and a rotation left every row at the width
+// it was filled at. `layoutSubviews` is UIKit's own hook for exactly this
+// question, so the cell re-places its content whenever its bounds differ from
+// the ones the row was laid out at. facet_appkit's `FacetRowCell` does the
+// same through `resizeSubviewsWithOldSize:`.
+static ROW_CELL_CLASS: *u8 = 0 as *u8;
+
+fn row_cell_class() -> *u8 {
+    if ROW_CELL_CLASS != (0 as *u8) { return ROW_CELL_CLASS; }
+    let base: *u8 = rt::get_class(#str_ptr("UITableViewCell\0"));
+    let existing: *u8 = rt::get_class(#str_ptr("FacetRowCell\0"));
+    if existing != (0 as *u8) { ROW_CELL_CLASS = existing; return existing; }
+    let cls: *u8 = { synth::allocate_class_pair(base, #str_ptr("FacetRowCell\0"), 0 as usize) };
+    if cls == (0 as *u8) { return base; }
+    let _l: i8 = synth::add_method_v_0id(cls, rt::sel(#str_ptr("layoutSubviews\0")),
+                                         cell_layout_imp, #str_ptr("v@:\0"));
+    { synth::register_class_pair(cls) };
+    ROW_CELL_CLASS = cls;
+    return cls;
+}
+
+// The two words `objc_msgSendSuper` reads. Both borrowed.
+struct ObjcSuper { opaque receiver: *u8, opaque class_: *u8 }
+
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_void(sup: *ObjcSuper, sel: *u8);
+
+fn cell_layout_imp(self_obj: *u8, cmd: *u8) {
+    // Super first: it is what places the content view the row is laid out in.
+    // The IMP passes its OWN address so the walk lands on the class that
+    // defines it — one hop up would find this very method under a second
+    // subclass and recurse. See keys.cplus.
+    let f_self: fn(*u8, *u8) = cell_layout_imp;
+    let base: *u8 = synth::super_class_below(self_obj, cmd, { f_self as *u8 });
+    if base != (0 as *u8) {
+        var sup: ObjcSuper = ObjcSuper { receiver: self_obj, class_: base };
+        { msg_super_void(#addr_of(sup), cmd) };
+    }
+    let root: *core::Node = cell_root(self_obj);
+    if root == (0 as *core::Node) { return; }
+    let content: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("contentView\0"))) };
+    if content == (0 as *u8) { return; }
+    let b: rt::Rect = ui::View::from_raw(content).bounds();
+    let fr: flex::Frame = { (*root).frame() };
+    // Already laid out for this box — which is also what stops the frames
+    // `layout_cell` sets from re-entering here forever.
+    if fr.width == b.w && fr.height == b.h { return; }
+    layout_cell(self_obj, root);
+    return;
+}
+
+// A CELL UNDER `ident`, recycled or made. One pool per identifier, which is
+// what keeps a row built for one shape from being handed another's views.
+fn dequeue_row_cell(tv: *u8, ident: str) -> *u8 {
+    var cell: *u8 = { rt::msg_id_id(tv, rt::sel(#str_ptr("dequeueReusableCellWithIdentifier:\0")),
+                                    bridge::nsstring(ident)) };
+    if cell != (0 as *u8) { return cell; }
+    let cls: *u8 = row_cell_class();
+    let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { return 0 as *u8; }
+    cell = { msg_id_i64_id(alloced, rt::sel(#str_ptr("initWithStyle:reuseIdentifier:\0")),
+                           0 as i64, bridge::nsstring(ident)) };
+    if cell == (0 as *u8) { return 0 as *u8; }
+    // A facet row draws its own background; the cell's would sit under it and
+    // win at the edges.
+    { rt::msg_void_id(cell, rt::sel(#str_ptr("setBackgroundColor:\0")), 0 as *u8) };
+    { rt::msg_void_i64(cell, rt::sel(#str_ptr("setSelectionStyle:\0")), 0 as i64) };
+    return cell;
+}
+
 // The cell. `dequeueReusableCellWithIdentifier:` is the whole recycling
 // mechanism — the identifier is facet's `row_kind`, so rows that look different
 // are never handed each other's views.
 fn imp_cell_for_row(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> *u8 {
     let n: *core::Node = input::node_of(tv);
     if n == (0 as *core::Node) { return 0 as *u8; }
+    if is_relist(n) {
+        let r: i64 = { rt::msg_i64(index_path, rt::sel(#str_ptr("row\0"))) };
+        if r < (0 as i64) { return 0 as *u8; }
+        // ONE POOL. `relist` has no `row_kind`: a row's shape is the builder's
+        // and the builder is one function, so every row is dequeued under the
+        // same identifier.
+        let cell: *u8 = dequeue_row_cell(tv, "facet.row.0");
+        if cell == (0 as *u8) { return 0 as *u8; }
+        fill_cell(cell, n, r as usize);
+        return cell;
+    }
     let p: *props::ListProps = list_props(tv);
     if p == (0 as *props::ListProps) { return 0 as *u8; }
     let row: usize = flat_index(p, index_path);
@@ -262,20 +766,8 @@ fn imp_cell_for_row(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> *u8 {
     let rk: fn(usize, *u8) -> usize = { (*p).row_kind };
     if rk != (0 as fn(usize, *u8) -> usize) { kind = rk(row, { (*p).row_kind_ctx }); }
     let ident: text::Text = text::from_str("facet.row.").appending(usize_text(kind).view());
-    var cell: *u8 = { rt::msg_id_id(tv, rt::sel(#str_ptr("dequeueReusableCellWithIdentifier:\0")),
-                                    bridge::nsstring(ident.view())) };
-    if cell == (0 as *u8) {
-        let cls: *u8 = rt::get_class(#str_ptr("UITableViewCell\0"));
-        let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
-        if alloced == (0 as *u8) { return 0 as *u8; }
-        cell = { msg_id_i64_id(alloced, rt::sel(#str_ptr("initWithStyle:reuseIdentifier:\0")),
-                               0 as i64, bridge::nsstring(ident.view())) };
-        if cell == (0 as *u8) { return 0 as *u8; }
-        // A facet row draws its own background; the cell's would sit under it
-        // and win at the edges.
-        { rt::msg_void_id(cell, rt::sel(#str_ptr("setBackgroundColor:\0")), 0 as *u8) };
-        { rt::msg_void_i64(cell, rt::sel(#str_ptr("setSelectionStyle:\0")), 0 as i64) };
-    }
+    let cell: *u8 = dequeue_row_cell(tv, ident.view());
+    if cell == (0 as *u8) { return 0 as *u8; }
     fill_cell(cell, n, row);
     // `on_item_appearing` — the row is about to be on screen, which is the
     // moment an app loads its image or its page.
@@ -306,7 +798,21 @@ fn flat_index(p: *props::ListProps, index_path: *u8) -> usize {
 // what `row_height_of` answers.
 fn imp_height_for_row(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> f64 {
     let p: *props::ListProps = list_props(tv);
-    if p == (0 as *props::ListProps) { return 44.0f64; }
+    if p == (0 as *props::ListProps) {
+        // A RELIST ROW IS MEASURED. It has no props to state a height with,
+        // and until 2026-09-15 that meant 44 for every row of every relist —
+        // a two-line row clipped, and a grid line's items drawn over the next
+        // line's. See `relist_line_height`.
+        let rn: *core::Node = input::node_of(tv);
+        if is_relist(rn) && index_path != (0 as *u8) {
+            let line: i64 = { rt::msg_i64(index_path, rt::sel(#str_ptr("row\0"))) };
+            if line >= (0 as i64) {
+                let hh: f64 = relist_line_height(tv, rn, line);
+                if hh > 0.0f64 { return hh; }
+            }
+        }
+        return 44.0f64;
+    }
     if { (*p).has_uneven_rows } {
         let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
         if f != (0 as fn(usize, *u8) -> f64) {
@@ -378,9 +884,41 @@ fn imp_did_end_displaying(self_obj: *u8, cmd: *u8, tv: *u8, cell: *u8, index_pat
         let d: fn(*u8, *u8) = { (*p).on_item_disappearing };
         if d != (0 as fn(*u8, *u8)) { d(cell, { (*p).on_item_disappearing_ctx }); }
     }
+    // A RELIST IS RELEASED HERE, WITH ITS OWNER. The realised set is the
+    // element's claim about what is on screen, and a cell that has left the
+    // screen for the reuse pool is not on it. Until 2026-09-15 a relist waited
+    // for the next fill — which kept the node alive, the half that mattered
+    // for `find`, and kept it "realised", the half that lied: measured on the
+    // iOS gallery, one animated `scroll_to` over a hundred rows left 27 rows in
+    // the set for a 7-row viewport, `scroll_to` on one of them answered
+    // `stale`, and `find` handed back a row nothing could see.
+    //
+    // `clear_cell` with the owner notes the release BEFORE the drop, so the set
+    // never holds the freed pointer either. The same late-arrival guard as a
+    // list, answered off the cell's own stamp because a relist has no props to
+    // ask: a cell already refilled with another line is left alone, since
+    // `fill_cell` cleared it with the owner on the way in.
+    let owner: *core::Node = input::node_of(tv);
+    if is_relist(owner) {
+        if !relist_cell_holds_line(cell, index_path) { return; }
+        clear_cell(cell, owner);
+        return;
+    }
     if !cell_holds_row(p, cell, index_path) { return; }
     clear_cell(cell);
     return;
+}
+
+// Is `cell` still showing the LINE `index_path` names? `place_built` stamps
+// the table row it was vended for — the data index in one column, the line in
+// a grid — and both are what the index path carries.
+fn relist_cell_holds_line(cell: *u8, index_path: *u8) -> bool {
+    if index_path == (0 as *u8) { return false; }
+    let held: usize = cell_row(cell);
+    if held == (0 as usize) { return false; }
+    let row: i64 = { rt::msg_i64(index_path, rt::sel(#str_ptr("row\0"))) };
+    if row < (0 as i64) { return false; }
+    return (held -% (1 as usize)) == (row as usize);
 }
 
 // Is `cell` still showing the row `index_path` names? Unanswerable without the
@@ -655,6 +1193,256 @@ fn make_table_view(n: *core::Node, style: i64) -> *u8 {
         { rt::msg_void_id(v, rt::sel(#str_ptr("setDelegate:\0")), ds) };
     }
     return v;
+}
+
+// A CELL VENDED THROUGH THE DATA SOURCE, the way UITableView asks for one. The
+// suite's way into the real path: a headless table lays nothing out, so it never
+// asks on its own.
+fn cell_for_row(v: *u8, row: i64) -> *u8 {
+    let ip: *u8 = index_path(row, 0 as i64);
+    if ip == (0 as *u8) { return 0 as *u8; }
+    return imp_cell_for_row(0 as *u8, 0 as *u8, v, ip);
+}
+
+// UIKit'S OWN TEARDOWN, driven. The suite's way to reach `didEndDisplayingCell:`
+// without a table that lays out.
+fn end_displaying(v: *u8, cell: *u8, row: i64) {
+    let ip: *u8 = index_path(row, 0 as i64);
+    imp_did_end_displaying(0 as *u8, 0 as *u8, v, cell, ip);
+    return;
+}
+
+// ---- relist: create and apply ------------------------------------------------
+
+// A PLAIN TABLE. `relist` has no `is_grouped` — it is a flat sequence — so the
+// style is not a question here the way it is for `list`.
+//
+// NOT a collection view, which is what AppKit needed: NSTableView overrides
+// `validateProposedFirstResponder:forEvent:` and answers NO for a view in an
+// unselected row, so a click over a row's own control was refused. UITableView
+// takes no such question — a control inside a cell receives its touches — so the
+// table is the right host here and the cell machinery is already written.
+fn create_relist_view(n: *core::Node) -> *u8 {
+    let v: *u8 = make_table_view(n, 0 as i64);
+    if v == (0 as *u8) { return v; }
+    // NO SELECTION, SAID OUT LOUD — the same thing the AppKit backend says to
+    // its collection view, for the same reason and with the same teeth.
+    //
+    // `relist` has no selection verb: which row is chosen is the application's
+    // own state plus a gesture on the row. Nothing here reads a selection —
+    // `imp_did_select` returns the moment it finds no `ListProps` — so leaving
+    // the table selectable would be inert in facet's terms and NOT inert in
+    // UIKit's: the table would still track a selection, still hand it to
+    // VoiceOver as a selectable row, and still arbitrate the press against the
+    // controls inside the row.
+    //
+    // That last one is not hypothetical. It is exactly why `relist` is an
+    // NSCollectionView on AppKit rather than an NSTableView: the table refused
+    // first responder to a view in an unselected row, so a click over a row's
+    // own button went to the table's selection tracking, which ate the release.
+    // UITableView arbitrates differently, but the fix is the same sentence and
+    // costs one message.
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setAllowsSelection:\0")), 0 as i8) };
+    return v;
+}
+
+fn apply_relist(v: *u8, n: *core::Node, dirty: u64) {
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(n) else { return; };
+    // THE ELEMENT LEARNS WHICH NODE IT IS, here and on every pass. The change
+    // handler runs on the application's stack and needs a node to mark dirty;
+    // it cannot capture one at construction, because the node is returned by
+    // value and moved into the tree.
+    let _b: relist::Relist = h.bind_node();
+
+    let creating: bool = dirty == paint::all_bits();
+    // A REGRID IS A LAYOUT CHANGE, not a change to the sequence: the same rows
+    // in a different arrangement, and every line in hand was built for the old
+    // one. What facet_appkit says to its collection view, said to the table:
+    // reload. Missing until 2026-09-15 — on the gallery the echo read
+    // `columns: 3` and the list stayed one item per line, because nothing here
+    // looked at the bit. A change pending alongside it is drained rather than
+    // applied: a reload has already re-vended every row it would have moved.
+    // A NEW BUILDER IS A NEW SHAPE and a regrid a new cell width: every
+    // measurement is stale either way. A data reload keeps them — a height
+    // cached by key is meant to outlive exactly that.
+    if (dirty & (relist::P_BUILDER | relist::P_COLUMNS)) != (0 as u64) && creating == false {
+        forget_all_measurements(v);
+    }
+    // ...AND THE FIRST VISIBLE ROW STAYS WHERE IT WAS. Items survive a regrid;
+    // lines are what it rewrites — so the anchor is an item, read under the
+    // old columns and put back at the top under the new.
+    let m: *RelistMeasure = measure_of(v);
+    var prior_cols: usize = relist_columns(n);
+    if m != (0 as *RelistMeasure) && { (*m).cols } > (0 as usize) { prior_cols = { (*m).cols }; }
+    if (dirty & relist::P_COLUMNS) != (0 as u64) && creating == false {
+        if h.has_pending() { let _c: obs_vec::Change = h.take_pending(); }
+        let anchor: i64 = relist_anchor_item(v, prior_cols);
+        reload_rows(v, n);
+        relist_show_item_at_top(v, n, anchor);
+    } else {
+        // GATED ON THE BITS. Acting unconditionally would re-read the
+        // collection on every unrelated write in the window.
+        let row_band: u64 = relist::P_ROWS | relist::P_BUILDER;
+        if (dirty & row_band) != (0 as u64) || creating {
+            apply_relist_rows(v, n, h, creating);
+        }
+    }
+    // LAST, AND WHATEVER THE ROWS DID. A scroll is not a change to the sequence
+    // and rides its own bit, but it has to happen after the rows have moved:
+    // scrolling to row 40 before the insert that makes row 40 exist asks the
+    // table for a row it does not have.
+    if (dirty & relist::P_SCROLL_TO) != (0 as u64) {
+        // TAKEN, not read: a command carried out twice scrolls a list nobody
+        // asked to move. `scroll_to` itself refuses a row past the end, which is
+        // what keeps UIKit from raising on an out-of-range index path.
+        scroll_to(v, h.take_scroll_to());
+    }
+    if m != (0 as *RelistMeasure) { { (*m).cols = relist_columns(n) }; }
+    // AN ESTIMATE ONLY WHERE MEASURING IS DEAR. An uneven list measures per
+    // row, so the table is given an estimate and asks as rows arrive; a
+    // uniform one measures once and answers from the cache, so it is told to
+    // ask outright — which is what makes `scrollToRowAtIndexPath:` land on the
+    // row rather than on where an estimate put it.
+    if creating {
+        var est: f64 = 0.0f64;
+        if h.uneven_rows() { est = 44.0f64; }
+        { rt::msg_void_f64(v, rt::sel(#str_ptr("setEstimatedRowHeight:\0")), est) };
+    }
+    return;
+}
+
+// THE ROW A REGRID KEEPS: the first visible line, as an ITEM index under the
+// columns it was laid out with. -1 when there is nothing to keep — no visible
+// rows, or a table at its top, which lands at the top again on its own.
+fn relist_anchor_item(tv: *u8, cols: usize) -> i64 {
+    let row: i64 = first_visible_row(tv);
+    if row <= (0 as i64) { return -1 as i64; }
+    var c: i64 = cols as i64;
+    if c < (1 as i64) { c = 1 as i64; }
+    return row *% c;
+}
+
+// Put the line holding `item` at the top, under the columns the table has
+// NOW — which is why this runs after the reload and not before.
+fn relist_show_item_at_top(tv: *u8, n: *core::Node, item: i64) {
+    if item < (0 as i64) { return; }
+    let cols: i64 = relist_columns(n) as i64;
+    var line: i64 = item;
+    if cols > (1 as i64) { line = item / cols; }
+    // FRESH METRICS FIRST. `reloadData` leaves the row geometry to the next
+    // layout pass, and a scroll asked for before it lands on where the OLD
+    // lines were: on the gallery the anchored line came up a title short of
+    // the top, every time. A regrid whose lines happen to measure the same as
+    // its rows hides this — the suite's stated-height check did.
+    { rt::msg_void(tv, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    scroll_row_to_top(tv, line);
+    return;
+}
+
+// The suite's readings: where the table has scrolled to, and where a row is.
+fn content_offset_y(v: *u8) -> f64 {
+    let off: rt::Point = { rt::msg_point(v, rt::sel(#str_ptr("contentOffset\0"))) };
+    return off.y;
+}
+
+fn row_top(v: *u8, row: i64) -> f64 {
+    let ip: *u8 = index_path(row, 0 as i64);
+    if ip == (0 as *u8) { return -1.0f64; }
+    let r: rt::Rect = { rt::msg_rect_id(v, rt::sel(#str_ptr("rectForRowAtIndexPath:\0")), ip) };
+    return r.y;
+}
+
+// The first row the table is showing, or -1.
+fn first_visible_row(tv: *u8) -> i64 {
+    let paths: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("indexPathsForVisibleRows\0"))) };
+    if paths == (0 as *u8) { return -1 as i64; }
+    let first: *u8 = { rt::msg_id(paths, rt::sel(#str_ptr("firstObject\0"))) };
+    if first == (0 as *u8) { return -1 as i64; }
+    return { rt::msg_i64(first, rt::sel(#str_ptr("row\0"))) };
+}
+
+// Row `row`'s top edge at the viewport's top, now — not animated, so a caller
+// laying out right after sees it there.
+fn scroll_row_to_top(tv: *u8, row: i64) {
+    if row < (0 as i64) || row >= tv_row_count(tv) { return; }
+    let ip: *u8 = index_path(row, 0 as i64);
+    if ip == (0 as *u8) { return; }
+    // UITableViewScrollPositionTop = 1.
+    { msg_void_id_i64_i8(tv, rt::sel(#str_ptr("scrollToRowAtIndexPath:atScrollPosition:animated:\0")),
+                         ip, 1 as i64, 0 as i8) };
+    return;
+}
+
+fn apply_relist_rows(v: *u8, n: *core::Node, h: relist::Relist, creating: bool) {
+    // THE TABLE COUNTS LINES. In one column a line is an item and the two
+    // numbers agree; in a grid they do not, and comparing the table against
+    // the item count would call every pass a reload.
+    let now: i64 = relist_lines(n);
+    let grid: bool = relist_columns(n) > (1 as usize);
+
+    // A NEW BUILDER IS A NEW SHAPE FOR EVERY ROW, and the create pass has
+    // nothing to splice against — both reload.
+    if creating { reload_rows(v, n); return; }
+
+    // A PENDING CHANGE IS A COMMAND, taken rather than read: applied twice, a
+    // splice moves the sequence twice and every row below is one out.
+    var kind: i64 = -1 as i64;
+    var at: i64 = 0 as i64;
+    var run: i64 = 0 as i64;
+    if h.has_pending() {
+        let c: obs_vec::Change = h.take_pending();
+        kind = relist::change_kind_num(c.kind);
+        at = c.at as i64;
+        run = c.count as i64;
+    }
+
+    // A COUNT THAT MOVED WITH NO CHANGE TO EXPLAIN IT is a reload: the
+    // collection is the truth and it disagrees with the table, so a splice would
+    // be guessing which rows moved. Reached when an app writes through
+    // `as_vec_ptr` and forgets the `note_reload()` that hatch owes.
+    if kind < (0 as i64) {
+        if now != tv_row_count(v) { reload_rows(v, n); }
+        return;
+    }
+    if kind == (0 as i64) { reload_rows(v, n); return; }
+    // A GRID SPLICES NOTHING: an insert moves every item after it across
+    // lines, so every table row from there down shows different items and the
+    // cells in hand are all wrong. A reload is the honest answer.
+    if grid { reload_rows(v, n); return; }
+
+    var delta: i64 = 0 as i64;
+    if kind == (1 as i64) { delta = run; }
+    if kind == (2 as i64) { delta = 0 as i64 -% run; }
+
+    // THE ARITHMETIC HAS TO HOLD, and UIKit checks it itself — by RAISING. An
+    // insert or delete whose arithmetic disagrees with the data source is an
+    // uncaught exception, which takes the application down rather than drawing
+    // something wrong.
+    //
+    // The invariant is the TABLE'S OWN count plus what this change moves,
+    // against the collection's count now — not what the element last said,
+    // which a silent `as_vec_ptr` write would have moved without telling
+    // anyone.
+    if kind == (1 as i64) || kind == (2 as i64) {
+        if tv_row_count(v) +% delta != now { reload_rows(v, n); return; }
+        splice(v, at, delta);
+        return;
+    }
+    // Changed: the sequence did not move, so only these rows are rebuilt —
+    // and re-measured, since what a row measures is part of what changed.
+    forget_measurements(v, n, at, at +% run -% (1 as i64));
+    invalidate_rows(v, at, at +% run -% (1 as i64));
+    return;
+}
+
+// A RELOAD DISCARDS EVERY CELL, and the rows in them go with it — UIKit does not
+// call `didEndDisplayingCell:` for them, so the realised set would keep pointers
+// to nodes the next fill frees. Saying so wholesale is cheaper and safer than
+// hoping every cell comes back through `clear_cell`.
+fn reload_rows(v: *u8, n: *core::Node) {
+    relist::note_all_released(n);
+    { rt::msg_void(v, rt::sel(#str_ptr("reloadData\0"))) };
+    return;
 }
 
 fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {

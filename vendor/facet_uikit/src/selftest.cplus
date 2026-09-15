@@ -25,6 +25,9 @@ import "stdlib/io" as io;
 import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
+import "facet/relist" as relist;
+import "facet/component" as component;
+import "facet/obs_vec" as obs_vec;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/application" as app;
@@ -116,12 +119,12 @@ fn a_radius_clips_whatever_the_view_is() -> bool {
 // in the package rendered as an empty cell with a separator under it.
 
 fn an_unkeyed_row_has_no_view_of_its_own() -> bool {
-    var n: core::Node = ui::row(flex::Builder::new());
+    var n: core::Node = ui::row(core::Builder::new());
     return views::wants_view(#addr_of(n)) == false;
 }
 
 fn a_realised_viewless_root_still_has_backed_children() -> bool {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label("x", font_size: 12.0f64));
     var row: core::Node = ui::row(b);
     let p: *core::Node = #addr_of(row);
@@ -153,10 +156,10 @@ fn a_container_with_a_context_menu_gets_a_view() -> bool {
     // The first wall. The interaction hangs on the node's OWN view and UIKit
     // lifts that view as the menu's preview, so without one there is not even
     // a rectangle for the press to land on.
-    var bare: core::Node = ui::row(flex::Builder::new());
+    var bare: core::Node = ui::row(core::Builder::new());
     if views::wants_view(#addr_of(bare)) { return false; }
 
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ctx_menu_node());
     var withmenu: core::Node = ui::row(b);
     return views::wants_view(#addr_of(withmenu));
@@ -209,7 +212,7 @@ fn reading_a_sender_that_is_not_a_view_answers_empty() -> bool {
 }
 
 fn attaching_a_menu_puts_an_interaction_on_the_view() -> bool {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ctx_menu_node());
     var withmenu: core::Node = ui::row(b, key: "sel:menuhost");
     let p: *core::Node = #addr_of(withmenu);
@@ -373,7 +376,7 @@ fn the_app_delegate_is_a_responder() -> bool {
 }
 
 fn key_commands_publishes_one_per_shortcut() -> bool {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ctx_menu_with_shortcut());
     var root: core::Node = ui::row(b, key: "sel:sc:host");
     let host: uik::View = probe_host();
@@ -396,14 +399,14 @@ fn a_tree_with_no_shortcut_publishes_nothing() -> bool {
     // never got the method at all, which is the exact defect it exists to catch.
     let d: *u8 = delegate_instance();
     if d == (0 as *u8) { return false; }
-    var wb: flex::Builder = flex::Builder::new();
+    var wb: core::Builder = core::Builder::new();
     wb.add(ctx_menu_with_shortcut());
     var with_one: core::Node = ui::row(wb, key: "sel:sc:host");
     let h1: uik::View = probe_host();
     mount_tree(#addr_of(with_one), h1.raw());
     if { rt::msg_id(d, rt::sel(#str_ptr("keyCommands\0"))) } == (0 as *u8) { return false; }
 
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ctx_menu_node());
     var root: core::Node = ui::row(b, key: "sel:sc:none");
     let host: uik::View = probe_host();
@@ -423,7 +426,7 @@ fn two_items_naming_one_shortcut_publish_one_command() -> bool {
     let _b: bool = mount::add_child(mp, ui::context_menu_item(
         "Second", key: "sel:dup:b",
         shortcut: vocab::Shortcut::of("r", vocab::KeyModifiers::Cmd)));
-    var bb: flex::Builder = flex::Builder::new();
+    var bb: core::Builder = core::Builder::new();
     bb.add(menu);
     var root: core::Node = ui::row(bb, key: "sel:dup:host");
     let host: uik::View = probe_host();
@@ -438,7 +441,7 @@ fn two_items_naming_one_shortcut_publish_one_command() -> bool {
 }
 
 fn the_shortcut_reaches_the_items_handler() -> bool {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ctx_menu_with_shortcut());
     var root: core::Node = ui::row(b, key: "sel:sc:host");
     let host: uik::View = probe_host();
@@ -462,7 +465,7 @@ fn an_item_with_no_key_is_found_by_its_shortcut() -> bool {
         "Duplicate",
         shortcut: vocab::Shortcut::of("d", vocab::KeyModifiers::Cmd),
         on_clicked: note_shortcut_fired));
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(menu);
     var root: core::Node = ui::row(b, key: "sel:nokey:host");
     let host: uik::View = probe_host();
@@ -481,7 +484,7 @@ fn a_disabled_item_does_not_fire_its_shortcut() -> bool {
     // `enabled` is read WHEN THE KEY IS PRESSED, not when the list was built:
     // UIKit harvests `keyCommands` when it pleases and a published command can
     // outlive the state that was true when it was made.
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ctx_menu_with_shortcut());
     var root: core::Node = ui::row(b, key: "sel:sc:host");
     let host: uik::View = probe_host();
@@ -509,7 +512,7 @@ fn a_command_whose_tree_is_gone_fires_nothing() -> bool {
     // command UIKit harvested before a rebuild is handed back after it; a
     // pointer taken at build time would be freed memory by then, and this
     // press would be a use-after-free instead of a no-op.
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ctx_menu_with_shortcut());
     var root: core::Node = ui::row(b, key: "sel:sc:host");
     let host: uik::View = probe_host();
@@ -544,7 +547,7 @@ fn the_key_in_the_property_list_decides_which_item() -> bool {
         "Second", key: "sel:pl:b",
         shortcut: vocab::Shortcut::of("r", vocab::KeyModifiers::Cmd),
         on_clicked: note_other_shortcut_fired));
-    var bb: flex::Builder = flex::Builder::new();
+    var bb: core::Builder = core::Builder::new();
     bb.add(menu);
     var root: core::Node = ui::row(bb, key: "sel:pl:host");
     let host: uik::View = probe_host();
@@ -567,7 +570,7 @@ fn a_sender_that_is_not_a_key_command_fires_nothing() -> bool {
     // perform it. `input` is the property that says the sender really is a
     // `UIKeyCommand`; without the guard the next line is an unrecognized
     // selector inside a key press.
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ctx_menu_with_shortcut());
     var root: core::Node = ui::row(b, key: "sel:sc:host");
     let host: uik::View = probe_host();
@@ -656,7 +659,7 @@ fn no_handler_is_a_real_function_not_null() -> bool {
 // matters — `clear_cell` takes ownership back with `box::from_raw`, and handing
 // it a stack address would free something it does not own.
 fn a_cleared_cell_gives_back_every_view_it_took() -> bool {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label("one", key: "rb:one", font_size: 12.0f64));
     b.add(ui::label("two", key: "rb:two", font_size: 12.0f64));
     var row: core::Node = ui::row(b);
@@ -962,7 +965,7 @@ fn the_enclosing_scroll_is_the_page_not_the_editor() -> bool {
 
 fn realising_a_subtree_opens_no_window() -> bool {
     let before: usize = app::window_count();
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::label("x", font_size: 12.0f64));
     var row: core::Node = ui::row(b);
     let _v: *u8 = mount::realise(#addr_of(row));
@@ -1402,12 +1405,33 @@ fn a_label_classifies_as_text_and_a_field_as_input() -> bool {
 // THE GATE, which is the one thing here that must never regress: a secure field
 // is sensitive whatever it declared, because an app that forgot to mark a
 // password field must not leak it because it forgot.
-fn a_secure_field_is_sensitive_by_class() -> bool {
+fn a_secure_field_masks_its_value_and_does_not_move_the_tier() -> bool {
+    // STALE UNTIL 2026-09-14, and failing since 2026-09-09 — unseen, because
+    // this file did not compile and so nobody ran it.
+    //
+    // It used to assert that a secure field is `tier_protected()` BY CLASS.
+    // That behaviour was deliberately removed: it was wrong twice over — it
+    // landed a secure field on protected where the AppKit reference used
+    // private, and the inference beat the DECLARATION, so an app that pinned
+    // `private` on a password box was talked back down. See the comment above
+    // `effective_policy` in agent_uikit for the whole reasoning.
+    //
+    // The two questions are on separate axes now, and this asserts both: the
+    // SECURE CLASS masks the value, and the TIER is the app's to declare and is
+    // untouched by the class. `<input type=password>` — masked on the way out,
+    // still writable.
     let f: uik::TextField = uik::TextField::new_with_frame(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
-    { rt::msg_void_i8(f.as_view().raw(), rt::sel(#str_ptr("setSecureTextEntry:\0")),
-                      1 as i8) };
-    return agent::effective_policy(f.as_view().raw()) == identity::tier_protected();
+    let v: *u8 = f.as_view().raw();
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setSecureTextEntry:\0")), 1 as i8) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setText:\0")), bridge::nsstring("hunter2")) };
+
+    // The tier is whatever was declared, which is nothing — NOT protected.
+    if agent::effective_policy(v) != identity::tier_open() { return false; }
+    // The value reads back masked, one star per character.
+    let shown: text::Text = agent::node_text(v, identity::Role::Input);
+    if { shown.view() } == "hunter2" { return false; }
+    return { shown.view() } == "*******";
 }
 
 fn a_control_is_clickable_and_a_bare_view_is_not() -> bool {
@@ -2073,7 +2097,7 @@ fn the_stack_starts_empty_and_refuses_without_a_window() -> bool {
     if window::pushed_count() != (0 as usize) { return false; }
     // No window means no navigation controller, and a push must SAY so rather
     // than half-succeed.
-    var n: core::Node = ui::column(flex::Builder::new());
+    var n: core::Node = ui::column(core::Builder::new());
     if window::push_screen(#addr_of(n), "Screen", 0 as *u8) { return false; }
     return window::pop_screen() == false;
 }
@@ -2500,7 +2524,7 @@ fn class_responds(cls: *u8, selector: *u8) -> bool {
 // and the cell rendered empty. The decision is `cell_holds_row`: clear only the
 // row the cell is actually showing.
 fn a_late_end_display_does_not_clear_a_refilled_cell() -> bool {
-    var b: flex::Builder = flex::Builder::new();
+    var b: core::Builder = core::Builder::new();
     b.add(ui::list(key: "rl:probe"));
     var root: core::Node = ui::column(b);
     let p: *props::ListProps =
@@ -2652,11 +2676,706 @@ fn a_scene_we_do_not_know_is_named_nothing() -> bool {
     return window::activity_named("") == (0 as *u8);
 }
 
+// ---- relist -------------------------------------------------------------------
+
+struct RlEntry { n: i32 }
+
+fn rl_row(i: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label("row"));
+    let id: text::Text = "rl:${i}";
+    return ui::column(b, key: id.view());
+}
+
+// Rows of STATED, DIFFERENT heights: 30, 40, 50 … plus whatever the bump says,
+// so a check can tell a fresh measurement from a cached one.
+static RL_BUMP: f64 = 0.0f64;
+fn rl_tall_row(i: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label("row"));
+    let id: text::Text = "tall:${i}";
+    return ui::column(b, key: id.view()).height(30.0f64 + 10.0f64 * (i as f64) + RL_BUMP);
+}
+
+// Rows of ONE stated height, so row arithmetic is exact: row r sits at 50r.
+fn rl_fixed_row(i: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label("row"));
+    let id: text::Text = "fx:${i}";
+    return ui::column(b, key: id.view()).height(50.0f64);
+}
+
+// A row whose ROOT IS VIEWLESS — an unkeyed `ui::row` is pure layout and gets
+// no view — with a keyed label inside it, so the label is what a check finds.
+fn rl_bare_row(i: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    let id: text::Text = "bare:${i}";
+    b.add(ui::label("row", key: id.view()));
+    return ui::row(b);
+}
+
+// THE COUNT IS THE COLLECTION'S, with nothing keeping a second copy in step.
+fn a_relist_reports_its_collections_count() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    let _a: status::Status = rows.append(RlEntry { n: 1 });
+    let _b: status::Status = rows.append(RlEntry { n: 2 });
+    var n: core::Node = relist::relist(rows, key: "rl", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    if recycler::tv_row_count(v) != (2 as i64) { return false; }
+    // ...and the app appends to its OWN collection, telling the list nothing.
+    let _c: status::Status = rows.append(RlEntry { n: 3 });
+    views::apply(0 as *u8, np);
+    return recycler::tv_row_count(v) == (3 as i64);
+}
+
+// A REALISED ROW IS FINDABLE BY THE KEY ITS BUILDER GAVE IT — the row is never a
+// child of the list, so this is the element answering for its realised set.
+fn a_realised_row_is_found_by_its_key() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "rl2", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    // Nothing realised yet, and the list has no children — so nothing to find.
+    if core::child_count_of(np) != (0 as usize) { return false; }
+    match core::find_in(np, "rl:3") {
+        option::Option[*core::Node]::Some(_x) => { return false; }
+        option::Option[*core::Node]::None => { }
+    }
+    let cell: *u8 = recycler::cell_for_row(v, 3 as i64);
+    if cell == (0 as *u8) { return false; }
+    match core::find_in(np, "rl:3") {
+        option::Option[*core::Node]::Some(hit) => {
+            if { (*hit).key() } != "rl:3" { return false; }
+        }
+        option::Option[*core::Node]::None => { return false; }
+    }
+    // A row nothing has asked for still has no node to find.
+    match core::find_in(np, "rl:8") {
+        option::Option[*core::Node]::Some(_x) => { return false; }
+        option::Option[*core::Node]::None => { }
+    }
+    return true;
+}
+
+// THE ONE WITH TEETH. A recycled cell tears down the row it held and frees the
+// node; an entry left in the realised set after that is a freed node handed to
+// `find`.
+fn a_recycled_cell_forgets_the_row_it_held() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "rl3", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+
+    let cell: *u8 = recycler::cell_for_row(v, 3 as i64);
+    if cell == (0 as *u8) { return false; }
+    if relist_realised(np) != (1 as usize) { return false; }
+    // The same cell, now showing a different row.
+    recycler::fill_cell(cell, np, 7 as usize);
+    if relist_realised(np) != (1 as usize) { return false; }
+    match core::find_in(np, "rl:3") {
+        option::Option[*core::Node]::Some(_x) => { return false; }
+        option::Option[*core::Node]::None => { }
+    }
+    match core::find_in(np, "rl:7") {
+        option::Option[*core::Node]::Some(_x) => { }
+        option::Option[*core::Node]::None => { return false; }
+    }
+    return true;
+}
+
+// A RELOAD DISCARDS EVERY CELL and UIKit does not walk them out, so the element
+// is told wholesale. Without it the set keeps pointers to nodes the next fill
+// frees.
+fn a_reload_empties_the_realised_set() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "rl4", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    let cell: *u8 = recycler::cell_for_row(v, 2 as i64);
+    if cell == (0 as *u8) { return false; }
+    if relist_realised(np) != (1 as usize) { return false; }
+
+    rows.note_reload();
+    views::apply(0 as *u8, np);
+    return relist_realised(np) == (0 as usize);
+}
+
+// A ROW LEAVING THE SCREEN IS RELEASED, AND THE ELEMENT IS TOLD. The realised
+// set is the element's claim about what is on screen, and a cell in the reuse
+// pool is not on it. Until 2026-09-15 a relist waited for the next fill — which
+// kept the node alive and kept it "realised": on the gallery one animated
+// `scroll_to` left 27 rows in the set for a 7-row viewport, and `find` handed
+// back rows nothing could see. `clear_cell` with the owner notes the release
+// BEFORE the drop, so the set never holds a freed node either.
+fn an_end_display_releases_the_row_the_cell_still_holds() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "rl5", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    let cell: *u8 = recycler::cell_for_row(v, 4 as i64);
+    if cell == (0 as *u8) { return false; }
+    if relist_realised(np) != (1 as usize) { return false; }
+
+    recycler::end_displaying(v, cell, 4 as i64);
+    // Gone from the set, and gone from `find` — not a freed node in either.
+    if relist_realised(np) != (0 as usize) { return false; }
+    match core::find_in(np, "rl:4") {
+        option::Option[*core::Node]::Some(_x) => { return false; }
+        option::Option[*core::Node]::None => { }
+    }
+    // The cell is empty and vends again cleanly.
+    recycler::fill_cell(cell, np, 6 as usize);
+    if relist_realised(np) != (1 as usize) { return false; }
+    match core::find_in(np, "rl:6") {
+        option::Option[*core::Node]::Some(_x) => { }
+        option::Option[*core::Node]::None => { return false; }
+    }
+    return true;
+}
+
+// ...BUT NOT A ROW THAT HAS ALREADY BEEN REFILLED. UIKit can deliver
+// `didEndDisplayingCell:` for the OLD index path after the same cell was handed
+// back out and filled with a new row; clearing then tears down the row that
+// was just built ("labels disappear while scrolling"). The cell says which
+// line it holds, so a late arrival for a line it no longer holds is left alone
+// — the same guard `list` has, answered off the cell's stamp.
+fn a_late_end_display_leaves_the_refilled_row_alone() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "rl6", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    let cell: *u8 = recycler::cell_for_row(v, 4 as i64);
+    if cell == (0 as *u8) { return false; }
+    recycler::fill_cell(cell, np, 6 as usize);
+    if relist_realised(np) != (1 as usize) { return false; }
+
+    // The late word about row 4, which this cell no longer holds.
+    recycler::end_displaying(v, cell, 4 as i64);
+    if relist_realised(np) != (1 as usize) { return false; }
+    match core::find_in(np, "rl:6") {
+        option::Option[*core::Node]::Some(_x) => { }
+        option::Option[*core::Node]::None => { return false; }
+    }
+    // And the word about row 6, which it does — that one is honoured.
+    recycler::end_displaying(v, cell, 6 as i64);
+    return relist_realised(np) == (0 as usize);
+}
+
+// A COLUMNS CHANGE REGRIDS THE TABLE: nine entries are nine rows, then three
+// lines, then nine rows again — the same table, re-vended. Missing until
+// 2026-09-15: the gallery's echo read `columns: 3` and the list stayed one item
+// per line, because `apply_relist` never looked at `P_COLUMNS`.
+fn a_columns_change_regrids_the_table() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 9 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "g4", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    if recycler::tv_row_count(v) != (9 as i64) { return false; }
+    let cell: *u8 = recycler::cell_for_row(v, 2 as i64);
+    if cell == (0 as *u8) { return false; }
+    if relist_realised(np) != (1 as usize) { return false; }
+
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(np) else { return false; };
+    let _c: relist::Relist = h.set_columns(3 as usize);
+    views::apply(0 as *u8, np);
+    // Three lines — and the reload emptied the set, as a reload does.
+    if recycler::tv_row_count(v) != (3 as i64) { return false; }
+    if relist_realised(np) != (0 as usize) { return false; }
+    let _d: relist::Relist = h.set_columns(1 as usize);
+    views::apply(0 as *u8, np);
+    return recycler::tv_row_count(v) == (9 as i64);
+}
+
+// THE STAR ASKS WHICH ROW IT IS IN, and gets an answer from any view inside the
+// row: `component::item_index_of(sender)` reads the index off the nearest
+// tagged VIEW above the sender. A row root with a view carries it from
+// `views::create`; a viewless root's is carried by the cell. Answered None on
+// this backend until 2026-09-15 — the gallery's star said "could not say which
+// row it is in" — because no view was ever tagged.
+fn a_control_inside_a_row_knows_its_row_index() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    // A keyed root, which has a view of its own.
+    var n: core::Node = relist::relist(rows, key: "ix1", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    let cell: *u8 = recycler::cell_for_row(v, 3 as i64);
+    if cell == (0 as *u8) { return false; }
+    guard let option::Option[*core::Node]::Some(row) = core::find_in(np, "rl:3") else { return false; };
+    // The LABEL inside the row — a descendant, not the root.
+    guard let option::Option[*core::Node]::Some(lab) = core::child_of(row, 0 as usize) else { return false; };
+    let lv: *u8 = core::view_of(lab);
+    if lv == (0 as *u8) { return false; }
+    match component::item_index_of(lv) {
+        option::Option[usize]::Some(at) => { if at != (3 as usize) { return false; } }
+        option::Option[usize]::None => { return false; }
+    }
+
+    // A VIEWLESS root, whose index has to come from the cell.
+    var flat: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var j: i32 = 0;
+    while j < 10 { let _b: status::Status = flat.append(RlEntry { n: j }); j = j +% 1; }
+    var m: core::Node = relist::relist(flat, key: "ix2", builder: rl_bare_row);
+    let mp: *core::Node = #addr_of(m);
+    let w: *u8 = views::create(0 as *u8, mp);
+    if w == (0 as *u8) { return false; }
+    core::set_view(mp, w, views::view_release);
+    let cell2: *u8 = recycler::cell_for_row(w, 7 as i64);
+    if cell2 == (0 as *u8) { return false; }
+    guard let option::Option[*core::Node]::Some(bare) = core::find_in(mp, "bare:7") else { return false; };
+    let bv: *u8 = core::view_of(bare);
+    if bv == (0 as *u8) { return false; }
+    return match component::item_index_of(bv) {
+        option::Option[usize]::Some(at) => at == (7 as usize),
+        option::Option[usize]::None => false,
+    };
+}
+
+// ...AND ON A GRID LINE, EACH ITEM'S OWN INDEX — not the line's. Three items
+// share one cell, so the cell can only say where the line starts; a keyed item
+// answers from its own view, a viewless one from the views it does have.
+fn each_item_on_a_grid_line_knows_its_own_index() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 9 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "ix3", builder: rl_row, columns: 3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    // Line 1 holds entries 3, 4 and 5.
+    let cell: *u8 = recycler::cell_for_row(v, 1 as i64);
+    if cell == (0 as *u8) { return false; }
+    var k: i32 = 3;
+    while k < 6 {
+        let want: text::Text = "rl:${k}";
+        guard let option::Option[*core::Node]::Some(row) = core::find_in(np, want.view()) else { return false; };
+        guard let option::Option[*core::Node]::Some(lab) = core::child_of(row, 0 as usize) else { return false; };
+        let lv: *u8 = core::view_of(lab);
+        if lv == (0 as *u8) { return false; }
+        match component::item_index_of(lv) {
+            option::Option[usize]::Some(at) => { if at != (k as usize) { return false; } }
+            option::Option[usize]::None => { return false; }
+        }
+        k = k +% 1;
+    }
+
+    // The same three, with viewless item roots.
+    var flat: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var j: i32 = 0;
+    while j < 9 { let _b: status::Status = flat.append(RlEntry { n: j }); j = j +% 1; }
+    var m: core::Node = relist::relist(flat, key: "ix4", builder: rl_bare_row, columns: 3 as usize);
+    let mp: *core::Node = #addr_of(m);
+    let w: *u8 = views::create(0 as *u8, mp);
+    if w == (0 as *u8) { return false; }
+    core::set_view(mp, w, views::view_release);
+    let cell2: *u8 = recycler::cell_for_row(w, 1 as i64);
+    if cell2 == (0 as *u8) { return false; }
+    var q: i32 = 3;
+    while q < 6 {
+        let want: text::Text = "bare:${q}";
+        guard let option::Option[*core::Node]::Some(lab) = core::find_in(mp, want.view()) else { return false; };
+        let lv: *u8 = core::view_of(lab);
+        if lv == (0 as *u8) { return false; }
+        match component::item_index_of(lv) {
+            option::Option[usize]::Some(at) => { if at != (q as usize) { return false; } }
+            option::Option[usize]::None => { return false; }
+        }
+        q = q +% 1;
+    }
+    return true;
+}
+
+// A RELIST ROW IS MEASURED, NOT 44. A uniform list — the default — measures
+// ONE row and answers it for every row: that is the claim `uneven_rows: false`
+// makes, and the saving it buys. Answered 44 for every relist row until
+// 2026-09-15, because the delegate asked `list_props` and a relist has none.
+fn a_uniform_relist_measures_one_row_for_all() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 5 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "h1", builder: rl_tall_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    recycler::reset_measure_realises();
+    if recycler::row_height_for(v, 0 as i64) != 30.0f64 { return false; }
+    // Row 3 would measure 60 — but the list said its rows are uniform.
+    if recycler::row_height_for(v, 3 as i64) != 30.0f64 { return false; }
+    if recycler::row_height_for(v, 4 as i64) != 30.0f64 { return false; }
+    return recycler::measure_realises() == (1 as i64);
+}
+
+// AN UNEVEN LIST MEASURES EACH ROW ONCE, AND REMEMBERS IT BY KEY — so a reload,
+// which invalidates every position, costs no measurement.
+fn an_uneven_relist_measures_each_row_and_remembers_by_key() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 5 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "h2", builder: rl_tall_row, uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    recycler::reset_measure_realises();
+    if recycler::row_height_for(v, 3 as i64) != 60.0f64 { return false; }
+    if recycler::row_height_for(v, 4 as i64) != 70.0f64 { return false; }
+    if recycler::measure_realises() != (2 as i64) { return false; }
+    // Asked again: from the cache.
+    if recycler::row_height_for(v, 3 as i64) != 60.0f64 { return false; }
+    if recycler::measure_realises() != (2 as i64) { return false; }
+    // A reload keeps it — the key is the identity, not the position.
+    rows.note_reload();
+    views::apply(0 as *u8, np);
+    if recycler::row_height_for(v, 3 as i64) != 60.0f64 { return false; }
+    return recycler::measure_realises() == (2 as i64);
+}
+
+// A CHANGED ROW IS RE-MEASURED, and only that row: what it measures is part of
+// what changed.
+fn a_changed_relist_row_is_re_measured() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 5 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "h3", builder: rl_tall_row, uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    recycler::reset_measure_realises();
+    if recycler::row_height_for(v, 2 as i64) != 50.0f64 { return false; }
+    if recycler::row_height_for(v, 1 as i64) != 40.0f64 { return false; }
+    RL_BUMP = 100.0f64;
+    rows.note_changed(2 as usize);
+    views::apply(0 as *u8, np);
+    let h2: f64 = recycler::row_height_for(v, 2 as i64);
+    let h1: f64 = recycler::row_height_for(v, 1 as i64);
+    RL_BUMP = 0.0f64;
+    // Row 2 measured again with the bump; row 1 answered from its cache.
+    if h2 != 150.0f64 { return false; }
+    if h1 != 40.0f64 { return false; }
+    return recycler::measure_realises() == (3 as i64);
+}
+
+// A GRID LINE IS AS TALL AS ITS TALLEST ITEM. Line 1 holds rows 3, 4 and 5 —
+// 60, 70 and 80 — and is 80.
+fn a_grid_line_is_as_tall_as_its_tallest_item() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 9 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "h4", builder: rl_tall_row,
+                                       uneven_rows: true, columns: 3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    if recycler::row_height_for(v, 1 as i64) != 80.0f64 { return false; }
+    if recycler::row_height_for(v, 0 as i64) != 50.0f64 { return false; }
+    return recycler::row_height_for(v, 2 as i64) == 110.0f64;
+}
+
+// A NEW BUILDER IS A NEW SHAPE FOR EVERY ROW, so every measurement goes with
+// it — the old height would be a lie about rows the old builder no longer makes.
+fn a_new_builder_forgets_every_measurement() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 5 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "h5", builder: rl_tall_row, uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    recycler::reset_measure_realises();
+    if recycler::row_height_for(v, 2 as i64) != 50.0f64 { return false; }
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(np) else { return false; };
+    let _b: relist::Relist = h.set_builder(rl_row);
+    views::apply(0 as *u8, np);
+    // `rl_row` states no height, so row 2 measures its label — anything but 50,
+    // and a fresh realise to learn it.
+    let after: f64 = recycler::row_height_for(v, 2 as i64);
+    if after == 50.0f64 || after <= 0.0f64 { return false; }
+    return recycler::measure_realises() == (2 as i64);
+}
+
+// A REGRID KEEPS THE FIRST VISIBLE ROW. Items survive a regrid and lines do
+// not, so the row under the viewport's top is read as an item under the old
+// columns and put back at the top under the new. Without it a regrid landed
+// the table at the top — measured on the gallery 2026-09-15.
+fn a_regrid_keeps_the_first_visible_row() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 60 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "gk", builder: rl_fixed_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    // A VIEWPORT, so there are visible rows to keep.
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 320.0f64, h: 200.0f64 }) };
+    { rt::msg_void(v, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    if recycler::first_visible_row(v) != (0 as i64) { return false; }
+    // Row 12 to the top.
+    recycler::scroll_row_to_top(v, 12 as i64);
+    { rt::msg_void(v, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    if recycler::first_visible_row(v) != (12 as i64) { return false; }
+
+    // THREE COLUMNS: item 12 starts line 4, and line 4 is at the top.
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(np) else { return false; };
+    let _c: relist::Relist = h.set_columns(3 as usize);
+    views::apply(0 as *u8, np);
+    { rt::msg_void(v, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    if recycler::tv_row_count(v) != (20 as i64) { return false; }
+    if recycler::first_visible_row(v) != (4 as i64) { return false; }
+
+    // AND BACK: row 12 again.
+    let _d: relist::Relist = h.set_columns(1 as usize);
+    views::apply(0 as *u8, np);
+    { rt::msg_void(v, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    return recycler::first_visible_row(v) == (12 as i64);
+}
+
+// A CELL THE TABLE RESIZES RE-LAYS ITS ROW. The fill happens at the cell's
+// bounds of the moment — 44 for a fresh one — and the table frames the cell to
+// the measured height afterwards; until 2026-09-15 nothing ran flex again, so
+// a 58-point row kept its 44-point layout, and a rotation kept every row at the
+// width it was filled at.
+fn a_cell_resized_by_the_table_re_lays_out_its_row() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 5 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "cz", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    let cell: *u8 = recycler::cell_for_row(v, 0 as i64);
+    if cell == (0 as *u8) { return false; }
+    guard let option::Option[*core::Node]::Some(root) = core::find_in(np, "rl:0") else { return false; };
+    let before: f64 = { (*root).frame().height };
+    if before <= 0.0f64 { return false; }
+    // The table's part: the cell framed to the row's height, then laid out.
+    { rt::msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 320.0f64, h: before + 40.0f64 }) };
+    { rt::msg_void(cell, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    let content: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("contentView\0"))) };
+    if content == (0 as *u8) { return false; }
+    let cb: rt::Rect = { rt::msg_rect(content, rt::sel(#str_ptr("bounds\0"))) };
+    let after: f64 = { (*root).frame().height };
+    // Laid out for the box it is in now, not the one it was filled in.
+    if after <= before { return false; }
+    return after == cb.h;
+}
+
+// A REGRID SCROLLS TO FRESH METRICS. `reloadData` leaves row geometry to the
+// next layout pass, and an anchor scrolled before it lands where the OLD lines
+// were. Rows of DIFFERENT heights, so the line tops after the regrid are not
+// where the row tops were — the stated-height check above cannot tell.
+fn a_regrid_scrolls_to_where_the_line_is_now() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 60 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "gm", builder: rl_tall_row, uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 320.0f64, h: 200.0f64 }) };
+    { rt::msg_void(v, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    recycler::scroll_row_to_top(v, 12 as i64);
+    { rt::msg_void(v, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    if recycler::first_visible_row(v) != (12 as i64) { return false; }
+    if recycler::content_offset_y(v) != recycler::row_top(v, 12 as i64) { return false; }
+
+    guard let option::Option[relist::Relist]::Some(h) = relist::from(np) else { return false; };
+    let _c: relist::Relist = h.set_columns(3 as usize);
+    views::apply(0 as *u8, np);
+    { rt::msg_void(v, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    // Line 4 holds 12, 13, 14 — and its top edge IS the viewport's top edge,
+    // measured against the geometry the table has now.
+    if recycler::first_visible_row(v) != (4 as i64) { return false; }
+    let top4: f64 = recycler::row_top(v, 4 as i64);
+    if top4 <= 0.0f64 { return false; }
+    return recycler::content_offset_y(v) == top4;
+}
+
+// THE MEASURE RECORD DIES WITH THE TABLE. It rides an associated raw pointer
+// the view's dealloc knows nothing about, so `view_release` frees it — or it
+// leaked once per relist table, which it did until 2026-09-15.
+fn a_released_relist_table_frees_its_measurements() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 5 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "mf", builder: rl_tall_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    // The record exists from the first apply — the regrid anchor reads it —
+    // and a measurement fills it.
+    let _h: f64 = recycler::row_height_for(v, 0 as i64);
+    if !recycler::has_measure(v) { return false; }
+    // The release path, on an extra retain so the view can still be asked
+    // after it — the node's own drop runs it once more at scope end, finds no
+    // record, and lets the view go for good.
+    let _r: *u8 = rt::retain(v);
+    views::view_release(v);
+    return !recycler::has_measure(v);
+}
+
+// A GRID LINE IS A TABLE ROW HOLDING `columns` ITEMS. Nine entries in three
+// columns is three rows as far as the table is concerned.
+fn a_three_column_relist_is_three_rows_of_three() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 9 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "g1", builder: rl_row, columns: 3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    // THREE lines, not nine rows.
+    if recycler::tv_row_count(v) != (3 as i64) { return false; }
+    // ...and one column is still one row per entry.
+    var flat: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var j: i32 = 0;
+    while j < 9 { let _b: status::Status = flat.append(RlEntry { n: j }); j = j +% 1; }
+    var m: core::Node = relist::relist(flat, key: "g2", builder: rl_row);
+    let mp: *core::Node = #addr_of(m);
+    let w: *u8 = views::create(0 as *u8, mp);
+    if w == (0 as *u8) { return false; }
+    core::set_view(mp, w, views::view_release);
+    return recycler::tv_row_count(w) == (9 as i64);
+}
+
+// EVERY ITEM ON THE LINE IS STILL FINDABLE BY ITS OWN KEY. The line is one node
+// so the cell lifecycle is untouched, and `find_in` recurses into it.
+fn every_item_on_a_grid_line_is_found_by_its_key() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 9 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "g3", builder: rl_row, columns: 3 as usize);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+
+    // Vend line 1, which holds entries 3, 4 and 5.
+    let cell: *u8 = recycler::cell_for_row(v, 1 as i64);
+    if cell == (0 as *u8) { return false; }
+    // ONE realised node for the line, three findable keys inside it.
+    if relist_realised(np) != (1 as usize) { return false; }
+    var k: i32 = 3;
+    while k < 6 {
+        let want: text::Text = "rl:${k}";
+        match core::find_in(np, want.view()) {
+            option::Option[*core::Node]::Some(_x) => { }
+            option::Option[*core::Node]::None => { return false; }
+        }
+        k = k +% 1;
+    }
+    // A line nobody asked for is still not realised.
+    match core::find_in(np, "rl:8") {
+        option::Option[*core::Node]::Some(_x) => { return false; }
+        option::Option[*core::Node]::None => { }
+    }
+    return true;
+}
+
+// A RELIST HAS NO SELECTION, and the widget is told so rather than left at its
+// default. `relist`'s selection is the application's own state plus a gesture
+// on the row; a table that still tracks one hands VoiceOver a selectable row
+// and arbitrates the press against the controls inside it.
+fn a_relist_table_does_not_select() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    let _a: status::Status = rows.append(RlEntry { n: 1 });
+    var n: core::Node = relist::relist(rows, key: "nosel", builder: rl_row);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    if { rt::msg_i8(v, rt::sel(#str_ptr("allowsSelection\0"))) } != (0 as i8) { return false; }
+    // ...and a `list` is untouched. It DECLARES a selection mode, so the one it
+    // was given is what the table gets — which is the contrast that makes the
+    // assertion above mean something rather than agreeing with a default.
+    //
+    // A list that says nothing is `SelectionMode::None` and is NOT selectable
+    // either, so asking an undeclared one would have proved nothing. That is
+    // what the first version of this check got wrong.
+    var m: core::Node = ui::list(key: "sel",
+                                 selection_mode: vocab::SelectionMode::Single);
+    let mp: *core::Node = #addr_of(m);
+    let w: *u8 = views::create(0 as *u8, mp);
+    if w == (0 as *u8) { return false; }
+    core::set_view(mp, w, views::view_release);
+    return { rt::msg_i8(w, rt::sel(#str_ptr("allowsSelection\0"))) } != (0 as i8);
+}
+
+fn relist_realised(n: *core::Node) -> usize {
+    return match relist::from(n) {
+        option::Option[relist::Relist]::Some(h) => h.realised_count(),
+        option::Option[relist::Relist]::None => 0 as usize,
+    };
+}
+
 fn run_all() -> i32 {
     FAILED = 0 as i32;
     RAN = 0 as i32;
     io::eprintln(text::from_str("facet_uikit selftest"));
 
+    check("a relist reports its collection's count", a_relist_reports_its_collections_count());
+    check("a realised row is found by its key", a_realised_row_is_found_by_its_key());
+    check("a recycled cell forgets the row it held", a_recycled_cell_forgets_the_row_it_held());
+    check("a reload empties the realised set", a_reload_empties_the_realised_set());
+    check("an end display releases the row the cell still holds", an_end_display_releases_the_row_the_cell_still_holds());
+    check("a late end display leaves the refilled row alone", a_late_end_display_leaves_the_refilled_row_alone());
+    check("a columns change regrids the table", a_columns_change_regrids_the_table());
+    check("a control inside a row knows its row index", a_control_inside_a_row_knows_its_row_index());
+    check("each item on a grid line knows its own index", each_item_on_a_grid_line_knows_its_own_index());
+    check("a uniform relist measures one row for all", a_uniform_relist_measures_one_row_for_all());
+    check("an uneven relist measures each row and remembers by key", an_uneven_relist_measures_each_row_and_remembers_by_key());
+    check("a changed relist row is re-measured", a_changed_relist_row_is_re_measured());
+    check("a grid line is as tall as its tallest item", a_grid_line_is_as_tall_as_its_tallest_item());
+    check("a new builder forgets every measurement", a_new_builder_forgets_every_measurement());
+    check("a regrid keeps the first visible row", a_regrid_keeps_the_first_visible_row());
+    check("a cell resized by the table re-lays out its row", a_cell_resized_by_the_table_re_lays_out_its_row());
+    check("a regrid scrolls to where the line is now", a_regrid_scrolls_to_where_the_line_is_now());
+    check("a released relist table frees its measurements", a_released_relist_table_frees_its_measurements());
+    check("a three column relist is three rows of three", a_three_column_relist_is_three_rows_of_three());
+    check("every item on a grid line is found by its key", every_item_on_a_grid_line_is_found_by_its_key());
+    check("a relist table does not select", a_relist_table_does_not_select());
     check("a created label is readable on the dark appearance",
           a_created_label_is_readable_on_the_dark_appearance());
     check("a created label is readable on the light appearance",
@@ -2747,7 +3466,8 @@ fn run_all() -> i32 {
     check("a tagged window carries its own id", a_tagged_window_carries_its_own_id());
     check("a button classifies as a button", a_button_classifies_as_a_button());
     check("a label is Text and a field is Input", a_label_classifies_as_text_and_a_field_as_input());
-    check("a secure field is sensitive by class", a_secure_field_is_sensitive_by_class());
+    check("a secure field masks its value and does not move the tier",
+          a_secure_field_masks_its_value_and_does_not_move_the_tier());
     check("a control is clickable, a bare view is not",
           a_control_is_clickable_and_a_bare_view_is_not());
     check("a real notification reaches its observer",
