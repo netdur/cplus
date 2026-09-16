@@ -105,9 +105,24 @@ struct Data {
     // collide across windows. 0 = nothing presented here.
     opaque presented: *u8,
     presented_detach: fn(*u8),
+    // The SAME record's reasoned half. `presented_detach` can say one thing
+    // (the presentation ended, free the box); this carries a WORD, so the
+    // walks can tell a first mount from a switch_to restore. Same repair
+    // `ScreenBox` already had — see the note on its `_attach` field: a
+    // carrier that can only say Mount/Unmount leaves the two-level
+    // `component::Lifecycle` unreachable through it. The word is OPAQUE
+    // here: `component` owns its meaning (facet cannot import it), and
+    // core only hands it back.
+    presented_lifecycle: fn(*u8, u32),
     // What `display` was before switch_to parked this node — so a Grid pane
     // is restored as Grid, not silently as Flex (review finding).
     parked_display: flex::Display,
+    // Was this node ON SCREEN at the last announcement pass? Not a property
+    // anyone writes — `mount::notify_visibility` computes it from the whole
+    // ancestor chain and stores the answer here so the NEXT pass can tell a
+    // transition from a steady state. Starts false: a node that has never
+    // been walked has never been seen.
+    was_showing: bool,
     dirty: u64,             // props changed since the backend last synced
     // What the platform learns first. facet declares the reads; a backend
     // writes them through set_focused / set_attached / set_window.
@@ -194,6 +209,9 @@ const C_GESTURES: u64 = 9223372036854775808u64;
 const SLOT_PREFIX: str = "@";
 
 fn no_release(p: *u8) { return; }
+// The absent reasoned hook. A FUNCTION, not null, for the same reason
+// `props::no_bind` is: the field is always callable.
+fn no_lifecycle(p: *u8, why: u32) { return; }
 
 // flex calls this on node drop, on detach, and when an attach replaces it.
 fn release_data(p: *u8) {
@@ -243,7 +261,9 @@ fn ensure_data(n: *Node) -> *Data {
                              native_create_ctx: 0 as *u8,
                              native_measure: 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size,
                              presented: 0 as *u8, presented_detach: no_release,
-                             parked_display: flex::Display::Flex, dirty: 0u64,
+                             presented_lifecycle: no_lifecycle,
+                             parked_display: flex::Display::Flex, was_showing: false,
+                             dirty: 0u64,
                              is_focused: false, is_attached: false,
                              window: vocab::WindowRef::none(), batch: 0 as i64,
                              gestures: 0 as *u8, gestures_release: no_release,
@@ -268,7 +288,9 @@ fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
                          native_create_ctx: 0 as *u8,
                          native_measure: 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size,
                          presented: 0 as *u8, presented_detach: no_release,
-                         parked_display: flex::Display::Flex, dirty: 0u64,
+                             presented_lifecycle: no_lifecycle,
+                         parked_display: flex::Display::Flex, was_showing: false,
+                         dirty: 0u64,
                          is_focused: false, is_attached: false,
                          window: vocab::WindowRef::none(), batch: 0 as i64,
                          gestures: 0 as *u8, gestures_release: no_release,
@@ -340,10 +362,22 @@ fn set_sync_request_fn(f: fn()) { SYNC_REQUEST_FN = f; return; }
 static FRAMES_SETTLED_FN: fn() = #zero::[fn()]();
 fn set_frames_settled_fn(f: fn()) { FRAMES_SETTLED_FN = f; return; }
 
+// facet's OWN post-layout work, kept apart from the one application slot
+// above so neither can take the other's place. `mount` installs the
+// visibility announcement here: the tick's layout pass is where a band rule
+// resolves into a node's `display`, so a column hidden by a narrow window is
+// only knowable AFTER it — and a band flip writes that display through flex
+// rather than through `touch`, so nothing would request the frame that would
+// otherwise notice.
+static POST_LAYOUT_FN: fn() = #zero::[fn()]();
+fn set_post_layout_fn(f: fn()) { POST_LAYOUT_FN = f; return; }
+
 // Called by the backend's tick. Cheap enough to sit in one: a null check, and
 // then whatever the one consumer does — which for the inspector is nothing at
 // all unless something is highlighted.
 fn frames_settled() {
+    let p: fn() = POST_LAYOUT_FN;
+    if p != (0 as fn()) { p(); }
     let f: fn() = FRAMES_SETTLED_FN;
     if f == (0 as fn()) { return; }
     f();
@@ -555,11 +589,27 @@ fn kind_of(n: *Node) -> u32 {
 
 // The presentation pair (see the Data field): the presenting verb writes it,
 // component_at reads it, teardown and eviction fire the trampoline.
-fn set_presented(n: *Node, addr: *u8, detach: fn(*u8)) {
+fn set_presented(n: *Node, addr: *u8, detach: fn(*u8),
+                 lifecycle: fn(*u8, u32) = no_lifecycle) {
     let d: *Data = ensure_data(n);
     if d.is_null() { return; }
     { (*d).presented = addr };
     { (*d).presented_detach = detach };
+    { (*d).presented_lifecycle = lifecycle };
+}
+
+// Tell this node's presented component why its situation changed. The walks
+// call it off their notification queue, so it lands at the same safe moment
+// the node-level handlers do — after the walk, never inside it. Inert on a
+// node presenting nothing, which is almost every node.
+fn fire_presented_lifecycle(n: *Node, why: u32) {
+    if n.is_null() { return; }
+    let d: *Data = { (*n).data() };
+    if d.is_null() { return; }
+    let pa: *u8 = { (*d).presented };
+    if pa.is_null() { return; }
+    let f: fn(*u8, u32) = { (*d).presented_lifecycle };
+    if f.is_not_null() && f != no_lifecycle { f(pa, why); }
 }
 
 fn presented_of(n: *Node) -> *u8 {
@@ -581,7 +631,23 @@ fn evict_presented(n: *Node) -> bool {
     if pd.is_not_null() { pd(pa); }
     { (*d).presented = 0 as *u8 };
     { (*d).presented_detach = no_release };
+    { (*d).presented_lifecycle = no_lifecycle };
     return true;
+}
+
+// What the last announcement pass concluded about this node. The pair is what
+// turns a state into a transition; only `mount::notify_visibility` writes it.
+fn was_showing(n: *Node) -> bool {
+    if n.is_null() { return false; }
+    let d: *Data = { (*n).data() };
+    if d.is_null() { return false; }
+    return { (*d).was_showing };
+}
+
+fn set_was_showing(n: *Node, on: bool) {
+    let d: *Data = ensure_data(n);
+    if d.is_null() { return; }
+    { (*d).was_showing = on };
 }
 
 // switch_to's memory of a parked pane's display mode.

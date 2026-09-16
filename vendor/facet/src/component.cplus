@@ -148,6 +148,33 @@ interface Lifecycle {
     fn on_detach(ref this, why: Detach);
 }
 
+// ---- the reasons the TREE can raise -------------------------------------------
+// `facet` carries these as an opaque `u32` on the presented record, because it
+// cannot import this module. This is the one place they mean anything.
+//
+// Only four, and the omissions are the point. `Active` and `Inactive` are
+// FOCUS, which no tree walk knows about — they arrive on the app event stream
+// (`app_lifecycle_tramp`) and reach a screen through the navigator. What a
+// walk does know is whether a subtree is in the live tree at all, and whether
+// it is the SHOWN one of its outlet's children.
+// No reason: the caller is notifying the records itself and the drain must
+// not double-fire. `switch_to` is the one that does this — parking is a
+// different question from attachment and the two walks do not line up.
+const LC_NONE: u32 = 0u32;
+const LC_MOUNT: u32 = 1u32;
+// A parked pane is fully gone: out of layout, space given away, the backends'
+// `visibility_of` reads `Display::None` as GONE rather than invisible. That is
+// the visibility level, not the focus level, so a component may release an
+// exclusive device here — which `Inactive` explicitly must not do.
+const LC_BACKGROUND: u32 = 2u32;
+// Shown again after a park. "VISIBLE again after being fully gone. Fires many
+// times over one Mount and NEVER at launch" — the enum's own words, and the
+// exact shape of a `switch_to` restore.
+const LC_FOREGROUND: u32 = 3u32;
+// Leaving the tree. Carried for completeness of the vocabulary; the boxed
+// tramp below deliberately does NOT answer it — see there.
+const LC_UNMOUNT: u32 = 4u32;
+
 // ---- binding a component to the app's lifecycle -------------------------------
 // The runtime calls this once, with the component's address, right where it
 // registers the attach trampoline. Everything below is the (fn_ptr, ctx) pair
@@ -323,6 +350,16 @@ fn lc_detach_tramp[C: Lifecycle](p: *u8) {
     { (*q).on_detach(Detach::Unmount) };
 }
 
+// The reasoned half of the same record. A presented component whose outlet is
+// inside a pane hears the pane being parked and restored, exactly as a boxed
+// child does.
+fn lc_lifecycle_tramp[C: Lifecycle](p: *u8, why: u32) {
+    let q: *C = p as *C;
+    if why == LC_FOREGROUND { { (*q).on_attach(Attach::Foreground) }; return; }
+    if why == LC_BACKGROUND { { (*q).on_detach(Detach::Background) }; return; }
+    return;
+}
+
 // ---- a component as an item in `@ui` ----------------------------------------
 // `child` is what lets a STATEFUL component be written inline in a container,
 // beside plain elements:
@@ -367,12 +404,20 @@ fn child[C: Component + Lifecycle](take c: C, key: str = "") -> Node {
             // is left alone: unwrapping instead would silently drop anything
             // applied to the block's own value (`@ui { .. }.grow(1.0)`).
             let holder: *core::Node = record_holder(#addr_of(tree));
-            // Node teardown and eviction both fire this — notify, then free.
-            core::set_presented(holder, p, child_detach_tramp::[C]);
-            // NOT called here. A mutator during `mount`'s tree walk reflows a
-            // tree the backend has not stored yet; the node-level attach queue
-            // drains AFTER the walk, which is the one safe moment.
-            core::set_on_attach(holder, child_attach_tramp::[C], p);
+            // Node teardown and eviction both fire the first; the walks fire
+            // the second with a reason. NEITHER is called here: a mutator
+            // during `mount`'s tree walk reflows a tree the backend has not
+            // stored yet, and the notification queue drains AFTER the walk,
+            // which is the one safe moment.
+            //
+            // The node's own `on_attach` slot is deliberately LEFT ALONE. It
+            // was where this used to live, and it cost two things: the slot
+            // can only say one word, so a `switch_to` restore arrived as a
+            // second `Mount` and a park as silence; and the application could
+            // not put its own handler on a component's root without silently
+            // taking the component's lifecycle away.
+            core::set_presented(holder, p, child_detach_tramp::[C],
+                                lifecycle: child_lifecycle_tramp::[C]);
             return tree;
         }
         option::Option[box::Box[C]]::None => {
@@ -401,11 +446,19 @@ fn record_holder(n: *core::Node) -> *core::Node {
     return c;
 }
 
-// `Attach::Mount` for a boxed child, fired off the node's attach queue. The
-// component rides in the ctx slot, which is the box pointer `child` stored.
-fn child_attach_tramp[C: Lifecycle](sender: *u8, ctx: *u8) {
-    let q: *C = { ctx as *C };
-    { (*q).on_attach(Attach::Mount) };
+// A boxed child's reason, fired off the walks' notification queue. The
+// component is the record's own address — no ctx slot needed.
+//
+// `LC_UNMOUNT` is NOT answered here, and that is not an omission: the detach
+// trampoline below both notifies and FREES, and it is the one the teardown
+// path fires. Answering unmount in both places would deliver `on_detach`
+// twice to a component that is about to stop existing.
+fn child_lifecycle_tramp[C: Lifecycle](p: *u8, why: u32) {
+    let q: *C = { p as *C };
+    if why == LC_MOUNT { { (*q).on_attach(Attach::Mount) }; return; }
+    if why == LC_FOREGROUND { { (*q).on_attach(Attach::Foreground) }; return; }
+    if why == LC_BACKGROUND { { (*q).on_detach(Detach::Background) }; return; }
+    return;
 }
 
 // Detach AND free — the half that makes the node the owner. Reclaiming the box
@@ -426,6 +479,11 @@ static CH_DETACHED: i32 = 0;
 // Proves the BOX was reclaimed: a leak fires on_detach just the same, so the
 // free needs its own witness. A destructor is a plain inherent `drop`.
 static CH_DROPPED: i32 = 0;
+// Which REASON arrived, counted apart — the whole point of the record's
+// reasoned half is that a component can tell these four situations apart.
+static CH_MOUNTS: i32 = 0;
+static CH_FOREGROUNDS: i32 = 0;
+static CH_BACKGROUNDS: i32 = 0;
 
 struct ChTestComp {
     tag: i32,
@@ -464,8 +522,25 @@ impl ChWrapComp: Lifecycle {
 }
 
 impl ChTestComp: Lifecycle {
-    fn on_attach(ref this, why: Attach) { this.attached = this.attached + 1; return; }
-    fn on_detach(ref this, why: Detach) { CH_DETACHED = CH_DETACHED + 1; return; }
+    fn on_attach(ref this, why: Attach) {
+        this.attached = this.attached + 1;
+        match why {
+            Attach::Mount => { CH_MOUNTS = CH_MOUNTS + 1; }
+            Attach::Foreground => { CH_FOREGROUNDS = CH_FOREGROUNDS + 1; }
+            Attach::Active => { }
+        }
+        return;
+    }
+    fn on_detach(ref this, why: Detach) {
+        CH_DETACHED = CH_DETACHED + 1;
+        match why {
+            Detach::Background => { CH_BACKGROUNDS = CH_BACKGROUNDS + 1; }
+            Detach::Inactive => { }
+            Detach::Unmount => { }
+            Detach::Terminate => { }
+        }
+        return;
+    }
 }
 
 #[test]
@@ -531,12 +606,44 @@ fn child_defers_on_attach_until_the_node_attaches() {
     // fires nothing while building — but "nothing happened" is also what a
     // MISSING registration looks like. So drive the hook the walk drives and
     // assert the attach actually lands.
+    CH_MOUNTS = 0;
     var n: Node = child::[ChTestComp](ChTestComp { tag: 0, attached: 0 });
     let p: *u8 = core::presented_of(#addr_of(n));
     let q: *ChTestComp = { p as *ChTestComp };
     assert { (*q).attached } == 0;
+    core::fire_presented_lifecycle(#addr_of(n), LC_MOUNT);
+    assert { (*q).attached } == 1;
+    assert CH_MOUNTS == 1;
+    // The node's OWN attach slot is not where this lives any more, and that
+    // is load-bearing: an application putting a handler on a component's root
+    // used to take the component's lifecycle away without saying so.
     core::fire_attach_handler(#addr_of(n));
     assert { (*q).attached } == 1;
+}
+
+#[test]
+fn a_boxed_child_hears_each_reason_as_itself() {
+    // The four words the tree can raise, at the one carrier that can say
+    // them. MOUNT is the only one that means "build" — the rest arrive at a
+    // component that already built, and answering them the same way is the
+    // bug this pair of trampolines exists to prevent.
+    CH_MOUNTS = 0;
+    CH_FOREGROUNDS = 0;
+    CH_BACKGROUNDS = 0;
+    CH_DETACHED = 0;
+    var n: Node = child::[ChTestComp](ChTestComp { tag: 0, attached: 0 });
+    let root: *core::Node = #addr_of(n);
+    core::fire_presented_lifecycle(root, LC_MOUNT);
+    core::fire_presented_lifecycle(root, LC_BACKGROUND);
+    core::fire_presented_lifecycle(root, LC_FOREGROUND);
+    assert CH_MOUNTS == 1;
+    assert CH_BACKGROUNDS == 1;
+    assert CH_FOREGROUNDS == 1;
+    assert CH_DETACHED == 1;
+    // UNMOUNT belongs to the trampoline that also FREES the box. Answering it
+    // here as well would deliver on_detach twice for one teardown.
+    core::fire_presented_lifecycle(root, LC_UNMOUNT);
+    assert CH_DETACHED == 1;
 }
 
 #[test]

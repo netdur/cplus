@@ -14,6 +14,31 @@ earlier history lives in each version's archived plan.
   `runtime::Window`, global content navigation, and `nav::Show` modes.
   See the [migration table](vendor/facet/docs/navigation.md#migration-from-the-previous-api).
 
+### Lifecycle
+- **A component is told when it is on screen, whatever moved the tree.**
+  `component::Attach::Foreground` and `component::Detach::Background` now
+  reach a boxed component (`component::child`) and a presented one
+  (`mount::set_content`) from the tree itself, not only from the app event
+  stream. One pass computes the answer — in a mounted window, and neither the
+  node nor any ancestor `Display::None` or invisible — and announces the
+  transitions; no mutating verb announces anything, so `switch_to` parking a
+  pane, `set_shown` hiding one, an ancestor hidden twelve levels up and a band
+  rule collapsing a column all arrive the same way. It is not occlusion:
+  scrolled out of view, behind another window or under a sheet are not known
+  and are not claimed.
+- The pass runs at the end of the frame (`mount::sync`, and again after layout
+  through `core::frames_settled`, where band rules have resolved into
+  `display`). A pane parked and restored inside one tick nets out to nothing,
+  and everything leaving is told before anything arriving, so a device handed
+  between screens is released on one side before the other asks for it.
+- **A parked pane used to hear `Attach::Mount` again on every restore, and
+  nothing at all on the way out.** The node's single attach slot carries no
+  reason, so `component::child` could say one word; the reason now rides the
+  node's presentation record, the repair `screen::ScreenBox` already had.
+  `Mount` keeps meaning what it meant — the application put this in the tree —
+  and is said once per attachment. A component's own root is also no longer
+  silently robbed of its lifecycle when the application sets `on_attach` on it.
+
 ### Toolchain
 - **A package archives one object per module.** `lib<name>.a` used to hold a
   single object, so resolving any symbol from a package linked every module

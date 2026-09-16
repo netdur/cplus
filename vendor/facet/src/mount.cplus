@@ -102,6 +102,13 @@ fn install(take r: Renderer) {
     RENDERER = r;
     core::set_main_thread_id(platform_sys::ui_thread_id());
     core::set_sync_request_fn(request_sync);
+    // Announce again once the tick has LAID OUT. `sync` already announces,
+    // and that is what carries every backend — but band rules resolve during
+    // layout, which is after it, and they write `display` through flex rather
+    // than through `touch`, so no frame would ever be asked for on their
+    // account. The pass compares states, so running it twice in a tick costs
+    // a walk and says nothing the second time.
+    core::set_post_layout_fn(notify_visibility);
 }
 
 // Tests and teardown: back to the portable no-backend posture.
@@ -109,6 +116,7 @@ fn uninstall() {
     RENDERER = renderer_none();
     core::set_main_thread_id(0 as u64);
     core::set_sync_request_fn(0 as fn());
+    core::set_post_layout_fn(0 as fn());
 }
 
 fn request_sync() {
@@ -269,12 +277,21 @@ fn replace(key: str, take child: core::Node) -> option::Option[core::Node] {
 // half-mounted tree. A LOCAL of each walk's caller, threaded by `ref` — the
 // queue's lifetime is one walk, so nothing about it is process state.
 
-fn drain_attach_queue(ref q: vec::Vec[*core::Node]) {
+fn drain_attach_queue(ref q: vec::Vec[*core::Node], why: u32) {
     var i: usize = 0 as usize;
     let n: usize = q.count();
     while i < n {
         match q.at(i) {
-            option::Option[*core::Node]::Some(p) => { core::fire_attach_handler(p); }
+            option::Option[*core::Node]::Some(p) => {
+                // Two carriers, and they are not the same signal. The node's
+                // own slot says "you are in the live tree" and says nothing
+                // else — a control that redraws on attach wants exactly that,
+                // and it fires on a restore too. The presented record carries
+                // the REASON, which is the only way a component can tell a
+                // first mount from coming back.
+                core::fire_attach_handler(p);
+                core::fire_presented_lifecycle(p, why);
+            }
             option::Option[*core::Node]::None => { }
         }
         i = i +% (1 as usize);
@@ -282,12 +299,15 @@ fn drain_attach_queue(ref q: vec::Vec[*core::Node]) {
     q.truncate(0 as usize);
 }
 
-fn drain_detach_queue(ref q: vec::Vec[*core::Node]) {
+fn drain_detach_queue(ref q: vec::Vec[*core::Node], why: u32) {
     var i: usize = 0 as usize;
     let n: usize = q.count();
     while i < n {
         match q.at(i) {
-            option::Option[*core::Node]::Some(p) => { core::fire_detach_handler(p); }
+            option::Option[*core::Node]::Some(p) => {
+                core::fire_detach_handler(p);
+                core::fire_presented_lifecycle(p, why);
+            }
             option::Option[*core::Node]::None => { }
         }
         i = i +% (1 as usize);
@@ -312,7 +332,13 @@ fn mount(root: *core::Node) -> bool {
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     let _slots: usize = mount_walk(root, 0 as *u8, 0 as usize, q);
     app::open_window(root);
-    drain_attach_queue(q);
+    drain_attach_queue(q, component::LC_MOUNT);
+    // AFTER the queue, not before: an application's `on_attach(Mount)` is
+    // where a shell picks its first pane, so the tree is not final until the
+    // queue has drained. Announcing before it would tell all twenty panes of
+    // an eagerly built outlet that they are on screen, one instant before
+    // nineteen of them are parked.
+    notify_visibility();
     return true;
 }
 
@@ -348,7 +374,7 @@ fn realise(n: *core::Node, host: *u8 = 0 as *u8) -> *u8 {
     if n.is_null() { return 0 as *u8; }
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     let _slots: usize = mount_walk(n, host, 0 as usize, q);
-    drain_attach_queue(q);
+    drain_attach_queue(q, component::LC_MOUNT);
     return core::view_of(n);
 }
 
@@ -358,7 +384,7 @@ fn unrealise(n: *core::Node) {
     if n.is_null() { return; }
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     detach_walk(n, q);
-    drain_detach_queue(q);
+    drain_detach_queue(q, component::LC_UNMOUNT);
 }
 
 // Apply the dirty bits over a subtree that is NOT in a window.
@@ -382,10 +408,13 @@ fn sync_from(n: *core::Node) {
 // node teardown (`release_data` fires `view_release`), not here — parking a
 // subtree must not destroy what re-attaching needs.
 fn unmount(root: *core::Node) {
+    // While it is still whole and still findable: once the window is closed
+    // the announcement walk cannot reach this tree at all.
+    notify_subtree_gone(root);
     app::close_window(root);
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     detach_walk(root, q);
-    drain_detach_queue(q);
+    drain_detach_queue(q, component::LC_UNMOUNT);
 }
 
 // One node: create + insert + recurse. Returns the next free slot in `host`.
@@ -492,6 +521,9 @@ fn sync() {
         if r.is_not_null() { sync_walk(r); }
         i = i +% (1 as usize);
     }
+    // END OF FRAME, and the placement is the point: the tree has finished
+    // moving, so a component hearing "you are on screen" can believe it.
+    notify_visibility();
 }
 
 fn sync_walk(n: *core::Node) {
@@ -1016,7 +1048,8 @@ fn set_content[C: component::Component + component::Lifecycle](outlet: *core::No
     tree = tree.grow(1.0f64).shrink(1.0f64);
     { (*outlet).add_child(tree) };
     // The record rides on the outlet itself.
-    core::set_presented(outlet, #addr_of(c) as *u8, component::lc_detach_tramp::[C]);
+    core::set_presented(outlet, #addr_of(c) as *u8, component::lc_detach_tramp::[C],
+                        lifecycle: component::lc_lifecycle_tramp::[C]);
     // Mount the new subtree when the outlet is live under a renderer; attach
     // flags and node-level handlers ride the M4 queue either way.
     if core::is_attached(outlet) {
@@ -1029,12 +1062,14 @@ fn set_content[C: component::Component + component::Lifecycle](outlet: *core::No
                 } else {
                     attach_flags_walk(cp, q);
                 }
-                drain_attach_queue(q);
+                drain_attach_queue(q, component::LC_MOUNT);
             }
             option::Option[*core::Node]::None => { }
         }
     }
-    // The component-level lifecycle, exactly as the old verb fired it.
+    // The component-level lifecycle, exactly as the old verb fired it. The
+    // record is on the OUTLET, which the queue above never contains — the
+    // walk starts at the outlet's child — so this is not a second Mount.
     c.on_attach(component::Attach::Mount);
     core::touch(outlet, props::C_FLUSH);
     return true;
@@ -1086,6 +1121,121 @@ fn host_search(cur: *core::Node, host: *u8, target: *core::Node) -> option::Opti
     return option::Option[*u8]::None;
 }
 
+// ---- the announcement pass ---------------------------------------------------
+//
+// ONE function decides whether a component is on screen, and it decides by
+// COMPUTING it from the tree rather than by being told. That is not a
+// preference; it is the same finding facet_android's MANIFEST records for the
+// paint side ("Two writers, one visibility"): every rule that was written
+// where the change happened was undone by the next walk, and a parked screen
+// sat on top of the one that replaced it.
+//
+// The mutating verbs announce NOTHING. `switch_to` parks a pane, `set_shown`
+// hides one, a band rule hides a whole column at a narrow width, an ancestor
+// is parked twelve levels up — none of them knows what the RESULT is for the
+// components underneath, and none of them has to. They change the tree; this
+// walks it and says what changed.
+//
+// WHAT "ON SCREEN" MEANS HERE, exactly: the node is in a mounted window's
+// tree, and neither it nor any ancestor is `Display::None` or `is_visible`
+// false. It does NOT mean unoccluded. Scrolled out of the viewport, behind
+// another window, under a modal sheet, on a display that is asleep — facet
+// does not know any of those and does not pretend to.
+
+// Collect the transitions. `up` is the computed answer for the parent, so the
+// chain is carried down; flex nodes have no parent pointer, which is why this
+// direction is the only one available.
+fn visibility_walk(n: *core::Node, up: bool,
+                   ref gone: vec::Vec[*core::Node], ref shown: vec::Vec[*core::Node]) {
+    // `is_hidden` is the node's own half — `Display::None` (out of layout,
+    // its space already given away) or `is_visible` false (space kept,
+    // nothing drawn). The ancestor half is this walk's, because flex nodes
+    // carry no parent pointer and the answer can only be built downwards.
+    // Band rules resolve INTO `display` during layout, so a column hidden by
+    // a narrow window arrives here as any other hidden node — one frame
+    // later, since layout runs after this pass.
+    let now: bool = up && !core::is_hidden(n);
+    if now != core::was_showing(n) {
+        core::set_was_showing(n, now);
+        if now { shown.append(n); } else { gone.append(n); }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { visibility_walk(c, now, gone, shown); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+
+// Walk every mounted window and tell each component whose answer changed.
+// `sync` runs this at the end of the frame it walked, which is what makes the
+// signal trustworthy AND cheap: a pane parked and restored inside one tick
+// nets out to nothing, and a component hears "you are on screen" once the
+// tree has finished moving rather than halfway through a swap.
+//
+// Everything GONE is told before anything SHOWN, across the whole tree and
+// not merely within one outlet: a camera, a socket or a decoder handed from
+// one screen to the next must be released on one side before the other asks
+// for it, and which side the tree happens to visit first is not something an
+// application chose.
+// A subtree on its way OUT of every window: the walk above can no longer
+// reach it, so it would never be told and — worse — would keep its `true`
+// and stay silent when it was re-attached somewhere else. Clear and announce
+// it while it is still whole.
+fn notify_subtree_gone(n: *core::Node) {
+    var gone: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    var shown: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    visibility_walk(n, false, gone, shown);
+    var i: usize = 0 as usize;
+    let ng: usize = gone.count();
+    while i < ng {
+        match gone.at(i) {
+            option::Option[*core::Node]::Some(p) => {
+                core::fire_presented_lifecycle(p, component::LC_BACKGROUND);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+}
+
+fn notify_visibility() {
+    var gone: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    var shown: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r.is_not_null() { visibility_walk(r, true, gone, shown); }
+        i = i +% (1 as usize);
+    }
+    var j: usize = 0 as usize;
+    let ng: usize = gone.count();
+    while j < ng {
+        match gone.at(j) {
+            option::Option[*core::Node]::Some(p) => {
+                core::fire_presented_lifecycle(p, component::LC_BACKGROUND);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        j = j +% (1 as usize);
+    }
+    var k: usize = 0 as usize;
+    let ns: usize = shown.count();
+    while k < ns {
+        match shown.at(k) {
+            option::Option[*core::Node]::Some(p) => {
+                core::fire_presented_lifecycle(p, component::LC_FOREGROUND);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        k = k +% (1 as usize);
+    }
+}
+
 // Headless attach: flags + M4 queue, no views.
 fn attach_flags_walk(n: *core::Node, ref q: vec::Vec[*core::Node]) {
     core::set_attached(n, true);
@@ -1106,6 +1256,11 @@ fn attach_flags_walk(n: *core::Node, ref q: vec::Vec[*core::Node]) {
 // survive the park — nothing is removed. Node-level lifecycle handlers fire
 // on the children whose state changed, post-swap. False when no child
 // carries the key (and nothing changes).
+//
+// A component inside a pane hears `Detach::Background` on the way out and
+// `Attach::Foreground` on the way in, and never a second `Attach::Mount` —
+// but NOT from here. This verb moves the tree; `notify_visibility` reads the
+// result and is the only thing that speaks.
 fn switch_to(outlet: *core::Node, key: str) -> bool {
     if outlet.is_null() { return false; }
     // First pass: the key must exist, or this is a typo and a no-op.
@@ -1122,41 +1277,70 @@ fn switch_to(outlet: *core::Node, key: str) -> bool {
         i = i +% (1 as usize);
     }
     if !found { return false; }
+    let live: bool = core::is_attached(outlet);
+    // Nothing here announces anything. What a component underneath ends up
+    // seeing is computed by `notify_visibility`, from the tree this leaves
+    // behind — see the note there.
+    // PARK PASS, and it runs first on purpose: the outgoing pane hears
+    // Background BEFORE the incoming one hears Foreground, whichever order
+    // they sit in. A resource handed from one pane to the next — a camera, a
+    // socket, a decoder — has to be let go on one side before the other asks
+    // for it, and child order is not something the application chose.
     var j: usize = 0 as usize;
     while j < n {
         match core::child_of(outlet, j) {
             option::Option[*core::Node]::Some(c) => {
-                let show: bool = ({ (*c).key() } == key);
-                let shown: bool = match { (*c).display() } {
-                    flex::Display::None => false,
-                    flex::Display::Flex => true,
-                    flex::Display::Grid => true,
-                };
-                if show && !shown {
-                    // Restore the display mode the pane was parked with —
-                    // a Grid pane comes back as Grid.
-                    { (*c).set_display(core::parked_display_of(c)) };
-                    // The WHOLE subtree re-attaches (guarded by the outlet
-                    // itself being live) and every handler in it hears.
-                    if core::is_attached(outlet) {
-                        var qa: vec::Vec[*core::Node] = vec::new::[*core::Node]();
-                        attach_flags_walk(c, qa);
-                        drain_attach_queue(qa);
+                if { (*c).key() } != key {
+                    let shown: bool = match { (*c).display() } {
+                        flex::Display::None => false,
+                        flex::Display::Flex => true,
+                        flex::Display::Grid => true,
+                    };
+                    if shown {
+                        core::set_parked_display(c, { (*c).display() });
+                        { (*c).set_display(flex::Display::None) };
+                        // The WHOLE subtree parks: descendants read detached
+                        // and their node handlers fire, exactly like an
+                        // unmount. The REASON does not ride this walk — see
+                        // below, it is a different question.
+                        var qd: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+                        detach_walk(c, qd);
+                        drain_detach_queue(qd, component::LC_NONE);
                     }
-                }
-                if !show && shown {
-                    core::set_parked_display(c, { (*c).display() });
-                    { (*c).set_display(flex::Display::None) };
-                    // The WHOLE subtree parks: descendants read detached and
-                    // their handlers fire, exactly like an unmount.
-                    var qd: vec::Vec[*core::Node] = vec::new::[*core::Node]();
-                    detach_walk(c, qd);
-                    drain_detach_queue(qd);
                 }
             }
             option::Option[*core::Node]::None => { }
         }
         j = j +% (1 as usize);
+    }
+    // SHOW PASS.
+    var k: usize = 0 as usize;
+    while k < n {
+        match core::child_of(outlet, k) {
+            option::Option[*core::Node]::Some(c) => {
+                if { (*c).key() } == key {
+                    let shown: bool = match { (*c).display() } {
+                        flex::Display::None => false,
+                        flex::Display::Flex => true,
+                        flex::Display::Grid => true,
+                    };
+                    if !shown {
+                        // Restore the display mode the pane was parked with —
+                        // a Grid pane comes back as Grid.
+                        { (*c).set_display(core::parked_display_of(c)) };
+                        // The WHOLE subtree re-attaches (guarded by the outlet
+                        // itself being live) and every node handler in it hears.
+                        if live {
+                            var qa: vec::Vec[*core::Node] = vec::new::[*core::Node]();
+                            attach_flags_walk(c, qa);
+                            drain_attach_queue(qa, component::LC_NONE);
+                        }
+                    }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        k = k +% (1 as usize);
     }
     core::touch(outlet, props::C_FLUSH);
     return true;
@@ -1349,7 +1533,7 @@ fn insert_child(parent: *core::Node, take child: core::Node, at: usize) -> bool 
                 } else {
                     attach_flags_walk(cp, q);
                 }
-                drain_attach_queue(q);
+                drain_attach_queue(q, component::LC_MOUNT);
             }
             option::Option[*core::Node]::None => { }
         }
@@ -1375,9 +1559,10 @@ fn remove_child(parent: *core::Node, at: usize) -> option::Option[core::Node] {
         option::Option[*core::Node]::Some(cp) => {
             // Notify first, while the subtree is still whole and its views
             // are alive — the order unmount uses.
+            notify_subtree_gone(cp);
             var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
             detach_walk(cp, q);
-            drain_detach_queue(q);
+            drain_detach_queue(q, component::LC_UNMOUNT);
             remove_native_views(cp, nearest_host(parent));
         }
         option::Option[*core::Node]::None => { }
@@ -1933,6 +2118,254 @@ fn switch_to_walks_the_whole_subtree_and_keeps_grid() {
             };
             assert is_grid;
         }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+}
+
+// A component being SHOWN and un-shown by `switch_to` — the case the two
+// levels of the lifecycle exist for. Counted in statics because the node owns
+// the box: the instance is not reachable from this frame by any other means.
+static SW_MOUNTS: i32 = 0;
+static SW_FOREGROUNDS: i32 = 0;
+static SW_BACKGROUNDS: i32 = 0;
+static SW_UNMOUNTS: i32 = 0;
+// A clock, so the ORDER of the two halves of one switch can be asserted and
+// not merely their counts.
+static SW_SEQ: i32 = 0;
+static SW_BG_SEQ: i32 = 0;
+static SW_FG_SEQ: i32 = 0;
+
+struct SwPane { }
+impl SwPane: component::Component {
+    fn build(ref this) -> core::Node {
+        return core::column(core::Builder::new(), key: "pane");
+    }
+}
+impl SwPane: component::Lifecycle {
+    fn on_attach(ref this, why: component::Attach) {
+        SW_SEQ = SW_SEQ + 1;
+        match why {
+            component::Attach::Mount => { SW_MOUNTS = SW_MOUNTS + 1; }
+            component::Attach::Foreground => {
+                SW_FOREGROUNDS = SW_FOREGROUNDS + 1;
+                SW_FG_SEQ = SW_SEQ;
+            }
+            component::Attach::Active => { }
+        }
+        return;
+    }
+    fn on_detach(ref this, why: component::Detach) {
+        SW_SEQ = SW_SEQ + 1;
+        match why {
+            component::Detach::Background => {
+                SW_BACKGROUNDS = SW_BACKGROUNDS + 1;
+                SW_BG_SEQ = SW_SEQ;
+            }
+            component::Detach::Unmount => { SW_UNMOUNTS = SW_UNMOUNTS + 1; }
+            component::Detach::Inactive => { }
+            component::Detach::Terminate => { }
+        }
+        return;
+    }
+}
+
+fn sw_reset() {
+    SW_MOUNTS = 0;
+    SW_FOREGROUNDS = 0;
+    SW_BACKGROUNDS = 0;
+    SW_UNMOUNTS = 0;
+    SW_SEQ = 0;
+    SW_BG_SEQ = 0;
+    SW_FG_SEQ = 0;
+}
+
+#[test]
+fn a_component_is_told_it_is_on_screen_whatever_moved_the_tree() {
+    app::reset_default_for_tests();
+    uninstall();
+    sw_reset();
+    var outlet: core::Node = core::column(core::Builder::new(), key: "panes");
+    app::open_window(#addr_of(outlet));
+    core::set_attached(#addr_of(outlet), true);
+    assert add_child(#addr_of(outlet), component::child::[SwPane](SwPane { }, key: "pane:a"));
+    assert add_child(#addr_of(outlet), component::child::[SwPane](SwPane { }, key: "pane:b"));
+    // Entering the tree is Mount and says nothing about being seen.
+    assert SW_MOUNTS == 2;
+    assert SW_FOREGROUNDS == 0;
+
+    // Both panes are in layout, because nothing has switched yet — so both
+    // ARE on screen, and that is what they are told. An outlet's first switch
+    // is what makes one of them the only one.
+    notify_visibility();
+    assert SW_FOREGROUNDS == 2;
+    assert SW_BACKGROUNDS == 0;
+
+    assert switch_to(#addr_of(outlet), "pane:a");
+    notify_visibility();
+    assert SW_BACKGROUNDS == 1;
+    assert SW_FOREGROUNDS == 2;
+
+    // Naming the pane already showing moves nothing, so nobody is told
+    // anything: the pass compares states, it does not count calls.
+    assert switch_to(#addr_of(outlet), "pane:a");
+    notify_visibility();
+    assert SW_BACKGROUNDS == 1;
+    assert SW_FOREGROUNDS == 2;
+
+    // A real swap. Whoever left is told before whoever arrived, so a device
+    // can be handed over rather than held twice.
+    assert switch_to(#addr_of(outlet), "pane:b");
+    notify_visibility();
+    assert SW_BACKGROUNDS == 2;
+    assert SW_FOREGROUNDS == 3;
+    assert SW_BG_SEQ < SW_FG_SEQ;
+
+    // AND NOW THE POINT: a cause that has nothing to do with switch_to. The
+    // pane did not move, was not parked, was not touched — its ANCESTOR was
+    // hidden, and the component underneath still finds out.
+    core::set_shown(#addr_of(outlet), false);
+    notify_visibility();
+    assert SW_BACKGROUNDS == 3;
+    assert SW_FOREGROUNDS == 3;
+    core::set_shown(#addr_of(outlet), true);
+    notify_visibility();
+    assert SW_FOREGROUNDS == 4;
+    // The pane parked behind it stayed parked through both.
+    assert SW_BACKGROUNDS == 3;
+    app::close_window(#addr_of(outlet));
+}
+
+#[test]
+fn moving_and_moving_back_within_one_pass_is_not_an_event() {
+    // The reason the answer is computed at the end of the frame rather than
+    // announced by each verb: a shell that parks a pane and restores it while
+    // handling one click has shown the person nothing, and a component that
+    // tore down a stream on the way through would be paying for a flicker
+    // that never reached the screen.
+    app::reset_default_for_tests();
+    uninstall();
+    sw_reset();
+    var outlet: core::Node = core::column(core::Builder::new(), key: "panes");
+    app::open_window(#addr_of(outlet));
+    core::set_attached(#addr_of(outlet), true);
+    assert add_child(#addr_of(outlet), component::child::[SwPane](SwPane { }, key: "pane:a"));
+    assert add_child(#addr_of(outlet), fr_leaf("pane:b"));
+    assert switch_to(#addr_of(outlet), "pane:a");
+    notify_visibility();
+    assert SW_FOREGROUNDS == 1;
+    assert SW_BACKGROUNDS == 0;
+
+    assert switch_to(#addr_of(outlet), "pane:b");
+    assert switch_to(#addr_of(outlet), "pane:a");
+    notify_visibility();
+    assert SW_FOREGROUNDS == 1;
+    assert SW_BACKGROUNDS == 0;
+    app::close_window(#addr_of(outlet));
+}
+
+#[test]
+fn leaving_the_tree_is_announced_and_forgotten() {
+    // Two halves. A subtree on its way out is told while it is still whole —
+    // the pass cannot reach it afterwards. And its record is CLEARED, so a
+    // subtree re-attached somewhere else is a change again rather than a
+    // node that still believes it is on screen and stays silent forever.
+    app::reset_default_for_tests();
+    uninstall();
+    sw_reset();
+    var outlet: core::Node = core::column(core::Builder::new(), key: "panes");
+    app::open_window(#addr_of(outlet));
+    core::set_attached(#addr_of(outlet), true);
+    assert add_child(#addr_of(outlet), component::child::[SwPane](SwPane { }, key: "pane:a"));
+    notify_visibility();
+    assert SW_FOREGROUNDS == 1;
+
+    match core::find_in(#addr_of(outlet), "pane:a") {
+        option::Option[*core::Node]::Some(ap) => { assert core::was_showing(ap); }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    // `remove` rather than `remove_child` because the freeing half runs when
+    // the detached subtree DROPS, and remove_child hands it to its caller.
+    assert remove("pane:a");
+    assert SW_BACKGROUNDS == 1;
+    assert SW_UNMOUNTS == 1;
+    assert SW_BG_SEQ < SW_SEQ;
+    app::close_window(#addr_of(outlet));
+}
+
+#[test]
+fn a_real_frame_announces_without_anyone_asking() {
+    // The other tests drive `notify_visibility` by hand, which proves what it
+    // computes and not that anything calls it. This one goes the way an
+    // application does: a write asks for a frame, and the frame announces.
+    // The backend's tick is `mount::sync()` — see facet_appkit's scheduler,
+    // where it is the first thing a tick does.
+    fr_reset();
+    install(fr_renderer());
+    app::reset_default_for_tests();
+    sw_reset();
+    var b: core::Builder = core::Builder::new();
+    b.add(component::child::[SwPane](SwPane { }, key: "pane:a"));
+    b.add(component::child::[SwPane](SwPane { }, key: "pane:b"));
+    var root: core::Node = core::column(b, key: "panes");
+    assert mount(#addr_of(root));
+    assert SW_MOUNTS == 2;
+    // Mount announces at its end, after the attach queue: both panes are in
+    // layout, so both are on screen and both are told so.
+    assert SW_FOREGROUNDS == 2;
+    assert SW_BACKGROUNDS == 0;
+
+    let asked: i32 = FR_SCHEDULES;
+    assert switch_to(#addr_of(root), "pane:a");
+    // facet asked the backend for a frame...
+    assert FR_SCHEDULES > asked;
+    // ...and said nothing yet: within one tick the tree can still move.
+    assert SW_BACKGROUNDS == 0;
+
+    // The tick.
+    sync();
+    assert SW_BACKGROUNDS == 1;
+    assert SW_FOREGROUNDS == 2;
+
+    // And a tick with nothing moved says nothing.
+    sync();
+    assert SW_BACKGROUNDS == 1;
+    assert SW_FOREGROUNDS == 2;
+
+    // THE LATE HALF OF THE SAME TICK. A band rule resolves into `display`
+    // during the layout pass, which runs after `sync` — and it writes that
+    // display through flex, not through `touch`, so no frame is ever asked
+    // for on its account. Standing in for one here: a display written after
+    // the sync, caught by `core::frames_settled`, which every backend calls
+    // at the end of its tick.
+    match core::find_in(#addr_of(root), "pane:a") {
+        option::Option[*core::Node]::Some(ap) => {
+            { (*ap).set_display(flex::Display::None) };
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    core::frames_settled();
+    assert SW_BACKGROUNDS == 2;
+    assert SW_FOREGROUNDS == 2;
+    uninstall();
+    app::close_window(#addr_of(root));
+}
+
+#[test]
+fn a_tree_in_no_window_is_announced_to_nobody() {
+    // The pass walks the app's windows, which is every tree facet owns. A
+    // node the application built and has not mounted is not on screen, and
+    // saying otherwise would make the signal a lie in exactly the case a
+    // component is most likely to act on it.
+    app::reset_default_for_tests();
+    uninstall();
+    sw_reset();
+    var b: core::Builder = core::Builder::new();
+    b.add(component::child::[SwPane](SwPane { }, key: "pane:a"));
+    var loose: core::Node = core::column(b, key: "loose");
+    notify_visibility();
+    assert SW_FOREGROUNDS == 0;
+    match core::find_in(#addr_of(loose), "pane:a") {
+        option::Option[*core::Node]::Some(ap) => { assert core::was_showing(ap) == false; }
         option::Option[*core::Node]::None => { assert false; }
     }
 }
