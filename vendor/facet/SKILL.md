@@ -694,7 +694,7 @@ verb and stops.
 
 ---
 
-## 8. Jobs — the other tier, and how to pick
+## 8. Jobs and services — the other tier, and how to pick
 
 Two tiers ship, and choosing wrong is the first mistake. **The question is who
 else has to hear the answer.**
@@ -707,6 +707,12 @@ else has to hear the answer.**
 It goes wrong in both directions. A job whose result you find yourself
 hand-delivering to a second screen wanted to be a resource. A resource with one
 watcher is a change channel paying for a reader that does not exist.
+
+**A "service" is not a third tier.** The word appears throughout facet's own
+comments and it means a job held as a module `static` rather than in a component
+field — the same two methods, living longer than any screen. Which tier you are
+in and where the struct lives are independent choices; they get one section each
+below.
 
 **The interface IS the threading contract, and for a job it is two methods:**
 
@@ -805,12 +811,121 @@ is exactly when a poller reading a counter is the shape that compiles.
 for that word" is an answer the caller has to be able to report, and silence
 after a menu command reads as a broken command.
 
+### Where the struct LIVES is a separate question from which tier it is
+
+The tier answers *who hears the answer*. Where you put the struct answers *how
+long the answer lives*, and **the two are independent**. The examples above put a
+job in a component field and a resource in a `static` because that is the common
+case of each — neither is a rule.
+
+`run_job` takes the job by reference and keeps its ADDRESS. A job held as a
+module `static` is exactly as legal as one held in a field, and it is what you
+want whenever the work, or its answer, should outlive the screen that asked.
+
 **A resource may be a field rather than a `static`.** The static is the default
 and is what makes "every component reaches the same store" true — but a store
 that is genuinely one panel's data is right as a field on that panel, because a
 second watcher would be a feature nobody asked for. The condition is the lifetime
 one, the same as a job's: **it must outlive its own flight**, since the pipeline
 reaches it through its address.
+
+### A service — a job that outlives every component
+
+A job in a component field dies with the component: `component::child` boxes the
+component so the NODE owns it, and detaching frees the box. That is fine for work
+whose answer only the asking screen wants, and it is wrong for two things — an
+answer worth keeping across a navigation, and work that must keep running while
+the screen is gone.
+
+Hold the job as a `static` and it is a **service**. Nothing new is required: it
+is the same two methods.
+
+```cplus
+struct Indexed { hits: i64 }
+
+struct Indexer {
+    word: text::Text,                    // main-thread input
+    staged: i64,                         // `run` writes ONLY here
+    hits: i64,                           // main-thread truth
+    changes: events::Signal[Indexed],    // the channel the service owns
+    _live: u64,
+}
+
+static INDEXER: Indexer = #zero::[Indexer]();
+
+impl Indexer: services::Job {
+    fn run(ref this) { this.staged = { this.word.count() } as i64; return; }
+    fn apply(ref this) {
+        this.hits = this.staged;
+        this.changes.emit(Indexed { hits: this.hits });   // main thread
+        return;
+    }
+}
+```
+
+**A `then:` does not survive the component, so a service broadcasts instead.**
+`then: this.on_hits` binds the CALLER's address. A service outliving a component
+and answering it through `then:` is the same use-after-free as before with the
+pointer at the other end — the service is alive and the callback's receiver is
+not. The signal is what makes it safe, because the subscription handle **owns the
+registration and cancels on drop**: a component that keeps its handle in a field
+unsubscribes by dying.
+
+```cplus
+// THE APP SURFACE IS THE MODULE, NOT THE STRUCT — §7's rule, unchanged.
+fn index(w: str) -> bool {
+    idx_ensure();
+    INDEXER.word = w.to_text();
+    return services::run_job::[Indexer](INDEXER);
+}
+
+fn watch_index(f: fn(Indexed, *u8), ctx: *u8 = 0 as *u8)
+        -> events::SignalSubscription[Indexed] {
+    idx_ensure();
+    return { INDEXER.changes.on(f, ctx: ctx) };
+}
+
+// A zeroed static is made live on first touch — the SHARED_BUS idiom, the same
+// three lines `resource::_ensure` is. A static signal also satisfies the rule
+// that a signal must outlive its handles and must not move.
+fn idx_ensure() {
+    if INDEXER._live == (0 as u64) {
+        INDEXER.changes = events::Signal[Indexed]::new();
+        INDEXER._live = 1 as u64;
+    }
+    return;
+}
+```
+
+The component side is §7's discipline with no change: watch in `on_attach` under
+`Attach::Mount`, keep the subscription in a field, read the service's synchronous
+accessors in `build`, and let the watch handler do all the screen updating.
+
+**Your app declares `events` itself.** The signal type is spelled in your code,
+so `events = "*"` goes in your `[dependencies]` even though facet already depends
+on it — reaching it through facet is E0852, and the message names an import
+rather than the manifest line it wants.
+
+**Why this rather than a resource.** `resource::Verb` is a closed
+`{ Loaded, Created, Updated, Deleted }`. A service whose verbs are "index the
+workspace" or "compile" would have to report itself as `Updated`, and the
+resource's draft/row vocabulary answers a question it is not being asked. Reach
+for a resource when the thing really is a store of rows; reach for a service when
+it is work with a channel.
+
+**What a static buys beyond survival.** A worker inside a service points at the
+service, never at the screen that started it, so closing that screen while the
+work is up is no longer a use-after-free waiting to be deferred. Be exact about
+what this does and does not change: `free_when_settled` still parks the screen,
+because its counters are global — `run_job` has no notion of an owning screen and
+cannot tell whose worker is flying. What goes away is the hazard, not the
+parking. That is the difference between a leak the timer reclaims and a crash in
+an unrelated subsystem.
+
+**A service still DROPS a second call.** The job tier's refusal is unchanged by
+where the struct lives — `run_job` returns `false` while a flight is up, and the
+ask is gone. For a long-lived service that is usually right, but it is still the
+caller's policy to state: say which ask wins and why.
 
 **What a test can reach is the pure half and `apply`.** Both tiers are plain
 methods, so a fixture stages by hand, calls `apply()`, and asserts the generation

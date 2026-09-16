@@ -518,6 +518,26 @@ for a complete screen example and the removed-API migration table.
 A `Cancellable` cancels on drop, so holding it is how you keep an observer
 alive.
 
+`Job` is the interface `run_job` drives: `run(ref this)` OFF the main thread
+writing staging fields only, `apply(ref this)` ON it installing them. A second
+`run_job` on a job already in flight returns `false` and the ask is dropped
+(a resource queues instead — the two tiers refuse oppositely).
+
+`run_job` keeps the job's ADDRESS, so the job must outlive its flight and must
+not move. Where it lives is the app's choice:
+
+| Held as | Lives | Answers through |
+|---|---|---|
+| a component field | until the node detaches and frees the box | `then:` bound to the component, or a generation it polls |
+| a module `static` (a **service**) | the process | a `events::Signal[T]` the service owns, watched by each component |
+
+A service answers through a signal rather than `then:` because `then:` binds
+the caller's address, which a long-lived service can outlive. A
+`SignalSubscription` owns its registration and cancels on drop, so a component
+holding one in a field unsubscribes when it dies. Make a zeroed static's signal
+live on first touch (`Signal[T]::new()` behind a `_live` flag) — a static also
+satisfies the rule that a signal must outlive its handles and must not move.
+
 ## facet/resource
 
 REST verbs over a shared store, with a change channel. A resource is an app

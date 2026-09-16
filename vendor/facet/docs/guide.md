@@ -287,6 +287,15 @@ the right shape for a load that is not a store — a file-tree walk, a
 scaffold step. Resources ride the same flight and the same teardown
 guarantees (`jobs_settled`).
 
+Where that job LIVES is a separate choice from which tier it is. In a
+component field it dies with the screen; as a module `static` it is a
+**service** and outlives every screen — useful for an answer worth keeping
+across a navigation, or work that must continue while the screen is gone. A
+service answers through an `events::Signal` it owns rather than through
+`then:`, because `then:` binds the caller's address and the service can
+outlive it; the subscription cancels on drop, so a component unsubscribes by
+dying.
+
 ## Errors
 
 facet does not panic. A mutator answers `Status`, a read answers `Option`, and
