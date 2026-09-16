@@ -132,6 +132,12 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // — even though no view exists for a menu or its items and none ever will.
     // facet_appkit calls its own `attach_context_menu` from exactly here.
     controls::attach_context_menu(v, n);
+    // WHICH NODE THIS VIEW STANDS FOR. The whole sender band reads it —
+    // `component::key_of(sender)` walks up to the nearest KEYED one, which is
+    // the idiom "one handler, several keyed controls" is written with. Cleared
+    // in `view_release` below, because a node pointer left in a tag on a view
+    // that outlives its node is a use-after-free.
+    recycler::bind_node(v, n);
     return v;
 }
 
@@ -284,6 +290,12 @@ fn has_intrinsic_size(kind: u32) -> bool {
 fn view_release(v: *u8) {
     if v == (0 as *u8) { return; }
     if !e::have_env() { return; }
+    // THE NODE TAG DIES WITH THE VIEW. This is the one place an ordinary view
+    // is released, and the pointer `create` wrote is into a node that is going
+    // away with it — a stale one read by the sender band would be a
+    // use-after-free. The same rule `recycler::set_cell_node` states for the
+    // cell's own tag, which a recycled cell rewrites rather than clears.
+    recycler::clear_node(v);
     e::env().delete_global_ref(v);
     return;
 }

@@ -1976,25 +1976,11 @@ fn sequence_row_click(sender: *u8, ctx: *u8) -> bool {
 // `SelectionMode::None` is a list that CANNOT be selected, and a click on one
 // still taps: the ledger keeps `ItemTapped` and `ItemSelected` apart precisely
 // so a read-only list can be clicked.
-// DID THE SET MOVE. `on_item_selected` is a selection-CHANGED verb and a
-// re-click that lands on the same selection is not a change — the rule this
-// backend already had for one row, asked of a set. Order is part of it: the
-// first element is `selected_index`, so a reordering IS a change.
-// The same question for a tree, whose selection is ids.
+// DID THE SET MOVE, for a tree, whose selection is ids. The same question for
+// a list's row indices is `vocab::same_indexes`, which lives in facet's own
+// vocabulary because every backend asks it.
 fn same_ids(a: *vocab::TextList, b: *vocab::TextList) -> bool {
     if a == (0 as *vocab::TextList) || b == (0 as *vocab::TextList) { return false; }
-    let n: usize = { (*a).count() };
-    if n != { (*b).count() } { return false; }
-    var i: usize = 0 as usize;
-    while i < n {
-        if { (*a).at(i) } != { (*b).at(i) } { return false; }
-        i = i +% (1 as usize);
-    }
-    return true;
-}
-
-fn same_selection(a: *vocab::IndexList, b: *vocab::IndexList) -> bool {
-    if a == (0 as *vocab::IndexList) || b == (0 as *vocab::IndexList) { return false; }
     let n: usize = { (*a).count() };
     if n != { (*b).count() } { return false; }
     var i: usize = 0 as usize;
@@ -2091,14 +2077,23 @@ fn list_row_click(owner: *core::Node, at: usize, sender: *u8) -> bool {
         // question is whether the SET moved, not whether the row did.
         let next: vocab::IndexList = selection_after_click(
             #addr_of((*p).selection), { (*p).selected_index }, at, multi);
-        if !same_selection(#addr_of((*p).selection), #addr_of(next)) {
+        if !vocab::same_indexes(#addr_of((*p).selection), #addr_of(next)) {
             list::note_selection(p, next);
             core::touch(owner, list::P_SELECTED_INDEX);
             let sel: fn(*u8, *u8) = { (*p).on_item_selected };
-            if sel != props::no_handler { sel(sender, { (*p).on_item_selected_ctx }); }
+            // THE SEQUENCE IS THE SENDER, not the row that was clicked. A
+            // selection is a SET and a change to it has no single row to name
+            // — under `Multiple` a shift-click moves five rows at once, and
+            // the keyboard moves it with no row clicked at all. A handler
+            // reads the set off the cursor. The ROW belongs to `on_item_tapped`
+            // below, which does name exactly one.
+            if sel != props::no_handler {
+                sel(core::view_of(owner), { (*p).on_item_selected_ctx });
+            }
         }
     }
-    // ...and the TAP fires either way, because it did happen.
+    // ...and the TAP fires either way, because it did happen — with the ROW as
+    // its sender, so `component::item_index_of(sender)` answers which.
     let tap: fn(*u8, *u8) = { (*p).on_item_tapped };
     if tap != props::no_handler { tap(sender, { (*p).on_item_tapped_ctx }); }
     return true;
@@ -2115,7 +2110,7 @@ fn collection_row_click(owner: *core::Node, at: usize, sender: *u8) -> bool {
     let multi: bool = multi_mode({ (*p).selectable_items_view.selection_mode });
     let next: vocab::IndexList = selection_after_click(
         #addr_of((*p).selection), { (*p).selected_index }, at, multi);
-    if same_selection(#addr_of((*p).selection), #addr_of(next)) { return true; }
+    if vocab::same_indexes(#addr_of((*p).selection), #addr_of(next)) { return true; }
     collection::note_selection(p, next);
     core::touch(owner, collection::P_SELECTED_INDEX);
     let h: fn(*u8, *u8) = { (*p).selectable_items_view.on_selection_changed };

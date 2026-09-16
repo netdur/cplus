@@ -34,6 +34,7 @@ import "facet/relist" as relist;
 import "facet/obs_vec" as obs_vec;
 import "facet/elements" as ui;
 import "facet/vocabulary" as vocab;
+import "facet/component" as component;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "stdlib/text" as text;
@@ -350,14 +351,76 @@ fn row_tapped(token: i64, position: i32) {
     }
     let p: *props::ListProps = list_props(n);
     if p == (0 as *props::ListProps) { return; }
-    list::note_selection(p, tapped_selection(
-        #addr_of((*p).selection), { position as i64 },
-        multi_mode({ (*p).selection_mode })));
+    // THE TAP FIRST, and whatever the selection does: a tap happened. Its
+    // sender is the ROW's own cell, because a tap names exactly one row — the
+    // contract every backend keeps, and the reason `on_item_tapped` exists
+    // beside `on_item_selected` rather than duplicating it.
+    //
+    // A `SelectionMode::None` list is the case that makes the pair worth
+    // having: it cannot be selected and can still be clicked, so the tap is
+    // the only verb it has and the sender is the only place the row can come
+    // from.
     let t: fn(*u8, *u8) = { (*p).on_item_tapped };
-    if t != props::no_handler { t(core::view_of(n), { (*p).on_item_tapped_ctx }); }
+    if t != props::no_handler {
+        t(row_cell_view(n, position), { (*p).on_item_tapped_ctx });
+    }
+    // A LIST THAT CANNOT BE SELECTED HAS NO SELECTION TO MOVE. This used to
+    // write the tapped row into the model whatever the mode said, so a
+    // read-only list came back from a tap with a selection it had refused.
+    if !selects({ (*p).selection_mode }) { return; }
+    // DID THE SET MOVE. `on_item_selected` is the selection-CHANGED verb, and
+    // a tap landing on the selection it already had is not a change — the rule
+    // facet_gtk and facet_win32 already applied, and AppKit now applies too.
+    // Its sender is the SEQUENCE: a set has no single row to name.
+    let next: vocab::IndexList = tapped_selection(
+        #addr_of((*p).selection), { position as i64 },
+        multi_mode({ (*p).selection_mode }));
+    if vocab::same_indexes(#addr_of((*p).selection), #addr_of(next)) { return; }
+    list::note_selection(p, next);
     let s: fn(*u8, *u8) = { (*p).on_item_selected };
     if s != props::no_handler { s(core::view_of(n), { (*p).on_item_selected_ctx }); }
     return;
+}
+
+fn selects(mode: vocab::SelectionMode) -> bool {
+    return match mode {
+        vocab::SelectionMode::None => false,
+        vocab::SelectionMode::Single => true,
+        vocab::SelectionMode::Multiple => true,
+    };
+}
+
+// THE CELL A ROW IS SHOWING IN, by adapter position — the sender
+// `on_item_tapped` is handed.
+//
+// Falls back to the LIST's own view when the row cannot be resolved, so a
+// handler is never given null. That fallback is also what a caller gets today
+// for the index itself: facet_android installs no `component::SenderReaders`,
+// so `item_index_of(sender)` answers `None` here whatever it is handed — see
+// the report on the missing sender band. The shape is right and becomes
+// correct the moment that lands.
+//
+// THE UI THREAD OR NOTHING, the same rule `realised_rows` states: this reads
+// the live View hierarchy, and a JNI call on the wrong thread is undefined.
+// The item-click callback that reaches `row_tapped` is on it.
+fn row_cell_view(n: *core::Node, position: i32) -> *u8 {
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return v; }
+    if !e::have_env() { return v; }
+    if !e::on_ui_thread() { return v; }
+    let env: rt::Env = e::env();
+    var lv: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(v));
+    let first: i32 = lv.get_first_visible_position();
+    var group: w::ViewGroup = w::ViewGroup::from_global(env, env.new_global_ref(v));
+    let at: i32 = position -% first;
+    var out: *u8 = v;
+    if at >= (0 as i32) && at < group.get_child_count() {
+        let cell: jni::jobject = group.get_child_at(at);
+        if cell != (0 as jni::jobject) { out = { #addr(cell) as *u8 }; }
+    }
+    let _k1: *u8 = group.into_raw();
+    let _k2: *u8 = lv.into_raw();
+    return out;
 }
 
 // ---- the row model -------------------------------------------------------------
@@ -615,6 +678,202 @@ fn long_tag(env: rt::Env, v: *u8, key: i32) -> i64 {
     return bits;
 }
 
+// ---- the sender band -----------------------------------------------------------
+//
+// THE WHOLE BAND WAS EMPTY. `component::key_of`, `item_of`, `item_index_of`,
+// `dropped_text`, `drop_position` and `drag_targeted` answered facet's portable
+// defaults on this backend for every handler ever written, because
+// `install_sender_readers` was called nowhere — the other four backends each
+// call it from their own `input.cplus`. There is no diagnostic: the readers
+// compile and answer a value indistinguishable from "nothing was set".
+//
+// THE TAGS ARE HERE because the tag machinery is (`long_tag` / `set_long_tag`
+// below), and `views.cplus` imports this module rather than the other way
+// round — so `views::create` calls in to write a node's tag and
+// `views::view_release` calls in to clear it.
+//
+// `key_of` NEEDS NO TAG OF ITS OWN — the key already rides `setTag(Object)`,
+// written by `paint::configure` for every keyed node (MANIFEST §1). Reading the
+// slot that exists beats writing a second copy of the same fact.
+//
+// `item_of` does need one, because it answers a NODE's app pointer and there is
+// no Java-side copy of that. TWO TAGS, ASKED IN ORDER: `NODE_TAG` is on the
+// view of every node that has one; `CELL_NODE_TAG` is on a row's CELL and
+// points at the row's root, which is usually VIEWLESS and so has no tag of its
+// own. A control inside a row sits under both, and the nearer answer is the
+// node's own.
+const NODE_TAG: i32 = 2131886096 as i32;   // 0x7F0F0010 — see SCROLL_DOC_TAG
+
+// WRITTEN WITH THE VIEW AND CLEARED WITH IT. A node pointer left in a tag on a
+// view that outlives its node is a use-after-free, which is the rule
+// `set_cell_node` already states for the cell's own tag. `views::view_release`
+// is the one place an ordinary view dies, so it is the one place this is
+// cleared.
+fn bind_node(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    if !e::have_env() { return; }
+    set_long_tag(e::env(), v, NODE_TAG, { #addr(n) as i64 });
+    return;
+}
+
+fn clear_node(v: *u8) {
+    if v == (0 as *u8) { return; }
+    if !e::have_env() { return; }
+    set_long_tag(e::env(), v, NODE_TAG, 0 as i64);
+    return;
+}
+
+// The node a view stands for: its own, else the row root it is the cell of.
+fn node_at_view(env: rt::Env, v: *u8) -> *core::Node {
+    let own: *core::Node = { long_tag(env, v, NODE_TAG) as *core::Node };
+    if own != (0 as *core::Node) { return own; }
+    return { long_tag(env, v, CELL_NODE_TAG) as *core::Node };
+}
+
+// The parent of `v`, or 0 — with the guard the whole band depends on.
+//
+// `getParent()` answers a ViewParent, which is NOT always a View: the root of a
+// window is not. Asking a non-View for a tag is a call on a class it is not an
+// instance of, which is a CheckJNI abort. The same guard `facet_agent`'s
+// Android tree walk states.
+fn parent_view(env: rt::Env, v: *u8) -> *u8 {
+    var view: w::View = w::View::from_global(env, env.new_global_ref(v));
+    let parent: jni::jobject = view.get_parent();
+    paint::unwrap_keep(view);
+    if parent == (0 as jni::jobject) { return 0 as *u8; }
+    if !is_a_view(env, parent) {
+        env.delete_local_ref(parent);
+        return 0 as *u8;
+    }
+    return { #addr(parent) as *u8 };
+}
+
+fn is_a_view(e: rt::Env, o: jni::jobject) -> bool {
+    if o == (0 as jni::jobject) { return false; }
+    let cls: jni::jclass = e.class_cached(#str_ptr("android/view/View\0"));
+    if cls == (0 as jni::jclass) { return false; }
+    let ptr: *jni::JNIEnv = e.raw();
+    return { (*(*ptr)).IsInstanceOf(ptr, o, cls) } != (0 as jni::jboolean);
+}
+
+// CAN THIS THREAD TOUCH JNI AT ALL. A handler runs on the UI thread; anything
+// else gets the empty answer rather than an abort.
+fn sender_walkable() -> bool {
+    if !e::have_env() { return false; }
+    return e::on_ui_thread();
+}
+
+// The sender's KEY — the reader behind the idiom one handler serving several
+// keyed controls is written with:
+//
+//     let key: text::Text = component::key_of(sender);
+//     if key.view() == "step:up" { ... }
+//
+// IT READS THE SLOT THAT ALREADY HAS IT. `paint::configure` writes a node's key
+// to `setTag(Object)` as a Java String for every keyed node — MANIFEST §1 says
+// why that slot and not `contentDescription`: Android has no
+// `accessibilityIdentifier`, and an address is not something a screen reader
+// should read aloud. So this needs no state of its own, and there is no second
+// copy of the key to keep in step.
+//
+// THE NEAREST KEYED ANCESTOR, which is what `accessibilityIdentifier` answers
+// on AppKit and UIKit. A view with no key does not stop the walk — most
+// container views are unkeyed, and stopping at one would report "" for a
+// control whose own key is two hops up.
+fn sender_key_of(sender: *u8) -> text::Text {
+    if sender == (0 as *u8) { return text::new(); }
+    if !sender_walkable() { return text::new(); }
+    let env: rt::Env = e::env();
+    var cur: *u8 = sender;
+    // BOUNDED. A view hierarchy is a tree and cannot cycle, but a malformed
+    // parent chain would spin here forever, and this runs inside an input event.
+    var hops: i32 = 0 as i32;
+    while cur != (0 as *u8) && hops < (64 as i32) {
+        match key_tag_of(env, cur) {
+            option::Option[text::Text]::Some(t) => { return t; }
+            option::Option[text::Text]::None => { }
+        }
+        cur = parent_view(env, cur);
+        hops = hops +% (1 as i32);
+    }
+    return text::new();
+}
+
+// The key a view carries in its identity slot, or None. `setTag(Object)` holds
+// anything, and only this package puts a String there — but a host application
+// that adopted a native view may have put its own object in it, so the read is
+// guarded on the class rather than assumed. `GetStringUTFChars` on a non-String
+// is undefined, which is the same trap `clipboard` states for a CharSequence.
+fn key_tag_of(env: rt::Env, v: *u8) -> option::Option[text::Text] {
+    var view: w::View = w::View::from_global(env, env.new_global_ref(v));
+    let tag: jni::jobject = view.get_tag_void();
+    paint::unwrap_keep(view);
+    if tag == (0 as jni::jobject) { return option::Option[text::Text]::None; }
+    if !is_a_string(env, tag) {
+        env.delete_local_ref(tag);
+        return option::Option[text::Text]::None;
+    }
+    // A key is an address, not prose — 160 bytes is what `paint::configure`
+    // writes through, so it is what can be read back.
+    var buf: [u8; 160] = #zero::[[u8; 160]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    let ok: bool = env.string_utf_into(tag as jni::jstring, base, 160 as usize);
+    env.delete_local_ref(tag);
+    if !ok { return option::Option[text::Text]::None; }
+    let n_bytes: usize = paint::cstr_len(base);
+    if n_bytes == (0 as usize) { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(
+        text::from_str({ #str_from_raw_parts(base, n_bytes) }));
+}
+
+fn is_a_string(e: rt::Env, o: jni::jobject) -> bool {
+    if o == (0 as jni::jobject) { return false; }
+    let cls: jni::jclass = e.class_cached(#str_ptr("java/lang/String\0"));
+    if cls == (0 as jni::jclass) { return false; }
+    let ptr: *jni::JNIEnv = e.raw();
+    return { (*(*ptr)).IsInstanceOf(ptr, o, cls) } != (0 as jni::jboolean);
+}
+
+// The app pointer a node carries, found by the SAME walk, so `item` and `key`
+// always resolve off the same view — the rule facet_appkit states too.
+// `component::item_index_of` reads this, and it is what `on_item_tapped`'s
+// contract needs: the row a tap landed on.
+fn sender_item_of(sender: *u8) -> *u8 {
+    if sender == (0 as *u8) { return 0 as *u8; }
+    if !sender_walkable() { return 0 as *u8; }
+    let env: rt::Env = e::env();
+    var cur: *u8 = sender;
+    var hops: i32 = 0 as i32;
+    while cur != (0 as *u8) && hops < (64 as i32) {
+        let n: *core::Node = node_at_view(env, cur);
+        if n != (0 as *core::Node) {
+            let it: *u8 = core::item_of(n);
+            if it != (0 as *u8) { return it; }
+        }
+        cur = parent_view(env, cur);
+        hops = hops +% (1 as i32);
+    }
+    return 0 as *u8;
+}
+
+// KEY AND ITEM, AND NOT THE DROP READERS. `dropped_text`, `drop_position` and
+// `drag_targeted` report what a DROP delivered, and this backend has no drag
+// and drop at all — no `startDrag`, no `OnDragListener`, nothing that would
+// ever write that state. Filling them would mean inventing an answer. An unset
+// field keeps facet's portable default, which is what
+// `install_sender_readers` is built for, and they stay unset until Android has
+// a drop band to read.
+//
+// `raise` is left for the same reason in reverse: it is a WRITE
+// (bring a keyed sibling to the front), not a reader, and belongs with the
+// z-order work rather than smuggled in here.
+fn sender_readers() -> component::SenderReaders {
+    var r: component::SenderReaders = component::sender_readers_none();
+    r.key_of = sender_key_of;
+    r.item_of = sender_item_of;
+    return r;
+}
+
 fn set_long_tag(env: rt::Env, v: *u8, key: i32, bits: i64) {
     let cls: jni::jclass = env.class_cached(#str_ptr("java/lang/Long\0"));
     let mid: jni::jmethodID = env.method_id_static(cls, #str_ptr("valueOf\0"),
@@ -717,6 +976,18 @@ fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobje
         let existing: *core::Node = cell_node(env, convert);
         if existing != (0 as *core::Node) && m.has_bind() {
             bind_into(m, row, existing);
+            // WHICH ROW THIS IS, RE-STAMPED ON EVERY REBIND — and this was the
+            // bug. The build path below writes the index once; a recycled cell
+            // takes this path instead and used to keep the index of whichever
+            // row happened to BUILD it. Measured on a device: a list of 200
+            // scrolled to row 157, tapped, reported row 3 — the cell that had
+            // built row 3 and been reused nine times since. Everything reading
+            // the row off the sender got that stale number, and the agent
+            // surface orders its realised rows by it.
+            //
+            // Before `sync_from`, so the dirty bit this raises is consumed by
+            // the walk that is about to run rather than left pending.
+            core::set_item_index(existing, row);
             // A bind WRITES PROPS, which marks nodes dirty and touches nothing
             // native. A realised row is outside the window walk, so nothing
             // would carry those writes across — `sync_from` is that walk,

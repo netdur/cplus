@@ -24,6 +24,7 @@ import "./views" as views;
 import "./scheduler" as scheduler;
 import "./controls" as controls;
 import "./window" as window;
+import "facet/component" as component;
 import "./recycler" as recycler;
 import "./drawing" as drawing;
 import "./swipe" as swipe;
@@ -62,6 +63,12 @@ fn install() {
     // platform, so without this every `io::println` in every package — and
     // every probe written to be read — prints into nothing. See log.cplus.
     log::install_sink();
+    // THE SENDER BAND. `component::item_index_of(sender)` and its siblings
+    // answered the portable empty default on this backend for every handler
+    // ever written, because nothing was ever installed. This fills the one
+    // reader Android can answer honestly — the row a sender sits in — and
+    // leaves the rest at the default; see `recycler::sender_readers`.
+    component::install_sender_readers(recycler::sender_readers());
     return;
 }
 
@@ -72,6 +79,7 @@ fn uninstall() {
     services::uninstall_scheduler();
     theme::set_is_dark_fn(0 as fn() -> bool);
     log::uninstall_sink();
+    component::uninstall_sender_readers();
     INSTALLED = false;
     return;
 }

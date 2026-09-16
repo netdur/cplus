@@ -2001,7 +2001,7 @@ fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
     // backend already had for one row, asked of a set. A ctrl-click that takes
     // the last selected row OFF is a change, which asking about the row alone
     // could not see.
-    let already: bool = same_selection(cur, #addr_of(next));
+    let already: bool = vocab::same_indexes(cur, #addr_of(next));
     { (*s).selected = index as i64 };
     // THE SELECTION IS WRITTEN BACK THROUGH THE REAL PROPS, not through the
     // resolved copy — `SeqSource` is a snapshot for reading and writing to it
@@ -2013,13 +2013,15 @@ fn on_row_click(v: *u8, n: *core::Node, index: usize) -> bool {
     if already { return true; }
     let h: fn(*u8, *u8) = src.on_item_selected;
     if h == props::no_handler { return false; }
-    // THE ROW'S WINDOW IS THE SENDER, not the list's — which is what lets a
-    // handler ask `component::item_index_of(sender)` which row it is on, and
-    // what facet_gtk passes. Handing it the list gave every handler a sender
-    // with no item slot above it, so the reader answered None and an
-    // application reading its click that way was told nothing at all. The same
-    // contract `fire_item_tapped` next door already used.
-    h(row_view_at(v, n, index), src.on_item_selected_ctx as *u8);
+    // THE SEQUENCE IS THE SENDER, not the row. This backend used to hand over
+    // the row's window so a handler could ask `component::item_index_of(sender)`
+    // — which works here and cannot on a backend whose selection arrives as a
+    // notification with no row in it (AppKit's arrow key, UIKit's deselect).
+    // A selection is a SET and a change to it has no single row to name, so the
+    // handler reads the set off the cursor and the sender is the thing the set
+    // belongs to. `fire_item_tapped` next door keeps the row, because a tap
+    // does name exactly one.
+    h(v, src.on_item_selected_ctx as *u8);
     return true;
 }
 
@@ -2524,19 +2526,6 @@ fn scroll_by(v: *u8, n: *core::Node, lines: f64) -> bool {
 // question: it reads the state as of the message the queue is on.
 //
 // VK_SHIFT is 0x10 and VK_CONTROL 0x11; the high bit of the answer means down.
-// DID THE SET MOVE. Order counts: the first element is `selected_index`.
-fn same_selection(a: *vocab::IndexList, b: *vocab::IndexList) -> bool {
-    if a == (0 as *vocab::IndexList) || b == (0 as *vocab::IndexList) { return false; }
-    let n: usize = { (*a).count() };
-    if n != { (*b).count() } { return false; }
-    var i: usize = 0 as usize;
-    while i < n {
-        if { (*a).at(i) } != { (*b).at(i) } { return false; }
-        i = i +% (1 as usize);
-    }
-    return true;
-}
-
 fn key_down(vk: i32) -> bool {
     let st: i16 = { u::GetKeyState(vk) };
     let hi: i16 = (1 as i16) << (15 as i16);

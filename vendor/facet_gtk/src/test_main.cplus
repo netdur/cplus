@@ -5467,3 +5467,100 @@ fn a_plan_that_changes_no_slot_count_still_reflows() {
     assert p.dirty_span == (3 as usize);
     return;
 }
+
+// ---- the two list verbs -------------------------------------------------------
+//
+// `on_item_selected` is THE SELECTION CHANGED and its sender is the SEQUENCE;
+// `on_item_tapped` is A POINTER ACTIVATED A ROW and its sender is the ROW. This
+// backend used to hand the row to both, which reads well here and cannot be
+// kept on a backend whose selection arrives as a notification with no row in it
+// — AppKit's arrow key, UIKit's deselect. A set has no single row to name.
+//
+// `list_row_click` is the whole of this backend's click path and takes a node,
+// an index and a sender, so it is asked directly: no GtkListView, no display.
+
+static GSEL: i64 = 0 as i64;
+static GSEL_SENDER: usize = 0;
+static GTAP: i64 = 0 as i64;
+static GTAP_SENDER: usize = 0;
+
+fn g_on_sel(sender: *u8, ctx: *u8) {
+    GSEL = GSEL + (1 as i64);
+    GSEL_SENDER = { sender as usize };
+    return;
+}
+fn g_on_tap(sender: *u8, ctx: *u8) {
+    GTAP = GTAP + (1 as i64);
+    GTAP_SENDER = { sender as usize };
+    return;
+}
+fn gh_sel() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = g_on_sel; return f; }
+fn gh_tap() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = g_on_tap; return f; }
+
+fn g_noop_release(v: *u8) { }
+
+// A stand-in for the sequence's own widget and for a row's, distinct enough to
+// tell apart by address. Nothing is ever messaged through them.
+fn g_fake_view(tag: usize) -> *u8 { return { tag as *u8 }; }
+
+fn g_reset() {
+    GSEL = 0 as i64;
+    GTAP = 0 as i64;
+    GSEL_SENDER = 0;
+    GTAP_SENDER = 0;
+    return;
+}
+
+#[test]
+fn a_tap_gets_the_row_and_a_selection_gets_the_sequence() {
+    g_reset();
+    var l: core::Node = ui::list(key: "verbs", on_item_selected: gh_sel(),
+                                 on_item_tapped: gh_tap(),
+                                 selection_mode: vocab::SelectionMode::Single);
+    let lp: *core::Node = #addr_of(l);
+    core::set_view(lp, g_fake_view(9001 as usize), g_noop_release);
+    let row: *u8 = g_fake_view(9002 as usize);
+    assert input::list_row_click(lp, 1 as usize, row);
+    assert GTAP == (1 as i64);
+    assert GSEL == (1 as i64);
+    // THE WHOLE POINT: two verbs, two senders, from one click.
+    assert GTAP_SENDER == { row as usize };
+    assert GSEL_SENDER == { g_fake_view(9001 as usize) as usize };
+}
+
+#[test]
+fn a_second_click_on_the_same_row_taps_and_does_not_select() {
+    // `on_item_selected` is named for the change. A re-click lands where the
+    // selection already was, so nothing was selected — and the click still
+    // happened, so it was still a tap.
+    g_reset();
+    var l: core::Node = ui::list(key: "again", on_item_selected: gh_sel(),
+                                 on_item_tapped: gh_tap(),
+                                 selection_mode: vocab::SelectionMode::Single);
+    let lp: *core::Node = #addr_of(l);
+    core::set_view(lp, g_fake_view(9001 as usize), g_noop_release);
+    let row: *u8 = g_fake_view(9002 as usize);
+    assert input::list_row_click(lp, 1 as usize, row);
+    assert GSEL == (1 as i64);
+    assert GTAP == (1 as i64);
+    assert input::list_row_click(lp, 1 as usize, row);
+    assert GSEL == (1 as i64);
+    assert GTAP == (2 as i64);
+}
+
+#[test]
+fn a_list_that_selects_nothing_still_taps() {
+    // WHY THE TWO VERBS EXIST. `SelectionMode::None` is the read-only list that
+    // can still be clicked: its selection never moves, so the tap's sender is
+    // the only place the row can come from.
+    g_reset();
+    var l: core::Node = ui::list(key: "readonly", on_item_selected: gh_sel(),
+                                 on_item_tapped: gh_tap());
+    let lp: *core::Node = #addr_of(l);
+    core::set_view(lp, g_fake_view(9001 as usize), g_noop_release);
+    let row: *u8 = g_fake_view(9002 as usize);
+    assert input::list_row_click(lp, 2 as usize, row);
+    assert GTAP == (1 as i64);
+    assert GTAP_SENDER == { row as usize };
+    assert GSEL == (0 as i64);
+}

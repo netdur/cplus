@@ -7706,6 +7706,210 @@ fn selecting_a_row_reaches_the_handler() {
     assert PICKED == (1 as i64);
 }
 
+// ---- the two list verbs, and what separates them ------------------------------
+//
+// `on_item_selected` is THE SELECTION CHANGED; `on_item_tapped` is A POINTER
+// ACTIVATED A ROW. Before this they were one event on this backend — the
+// selection notification fired both — which made an arrow key a "tap" on macOS
+// and nowhere else, gave a `SelectionMode::None` list no click at all, and
+// handed both verbs the TABLE as sender, so `component::item_index_of(sender)`
+// answered `None` for every row a handler was ever called about.
+
+static TAPPED: i64 = 0 as i64;
+static TAPPED_ROW: i64 = 0 as i64 - (1 as i64);
+fn on_tapped(sender: *u8, ctx: *u8) {
+    TAPPED = TAPPED + (1 as i64);
+    TAPPED_ROW = match component::item_index_of(sender) {
+        option::Option[usize]::Some(i) => { i as i64 },
+        option::Option[usize]::None => { 0 as i64 - (1 as i64) },
+    };
+    return;
+}
+fn h_tapped() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = on_tapped; return f; }
+
+// A mouse-down aimed at a ROW, in window coordinates — taken from the table's
+// own `rectOfRow:` and converted out, so the point the event carries is the
+// one `rowAtPoint:` will invert, whatever the view tree above it looks like.
+fn mouse_down_on_row(tv: *u8, row: i64) -> *u8 {
+    let r: rt::Rect = { rt::msg_rect_i64(tv, rt::sel(#str_ptr("rectOfRow:\0")), row) };
+    let mid: rt::Point = rt::Point { x: { r.x } + ({ r.w } / 2.0f64),
+                                     y: { r.y } + ({ r.h } / 2.0f64) };
+    let win_pt: rt::Point = { rt::msg_point_point_id(
+        tv, rt::sel(#str_ptr("convertPoint:toView:\0")), mid, 0 as *u8) };
+    return { msg_mouse_event(
+        rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:\0")),
+        1 as u64, win_pt, 0 as u64, 0.0f64,
+        0 as i64, 0 as *u8, 0 as i64, 1 as i64, 0.0f32) };
+}
+
+// A three-row list, realised, with both verbs bound.
+fn two_verb_list(ref l: core::Node, key: str) -> *u8 {
+    let lp: *core::Node = #addr_of(l);
+    match list::find(key, within: lp) {
+        option::Option[list::List]::Some(h) => {
+            let h2: list::List = h.set_row(t_row, ctx: 0 as *u8);
+            let _h3: list::List = h2.set_count(3 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, lp);
+    core::set_view(lp, v, views::view_release);
+    let tv: *u8 = recycler::table_of(v);
+    assert tv.is_not_null();
+    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+    // REALISE THE ROWS. `fire_row_tap` reads the clicked row's cell with
+    // `makeIfNecessary: NO`, because in production a click landed on it and
+    // building one inside an event is this backend's classic reentrancy bug.
+    // Nothing has drawn here, so the test establishes that invariant itself.
+    var r: i64 = 0 as i64;
+    while r < (3 as i64) {
+        let _c: *u8 = { rt::msg_id_i64_i64_i8(tv,
+                            rt::sel(#str_ptr("viewAtColumn:row:makeIfNecessary:\0")),
+                            0 as i64, r, 1 as i8) };
+        r = r +% (1 as i64);
+    }
+    return tv;
+}
+
+#[test]
+fn a_selection_that_does_not_move_is_not_a_selection() {
+    // The verb is `selected`, not `clicked`, and the set is the MODEL's — so
+    // what counts is whether the application's selection changed, not whether
+    // the table's did.
+    //
+    // MEASURED: `reloadData` drops NSTableView's own selection without posting
+    // (headlessly), so restoring it afterwards posts a change for a set the
+    // application never moved. A list that reloads its rows and puts the
+    // selection back — which is every list that edits its model — therefore
+    // re-fired `on_item_selected` every time, and a handler that rebuilds a
+    // detail pane rebuilt it for nothing.
+    backend::install();
+    PICKED = 0 as i64;
+    var l: core::Node = list::list(key: "resel", on_item_selected: h_picked(),
+                                   selection_mode: vocab::SelectionMode::Single);
+    let tv: *u8 = two_verb_list(l, "resel");
+    let idx: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                    rt::sel(#str_ptr("indexSetWithIndex:\0")), 1 as u64) };
+    { rt::msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                         idx, false as i8) };
+    assert PICKED == (1 as i64);
+    // Reload, then put the same row back. The application's set never moved.
+    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+    { rt::msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                         idx, false as i8) };
+    assert PICKED == (1 as i64);
+    // ...and a row that IS a change still arrives.
+    let idx2: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                     rt::sel(#str_ptr("indexSetWithIndex:\0")), 2 as u64) };
+    { rt::msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                         idx2, false as i8) };
+    assert PICKED == (2 as i64);
+}
+
+#[test]
+fn a_selection_change_is_not_a_tap() {
+    // The divergence this removed: the keyboard reaches the selection
+    // notification exactly as `selectRowIndexes:` does, and firing
+    // `on_item_tapped` from there made an arrow key a tap on macOS and on no
+    // other backend.
+    backend::install();
+    PICKED = 0 as i64;
+    TAPPED = 0 as i64;
+    var l: core::Node = list::list(key: "kbd", on_item_selected: h_picked(),
+                                   on_item_tapped: h_tapped(),
+                                   selection_mode: vocab::SelectionMode::Single);
+    let tv: *u8 = two_verb_list(l, "kbd");
+    let idx: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                    rt::sel(#str_ptr("indexSetWithIndex:\0")), 1 as u64) };
+    { rt::msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                         idx, false as i8) };
+    assert PICKED == (1 as i64);
+    assert TAPPED == (0 as i64);
+}
+
+#[test]
+fn a_tap_names_its_row_on_the_sender() {
+    // THE CONTRACT THE REPORT WAS FILED AGAINST, met by the verb that can keep
+    // it: a tap always names exactly one row, so its sender is that row and
+    // `component::item_index_of(sender)` answers. A real mouse-down on the
+    // table, because the table is the only object a click inside a row reaches.
+    backend::install();
+    TAPPED = 0 as i64;
+    TAPPED_ROW = 0 as i64 - (1 as i64);
+    var l: core::Node = list::list(key: "tap", on_item_tapped: h_tapped(),
+                                   selection_mode: vocab::SelectionMode::Single);
+    let tv: *u8 = two_verb_list(l, "tap");
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("mouseDown:\0")), mouse_down_on_row(tv, 1 as i64)) };
+    assert TAPPED == (1 as i64);
+    assert TAPPED_ROW == (1 as i64);
+}
+
+#[test]
+fn a_list_that_selects_nothing_can_still_be_tapped() {
+    // WHY THE TWO VERBS EXIST. `SelectionMode::None` is a list that cannot be
+    // selected and can still be clicked — a read-only list of links. Its
+    // selection never moves, so `on_item_selected` is silent by definition and
+    // the row is recoverable from nothing except the tap's own sender.
+    backend::install();
+    PICKED = 0 as i64;
+    TAPPED = 0 as i64;
+    TAPPED_ROW = 0 as i64 - (1 as i64);
+    var l: core::Node = list::list(key: "readonly", on_item_selected: h_picked(),
+                                   on_item_tapped: h_tapped());
+    let tv: *u8 = two_verb_list(l, "readonly");
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("mouseDown:\0")), mouse_down_on_row(tv, 2 as i64)) };
+    assert TAPPED == (1 as i64);
+    assert TAPPED_ROW == (2 as i64);
+    assert PICKED == (0 as i64);
+}
+
+#[test]
+fn a_tap_on_the_row_already_selected_is_still_a_tap() {
+    // The other half of the split. The selection does not move, so `selected`
+    // is silent — and the click happened, so `tapped` is not.
+    backend::install();
+    PICKED = 0 as i64;
+    TAPPED = 0 as i64;
+    var l: core::Node = list::list(key: "again", on_item_selected: h_picked(),
+                                   on_item_tapped: h_tapped(),
+                                   selection_mode: vocab::SelectionMode::Single);
+    let tv: *u8 = two_verb_list(l, "again");
+    let idx: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                    rt::sel(#str_ptr("indexSetWithIndex:\0")), 1 as u64) };
+    { rt::msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                         idx, false as i8) };
+    assert PICKED == (1 as i64);
+    // ZEROED AFTER THE PROGRAMMATIC SELECT, so only the click below can raise
+    // it — otherwise this passes against the very bug it is about, where a
+    // selection change fired `on_item_tapped` too.
+    TAPPED = 0 as i64;
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("mouseDown:\0")), mouse_down_on_row(tv, 1 as i64)) };
+    assert TAPPED == (1 as i64);
+    assert PICKED == (1 as i64);
+}
+
+#[test]
+fn a_click_that_lands_on_no_row_taps_nothing() {
+    // The negative. `rowAtPoint:` answers -1 below the last row, and a tap
+    // that names no row must not be reported as row zero.
+    backend::install();
+    TAPPED = 0 as i64;
+    var l: core::Node = list::list(key: "empty", on_item_tapped: h_tapped(),
+                                   selection_mode: vocab::SelectionMode::Single);
+    let tv: *u8 = two_verb_list(l, "empty");
+    // Far below three rows of a list that is only as tall as its content.
+    let far: rt::Point = { rt::msg_point_point_id(
+        tv, rt::sel(#str_ptr("convertPoint:toView:\0")),
+        rt::Point { x: 5.0f64, y: 100000.0f64 }, 0 as *u8) };
+    let e: *u8 = { msg_mouse_event(
+        rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:\0")),
+        1 as u64, far, 0 as u64, 0.0f64, 0 as i64, 0 as *u8, 0 as i64, 1 as i64, 0.0f32) };
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("mouseDown:\0")), e) };
+    assert TAPPED == (0 as i64);
+}
+
 #[test]
 fn a_list_that_selects_nothing_still_draws_no_highlight() {
     // `selection_mode: None` is the generated default now that the enum zeros

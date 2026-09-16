@@ -123,6 +123,9 @@ extern fn msg_super_id_id(s: *RowSuper, sel: *u8, a: *u8) -> *u8;
 #[link_name = "objc_msgSendSuper"]
 extern fn msg_super_i8_2id(s: *RowSuper, sel: *u8, a: *u8, b: *u8) -> i8;
 
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_void_id(s: *RowSuper, sel: *u8, a: *u8);
+
 #[link_name = "objc_msgSend"]
 extern fn msg_point_point_id(recv: *u8, sel: *u8, a: rt::Point, b: *u8) -> rt::Point;
 
@@ -185,6 +188,82 @@ fn imp_row_menu_for_event(self_obj: *u8, cmd: *u8, event: *u8) -> *u8 {
     let mine: *u8 = menu_for_row_event(self_obj, event);
     if mine.is_not_null() { return mine; }
     return inherited;
+}
+
+// `on_item_tapped` — A POINTER ACTIVATED A ROW, which is a different question
+// from "the selection changed" and the reason facet carries both verbs.
+//
+// It fires for a click on a row whatever the selection did: on the row that was
+// already selected, and on a `SelectionMode::None` list, which is the read-only
+// list that can still be clicked. It does NOT fire for an arrow key — that
+// moves the selection and nothing was tapped.
+//
+// THE SENDER IS THE ROW, so `component::item_index_of(sender)` answers which
+// one. It can be, because a tap always names exactly one row — where a
+// selection change under `Multiple` names a set and cannot. The index is
+// already on the cell: `set_row_item_index` binds it there, and every
+// descendant of the row sits under it.
+//
+// IT HAS TO BE FIRED FROM THE TABLE. NSTableView owns the mouse inside its own
+// rows — its `mouseDown:` runs a tracking loop that consumes the release — so
+// the cell never sees the event and a gesture hung on a row is never delivered
+// to. That is the same platform fact `imp_validate_first_responder` below is
+// about, met from the other side: the table is the only object the click
+// reaches, so the table is where the tap is announced.
+//
+// AFTER super, deliberately. Super is what moves the selection, so by the time
+// this runs `on_item_selected` has already fired and a handler asking the
+// cursor is told the selection this tap produced. It is also what records
+// `clickedRow`.
+fn imp_row_mouse_down(self_obj: *u8, cmd: *u8, event: *u8) {
+    // The row is resolved BEFORE super: super runs a modal tracking loop, and
+    // a drag inside it can leave the table scrolled somewhere else by the time
+    // it returns, so `rowAtPoint:` afterwards would answer about a different
+    // row than the one that was pressed.
+    let row: i64 = row_at_event(self_obj, event);
+    let f_self: fn(*u8, *u8, *u8) = imp_row_mouse_down;
+    let target: *u8 = synth::super_class_below(self_obj, cmd, { f_self as *u8 });
+    if target.is_not_null() {
+        let sup: RowSuper = RowSuper { receiver: self_obj, super_class: target };
+        { msg_super_void_id(#addr_of(sup), cmd, event) };
+    }
+    if row < (0 as i64) { return; }
+    fire_row_tap(self_obj, row);
+    return;
+}
+
+// Which row an event landed on, or -1 for a click that landed on none. The
+// same three steps `menu_for_row_event` takes; `nil` as the from-view means
+// window coordinates, which is what an event's location is in.
+fn row_at_event(table: *u8, event: *u8) -> i64 {
+    if table.is_null() { return 0 as i64 - (1 as i64); }
+    if event.is_null() { return 0 as i64 - (1 as i64); }
+    let in_window: rt::Point = { rt::msg_point(event, rt::sel(#str_ptr("locationInWindow\0"))) };
+    let local: rt::Point = { msg_point_point_id(table, rt::sel(#str_ptr("convertPoint:fromView:\0")),
+                                                in_window, 0 as *u8) };
+    return { rt::msg_i64_point(table, rt::sel(#str_ptr("rowAtPoint:\0")), local) };
+}
+
+fn fire_row_tap(tv: *u8, row: i64) {
+    let n: *core::Node = list_node_of(tv);
+    if n.is_null() { return; }
+    let p: *props::ListProps = props_of_list(n);
+    if p.is_null() { return; }
+    if { (*p).on_item_tapped } == props::no_handler { return; }
+    // A GROUP HEADER IS NOT AN ITEM. `resolve_row` answers negative for one,
+    // and a tap on it names no row rather than row zero.
+    let s: *RowSource = source_of(tv);
+    if s.is_null() { return; }
+    if resolve_row(s, row) < (0 as i64) { return; }
+    // `makeIfNecessary: NO` — a click landed on it, so it is realised. Asking
+    // AppKit to build one inside an event is the shape of every reentrancy bug
+    // this backend has had.
+    let cell: *u8 = { msg_id_i64_i64_i8(tv,
+                                        rt::sel(#str_ptr("viewAtColumn:row:makeIfNecessary:\0")),
+                                        0 as i64, row, 0 as i8) };
+    if cell.is_null() { return; }
+    fire_list(n, { (*p).on_item_tapped }, { (*p).on_item_tapped_ctx }, cell);
+    return;
 }
 
 // A CONTROL INSIDE A FACET ROW ANSWERS THE WAY IT WOULD OUTSIDE ONE.
@@ -254,6 +333,11 @@ fn row_menu_class(base: *u8, name: *u8) -> *u8 {
         cls, rt::sel(#str_ptr("validateProposedFirstResponder:forEvent:\0")),
         imp_validate_first_responder, #str_ptr("c@:@@\0"));
     let _ = ok2;
+    // ...and the TAP, which is the table's own mouse event because the table
+    // is the only object a click inside a row reaches.
+    let ok3: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")),
+                                          imp_row_mouse_down, #str_ptr("v@:@\0"));
+    let _ = ok3;
     synth::register_class_pair(cls);
     return cls;
 }
@@ -1584,10 +1668,22 @@ fn data_rows_selected(tv: *u8, s: *RowSource) -> vocab::IndexList {
     return out;
 }
 
-// A selection change is BOTH `on_item_selected` and `on_item_tapped` on this
-// backend, and the manifest says why: a table row is selected by click and by
-// arrow key, and macOS has no separate "tapped" moment. Firing only the first
-// would leave the keyboard path silent.
+// `on_item_selected` IS THE SELECTION-CHANGED VERB, and this is the whole of
+// it: the keyboard reaches here as readily as the mouse, which is the reason
+// it is driven by the notification rather than by a click.
+//
+// THE SENDER IS THE SEQUENCE, not a row, because a selection is a SET and a
+// change to a set has no single row to name — under `Multiple` there may be
+// five rows or none. A handler reads the set from the cursor
+// (`selection_count` / `selection_at` / `is_selected`, or `selected_index` for
+// the first of it). `component::item_index_of(sender)` belongs to
+// `on_item_tapped`, which does name one row; see `fire_row_tap` below.
+//
+// This used to fire `on_item_tapped` here too, on the reasoning that macOS has
+// no separate "tapped" moment. It does — the table's own `mouseDown:` — and
+// firing both from here made an ARROW KEY a tap on this backend and not on any
+// other, while a click on the already-selected row was neither, because AppKit
+// does not post this notification for one.
 fn selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     let tv: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("object\0"))) };
     if tv.is_null() { return; }
@@ -1600,10 +1696,16 @@ fn selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     // a grouped table's fifth row may be its third item.
     let s: *RowSource = source_of(tv);
     if s.is_not_null() {
-        list::note_selection(p, data_rows_selected(tv, s));
+        let next: vocab::IndexList = data_rows_selected(tv, s);
+        // DID THE SET MOVE. AppKit posts this for its own reasons — a reload
+        // that restores the same rows, a programmatic write of what was
+        // already there — and a verb named "selected" must not fire for a
+        // selection that did not change. The same rule facet_gtk and
+        // facet_win32 already applied.
+        if vocab::same_indexes(#addr_of((*p).selection), #addr_of(next)) { return; }
+        list::note_selection(p, next);
     }
     fire_list(n, { (*p).on_item_selected }, { (*p).on_item_selected_ctx }, tv);
-    fire_list(n, { (*p).on_item_tapped }, { (*p).on_item_tapped_ctx }, tv);
 }
 
 // A FACET ROW DRAWS ITSELF, so the platform must not draw a selection behind

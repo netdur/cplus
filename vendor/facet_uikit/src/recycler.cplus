@@ -172,6 +172,17 @@ fn fill_cell(cell: *u8, n: *core::Node, i: usize) {
             // nothing in the cell: every recycled row in the package rendered
             // as an empty cell with a separator under it.
             //
+            // WHICH ROW THIS IS, on the row's own node. `place_built` binds
+            // the node to the cell so the climb from anything inside the row
+            // finds it — but nothing had ever WRITTEN the index for a plain
+            // `list`, only for a relist, so `component::item_index_of(sender)`
+            // answered `None` for every list row on this backend. The same
+            // hole facet_appkit's `set_row_item_index` was added to close.
+            //
+            // NOT in `place_built`, which both row sources share: a
+            // multi-column relist hands it the LINE number, and the data index
+            // of each item is written separately there.
+            core::set_item_index(root, i);
             // Which is what `add_backed` exists for, and it was already written.
             place_built(cell, content, root, i);
         }
@@ -877,17 +888,21 @@ fn imp_did_select(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
     if n == (0 as *core::Node) { return; }
     let p: *props::ListProps = list_props(tv);
     if p == (0 as *props::ListProps) { return; }
-    // The write-back, before the handlers — the same rule every control follows,
-    // and EVERY selected row rather than the one this call names. UIKit reports
-    // a multiple selection one tap at a time, so the table is the only thing
-    // that knows the whole of it.
-    list::note_selection(p, selected_rows_of(tv, p));
-    let tap: fn(*u8, *u8) = { (*p).on_item_tapped };
-    if tap != (0 as fn(*u8, *u8)) { tap(tv, { (*p).on_item_tapped_ctx }); }
-    let sel: fn(*u8, *u8) = { (*p).on_item_selected };
-    if sel != (0 as fn(*u8, *u8)) { sel(tv, { (*p).on_item_selected_ctx }); }
+    // THE TAP FIRST, and unconditionally: a tap happened whatever the selection
+    // did. Its sender is the ROW's cell, because a tap names exactly one row
+    // and the cell is where `fill_cell` bound the index — so
+    // `component::item_index_of(sender)` answers. This is also the only verb a
+    // `SelectionMode::None` list has, and that list's selection never moves.
+    fire_row_tap(p, tv, index_path);
     // `SelectionMode::None` means the row may be tapped and never stays
     // selected, which is a deselect right after the tap.
+    //
+    // BEFORE THE SELECTION IS READ, not after. UIKit has already selected the
+    // row by the time it calls this, so reading the table first would see a
+    // set of one on a list that cannot be selected at all — and report a
+    // selection change to an application that asked for none. Undoing it first
+    // means the read below sees the empty set the list actually has, and the
+    // `same_indexes` gate then says nothing changed, which is the truth.
     let keeps: bool = match { (*p).selection_mode } {
         vocab::SelectionMode::None => false,
         vocab::SelectionMode::Single => true,
@@ -897,6 +912,27 @@ fn imp_did_select(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
         { msg_void_id_i8(tv, rt::sel(#str_ptr("deselectRowAtIndexPath:animated:\0")),
                          index_path, 1 as i8) };
     }
+    // The write-back, before the handler — the same rule every control follows,
+    // and EVERY selected row rather than the one this call names. UIKit reports
+    // a multiple selection one tap at a time, so the table is the only thing
+    // that knows the whole of it.
+    //
+    // DID THE SET MOVE. `on_item_selected` is the selection-CHANGED verb, so a
+    // call that leaves the set where it was is not one. Its sender is the
+    // SEQUENCE: a set has no single row to name, and under `Multiple` there may
+    // be five rows in it or none.
+    fire_selection_change(p, tv);
+    return;
+}
+
+// The half `imp_did_select` and `imp_did_deselect` share: read the table's
+// whole selection, and report it only if it is not the one already recorded.
+fn fire_selection_change(p: *props::ListProps, tv: *u8) {
+    let next: vocab::IndexList = selected_rows_of(tv, p);
+    if vocab::same_indexes(#addr_of((*p).selection), #addr_of(next)) { return; }
+    list::note_selection(p, next);
+    let sel: fn(*u8, *u8) = { (*p).on_item_selected };
+    if sel != (0 as fn(*u8, *u8)) { sel(tv, { (*p).on_item_selected_ctx }); }
     return;
 }
 
@@ -905,19 +941,36 @@ fn imp_did_select(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
 // stayed in the model forever. There is no such half on AppKit: one
 // notification covers every change there.
 //
-// Both handlers fire, the way they do for a select: a deselecting tap IS a tap,
-// and the selection DID change. `on_item_selected` on this backend means "the
-// selection changed", which is what its AppKit note already says.
+// Both verbs fire, for their own reasons: a deselecting tap IS a tap, and the
+// selection DID change. That is the contract everywhere — `on_item_tapped` is
+// "a pointer activated a row" and takes the row as its sender;
+// `on_item_selected` is "the selection changed" and takes the sequence.
 fn imp_did_deselect(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
     let n: *core::Node = input::node_of(tv);
     if n == (0 as *core::Node) { return; }
     let p: *props::ListProps = list_props(tv);
     if p == (0 as *props::ListProps) { return; }
-    list::note_selection(p, selected_rows_of(tv, p));
+    // A DESELECTING TAP IS A TAP. UIKit calls this only for a user's touch —
+    // a programmatic `deselectRowAtIndexPath:` does not reach the delegate —
+    // so a row tapped off in `Multiple` was pressed, and the row it names is
+    // the sender.
+    fire_row_tap(p, tv, index_path);
+    fire_selection_change(p, tv);
+    return;
+}
+
+// `on_item_tapped` with the ROW as its sender. `cellForRowAtIndexPath:` answers
+// only for a REALISED cell, which a tapped row always is — it was on screen to
+// be touched — and never builds one, so this cannot mount inside an event.
+fn fire_row_tap(p: *props::ListProps, tv: *u8, index_path: *u8) {
+    if p == (0 as *props::ListProps) { return; }
     let tap: fn(*u8, *u8) = { (*p).on_item_tapped };
-    if tap != (0 as fn(*u8, *u8)) { tap(tv, { (*p).on_item_tapped_ctx }); }
-    let sel: fn(*u8, *u8) = { (*p).on_item_selected };
-    if sel != (0 as fn(*u8, *u8)) { sel(tv, { (*p).on_item_selected_ctx }); }
+    if tap == (0 as fn(*u8, *u8)) { return; }
+    if index_path == (0 as *u8) { return; }
+    let cell: *u8 = { rt::msg_id_id(tv, rt::sel(#str_ptr("cellForRowAtIndexPath:\0")),
+                                    index_path) };
+    if cell == (0 as *u8) { return; }
+    tap(cell, { (*p).on_item_tapped_ctx });
     return;
 }
 

@@ -16,6 +16,7 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/label" as label;
 import "facet/list" as list;
+import "facet/component" as component;
 import "facet/vocabulary" as vocab;
 import "../shell" as shell;
 
@@ -56,13 +57,14 @@ fn bind(index: usize, n: *core::Node, ctx: *u8) {
     }
 }
 
+// THE TAP'S SENDER IS THE ROW, which is what makes this list work at all: it
+// never says `selection_mode`, so it cannot be selected and its
+// `selected_index` is -1 forever. `on_item_tapped` is the verb a read-only
+// list has, and the row it names comes off the sender.
 fn on_tap(sender: *u8, ctx: *u8) {
-    match list::find("lists:list") {
-        option::Option[list::List]::Some(l) => {
-            let i: i64 = l.selected_index();
-            note("tapped row ${i}");
-        }
-        option::Option::None => { }
+    match component::item_index_of(sender) {
+        option::Option[usize]::Some(i) => { note("tapped row ${i}"); }
+        option::Option[usize]::None => { note("tapped a row with no index"); }
     }
 }
 

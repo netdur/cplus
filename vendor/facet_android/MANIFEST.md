@@ -249,10 +249,31 @@ text is answered; the colour of it is the dialog's.
 
 ## 2. Not yet built — Android has an answer, this pass did not write it
 
-**This section is EMPTY of verbs as of 2026-09-08.** What follows is the one
-entry that was never a missing verb — a built thing whose answer is weaker than
-AppKit's — kept because the difference is worth knowing. Everything that used to
-be here is either built or recorded in a ledger above.
+**Two entries as of 2026-09-16**, both about the sender band, plus the one below
+that was never a missing verb — a built thing whose answer is weaker than
+AppKit's — kept because the difference is worth knowing.
+
+### The sender band's DROP readers, and `raise`
+
+`component::install_sender_readers` is called now (2026-09-16) and fills
+`key_of` and `item_of`; before that it was called NOWHERE, so every reader on
+the band answered facet's empty portable default for every handler in every
+Android app, with no diagnostic. See `recycler::sender_readers`.
+
+Three readers are still unfilled, and not because nobody got to them:
+`dropped_text`, `drop_position` and `drag_targeted` report what a DROP
+delivered, and **this backend has no drag and drop at all** — no `startDrag`,
+no `OnDragListener`, nothing that would ever write that state. Filling them
+would mean inventing an answer. They stay at the portable default until
+Android has a drop band to read, and that band is the real missing piece.
+
+`raise` — bring a keyed sibling to the front — is unfilled for a different
+reason: it is the band's one WRITE, `View.bringToFront()` is the obvious body,
+and it belongs with z-order work rather than smuggled in beside the readers.
+
+An unset field keeping the portable default is the shape
+`install_sender_readers` is built for, pinned by facet's own
+`an_unset_reader_keeps_the_portable_default_beside_a_filled_one`.
 
 ### The clipboard IS built, and its `copy_text` answers weaker than AppKit's
 

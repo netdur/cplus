@@ -819,6 +819,46 @@ fn sender_verbs_default_to_the_no_backend_posture() {
     assert drag_targeted(0 as *u8) == false;
 }
 
+// A PARTLY-FILLED BAND IS A SUPPORTED SHAPE, and facet_android is the backend
+// that depends on it: it can answer `key_of` and `item_of` off a view's node
+// tag, and it has no drag and drop at all, so the three drop readers have no
+// state to report and are deliberately left unset. Filling them would mean
+// inventing an answer.
+//
+// The property is that an unset field keeps the PORTABLE DEFAULT rather than
+// being called as a null function pointer — which would be a crash, and the
+// reason every reader here guards on `is_null` before dispatching.
+
+fn probe_key_of(sender: *u8) -> text::Text { return text::from_str("probe:key"); }
+
+#[test]
+fn an_unset_reader_keeps_the_portable_default_beside_a_filled_one() {
+    uninstall_sender_readers();
+    var r: SenderReaders = sender_readers_none();
+    r.key_of = probe_key_of;
+    install_sender_readers(r);
+
+    // The one that was filled answers the backend.
+    let k: text::Text = key_of(0 as *u8);
+    assert k.view() == "probe:key";
+
+    // ...and every one that was not still answers the neutral value rather
+    // than dispatching through a null.
+    assert item_of(0 as *u8) == (0 as *u8);
+    let d: text::Text = dropped_text(0 as *u8);
+    assert d.view() == "";
+    assert drag_targeted(0 as *u8) == false;
+    match drop_position(0 as *u8) {
+        option::Option[vocab::Point]::Some(_p) => { assert false; }
+        option::Option[vocab::Point]::None => { }
+    }
+    // `raise` is the band's one WRITE, and an unset one has to be a no-op
+    // rather than a call through null.
+    raise(0 as *u8, "k");
+
+    uninstall_sender_readers();
+}
+
 // ---- a component reached from the live tree, the way an application writes it -
 
 struct CfSide { n: i32 }

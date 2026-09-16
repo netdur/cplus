@@ -34,6 +34,7 @@ import "facet/application" as app;
 import "facet/app_events" as ev;
 import "facet/tree" as tree;
 import "facet/vocabulary" as vocab;
+import "facet/list" as flist;
 import "facet/elements" as ui;
 import "objc/runtime" as rt;
 import "uikit/uikit" as uik;
@@ -977,6 +978,146 @@ fn realising_a_subtree_opens_no_window() -> bool {
 // ---- the bands that were recorded as unfillable --------------------------------
 // Two seams were left empty on the grounds that iOS's shape was different. It
 // is, and different is not absent — the same error as "iOS has no hover".
+
+// ---- the two list verbs --------------------------------------------------------
+//
+// `on_item_selected` is THE SELECTION CHANGED and takes the SEQUENCE as its
+// sender; `on_item_tapped` is A POINTER ACTIVATED A ROW and takes the ROW. This
+// backend used to fire both from `didSelectRowAtIndexPath:` with the table as
+// sender for each, and to fire the tap again on a deselect — so
+// `component::item_index_of(sender)` answered `None` for every row a handler
+// was ever called about.
+//
+// `fire_selection_change` and `fire_row_tap` are the two halves the delegate
+// methods now call, and they are asked directly: the delegate hop is UIKit's
+// and the runner has no responder chain to drive it through (MANIFEST: the
+// checks call into the backend, `main` never calls `UIApplicationMain`).
+
+static UISEL: i64 = 0 as i64;
+static UISEL_SENDER: usize = 0;
+static UITAP: i64 = 0 as i64;
+static UITAP_SENDER: usize = 0;
+
+fn ui_on_sel(sender: *u8, ctx: *u8) {
+    UISEL = UISEL + (1 as i64);
+    UISEL_SENDER = { sender as usize };
+    return;
+}
+fn ui_on_tap(sender: *u8, ctx: *u8) {
+    UITAP = UITAP + (1 as i64);
+    UITAP_SENDER = { sender as usize };
+    return;
+}
+fn uih_sel() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = ui_on_sel; return f; }
+fn uih_tap() -> fn(*u8, *u8) { let f: fn(*u8, *u8) = ui_on_tap; return f; }
+
+fn ui_verbs_reset() {
+    UISEL = 0 as i64;
+    UITAP = 0 as i64;
+    UISEL_SENDER = 0;
+    UITAP_SENDER = 0;
+    return;
+}
+
+// A realised three-row list: a real UITableView with a real data source, so the
+// selection read below is the platform's and not a stand-in.
+fn ui_verbs_table(ref l: core::Node, key: str) -> *u8 {
+    let lp: *core::Node = #addr_of(l);
+    match flist::find(key, within: lp) {
+        option::Option[flist::List]::Some(h) => {
+            let h2: flist::List = h.set_row(ui_verbs_row, ctx: 0 as *u8);
+            let _h3: flist::List = h2.set_count(3 as usize);
+        }
+        option::Option[flist::List]::None => { }
+    }
+    // ON THIS BACKEND THE LIST'S VIEW IS THE UITableView — there is no scroll
+    // wrapper between them, so `views::create` answers the table itself.
+    let v: *u8 = views::create(0 as *u8, lp);
+    core::set_view(lp, v, views::view_release);
+    if v == (0 as *u8) { return v; }
+    // A FRAME AND A LAYOUT PASS. `views::create` makes the table at zero size,
+    // and UITableView realises a cell only for a row in its VISIBLE rect — so
+    // with no frame `cellForRowAtIndexPath:` answers nil for every row and the
+    // tap has no sender to hand over. Nothing has drawn here, so the check
+    // establishes the invariant a real screen would.
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 320.0f64, h: 480.0f64 }) };
+    { rt::msg_void(v, rt::sel(#str_ptr("reloadData\0"))) };
+    { rt::msg_void(v, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    return v;
+}
+
+fn ui_verbs_row(i: usize, ctx: *u8) -> core::Node {
+    return ui::label("row ${i}");
+}
+
+fn ui_index_path(row: i64) -> *u8 {
+    return { rt::msg_id_i64_i64(rt::get_class(#str_ptr("NSIndexPath\0")),
+                                rt::sel(#str_ptr("indexPathForRow:inSection:\0")),
+                                row, 0 as i64) };
+}
+
+fn a_selection_that_does_not_move_is_not_a_selection() -> bool {
+    ui_verbs_reset();
+    var l: core::Node = ui::list(key: "uiresel", on_item_selected: uih_sel(),
+                                 selection_mode: vocab::SelectionMode::Single);
+    let tv: *u8 = ui_verbs_table(l, "uiresel");
+    if tv == (0 as *u8) { return false; }
+    let p: *props::ListProps = recycler::list_props(tv);
+    if p == (0 as *props::ListProps) { return false; }
+    { rt::msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowAtIndexPath:animated:scrollPosition:\0")),
+                         ui_index_path(1 as i64), 0 as i8) };
+    recycler::fire_selection_change(p, tv);
+    if UISEL != (1 as i64) { return false; }
+    // Asked again with the table in the same state: the set did not move.
+    recycler::fire_selection_change(p, tv);
+    return UISEL == (1 as i64);
+}
+
+fn a_taps_sender_is_the_row_and_a_selections_is_the_sequence() -> bool {
+    ui_verbs_reset();
+    var l: core::Node = ui::list(key: "uiverbs", on_item_selected: uih_sel(),
+                                 on_item_tapped: uih_tap(),
+                                 selection_mode: vocab::SelectionMode::Single);
+    let tv: *u8 = ui_verbs_table(l, "uiverbs");
+    if tv == (0 as *u8) { return false; }
+    let p: *props::ListProps = recycler::list_props(tv);
+    if p == (0 as *props::ListProps) { return false; }
+    let ip: *u8 = ui_index_path(1 as i64);
+    { rt::msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowAtIndexPath:animated:scrollPosition:\0")),
+                         ip, 0 as i8) };
+    recycler::fire_row_tap(p, tv, ip);
+    recycler::fire_selection_change(p, tv);
+    if UITAP != (1 as i64) { return false; }
+    if UISEL != (1 as i64) { return false; }
+    // TWO VERBS, TWO SENDERS: the tap got the row's cell, the selection got the
+    // table. A cell is never the table, so this cannot pass by accident.
+    if UITAP_SENDER == { tv as usize } { return false; }
+    if UISEL_SENDER != { tv as usize } { return false; }
+    // ...and the row the tap named is readable off its sender, which is the
+    // whole contract.
+    return match component::item_index_of({ UITAP_SENDER as *u8 }) {
+        option::Option[usize]::Some(i) => { i == (1 as usize) },
+        option::Option[usize]::None => false,
+    };
+}
+
+fn a_list_that_selects_nothing_still_taps() -> bool {
+    // WHY THE TWO VERBS EXIST. A `SelectionMode::None` list cannot be selected
+    // and can still be clicked, so the tap's sender is the only place its row
+    // can come from.
+    ui_verbs_reset();
+    var l: core::Node = ui::list(key: "uireadonly", on_item_selected: uih_sel(),
+                                 on_item_tapped: uih_tap());
+    let tv: *u8 = ui_verbs_table(l, "uireadonly");
+    if tv == (0 as *u8) { return false; }
+    let p: *props::ListProps = recycler::list_props(tv);
+    if p == (0 as *props::ListProps) { return false; }
+    recycler::fire_row_tap(p, tv, ui_index_path(2 as i64));
+    recycler::fire_selection_change(p, tv);
+    if UITAP != (1 as i64) { return false; }
+    return UISEL == (0 as i64);
+}
 
 fn the_sender_readers_are_installed() -> bool {
     // `key_of` walks accessibilityIdentifier up the superview chain — the SAME
@@ -3454,6 +3595,12 @@ fn run_all() -> i32 {
     check("expansion is keyed on the node's own id", expansion_is_keyed_on_the_nodes_own_id());
     check("no_handler is a real function, not null", no_handler_is_a_real_function_not_null());
     check("realising a subtree opens no window", realising_a_subtree_opens_no_window());
+    check("a selection that does not move is not a selection",
+          a_selection_that_does_not_move_is_not_a_selection());
+    check("a tap's sender is the row, a selection's is the sequence",
+          a_taps_sender_is_the_row_and_a_selections_is_the_sequence());
+    check("a list that selects nothing still taps",
+          a_list_that_selects_nothing_still_taps());
     check("the sender readers are installed", the_sender_readers_are_installed());
     check("key_of walks up to a tagged ancestor", key_of_walks_up_to_a_tagged_ancestor());
     check("raise brings a keyed sibling to the front",

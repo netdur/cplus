@@ -283,8 +283,10 @@ fn on_step(ref this, sender: *u8) {
 }
 ```
 
-Also on `sender`: `component::item_index_of` (the row index in a list),
-`component::item_of`, `component::dropped_text`, `component::drop_position`.
+Also on `sender`: `component::item_index_of` (the row a TAP landed on — see
+"the two list verbs" below; a selection change hands you the sequence, not a
+row), `component::item_of`, `component::dropped_text`,
+`component::drop_position`.
 
 **Pass more than one handler BY NAME.** Each handler's context slot is the `*u8`
 immediately after it, so positionally the second handler lands in the first
@@ -482,6 +484,48 @@ question of which wins. A tree is the same with ids: `set_selection(TextList)`,
 The modifier is the platform's: command-click on macOS, ctrl-click elsewhere,
 and a plain tap TOGGLES on iOS and Android, which have no modifiers.
 
+### The two list verbs
+
+A list has two, they mean different things, and the difference is what each one
+can tell you:
+
+```cplus
+// A POINTER ACTIVATED A ROW. Fires for a click or tap on a row whatever the
+// selection did — on the row that was already selected, and on a
+// `SelectionMode::None` list, which is the read-only list that can still be
+// clicked. NEVER for an arrow key: that moves the selection and taps nothing.
+fn on_row_tapped(ref this, sender: *u8) {
+    guard let option::Option[usize]::Some(at) =
+        component::item_index_of(sender) else { return; };
+    this.open(at);
+}
+
+// THE SELECTION CHANGED. Fires when the set actually moves — never on a
+// re-click that lands where it already was, and never on a reload that puts
+// the same rows back. Fires for the KEYBOARD too, because an arrow key
+// changes the selection.
+fn on_rows_selected(ref this, sender: *u8) {
+    guard let option::Option[list::List]::Some(rows) = list::find("panel:list") else { return; };
+    let at: i64 = rows.selected_index();
+    if at < (0 as i64) { return; }
+    this.preview(at as usize);
+}
+```
+
+**A tap's sender is the ROW; a selection's sender is the SEQUENCE.** That is not
+a platform detail, it is what each verb can honestly say. A tap always names
+exactly one row, so `component::item_index_of(sender)` answers. A selection
+change names a SET — under `Multiple` a shift-click moves five rows at once and
+a keyboard arrow moves it with no row clicked at all — so there is no single
+row to hand over, and the handler reads the set off the cursor
+(`selection_count` / `selection_at` / `is_selected`, or `selected_index` for
+the first of it). Asking `item_index_of` on a selection sender answers `None`.
+
+**Which one you want:** opening a detail for the row somebody clicked is
+`on_item_tapped`. Keeping a preview pane in step with the selection — including
+when the user arrows through it — is `on_item_selected`. A list that only
+navigates wants `SelectionMode::None` and `on_item_tapped` alone.
+
 Five things about lists that compile wrong:
 
 1. **Say appearance AFTER mount.** `selection_mode`, separators and scroll bars
@@ -491,11 +535,11 @@ Five things about lists that compile wrong:
    Write appearance through the cursor beside `set_row`, never in the
    constructor.
 
-2. **A row's click is the LIST'S SELECTION**, not a gesture you hang on it. The
-   table owns the mouse inside its own rows, so `.gesture(on_click:)` on anything
-   in a row is a handler nothing will deliver to. Say `selection_mode`, read
-   `on_item_selected`, and the index you are handed is already the model's. A
-   real control inside a row still gets its own press.
+2. **A row's click is the LIST'S, not a gesture you hang on it.** The table owns
+   the mouse inside its own rows, so `.gesture(on_click:)` on anything in a row
+   is a handler nothing will deliver to. Read `on_item_tapped` or
+   `on_item_selected` — see "the two list verbs" below. A real control inside a
+   row still gets its own press.
 
 3. **A row is measured BEFORE it is realised**, so anything sized by its own text
    answers zero — a label cannot say how tall it is until it has a view. State
