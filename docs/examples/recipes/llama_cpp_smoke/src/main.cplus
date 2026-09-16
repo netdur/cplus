@@ -1,42 +1,60 @@
-// Smoke skeleton for vendor/llama_cpp.
+// Smoke program for vendor/llama_cpp: load a GGUF, print what it is, and
+// generate a short continuation.
 //
-// This recipe needs:
-//   1. A built `vendor/llama_cpp/bridge/build/libcplus_llama_cpp_bridge.dylib`.
-//   2. A local copy/symlink at `docs/examples/recipes/llama_cpp_smoke/vendor/llama_cpp`.
-//   3. A GGUF model path replacing `/tmp/model.gguf`.
+// Pass the model path as argv[1], or set LLAMA_CPP_MODEL. See README.md for
+// the one piece of wiring this needs (LLAMA_CPP_LIB, pointing at the directory
+// holding libllama / libmtmd).
 
 import "llama_cpp/llama_cpp" as llama;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+import "stdlib/option" as option;
 import "stdlib/result" as result;
+import "stdlib/text" as text;
 
-extern fn printf(fmt: *u8, ...) -> i32;
+// argv[1], else $LLAMA_CPP_MODEL, else None.
+fn model_path() -> option::Option[text::Text] {
+    match env::arg(1 as usize) {
+        option::Option[text::Text]::Some(a) => {
+            return option::Option[text::Text]::Some(a);
+        }
+        option::Option[text::Text]::None => { }
+    }
+    return env::var("LLAMA_CPP_MODEL");
+}
 
 fn main() -> i32 {
+    guard let option::Option[text::Text]::Some(path) = model_path() else {
+        io::eprintln("usage: llama_cpp_smoke <model.gguf>   (or set LLAMA_CPP_MODEL)");
+        return 2;
+    };
+
     llama::backend_init();
 
-    let opts: llama::LoadOptions = llama::default_options();
-    guard let result::Result[llama::Session, llama::LlamaError]::Ok(session) =
-        llama::load("/tmp/model.gguf", opts) else {
-        { printf(#str_ptr("model load failed\n\0")); }
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(path.view(), context_size: 2048 as u32) else {
+        io::eprintln("model load failed: ${path}");
+        llama::backend_free();
         return 1;
     };
+    var session: llama::Session = loaded;
 
-    var out: [u8; 64] = [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ];
-    let out_slice: u8[] = { #slice_from_raw_parts(#addr_of(out[0]), 64 as usize) };
+    let description: text::Text = session.describe();
+    let n_ctx: u32 = session.context_size();
+    let n_params: u64 = session.parameter_count();
+    io::println("model:  ${description}");
+    io::println("ctx:    ${n_ctx}");
+    io::println("params: ${n_params}");
 
-    guard let result::Result[usize, llama::LlamaError]::Ok(n) =
-        llama::generate_greedy_into(session, "Hello, who are you?", 16, out_slice) else {
-        { printf(#str_ptr("generation failed\n\0")); }
+    let prompt: str = "The capital of France is";
+    guard let result::Result[text::Text, llama::LlamaError]::Ok(answer) =
+        session.generate(prompt, max_new_tokens: 32) else {
+        io::eprintln("generation failed");
+        llama::backend_free();
         return 1;
     };
-
-    {
-        printf(#str_ptr("%.*s\n\0"), n as i32, #slice_ptr(out_slice));
-    }
+    io::println("");
+    io::println("${prompt}${answer}");
 
     llama::backend_free();
     return 0;

@@ -1,25 +1,38 @@
 # llama_cpp smoke recipe
 
-This is a wiring template for `vendor/llama_cpp`.
+Loads a GGUF through `vendor/llama_cpp`, prints what the model is, and
+generates a short continuation.
 
-Before building it:
+```bash
+export LLAMA_CPP_LIB="$HOME/Workspace/llama.cpp/build/bin"
+cpc run -- /path/to/model.gguf
+# or: LLAMA_CPP_MODEL=/path/to/model.gguf cpc run
+```
 
-1. Build upstream `llama.cpp` with `libllama` and `libmtmd`.
-2. Point cpc at that library directory via the `LLAMA_CPP_LIB` environment
-   variable — `vendor/llama_cpp/Cplus.toml` expands `${LLAMA_CPP_LIB}` into its
-   `[link].search-paths`:
+Expected output:
 
-   ```bash
-   export LLAMA_CPP_LIB="$HOME/Workspace/llama.cpp/build/bin"
-   ```
+```text
+model:  llama 256M Q8_0
+ctx:    2048
+params: 162974016
 
-   If it is unset, `cpc build` stops with E0865 naming the variable, rather
-   than letting the linker fail with an opaque "library not found".
-3. Vendor or symlink the package into this recipe:
+The capital of France is Paris. The capital of France is Paris. The capital
+```
 
-   ```bash
-   mkdir -p docs/examples/recipes/llama_cpp_smoke/vendor
-   ln -s ../../../../../vendor/llama_cpp docs/examples/recipes/llama_cpp_smoke/vendor/llama_cpp
-   ```
+## The one piece of wiring
 
-4. Replace `/tmp/model.gguf` with a real GGUF path.
+llama.cpp has no standard install location, so `vendor/llama_cpp/Cplus.toml`
+expands `${LLAMA_CPP_LIB}` into its `[link].search-paths`. Point it at the
+directory holding `libllama.dylib` and `libmtmd.dylib`:
+
+```bash
+export LLAMA_CPP_LIB="$HOME/Workspace/llama.cpp/build/bin"
+```
+
+If it is unset, `cpc build` stops with E0865 naming the variable, rather than
+letting the linker fail with an opaque "library not found". That directory is
+used as both `-L` and `-rpath`, so `libllama` finds its own `libggml*.dylib`
+siblings at run time.
+
+See [vendor/llama_cpp/README.md](../../../../vendor/llama_cpp/README.md) for
+building upstream llama.cpp and for regenerating the bindings after an update.

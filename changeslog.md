@@ -29,6 +29,32 @@ earlier history lives in each version's archived plan.
   extending module's file (`.gesture(on_click: h)` without
   `facet/gestures`: twenty errors inside `vendor/`, the real one last).
 
+### Packages
+- **`llama_cpp` regenerated against llama.cpp b11003 (0.4.1), and regenerated
+  from upstream's own headers from now on.** The package used to carry a
+  hand-curated `upstream/llama_cplus.h` mirroring llama.cpp's ABI; it had
+  drifted badly — still declaring `llama_model_params::use_mmap`,
+  `use_direct_io` and `use_mlock` after upstream deleted them, never having
+  heard of `load_mode`, `lazy_mode`, `load_mtp` or
+  `llama_context_params::n_outputs_max_per_seq`. Every field past
+  `n_gpu_layers` read the wrong bytes. `build.sh` now runs `cpc-bindgen`
+  directly on `include/llama.h` and `tools/mtmd/mtmd.h`, so layouts come from
+  clang's record layout of the real header and the mirror is gone.
+- The facade gained a sampler chain (`temperature`/`top_k`/`top_p`/`min_p`/
+  `seed` on `load`, greedy at temperature 0), `Session::tokens_for`,
+  `describe`, `reset`, `train_context_size`, `parameter_count`,
+  `embedding_size`, `vocabulary_size`, `bitmap_audio`, and `Bitmap`
+  dimension accessors. Three fixes rode along: `sample` no longer calls
+  `llama_sampler_accept` after `llama_sampler_sample` (which already accepts —
+  the double count skews every stateful sampler), model paths cross to C as a
+  NUL-terminated `CString` rather than a bare `str` pointer, and `generate`
+  clears the KV cache unless asked to continue.
+- `llama_cpp` gained an e2e suite (`src/test_main.cplus`) that loads a real
+  GGUF and drives real inference, gated on `LLAMA_CPP_TEST_MODEL` and loud when
+  it skips. The unit tests never reach a `llama_*` symbol, so this is the only
+  half that can catch ABI drift — restoring the stale `llama_model_params`
+  kills the test binary with SIGSEGV, which is what it is there to do.
+
 ## v0.0.27 — 2026-08-14
 
 > From v0.0.26 (~677 commits, 2026-07-02 → 2026-08-11). Three strands: the

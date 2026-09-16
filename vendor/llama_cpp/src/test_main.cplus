@@ -1,0 +1,448 @@
+// llama_cpp test root — the e2e half of the suite.
+//
+// `src/llama_cpp.cplus` carries the unit and negative tests: every one of them
+// runs with null handles and never reaches a `llama_*` symbol, so they prove
+// the guard logic and nothing about the linked library. THIS file is the other
+// half: it loads a real GGUF and drives the real inference path, which is the
+// only thing that can catch an ABI drift between this package and the
+// llama.cpp it was generated against — a wrong struct layout compiles, links
+// and then hands libllama garbage.
+//
+// A model is a large binary that cannot live in the repo, so these are gated
+// on environment variables and announce themselves when they skip:
+//
+//   export LLAMA_CPP_LIB=/path/to/llama.cpp/build/bin
+//   export LLAMA_CPP_TEST_MODEL=/path/to/some-model.gguf
+//   export LLAMA_CPP_TEST_MMPROJ=/path/to/mmproj-....gguf   # optional, mtmd
+//   cd vendor/llama_cpp && cpc test
+//
+// A SKIPPED line in the output is the signal that the e2e half did not run.
+// Do not read a green suite without one as coverage of the linked library.
+
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "./llama_cpp" as llama;
+
+// The model path from the environment, or `None` with a loud line saying which
+// test just became a no-op and how to arm it.
+fn _model_path(test_name: str) -> option::Option[text::Text] {
+    match env::var("LLAMA_CPP_TEST_MODEL") {
+        option::Option[text::Text]::Some(p) => {
+            return option::Option[text::Text]::Some(p);
+        }
+        option::Option[text::Text]::None => {
+            io::println("SKIPPED ${test_name}: set LLAMA_CPP_TEST_MODEL to a .gguf to run it");
+            return option::Option[text::Text]::None;
+        }
+    }
+}
+
+fn _mmproj_path(test_name: str) -> option::Option[text::Text] {
+    match env::var("LLAMA_CPP_TEST_MMPROJ") {
+        option::Option[text::Text]::Some(p) => {
+            return option::Option[text::Text]::Some(p);
+        }
+        option::Option[text::Text]::None => {
+            io::println("SKIPPED ${test_name}: set LLAMA_CPP_TEST_MMPROJ to an mmproj .gguf to run it");
+            return option::Option[text::Text]::None;
+        }
+    }
+}
+
+// ---- the load path -------------------------------------------------------
+
+#[test]
+fn a_real_model_loads_and_reports_a_coherent_shape() {
+    guard let option::Option[text::Text]::Some(path) =
+        _model_path("a_real_model_loads_and_reports_a_coherent_shape") else {
+        return;
+    };
+    llama::backend_init();
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(path.view(), context_size: 512 as u32) else {
+        assert false;
+        return;
+    };
+    var session: llama::Session = loaded;
+
+    // These four all read through `llama_model_params` / `llama_context_params`
+    // — the two structs that drifted. A layout that is off by one field reads
+    // an adjacent member and these stop being plausible.
+    assert session.context_size() == (512 as u32);
+    assert session.vocabulary_size() > 0;
+    assert session.embedding_size() > 0;
+    assert session.parameter_count() > (0 as u64);
+    // `n_ctx` asked for is honoured independently of what the model trained on.
+    assert session.train_context_size() > 0;
+
+    // `llama_model_desc` fills a caller buffer; an empty answer means the fill
+    // never happened (the `Vec::at_ptr`-on-an-empty-vec trap).
+    let described: text::Text = session.describe();
+    assert described.count() > (0 as usize);
+}
+
+// ---- tokenization --------------------------------------------------------
+
+#[test]
+fn tokenizing_a_prompt_yields_tokens_inside_the_vocabulary() {
+    guard let option::Option[text::Text]::Some(path) =
+        _model_path("tokenizing_a_prompt_yields_tokens_inside_the_vocabulary") else {
+        return;
+    };
+    llama::backend_init();
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(path.view(), context_size: 512 as u32) else {
+        assert false;
+        return;
+    };
+    var session: llama::Session = loaded;
+
+    guard let result::Result[vec::Vec[i32], llama::LlamaError]::Ok(tokens) =
+        session.tokens_for("The capital of France is") else {
+        assert false;
+        return;
+    };
+    // A six-word prompt is more than one token and far fewer than the context.
+    assert tokens.count() > (1 as usize);
+    assert tokens.count() < (64 as usize);
+
+    // Every id must be addressable in this vocabulary. A garbage `_vocab`
+    // handle (or a tokenize that wrote nothing and left the zeros behind)
+    // fails this.
+    let n_vocab: i32 = session.vocabulary_size();
+    var i: usize = 0 as usize;
+    var distinct: bool = false;
+    var previous: i32 = -1;
+    while i < tokens.count() {
+        guard let option::Option[i32]::Some(id) = tokens.at(i) else {
+            assert false;
+            return;
+        };
+        assert id >= 0;
+        assert id < n_vocab;
+        if i > (0 as usize) && id != previous {
+            distinct = true;
+        }
+        previous = id;
+        i = i +% (1 as usize);
+    }
+    // All-zeros would satisfy the range check above; this is the ablation for
+    // a buffer that was sized but never filled.
+    assert distinct;
+}
+
+#[test]
+fn tokens_render_back_to_the_text_they_came_from() {
+    guard let option::Option[text::Text]::Some(path) =
+        _model_path("tokens_render_back_to_the_text_they_came_from") else {
+        return;
+    };
+    llama::backend_init();
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(path.view(), context_size: 512 as u32) else {
+        assert false;
+        return;
+    };
+    var session: llama::Session = loaded;
+
+    let prompt: str = "The capital of France is";
+    // `add_special: false` keeps BOS out, so the pieces concatenate back to
+    // exactly the prompt rather than to the prompt plus a control token.
+    guard let result::Result[vec::Vec[i32], llama::LlamaError]::Ok(tokens) =
+        session.tokens_for(prompt, add_special: false) else {
+        assert false;
+        return;
+    };
+
+    var rebuilt: text::Text = text::new();
+    var scratch: [u8; 256] = #zero::[[u8; 256]]();
+    let into: u8[] = { #slice_from_raw_parts(#addr_of(scratch[0]), 256 as usize) };
+    var i: usize = 0 as usize;
+    while i < tokens.count() {
+        guard let option::Option[i32]::Some(id) = tokens.at(i) else {
+            assert false;
+            return;
+        };
+        guard let result::Result[usize, llama::LlamaError]::Ok(n) =
+            session.token_piece(id, into: into) else {
+            assert false;
+            return;
+        };
+        let piece: str = { #str_from_raw_parts(#addr_of(scratch[0]), n) };
+        rebuilt.append(piece);
+        i = i +% (1 as usize);
+    }
+    assert rebuilt.equals(prompt);
+}
+
+// ---- generation ----------------------------------------------------------
+
+#[test]
+fn greedy_generation_produces_text_and_is_repeatable() {
+    guard let option::Option[text::Text]::Some(path) =
+        _model_path("greedy_generation_produces_text_and_is_repeatable") else {
+        return;
+    };
+    llama::backend_init();
+    // temperature defaults to 0 — greedy, no RNG, so two runs of the same
+    // prompt must agree. That is also what proves `generate`'s `reset` really
+    // clears the KV cache: without it the second run continues the first and
+    // answers something else.
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(path.view(), context_size: 512 as u32) else {
+        assert false;
+        return;
+    };
+    var session: llama::Session = loaded;
+
+    guard let result::Result[text::Text, llama::LlamaError]::Ok(first) =
+        session.generate("The capital of France is", max_new_tokens: 12) else {
+        assert false;
+        return;
+    };
+    assert first.count() > (0 as usize);
+
+    guard let result::Result[text::Text, llama::LlamaError]::Ok(second) =
+        session.generate("The capital of France is", max_new_tokens: 12) else {
+        assert false;
+        return;
+    };
+    assert second.equals(first.view());
+}
+
+#[test]
+fn generation_respects_its_token_budget() {
+    guard let option::Option[text::Text]::Some(path) =
+        _model_path("generation_respects_its_token_budget") else {
+        return;
+    };
+    llama::backend_init();
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(path.view(), context_size: 512 as u32) else {
+        assert false;
+        return;
+    };
+    var session: llama::Session = loaded;
+
+    // A token is at most ~128 UTF-8 bytes, so 4 tokens cannot exceed 512 bytes.
+    // The loop either stops at the budget or earlier at an EOG token.
+    guard let result::Result[text::Text, llama::LlamaError]::Ok(short) =
+        session.generate("Once upon a time", max_new_tokens: 4) else {
+        assert false;
+        return;
+    };
+    assert short.count() <= (512 as usize);
+
+    guard let result::Result[text::Text, llama::LlamaError]::Ok(longer) =
+        session.generate("Once upon a time", max_new_tokens: 24) else {
+        assert false;
+        return;
+    };
+    // More budget cannot produce less text for the same greedy prefix.
+    assert longer.count() >= short.count();
+}
+
+#[test]
+fn a_sampled_session_still_generates() {
+    guard let option::Option[text::Text]::Some(path) =
+        _model_path("a_sampled_session_still_generates") else {
+        return;
+    };
+    llama::backend_init();
+    // temperature > 0 takes the OTHER branch of `_build_sampler`: a five-link
+    // chain (top_k, top_p, min_p, temp, dist) instead of a single greedy link.
+    // A chain that is mis-assembled crashes or samples out of range here.
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(path.view(), context_size: 512 as u32, temperature: 0.8 as f32, seed: 1234 as u32) else {
+        assert false;
+        return;
+    };
+    var session: llama::Session = loaded;
+
+    guard let result::Result[text::Text, llama::LlamaError]::Ok(out) =
+        session.generate("The capital of France is", max_new_tokens: 12) else {
+        assert false;
+        return;
+    };
+    assert out.count() > (0 as usize);
+}
+
+// ---- negative: real handles, refused inputs ------------------------------
+
+#[test]
+fn a_missing_model_file_is_a_load_error_not_a_crash() {
+    llama::backend_init();
+    match llama::load("/nonexistent/definitely-not-a-model.gguf") {
+        result::Result[llama::Session, llama::LlamaError]::Err(e) => {
+            assert e == llama::LlamaError::LoadFailed;
+        }
+        result::Result[llama::Session, llama::LlamaError]::Ok(_s) => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_loaded_session_refuses_an_empty_decode() {
+    guard let option::Option[text::Text]::Some(path) =
+        _model_path("a_loaded_session_refuses_an_empty_decode") else {
+        return;
+    };
+    llama::backend_init();
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(path.view(), context_size: 512 as u32) else {
+        assert false;
+        return;
+    };
+    var session: llama::Session = loaded;
+
+    // The handles are REAL here, so this exercises the argument check rather
+    // than the null guard the unit tests cover.
+    let empty: i32[] = { #slice_from_raw_parts({ 0 as *i32 }, 0 as usize) };
+    match session.decode(empty) {
+        result::Result[usize, llama::LlamaError]::Err(e) => {
+            assert e == llama::LlamaError::InvalidArgument;
+        }
+        result::Result[usize, llama::LlamaError]::Ok(_n) => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_one_byte_piece_buffer_is_refused_not_overrun() {
+    guard let option::Option[text::Text]::Some(path) =
+        _model_path("a_one_byte_piece_buffer_is_refused_not_overrun") else {
+        return;
+    };
+    llama::backend_init();
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(path.view(), context_size: 512 as u32) else {
+        assert false;
+        return;
+    };
+    var session: llama::Session = loaded;
+
+    guard let result::Result[vec::Vec[i32], llama::LlamaError]::Ok(tokens) =
+        session.tokens_for("internationalization", add_special: false) else {
+        assert false;
+        return;
+    };
+    guard let option::Option[i32]::Some(first) = tokens.at(0 as usize) else {
+        assert false;
+        return;
+    };
+    // llama_token_to_piece reports "your buffer is too small" as a negative
+    // return; the facade must turn that into OutputTooSmall and NOT write.
+    var one: [u8; 1] = [0 as u8];
+    let tiny: u8[] = { #slice_from_raw_parts(#addr_of(one[0]), 1 as usize) };
+    match session.token_piece(first, into: tiny) {
+        result::Result[usize, llama::LlamaError]::Err(e) => {
+            assert e == llama::LlamaError::OutputTooSmall;
+        }
+        result::Result[usize, llama::LlamaError]::Ok(n) => {
+            // A single-byte token legitimately fits; anything longer must have
+            // been refused above.
+            assert n <= (1 as usize);
+        }
+    }
+    return;
+}
+
+// ---- multimodal ----------------------------------------------------------
+
+#[test]
+fn an_mmproj_reports_its_capabilities() {
+    guard let option::Option[text::Text]::Some(path) =
+        _mmproj_path("an_mmproj_reports_its_capabilities") else {
+        return;
+    };
+    match llama::mtmd_caps_from_file(path.view()) {
+        result::Result[llama::MtmdCaps, llama::LlamaError]::Ok(caps) => {
+            // An mmproj exists to project SOMETHING; a projector that claims
+            // neither vision nor audio means the caps read went wrong.
+            assert caps.inp_vision || caps.inp_audio;
+        }
+        result::Result[llama::MtmdCaps, llama::LlamaError]::Err(_e) => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn an_mtmd_context_attaches_to_a_loaded_model() {
+    guard let option::Option[text::Text]::Some(model) =
+        _model_path("an_mtmd_context_attaches_to_a_loaded_model") else {
+        return;
+    };
+    guard let option::Option[text::Text]::Some(mmproj) =
+        _mmproj_path("an_mtmd_context_attaches_to_a_loaded_model") else {
+        return;
+    };
+    llama::backend_init();
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(loaded) =
+        llama::load(model.view(), context_size: 512 as u32) else {
+        assert false;
+        return;
+    };
+    var session: llama::Session = loaded;
+
+    guard let result::Result[llama::MtmdCaps, llama::LlamaError]::Ok(caps) =
+        llama::mtmd_caps_from_file(mmproj.view()) else {
+        assert false;
+        return;
+    };
+    guard let result::Result[llama::MtmdContext, llama::LlamaError]::Ok(opened) =
+        llama::mtmd_init(session, mmproj.view(), llama::mtmd_default_params()) else {
+        assert false;
+        return;
+    };
+    var projector: llama::MtmdContext = opened;
+
+    // The live context must agree with what the file's header advertised.
+    assert projector.supports_vision() == caps.inp_vision;
+    assert projector.supports_audio() == caps.inp_audio;
+}
+
+#[test]
+fn a_well_sized_rgb_bitmap_round_trips_its_dimensions() {
+    // mtmd_bitmap_init is in libmtmd and needs no model, so this one always
+    // runs: it is the cheapest proof that libmtmd is actually linked.
+    let w: u32 = 4 as u32;
+    let h: u32 = 3 as u32;
+    var px: vec::Vec[u8] = vec::new::[u8]();
+    var i: usize = 0 as usize;
+    while i < (36 as usize) {
+        px.append(i as u8);
+        i = i +% (1 as usize);
+    }
+    guard let result::Result[llama::Bitmap, llama::LlamaError]::Ok(made) =
+        llama::bitmap_rgb(w, h, px.as_slice()) else {
+        assert false;
+        return;
+    };
+    var bitmap: llama::Bitmap = made;
+    assert bitmap.width() == w;
+    assert bitmap.height() == h;
+    assert !bitmap.is_audio();
+    assert bitmap.byte_count() == (36 as u64);
+}
+
+#[test]
+fn an_audio_bitmap_is_marked_as_audio() {
+    var samples: vec::Vec[f32] = vec::new::[f32]();
+    var i: usize = 0 as usize;
+    while i < (160 as usize) {
+        samples.append(0.0 as f32);
+        i = i +% (1 as usize);
+    }
+    guard let result::Result[llama::Bitmap, llama::LlamaError]::Ok(made) =
+        llama::bitmap_audio(samples.as_slice()) else {
+        assert false;
+        return;
+    };
+    var bitmap: llama::Bitmap = made;
+    assert bitmap.is_audio();
+    assert bitmap.byte_count() > (0 as u64);
+}
