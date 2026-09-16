@@ -17960,3 +17960,72 @@ fn a_collection_that_cannot_be_selected_does_not_answer_the_door() {
     assert AGENT_PICKS == (0 as i64);
     mount::unmount(p);
 }
+
+#[test]
+fn a_collection_row_answers_the_agents_door_on_first_mount() {
+    backend::install();
+    AGENT_PICKS = 0 as i64;
+    // THE FIRST-MOUNT PATH, which is the one an application actually takes and
+    // the one `a_plain_collection_row_answers_the_agents_door` does NOT cover:
+    // its helper calls `views::apply` after mounting, and that later apply is
+    // what armed the rows. On a fresh open there is no later apply — the
+    // create pass materialises the rows and the walk gives them views
+    // AFTERWARDS, so arming at apply time reached views that did not exist.
+    //
+    // Reported against the llama Model Library, whose shell carried a
+    // post-mount `set_selection_mode(Single)` as a workaround:
+    // bugs/facet-appkit-collection-agent-row-not-armed-on-first-mount.md
+    //
+    // Everything here is what a window does: build, mount, lay out, tick.
+    // No `views::apply`, and no restating the mode.
+    var c: core::Node = collection::collection(key: "cfirst", count: 3 as usize,
+                                               row: plain_row_no_gesture,
+                                               selection_mode: vocab::SelectionMode::Single,
+                                               on_selection_changed: on_agent_pick);
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    geometry::relayout_root(p, 200.0f64, 200.0f64, 1.0f64);
+    scheduler::drain_place_jobs();          // the tick, which a window always gets
+
+    let v1: *u8 = selection_view_of(p, 1 as usize);
+    assert v1.is_not_null();
+    assert answers_perform_click(v1);
+    assert agent_clicks(v1);
+    match collection::find("cfirst", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            assert x.selected_index() == (1 as i64);
+            assert x.is_selected(1 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert AGENT_PICKS == (1 as i64);
+    mount::unmount(p);
+}
+
+#[test]
+fn a_none_collection_stays_unselectable_through_the_first_mount() {
+    backend::install();
+    AGENT_PICKS = 0 as i64;
+    // The negative on the same path. The deferred re-arm is queued only by the
+    // selectable branch, so a collection that says `None` must come through
+    // mount, layout and tick with nothing armed — otherwise the fix would have
+    // handed every sequence a selection it was told not to have.
+    var c: core::Node = collection::collection(key: "cfirst", count: 3 as usize,
+                                               row: plain_row_no_gesture,
+                                               selection_mode: vocab::SelectionMode::None,
+                                               on_selection_changed: on_agent_pick);
+    let p: *core::Node = #addr_of(c);
+    assert mount::mount(p);
+    geometry::relayout_root(p, 200.0f64, 200.0f64, 1.0f64);
+    scheduler::drain_place_jobs();
+    let _sent: bool = agent_clicks(selection_view_of(p, 1 as usize));
+    match collection::find("cfirst", within: p) {
+        option::Option[collection::Collection]::Some(x) => {
+            assert x.selected_index() == (-1 as i64);
+            assert x.selection_count() == (0 as usize);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert AGENT_PICKS == (0 as i64);
+    mount::unmount(p);
+}

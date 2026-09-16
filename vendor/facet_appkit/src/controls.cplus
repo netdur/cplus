@@ -4548,6 +4548,30 @@ fn selected_children(n: *core::Node, p: *props::CollectionProps) -> vocab::Index
     return out;
 }
 
+// The deferred half of the arming above. Runs after layout, when the rows the
+// create pass materialised have the views it could not reach.
+//
+// It re-asks everything rather than remembering anything: the mode may have
+// changed between the apply and the tick, the rows may have been replaced, and
+// `install_row_selection` is idempotent. A collection that stopped being
+// selectable disarms here rather than staying armed from a stale job.
+fn rearm_collection_rows(n: *core::Node) {
+    if n.is_null() { return; }
+    let v: *u8 = core::view_of(n);
+    if v.is_null() { return; }
+    let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p.is_null() { return; }
+    let doc: *u8 = document_host(v);
+    if doc.is_null() { return; }
+    if selects_rows({ (*p).selectable_items_view.selection_mode }) {
+        let f: fn(*u8, i64, u64) = collection_row_picked;
+        compose::install_row_selection(doc, n, f);
+    } else {
+        compose::uninstall_row_selection(doc, n);
+    }
+    return;
+}
+
 fn collection_row_picked(doc: *u8, child: i64, mods: u64) {
     let n: *core::Node = { synth::get_associated(doc, compose::select_node_key()) as *core::Node };
     if n.is_null() { return; }
@@ -4668,6 +4692,22 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
         if selects_rows({ (*sel).selection_mode }) {
             let f: fn(*u8, i64, u64) = collection_row_picked;
             compose::install_row_selection(doc, n, f);
+            // ...AND AGAIN AFTER THE WALK, which is the only pass where the
+            // rows have views to arm.
+            //
+            // On the CREATE pass this body materialises the row nodes and the
+            // mount walk gives them views AFTERWARDS, so the arming above
+            // reaches `first_viewed(row) == 0` for every one of them and a
+            // freshly opened window had no agent-clickable rows at all. An
+            // application could only get them by restating the selection mode
+            // in `on_attach` to force a second apply — which is what the llama
+            // Model Library was carrying as a workaround when this was reported.
+            //
+            // `defer_place` is the queue for exactly this two-phase problem:
+            // "apply runs before layout, so a view sized 0x0 there cannot
+            // measure anything against its host". A view that does not exist
+            // yet is the same problem one step earlier.
+            scheduler::defer_place(rearm_collection_rows, n);
         } else {
             compose::uninstall_row_selection(doc, n);
         }
