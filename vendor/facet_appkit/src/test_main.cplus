@@ -8534,6 +8534,88 @@ fn an_ordinary_node_still_takes_its_own_hit() {
                               rt::Point { x: 50.0f64, y: 50.0f64 }) } == v;
 }
 
+// ---- what is behind `performClick:` ------------------------------------------
+//
+// THE SAME FACT FROM THE OTHER SIDE, and a live agent session paid for it.
+// Input transparency arms the node — the hit test is the only place AppKit
+// lets "takes no input" be said, and `imp_hit_test` is on this class — so the
+// class that answers `performClick:` is installed for a node that has no click
+// at all. The agent surface read "the view answers the selector" as "something
+// armed it", and reported `wired=true` and `Allowed` for a click that fired
+// nothing: a keyed row root carrying `set_input_transparent(true)` inside a
+// selectable list, which is the ORDINARY shape, because transparency is the
+// right tool for row decoration.
+//
+// `performClick:` returns void, so the caller cannot tell an empty send from a
+// real one after the fact. It has to ask first, and this is the answer.
+
+fn responds(v: *u8, name: *u8) -> bool {
+    return { rt::msg_i8_id(v, rt::sel(#str_ptr("respondsToSelector:\0")), rt::sel(name)) } != (0 as i8);
+}
+
+fn click_wired(v: *u8) -> bool {
+    return { rt::msg_i8(v, rt::sel(#str_ptr("cplusFacetClickWired\0"))) } != (0 as i8);
+}
+
+#[test]
+fn an_input_transparent_node_says_its_click_would_do_nothing() {
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64), key: "ghost");
+    core::set_input_transparent(#addr_of(n), true);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // The class IS installed — that is the trap, not an accident of the
+    // fixture. Both assertions matter: answering the selector and having
+    // nothing behind it are the two halves that used to be read as one.
+    assert responds(v, #str_ptr("performClick:\0"));
+    assert responds(v, #str_ptr("cplusFacetClickWired\0"));
+    assert click_wired(v) == false;
+}
+
+#[test]
+fn a_node_that_carries_a_click_says_so() {
+    // The ablation for the test above: same class, same question, and the one
+    // difference is whether a handler is on the other end.
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64), key: "solid")
+        .gesture(on_click: h_took());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    assert click_wired(v);
+    // ...and the answer predicts the send, which is the whole contract.
+    IN_CLICKS = 0 as i64;
+    { rt::msg_void_id(v, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert IN_CLICKS == (1 as i64);
+}
+
+#[test]
+fn a_row_armed_for_the_agents_door_says_so_without_a_gesture() {
+    // The OTHER thing `imp_perform_click` can do: a collection's rows are
+    // ordinary views with no table to ask, so the sequence arms each one with
+    // the index and the pick handler. A row armed that way carries no gesture
+    // and is still wired, and this asks the two in the same order the dispatch
+    // does.
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64), key: "row");
+    core::set_input_transparent(#addr_of(n), true);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    assert click_wired(v) == false;
+
+    let doc: *u8 = synth::alloc_init_class({ rt::get_class(#str_ptr("NSView\0")) });
+    input::arm_as_row(v, p, doc, 3 as usize, probe_row_pick);
+    assert click_wired(v);
+
+    // ...and forgetting the row takes the answer with it.
+    input::disarm_as_row(v);
+    assert click_wired(v) == false;
+}
+
+fn probe_row_pick(doc: *u8, index: i64, mods: u64) { return; }
+
 #[test]
 fn a_scroll_that_does_not_cascade_lets_its_children_be_hit() {
     // `CascadeInputTransparent`. The hit test runs TOP-DOWN, so a container

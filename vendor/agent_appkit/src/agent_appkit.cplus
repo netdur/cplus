@@ -1625,7 +1625,7 @@ impl Surface {
                 // So this refuses without sending. If the two ever disagree the
                 // failure is inert — a control unreachable over the wire —
                 // rather than an action nobody was told about.
-                if !view_wired(v, part) {
+                if !performs_click(v) {
                     // ...UNLESS IT IS A ROW. A row cell's label answers
                     // `performClick:` (every facet clickable view does) and is
                     // wired to nothing, because a row's action is the TABLE's
@@ -1635,6 +1635,15 @@ impl Surface {
                     // answers false for anything that is not inside a table,
                     // which leaves every other unwired view refused exactly as
                     // before.
+                    //
+                    // THE ORDER IS THE FIX. This used to send `performClick:`
+                    // whenever the view merely ANSWERED it, and reached the row
+                    // only for a view that did not — so an input-transparent
+                    // row root, which facet arms into a class that answers the
+                    // selector and then finds nothing to do, consumed the click
+                    // and reported `Allowed`. Ask what the send would do first,
+                    // and the row is reached by the one view most likely to be
+                    // addressed as the row.
                     if select_row_of(v) { return surface::Outcome::Allowed; }
                     return surface::Outcome::NoHandler;
                 }
@@ -2131,6 +2140,11 @@ fn view_clickable(v: *u8, part: u32) -> bool {
         }
         option::Option::None => { }
     }
+    // CAPABILITY, not delivery: a view that ANSWERS the selector is a view a
+    // click reaches, whether or not anything is behind it. Whether it is
+    // behind it is `wired`'s question, and the pair is the whole point — a
+    // dead button is `clickable` and not `wired`, and neither flag alone
+    // separates it from a live one.
     if responds_to(v, #str_ptr("performClick:\0")) { return true; }
     return can_select_row_of(v);
 }
@@ -2145,14 +2159,10 @@ fn view_clickable(v: *u8, part: u32) -> bool {
 // button written `ui::button(...).gesture(on_click: h)` is therefore dead, and
 // looks exactly like a live one from every other angle.
 //
-// So the answer is asked of the mechanism that would actually run:
-//
-//   an NSControl            -> does it carry an action to send
-//   a facet clickable view  -> is a primary handler in the slot `performClick:`
-//                              reads (`agent_click_imp` checks the same slot,
-//                              so the reader and the dispatch cannot disagree)
-//   a row cell              -> selection IS the drive, and it always lands
-//   a part                  -> driven through its owner, as in `clickable`
+// So the answer is asked of the mechanism that would actually run — the send
+// itself (`performs_click`, below, which `click` reads too), and failing that
+// the row selection `click` falls back to. A part is driven through its owner,
+// as in `clickable`.
 //
 // This is honest only because facet stopped arming an action on a control with
 // nothing behind it (`controls::arm_control`). Before that, every button
@@ -2168,32 +2178,45 @@ fn view_wired(v: *u8, part: u32) -> bool {
         }
         option::Option::None => { }
     }
-    // NSControl first: `respondsToSelector:@selector(action)` is what separates
-    // a control from a facet view that merely answers `performClick:`.
-    if responds_to(v, #str_ptr("action\0")) {
-        return akx::control_has_action(v);
-    }
-    if responds_to(v, #str_ptr("performClick:\0")) {
-        // ANSWERING THE SELECTOR IS THE ANSWER, with one exception. A framework
-        // swaps in a class that receives input only for a node that HAS input —
-        // facet leaves a plain container as a `FlexFlippedView`, which does not
-        // answer this, and arms it into a `FacetInput00`, which does. So a view
-        // that answers is a view something armed.
-        //
-        // The exception is appkit_ext's own agent-clickable classes: their
-        // `performClick:` reads a handler slot and does nothing when it is
-        // empty, so for those two the slot is the question.
-        //
-        // Asking the slot for EVERY view was the bug this replaces. It reported
-        // `wired=false` for every gesture-bound container — the one correct way
-        // to make a non-control clickable, and the very form the flag was added
-        // to distinguish from a dead button. appkit_ext's agent-click plumbing
-        // is real and facet does not use it; reading it as though facet did is
-        // the "check the old tree first" trap from the other direction.
-        if akx::answers_agent_click_only(v) { return akx::has_agent_click(v); }
-        return true;
-    }
+    if performs_click(v) { return true; }
     return can_select_row_of(v);
+}
+
+// WOULD `performClick:` ON THIS VIEW DO ANYTHING — the one question `click`,
+// `view_wired` and `view_clickable` all ask, written once so the three cannot
+// answer it differently.
+//
+// The selector returns void, so there is no way to tell a completed click from
+// an empty one after the send. It has to be asked first, of the mechanism that
+// would actually run:
+//
+//   an NSControl        -> does it carry an action to send. `respondsToSelector:
+//                          @selector(action)` is what separates a control from a
+//                          view that merely answers `performClick:`.
+//   appkit_ext's two    -> their `performClick:` reads a handler slot and does
+//   agent-click classes    nothing when it is empty, so the slot is the question.
+//   a facet input view  -> it answers `cplusFacetClickWired` for exactly this,
+//                          because `arm` installs the input class for a node
+//                          whose only property is input-TRANSPARENCY as readily
+//                          as for one carrying a click.
+//   anything else       -> answering the selector is the answer.
+//
+// That last line is the rule, and the three above it are its exceptions. Asking
+// a slot of EVERY view was the bug this replaces: it reported `wired=false` for
+// every gesture-bound container — the one correct way to make a non-control
+// clickable, and the very form the flag exists to distinguish from a dead
+// button. Reading a facet view as though it were one of appkit_ext's is the
+// "check the old tree first" trap from the other direction; asking the view
+// itself is neither.
+fn performs_click(v: *u8) -> bool {
+    if is_null(v) { return false; }
+    if !responds_to(v, #str_ptr("performClick:\0")) { return false; }
+    if responds_to(v, #str_ptr("action\0")) { return akx::control_has_action(v); }
+    if akx::answers_agent_click_only(v) { return akx::has_agent_click(v); }
+    if responds_to(v, #str_ptr("cplusFacetClickWired\0")) {
+        return rt::msg_i8(v, rt::sel(#str_ptr("cplusFacetClickWired\0"))) != 0;
+    }
+    return true;
 }
 
 // ---- pointer reachability ---------------------------------------------------

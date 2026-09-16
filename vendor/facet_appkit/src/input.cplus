@@ -1048,6 +1048,46 @@ fn pick_row(v: *u8) -> bool {
     return true;
 }
 
+// The READ-ONLY half of `pick_row` — the same three associations, asked
+// rather than fired. It exists for `imp_click_wired` below, and it is written
+// beside the thing it predicts so the two cannot drift.
+fn can_pick_row(v: *u8) -> bool {
+    if v.is_null() { return false; }
+    let doc: *u8 = { synth::get_associated(v, row_owner_key()) };
+    if doc.is_null() { return false; }
+    let raw: usize = { synth::get_associated(v, row_index_key()) as usize };
+    if raw == (0 as usize) { return false; }
+    let h: fn(*u8, i64, u64) = { synth::get_associated(v, row_pick_key()) as fn(*u8, i64, u64) };
+    return { h } != (0 as fn(*u8, i64, u64));
+}
+
+// IS THERE ANYTHING BEHIND `performClick:` — asked from outside the package.
+//
+// The agent surface clicks by sending `performClick:`, and until this existed
+// it read "the view answers the selector" as "something armed the view", on
+// the reasoning that a framework swaps in an input class only for a node that
+// HAS input. That reasoning is wrong HERE: `arm` also installs this class for
+// a node whose only property is `set_input_transparent(true)` — which is the
+// documented way to keep a row's decoration out of the hit test, so it lands
+// on ordinary rows all the time. The result was a keyed table row reported
+// `wired=true`, clicked `Allowed`, and nothing happening: the surface
+// reporting work it did not do, which is worse than refusing, because an
+// agent has no reason to retry or look elsewhere.
+//
+// So the class answers the question itself. `imp_perform_click` has exactly
+// two things to try, and this asks for both in the same order — a click
+// handler, then a row pick. False means the send would be a no-op, and the
+// caller is then free to reach the row the way a person does (the table's own
+// selection) or to report that nothing is there.
+fn imp_click_wired(self_obj: *u8, cmd: *u8) -> i8 {
+    let n: *core::Node = node_of_view(self_obj);
+    if n.is_not_null() {
+        if gestures::on_click_of(n) != gestures::no_gesture { return 1 as i8; }
+    }
+    if can_pick_row(self_obj) { return 1 as i8; }
+    return 0 as i8;
+}
+
 // Where the drop landed, in the receiving node's own space. The backend stashed
 // it during `performDragOperation:` — see `appkit_ext::drop_set_point`, which
 // converts out of window space while the view that was hit is still in hand.
@@ -1060,6 +1100,11 @@ fn drop_position(sender: *u8) -> option::Option[vocab::Point] {
 
 fn add_input_methods(cls: *u8) {
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("performClick:\0")), imp_perform_click, #str_ptr("v@:@\0"));
+    // ...and the question that goes with it: WOULD that send do anything.
+    // `performClick:` returns void, so a caller cannot tell a completed click
+    // from an empty one after the fact — it has to ask first.
+    add_method_i8_0(cls, rt::sel(#str_ptr("cplusFacetClickWired\0")),
+                    imp_click_wired, #str_ptr("c@:\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseDown:\0")), imp_mouse_down, #str_ptr("v@:@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("mouseUp:\0")), imp_mouse_up, #str_ptr("v@:@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("rightMouseDown:\0")), imp_right_mouse_down, #str_ptr("v@:@\0"));

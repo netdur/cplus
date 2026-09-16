@@ -20,6 +20,7 @@ import "stdlib/option" as option;
 import "stdlib/io" as io;
 import "objc/synthesis" as synth;
 import "facet/facet" as core;
+import "facet/props" as props;
 import "facet/tree" as ftree;
 import "facet/relist" as frelist;
 import "facet/obs_vec" as obs_vec;
@@ -456,6 +457,198 @@ fn an_agent_clickable_view_is_wired_only_with_a_handler() {
 
 static CLICKS_2: i32 = 0;
 fn on_probe_click_2(sender: *u8, ctx: *u8) { CLICKS_2 = CLICKS_2 + 1; return; }
+
+// ---- a view that ANSWERS the click and has nothing behind it -------------------
+//
+// THE SECOND EXCEPTION, and the one that cost a live session. facet arms its
+// input class for a node whose only property is `set_input_transparent(true)`
+// — the documented way to keep a row's decoration out of the hit test, so it
+// lands on ordinary rows all the time. That class answers `performClick:`, and
+// the selector returns void, so "the view answered" was read as "something
+// armed it" and the surface reported `wired=true` / `Allowed` for a click that
+// fired nothing and changed nothing. A false `allowed` is worse than a refusal:
+// an agent has no reason to retry or look elsewhere, and its log records work
+// that never happened.
+//
+// So facet's class answers `cplusFacetClickWired`, and these two pin both ends
+// of it — the refusal when nothing is behind the selector, and the row that IS
+// behind it when the view sits in a table.
+
+#[link_name = "class_addMethod"]
+extern fn probe_add_method_i8_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;
+
+static TRANSPARENT_CLICKS: i32 = 0;
+fn transparent_perform_click(self_obj: *u8, cmd: *u8, sender: *u8) {
+    TRANSPARENT_CLICKS = TRANSPARENT_CLICKS + 1;
+}
+fn transparent_click_wired(self_obj: *u8, cmd: *u8) -> i8 { return 0 as i8; }
+
+// The stand-in for `FacetInput00` over a node that carries input transparency
+// and no click: it answers the selector, and answers the question with NO.
+fn transparent_row_class() -> *u8 {
+    let existing: *u8 = { rt::get_class(#str_ptr("AgentProbeTransparentRow\0")) };
+    if existing.is_not_null() { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")),
+                                              #str_ptr("AgentProbeTransparentRow\0"), 0);
+    let _a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("performClick:\0")),
+                                         transparent_perform_click, #str_ptr("v@:@\0"));
+    let _b: i8 = probe_add_method_i8_0(cls, rt::sel(#str_ptr("cplusFacetClickWired\0")),
+                                       transparent_click_wired, #str_ptr("c@:\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+#[test]
+fn a_view_that_answers_the_click_with_nothing_behind_it_is_refused_not_reported_allowed() {
+    // NOT in a table, so there is no row to fall back to: the only honest
+    // answers are `wired=false` and a refusal that does not send.
+    let win = fixture_window(300.0, 200.0);
+    let content = content_of(win);
+
+    TRANSPARENT_CLICKS = 0;
+    let deco: *u8 = synth::alloc_init_class(transparent_row_class());
+    { rt::msg_void_rect(deco, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 }) };
+    content.add_subview(ak::View::from_raw(deco));
+    agent::set_agent_id(deco, "deco");
+
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    var saw: bool = false;
+    var i: usize = 0;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                if { (*n).id.view() } == "deco" {
+                    saw = true;
+                    // CLICKABLE and NOT WIRED — the same pair a dead button
+                    // reports, and for the same reason: the click would land
+                    // on it, and there is nothing on the other end.
+                    assert { (*n).clickable };
+                    assert { (*n).wired } == false;
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    assert saw;
+
+    assert surface::outcome_eq(s.click(auth::operator(), "deco"), surface::Outcome::NoHandler);
+    // ...and it refused WITHOUT SENDING. A verb that performs the action and
+    // reports it did not is untrustworthy in both directions.
+    assert TRANSPARENT_CLICKS == 0;
+}
+
+// ---- ...and the same view inside a table IS the row --------------------------
+
+static ROW_SELECTIONS: i32 = 0;
+fn tds_number_of_rows(self_obj: *u8, cmd: *u8, tv: *u8) -> i64 { return 2 as i64; }
+fn tds_selection_did_change(self_obj: *u8, cmd: *u8, note: *u8) {
+    ROW_SELECTIONS = ROW_SELECTIONS + 1;
+}
+
+// The row's own view, built by the table the way a backend builds one — and
+// tagged here, because a row is not a facet node and its agent id rides the
+// cell rather than a key.
+fn tds_view_for_row(self_obj: *u8, cmd: *u8, tv: *u8, col: *u8, row: i64) -> *u8 {
+    let v: *u8 = synth::alloc_init_class(transparent_row_class());
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 20.0 }) };
+    if row == (0 as i64) { agent::set_agent_id(v, "library:model:0"); }
+    else { agent::set_agent_id(v, "library:model:1"); }
+    return v;
+}
+
+#[link_name = "class_addMethod"]
+extern fn probe_add_method_id_2id_i64(cls: *u8, sel: *u8,
+                                      imp: fn(*u8, *u8, *u8, *u8, i64) -> *u8,
+                                      types: *u8) -> i8;
+
+fn table_source_class() -> *u8 {
+    let existing: *u8 = { rt::get_class(#str_ptr("AgentProbeTableSource\0")) };
+    if existing.is_not_null() { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
+                                              #str_ptr("AgentProbeTableSource\0"), 0);
+    let _a: i8 = synth::add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")),
+                                           tds_number_of_rows, #str_ptr("q@:@\0"));
+    let _b: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("tableViewSelectionDidChange:\0")),
+                                         tds_selection_did_change, #str_ptr("v@:@\0"));
+    let _c: i8 = probe_add_method_id_2id_i64(
+        cls, rt::sel(#str_ptr("tableView:viewForTableColumn:row:\0")),
+        tds_view_for_row, #str_ptr("@@:@@q\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+#[test]
+fn an_input_transparent_row_root_selects_its_row_rather_than_swallowing_the_click() {
+    // THE REPORTED BUG, end to end. A keyed row root made input-transparent
+    // inside a selectable list: `describe_ui` said clickable and wired, `click`
+    // said `Allowed`, and the selection never moved.
+    //
+    // The table is realised the way facet_appkit's own suite realises one —
+    // a scroll view, a column with a width, and `viewAtColumn:row:
+    // makeIfNecessary:`, which is what a headless table has instead of drawing.
+    let win = fixture_window(300.0, 200.0);
+    let content = content_of(win);
+
+    let tv: *u8 = synth::alloc_init_class({ rt::get_class(#str_ptr("NSTableView\0")) });
+    { rt::msg_void_rect(tv, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 }) };
+    let col: *u8 = synth::alloc_init_class({ rt::get_class(#str_ptr("NSTableColumn\0")) });
+    { rt::msg_void_f64(col, rt::sel(#str_ptr("setWidth:\0")), 200.0f64) };
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("addTableColumn:\0")), col) };
+    { rt::msg_void_f64(tv, rt::sel(#str_ptr("setRowHeight:\0")), 20.0f64) };
+
+    let src: *u8 = synth::alloc_init_class(table_source_class());
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("setDataSource:\0")), src) };
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("setDelegate:\0")), src) };
+
+    let scroll: *u8 = synth::alloc_init_class({ rt::get_class(#str_ptr("NSScrollView\0")) });
+    { rt::msg_void_rect(scroll, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 }) };
+    { rt::msg_void_id(scroll, rt::sel(#str_ptr("setDocumentView:\0")), tv) };
+    content.add_subview(ak::View::from_raw(scroll));
+
+    TRANSPARENT_CLICKS = 0;
+    ROW_SELECTIONS = 0;
+    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
+    let cell: *u8 = { rt::msg_id_i64_i64_i8(tv,
+                          rt::sel(#str_ptr("viewAtColumn:row:makeIfNecessary:\0")),
+                          0 as i64, 0 as i64, 1 as i8) };
+    assert cell.is_not_null();
+
+    // The facet node is a cell-built list: the control's kind, no children —
+    // which is what makes the agent walk descend into the cells the backend
+    // owns and find the row at all.
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    core::set_view(#addr_of(root), content_of(win).raw(), noop_release);
+    var list_node: core::Node = core::node_with("library:models", props::K_LIST,
+                                                0 as *u8, noop_release);
+    core::set_view(#addr_of(list_node), tv, noop_release);
+    let _a: status::Status = root.add_child(list_node);
+    mount_tree(#addr_of(root), win.raw());
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    assert has_id(nodes, "library:model:0");
+
+    // Nothing is selected yet — a table with no selection answers -1.
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectedRow\0"))) } == (0 as i64) - (1 as i64);
+
+    assert surface::outcome_eq(s.click(auth::operator(), "library:model:0"),
+                               surface::Outcome::Allowed);
+    // `Allowed` HAS TO MEAN THE STATE MOVED. This is the assertion the bug was
+    // about: the outcome was already `Allowed` before the fix, and the two
+    // below were not.
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectedRow\0"))) } == (0 as i64);
+    assert ROW_SELECTIONS == 1;
+    // ...and the empty `performClick:` was never sent.
+    assert TRANSPARENT_CLICKS == 0;
+}
 
 // ---- the disclosure part -----------------------------------------------------
 //
