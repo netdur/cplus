@@ -34,6 +34,7 @@
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
@@ -439,8 +440,15 @@ fn classify(view: *u8) -> identity::Role {
     if is_kind(view, #str_ptr("UITableView\0")) { return identity::Role::List; }
     if is_kind(view, #str_ptr("UICollectionView\0")) { return identity::Role::List; }
     if is_kind(view, #str_ptr("UISwitch\0")) { return identity::Role::Button; }
-    if is_kind(view, #str_ptr("UISlider\0")) { return identity::Role::Button; }
     if is_kind(view, #str_ptr("UISegmentedControl\0")) { return identity::Role::Button; }
+    // A CONTROL WHOSE CONTENT IS A NUMBER. A slider was a `Button` here and a
+    // `Group` on AppKit, and neither answered its VALUE: a control an agent can
+    // write and cannot read back. `node_text` has the other half.
+    if is_kind(view, #str_ptr("UISlider\0"))
+        || is_kind(view, #str_ptr("UIStepper\0"))
+        || is_kind(view, #str_ptr("UIProgressView\0")) {
+        return identity::Role::Value;
+    }
     return identity::Role::Group;
 }
 
@@ -464,10 +472,35 @@ fn resolve_role(view: *u8) -> identity::Role {
 // a reader knows to expect a value.
 fn node_content_name(view: *u8, role: identity::Role) -> text::Text {
     if is_secure_by_class(view) && !has_explicit_policy(view) { return text::new(); }
+    // A VALUE IS NOT A NAME — the number goes in `text`, where a reader expects
+    // one, and a name that moved with the knob would be worse than none.
+    if identity::role_eq(role, identity::Role::Value) { return text::new(); }
     return node_text(view, role);
 }
 
 fn node_text(view: *u8, role: identity::Role) -> text::Text {
+    // A VALUE CONTROL ANSWERS ITS NUMBER. UIKit spells it three ways and none
+    // of them is `stringValue`: a slider and a stepper answer `value` (float
+    // and double respectively), a progress view answers `progress`. The number
+    // is bare — a slider is whatever range the app gave it, so the range is
+    // asked for by name on the inspector's typed surface.
+    if identity::role_eq(role, identity::Role::Value) {
+        if responds_to(view, #str_ptr("progress\0")) {
+            let p: f32 = { rt::msg_f32(view, rt::sel(#str_ptr("progress\0"))) };
+            let d: f64 = p as f64;
+            return text::from_str("${d}");
+        }
+        if is_kind(view, #str_ptr("UISlider\0")) {
+            let v: f32 = { rt::msg_f32(view, rt::sel(#str_ptr("value\0"))) };
+            let d: f64 = v as f64;
+            return text::from_str("${d}");
+        }
+        if responds_to(view, #str_ptr("value\0")) {
+            let d: f64 = { rt::msg_f64(view, rt::sel(#str_ptr("value\0"))) };
+            return text::from_str("${d}");
+        }
+        return text::new();
+    }
     if identity::role_eq(role, identity::Role::Button) {
         // A UIButton's title is per-state; state 0 is Normal, which is the one
         // a person reads.
@@ -765,17 +798,39 @@ fn walk_realised_rows(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
 // Walk a window into a Surface. The window is the root node (role Window); its
 // ROOT VIEW CONTROLLER's view is the subtree — a UIWindow has no `contentView`,
 // which is the one structural difference from the AppKit walk.
-fn open(window: *u8) -> Surface {
-    var reg: identity::Registry = identity::new();
-    var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
-    // NodeId 0 is the synthetic app root — no backing view.
-    views.append(ViewRef { p: null() });
-
-    if is_null(window) {
-        return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+// THE WINDOW'S OWN ADDRESS: the id pinned on the UIWindow, then the NAME THE
+// APP OPENED IT UNDER, then nothing (an auto `app/window#i`). The middle one is
+// what puts a window LAYER in the answer when an app has more than one — a
+// node's window is then its parent chain, and a verb can name a window the way
+// it names anything else.
+fn window_id_of(window: *u8, roots: vec::Vec[*core::Node]) -> option::Option[text::Text] {
+    match get_agent_id(window) {
+        option::Option[text::Text]::Some(t) => { return option::Option[text::Text]::Some(t); }
+        option::Option[text::Text]::None => { }
     }
+    match { roots.at(0 as usize) } {
+        option::Option[*core::Node]::Some(r) => {
+            if is_null(r as *u8) { return option::Option[text::Text]::None; }
+            let k: str = app::window_key_of(r);
+            if k == "" { return option::Option[text::Text]::None; }
+            return option::Option[text::Text]::Some(text::from_str(k));
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return option::Option[text::Text]::None;
+}
 
-    let win_reg: usize = match get_agent_id(window) {
+// One window into an already-open registry. Split out of `open` so several
+// windows go into ONE surface — see `open_app`.
+fn walk_window(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window: *u8) {
+    if is_null(window) { return; }
+    // EVERY root in this window, not the view hierarchy. A presented sheet and
+    // a pushed screen are separate facet trees that share one UIWindow — macOS
+    // gives each its own window and gets this for free — so `push_screen`
+    // registers them and this walks all of them. An agent that saw only the
+    // primary root would go blind the moment an alert came up.
+    var roots: vec::Vec[*core::Node] = app::window_roots_for_native(window);
+    let win_reg: usize = match window_id_of(window, roots) {
         option::Option[text::Text]::Some(t) =>
             reg.add_child(reg.root(), option::Option[str]::Some({ t.view() }),
                           identity::Role::Window),
@@ -785,12 +840,6 @@ fn open(window: *u8) -> Surface {
     let _rw: *u8 = rt::retain(window);
     views.append(ViewRef { p: window });
 
-    // EVERY root in this window, not the view hierarchy. A presented sheet and
-    // a pushed screen are separate facet trees that share one UIWindow — macOS
-    // gives each its own window and gets this for free — so `push_screen`
-    // registers them and this walks all of them. An agent that saw only the
-    // primary root would go blind the moment an alert came up.
-    var roots: vec::Vec[*core::Node] = app::window_roots_for_native(window);
     var ri: usize = 0 as usize;
     while ri < { roots.count() } {
         match { roots.at_ptr(ri) } {
@@ -802,8 +851,61 @@ fn open(window: *u8) -> Surface {
         }
         ri = ri +% (1 as usize);
     }
+    return;
+}
 
+fn open(window: *u8) -> Surface {
+    var reg: identity::Registry = identity::new();
+    var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
+    // NodeId 0 is the synthetic app root — no backing view.
+    views.append(ViewRef { p: null() });
+    walk_window(reg, views, window);
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+}
+
+// EVERY WINDOW THE APP HAS OPEN, in OPEN ORDER, in one surface — the same
+// answer agent_appkit gives, for the same reason.
+//
+// A surface that holds ONE window shows one at a time and shows NOTHING once
+// that one closes: the cached handle yields nothing, the early return keeps the
+// emptiness, and the agent reads a single node named `app` for the rest of the
+// process while the user has a working app in front of them. facet keeps the
+// window list, so the answer is to read it every pass.
+//
+// ONE WALK PER NATIVE WINDOW. iOS is the platform where this matters: a pushed
+// screen and a presented sheet are separate roots inside the SAME UIWindow, so
+// the handles repeat and `walk_window` already takes all of a handle's roots.
+fn open_app() -> Surface {
+    var reg: identity::Registry = identity::new();
+    var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
+    views.append(ViewRef { p: null() });
+    var seen: vec::Vec[usize] = vec::new::[usize]();
+    let n: usize = app::window_count();
+    var i: usize = 0 as usize;
+    while i < n {
+        let root: *core::Node = app::window_root(i);
+        if !is_null(root as *u8) {
+            let win: *u8 = app::window_native(root);
+            if !is_null(win) && !first_seen(seen, win) { walk_window(reg, views, win); }
+        }
+        i = i +% (1 as usize);
+    }
+    return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+}
+
+// Have we walked this handle already? Records it when not.
+fn first_seen(ref seen: vec::Vec[usize], p: *u8) -> bool {
+    let key: usize = { #addr(p) };
+    var i: usize = 0 as usize;
+    while i < { seen.count() } {
+        match { seen.at(i) } {
+            option::Option[usize]::Some(k) => { if k == key { return true; } }
+            option::Option[usize]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _s: status::Status = { seen.append(key) };
+    return false;
 }
 
 impl Surface {
@@ -1160,16 +1262,34 @@ static REFRESH_METHOD_REGISTERED: bool = false;
 #[keeps(nothing)]
 fn refresh_in_place(p: *u8) {
     let s: *Surface = p as *Surface;
-    // NodeId 0 is the synthetic app root; 1 is the window the surface was
-    // opened on, and re-opening in place is what keeps the serve worker's
-    // pointer valid.
-    let win: *u8 = { (*s).view_of(1 as usize) };
-    if is_null(win) { return; }
+    // EVERY WINDOW, READ FRESH. This used to re-open from the window cached at
+    // NodeId 1 — so a second window took the surface over and a CLOSED one left
+    // it empty for the rest of the process. facet's own window list is never
+    // stale; a cached handle is.
+    //
     // A UITableView realises its cells inside its own `layoutSubviews`, which
     // UIKit runs on the turn after the table is given a size or a `reloadData`.
     // Without this the walk can catch a list between the two and answer a table
     // with no rows in it — the AppKit refresh needs no such line because an
     // NSTableView's rows are made by the same pass that sizes it.
+    let n: usize = app::window_count();
+    if n > (0 as usize) {
+        var i: usize = 0 as usize;
+        while i < n {
+            let root: *core::Node = app::window_root(i);
+            if !is_null(root as *u8) {
+                let w: *u8 = app::window_native(root);
+                if !is_null(w) { rt::msg_void(w, rt::sel(#str_ptr("layoutIfNeeded\0"))); }
+            }
+            i = i +% (1 as usize);
+        }
+        { *s = open_app() };
+        return;
+    }
+    // A host driving a window facet does not know about: the cached one is all
+    // there is, and unchanged.
+    let win: *u8 = { (*s).view_of(1 as usize) };
+    if is_null(win) { return; }
     { rt::msg_void(win, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
     { *s = open(win) };
     return;
@@ -1251,6 +1371,15 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     if { (*n).readable } {
                         if !is_null(live) { shown = node_text(live, { (*n).role }); }
                     }
+                }
+                // A VALUE CONTROL SHOWS ITS NUMBER HERE TOO, read LIVE. In the
+                // lean view the name is the text, and a value is deliberately
+                // not a name — so a slider came out of the curated view with an
+                // empty string, which is the view an agent plans from. Read now
+                // rather than stored, for the same reason the gated arm above
+                // reads now: the knob moves between walks.
+                if identity::role_eq({ (*n).role }, identity::Role::Value) {
+                    if !is_null(live) { shown = node_text(live, { (*n).role }); }
                 }
                 out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),

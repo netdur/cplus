@@ -60,6 +60,25 @@ enum Role {
     List,
     Group,
     Window,
+    // A CONTROL WHOSE CONTENT IS A NUMBER — a slider, a stepper, a progress
+    // bar. Added 2026-09-17, and it is the case the comment above meant by
+    // "grows deliberately as real widgets land".
+    //
+    // These fell to `Group` — scenery — on every backend that classifies by
+    // native type, so an agent was told a slider it could WRITE (set_text
+    // moves the knob and fires the app's action) was a structural box, and
+    // asked for its text it got "" with `readable: true`: success, for a value
+    // that was never returned. There was no way to tell "this slider is at 0"
+    // from "sliders do not answer this verb".
+    //
+    // WHY ONE ROLE AND NOT ONE PER WIDGET. A role is what an agent may DO with
+    // a node, not what the widget is called — `Button` already covers a
+    // checkbox, a radio and a switch. Every value control answers the same two
+    // questions ("what is it now", "set it to this"), and the widget's own name
+    // is `describe_tree`'s answer, which says `"kind": "slider"` already.
+    // `minimum` / `maximum` / `value` on the inspector surface are the typed
+    // spelling; this is the coarse one the planning view carries.
+    Value,
 }
 
 // The stable tag a role contributes to an auto-id path segment.
@@ -71,6 +90,7 @@ fn role_tag(r: Role) -> str {
         Role::List => "list",
         Role::Group => "group",
         Role::Window => "window",
+        Role::Value => "value",
     };
 }
 
@@ -82,6 +102,7 @@ fn role_index(r: Role) -> i32 {
         Role::List => 3,
         Role::Group => 4,
         Role::Window => 5,
+        Role::Value => 6,
     };
 }
 
@@ -99,6 +120,7 @@ fn role_from_index(i: u32) -> Role {
     if i == 3 { return Role::List; }
     if i == 4 { return Role::Group; }
     if i == 5 { return Role::Window; }
+    if i == 6 { return Role::Value; }
     return Role::Group;
 }
 
@@ -135,6 +157,11 @@ fn drive_for_role(r: Role) -> u32 {
         Role::List => drive_none(),
         Role::Group => drive_none(),
         Role::Window => drive_none(),
+        // WRITTEN AS TEXT, which is what it already was: `set_text "0.75"` on a
+        // slider parses the string and moves the knob, and this is the
+        // declaration that says so rather than leaving it to a classify that
+        // called the control scenery.
+        Role::Value => drive_text(),
     };
 }
 

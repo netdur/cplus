@@ -828,6 +828,26 @@ fn table() -> vec::Vec[Descriptor] {
         "The button's label."));
     let _c2: status::Status = v.append(d("on", "bool", "", "checkbox toggle", "",
         "Whether the control is switched on."));
+    // ---- what it is SET TO ----
+    //
+    // A VALUE CONTROL CAN BE WRITTEN AND COULD NOT BE READ. `set_text "0.75"`
+    // on a slider has moved the knob and fired the app's handler since the
+    // write half was built; nothing answered what it was now. An agent could
+    // move a control it could not observe, and the only way to check a write
+    // was a debugger — which a simulator or a device does not offer at all.
+    //
+    // THE RANGE IS PART OF THE ANSWER, not decoration. A bare number is
+    // ambiguous in the one way that matters: iris's card sheet has a 0..1
+    // slider beside a 0..100 percent field, so `0.75` and `75` are both
+    // plausible writes and only one is right. Reading `minimum` and `maximum`
+    // is how a caller knows which, and there is nothing else on the wire that
+    // says it.
+    let _v0: status::Status = v.append(d("value", "number", "", "slider stepper progress", "",
+        "What the control is set to, in the control's own units — read `minimum` and `maximum` to know the scale. A progress bar's is its fraction, 0..1, and it has no minimum or maximum of its own."));
+    let _v1: status::Status = v.append(d("minimum", "number", "", "slider stepper", "",
+        "The lowest value the control takes."));
+    let _v2: status::Status = v.append(d("maximum", "number", "", "slider stepper", "",
+        "The highest value the control takes."));
     let _c3: status::Status = v.append(d("font_size", "number", "points", "label button text_field text_area", "",
         "Point size of the control's text."));
     let _c4: status::Status = v.append(d("font_weight", "enum", "",

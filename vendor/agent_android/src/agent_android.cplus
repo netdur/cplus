@@ -57,7 +57,12 @@ fn role_of(kind: u32) -> identity::Role {
     if kind == props::K_CHECKBOX { return identity::Role::Button; }
     if kind == props::K_TOGGLE { return identity::Role::Button; }
     if kind == props::K_RADIO { return identity::Role::Button; }
-    if kind == props::K_STEPPER { return identity::Role::Button; }
+    // A CONTROL WHOSE CONTENT IS A NUMBER. A stepper read as a `Button` and a
+    // slider as an `Input` here, and neither answered its VALUE — a control an
+    // agent can write and could not read back. `text_of` has the other half.
+    if kind == props::K_STEPPER { return identity::Role::Value; }
+    if kind == props::K_SLIDER { return identity::Role::Value; }
+    if kind == props::K_PROGRESS { return identity::Role::Value; }
     // A date picker's field OPENS a picker, which is a button's affordance.
     if kind == props::K_DATE_PICKER { return identity::Role::Button; }
     if kind == props::K_LABEL { return identity::Role::Text; }
@@ -65,7 +70,6 @@ fn role_of(kind: u32) -> identity::Role {
     if kind == props::K_TEXT_FIELD { return identity::Role::Input; }
     if kind == props::K_TEXT_AREA { return identity::Role::Input; }
     if kind == props::K_SEARCH_FIELD { return identity::Role::Input; }
-    if kind == props::K_SLIDER { return identity::Role::Input; }
     if kind == props::K_LIST { return identity::Role::List; }
     if kind == props::K_COLLECTION { return identity::Role::List; }
     if kind == props::K_TABLE { return identity::Role::List; }
@@ -97,6 +101,24 @@ fn text_of(n: *core::Node) -> text::Text {
     if kind == props::K_RADIO {
         let p: *props::RadioProps = raw as *props::RadioProps;
         return { (*p).text.clone() };
+    }
+    // A VALUE CONTROL SAYS ITS NUMBER. Bare — a slider is whatever range the
+    // application gave it, so the range is asked for by name on the inspector's
+    // typed surface (`minimum` / `maximum`) rather than guessed from the value.
+    if kind == props::K_SLIDER {
+        let p: *props::SliderProps = raw as *props::SliderProps;
+        let d: f64 = { (*p).value };
+        return text::from_str("${d}");
+    }
+    if kind == props::K_STEPPER {
+        let p: *props::StepperProps = raw as *props::StepperProps;
+        let d: f64 = { (*p).value };
+        return text::from_str("${d}");
+    }
+    if kind == props::K_PROGRESS {
+        let p: *props::ProgressProps = raw as *props::ProgressProps;
+        let d: f64 = { (*p).progress };
+        return text::from_str("${d}");
     }
     let iv: *props::InputViewProps = controls::input_view_of(n);
     if iv != (0 as *props::InputViewProps) {

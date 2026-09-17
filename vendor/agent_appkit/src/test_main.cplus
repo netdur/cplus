@@ -13,6 +13,7 @@ import "appkit/appkit_ext" as akx;   // for new_drag_view: the mouseDown: regres
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/auth" as auth;
+import "agent_core/backend" as mcpb;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "stdlib/text" as text;
@@ -215,6 +216,153 @@ fn open_walks_titlebar_accessory_controls() {
         i = i +% 1;
     }
     assert found;   // the accessory's control was NOT reached before the fix
+}
+
+// ---- every window the app has open --------------------------------------------
+//
+// The surface held ONE window and re-opened from it on every verb. An app with
+// two registered windows — the shape facet's window tier asks for since
+// 2026-09-13 — met two defects in order: opening the second HID the first (its
+// nodes were not in the answer at all, while the user still had it on screen),
+// and CLOSING the second left the surface holding a dead window, `open`
+// yielding nothing, and the agent reading a single node named `app` for the
+// rest of the process. A driver cannot tell that from an app that has not
+// finished launching.
+
+// Two windows, each with its own tree and its own name, both registered and
+// both mounted — `mount_tree` resets, so the second is added by hand.
+fn mount_two(root_a: *core::Node, win_a: *u8, key_a: str,
+             root_b: *core::Node, win_b: *u8, key_b: str) {
+    app::reset_default_for_tests();
+    app::open_window(root_a, key: key_a);
+    app::set_window_native(root_a, win_a);
+    app::open_window(root_b, key: key_b);
+    app::set_window_native(root_b, win_b);
+}
+
+#[test]
+fn both_open_windows_are_in_one_answer() {
+    let win_a = fixture_window(300.0, 200.0);
+    let a = add_button(content_of(win_a), "go");
+    agent::set_agent_id(a.as_view().raw(), "main:go");
+    let win_b = fixture_window(300.0, 200.0);
+    let b = add_button(content_of(win_b), "done");
+    agent::set_agent_id(b.as_view().raw(), "settings:done");
+
+    var root_a: core::Node = mirror(content_of(win_a).raw());
+    var root_b: core::Node = mirror(content_of(win_b).raw());
+    mount_two(#addr_of(root_a), win_a.raw(), "main",
+              #addr_of(root_b), win_b.raw(), "settings");
+
+    var s: agent::Surface = agent::open_app();
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    // Both windows' controls, in ONE answer. Before this the second window's
+    // walk replaced the first's.
+    assert has_node(nodes, "main:go");
+    assert has_node(nodes, "settings:done");
+    // ...AND THE WINDOW LAYER IS IN IT. Each window is a node addressed by the
+    // name the app opened it under, so a node's window is its parent chain.
+    match node_named(nodes, "settings") {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Window);
+        }
+        option::Option::None => { assert false; }
+    }
+    assert has_node(nodes, "main");
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn closing_the_second_window_leaves_the_first_one_answering() {
+    // THE MEASURED FAILURE, step for step: open a second window, close it, and
+    // ask again. This used to answer ONE node — `app` — for the rest of the
+    // process, while the first window was open, visible and holding the user's
+    // work.
+    let win_a = fixture_window(300.0, 200.0);
+    let a = add_button(content_of(win_a), "go");
+    agent::set_agent_id(a.as_view().raw(), "main:go");
+    let win_b = fixture_window(300.0, 200.0);
+    let b = add_button(content_of(win_b), "done");
+    agent::set_agent_id(b.as_view().raw(), "settings:done");
+
+    var root_a: core::Node = mirror(content_of(win_a).raw());
+    var root_b: core::Node = mirror(content_of(win_b).raw());
+    mount_two(#addr_of(root_a), win_a.raw(), "main",
+              #addr_of(root_b), win_b.raw(), "settings");
+
+    var s: agent::Surface = agent::open_app();
+    let sp: *u8 = #addr_of(s) as *u8;
+    // THE SERVING PATH, which refreshes before it answers — the one every verb
+    // takes and the one that went blind.
+    let before: vec::Vec[mcpb::UiNode] = agent::mcp_describe(sp, auth::operator());
+    assert has_mcp(before, "main:go");
+    assert has_mcp(before, "settings:done");
+
+    app::close_window(#addr_of(root_b));
+    let after: vec::Vec[mcpb::UiNode] = agent::mcp_describe(sp, auth::operator());
+    assert has_mcp(after, "main:go");
+    // The closed window's nodes are gone, which is correct — and they are the
+    // ONLY thing that went.
+    assert has_mcp(after, "settings:done") == false;
+    assert after.count() > (1 as usize);
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn a_verb_reaches_a_node_in_either_window() {
+    // WHICH WINDOW A VERB MEANS is not a question any more: ids resolve in ONE
+    // registry across every window, so a verb names a node and the node knows
+    // its window. Before, it was "the last window opened", decided by a cache
+    // rather than stated — and a click on the other window's button answered
+    // NotFound.
+    CLICKS = 0;
+    let win_a = fixture_window(300.0, 200.0);
+    let a = add_button(content_of(win_a), "go");
+    agent::set_agent_id(a.as_view().raw(), "main:go");
+    let win_b = fixture_window(300.0, 200.0);
+    let b = add_button(content_of(win_b), "done");
+    agent::set_agent_id(b.as_view().raw(), "settings:done");
+
+    var root_a: core::Node = mirror(content_of(win_a).raw());
+    var root_b: core::Node = mirror(content_of(win_b).raw());
+    mount_two(#addr_of(root_a), win_a.raw(), "main",
+              #addr_of(root_b), win_b.raw(), "settings");
+
+    var s: agent::Surface = agent::open_app();
+    // The FIRST window's button, with the second one open over it.
+    assert surface::outcome_eq(s.click(auth::operator(), "main:go"),
+                               surface::Outcome::Allowed);
+    assert CLICKS == 1;
+    assert surface::outcome_eq(s.click(auth::operator(), "settings:done"),
+                               surface::Outcome::Allowed);
+    assert CLICKS == 2;
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn a_window_nobody_named_keeps_its_positional_address() {
+    // THE NEGATIVE HALF, and the compatibility one: a window opened with no
+    // key is addressed the way it always was — `app/window#0`, auto-generated
+    // and NOT exposed — so every app that never named a window sees exactly
+    // what it saw before.
+    let win = fixture_window(300.0, 200.0);
+    let b = add_button(content_of(win), "go");
+    agent::set_agent_id(b.as_view().raw(), "go-btn");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+
+    var s: agent::Surface = agent::open_app();
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    match node_named(nodes, "app/window#0") {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Window);
+            // Auto-id, so not tagged: it stays out of the curated view.
+            assert { (*n).actionable } == false;
+        }
+        option::Option::None => { assert false; }
+    }
+    assert has_node(nodes, "go-btn");
+    app::reset_default_for_tests();
 }
 
 #[test]
@@ -912,6 +1060,117 @@ fn the_caret_can_be_placed_and_is_counted_in_bytes() {
     let r2: rt::Range = tv.as_text().selected_range();
     assert { r2.location } == 2;
     assert { r2.length } == 1;
+}
+
+// ---- a value control answers what it is set to --------------------------------
+//
+// `set_text "0.75"` on a slider has moved the knob and fired the app's action
+// since the write half was built. The READ half did not exist: `describe_ui`
+// called the node a "group" with text "", and `read_text` answered ""
+// with `readable: true` — success, for a value it never returned. There was no
+// way to tell "this slider is at 0" from "sliders do not answer this verb", and
+// verifying a write meant lldb over every NSSlider.
+
+fn add_slider(content: ak::View, at: f64) -> ak::Slider {
+    let sl = ak::Slider::new_with_frame(rt::Rect { x: 10.0, y: 10.0, w: 160.0, h: 24.0 });
+    sl.set_min_value(0.0);
+    sl.set_max_value(1.0);
+    sl.as_control().set_double_value(at);
+    content.add_subview(sl.as_view());
+    return sl;
+}
+
+#[test]
+fn a_slider_is_a_value_control_and_reads_back_its_number() {
+    let win = fixture_window(300.0, 200.0);
+    let content = content_of(win);
+    let sl = add_slider(content, 0.75);
+    agent::set_agent_id(sl.as_view().raw(), "progress");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    match node_named(nodes, "progress") {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            // Was Role::Group — scenery — for a control an agent can drive.
+            assert identity::role_eq({ (*n).role }, identity::Role::Value);
+            // Was "". The number is the control's own string, so it is the one
+            // the control would print.
+            assert { (*n).text.view() } == "0.75";
+            // A VALUE IS NOT A NAME: the number belongs in `text`, and a name
+            // that changed every time the knob moved would be worse than none.
+            assert { (*n).name.view() } == "";
+        }
+        option::Option::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_written_slider_reads_back_what_was_written() {
+    // The pair the report was filed on: write, then read, with no debugger.
+    let win = fixture_window(300.0, 200.0);
+    let content = content_of(win);
+    let sl = add_slider(content, 0.0);
+    agent::set_agent_id(sl.as_view().raw(), "progress");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    assert surface::outcome_eq(
+        s.set_text(auth::operator(), "progress", "0.75", s.text_version("progress")),
+        surface::Outcome::Allowed);
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    match node_named(nodes, "progress") {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).text.view() } == "0.75";
+            // AND THE KNOB REALLY MOVED — the widget, not the surface's copy.
+            assert sl.as_control().double_value() > 0.7;
+        }
+        option::Option::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_stepper_and_a_progress_indicator_answer_too() {
+    // Not slider-only: the role is what an agent may DO with the node, and
+    // every value control answers the same two questions. A progress indicator
+    // is the one that is NOT an NSControl — it answers `doubleValue` and no
+    // `stringValue`, which is the arm that would silently read "" if the
+    // fallback were missing.
+    let win = fixture_window(300.0, 200.0);
+    let content = content_of(win);
+    let st = ak::Stepper::new_with_frame(rt::Rect { x: 10.0, y: 40.0, w: 20.0, h: 28.0 });
+    st.set_min_value(0.0);
+    st.set_max_value(10.0);
+    st.as_control().set_double_value(3.0);
+    content.add_subview(st.as_view());
+    agent::set_agent_id(st.as_view().raw(), "count");
+
+    let pr = ak::ProgressIndicator::new_with_frame(rt::Rect { x: 10.0, y: 80.0, w: 160.0, h: 20.0 });
+    pr.set_indeterminate(false);
+    pr.set_min_value(0.0);
+    pr.set_max_value(100.0);
+    pr.set_double_value(40.0);
+    content.add_subview(pr.as_view());
+    agent::set_agent_id(pr.as_view().raw(), "bar");
+
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    match node_named(nodes, "count") {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Value);
+            assert { (*n).text.view() } == "3";
+        }
+        option::Option::None => { assert false; }
+    }
+    match node_named(nodes, "bar") {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Value);
+            assert { (*n).text.view() } == "40";
+        }
+        option::Option::None => { assert false; }
+    }
 }
 
 #[test]
@@ -2056,6 +2315,36 @@ fn payment_form(content: ak::View) -> *u8 {
     // The three digits. Private, and the app will never mint the bit.
     agent::set_agent_policy(cvc.as_view().raw(), identity::policy_private());
     return card;
+}
+
+// Present-or-not, as a bool: `Option` has no `is_none`, and a `match` per
+// assertion buries what is being asserted.
+fn has_node(nodes: vec::Vec[agent::AppKitNode], id: str) -> bool {
+    return match node_named(nodes, id) {
+        option::Option[*agent::AppKitNode]::Some(_n) => true,
+        option::Option[*agent::AppKitNode]::None => false,
+    };
+}
+
+fn has_mcp(nodes: vec::Vec[mcpb::UiNode], id: str) -> bool {
+    return match mcp_named(nodes, id) {
+        option::Option[*mcpb::UiNode]::Some(_n) => true,
+        option::Option[*mcpb::UiNode]::None => false,
+    };
+}
+
+fn mcp_named(nodes: vec::Vec[mcpb::UiNode], id: str) -> option::Option[*mcpb::UiNode] {
+    var i: usize = 0;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*mcpb::UiNode]::Some(n) => {
+                if { (*n).id.view() } == id { return option::Option[*mcpb::UiNode]::Some(n); }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return option::Option[*mcpb::UiNode]::None;
 }
 
 fn node_named(nodes: vec::Vec[agent::AppKitNode], id: str) -> option::Option[*agent::AppKitNode] {

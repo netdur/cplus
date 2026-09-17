@@ -134,9 +134,24 @@ fn pin_policy(view: *u8, a: vocab::Agent) {
     agent_appkit::set_agent_policy(view, policy_for(a));
 }
 
-// Walk `win`'s live view tree into the surface, replacing the previous
-// screen's (its retained views are released by the drop).
+// A window came up (or a screen mounted in one): re-walk the app into the
+// surface, replacing what was there — its retained views are released by the
+// drop.
+//
+// EVERY WINDOW, NOT `win`. The surface used to be opened on the window that
+// had just appeared, which meant it held exactly one: opening Preferences hid
+// the workspace from the agent while the user still had it, and closing
+// Preferences left the surface pointing at a window that was gone, answering a
+// single node named `app` for the rest of the process. `win` is now only the
+// signal that something changed; facet's own window list says what to walk.
+//
+// `open_app` falls back to this window when facet has no windows registered —
+// a host driving a window facet does not know about.
 fn attach_window(win: *u8) {
+    if app::window_count() > (0 as usize) {
+        AGENT_SURFACE = agent_appkit::open_app();
+        return;
+    }
     AGENT_SURFACE = agent_appkit::open(win);
 }
 

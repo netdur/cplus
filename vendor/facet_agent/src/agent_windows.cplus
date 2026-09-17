@@ -54,6 +54,9 @@ import "agent_mcp/agent_mcp" as mcp;
 import "agent_mcp/inspect" as mcp_inspect;
 import "./inspect_tree" as itree;
 import "./inspect_platform" as iplatform;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
 import "stdlib/thread" as thread;
@@ -68,6 +71,9 @@ static AGENT_SERVING: bool = false;
 // pair with `app::install_agent`, and a hook family outside the install
 // structs is drift by definition.
 fn enable() {
+    // The window list first: `attach_window` below asks for every open window
+    // and the backend has no way of its own to know what they are.
+    agent_win32::set_windows_fn(open_windows);
     app::install_agent(app::AgentHooks {
         attach_window: attach_window,
         serve_once: serve_once,
@@ -143,8 +149,42 @@ fn pin_policy(view: *u8, a: vocab::Agent) {
 
 // Walk `win`'s live view tree into the surface, replacing the previous
 // screen's (its retained views are released by the drop).
+// THE WINDOW LIST, for a backend that cannot read facet's.
+//
+// `agent_win32` walks the platform's own widgets and depends on agent_core and
+// nothing else — which is what lets it serve an app that never heard of facet.
+// So it asks for the windows through a seam, and this is the answer: every
+// window the running app has open, in OPEN order, by native handle. A window
+// registered but not yet mounted has none and is left out.
+//
+// Asked AT EVERY REFRESH, never snapshotted: a window closed since the last
+// pass has to leave the answer before anything walks a destroyed one.
+fn open_windows() -> vec::Vec[usize] {
+    var out: vec::Vec[usize] = vec::new::[usize]();
+    let n: usize = app::window_count();
+    var i: usize = 0 as usize;
+    while i < n {
+        let root: *flex::Node = app::window_root(i);
+        if root.is_not_null() {
+            let w: *u8 = app::window_native(root);
+            if w.is_not_null() { let _s: status::Status = out.append({ #addr(w) }); }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
 fn attach_window(win: *u8) {
-    AGENT_SURFACE = agent_win32::open(win);
+    // EVERY WINDOW, NOT `win`. A surface holding one window hides the
+    // others while they are on screen, and holds a DEAD one once it closes —
+    // after which the agent reads a single node named `app` for the rest of
+    // the process. `win` is the signal that something changed; facet's own
+    // window list says what to walk.
+    if app::window_count() > (0 as usize) {
+        AGENT_SURFACE = agent_win32::open_app();
+    } else {
+        AGENT_SURFACE = agent_win32::open(win);
+    }
     return;
 }
 

@@ -45,7 +45,16 @@ agents; `agent_inapp` exposes typed calls over it for embedded assistants.
 
 ### Roles
 
-`Button`, `Text`, `Input`, `List`, `Group`, `Window` — small curated set.
+`Button`, `Text`, `Input`, `List`, `Group`, `Window`, `Value` — small curated
+set. A role is what an agent may DO with a node, not what the widget is
+called: `Button` covers a checkbox and a switch, and `Value` covers a slider, a
+stepper and a progress bar. The widget's own name is the developer view's
+answer (`describe_tree` says `"kind": "slider"`).
+
+`Value` was added 2026-09-17. Before it these fell to `Group` — scenery — while
+`set_text` on them moved the control and fired the app's handler, so an agent
+could drive a control it could not observe: `read_text` answered `""` with
+`readable: true`, which reports success for a value it never returned.
 Backends may pack role+drive on native handles via `pack_affordance` /
 `affordance_key` (platform-neutral encoding).
 

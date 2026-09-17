@@ -97,9 +97,18 @@ fn pin_policy(view: *u8, a: vocab::Agent) {
     agent_uikit::set_agent_policy(view, policy_for(a));
 }
 
-// Walk `win`'s live view tree into the surface, replacing the previous
-// screen's — whose retained views are released by the drop.
+// A window came up (or a screen mounted in one): re-walk the app into the
+// surface, replacing what was there — whose retained views are released by the
+// drop.
+//
+// EVERY WINDOW, NOT `win` — see agent.cplus's copy for what a one-window
+// surface costs. `win` is the signal that something changed; facet's own
+// window list says what to walk.
 fn attach_window(win: *u8) {
+    if app::window_count() > (0 as usize) {
+        AGENT_SURFACE = agent_uikit::open_app();
+        return;
+    }
     AGENT_SURFACE = agent_uikit::open(win);
 }
 

@@ -207,6 +207,12 @@ fn classify_by_class(cls: str, hwnd: *u8) -> identity::Role {
     if cls == "Static" { return identity::Role::Text; }
     if cls == "ListBox" { return identity::Role::List; }
     if cls == "ComboBox" { return identity::Role::List; }
+    // A CONTROL WHOSE CONTENT IS A NUMBER. These carry NO window text — a
+    // trackbar answers `GetWindowTextLength` 0 — so before this they were
+    // scenery with an empty string, for controls an agent can drive. The
+    // position comes out of the control's own message instead; see `node_text`.
+    if cls == "msctls_trackbar32" { return identity::Role::Value; }
+    if cls == "msctls_progress32" { return identity::Role::Value; }
     return identity::Role::Group;
 }
 
@@ -237,6 +243,12 @@ fn class_name_text(hwnd: *u8) -> text::Text {
 // EM_GETPASSWORDCHAR. The mask character an EDIT is currently using, or 0 for
 // one that is not masking.
 fn em_getpasswordchar() -> u32 { return 0x00D2 as u32; }
+
+// A VALUE CONTROL'S POSITION, per control. Both are WM_USER-relative and the
+// two bases differ, which is why they are named rather than computed:
+// TBM_GETPOS is WM_USER + 0 and PBM_GETPOS is WM_USER + 8.
+fn tbm_getpos() -> u32 { return 0x0400 as u32; }
+fn pbm_getpos() -> u32 { return 0x0408 as u32; }
 
 // The character an agent sees instead of a secret. Matches `facet::agent_mask`:
 // ASCII `*`, one per character, because this string is read back through JSON
@@ -270,7 +282,25 @@ fn is_secure_edit(hwnd: *u8) -> bool {
 // needs. `<input type=password>`.
 fn node_text(hwnd: *u8) -> text::Text {
     let len: i32 = { GetWindowTextLengthA(hwnd) };
-    if len <= (0 as i32) { return text::from_str(""); }
+    if len <= (0 as i32) {
+        // A VALUE CONTROL HAS NO WINDOW TEXT, which is why it is asked HERE and
+        // not first: a trackbar and a progress bar both answer
+        // `GetWindowTextLength` 0, so every one of them read back "" — an agent
+        // could not tell "this slider is at 0" from "sliders do not answer this
+        // verb". Every text-bearing control returns above without paying for
+        // the class lookup.
+        let vbuf: *u8 = { malloc(256 as usize) };
+        let vcls: str = class_name_view(hwnd, vbuf);
+        var vmsg: u32 = 0 as u32;
+        if vcls == "msctls_trackbar32" { vmsg = tbm_getpos(); }
+        if vcls == "msctls_progress32" { vmsg = pbm_getpos(); }
+        { free(vbuf); }
+        if vmsg != (0 as u32) {
+            let pos: i64 = { SendMessageA(hwnd, vmsg, 0 as u64, 0 as i64) };
+            return text::from_str("${pos}");
+        }
+        return text::from_str("");
+    }
     if is_secure_edit(hwnd) {
         // GetWindowTextLengthA is a BYTE count and these are ANSI windows, so
         // for this control one byte is one character and the secret itself is
@@ -344,18 +374,11 @@ fn walk(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], hwnd: *u8, par
     return;
 }
 
-// Walk a window's child hierarchy into a `Surface`. The window is the root node
-// (role Window) under the registry's app root; its child controls follow.
-fn open(window: *u8) -> Surface {
-    var reg: identity::Registry = identity::new();
-    var refs: vec::Vec[HwndRef] = vec::new::[HwndRef]();
-    // NodeId 0 is the synthetic app root — no backing window.
-    refs.append(HwndRef { p: null() });
-
-    if is_null(window) {
-        return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
-    }
-
+// One window into an already-open registry: the window node (role Window) and
+// its child controls. Split out of `open` so several windows go into ONE
+// surface — see `open_app`.
+fn walk_window(ref reg: identity::Registry, ref refs: vec::Vec[HwndRef], window: *u8) {
+    if is_null(window) { return; }
     let win_pinned: *u8 = get_agent_id(window);
     let win_reg: usize = if is_null(win_pinned) {
         reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)
@@ -369,7 +392,57 @@ fn open(window: *u8) -> Surface {
         walk(reg, refs, child, win_reg);
         child = { GetWindow(child, gw_hwndnext()) };
     }
+    return;
+}
 
+// Walk a window's child hierarchy into a `Surface` of its own. The window is
+// the root node (role Window) under the registry's app root.
+fn open(window: *u8) -> Surface {
+    var reg: identity::Registry = identity::new();
+    var refs: vec::Vec[HwndRef] = vec::new::[HwndRef]();
+    // NodeId 0 is the synthetic app root — no backing window.
+    refs.append(HwndRef { p: null() });
+    walk_window(reg, refs, window);
+    return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
+}
+
+// ---- every window the app has open --------------------------------------------
+//
+// A SURFACE THAT HOLDS ONE WINDOW is wrong in two ways as soon as an app has
+// two: opening the second hides the first, and closing the second leaves a
+// surface over a destroyed HWND that answers nothing and never recovers.
+//
+// WHICH WINDOWS EXIST is a question this backend must not answer by importing
+// facet — it walks HWNDs and depends on agent_core and nothing else, which is
+// what lets it serve an app that never heard of facet. The list arrives through
+// this seam instead, filled by `facet_agent` from facet's own registry. Nothing
+// installed is the old one-window behaviour, unchanged.
+static WINDOWS_FN: fn() -> vec::Vec[usize] = #zero::[fn() -> vec::Vec[usize]]();
+
+fn set_windows_fn(f: fn() -> vec::Vec[usize]) { WINDOWS_FN = f; return; }
+
+fn has_windows_fn() -> bool { return WINDOWS_FN.is_not_null(); }
+
+fn open_app() -> Surface {
+    var reg: identity::Registry = identity::new();
+    var refs: vec::Vec[HwndRef] = vec::new::[HwndRef]();
+    refs.append(HwndRef { p: null() });
+    let f: fn() -> vec::Vec[usize] = WINDOWS_FN;
+    if f.is_null() {
+        return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
+    }
+    let wins: vec::Vec[usize] = f();
+    var i: usize = 0 as usize;
+    while i < { wins.count() } {
+        match { wins.at(i) } {
+            option::Option[usize]::Some(w) => {
+                let p: *u8 = { w as *u8 };
+                if !is_null(p) { walk_window(reg, refs, p); }
+            }
+            option::Option[usize]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
     return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
 }
 
@@ -603,13 +676,25 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     while i < views.count() {
         match views.at_ptr(i) {
             option::Option[*identity::NodeView]::Some(n) => {
+                // A VALUE CONTROL SHOWS ITS POSITION, read LIVE — a trackbar
+                // carries no window text, so the lean view (where the name is
+                // the text) showed nothing at all for a control an agent can
+                // drive. `node_text` asks the control's own message.
+                var shown: text::Text = text::from_str({ (*n).name.view() });
+                if identity::role_eq({ (*n).role }, identity::Role::Value) {
+                    let live: *u8 = match { (*s).reg.lookup({ (*n).id.view() }) } {
+                        option::Option[usize]::Some(idx) => { (*s).hwnd_of(idx) },
+                        option::Option[usize]::None => null(),
+                    };
+                    if !is_null(live) { shown = node_text(live); }
+                }
                 out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
                     is_hidden: false,
-                    text: text::from_str({ (*n).name.view() }),
+                    text: shown,
                     name: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),
                     // The registry's own answer, which is real: nothing in this

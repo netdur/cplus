@@ -69,6 +69,15 @@ extern fn gtk_check_button_get_label(button: *u8) -> *u8;
 extern fn gtk_editable_get_text(editable: *u8) -> *u8;
 #[link_name = "gtk_window_get_title"]
 extern fn gtk_window_get_title(window: *u8) -> *u8;
+// A VALUE CONTROL'S NUMBER. A GtkScale is a GtkRange and answers a value; a
+// progress bar answers a FRACTION and a level bar a value of its own, so the
+// three are asked separately rather than through one guessed getter.
+#[link_name = "gtk_range_get_value"]
+extern fn gtk_range_get_value(range: *u8) -> f64;
+#[link_name = "gtk_progress_bar_get_fraction"]
+extern fn gtk_progress_bar_get_fraction(bar: *u8) -> f64;
+#[link_name = "gtk_level_bar_get_value"]
+extern fn gtk_level_bar_get_value(bar: *u8) -> f64;
 
 // Live state.
 #[link_name = "gtk_widget_get_sensitive"]
@@ -242,6 +251,20 @@ fn classify(widget: *u8) -> identity::Role {
         || is_a(widget, #str_ptr("GtkColumnView\0")) {
         return identity::Role::List;
     }
+    // A CONTROL WHOSE CONTENT IS A NUMBER — it used to be `Group`, scenery, for
+    // a control an agent can write and could not read back. `node_text` is the
+    // other half.
+    //
+    // A SPIN BUTTON IS NOT ONE OF THESE, deliberately: it implements
+    // GtkEditable, so the arm above claims it as an `Input` and its value IS
+    // its text. Naming it a Value here would change nothing about what it
+    // answers and would take it out of the text vocabulary it really belongs
+    // to. GtkScale is a GtkRange, which is what the first test names.
+    if is_a(widget, #str_ptr("GtkRange\0"))
+        || is_a(widget, #str_ptr("GtkProgressBar\0"))
+        || is_a(widget, #str_ptr("GtkLevelBar\0")) {
+        return identity::Role::Value;
+    }
     return identity::Role::Group;
 }
 
@@ -276,6 +299,21 @@ fn node_text(widget: *u8, role: identity::Role) -> text::Text {
                 return mask_of(v);
             }
             return v;
+        }
+        return text::from_str("");
+    }
+    if identity::role_eq(role, identity::Role::Value) {
+        if is_a(widget, #str_ptr("GtkRange\0")) {
+            let d: f64 = { gtk_range_get_value(widget) };
+            return text::from_str("${d}");
+        }
+        if is_a(widget, #str_ptr("GtkProgressBar\0")) {
+            let d: f64 = { gtk_progress_bar_get_fraction(widget) };
+            return text::from_str("${d}");
+        }
+        if is_a(widget, #str_ptr("GtkLevelBar\0")) {
+            let d: f64 = { gtk_level_bar_get_value(widget) };
+            return text::from_str("${d}");
         }
         return text::from_str("");
     }
@@ -371,18 +409,11 @@ fn walk(ref reg: identity::Registry, ref refs: vec::Vec[WidgetRef], widget: *u8,
     return;
 }
 
-// Walk a window's child hierarchy into a `Surface`. The window is the root node
-// (role Window) under the registry's app root; its child widgets follow.
-fn open(window: *u8) -> Surface {
-    var reg: identity::Registry = identity::new();
-    var refs: vec::Vec[WidgetRef] = vec::new::[WidgetRef]();
-    // NodeId 0 is the synthetic app root — no backing widget.
-    refs.append(WidgetRef { p: null() });
-
-    if is_null(window) {
-        return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
-    }
-
+// One window into an already-open registry: the window node (role Window) and
+// its child widgets. Split out of `open` so several windows go into ONE
+// surface — see `open_app`.
+fn walk_window(ref reg: identity::Registry, ref refs: vec::Vec[WidgetRef], window: *u8) {
+    if is_null(window) { return; }
     let win_pinned: *u8 = get_agent_id(window);
     let win_reg: usize = if is_null(win_pinned) {
         reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)
@@ -396,7 +427,67 @@ fn open(window: *u8) -> Surface {
         walk(reg, refs, child, win_reg);
         child = { gtk_widget_get_next_sibling(child) };
     }
+    return;
+}
 
+// Walk a window's child hierarchy into a `Surface` of its own. The window is
+// the root node (role Window) under the registry's app root.
+fn open(window: *u8) -> Surface {
+    var reg: identity::Registry = identity::new();
+    var refs: vec::Vec[WidgetRef] = vec::new::[WidgetRef]();
+    // NodeId 0 is the synthetic app root — no backing widget.
+    refs.append(WidgetRef { p: null() });
+    walk_window(reg, refs, window);
+    return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
+}
+
+// ---- every window the app has open --------------------------------------------
+//
+// A SURFACE THAT HOLDS ONE WINDOW is wrong in two ways as soon as an app has
+// two, and an app with two is ordinary now that facet has a window tier.
+// Opening the second hides the first — its widgets are not in the answer at all
+// while the user still has it on screen — and closing the second leaves the
+// surface holding a destroyed window, which yields nothing and never recovers:
+// the agent reads one node named `app` for the rest of the process.
+//
+// WHO KNOWS WHICH WINDOWS EXIST is the question this backend cannot answer for
+// itself, and must not learn by importing facet: agent_gtk walks WIDGETS and
+// depends on agent_core and gobject and nothing else, which is what lets it
+// serve a GTK app that never heard of facet. So the window list arrives through
+// a seam, installed by the tier that owns it — `facet_agent` reads facet's own
+// registry and fills this in. Nothing installed is the old one-window
+// behaviour, unchanged.
+//
+// The source is asked AT EVERY REFRESH rather than snapshotted, because a
+// window closed since the last pass must leave the answer before anything walks
+// a destroyed GtkWindow.
+static WINDOWS_FN: fn() -> vec::Vec[usize] = #zero::[fn() -> vec::Vec[usize]]();
+
+fn set_windows_fn(f: fn() -> vec::Vec[usize]) { WINDOWS_FN = f; return; }
+
+fn has_windows_fn() -> bool { return WINDOWS_FN.is_not_null(); }
+
+// Every window the source names, in the order it names them.
+fn open_app() -> Surface {
+    var reg: identity::Registry = identity::new();
+    var refs: vec::Vec[WidgetRef] = vec::new::[WidgetRef]();
+    refs.append(WidgetRef { p: null() });
+    let f: fn() -> vec::Vec[usize] = WINDOWS_FN;
+    if f.is_null() {
+        return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
+    }
+    let wins: vec::Vec[usize] = f();
+    var i: usize = 0 as usize;
+    while i < { wins.count() } {
+        match { wins.at(i) } {
+            option::Option[usize]::Some(w) => {
+                let p: *u8 = { w as *u8 };
+                if !is_null(p) { walk_window(reg, refs, p); }
+            }
+            option::Option[usize]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
     return Surface { reg: reg, versions: surface::new_text_versions(), refs: refs };
 }
 
@@ -811,13 +902,23 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     while i < views.count() {
         match views.at_ptr(i) {
             option::Option[*identity::NodeView]::Some(n) => {
+                // A VALUE CONTROL SHOWS ITS NUMBER, read LIVE. In the lean view
+                // the name is the text, and a slider has no name to speak of —
+                // so it came out of the view an agent plans from with an empty
+                // string, for a control it can write. Read now rather than
+                // stored: the knob moves between walks.
+                var shown: text::Text = text::from_str({ (*n).name.view() });
+                if identity::role_eq({ (*n).role }, identity::Role::Value) {
+                    let live: *u8 = widget_for_id(s, { (*n).id.view() });
+                    if !is_null(live) { shown = node_text(live, { (*n).role }); }
+                }
                 out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
                     is_hidden: false,
-                    text: text::from_str({ (*n).name.view() }),
+                    text: shown,
                     name: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),
                     // The registry's own answer, which is real: nothing in this
@@ -1316,13 +1417,29 @@ fn replace_surface(s: *Surface, win: *u8) {
     return;
 }
 
+// The same, for every window the source names. Same declaration for the same
+// reason: a whole new Surface replaces the old one and nothing is borrowed on.
+#[keeps(nothing)]
+fn replace_surface_all(s: *Surface) {
+    { (*s) = open_app() };
+    return;
+}
+
 fn refresh_on_main(user: *u8) -> i32 {
     let p: usize = REFRESH_TARGET;
     if p != (0 as usize) {
         let s: *Surface = p as *Surface;
-        // The window is NodeId 1 — NodeId 0 is the synthetic app root.
-        let win: *u8 = (*s).widget_of(1 as usize);
-        if !is_null(win) { replace_surface(s, win); }
+        // EVERY WINDOW, READ FRESH, when something knows what they are. The
+        // fallback re-opens from the window at NodeId 1 — which is what this
+        // always did, and what leaves a surface empty once that window is
+        // destroyed.
+        if has_windows_fn() {
+            replace_surface_all(s);
+        } else {
+            // The window is NodeId 1 — NodeId 0 is the synthetic app root.
+            let win: *u8 = (*s).widget_of(1 as usize);
+            if !is_null(win) { replace_surface(s, win); }
+        }
     }
     atomic::store_i32(#addr_of(REFRESH_DONE), 1 as i32, atomic::Ordering::Release);
     // G_SOURCE_REMOVE.

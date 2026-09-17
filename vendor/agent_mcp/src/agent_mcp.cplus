@@ -128,14 +128,16 @@ fn member(k: str, take v: json::Value) -> json::Member {
 
 // ---- enum -> wire string ----------------------------------------------------
 
+// ONE TABLE, and it is not this one. `identity::role_tag` is the spelling every
+// auto-id already uses, so a role named there is named here by construction.
+//
+// This used to be a hand-written copy ending in `return "group"`, which is the
+// shape that fails silently: a role added to the vocabulary kept its auto-ids
+// and came out on the wire as GROUP — scenery — for every agent reading
+// `describe_ui`. That is how `Value` arrived complete on the backends and still
+// read "group" in the curated view, which is the view an agent plans from.
 fn role_to_str(role: identity::Role) -> str {
-    if identity::role_eq(role, identity::Role::Button) { return "button"; }
-    if identity::role_eq(role, identity::Role::Text) { return "text"; }
-    if identity::role_eq(role, identity::Role::Input) { return "input"; }
-    if identity::role_eq(role, identity::Role::List) { return "list"; }
-    if identity::role_eq(role, identity::Role::Group) { return "group"; }
-    if identity::role_eq(role, identity::Role::Window) { return "window"; }
-    return "group";
+    return identity::role_tag(role);
 }
 
 // The declared tier, as the word a model reads. `open` never reaches the wire
@@ -648,7 +650,7 @@ fn core_tools() -> vec::Vec[json::Value] {
     p_describe.append(prop("prefix", "string",
         "Answer only with nodes whose id starts with this, e.g. \"board:detail:\". Absent means the whole view. Use it: a whole-tree answer runs to tens of thousands of characters, and the id path is a path, so the question you are asking almost always has a prefix."));
     out.append(tool("describe_ui",
-        "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, wired, parent. The three flags are different questions and you need all three: `actionable` is whether you are ALLOWED to act, `clickable` is whether a click would LAND, and `wired` is whether it would reach a handler — a control can pass the first two and still do nothing. `wired` absent means this backend cannot answer it, which is not the same as false. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it. Long text is CLIPPED here and marked `text_truncated` with the full `text_len`; `read_text` answers the whole value.",
+        "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, wired, parent. The three flags are different questions and you need all three: `actionable` is whether you are ALLOWED to act, `clickable` is whether a click would LAND, and `wired` is whether it would reach a handler — a control can pass the first two and still do nothing. `wired` absent means this backend cannot answer it, which is not the same as false. EVERY WINDOW THE APP HAS OPEN is in one answer, each window a node of role \"window\" addressed by the name the app opened it under — so a node's window is its parent chain, and there is no \"current window\" to set. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it. Long text is CLIPPED here and marked `text_truncated` with the full `text_len`; `read_text` answers the whole value.",
         p_describe, no_required()));
 
     var p_click: vec::Vec[json::Member] = no_props();

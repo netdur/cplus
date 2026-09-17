@@ -63,6 +63,9 @@ import "facet/text_field" as text_field;
 import "facet/text_area" as text_area;
 import "facet/checkbox" as checkbox;
 import "facet/toggle" as toggle;
+import "facet/slider" as slider;
+import "facet/stepper" as stepper;
+import "facet/progress" as progress;
 import "agent_core/inspect" as insp;
 import "./inspect_vocabulary" as voc;
 
@@ -590,6 +593,40 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
             }
             option::Option::None => option::Option[insp::Value]::None,
         };
+    }
+
+    if is_value_prop(prop) {
+        if kind == props::K_SLIDER {
+            return match slider::find(k, within: root) {
+                option::Option[slider::Slider]::Some(sl) => {
+                    if prop == "minimum" { return num(sl.minimum()); }
+                    if prop == "maximum" { return num(sl.maximum()); }
+                    return num(sl.value());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_STEPPER {
+            return match stepper::find(k, within: root) {
+                option::Option[stepper::Stepper]::Some(st) => {
+                    if prop == "minimum" { return num(st.minimum()); }
+                    if prop == "maximum" { return num(st.maximum()); }
+                    return num(st.value());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_PROGRESS {
+            // A FRACTION, 0..1, and no range of its own — so the other two are
+            // absent rather than present and made up. `declared_props` drops a
+            // name that answers None, which is what makes absence readable.
+            if prop != "value" { return option::Option[insp::Value]::None; }
+            return match progress::find(k, within: root) {
+                option::Option[progress::Progress]::Some(pr) => num(pr.progress()),
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        return option::Option[insp::Value]::None;
     }
 
     if prop == "text" {
@@ -1415,10 +1452,22 @@ fn is_button_border(prop: str) -> bool {
     return (prop == "border_color") || (prop == "border_width");
 }
 
+// THE THREE A VALUE CONTROL CARRIES, and the reason they are one group: a
+// number without its range is ambiguous in the way that costs — a 0..1 slider
+// beside a 0..100 percent field takes `0.75` and `75` equally happily and only
+// one of them is right. Reading all three is how a caller knows which.
+//
+// `value` alone reaches a progress bar, whose own spelling is `progress` and
+// whose range is fixed at 0..1 — so it answers the value and declines the other
+// two rather than inventing a minimum nobody stated.
+fn is_value_prop(prop: str) -> bool {
+    return (prop == "value") || (prop == "minimum") || (prop == "maximum");
+}
+
 fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> insp::Outcome {
     let kind: u32 = core::kind_of(n);
     let known: bool = (prop == "text") || (prop == "title") || (prop == "on")
-        || is_type_face(prop) || is_button_border(prop);
+        || is_type_face(prop) || is_button_border(prop) || is_value_prop(prop);
     if !known { return insp::Outcome::UnknownProperty; }
     if !keyed_resolves_here(n, window) { return insp::Outcome::Unsupported; }
     let k: str = { (*n).key() };
@@ -1552,6 +1601,63 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                     }
                     option::Option::None => { return insp::Outcome::NotFound; }
                 }
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+
+    // THE TYPED WRITE, beside the `set_text "0.75"` one. Both reach the same
+    // setter — the app's `on_value_changed` runs either way — but this one says
+    // in its own type what it is writing, and it is the only one that can say
+    // `minimum` and `maximum` at all.
+    if is_value_prop(prop) {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                if kind == props::K_SLIDER {
+                    match slider::find(k, within: root) {
+                        option::Option[slider::Slider]::Some(sl) => {
+                            if prop == "minimum" {
+                                let _h: slider::Slider = sl.set_minimum(x);
+                                return insp::Outcome::Ok;
+                            }
+                            if prop == "maximum" {
+                                let _h: slider::Slider = sl.set_maximum(x);
+                                return insp::Outcome::Ok;
+                            }
+                            let _h: slider::Slider = sl.set_value(x);
+                            return insp::Outcome::Ok;
+                        }
+                        option::Option::None => { return insp::Outcome::NotFound; }
+                    }
+                }
+                if kind == props::K_STEPPER {
+                    match stepper::find(k, within: root) {
+                        option::Option[stepper::Stepper]::Some(st) => {
+                            if prop == "minimum" {
+                                let _h: stepper::Stepper = st.set_minimum(x);
+                                return insp::Outcome::Ok;
+                            }
+                            if prop == "maximum" {
+                                let _h: stepper::Stepper = st.set_maximum(x);
+                                return insp::Outcome::Ok;
+                            }
+                            let _h: stepper::Stepper = st.set_value(x);
+                            return insp::Outcome::Ok;
+                        }
+                        option::Option::None => { return insp::Outcome::NotFound; }
+                    }
+                }
+                if kind == props::K_PROGRESS {
+                    if prop != "value" { return insp::Outcome::UnknownProperty; }
+                    match progress::find(k, within: root) {
+                        option::Option[progress::Progress]::Some(pr) => {
+                            let _h: progress::Progress = pr.set_progress(x);
+                            return insp::Outcome::Ok;
+                        }
+                        option::Option::None => { return insp::Outcome::NotFound; }
+                    }
+                }
+                return insp::Outcome::UnknownProperty;
             }
             option::Option::None => insp::Outcome::TypeMismatch,
         };

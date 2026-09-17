@@ -158,6 +158,16 @@ fn text_eq(h: insp::Handle, prop: str, want: str) -> bool {
     };
 }
 
+// Is `name` in the published vocabulary, and does it say it applies to these
+// kinds? Both halves, because a descriptor that names the wrong kinds sends a
+// client to the wrong control.
+fn voc_has(name: str, applies: str) -> bool {
+    return match insp::describe_prop(name) {
+        option::Option[insp::Descriptor]::Some(d) => d.applies == applies,
+        option::Option[insp::Descriptor]::None => false,
+    };
+}
+
 fn prop_named(props_in: vec::Vec[insp::Prop], name: str) -> bool {
     var i: usize = 0;
     let c: usize = props_in.count();
@@ -410,7 +420,16 @@ fn describe_includes_unkeyed_nodes_that_a_native_walk_would_miss() {
 // The walk has to survive one: `key()`, `kind_of` and the band readers all go
 // through a null data pointer.
 #[test]
-fn the_walk_survives_the_dataless_wrapper_the_dsl_hands_back() {
+fn a_single_item_ui_block_puts_no_wrapper_in_the_walk() {
+    // THE BLOCK USED TO HAND BACK A DATALESS WRAPPER and this test asserted the
+    // walk survived it — three rows, `root` at depth 1. `@ui { x }` has
+    // answered `x` itself since 2026-09-15 (a71e9bdb), because that invisible
+    // container was one node deeper than every block reads and cost three bugs
+    // of one shape. The walk is what SEES the difference, so the test stays and
+    // says the current thing: no wrapper, and the depths that follow from it.
+    //
+    // It had been red since that commit — the contract moved and this
+    // assertion did not.
     fresh();
     var root: core::Node = @ui {
         column(key: "root") {
@@ -420,23 +439,130 @@ fn the_walk_survives_the_dataless_wrapper_the_dsl_hands_back() {
     app::open_window(#addr_of(root));
 
     let rows: vec::Vec[insp::Node] = tree::describe();
-    // wrapper, column, label.
-    assert rows.count() == 3;
-    let wrapper: insp::Handle = match rows.at_ptr(0) {
-        option::Option[*insp::Node]::Some(p) => { (*p).handle }
-        option::Option::None => insp::Handle::none(),
-    };
-    assert !wrapper.is_none();
-    // It has no key and no kind, and reads as a plain node rather than
-    // crashing the walk.
+    // column, label. No third row, and nothing unkeyed above them.
+    assert rows.count() == 2;
     assert match rows.at_ptr(0) {
-        option::Option[*insp::Node]::Some(p) => ({ (*p).key.view() } == ""),
+        option::Option[*insp::Node]::Some(p) => ({ (*p).key.view() } == "root"),
         option::Option::None => false,
     };
-    // Keys inside it still resolve, and the depth accounts for the wrapper.
-    assert depth_of(rows, "root") == 1;
-    assert depth_of(rows, "status") == 2;
+    assert depth_of(rows, "root") == 0;
+    assert depth_of(rows, "status") == 1;
     assert !row_for(rows, "status").is_none();
+}
+
+// ---- a value control can be read, not only written ---------------------------
+//
+// `set_text "0.75"` on a slider moved the knob and fired the app's handler, and
+// nothing answered what the slider was NOW: `describe_ui` called it a group
+// with empty text, `read_text` answered "" with `readable: true`, and `inspect`
+// declared 76 properties without `value` among them. An agent could move a
+// control it could not observe, and checking a write meant lldb over every
+// NSSlider — which a simulator or a device does not offer at all.
+
+#[test]
+fn a_slider_answers_its_value_and_its_range() {
+    fresh();
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::slider(0.75f64, key: "progress", minimum: 0.0f64, maximum: 1.0f64));
+    var root: core::Node = ui::column(b, key: "root");
+    app::open_window(#addr_of(root));
+
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    let h: insp::Handle = row_for(rows, "progress");
+    assert get_num(h, "value") == 0.75f64;
+    // THE RANGE IS PART OF THE ANSWER. Without it `0.75` and `75` are both
+    // plausible writes to the same control and nothing on the wire says which
+    // — which is exactly the sheet this was found on: a 0..1 slider beside a
+    // 0..100 percent field.
+    assert get_num(h, "minimum") == 0.0f64;
+    assert get_num(h, "maximum") == 1.0f64;
+    // ...and they are DECLARED, so a client that lists the node's properties
+    // finds them rather than having to know the names.
+    let ps: vec::Vec[insp::Prop] = tree::declared_props(h, tree::node_of(h));
+    assert prop_named(ps, "value");
+    assert prop_named(ps, "minimum");
+    assert prop_named(ps, "maximum");
+}
+
+#[test]
+fn a_slider_takes_a_typed_write_and_reads_it_back() {
+    fresh();
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::slider(0.0f64, key: "progress", minimum: 0.0f64, maximum: 1.0f64));
+    var root: core::Node = ui::column(b, key: "root");
+    app::open_window(#addr_of(root));
+
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    let h: insp::Handle = row_for(rows, "progress");
+    assert tree::set(h, "value", insp::Value::Num(0.4f64)) == insp::Outcome::Ok;
+    assert get_num(h, "value") == 0.4f64;
+    // The range is writable too — a control whose scale an inspector can see
+    // and not change is half a surface.
+    assert tree::set(h, "maximum", insp::Value::Num(2.0f64)) == insp::Outcome::Ok;
+    assert get_num(h, "maximum") == 2.0f64;
+    // A string is not a number here. The `set_text` door takes one and parses
+    // it; this door is typed, and saying so is the point of having both.
+    assert tree::set(h, "value", insp::Value::Str(text::from_str("0.9")))
+        == insp::Outcome::TypeMismatch;
+}
+
+#[test]
+fn a_stepper_answers_the_same_three_and_a_progress_bar_answers_one() {
+    fresh();
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::stepper(3.0f64, key: "count", minimum: 0.0f64, maximum: 10.0f64));
+    b.add(ui::progress(0.25f64, key: "bar"));
+    var root: core::Node = ui::column(b, key: "root");
+    app::open_window(#addr_of(root));
+
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    let st: insp::Handle = row_for(rows, "count");
+    assert get_num(st, "value") == 3.0f64;
+    assert get_num(st, "minimum") == 0.0f64;
+    assert get_num(st, "maximum") == 10.0f64;
+    assert tree::set(st, "value", insp::Value::Num(7.0f64)) == insp::Outcome::Ok;
+    assert get_num(st, "value") == 7.0f64;
+
+    // A PROGRESS BAR IS A FRACTION with no range of its own, so `minimum` and
+    // `maximum` are ABSENT rather than present and invented — an editor for a
+    // property that does not exist is an invitation to write into nothing.
+    let pr: insp::Handle = row_for(rows, "bar");
+    assert get_num(pr, "value") == 0.25f64;
+    let ps: vec::Vec[insp::Prop] = tree::declared_props(pr, tree::node_of(pr));
+    assert prop_named(ps, "value");
+    assert !prop_named(ps, "minimum");
+    assert !prop_named(ps, "maximum");
+}
+
+#[test]
+fn a_control_with_no_value_does_not_pretend_to_have_one() {
+    // THE NEGATIVE HALF. `value` is not a property every node carries: a label
+    // has none, and answering 0 for it would be a number an agent could act on.
+    fresh();
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label("hello", key: "greeting"));
+    var root: core::Node = ui::column(b, key: "root");
+    app::open_window(#addr_of(root));
+
+    let rows: vec::Vec[insp::Node] = tree::describe();
+    let h: insp::Handle = row_for(rows, "greeting");
+    match tree::get(h, "value") {
+        option::Option[insp::Value]::Some(_v) => { assert false; }
+        option::Option[insp::Value]::None => { }
+    }
+    assert tree::set(h, "value", insp::Value::Num(1.0f64)) == insp::Outcome::UnknownProperty;
+    let ps: vec::Vec[insp::Prop] = tree::declared_props(h, tree::node_of(h));
+    assert !prop_named(ps, "value");
+}
+
+#[test]
+fn the_vocabulary_names_value_minimum_and_maximum() {
+    // The vocabulary IS the contract: a client reads it to learn what a
+    // property is called, what type it takes and which kinds carry it. A
+    // property implemented and not described is one a caller has to guess.
+    assert voc_has("value", "slider stepper progress");
+    assert voc_has("minimum", "slider stepper");
+    assert voc_has("maximum", "slider stepper");
 }
 
 #[test]

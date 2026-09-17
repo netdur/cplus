@@ -23,6 +23,7 @@
 // arm64).
 
 import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "objc/runtime" as rt;
@@ -32,6 +33,7 @@ import "facet/props" as props;
 import "facet/tree" as ftree;
 import "facet/relist" as frelist;
 import "facet/application" as app;
+import "facet/window" as fwindow;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/auth" as auth;
@@ -350,6 +352,10 @@ fn is_secure_by_class(view: *u8) -> bool {
 // reader knows to expect a value.
 fn node_content_name(view: *u8, role: identity::Role) -> text::Text {
     if is_secure_by_class(view) && !has_explicit_policy(view) { return text::new(); }
+    // A VALUE IS NOT A NAME. "0.75" names nothing, and a name that changes
+    // every time the knob moves is worse than none — the `text` field is where
+    // a reader expects a value and where this control's number goes.
+    if identity::role_eq(role, identity::Role::Value) { return text::new(); }
     return node_text(view, role);
 }
 
@@ -732,6 +738,17 @@ fn classify(view: *u8) -> identity::Role {
     if is_kind(view, #str_ptr("NSTableView\0")) || is_kind(view, #str_ptr("NSOutlineView\0")) {
         return identity::Role::List;
     }
+    // A CONTROL WHOSE CONTENT IS A NUMBER. Every one of these fell through to
+    // `Group` — scenery — while `set_text` on it moved the knob and fired the
+    // app's action, so an agent could drive a control the surface described as
+    // a box and could not read back what it had done. `node_text` below is the
+    // other half: the value, as the control's own string.
+    if is_kind(view, #str_ptr("NSSlider\0"))
+        || is_kind(view, #str_ptr("NSStepper\0"))
+        || is_kind(view, #str_ptr("NSProgressIndicator\0"))
+        || is_kind(view, #str_ptr("NSLevelIndicator\0")) {
+        return identity::Role::Value;
+    }
     return identity::Role::Group;
 }
 
@@ -765,6 +782,32 @@ fn node_text(view: *u8, role: identity::Role) -> text::Text {
             if !is_null(t) {
                 return bridge::to_text(t);
             }
+        }
+        return text::from_str("");
+    }
+    // A VALUE CONTROL ANSWERS ITS NUMBER. Asked three ways, a slider used to
+    // answer role "group" with text "" — and `read_text` reported
+    // `readable: true` for the "" it did not return, which is the sharpest
+    // edge of the three: it reports success. An agent could not tell "this
+    // slider is at 0" from "sliders do not answer this verb", and verifying a
+    // write needed lldb over every NSSlider.
+    //
+    // `stringValue` is NSControl's own formatting of `doubleValue`, so the
+    // answer is the one the control would print. NSProgressIndicator is not an
+    // NSControl and answers `doubleValue` only, hence the second arm.
+    //
+    // THE NUMBER IS NOT THE SCALE. A slider is whatever range the application
+    // gave it — iris's is 0..1 beside a 0..100 percent field — so this reads
+    // as a bare number and the range is asked for by name: `minimum` and
+    // `maximum` on the inspector's typed surface.
+    if identity::role_eq(role, identity::Role::Value) {
+        if responds_to(view, #str_ptr("stringValue\0")) {
+            let s: *u8 = rt::msg_id(view, rt::sel(#str_ptr("stringValue\0")));
+            if !is_null(s) { return bridge::to_text(s); }
+        }
+        if responds_to(view, #str_ptr("doubleValue\0")) {
+            let d: f64 = { rt::msg_f64(view, rt::sel(#str_ptr("doubleValue\0"))) };
+            return text::from_str("${d}");
         }
         return text::from_str("");
     }
@@ -1330,20 +1373,86 @@ fn walk_realised_rows(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
     }
 }
 
-// Walk a window's view hierarchy into a `Surface`. The window is the root node
-// (role Window) under the registry's app root; its contentView subtree follows.
-fn open(window: *u8) -> Surface {
-    var reg: identity::Registry = identity::new();
-    var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
-    // NodeId 0 is the synthetic app root — no backing view.
-    views.append(ViewRef { p: null(), part: PART_SELF });
-
-    if is_null(window) {
-        return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+// THE WINDOW'S OWN ADDRESS. In order: the id the developer pinned on the
+// NSWindow, then the NAME THE APP REGISTERED IT UNDER — `App::window(
+// "settings", …)` — and an auto `app/window#i` for a window nobody named.
+//
+// The middle one is what gives an answer with two windows in it a window
+// LAYER: `app > settings > settings:root > …` beside `app > main > …`, so a
+// node's window is its parent chain and a verb can name a window the way it
+// names anything else. It is the app's own word, which is the rule every other
+// address in this system follows.
+//
+// NOT `app::window_key_of`, which is what this reached for first and is the
+// wrong name: that key is the runtime's collision-free INSTANCE id
+// (`@window:2`), deliberately backend-facing, and an agent reading it learns
+// nothing about which window it has. The instance id is still the fallback for
+// the case the name cannot serve — SEVERAL INSTANCES OF ONE DEFINITION, which
+// is an ordinary thing to have (two note windows) and would otherwise put two
+// nodes with one id in the same answer.
+fn window_id_of(window: *u8, root: *core::Node) -> option::Option[text::Text] {
+    match get_agent_id(window) {
+        option::Option[text::Text]::Some(t) => { return option::Option[text::Text]::Some(t); }
+        option::Option[text::Text]::None => { }
     }
+    if is_null(root as *u8) { return option::Option[text::Text]::None; }
+    let name: str = window_name_of(root);
+    if name != "" && window_name_is_unique(name) {
+        return option::Option[text::Text]::Some(text::from_str(name));
+    }
+    let k: str = app::window_key_of(root);
+    if k == "" { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(text::from_str(k));
+}
 
-    let win_pinned: option::Option[text::Text] = get_agent_id(window);
-    let win_reg: usize = match win_pinned {
+// The registered name of the window `root` belongs to, "" for a window the app
+// never registered (a bare backend mount, which is every window in a test that
+// builds NSWindows by hand).
+fn window_name_of(root: *core::Node) -> str {
+    let ws: vec::Vec[fwindow::Window] = fwindow::all();
+    var i: usize = 0 as usize;
+    while i < { ws.count() } {
+        match { ws.at_ptr(i) } {
+            option::Option[*fwindow::Window]::Some(w) => {
+                if { (*w).root() } == root { return { (*w).name() }; }
+            }
+            option::Option[*fwindow::Window]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return "";
+}
+
+// Is this name worth using as an address — i.e. does exactly one open window
+// answer to it? Two instances of one definition share a name, and two nodes
+// with one id in one answer is the thing an address exists to prevent.
+fn window_name_is_unique(name: str) -> bool {
+    let ws: vec::Vec[fwindow::Window] = fwindow::all();
+    var seen: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i < { ws.count() } {
+        match { ws.at_ptr(i) } {
+            option::Option[*fwindow::Window]::Some(w) => {
+                if { (*w).name() } == name { seen = seen +% (1 as usize); }
+            }
+            option::Option[*fwindow::Window]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return seen == (1 as usize);
+}
+
+// One window into an already-open registry: the window node (role Window) and
+// everything under it. Split out of `open` so several windows go into ONE
+// surface — see `open_app`.
+fn walk_window(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], window: *u8) {
+    if is_null(window) { return; }
+    // THE TREE, not the view hierarchy. `window_root_for_native` is facet's own
+    // window->root map, recorded by the backend at mount, so this is the same
+    // tree `label::find("taps")` addresses in-process. The wire surface and the
+    // in-process API now describe one thing.
+    let root: *core::Node = app::window_root_for_native(window);
+    let win_reg: usize = match window_id_of(window, root) {
         option::Option[text::Text]::Some(t) => {
             reg.add_child(reg.root(), option::Option[str]::Some({ t }), identity::Role::Window)
         }
@@ -1354,11 +1463,6 @@ fn open(window: *u8) -> Surface {
     let _rw: *u8 = rt::retain(window);
     views.append(ViewRef { p: window, part: PART_SELF });
 
-    // THE TREE, not the view hierarchy. `window_root_for_native` is facet's own
-    // window->root map, recorded by the backend at mount, so this is the same
-    // tree `label::find("taps")` addresses in-process. The wire surface and the
-    // in-process API now describe one thing.
-    let root: *core::Node = app::window_root_for_native(window);
     if !is_null(root as *u8) {
         walk_facet(reg, views, root, win_reg);
     }
@@ -1383,8 +1487,84 @@ fn open(window: *u8) -> Surface {
             ai = ai +% 1;
         }
     }
+    return;
+}
 
+// Walk ONE window into a `Surface` of its own. The window is the root node
+// (role Window) under the registry's app root; its facet tree follows.
+//
+// `open_app` is what the serving surface uses. This stays for a caller that
+// really means one window — a test, and any host driving a window that facet
+// does not know about.
+fn open(window: *u8) -> Surface {
+    var reg: identity::Registry = identity::new();
+    var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
+    // NodeId 0 is the synthetic app root — no backing view.
+    views.append(ViewRef { p: null(), part: PART_SELF });
+    walk_window(reg, views, window);
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+}
+
+// EVERY WINDOW THE APP HAS OPEN, in OPEN ORDER, in one surface.
+//
+// THE SURFACE USED TO HOLD ONE WINDOW and re-open from it on every verb, which
+// is two defects an app with a second window meets in order. Opening
+// Preferences retargeted the surface: the main window was still open, still
+// visible, still holding the user's work, and not one node of it was in the
+// answer. CLOSING Preferences was worse — the cache held a window that no
+// longer existed, `open` yielded nothing, and the early return left the agent
+// with a single node named `app` for the rest of the process, while the user
+// saw a working app and `describe_tree` walked its live tree. A driver cannot
+// tell that from an app that has not finished launching, and waits forever.
+//
+// facet has kept the list since the window tier landed (`App::window` registers
+// each one), so the answer is to READ IT rather than to cache a pointer: every
+// open window, every pass, addressed by the name the app opened it under.
+//
+// WHICH WINDOW A VERB MEANS is then not a question. Ids are resolved in one
+// registry across every window, so a verb names a node and the node knows its
+// window — no "the last one opened" rule decided by a cache, and nothing an
+// agent has to be told.
+//
+// A window with no native handle yet is skipped: it is registered and not
+// mounted, so there is nothing to walk and nothing to address.
+fn open_app() -> Surface {
+    var reg: identity::Registry = identity::new();
+    var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
+    views.append(ViewRef { p: null(), part: PART_SELF });
+    // ONE WALK PER NATIVE WINDOW, not per registered root. macOS gives every
+    // screen its own NSWindow — a sheet included — so this changes nothing
+    // here today; it is what keeps the loop honest for a platform where one
+    // handle legitimately carries several roots, which is the arrangement
+    // `window_roots_for_native` exists for.
+    var seen: vec::Vec[usize] = vec::new::[usize]();
+    let n: usize = app::window_count();
+    var i: usize = 0 as usize;
+    while i < n {
+        let root: *core::Node = app::window_root(i);
+        if !is_null(root as *u8) {
+            let win: *u8 = app::window_native(root);
+            if !is_null(win) && !first_seen(seen, win) { walk_window(reg, views, win); }
+        }
+        i = i +% (1 as usize);
+    }
+    return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+}
+
+// Have we walked this handle already? Records it when not — so the caller's
+// loop reads as the question it is asking.
+fn first_seen(ref seen: vec::Vec[usize], p: *u8) -> bool {
+    let key: usize = { #addr(p) };
+    var i: usize = 0 as usize;
+    while i < { seen.count() } {
+        match { seen.at(i) } {
+            option::Option[usize]::Some(k) => { if k == key { return true; } }
+            option::Option[usize]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _s: status::Status = { seen.append(key) };
+    return false;
 }
 
 // Convenience: the read-only snapshot of a window in one call.
@@ -1974,9 +2154,18 @@ static REFRESH_METHOD_REGISTERED: bool = false;
 #[keeps(nothing)]
 fn refresh_in_place(p: *u8) {
     let s: *Surface = { p as *Surface };
+    // EVERY WINDOW, READ FRESH. This used to re-open from the window cached at
+    // NodeId 1, which is how a second window took the surface over and how a
+    // CLOSED one left it empty for the rest of the process: `open` on a dead
+    // window yields nothing and the early return kept the emptiness. facet's
+    // own window list is the answer and it is never stale.
+    if app::window_count() > (0 as usize) { { *s = open_app() }; return; }
+    // A host driving a window facet does not know about — no registry to read,
+    // so the cached window is all there is, and it is still better than
+    // nothing. Unchanged behaviour for that caller.
     let win: *u8 = { (*s).view_of(1) };
     if is_null(win) { return; }
-    { *s = open(win); }
+    { *s = open(win) };
 }
 
 fn cplus_agent_refresh(receiver: *u8, _cmd: *u8, _arg: *u8) {
@@ -1993,6 +2182,17 @@ fn ensure_refresh_method() {
     if !is_null(cls) {
         rt::add_method_action(
             cls,
+            rt::sel(#str_ptr("cplusAgentRefresh:\0")),
+            cplus_agent_refresh,
+            #str_ptr("v@:@\0"),
+        );
+    }
+    // ...AND ON THE APPLICATION, which is what `refresh_surface` hops on now: a
+    // window can close while the surface is alive, and the application cannot.
+    let acls: *u8 = rt::get_class(#str_ptr("NSApplication\0"));
+    if !is_null(acls) {
+        rt::add_method_action(
+            acls,
             rt::sel(#str_ptr("cplusAgentRefresh:\0")),
             cplus_agent_refresh,
             #str_ptr("v@:@\0"),
@@ -2266,12 +2466,18 @@ fn refresh_surface(p: *u8) {
         refresh_in_place(p);
         return;
     }
+    // THE HOP TARGET IS THE APPLICATION, not a window. It used to be the window
+    // cached at NodeId 1 — so once that window closed there was nothing to hop
+    // ON, and a serve thread's every later request answered out of a surface
+    // that could no longer be refreshed. NSApp outlives every window.
     let s: *Surface = { p as *Surface };
-    let win: *u8 = { (*s).view_of(1) };
-    if is_null(win) { return; }
+    var target: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                                   rt::sel(#str_ptr("sharedApplication\0"))) };
+    if is_null(target) { target = { (*s).view_of(1) }; }
+    if is_null(target) { return; }
     ensure_refresh_method();
     REFRESH_TARGET = p;
-    perform_on_main(win, rt::sel(#str_ptr("cplusAgentRefresh:\0")), null());
+    perform_on_main(target, rt::sel(#str_ptr("cplusAgentRefresh:\0")), null());
     REFRESH_TARGET = null();
 }
 
@@ -2322,6 +2528,15 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     if { (*n).readable } {
                         if !is_null(live) { shown = node_text(live, { (*n).role }); }
                     }
+                }
+                // A VALUE CONTROL SHOWS ITS NUMBER HERE TOO, read LIVE. In the
+                // lean view the name is the text, and a value is deliberately
+                // not a name — so a slider came out of the curated view with an
+                // empty string, which is the view an agent plans from. Read now
+                // rather than stored, for the same reason the gated arm above
+                // reads now: the knob moves between walks.
+                if identity::role_eq({ (*n).role }, identity::Role::Value) {
+                    if !is_null(live) { shown = node_text(live, { (*n).role }); }
                 }
                 out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),

@@ -17,7 +17,12 @@ import "agent_core/agent_core" as agent_core;  // convenience only
 
 ### `Role`
 
-`Button`, `Text`, `Input`, `List`, `Group`, `Window`
+`Button`, `Text`, `Input`, `List`, `Group`, `Window`, `Value`
+
+`Value` is a control whose content is a NUMBER — a slider, a stepper, a
+progress bar. Its drive is `drive_text`, so `set_text "0.75"` writes it; the
+backends answer the number as the node's `text`, and the typed spelling
+(`value` / `minimum` / `maximum`) is on the inspector's property vocabulary.
 
 ```cplus
 fn role_tag(r: Role) -> str

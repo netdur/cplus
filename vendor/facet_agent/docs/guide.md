@@ -23,6 +23,35 @@ and nothing binds — which is the rule the whole surface hangs off: **no
 so a shipped binary cannot be switched on by its launcher or by anything that
 can set a variable on the process.
 
+## Every window, in one answer
+
+`attach_window` fires when a window comes up or a screen mounts in one, and it
+re-walks **every window the app has open**, in open order, into one surface.
+The hook's argument is the signal that something changed, not the thing to walk
+— facet's own window list says what to walk.
+
+Each window is a node of role `window` under `app`, addressed by the name the
+app opened it under (`App::window("settings", …)` ⇒ the id `settings`). A
+window nobody named keeps its positional auto-id, `app/window#0`, and stays out
+of the curated view exactly as before. So a node's window is its parent chain,
+and there is no "current window" for a caller to set: ids resolve in one
+registry across every window, and a verb names a node.
+
+**This is what the surface did NOT do until 2026-09-17**, and it is worth
+knowing because the failure is silent. The surface held ONE window and
+re-opened from it on every verb, so an app with two registered windows — the
+shape facet's window tier asks for — hid the first the moment the second
+opened, and answered a single node named `app` for the rest of the process once
+that second window CLOSED. The user saw a working app throughout. A driver
+cannot tell one node named `app` from an app that has not finished launching,
+and waits forever.
+
+On GTK and Win32 the backend walks the platform's widgets and never imports
+facet, so it asks for the window list through a seam (`set_windows_fn`) that
+`facet_agent` fills from facet's registry. A backend with nothing installed
+keeps the old one-window behaviour, which is what an app driving a window facet
+does not know about still gets.
+
 ## An id, not an address
 
 `agent_mcp` used to take a path, and on a phone `port_of` scanned it for digits
