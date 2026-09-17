@@ -431,8 +431,13 @@ fn source_of(n: *core::Node) -> SeqSource {
         // from `list`: there is no count an application can have forgotten to
         // update.
         //
-        // NO BIND, no kinds, no groups, no stated height, ONE column. `relist`
-        // builds a row fresh per index from a single builder.
+        // NO BIND, no kinds, no groups, ONE column. `relist` builds a row
+        // fresh per index from a single builder.
+        //
+        // A STATED HEIGHT IT DOES CARRY, since 2026-09-17: without one an
+        // uneven row is measured by BUILDING it, and a recycler re-asks every
+        // row's height whenever the width changes. `height_of_data_row` asks
+        // it first and scales the answer, exactly as it does for a `list`.
         let p: *relist::RelistProps = raw as *relist::RelistProps;
         var src: SeqSource = no_source();
         let count_of: fn(*u8) -> usize = { (*p).count_of };
@@ -441,6 +446,8 @@ fn source_of(n: *core::Node) -> SeqSource {
         src.row = { (*p).builder };
         src.row_ctx = { #addr((*p).builder_ctx) };
         src.uneven = { (*p).uneven_rows };
+        src.row_height_of = { (*p).row_height_of };
+        src.row_height_of_ctx = { #addr((*p).row_height_of_ctx) };
         // THE GRID, and this backend already knows how: `is_grid`, `line_of`
         // and `col_of` are the map's own arithmetic, and one column is the
         // degenerate case they have always walked.

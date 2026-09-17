@@ -20,6 +20,16 @@
 // mechanisms and no precedence rule between them. This element stays a
 // collection, a builder and a key.
 //
+// WITH ONE EXCEPTION, ADDED 2026-09-17 AND ARGUED FOR: `row_height_of`, the
+// height of a row stated WITHOUT building it. It is here because the identity
+// cache cannot cover the case it exists for — a height belongs to a WIDTH, so
+// the cache is dropped whole when the width moves, and a recycler re-asks
+// every row's height on every frame of a resize. Without this an application
+// watching a zoom animation realises its whole visible set per frame and has
+// no call to make. The precedence rule is one sentence and both readers state
+// it: the stated height is asked FIRST and a 0 answer falls through to the
+// measurement. See `plans/facet/relist.md`, `## A stated height`.
+//
 // ---- how `T` gets out of the way -------------------------------------------
 //
 // A node's props are `*u8`, so the collection has to be erased — and reading a
@@ -38,6 +48,7 @@ import "events/events" as events;
 import "./facet" as core;
 import "./mount" as mount;
 import "./obs_vec" as obs_vec;
+import "./props" as props;
 import "./band" as band;
 import "./vocabulary" as vocab;
 
@@ -115,6 +126,27 @@ struct RelistProps {
     // about the model rather than a hint — which is why it is stated rather
     // than guessed.
     uneven_rows: bool,
+    // THE HEIGHT OF ROW `i`, ANSWERED WITHOUT BUILDING IT.
+    //
+    // `uneven_rows` says the rows differ; this is where an application says by
+    // how much. Without it the only way to learn an uneven row's height is to
+    // BUILD the row and REALISE it — ~5us for the build and ~300us for the
+    // realise it forces — and a recycler asks for the height of every row
+    // whenever its WIDTH changes, because that is how it knows its own extent.
+    // So a window-zoom animation realises every visible row on every frame.
+    //
+    // THE IDENTITY CACHE DOES NOT COVER THAT, which is the bet this element
+    // shipped on. A height belongs to a width, so the cache is thrown away
+    // whole when the width moves, and every number that justified it was
+    // measured at a CONSTANT width. The two do not compete: a backend asks the
+    // stated height FIRST and never reaches the cache for a row it answers, so
+    // a streaming transcript keeps the numbers it had.
+    //
+    // Answer 0 for a row you cannot compute and that row is built and measured
+    // as before — a partial answer is a legal answer, which is what lets the
+    // two mechanisms compose with no precedence rule between them.
+    row_height_of: fn(usize, *u8) -> f64,
+    opaque row_height_of_ctx: *u8,
     // The subscription, owned. Dropping the props cancels it — which is why it
     // is stored rather than detached: a listener that outlives the props reads
     // `ctx` as a freed pointer on the next append.
@@ -167,6 +199,8 @@ impl RelistProps {
             pending: obs_vec::Change::reload(),
             has_pending: false,
             uneven_rows: false,
+            row_height_of: props::no_row_height_of,
+            row_height_of_ctx: 0 as *u8,
             sub: events::SignalSubscription[obs_vec::Change]::none(),
             live: vec::new::[*core::Node](),
             scroll_to_index: -1 as i64,
@@ -376,6 +410,8 @@ fn relist[T](
     builder: fn(usize, *u8) -> flex::Node = no_builder,
     builder_ctx: *u8 = 0 as *u8,
     uneven_rows: bool = false,
+    row_height_of: fn(usize, *u8) -> f64 = props::no_row_height_of,
+    row_height_of_ctx: *u8 = 0 as *u8,
     columns: usize = 1 as usize,
 ) -> core::Node {
     var p: RelistProps = RelistProps::new();
@@ -384,6 +420,8 @@ fn relist[T](
     p.builder = builder;
     p.builder_ctx = builder_ctx;
     p.uneven_rows = uneven_rows;
+    p.row_height_of = row_height_of;
+    p.row_height_of_ctx = row_height_of_ctx;
     p.columns = _at_least_one(columns);
     return match box::new::[RelistProps](p) {
         option::Option[box::Box[RelistProps]]::Some(b) => {
@@ -571,6 +609,53 @@ impl Relist {
         return { (*p).uneven_rows };
     }
 
+    // THE HEIGHT OF ROW `at`, WITHOUT BUILDING IT — see the field.
+    //
+    // The one escape hatch `list` has that this element did not, and the
+    // reason it is here rather than in the application: a row with no stated
+    // height is measured by REALISING it, and a recycler re-asks every visible
+    // row's height on every width change, so a resize animation pays ~300us
+    // per row per frame and nothing an application can call makes it stop.
+    //
+    // An application that stacks known extents already knows the answer as
+    // arithmetic. This is where it says so. Answer 0 for a row you cannot
+    // compute and that row is built and measured as before.
+    fn set_row_height_of(this, f: fn(usize, *u8) -> f64,
+                         row_height_of_ctx: *u8 = 0 as *u8) -> Relist {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return this; }
+        { (*p).row_height_of = f };
+        { (*p).row_height_of_ctx = row_height_of_ctx };
+        // THE ROW BAND, like `set_uneven_rows`: it changes what a row
+        // measures, which is part of describing what a row IS.
+        core::touch(this._p, P_ROWS);
+        return this;
+    }
+
+    // THE STATED HEIGHT OF ROW `at`, or 0 for "nobody said" — which covers
+    // both an element that states no function and one whose function declines
+    // this row. The reader for a backend that holds a CURSOR rather than the
+    // props, so the sentinel comparison and the "0 means I cannot compute
+    // this one" reading each have one home.
+    fn stated_row_height(this, at: usize) -> f64 {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return 0.0f64; }
+        let f: fn(usize, *u8) -> f64 = { (*p).row_height_of };
+        if f == props::no_row_height_of { return 0.0f64; }
+        let h: f64 = f(at, { (*p).row_height_of_ctx });
+        if h < 1.0f64 { return 0.0f64; }
+        return h;
+    }
+
+    // WHETHER A HEIGHT IS STATED AT ALL. `props::no_row_height_of` is the
+    // sentinel every backend compares against, so this answers the same
+    // question they ask and a suite need not know the spelling.
+    fn states_row_height(this) -> bool {
+        let p: *RelistProps = this._props();
+        if p.is_null() { return false; }
+        return { (*p).row_height_of } != props::no_row_height_of;
+    }
+
     // The change waiting to be applied, and whether there is one. The backend's
     // two questions; `take_pending` clears it, because a change applied twice
     // is a sequence spliced twice.
@@ -656,6 +741,33 @@ fn _keyed_row(id: str, inner: str) -> core::Node {
 }
 
 fn _no_release(p: *u8) { return; }
+
+// ---- stated heights ----------------------------------------------------------
+
+static RL_HEIGHT_ASKS: i64 = 0 as i64;
+
+// A height as ARITHMETIC over the index, which is the shape an application that
+// stacks known extents already has. Nothing is built to answer it, and
+// `RL_BUILT` beside `RL_HEIGHT_ASKS` is how the tests say so.
+fn _stated_height(index: usize, ctx: *u8) -> f64 {
+    RL_HEIGHT_ASKS = RL_HEIGHT_ASKS + (1 as i64);
+    return 40.0f64 + ((index as f64) * 2.0f64);
+}
+
+// DECLINES THE ODD ROWS. Zero means "I cannot compute this one", so an
+// application with one awkward row keeps the hatch for the rest.
+fn _partial_height(index: usize, ctx: *u8) -> f64 {
+    if (index % (2 as usize)) == (1 as usize) { return 0.0f64; }
+    return 44.0f64;
+}
+
+// Answers out of its CONTEXT, the way a component states heights from its own
+// state rather than from a static.
+fn _ctx_height(index: usize, ctx: *u8) -> f64 {
+    let n: *f64 = { ctx as *f64 };
+    if n.is_null() { return 0.0f64; }
+    return { *n };
+}
 
 // What `@ui { .. }` hands a builder back: a WRAPPER whose child 0 is the keyed
 // row. The probe has to see through it, and this is the shape that says so.
@@ -1209,5 +1321,120 @@ fn a_node_that_is_not_a_relist_is_not_narrowed() {
     match from(#addr_of(col)) {
         option::Option[Relist]::Some(_h) => { assert false; }
         option::Option[Relist]::None => { }
+    }
+}
+
+#[test]
+fn a_stated_height_answers_without_building_the_row() {
+    // THE GAP THIS FIELD CLOSES. A row with no stated height is measured by
+    // BUILDING it and realising it, and a recycler re-asks every row's height
+    // whenever the width changes — so a window-zoom animation realised the
+    // whole visible set per frame and no call an application could make would
+    // stop it. The build counter is the assertion: three heights, no builds.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    let _b: status::Status = rows.append(_Entry { n: 2 });
+    let _c: status::Status = rows.append(_Entry { n: 3 });
+    var n: core::Node = relist(rows, key: "h", builder: _row, uneven_rows: true,
+                               row_height_of: _stated_height);
+    let np: *core::Node = #addr_of(n);
+    match from(np) {
+        option::Option[Relist]::Some(h) => {
+            assert h.states_row_height();
+            RL_BUILT = 0 as i64;
+            RL_HEIGHT_ASKS = 0 as i64;
+            assert h.stated_row_height(0 as usize) == 40.0f64;
+            assert h.stated_row_height(1 as usize) == 42.0f64;
+            assert h.stated_row_height(2 as usize) == 44.0f64;
+            assert RL_HEIGHT_ASKS == (3 as i64);
+            assert RL_BUILT == (0 as i64);
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_relist_that_states_no_height_answers_nobody_said() {
+    // THE NEGATIVE HALF, and the one that keeps every relist written before
+    // this field meaning what it meant: absent is `no_row_height_of`, which
+    // answers 0, which is what sends a backend to the measurement it has
+    // always done.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    var n: core::Node = relist(rows, key: "h0", builder: _row);
+    match from(#addr_of(n)) {
+        option::Option[Relist]::Some(h) => {
+            assert h.states_row_height() == false;
+            assert h.stated_row_height(0 as usize) == 0.0f64;
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_row_the_application_cannot_compute_falls_through() {
+    // A PARTIAL ANSWER IS A LEGAL ANSWER — the reading that lets a stated
+    // height and a measured one compose with no precedence rule between them.
+    // Row 1 declines and reads as "nobody said"; row 0 and row 2 do not.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    let _b: status::Status = rows.append(_Entry { n: 2 });
+    let _c: status::Status = rows.append(_Entry { n: 3 });
+    var n: core::Node = relist(rows, key: "hp", builder: _row, uneven_rows: true,
+                               row_height_of: _partial_height);
+    match from(#addr_of(n)) {
+        option::Option[Relist]::Some(h) => {
+            assert h.states_row_height();
+            assert h.stated_row_height(0 as usize) == 44.0f64;
+            assert h.stated_row_height(1 as usize) == 0.0f64;
+            assert h.stated_row_height(2 as usize) == 44.0f64;
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_stated_height_reads_its_own_context() {
+    // The context is the half a static-backed test cannot catch: a component
+    // states heights off its own state, and passing the pointer is what makes
+    // `this` reachable from a plain fn.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    var tall: f64 = 96.0f64;
+    var n: core::Node = relist(rows, key: "hc", builder: _row, uneven_rows: true,
+                               row_height_of: _ctx_height,
+                               row_height_of_ctx: { #addr_of(tall) as *u8 });
+    match from(#addr_of(n)) {
+        option::Option[Relist]::Some(h) => {
+            assert h.stated_row_height(0 as usize) == 96.0f64;
+            // The place is READ each time, not copied at construction — which
+            // is what makes a height that depends on live state work at all.
+            tall = 120.0f64;
+            assert h.stated_row_height(0 as usize) == 120.0f64;
+        }
+        option::Option[Relist]::None => { assert false; }
+    }
+}
+
+#[test]
+fn stating_a_height_after_the_fact_raises_the_row_band() {
+    // The setter's half: it changes what a row MEASURES, which is part of
+    // describing what a row is, so it rides `P_ROWS` like `set_uneven_rows`.
+    // Without the bit the backend keeps the heights it measured the old way
+    // and the new answer is never asked for.
+    var rows: obs_vec::ObsVec[_Entry] = obs_vec::ObsVec[_Entry]::new();
+    let _a: status::Status = rows.append(_Entry { n: 1 });
+    var n: core::Node = relist(rows, key: "hs", builder: _row);
+    let np: *core::Node = #addr_of(n);
+    match from(np) {
+        option::Option[Relist]::Some(h) => {
+            core::clear_dirty(np);
+            assert core::dirty_of(np) == (0 as u64);
+            let _s: Relist = h.set_row_height_of(_stated_height);
+            assert (core::dirty_of(np) & P_ROWS) != (0 as u64);
+            assert h.states_row_height();
+            assert h.stated_row_height(0 as usize) == 40.0f64;
+        }
+        option::Option[Relist]::None => { assert false; }
     }
 }

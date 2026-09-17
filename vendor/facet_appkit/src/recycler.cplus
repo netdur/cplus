@@ -2696,6 +2696,16 @@ fn apply_relist_rows(cv: *u8, n: *core::Node, dirty: u64) {
     // that is 646 realises to show a list against 46 — and 3 dropped frames in
     // 60 under a hard flick against none.
     { (*s).uniform = { (*p).uneven_rows } == false };
+    // AND HOW MUCH THEY DIFFER BY, when the application can say. `uneven_rows`
+    // alone leaves every row measured by REALISING it, and this delegate is
+    // asked for every row whenever the WIDTH changes — so a zoom animation
+    // realises the whole visible set on every frame, ~300us a row, with no
+    // call an application could make to stop it. The identity cache does not
+    // cover that: it is keyed to one width and dropped whole when the width
+    // moves. Copied beside `row`, unconditionally, for the reason `apply_list`
+    // states at length below — the height rides the ROW band.
+    { (*s).row_height_of = { (*p).row_height_of } };
+    { (*s).row_height_of_ctx = { (*p).row_height_of_ctx } };
     // HOW MANY COLUMNS A LINE HOLDS. One is a list, which is every relist that
     // never mentions the verb. The count it is REPLACING is read first: a
     // regrid keeps the first visible row, and that row is found under the

@@ -576,6 +576,14 @@ fn relist_row_height(tv: *u8, n: *core::Node, at: usize, w: f64) -> f64 {
     let m: *RelistMeasure = measure_of(tv);
     if m == (0 as *RelistMeasure) { return 0.0f64; }
     if { (*m).width } != w { forget_all_measurements(tv); { (*m).width = w }; }
+    // ASK BEFORE BUILDING, and before the caches — the more specific answer
+    // wins, the way it does on the table path. A row with no stated height is
+    // measured by REALISING it, and this is asked for every row whenever the
+    // width changes, so a rotation with no answer here realises the visible
+    // set again. A 0 answer means "I cannot compute this one" and falls
+    // through to the measurement below, so a partial answer is a legal answer.
+    let stated: f64 = h.stated_row_height(at);
+    if stated >= 1.0f64 { return stated; }
     let uneven: bool = h.uneven_rows();
     if uneven == false && { (*m).uniform_h } > 0.0f64 { return { (*m).uniform_h }; }
 

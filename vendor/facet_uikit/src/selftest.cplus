@@ -3229,6 +3229,60 @@ fn a_changed_relist_row_is_re_measured() -> bool {
     return recycler::measure_realises() == (3 as i64);
 }
 
+// A STATED HEIGHT IS ANSWERED WITHOUT REALISING ANYTHING — the hatch `list`
+// has always had and `relist` did not until 2026-09-17. It matters most on a
+// WIDTH change: every measurement is keyed to the width it was taken at, so a
+// rotation throws them all away and an uneven list realises the visible set
+// again. A stated height costs one call and survives it.
+fn rl_stated_height(i: usize, ctx: *u8) -> f64 { return 33.0f64 + (i as f64); }
+
+// Declines every row past 1 — 0 means "I cannot compute this one".
+fn rl_stated_height_partial(i: usize, ctx: *u8) -> f64 {
+    if i > (1 as usize) { return 0.0f64; }
+    return 33.0f64;
+}
+
+fn a_stated_height_is_answered_without_realising() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 5 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "sh1", builder: rl_tall_row,
+                                       uneven_rows: true,
+                                       row_height_of: rl_stated_height);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    recycler::reset_measure_realises();
+    // The builder would answer 30, 40, 50; the application's arithmetic wins,
+    // because the more specific answer is asked first.
+    if recycler::row_height_for(v, 0 as i64) != 33.0f64 { return false; }
+    if recycler::row_height_for(v, 1 as i64) != 34.0f64 { return false; }
+    if recycler::row_height_for(v, 2 as i64) != 35.0f64 { return false; }
+    return recycler::measure_realises() == (0 as i64);
+}
+
+// A ROW THE APPLICATION CANNOT STATE IS MEASURED, which is what makes a
+// partial answer legal — an app states the rows it knows and leaves the rest.
+fn a_relist_row_that_declines_is_measured() -> bool {
+    var rows: obs_vec::ObsVec[RlEntry] = obs_vec::ObsVec[RlEntry]::new();
+    var i: i32 = 0;
+    while i < 5 { let _a: status::Status = rows.append(RlEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "sh2", builder: rl_tall_row,
+                                       uneven_rows: true,
+                                       row_height_of: rl_stated_height_partial);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    if v == (0 as *u8) { return false; }
+    core::set_view(np, v, views::view_release);
+    recycler::reset_measure_realises();
+    if recycler::row_height_for(v, 0 as i64) != 33.0f64 { return false; }
+    if recycler::measure_realises() != (0 as i64) { return false; }
+    // Row 3 declines, so it is built and realised the way every relist row was.
+    if recycler::row_height_for(v, 3 as i64) != 60.0f64 { return false; }
+    return recycler::measure_realises() == (1 as i64);
+}
+
 // A GRID LINE IS AS TALL AS ITS TALLEST ITEM. Line 1 holds rows 3, 4 and 5 —
 // 60, 70 and 80 — and is 80.
 fn a_grid_line_is_as_tall_as_its_tallest_item() -> bool {
@@ -3508,6 +3562,8 @@ fn run_all() -> i32 {
     check("a uniform relist measures one row for all", a_uniform_relist_measures_one_row_for_all());
     check("an uneven relist measures each row and remembers by key", an_uneven_relist_measures_each_row_and_remembers_by_key());
     check("a changed relist row is re-measured", a_changed_relist_row_is_re_measured());
+    check("a stated height is answered without realising", a_stated_height_is_answered_without_realising());
+    check("a relist row that declines is measured", a_relist_row_that_declines_is_measured());
     check("a grid line is as tall as its tallest item", a_grid_line_is_as_tall_as_its_tallest_item());
     check("a new builder forgets every measurement", a_new_builder_forgets_every_measurement());
     check("a regrid keeps the first visible row", a_regrid_keeps_the_first_visible_row());

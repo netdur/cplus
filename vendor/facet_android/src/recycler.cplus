@@ -545,9 +545,14 @@ fn model_of(n: *core::Node) -> RowModel {
         // from `list`: there is no count an application can have forgotten to
         // update.
         //
-        // NO BIND, no kinds, no groups, no stated height. `relist` builds a row
-        // fresh per index and the builder is ONE function, so every row shares
-        // a pool and the height is whatever the row measures to.
+        // NO BIND, no kinds, no groups. `relist` builds a row fresh per index
+        // and the builder is ONE function, so every row shares a pool.
+        //
+        // A STATED HEIGHT IT DOES CARRY, since 2026-09-17. Without one the
+        // height is whatever the row MEASURES to, which means building it —
+        // and a recycler re-asks every row's height whenever the width
+        // changes, so a resize with no answer here rebuilds the visible set.
+        // `height_of` already prefers the stated answer over the flat one.
         let p: *relist::RelistProps = relist::props_of(n);
         if p == (0 as *relist::RelistProps) { return RowModel::none(); }
         let count_of: fn(*u8) -> usize = { (*p).count_of };
@@ -557,8 +562,8 @@ fn model_of(n: *core::Node) -> RowModel {
                           bind: props::no_bind,
                           bind_ctx: 0 as *u8,
                           height: 0.0f64,
-                          height_of: props::no_row_height_of,
-                          height_of_ctx: 0 as *u8,
+                          height_of: { (*p).row_height_of },
+                          height_of_ctx: { (*p).row_height_of_ctx },
                           kind_of: props::no_row_kind,
                           kind_ctx: 0 as *u8,
                           grouped: false,

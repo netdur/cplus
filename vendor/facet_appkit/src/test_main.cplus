@@ -15867,6 +15867,225 @@ fn a_uniform_relist_measures_one_row_for_all_of_them() {
     assert RLB == after_first;
 }
 
+// ---- a relist that STATES its heights -----------------------------------------
+//
+// The hatch `list` has had since a live splitter drag rebuilt a timeline per
+// frame, and `relist` did not until 2026-09-17. Without it there is no call an
+// application can make: a height belongs to a WIDTH, so the identity cache is
+// dropped whole when the width moves, and every row is then measured by
+// building and REALISING it — ~300us each, on every frame of a zoom animation.
+
+static RLH_ASKED: i64 = 0 as i64;
+
+fn rlh_height(index: usize, ctx: *u8) -> f64 {
+    RLH_ASKED = RLH_ASKED + (1 as i64);
+    if (index % (2 as usize)) == (0 as usize) { return 40.0f64; }
+    return 24.0f64;
+}
+
+// Declines the rows past 2 — 0 is "I cannot compute this one".
+fn rlh_height_partial(index: usize, ctx: *u8) -> f64 {
+    if index > (2 as usize) { return 0.0f64; }
+    return 40.0f64;
+}
+
+fn rlh_rows(ref rows: obs_vec::ObsVec[RLEntry], key: str,
+            f: fn(usize, *u8) -> f64) -> core::Node {
+    return relist::relist(rows, key: key, builder: rlb_row, uneven_rows: true,
+                          row_height_of: f);
+}
+
+#[test]
+fn the_identity_cache_covers_a_re_ask_and_not_a_width_change() {
+    backend::install();
+    // WHAT THE IDENTITY CACHE ACTUALLY BUYS, measured rather than assumed —
+    // because "relist caches heights by row id" is true and is not the whole
+    // sentence, and the difference is the whole of this row of the contract.
+    //
+    // KEYED rows, uneven, no stated height: the arrangement the cache exists
+    // for. Asking the same rows again at the same width costs NOTHING, which is
+    // the streaming case and is why relist shipped without a height callback.
+    // A WIDTH CHANGE costs a realise per row asked — the cache is keyed to one
+    // width and REPLACED when it moves, so even going back to a width already
+    // measured pays again.
+    RLB = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 50 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "idc", builder: tl_row_keyed,
+                                       uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    recycler::set_column_width(v, 400.0f64);
+    recycler::reset_measure_realises();
+    var r: i64 = 0 as i64;
+    while r < (5 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+    assert recycler::measure_realises() == (5 as i64);
+
+    // THE CACHE WORKING: the same five rows, the same width, nothing realised.
+    recycler::reset_measure_realises();
+    r = 0 as i64;
+    while r < (5 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+    assert recycler::measure_realises() == (0 as i64);
+
+    // THE CASE IT DOES NOT COVER: the width moves, as it does on every frame of
+    // a resize or zoom animation.
+    recycler::set_column_width(v, 640.0f64);
+    recycler::reset_measure_realises();
+    r = 0 as i64;
+    while r < (5 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+    assert recycler::measure_realises() == (5 as i64);
+
+    // ...and the un-zoom is not free either: `heights_by_id` is REPLACED rather
+    // than kept per width, so a width it has already measured is a fresh one.
+    recycler::set_column_width(v, 400.0f64);
+    recycler::reset_measure_realises();
+    r = 0 as i64;
+    while r < (5 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+    assert recycler::measure_realises() == (5 as i64);
+}
+
+#[test]
+fn a_relist_that_states_a_height_builds_no_row_to_answer() {
+    backend::install();
+    RLB = 0 as i64;
+    RLH_ASKED = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 50 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = rlh_rows(rows, "rh1", rlh_height);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 1 as i64) == 24.0f64;
+    assert recycler::height_of_row(v, 8 as i64) == 40.0f64;
+    // Asked three times, built ZERO — which is the whole saving. Without the
+    // apply copying the pair across, every one of these is a build AND a
+    // realise, and each answer is the measured height rather than the stated
+    // one.
+    assert RLH_ASKED == (3 as i64);
+    assert RLB == (0 as i64);
+}
+
+#[test]
+fn a_width_change_realises_nothing_when_a_relist_states_its_heights() {
+    backend::install();
+    // THE REPORTED CASE, and the one the identity cache cannot cover: a zoom
+    // animation changes the width every frame, and a width change drops the
+    // cache entire because a height belongs to the width it was measured at.
+    // With the heights stated, the second pass costs the same as the first —
+    // three calls into the application and nothing built.
+    RLB = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 50 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = rlh_rows(rows, "rh2", rlh_height);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 400.0f64);
+    var r: i64 = 0 as i64;
+    while r < (3 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+    assert RLB == (0 as i64);
+
+    // The window zooms: same rows, new width.
+    recycler::set_column_width(v, 640.0f64);
+    r = 0 as i64;
+    while r < (3 as i64) {
+        assert recycler::height_of_row(v, r) > 1.0f64;
+        r = r +% (1 as i64);
+    }
+    assert RLB == (0 as i64);
+}
+
+#[test]
+fn a_width_change_DOES_realise_a_relist_that_states_none() {
+    backend::install();
+    // THE ABLATION, kept as a test. The claim above is only worth something if
+    // a relist without the hatch really does pay on a resize — this is that
+    // same width change over the same rows, with nothing stated, and it builds
+    // every time. It is also the measurement the report was filed on.
+    RLB = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 50 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "rh3", builder: rlb_row,
+                                       uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    recycler::set_column_width(v, 400.0f64);
+    var r: i64 = 0 as i64;
+    while r < (3 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+    let after_first: i64 = RLB;
+    assert after_first > (0 as i64);
+
+    recycler::set_column_width(v, 640.0f64);
+    r = 0 as i64;
+    while r < (3 as i64) { let _h: f64 = recycler::height_of_row(v, r); r = r +% (1 as i64); }
+    assert RLB > after_first;
+}
+
+#[test]
+fn a_relist_row_the_application_cannot_state_is_measured() {
+    backend::install();
+    // A PARTIAL ANSWER IS A LEGAL ANSWER. Rows 0..2 are stated and cost
+    // nothing; row 3 declines and is built and measured the way every relist
+    // row was before this.
+    RLB = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = rlh_rows(rows, "rh4", rlh_height_partial);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert RLB == (0 as i64);
+    let h3: f64 = recycler::height_of_row(v, 3 as i64);
+    assert h3 > 0.0f64;
+    assert RLB == (1 as i64);
+}
+
+#[test]
+fn stating_a_height_on_a_live_relist_reaches_the_row_source() {
+    backend::install();
+    // The setter, through the apply. `set_row_height_of` raises the ROW band
+    // and the pass copies the pair across — so a relist told its heights after
+    // it was mounted stops building to measure from that pass onwards.
+    RLB = 0 as i64;
+    var rows: obs_vec::ObsVec[RLEntry] = obs_vec::ObsVec[RLEntry]::new();
+    var i: i32 = 0;
+    while i < 10 { let _a: status::Status = rows.append(RLEntry { n: i }); i = i +% 1; }
+    var n: core::Node = relist::relist(rows, key: "rh5", builder: rlb_row,
+                                       uneven_rows: true);
+    let np: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, np);
+    core::set_view(np, v, views::view_release);
+    let _h: f64 = recycler::height_of_row(v, 0 as i64);
+    assert RLB > (0 as i64);
+
+    match relist::from(np) {
+        option::Option[relist::Relist]::Some(h) => {
+            let _x: relist::Relist = h.set_row_height_of(rlh_height);
+        }
+        option::Option[relist::Relist]::None => { assert false; }
+    }
+    views::apply(0 as *u8, np);
+    // A new width, so nothing answers out of the cache the old measurements
+    // filled — the stated height is the only thing that can answer now.
+    recycler::set_column_width(v, 512.0f64);
+    let built: i64 = RLB;
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 1 as i64) == 24.0f64;
+    assert RLB == built;
+}
+
 #[test]
 fn an_uneven_relist_measures_every_row() {
     backend::install();

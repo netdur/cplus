@@ -4266,6 +4266,9 @@ fn relist[T](
     builder: fn(usize, *u8) -> flex::Node = m_relist::no_builder,
     builder_ctx: *u8 = 0 as *u8,
     uneven_rows: bool = false,
+    row_height_of: fn(usize, *u8) -> f64 = props::no_row_height_of,
+    row_height_of_ctx: *u8 = 0 as *u8,
+    columns: usize = 1 as usize,
 ) -> core::Node {
     // TURBOFISH, and it is not optional here. Inference DOES read `T` off a
     // bare `ref rows: ObsVec[T]` place when the caller's collection is
@@ -4277,7 +4280,10 @@ fn relist[T](
     // not have to.
     return m_relist::relist::[T](rows, key: key,
                                  builder: builder, builder_ctx: builder_ctx,
-                                 uneven_rows: uneven_rows);
+                                 uneven_rows: uneven_rows,
+                                 row_height_of: row_height_of,
+                                 row_height_of_ctx: row_height_of_ctx,
+                                 columns: columns);
 }
 """
 

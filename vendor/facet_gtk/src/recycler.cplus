@@ -284,9 +284,15 @@ fn sequence_of(n: *core::Node) -> Sequence {
         // from `list`: there is no count an application can have forgotten to
         // update.
         //
-        // NO BIND, no kinds, no groups, no stated height, ONE column. `relist`
-        // builds a row fresh per index from a single builder, so every slot in
-        // the map is a plain data row — which is the simplest shape the map has.
+        // NO BIND, no kinds, no groups, ONE column. `relist` builds a row
+        // fresh per index from a single builder, so every slot in the map is a
+        // plain data row — which is the simplest shape the map has.
+        //
+        // A STATED HEIGHT IT DOES CARRY, since 2026-09-17. A row with none is
+        // measured by BUILDING it, and a recycler re-asks every row's height
+        // whenever the width changes, so a resize with no answer here rebuilds
+        // the visible set per frame. `build_row` below already asks in the
+        // right order — the stated height first, the measured one after.
         let p: *relist::RelistProps = relist::props_of(n);
         if p == (0 as *relist::RelistProps) { return empty_sequence(); }
         var s: Sequence = empty_sequence();
@@ -294,6 +300,8 @@ fn sequence_of(n: *core::Node) -> Sequence {
         s.count = count_of({ (*p).rows }) as i64;
         s.row = { (*p).builder };
         s.row_ctx = { (*p).builder_ctx };
+        s.row_height_of = { (*p).row_height_of };
+        s.row_height_of_ctx = { (*p).row_height_of_ctx };
         // THE GRID, and this backend already knows how: the slot map turns a
         // line into `columns` data rows, and one column is the degenerate case
         // it has always walked.
