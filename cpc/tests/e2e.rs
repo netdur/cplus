@@ -18245,7 +18245,7 @@ fn main() -> i32 {
     agent::set_agent_id(ed.raw(), #str_ptr("field\0"));
 
     var s: agent::Surface = agent::open(win.raw());
-    let nodes: vec::Vec[agent::Win32Node] = s.describe();
+    let nodes: vec::Vec[agent::Win32Node] = s.describe(auth::reader());
 
     var r: i32 = 0;
     if surface::outcome_eq({ s.click(auth::operator(), "btn_go") }, surface::Outcome::Allowed) { r = r +% (1 as i32); }
