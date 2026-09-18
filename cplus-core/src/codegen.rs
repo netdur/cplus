@@ -27403,7 +27403,11 @@ fn main() -> i32 {\n\
         );
         let ir = gen_src_mono(&src);
         assert!(
-            ir.contains("call i32 @pthread_create(ptr "),
+            ir.contains(if cfg!(windows) {
+                "call i32 @__cplus_thread_create_v1(ptr "
+            } else {
+                "call i32 @pthread_create(ptr "
+            }),
             "expected pthread_create call, got:\n{ir}"
         );
         assert!(
@@ -27431,7 +27435,11 @@ fn main() -> i32 {\n\
         );
         let ir = gen_src_mono(&src);
         assert!(
-            ir.contains("call i32 @pthread_join(i64 "),
+            ir.contains(if cfg!(windows) {
+                "call i32 @__cplus_thread_join_v1(i64 "
+            } else {
+                "call i32 @pthread_join(i64 "
+            }),
             "expected pthread_join call, got:\n{ir}"
         );
         assert!(
@@ -27491,8 +27499,14 @@ fn main() -> i32 {\n\
     #[test]
     fn thread_pthread_create_declared_in_preamble() {
         let ir = gen_src("fn main() -> i32 { return 0; }");
-        assert!(ir.contains("declare i32 @pthread_create(ptr, ptr, ptr, ptr)"));
-        assert!(ir.contains("declare i32 @pthread_join(i64, ptr)"));
+        if cfg!(windows) {
+            assert!(ir.contains("declare ptr @CreateThread(ptr, i64, ptr, ptr, i32, ptr)"));
+            assert!(ir.contains("declare i32 @WaitForSingleObject(ptr, i32)"));
+            assert!(ir.contains("declare i32 @CloseHandle(ptr)"));
+        } else {
+            assert!(ir.contains("declare i32 @pthread_create(ptr, ptr, ptr, ptr)"));
+            assert!(ir.contains("declare i32 @pthread_join(i64, ptr)"));
+        }
     }
 
     // ---- v0.0.3 Phase 5 Slice 5C: thread::spawn_with[I, O] ----
@@ -27507,7 +27521,11 @@ fn main() -> i32 {\n\
                    }";
         let ir = gen_src_mono(src);
         assert!(
-            ir.contains("call i32 @pthread_create(ptr "),
+            ir.contains(if cfg!(windows) {
+                "call i32 @__cplus_thread_create_v1(ptr "
+            } else {
+                "call i32 @pthread_create(ptr "
+            }),
             "expected pthread_create call, got:\n{ir}"
         );
         assert!(
@@ -27748,6 +27766,7 @@ fn main() -> i32 {\n\
         // Both the spawn malloc and the spawn_with layout must pad the slot
         // to the coerce size (64+16=80, not 64+12=76) or the store tramples
         // the bytes after the slot (the input, or heap metadata).
+        // MSVC returns this type indirectly, so its slot remains 12 bytes.
         let src = format!(
             "{SPAWN_ABI_PRELUDE}fn make_odd() -> Odd {{ return Odd {{ a: 1, b: 2, c: 3 }}; }} \
              fn main() -> i32 {{ \
@@ -27757,8 +27776,12 @@ fn main() -> i32 {\n\
         );
         let ir = gen_src_mono(&src);
         assert!(
-            ir.contains("call ptr @malloc(i64 80)"),
-            "spawn ctx must pad a coerced 12-byte result slot to 16 (64+16=80):\n{ir}"
+            ir.contains(if cfg!(windows) {
+                "call ptr @malloc(i64 76)"
+            } else {
+                "call ptr @malloc(i64 80)"
+            }),
+            "spawn ctx must fit the ABI result: MSVC uses 12-byte sret, Unix coerces to 16:\n{ir}"
         );
     }
     #[test]
@@ -28366,6 +28389,17 @@ fn main() -> i32 {\n\
              export extern fn make() -> P { return P { a: 1, b: 2 }; }\n\
              fn main() -> i32 { return 0; }",
         );
+        if cfg!(windows) {
+            assert!(
+                ir.contains("sret(%P)"),
+                "MSVC returns this struct indirectly: {ir}"
+            );
+            assert!(
+                !ir.contains("ret.coerce"),
+                "sret needs no coerced staging slot: {ir}"
+            );
+            return;
+        }
         let ms_line = ir
             .lines()
             .find(|l| l.contains("llvm.memset") && l.contains("ret.coerce"))
@@ -29171,13 +29205,16 @@ fn main() -> i32 {\n\
             !ir.contains("call %Pt @objc_msgSend"),
             "small struct return must coerce, not pass by value; IR:\n{ir}"
         );
-        // TWO ABIS, TWO COERCIONS, and both are "in FP registers, not sret".
+        // AArch64 and SysV return this shape in FP registers. MSVC returns
+        // it indirectly and therefore uses the stret entry point.
         // AArch64 calls a 2xf64 struct an HFA and coerces it to `[2 x double]`;
         // x86-64 SysV classifies both eightbytes SSE and returns them in
         // xmm0/xmm1, which LLVM spells `{ double, double }`. The assertion is
         // that it coerced at all — pinning arm64's spelling failed a correct
         // x86-64 codegen.
-        let coerced = if active_target().arch == TargetArch::X86_64 {
+        let coerced = if active_target().os == TargetOs::Windows {
+            "call void @objc_msgSend_stret(ptr sret(%Pt)"
+        } else if active_target().arch == TargetArch::X86_64 {
             "call { double, double } @objc_msgSend("
         } else {
             "call [2 x double] @objc_msgSend("
@@ -29200,7 +29237,8 @@ fn main() -> i32 {\n\
         // The global is a constant struct in declared field order, with the
         // f32 field rendered as the f32 hex bit pattern and bool as i1.
         assert!(
-            ir.contains("@S = global %P { i32 7, float 0x3FF8000000000000, i1 true }"),
+            ir.replace(" = weak_odr global ", " = global ")
+                .contains("@S = global %P { i32 7, float 0x3FF8000000000000, i1 true }"),
             "expected constant struct aggregate; IR:\n{ir}"
         );
     }
@@ -29214,7 +29252,8 @@ fn main() -> i32 {\n\
              fn main() -> i32 { return S.a; }",
         );
         assert!(
-            ir.contains("@S = global %P { i32 1, i32 2 }"),
+            ir.replace(" = weak_odr global ", " = global ")
+                .contains("@S = global %P { i32 1, i32 2 }"),
             "expected declared-order fields; IR:\n{ir}"
         );
     }
@@ -29228,7 +29267,8 @@ fn main() -> i32 {\n\
              fn main() -> i32 { return O.n; }",
         );
         assert!(
-            ir.contains("@O = global %Outer { %Inner { i32 5 }, i32 6 }"),
+            ir.replace(" = weak_odr global ", " = global ")
+                .contains("@O = global %Outer { %Inner { i32 5 }, i32 6 }"),
             "expected nested constant struct; IR:\n{ir}"
         );
     }
@@ -29241,7 +29281,8 @@ fn main() -> i32 {\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(
-            ir.contains("@G = global %W { half 0xH3C00, half 0xH3E00 }"),
+            ir.replace(" = weak_odr global ", " = global ")
+                .contains("@G = global %W { half 0xH3C00, half 0xH3E00 }"),
             "expected half constants; IR:\n{ir}"
         );
     }
@@ -29256,7 +29297,8 @@ fn main() -> i32 {\n\
         );
         // The cast value renders identically to the plain `= 1` form.
         assert!(
-            ir.contains("@X = global i8 1"),
+            ir.replace(" = weak_odr global ", " = global ")
+                .contains("@X = global i8 1"),
             "expected scalar i8 global; IR:\n{ir}"
         );
     }
@@ -29268,7 +29310,8 @@ fn main() -> i32 {\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(
-            ir.contains("@X = global i16 -3"),
+            ir.replace(" = weak_odr global ", " = global ")
+                .contains("@X = global i16 -3"),
             "expected negative i16 global; IR:\n{ir}"
         );
     }
@@ -29282,7 +29325,8 @@ fn main() -> i32 {\n\
         // 2.0f32 bit pattern (rendered as the double-width hex form LLVM
         // uses for `float` constants), not the invalid `float 2`.
         assert!(
-            ir.contains("@F = global float 0x4000000000000000"),
+            ir.replace(" = weak_odr global ", " = global ")
+                .contains("@F = global float 0x4000000000000000"),
             "expected float constant for `2 as f32`; IR:\n{ir}"
         );
     }

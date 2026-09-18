@@ -2118,6 +2118,8 @@ pub fn int_bit_width(ty: &Ty, tables: &dyn TypeShape) -> Option<u64> {
 ///   4-aligned even when it is one byte wide.
 /// - The size rounds up to the alignment, so an array of the struct strides
 ///   correctly.
+/// Windows instead reserves complete, equally-sized bitfield storage units;
+/// see `MsvcBitfieldUnit` below. Plain fields obey the same packing rule.
 pub fn struct_plan(id: StructId, tables: &dyn TypeShape) -> Option<StructPlan> {
     struct_plan_inner(id, tables, &mut Vec::new())
 }
@@ -2202,6 +2204,43 @@ pub fn place_field(
     }
 }
 
+/// MSVC reserves a whole storage unit for adjacent, same-sized bitfields.
+/// Packing caps the unit's alignment; it does not allow fields to straddle.
+/// https://learn.microsoft.com/en-us/cpp/c-language/storage-and-alignment-of-structures
+#[derive(Default)]
+struct MsvcBitfieldUnit {
+    start: u64,
+    size: u64,
+    used: u64,
+}
+
+impl MsvcBitfieldUnit {
+    fn place(&mut self, cursor: u64, size: u64, align: u64, width: u8) -> (FieldPlace, u64) {
+        let bits = size * 8;
+        let next = if self.size != size || self.used + u64::from(width) > bits {
+            let boundary = align * 8;
+            self.start = cursor.div_ceil(boundary) * boundary;
+            self.size = size;
+            self.used = 0;
+            self.start + bits
+        } else {
+            cursor
+        };
+        let at = self.start + self.used;
+        self.used += u64::from(width);
+        let shift = (at % 8) as u8;
+        (
+            FieldPlace {
+                offset: at / 8,
+                shift,
+                width,
+                span_bytes: (u64::from(shift + width).div_ceil(8)) as u8,
+            },
+            next,
+        )
+    }
+}
+
 fn struct_plan_inner(
     id: StructId,
     tables: &dyn TypeShape,
@@ -2222,6 +2261,8 @@ fn struct_plan_inner(
     let mut cursor_bits: u64 = 0;
     let mut union_size: u64 = 0;
     let mut max_align: u64 = 1;
+    let msvc = crate::target::active_target().os == crate::target::TargetOs::Windows;
+    let mut bitfield_unit = MsvcBitfieldUnit::default();
     let mut ok = true;
     for (i, fty) in ftys.iter().enumerate() {
         let Some((sz, al)) = layout_of_inner(fty, tables, visiting) else {
@@ -2251,6 +2292,14 @@ fn struct_plan_inner(
             });
             continue;
         }
+        if msvc && width > 0 {
+            let (place, next) = bitfield_unit.place(cursor_bits, sz, eff_al, width);
+            places.push(place);
+            cursor_bits = next;
+            continue;
+        }
+        // A plain member ends an MSVC bitfield allocation unit.
+        bitfield_unit = MsvcBitfieldUnit::default();
         let (place, next) = place_field(
             cursor_bits,
             sz,
@@ -20729,7 +20778,8 @@ fn package_root_of(file: &std::path::Path) -> Option<PathBuf> {
     let mut cur = file.parent();
     while let Some(d) = cur {
         if d.join("Cplus.toml").is_file() {
-            return Some(d.to_path_buf());
+            // Windows entry paths may use 8.3 names while resolver paths are canonical.
+            return Some(std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf()));
         }
         cur = d.parent();
     }
@@ -34555,6 +34605,44 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
             "#[repr(C)] struct A { #[bits(3)] a: u32, #[bits(5)] b: u32, c: u8 }\n             #[repr(C)] struct B { #[bits(3)] a: u32, #[bits(30)] b: u32 }\n             #[repr(C, packed)] struct E { a: u8, b: u32 }\n             #[repr(C, packed = 2)] struct H { a: u8, b: u32, d: f64 }\n             struct Arr { xs: [A; 3] }\n             fn main() -> i32 {\n                 if #size_of::[A]() != (4 as usize) { return 1; }\n                 if #align_of::[A]() != (4 as usize) { return 2; }\n                 if #size_of::[B]() != (8 as usize) { return 3; }\n                 if #size_of::[E]() != (5 as usize) { return 4; }\n                 if #align_of::[E]() != (1 as usize) { return 5; }\n                 if #size_of::[H]() != (14 as usize) { return 6; }\n                 if #align_of::[H]() != (2 as usize) { return 7; }\n                 if #size_of::[Arr]() != (12 as usize) { return 8; }\n                 return 0;\n             }",
         );
         assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn msvc_bitfields_reserve_whole_units_and_only_share_equal_sizes() {
+        let mut unit = MsvcBitfieldUnit::default();
+        let (a, end) = unit.place(0, 4, 4, 3);
+        assert_eq!((a.offset, a.shift, end), (0, 0, 32));
+        let (b, end) = unit.place(end, 4, 4, 5);
+        assert_eq!((b.offset, b.shift, end), (0, 3, 32));
+        let (plain, end) = place_field(end, 1, 1, None, None);
+        assert_eq!((plain.offset, end), (4, 40));
+
+        // Changing declared type size forces a new aligned unit even when
+        // the preceding unit still has room.
+        let mut unit = MsvcBitfieldUnit::default();
+        let (_, end) = unit.place(8, 4, 4, 3);
+        let (wide, end) = unit.place(end, 8, 8, 40);
+        assert_eq!((wide.offset, wide.shift, end), (8, 0, 128));
+    }
+
+    #[test]
+    fn packed_msvc_bitfields_do_not_straddle_storage_units() {
+        let mut unit = MsvcBitfieldUnit::default();
+        let (_, end) = unit.place(0, 4, 1, 3);
+        let (wide, end) = unit.place(end, 4, 1, 30);
+        assert_eq!((wide.offset, wide.shift, end), (4, 0, 64));
+        let (plain, end) = place_field(end, 1, 1, None, Some(1));
+        assert_eq!((plain.offset, end), (8, 72));
+    }
+
+    #[test]
+    fn package_identity_uses_canonical_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cplus.toml"), "[package]\nname = \"app\"\n").unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        let canonical = dir.path().canonicalize().unwrap().join("src/main.cplus");
+        let alternate = dir.path().join("src/../src/main.cplus");
+        assert_eq!(package_root_of(&canonical), package_root_of(&alternate));
     }
 
     #[test]

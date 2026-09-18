@@ -241,7 +241,7 @@ fn packed_and_bitfield_layout_matches_clang() {
         .expect("invoke clang");
     assert!(st.success(), "C reference failed to build");
     let c_out = Command::new(&cbin).output().expect("run C reference");
-    let c_out = String::from_utf8_lossy(&c_out.stdout).into_owned();
+    let c_out = String::from_utf8_lossy(&c_out.stdout).replace("\r\n", "\n");
 
     let src = resolve_field_types(cplus_program());
     let srcp = dir.path().join("shapes.cplus");
@@ -259,7 +259,7 @@ fn packed_and_bitfield_layout_matches_clang() {
         String::from_utf8_lossy(&out.stderr)
     );
     let p_out = Command::new(&pbin).output().expect("run C+ program");
-    let p_out = String::from_utf8_lossy(&p_out.stdout).into_owned();
+    let p_out = String::from_utf8_lossy(&p_out.stdout).replace("\r\n", "\n");
 
     if c_out != p_out {
         let c_lines: Vec<&str> = c_out.lines().collect();

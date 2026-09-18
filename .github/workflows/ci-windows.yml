@@ -29,6 +29,9 @@ jobs:
     name: cargo test + build (Windows, clang)
     runs-on: windows-latest
     steps:
+      - name: Preserve fixture line endings
+        run: git config --global core.autocrlf false
+
       - name: Check out source
         uses: actions/checkout@v5
 
@@ -37,6 +40,9 @@ jobs:
 
       - name: Install LLVM/clang (>= 19)
         run: choco upgrade llvm -y --no-progress
+
+      - name: Install Maven fixture archive tools
+        run: choco install zip unzip -y --no-progress
 
       - name: Put clang + ASan runtime on PATH
         shell: pwsh

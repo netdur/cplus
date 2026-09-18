@@ -4432,7 +4432,7 @@ fn hello_mods_project_builds_and_runs() {
         .expect("invoke cpc build");
     assert!(status.success(), "cpc build failed: {status}");
 
-    let bin = dir.join("target/debug/hello_mods");
+    let bin = dir.join(format!("target/debug/hello_mods{}", std::env::consts::EXE_SUFFIX));
     assert!(bin.is_file(), "expected binary at {}", bin.display());
     let out = Command::new(&bin).output().expect("run binary");
     assert!(
@@ -4890,7 +4890,7 @@ fn calc_5file_project_builds_and_runs() {
         .expect("invoke cpc build");
     assert!(status.success(), "cpc build failed: {status}");
 
-    let bin = dir.join("target/debug/calc");
+    let bin = dir.join(format!("target/debug/calc{}", std::env::consts::EXE_SUFFIX));
     assert!(bin.is_file(), "expected binary at {}", bin.display());
     let out = Command::new(&bin).output().expect("run binary");
     assert!(
@@ -14045,11 +14045,12 @@ fn app_package_link_libs_are_linked() {
     // `frameworks` ARE its link surface (the old `[[bin]] libs` moved here,
     // and W0003 died with it). Proof they reach the linker: a bogus lib
     // must fail the build.
+    let lib_name = if cfg!(windows) { "kernel32" } else { "z" };
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[link]\nlibs = [\"z\"]\n",
+        format!("[package]\nname = \"app\"\n\n[link]\nlibs = [\"{lib_name}\"]\n"),
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -14065,7 +14066,7 @@ fn app_package_link_libs_are_linked() {
         .expect("invoke cpc");
     assert!(
         out.status.success(),
-        "a real `[link] lib` (z) must link; stderr: {}",
+        "a real `[link] lib` ({lib_name}) must link; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     // And a bogus one must FAIL — the entries are on the link line now.
@@ -18220,6 +18221,7 @@ fn agent_win32_describe_and_gated_actions() {
 import "win32/controls" as controls;
 import "agent_win32/agent_win32" as agent;
 import "agent_core/surface" as surface;
+import "agent_core/auth" as auth;
 import "stdlib/vec" as vec;
 
 extern fn malloc(n: usize) -> *u8;
@@ -18246,12 +18248,12 @@ fn main() -> i32 {
     let nodes: vec::Vec[agent::Win32Node] = s.describe();
 
     var r: i32 = 0;
-    if surface::outcome_eq({ s.click("btn_go") }, surface::Outcome::Allowed) { r = r +% (1 as i32); }
+    if surface::outcome_eq({ s.click(auth::operator(), "btn_go") }, surface::Outcome::Allowed) { r = r +% (1 as i32); }
     r = r +% { *counter };
-    if surface::outcome_eq({ s.click("ghost") }, surface::Outcome::NotFound) { r = r +% (2 as i32); }
+    if surface::outcome_eq({ s.click(auth::operator(), "ghost") }, surface::Outcome::NotFound) { r = r +% (2 as i32); }
     if nodes.count() >= (4 as usize) { r = r +% (10 as i32); }
     let v0: u64 = s.text_version("field");
-    if surface::outcome_eq({ s.set_text("field", "hi", v0) }, surface::Outcome::Allowed) { r = r +% (4 as i32); }
+    if surface::outcome_eq({ s.set_text(auth::operator(), "field", "hi", v0) }, surface::Outcome::Allowed) { r = r +% (4 as i32); }
     if s.text_version("field") > v0 { r = r +% (8 as i32); }
     return r;
 }
@@ -24709,11 +24711,15 @@ fn a_comment_after_the_package_name_stays_out_of_symbols() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );
-    let nm = Command::new(nm_prog())
-        .arg(dir.join("target/debug/tomly"))
+    // PE executables need not retain a symbol table. Inspect the compiler's
+    // emitted IR, where the package-qualified symbol must always exist.
+    let ir = Command::new(cpc)
+        .arg("--emit-ll-project")
+        .current_dir(&dir)
         .output()
-        .expect("invoke nm");
-    let syms = String::from_utf8_lossy(&nm.stdout);
+        .expect("emit project IR");
+    assert!(ir.status.success(), "{}", String::from_utf8_lossy(&ir.stderr));
+    let syms = String::from_utf8_lossy(&ir.stdout);
     let helper = syms
         .lines()
         .find(|l| l.contains("util.helper"))
@@ -27200,7 +27206,7 @@ fn build_hides_dependency_warnings_but_never_dependency_errors() {
     let _ = std::fs::remove_dir_all(dir.join("vendor/dep/lib"));
     let quiet = build(&["build"]);
     assert!(
-        quiet.contains("src/main.cplus") && quiet.contains("W0002"),
+        quiet.replace('\\', "/").contains("src/main.cplus") && quiet.contains("W0002"),
         "the project's OWN warning must always be reported:\n{quiet}"
     );
     assert!(

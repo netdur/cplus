@@ -43,9 +43,13 @@ fn build_static_lib(project: &Path, name: &str, answer: i32) -> bool {
     if !compiled {
         return false;
     }
-    Command::new("ar")
+    Command::new(if cfg!(windows) { "llvm-ar" } else { "ar" })
         .arg("rcs")
-        .arg(libs.join(format!("lib{name}.a")))
+        .arg(libs.join(if cfg!(windows) {
+            format!("{name}.lib")
+        } else {
+            format!("lib{name}.a")
+        }))
         .arg(&obj)
         .status()
         .map(|s| s.success())
