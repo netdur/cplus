@@ -40,6 +40,15 @@ earlier history lives in each version's archived plan.
   silently robbed of its lifecycle when the application sets `on_attach` on it.
 
 ### Toolchain
+- **`This` in a method body is the block's own type, whatever else the file
+  impls.** The self-type was bound while method signatures were collected and
+  left set afterwards, so every method BODY in the build resolved `This`
+  against whichever `impl` block came last. With two blocks in one file,
+  `let t: This = this;` in the first one typed `t` as the second one's target:
+  a compiler panic when that type lacks the field named next, and IR clang
+  rejects when it has it. Signatures were unaffected, and swapping the two
+  blocks made the same program build. Bodies now bind the self-type for
+  themselves, structs, enums and blessed builtin impls alike.
 - **A package archives one object per module.** `lib<name>.a` used to hold a
   single object, so resolving any symbol from a package linked every module
   it had — a facet app on Android that imports `stdlib/vec` linked `process`

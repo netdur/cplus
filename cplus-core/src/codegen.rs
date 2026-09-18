@@ -1569,54 +1569,62 @@ fn generate_inner(
                 );
             }
             ItemKind::Impl(b) => {
-                if let Some(&id) = types.struct_by_name.get(&b.target.name) {
-                    for m in &b.methods {
-                        // Slice 7GEN.5e: generic methods are codegen-skipped
-                        // pre-monomorphization. Their Ty::Param-bearing
-                        // signatures and bodies are emitted as concrete
-                        // copies by the monomorphize pass.
-                        if !m.generic_params.is_empty() {
-                            continue;
+                // WHAT `Self` MEANS FOR THIS BLOCK'S BODIES. `collect_types`
+                // binds it for the SIGNATURE walk and clears it on the way
+                // out; bodies are lowered here, later, so they need their own
+                // binding. Without it every body in the build resolved `Self`
+                // against whichever impl block came last — see `with_self_ty`.
+                let block_self = impl_self_ty(&b.target, &types);
+                with_self_ty(&types, block_self, || {
+                    if let Some(&id) = types.struct_by_name.get(&b.target.name) {
+                        for m in &b.methods {
+                            // Slice 7GEN.5e: generic methods are codegen-skipped
+                            // pre-monomorphization. Their Ty::Param-bearing
+                            // signatures and bodies are emitted as concrete
+                            // copies by the monomorphize pass.
+                            if !m.generic_params.is_empty() {
+                                continue;
+                            }
+                            gen_method(
+                                &mut out, id, m, &sigs, &types, &str_lits, mode, test_mode, &md,
+                                &tramps, is_lib,
+                            );
+                            // `Type::f` in value position points at a C-ABI thunk,
+                            // not at the method. See `emit_fnptr_bridge`.
+                            if md
+                                .address_taken_funcs
+                                .borrow()
+                                .contains(&mangle(&b.target.name, &m.name.name))
+                            {
+                                emit_fnptr_bridge(&mut out, id, m, &types, &md, is_lib);
+                            }
                         }
-                        gen_method(
-                            &mut out, id, m, &sigs, &types, &str_lits, mode, test_mode, &md,
-                            &tramps, is_lib,
-                        );
-                        // `Type::f` in value position points at a C-ABI thunk,
-                        // not at the method. See `emit_fnptr_bridge`.
-                        if md
-                            .address_taken_funcs
-                            .borrow()
-                            .contains(&mangle(&b.target.name, &m.name.name))
-                        {
-                            emit_fnptr_bridge(&mut out, id, m, &types, &md, is_lib);
+                    } else if let Some(&enum_id) = types.enum_by_name.get(&b.target.name) {
+                        // v0.0.5 Phase 2C: enum impl-method emission.
+                        for m in &b.methods {
+                            if !m.generic_params.is_empty() {
+                                continue;
+                            }
+                            gen_enum_method(
+                                &mut out, enum_id, m, &sigs, &types, &str_lits, mode, test_mode,
+                                &md, &tramps, is_lib,
+                            );
+                        }
+                    } else if let Some(bt) = crate::sema::builtin_impl_target(&b.target.name) {
+                        // v0.0.28: a blessed `impl <builtin>` block — methods emit
+                        // as plain fns `<builtin>.<name>` with the receiver as the
+                        // first param, by value (every builtin here is Copy).
+                        for m in &b.methods {
+                            if !m.generic_params.is_empty() {
+                                continue;
+                            }
+                            gen_builtin_method(
+                                &mut out, bt, m, &sigs, &types, &str_lits, mode, test_mode, &md,
+                                &tramps, is_lib,
+                            );
                         }
                     }
-                } else if let Some(&enum_id) = types.enum_by_name.get(&b.target.name) {
-                    // v0.0.5 Phase 2C: enum impl-method emission.
-                    for m in &b.methods {
-                        if !m.generic_params.is_empty() {
-                            continue;
-                        }
-                        gen_enum_method(
-                            &mut out, enum_id, m, &sigs, &types, &str_lits, mode, test_mode, &md,
-                            &tramps, is_lib,
-                        );
-                    }
-                } else if let Some(bt) = crate::sema::builtin_impl_target(&b.target.name) {
-                    // v0.0.28: a blessed `impl <builtin>` block — methods emit
-                    // as plain fns `<builtin>.<name>` with the receiver as the
-                    // first param, by value (every builtin here is Copy).
-                    for m in &b.methods {
-                        if !m.generic_params.is_empty() {
-                            continue;
-                        }
-                        gen_builtin_method(
-                            &mut out, bt, m, &sigs, &types, &str_lits, mode, test_mode, &md,
-                            &tramps, is_lib,
-                        );
-                    }
-                }
+                });
             }
             // Slice 7GEN.3: interface declarations have no runtime
             // presence — they're sema-time contracts. No IR emission.
@@ -2325,11 +2333,50 @@ struct TypeTable {
 /// Run `f` with `Self` bound to `ty`, restoring whatever was bound before.
 /// Impl blocks do not nest, but restoring rather than clearing costs nothing
 /// and keeps this honest if they ever do.
+///
+/// EVERY per-impl walk that can resolve a type must go through this. The
+/// original fix bound the slot in `collect_types` alone and left it holding
+/// the LAST block's target when that walk returned, so method SIGNATURES
+/// (resolved inside that walk) were right and method BODIES (lowered later,
+/// in `generate_inner`'s item walk) all saw the last block's type. With two
+/// impl blocks in one file, `let t: This = this;` in the first one typed `t`
+/// as the second one's target: a `sema validated` panic when that type lacks
+/// the field, and IR clang rejects when it has it. Swapping the two blocks
+/// made the same program build.
 fn with_self_ty<R>(types: &TypeTable, ty: Option<Ty>, f: impl FnOnce() -> R) -> R {
     let prev = types.self_ty.replace(ty);
     let out = f();
     types.self_ty.replace(prev);
     out
+}
+
+/// What `Self` means inside `impl <target> { ... }` — the one answer both the
+/// signature walk and the body walk bind, so the two cannot disagree about it.
+///
+/// Structs and enums resolve through the table's own name maps. A blessed
+/// builtin impl (`impl f32`, `impl str` — see sema's `builtin_impl_target`)
+/// resolves through `ty_from` on the target name, which is where every other
+/// primitive spelling is already decided. `None` for a target this build has
+/// no type for, which leaves `Self` resolving to `Ty::Error` exactly as an
+/// unbound slot did.
+fn impl_self_ty(target: &Ident, types: &TypeTable) -> Option<Ty> {
+    if let Some(&e) = types.enum_by_name.get(&target.name) {
+        return Some(Ty::Enum(e));
+    }
+    if let Some(&sid) = types.struct_by_name.get(&target.name) {
+        return Some(Ty::Struct(sid));
+    }
+    if crate::sema::builtin_impl_target(&target.name).is_some() {
+        let as_path = Type {
+            kind: TypeKind::Path(target.name.clone()),
+            span: target.span,
+        };
+        let ty = ty_from(&as_path, types);
+        if !matches!(ty, Ty::Error) {
+            return Some(ty);
+        }
+    }
+    None
 }
 
 impl crate::sema::TypeShape for TypeTable {
@@ -2868,12 +2915,13 @@ fn collect_types(
         // WHAT `Self` MEANS FOR THIS BLOCK, for the whole of it — see
         // `TypeTable.self_ty`. Bound before any type in the block is resolved,
         // because a method SIGNATURE can name it as readily as a body can.
-        let block_self: Option<Ty> = t
-            .enum_by_name
-            .get(&b.target.name)
-            .map(|&e| Ty::Enum(e))
-            .or_else(|| t.struct_by_name.get(&b.target.name).map(|&sid| Ty::Struct(sid)));
-        let _self_guard = t.self_ty.replace(block_self);
+        //
+        // Set per iteration, so every signature sees its OWN block's target.
+        // The slot is cleared after the loop: it must not survive this walk,
+        // because the body walk binds it for itself and anything reading it in
+        // between would be reading whichever block happened to come last.
+        let block_self = impl_self_ty(&b.target, &t);
+        t.self_ty.replace(block_self);
         // v0.0.5 Phase 2C: route enum impls to enum_defs's method table.
         if let Some(&enum_id) = t.enum_by_name.get(&b.target.name) {
             for m in &b.methods {
@@ -3032,6 +3080,12 @@ fn collect_types(
     for (i, plan) in planned.into_iter().enumerate() {
         t.struct_defs[i].plan = plan;
     }
+    // `Self` means nothing outside an impl block. The method walk above left
+    // the slot holding whichever block came last; clearing it here means a
+    // `Self` resolved outside any impl gets `Ty::Error` — the answer sema is
+    // expected to have rejected already — instead of silently getting a real
+    // type that belongs to an unrelated block.
+    t.self_ty.replace(None);
     t
 }
 
@@ -21460,6 +21514,71 @@ mod tests {
             "enum E { A, B }\n             impl E { fn same(this) -> This { return this; } }\n             fn main() -> i32 { let e: E = E::A; let f: E = e.same();               return match f { E::A => 9, E::B => 1 }; }",
         );
         assert!(ir.contains("@E.same"), "the method must be emitted:\n{ir}");
+    }
+
+    /// `bugs/closed/self-in-a-method-body-resolves-to-the-last-impl-block.md`.
+    /// TWO impl blocks is the shape every test above misses, and the one that
+    /// matters: the first fix bound the self-type only in `collect_types`, so
+    /// SIGNATURES were right and BODIES — lowered later, from a slot nothing
+    /// had touched since that walk ended — all saw the LAST block's target.
+    ///
+    /// `Q` is given a field of the same name as `P`'s on purpose. Without it
+    /// the mistyped local dies in `field_index`'s `expect` ("sema validated"),
+    /// which is loud; with it the field lookup SUCCEEDS at the wrong offset
+    /// and only clang objects, which is the quiet half of the same bug.
+    #[test]
+    fn the_self_type_in_a_body_is_this_blocks_target_not_the_last_blocks() {
+        let src = "struct P { v: i32 }\n\
+             struct Q { v: i64, b: i64, c: i64 }\n\
+             impl P { fn twin(this) -> i32 { let t: This = this; return t.v; } }\n\
+             impl Q { fn first(this) -> i64 { return this.v; } }\n\
+             fn main() -> i32 { let p: P = P { v: 5 }; let q: Q = Q { v: 1 as i64, b: 2 as i64, c: 3 as i64 };\n\
+                                return p.twin() + (q.first() as i32); }";
+        let ir = gen_src(src);
+        let twin = fn_body(&ir, "P.twin");
+        // The `This`-typed local is P's storage, and nothing in this body may
+        // mention Q. Pre-fix this read `alloca %Q` / `store %Q %t3`.
+        assert!(twin.contains("alloca %P"), "`let t: This` must be P:\n{twin}");
+        assert!(
+            !twin.contains("%Q"),
+            "P's body must not name Q at all:\n{twin}"
+        );
+    }
+
+    /// The same program with the blocks the other way round. Pre-fix THIS one
+    /// passed while the one above crashed, which is what identified the last
+    /// block as the thing being resolved against.
+    #[test]
+    fn the_self_type_in_a_body_does_not_depend_on_impl_block_order() {
+        let src = "struct P { v: i32 }\n\
+             struct Q { v: i64, b: i64, c: i64 }\n\
+             impl Q { fn first(this) -> i64 { return this.v; } }\n\
+             impl P { fn twin(this) -> i32 { let t: This = this; return t.v; } }\n\
+             fn main() -> i32 { let p: P = P { v: 5 }; let q: Q = Q { v: 1 as i64, b: 2 as i64, c: 3 as i64 };\n\
+                                return p.twin() + (q.first() as i32); }";
+        let ir = gen_src(src);
+        let twin = fn_body(&ir, "P.twin");
+        assert!(twin.contains("alloca %P"), "`let t: This` must be P:\n{twin}");
+        assert!(!twin.contains("%Q"), "P's body must not name Q:\n{twin}");
+    }
+
+    /// An ENUM impl body, with a struct impl after it to move the stale slot
+    /// off the enum. The enum arm is a different emitter (`gen_enum_method`),
+    /// so it needs its own row or the binding could cover structs only.
+    #[test]
+    fn the_self_type_in_an_enum_body_is_not_the_next_blocks_target() {
+        let src = "enum E { A, B }\n\
+             struct S { a: i64, b: i64 }\n\
+             impl E { fn same(this) -> i32 { let e: This = this; return match e { E::A => 9, E::B => 1 }; } }\n\
+             impl S { fn sum(this) -> i64 { return this.a + this.b; } }\n\
+             fn main() -> i32 { let e: E = E::A; let s: S = S { a: 1 as i64, b: 2 as i64 };\n\
+                                return e.same() + (s.sum() as i32); }";
+        let ir = gen_src(src);
+        let same = fn_body(&ir, "E.same");
+        assert!(
+            !same.contains("%S"),
+            "the enum body must not name the struct that follows it:\n{same}"
+        );
     }
 
     // ---- body-less declarations emit `declare`, never `define` ----
