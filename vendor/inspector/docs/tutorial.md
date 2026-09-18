@@ -8,17 +8,30 @@ rationale and gotchas live in [guide.md](guide.md); signatures in
 
 ```toml
 [dependencies]
-inspector = "*"
+inspector     = "*"
+agent_core    = "*"
+facet         = "*"
+facet_agent   = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+stdlib        = "*"
 ```
+
+Use `cpc pm add . inspector` to add the platform-specific backend closure.
 
 ```cplus
 import "inspector/widget" as panel;
+import "agent_core/inspect" as insp;
+import "facet_agent/agent" as agent;
 import "facet_agent/inspect_tree" as itree;
 import "facet/component" as component;
 import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/screen" as screen;
 import "facet_runtime/runtime" as runtime;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 ```
 

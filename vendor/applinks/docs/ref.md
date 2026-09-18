@@ -99,7 +99,7 @@ Every field of `Url` **views** the string that was parsed, so the source must
 outlive it and needs a named owner:
 
 ```cplus
-let s: str = incoming.view();     // named, not a temporary
+let s: str = incoming;            // expected `str` borrows the named owner
 match url::parse(s) { ... }
 ```
 

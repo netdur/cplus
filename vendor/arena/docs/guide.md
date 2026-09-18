@@ -95,6 +95,5 @@ fn handle_request(body: str) {
     var scratch: arena::Arena = arena::Arena::new(64 * 1024usize);
     // parse / build using scratch.alloc_* …
     // all freed when scratch drops
-    return;
 }
 ```

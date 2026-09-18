@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Filtering and output behavior:
+[guide.md](guide.md).
+
 Manual for the `log` package. Signatures and behavior only.
 
 ```cplus

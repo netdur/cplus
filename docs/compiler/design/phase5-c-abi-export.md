@@ -2,6 +2,11 @@
 
 **Status:** ✅ shipped 2026-05-15 (slices 5.A–5.F).
 
+> **Historical release design.** v0.0.28 replaced `[lib]` with `[library]`,
+> moved link requirements to `[link]`, and spells a public C symbol with
+> `export extern fn`. Use the current [FFI guide](../../lang/ffi.md) and
+> [package guide](../../lang/packages.md) for authoring.
+
 **Motivation.** Phase 4 (`cpc-bindgen`) covers the C→C+ direction: consuming
 existing C headers. Phase 5 covers the inverse: emitting `.a` / `.dylib` /
 `.so` artifacts a C, C++, Swift, Python-cffi, Lua-FFI, Java-JNA, or
@@ -211,15 +216,15 @@ That's it. No `bindgen` step, no header maintenance.
 
 ## Cross-references
 
-- Implementation: [cplus-core/src/codegen.rs](../../cplus-core/src/codegen.rs)
+- Implementation: [cplus-core/src/codegen.rs](../../../cplus-core/src/codegen.rs)
   — `classify_c_abi`, `CAbiClass`, the param + return coercion paths in
   `gen_function`, the `coerce_ret` field on `FnState`.
-- Sema gate: [cplus-core/src/sema.rs](../../cplus-core/src/sema.rs) —
+- Sema gate: [cplus-core/src/sema.rs](../../../cplus-core/src/sema.rs) —
   `c_exportable_diagnosis`, `check_extern_export_signature`.
-- Header generation: [cpc/src/main.rs](../../cpc/src/main.rs) —
+- Header generation: [cpc/src/main.rs](../../../cpc/src/main.rs) —
   `render_c_header`, `type_to_c`, `render_param_decl`.
-- Manifest: [cplus-core/src/manifest.rs](../../cplus-core/src/manifest.rs)
+- Manifest: [cplus-core/src/manifest.rs](../../../cplus-core/src/manifest.rs)
   — `LibTarget`, `CrateType`, the E0408/E0412 paths.
-- Tests: [cpc/tests/e2e.rs](../../cpc/tests/e2e.rs) — every 5.* slice has
+- Tests: [cpc/tests/e2e.rs](../../../cpc/tests/e2e.rs) — every 5.* slice has
   at least one round-trip e2e test that goes C → C+ library → C and
   checks the runtime answer.

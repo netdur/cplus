@@ -1,11 +1,17 @@
 # Tutorial
 
+Quick path: open or save with the system chooser. Platform behavior and
+gotchas: [guide.md](guide.md). Signatures: [ref.md](ref.md).
+
 ## 1. Depend on it
 
 ```toml
 [dependencies]
 filepicker = "*"
 ```
+
+Use `cpc pm add . filepicker` to write the platform-specific dependency
+closure.
 
 ## 2. Open something
 
@@ -26,8 +32,9 @@ let _o: fp::Outcome = fp::open(picked);
 fp::open(picked, types: "png,jpg");
 ```
 
-Honoured on macOS, mapped to one MIME family on Android, **ignored on iOS**.
-See the [guide](guide.md#the-types-filter-is-lossy-on-purpose).
+Honoured as extensions on macOS and as portal glob filters on Linux, mapped to
+one MIME family on Android, and **ignored on iOS and Windows**. See the
+[guide](guide.md#the-types-filter-is-lossy-on-purpose).
 
 ## 4. Save
 
@@ -42,7 +49,7 @@ fp::save("report.pdf", picked);
 ```cplus
 fn picked(p: fp::Pick, ctx: *u8) {
     if !p.chose() { return; }
-    // macOS and iOS: a real path.
+    // macOS, iOS, Linux, and Windows: a real path.
     // Android: a content:// URI — use ContentResolver, not fs::open_read.
 }
 ```

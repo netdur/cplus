@@ -143,7 +143,7 @@ each. You import them only when you are extending stdlib itself.
 Everything else is a vendor package, imported by its own name
 (`import "json/json" as json;`) and declared in `[dependencies]`. The
 current set includes `json`, `log`, `uuid`, `http`, `sqlite`, `arena`,
-`static-arena`, `simd`, `flex_layout`, `events`, the Apple bindings
+`static_arena`, `simd`, `flex_layout`, `events`, the Apple bindings
 (`appkit`, `uikit`, `metal`, `accelerate`, `quartzcore`, `objc`), the GTK
 family, and the `facet` UI stack. Each ships its own tests
 (`cd vendor/<pkg> && cpc test`) and many ship a `SKILL.md` that `cpc skill`

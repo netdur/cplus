@@ -68,18 +68,13 @@ so the pose was never the question — the box is. A band constraining
 `max_height` says the useful half of what portrait/landscape was reaching for,
 without asking what the hardware is doing.
 
-## Not yet migrated
+## Migration status
 
-- **`vendor/facet_gtk/src/facet_gtk.cplus:483`** — `{ (*node).children.at_ptr(i) }`
-  must become `{ (*node).child_ptr(i) }` (identical `Option[*Node]` return).
-  **This package does not compile until that line changes.** Left deliberately:
-  the owner asked for no GTK work during the facet refactor. Nothing else in
-  the file needs changing; `add_child`'s new `Status` return is ignorable
-  (`Status` is Copy, discarding it leaks nothing).
-- Every consumer was updated textually but **not built** — the workspace was
-  mid-facet-refactor, so only `vendor/flex_layout` and `vendor/stdlib` were
-  compiled and tested. Build `examples/pad_flex`, `examples/pad_portable`,
-  `examples/hello_facet`, and `vendor/terminal` when the workspace is stable.
+The consumers in this repository have been migrated, including `facet_gtk`'s
+use of `child_ptr(at:)`. The current workspace and vendor package suites build
+against this surface. External consumers written before the API pass still need
+the rename table above; `responsive` remains available for compatibility while
+new code should prefer bands.
 
 ## Sharp edges
 
@@ -103,8 +98,9 @@ without asking what the hardware is doing.
   covers the ones it owns (structural verbs, callback setters,
   `set_context`); content that changes what `measure` returns is the caller's
   job: `mark_content_changed()`.
-- **A trailing `match` cannot end a function body** (E0333). Add `return;`
-  after it.
+- **A unit function needs no trailing `return;`.** A trailing `match` may end
+  the body directly; only a function that returns a value needs
+  `return expression;`.
 
 ## Where a property belongs (for generated bindings)
 

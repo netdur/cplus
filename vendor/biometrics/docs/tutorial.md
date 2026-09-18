@@ -1,16 +1,21 @@
 # Tutorial
 
+Quick path: check availability and ask for verification. Deeper behavior and
+platform limits: [guide.md](guide.md). Signatures: [ref.md](ref.md).
+
 ## 1. Depend on it
 
 ```toml
 [dependencies]
 biometrics = "*"
+securestore = "*"
 ```
 
 ## 2. Ask
 
 ```cplus
 import "biometrics/biometrics" as bio;
+import "securestore/securestore" as securestore;
 
 fn answered(o: bio::Outcome, ctx: *u8) {
     match o {
@@ -20,7 +25,6 @@ fn answered(o: bio::Outcome, ctx: *u8) {
         bio::Outcome::LockedOut => { show("Too many attempts — use your passcode"); }
         _ => { show("Could not verify"); }
     }
-    return;
 }
 
 let _o: bio::Outcome = bio::authenticate("Unlock your notes", answered);

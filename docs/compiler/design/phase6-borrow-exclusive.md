@@ -1,6 +1,6 @@
 # Phase 6 — Exclusive-borrow tracking, aliasing-XOR-mutability, and `noalias`
 
-> Status: design note. Implementation lands in 5–7 sub-slices per the Phase 6 sequencing block in [plan.md](../../plan.md) §3.
+> Status: design note. Implementation lands in 5–7 sub-slices per the Phase 6 sequencing block in [plan.md](../../../plan.md) §3.
 > Scope: tracking the *exclusive* borrow form (`mut x: T` and `mut self` on non-`Copy` types); the aliasing-XOR-mutability rule; explicit lifetime annotation syntax for the cases Phase 5 elision cannot infer; `noalias` codegen for the proved cases; the iterator-invalidation / data-race / dangling-pointer rejection surface.
 > Out of scope: atomic types `Atomic[T]` (sibling Phase-6 design note, not this one); heap allocation primitives (likely paired with a `Vec[T]` slice in Phase 6 or 7); generic types (Phase 7); raw-pointer `*T` and slice `T[]` machinery (Phase 6+ — depends on this note's exclusive-borrow rules being in place first).
 >
@@ -231,7 +231,10 @@ Phase 6 first cut admits only **shared** borrows in struct fields. Exclusive-bor
 - New reserved keyword `borrow`. Currently not an identifier in any in-tree sample; reservation lands as a one-row addition to the keyword table.
 - Type grammar extends: `Type = ... | "borrow" Ident Type`. The annotation binds tighter than function-arrow but looser than array `[T; N]`; concrete precedence pinned in the slice.
 - Formatter rule: `borrow REGION T` with single spaces, no line wrap inside the annotation.
-- TextMate grammar in [editors/vscode/syntaxes/cplus.tmLanguage.json](../../editors/vscode/syntaxes/cplus.tmLanguage.json): `borrow` joins the keyword class; region-name token inherits the type-parameter style class.
+- TextMate grammar (then stored at `editors/vscode/syntaxes/cplus.tmLanguage.json`):
+  `borrow` joins the keyword class; region-name token inherits the
+  type-parameter style class. That editor extension is no longer in this
+  repository.
 
 ### 4.3 Variance
 

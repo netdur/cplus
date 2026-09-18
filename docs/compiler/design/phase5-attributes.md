@@ -1,8 +1,12 @@
 # Phase 5 — Attributes (`#[...]`)
 
-> Status: design note. Implementation pending; lands after the borrow checker per the Phase 5 sequencing block in [plan.md](../../plan.md) §3.
+> Status: design note. Implementation pending; lands after the borrow checker per the Phase 5 sequencing block in [plan.md](../../../plan.md) §3.
 > Locks in: the `#[test]` vs `test fn` open question (resolved at Phase-5 kickoff in favor of `#[test]`); plan.md §2.8d (attributes are declarative-only).
 > First instantiation: `#[test]`. Other attributes (`#[inline]`, `#[repr(C)]`, `#[deprecated]`) get their own design notes when they land.
+>
+> **Historical preimplementation design.** Attributes and `#[test]` have
+> shipped, and the supported attribute set is broader than this note. See
+> [§14 of the language specification](../../lang/spec.md#14-attributes).
 
 ---
 

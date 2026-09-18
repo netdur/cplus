@@ -3,6 +3,11 @@
 > Status: draft (redesigned post-discussion, 2026-05-11)
 > Scope: explicit path-string imports with mandatory `as` prefix, `pub` visibility, multi-file projects rooted at `Cplus.toml`. Compilation model is whole-program (all reachable `.cplus` files → one LLVM IR module) for the initial Phase 4 landing; per-module separate compilation is later polish.
 > Out of scope: external dependencies / package manager (Phase 9), re-exports, finer visibility scoping (`pub(crate)` / `pub(super)`), conditional compilation (`cfg`).
+>
+> **Historical design record.** This draft predates the package system and the
+> v0.0.28 manifest model; several path and target examples are intentionally
+> preserved as design history. Use the current [package guide](../../lang/packages.md)
+> and [language specification](../../lang/spec.md) for supported syntax.
 
 ## 1. Problem
 

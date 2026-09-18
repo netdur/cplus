@@ -10,6 +10,7 @@ API: [ref.md](ref.md).
 agent_mcp = "*"
 agent_core = "*"
 json = "*"
+stdlib = "*"
 ```
 
 You also need a **backend** package that implements `agent_core::backend::Backend`

@@ -1,5 +1,8 @@
 # Tutorial
 
+Quick path: play one portable feedback effect. Platform mappings and limits:
+[guide.md](guide.md). Signatures: [ref.md](ref.md).
+
 ## 1. Depend on it
 
 ```toml
@@ -38,8 +41,8 @@ fn drag_began(sender: *u8, ctx: *u8) { hap::prepare(hap::Feel::Medium); }
 fn drag_ended(sender: *u8, ctx: *u8) { hap::play(hap::Feel::Medium); }
 ```
 
-Skipping this costs latency on the first tap and nothing else. On macOS and
-Android it does nothing at all.
+Skipping this costs latency on the first tap and nothing else. On macOS,
+Android, Linux and Windows it does nothing at all.
 
 ## 5. Hide a setting that would do nothing
 

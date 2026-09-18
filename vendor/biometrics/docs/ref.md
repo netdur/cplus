@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Platform behavior and security model:
+[guide.md](guide.md).
+
 `import "biometrics/biometrics" as bio;`
 
 ## Kind
@@ -41,12 +44,13 @@ an empty one, so the facade refuses it first.
 the handler.
 
 **The handler runs on the main thread on Android and on a private queue on
-Apple.**
+Apple.** The current Linux and Windows stubs call it synchronously on the
+calling thread with `Unavailable`.
 
 ## Coverage
 
-| | macOS | iOS | Android |
-|---|---|---|---|
-| prompt | ✅ | ✅ | ✅ API 28+ |
-| `kind()` exact | ✅ | ✅ | ❌ "something" |
-| `allow_passcode` | ✅ | ✅ | API 30+, else a Cancel button |
+| | macOS | iOS | Android | Linux | Windows |
+|---|---|---|---|---|---|
+| prompt | ✅ | ✅ | ✅ API 28+ | ❌ `Unavailable` | ❌ `Unavailable` |
+| `kind()` exact | ✅ | ✅ | ❌ "something" | `None` | `None` |
+| `allow_passcode` | ✅ | ✅ | API 30+, else a Cancel button | — | — |

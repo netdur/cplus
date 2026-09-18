@@ -1,10 +1,11 @@
 // http — HTTP(S) requests over whatever stack the platform already ships.
 //
-// ONE PACKAGE, THREE TRANSPORTS, and the split is a file-level one rather than
+// ONE PACKAGE, FIVE PLATFORM TARGETS, and the split is a file-level one rather than
 // a package-level one on purpose: `http/http` is the module an application
 // imports on every platform, and the transport underneath it is swapped by the
 // resolver's platform override — `transport.cplus` on Apple, shadowed by
-// `transport_android.cplus` and `transport_linux.cplus`. There is no
+// `transport_android.cplus`, `transport_linux.cplus`, and
+// `transport_windows.cplus`. There is no
 // `http_android` package and there will not be one; a consumer's manifest says
 // `http = "*"` and nothing else moves.
 //
@@ -12,7 +13,8 @@
 //
 //   macOS, iOS   NSURLSession (Foundation)          transport.cplus
 //   Android      java.net.HttpURLConnection (JNI)   transport_android.cplus
-//   Linux        — not built; refuses, loudly       transport_linux.cplus
+//   Linux        libcurl                            transport_linux.cplus
+//   Windows      WinHTTP                            transport_windows.cplus
 //
 // TLS, certificate validation and pinning, DNS, connection reuse, HTTP/2,
 // redirects, proxy and VPN configuration, the system cookie store, the user's

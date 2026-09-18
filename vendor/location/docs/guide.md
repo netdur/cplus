@@ -1,5 +1,7 @@
 # Guide
 
+Fast start: [tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 The non-obvious parts, and the traps. Everything here was measured on a
 machine, a simulator or an emulator — not read from a header.
 
@@ -28,9 +30,9 @@ a second one. **The handler always runs exactly once for a `once`.** Silence
 would be indistinguishable from success, which is the failure this shape
 exists to prevent.
 
-`Request.timeout_ms` is honoured on Android. Apple ignores it:
+`Request.timeout_ms` is honoured on Android and Linux. Apple ignores it:
 `requestLocation` runs its own timer of about ten seconds and offers no way to
-set it.
+set it. Linux uses 20 seconds when the field is zero.
 
 ## Unknowns are negative, not zero
 
@@ -74,6 +76,8 @@ On Android that reads the granted permission; on Apple it reads
 |---|---|
 | macOS, iOS | **this package**. `CLLocationManager` is the only door — authorization is a method on the manager and the answer arrives on its delegate — so `once`/`updates` prompt when needed. |
 | Android | **the app**, through `permissions`, before touching this package. `requestLocationUpdates` throws `SecurityException` when the grant is missing and never prompts. |
+| Linux | **GeoClue's desktop agent**, when this package starts a client. There is no useful check-before-asking API, so `permission()` is `Unknown` until a fix or refusal arrives. |
+| Windows | no prompt in this backend; every request reports `Unsupported`. |
 
 Writing the `permissions` gate on every platform is harmless and keeps one path.
 
@@ -131,6 +135,15 @@ dex for a latitude and a longitude.
 `getLastKnownLocation` is **not implemented** on Android. `last_known()`
 answers `None` there — the seam has nowhere to put a synchronous answer, and
 saying so beats faking one.
+
+### Linux: GeoClue needs a desktop session
+
+The backend talks to `org.freedesktop.GeoClue2` on D-Bus. `DesktopId` is
+required before `Start`, and the desktop authorization agent decides whether
+that id may read location. Signal delivery and one-shot timeouts use the
+calling thread's GLib main context, so a headless process must run that context.
+`last_known()` returns only a fix this process has already received; GeoClue has
+no synchronous system cache API.
 
 ### Both mobile platforms: the dex is a build artifact
 

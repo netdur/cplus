@@ -1460,7 +1460,7 @@ fn bad() -> str {
 }
 ```
 
-**Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. For a temporary owner, give it a name first — `let owner: Text = mk(); let s: str = owner.view();` — or keep the binding owned. At a kept argument the same two spellings apply: name the owner (`let owner: Text = "item ${i}".to_text(); names.append(owner.view());`) or own the element (`Vec[Text]` rather than `Vec[str]`). Literal-backed views ('static bytes) escape freely.
+**Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. For a temporary owner, give it a name first — `let owner: Text = mk(); let s: str = owner;` — or keep the binding owned. At a kept argument the same two spellings apply: name the owner (`let owner: Text = "item ${i}".to_text(); names.append(owner);`) or own the element (`Vec[Text]` rather than `Vec[str]`). Literal-backed views ('static bytes) escape freely.
 
 <sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules: check_return / flag_view_leaves / check_view_of_temp / check_view_of_rvalue_owner / check_captured_view_of_temp / check_store_escape / check_kept_arg_is_not_a_temporary / check_detached_arg) · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
 
@@ -1833,6 +1833,19 @@ fn main() -> i32 { let p: Point = Point { x: 0 }; let r: Point = max(p, p); retu
 **Fix.** `T: Ord` requires `impl Point: Ord`; provide the impl, or for thread-crossing use `impl T: Send {}` when the marker holds.
 
 <sub>repro: checked · cplus-core/src/sema.rs:1838 · test cplus-core/src/sema.rs:bound_violation_at_generic_fn_call_e0502</sub>
+
+### E0910 · Generic instantiation exceeds the recursion limit
+
+A generic function calls itself (directly or through a cycle) with a type argument that grows on every step — `rec::[*T]`, `rec::[[T; 2]]`, `rec::[Box[T]]`. Each step is a distinct concrete type, so monomorphization never converges and the compiler would hang. Two limits catch this: a ceiling on the number of instantiations, and a ceiling on the size of any one synthesized type name. A wrapper that names its parameter more than once (`rec::[Pair[T, T]]`) doubles that name at every step, so it hits the size ceiling while the instantiation count is still small.
+
+```cplus
+fn rec[T]() -> i32 { let _z: i32 = rec::[*T](); return 0; }
+fn main() -> i32 { return rec::[i32](); }
+```
+
+**Fix.** Reduce the type argument toward a non-generic base case, or drop the wrapper so the recursive call reuses the same type (`rec::[T]`). Runtime recursion on a value parameter is fine; only the *type* argument must not grow.
+
+<sub>repro: checked · cplus-core/src/monomorphize.rs:check_instantiation_bounds, cplus-core/src/sema.rs:reject_oversized_instantiation · test cplus-core/src/monomorphize.rs:self_growing_generic_instantiation_reports_e0910, cplus-core/src/sema.rs:self_growing_struct_generic_reports_e0910_not_oom</sub>
 
 ## Unsafe, FFI, and intrinsics
 
@@ -2411,7 +2424,7 @@ fn main() -> i32 { let a: [i32; NOPE] = [0; 1]; return a[0]; }
 
 ### E0918 · Compile-time include/shader path escapes the package
 
-A `#include_bytes` / `#include_str` / `#compile_shader` path resolves outside the including file's package directory — an absolute path or a `..` chain that leaves the package. In project mode (a `Cplus.toml` is present) these compile-time file reads are contained to the package tree, the same boundary imports (E0914) and `[[bin]]`/`[lib]` paths (E0868) enforce, so untrusted source can't bake an arbitrary readable host file into the artifact.
+A `#include_bytes` / `#include_str` / `#compile_shader` path resolves outside the including file's package directory — an absolute path or a `..` chain that leaves the package. In project mode (a `Cplus.toml` is present) these compile-time file reads are contained to the package tree, the same boundary imports (E0914) and manifest entry paths (E0868) enforce, so untrusted source can't bake an arbitrary readable host file into the artifact.
 
 ```cplus
 fn main() -> i32 {
@@ -2548,25 +2561,24 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: scenario · cplus-core/src/resolver.rs:728 · test cpc/tests/e2e.rs:vendor_escape_emits_e0859</sub>
 
-### E0860 · Declared `[link].bundled` file missing on host
+### E0860 · Declared `[link].bundled` file missing from a target slice
 
-A vendored package's manifest declares a file in `[link].bundled`, but `lib/<host-triple>/<basename>` does not exist. The manifest says the package ships that binary for this triple; the file is missing.
+A vendored package has a `lib/<target-triple>/` directory and declares a file in `[link].bundled`, but that file is absent from the target slice. If the whole target directory is absent, the package falls back to source; once a slice exists, the manifest is authoritative and every declared bundled file must be present.
 
 ```toml
 [link]
-triples = ["arm64-apple-darwin"]
 bundled = ["libfoo.a"]
 # lib/arm64-apple-darwin/libfoo.a absent
 # -> [E0860] package declares bundled `libfoo.a` but the file is not present
 ```
 
-**Fix.** Add the missing file under `lib/<host-triple>/`, or remove its entry from `[link].bundled`.
+**Fix.** Add the missing file under `lib/<target-triple>/`, remove its name from `[link].bundled`, or remove the incomplete target directory so the package can build from source.
 
 <sub>repro: scenario · cpc/src/main.rs:link_bundled_missing · test cpc/tests/e2e.rs:bundled_lib_missing_for_host_triple_is_e0860</sub>
 
 ### E0861 · Orphan binary under `lib/` not declared in `[link].bundled`
 
-A binary artifact (`.a`, `.o`, `.lib`) sits under a package's `lib/<triple>/`, but the package manifest does not declare it in `[link].bundled`. The manifest is the single source of truth for shipped binaries.
+A binary artifact (`.a`, `.dylib`, `.so`, or `.lib`) sits under a package's `lib/<triple>/`, but the package manifest does not declare it in `[link].bundled`. The manifest is the single source of truth for shipped binaries.
 
 ```toml
 # vendor/foo/lib/arm64-apple-darwin/liborphan.a exists
@@ -2585,9 +2597,6 @@ A `[link].extra-objects` path (resolved relative to the manifest) does not exist
 ```toml
 [package]
 name = "missing-obj"
-[[bin]]
-name = "missing-obj"
-path = "src/main.cplus"
 [link]
 extra-objects = ["does-not-exist.o"]
 # -> [E0864] [link] extra-objects entry `does-not-exist.o` not found
@@ -2645,23 +2654,20 @@ fn main() -> i32 { return 0; }
 
 <sub>repro: scenario · cplus-core/src/attrs.rs:559 · test cpc/tests/e2e.rs:target_esp32_async_fn_fires_e0867</sub>
 
-### E0868 · `[lib]` / `[[bin]]` path escapes the package directory
+### E0868 · Manifest entry path escapes the package directory
 
-A `[lib].path` or `[[bin]].path` key resolves outside the package directory — an absolute path or a `..` chain. Source targets must live inside the package tree; a hostile vendored manifest must not point compilation at arbitrary host files. `[link]` search paths and `${VAR}`-expanded extra objects are exempt (they legitimately name external SDK locations).
+A `[package] entry`, `[<platform>] entry`, or `[library] entry` resolves outside the package directory — an absolute path or a `..` chain. Source targets must live inside the package tree; a hostile vendored manifest must not point compilation at arbitrary host files. `[link]` search paths and `${VAR}`-expanded extra objects are exempt because they legitimately name external SDK locations.
 
 ```toml
 [package]
 name = "esc"
-
-[[bin]]
-name = "esc"
-path = "../../outside/main.cplus"
-# -> [E0868] `[[bin]] `esc`` path resolves outside the package directory
+entry = "../../outside/main.cplus"
+# -> [E0868] `[package] entry` path `../../outside/main.cplus` resolves outside the package directory
 ```
 
-**Fix.** Move the source file into the package and use a package-relative path (e.g. `path = "src/main.cplus"`).
+**Fix.** Move the source file into the package and use a package-relative entry (for example, `entry = "src/main.cplus"`).
 
-<sub>repro: checked · cplus-core/src/manifest.rs:target_path_escapes · test cplus-core/src/manifest.rs:bin_path_escaping_package_is_rejected_e0868</sub>
+<sub>repro: checked · cplus-core/src/manifest.rs:target_path_escapes · test cplus-core/src/manifest.rs:package_entry_escaping_package_is_rejected_e0868</sub>
 
 ### E0869 · Conflicting declarations of one dependency
 
@@ -2861,18 +2867,3 @@ fn good(f: fn(usize, *u8) -> i32, ctx: *u8 = 0 as *u8) -> i32 { return 2; }
 **Fix.** Move the `*u8` to the end of the handler's parameter list: `fn(usize, *u8)` rather than `fn(*u8, usize)`. The context parameter beside it is already right; it is the fn type that is reversed.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_handler_ctx_slots · test cpc/tests/e2e.rs:ctx_first_handler_warns_w0825</sub>
-
-## Generics
-
-### E0910 · Generic instantiation exceeds the recursion limit
-
-A generic function calls itself (directly or through a cycle) with a type argument that grows on every step — `rec::[*T]`, `rec::[[T; 2]]`, `rec::[Box[T]]`. Each step is a distinct concrete type, so monomorphization never converges and the compiler would hang. Two limits catch this: a ceiling on the number of instantiations, and a ceiling on the size of any one synthesized type name. A wrapper that names its parameter more than once (`rec::[Pair[T, T]]`) doubles that name at every step, so it hits the size ceiling while the instantiation count is still small.
-
-```cplus
-fn rec[T]() -> i32 { let _z: i32 = rec::[*T](); return 0; }
-fn main() -> i32 { return rec::[i32](); }
-```
-
-**Fix.** Reduce the type argument toward a non-generic base case, or drop the wrapper so the recursive call reuses the same type (`rec::[T]`). Runtime recursion on a value parameter is fine; only the *type* argument must not grow.
-
-<sub>repro: checked · cplus-core/src/monomorphize.rs:check_instantiation_bounds, cplus-core/src/sema.rs:reject_oversized_instantiation · test cplus-core/src/monomorphize.rs:self_growing_generic_instantiation_reports_e0910, cplus-core/src/sema.rs:self_growing_struct_generic_reports_e0910_not_oom</sub>

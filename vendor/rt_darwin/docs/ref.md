@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Darwin runtime constraints:
+[guide.md](guide.md).
+
 Manual for the `rt_darwin` package. Signatures and behavior only.
 
 ```cplus

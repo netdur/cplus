@@ -7,7 +7,7 @@ edition = "2026"
 #
 # SCOPE IS FOREGROUND, deliberately. What 99% of apps mean by "requesting
 # location" is a fix now, or a stream while the person is using the app. This
-# package does that on all three platforms and says `Unsupported` to the rest.
+# package does that on Apple, Android and Linux; Windows says `Unsupported`.
 #
 # NOT HERE, and not by omission:
 #   - background tracking while the app is not frontmost

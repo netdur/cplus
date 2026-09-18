@@ -43,6 +43,6 @@ working and you keep the user-facing slice working.
 
 ## Design note
 
-[docs/compiler/design/phase5-c-abi-export.md](../../design/phase5-c-abi-export.md)
+[docs/compiler/design/phase5-c-abi-export.md](../../compiler/design/phase5-c-abi-export.md)
 has the rationale, the locked decisions, and the worked ABI examples
 showing what cpc emits at the LLVM level for each class.

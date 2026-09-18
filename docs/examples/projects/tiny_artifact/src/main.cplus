@@ -4,7 +4,7 @@
 // The dependency `tiny_artifact = "*"` resolves under `vendor/tiny_artifact/`,
 // whose Cplus.toml declares `[link] bundled = ["libtiny_artifact.a"] triples
 // = [...]`. The build driver verifies the archive is present at
-// `vendor/tiny_artifact/src/lib/<host-triple>/libtiny_artifact.a` and splices
+// `vendor/tiny_artifact/lib/<target-triple>/libtiny_artifact.a` and splices
 // it into the clang link line. The C+ side of the package supplies a thin
 // `extern fn` wrapper so callers don't have to know they're invoking C.
 

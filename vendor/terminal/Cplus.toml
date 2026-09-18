@@ -6,10 +6,10 @@ edition = "2026"
 # Portable terminal-facing API:
 # - terminal/terminal: bounded, ANSI-aware transcript model — PORTABLE, and the
 #                      bulk of the package
-# - terminal/pty:      pseudo-terminal session (POSIX forkpty; the Windows
-#                      sibling refuses — ConPTY is the road, see the file)
-# - terminal/backend:  the live widget (AppKit today; the Windows sibling
-#                      refuses, and says what building one costs)
+# - terminal/pty:      pseudo-terminal session (POSIX forkpty on macOS/Linux;
+#                      the Windows sibling refuses — ConPTY is the road)
+# - terminal/backend:  the live widget (AppKit on macOS, GTK 4 on Linux; the
+#                      Windows sibling refuses and explains the missing work)
 # - terminal/widget:   the facet-facing facade applications use
 #
 # THE APPLE PACKAGES ARE NOT TOP-LEVEL, and that is what kept this package off

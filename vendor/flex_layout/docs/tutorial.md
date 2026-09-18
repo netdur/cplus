@@ -8,6 +8,7 @@ Quick path: build a tree, run layout, read frames. Deeper concepts in
 ```toml
 [dependencies]
 flex_layout = "*"
+stdlib = "*"
 ```
 
 ```cplus

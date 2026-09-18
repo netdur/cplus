@@ -1,6 +1,6 @@
 # C+ and the GPU question
 
-A context document. Captures where the GPU discussion landed in v0.0.10 and why, so a future conversation can pick up the thread without re-litigating from scratch. References to the canonical artifacts: [plan.md](../plan.md), [plan.gpu.md](../plan.gpu.md) (historical / rejected vision), [vendor/metal](../vendor/metal/).
+A context document. Captures where the GPU discussion landed in v0.0.10 and why, so a future conversation can pick up the thread without re-litigating from scratch. References to the canonical artifacts: [plan.md](../../../plan.md), the [historical maximalist sketch](#historical-maximalist-gpu-plan), and [vendor/metal](../../../vendor/metal/).
 
 ---
 
@@ -11,7 +11,7 @@ A context document. Captures where the GPU discussion landed in v0.0.10 and why,
 What this means concretely:
 - The only language-level GPU work we ever ship is the v0.0.10 binding-layer wedge (`#selector`, `#msg_send`, `#compile_shader`) — and those are justified by ObjC FFI broadly, not GPU specifically.
 - Everything else is **package work forever**: `vendor/metal` + MPS, `vendor/cuda` + cuBLAS, `vendor/accelerate`.
-- The maximalist vision from [plan.gpu.md](../plan.gpu.md) — `#[kernel]` attribute, NVPTX/AMDGPU/SPIR-V codegen, address spaces, GPU intrinsics — is **dropped, not deferred**. Wrong shape for this position.
+- The [maximalist vision summarized below](#historical-maximalist-gpu-plan) — `#[kernel]` attribute, NVPTX/AMDGPU/SPIR-V codegen, address spaces, GPU intrinsics — is **dropped, not deferred**. Wrong shape for this position.
 
 The "user with large numbers to crush" answer: write the host orchestration in C+, dispatch the heavy work to `cublas::sgemv` / `mps::MatrixMultiplication` / `accelerate::cblas_sgemm`. Same shape FAISS uses.
 
@@ -23,7 +23,7 @@ The conversation started after the v0.0.9 close. With vendor/metal landed (typed
 
 Two artifacts were on the table:
 
-### plan.gpu.md (pre-existing, ambitious)
+### Historical maximalist GPU plan
 
 The maximalist vision: extend the compiler with a `#[kernel]` attribute, build a multi-target codegen pipeline that compiles kernel functions to NVPTX (NVIDIA) / AMDGPU / SPIR-V / MSL, add address-space qualifiers (`*global`, `*shared`, `*private`) on raw pointers, ship GPU execution intrinsics (`#thread_idx_x`, `#barrier`, etc.), enforce sema rules that reject host-only code inside kernel bodies. Bundle the resulting GPU binary in the host executable's `.rodata`, ship `vendor/gpu` as the host-side runtime abstraction.
 
@@ -294,9 +294,9 @@ Worth tracking but not blocking:
 
 ## Reference points
 
-- **[plan.md](../plan.md)** — current cycle plan. §"GPU" intro + Phase 4 + Post-v0.0.10 follow-ups capture the position.
-- **[plan.gpu.md](../plan.gpu.md)** — the maximalist vision. Kept in-tree as historical record of the rejected direction. Do not implement.
-- **[vendor/metal](../vendor/metal/)** — current Metal bindings (v0.0.9). 6 files, ~620 LOC. Drop-clean, Result-returning. Lacks MPS bindings — that's the fast follow-up.
+- **[plan.md](../../../plan.md)** — current cycle plan. §"GPU" intro + Phase 4 + Post-v0.0.10 follow-ups capture the position.
+- **[Historical maximalist sketch](#historical-maximalist-gpu-plan)** — the rejected compiler-kernel direction, preserved in this document. Do not implement.
+- **[vendor/metal](../../../vendor/metal/)** — current Metal bindings (v0.0.9). 6 files, ~620 LOC. Drop-clean, Result-returning. Lacks MPS bindings — that's the fast follow-up.
 - **[docs/compiler/internals.md](../internals.md)** — compiler-internals reference. §11 explains the codegen / IR-text contract that `#compile_shader` plugs into.
 - **research.md** — the original "what would it take" survey. Predates the position decision; its framing of GPU as "feasible but massive" is correct but the conclusion (build it anyway) is what we rejected.
 - **[skill.md](../../lang/skill.md)** — how to write C+ (the LLM-facing reference). §9 lists the existing vendor packages.

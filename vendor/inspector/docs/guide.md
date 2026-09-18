@@ -249,8 +249,9 @@ could write over any other value.
 - **No source navigation.** facet's runtime `Data` carries no source origin;
   that needs a debug-only origin ID injected during `@ui` lowering. Until then
   the key is the handle and an editor can search for it.
-- **macOS only for the overlay and the thread hop.** The walker is
-  portable and needs no platform at all.
+- **The overlay and thread hop are platform code.** They are implemented for
+  macOS, Linux, Windows, iOS, and Android; the walker itself remains portable
+  and needs no platform at all.
 - **Handles are process-local pointers.** A transport sends indices into the
   flat `describe` listing instead — which is why that listing is flat and
   parent-indexed.

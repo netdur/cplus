@@ -1,5 +1,26 @@
 # Tutorial
 
+Quick path: watch a path and deliver typed changes. Lifecycle and platform
+details: [guide.md](guide.md). Signatures: [ref.md](ref.md).
+
+## Setup
+
+```toml
+[dependencies]
+fswatch     = "*"
+events      = "*"
+facet       = "*"
+flex_layout = "*"
+stdlib      = "*"
+```
+
+```cplus
+import "fswatch/fswatch" as fswatch;
+import "events/events" as events;
+import "facet/services" as facet;
+import "stdlib/result" as result;
+```
+
 ## Watch in one call
 
 `fswatch::watch` owns the thread and the poll loop; you keep the returned
@@ -7,11 +28,7 @@
 thread):
 
 ```cplus
-import "fswatch/fswatch" as fswatch;
-import "stdlib/result" as result;
-
 fn changed(event: fswatch::Change, ctx: *u8) {
-    return;
 }
 
 var options: fswatch::Options = fswatch::Options::new();
@@ -34,15 +51,10 @@ a loop or an executor.
 ## Watch one file
 
 ```cplus
-import "fswatch/fswatch" as fswatch;
-import "events/events" as events;
-import "stdlib/result" as result;
-
 fn changed(event: fswatch::Change, ctx: *u8) {
     if event.kind == fswatch::ChangeKind::Modified {
         // Reload event.path here. The string is borrowed for this call.
     }
-    return;
 }
 
 var options: fswatch::Options = fswatch::Options::new();

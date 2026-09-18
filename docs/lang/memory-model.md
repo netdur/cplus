@@ -83,7 +83,7 @@ raced. Fixed 2026-08-22.)
 
 ```cplus
 fn read(b: B)      -> i32 { return b.x; }                // shared borrow: read only
-fn bump(ref b: B)         { b.x = b.x + 1; return; }     // exclusive borrow: writes reach the caller
+fn bump(ref b: B)         { b.x = b.x + 1; }             // exclusive borrow: writes reach the caller
 fn into(take b: B) -> i32 { return b.x; }                // move: caller's b is consumed
 ```
 

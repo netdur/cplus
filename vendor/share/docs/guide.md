@@ -1,5 +1,8 @@
 # Guide
 
+What presenting a share means on each platform. Fast start:
+[tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 ## What `Ok` means
 
 The sheet was **presented**. That is the only fact any of these platforms
@@ -86,6 +89,14 @@ gets `Unsupported` or a sheet that never asks.
 **A title is not optional.** A `DataPackage` with no title makes the shell show
 a "nothing to share" pane rather than an error, which is the most confusing way
 this can fail, so a share with no `subject` still gets one.
+
+## Linux: no system share sheet
+
+The XDG portals provide `OpenURI`, `OpenFile`, and `ComposeEmail`, but none is a
+chooser that hands an item to an application selected by the person. Opening a
+URL in the browser or a file in its default editor would be a different verb,
+so the Linux backend reports `available() == false` and every share returns
+`Unsupported`.
 
 ### It is not blocked by package identity, and an earlier note said it was
 

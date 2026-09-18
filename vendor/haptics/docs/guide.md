@@ -1,5 +1,8 @@
 # Guide
 
+How portable feedback maps onto each platform. Fast start:
+[tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 ## Why every verb is a no-op somewhere
 
 Haptics is the one capability where "it did nothing" is the *normal* outcome
@@ -20,8 +23,9 @@ nothing.
 
 ## The vocabulary, and what each platform does with it
 
-`Feel` names the *moment*. The three platforms describe haptics completely
-differently, and an app should not have to know which it is talking to.
+`Feel` names the *moment*. The four active backends describe haptics completely
+differently, and Linux explicitly reports the capability unavailable. An app
+should not have to know which it is talking to.
 
 | `Feel` | iOS | macOS | Android | Windows (low/high motor, ms) |
 |---|---|---|---|---|
@@ -64,6 +68,11 @@ it answers `available() == false` and keeps running rather than failing to start
 With no controller connected, `available()` is false and `play` is a no-op,
 which is the common case on a desktop and not an error.
 
+**Linux refuses rather than borrowing gamepad rumble.** The kernel's evdev
+force-feedback API drives a controller selected for writing; it does not expose
+a device-level UI actuator. `available()` and `play()` therefore return false,
+and `prepare()` is a no-op.
+
 ## `prepare`, and why the first tap is late
 
 The Taptic Engine idles. A tap played on a cold engine lands late enough to
@@ -71,7 +80,7 @@ feel disconnected from the touch that caused it — Apple's own guidance is to
 warm it when a gesture *begins* and play when it ends.
 
 That is what `prepare` is. It is **not required**: skipping it costs latency on
-the first tap and nothing else. macOS, Android and Windows have nothing to warm
+the first tap and nothing else. macOS, Android, Linux and Windows have nothing to warm
 and do nothing.
 
 The iOS backend keeps **one generator per family alive for the process** rather

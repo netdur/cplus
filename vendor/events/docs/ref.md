@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Delivery, ownership, and teardown:
+[guide.md](guide.md).
+
 Manual for the `events` package. Signatures and behavior only — no tutorials.
 Import:
 

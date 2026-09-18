@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Ownership and messaging rules:
+[guide.md](guide.md).
+
 Manual for the `objc` package. Messaging overloads are numerous — listed by
 family, not every arity.
 

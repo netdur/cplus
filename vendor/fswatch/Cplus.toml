@@ -5,10 +5,10 @@ edition = "2026"
 
 # fswatch — owner-thread filesystem change events.
 #
-# TWO BACKENDS, ONE PACKAGE. `backend.cplus` is kqueue (macOS); it is shadowed
+# THREE BACKENDS, ONE PACKAGE. `backend.cplus` is kqueue (macOS); it is shadowed
 # by `backend_linux.cplus`, which is inotify and serves Android too — the
 # resolver falls back from `android` to `_linux`, and Android's kernel IS Linux.
-# A `backend_windows.cplus` (ReadDirectoryChangesW) would be the third. The
+# `backend_windows.cplus` supplies `ReadDirectoryChangesW`. The
 # public module — `fswatch/fswatch` — is the same on all of them.
 
 [dependencies]

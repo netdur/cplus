@@ -1,5 +1,8 @@
 # Guide
 
+How each platform opens its chooser and what the returned value means. Fast
+start: [tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 ## Why there is no blocking form
 
 `NSOpenPanel.runModal` is the obvious call and it spins a **nested run loop**:
@@ -8,7 +11,8 @@ inside a frame that is still inside the caller's. That is a reentrancy problem,
 not a convenience.
 
 `beginWithCompletionHandler:` answers on the main run loop with the stack
-unwound, which is what iOS and Android do anyway. One shape, three platforms.
+unwound, which is what iOS, Android, the Linux portal, and the Windows common
+dialog do as well. One callback shape covers all five platforms.
 
 ## A cancel is an answer
 
@@ -37,6 +41,9 @@ The permission it carries is **per-process** and dies with the app unless
 `takePersistableUriPermission` is called — a decision about long-term access
 that a picker should not make silently.
 
+Linux's XDG portal returns a `file://` URI. The backend percent-decodes it into
+the ordinary path promised by the facade before calling the handler.
+
 ## The types filter is lossy, on purpose
 
 `types` is a comma-separated list of extensions without dots — `"png,jpg"`.
@@ -45,6 +52,7 @@ that a picker should not make silently.
 |---|---|
 | macOS | `setAllowedFileTypes:`, which takes exactly these strings |
 | Android | mapped to **one** MIME type; anything unrecognised becomes `*/*` |
+| Linux | XDG portal glob entries such as `*.png` and `*.jpg` |
 | iOS | **ignored** — the picker is opened for `public.item` |
 | Windows | **ignored** — not wired yet; see below |
 
@@ -52,8 +60,8 @@ iOS wants `UTType` objects, and building one from three letters is a guess for
 anything unusual. Filtering wrongly hides a person's own files from them, which
 is worse than not filtering — so the iOS backend does not pretend.
 
-**Windows ignores it for a different reason: it is simply not built yet.** This
-is a gap, not a judgement. `lpstrFilter` on `OPENFILENAMEW` wants a
+**Windows ignores it because its filter conversion is not built yet.** This is
+a gap, not a judgement. `lpstrFilter` on `OPENFILENAMEW` wants a
 double-NUL-terminated pair-list ("Images\0*.png;*.jpg\0\0"), which is a
 straightforward transform of the `types` string onto a working picker — it just
 has not been done. Until it is, the dialog shows every file, which errs the same
@@ -90,8 +98,8 @@ nothing useful. The picker is opened **as a copy** (`inMode:` import), which
 sidesteps it — the alternative hands back a URL into another app's container
 that stops working when that app suspends.
 
-## What was measured
+## What is tested
 
-Nothing yet — **a picker cannot be asserted**. The suite covers the vocabulary,
-the empty-input guards, and that a cancelled pick is an empty path rather than
-an error.
+A visible chooser cannot be automated in the unit suite. The suite covers the
+vocabulary, empty-input guards, cancellation shape, and Linux portal URI/path
+conversion. Live dialog behavior still needs a desktop or device check.

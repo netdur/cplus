@@ -7,12 +7,16 @@ A screen that shows the camera and takes a photo. Signatures are in
 
 ```toml
 [dependencies]
-camera = "*"
+camera      = "*"
+facet       = "*"
+flex_layout = "*"
+permissions = "*"
+stdlib      = "*"
 ```
 
-The package pulls in `permissions` itself. On Apple you also need the usage
-description in your bundle's `Info.plist` — without it the system kills the
-process the moment you open a camera:
+Use `cpc pm add . camera` to write the platform-specific closure as well. On
+Apple you also need the usage description in your bundle's `Info.plist` —
+without it the system kills the process the moment you open a camera:
 
 ```xml
 <key>NSCameraUsageDescription</key>
@@ -25,9 +29,10 @@ On Android, add the permission to your manifest:
 <uses-permission android:name="android.permission.CAMERA"/>
 ```
 
-Windows needs neither, and links nothing extra — Media Foundation and WIC are
-bound at runtime, so an application that imports this package still starts on a
-machine that has no camera stack at all.
+Linux and Windows need neither. Linux opens V4L2 devices such as `/dev/video0`;
+the process still needs permission to open that device. Windows binds Media
+Foundation and WIC at runtime, so an application that imports this package
+still starts on a machine that has no camera stack at all.
 
 ## 2. Ask first
 
@@ -54,6 +59,7 @@ that reason.
 
 ```cplus
 import "camera/camera" as camera;
+import "facet/facet" as core;
 import "stdlib/result" as result;
 
 static SESSION: camera::Camera = #zero::[camera::Camera]();
@@ -72,12 +78,12 @@ The match arms need no type arguments — `result::Result::Ok(c)` infers them
 from the call. Every field of `Request` defaults, so `camera::open()` takes the
 first camera at whatever format it settles on.
 
-**On Windows, `facing` is ignored** — the platform has no such concept. Name the
-camera you want instead, and a name that matches nothing is refused rather than
-substituted:
+**On Linux and Windows, `facing` is ignored** — neither platform exposes it.
+Name the camera you want instead: a `/dev/videoN` path on Linux or a device name
+on Windows. A value that matches nothing is refused rather than substituted:
 
 ```cplus
-camera::open(camera::Request::new(device: "HP Wide Vision HD Camera"))
+camera::open(camera::Request::new(device: "/dev/video0"))
 ```
 
 `Camera` owns the session. When it drops, the session closes and the recording
@@ -109,8 +115,8 @@ fn got_photo(jpeg: u8[], ctx: *u8) {
     let n: usize = jpeg.count();
     let bytes: *u8 = { #slice_ptr(jpeg) };   // for handing to C
     // JPEG, freed when this returns. Copy what you keep.
-    // On the main thread on Apple and Android; on Windows, the thread that
-    // called `capture` — see the guide.
+    // On the main thread on Apple and Android; inline on the caller's thread
+    // on Linux. Windows depends on whether a frame stream is active.
 }
 ```
 
@@ -133,15 +139,16 @@ SESSION.close();          // idempotent; `drop` calls it too
 
 ## Running it
 
-`cpc test` in this package proves the portable half. On Apple and Android it
-opens nothing; the Windows backend's tests do open the lens, deliberately, and
-the guide says why.
+`cpc test` in this package proves the portable half. Apple and Android open
+nothing. Linux and Windows exercise a real camera when one is present, and
+skip those checks when none is available; the guide says why.
 
 To see the camera actually work:
 
 | target | probe | what it does |
 |---|---|---|
 | macOS | `playground/cameraprobe` | opens the lens, takes one photo to `/tmp/cameraprobe.jpg` |
+| Linux | package tests | V4L2 enumeration, frames, controls and a GTK preview when hardware is present |
 | Windows | `playground/cam_shot` | the same, to `shot.jpg`, through the facade |
 | Windows | `playground/cam_facet` | a live preview inside a real facet tree |
 

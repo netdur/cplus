@@ -1,6 +1,6 @@
 # Phase 5 — Doctests
 
-> Status: design note. Implementation lands after `cpc test` (which lands after attributes — see Phase 5 sequencing in [plan.md](../../plan.md) §3).
+> Status: design note. Implementation lands after `cpc test` (which lands after attributes — see Phase 5 sequencing in [plan.md](../../../plan.md) §3).
 > Depends on: [phase5-attributes.md](phase5-attributes.md) (the `#[test]` attribute machinery and the `cpc test` runner).
 
 ---

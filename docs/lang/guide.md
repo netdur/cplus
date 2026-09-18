@@ -99,7 +99,7 @@ The house convention, in one table (rationale and patterns in
 |---|---|---|
 | a mutator that can fail (append, insert, reserve) | `status::Status` | `if !s.is_ok() { … }` or bind `_` when the failure mode is OOM-only |
 | a read that can miss (lookup, parse, index) | `Option[T]` | `match` / `guard let` |
-| a computation with a value *and* a reason | `Result[T, E]` or your own enum | `match` / `guard let … else \|Err(e)\|` |
+| a computation with a value *and* a reason | `Result[T, E]` or your own enum | `match` / `guard let … else Err(e)` |
 
 No panic exists. `assert` traps — use it for contract violations that mean
 the program itself is wrong, never for input.

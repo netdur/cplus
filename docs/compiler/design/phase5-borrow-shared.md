@@ -1,6 +1,6 @@
 # Phase 5 — Shared-borrow tracking
 
-> Status: design note. Implementation lands in 4–6 sub-slices per the Phase 5 sequencing block in [plan.md](../../plan.md) §3.
+> Status: design note. Implementation lands in 4–6 sub-slices per the Phase 5 sequencing block in [plan.md](../../../plan.md) §3.
 > Scope: tracking the *shared* borrow form (`x: T` and `self` on non-`Copy` types); detecting conflicts between shared borrows and concurrent moves; choosing the minimum lifetime-elision rule set that admits common signatures without explicit annotations; specifying the borrow-checker diagnostic surface.
 > Out of scope: exclusive-borrow tracking (Phase 6), explicit lifetime annotation syntax (Phase 6), `noalias` codegen (Phase 6), atomic types (Phase 6), heap allocation / `Vec[T]` (Phase 5+).
 

@@ -8,6 +8,7 @@ signatures in [ref.md](ref.md).
 ```toml
 [dependencies]
 simd = "*"
+stdlib = "*"
 ```
 
 ```cplus

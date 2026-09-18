@@ -6,18 +6,18 @@ five-minute path is [tutorial.md](tutorial.md).
 
 ## What each platform does
 
-| | Apple | Android | Windows |
-|---|---|---|---|
-| capture | AVFoundation, `AVCaptureSession` | `android.hardware.camera2` | Media Foundation, `IMFSourceReader` |
-| preview | `AVCaptureVideoPreviewLayer` in a layer-backed view | `TextureView` | an HWND this package owns, blitting the frames |
-| still | `AVCapturePhotoOutput` → JPEG | `ImageReader`, JPEG format | a frame converted to BGR, encoded by WIC |
-| device controls | `AVCaptureDevice` | camera2 | `IAMCameraControl` + `IAMVideoProcAmp` |
-| Java/ObjC shipped | none | one class, 8,244 bytes of dex | none |
-| needs a permission | yes, `camera` | yes, `camera` | no gate to pass; `permissions` reports `Granted` |
-| needs a manifest entry | `NSCameraUsageDescription` | `android.permission.CAMERA` | none |
-| facing | real | real | **none — see below** |
+| | Apple | Android | Linux | Windows |
+|---|---|---|---|---|
+| capture | AVFoundation, `AVCaptureSession` | `android.hardware.camera2` | V4L2 | Media Foundation, `IMFSourceReader` |
+| preview | `AVCaptureVideoPreviewLayer` in a layer-backed view | `TextureView` | `GtkPicture` + `GdkMemoryTexture` | an HWND this package owns, blitting the frames |
+| still | `AVCapturePhotoOutput` → JPEG | `ImageReader`, JPEG format | device-provided MJPG | a frame converted to BGR, encoded by WIC |
+| device controls | `AVCaptureDevice` | camera2 | V4L2 controls when exposed | `IAMCameraControl` + `IAMVideoProcAmp` |
+| Java/ObjC shipped | none | one class, 8,244 bytes of dex | none | none |
+| needs permission | yes, `camera` | yes, `camera` | access to `/dev/videoN` | no gate; `permissions` reports `Granted` |
+| needs a manifest entry | `NSCameraUsageDescription` | `android.permission.CAMERA` | none | none |
+| facing | real | real | **none — select by path** | **none — select by name** |
 
-The preview is a `facet::Node` on all three, built through
+The preview is a `facet::Node` on all four backends, built through
 `facet::adopt_native_with` — the factory escape hatch, where the platform view
 is created at mount and the previous one released first. No new ledger element
 exists for camera and `tools/gen_contract.py` was not touched.
@@ -108,6 +108,11 @@ the pump's next frame and the handler runs on the pump thread, the same one
 to: a hop would need a message loop the package has no claim on. If you capture
 from a frame handler, treat the result as off-main and cross back yourself.
 
+**Linux calls the photo handler inline**, before `capture` returns. Taking a
+still temporarily stops the YUYV stream, negotiates MJPG, reads a settled frame,
+then restores the stream. A device without MJPG returns `Unsupported` for still
+capture instead of encoding a different format in software.
+
 The buffer is valid FOR THE DURATION OF THE CALL and freed after it returns.
 Copy what you keep. Handing back an owned buffer would make every caller
 responsible for a free across a seam where forgetting is silent.
@@ -127,17 +132,13 @@ The alternative reads worse — `has` saying no on a machine where `open` works.
 Android does the same for an external USB camera, which reports `EXTERNAL`:
 rather than refuse it, the first camera is the fallback.
 
-**Windows has no facing at all**, and this is the one place the platform is
-poorer than the contract rather than differently shaped. A capture device is
-addressed by name or by index and says nothing about which way it points. So
-every facing answers the same way there, `actual_facing()` reports `External`
-rather than guessing a side, and `switch_to` refuses. An application that wants
-a particular camera on Windows names it in `Request::device` and opens that one
-— and a name that matches nothing is REFUSED rather than silently substituted,
-because handing back a different camera than the one asked for is exactly the
-lie this package exists to avoid.
+**Linux and Windows have no facing at all.** V4L2 addresses a camera by device
+path; Media Foundation addresses it by name or index. Both report `External`
+rather than guessing a side, and both refuse `switch_to`. An application that
+wants a particular desktop camera names it in `Request::device`; a value that
+matches nothing is refused rather than silently substituted.
 
-## Verification, and why the suite opens nothing — except on Windows
+## Verification and hardware tests
 
 `cd vendor/camera && cpc test` checks the outcome mapping, the guards and the
 factory hooks. On Apple and Android it **never opens a camera**.
@@ -148,7 +149,7 @@ suite that opened the lens would light the recording indicator on every run, and
 on macOS the first open raises a system permission dialog. A test suite that can
 interrupt you with a dialog is one you stop running.
 
-**The Windows suite breaks that rule on purpose**, and it is worth being plain
+**The Linux and Windows suites break that rule on purpose**, and it is worth being plain
 about rather than quietly inconsistent. It opens the device, streams frames,
 encodes a still and sets exposure and white balance — reading each back off the
 hardware afterwards, so an `Ok` that did nothing fails. The two halves of the
@@ -166,6 +167,7 @@ The platform round-trips live in probes:
 |---|---|---|
 | macOS | `playground/cameraprobe` (CLI), `playground/cameraprobe_mac` (window) | **PASSES** — 1920×1080 JPEG with valid Exif, and the preview confirmed live BY EYE |
 | Android emulator | `playground/cameraprobe_android` | **PASSES** — see below |
+| Linux | package tests | exercises V4L2 enumeration, frames, controls and GTK preview when a camera is present; skips otherwise |
 | Windows | `playground/cam_probe` (CLI), `cam_shot` (still), `cam_view` (raw window), `cam_facet` (preview in a facet tree) | **PASSES** — see below |
 | **iOS simulator** | — | **nothing to run: it has no camera** |
 | iOS device | a real iPad | **NOT YET RUN.** Cross-builds only |
@@ -315,6 +317,11 @@ can give — and `zoom()` reports what it actually got.
 query: neither interface has a lamp property at all, so there is nothing to ask.
 A camera with a lamp exposes it through `Windows.Devices.Lights.Lamp` or a
 KSPROPERTY extended control set, which is a different pipeline.
+
+Linux asks V4L2 whether each control exists. Focus, exposure, white balance,
+zoom and torch work only when the driver exposes the corresponding control.
+`Mode::Once` is `Unsupported`: V4L2 exposes continuous or held state here, not
+a portable one-shot trigger.
 
 ## Gotcha: `capture` while streaming costs a frame, not the stream
 

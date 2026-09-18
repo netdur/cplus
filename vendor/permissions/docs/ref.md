@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Permission models and platform traps:
+[guide.md](guide.md).
+
 Manual for the `permissions` package. Signatures and behavior only — no
 tutorials. Import:
 

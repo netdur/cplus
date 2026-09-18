@@ -2,7 +2,7 @@
 
 **Status:** design only. Implementation pending user approval of this note.
 
-**Motivation.** ObjC's `class_addMethod(class, sel, IMP imp, types)` takes a function pointer as the runtime method body. Without function pointer values in C+, the user's [hello_appkit_c.c](../../objc-c-interop/hello_appkit_c.c) reference can't be expressed — the `CAppDelegate` subclass can't be built, and the window-close-quits-app behavior is unreachable.
+**Motivation.** ObjC's `class_addMethod(class, sel, IMP imp, types)` takes a function pointer as the runtime method body. Without function pointer values in C+, the user's [hello_appkit_c.c](../../../objc-c-interop/hello_appkit_c.c) reference can't be expressed — the `CAppDelegate` subclass can't be built, and the window-close-quits-app behavior is unreachable.
 
 More generally, function pointers are how C libraries take callbacks: `signal(SIGTERM, handler)`, `qsort(..., comparator)`, `pthread_create(..., thread_fn, ...)`. Every nontrivial FFI consumer eventually needs them.
 

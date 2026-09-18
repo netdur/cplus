@@ -27,9 +27,9 @@
 // PLAIN TEXT, NOT ATTRIBUTED. The AppKit half renders `terminal::Screen`'s
 // cells with per-run colour and a cursor layer; this renders `screen.view()`,
 // the same grid as text. Colour and a drawn cursor are the two things missing
-// and both are additive — the model already carries the attributes, so a future
-// pass sets tags on the buffer without changing anything here. Saying that is
-// better than a half-built tag path that gets colours subtly wrong.
+// and both require widening the model as well as this renderer: the current
+// screen parser drops SGR attributes. Saying that is better than a half-built
+// tag path that gets colours subtly wrong.
 //
 // THE PUMP IS A TIMER, not a read source. GTK has no dispatch-source
 // equivalent that is worth reaching for here: the master fd is non-blocking

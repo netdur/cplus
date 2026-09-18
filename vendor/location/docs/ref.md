@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Permission, accuracy, and platform
+behavior: [guide.md](guide.md).
+
 `import "location/location" as loc;`
 
 ## Accuracy
@@ -67,8 +70,9 @@ fn Request::defaults() -> Request
 ```
 
 `distance_filter_m` — metres of movement before another fix. 0 = every fix.
-`timeout_ms` — honoured on Android; Apple runs its own ~10 s timer. 0 = the
-platform default, never "forever".
+`timeout_ms` — honoured on Android and Linux; Apple runs its own ~10 s timer.
+Linux uses 20 s when the value is 0. Zero means the platform default, never
+"forever".
 
 `defaults()` exists only because `Request::new()` cannot be a default-argument
 expression (E0308 counts parameters before filling them). It is a deliberate
@@ -108,14 +112,16 @@ a `static` or a field.
 
 ## Platform coverage
 
-| | macOS | iOS | Android |
-|---|---|---|---|
-| `available` / `services_enabled` | ✅ | ✅ | ✅ |
-| `permission` | ✅ | ✅ | ✅ |
-| `last_known` | ✅ | ✅ | ❌ `None` |
-| `once` / `updates` | ✅ | ✅ | ✅ |
-| `accuracy()` read-back | ✅ | ✅ | ✅ |
-| prompts on first use | ✅ | ✅ | ❌ ask via `permissions` |
-| `timeout_ms` honoured | ❌ own ~10 s | ❌ own ~10 s | ✅ |
+| | macOS | iOS | Android | Linux | Windows |
+|---|---|---|---|---|---|
+| `available` / `services_enabled` | ✅ | ✅ | ✅ | ✅ GeoClue | ❌ |
+| `permission` | ✅ | ✅ | ✅ | `Unknown` until start settles | `Unsupported` |
+| `last_known` | ✅ | ✅ | ❌ `None` | process cache | ❌ `None` |
+| `once` / `updates` | ✅ | ✅ | ✅ | ✅ | ❌ `Unsupported` |
+| `accuracy()` read-back | ✅ | ✅ | ✅ | ✅ from fix radius | — |
+| prompts on first use | ✅ | ✅ | ❌ ask via `permissions` | GeoClue agent | ❌ |
+| `timeout_ms` honoured | ❌ own ~10 s | ❌ own ~10 s | ✅ | ✅ | — |
 
-Verified live on macOS, the iOS simulator and the Android emulator, 2026-09-02.
+The live path is verified on macOS, the iOS simulator, and the Android
+emulator. Linux's pure mapping and lifecycle pieces are covered by tests; a
+coordinate still depends on the host's GeoClue service and data sources.

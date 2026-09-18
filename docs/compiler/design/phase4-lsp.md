@@ -3,6 +3,11 @@
 > Status: design note, not yet implemented.
 > Scope: a Language Server for C+ that serves diagnostics, formatting, and goto-definition in editors (VS Code, Helix, Neovim, Zed, Emacs) over the standard LSP stdio transport. Capability set is intentionally minimal for Phase 4; completions / hover / find-references / refactorings land in Phase 5+ alongside richer sema.
 > Out of scope: incremental parsing, virtual workspaces, multi-root workspaces, semantic tokens, code actions / quickfixes (deferred to slice 4E.2), inlay hints, document symbols / outline (deferred), real-time linting beyond the diagnostics surface that `cpc build` already produces.
+>
+> **Historical preimplementation design.** `cpc-lsp` is now resident and serves
+> completion, definitions, references, hover, and outlines from a cached
+> project graph. See the current [tooling reference](../../lang/tooling.md) and
+> the [v0.0.28 notes](../../releases/v0.0.28.md).
 
 ---
 

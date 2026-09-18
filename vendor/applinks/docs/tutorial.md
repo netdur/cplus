@@ -19,6 +19,8 @@ whichever facet backend your app already uses.
 
 ```cplus
 import "applinks/applinks" as applinks;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
 import "stdlib/url" as url;
 ```
 
@@ -27,7 +29,6 @@ import "stdlib/url" as url;
 ```cplus
 fn opened(u: str, ctx: *u8) {
     // `u` is the whole URL, exactly as the system spelled it.
-    return;
 }
 
 let _o: applinks::Outcome = applinks::on_link(opened, scheme: "myapp");

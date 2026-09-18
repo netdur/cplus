@@ -136,7 +136,7 @@ async fn main() -> i32 { return await fetch(u); }   // the compiler drives the e
 
 The rules that shape every async signature you will write:
 
-- **`main` may be `async`, and so may a `#[test]` fn** (v0.0.31). The
+- **`main` may be `async`, and so may a `#[test]` fn** (v0.0.28). The
   compiler splits the entry into a private async body and a synchronous
   wrapper whose whole body is the drive loop — the same loop `Future::wait`
   is, so this is sugar and nothing more. There is no
@@ -312,7 +312,7 @@ indexed over `0..n`.
   actually reasoned about it.
 - **`wait` ignores a cancel request.** If a worker must be stoppable, drive
   with `future::wait_or_cancel(f)` and handle `WaitResult::Cancelled`.
-- **Dropping a `Future` cancels it** (v0.0.30). A future you set aside and
+- **Dropping a `Future` cancels it** (v0.0.28). A future you set aside and
   never await is destroyed at scope exit, drops and all — bind it if it
   must outlive the statement that made it.
 - **`join` consumes the handle; `cancel` does not.** Cancel first, join

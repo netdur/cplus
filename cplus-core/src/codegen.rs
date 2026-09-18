@@ -385,7 +385,7 @@ impl ModuleMetadata {
 /// `JoinHandle[O]::cancel` in stdlib/thread.cplus find it without knowing
 /// `I` (which the handle type does not carry).
 ///
-/// **Cancel block** (v0.0.29; offsets relative to ctx+16, all 8-byte):
+/// **Cancel block** (v0.0.28; offsets relative to ctx+16, all 8-byte):
 /// ```text
 /// +0:  flag       u64   1 = cancellation requested   (canceller writes)
 /// +8:  parked     u64   1 = worker inside a cancellable park (worker writes)
@@ -642,7 +642,7 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable, fn_attrs: &s
     out.push_str("entry:\n");
     out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
     out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
-    // v0.0.29 cancellation: point this thread's cancel slot at the ctx's
+    // v0.0.28 cancellation: point this thread's cancel slot at the ctx's
     // cancel block for the worker's whole run, so `thread::cancelled()` and
     // the park protocol observe the spawner's `JoinHandle::cancel` requests.
     out.push_str(&format!(
@@ -725,7 +725,7 @@ fn emit_spawn_with_tramp(
     out.push_str("entry:\n");
     out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
     out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
-    // v0.0.29 cancellation: install this thread's cancel slot (see
+    // v0.0.28 cancellation: install this thread's cancel slot (see
     // `emit_spawn_tramp` for the contract).
     out.push_str(&format!(
         "  %cancel = getelementptr i8, ptr %arg, i64 {THREAD_CTX_CANCEL_OFF}\n"
@@ -1451,7 +1451,7 @@ fn generate_inner(
         "__cplus_coro_resume",
         "__cplus_coro_done",
         "__cplus_coro_destroy",
-        // v0.0.29: cancel-slot accessors, emitted linkonce_odr in every
+        // v0.0.28: cancel-slot accessors, emitted linkonce_odr in every
         // module; stdlib/thread.cplus re-declares the getter.
         "__cplus_cancel_get_slot",
         "__cplus_cancel_set_slot",
@@ -2549,9 +2549,6 @@ struct MethodInfo {
     /// the method's own symbol — the behaviour it had before the bridge
     /// existed. See [`emit_fnptr_bridge`].
     is_coroutine: bool,
-    /// v0.0.28: `#[intrinsic("llvm.sqrt")]` — codegen replaces a call to
-    /// this method with the named LLVM intrinsic. See attrs.rs.
-    intrinsic: Option<String>,
 }
 
 /// v0.0.8 bench-gap fix D: classify a method's body for cpc-side
@@ -2956,7 +2953,6 @@ fn collect_types(
                         return_type,
                         trivial_inline,
                         is_coroutine: m.is_gen || m.is_async,
-                        intrinsic: None,
                     },
                 );
             }
@@ -2994,7 +2990,6 @@ fn collect_types(
                             .map(TrivialInline::MathUnary)
                             .or_else(|| detect_trivial_inline(m)),
                         is_coroutine: false,
-                        intrinsic: None,
                     },
                 );
             }
@@ -3047,7 +3042,6 @@ fn collect_types(
                     return_type,
                     trivial_inline,
                     is_coroutine: m.is_gen || m.is_async,
-                        intrinsic: None,
                 },
             );
             // Mirror sema's Drop detection so codegen knows which bindings
@@ -3278,7 +3272,7 @@ fn ty_carries_view_rec(ty: &Ty, t: &TypeTable, visiting: &mut Vec<(bool, u32)>) 
 /// registers and becomes a memcpy — and a first-class LLVM aggregate load or
 /// store of one is expanded ELEMENT BY ELEMENT by SelectionDAG.
 ///
-/// WHAT THAT COSTS, measured: `vendor/static-arena` is a bump allocator whose
+/// WHAT THAT COSTS, measured: `vendor/static_arena` is a bump allocator whose
 /// whole point is a 16K or 64K buffer INSIDE the struct, and its by-value
 /// methods (`capacity(this)`, `used(this)`, `new() -> Self`) put
 /// `{[16384 x i8], i64}` in a `%T %0` parameter. clang never finished. Not
@@ -4078,7 +4072,7 @@ fn return_passes_by_sret_widened(ty: &Ty, types: &TypeTable) -> bool {
         // and jumps through whatever was in it.
         //
         // It went unnoticed while `Future` had no destructor and was therefore
-        // Copy. Giving it one (v0.0.30, so a future that is merely dropped
+        // Copy. Giving it one in v0.0.28, so a future that is merely dropped
         // stops leaking its frame) cleared `is_copy` and tripped this — the
         // minimal repro is `let _f = an_async_fn();` and it segfaults before
         // main's first line.
@@ -5810,7 +5804,7 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
     // remain global-free; stdlib calls these as plain extern fns.
     //
     // ONE REACTOR PER THREAD (2026-08-22). This was a process-global with no
-    // lock while `executor::block_on` had — and still has — no thread
+    // lock while the old `executor::block_on` API had no thread
     // affinity, so two `block_on`s on two threads shared one kqueue and one
     // set of six realloc-grown arrays. TSan, once it could see stdlib, found
     // the lazy init first, exactly where the bug report predicted:
@@ -5828,7 +5822,7 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
     // one reactor per thread is what `reactor.cplus`'s own header has
     // claimed since v0.0.4 ("single-threaded — matches tokio's
     // current_thread"), and making the slot per-thread makes that claim true
-    // instead of aspirational. `block_on` becomes honestly callable from any
+    // instead of aspirational. The future drive loop becomes callable from any
     // thread, which `stdlib/thread` already allows.
     //
     // NOT A LANGUAGE FEATURE. C+ has no thread-local storage and this does
@@ -5842,7 +5836,7 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
     // platforms. The slot is touched once per await, so the model's cost is
     // not worth a portability hazard.
     //
-    // THE COST, named: a thread that calls `block_on` and then exits leaves
+    // THE COST, named: a thread that drives a future and then exits leaves
     // its kqueue fd and six buffers behind, because C+ has no thread-exit
     // hook to run a teardown from. Bounded by "threads that ran an
     // executor", not by threads; a program that spawns many short-lived
@@ -5863,7 +5857,7 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
          ret void\n\
          }}\n"
     ));
-    // v0.0.29 cancellation: per-thread cancel slot. Unlike the reactor slot
+    // v0.0.28 cancellation: per-thread cancel slot. Unlike the reactor slot
     // (internal — one module, reactor.cplus, is its only user) this one is
     // WRITTEN by thread-spawn trampolines emitted into whichever module has
     // the spawn call site and READ by stdlib/thread.cplus, so `internal`
@@ -5874,7 +5868,7 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
     // plugin gets its own slot, same bounded cost as the reactor slot).
     // Same general-dynamic TLS model as the reactor slot, for the same
     // dlopen reasons.
-    out.push_str("\n; v0.0.29: cancellation slot (per-thread), one per image.\n");
+    out.push_str("\n; v0.0.28: cancellation slot (per-thread), one per image.\n");
     // `hidden` is an ELF/Mach-O concept; COFF has no visibility field, so on
     // Windows it hides nothing and only stops LLVM emitting these into a
     // COMDAT — lld-link then reports the app's copy and stdlib's as a
@@ -5916,7 +5910,7 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
          ret void\n\
          }}\n"
     ));
-    // v0.0.29 phase 2: FFI-callable destroy — `future::cancel` and the
+    // v0.0.28: FFI-callable destroy — `future::cancel` and the
     // cancellable drive (`future::wait_or_cancel`) call this to tear down a
     // suspended frame; the per-suspend cancel blocks make it run the live
     // locals' drops before freeing.
@@ -10584,7 +10578,7 @@ impl<'a> FnState<'a> {
     /// `movb N(%rsp), %cl` — every byte into the SAME register, each
     /// overwriting the last — and the paired `store` then writes nothing that
     /// came from the source. The copy is silently DROPPED.
-    /// `vendor/static-arena`'s `let a = StaticArena64K::new()` produced an
+    /// `vendor/static_arena`'s `let a = StaticArena64K::new()` produced an
     /// arena whose `_used` field was a leftover stack address, and six of its
     /// tests failed with values in the hundreds of millions. It is also why
     /// `cpc build` of that package never finished: sixty-five thousand dead
@@ -12163,11 +12157,11 @@ impl<'a> FnState<'a> {
                                         // Copy aggregates raw, in registers, so
                                         // nothing points at the frame. That is
                                         // why this only ever bit a LIBRARY build:
-                                        // `[lib]` gives every name-public fn
+                                        // `[library]` gives every name-public fn
                                         // `weak_odr` linkage, which forfeits
                                         // fastcc, which turns every big Copy
                                         // struct parameter indirect. The same
-                                        // source in a `[[bin]]` passes the
+                                        // source in an application build passes the
                                         // aggregate by value and is correct.
                                         // `facet`'s 25-parameter `elements::button`
                                         // forwarder lost both its `vocab::Color`
@@ -13357,7 +13351,7 @@ impl<'a> FnState<'a> {
     /// aggregate. The memset fast path here already kept 65536 STORES out of
     /// the IR, and the load-back put an object of the same size straight back
     /// in — LLVM's SelectionDAG then crashed outright (`ReplaceAllUsesWith`,
-    /// x86 ISel) on `vendor/static-arena`'s 64K arena. Instructive that the
+    /// x86 ISel) on `vendor/static_arena`'s 64K arena. Instructive that the
     /// fast path and the bug were four lines apart: the cost was never the
     /// stores, it was the VALUE. A caller that has somewhere to put the array —
     /// a `let` slot, a struct-literal field — passes it and never makes one.
@@ -13387,7 +13381,7 @@ impl<'a> FnState<'a> {
         };
 
         // Fast path: zero-byte fill (`[0u8; N]`) lowers to llvm.memset.
-        // This is the hot case for static-arena's buffer init — N can be
+        // This is the hot case for static_arena's buffer init — N can be
         // 16K, 64K, etc., and emitting that many enumerated stores would
         // be absurd both at codegen time and in the resulting IR size.
         let zero_byte_fill = matches!(elem_ty, Ty::U8 | Ty::I8) && fill_val == "0";
@@ -16891,7 +16885,7 @@ impl<'a> FnState<'a> {
             return Some(("undef".to_string(), self.lookup_join_handle_ty(&o_ty)));
         }
         let tramp_sym = self.tramps.register_spawn(&o_ty, self.types);
-        // v0.0.29 ctx layout (see `TrampolineSpec` doc):
+        // v0.0.28 ctx layout (see `TrampolineSpec` doc):
         //   refcount: u64       @ 0   (initialized to 2: parent + worker)
         //   fn_ptr:             @ 8
         //   cancel block:       @ 16  (48 bytes, zero-initialized)
@@ -16978,7 +16972,7 @@ impl<'a> FnState<'a> {
         }
         let tramp_sym = self.tramps.register_spawn_with(&i_ty, &o_ty);
         let (_i_size, i_align) = static_layout(&i_ty, self.types).unwrap_or((8, 8));
-        // v0.0.29 ctx layout, computed by `spawn_with_ctx_layout` — shared
+        // v0.0.28 ctx layout, computed by `spawn_with_ctx_layout` — shared
         // with `emit_spawn_with_tramp` so the call site and the trampoline
         // can never disagree:
         //   refcount: u64       @ 0   (initialized to 2: parent + worker)
@@ -17220,7 +17214,7 @@ impl<'a> FnState<'a> {
             "  {suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)\n"
         ));
         // i8 1 = destroy (outer future cancelled while suspended at this await)
-        // → the per-await cancel path (v0.0.29 phase 2): unregister the
+        // → the per-await cancel path (v0.0.28): unregister the
         // (inner → self) awaiter entries so the reactor can never enqueue this
         // frame again (frame addresses get reused by malloc — a stale entry is
         // a use-after-free, not just a leak), destroy the awaited inner frame
@@ -17284,7 +17278,8 @@ impl<'a> FnState<'a> {
         // v0.0.5 Slice 4A fix: when U is Unit, the promise has no
         // payload to load — emitting `load void, ...` is illegal LLVM.
         // Skip the load and produce the canonical unit value instead.
-        // THE FRAME IS NOT DESTROYED HERE, and that changed in v0.0.30.
+        // THE FRAME IS NOT DESTROYED HERE; v0.0.28 added destruction on the
+        // owning future's drop path instead.
         //
         // This used to `coro.destroy` the inner frame the moment it extracted
         // the value, which was correct while `Future` had no destructor and
@@ -17440,7 +17435,7 @@ impl<'a> FnState<'a> {
         self.terminated = false;
         // A unit future has no payload to read out — `load void` is not IR.
         // Purge and answer unit, the same shape as the `await` lowering.
-        // Reached by `#[test] async fn t()` since v0.0.31 (its wrapper is
+        // Reached by `#[test] async fn t()` since v0.0.28 (its wrapper is
         // `#block_on::[()](__async_t())`).
         if matches!(t_ty, Ty::Unit) {
             self.emit(&format!(
@@ -17536,7 +17531,7 @@ impl<'a> FnState<'a> {
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
         // i8 1 = destroy (coroutine cancelled mid-suspend) → per-park cancel
-        // block (v0.0.29 phase 2): drop the locals live at this suspend, then
+        // block (v0.0.28): drop the locals live at this suspend, then
         // free the frame. Same machinery as gen_yield_expr. The reactor entry
         // that still names this frame (waiter / timer / pending) is the
         // executor teardown's job to purge — see `reactor::teardown`. The
@@ -17577,7 +17572,7 @@ impl<'a> FnState<'a> {
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
         // i8 1 = destroy (coroutine cancelled mid-suspend) → per-park cancel
-        // block (v0.0.29 phase 2): drop the locals live at this suspend, then
+        // block (v0.0.28): drop the locals live at this suspend, then
         // free the frame. Same machinery as gen_yield_expr. The kqueue timer
         // that still names this frame is purged by `Future::drop`
         // (`reactor::unregister_waiter`) before the destroy — leaving it to
@@ -17626,7 +17621,7 @@ impl<'a> FnState<'a> {
     ///
     /// CONSUMING MEANS NULLING THE SOURCE, and it did not used to. This said
     /// "keeping its frame alive — `Future` has no destroying drop glue", which
-    /// was true until v0.0.30 gave it one so a merely-dropped future would stop
+    /// was true until v0.0.28 gave it one so a merely-dropped future would stop
     /// leaking. After that, `spawn_local`'s own `take f` local dropped at the
     /// end of the wrapper and destroyed the frame the reactor was still
     /// driving: the spawned task simply never ran, silently, and no test in the
@@ -17635,7 +17630,7 @@ impl<'a> FnState<'a> {
     /// So the handle is moved OUT of the value here — the transfer of ownership
     /// the name always implied. The argument is the wrapper's own `take`
     /// parameter, a place, so its slot is reachable; a non-place argument keeps
-    /// the old behaviour, which is the pre-v0.0.30 leak rather than a
+    /// the old behaviour, which leaked the frame rather than running a
     /// use-after-free.
     fn gen_reactor_spawn_local(&mut self, args: &[Expr]) -> Option<(String, Ty)> {
         let (fut_val, fut_ty) = self.gen_expr(&args[0]).expect("spawn_local future arg");
@@ -17677,7 +17672,7 @@ impl<'a> FnState<'a> {
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
         // i8 1 = destroy (coroutine cancelled mid-suspend) → per-park cancel
-        // block (v0.0.29 phase 2): drop the locals live at this suspend, then
+        // block (v0.0.28): drop the locals live at this suspend, then
         // free the frame. Same machinery as gen_yield_expr. The reactor entry
         // that still names this frame (waiter / timer / pending) is the
         // executor teardown's job to purge — see `reactor::teardown`. The
@@ -17755,7 +17750,7 @@ impl<'a> FnState<'a> {
         Some((result, o_ty))
     }
 
-    /// v0.0.29 cancellation: zero the 48-byte cancel block at ctx+16
+    /// v0.0.28 cancellation: zero the 48-byte cancel block at ctx+16
     /// (flag / parked / verb_lock / verb_cond / verb_mutex / reserved).
     /// Plain stores — the ctx is not yet shared with the worker.
     fn emit_zeroed_cancel_block(&mut self, ctx: &str) {
@@ -21876,10 +21871,10 @@ mod tests {
         generate(&prog, mode)
     }
 
-    /// The IR a `[lib]` build emits: name-public functions become `weak_odr`
+    /// The IR a `[library]` build emits: name-public functions become `weak_odr`
     /// instead of `internal fastcc`, which is what forfeits the raw-aggregate
     /// parameter ABI and makes big Copy structs pass indirectly. Several real
-    /// defects exist only in this mode — a `[[bin]]` of the same source is
+    /// defects exist only in this mode — an application build of the same source is
     /// correct — so a bin-only test cannot see them.
     fn gen_src_lib(src: &str) -> String {
         let toks = tokenize(src).expect("lex");
@@ -21914,7 +21909,7 @@ mod tests {
     /// `elements::button` the low half of a stale stack pointer came back as
     /// `Color.token`, and the iOS gallery drew a button with alpha 0.
     ///
-    /// The same source built as a `[[bin]]` passes the aggregate by value and
+    /// The same source built as an application passes the aggregate by value and
     /// was always correct, which is what made the bug look target-specific.
     const BIGARG_FORWARDER: &str = "\
         struct Color { token: u32, r: f64, g: f64, b: f64, a: f64,\n\
@@ -22154,7 +22149,7 @@ mod tests {
     /// `let _ = expr;` is a discard binding: it parses, type-checks, and lowers
     /// (evaluating — and dropping — its initializer). Multiple `let _` in one
     /// scope must not collide (each gets a unique synthesized name).
-    /// v0.0.31: `async fn main` — the entry the compiler drives. Lower splits
+    /// v0.0.28: `async fn main` — the entry the compiler drives. Lower splits
     /// it, so the IR must carry a synchronous `@main` whose body is the
     /// `#block_on` loop (resume until done) over the coroutine `__async_main`,
     /// and no coroutine ramp named `main`. Runs lower first, as the driver
@@ -25673,7 +25668,6 @@ fn main() -> i32 {\n\
         assert_eq!(static_layout(&Ty::Struct(id), &types), Some((12, 4)));
     }
 
-    #[test]
     /// issue-15(c): `f16` and a SIMD mask are register values with no padding,
     /// exactly like every other float and vector — they were missing from this
     /// one list while present in every sibling list, so a value-passed `f16`
@@ -27544,7 +27538,7 @@ fn main() -> i32 {\n\
 
     #[test]
     fn thread_spawn_with_input_stored_after_result_slot() {
-        // v0.0.29 ctx layout:
+        // v0.0.28 ctx layout:
         //   refcount:     @ 0  (u64, 8 bytes)
         //   fn_ptr:       @ 8
         //   cancel block: @ 16 (48 bytes)
@@ -28320,7 +28314,7 @@ fn main() -> i32 {\n\
         // struct literal holding `[0u8; 65536]` memset a slot and then hauled
         // 64 KiB back out as an SSA value to store it again. LLVM's x86 ISel
         // crashed outright on the aggregate (`ReplaceAllUsesWith`), and
-        // `vendor/static-arena` could not be compiled at all.
+        // `vendor/static_arena` could not be compiled at all.
         //
         // The field must be filled through its own address, with no `load` of
         // the array type anywhere in the constructor.

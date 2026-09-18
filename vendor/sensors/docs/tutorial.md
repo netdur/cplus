@@ -1,10 +1,26 @@
 # Tutorial
 
+Quick path: check a sensor, start a stream, and stop it with the screen.
+Units and platform behavior: [guide.md](guide.md). Signatures:
+[ref.md](ref.md).
+
 ## 1. Depend on it
 
 ```toml
 [dependencies]
-sensors = "*"
+sensors     = "*"
+facet       = "*"
+flex_layout = "*"
+events      = "*"
+stdlib      = "*"
+```
+
+Use `cpc pm add . sensors` to add the platform-specific backend closure.
+
+```cplus
+import "sensors/sensors" as sens;
+import "facet/component" as component;
+import "stdlib/result" as result;
 ```
 
 ## 2. Check before you ask

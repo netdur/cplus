@@ -5,10 +5,13 @@ RFC 4122 UUID: generate v4, parse, format, and inspect 16-byte ids.
 ```toml
 [dependencies]
 uuid = "*"
+stdlib = "*"
 ```
 
 ```cplus
 import "uuid/uuid" as uuid;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
 ```
 
 ## Common case

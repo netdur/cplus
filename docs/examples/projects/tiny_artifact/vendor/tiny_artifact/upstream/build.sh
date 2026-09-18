@@ -9,8 +9,14 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG_ROOT="$(cd "$HERE/.." && pwd)"
-HOST="$(clang -print-target-triple)"
-OUT_DIR="$PKG_ROOT/src/lib/$HOST"
+RAW_HOST="$(clang -print-target-triple)"
+# Match cpc's stable artifact-triple spelling: Apple clang includes the OS
+# version and spells aarch64 as arm64, neither of which belongs in the package
+# slice directory.
+HOST="$(printf '%s\n' "$RAW_HOST" | sed -E \
+  -e 's/^arm64-/aarch64-/' \
+  -e 's/^((aarch64|x86_64)-apple-darwin)[0-9.]*$/\1/')"
+OUT_DIR="$PKG_ROOT/lib/$HOST"
 mkdir -p "$OUT_DIR"
 
 OBJ="$(mktemp -t tiny_artifact.XXXXXX.o)"
@@ -19,5 +25,3 @@ clang -O2 -c "$HERE/tiny_artifact.c" -o "$OBJ"
 ar rcs "$OUT_DIR/libtiny_artifact.a" "$OBJ"
 
 echo "built $OUT_DIR/libtiny_artifact.a (host: $HOST)"
-echo "ensure '$HOST' appears in [link].triples of Cplus.toml — current value:"
-grep -A 10 '^\[link\]' "$PKG_ROOT/Cplus.toml" || true

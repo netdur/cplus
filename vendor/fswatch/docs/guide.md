@@ -1,5 +1,8 @@
 # Guide
 
+How watcher ownership, delivery, and native backends behave. Fast start:
+[tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 ## Delivery model
 
 `fswatch` deliberately separates native notification collection from callback
@@ -81,8 +84,10 @@ snapshot and registration.
 ## Current platform scope
 
 Three backends behind one seam, each a platform override of `backend.cplus`:
-`kqueue` vnode notifications on macOS, `inotify` on Linux, and
-`ReadDirectoryChangesW` on Windows. None is emulated with timestamp polling.
+`kqueue` vnode notifications on macOS, `inotify` on Linux and Android, and
+`ReadDirectoryChangesW` on Windows. Android resolves to the Linux backend; its
+bionic-specific syscall and metadata differences are handled in that file.
+None is emulated with timestamp polling.
 
 The seam is `queue_open` / `watch_path` / `poll_one`, and it survives the three
 shapes because the handle it carries is only ever an opaque `i32` — an
@@ -95,7 +100,7 @@ its result arrives through an `OVERLAPPED` with an event to wait on, so the
 backend keeps a table of watch slots tagged with a queue id and `poll_one` walks
 the slots asking each event whether it is signalled, with a zero timeout.
 
-Events are a WAKEUP, not a payload, on all three. `poll_one` never reports what
+Events are a WAKEUP, not a payload, on all four targets. `poll_one` never reports what
 changed, because the engine above is a snapshot differ that rescans and
 compares. On Windows that means the `FILE_NOTIFY_INFORMATION` records are read
 and discarded — the buffer exists only because the call requires one — and a
@@ -119,13 +124,13 @@ with a 1ms gap: .289201200 -> .302375600    <- one tick apart
 That is not "reported late". It is **invisible, permanently**: mtime is stamped
 at write time, so no amount of waiting makes the second write appear.
 
-macOS and Linux stamp from a high-resolution clock and do not collide, so this
-is the one place the three platforms differ in what they can *report*.
+macOS, Linux and Android stamp from a high-resolution clock and do not collide,
+so this is the one place Windows differs in what it can *report*.
 
 **`Metadata` therefore carries a fourth field, `version`**, and the Windows
 backend fills it from the NTFS USN — a per-file counter that moves on every
-change, read with `FSCTL_READ_FILE_USN_DATA`. macOS and Linux answer a constant
-`0`, which compares equal every time and so changes nothing for them.
+change, read with `FSCTL_READ_FILE_USN_DATA`. macOS, Linux and Android answer a
+constant `0`, which compares equal every time and so changes nothing for them.
 
 It costs one `DeviceIoControl` and no extra file open: `metadata` already opens
 a handle for `GetFileInformationByHandle`, and the ioctl needs no more access

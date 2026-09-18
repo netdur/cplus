@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Concurrency and ownership rules:
+[guide.md](guide.md).
+
 Manual for the `rt` package. Signatures and behavior only.
 
 ```cplus

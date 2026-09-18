@@ -19,7 +19,7 @@ agent_gtk  ──walks──▶  a live GtkWidget tree (GTK 4 / GObject)
 is GTK-specific. Introspection is plain GTK/GObject `extern fn` calls
 (`gtk_widget_get_first_child` / `g_type_name_from_instance` /
 `gtk_editable_get_text` / …) plus `gtk/convert` for the `str`↔`char*` bridges, so
-it can describe any widget tree built with [`vendor/gtk`](../gtk).
+it can describe any widget tree built with [`vendor/gtk4`](../gtk4).
 
 ## Usage
 

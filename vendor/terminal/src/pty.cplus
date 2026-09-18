@@ -1,4 +1,4 @@
-// terminal/pty — macOS pseudo-terminal session.
+// terminal/pty — POSIX pseudo-terminal session for macOS and Linux.
 //
 // The public Session surface is intentionally small and backend-shaped. A
 // future platform module can replace this implementation without changing the

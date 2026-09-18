@@ -7,7 +7,8 @@ or HTTP framing of our own — the platform ships all three.
 |---|---|
 | macOS, iOS | `NSURLSession` (Foundation) |
 | Android | `java.net.HttpURLConnection` (JNI, no Java to compile) |
-| Linux | not built — refuses with a named error |
+| Linux | libcurl easy interface |
+| Windows | WinHTTP |
 
 **One package on every platform.** There is no `http_android`; the transport is
 a file inside this package, swapped by the resolver's `_<platform>` override.
@@ -19,7 +20,8 @@ manifest, not from a dependency's own):
 
 ```toml
 [dependencies]
-http = "*"
+http   = "*"
+stdlib = "*"
 
 [macos.dependencies]
 objc = "*"      # NSURLSession; brings -framework Foundation with it
@@ -36,6 +38,8 @@ it wanted, naming the package.
 
 ```cplus
 import "http/http" as http;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
 ```
 
 ## Common case
@@ -76,11 +80,11 @@ means a service: produce off the UI thread, hop the result home with
 - [docs/guide.md](docs/guide.md) — how / why / gotchas
 - [docs/ref.md](docs/ref.md) — API manual
 
-## Roadmap
+## Remaining platform
 
-Other platforms are not in scope yet, and each is the OS's own client bound the
-same way: linux → libcurl, windows → WinHTTP, android → JNI to
-`HttpURLConnection`, esp32 → `esp_http_client`.
+ESP32 is not implemented. Its matching native client is
+`esp_http_client`; adding it requires an embedded transport that preserves the
+same blocking result and error contracts.
 
 ## Tests
 

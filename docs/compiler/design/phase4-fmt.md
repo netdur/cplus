@@ -3,6 +3,9 @@
 > Status: design note, not yet implemented.
 > Scope: a single, canonical, opinionated formatter for `.cplus` source. Runs as `cpc fmt FILE` or `cpc fmt PATH/`; in-place by default; `--check` mode for CI; `--stdin` for editor integration.
 > Out of scope: comment reflowing of `//` line-comment runs (preserve as-is), per-project style configuration (the formatter is single-canonical, no knobs), import-graph-aware sorting (alphabetic only).
+>
+> **Historical preimplementation design.** The formatter has shipped. Use the
+> current [tooling reference](../../lang/tooling.md) for its supported CLI.
 
 ---
 

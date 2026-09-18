@@ -9,15 +9,21 @@ Signatures: [ref.md](ref.md).
 [dependencies]
 espidf = "*"
 stdlib = "*"
+
+[esp32]
+entry = "src/main.cplus"
 ```
 
-Target **`esp32-xtensa`**. Consume as a `[lib]` staticlib; IDF links the `.a`.
+`esp32` is an external-builder platform, so `cpc build --target esp32-xtensa`
+produces `target/esp32-xtensa/debug/lib<package>.a` plus a C header. IDF links
+that archive; the obsolete `[lib]` manifest section is not used.
 
 ```cplus
 import "espidf/gpio" as gpio;
 import "espidf/timer" as timer;
 import "espidf/task" as task;
 import "espidf/log" as log;
+import "stdlib/option" as option;
 import "stdlib/status" as status;
 ```
 
@@ -59,6 +65,18 @@ log::print_i64("us: ", timer::now_us() -% t0);
 
 ESP-IDF calls `void app_main(void)`. Export `cplus_app_main` from C+ and
 shim in the main component:
+
+```cplus
+export extern fn cplus_app_main() {
+    let _d: status::Status = gpio::set_direction(2, to: gpio::Mode::Output);
+    while true {
+        let _h: status::Status = gpio::set_level(2, to: gpio::Level::High);
+        task::delay_ms(500);
+        let _l: status::Status = gpio::set_level(2, to: gpio::Level::Low);
+        task::delay_ms(500);
+    }
+}
+```
 
 ```c
 extern void cplus_app_main(void);

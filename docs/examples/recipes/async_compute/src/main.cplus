@@ -7,7 +7,7 @@
 //     type is `Future[T]`.
 //   - `await EXPR` drives an inner future to completion and yields
 //     the inner T.
-//   - `async fn main` (v0.0.31): the compiler drives the entry with
+//   - `async fn main` (v0.0.28): the compiler drives the entry with
 //     the same loop `Future::wait` is — resume until done, then
 //     read the value. `f.wait()` is that loop for driving a future from
 //     other synchronous code (a handler, a worker); not needed here.

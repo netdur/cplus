@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Module choices and cross-cutting rules:
+[guide.md](guide.md).
+
 Manual for the `stdlib` package. Per-module catalog and public signatures.
 Internal helpers and `#[test]` functions are omitted.
 
@@ -876,7 +879,7 @@ struct Url { scheme: str, host: str, port: u16, path: str, query: str, fragment:
 the `Url` — which means a named owner rather than a temporary:
 
 ```cplus
-let s: str = incoming.view();     // named
+let s: str = incoming;            // expected `str` borrows the named owner
 match url::parse(s) { ... }
 ```
 

@@ -5,6 +5,7 @@ Typed JSON parse and serialize for C+.
 ```toml
 [dependencies]
 json = "*"
+stdlib = "*"
 ```
 
 ```cplus

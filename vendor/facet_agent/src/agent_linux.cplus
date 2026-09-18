@@ -7,7 +7,7 @@
 // failed to compile — `E0866: import agent_appkit/agent_appkit is not
 // available on platform linux`. A facet app on GTK therefore could not serve
 // an agent at all, whatever it wrote. `facet_runtime/runtime_linux.cplus`
-// already calls `app::agent_serve_once(sock)` when `app.agent_mcp(path)` was
+// already calls `app::agent_serve_once(id)` when `app.agent_mcp(id)` was
 // given; the seam was there and nothing filled it.
 //
 // The transport is a Unix socket, the same as macOS and unlike iOS — a Linux
@@ -162,12 +162,12 @@ fn attach_window(win: *u8) {
     }
 }
 
-// The default channel policy: the developer opted in by giving a socket path,
+// The default channel policy: the developer opted in by giving an app id,
 // so both channels are admitted — as ORDINARY OPERATORS. Read the app, drive
 // the app, and nothing from a node the application put behind a tier.
 //
 // `operator()` and not something wider is the whole of the default's opinion.
-// A grant that reached protected content would make `app.agent_mcp(path)` — one
+// A grant that reached protected content would make `app.agent_mcp(id)` — one
 // line, written to get an agent talking at all — silently the line that hands
 // a card number to whatever connects. Widening is an app supplying its own
 // policy, which is a place a reader can find it.
@@ -199,7 +199,7 @@ fn admit(req: auth::Request) -> auth::Grant {
 // `admit` above is a DEFAULT, and its comment argues carefully for why that
 // default is `operator()` and not something wider. What it could not do is let
 // an app be narrower — there was no way to supply a policy at all, so every
-// facet app that called `app.agent_mcp(path)` served every connection the same
+// facet app that called `app.agent_mcp(id)` served every connection the same
 // grant with no way to say otherwise. An app that wants to ask its user first,
 // or to check a token, or to refuse outright, had nowhere to put that.
 //

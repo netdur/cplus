@@ -6,12 +6,22 @@ rationale and gotchas live in [guide.md](guide.md); signatures in
 
 ## Setup
 
-See the dependency block in the [README](../README.md) — it is longer than one
-line because the resolver validates against one flat set from your own manifest.
+The resolver validates against one flat set from your own manifest, so declare
+the package and the direct modules used below. `cpc pm add . notifications`
+writes the full platform-specific closure shown in the [README](../README.md).
+
+```toml
+[dependencies]
+notifications = "*"
+permissions   = "*"
+stdlib        = "*"
+```
 
 ```cplus
 import "notifications/notifications" as notifications;
 import "permissions/permissions" as permissions;
+import "stdlib/status" as status;
+import "stdlib/vec" as vec;
 ```
 
 ## Ask before you post
@@ -22,7 +32,6 @@ show it. This package refuses instead, so the permission comes first.
 ```cplus
 fn answered(name: str, s: permissions::State, ctx: *u8) {
     if s == permissions::State::Granted { schedule_the_thing(); }
-    return;
 }
 
 if permissions::can_prompt(permissions::NOTIFICATIONS) {
@@ -75,7 +84,6 @@ It appends to a Vec you own, so you can accumulate across calls.
 fn tapped(payload: str, action: str, ctx: *u8) {
     // `payload` is whatever you put in the notification.
     // `action` is which button was pressed, or "" for the body.
-    return;
 }
 
 let _t: notifications::Outcome = notifications::on_tap(tapped);
@@ -83,7 +91,8 @@ let _t: notifications::Outcome = notifications::on_tap(tapped);
 
 Safe to call at any point — startup, a screen's `on_attach`, after a route
 change. If a tap already happened, including the one that launched the app, your
-handler is called before `on_tap` returns.
+handler is called before `on_tap` returns. Tap delivery is implemented on Apple
+and Android; the current Windows balloon backend does not receive clicks.
 
 ## Add buttons
 
@@ -137,7 +146,8 @@ asking, the other by hiding the feature.
   `Unsupported`. `examples/notifications_demo/bundle.sh` is the smallest thing
   that works.
 - **On Android a scheduled notification does not survive the app being
-  killed.** See [guide.md](guide.md#deferred-delivery-on-android).
+  killed.** See
+  [guide.md](guide.md#deferred-delivery-on-android-and-windows).
 - **A tap can arrive before you subscribe.** One that launched the app fired
   around process start; `on_tap` is handed it at registration, so there is no
   ordering to get right.

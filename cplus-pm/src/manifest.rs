@@ -257,7 +257,7 @@ struct RawManifest {
     dependencies: BTreeMap<String, String>,
     // `[<platform>.dependencies]` sections — one field per platform the
     // compiler's `target::PLATFORMS` knows, kept in lockstep. The pm stays
-    // lenient about everything else in the file ([[bin]], [link], …), but
+    // lenient about everything else in the file (`[library]`, `[link]`, …), but
     // platform deps must be READ, not skipped: skipping them would leave
     // vendor/ missing the packages another OS's build needs.
     #[serde(default)]

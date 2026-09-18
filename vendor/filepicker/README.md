@@ -7,6 +7,9 @@ The system's own file chooser.
 filepicker = "*"
 ```
 
+Use `cpc pm add . filepicker` to write the platform-specific dependency
+closure.
+
 ```cplus
 import "filepicker/filepicker" as fp;
 
@@ -40,12 +43,12 @@ would be a lie.
 
 ## Coverage
 
-| | macOS | iOS | Android | Windows |
-|---|---|---|---|---|
-| `open` | ✅ | ✅ | ✅ | ✅ `GetOpenFileNameW` |
-| `save` | ✅ | ❌ no such picker | ✅ `CREATE_DOCUMENT` | ✅ `GetSaveFileNameW` |
-| `types` filter | ✅ extensions | ❌ ignored | ✅ one MIME family | ❌ **not wired yet** — every file shown |
-| `path` is a real path | ✅ | ✅ | ❌ `content://` URI | ✅ |
+| | macOS | iOS | Android | Linux | Windows |
+|---|---|---|---|---|---|
+| `open` | ✅ | ✅ | ✅ | ✅ XDG portal | ✅ `GetOpenFileNameW` |
+| `save` | ✅ | ❌ no such picker | ✅ `CREATE_DOCUMENT` | ✅ XDG portal | ✅ `GetSaveFileNameW` |
+| `types` filter | ✅ extensions | ❌ ignored | ✅ one MIME family | ✅ extension globs | ❌ **not wired yet** — every file shown |
+| returned value | path | path | `content://` URI | decoded file path | path |
 
 - [tutorial](docs/tutorial.md) · [guide](docs/guide.md) · [ref](docs/ref.md)
 
@@ -53,4 +56,5 @@ would be a lie.
 
     cd vendor/filepicker && cpc test
 
-A picker cannot be asserted.
+A visible picker cannot be automated in the unit suite; pure mapping and
+validation paths are tested.

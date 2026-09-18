@@ -38,13 +38,17 @@ one. An app should be spelling neither.
 
 ## Coverage
 
-| | macOS | iOS | Android | Windows |
-|---|---|---|---|---|
-| plays | Force Touch trackpad only, 3 patterns | ✅ 1:1 | ✅ durations | ✅ XInput gamepad rumble |
-| `prepare` | no-op | ✅ warms the Taptic Engine | no-op | no-op |
+| | macOS | iOS | Android | Linux | Windows |
+|---|---|---|---|---|---|
+| plays | Force Touch trackpad only, 3 patterns | ✅ 1:1 | ✅ durations | unavailable | ✅ XInput gamepad rumble |
+| `prepare` | no-op | ✅ warms the Taptic Engine | no-op | no-op | no-op |
 
 Windows taps a **gamepad**, not the machine — a desktop has nothing to buzz, so
 `available()` is false with no controller connected.
+
+Linux reports unavailable. Its force-feedback API targets game controllers and
+there is no desktop UI-haptics API, so this package does not rumble a gamepad in
+response to ordinary UI gestures.
 
 - [tutorial](docs/tutorial.md) · [guide](docs/guide.md) · [ref](docs/ref.md)
 

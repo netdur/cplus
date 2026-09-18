@@ -1,5 +1,8 @@
 # Guide
 
+How readings are normalized and how streams behave. Fast start:
+[tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 ## Units, and why this package converts
 
 The two platforms disagree in a way nothing reports:
@@ -143,3 +146,8 @@ offer it yet.
 
 macOS: builds, and answers `Unavailable` for all four because the hardware does
 not exist. Correct, and it tests nothing.
+
+Linux and Windows also build and currently answer `Unavailable` for all four.
+Linux's eventual native surface is IIO; Windows needs the WinRT sensors API.
+Those backends stay explicit stubs until they can be exercised on real sensor
+hardware.

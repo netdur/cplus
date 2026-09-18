@@ -1582,7 +1582,7 @@ fn xcrun_sdk_path(sdk: &str) -> Option<String> {
 }
 
 /// Phase 2 Slice 2C: build a `Diagnostic` anchored at a manifest file.
-/// Manifest-level driver errors (E0854/E0855/E0860/E0861/E0862) don't
+/// Manifest-level driver errors (E0854/E0855/E0860/E0861) don't
 /// have meaningful byte spans yet; the primary location is the file at
 /// position 1:1.
 fn manifest_diag(
@@ -1623,9 +1623,9 @@ fn manifest_diag(
 /// Per-dep validation:
 ///   - `vendor/<name>/Cplus.toml` exists (E0854) and parses cleanly.
 ///   - Vendor manifest's `[package].name == <name>` (E0855).
-///   - For each name in `[link].bundled`:
-///     host triple is in `[link].triples` (E0862),
-///     `vendor/<name>/lib/<host-triple>/<basename>` exists (E0860).
+///   - When `lib/<target-triple>/` exists, each name in `[link].bundled`
+///     exists inside that target slice (E0860). A missing slice falls back to
+///     source; triples are derived from the selected target, never declared.
 ///   - No `.a`/`.dylib`/`.so` files under any
 ///     `vendor/<name>/lib/<triple>/` that aren't in `[link].bundled`
 ///     (E0861). Applies even when a package declares no `[link]` table —
@@ -1845,7 +1845,12 @@ fn collect_dep_link_args(
         // The prebuilt slice, if `ensure_prebuilt_deps` produced one. Checked
         // for existence rather than assumed: `cpc check` never builds a cache,
         // and a dep whose package failed to prebuild has already aborted.
-        if vm.build.prebuild {
+        // `ensure_prebuilt_deps` deliberately does not build a generated
+        // slice for a package that declares bundled artifacts. Without the
+        // same distinction here, a bundled archive named like the generated
+        // one (the common `lib<package>.a` case) was appended once as a
+        // prebuild and once as bundled, producing duplicate linker arguments.
+        if vm.build.prebuild && bundled.is_empty() {
             let archive = triple_lib_dir.join(prebuilt_archive_name(&dep.name));
             if archive.is_file() {
                 pkg_archives.push(archive.to_string_lossy().to_string());
@@ -3701,7 +3706,7 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
         }
     };
     // Phase 2 Slice 2C: surface dep walk errors before codegen — the same
-    // E0854/E0855/E0860-E0862 checks fire on `--emit-ll-project`, even
+    // E0854/E0855/E0860/E0861 checks fire on `--emit-ll-project`, even
     // though no link step runs here. Catches manifest-is-truth violations
     // in CI loops that exercise this flag.
     if let Err(code) = collect_dep_link_args(&m, diag_mode) {
@@ -7645,8 +7650,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"facet/screen\" as screen;\n\
          import \"facet/vocabulary\" as vocab;\n\
          import \"facet_runtime/runtime\" as runtime;\n\
-         import \"facet_agent/agent\" as agent;\n\
-
+         import \"facet_agent/agent\" as agent;\n\n\
          import \"./agent_consent\" as agent_consent;\n\
          import \"stdlib/option\" as option;\n\
          import \"stdlib/status\" as status;\n\

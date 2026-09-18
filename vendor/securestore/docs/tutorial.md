@@ -39,7 +39,7 @@ let stored: securestore::Outcome = securestore::set("token", to: session_token);
 
 var token: text::Text = text::new();
 match securestore::get("token", into: token) {
-    securestore::Outcome::Ok       => { /* token.view() is the secret */ }
+    securestore::Outcome::Ok       => { /* token coerces to `str` where needed */ }
     securestore::Outcome::NotFound => { /* first run — sign in */ }
     securestore::Outcome::Denied   => { /* the platform refused */ }
     securestore::Outcome::Unsupported => { /* no secure storage here */ }

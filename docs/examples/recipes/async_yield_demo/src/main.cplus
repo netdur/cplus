@@ -19,7 +19,7 @@
 //     counter ordering reveals the interleaving.
 //   - `drive_three` spawns two `step_loop`s via `spawn_local`, then
 //     awaits its own `step_loop`. The `async fn main` awaits it, and
-//     the compiler drives the whole tree (v0.0.31) with the same loop
+//     the compiler drives the whole tree (v0.0.28) with the same loop
 //     `Future::wait` is — every `yield_now` goes through its
 //     drain step.
 //   - The exit code is the final counter value, which equals

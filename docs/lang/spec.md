@@ -1,6 +1,6 @@
 # The C+ Language Specification
 
-Version 0.0.27 · normative reference.
+Version 0.0.28 · normative reference.
 
 **Project:** <https://cplus-lang.dev> · **Source:** <https://github.com/netdur/cplus>
 
@@ -754,7 +754,7 @@ extern fn printf(fmt: *u8, ...) -> i32;   // C-ABI declaration
 `extern fn` declares a C-ABI function; calling one is an ordinary call
 (the `extern` declaration is itself the marker that this crosses to C).
 `...` declares varargs (extern signatures only). `#[repr(C)]` (§14) gives
-a struct C-compatible layout. A `[lib]` target's entry-file `export`
+a struct C-compatible layout. A `[library]` package's entry-file `export`
 items keep their bare symbol names so C consumers link `add` as `_add`;
 non-`export` items stay mangled.
 

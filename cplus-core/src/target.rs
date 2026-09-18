@@ -125,7 +125,8 @@ pub struct TargetSpec {
     /// line in the IR (today's output, byte-for-byte).
     pub triple: Option<&'static str>,
     /// Stable directory name for vendor bundled-artifact lookup
-    /// (`vendor/<dep>/lib/<artifact-triple>/` and `[link].triples`).
+    /// (`vendor/<dep>/lib/<artifact-triple>/`). The selected target derives
+    /// this slice; manifests do not list supported triples.
     /// Unversioned, unlike `triple` (no `13.0`) — packages ship one binary
     /// per target, not per minimum OS version. `None` = host: the dep
     /// walker uses `clang -print-target-triple` as before.
@@ -529,7 +530,7 @@ pub fn platform_gated_dep(name: &str) -> Option<String> {
 /// directory name makes a shipped binary stop being found the moment the user
 /// upgrades the OS, which is fatal for a distribution format: the slice is
 /// still perfectly valid, but the lookup no longer matches it and the build
-/// fails with E0862 "host not supported".
+/// looked like a missing target slice.
 ///
 /// It also spells the architecture Apple's way (`arm64`) rather than the LLVM /
 /// Rust canonical `aarch64`, so two names exist for one machine.

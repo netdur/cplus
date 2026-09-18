@@ -15,7 +15,8 @@ sh::url("https://example.com/thing");
 sh::file("/path/to/report.pdf");
 ```
 
-macOS, iOS, Android and Windows. On Windows it goes through WinRT's
+macOS, iOS, Android and Windows. Linux builds and reports `Unsupported` because
+the desktop has no system share-sheet service. On Windows it goes through WinRT's
 `DataTransferManager` reached as plain COM, and it needs **a window and a
 running message loop** — the sheet asks for the payload later, on that loop.
 `file()` is `Unsupported` there and on Android; the guide says why.
@@ -36,12 +37,12 @@ a URL should say so.
 
 ## Coverage
 
-| | macOS | iOS | Android |
-|---|---|---|---|
-| `text` | ✅ | ✅ | ✅ |
-| `url` | ✅ real `NSURL` | ✅ real `NSURL` | ✅ as text — Android has no link intent |
-| `file` | ✅ | ✅ | ❌ needs an app-level `FileProvider` |
-| `subject` | dropped | dropped | ✅ `EXTRA_SUBJECT` |
+| | macOS | iOS | Android | Linux | Windows |
+|---|---|---|---|---|---|
+| `text` | ✅ | ✅ | ✅ | ❌ `Unsupported` | ✅ |
+| `url` | ✅ real `NSURL` | ✅ real `NSURL` | ✅ as text | ❌ `Unsupported` | ✅ real `Uri` |
+| `file` | ✅ | ✅ | ❌ needs an app-level `FileProvider` | ❌ `Unsupported` | ❌ not built |
+| `subject` | dropped | dropped | ✅ `EXTRA_SUBJECT` | — | used as title |
 
 - [tutorial](docs/tutorial.md) · [guide](docs/guide.md) · [ref](docs/ref.md)
 

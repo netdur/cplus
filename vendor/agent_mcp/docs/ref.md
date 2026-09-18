@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Design and gotchas:
+[guide.md](guide.md).
+
 Manual for `agent_mcp`.
 
 ```cplus

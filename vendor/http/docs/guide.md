@@ -1,5 +1,7 @@
 # Guide
 
+Fast start: [tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 How the package works, why it is shaped this way, and the things that will
 surprise you.
 
@@ -14,7 +16,7 @@ would be worse code shipping later.
 
 That decision is also what makes the package small. There are two verbs.
 
-## One package, three transports
+## One package, five platforms
 
 `http/http` is the module you import everywhere. Underneath it,
 `transport.cplus` is swapped per platform by the resolver's `_<platform>` file
@@ -25,12 +27,14 @@ override — the same mechanism `stdlib` uses for `reactor.cplus` /
 |---|---|---|
 | macOS, iOS | `transport.cplus` | `NSURLSession` |
 | Android | `transport_android.cplus` | `java.net.HttpURLConnection` |
-| Linux | `transport_linux.cplus` | none — refuses with `-3001` |
+| Linux | `transport_linux.cplus` | libcurl easy interface |
+| Windows | `transport_windows.cplus` | WinHTTP |
 
 NSURLSession lives in **Foundation**, not AppKit, which is what lets one file
 serve macOS and iOS both. The Android transport is reflective JNI against
-classes already on every app's boot classpath, so it compiles to a `.so` and
-ships **no Java and no dex**.
+classes already on every app's boot classpath, so it ships **no Java and no
+dex**. Linux links libcurl because its option and info entry points are
+variadic; Windows calls the OS's synchronous WinHTTP API.
 
 The two halves meet at a stable symbol (`http_transport_perform_v1`) rather
 than an import: the transport must import `http` for `Request` and `Response`,
@@ -64,10 +68,9 @@ them is needed to fetch a JSON document. So v1 blocks, and a caller that needs
 concurrency gets it the way C+ gets concurrency everywhere else: a thread.
 
 Blocking the main thread does **not** deadlock — NSURLSession delivers its
-completion on a private serial queue, never on the main queue, and the Android
-transport is synchronous all the way down — it just freezes the UI for a network
-round trip. Both are bugs. Call it off-main. On Android the platform refuses
-outright; see above.
+completion on a private serial queue, while Android, libcurl, and WinHTTP are
+synchronous all the way down — but it freezes the UI for a network round trip.
+Call it off-main. On Android the platform refuses outright; see above.
 
 The facet shape is a service: produce off the UI thread, apply on it.
 
@@ -104,8 +107,12 @@ if !r.is_success() { /* the server answered, and the answer was no */ }
 
 `Error` is `{ code: i64, message: Text }`.
 
-`code` is the platform's own code whenever the request reached the
-session, and every NSURLErrorDomain code is **negative**:
+`code` is negative for native transport failures and positive for this
+package's own preflight failures. The native domain depends on the backend:
+Apple uses `NSURLErrorDomain`, Linux negates `CURLcode`, Windows negates
+`GetLastError()`, and Android maps Java exceptions to stable negative codes.
+
+Common Apple codes are:
 
 | code  | means |
 |-------|-------|
@@ -122,8 +129,9 @@ three are rare, and the first is rarer than it looks — modern Foundation
 percent-escapes almost any input rather than refusing it, so `http::get("not a
 url")` comes back as a real -1002 from the session, not as a local rejection.
 
-`message` is the NSError's `localizedDescription`: the sentence Apple would
-have shown a user, in the user's language.
+`message` is the platform's description when one exists: NSError's localized
+description on Apple, `curl_easy_strerror` on Linux, a WinHTTP error sentence
+on Windows, or the Java exception message on Android.
 
 ## Headers
 
@@ -156,7 +164,7 @@ caller knows whether this response was supposed to be text at all — check
 On the request side, `set_body_text` and `set_body` both *replace* the body, and
 both are one memcpy.
 
-## How the escaping block works
+## Apple: how the escaping block works
 
 This is the mechanically interesting part, and it is worth reading before
 changing it.
@@ -216,7 +224,7 @@ The semaphore is released right after the wait. That is safe for a related
 reason: once `dispatch_semaphore_signal` has woken a waiter it touches no more
 of the semaphore's memory.
 
-## Autorelease pools
+## Apple: autorelease pools
 
 `+[NSURL URLWithString:]`, `+[NSMutableURLRequest requestWithURL:]` and the
 bridge's NSStrings are all autoreleased, and a plain C thread has no pool. Every
@@ -248,22 +256,11 @@ system credential store answers on its own, and cancellation. Each is a real
 feature; none of them is needed to fetch a document, and adding them
 speculatively would fix their shape before there is a caller to shape them.
 
-## Other platforms
+## Remaining platform
 
-Not in scope. Each is the OS's own client, bound the same way this one is:
-
-| platform | client |
-|---|---|
-| linux | libcurl, easy interface, blocking `curl_easy_perform` |
-| windows | WinHTTP, `WinHttpSendRequest` / `WinHttpReceiveResponse` |
-| android | JNI to `java.net.HttpURLConnection` (see `vendor/jni`) |
-| esp32 | `esp_http_client` from ESP-IDF (see `vendor/espidf`) |
-
-When the second backend lands, the split follows the language's own mechanism:
-the platform-free half (Method / Header / Request / Response / Error) stays in
-`http.cplus` and the transport moves to `transport.cplus`, shadowed per platform
-by `transport_linux.cplus` and friends. Doing that split now, with one backend,
-would be guessing at a seam.
+ESP32 is not implemented. Its matching native client is `esp_http_client` from
+ESP-IDF. A backend belongs in a platform override beside the four existing
+transports and must preserve the same blocking result and error contracts.
 
 ## Testing
 
@@ -271,12 +268,9 @@ would be guessing at a seam.
 cd vendor/http && cpc test
 ```
 
-Everything except the `net_*` tests runs offline — including the transport-error
-path, because NSURLSession rejects a malformed URL locally with -1002 before any
-DNS lookup. Request building and error mapping are tested against **real**
-Foundation objects (a real `NSMutableURLRequest` read back through
-`-HTTPMethod` / `-valueForHTTPHeaderField:` / `-HTTPBody`, a real `NSError` from
-`+errorWithDomain:code:userInfo:`), not against stand-ins.
+Everything except the `net_*` tests runs offline. The suite exercises the
+active platform transport; Apple request building and error mapping use real
+Foundation objects rather than stand-ins.
 
 The `net_*` tests need the internet and are the end-to-end gate: a live 200 with
 a JSON body, a live 404 that must arrive as `Ok`, and a POST whose method,

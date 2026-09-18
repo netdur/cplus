@@ -119,7 +119,7 @@ compose in one `Result` family.
   or consuming removes (`remove`, `remove_last`, …).
 - **`HashMap` / `HashSet`** require `Copy` keys/values (and elements). For
   owned strings use **`StringMap` / `StringSet`**.
-- **`Text`** owns a heap buffer; `.view()` / coercion to `str` is a borrow
+- **`Text`** owns a heap buffer; implicit coercion to `str` is a borrow
   into that buffer — dangling if the `Text` is dropped or reallocated by
   `append` / growth.
 - **`Rc` vs `Arc`**: same API idea; `Rc` is single-thread (cheaper); `Arc`

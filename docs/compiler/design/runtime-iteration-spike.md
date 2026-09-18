@@ -223,7 +223,7 @@ callback revocation, task quiescence, and ownership rules are proven.
 
 Facet does not rebuild a virtual description on every state change. It builds a
 retained tree once and performs keyed direct writes afterward
-([guide](vendor/facet/docs/guide.md#keyed-direct-updates)). This means a reloaded
+([guide](../../../vendor/facet/docs/guide.md#keyed-direct-updates)). This means a reloaded
 function cannot simply return a new description and expect a framework diff to
 reconcile it.
 
@@ -237,7 +237,7 @@ Possible integration models are:
 
 The first two are safer. Facet does have `replace`, `set_content`, `add_child`,
 `insert_child`, and `remove_child` operations
-([mount.cplus](vendor/facet/src/mount.cplus#L187)), but using them as a general
+([mount.cplus](../../../vendor/facet/src/mount.cplus#L187)), but using them as a general
 hot-reload reconciler would require identity, focus, selection, scroll, and
 component-lifecycle policies that do not currently exist.
 
@@ -291,7 +291,7 @@ migration, structural UI reconciliation, or safe unloading.
 
 Facet already retains all of the state an inspector needs. A node's `Data`
 contains its key, control kind, typed props, common props, native view, and dirty
-word ([facet.cplus](vendor/facet/src/facet.cplus#L20)).
+word ([facet.cplus](../../../vendor/facet/src/facet.cplus#L20)).
 
 A Facet setter already performs the complete live-edit pipeline:
 
@@ -301,8 +301,8 @@ A Facet setter already performs the complete live-edit pipeline:
 4. have the backend apply the changed property to the existing native view.
 
 The write and scheduling seam is in
-[`facet.cplus`](vendor/facet/src/facet.cplus#L238), and the backend sync walk is
-in [`mount.cplus`](vendor/facet/src/mount.cplus#L454).
+[`facet.cplus`](../../../vendor/facet/src/facet.cplus#L238), and the backend sync walk is
+in [`mount.cplus`](../../../vendor/facet/src/mount.cplus#L454).
 
 This means an inspector should mutate Facet nodes through the same setters an
 application uses. It should not write directly to `NSView`: a native-only write
@@ -331,9 +331,9 @@ evaluation is not necessary for the narrow feature.
 The existing agent packages already provide several reusable pieces:
 
 - a live native-tree snapshot with IDs, roles, classes, frames, text, and
-  parents ([backend.cplus](vendor/agent_core/src/backend.cplus#L31));
+  parents ([backend.cplus](../../../vendor/agent_core/src/backend.cplus#L31));
 - `describe_ui`, `click`, `hit_test`, `scroll_to`, `set_text`, and event polling
-  over JSON-RPC ([agent_mcp.cplus](vendor/agent_mcp/src/agent_mcp.cplus#L229));
+  over JSON-RPC ([agent_mcp.cplus](../../../vendor/agent_mcp/src/agent_mcp.cplus#L229));
 - main-thread marshaling for AppKit operations;
 - stable developer IDs and generated IDs;
 - optimistic concurrency for text and stale-operation outcomes;
@@ -341,7 +341,7 @@ The existing agent packages already provide several reusable pieces:
 
 The full `describe_ui` view is a useful diagnostic start, but the AppKit backend
 currently walks the native `NSView` hierarchy
-([agent_appkit.cplus](vendor/agent_appkit/src/agent_appkit.cplus#L689)). A
+([agent_appkit.cplus](../../../vendor/agent_appkit/src/agent_appkit.cplus#L689)). A
 developer inspector should instead walk Facet's mounted tree and join native
 information when a node has a backing view.
 
@@ -384,10 +384,10 @@ Keys make the initial version unusually small:
 
 - `mount::find(key)` already behaves like `getElementById`, with scoped lookup
   available for duplicate keys across windows
-  ([mount.cplus](vendor/facet/src/mount.cplus#L128));
+  ([mount.cplus](../../../vendor/facet/src/mount.cplus#L128));
 - a keyed Facet node gets a native view;
 - on AppKit, its key becomes the view's accessibility identifier
-  ([views.cplus](vendor/facet_appkit/src/views.cplus#L171));
+  ([views.cplus](../../../vendor/facet_appkit/src/views.cplus#L171));
 - the agent surface already uses the same identifier.
 
 The initial inspector should support:
@@ -479,9 +479,9 @@ identity.
 
 Runtime reflection is not required. Facet already generates its control props,
 setters, readers, dirty bits, and contract from one ledger
-([gen_contract.py](tools/gen_contract.py#L2455)). The generated contract currently
+([gen_contract.py](../../../tools/gen_contract.py#L2455)). The generated contract currently
 contains 408 declared verbs over 38 generated controls
-([contract.md](vendor/facet/docs/contract.md#L1)).
+([contract.md](../../../vendor/facet/docs/contract.md#L1)).
 
 The generator can eventually emit an inspector dispatch layer:
 
@@ -517,7 +517,7 @@ show three categories:
 This distinction is important for layout. Facet's own documentation notes the
 same distinction as browser `style.width` versus `offsetWidth`: setting width
 writes style, while reading `width()` currently reads the laid-out frame
-([facet.cplus](vendor/facet/src/facet.cplus#L967)).
+([facet.cplus](../../../vendor/facet/src/facet.cplus#L967)).
 
 ### Picker and highlight implementation
 
@@ -565,7 +565,7 @@ source that created this node,” however, is not currently available: the runti
 Facet `Data` structure carries no source origin.
 
 The compiler already has file-aware spans during parsing
-([lexer.rs](cplus-core/src/lexer.rs#L3)), so a later debug-only enhancement could
+([lexer.rs](../../../cplus-core/src/lexer.rs#L3)), so a later debug-only enhancement could
 inject a compact source-origin ID during `@ui` lowering and place it on each
 node. A side table would map that ID to file, line, and column without retaining
 large path strings on every node.
@@ -578,7 +578,7 @@ more than once.
 
 The present `agent_mcp` server uses newline-delimited JSON-RPC over a Unix-domain
 socket and reads requests into an 8 KiB buffer
-([agent_mcp.cplus](vendor/agent_mcp/src/agent_mcp.cplus#L487)). A rich inspector
+([agent_mcp.cplus](../../../vendor/agent_mcp/src/agent_mcp.cplus#L487)). A rich inspector
 tree can exceed that model quickly.
 
 The inspector transport should support at least one of:

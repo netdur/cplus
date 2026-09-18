@@ -73,8 +73,8 @@ business.
 
 ## Ids, and why they are yours
 
-The id is caller-chosen rather than returned, because both platforms key
-**replacement** on it. Scheduling twice with one id updates in place instead of
+The id is caller-chosen rather than returned, because every implemented backend
+keys **replacement** on it. Scheduling twice with one id updates in place instead of
 stacking a duplicate — which is what a "3 unread messages" notification wants,
 and what makes `cancel(id)` possible without this package handing out tokens.
 
@@ -373,7 +373,8 @@ give you one yet on either platform.
 
 Its own record, not the platform's. Apple can be asked —
 `getPendingNotificationRequestsWithCompletionHandler:` — and Android has no
-listing API at all, so an answer that exists on both platforms has to be the one
+listing API at all. Windows schedules from this process's own table. An answer
+that exists on all three implemented backends therefore has to be the record
 kept here.
 
 It goes stale in one direction only: an entry may outlive a notification the
@@ -400,11 +401,15 @@ default, and an `atexit` hook removes it.
 
 ## Taps, and why a cold one is the hard case
 
-`on_tap(f)` hands `f` the notification's `payload`. Both platforms deliver, by
-completely different roads: a `UNUserNotificationCenterDelegate` method on
+`on_tap(f)` hands `f` the notification's `payload`. Apple and Android deliver,
+by completely different roads: a `UNUserNotificationCenterDelegate` method on
 Apple, and on Android a `PendingIntent` that starts the Activity —
 `onNewIntent` if it is running, the launch intent's extra if the process was
 dead.
+
+The current Windows backend uses `Shell_NotifyIconW` as a posting surface but
+does not install the window-message callback needed to receive balloon clicks.
+It supports scheduling and clearing, not tap delivery or action buttons.
 
 **The dead case is the one that breaks elsewhere.** A tap on a notification
 while the app is not running LAUNCHES it, and the payload arrives around process

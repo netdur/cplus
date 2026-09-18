@@ -181,14 +181,14 @@ struct Cache { last: text::Text }
 
 impl Cache {
     // ✗ E0337 — `s` is borrowed; storing it would make the field a second owner
-    // fn remember(ref this, s: text::Text) { this.last = s; return; }
+    // fn remember(ref this, s: text::Text) { this.last = s; }
 
     // ✓ say what you meant. Either the caller gives it up …
-    fn remember(ref this, take s: text::Text) { this.last = s; return; }
+    fn remember(ref this, take s: text::Text) { this.last = s; }
 }
 
 // … or you pay for a copy, and you pay for it VISIBLY:
-fn remember_copy(ref this, s: text::Text) { this.last = s.clone(); return; }
+fn remember_copy(ref this, s: text::Text) { this.last = s.clone(); }
 ```
 
 **The fix belongs in the signature, not at the call site.** An author who hits
@@ -248,8 +248,8 @@ Three consequences that look like compiler bugs when you meet them cold:
 
   ```cplus
   match slot {                        // presence check — binds nothing, consumes nothing
-      option::Option::Some(_) => { }
-      option::Option::None    => { return 0; }
+      option::Option::None => { return 0; }
+      _                    => { }
   }
   match slot {                        // still mine, still matchable for real
       option::Option::Some(t) => { return t.count() as i32; }
@@ -257,9 +257,11 @@ Three consequences that look like compiler bugs when you meet them cold:
   }
   ```
 
-  `Some(_v)` **binds** — a leading `_` is the privacy convention, never a
-  wildcard — so it consumes exactly like any other name. `Some(_)` is the
-  non-consuming form.
+  `_` is the catch-all arm and binds nothing. Prefer it when every remaining
+  variant does the same thing; list the remaining variants only when their
+  behavior differs. Inside a payload, `Some(_)` also binds nothing, while
+  `Some(_v)` **does bind** — a leading `_` is the privacy convention, never a
+  wildcard — and consumes exactly like any other name.
 - **`take this` does not disarm the exit drop.** A consuming method still runs
   the destructor when its receiver dies at the end of it. Return the inner value
   and let the drop free the shell; freeing it by hand is a double free.
@@ -271,17 +273,18 @@ interleaved in declaration order.
 
 `str` is a borrowed `(ptr, len)` view; `text::Text` is the heap-owning string. A
 `Text` coerces to `str` wherever one is expected, so a `str` slot takes a `Text`
-directly — no `.as_str()`. But at a **binding**, the thing being viewed must be
-somebody's binding. A temporary has no lifetime to lend, and that is E0513:
+directly — no `.view()` or `.as_str()`. But at a **binding**, the thing being
+viewed must be somebody's binding. A temporary has no lifetime to lend, and
+that is E0513:
 
 ```cplus
 // ✗ every one of these is E0513 — the owner is an anonymous temporary
 // let s: str = t.clone();
 // let s: str = "x = ${n}";
-// let s: str = make().view();
+// let s: str = make();
 
 let owner: text::Text = t.clone();     // name it …
-let s: str = owner.view();             // … then view it
+let s: str = owner;                    // … then let the expected type borrow it
 
 f("x = ${n}");                         // ✓ an ARGUMENT's temp outlives the call
 ```
@@ -1016,7 +1019,7 @@ yourself.
 `facet_uikit` / `facet_gtk` / `facet_android` backends, `facet_runtime`,
 `facet_agent`) · `appkit` (Cocoa bindings) · `flex_layout` · `events` ·
 `accelerate` (BLAS + vDSP) · `metal` + `metal/mps` · `simd` · `json` · `log` ·
-`arena` / `static-arena` · `terminal` · `securestore` · `location` · `sensors` ·
+`arena` / `static_arena` · `terminal` · `securestore` · `location` · `sensors` ·
 `camera` · `notifications` · `applinks`.
 
 **YOUR MANIFEST MUST NAME TRANSITIVE DEPENDENCIES TOO.** `cpc` does not read a
@@ -1098,17 +1101,15 @@ impl Counter {
         if let option::Option::Some(l) = label::find("count") {
             let _l: label::Label = l.set_text("${n}");
         }
-        return;
     }
 
     // a handler: a bound method. One handler can serve many keyed controls —
     // ask the sender which one fired.
     fn on_step(ref this, sender: *u8) {
         let key: text::Text = component::key_of(sender);
-        if key.view() == "step:up"   { this.clicks = this.clicks + (1 as i64); }
-        if key.view() == "step:down" { this.clicks = this.clicks - (1 as i64); }
+        if key == "step:up"   { this.clicks = this.clicks + (1 as i64); }
+        if key == "step:down" { this.clicks = this.clicks - (1 as i64); }
         this.show_count();
-        return;
     }
 }
 ```
@@ -1172,9 +1173,8 @@ impl Counter: component::Lifecycle {
     fn on_attach(ref this, why: component::Attach) {
         if why != component::Attach::Mount { return; }   // ONCE — see below
         this.show_count();
-        return;
     }
-    fn on_detach(ref this, why: component::Detach) { return; }
+    fn on_detach(ref this, why: component::Detach) { }
 }
 ```
 
@@ -1244,9 +1244,8 @@ impl Panel: component::Lifecycle {
         if why != component::Attach::Mount { return; }
         this.sub = notes::watch(this.on_notes_changed);   // WATCH first …
         notes::load();                                     // … THEN ask
-        return;
     }
-    fn on_detach(ref this, why: component::Detach) { return; }
+    fn on_detach(ref this, why: component::Detach) { }
 }
 
 impl Panel {
@@ -1258,11 +1257,10 @@ impl Panel {
             resource::Verb::Updated => { this.repaint(c.id); }
             resource::Verb::Deleted => { this.reload(); }
         }
-        return;
     }
 
     // a mutating handler fills the draft, calls the verb, and STOPS.
-    fn on_add(ref this, sender: *u8) { notes::add("untitled"); return; }
+    fn on_add(ref this, sender: *u8) { notes::add("untitled"); }
 }
 ```
 

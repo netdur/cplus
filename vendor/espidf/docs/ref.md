@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Target and realtime constraints:
+[guide.md](guide.md).
+
 Manual for the `espidf` package.
 
 ```cplus

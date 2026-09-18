@@ -7,19 +7,27 @@ It walks **facet's own tree**, not the platform's view hierarchy, so it sees
 pure-layout nodes, spans and menu items that have no native view at all — and
 one walker serves every backend.
 
-This is **not** the agent surface. `agent_core` is curated and permissioned;
-this one sees unexposed nodes and writes properties that are not user
-affordances. Nothing here is reachable from the agent surface.
+This is a **developer surface**, distinct from the curated, permissioned UI
+verbs in `agent_core`. It sees unexposed nodes and writes properties that are
+not user affordances. `facet_agent` can publish these inspector verbs over the
+same MCP server, guarded by its `edit_tree` capability.
 
 ```toml
 [dependencies]
 inspector = "*"
+facet     = "*"
+stdlib    = "*"
 ```
+
+Use `cpc pm add . inspector` to write the full platform-specific closure.
 
 ## Embed the panel
 
 ```cplus
 import "inspector/widget" as panel;
+import "facet/component" as component;
+import "facet/facet" as core;
+import "facet/elements" as ui;
 
 struct App { panel: panel::Inspector, }
 
@@ -34,13 +42,12 @@ impl App: component::Component {
 
 impl App: component::Lifecycle {
     // A nested component's hooks are the host's to run.
-    fn on_attach(ref this) { panel::attach(#addr_of(this.panel)); return; }
-    fn on_detach(ref this) { panel::detach(#addr_of(this.panel)); return; }
-}
-
-fn main() -> i32 {
-    let app: App = App { panel: panel::embedded() };
-    ...
+    fn on_attach(ref this, why: component::Attach) {
+        if why == component::Attach::Mount { panel::attach(#addr_of(this.panel)); }
+    }
+    fn on_detach(ref this, why: component::Detach) {
+        if why == component::Detach::Unmount { panel::detach(#addr_of(this.panel)); }
+    }
 }
 ```
 
@@ -55,9 +62,17 @@ panel has nothing to install.
 listening.
 
 ```cplus
-let live: vec::Vec[text::Text] = panel::discover("myapp");
-let r: status::Status = await panel::connect(st, live.at_ptr(0)... );
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+
+async fn attach_remote(st: *panel::Inspector) -> status::Status {
+    return await panel::connect(
+        st, text::from_str("http://127.0.0.1:9123/"));
+}
 ```
+
+`panel::discover("myapp")` returns live addresses for a named app, newest
+first; each returned `Text` can be moved directly into `connect`.
 
 The fourteen verbs are on every agent surface: an app that calls
 `runtime::agent_mcp(id)` is inspectable, with no second call. See
@@ -79,7 +94,7 @@ without depending on a toolkit:
 | `agent_core/inspect` | the neutral surface — `Handle`, `Value`, `Spec`, `Prop`, `Outcome`, `Backend`, the property vocabulary. Names no toolkit, which is why the verbs could move |
 | `agent_mcp/inspect` | the fourteen verbs, published by `agent_mcp` itself when it starts serving |
 | `facet_agent/inspect_tree` | the facet-tree walker, the typed dispatch, the structural verbs |
-| `facet_agent/inspect_platform` | highlight overlay, native rows, the UI-thread hop — the PLATFORM half, resolved per platform (`_ios`, `_android`) |
+| `facet_agent/inspect_platform` | highlight overlay, native rows, the UI-thread hop — resolved for macOS, Linux, Windows, iOS, and Android |
 
 ## Docs
 
@@ -98,7 +113,7 @@ facet's own state, so the walker, the dispatch, the ledger, the structural verbs
 and every refusal are exercisable headlessly.
 
 ```
-cd vendor/inspector && ../../target/release/cpc test
+cd vendor/inspector && cpc test
 ```
 
 `examples/inspector_probe` is the manual-test app for the things a test cannot

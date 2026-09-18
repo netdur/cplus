@@ -23,8 +23,10 @@ cpc produces a **static library** for `--target esp32-xtensa`. There is no
 `[link]` in `Cplus.toml`: symbols come from IDF components (`driver`,
 `esp_timer`, newlib). The IDF/CMake tree owns the final firmware link.
 
-The app package is typically a `[lib]`; the main component’s `main.c` only
-forwards `app_main` → `cplus_app_main`.
+Declare an `[esp32] entry` in the app package. Because ESP32 is an
+external-builder target, `cpc build --target esp32-xtensa` emits the static
+archive and C header that the main component links; its `main.c` only forwards
+`app_main` → `cplus_app_main`.
 
 ## Realtime / no-alloc
 

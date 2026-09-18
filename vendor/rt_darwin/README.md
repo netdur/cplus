@@ -6,12 +6,14 @@ page locking.
 ```toml
 [dependencies]
 rt_darwin = "*"
+stdlib = "*"
 ```
 
 ```cplus
 import "rt_darwin/clock" as clock;
 import "rt_darwin/thread" as thread;
 import "rt_darwin/mem" as mem;
+import "stdlib/result" as result;
 
 let t0: u64 = clock::now_monotonic_ns();
 let _r: result::Result[i32, i32] = thread::set_current_priority(thread::Priority::RealtimeAudio);

@@ -29,7 +29,7 @@ let _s: securestore::Outcome = securestore::set("token", to: session_token);
 
 var token: text::Text = text::new();
 match securestore::get("token", into: token) {
-    securestore::Outcome::Ok       => { /* token.view() */ }
+    securestore::Outcome::Ok       => { /* use token where `str` is expected */ }
     securestore::Outcome::NotFound => { /* first run */ }
     securestore::Outcome::Denied   => { }
     securestore::Outcome::Unsupported => { }

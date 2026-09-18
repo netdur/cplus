@@ -1,5 +1,23 @@
 # Tutorial
 
+Quick path: mount a live terminal and manage its session. Design and platform
+details: [guide.md](guide.md). Signatures: [ref.md](ref.md).
+
+## Setup
+
+Use `cpc pm add . terminal` for the terminal and its platform backend, then add
+the facet runtime used to open the window:
+
+```toml
+[dependencies]
+terminal      = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+stdlib        = "*"
+```
+
 ## A shell in a window
 
 `terminal/widget` is the module an application imports. `start` opens a
@@ -14,6 +32,7 @@ import "facet/component" as component;
 import "facet/screen" as screen;
 import "facet_runtime/runtime" as runtime;
 import "stdlib/option" as option;
+import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 
 struct Console { term: terminal::Widget }
@@ -54,7 +73,7 @@ of a tree: put it in a split, give it a toolbar, size it with `grow` or
 `frame`. The node holds its own retain on the native view, but the widget is
 what owns the session.
 
-Create, use, and drop the widget on the AppKit main thread. The window factory
+Create, use, and drop the widget on the platform UI thread. The window factory
 owns the widget through its screen. Stop it on `Unmount`, not on `Inactive`:
 Back/Forward can park content while preserving its state. See
 [Facet navigation](../../facet/docs/navigation.md).
@@ -103,7 +122,6 @@ fn build_finished(ctx: *u8) {
         option::Option[i32]::Some(_) => { { (*app).show_errors(); } }
         option::Option[i32]::None    => {}      // still running
     }
-    return;
 }
 
 // once, after start:
@@ -174,8 +192,8 @@ win.set_content_view(widget.view());
 ```
 
 Naming it means naming the platform, so prefer `terminal/widget` unless you are
-already holding AppKit types. (This module was `terminal/appkit` until
-2026-09-08 — the rename is what let a second platform exist.)
+already holding AppKit or GTK types. (This module was `terminal/appkit` until
+2026-09-08 — the rename is what let the Linux backend exist.)
 
 ## The screen on its own
 

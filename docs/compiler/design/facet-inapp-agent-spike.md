@@ -3,6 +3,11 @@
 Status: **working vertical slice** (2026-08-07). Revised 2026-08-07 after
 review — the authorization finding below reverses the first draft's.
 
+> Historical design record. Package names and serving APIs below describe the
+> August 2026 spike. For the current surface, use the
+> [Facet agent guide](../../../vendor/facet_agent/docs/guide.md) and
+> [Facet navigation guide](../../../vendor/facet/docs/navigation.md).
+
 ## Question
 
 Facet already lets an external process inspect and control a running app over
@@ -138,8 +143,9 @@ which is why the small tree is what you get without asking.
 - The global Facet surface targets the most recently attached window, and
   `attach_window` replaces it — so a `Session` held across navigation silently
   retargets. A multi-window product needs an explicit selector.
-- `facet/agent::admit` still returns `Allow` unconditionally, ignoring the
-  channel. That is the EXTERNAL consent path and it is not implemented.
+- At the time of the spike, `facet/agent::admit` returned `Allow`
+  unconditionally and ignored the channel. That was the external consent gap
+  recorded by this design note.
 - `docs/examples/recipes/facet_inapp_agent` is an empty directory. The first
   draft listed it as landed.
 - Add cancellation and serialize model turns so two tool loops cannot race each

@@ -5890,7 +5890,7 @@ fn cpc_test_json_output() {
     assert_eq!(v2["failed"], 1);
 }
 
-// ---- v0.0.31: `async fn main` / `#[test] async fn` — the compiler drives the entry ----
+// ---- v0.0.28: `async fn main` / `#[test] async fn` — the compiler drives the entry ----
 
 /// The entry shape settled on 2026-09-04: `main` may be `async`, and the
 /// compiler drives it with the one loop the language has — lower splits it
@@ -5984,7 +5984,7 @@ fn async_main_shape_errors_are_the_sync_ones() {
 }
 
 /// Driving a future from a SYNCHRONOUS fn is a method on the value
-/// (v0.0.31): `f.wait()` blocks this thread, running its reactor, until the
+/// (v0.0.28): `f.wait()` blocks this thread, running its reactor, until the
 /// value is out, and consumes the future the way `JoinHandle::join` consumes
 /// a handle. No executor import, no turbofish. This is the program that
 /// settled the shape; it parks on a real timer.
@@ -13979,9 +13979,8 @@ fn local_relative_imports_still_work_with_deps_declared() {
 // distinct E08xx diagnostics with no graceful-degradation fallbacks.
 
 /// Helper: ask the same `clang -print-target-triple` that cpc asks. Tests
-/// that probe bundled-binary paths need to match cpc's host triple lookup
-/// exactly — falsehood about the host is the difference between exercising
-/// E0860 (file missing on host) and E0862 (host unsupported).
+/// that probe bundled-binary paths need to match cpc's target-slice lookup
+/// exactly so they exercise the intended `lib/<triple>/` directory.
 fn host_triple_for_test() -> String {
     let out = Command::new("clang")
         .arg("-print-target-triple")
@@ -14147,6 +14146,33 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
         "import \"tiny/api\" as tiny;\nfn main() -> i32 { return tiny::double(21); }\n",
     )
     .unwrap();
+
+    // The default prebuild setting must not make a bundled archive look like
+    // both a generated package slice and an author-shipped artifact. Ask the
+    // compiler for the exact link line and pin one occurrence.
+    let link = Command::new(cpc)
+        .arg("build")
+        .arg("--print-link-args")
+        .current_dir(&dir)
+        .output()
+        .expect("query link args");
+    assert!(
+        link.status.success(),
+        "querying bundled link args failed: {}",
+        String::from_utf8_lossy(&link.stderr)
+    );
+    let occurrences = String::from_utf8_lossy(&link.stdout)
+        .lines()
+        .filter(|line| {
+            Path::new(line).file_name().and_then(|name| name.to_str()) == Some("libtiny.a")
+        })
+        .count();
+    assert_eq!(
+        occurrences,
+        1,
+        "bundled archive must appear exactly once; got:\n{}",
+        String::from_utf8_lossy(&link.stdout)
+    );
 
     let st = Command::new(cpc)
         .arg("build")
@@ -16447,7 +16473,7 @@ fn unknown_manifest_key_is_rejected_not_ignored() {
 
 // ---- Phase 5 Slice 5.A: library targets + object emission ----
 //
-// `[lib]` in Cplus.toml produces `.a` and `.dylib`/`.so` instead of an
+// `[library]` in Cplus.toml produces `.a` and `.dylib`/`.so` instead of an
 // executable. A C consumer can `#include` a hand-written header, link
 // against the artifact, and call any C-callable function. The e2e tests
 // here build a tiny library, link it from C, and verify the runtime
@@ -17281,7 +17307,7 @@ fn emit_header_passes_clang_syntax_check() {
 
 #[test]
 fn lib_build_writes_libname_h_alongside_artifacts() {
-    // `cpc build` on a [lib] manifest emits target/<mode>/<libname>.h
+    // `cpc build` on a [library] manifest emits target/<mode>/<libname>.h
     // alongside the .a / .dylib so consumers can `#include` it directly.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
@@ -17673,7 +17699,7 @@ fn pub_extern_fn_with_str_param_is_rejected_e0410() {
 fn exec_target_linkage_unchanged_by_5b() {
     // Regression guard: 5.B's `internal` linkage rule is gated on lib
     // mode. An executable build must not change symbol visibility for
-    // non-pub helpers — the change is opt-in via `[lib]`.
+    // non-pub helpers — the change is opt-in via `[library]`.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("exe.cplus");
@@ -22095,8 +22121,8 @@ fn target_dep_bundled_artifacts_resolve_by_selected_target() {
 fn target_dep_without_a_slice_for_the_selected_target_uses_source() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    // Vendor bundles a binary for some other triple only; selecting
-    // ios-arm64 must fail E0862 and word it for the *target* triple.
+    // Vendor bundles a binary for some other triple only. Selecting
+    // ios-arm64 must fall back to source for that target.
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\ngadget = \"*\"\n",
@@ -25819,7 +25845,7 @@ fn print_link_args_is_empty_and_succeeds_for_a_project_with_no_dependencies() {
 
 #[test]
 fn prebuild_compiles_the_dep_once_and_links_the_slice() {
-    // `[build] prebuild = true` is the whole opt-in: no `[lib]`, no `[link]`,
+    // `[build] prebuild = true` is the whole opt-in: no `[library]`, no `[link]`,
     // no triple. The first consumer build produces the slice and its headers;
     // the second reuses them.
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -26956,7 +26982,7 @@ fn an_associated_fn_can_be_a_fn_pointer_value_and_runs() {
     );
 }
 
-/// v0.0.29 cancellation, end to end through codegen: the spawn trampoline
+/// v0.0.28 cancellation, end to end through codegen: the spawn trampoline
 /// extends the ctx with the 48-byte cancel block (result slot moves to
 /// offset 64) and installs the per-thread cancel slot around the worker
 /// call; `JoinHandle::cancel` kicks the worker out of a real read(2) park
@@ -27039,7 +27065,7 @@ fn thread_cancel_unparks_a_blocking_read_end_to_end() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "cancelled-ok\n");
 }
 
-/// v0.0.29 phase 2, end to end through codegen: cancelling a thread that
+/// v0.0.28 cancellation, end to end through codegen: cancelling a thread that
 /// drives async work with `future::wait_or_cancel` destroys the suspended frame tree
 /// through the awaits' cancel edges — running the drops of locals live
 /// across the await — unregisters the reactor entries, tears down the

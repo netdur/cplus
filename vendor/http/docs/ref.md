@@ -1,15 +1,18 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Transport choices and gotchas:
+[guide.md](guide.md).
+
 ```cplus
 import "http/http" as http;
 import "stdlib/result" as result;
 import "stdlib/status" as status;
 ```
 
-Everything below is in module `http`. macOS and iOS only. The two stdlib
-imports are what the signatures on this page return — `result::Result` from
-every send, `status::Status` from every setter — so a file that calls them
-needs all three lines, not just the first.
+Everything below is in module `http` on macOS, iOS, Android, Linux, and
+Windows. The two stdlib imports are what the signatures on this page return —
+`result::Result` from every send, `status::Status` from every setter — so a file
+that calls them needs all three lines, not just the first.
 
 ---
 
@@ -202,11 +205,13 @@ struct Error {
 
 Transport failures only — an exchange that produced no HTTP response.
 
-`code` is Foundation's NSError code (always **negative**) when the request
-reached the session, or one of the positive constants below when it never left
-the process. `message` is the NSError's `localizedDescription`.
+`code` is a negative native transport code when the request reached the
+backend, or one of the positive constants below when it never left the
+process. Apple uses `NSURLErrorDomain`; Linux negates `CURLcode`; Windows
+negates `GetLastError()`; Android maps Java exceptions to stable negatives.
+`message` carries the platform description when available.
 
-Common Foundation codes:
+Common Apple codes:
 
 | code | means |
 |------|-------|
@@ -234,11 +239,19 @@ Common Foundation codes:
 ```toml
 [dependencies]
 http = "*"
+stdlib = "*"
+
+[macos.dependencies]
 objc = "*"
+
+[ios.dependencies]
+objc = "*"
+
+[android.dependencies]
+jni = "*"
 ```
 
-`objc` must be named in the consuming manifest as well: the resolver validates
-every import in a build against one flat set taken from that manifest, not from
-a dependency's own. Omitting it is `E0852`.
-
-`Foundation` links automatically through this package's `[link]` table.
+The resolver validates every import against the consuming manifest's flat
+dependency set. `objc` is the Apple transport and `jni` the Android transport;
+Linux links libcurl through the package's `[linux.link]`, and the compiler's
+Windows system link set supplies WinHTTP.

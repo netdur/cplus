@@ -5,10 +5,14 @@ Accelerometer, gyroscope, magnetometer, barometer — one shape each.
 ```toml
 [dependencies]
 sensors = "*"
+stdlib = "*"
 ```
+
+Use `cpc pm add . sensors` to write the platform-specific dependency closure.
 
 ```cplus
 import "sensors/sensors" as sens;
+import "stdlib/result" as result;
 
 fn shook(s: sens::Sample, ctx: *u8) {
     if s.magnitude() > 15.0f64 { /* a shake */ }
@@ -37,16 +41,16 @@ run on the other would be wrong by 9.8× with no error anywhere.
 
 ## Coverage
 
-| | macOS | iOS | Android |
-|---|---|---|---|
-| accelerometer, gyroscope, magnetometer | hardware permitting | ✅ | ✅ |
-| barometer | ❌ no hardware | ✅ needs `NSMotionUsageDescription` | ✅ |
+| | macOS | iOS | Android | Linux | Windows |
+|---|---|---|---|---|---|
+| accelerometer, gyroscope, magnetometer | hardware permitting | ✅ | ✅ | ❌ `Unavailable` | ❌ `Unavailable` |
+| barometer | ❌ no hardware | ✅ needs `NSMotionUsageDescription` | ✅ | ❌ `Unavailable` | ❌ `Unavailable` |
 
 Verified live on an iPad Pro M1 and an Android emulator, 2026-09-02.
 
-A Mac answers `Unavailable` for everything — CoreMotion links there and the
-hardware does not exist. That is deliberately **not** `Unsupported`, which
-means "this build cannot ask at all".
+A Mac without motion hardware, plus the current Linux and Windows backends,
+answers `Unavailable`. That is deliberately **not** `Unsupported`, which means
+"this build cannot ask at all".
 
 The barometer needs `NSMotionUsageDescription` in the app's Info.plist on
 Apple — without it `CMAltimeter` starts, reports available, and delivers

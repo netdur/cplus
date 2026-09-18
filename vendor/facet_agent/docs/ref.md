@@ -1,8 +1,11 @@
 # facet_agent — reference
 
+Fast start: [tutorial.md](tutorial.md). Architecture, transport, and policy:
+[guide.md](guide.md).
+
 `import "facet_agent/agent" as agent;` resolves per platform: `agent.cplus`
-(macOS), `agent_linux.cplus`, `agent_ios.cplus`, `agent_android.cplus`. The
-surface below is identical on all four.
+(macOS), `agent_linux.cplus`, `agent_windows.cplus`, `agent_ios.cplus`, or
+`agent_android.cplus`. The surface below is identical on all five.
 
 ## facet_agent/agent
 
@@ -53,7 +56,7 @@ derivable by anything that knows the id and the pid:
 |---|---|
 | macOS, Linux | `agent_mcp::uds_path(id, pid)` → `/tmp/mcp-<id>-<pid>.socket`, mode 0600 |
 | macOS, Linux | plus `agent_mcp::loopback_port(pid)` → `http://127.0.0.1:<port>/` |
-| iOS, Android | `agent_mcp::loopback_port(pid)` → `http://127.0.0.1:<port>/` |
+| Windows, iOS, Android | `agent_mcp::loopback_port(pid)` → `http://127.0.0.1:<port>/` |
 
 `loopback_port(pid)` is `9000 + pid % 1000`. Both are reported on stderr at
 startup — on Android that is `adb logcat -s cplus`, where stdlib's sink puts

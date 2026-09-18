@@ -489,7 +489,7 @@ finisher — diagnostics land on your lines.
 
 ```cplus
 async fn fetch() -> i32 { return (await inner()) +% 1; }
-async fn main() -> i32 { return await fetch(); }       // the compiler drives an async entry (v0.0.31)
+async fn main() -> i32 { return await fetch(); }       // the compiler drives an async entry (v0.0.28)
 let r: i32 = fetch().wait();                           // driving from other sync code; consumes the future
 let w: future::WaitResult[i32] = future::wait_or_cancel(fetch());   // the cancellable drive: Done(v) | Cancelled
 

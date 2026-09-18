@@ -8,6 +8,7 @@ Quick path: create a heap arena, allocate, reset. Gotchas in
 ```toml
 [dependencies]
 arena = "*"
+stdlib = "*"
 ```
 
 ```cplus

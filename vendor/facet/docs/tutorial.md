@@ -112,8 +112,8 @@ impl Counter: component::Component {
 }
 
 impl Counter: component::Lifecycle {
-    fn on_attach(ref this, why: component::Attach) { return; }
-    fn on_detach(ref this, why: component::Detach) { return; }
+    fn on_attach(ref this, why: component::Attach) { }
+    fn on_detach(ref this, why: component::Detach) { }
 }
 ```
 

@@ -133,7 +133,6 @@ label("hi", key: "banner", opacity: 0.0f64)     // applied at mount
 fn fade_in(n: *core::Node) {
     core::animate_opacity(n, 1.0f64, vocab::Duration::of_seconds(0.4f64),
                           vocab::Easing::SinOut);
-    return;
 }
 ```
 

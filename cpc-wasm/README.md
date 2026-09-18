@@ -53,7 +53,7 @@ const { ok, diagnostics, ir } = JSON.parse(json);
 //                       labels?, notes?, suggestions? }>
 // ir:           string | null — LLVM IR when ok, else null
 
-cplus_version(); // "0.0.13" — toolchain version this build came from
+cplus_version(); // "0.0.28" — toolchain version this build came from
 ```
 
 ### Running (the i32 slice)

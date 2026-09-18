@@ -8,7 +8,7 @@
 #      so `include_str!` can pick it up at cpc-build time.
 #   2. cpc build:      reads ./Cplus.toml, walks imports, links against
 #                      -framework Metal / Foundation / -lobjc declared
-#                      in [[bin]].
+#                      in [link].
 #
 # v0.0.7 Phase 4.1: dropped the v0.0.6 `--emit-ll | clang` two-step and
 # the sed `__SHADER_LEN__` patch. Plain `cpc build` now does the link;

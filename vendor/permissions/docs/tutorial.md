@@ -9,6 +9,7 @@ rationale and gotchas live in [guide.md](guide.md); signatures in
 ```toml
 [dependencies]
 permissions = "*"
+stdlib      = "*"
 
 [macos.dependencies]
 objc = "*"      # the Apple half's msgSend; brings -framework Foundation
@@ -31,6 +32,8 @@ and the link says which symbol.
 
 ```cplus
 import "permissions/permissions" as permissions;
+import "stdlib/status" as status;
+import "stdlib/vec" as vec;
 ```
 
 No `[link]` frameworks and no Java or dex: the Apple half `dlopen`s what it
@@ -52,7 +55,6 @@ Six answers: `Unknown`, `Granted`, `Limited`, `Denied`, `Blocked`,
 ```cplus
 fn answered(name: str, s: permissions::State, ctx: *u8) {
     if s == permissions::State::Granted { start_capture(); }
-    return;
 }
 
 let _st: status::Status = permissions::request(permissions::CAMERA,

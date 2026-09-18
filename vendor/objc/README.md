@@ -7,11 +7,13 @@ delegates/targets.
 ```toml
 [dependencies]
 objc = "*"
+stdlib = "*"
 ```
 
 ```cplus
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
+import "stdlib/text" as text;
 
 let cls: *u8 = rt::get_class(#str_ptr("NSString\0"));
 let ns: *u8 = bridge::nsstring("hello");

@@ -76,7 +76,7 @@ The enum-name → variant-index table lives in both the sema and codegen context
 
 ## 5. AST + sema additions
 
-**AST** ([ast.rs](../../cplus-core/src/ast.rs)):
+**AST** ([ast.rs](../../../cplus-core/src/ast.rs)):
 
 ```rust
 ItemKind::Enum(EnumDecl)
@@ -97,7 +97,7 @@ Ty::Enum(EnumId)         // EnumId(u32) — index into the enum table
 
 ### 6.1 Must compile and run
 
-[direction.cplus](../examples/direction.cplus):
+[direction.cplus](../../examples/direction.cplus):
 
 ```cp
 enum Direction { North, South, East, West }

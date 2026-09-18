@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Ownership and parsing behavior:
+[guide.md](guide.md).
+
 Manual for the `json` package. Signatures and behavior only.
 
 ```cplus

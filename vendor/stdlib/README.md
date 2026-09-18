@@ -57,7 +57,7 @@ packages with `cpc`). It is not run by `cpc test` until re-wired.
 
 ## Distribution modes
 
-Today the package is **source-only**. Future binary / mixed modes are declared
-in `Cplus.toml` via `[link].bundled` / `[link].triples` and verified under
-`src/lib/<triple>/` (see `Cplus.toml` comments and the package design notes in
-the repo plans). Import paths stay `stdlib/<module>` either way.
+Today the package is **source-only**. Future binary / mixed modes declare archive
+basenames with `[link].bundled`; the compiler derives the target triple and
+verifies the files under `lib/<triple>/`. Import paths stay
+`stdlib/<module>` either way.

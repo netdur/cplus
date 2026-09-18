@@ -52,7 +52,7 @@ error (D8).
 
 The **store tier** extends this identity machine-wide: packages install
 into `~/.cplus/<tier>/vendor/<name>`, where the tier is the compatibility
-line of the running toolchain — the exact version pre-1.0 (`v0.0.27`),
+line of the running toolchain — the exact version pre-1.0 (`v0.0.28`),
 `major.minor` post-1.0 (`v1.2`). A toolchain can only see its own tier, so
 cross-version drift is impossible by construction (D13).
 

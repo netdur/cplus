@@ -1,5 +1,8 @@
 # Guide
 
+How biometric verification should be interpreted and handled. Fast start:
+[tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 ## What a pass actually proves
 
 That **the person holding the device is its owner**. Nothing else.

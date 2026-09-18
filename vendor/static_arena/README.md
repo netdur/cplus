@@ -6,10 +6,12 @@ Fixed-size bump allocator in the struct itself — **no malloc**. Stack or
 ```toml
 [dependencies]
 static_arena = "*"
+stdlib = "*"
 ```
 
 ```cplus
 import "static_arena/static_arena" as sa;
+import "stdlib/option" as option;
 
 var a: sa::StaticArena16K = sa::StaticArena16K::new();
 guard let option::Option[*u8]::Some(p) = a.alloc_bytes(64usize) else {

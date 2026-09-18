@@ -1,5 +1,8 @@
 # facet_agent — tutorial
 
+Design and security details: [guide.md](guide.md). Signatures:
+[ref.md](ref.md).
+
 Make a facet app driveable by an agent, then decide who may drive it.
 
 ## Depend
@@ -7,6 +10,11 @@ Make a facet app driveable by an agent, then decide who may drive it.
 ```toml
 [dependencies]
 facet_agent = "*"
+facet         = "*"
+facet_runtime = "*"
+flex_layout   = "*"
+events        = "*"
+stdlib        = "*"
 # the stack it serves; the resolver checks every import against ONE flat set
 # taken from THIS manifest, so the closure is named here
 agent_core  = "*"
@@ -45,7 +53,7 @@ from the id and this process's pid:
 | platform | address |
 |---|---|
 | macOS, Linux | `/tmp/mcp-myapp-<pid>.socket` (0600) **and** `http://127.0.0.1:<9000+pid%1000>/` |
-| iOS, Android | `http://127.0.0.1:<9000+pid%1000>/` |
+| Windows, iOS, Android | `http://127.0.0.1:<9000+pid%1000>/` |
 
 The app prints where it landed on stderr at startup, and writes the same thing
 to `/tmp/mcp-myapp-<pid>.json`.
@@ -89,24 +97,25 @@ To ask the user instead:
 ```cplus
 import "facet/services" as services;
 import "facet_agent/consent" as consent;
+import "stdlib/text" as text;
 
 fn answered(index: i32, ctx: *u8) {
-    if index == (0 as i32) { consent::allow_pending(); return; }
-    consent::deny_pending();
-    return;
+    if index == (0 as i32) {
+        consent::allow_pending();
+    } else {
+        consent::deny_pending();
+    }
 }
 
 fn show(ctx: *u8) {
     let msg: text::Text = "${consent::pending()} wants to drive this app.";
-    runtime::alert("Allow agent access?", msg.view(), "Allow",
+    runtime::alert("Allow agent access?", msg, "Allow",
                    secondary: "Deny", on_answer: answered);
-    return;
 }
 
 fn ask(client: str, ctx: *u8) {
     if !services::has_main_hop() { consent::cancel_pending(); return; }
     services::run_on_main(show, 0 as *u8);      // the policy runs OFF the main thread
-    return;
 }
 
     consent::on_ask(ask);

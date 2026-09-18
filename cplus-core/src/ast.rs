@@ -1129,7 +1129,7 @@ pub enum ExprKind {
     /// an N-element array where every slot is initialized to a clone of
     /// `EXPR`. Lowering: codegen emits one `memset` for byte-valued
     /// fills, otherwise an enumerated store loop. The
-    /// motivating consumer is `vendor/static-arena`'s 16KB / 64KB / etc.
+    /// motivating consumer is `vendor/static_arena`'s 16KB / 64KB / etc.
     /// stack-allocated buffer fields, which can't be written as 16384
     /// enumerated literals.
     ///

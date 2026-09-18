@@ -206,7 +206,32 @@ The keys are kebab-case and an unknown key is a hard parse error. That
 matters more than it sounds: the snake_case spelling used to be silently
 dropped, which meant a gate the author believed was on was off.
 
-## 8. Gotchas
+## 8. Repository CI
+
+The repository runs the Rust workspace suite after every push on three
+GitHub-hosted systems:
+
+| Job | Host target | Additional check |
+|---|---|---|
+| macOS | Apple Silicon / Darwin | runs the suite with two documented Homebrew-clang exclusions; the tag-only release workflow builds the archive |
+| Linux | x86-64 GNU/Linux | builds release binaries, compiles and runs a native smoke program, builds Debian packages |
+| Windows | x86-64 MSVC | builds release binaries, compiles and runs a native smoke program, uploads a ZIP |
+
+Tests run serially inside each operating-system job. Several end-to-end
+fixtures use the same vendored packages and mutate their prebuild output, so
+running those tests concurrently can delete another test's in-flight object
+directory. The three operating-system jobs still run in parallel.
+
+The macOS job skips two C-interoperability tests that depend on behavior not
+provided by the Homebrew clang used on the runner. Linux and Windows run those
+tests. A green desktop matrix does not replace the simulator, device, or probe
+app checks described above for UI and hardware-backed packages.
+
+Release publishing is tag-gated. Ordinary Linux and Windows pushes retain
+short-lived workflow artifacts; a `v*` tag attaches all three platform
+packages to its GitHub release.
+
+## 9. Gotchas
 
 - **A ` ```cplus ` fence in a `///` comment is not a doctest.** Three bare
   backticks, or it never runs.

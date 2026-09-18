@@ -1,7 +1,8 @@
 // facet agent — serve the running app's agent surface over MCP (opt-in).
 //
-// The App tier's `app.agent_mcp(path)` names the Unix socket; THIS module does
-// the serving. It is a separate module so the agent packages (agent_core,
+// The App tier's `runtime::agent_mcp(id)` names the app; the runtime derives
+// the process-specific endpoint and THIS module serves it. It is a separate
+// module so the agent packages (agent_core,
 // agent_appkit, agent_mcp and their deps) are only in an app's build when the
 // app actually serves — importing "facet_runtime/runtime" alone never pulls them.
 //
@@ -10,7 +11,7 @@
 //     fn main() -> i32 {
 //         agent::enable();
 //         var app: runtime::App = runtime::App::new("Iris");   // import "facet_runtime/runtime" as runtime;
-//         app.agent_mcp("/tmp/iris.sock");
+//         app.agent_mcp("iris");
 //         ...
 //         let _s: status::Status = app.run("welcome");
 //         return 0;
@@ -155,12 +156,12 @@ fn attach_window(win: *u8) {
     AGENT_SURFACE = agent_appkit::open(win);
 }
 
-// The default channel policy: the developer opted in by giving a socket path,
+// The default channel policy: the developer opted in by giving an app id,
 // so both channels are admitted — as ORDINARY OPERATORS. Read the app, drive
 // the app, and nothing from a node the application put behind a tier.
 //
 // `operator()` and not something wider is the whole of the default's opinion.
-// A grant that reached protected content would make `app.agent_mcp(path)` — one
+// A grant that reached protected content would make `app.agent_mcp(id)` — one
 // line, written to get an agent talking at all — silently the line that hands
 // a card number to whatever connects. Widening is an app supplying its own
 // policy, which is a place a reader can find it.
@@ -192,7 +193,7 @@ fn admit(req: auth::Request) -> auth::Grant {
 // `admit` above is a DEFAULT, and its comment argues carefully for why that
 // default is `operator()` and not something wider. What it could not do is let
 // an app be narrower — there was no way to supply a policy at all, so every
-// facet app that called `app.agent_mcp(path)` served every connection the same
+// facet app that called `app.agent_mcp(id)` served every connection the same
 // grant with no way to say otherwise. An app that wants to ask its user first,
 // or to check a token, or to refuse outright, had nowhere to put that.
 //

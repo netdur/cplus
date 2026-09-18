@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Lane invariants and module choices:
+[guide.md](guide.md).
+
 Manual for the `simd` package. Public signatures and behavior.
 
 ```cplus

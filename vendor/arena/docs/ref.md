@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Ownership and allocation rules:
+[guide.md](guide.md).
+
 Manual for the `arena` package. Signatures and behavior only.
 
 ```cplus

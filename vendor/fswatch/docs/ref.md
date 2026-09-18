@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Ownership and platform behavior:
+[guide.md](guide.md).
+
 Import:
 
 ```cplus
@@ -85,8 +88,10 @@ allocation failure returns `OutOfMemory`.
 fn new(path: str, take options: Options) -> Result[Watcher, WatchError]
 ```
 
-Copies `path`, creates the initial filtered snapshot, opens a private kqueue,
-and registers the visible nodes. The target must exist initially.
+Copies `path`, creates the initial filtered snapshot, opens the platform event
+queue, and registers the visible nodes. That is kqueue on macOS, inotify on
+Linux and Android, and a `ReadDirectoryChangesW` watch table on Windows. The
+target must exist initially.
 
 ### `watch`
 

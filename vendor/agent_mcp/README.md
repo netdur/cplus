@@ -6,8 +6,10 @@ Optional Unix-domain socket transport (newline-delimited JSON).
 
 ```toml
 [dependencies]
-agent_mcp = "*"
-# pulls agent_core, json, stdlib
+agent_mcp  = "*"
+agent_core = "*"
+json       = "*"
+stdlib     = "*"
 ```
 
 ```cplus
@@ -15,6 +17,7 @@ import "agent_mcp/agent_mcp" as mcp;
 import "agent_core/auth" as auth;
 import "agent_core/events" as events;
 import "agent_core/backend" as backend;
+import "stdlib/text" as text;
 
 // vt = backend.mcp_backend() from agent_appkit / agent_win32 / agent_gtk
 // surf = #addr_of(surface) as *u8

@@ -156,7 +156,7 @@ For Phase 3 specifically, *every* user-definable aggregate composed of currently
 
 ### 6.3 Existing samples that are unaffected
 
-[ownership.cplus](../examples/ownership.cplus) currently relies on Buffer being non-Copy (so `move self` actually consumes it). Under auto-derive, `Buffer { data: [i32; 4] }` *would* be Copy, which would silently make `move self` a no-op consumption.
+[ownership.cplus](../../examples/ownership.cplus) currently relies on Buffer being non-Copy (so `move self` actually consumes it). Under auto-derive, `Buffer { data: [i32; 4] }` *would* be Copy, which would silently make `move self` a no-op consumption.
 
 This is the only sample affected. Two options:
 

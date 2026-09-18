@@ -2353,7 +2353,7 @@ fn main() -> i32 { return 0; }
 
 [[code]]
 id = "E0860"
-title = "Declared `[link].bundled` file missing on host"
+title = "Declared `[link].bundled` file missing from a target slice"
 category = "Targets and packages"
 severity = "error"
 repro = "scenario"
@@ -2361,11 +2361,10 @@ lang = "toml"
 verified = true
 emit_site = "cpc/src/main.rs:link_bundled_missing"
 test = "cpc/tests/e2e.rs:bundled_lib_missing_for_host_triple_is_e0860"
-cause = "A vendored package's manifest declares a file in `[link].bundled`, but `lib/<host-triple>/<basename>` does not exist. The manifest says the package ships that binary for this triple; the file is missing."
-fix = "Add the missing file under `lib/<host-triple>/`, or remove its entry from `[link].bundled`."
+cause = "A vendored package has a `lib/<target-triple>/` directory and declares a file in `[link].bundled`, but that file is absent from the target slice. If the whole target directory is absent, the package falls back to source; once a slice exists, the manifest is authoritative and every declared bundled file must be present."
+fix = "Add the missing file under `lib/<target-triple>/`, remove its name from `[link].bundled`, or remove the incomplete target directory so the package can build from source."
 example = '''
 [link]
-triples = ["arm64-apple-darwin"]
 bundled = ["libfoo.a"]
 # lib/arm64-apple-darwin/libfoo.a absent
 # -> [E0860] package declares bundled `libfoo.a` but the file is not present
@@ -2381,7 +2380,7 @@ lang = "toml"
 verified = true
 emit_site = "cpc/src/main.rs:link_orphan_binary"
 test = "cpc/tests/e2e.rs (orphan .a under lib/<host> without [link])"
-cause = "A binary artifact (`.a`, `.o`, `.lib`) sits under a package's `lib/<triple>/`, but the package manifest does not declare it in `[link].bundled`. The manifest is the single source of truth for shipped binaries."
+cause = "A binary artifact (`.a`, `.dylib`, `.so`, or `.lib`) sits under a package's `lib/<triple>/`, but the package manifest does not declare it in `[link].bundled`. The manifest is the single source of truth for shipped binaries."
 fix = "Add the file to `[link].bundled`, or delete it from the package."
 example = '''
 # vendor/foo/lib/arm64-apple-darwin/liborphan.a exists
@@ -2404,9 +2403,6 @@ fix = "Provide the object file at the declared path, or remove the entry from `[
 example = '''
 [package]
 name = "missing-obj"
-[[bin]]
-name = "missing-obj"
-path = "src/main.cplus"
 [link]
 extra-objects = ["does-not-exist.o"]
 # -> [E0864] [link] extra-objects entry `does-not-exist.o` not found
@@ -2474,24 +2470,21 @@ fn main() -> i32 { return 0; }
 
 [[code]]
 id = "E0868"
-title = "`[lib]` / `[[bin]]` path escapes the package directory"
+title = "Manifest entry path escapes the package directory"
 category = "Targets and packages"
 severity = "error"
 repro = "checked"
 lang = "toml"
 verified = true
 emit_site = "cplus-core/src/manifest.rs:target_path_escapes"
-test = "cplus-core/src/manifest.rs:bin_path_escaping_package_is_rejected_e0868"
-cause = "A `[lib].path` or `[[bin]].path` key resolves outside the package directory — an absolute path or a `..` chain. Source targets must live inside the package tree; a hostile vendored manifest must not point compilation at arbitrary host files. `[link]` search paths and `${VAR}`-expanded extra objects are exempt (they legitimately name external SDK locations)."
-fix = "Move the source file into the package and use a package-relative path (e.g. `path = \"src/main.cplus\"`)."
+test = "cplus-core/src/manifest.rs:package_entry_escaping_package_is_rejected_e0868"
+cause = "A `[package] entry`, `[<platform>] entry`, or `[library] entry` resolves outside the package directory — an absolute path or a `..` chain. Source targets must live inside the package tree; a hostile vendored manifest must not point compilation at arbitrary host files. `[link]` search paths and `${VAR}`-expanded extra objects are exempt because they legitimately name external SDK locations."
+fix = "Move the source file into the package and use a package-relative entry (for example, `entry = \"src/main.cplus\"`)."
 example = '''
 [package]
 name = "esc"
-
-[[bin]]
-name = "esc"
-path = "../../outside/main.cplus"
-# -> [E0868] `[[bin]] `esc`` path resolves outside the package directory
+entry = "../../outside/main.cplus"
+# -> [E0868] `[package] entry` path `../../outside/main.cplus` resolves outside the package directory
 '''
 
 [[code]]
@@ -2914,7 +2907,7 @@ fn main() -> i32 { return 0; }
 [[code]]
 id = "E0910"
 title = "Generic instantiation exceeds the recursion limit"
-category = "Generics"
+category = "Generics and bounds"
 severity = "error"
 repro = "checked"
 lang = "cplus"
@@ -3063,7 +3056,7 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:include_path_escapes_package"
 test = "cplus-core/src/sema.rs:include_bytes_escaping_package_is_rejected_e0918"
-cause = "A `#include_bytes` / `#include_str` / `#compile_shader` path resolves outside the including file's package directory — an absolute path or a `..` chain that leaves the package. In project mode (a `Cplus.toml` is present) these compile-time file reads are contained to the package tree, the same boundary imports (E0914) and `[[bin]]`/`[lib]` paths (E0868) enforce, so untrusted source can't bake an arbitrary readable host file into the artifact."
+cause = "A `#include_bytes` / `#include_str` / `#compile_shader` path resolves outside the including file's package directory — an absolute path or a `..` chain that leaves the package. In project mode (a `Cplus.toml` is present) these compile-time file reads are contained to the package tree, the same boundary imports (E0914) and manifest entry paths (E0868) enforce, so untrusted source can't bake an arbitrary readable host file into the artifact."
 fix = "Move the asset inside the package and reference it with a package-relative path. A `..` that stays within the package (e.g. `../adapter/asset.bin` from `src/`) is allowed; only paths that leave the package are rejected."
 example = '''
 fn main() -> i32 {

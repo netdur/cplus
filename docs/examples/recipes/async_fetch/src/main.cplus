@@ -19,7 +19,7 @@
 // This recipe runs *one* async client; `async_yield_demo` is the
 // interleaving one.
 //
-// The entry is an `async fn main` (v0.0.31): the compiler drives it
+// The entry is an `async fn main` (v0.0.28): the compiler drives it
 // with the same loop `Future::wait` is, so nothing here names
 // the executor.
 

@@ -7,6 +7,9 @@ Ask the person to prove they own the device.
 biometrics = "*"
 ```
 
+Use `cpc pm add . biometrics` to write the platform-specific dependency
+closure.
+
 ```cplus
 import "biometrics/biometrics" as bio;
 
@@ -40,11 +43,11 @@ this, rather than replacing it with this.
 
 ## Coverage
 
-| | macOS | iOS | Android |
-|---|---|---|---|
-| prompt | ✅ Touch ID / Watch | ✅ Touch ID / Face ID | ✅ API 28+ |
-| which sensor | ✅ exactly | ✅ exactly | ⚠ "something" only |
-| passcode fallback | ✅ | ✅ | ✅ API 30+ |
+| | macOS | iOS | Android | Linux | Windows |
+|---|---|---|---|---|---|
+| prompt | ✅ Touch ID / Watch | ✅ Touch ID / Face ID | ✅ API 28+ | ❌ `Unavailable` | ❌ `Unavailable` |
+| which sensor | ✅ exactly | ✅ exactly | ⚠ "something" only | `None` | `None` |
+| passcode fallback | ✅ | ✅ | ✅ API 30+ | — | — |
 
 - [tutorial](docs/tutorial.md) · [guide](docs/guide.md) · [ref](docs/ref.md)
 

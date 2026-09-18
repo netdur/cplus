@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Delivery and platform behavior:
+[guide.md](guide.md).
+
 Manual for the `notifications` package. Signatures and behavior only — no
 tutorials. Import:
 
@@ -223,6 +226,8 @@ disagreeing about one payload is a bug.
 **Safe to call at any time.** If a tap already happened — including the one that
 launched the app from a dead process — `f` is called before this returns.
 `facet/app_events` latches the payload, so there is no ordering to get right.
+This delivery path is implemented on Apple and Android. The Windows balloon
+backend does not receive clicks, and Linux has no notification backend.
 
 ### `off_tap`
 
@@ -240,7 +245,7 @@ removing it would drop the latch replay for a handler installed later.
 | Item | Value |
 |---|---|
 | Import | `notifications/notifications` |
-| Dependencies | `stdlib`, `permissions`; `objc` on macOS and iOS; `jni`, `android_view`, `facet`, `flex_layout`, `events` on Android |
+| Dependencies | `stdlib`, `permissions`, `facet`, `flex_layout`, `events`; `objc` on macOS and iOS; `jni`, `android_view` on Android |
 | `[link]` frameworks | none — the Apple half `dlopen`s UserNotifications |
 | Unit tests | `cd vendor/notifications && cpc test` |
 | iOS checks | `tools/run_ios_tests.sh` |
@@ -252,4 +257,4 @@ removing it would drop the latch replay for a handler installed later.
 |---|---|
 | Push token registration | An entitlement + provisioning profile on Apple; Firebase on Android. `plans/notifications.md` §6 |
 | Media / transport controls | Sticky + actions covers the shade; the rest is a `MediaSession`. §9 |
-| Actions, images, sticky, badges, grouping | Later tiers. §9 has the list |
+| Badges and platform grouping | Later tiers. §9 has the list |

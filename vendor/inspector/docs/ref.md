@@ -788,7 +788,8 @@ directly.
 
 THE PLATFORM HALF: the two things facet's tree cannot answer, plus the thread
 hop. Resolved per platform — `inspect_platform.cplus` on macOS,
-`inspect_platform_ios.cplus`, `inspect_platform_android.cplus`.
+`inspect_platform_linux.cplus`, `inspect_platform_windows.cplus`,
+`inspect_platform_ios.cplus`, or `inspect_platform_android.cplus`.
 
 **An application does not call this.** `facet_agent`'s serving facade installs
 it beside the walker, so `runtime::agent_mcp(id)` is the whole opt-in. It is
@@ -885,5 +886,5 @@ the prefix.
 | Name | `inspector` |
 | Modules | `inspector/widget`, `inspector/remote`. The surface, verbs, walker and platform halves live in `agent_core`, `agent_mcp` and `facet_agent` — see the header |
 | Dependencies | `stdlib`, `flex_layout`, `facet`, `objc`, `appkit`, `quartzcore`, `json`, `agent_mcp`, `agent_core` |
-| Platform notes | The walker is portable; `facet_agent/inspect_platform` is the platform half and resolves three ways — macOS, iOS, Android. Where the process LISTENS is `agent_mcp`'s business and differs — a Unix socket at `/tmp/mcp-<id>-<pid>.socket` on a desktop, a loopback port `9000 + pid % 1000` on iOS and Android, because a socket inside the sandbox is unreachable from the development machine. Both are derived from the pid, so a launcher can compute the address from the process it spawned. On Android the app also needs `android.permission.INTERNET`, without which the bind fails and nothing listens |
+| Platform notes | The walker is portable; `facet_agent/inspect_platform` supplies the overlay, native rows, and UI-thread hop on macOS, Linux, Windows, iOS, and Android. `agent_mcp` listens on a 0600 Unix socket plus loopback HTTP on macOS/Linux, and loopback HTTP on Windows/iOS/Android. Both address forms derive from the pid, so a launcher can compute them from the process it spawned. Android also needs `android.permission.INTERNET`, without which the bind fails and nothing listens |
 | Tests | `src/test_main.cplus` — `cd vendor/inspector && cpc test` |

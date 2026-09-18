@@ -19,7 +19,7 @@ for decoupled cross-module messaging. `on` returns an owning
 unsubscribes.
 
 ```cplus
-fn open_file(path: str, ctx: *u8) { /* ... */ return; }
+fn open_file(path: str, ctx: *u8) { /* ... */ }
 var sub: events::Subscription = events::on("file:open", open_file);
 
 events::emit("file:open", payload: "src/main.cplus");
@@ -42,7 +42,7 @@ handle contract, typed: `SignalSubscription[T]`.
 
 ```cplus
 var opened: events::Signal[str] = events::Signal[str]::new();
-fn on_opened(path: str, ctx: *u8) { /* ... */ return; }
+fn on_opened(path: str, ctx: *u8) { /* ... */ }
 
 var sub: events::SignalSubscription[str] = opened.on(on_opened);
 opened.emit("notes.md");

@@ -2,14 +2,19 @@
 
 > Status: shipped 2026-05-15 (v0.0.2 Slices 2A / 2B / 2C / 2D).
 > Scope: a minimum-viable package system that lets a C+ project depend on vendored packages, with system libraries and prebuilt static archives declared in TOML. Importers use a strict path shape that disambiguates local files from packages at lex time.
-> Out of scope: `cpc fetch`, lockfiles, SemVer resolution, transitive C+ deps, dynamic `.dylib`/`.so` packaging, cross-compilation, sandbox/capability/signing — all forward-compatible follow-ups (see Phase 2 non-goals in [plan.md](../../plan.md)).
+> Out of scope: `cpc fetch`, lockfiles, SemVer resolution, transitive C+ deps, dynamic `.dylib`/`.so` packaging, cross-compilation, sandbox/capability/signing — all forward-compatible follow-ups (see Phase 2 non-goals in [plan.md](../../../plan.md)).
+>
+> **Historical design record.** The manifest examples below show the v0.0.2
+> schema. v0.0.28 removed `[[bin]]`, derives target slices from the selected
+> platform, and added the package store. Use the current
+> [package guide](../../lang/packages.md) when writing a manifest.
 
 ## 1. Problem
 
 C+ entered v0.0.2 with imports but no package concept: every cross-file `import "foo.cplus"` was file-relative, and there was no way to depend on code that wasn't physically a sibling of `main.cplus`. A stdlib couldn't exist outside the language, FFI bindings couldn't be modeled, and the `04-curl-lite` benchmark stalled because there was no way to factor reusable helpers behind an import boundary.
 
 Three constraints shaped the design:
-- **AI-first ergonomics.** The compiler's import-rejection messages had to leave no doubt about whether a path was meant to be local or a package — guesswork is a tax the agent pays every session ([proves/stats.md](../../proves/stats.md) recorded ~10 turns of SKILL.md spelunking on the 04-curl-lite run).
+- **AI-first ergonomics.** The compiler's import-rejection messages had to leave no doubt about whether a path was meant to be local or a package — guesswork is a tax the agent pays every session.
 - **Manifest is the single source of truth.** A real package may ship as C+ source, as a prebuilt static archive, or as both. The compiler must trust the manifest's claims and reject anything that disagrees — silent fallthrough on a missing artifact is a footgun.
 - **No package manager.** `cpc` doesn't fetch, doesn't resolve, doesn't sandbox. Whatever ends up under `vendor/<name>/` is what `cpc build` uses; flattening and integrity are the AI agent's (or human's) job.
 
@@ -124,17 +129,17 @@ The dep walk runs on every code-emitting entry point (`cpc build`, `cpc test`, `
 
 | Concern | Code |
 |---------|------|
-| Manifest schema + E0857/E0863 | [cplus-core/src/manifest.rs](../../cplus-core/src/manifest.rs) |
-| Import classification + E0852/E0853/E0858/E0859 | [cplus-core/src/resolver.rs](../../cplus-core/src/resolver.rs) (`classify_import_path`) |
-| Host-triple detection + dep walk + E0854/E0855/E0860/E0861/E0862 | [cpc/src/main.rs](../../cpc/src/main.rs) (`detect_host_triple`, `collect_dep_link_args`) |
-| Smoke tests | [docs/examples/projects/tiny_source/](../examples/projects/tiny_source/), [docs/examples/projects/tiny_artifact/](../examples/projects/tiny_artifact/) |
-| End-to-end test coverage | [cpc/tests/e2e.rs](../../cpc/tests/e2e.rs) — 14 Phase-2 tests (8 of them Slice 2C) |
+| Manifest schema + E0857/E0863 | [cplus-core/src/manifest.rs](../../../cplus-core/src/manifest.rs) |
+| Import classification + E0852/E0853/E0858/E0859 | [cplus-core/src/resolver.rs](../../../cplus-core/src/resolver.rs) (`classify_import_path`) |
+| Host-triple detection + dep walk + E0854/E0855/E0860/E0861/E0862 | [cpc/src/main.rs](../../../cpc/src/main.rs) (`detect_host_triple`, `collect_dep_link_args`) |
+| Smoke tests | [docs/examples/projects/tiny_source/](../../examples/projects/tiny_source/), [docs/examples/projects/tiny_artifact/](../../examples/projects/tiny_artifact/) |
+| End-to-end test coverage | [cpc/tests/e2e.rs](../../../cpc/tests/e2e.rs) — 14 Phase-2 tests (8 of them Slice 2C) |
 
 ## 4. What the smoke tests demonstrate
 
-[`tiny_source`](../examples/projects/tiny_source/) — pure-C+ vendor package. A consumer declares `tiny = "*"`, imports `tiny/lib`, and calls `tiny::echo(42)`. Vendor's `Cplus.toml` is just `[package] name = "tiny"`. No binaries, no `[link]`. The canonical reference shape for stdlib (Phase 3).
+[`tiny_source`](../../examples/projects/tiny_source/) — pure-C+ vendor package. A consumer declares `tiny = "*"`, imports `tiny/lib`, and calls `tiny::echo(42)`. Vendor's `Cplus.toml` is just `[package] name = "tiny"`. No binaries, no `[link]`. The canonical reference shape for stdlib (Phase 3).
 
-[`tiny_artifact`](../examples/projects/tiny_artifact/) — bundled-binary vendor package. Vendor's `Cplus.toml` declares `[link] bundled = ["libtiny_artifact.a"] triples = [...]`. The implementation is a C file under `upstream/` (not built by cpc); the prebuilt `.a` lives at `src/lib/<host-triple>/libtiny_artifact.a`. The C+ side is a thin `extern fn tiny_artifact_double(...)` plus a `pub fn double(n)` wrapper. The canonical reference for `cpc-bindgen` output (Phase 4).
+[`tiny_artifact`](../../examples/projects/tiny_artifact/) is the updated bundled-binary smoke test. Its current manifest follows the v0.0.28 target-derived slice model described in that example's README; the older schema above remains here as the Phase 2 record.
 
 ## 5. Forward path
 

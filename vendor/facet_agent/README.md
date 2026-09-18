@@ -6,6 +6,7 @@ a connected agent can read the UI and act through it.
 ```toml
 [dependencies]
 facet_agent = "*"
+facet_runtime = "*"
 # plus the agent stack it serves (agent_core/mcp/inapp + the platform
 # overlay) — `cpc pm add . facet_agent` writes the closure
 ```
@@ -25,10 +26,10 @@ fn run() -> i32 {
 ```
 
 An **id, not an address**: the platform derives where it listens from the id and
-this process's pid — a 0600 Unix socket plus an HTTP port on desktop, an HTTP
-port on a phone. A launcher that spawned the app knows the pid, so it can work
-the address out without being told. The app also prints it and writes it to
-`/tmp/mcp-<id>-<pid>.json`.
+this process's pid. macOS and Linux expose a 0600 Unix socket plus an HTTP port;
+Windows, iOS, and Android expose the loopback HTTP port. A launcher that spawned
+the app knows the pid, so it can work the address out without being told. The
+app also prints it and writes it to `/tmp/mcp-<id>-<pid>.json`.
 
 Without a policy, anything that connects is admitted with `operator()` — read
 the tree and drive it, nothing behind a tier. `facet_agent/consent` is a
@@ -46,9 +47,9 @@ construction rather than by promise.
 
 | Need | File |
 |---|---|
-| Use it in minutes | `docs/tutorial.md` |
-| Why it is shaped this way, and the traps | `docs/guide.md` |
-| Exact signatures | `docs/ref.md` |
+| Use it in minutes | [docs/tutorial.md](docs/tutorial.md) |
+| Why it is shaped this way, and the traps | [docs/guide.md](docs/guide.md) |
+| Exact signatures | [docs/ref.md](docs/ref.md) |
 
 Tests: `cd vendor/facet_agent && cpc test`. The suite compiles the serving
 surface on the active platform — the `vocab::Agent` → policy translation

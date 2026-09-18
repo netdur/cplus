@@ -43,11 +43,12 @@ if o == notifications::Outcome::NotPermitted {
 }
 ```
 
-## Three things that will bite you
+## Things that will bite you
 
-- **Ask for the permission first.** Both platforms accept a notification from an
-  app without permission and silently never show it. This package returns
-  `NotPermitted` instead — which is why it depends on `permissions`.
+- **Ask for the permission first on Apple and Android.** Those platforms accept
+  a notification from an app without permission and silently never show it.
+  This package returns `NotPermitted` instead — which is why it depends on
+  `permissions`.
 - **On Apple, nothing appears while your app is in front** unless a delegate
   says to present it. This package installs one. Without it the code is correct
   and nothing happens, which is the most common "notifications don't work"
@@ -89,9 +90,11 @@ handled exactly like a local one), and media/transport-control notifications
 (sticky + actions covers the ask; the rest comes from a `MediaSession`).
 See `plans/notifications.md` §6 and §9.
 
-**Taps work, cold and warm.** `on_tap` hands back the payload the notification
-carried. A tap on a *dead* app launches it and still reaches your handler —
-`facet/app_events` latches the payload, so registering late is safe.
+**Taps work cold and warm on Apple and Android.** `on_tap` hands back the
+payload the notification carried. A tap on a *dead* app launches it and still
+reaches your handler — `facet/app_events` latches the payload, so registering
+late is safe. The current Windows balloon backend posts and clears
+notifications but does not receive clicks; Linux is unsupported.
 
 ## Tests
 

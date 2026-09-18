@@ -96,6 +96,5 @@ fn prepare_audio_thread() {
     let _q: result::Result[i32, i32] =
         thread::set_current_priority(thread::Priority::RealtimeAudio);
     // optionally mlock DSP state buffers
-    return;
 }
 ```

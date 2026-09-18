@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Ownership and SQLite behavior:
+[guide.md](guide.md).
+
 Manual for the idiomatic `sqlite` package.
 
 ```cplus

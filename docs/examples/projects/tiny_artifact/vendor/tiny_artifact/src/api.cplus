@@ -1,7 +1,7 @@
 // tiny_artifact — C+ side of a bundled-artifact package.
 //
 // The implementation lives in C (see `upstream/tiny_artifact.c`); the
-// shipped form is `src/lib/<host-triple>/libtiny_artifact.a`. C+ callers
+// shipped form is `lib/<target-triple>/libtiny_artifact.a`. C+ callers
 // see only the `pub fn` below — the `extern fn` declaration matches the
 // C symbol name and signature exactly, and the safe wrapper hides the
 // `{ ... }` block at the FFI boundary.

@@ -75,7 +75,7 @@ pub fn lower_multi(
     // the same reason derive does it here, and with the same consequence:
     // the rest of the compiler sees a hand-written method.
     cx.expand_interface_defaults(prog);
-    // v0.0.31: `async fn main` / `#[test] async fn`. Split each into a
+    // v0.0.28: `async fn main` / `#[test] async fn`. Split each into a
     // module-private async body plus a synchronous entry that drives it,
     // before the const and parameter tables are built so the synthesized
     // functions are ordinary items to everything that follows.
@@ -4096,7 +4096,7 @@ impl Lower {
 }
 
 impl Lower {
-    /// v0.0.31: an entry the compiler drives. `async fn main() -> i32` and
+    /// v0.0.28: an entry the compiler drives. `async fn main() -> i32` and
     /// `#[test] async fn t()` are pure sugar over the one drive loop the
     /// language has: the async body moves to a module-private
     /// `__async_<name>`, and a synchronous `<name>` takes its place whose
@@ -5492,7 +5492,7 @@ fn main() -> i32 { return 0; }\n";
         assert!(has_to_text_call, "nested field should call to_text");
     }
 
-    // ---- v0.0.31: `async fn main` / `#[test] async fn` desugar ----
+    // ---- v0.0.28: `async fn main` / `#[test] async fn` desugar ----
 
     fn fn_named<'a>(prog: &'a Program, name: &str) -> &'a Function {
         prog.items

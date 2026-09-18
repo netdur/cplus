@@ -38,7 +38,7 @@ keystroke (debounce for cost, not correctness).
 
 | Function | Returns | Use for |
 |---|---|---|
-| `cplus_version()` | `string` (e.g. `"0.0.24"`) | show the toolchain version |
+| `cplus_version()` | `string` (e.g. `"0.0.28"`) | show the toolchain version |
 | `cplus_compile(src)` | JSON string (see §2.1) | the **check + IR** view |
 | `cplus_run(src)` | JSON string (see §2.2) | the **run** view (execute + output) |
 
@@ -78,7 +78,7 @@ just instantiate the bytes (§4).
 ```js
 import init, { cplus_compile, cplus_run, cplus_version } from "./pkg/cpc_wasm.js";
 await init();                       // fetches + instantiates cpc_wasm_bg.wasm once
-const version = cplus_version();    // "0.0.24"
+const version = cplus_version();    // "0.0.28"
 ```
 
 `init()` must complete before any call. It is idempotent-ish but call it once at

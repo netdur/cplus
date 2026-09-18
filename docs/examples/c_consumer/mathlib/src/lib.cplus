@@ -142,7 +142,7 @@ export extern fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
 // ---- Private helper (internal linkage in lib mode) ----
 //
 // `pub` is intentionally absent — Slice 5.B marks non-`pub` items as
-// `internal` LLVM linkage in `[lib]` builds, so this name doesn't
+// `internal` LLVM linkage in `[library]` builds, so this name doesn't
 // appear in `nm -g libmathlib.a`. `-O2` LTO may inline it away entirely.
 
 fn helper(x: i32) -> i32 {

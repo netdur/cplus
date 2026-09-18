@@ -1,5 +1,8 @@
 # Tutorial
 
+Permission and lifecycle details: [guide.md](guide.md). Signatures:
+[ref.md](ref.md).
+
 A screen that shows where you are.
 
 ## 1. Depend on it
@@ -7,14 +10,22 @@ A screen that shows where you are.
 ```toml
 [dependencies]
 location    = "*"
-permissions = "*"     # Android only needs this; see step 3
+permissions = "*"
+facet       = "*"
+flex_layout = "*"
+events      = "*"
+stdlib      = "*"
 ```
+
+Use `cpc pm add . location` to add the platform-specific backend closure.
 
 ## 2. Ask for one fix
 
 ```cplus
 import "stdlib/option" as option;
+import "stdlib/result" as result;
 import "location/location" as loc;
+import "facet/component" as component;
 
 fn got(f: loc::Fix, ctx: *u8) {
     if !f.is_valid() {
@@ -52,7 +63,9 @@ match perm::state(perm::LOCATION_WHEN_IN_USE) {
 }
 ```
 
-Writing the gate on every platform is harmless and keeps one code path.
+Writing the gate on every platform is harmless and keeps one code path. Linux
+asks through GeoClue's desktop authorization agent when the request starts;
+Windows currently reports `Unsupported`.
 
 ## 4. Follow the person
 
@@ -103,3 +116,5 @@ Each platform has exactly one thing that is not guessable. The probes under
 | macOS | `locationprobe_mac/bundle.sh` | must be a signed `.app`, or it is silent |
 | iOS | `locationprobe_ios/sim.sh` | `xcrun simctl location <udid> set <lat>,<lon>` |
 | Android | `locationprobe_android/build.sh` | `adb emu geo fix <lon> <lat>` — **longitude first** |
+| Linux | — | run under a desktop session with GeoClue2 and its authorization agent |
+| Windows | — | current backend reports `Unsupported` |

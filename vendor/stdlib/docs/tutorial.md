@@ -61,7 +61,7 @@ not move out of the vector.
 ```cplus
 var t: text::Text = text::from_str("hello");
 let _s: status::Status = t.append(" world");
-let view: str = t.view();          // borrow; do not keep past mutation/drop
+let view: str = t;                 // expected `str` borrows the named owner
 io::println(view);
 ```
 

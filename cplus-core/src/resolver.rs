@@ -1460,7 +1460,7 @@ fn classify_import_path(
 /// Kept in lockstep with `cplus-pm`'s `store` module — the pm writes the
 /// store, the resolver reads it; the shared vocabulary is deliberate (D16 in
 /// `cplus-pm/docs/decisions.md`). The tier is the compatibility line of the
-/// running toolchain: the exact version pre-1.0 (`v0.0.27`), `major.minor`
+/// running toolchain: the exact version pre-1.0 (`v0.0.28`), `major.minor`
 /// from 1.0 (`v1.2`, D13/D14). `$CPLUS_HOME` overrides the root — which is
 /// also how tests keep themselves hermetic from a populated `~/.cplus`.
 pub fn store_vendor_dir() -> Option<std::path::PathBuf> {
@@ -2261,7 +2261,7 @@ struct RewriteCtx {
     self_file_path: PathBuf,
     entry_file_id: String,
     /// Phase 5 Slice 5.A: this project's root file is the entry of a
-    /// `[lib]` target. Top-level items in `entry_file_id` skip mangling
+    /// `[library]` target. Top-level items in `entry_file_id` skip mangling
     /// so C consumers can link against an exported `fn add` as the bare
     /// `_add` symbol. Files imported by the entry stay qualified normally —
     /// they're not part of the public C ABI.

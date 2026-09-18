@@ -1,6 +1,6 @@
 # Phase 7 — Generics + interfaces
 
-> Status: design note. Implementation lands in 5–6 sub-slices per the Phase 7 sequencing block in [plan.md](../../plan.md) §3.
+> Status: design note. Implementation lands in 5–6 sub-slices per the Phase 7 sequencing block in [plan.md](../../../plan.md) §3.
 > Scope: parametric polymorphism (type parameters on functions and types); bounded polymorphism (interface bounds on type parameters); interface declaration and implementation syntax; monomorphization at codegen.
 > Out of scope: dynamic dispatch / interface objects (no `dyn` equivalent — Phase 7 is monomorphization-only); associated types; higher-kinded types; const generics; specialization; auto-derive attributes; heap allocation primitives (sibling slice, see §8).
 >

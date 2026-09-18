@@ -109,7 +109,7 @@ complete positional argument list during sema, so codegen, monomorphization,
 mangling, and the C ABI are untouched.
 
 - **AST**
-  - `Param` gains `default: Option<Box<Expr>>` ([ast.rs](../../cplus-core/src/ast.rs) `struct Param`).
+  - `Param` gains `default: Option<Box<Expr>>` ([ast.rs](../../../cplus-core/src/ast.rs) `struct Param`).
   - `Call` (and `GenericEnumCall`) gain `arg_labels: Vec<Option<Ident>>`, parallel
     to `args`, set by the parser. There is a single `Call` node for both free-fn
     and method calls, so only these two nodes need labels.

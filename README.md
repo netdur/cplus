@@ -38,7 +38,7 @@ brew install netdur/cplus/cplus
 
 This installs prebuilt `cpc` (compiler), `cpc-lsp` (language server), and `cpc-bindgen` (FFI generator) binaries — **no build step, installed in seconds**. Update later with `brew upgrade cplus`.
 
-On Linux (`x86_64`, Debian/Ubuntu) and Windows (`x86_64`), prebuilt binaries are attached to each [GitHub release](https://github.com/netdur/cplus/releases/latest). These ports work but are not yet part of the tested matrix (see [Requirements](#requirements)):
+On Linux (`x86_64`, Debian/Ubuntu) and Windows (`x86_64`), prebuilt binaries are attached to each [GitHub release](https://github.com/netdur/cplus/releases/latest). macOS, Linux, and Windows are tested after every push (see [Requirements](#requirements)):
 
 - **Linux**: download the `.deb` and `sudo apt install ./cplus_*_amd64.deb` (this resolves the clang ≥ 19 dependency).
 - **Windows**: download `cplus-x86_64-pc-windows-msvc.zip` and put `cpc.exe`, `cpc-lsp.exe`, and `cpc-bindgen.exe` on your `PATH`.
@@ -57,7 +57,12 @@ xcode-select --install
 
 The front-end-only commands (`cpc check`, `cpc --emit-ll`, `cpc lsp`, `cpc graph`, `cpc query`, `cpc mcp`, `cpc fmt`, `cpc doc`) are self-contained and need no external tools.
 
-C+ is developed and tested on macOS / Apple Silicon (`aarch64-apple-darwin`) against **Apple clang 21.0.0** — the configuration the test suite runs against. As of v0.0.27 there are working **Linux** (`x86_64`, generated GTK 4 / libadwaita stack) and **Windows** (`x86_64-pc-windows-msvc`, Win32) ports; those targets and other clang versions may work but are not yet part of the tested matrix.
+C+ is continuously tested on **macOS / Apple Silicon**
+(`aarch64-apple-darwin`), **Linux / x86-64**, and **Windows / x86-64 MSVC**.
+Each job runs the Rust workspace tests; Linux and Windows also build the release
+binaries and use the resulting `cpc` to compile, link, and run a native smoke
+program. Cross targets such as iOS, Android, and ESP32 use separate
+package-specific, simulator, device, and probe-app checks.
 
 ### Language Tools
 
@@ -68,10 +73,10 @@ The C+ repository includes a robust suite of practical tooling to improve the de
 - **`cpc test`**: Discovers and runs `#[test]` functions and doctests.
 - **`cpc fmt`**: Formats your C+ source code.
 - **`cpc doc`**: Generates Markdown documentation from public items.
-- **`cpc lsp`**: Starts the Language Server (goto-definition, references, hover, outline — served from the code graph).
-- **`cpc graph` / `cpc query` / `cpc mcp`**: The resolved, typed code-knowledge graph — as JSON, as per-symbol queries (`def`/`refs`/`callers`/`callees`/`call-hierarchy`/`type-at`/`context`/…), or as a resident MCP server for agents.
+- **`cpc lsp`**: Starts the resident Language Server (completion, goto-definition, references, hover, outline — served from one cached project graph).
+- **`cpc graph` / `cpc query` / `cpc mcp`**: The resolved, typed code-knowledge graph — as JSON, as per-symbol queries (`complete`/`def`/`refs`/`callers`/`callees`/`call-hierarchy`/`type-at`/`context`/…), or as a resident MCP server for agents.
 - **`cpc --realtime-report`**: Whole-project digest of the real-time contract analysis.
-- **`cpc-bindgen`**: Generates C+ FFI bindings from C headers, whole typed C+ packages from Objective-C and Swift frameworks (`--framework` / `--swift`), GObject Introspection graphs (`--gobject`), and pkg-config C packages (`--cpackage`).
+- **`cpc-bindgen`**: Generates C+ FFI bindings from C headers, whole typed C+ packages from Objective-C and Swift frameworks (`--framework` / `--swift`), Java classes (`--java`), GObject Introspection graphs (`--gobject`), and pkg-config C packages (`--cpackage`).
 
 ### Creating a C+ Project
 
@@ -125,6 +130,8 @@ To be a truly great community, C+ needs to welcome developers from all walks of 
 
 ## Learning More
 
+- Read the [v0.0.28 release notes](changeslog.md#v0028--2026-09-18) for the
+  upgrade checklist and platform/toolchain highlights.
 - Build a GUI with the [Facet tutorial](vendor/facet/docs/tutorial.md) and [apps, windows, and navigation guide](vendor/facet/docs/navigation.md).
 - Read [`docs/lang/spec.md`](docs/lang/spec.md) — the normative language specification (syntax, semantics, ownership model, the builder-block DSL, error-code catalog).
 - Check the [`docs/`](docs/) directory — the language docs in [`docs/lang/`](docs/lang/) (including [`docs/lang/skill.md`](docs/lang/skill.md), a dense reference for LLMs writing C+), runnable [`docs/examples/`](docs/examples/), and compiler internals + design deep-dives in [`docs/compiler/`](docs/compiler/).

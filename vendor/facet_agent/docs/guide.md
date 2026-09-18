@@ -1,5 +1,7 @@
 # facet_agent — guide
 
+Fast start: [tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 Why this package exists, and the choices in it that are not obvious.
 
 ## Why it is a package and not part of facet
@@ -91,11 +93,11 @@ bound at all" — three states that otherwise look identical.
 never reused and nothing else would ever remove a dead one; the `atexit` hook
 covers a normal quit but not a kill.
 
-## Two doors on desktop, one on mobile
+## Two doors on Unix desktops, HTTP everywhere
 
 | | speaks | reachable by |
 |---|---|---|
-| Unix socket (desktop) | line-delimited JSON-RPC | the owning user only — 0600 |
+| Unix socket (macOS, Linux) | line-delimited JSON-RPC | the owning user only — 0600 |
 | HTTP (everywhere) | Streamable HTTP, `application/json` | any MCP client, no bridge; any local process |
 
 Both funnel into one `handle_request`, so a verb cannot exist on one and not the
@@ -103,8 +105,9 @@ other, and one consent gate covers both.
 
 The socket keeps filesystem permissions HTTP cannot have. HTTP is what an MCP
 client can actually reach — without it, every tool needs its own `nc` bridge
-written for it, and a phone has no socket to bridge to at all. Neither subsumes
-the other, which is why there are two.
+written for it, and Windows and mobile have no Unix socket in this stack to
+bridge to at all. Neither subsumes the other, which is why Unix desktops keep
+both.
 
 Keep-alive, not `Connection: close`: **the connection is the session.** A
 client's self-reported name arrives in `initialize` and is cleared when a

@@ -1,5 +1,8 @@
 # Tutorial
 
+Quick path: present the system share UI. Meaning and platform limits:
+[guide.md](guide.md). Signatures: [ref.md](ref.md).
+
 ## 1. Depend on it
 
 ```toml

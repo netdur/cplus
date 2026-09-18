@@ -15,6 +15,7 @@ applinks    = "*"
 
 ```cplus
 import "applinks/applinks" as applinks;
+import "stdlib/option" as option;
 import "stdlib/url" as url;
 
 fn opened(u: str, ctx: *u8) {
@@ -26,7 +27,6 @@ fn opened(u: str, ctx: *u8) {
         }
         option::Option::None => { }
     }
-    return;
 }
 
 let _o: applinks::Outcome = applinks::on_link(opened, scheme: "myapp");

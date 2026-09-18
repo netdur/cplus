@@ -79,6 +79,8 @@ the keyboard:
 
 ```toml
 [dependencies]
+facet_agent = "*"
+agent_inapp = "*"
 agent_core = "*"
 agent_mcp  = "*"
 json       = "*"
@@ -90,18 +92,17 @@ agent_appkit = "*"
 ```cplus
 import "facet_agent/agent" as agent;
 
-backend::install();
 agent::enable();
 
 var app: runtime::App = runtime::App::new("hello");
 app.agent_mcp();                  // an ID, defaulting to the app's name
 ```
 
-Then, with the app running:
-
-```
-printf '{"method":"describe_ui","params":{},"id":1}\n' | nc -U /tmp/hello.sock
-```
+With the app running, use either endpoint printed at startup: the 0600 Unix socket at
+`/tmp/mcp-hello-<pid>.socket`, or the streamable-HTTP endpoint at
+`http://127.0.0.1:<9000+pid%1000>/`. The
+[facet_agent tutorial](../../facet_agent/docs/tutorial.md#connect) shows the
+HTTP request.
 
 `describe_ui` answers the live tree addressed by key. `click` drives a control
 through the same path a mouse takes. `mode: "full"` describes the native view

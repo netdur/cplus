@@ -26,7 +26,7 @@
 //! - E0306: block produces no value but one is required
 //! - E0307: `return` without a value when function returns non-`Unit`
 //! - E0308: wrong number of arguments
-//! - E0309: `main` must have signature `fn main() -> i32` (or `async fn main() -> i32`, v0.0.31)
+//! - E0309: `main` must have signature `fn main() -> i32` (or `async fn main() -> i32`, v0.0.28)
 //! - E0310: float literals not supported in Phase 1
 //! - E0311: non-`i32` integer suffix not supported in Phase 1
 //! - E0312: feature parsed but not yet supported in Phase 1
@@ -7381,7 +7381,7 @@ impl SemaCx<'_> {
         if sig.return_type == Ty::Error {
             return;
         }
-        // v0.0.31: an `async fn main() -> i32` reaches here as the synchronous
+        // v0.0.28: an `async fn main() -> i32` reaches here as the synchronous
         // wrapper lower desugars it to, so the same rule judges both spellings
         // and a unit-returning `async fn main()` is E0309 like `fn main()` is.
         if !no_params || sig.return_type != Ty::I32 {
@@ -8416,7 +8416,7 @@ impl SemaCx<'_> {
         // E0358 — signature.
         let params_ok = f.params.is_empty();
         let return_ok = matches!(sig.return_type, Ty::Unit | Ty::I32);
-        // v0.0.31: a `#[test] async fn` reaches here as the synchronous wrapper
+        // v0.0.28: a `#[test] async fn` reaches here as the synchronous wrapper
         // lower desugars it to (the attribute rides with the wrapper), so
         // the same shapes are allowed with or without `async`.
         if !params_ok || !return_ok {
@@ -11006,7 +11006,7 @@ impl SemaCx<'_> {
         };
         // Sandbox: in project mode the resolved path must stay inside the
         // including file's package (E0918), the same boundary imports (E0914)
-        // and `[[bin]]`/`[lib]` paths (E0868) enforce. Without it, untrusted
+        // and manifest entry paths (E0868) enforce. Without it, untrusted
         // source could `#include_bytes("/etc/passwd")` or `../../../.ssh/id_rsa`
         // and bake any readable host file into the artifact.
         if include_path_escapes_package(&base_dir, path) {
@@ -13243,7 +13243,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         // `#coro_promise::[T](hdl: *u8) -> *T` — the address of a completed
         // coroutine's promise slot (its return value), given the coroutine
-        // handle. v0.0.29 phase 2: what lets `future::wait_or_cancel` extract a
+        // handle. v0.0.28: what lets `future::wait_or_cancel` extract a
         // driven future's value in surface C+ instead of intrinsic IR. The
         // type argument is required because LLVM's `llvm.coro.promise` takes
         // the promise ALIGNMENT as a compile-time constant — the T fixes it.
@@ -32730,7 +32730,7 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
         );
     }
 
-    // ---- v0.0.31: `async fn main` / `#[test] async fn` ----
+    // ---- v0.0.28: `async fn main` / `#[test] async fn` ----
     //
     // Lower splits an async entry into `__async_<name>` plus a synchronous
     // wrapper whose body is the `#block_on` drive, so these run lower first
@@ -34313,7 +34313,7 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
         // E1002 telling the caller their labels were "in different positions"
         // when they were in the very same ones.
         //
-        // `vendor/static-arena` — two arenas, one
+        // `vendor/static_arena` — two arenas, one
         // `alloc_bytes(count, aligned_to:, zeroed:)` apiece — could not compile
         // on ANY platform, and the message pointed away from the cause.
         // `check_call`'s own comment states the invariant this pins: "Identical

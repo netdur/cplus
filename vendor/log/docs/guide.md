@@ -146,6 +146,5 @@ fn init_logging(verbose: bool) {
     }
     log::set_uses_color(true);   // or false under CI
     log::info("logging ready");
-    return;
 }
 ```

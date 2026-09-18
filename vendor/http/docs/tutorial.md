@@ -7,8 +7,20 @@ signatures in [ref.md](ref.md).
 
 ```toml
 [dependencies]
-http = "*"
+http        = "*"
+stdlib      = "*"
+facet       = "*"   # only for services::run_on_main below
+flex_layout = "*"
+events      = "*"
+
+[macos.dependencies]
 objc = "*"
+
+[ios.dependencies]
+objc = "*"
+
+[android.dependencies]
+jni = "*"
 ```
 
 `objc` is http's own dependency, and it has to be named here too: the resolver
@@ -19,6 +31,8 @@ manifest, not from a dependency's. Leaving it out is `E0852: first segment
 ```cplus
 import "stdlib/result" as result;
 import "stdlib/status" as status;
+import "stdlib/vec" as vec;
+import "facet/services" as services;
 import "http/http" as http;
 ```
 
@@ -27,11 +41,10 @@ import "http/http" as http;
 first `set_header` you write — the same class of mistake as leaving `objc` out
 of the manifest, one layer up.
 
-macOS, iOS and Android, from the same source. The manifest names `http` plus
-one transitive dep per platform you build for — `objc` on Apple (which brings
-`-framework Foundation` with it), `jni` on Android — which is the same rule
-every package here follows. Linux has no transport yet and says so at runtime
-rather than failing to link. See the README for the manifest block.
+macOS, iOS, Android, Linux, and Windows use the same source-level API. The
+platform transport is NSURLSession, `HttpURLConnection`, libcurl, or WinHTTP.
+The manifest names `objc` on Apple and `jni` on Android; Linux and Windows add
+no package dependency. See the README for the compact manifest block.
 
 ## GET something
 

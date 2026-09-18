@@ -68,10 +68,9 @@ pub struct Manifest {
     /// Phase 2 (v0.0.2) — package system MVP. Vendor packages declare
     /// their linker requirements in a top-level `[link]` table; the
     /// consumer's build driver walks the dep graph and forwards each
-    /// dep's `[link]` to its own clang invocation. Consumers typically
-    /// don't populate this directly — they use `[[bin]] frameworks`/
-    /// `libs` for their own binary's link surface. Both sources of
-    /// link args are merged at build time.
+    /// dep's `[link]` to its own clang invocation. Applications and libraries
+    /// also use this table for their own link surface. Both sources of link
+    /// arguments are merged at build time.
     pub link: Option<LinkSpec>,
     /// Phase 2 (v0.0.2) — consumer's declared dependencies. Each entry
     /// names a directory expected to exist at `vendor/<name>/` with a
@@ -87,8 +86,8 @@ pub struct Manifest {
     /// them on — the APK assembly step is still the build script's
     /// (`plans/aar.md`, `plans/third-party-sdks.md` §3).
     pub maven: std::collections::BTreeMap<String, String>,
-    /// Directory containing the manifest file. All bin `path` entries are
-    /// resolved relative to this directory.
+    /// Directory containing the manifest file. All `entry` paths are resolved
+    /// relative to this directory.
     pub root: PathBuf,
     /// Optional `[build]` table — how this package is consumed. See `BuildSpec`.
     pub build: BuildSpec,
@@ -122,7 +121,7 @@ pub struct RealtimeProfile {
 /// The manifest is the single source of truth: the build driver
 /// verifies the filesystem matches what's declared, and refuses to
 /// link anything else. See plan.md §"Phase 2 — Manifest = single
-/// source of truth" for the E0860-E0863 error codes.
+/// source of truth" for the E0860/E0861 error codes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LinkSpec {
     /// macOS / iOS frameworks. Each entry becomes `-framework <name>`
@@ -260,7 +259,7 @@ pub struct LibTarget {
 /// `prebuild` is the cache: the first consumer build compiles the package into
 /// `lib/<triple>/<name>.a`, generates `lib/include/`, and records a fingerprint
 /// next to the archive. Later builds link the archive instead of recompiling.
-/// A package that declares it needs no `[lib]` table — one is synthesized, so
+/// A package that declares it needs no `[library]` table — one is synthesized, so
 /// `prebuild = true` is the whole opt-in.
 ///
 /// `dev` is the escape hatch, and it wins over everything: no headers, no

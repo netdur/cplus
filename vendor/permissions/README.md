@@ -36,7 +36,6 @@ Read a state, ask when it can be asked, answer through a callback.
 ```cplus
 fn answered(name: str, s: permissions::State, ctx: *u8) {
     if s == permissions::State::Granted { start_capture(); }
-    return;
 }
 
 match permissions::state(of: permissions::CAMERA) {

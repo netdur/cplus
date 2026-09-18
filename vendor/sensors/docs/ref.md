@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Units and platform behavior:
+[guide.md](guide.md).
+
 `import "sensors/sensors" as sens;`
 
 ## Kind
@@ -78,3 +81,9 @@ fn Readings::drop(ref this)        // stops
 ```
 
 **Stops on drop.** Park it in a `static` or a field.
+
+## Platform coverage
+
+Apple and Android stream from CoreMotion and the Android sensor manager. The
+current Linux and Windows backends build and report `Unavailable` for every
+kind; they do not fabricate readings or invoke the sample callback.

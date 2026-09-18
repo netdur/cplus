@@ -8,6 +8,7 @@ Build a small agent-id tree, check auth and action outcomes. Details:
 ```toml
 [dependencies]
 agent_core = "*"
+stdlib = "*"
 ```
 
 ```cplus

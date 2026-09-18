@@ -1,6 +1,6 @@
 # C+ Compiler Internals
 
-A compiler-internals reference for [`cplus-core`](../cplus-core/src/) (the library), [`cpc`](../cpc/src/) (the driver binary), and [`cpc-lsp`](../cpc-lsp/src/) (the language server). Audience: someone reading the source.
+A compiler-internals reference for [`cplus-core`](../../cplus-core/src/) (the library), [`cpc`](../../cpc/src/) (the driver binary), and [`cpc-lsp`](../../cpc-lsp/src/) (the language server). Audience: someone reading the source.
 
 If you want to use the language, read [skill.md](../lang/skill.md) (how to write C+) and [spec.md](../lang/spec.md) (the normative reference). If you want to extend it, read this file then `sema.rs` and `codegen.rs`.
 
@@ -66,32 +66,34 @@ Each phase is total — it produces a value or a list of `Diagnostic`s. There is
 
 | File | LOC | Phase |
 |---|---|---|
-| [`lexer.rs`](../cplus-core/src/lexer.rs) | 1.3k | Lex |
-| [`parser.rs`](../cplus-core/src/parser.rs) | 4.7k | Parse |
-| [`ast.rs`](../cplus-core/src/ast.rs) | 0.9k | AST types |
-| [`attrs.rs`](../cplus-core/src/attrs.rs) | 0.8k | Attribute validation + test discovery |
-| [`lower.rs`](../cplus-core/src/lower.rs) | 1.2k | AST → AST desugaring |
-| [`resolver.rs`](../cplus-core/src/resolver.rs) | 2.7k | Multi-file project loading |
-| [`sema.rs`](../cplus-core/src/sema.rs) | 14.4k | Name resolution + type checking + generic-instantiation collection |
-| [`borrowck.rs`](../cplus-core/src/borrowck.rs) | 5.4k | Move/borrow analysis |
-| [`monomorphize.rs`](../cplus-core/src/monomorphize.rs) | 3.0k | Generic-template expansion |
-| [`codegen.rs`](../cplus-core/src/codegen.rs) | 16.6k | LLVM IR emission |
-| [`manifest.rs`](../cplus-core/src/manifest.rs) | 1.0k | `Cplus.toml` parser |
-| [`diagnostics.rs`](../cplus-core/src/diagnostics.rs) | 0.4k | Diagnostic shape + rendering helpers |
-| [`fmt.rs`](../cplus-core/src/fmt.rs) | 0.6k | `cpc fmt` |
-| [`docgen.rs`](../cplus-core/src/docgen.rs) | 0.5k | `cpc doc` |
-| [`doctest.rs`](../cplus-core/src/doctest.rs) | 0.4k | Doctest extraction |
-| [`atomic.rs`](../cplus-core/src/atomic.rs) | 0.2k | `__cplus_atomic_*` intrinsic name → LLVM atomic mapping |
-| [`cpc/src/main.rs`](../cpc/src/main.rs) | 2.7k | CLI driver |
-| [`cpc-lsp/src/main.rs`](../cpc-lsp/src/main.rs) | — | Language server (LSP over stdio) |
+| [`lexer.rs`](../../cplus-core/src/lexer.rs) | 2.4k | Lex |
+| [`parser.rs`](../../cplus-core/src/parser.rs) | 7.6k | Parse |
+| [`ast.rs`](../../cplus-core/src/ast.rs) | 2.2k | AST types |
+| [`attrs.rs`](../../cplus-core/src/attrs.rs) | 1.7k | Attribute validation + test discovery |
+| [`lower.rs`](../../cplus-core/src/lower.rs) | 5.9k | AST → AST desugaring |
+| [`resolver.rs`](../../cplus-core/src/resolver.rs) | 4.4k | Multi-file project loading |
+| [`sema.rs`](../../cplus-core/src/sema.rs) | 36.9k | Name resolution + type checking + generic-instantiation collection |
+| [`borrowck.rs`](../../cplus-core/src/borrowck.rs) | 14.4k | Move/borrow analysis |
+| [`monomorphize.rs`](../../cplus-core/src/monomorphize.rs) | 3.4k | Generic-template expansion |
+| [`codegen.rs`](../../cplus-core/src/codegen.rs) | 29.5k | LLVM IR emission |
+| [`manifest.rs`](../../cplus-core/src/manifest.rs) | 2.7k | `Cplus.toml` parser |
+| [`diagnostics.rs`](../../cplus-core/src/diagnostics.rs) | 0.8k | Diagnostic shape + rendering helpers |
+| [`fmt.rs`](../../cplus-core/src/fmt.rs) | 0.9k | `cpc fmt` |
+| [`docgen.rs`](../../cplus-core/src/docgen.rs) | 0.6k | `cpc doc` |
+| [`doctest.rs`](../../cplus-core/src/doctest.rs) | 0.4k | Doctest extraction |
+| [`atomic.rs`](../../cplus-core/src/atomic.rs) | 0.2k | `__cplus_atomic_*` intrinsic name → LLVM atomic mapping |
+| [`cpc/src/main.rs`](../../cpc/src/main.rs) | 8.5k | CLI driver |
+| [`cpc-lsp/src/main.rs`](../../cpc-lsp/src/main.rs) | 1.4k | Language server (LSP over stdio) |
 
-Total: ~54k LOC of Rust. About 30k is the sema + codegen pair; the rest is plumbing.
+The files above total about 124k lines. Semantic analysis and code generation
+account for about 66k of them; the remaining files cover parsing, ownership,
+project loading, manifests, diagnostics, tooling, and the command-line driver.
 
 ---
 
 ## 2. Driver flow
 
-`cpc <subcommand> [args]` dispatches in [`cpc/src/main.rs`](../cpc/src/main.rs):
+`cpc <subcommand> [args]` dispatches in [`cpc/src/main.rs`](../../cpc/src/main.rs):
 
 - `cpc FILE.cplus -o OUT` — single-file build. Reads source → `build_ir` (lex/parse/attrs/lower/sema/borrowck/mono/codegen) → writes `.ll` to a temp file → invokes `clang` to assemble + link.
 - `cpc build` — project build. `manifest::load("Cplus.toml")` → `resolver::load_project_full` → same downstream phases → `clang` with the manifest's `frameworks` / `libs` / `[link].extra_objects` / dep `[link]` contributions.
@@ -108,7 +110,7 @@ The driver never embeds LLVM as a library — it shells out to `clang` for assem
 
 ## 3. Lexer
 
-`fn tokenize(src: &str) -> Result<Vec<Token>, LexError>` ([`lexer.rs`](../cplus-core/src/lexer.rs)).
+`fn tokenize(src: &str) -> Result<Vec<Token>, LexError>` ([`lexer.rs`](../../cplus-core/src/lexer.rs)).
 
 Hand-written lexer. Returns a `Vec<Token>` where each `Token` carries a `TokenKind` and a `Span { byte_start, byte_end }`. Comments and whitespace are dropped by default; `tokenize_with_trivia` keeps them (used by `fmt` and `docgen`).
 
@@ -125,13 +127,13 @@ Spans are byte offsets into the original source. The `LineMap` helper in `diagno
 
 ## 4. Parser
 
-`fn parse(tokens: Vec<Token>) -> Result<Program, ParseError>` ([`parser.rs`](../cplus-core/src/parser.rs)).
+`fn parse(tokens: Vec<Token>) -> Result<Program, ParseError>` ([`parser.rs`](../../cplus-core/src/parser.rs)).
 
 Recursive descent. One-token lookahead with occasional two-token disambiguation (e.g. `Type::method` vs `mod::name`). On the first error the parser returns — no recovery, no partial parse. (Acceptable because incremental editor support runs through the LSP, which calls `parse` repeatedly on snapshots.)
 
 ### AST shape
 
-The AST lives in [`ast.rs`](../cplus-core/src/ast.rs). The two top-level types:
+The AST lives in [`ast.rs`](../../cplus-core/src/ast.rs). The two top-level types:
 
 ```rust
 pub struct Program {
@@ -170,7 +172,7 @@ pub enum ItemKind {
 
 ## 5. Attribute validation + test discovery
 
-[`attrs.rs`](../cplus-core/src/attrs.rs).
+[`attrs.rs`](../../cplus-core/src/attrs.rs).
 
 Two entry points:
 
@@ -193,7 +195,7 @@ The attribute table is the single source of truth. Adding a new attribute means:
 
 ## 6. Lowering
 
-`fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic>` ([`lower.rs`](../cplus-core/src/lower.rs)).
+`fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic>` ([`lower.rs`](../../cplus-core/src/lower.rs)).
 
 In-place AST rewrites that happen before sema so the rest of the compiler only deals with the canonical forms:
 
@@ -208,7 +210,7 @@ Lower emits diagnostics in the E0347–E0352 range for malformed `if let` / `gua
 
 ## 7. Multi-file resolver
 
-`fn load_project_full(entry: &Path, manifest_root: &Path, is_lib: bool, deps: Option<&[String]>) -> Result<LoadedProject, LoadFailure>` ([`resolver.rs`](../cplus-core/src/resolver.rs)).
+`fn load_project_full(entry: &Path, manifest_root: &Path, is_lib: bool, deps: Option<&[String]>) -> Result<LoadedProject, LoadFailure>` ([`resolver.rs`](../../cplus-core/src/resolver.rs)).
 
 Starts at the entry file, follows every `import "PATH" as ALIAS;` recursively. Three import forms:
 
@@ -226,9 +228,11 @@ Security: vendor imports with `..` segments fire E0859; vendor imports of undecl
 
 ## 8. Semantic analysis
 
-`fn check_multi_with_mono(program: &Program, entry_file: PathBuf, entry_src: &str, files: BTreeMap<String, (PathBuf, String)>) -> (Vec<Diagnostic>, MonoInfo)` ([`sema.rs`](../cplus-core/src/sema.rs)).
+`fn check_multi_with_mono(program: &Program, entry_file: PathBuf, entry_src: &str, files: BTreeMap<String, (PathBuf, String)>) -> (Vec<Diagnostic>, MonoInfo)` ([`sema.rs`](../../cplus-core/src/sema.rs)).
 
-This is the largest file in the compiler (~14k LOC). It does name resolution, type checking, generic instantiation collection, attribute-driven layout decisions, and a dozen other passes wrapped together.
+This is the largest file in the compiler (~36.9k lines). It does name
+resolution, type checking, generic instantiation collection, attribute-driven
+layout decisions, and a dozen other passes wrapped together.
 
 ### Type representation
 
@@ -296,7 +300,8 @@ The driver passes this to `codegen::generate_with_mono` and `monomorphize::monom
 
 ### Error codes
 
-Sema emits ~77 unique `Exxxx` codes. The main ranges:
+The compiler catalog currently contains 187 `Exxxx` errors and 8 `Wxxxx`
+warnings. The main ranges include:
 
 | Range | Theme |
 |---|---|
@@ -307,17 +312,19 @@ Sema emits ~77 unique `Exxxx` codes. The main ranges:
 | E0407–E0411 | Project / library targets, `restrict` |
 | E0500–E0509 | Generics + interfaces |
 | E0801–E0810 | Unsafe / compile-time intrinsics |
-| E0821–E0876 | Function pointers, statics, env vars |
-| E0852–E0864 | Vendor packages + `[link]` validation |
-| E0900 | Borrow-shaped params in async fns |
+| E0821–E0877 | Function pointers, statics, targets, packages, env vars |
+| E0852–E0869 | Imports, dependencies, target entries, and `[link]` validation |
+| E0900–E0928 | Async ownership, handlers, FFI layout, and platform rules |
 
-Each code lives in the file that emits it. There is no central error registry — the codes are documented in [errors.md](../lang/errors.md) and the error message itself.
+Each diagnostic is emitted by the pass that detects it. Its documentation lives
+in the central [`errors.toml`](../lang/errors.toml) registry, which generates
+[`errors.md`](../lang/errors.md).
 
 ---
 
 ## 9. Borrow checker
 
-`fn check(prog: &Program, file: &PathBuf, src: &str) -> Vec<Diagnostic>` ([`borrowck.rs`](../cplus-core/src/borrowck.rs)).
+`fn check(prog: &Program, file: &PathBuf, src: &str) -> Vec<Diagnostic>` ([`borrowck.rs`](../../cplus-core/src/borrowck.rs)).
 
 **Flow-sensitive, per-function, lexical-scope based.** No region inference, no constraint solver, no lifetime variables. The model is closer to a forward dataflow analysis over the AST than to Rust's NLL.
 
@@ -363,13 +370,15 @@ For each function body:
 - No two-phase borrows. `f(ref x, x.field)` either rejects or accepts based on argument order — no clever reordering.
 - No reborrows. A `*p` access in a function that took a bare `p: T` is a read of `p`, not a borrow.
 
-This keeps the implementation manageable (5.4k LOC) at the cost of some valid programs being rejected. Most rejected programs have a straightforward rewrite using `take` semantics.
+This keeps the implementation manageable (~14.4k lines) at the cost of some
+valid programs being rejected. Most rejected programs have a straightforward
+rewrite using `take` semantics.
 
 ---
 
 ## 10. Monomorphization
 
-`fn monomorphize(program: Program, mono: &MonoInfo, type_name_of: &dyn Fn(&Ty) -> String) -> Program` ([`monomorphize.rs`](../cplus-core/src/monomorphize.rs)).
+`fn monomorphize(program: Program, mono: &MonoInfo, type_name_of: &dyn Fn(&Ty) -> String) -> Program` ([`monomorphize.rs`](../../cplus-core/src/monomorphize.rs)).
 
 Input: the type-checked `Program` (still containing generic templates) + the `MonoInfo` collected by sema. Output: a `Program` where every generic template has been replaced with concrete per-instantiation functions / structs / enums, and every call site rewritten to the mangled symbol.
 
@@ -403,9 +412,11 @@ C+ aims for predictable, zero-overhead generics. Monomorphization gives that —
 
 ## 11. Codegen
 
-`fn generate(program: &Program, mode: BuildMode) -> String` plus variants ([`codegen.rs`](../cplus-core/src/codegen.rs)).
+`fn generate(program: &Program, mode: BuildMode) -> String` plus variants ([`codegen.rs`](../../cplus-core/src/codegen.rs)).
 
-The largest file in the compiler at 16.6k LOC. Emits **text LLVM IR** directly — no `inkwell` or LLVM C++ bindings. The output is a `String` that can be written to a `.ll` file and passed to `clang -x ir`.
+At about 29.5k lines, this is the second-largest compiler source file. It emits
+**text LLVM IR** directly — no `inkwell` or LLVM C++ bindings. The output is a
+`String` that can be written to a `.ll` file and passed to `clang -x ir`.
 
 ### Why text IR?
 
@@ -523,16 +534,22 @@ The motivating principle: a SIMD comparison should produce a value that can only
 
 ## 13. Multi-file builds: manifest
 
-[`manifest.rs`](../cplus-core/src/manifest.rs).
+[`manifest.rs`](../../cplus-core/src/manifest.rs).
 
 ```rust
 pub struct Manifest {
     pub package: Package,
-    pub bins: Vec<BinTarget>,
+    pub entry: Option<PathBuf>,
+    pub entry_declared: bool,
+    pub platform_entries: BTreeMap<String, PathBuf>,
     pub lib: Option<LibTarget>,
     pub link: Option<LinkSpec>,
     pub dependencies: Vec<Dependency>,
+    pub platform_dependencies: BTreeMap<String, Vec<Dependency>>,
+    pub maven: BTreeMap<String, String>,
     pub root: PathBuf,
+    pub build: BuildSpec,
+    pub realtime_profile: Option<RealtimeProfile>,
 }
 ```
 
@@ -552,11 +569,12 @@ The `cpc test` driver resolves its entry through a ladder: `src/test_main.cplus`
 
 - E0854 — `[dependencies] x = "*"` declared but `vendor/x/Cplus.toml` missing.
 - E0855 — package name mismatch (`vendor/x/`'s manifest declares `name = "y"`).
-- E0860 — `[link].bundled` declared but file missing.
-- E0861 — orphan binary file in `src/lib/<triple>/` not declared in `[link].bundled`.
-- E0862 — host triple not supported by package's `[link].triples`.
-- E0863 — `[link].bundled` declared without `[link].triples`.
+- E0860 — a present target slice omits a file named by `[link].bundled`.
+- E0861 — orphan binary file in `lib/<triple>/` not declared in `[link].bundled`.
 - E0864 — `[link].extra-objects` entry doesn't exist on disk.
+
+Target triples are derived from the selected build target. If an entire
+`lib/<target-triple>/` slice is absent, the package compiles from source.
 
 Vendor packages can declare their `[link]` frameworks/libs at top level; consumers don't need to re-state them. The `cpc test` driver picks these up too — G-029 fix.
 
@@ -564,7 +582,7 @@ Vendor packages can declare their `[link]` frameworks/libs at top level; consume
 
 ## 14. Diagnostics + LineMap
 
-[`diagnostics.rs`](../cplus-core/src/diagnostics.rs).
+[`diagnostics.rs`](../../cplus-core/src/diagnostics.rs).
 
 ```rust
 pub struct Diagnostic {
@@ -607,7 +625,7 @@ After all three: the typed json refactor (994 LOC) shipped with 23 in-package `#
 | Task | Files to touch | Notes |
 |---|---|---|
 | Add a new attribute | `attrs.rs`, possibly `codegen.rs`, `cpc/tests/e2e.rs` | Attribute table is the single source. Read §5. |
-| Add a new error code | The file that emits it. Document it in `docs/lang/errors.toml` (E0xxx). | No central registry. Make the message specific. |
+| Add a new error code | The file that emits it and `docs/lang/errors.toml` (E0xxx). | Regenerate `docs/lang/errors.md`; make the message specific. |
 | Add a new builtin type | `ast.rs` (`Ty` variant), `sema.rs` (resolution + ops), `codegen.rs` (lowering), `monomorphize.rs` (mangling). | Mask was the most recent — search for `Ty::Mask` to see every site touched. |
 | Add a new compile-time intrinsic | `sema.rs` (`check_named_call`), `codegen.rs` (lowering), `MonoInfo` field if it carries data. | `addr_of` is the smallest example. |
 | Add a new generic stdlib type | `vendor/stdlib/src/<name>.cplus`, plus a smoke test under `docs/examples/projects/`. | No compiler changes if the type uses existing primitives. |
@@ -620,9 +638,10 @@ After all three: the typed json refactor (994 LOC) shipped with 23 in-package `#
 
 Three layers:
 
-- **Unit tests** colocated in each `cplus-core/src/*.rs` file (`#[cfg(test)] mod tests { ... }`). 1035 of these. Cover sema rules, parser edge cases, codegen helpers.
-- **End-to-end tests** in [`cpc/tests/e2e.rs`](../cpc/tests/e2e.rs). 399 of these. Each invokes the `cpc` binary on a fixture, asserts on diagnostics or runs the produced binary and checks output.
-- **In-package vendor tests** — 57 `#[test]` fns across `vendor/{arena, json, log, metal, uuid}`. Run via `cd vendor/<pkg> && cpc test`.
+- **Unit tests** colocated in each `cplus-core/src/*.rs` file (`#[cfg(test)] mod tests { ... }`). They cover sema rules, parser edge cases, codegen helpers, and regressions.
+- **End-to-end tests** in [`cpc/tests/e2e.rs`](../../cpc/tests/e2e.rs). Each invokes the `cpc` binary on a fixture, asserts on diagnostics or runs the produced binary and checks output.
+- **In-package tests** shipped by packages under `vendor/`. Run them from the
+  package directory with `cpc test`.
 
 Every new feature ships with at least:
 1. Positive — program compiles and runs.
@@ -637,7 +656,7 @@ The `fmt_check_all_samples_clean` test walks `docs/examples/` with `cpc fmt --ch
 
 ## 18. The LSP
 
-[`cpc-lsp/src/main.rs`](../cpc-lsp/src/main.rs).
+[`cpc-lsp/src/main.rs`](../../cpc-lsp/src/main.rs).
 
 Speaks LSP over stdio. The implementation reuses `cplus-core` directly: every `textDocument/didChange` re-runs the pipeline through borrowck (no codegen) and reports diagnostics. Hover / goto-definition / find-references use sema's symbol tables.
 

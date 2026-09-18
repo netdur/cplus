@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Behavior and platform details:
+[guide.md](guide.md).
+
 `import "camera/camera" as cam;`
 
 Behaviour and reasoning are in [guide.md](guide.md).
@@ -16,7 +19,7 @@ Behaviour and reasoning are in [guide.md](guide.md).
 | `Unspecified` | the platform will not say. Only ever comes OUT of `facing()`; requesting it is the same as `Back` |
 
 A desktop camera that reports no position satisfies both `Back` and `Front` —
-see the guide. **Windows has no concept of facing at all**: every camera answers
+see the guide. **Linux and Windows have no concept of facing at all**: every camera answers
 every facing, `facing()` reports `External`, and a particular device is named
 through `Request::device`.
 
@@ -156,10 +159,10 @@ fn capture(this, on_photo: fn(u8[], *u8), on_photo_ctx: *u8 = 0 as *u8) -> Outco
 
 Request one still. `Ok` means the request was accepted, not that a photo exists.
 
-`on_photo(jpeg, ctx)` runs on the MAIN THREAD on Apple and Android. **On Windows
-it does not hop**: with no frame stream open it runs on the caller's own thread
-before `capture` returns, and with one open it runs on the reader thread. See
-the guide.
+`on_photo(jpeg, ctx)` runs on the MAIN THREAD on Apple and Android. On Linux it
+runs inline on the caller's thread before `capture` returns. **On Windows it
+does not hop**: with no frame stream open it runs on the caller's own thread,
+and with one open it runs on the reader thread. See the guide.
 
 The slice is valid only for the duration of the call — copy what you keep. Reach
 the bytes with `jpeg.count()` and `#slice_ptr(jpeg)`. A failed capture calls back
@@ -225,22 +228,23 @@ None on the public surface.
 
 ## Platform notes
 
-| | macOS | iOS | iOS simulator | Android | Windows |
-|---|---|---|---|---|---|
-| `count` / `has` | yes | yes | always 0 / false | yes | yes; `has` ignores facing |
-| `open` | yes | yes | `Unsupported` | yes | yes, by `Request::device` |
-| `preview` | layer-hosting NSView | UIView, `+layerClass` | — | `TextureView` | an adopted HWND |
-| `capture` | yes | yes | — | yes | yes, WIC-encoded |
-| `facing` / `switch_to` | yes | yes | — | yes | **`Unsupported`** |
-| `set_exposure` / `set_white_balance` | yes | yes | — | yes | if the device says so |
-| `set_focus` / `set_zoom` | yes | yes | — | yes | if the device says so — most webcams do not |
-| `set_torch` / `has_torch` | yes | yes | — | yes | **no; there is no lamp property to query** |
-| `Mode::Once` | yes | yes | — | yes | **`Unsupported` — no one-shot exists** |
+| | macOS | iOS | iOS simulator | Android | Linux | Windows |
+|---|---|---|---|---|---|---|
+| `count` / `has` | yes | yes | always 0 / false | yes | yes; facing ignored | yes; facing ignored |
+| `open` | yes | yes | `Unsupported` | yes | yes, by `/dev/videoN` | yes, by device name |
+| `preview` | layer-hosting NSView | UIView, `+layerClass` | — | `TextureView` | `GtkPicture` | an adopted HWND |
+| `capture` | yes | yes | — | yes | device MJPG or `Unsupported` | yes, WIC-encoded |
+| `facing` / `switch_to` | yes | yes | — | yes | **`Unsupported`** | **`Unsupported`** |
+| `set_exposure` / `set_white_balance` | yes | yes | — | yes | if V4L2 exposes it | if the device says so |
+| `set_focus` / `set_zoom` | yes | yes | — | yes | if V4L2 exposes it | if the device says so — most webcams do not |
+| `set_torch` / `has_torch` | yes | yes | — | yes | if V4L2 exposes it | **no; there is no lamp property to query** |
+| `Mode::Once` | yes | yes | — | yes | **`Unsupported`** | **`Unsupported` — no one-shot exists** |
 
 Requires `NSCameraUsageDescription` in the bundle on Apple and
-`android.permission.CAMERA` in the manifest on Android. Windows needs neither a
-manifest entry nor a permission, and links nothing extra: Media Foundation, WIC
-and gdi32 are all bound at runtime.
+`android.permission.CAMERA` in the manifest on Android. Linux needs permission
+to open the selected `/dev/videoN` device. Windows needs neither a manifest
+entry nor a permission, and links nothing extra: Media Foundation, WIC and
+gdi32 are all bound at runtime.
 
 Every "if the device says so" row is a real query, not a platform assumption —
 the backend calls `GetRange` and reports what the hardware answered, so the same

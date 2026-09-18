@@ -111,7 +111,6 @@ fn on_filter(ref this, sender: *u8) {
         }
         _ => { }
     }
-    return;
 }
 ```
 

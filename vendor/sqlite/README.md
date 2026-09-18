@@ -6,6 +6,7 @@ column text, Drop closes and finalizes.
 ```toml
 [dependencies]
 sqlite = "*"
+stdlib = "*"
 ```
 
 ```cplus

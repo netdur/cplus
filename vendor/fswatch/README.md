@@ -1,20 +1,24 @@
 # fswatch
 
-Filesystem watching with typed, owner-thread change events. macOS, Linux and
-Windows.
+Filesystem watching with typed, owner-thread change events. macOS, Linux,
+Android and Windows.
 
 ```toml
 [dependencies]
-fswatch = "*"
+fswatch     = "*"
+events      = "*"
+facet       = "*"
+flex_layout = "*"
+stdlib      = "*"
 ```
 
 ```cplus
 import "fswatch/fswatch" as fswatch;
+import "facet/services" as facet;
 import "stdlib/result" as result;
 
 fn changed(event: fswatch::Change, ctx: *u8) {
     // event.path is borrowed for this callback.
-    return;
 }
 
 var options: fswatch::Options = fswatch::Options::new();
@@ -41,7 +45,7 @@ the watcher thread. For a loop you drive yourself, use the low-level
 ## Scope
 
 - three backends behind one seam — `kqueue` vnode notifications on macOS,
-  `inotify` on Linux, `ReadDirectoryChangesW` on Windows;
+  `inotify` on Linux and Android, `ReadDirectoryChangesW` on Windows;
 - individual file or directory roots;
 - shallow immediate-child or recursive nested snapshots;
 - glob ignores with ignored-directory pruning;
@@ -85,9 +89,9 @@ the fswatch-specific tests are listed under `src::fswatch` and
 
 **One platform difference worth knowing**: Windows stamps `LastWriteTime` from a
 clock that advances about every 13ms, so two writes of the same size inside one
-tick look identical to a snapshot differ — macOS and Linux stamp from a
-high-resolution clock and do not collide. The Windows backend closes that gap
+tick look identical to a snapshot differ — macOS, Linux and Android stamp from
+a high-resolution clock and do not collide. The Windows backend closes that gap
 with the NTFS USN, a per-file counter that moves on every change, carried as
-`Metadata::version`; macOS and Linux answer a constant `0`. On a volume with no
+`Metadata::version`; macOS, Linux and Android answer a constant `0`. On a volume with no
 journal (FAT32, exFAT, a network share) it degrades back to mtime rather than
 reporting spurious changes. The guide has the measurement.

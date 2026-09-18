@@ -1,5 +1,8 @@
 # Guide
 
+How the screen model, shell session, and native widget fit together. Fast
+start: [tutorial.md](tutorial.md). Signatures: [ref.md](ref.md).
+
 ## A screen, not a line buffer
 
 The model is a grid: `rows * cols` cells holding one Unicode scalar each, with
@@ -299,17 +302,21 @@ child, because only async-signal-safe calls are legal between fork and exec and
 
 ## Portability
 
-Only the macOS backend WORKS today. The session seam is deliberately narrow —
-start, read, write, resize, close, poll_exit — so another backend can be added
-without changing the screen model or the widget's API. `terminal/terminal` is
-platform-neutral and is tested as such.
+macOS and Linux have working live backends. The session seam is deliberately
+narrow — start, read, write, resize, close, poll_exit — so a backend can be
+added without changing the screen model or the widget's API.
+`terminal/terminal` is platform-neutral and is tested as such.
 
-The package's structure now reflects that: `backend.cplus` +
-`backend_windows.cplus`, `pty.cplus` + `pty_windows.cplus`, resolved by C+'s
-platform-override convention. The module was called `appkit.cplus` until
-2026-09-08, which named one platform in the one module whose job is not to —
-there was nowhere for a second implementation to go, and the package did not
-build off macOS at all.
+The package's structure now reflects that: `backend.cplus` plus Linux and
+Windows overrides, `pty.cplus` plus the Windows override, and a Linux ptysys
+override, all resolved by C+'s platform convention. The module was called
+`appkit.cplus` until 2026-09-08, which named one platform in the one module
+whose job is not to; renaming it made the GTK implementation possible.
+
+**Linux is live.** The POSIX session uses `forkpty`; the GTK 4 backend renders a
+non-editable `GtkTextView`, forwards keys, pumps the non-blocking master fd from
+the GLib loop, and resizes the pseudo-terminal. It renders plain text because
+the screen model does not carry SGR attributes.
 
 **Windows builds and passes; it has no live session.** A ConPTY backend was
 written in full against this seam and then backed out. On the host it was

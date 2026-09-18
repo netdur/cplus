@@ -1,15 +1,16 @@
 # terminal
 
-A macOS-first, portable-shaped terminal widget for C+.
+A native terminal widget for C+ on macOS and Linux, with a portable screen
+model that also builds on Windows.
 
 The package provides:
 
 - `terminal/terminal`: a platform-neutral VT screen with scrollback.
-- `terminal/pty`: a real pseudo-terminal session — `forkpty` on macOS, with
-  shell integration installed into zsh.
-- `terminal/backend`: the platform half — on Apple, a live AppKit widget with
-  automatic main-queue PTY reads, keyboard forwarding, paste, resize
-  propagation, and bounded scrollback.
+- `terminal/pty`: a real POSIX pseudo-terminal session — `forkpty` on macOS
+  and Linux, with shell integration installed into zsh.
+- `terminal/backend`: the platform half — AppKit on macOS and GTK 4 on Linux,
+  with automatic PTY reads, keyboard forwarding, paste, resize propagation,
+  and bounded scrollback.
 - `terminal/widget`: the portable facet-facing wrapper applications should
   normally import.
 
@@ -45,14 +46,24 @@ screen.feed(bytes_from_a_pty);
 show(screen.view());
 ```
 
-## AppKit widget
+## Native widget
+
+Add the package with `cpc pm add . terminal`; the command writes the native
+backend's dependency closure.
+
+```toml
+[dependencies]
+terminal = "*"
+stdlib   = "*"
+```
 
 Keep the `Widget` alive for as long as the terminal should remain interactive.
-Create, use, and drop it on the AppKit main thread. It owns the shell and shuts
+Create, use, and drop it on the platform UI thread. It owns the shell and shuts
 it down on `stop()` or drop.
 
 ```cplus
 import "terminal/widget" as terminal;
+import "stdlib/option" as option;
 
 var term = match terminal::start(cwd: project_path) {
     option::Option[terminal::Widget]::Some(w) => w,
@@ -108,7 +119,6 @@ wants a terminal ready to type into says so:
 ```cplus
 fn on_attach(ref this) {
     let focused: bool = this.term.focus();   // false = not on screen yet
-    return;
 }
 ```
 
@@ -118,8 +128,9 @@ reports where it is. A view mounted through the native escape hatch is not
 addressable by key, so `facet::find(key)` cannot do this — the widget owns the
 verb.
 
-Apps working directly with AppKit or `facet_appkit/ui` can instead import
-`terminal/backend` and use `view()`, `native_handle()`, or the flex `node()`.
+Apps working directly with AppKit can instead import `terminal/backend` and use
+`view()`, `native_handle()`, or the flex `node()`. Linux's backend exposes the
+same portable `node()` and native handle around its GTK widget.
 
 ## Shell history
 
@@ -135,11 +146,11 @@ history. Either way the shell loads the user's own rc files.
 
 ## Status
 
-macOS is the only PTY/UI backend that WORKS at the moment. The public session
-seam is kept to `start/read/write/resize/close/poll_exit`, which is what let a
-Windows implementation be written against it without touching the screen model —
-and that seam held: the ConPTY attempt failed on the platform, not on the shape.
-Linux (`forkpty`/`epoll`) is the same job again.
+macOS and Linux have live PTY/UI backends. The public session seam is kept to
+`start/read/write/resize/close/poll_exit`, which is what let the GTK backend and
+a Windows experiment use it without changing the screen model. The ConPTY
+attempt failed on its test host and was backed out; its recipe remains in
+`src/pty_windows.cplus`.
 
 The package builds and its suite passes on Windows; only the live session is
 missing there. See the note at the top.

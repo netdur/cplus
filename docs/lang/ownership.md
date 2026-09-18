@@ -75,7 +75,7 @@ are the highest-traffic borrow in the language, with three rules:
    ```cplus
    let s: str = t.clone();          // E0513 — the clone is an anonymous temp
    let owner: Text = t.clone();     // name it…
-   let s: str = { owner.view() };   // …then view it
+   let s: str = owner;              // …then let the expected type borrow it
    f("x = ${n}");                   // an ARGUMENT's temp outlives its call — fine
    ```
 
@@ -86,7 +86,7 @@ are the highest-traffic borrow in the language, with three rules:
    ```cplus
    let _s = names.append("item ${i}");   // E0513 — Vec[str] keeps the view
    let owner: Text = "item ${i}".to_text();
-   let _s = names.append(owner.view());  // name the owner…
+   let _s = names.append(owner);         // name the owner…
    var names: Vec[Text] = vec::new::[Text]();
    let _s = names.append("item ${i}".to_text());   // …or own the element
    ```

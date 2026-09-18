@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Parsing and generation rules:
+[guide.md](guide.md).
+
 Manual for the `uuid` package. Signatures and behavior only.
 
 ```cplus

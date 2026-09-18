@@ -22,7 +22,6 @@ the handle: dropping it unsubscribes, `cancel()` unsubscribes now.
 
 ```cplus
 fn on_opened(path: str, ctx: *u8) {
-    return;
 }
 
 var opened: events::Signal[str] = events::Signal[str]::new();
@@ -48,7 +47,6 @@ Same handle contract, non-generic `Subscription`:
 
 ```cplus
 fn open_file(path: str, ctx: *u8) {
-    return;
 }
 
 var sub: events::Subscription = events::on("file:open", open_file);
@@ -68,7 +66,6 @@ Same shape as facet handlers — the receiver is `ctx`:
 ```cplus
 impl StatusBar {
     fn on_open(ref this, path: str) {
-        return;
     }
 }
 

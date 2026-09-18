@@ -6,21 +6,10 @@ edition = "2026"
 # Phase 2 Slice 2D smoke test: bundled-artifact package mode.
 #
 # `[link].bundled` names the static archive shipped under
-# `src/lib/<host-triple>/`; `[link].triples` lists the host triples this
-# package's binaries are built for. The build driver verifies the host
-# appears in `triples` (E0862) and that the file exists (E0860).
-#
-# The `triples` list below is whatever the package author built for. Edit
-# it (and rebuild the `.a` via `upstream/build.sh`) when porting to a new
-# host. The smoke-test script regenerates both for the current host.
+# `lib/<target-triple>/`. The selected build target derives the directory
+# name; there is no declared triples list. A missing target directory falls
+# back to source. If the directory exists, every declared archive must exist
+# inside it (E0860).
 
 [link]
 bundled = ["libtiny_artifact.a"]
-triples = [
-    "arm64-apple-darwin25.4.0",
-    "arm64-apple-darwin",
-    "aarch64-apple-darwin",
-    "x86_64-apple-darwin",
-    "x86_64-unknown-linux-gnu",
-    "x86_64-pc-linux-gnu",
-]

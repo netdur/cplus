@@ -608,7 +608,7 @@ curl -s -X POST http://127.0.0.1:$PORT/ -H 'Content-Type: application/json' \
 A good answer names the app, and that is how you know it is the DEVICE talking:
 
 ```json
-{"result":{"serverInfo":{"name":"facet_gallery_ios","version":"0.0.27"}}}
+{"result":{"serverInfo":{"name":"facet_gallery_ios","version":"0.0.28"}}}
 ```
 
 **Three failures and what each one actually is.** They are easy to confuse

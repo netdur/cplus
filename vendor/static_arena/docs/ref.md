@@ -1,5 +1,8 @@
 # Reference
 
+Fast start: [tutorial.md](tutorial.md). Capacity and lifetime rules:
+[guide.md](guide.md).
+
 Manual for the `static_arena` package. Signatures and behavior only.
 
 ```cplus
