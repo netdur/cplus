@@ -29,11 +29,8 @@ import "stdlib/text" as text;
 External MCP traffic always hits the gate first:
 
 ```cplus
-fn allow_external(req: auth::Request) -> auth::Decision {
-    return match req.channel {
-        auth::Channel::External => auth::Decision::Allow,
-        auth::Channel::InApp => auth::Decision::Allow,
-    };
+fn allow_external(req: auth::Request) -> auth::Grant {
+    return auth::operator();
 }
 // deny_all() → every request returns consent denied (-32001)
 ```
@@ -42,7 +39,7 @@ fn allow_external(req: auth::Request) -> auth::Decision {
 
 ```cplus
 var sub: events::Subscriber =
-    events::subscriber(events::everything(), 64);
+    events::subscriber(events::everything(), 64usize);
 let gate: auth::AuthGate = auth::serve(allow_external);
 let resp: text::Text = mcp::handle_request(
     surf,   // *u8 surface
@@ -82,7 +79,7 @@ Or accept yourself and call `serve_fd(...)` per connection.
 
 ## Day-one rules
 
-- Gate **Reject** → no surface touch; JSON-RPC error `consent denied`.
+- An empty grant → no surface touch; JSON-RPC error `consent denied`.
 - Protocol is **backend-neutral** — only the vtable knows AppKit/GTK/Win32.
 - Transport is **newline-delimited** JSON-RPC 2.0 over a stream socket.
 - This module includes UDS helpers; pure `handle_request` needs no sockets.

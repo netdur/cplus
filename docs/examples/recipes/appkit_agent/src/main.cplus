@@ -48,8 +48,8 @@ fn on_save(sender: *u8) {
 // The consent policy. Here we admit the external agent; a real app would prompt
 // the user / consult persisted rules. An un-served (`deny_all`) gate rejects
 // everything — the surface is closed until a policy is supplied.
-fn allow_external(req: auth::Request) -> auth::Decision {
-    return auth::Decision::Allow;
+fn allow_external(req: auth::Request) -> auth::Grant {
+    return auth::operator();
 }
 
 fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {

@@ -35,7 +35,7 @@ model as every other recipe):
 
 ```bash
 mkdir -p vendor
-for p in stdlib json objc quartzcore appkit agent_core agent_appkit agent_mcp; do
+for p in stdlib json objc quartzcore appkit agent_core agent_appkit agent_mcp facet events flex_layout; do
   ln -s "$(git rev-parse --show-toplevel)/vendor/$p" "vendor/$p"
 done
 cpc build
@@ -78,7 +78,9 @@ agents on a background connection:
 
 ```cplus
 // after building the window and opening the surface:
-mcp::serve_uds(surf, sub, allow_external, "/tmp/cplus-agent.sock");
+let vt: backend::Backend = agent::mcp_backend();
+let sp: *u8 = { #addr_of(surf) as *u8 };
+mcp::serve_uds(sp, vt, sub, allow_external, "/tmp/cplus-agent.sock");
 ```
 
 `serve_uds` accepts connections on a Unix-domain socket and runs the same
