@@ -18,7 +18,7 @@ fn model_path() -> option::Option[text::Text] {
         option::Option[text::Text]::Some(a) => {
             return option::Option[text::Text]::Some(a);
         }
-        option::Option[text::Text]::None => { }
+        option::Option[text::Text]::None => {}
     }
     return env::var("LLAMA_CPP_MODEL");
 }

@@ -340,6 +340,47 @@ mod tests {
     }
 
     #[test]
+    fn reads_keep_the_previous_graph_while_a_worker_is_blocked() {
+        use std::sync::Mutex;
+        use std::time::Duration;
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let mut s = GraphSession::new(
+            project_from("fn old() -> i32 { return 1; }"),
+            0,
+            move |_| {
+                started_tx.send(()).unwrap();
+                // A timeout bounds a regression that accidentally waits for the
+                // worker. Normal completion is driven solely by the release message.
+                release_rx
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(10))
+                    .map_err(|e| format!("worker was not released: {e}"))?;
+                Ok(project_from("fn new() -> i32 { return 2; }"))
+            },
+        );
+        s.mark_dirty();
+        s.absorb(false);
+        started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+
+        s.absorb(false);
+        assert!(s.status().building);
+        assert!(s.status().pending_rebuild);
+        assert!(!s.graph().def("old").is_empty());
+        assert!(s.graph().def("new").is_empty());
+
+        release_tx.send(()).unwrap();
+        s.absorb(true);
+        assert!(!s.status().building);
+        assert!(!s.status().pending_rebuild);
+        assert!(s.graph().def("old").is_empty());
+        assert!(!s.graph().def("new").is_empty());
+    }
+
+    #[test]
     fn re_sending_identical_text_costs_no_build() {
         let mut s = session_over("fn a() -> i32 { return 1; }", "fn a() -> i32 { return 1; }");
         let text = "fn a() -> i32 { return 1; }";

@@ -5908,7 +5908,7 @@ fn async_main_is_driven_to_completion() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -5966,7 +5966,7 @@ fn async_main_shape_errors_are_the_sync_ones() {
         )
         .unwrap();
         std::fs::create_dir_all(dir.join("src")).unwrap();
-        std::os::unix::fs::symlink(
+        symlink_dir(
             format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
             dir.join("vendor"),
         )
@@ -5998,7 +5998,7 @@ fn future_wait_drives_from_a_sync_fn() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -6046,7 +6046,7 @@ fn future_wait_consumes_the_future() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -6086,7 +6086,7 @@ fn cpc_test_drives_async_test_fns() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -20710,58 +20710,26 @@ fn mcp_a_burst_of_edits_collapses_into_one_rebuild() {
     assert_eq!(same["building"], false);
 }
 
-/// A read issued while a rebuild is in flight answers from the previous graph
-/// instead of waiting for it. This is what makes the resident server usable
-/// behind one stdio pipe: a 2 s rebuild on a real project would otherwise
-/// freeze every other query for 2 s.
+/// Across an asynchronous rebuild, reads see either the previous graph or the
+/// completed new graph. The worker may finish between any two protocol calls;
+/// session unit tests hold it behind a channel to prove reads never wait.
 #[test]
-fn mcp_a_read_does_not_wait_for_a_rebuild_in_flight() {
+fn mcp_reads_remain_consistent_across_an_async_rebuild() {
     let dir = graph_project();
-    // Enough files that a rebuild is measurably slower than a lookup.
-    let mut imports = String::new();
-    for i in 0..40 {
-        std::fs::write(
-            dir.join(format!("src/m{i}.cplus")),
-            format!("struct T{i} {{ v: i32 }}\nfn f{i}(x: i32) -> i32 {{ return x +% {i}; }}\n"),
-        )
-        .unwrap();
-        imports.push_str(&format!("import \"./m{i}\" as m{i};\n"));
-    }
-    std::fs::write(
-        dir.join("src/main.cplus"),
-        format!("{imports}struct Point {{ x: i32, y: i32 }}\nfn main() -> i32 {{ return 0; }}\n"),
-    )
-    .unwrap();
-
     let mut s = McpServer::start(&dir);
-    // Calibrate: how long does a full rebuild actually take here?
-    let t = std::time::Instant::now();
-    s.json("reload", serde_json::json!({}));
-    let build_ms = t.elapsed().as_millis();
+    let before = s.text("find_definition", serde_json::json!({"symbol": "Point"}));
+    assert!(before.contains("\"name\": \"Point\""), "{before}");
 
-    // A buffer that deletes `Point`, handed over WITHOUT waiting.
     let ch = s.json(
         "did_change",
         serde_json::json!({"file": "src/main.cplus", "text": "fn main() -> i32 { return 0; }\n"}),
     );
-    assert_eq!(ch["building"], true, "the worker is running: {ch}");
-    assert_eq!(ch["pending_rebuild"], true);
-
-    let t = std::time::Instant::now();
+    assert_eq!(ch["changed"], true);
     let during = s.text("find_definition", serde_json::json!({"symbol": "Point"}));
-    let read_ms = t.elapsed().as_millis();
     assert!(
-        during.contains("\"name\": \"Point\""),
-        "the previous graph answers while the new one builds: {during}"
+        during == before || during.trim() == "[]",
+        "a read must see a complete old or new graph: {during}"
     );
-    // Only meaningful if the rebuild is slow enough to notice; on a fixture
-    // this small it may already be done, and that is not a failure.
-    if build_ms > 150 {
-        assert!(
-            read_ms * 3 < build_ms,
-            "the read ({read_ms} ms) should not have waited for the build ({build_ms} ms)"
-        );
-    }
 
     // And once it lands, `Point` is gone, without anyone having blocked.
     let after = s.json(
@@ -21822,6 +21790,37 @@ fn target_ios_app_with_fn_main_is_rejected_e0409() {
     );
 }
 
+/// Library builds keep one object per module under `<name>.objs/`.
+/// Check every emitted object, without depending on the module filenames.
+fn module_objects(dir: &Path) -> Vec<std::path::PathBuf> {
+    let objects: Vec<_> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("expected object directory {}: {e}", dir.display()))
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("o"))
+        .collect();
+    assert!(!objects.is_empty(), "no objects in {}", dir.display());
+    objects
+}
+
+fn assert_ios_objects(dir: &Path) {
+    for object in module_objects(dir) {
+        let bytes = std::fs::read(&object).unwrap();
+        assert!(bytes.len() >= 8, "truncated object: {}", object.display());
+        assert_eq!(
+            &bytes[0..4],
+            &[0xcf, 0xfa, 0xed, 0xfe],
+            "Mach-O: {}",
+            object.display()
+        );
+        assert_eq!(
+            &bytes[4..8],
+            &[0x0c, 0x00, 0x00, 0x01],
+            "arm64: {}",
+            object.display()
+        );
+    }
+}
+
 #[test]
 fn target_ios_app_entry_builds_the_archive() {
     // The other half of the v0.0.28 routing: the SAME app package whose
@@ -21856,10 +21855,11 @@ fn target_ios_app_entry_builds_the_archive() {
         "iOS app-entry build failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    for artifact in ["app.o", "libapp.a", "app.h"] {
+    for artifact in ["libapp.a", "app.h"] {
         let p = dir.join("target/ios-arm64/debug").join(artifact);
         assert!(p.is_file(), "expected {} in the per-target tree", p.display());
     }
+    assert_ios_objects(&dir.join("target/ios-arm64/debug/app.objs"));
     // The header declares the exported entry the platform shell calls.
     let header = std::fs::read_to_string(dir.join("target/ios-arm64/debug/app.h")).unwrap();
     assert!(
@@ -21995,7 +21995,7 @@ fn target_ios_staticlib_build_lands_in_per_target_tree() {
     );
     // Explicit targets build into target/<target-name>/<mode>/ so host and
     // iOS artifacts of one package never collide.
-    for artifact in ["gadget.o", "libgadget.a", "gadget.h"] {
+    for artifact in ["libgadget.a", "gadget.h"] {
         let p = dir.join("target/ios-arm64/debug").join(artifact);
         assert!(
             p.is_file(),
@@ -22003,10 +22003,7 @@ fn target_ios_staticlib_build_lands_in_per_target_tree() {
             p.display()
         );
     }
-    // The object inside the per-target tree is an arm64 Mach-O.
-    let bytes = std::fs::read(dir.join("target/ios-arm64/debug/gadget.o")).unwrap();
-    assert_eq!(&bytes[0..4], &[0xcf, 0xfa, 0xed, 0xfe]);
-    assert_eq!(&bytes[4..8], &[0x0c, 0x00, 0x00, 0x01]);
+    assert_ios_objects(&dir.join("target/ios-arm64/debug/gadget.objs"));
 
     // A host build of the same package keeps today's layout untouched.
     let st = Command::new(cpc)
@@ -22377,7 +22374,7 @@ fn target_android_staticlib_links_under_ndk_clang() {
         "android staticlib build failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    for artifact in ["droid.o", "libdroid.a", "droid.h"] {
+    for artifact in ["libdroid.a", "droid.h"] {
         let p = dir.join("target/android-arm64/debug").join(artifact);
         assert!(
             p.is_file(),
@@ -22385,12 +22382,13 @@ fn target_android_staticlib_links_under_ndk_clang() {
             p.display()
         );
     }
-    let obj_bytes = std::fs::read(dir.join("target/android-arm64/debug/droid.o")).unwrap();
-    assert_eq!(
-        &obj_bytes[0..4],
-        b"\x7fELF",
-        "per-target object must be ELF"
-    );
+    for object in module_objects(&dir.join("target/android-arm64/debug/droid.objs")) {
+        let bytes = std::fs::read(&object).unwrap();
+        assert!(bytes.len() >= 20, "truncated object: {}", object.display());
+        assert_eq!(&bytes[0..4], b"\x7fELF", "per-target object must be ELF");
+        assert_eq!(bytes[4], 2, "object must be ELFCLASS64");
+        assert_eq!(&bytes[18..20], &[0xb7, 0x00], "object must target aarch64");
+    }
 
     std::fs::write(
         dir.join("main.c"),
