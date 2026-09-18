@@ -115,7 +115,9 @@ $ cargo test --workspace
 
 GitHub Actions runs the workspace tests on Windows, Linux, and macOS after
 every push to any branch or tag. Each platform workflow can also be started
-manually. The macOS workflow skips two C-interop tests affected by Homebrew
+manually. Tests run serially within each platform job because the end-to-end
+fixtures share mutable vendor build outputs; the three platform jobs run in
+parallel. The macOS workflow skips two C-interop tests affected by Homebrew
 clang compatibility; Linux and Windows include them. Linux and Windows also
 build and smoke-test the toolchain, with release publishing limited to `v*` tags.
 

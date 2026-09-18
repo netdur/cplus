@@ -22,6 +22,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # E2E fixtures share vendored packages and their mutable prebuild outputs.
+  # Concurrent tests can delete another test's in-flight object directory.
+  RUST_TEST_THREADS: "1"
+
 jobs:
   test:
     name: cargo test --workspace (macOS, Homebrew clang)
