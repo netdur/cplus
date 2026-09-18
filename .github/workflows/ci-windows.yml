@@ -1,9 +1,9 @@
 name: Windows CI
 
 # Builds, tests, and packages the toolchain on Windows (x86_64-pc-windows-msvc)
-# on a vX.Y.Z release tag (matching ci-linux.yml / release.yml), plus manual
-# dispatch. On a tag it runs the full suite, builds release binaries, smoke-
-# tests cpc, and attaches a binaries .zip to the GitHub Release.
+# on every branch/tag push and manual dispatch. Runs the full suite, builds
+# release binaries, and smoke-tests cpc. On a v* tag it also attaches a
+# binaries .zip to the GitHub Release.
 #
 # cpc emits LLVM IR and shells out to clang to assemble/link, so the runner
 # needs clang >= 19 (for the `preserve_nonecc` calling convention cpc emits) on
@@ -13,14 +13,7 @@ name: Windows CI
 # clang_rt.asan_dynamic at run time.
 
 on:
-  # DISABLED 2026-08-14: Windows CI is paused. The release-tag trigger is
-  # commented out so a `v*` tag won't run this workflow; re-enable by
-  # uncommenting the `push:` block below. `workflow_dispatch` is kept so it
-  # can still be run manually from the Actions tab. (A red Windows run never
-  # blocked macOS release jobs — it only meant no Windows asset that tag.)
-  # push:
-  #   tags:
-  #     - "v*"
+  push:
   workflow_dispatch:
 
 permissions:
@@ -29,7 +22,7 @@ permissions:
 jobs:
   build-test:
     name: cargo test + build (Windows, clang)
-    runs-on: windows-latest # currently windows-2022 (x86_64)
+    runs-on: windows-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -100,7 +93,7 @@ jobs:
           retention-days: 14
 
       - name: Attach binaries to the GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

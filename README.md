@@ -113,6 +113,12 @@ Run the full test suite before submitting a pull request:
 $ cargo test --workspace
 ```
 
+GitHub Actions runs the workspace tests on Windows, Linux, and macOS after
+every push to any branch or tag. Each platform workflow can also be started
+manually. The macOS workflow skips two C-interop tests affected by Homebrew
+clang compatibility; Linux and Windows include them. Linux and Windows also
+build and smoke-test the toolchain, with release publishing limited to `v*` tags.
+
 To be a truly great community, C+ needs to welcome developers from all walks of life, with different backgrounds, and with a wide range of experience. A diverse and friendly community will have more great ideas, more unique perspectives, and produce more great code. We work diligently to make the C+ community welcoming to everyone.
 
 ## Learning More

@@ -1,11 +1,9 @@
 name: Linux CI
 
-# Triggers on a vX.Y.Z release tag (same model as release.yml) plus manual
-# dispatch — not on every push/PR. On a tag it runs the full `cargo test
-# --workspace` suite on Ubuntu (the project's first test-running CI — catches
-# the cross-platform regressions local macOS runs miss), then packages a .deb
-# and apt-installs + smoke-tests it so the `Depends:` line is exercised end to
-# end.
+# Runs on every branch/tag push and manual dispatch. Runs the full
+# `cargo test --workspace` suite on Ubuntu, then packages a .deb and
+# apt-installs + smoke-tests it so the `Depends:` line is exercised end to end.
+# Release assets are published only for v* tags.
 #
 # cpc discovers a clang >= 19 itself (it probes clang / clang-21 / clang-20 /
 # clang-19, honoring $CPC_CLANG), so installing clang-19 is enough — no
@@ -13,13 +11,7 @@ name: Linux CI
 # `preserve_nonecc` calling convention cpc emits.
 
 on:
-  # DISABLED 2026-08-14: Linux CI is paused. The release-tag trigger is
-  # commented out so a `v*` tag won't run this workflow; re-enable by
-  # uncommenting the `push:` block below. `workflow_dispatch` is kept so it
-  # can still be run manually from the Actions tab.
-  # push:
-  #   tags:
-  #     - "v*"
+  push:
   workflow_dispatch:
 
 permissions:
@@ -112,7 +104,7 @@ jobs:
           retention-days: 14
 
       - name: Attach the .deb to the GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

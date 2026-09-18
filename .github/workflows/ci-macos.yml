@@ -1,10 +1,8 @@
 name: macOS CI
 
-# Runs the full `cargo test --workspace` suite on macOS / Apple Silicon. Like
-# ci-linux.yml / ci-windows.yml, this fires only on a vX.Y.Z release tag (plus
-# manual dispatch) — development happens on macOS where the full suite is run
-# locally on every change, so push/PR CI here was redundant. Tag runs still
-# guarantee a clean macOS build is recorded for each release.
+# Runs `cargo test --workspace` on macOS / Apple Silicon on every branch/tag
+# push and manual dispatch. Two Homebrew clang compatibility exclusions are
+# documented at the test step below.
 #
 # cpc emits IR that needs clang/LLVM >= 19 (e.g. the `preserve_nonecc` calling
 # convention + newer struct-ABI IR). The macos-14 runner's *default* Apple clang
@@ -19,8 +17,6 @@ name: macOS CI
 
 on:
   push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
