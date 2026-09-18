@@ -49,6 +49,15 @@ earlier history lives in each version's archived plan.
   rejects when it has it. Signatures were unaffected, and swapping the two
   blocks made the same program build. Bodies now bind the self-type for
   themselves, structs, enums and blessed builtin impls alike.
+- **A package's public static stays in its own archive.** Splitting the
+  library into one object per module placed data by reachability, and a
+  `static` that nothing inside the package reads is reached from nowhere — so
+  it was in no member of `lib<name>.a` and no export of the dylib, though it
+  is made `weak_odr` for the express purpose of being kept. A global that its
+  linkage says must survive the link is now defined in its own module's piece
+  whether or not anything reaches it, while one the linkage says is
+  discardable still travels only where it is used. Verified against the
+  single-object build: the two now export the same data symbols.
 - **A package archives one object per module.** `lib<name>.a` used to hold a
   single object, so resolving any symbol from a package linked every module
   it had — a facet app on Android that imports `stdlib/vec` linked `process`

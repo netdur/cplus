@@ -50,10 +50,32 @@
 //! - LOCAL: `internal` or `private` — helpers, constants, trampolines. Copied
 //!   into every piece that reaches them; the linker never sees the copies.
 //!
-//! Globals are copied where referenced: a private constant duplicates
-//! harmlessly and a `weak_odr` static merges. Types, `declare`s and metadata
-//! are shared by every piece. A definition with no home and nothing reaching
-//! it lands in a residual piece named after the package, so nothing is dropped.
+//! A GLOBAL is placed by whether its linkage lets it be dropped, which is not
+//! the same question as a definition's ([`Retention`]). A definition earns its
+//! piece by being a root or by being reached; a global has no such walk to earn
+//! it, because nothing has to reference a package's public data.
+//!
+//! - RETAINED — `external`, `weak`, `weak_odr`, `appending`: must survive to
+//!   the link, so it is DEFINED in its home piece whether or not anything
+//!   reaches it, and copied into any piece that does reach it (which is why
+//!   the retained set is `weak_odr` in practice — copies merge). Home is the
+//!   module its qualified name names, so a module's static ships in the member
+//!   a consumer already loads for that module.
+//! - DISCARDABLE — `linkonce`, `linkonce_odr`: promises to vanish when unused,
+//!   so it needs no home and is copied only where referenced.
+//! - LOCAL — `internal`, `private`: copied where referenced, dead where not.
+//!
+//! Statics are emitted into the PREAMBLE, before the first home marker, so
+//! every one of them is homeless as far as the markers go and the name is what
+//! answers. Reachability alone used to place them, and a public static that
+//! nothing inside the package read was therefore in no member of the archive
+//! and no export of the dylib — while `emit_statics` had made it `weak_odr`
+//! for the express purpose of keeping it there
+//! (bugs/closed/the-archive-split-drops-a-static-nothing-in-the-package-reads.md).
+//!
+//! Types, `declare`s and metadata are shared by every piece. A definition with
+//! no home and nothing reaching it lands in a residual piece named after the
+//! package, so nothing is dropped.
 //!
 //! ## The hazard, named
 //!
@@ -94,6 +116,30 @@ pub struct Split {
     pub notes: Vec<String>,
 }
 
+/// Whether a GLOBAL has to be defined somewhere, which is a different question
+/// from a definition's linkage and the one the partition actually asks.
+///
+/// A `define` earns its piece by being a root or by being reached. A global has
+/// no such walk to earn it — nothing has to reference a package's public data —
+/// so the rule is the linkage's own promise about being dropped.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Retention {
+    /// `internal` / `private`: invisible outside its object. Copied where
+    /// referenced, dead where not, which is what those linkages mean.
+    Local,
+    /// `linkonce` / `linkonce_odr` / `available_externally` / `extern_weak`:
+    /// DISCARDABLE if unused, by definition. Copied where referenced; giving
+    /// one a defining home would put it in a piece nothing reads, and LLVM
+    /// would drop it there anyway. `__cplus_cancel_slot` is this, and rooting
+    /// it added an empty residual member to every archive.
+    Discardable,
+    /// `external` / `weak` / `weak_odr` / `common` / `appending`, and anything
+    /// this cannot parse: must survive to the link. Defined in its home piece
+    /// whether or not anything reaches it — a package's public static is
+    /// `weak_odr` precisely so the archive keeps it.
+    Retained,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Linkage {
     /// `internal` / `private`: invisible outside its object, so copied.
@@ -116,7 +162,9 @@ enum Kind {
     },
     Global {
         name: String,
-        mutable_local: bool,
+        retention: Retention,
+        /// `global`, not `constant`: the hazard report is about VARIABLES.
+        mutable: bool,
     },
     /// `$name = comdat any` (COFF): travels with the definition it names.
     Comdat {
@@ -195,13 +243,29 @@ pub fn split_by_home(ir: &str, residual: &str) -> Split {
         }
         if line.starts_with('@') {
             let name = first_symbol(line).unwrap_or("").to_string();
-            let head = &line[..line.find(" global ").map(|p| p + 8).unwrap_or(0)];
-            let mutable_local = !head.is_empty()
-                && (head.contains(" internal ") || head.contains(" private "));
+            // `@name = <linkage> <attrs> global|constant <type> <init>`. The
+            // keyword ends the head, and linkage is then read by the SAME rule
+            // a `define` is read by — the old substring test for ` internal `
+            // / ` private ` cut the head at ` global ` alone, so a `private
+            // constant` (every string literal) had an empty head and read as
+            // not-local.
+            let mutable = line.find(" global ").is_some();
+            let kw = if mutable {
+                line.find(" global ")
+            } else {
+                line.find(" constant ")
+            };
+            // No keyword: not a shape codegen emits. An empty head reads as
+            // `Retained`, which keeps the line — nothing is lost to something
+            // this cannot parse, which is the same bias the rest of the pass
+            // takes.
+            let head = &line[..kw.unwrap_or(0)];
+            let retention = retention_of(head);
             entities.push(Entity {
                 kind: Kind::Global {
                     name,
-                    mutable_local,
+                    retention,
+                    mutable,
                 },
                 start: i,
                 end: i,
@@ -278,9 +342,47 @@ pub fn split_by_home(ir: &str, residual: &str) -> Split {
             out
         })
         .collect();
+    // WHICH MODULE A GLOBAL BELONGS TO. `emit_statics` runs before the item
+    // walk that writes the home markers, so every global is emitted into the
+    // PREAMBLE and carries no marker — which is why a global with nothing
+    // referencing it used to land in no piece at all, and a package's public
+    // static disappeared from its own archive.
+    //
+    // The name answers instead, and it is a lookup rather than a guess at the
+    // naming grammar: the qualified name of anything belonging to module
+    // `stdlib.src.text` starts with `stdlib.src.text.`, and the module ids
+    // being matched against are the ones the markers actually declared.
+    // Longest match wins, so `stdlib.src.text.INTERN_HEAD` is text's and not
+    // the residual piece's (the residual is named for the package, and every
+    // module id starts with that too). A name matching nothing — a private
+    // string literal, a compiler-synthesized global — has no home and falls to
+    // the residual piece.
+    //
+    // Computed after the scan because `modules` is not complete until the last
+    // marker has been read.
+    let module_home_of_name = |name: &str| -> Option<usize> {
+        modules
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                name.len() > m.len()
+                    && name.starts_with(m.as_str())
+                    && name.as_bytes()[m.len()] == b'.'
+            })
+            .max_by_key(|(_, m)| m.len())
+            .map(|(idx, _)| idx)
+    };
     let home_of = |e: &Entity| -> Option<usize> {
         match &e.kind {
             Kind::Define { home, .. } | Kind::Asm { home } => Some(home.unwrap_or(residual_id)),
+            // A global that must survive the link is homed like a define, so
+            // it is DEFINED once whether or not anything reaches it. The other
+            // two keep the old rule — copied where referenced, dead where not.
+            Kind::Global {
+                name,
+                retention: Retention::Retained,
+                ..
+            } => Some(module_home_of_name(name).unwrap_or(residual_id)),
             _ => None,
         }
     };
@@ -289,10 +391,21 @@ pub fn split_by_home(ir: &str, residual: &str) -> Split {
     // Which pieces each internal mutable global landed in — the hazard report.
     let mut landings: HashMap<usize, Vec<String>> = HashMap::new();
     for m in 0..modules.len() {
+        // A piece's roots: its own externally-visible definitions, and its own
+        // non-local globals. The globals are roots and not merely reachable
+        // cargo because a library's public surface includes data — a static
+        // `emit_statics` deliberately made `weak_odr` so "the archive must
+        // retain its public surface even though nothing inside the archive
+        // references it". Reachability alone dropped exactly those.
         let roots: Vec<usize> = entities
             .iter()
             .enumerate()
-            .filter(|(_, e)| matches!(e.kind, Kind::Define { root: true, .. }) && home_of(e) == Some(m))
+            .filter(|(_, e)| {
+                matches!(
+                    e.kind,
+                    Kind::Define { root: true, .. } | Kind::Global { .. }
+                ) && home_of(e) == Some(m)
+            })
             .map(|(idx, _)| idx)
             .collect();
         let has_asm = entities
@@ -340,7 +453,8 @@ pub fn split_by_home(ir: &str, residual: &str) -> Split {
                 continue;
             }
             if let Kind::Global {
-                mutable_local: true,
+                retention: Retention::Local,
+                mutable: true,
                 ..
             } = &e.kind
             {
@@ -411,6 +525,21 @@ const LINKAGES: &[&str] = &[
     "weak_odr",
     "external",
 ];
+
+/// A global's retention, from the text before its `global` / `constant`
+/// keyword. See [`Retention`]; the default is to KEEP.
+fn retention_of(head: &str) -> Retention {
+    for w in head.split_whitespace() {
+        match w {
+            "internal" | "private" => return Retention::Local,
+            "linkonce" | "linkonce_odr" | "available_externally" | "extern_weak" => {
+                return Retention::Discardable
+            }
+            _ => {}
+        }
+    }
+    Retention::Retained
+}
 
 fn linkage_of(head: &str) -> Linkage {
     for w in head.split_whitespace() {
@@ -629,6 +758,127 @@ entry:
         assert!(a.contains("@pkg.src.b._SEEN = internal global"), "{a}");
         assert!(!b.contains("@pkg.src.b._SEEN ="), "{b}");
         assert!(s.notes.is_empty(), "{:?}", s.notes);
+    }
+
+    // ---- a global nothing references -------------------------------------
+    // `bugs/closed/the-archive-split-drops-a-static-nothing-in-the-package-
+    // reads.md`. Statics are emitted into the PREAMBLE, before any home
+    // marker, so every one of them was homeless; a homeless global was only
+    // ever emitted where the reachability walk named it, and a package's
+    // public static that nothing inside the package reads is named nowhere.
+    // It was in no member of the archive and no export of the dylib, while
+    // `emit_statics` had deliberately given it `weak_odr` so the archive would
+    // keep it. The single-object build kept it, so the split was the regression.
+
+    /// Four globals, one of each kind, and NOTHING references any of them.
+    /// The two that must survive a link do; the two that are droppable are
+    /// dropped.
+    const LONELY: &str = "\
+@pkg.src.a.PUBLIC_LIMIT = weak_odr global i32 42, align 4
+@pkg.src.a.EXPORTED = global i32 7, align 4
+@pkg.src.a._PRIVATE = internal global i32 1, align 4
+@.str.0 = private unnamed_addr constant [3 x i8] c\"hi\\00\", align 1
+@__cplus_cancel_slot = linkonce_odr hidden global ptr null, align 8
+; cpc-home: pkg.src.a
+define weak_odr i32 @pkg.src.a.f() {
+entry:
+  ret i32 0
+}
+";
+
+    #[test]
+    fn a_public_static_survives_even_though_nothing_in_the_package_reads_it() {
+        let s = split_by_home(LONELY, "pkg");
+        let a = piece(&s, "pkg.src.a");
+        assert!(
+            a.contains("@pkg.src.a.PUBLIC_LIMIT = weak_odr global"),
+            "a `weak_odr` static IS the package's public surface — it must be \
+             in its module's piece with nothing referencing it:\n{a}"
+        );
+        assert!(
+            a.contains("@pkg.src.a.EXPORTED = global"),
+            "a plain external global must be defined somewhere:\n{a}"
+        );
+    }
+
+    /// Its home is its NAME's module, so it ships in the member a consumer
+    /// already loads for that module rather than in a residual catch-all.
+    #[test]
+    fn a_retained_global_is_homed_by_its_qualified_name() {
+        let ir = "\
+@pkg.src.b.COUNT = weak_odr global i32 0, align 4
+; cpc-home: pkg.src.a
+define weak_odr void @pkg.src.a.f() {
+entry:
+  ret void
+}
+; cpc-home: pkg.src.b
+define weak_odr void @pkg.src.b.g() {
+entry:
+  ret void
+}
+";
+        let s = split_by_home(ir, "pkg");
+        let b = piece(&s, "pkg.src.b");
+        let a = piece(&s, "pkg.src.a");
+        assert!(b.contains("@pkg.src.b.COUNT ="), "COUNT belongs to b:\n{b}");
+        assert!(!a.contains("@pkg.src.b.COUNT ="), "not a's:\n{a}");
+        assert!(
+            !s.pieces.iter().any(|p| p.module == "pkg"),
+            "and not a residual piece: {:?}",
+            s.pieces.iter().map(|p| &p.module).collect::<Vec<_>>()
+        );
+    }
+
+    /// The other half of the rule, and the reason it is RETENTION and not
+    /// merely "is it local". A `linkonce_odr` global promises to be discarded
+    /// when unused, so it needs no defining home; giving it one put an empty
+    /// residual member into the archive of every package that has a thread
+    /// (`__cplus_cancel_slot`), which the one-object build never had.
+    #[test]
+    fn a_discardable_global_gets_no_home_and_no_residual_member() {
+        let s = split_by_home(LONELY, "pkg");
+        for p in &s.pieces {
+            assert!(
+                !p.ir.contains("@__cplus_cancel_slot ="),
+                "nothing references it, so no piece defines it: {}",
+                p.module
+            );
+            assert!(
+                !p.ir.contains("@pkg.src.a._PRIVATE ="),
+                "an unreferenced internal global is dead: {}",
+                p.module
+            );
+            assert!(
+                !p.ir.contains("@.str.0 ="),
+                "so is an unreferenced private constant: {}",
+                p.module
+            );
+        }
+        assert_eq!(
+            s.pieces.len(),
+            1,
+            "one module, one piece: {:?}",
+            s.pieces.iter().map(|p| &p.module).collect::<Vec<_>>()
+        );
+    }
+
+    /// A global whose name matches no module still has to be kept, and the
+    /// residual piece is where a homeless thing goes.
+    #[test]
+    fn a_retained_global_with_no_module_in_its_name_lands_in_the_residual() {
+        let ir = "\
+@some_c_global = global i32 3, align 4
+; cpc-home: pkg.src.a
+define weak_odr void @pkg.src.a.f() {
+entry:
+  ret void
+}
+";
+        let s = split_by_home(ir, "pkg");
+        let res = piece(&s, "pkg");
+        assert!(res.contains("@some_c_global = global"), "{res}");
+        assert!(!piece(&s, "pkg.src.a").contains("@some_c_global ="), "once only");
     }
 
     #[test]
