@@ -1,138 +1,350 @@
 # C+ Programming Language
 
-## Welcome to C+
+C+ is an experimental, pre-1.0 systems programming language and toolchain. It
+compiles to native machine code through LLVM, uses explicit ownership and a
+borrow checker without a garbage collector, speaks the C ABI in both
+directions, and keeps high-level capabilities in ordinary vendored packages
+instead of growing the core language.
 
-C+ is an experimental, safety-oriented systems programming language and toolchain. Its main design philosophy is to keep the core language as small as possible while moving high-level capabilities into explicit, vendored packages.
+Version **0.0.28** supports macOS, Windows, Linux, iOS, Android, ESP32, and
+WebAssembly. Facet supplies native AppKit, UIKit, Android, GTK, and Win32 UI
+backends.
 
-**Website:** <https://cplus-lang.dev> · **Source:** <https://github.com/netdur/cplus>
+**Website:** <https://cplus-lang.dev> ·
+**Documentation:** <https://cplus-lang.dev/docs> ·
+**Releases:** <https://github.com/netdur/cplus/releases> ·
+**Changelog:** [changeslog.md](changeslog.md)
 
-C+ provides the necessary primitives for low-level systems programming:
-- **Safety**: Ownership, borrow checking, memory-safe abstractions, and raw-pointer accountability (every `*T` field must be released or marked `opaque`). No `null` in safe code.
-- **Modern Constructs**: Structs, tagged enums, generics, interfaces, methods, and modules.
-- **Package-extensible DSLs**: `@view { ... }` contextual builder blocks let a package expose concise declarative construction syntax (UI trees, route tables, config) without macros, closures, or compiler plugins. The compiler owns only the `@context { ... }` syntax, contextual name lookup, leading-dot modifiers, and `if`/`for` item-control; a package supplies ordinary builder types and element constructors. Bare child elements (`vstack { ... }`) nest within the same context.
-- **Low-Level Control**: Raw pointers, `#[repr(C)]`, SIMD primitives, atomics, threads, compiler-checked real-time contracts (`#[no_alloc]` / `#[realtime]`), and direct LLVM IR generation.
-- **C Interoperability**: Seamless C ABI interop, `extern fn`, and clang-based linking.
-- **Multi-target**: `--target` cross-compiles for iOS (`ios-arm64`), Android (`android-arm64`, via the NDK's clang), and ESP32 (`esp32-xtensa`, 32-bit, via Espressif's esp-clang). cpc emits the object or static library; the platform's build system (Xcode, Gradle/NDK, ESP-IDF) owns the final link. Compiler-checked `#[realtime]` code runs on a $4 microcontroller.
-- **Built for tools and LLMs**: a deliberately small, unambiguous surface, plus a resolved, typed **code-knowledge graph** the compiler exposes to editors and agents (`cpc query` / `cpc mcp`, and the LSP) — so navigation is by *symbol and type*, not text search.
+## What C+ is
 
-Instead of relying on compiler magic for everything, C+ relies on an external-package architecture. Capabilities like the standard library (`stdlib`), 3D math (`simd`), GPU compute (`metal`), and UI bindings (`appkit` for macOS, `uikit` for iOS, `gtk`/`adwaita` for Linux, `espidf` for ESP32 firmware) are implemented as regular packages, keeping the compiler focused and fast.
+- **Native systems programming.** C+ emits LLVM IR and uses clang to assemble
+  and link native artifacts. There is no VM and no garbage collector.
+- **Explicit ownership.** A parameter is a read-only borrow by default, `ref`
+  writes back to the caller, and `take` transfers ownership. Owning values drop
+  deterministically at the end of their scope.
+- **A checked safe subset with an explicit raw tier.** The borrow checker
+  enforces aliasing-xor-mutation and rejects uninitialized reads, invalid
+  escapes, and data races. Raw-pointer dereferences, pointer casts, and foreign
+  calls remain available and visible at their point of use; C+ does not claim
+  that those operations are automatically safe.
+- **A small, unambiguous language surface.** C+ has no exceptions, closures,
+  function overloading, implicit numeric conversions, or source-rewriting
+  macros. Structs, tagged enums, generics, interfaces, methods, modules, async
+  functions, generators, and explicit error values cover the core model.
+- **Package-defined high-level syntax.** Contextual builder blocks such as
+  `@view { ... }` let packages provide declarative construction syntax without
+  compiler plugins or hidden control flow.
+- **Two-way C interoperability.** C+ calls C through `extern fn`, exports plain
+  C symbols, emits C headers, and can be introduced one object file at a time
+  inside an existing C or C++ build.
+- **Compiler-checked real-time code.** `#[no_alloc]`, `#[no_block]`,
+  `#[bounded_recursion]`, `#[max_stack(N)]`, and `#[realtime]` are checked over
+  the call graph rather than treated as advisory lints.
+- **Packages instead of compiler magic.** The standard library, SIMD, GPU,
+  platform bindings, UI, application capabilities, and agent surfaces are
+  regular C+ packages under [`vendor/`](vendor/).
 
-- [Getting Started](#getting-started)
-  - [Installing](#installing)
-  - [Requirements](#requirements)
-  - [Language Tools](#language-tools)
-  - [Creating a C+ Project](#creating-a-c-project)
-- [Contributing to C+](#contributing-to-c)
-  - [Building from Source](#building-from-source)
-- [Learning More](#learning-more)
+## Platforms and artifacts
 
-## Getting Started
+C+ uses seven platform names throughout source-file overrides, manifest
+sections, and `#platform()`:
 
-### Installing
+| Platform | Build path | Artifact or runtime | Facet backend |
+|---|---|---|---|
+| macOS | native host | executable | AppKit |
+| Linux | native host | executable | GTK 4 |
+| Windows | native host | executable | Win32 |
+| iOS | `ios-arm64`, `ios-arm64-simulator` through Xcode | static library + C header for the platform shell | UIKit |
+| Android | `android-arm64` through the Android NDK | static library + C header for the platform shell | Android |
+| ESP32 | `esp32-xtensa`, `esp32c3-riscv32` through esp-clang / ESP-IDF | static library + C header for firmware integration | — |
+| WebAssembly | `cpc-wasm` in the browser | full front-end; runnable WebAssembly for the current supported subset | — |
 
-On macOS (Apple Silicon), install C+ with Homebrew:
+The native compiler runs on macOS, Linux, and Windows. Cross-target builds use
+the target platform's own toolchain: Xcode for iOS, the Android NDK for
+Android, and Espressif's esp-clang for ESP32. External-builder targets stop at
+an archive and generated header; Xcode, the Android build, or ESP-IDF owns the
+final link.
+
+See [Platforms and targets](docs/lang/platforms.md) for target triples,
+platform-specific source files, manifest sections, artifact locations, and
+toolchain discovery.
+
+## Install
+
+### macOS / Apple Silicon
 
 ```sh
 brew install netdur/cplus/cplus
 ```
 
-This installs prebuilt `cpc` (compiler), `cpc-lsp` (language server), and `cpc-bindgen` (FFI generator) binaries — **no build step, installed in seconds**. Update later with `brew upgrade cplus`.
-
-On Linux (`x86_64`, Debian/Ubuntu) and Windows (`x86_64`), prebuilt binaries are attached to each [GitHub release](https://github.com/netdur/cplus/releases/latest). macOS, Linux, and Windows are tested after every push (see [Requirements](#requirements)):
-
-- **Linux**: download the `.deb` and `sudo apt install ./cplus_*_amd64.deb` (this resolves the clang ≥ 19 dependency).
-- **Windows**: download `cplus-x86_64-pc-windows-msvc.zip` and put `cpc.exe`, `cpc-lsp.exe`, and `cpc-bindgen.exe` on your `PATH`.
-
-To build from source instead, see [Building from Source](#building-from-source).
-
-### Requirements
-
-C+ has a single external dependency: a C toolchain (**clang**), used to assemble and link the native binary. `cpc` emits textual LLVM IR and shells out to `clang`, detecting the host target with `clang -print-target-triple`. clang already bundles LLVM, so **no separate LLVM install is needed**. Cross-compiling with `--target` uses the platform's own toolchain: the Android NDK's clang for `android-arm64`, Espressif's esp-clang for `esp32-xtensa` (both auto-discovered from their default install locations).
-
-On macOS, install the Xcode Command Line Tools (most developers already have them):
+The Homebrew package installs prebuilt `cpc`, `cpc-lsp`, and `cpc-bindgen`
+binaries. Native builds require the Xcode Command Line Tools:
 
 ```sh
 xcode-select --install
 ```
 
-The front-end-only commands (`cpc check`, `cpc --emit-ll`, `cpc lsp`, `cpc graph`, `cpc query`, `cpc mcp`, `cpc fmt`, `cpc doc`) are self-contained and need no external tools.
+### Linux / x86-64
 
-C+ is continuously tested on **macOS / Apple Silicon**
-(`aarch64-apple-darwin`), **Linux / x86-64**, and **Windows / x86-64 MSVC**.
-Each job runs the Rust workspace tests; Linux and Windows also build the release
-binaries and use the resulting `cpc` to compile, link, and run a native smoke
-program. Cross targets such as iOS, Android, and ESP32 use separate
-package-specific, simulator, device, and probe-app checks.
+Download the `.deb` from the
+[latest release](https://github.com/netdur/cplus/releases/latest), then install
+it with apt so the clang dependency is resolved:
 
-### Language Tools
+```sh
+sudo apt install ./cplus_*_amd64.deb
+```
 
-The C+ repository includes a robust suite of practical tooling to improve the developer experience:
+### Windows / x86-64
 
-- **`cpc build`**: Compiles C+ projects and handles linking.
-- **`cpc check`**: Runs parsing, semantic analysis, and borrow checking without emitting code (whole-project front-end / CI gate; enforces any `[profile.realtime]`).
-- **`cpc test`**: Discovers and runs `#[test]` functions and doctests.
-- **`cpc fmt`**: Formats your C+ source code.
-- **`cpc doc`**: Generates Markdown documentation from public items.
-- **`cpc lsp`**: Starts the resident Language Server (completion, goto-definition, references, hover, outline — served from one cached project graph).
-- **`cpc graph` / `cpc query` / `cpc mcp`**: The resolved, typed code-knowledge graph — as JSON, as per-symbol queries (`complete`/`def`/`refs`/`callers`/`callees`/`call-hierarchy`/`type-at`/`context`/…), or as a resident MCP server for agents.
-- **`cpc --realtime-report`**: Whole-project digest of the real-time contract analysis.
-- **`cpc-bindgen`**: Generates C+ FFI bindings from C headers, whole typed C+ packages from Objective-C and Swift frameworks (`--framework` / `--swift`), Java classes (`--java`), GObject Introspection graphs (`--gobject`), and pkg-config C packages (`--cpackage`).
+Download `cplus-x86_64-pc-windows-msvc.zip` from the
+[latest release](https://github.com/netdur/cplus/releases/latest) and put
+`cpc.exe`, `cpc-lsp.exe`, and `cpc-bindgen.exe` on `PATH`. Native linking uses
+clang and the MSVC toolchain.
 
-### Creating a C+ Project
+The compiler front end, formatter, code graph, MCP server, package manifest
+operations, and documentation tools do not need clang. Commands that emit,
+link, or run native code do.
 
-A C+ project uses a `Cplus.toml` manifest file. Imports in C+ have a strict, clean shape to ensure builds are predictable:
+## Quick start
+
+Create, check, build, and run a host command-line project:
+
+```sh
+cpc init hello
+cd hello
+cpc pm install
+cpc check
+cpc build
+./target/debug/hello
+```
+
+The generated project has a `Cplus.toml` manifest and `src/main.cplus`. A
+minimal standalone program is:
 
 ```cplus
-import "./local_module" as local;
+fn main() -> i32 {
+    #println("hello, world");
+    return 0;
+}
+```
+
+Compile a single import-free file directly with:
+
+```sh
+cpc hello.cplus -o hello
+./hello
+```
+
+Scaffold a Facet application for a supported UI platform with `--kind gui`:
+
+```sh
+cpc init --kind gui --platform macos notes
+```
+
+`cpc init --help` documents platform-scoped entries and the files generated
+for host, iOS, and Android projects.
+
+## Projects and packages
+
+A project is described by `Cplus.toml`. Modules are `.cplus` files, and every
+import names its source and binds an alias:
+
+```cplus
+import "./catalog" as catalog;
 import "stdlib/io" as io;
-import "metal/metal" as metal;
+import "stdlib/str" as _;
 ```
-Every import names its source and binds an alias (`import "X" as Y;`) — local paths start with `./`, vendored packages match a `[dependencies]` entry in the manifest. The compiler validates these artifacts to ensure robust, reproducible builds.
 
-## Contributing to C+
+Dependencies are explicit in the manifest:
 
-Contributions to C+ are welcomed and encouraged!
+```toml
+[package]
+name    = "notes"
+version = "0.0.1"
+edition = "2026"
 
-The C+ toolchain is implemented as a Rust workspace containing:
-- `cplus-core`: The core compiler library (lexer, parser, AST, semantic analyzer, borrow checker, monomorphizer, LLVM IR codegen).
-- `cpc`: The command-line compiler and build driver.
-- `cpc-lsp`: The JSON-RPC language server for editor integration.
-- `cpc-bindgen`: A binding generator — C headers, Objective-C / Swift frameworks, GObject Introspection (`--gobject`), and pkg-config C packages (`--cpackage`).
-- `cpc-wasm`: A WebAssembly build of the front end powering the in-browser playground on [cplus-lang.dev](https://cplus-lang.dev) (source → diagnostics + LLVM IR, client-side).
+[dependencies]
+stdlib = "*"
+```
 
-### Building from Source
-
-Building the compiler from source requires a Rust toolchain:
+`cpc pm` materializes dependencies into the versioned per-user store, or into
+the project's `vendor/` directory with `--local`. Toolchain packages use `*`
+and are locked to the compiler version; third-party packages use exact pinned
+tree URLs. There are no version ranges or dependency solver.
 
 ```sh
-$ git clone https://github.com/netdur/cplus.git
-$ cd cplus
-$ cargo build --release
+cpc pm add . facet
+cpc pm install
+cpc pm manifest
 ```
 
-Once built, the `cpc` compiler binary will be available in `target/release/cpc`.
+Use `cpc pm add` for a multi-package feature such as Facet: it writes the
+feature's complete dependency closure, including the platform-specific part,
+instead of leaving that closure to be assembled by hand.
 
-Run the full test suite before submitting a pull request:
+Applications use `src/main.cplus` by default or an explicit `entry`. A package
+with no entry is a C+ library. `[library]` describes a C-ABI static or dynamic
+library product. The removed `[[bin]]` and `[lib]` forms are not part of the
+v0.0.28 manifest model.
+
+See [Packages and platforms](docs/lang/packages.md) and the
+[`cplus-pm` reference](cplus-pm/README.md) for the complete model.
+
+## Toolchain
+
+| Tool | Purpose |
+|---|---|
+| `cpc skill` | Print the version-matched C+ language reference plus dependency skills for an LLM or agent. |
+| `cpc explain E####` | Explain a diagnostic offline with its cause, fix, and example. |
+| `cpc init` | Scaffold a host, platform-scoped, or Facet project. |
+| `cpc pm` | Add, install, update, and inspect dependencies; remove local vendored copies; resolve Android Maven/AAR dependencies. |
+| `cpc check` | Run the whole-project front end without code generation; the fast project validation path. |
+| `cpc check FILE` | Check and code-generate one import-free file without invoking clang. |
+| `cpc build` | Build the current project for the host or a selected target. |
+| `cpc FILE -o BIN` | Compile and link one import-free source file. |
+| `cpc test` | Discover and run `#[test]` functions and doctests; supports filters, JSON, release mode, and sanitizers. |
+| `cpc fmt` | Format files or a project; supports check, stdout, and stdin modes. |
+| `cpc doc` / `cpc headers` | Generate Markdown API documentation or C headers. |
+| `cpc graph` | Emit the resolved, typed code graph as JSON. |
+| `cpc query` | Ask one semantic question: definitions, references, callers, callees, hierarchy, members, types, scope, completion, or an edit context. |
+| `cpc mcp` | Keep the graph resident and expose it as MCP tools, including live unsaved-buffer updates. |
+| `cpc lsp` | Run the language server over the same resident graph. |
+| `cpc-bindgen` | Generate C+ bindings for C, Objective-C, Swift frameworks, Java, GObject Introspection, and pkg-config packages. |
+| `cpc-wasm` | Run the front end in a browser and execute the currently supported WebAssembly subset. |
+
+`cpc check` deliberately never invokes clang. It answers whether the C+
+front end accepts the program; `cpc build` answers whether the emitted IR also
+assembles and links. Diagnostics support human, short, and NDJSON output.
+
+See [Tooling](docs/lang/tooling.md) for flags, sanitizer support, code-graph
+queries, MCP tools, documentation generation, and artifact inspection.
+
+## The complete agent development loop
+
+“Built for agents” does not mean only reducing the time or token count needed
+to generate source. C+ is designed around the complete development loop:
+
+```text
+understand code
+    ↓  cpc query / cpc mcp
+modify code
+    ↓  edit source
+validate cheaply
+    ↓  cpc check
+produce executable
+    ↓  cpc build
+run application
+    ↓  connect to live agent surface
+exercise real behavior
+    ↓  click / type / invoke actions
+inspect outcome
+    ↓  read exposed state / events / results
+expected?
+    ├─ yes → continue
+    └─ no  → query → edit → check → build → run again
+```
+
+The compiler's code graph supplies resolved understanding before an edit.
+Numbered, machine-readable diagnostics close the source-repair step. For
+applications that enable it, the optional agent stack exposes the live native
+interface through stable identities, capability grants, semantic actions,
+state, and events. The running application's behavior—not only a successful
+build—then becomes evidence for the next iteration.
+
+The stack is split into ordinary packages: `agent_core`, platform backends
+(`agent_appkit`, `agent_uikit`, `agent_android`, `agent_gtk`, `agent_win32`),
+`agent_mcp`, `agent_inapp`, and the optional `facet_agent` integration.
+
+## Facet and native application capabilities
+
+[Facet](vendor/facet/README.md) is the cross-platform UI package. Shared
+component and application code is paired with native backends:
+
+- `facet_appkit` — macOS / AppKit
+- `facet_uikit` — iOS / UIKit
+- `facet_android` — Android
+- `facet_gtk` — Linux / GTK 4
+- `facet_win32` — Windows / Win32
+
+`facet_runtime` owns application startup, windows, routes, and navigation.
+Capabilities remain packages rather than language features: HTTP, filesystem
+watching, notifications, application links, camera, location, sensors,
+biometrics, secure storage, permissions, file picking, haptics, sharing,
+terminal support, SQLite, Metal, CUDA, Core ML, and llama.cpp bindings are all
+represented in [`vendor/`](vendor/), with native implementations or explicit
+unsupported outcomes per platform.
+
+## Repository layout
+
+The Rust workspace contains:
+
+- [`cplus-core/`](cplus-core/) — lexer, parser, AST, semantic analysis, borrow
+  checking, monomorphization, LLVM IR generation, diagnostics, code graph, and
+  the WebAssembly emitter.
+- [`cpc/`](cpc/) — compiler CLI, build driver, project scaffolding, package
+  manager integration, queries, and MCP server.
+- [`cpc-lsp/`](cpc-lsp/) — language server using the resident project graph.
+- [`cpc-bindgen/`](cpc-bindgen/) — binding generation for foreign APIs.
+- [`cpc-wasm/`](cpc-wasm/) — browser front end and WebAssembly run path.
+- [`cplus-pm/`](cplus-pm/) — package manager library and standalone
+  compatibility binary; also exposed through `cpc pm`.
+
+The C+ packages live under [`vendor/`](vendor/). Language documentation is in
+[`docs/lang/`](docs/lang/), runnable recipes are in
+[`docs/examples/recipes/`](docs/examples/recipes/), and compiler internals and
+design notes are in [`docs/compiler/`](docs/compiler/).
+
+## Building and testing the toolchain
+
+Building the compiler requires a Rust toolchain and a compatible clang for the
+native end-to-end tests:
 
 ```sh
-$ cargo test --workspace
+git clone https://github.com/netdur/cplus.git
+cd cplus
+cargo build --release
+cargo test --workspace
 ```
 
-GitHub Actions runs the workspace tests on Windows, Linux, and macOS after
-every push to any branch or tag. Each platform workflow can also be started
-manually. Tests run serially within each platform job because the end-to-end
-fixtures share mutable vendor build outputs; the three platform jobs run in
-parallel. The macOS workflow skips two C-interop tests affected by Homebrew
-clang compatibility; Linux and Windows include them. Linux and Windows also
-build and smoke-test the toolchain, with release publishing limited to `v*` tags.
+The release compiler is written to `target/release/cpc`.
 
-To be a truly great community, C+ needs to welcome developers from all walks of life, with different backgrounds, and with a wide range of experience. A diverse and friendly community will have more great ideas, more unique perspectives, and produce more great code. We work diligently to make the C+ community welcoming to everyone.
+GitHub Actions runs the Rust workspace tests on macOS / Apple Silicon, Linux /
+x86-64, and Windows / x86-64 MSVC after every push. Linux and Windows also
+package and smoke-test the installed toolchain; release assets are attached on
+`v*` tags. End-to-end fixtures share mutable package build outputs, so tests run
+serially inside each platform job while the platform jobs run independently.
 
-## Learning More
+For C+ packages, run `cpc test` from the package directory. The project uses
+unit, end-to-end, negative, and doctest coverage; platform behavior is also
+checked with simulator, device, and probe applications where applicable.
 
-- Read the [v0.0.28 release notes](changeslog.md#v0028--2026-09-18) for the
-  upgrade checklist and platform/toolchain highlights.
-- Build a GUI with the [Facet tutorial](vendor/facet/docs/tutorial.md) and [apps, windows, and navigation guide](vendor/facet/docs/navigation.md).
-- Read [`docs/lang/spec.md`](docs/lang/spec.md) — the normative language specification (syntax, semantics, ownership model, the builder-block DSL, error-code catalog).
-- Check the [`docs/`](docs/) directory — the language docs in [`docs/lang/`](docs/lang/) (including [`docs/lang/skill.md`](docs/lang/skill.md), a dense reference for LLMs writing C+), runnable [`docs/examples/`](docs/examples/), and compiler internals + design deep-dives in [`docs/compiler/`](docs/compiler/).
-- See the [`vendor/`](vendor/) directory to explore how major language features (stdlib, SIMD, GPU, AppKit, GTK, JNI) are implemented purely through the package system.
+## Documentation
+
+- [Language tour](docs/lang/tour.md)
+- [Guide](docs/lang/guide.md)
+- [Language reference](docs/lang/ref.md)
+- [Normative specification](docs/lang/spec.md)
+- [Ownership](docs/lang/ownership.md)
+- [Memory model](docs/lang/memory-model.md)
+- [Packages](docs/lang/packages.md)
+- [Platforms](docs/lang/platforms.md)
+- [Tooling](docs/lang/tooling.md)
+- [Testing](docs/lang/testing.md)
+- [Dense language skill for LLMs and agents](docs/lang/skill.md)
+- [Facet tutorial](vendor/facet/docs/tutorial.md)
+- [Facet application and navigation guide](vendor/facet/docs/navigation.md)
+- [v0.0.28 changelog](changeslog.md#v0028--2026-09-18)
+
+Every release should be read with its matching documentation and packages.
+C+ is pre-1.0 and moves quickly; pin the toolchain version for real projects.
+
+## Contributing
+
+Contributions are welcome. Keep changes within the language's small-core,
+package-extensible model, add tests for positive and negative behavior, run the
+relevant package suite, and run `cargo test --workspace` before submitting a
+toolchain change.
+
+## License
+
+C+ is available under the [MIT License](LICENSE).
