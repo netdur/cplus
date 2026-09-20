@@ -28547,3 +28547,72 @@ fn a_consuming_method_on_an_enum_local_builds_without_tripping_the_move_guard() 
     assert!(!all.contains("panicked"), "compiler panicked:\n{all}");
     assert!(compile.status.success(), "expected clean build, got:\n{all}");
 }
+
+#[test]
+fn a_take_this_method_on_an_enum_drops_what_it_owns() {
+    // bugs/closed/a-take-this-method-on-an-enum-drops-nothing-it-owns.md:
+    // `gen_enum_method` registered no drop for a `take this` receiver or a
+    // `take` parameter, so a consuming method on an enum leaked both. A
+    // caller-side double drop of the moved-out shell (fixed the same day)
+    // had been hiding the payload half of that from a plain counter.
+    //
+    // Weighted counter: the payload weighs 1, the `take` param 10, and `main`
+    // reads the total after the owning block exits. Every shape must read
+    // exactly what it owns, exactly once.
+    let prelude = "static DROPS: i32 = 0;\n\
+                   struct H { n: i32 }\n\
+                   impl H { fn drop(ref this) { DROPS = DROPS + this.n; } }\n";
+    let cases: &[(&str, &str, i32)] = &[
+        (
+            "receiver only",
+            "enum E { A(H), B }\n\
+             impl E { fn m(take this) -> i32 { return 0; } }\n\
+             fn main() -> i32 { { let e: E = E::A(H { n: 1 }); let _r: i32 = e.m(); } return DROPS; }\n",
+            1,
+        ),
+        (
+            "receiver and take param, neither moved out",
+            "enum E { A(H), B }\n\
+             impl E { fn m(take this, take d: H) -> i32 { return 0; } }\n\
+             fn main() -> i32 { { let e: E = E::A(H { n: 1 }); let _r: i32 = e.m(H { n: 10 }); } return DROPS; }\n",
+            11,
+        ),
+        (
+            "take param returned",
+            "enum E { A(H), B }\n\
+             impl E { fn m(take this, take d: H) -> H { return d; } }\n\
+             fn main() -> i32 { { let e: E = E::A(H { n: 1 }); let _h: H = e.m(H { n: 10 }); } return DROPS; }\n",
+            11,
+        ),
+        (
+            "receiver consumed by a match",
+            "enum E { A(H), B }\n\
+             impl E { fn m(take this, take d: H) -> H { match this { E::A(v) => { return v; } E::B => { return d; } } } }\n\
+             fn main() -> i32 { { let e: E = E::A(H { n: 1 }); let _h: H = e.m(H { n: 10 }); } return DROPS; }\n",
+            11,
+        ),
+        (
+            "generic enum, receiver consumed by a match",
+            "enum E[T] { A(T), B }\n\
+             impl E[T] { fn m(take this, take d: T) -> T { match this { E::A(v) => { return v; } E::B => { return d; } } } }\n\
+             fn main() -> i32 { { let e: E[H] = E[H]::A(H { n: 1 }); let _h: H = e.m(H { n: 10 }); } return DROPS; }\n",
+            11,
+        ),
+    ];
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    for (name, body, expected) in cases {
+        let dir = tempdir();
+        let src = dir.join("em.cplus");
+        let bin = dir.join("em");
+        std::fs::write(&src, format!("{prelude}{body}")).unwrap();
+        let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+        assert!(
+            compile.status.success(),
+            "[{name}] must build:\n{}{}",
+            String::from_utf8_lossy(&compile.stdout),
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let run = Command::new(&bin).status().expect("run produced binary");
+        assert_eq!(run.code(), Some(*expected), "[{name}] drop total");
+    }
+}

@@ -33,9 +33,15 @@ earlier history lives in each version's archived plan.
   build of the compiler aborted on the guard that exists to catch exactly
   that, and a release build dropped the moved-out shell again at the
   caller's scope exit. That second drop had been cancelling a leak on the
-  callee's side — a `take this` method on an enum drops nothing it owns at
-  exit — so the counts looked right. The scanner consults enum methods now;
-  the callee-side leak is filed and is the next fix.
+  callee's side, below, so the counts looked right. The scanner consults
+  enum methods now.
+- **A `take this` method on an enum drops what it owns.** The enum method
+  emitter bound `this` and the parameters and registered no drop for
+  either, so a consuming method on an enum leaked its payload and every
+  `take` parameter (`fn both(take this, take d: H)` dropped neither); the
+  struct emitter had always dropped both. Measured with a weighted
+  counter across twelve receiver and parameter shapes, enum and struct,
+  method and free function: each now drops exactly what it owns, once.
 
 ## v0.0.28 — 2026-09-18
 

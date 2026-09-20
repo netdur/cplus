@@ -8948,9 +8948,20 @@ fn gen_enum_method(
         state.sret_slot = Some("%0".to_string());
         next_idx = 1;
     }
-    if let Some(_rcv) = sig.receiver {
+    if let Some(rcv) = sig.receiver {
         let recv_name = format!("%{}", next_idx);
-        state.bind("self", recv_name, Ty::Enum(enum_id));
+        state.bind("self", recv_name.clone(), Ty::Enum(enum_id));
+        // `take this` consumes the receiver: the body owns it, so it is
+        // dropped at scope exit — the same registration `gen_method` makes
+        // for a struct receiver. Until 2026-09-20 this emitter made neither
+        // this registration nor the `take`-param one below, so a consuming
+        // method on an enum dropped NOTHING it owned: `fn both(take this,
+        // take d: H)` leaked the payload and `d` alike (a caller-side double
+        // drop of the moved-out shell happened to hide the payload half).
+        // bugs/closed/a-take-this-method-on-an-enum-drops-nothing-it-owns.md
+        if matches!(rcv, Receiver::Move) && !state.in_destructor && state.needs_drop(&enum_ty) {
+            state.register_drop_kind("self", &recv_name, DropKind::Enum(enum_id), true);
+        }
         next_idx += 1;
     }
     for (param, ps) in m.params.iter().zip(sig.params.iter()) {
@@ -8967,6 +8978,11 @@ fn gen_enum_method(
                 slot
             ));
             state.bind(&param.name.name, slot.clone(), pty.clone());
+            // A moved-in owning value is the callee's to tear down — see
+            // the struct path's loop for the drop-flag story.
+            if ps.mode.is_take() {
+                state.register_value_drop(&param.name.name, &slot, pty, true);
+            }
         }
         next_idx += 1;
     }
@@ -21501,6 +21517,62 @@ mod tests {
     /// An unknown type errored CLEANLY (E0303) and the self-type crashed, which
     /// is the wrong way round: the crash was not a type that does not exist but
     /// one the compiler half-knew.
+    // ---- a `take this` method on an enum owns its receiver and `take` params --
+
+    // bugs/closed/a-take-this-method-on-an-enum-drops-nothing-it-owns.md:
+    // `gen_enum_method` bound `self` and the params and registered no drop
+    // for either, so a consuming method on an enum leaked its payload and
+    // every `take` parameter, while the struct emitter dropped both.
+    // (`fn_body` is the module's shared IR-slicing helper.)
+    #[test]
+    fn a_take_this_enum_method_drops_its_receiver_and_take_params() {
+        let ir = gen_src(
+            "struct H { n: i32 }\n\
+             impl H { fn drop(ref this) { } }\n\
+             enum E { A(H), B }\n\
+             impl E { fn both(take this, take d: H) -> i32 { return 0; } }\n\
+             fn main() -> i32 { let e: E = E::A(H { n: 1 }); return e.both(H { n: 2 }); }",
+        );
+        let body = fn_body(&ir, "E.both");
+        assert_eq!(
+            body.matches("@H.drop(").count(),
+            2,
+            "`d` and the receiver's payload must both be dropped:\n{body}"
+        );
+    }
+
+    #[test]
+    fn a_borrowing_enum_method_drops_only_its_take_params() {
+        // `this` (Read) is the caller's; `take d` is the callee's.
+        let ir = gen_src(
+            "struct H { n: i32 }\n\
+             impl H { fn drop(ref this) { } }\n\
+             enum E { A(H), B }\n\
+             impl E { fn peek(this, take d: H) -> i32 { return 0; } }\n\
+             fn main() -> i32 { let e: E = E::A(H { n: 1 }); return e.peek(H { n: 2 }); }",
+        );
+        let body = fn_body(&ir, "E.peek");
+        assert_eq!(
+            body.matches("@H.drop(").count(),
+            1,
+            "only `d` is the callee's to drop:\n{body}"
+        );
+    }
+
+    #[test]
+    fn an_enum_method_does_not_drop_a_bare_param() {
+        // A bare `d: H` is a borrow: the caller still owns it.
+        let ir = gen_src(
+            "struct H { n: i32 }\n\
+             impl H { fn drop(ref this) { } }\n\
+             enum E { A(H), B }\n\
+             impl E { fn look(this, d: H) -> i32 { return d.n; } }\n\
+             fn main() -> i32 { let e: E = E::A(H { n: 1 }); let d: H = H { n: 2 }; return e.look(d); }",
+        );
+        let body = fn_body(&ir, "E.look");
+        assert_eq!(body.matches("@H.drop(").count(), 0, "nothing here is owned:\n{body}");
+    }
+
     #[test]
     fn the_self_type_resolves_to_the_impl_target_in_every_position() {
         // Return position — what a CHAINING setter needs, and the reason this
