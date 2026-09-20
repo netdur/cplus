@@ -1998,6 +1998,15 @@ pub trait TypeShape {
     fn enum_is_tagged(&self, id: EnumId) -> bool;
     /// Per-variant payload type lists, in declaration order.
     fn enum_variant_payloads(&self, id: EnumId) -> Vec<Vec<Ty>>;
+    /// Might a value of the generic type parameter `name` carry a
+    /// destructor? Inside a template `T` stands for every instantiation, so
+    /// the sound answer is `true` unless the parameter is bounded `Copy`.
+    /// Only sema can see the bound stack; after monomorphization no `Param`
+    /// remains, so the default answers `false`.
+    fn param_may_drop(&self, name: &str) -> bool {
+        let _ = name;
+        false
+    }
     /// v0.0.27 FFI enums: the `#[repr]` width of a PLAIN enum's bare
     /// integer, in bits. 32 (the historical default) unless pinned.
     /// Meaningless for tagged enums (their tag stays i32).
@@ -2333,6 +2342,8 @@ fn struct_plan_inner(
 /// - A tagged enum carries drop if any variant payload does; a plain enum is
 ///   a bare tag.
 /// - An array carries drop if its element does.
+/// - A generic type parameter carries drop unless it is bounded `Copy`
+///   (answered by [`TypeShape::param_may_drop`]; only sema sees the bounds).
 ///
 /// Cycle-guarded. E0913 rejects value-recursive types, so the ordinary
 /// containment graph is acyclic — but not every cycle is infinite-size:
@@ -2380,6 +2391,14 @@ fn carries_drop_inner(ty: &Ty, tables: &dyn TypeShape, visiting: &mut Vec<(bool,
             r
         }
         Ty::Array(elem, _) => carries_drop_inner(elem, tables, visiting),
+        // A template's `T` is every instantiation at once. Until 2026-09-20
+        // this arm answered `false`, so `struct W[T] { v: T }` carried no
+        // drop inside its own generic impl and `fn get(this) -> T { return
+        // this.v; }` was not a partial move: at `W[Text]` the field was
+        // returned AND dropped with the shell — a double free the safe
+        // subset wrote (bugs/closed/generic-impl-method-bodies-are-checked-
+        // and-every-diagnostic-is-discarded.md). `T: Copy` still answers no.
+        Ty::Param(name) => tables.param_may_drop(name),
         _ => false,
     }
 }
@@ -2513,6 +2532,9 @@ enum NamedCallArrangement {
 }
 
 impl TypeShape for SemaCx<'_> {
+    fn param_may_drop(&self, name: &str) -> bool {
+        !self.param_has_copy_bound(name)
+    }
     fn struct_has_drop(&self, id: StructId) -> bool {
         self.structs[id.0 as usize].is_drop
     }
@@ -4615,14 +4637,19 @@ impl SemaCx<'_> {
             Ty::Struct(id) => {
                 let sd = &self.structs[id.0 as usize];
                 match &sd.generic_origin {
-                    Some((tmpl, args)) => format!(
-                        "{}[{}]",
-                        name_leaf(tmpl),
-                        args.iter()
+                    Some((tmpl, args)) => {
+                        let inner = args
+                            .iter()
                             .map(|a| self.ty_display_named(a))
                             .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
+                            .join(", ");
+                        // A tuple is a synthesized struct; the user wrote `(A, B)`.
+                        if tmpl == TUPLE_TEMPLATE {
+                            format!("({inner})")
+                        } else {
+                            format!("{}[{}]", name_leaf(tmpl), inner)
+                        }
+                    }
                     None => name_leaf(&sd.name).to_string(),
                 }
             }
@@ -6397,14 +6424,13 @@ impl SemaCx<'_> {
                 continue;
             }
             // A generic-target impl block (`impl Box[T] { ... }`) has no
-            // concrete struct/enum id yet — its methods are checked per
-            // instantiation. But nothing name-resolves the TEMPLATE body, so an
-            // undefined name (typo, out-of-scope match binding) sailed through
-            // `cpc check` and panicked codegen at the instantiation
-            // (`.expect("sema validated")`). Generic FREE fns already get this
-            // via `check_function`'s `fns_generic` path; this closes the same
-            // gap for generic methods with a name-resolution pass (no typing —
-            // that stays per-instantiation).
+            // concrete struct/enum id, so its bodies are checked against the
+            // template instantiated at its own parameters — names first (an
+            // undefined name used to sail through `cpc check` and panic
+            // codegen at the instantiation), then the full typed pass, whose
+            // diagnostics are REPORTED. Nothing checks a method body after
+            // this: monomorphize only substitutes, so an error a template
+            // body carries is this pass's to report or nobody's.
             if !b.target_generic_params.is_empty() {
                 self.check_generic_impl_methods(b);
                 for m in &b.methods {
@@ -6416,57 +6442,38 @@ impl SemaCx<'_> {
     }
 
     /// Type-check a generic impl block's method bodies, the way generic FREE
-    /// fn bodies are already checked.
+    /// fn bodies are already checked, and report what the check finds.
     ///
     /// The target is instantiated at its OWN parameters — `impl Cell[T]`
     /// becomes `Cell[Param("T")]` — which gives `this` a real `StructId` to
     /// resolve fields and methods against while every `T`-typed value stays
     /// abstract. `is_copy(Ty::Param)` is false, so a `T` is move-only inside
-    /// the body: the rule that holds across every instantiation. The
-    /// placeholder instantiation is filtered out of `MonoInfo` by
-    /// `ty_contains_param`, exactly like the ones sema already records from
-    /// generic bodies today.
+    /// the body: the rule that holds across every instantiation. A body that
+    /// duplicates a `T` says so with a `[T: Copy]` bound (`impl Vec[T: Copy]`
+    /// is the precedent) or takes the value with `take`. The placeholder
+    /// instantiation is filtered out of `MonoInfo` by `ty_contains_param`,
+    /// exactly like the ones sema already records from generic bodies today.
     ///
     /// Before this, these bodies got name resolution and nothing else, so
     /// every span-keyed table sema fills WHILE CHECKING A BODY was empty for
     /// them — and each consumer that later expected an entry crashed at the
-    /// last pass with `.expect("sema validated")`. That was five distinct
-    /// ICEs on ordinary source (`#env`, `#include_str`, an inferred struct
-    /// literal, an inferred generic call, an inferred tuple literal) plus a
-    /// false E0300 on a turbofish type argument, all closed by checking the
-    /// body once. Generic free fns were given this exact treatment earlier,
-    /// after the same class of crash; this is the impl-method half.
+    /// last pass with `.expect("sema validated")`. Checking the body once
+    /// closed five distinct ICEs on ordinary source.
     ///
-    /// **The diagnostics this check produces are discarded**, and the reason
-    /// is soundness rather than volume — which is not what this comment used
-    /// to say. Re-measured 2026-08-08 with `CPC_GENERIC_IMPL_DIAGNOSTICS=1`:
-    ///
-    /// - The old justification was ~250 diagnostics against the stdlib's own
-    ///   containers. That figure had expired. The E0324 half is fixed BELOW
-    ///   (the template's bounds are merged into the impl's by position), the
-    ///   containers now read elements through `at_ptr` or a `T: Copy` impl
-    ///   rather than moving out of a raw deref, and the count today is
-    ///   **zero** across stdlib, facet, facet_appkit, terminal, events,
-    ///   flex_layout and agent_core.
-    /// - What reporting would cost instead is FALSE POSITIVES. A template
-    ///   body is checked against its own parameters, so a `T` of unknown
-    ///   Copy-ness is treated conservatively as non-Copy: `fn put(ref this,
-    ///   v: T) { this.a = v; }` reports E0337 even though it is correct for
-    ///   every Copy instantiation, and `Pair[i32]` is exactly that. Six
-    ///   compiler tests over ordinary generic code fail this way, on E0337
-    ///   and on E0302 against `type-param`.
-    /// - And nothing is LOST by dropping them. The same body is re-checked
-    ///   per instantiation, where `T` is concrete: `Pair[Text]::put` — the
-    ///   case that really is unsound — reports the same E0337 against the
-    ///   template's own line. Verified by hand.
-    ///
-    /// So this is not a muted alarm: it is a check deferred to the point
-    /// where it can answer correctly. The template-level report would be an
-    /// EARLIER error, never a missing one, and it cannot be had until the
-    /// substitution-dependent rules can say "unknown for this `T`" rather
-    /// than assuming the conservative answer. That is the real work behind
-    /// turning this on, and it is worth doing for the earlier span alone —
-    /// but it is a rules change, not a `truncate` that wants deleting.
+    /// Until 2026-09-20 the diagnostics this check produced were then
+    /// DISCARDED (`sink.truncate(mark)`), on the recorded belief that the
+    /// same body is re-checked per instantiation with `T` concrete. No such
+    /// re-check exists — nothing types a method body after this pass, and
+    /// monomorphize only substitutes — so a generic method could carry an
+    /// unknown method or field (codegen ICE), a wrong arity or a plain type
+    /// mismatch (compiled), `return 5` in a `-> T` body instantiated at
+    /// `bool` (linked, as `ret i1 5`), or a partial move out of a Drop-owning
+    /// receiver (ran, and dropped the field twice). Measured before turning
+    /// the reports on: zero errors across stdlib, facet, facet_runtime,
+    /// facet_appkit, events, flex_layout, terminal, agent_core and the
+    /// example apps, so the false positives the discard guarded against were
+    /// not in the tree. Report:
+    /// bugs/closed/generic-impl-method-bodies-are-checked-and-every-diagnostic-is-discarded.md
     fn check_generic_impl_methods(&mut self, b: &crate::ast::ImplBlock) {
         // The name-resolution pass KEEPS its diagnostics: they are what
         // users see today, and they are the guard that stops an undefined
@@ -6474,7 +6481,6 @@ impl SemaCx<'_> {
         for m in &b.methods {
             self.check_generic_method_body_names(b, m);
         }
-        let mark = self.sink.len();
         // An impl block re-declares the target's parameters and usually
         // drops their bounds: `struct HashMap[K: Hash, V]` is implemented as
         // `impl HashMap[K, V]`. The bound is a property of the TYPE, so a
@@ -6532,16 +6538,6 @@ impl SemaCx<'_> {
             _ => {}
         }
         self.pop_type_params();
-        // Record-only: drop what the typed pass reported. The
-        // name-resolution diagnostics are below the mark and survive.
-        //
-        // `CPC_GENERIC_IMPL_DIAGNOSTICS=1` keeps them. That switch is how the
-        // decision above is re-measured instead of remembered — it is what
-        // showed the ~250 figure had expired, and it is how the next person
-        // checks whether the false positives are still there.
-        if std::env::var_os("CPC_GENERIC_IMPL_DIAGNOSTICS").is_none() {
-            self.sink.truncate(mark);
-        }
     }
 
     /// A bound method reference (`recv.handler` passed where an `fn` is
@@ -6552,7 +6548,7 @@ impl SemaCx<'_> {
     /// instantiations, each needing its own bridge for its own concrete
     /// type — so the record has nowhere to live.
     ///
-    /// Sema does not type these bodies either (`check_methods` runs name
+    /// Sema did not type these bodies at the time (`check_methods` ran name
     /// resolution over them and nothing else), so the reference was never
     /// recorded, monomorphize never rewrote it, and codegen read
     /// `this.handler` as a FIELD of a struct that has no such field and hit
@@ -18079,7 +18075,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     if let Some(base_ty) = self.place_ty_quiet(receiver) {
                         if self.ty_carries_drop(&base_ty) {
                             let base_name = match &base_ty {
-                                Ty::Struct(id) => self.structs[id.0 as usize].name.clone(),
+                                Ty::Struct(_) | Ty::Enum(_) => self.ty_display_named(&base_ty),
                                 Ty::Array(elem, _) => format!("[{}; N]", elem.name()),
                                 _ => base_ty.name().to_string(),
                             };
@@ -25182,13 +25178,13 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
         // vars, and match-arm bindings correctly must NOT be flagged.
         assert_clean(
             "struct Box[T] { v: T }\n\
-             impl Box[T] {\n\
-                 fn new(x: T) -> Box[T] { return Box[T] { v: x }; }\n\
+             impl Box[T: Copy] {\n\
+                 fn new(take x: T) -> Box[T] { return Box[T] { v: x }; }\n\
                  fn get(this) -> T { return this.v; }\n\
                  fn count(this, extra: i32) -> i32 { var n: i32 = extra; for i in 0..3 { n = n + i; } return n; }\n\
              }\n\
              enum Opt[T] { Some(T), None }\n\
-             impl Opt[T] { fn unwrap_or(this, d: T) -> T { match this { Opt::Some(v) => { return v; } Opt::None => { return d; } } } }\n\
+             impl Opt[T] { fn unwrap_or(take this, take d: T) -> T { match this { Opt::Some(v) => { return v; } Opt::None => { return d; } } } }\n\
              fn main() -> i32 { let b: Box[i32] = Box[i32]::new(5); let o: Opt[i32] = Opt[i32]::None; return b.get() + b.count(1) + o.unwrap_or(0); }",
         );
     }
@@ -25348,6 +25344,191 @@ fn go() { let c: C = C { n: 0 }; c.bump(); return; }\n";
              fn steal[T: Take](t: T) -> i32 { return t.take(); }\n\
              fn main() -> i32 { return 0; }",
             "E0337",
+        );
+    }
+
+    // 2026-09-20: a generic impl's method bodies were type-checked and every
+    // diagnostic then discarded (`sink.truncate(mark)`), on the belief that the
+    // body is re-checked per instantiation. It never was, so a template body
+    // could carry any error — an ICE at codegen for the unknown-name shapes,
+    // silent acceptance for the rest. And a template's `T` answered "carries
+    // no drop", so a `T`-typed field moved out of a borrowed receiver was not
+    // a partial move: at `W[Text]` it was returned AND dropped with the shell.
+    // bugs/closed/generic-impl-method-bodies-are-checked-and-every-diagnostic-is-discarded.md
+
+    #[test]
+    fn generic_impl_body_unknown_method_e0324() {
+        // Used to panic codegen at `.expect("sema validated")`.
+        assert_has_code(
+            "struct W[T] { v: T }\n\
+             impl W[T: Copy] {\n\
+                 fn get(this) -> T { return this.v; }\n\
+                 fn twice(this) -> T { return this.gett(); }\n\
+             }\n\
+             fn main() -> i32 { let w: W[i32] = W[i32] { v: 3 }; return w.twice(); }",
+            "E0324",
+        );
+    }
+
+    #[test]
+    fn generic_impl_body_is_checked_without_any_instantiation() {
+        // No `W[..]` is ever built, so no instantiation could have reported it.
+        assert_has_code(
+            "struct W[T] { v: T }\n\
+             impl W[T] { fn twice(this) -> T { return this.gett(); } }\n\
+             fn main() -> i32 { return 0; }",
+            "E0324",
+        );
+    }
+
+    #[test]
+    fn generic_impl_body_unknown_field_e0320() {
+        // Used to panic codegen in `StructInfo::field_index`.
+        assert_has_code(
+            "struct W[T] { v: T }\n\
+             impl W[T: Copy] { fn get(this) -> T { return this.w; } }\n\
+             fn main() -> i32 { let w: W[i32] = W[i32] { v: 3 }; return w.get(); }",
+            "E0320",
+        );
+    }
+
+    #[test]
+    fn generic_impl_body_wrong_arity_e0308() {
+        // Used to compile.
+        assert_has_code(
+            "struct W[T] { v: T }\n\
+             impl W[T: Copy] {\n\
+                 fn get(this) -> T { return this.v; }\n\
+                 fn twice(this) -> T { return this.get(1); }\n\
+             }\n\
+             fn main() -> i32 { let w: W[i32] = W[i32] { v: 3 }; return w.twice(); }",
+            "E0308",
+        );
+    }
+
+    #[test]
+    fn generic_impl_body_plain_type_mismatch_e0302() {
+        // A mismatch that does not involve `T` at all, inside an instantiated
+        // method: the proof that no per-instantiation re-check ever ran.
+        assert_has_code(
+            "struct W[T] { v: T }\n\
+             impl W[T: Copy] { fn get(this) -> T { let b: bool = 5; return this.v; } }\n\
+             fn main() -> i32 { let w: W[i32] = W[i32] { v: 3 }; return w.get(); }",
+            "E0302",
+        );
+    }
+
+    #[test]
+    fn generic_impl_body_literal_returned_for_param_e0302() {
+        // Used to build and link: `W[bool]::get` was emitted as `ret i1 5`.
+        assert_has_code(
+            "struct W[T] { v: T }\n\
+             impl W[T] { fn get(this) -> T { return 5; } }\n\
+             fn main() -> i32 { let w: W[bool] = W[bool] { v: true }; if w.get() { return 1; } return 0; }",
+            "E0302",
+        );
+    }
+
+    #[test]
+    fn generic_impl_body_partial_move_out_of_borrowed_this_e0509() {
+        // Used to run, and drop `h` twice (once in `eat`, once with `w`).
+        assert_has_code(
+            "struct H { n: i32 }\n\
+             impl H { fn drop(ref this) { } }\n\
+             struct W[T] { v: T, h: H }\n\
+             fn eat(take h: H) { }\n\
+             impl W[T] { fn go(this) -> T { eat(this.h); return this.v; } }\n\
+             fn main() -> i32 { let w: W[i32] = W[i32] { v: 3, h: H { n: 1 } }; return w.go(); }",
+            "E0509",
+        );
+    }
+
+    #[test]
+    fn generic_impl_getter_moves_param_field_out_of_borrowed_this_e0509() {
+        // `T` is every instantiation at once; at `W[Text]` this returned the
+        // buffer and dropped it with the shell. The unbounded getter is a
+        // partial move, exactly as it is for a `Text` field.
+        assert_has_code(
+            "struct W[T] { v: T }\n\
+             impl W[T] { fn get(this) -> T { return this.v; } }\n\
+             fn main() -> i32 { let w: W[i32] = W[i32] { v: 3 }; return w.get(); }",
+            "E0509",
+        );
+    }
+
+    #[test]
+    fn generic_impl_getter_moves_param_field_out_of_taken_this_e0509() {
+        // `take this` does not disarm the shell's drop (ownership.md §6), so a
+        // consuming getter is the same double free; a `match` is the way out,
+        // as `generic_enum_consuming_match_clean` shows.
+        assert_has_code(
+            "struct W[T] { v: T }\n\
+             impl W[T] { fn into_inner(take this) -> T { return this.v; } }\n\
+             fn main() -> i32 { let w: W[i32] = W[i32] { v: 3 }; return w.into_inner(); }",
+            "E0509",
+        );
+    }
+
+    #[test]
+    fn generic_impl_body_bare_param_stored_e0337() {
+        // The one shape the discarded-diagnostics comment claimed was caught
+        // per instantiation. It was not.
+        assert_has_code(
+            "struct H { n: i32 }\n\
+             impl H { fn drop(ref this) { } }\n\
+             struct Pair[T] { a: T }\n\
+             impl Pair[T] { fn put(ref this, v: T) { this.a = v; } }\n\
+             fn main() -> i32 { var p: Pair[H] = Pair[H] { a: H { n: 1 } }; let h: H = H { n: 2 }; p.put(h); return 0; }",
+            "E0337",
+        );
+    }
+
+    #[test]
+    fn e0509_in_a_generic_body_names_the_type_as_spelled() {
+        let diags = check_src(
+            "struct W[T] { v: T }\n\
+             impl W[T] { fn get(this) -> T { return this.v; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0509")
+            .expect("E0509 expected");
+        assert!(d.message.contains("`W[T]`"), "{}", d.message);
+        assert!(!d.message.contains("Param"), "{}", d.message);
+    }
+
+    #[test]
+    fn generic_impl_copy_bound_getter_clean() {
+        // The honest signature for a by-value getter.
+        assert_clean(
+            "struct W[T] { v: T }\n\
+             impl W[T: Copy] { fn get(this) -> T { return this.v; } }\n\
+             fn main() -> i32 { let w: W[i32] = W[i32] { v: 3 }; return w.get(); }",
+        );
+    }
+
+    #[test]
+    fn generic_impl_take_param_store_clean() {
+        assert_clean(
+            "struct H { n: i32 }\n\
+             impl H { fn drop(ref this) { } }\n\
+             struct W[T] { v: T }\n\
+             impl W[T] { fn put(ref this, take x: T) { this.v = x; } }\n\
+             fn main() -> i32 { var w: W[H] = W[H] { v: H { n: 1 } }; w.put(H { n: 2 }); return 0; }",
+        );
+    }
+
+    #[test]
+    fn generic_enum_consuming_match_clean() {
+        // Consuming the whole value with a `match` is the sanctioned way to
+        // get an owned payload out; the enum now carries drop through `T`.
+        assert_clean(
+            "struct H { n: i32 }\n\
+             impl H { fn drop(ref this) { } }\n\
+             enum E[T] { A(T), B }\n\
+             impl E[T] { fn into_inner(take this, take d: T) -> T { match this { E::A(v) => { return v; } E::B => { return d; } } } }\n\
+             fn main() -> i32 { let e: E[H] = E[H]::A(H { n: 1 }); let h: H = e.into_inner(H { n: 0 }); return h.n; }",
         );
     }
 
@@ -26793,7 +26974,7 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         assert_clean(
             "struct Pair[T] { a: T, b: T }\n\
              impl Pair[T] {\n\
-                 fn put(ref this, v: T) { this.a = v; return; }\n\
+                 fn put(ref this, take v: T) { this.a = v; return; }\n\
              }\n\
              struct Holder { p: Pair[i32] }\n\
              fn touch() -> i32 {\n\
@@ -30359,7 +30540,7 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
         );
         assert_clean(
             "struct Box[T] { value: T } \
-             impl Box[T] { fn pick[U, V](a: U, b: V) -> V { return b; } } \
+             impl Box[T] { fn pick[U, V](a: U, take b: V) -> V { return b; } } \
              fn main() -> i32 { return Box[i32]::pick(true, 7); }",
         );
     }
@@ -31184,7 +31365,7 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
         // unbounded methods. Only `dup` requires Copy; `store` does not.
         assert_clean(
             "struct W[T] { v: T } \
-             impl W[T] { fn store(ref this, x: T) { this.v = x; return; } } \
+             impl W[T] { fn store(ref this, take x: T) { this.v = x; return; } } \
              impl W[T: Copy] { fn dup(this) -> T { return this.v; } } \
              struct NC { x: i32 } \
              impl NC { fn drop(ref this) { return; } } \
@@ -31205,7 +31386,7 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
         // failed (E0302), forcing `::[T]` at every generic-over-container call.
         assert_clean(
             "struct Box2[T] { v: T } \
-             fn get[T](b: Box2[T]) -> T { return b.v; } \
+             fn get[T: Copy](b: Box2[T]) -> T { return b.v; } \
              fn main() -> i32 { let a: Box2[i32] = Box2[i32] { v: 5 }; let r: i32 = get(a); return r -% 5; }",
         );
     }
@@ -31957,7 +32138,7 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
         // Slice 7GEN.5e step 3: `impl Box[T] { fn get(self) -> T }`.
         assert_clean(
             "struct Box[T] { value: T } \
-             impl Box[T] { fn get(this) -> T { return this.value; } } \
+             impl Box[T: Copy] { fn get(this) -> T { return this.value; } } \
              fn main() -> i32 { \
                  let b: Box[i32] = Box[i32] { value: 42 }; \
                  return b.get(); \
@@ -31970,7 +32151,7 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
         // `impl Pair[A, B]` — multiple impl-level params.
         assert_clean(
             "struct Pair[A, B] { first: A, second: B } \
-             impl Pair[A, B] { \
+             impl Pair[A: Copy, B: Copy] { \
                  fn first(this) -> A { return this.first; } \
                  fn second(this) -> B { return this.second; } \
              } \
@@ -31986,7 +32167,7 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
         // Method takes T as a param.
         assert_clean(
             "struct Box[T] { value: T } \
-             impl Box[T] { fn replace(ref this, new_value: T) { this.value = new_value; } } \
+             impl Box[T] { fn replace(ref this, take new_value: T) { this.value = new_value; } } \
              fn main() -> i32 { \
                  var b: Box[i32] = Box[i32] { value: 0 }; \
                  b.replace(42); \

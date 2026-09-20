@@ -4550,6 +4550,20 @@ fn scan_moves_in_expr(
                             }
                         }
                     }
+                    // 2026-09-20: an enum has methods too. `e.into_inner()`
+                    // through a `take this` method left `e` classified as
+                    // never-moved because only struct methods were consulted,
+                    // so the emission-time `mark_moved` tripped the
+                    // `is_always_drop_binding` debug guard on every consuming
+                    // method call on an owned enum local (a struct receiver was
+                    // fine). Same conservative walk, same safety argument.
+                    for edef in &types.enum_defs {
+                        if let Some(mi) = edef.methods.get(&m.name) {
+                            if matches!(mi.receiver, Some(crate::ast::Receiver::Move)) {
+                                set.insert(recv.clone());
+                            }
+                        }
+                    }
                 }
                 // G-027 fix: method calls also need to register
                 // bare-Ident args at positions where the method's
@@ -4565,6 +4579,17 @@ fn scan_moves_in_expr(
                         for (a, ps) in args.iter().zip(mi.params.iter()) {
                             let move_flag = ps.mode.is_take();
                             if move_flag {
+                                if let ExprKind::Ident(n) = &a.kind {
+                                    set.insert(n.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                for edef in &types.enum_defs {
+                    if let Some(mi) = edef.methods.get(&m.name) {
+                        for (a, ps) in args.iter().zip(mi.params.iter()) {
+                            if ps.mode.is_take() {
                                 if let ExprKind::Ident(n) = &a.kind {
                                     set.insert(n.clone());
                                 }

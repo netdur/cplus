@@ -3002,32 +3002,32 @@ mod tests {
     #[test]
     fn self_is_substituted_in_every_statement_position() {
         let out = run_with_driver_names(
-            "struct Holder[T] { v: T }\n\
-             impl Holder[T] {\n\
+            "struct Holder[T] { v: T, n: i32 }\n\
+             impl Holder[T: Copy] {\n\
                fn spin(this) -> i32 {\n\
                  loop {\n\
-                   let h: Self = Self { v: this.v };\n\
-                   return h.v;\n\
+                   let h: Self = Self { v: this.v, n: this.n };\n\
+                   return h.n;\n\
                  }\n\
                }\n\
                fn deferred(this) -> i32 {\n\
                  var n: i32 = 0;\n\
                  {\n\
                    defer n = n;\n\
-                   let h: Self = Self { v: this.v };\n\
-                   n = h.v;\n\
+                   let h: Self = Self { v: this.v, n: this.n };\n\
+                   n = h.n;\n\
                  }\n\
                  return n;\n\
                }\n\
                fn asserted(this) -> i32 {\n\
-                 assert Self { v: this.v }.v == 3;\n\
+                 assert Self { v: this.v, n: this.n }.n == 3;\n\
                  return 1;\n\
                }\n\
                fn assoc() -> i32 { return 5; }\n\
                fn viaassoc(this) -> i32 { return Self::assoc(); }\n\
              }\n\
              fn main() -> i32 {\n\
-               let b: Holder[i32] = Holder[i32] { v: 3 };\n\
+               let b: Holder[i32] = Holder[i32] { v: 3, n: 3 };\n\
                return b.spin() + b.deferred() + b.asserted() + b.viaassoc() - 9;\n\
              }",
         );

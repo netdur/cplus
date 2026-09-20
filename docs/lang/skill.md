@@ -515,6 +515,20 @@ the same change touches none of them.
 Never write a mangled name (`Option__i32`). It is internal and is rejected in
 source (E0405) even where an old diagnostic printed one.
 
+A generic body is checked once, against the template, and must hold for every
+`T`. An unbounded `T` is move-only and may own a destructor, so the rules for
+`Text` apply to it: a bare `x: T` parameter cannot be stored or returned
+(E0337 — write `take x: T`), and a `T`-typed field cannot be moved out of a
+borrowed or consumed receiver (E0509). A by-value getter says what it needs:
+
+```cplus
+impl Box[T: Copy] { fn get(this) -> T { return this.value; } }    // bit-copy: T is Copy
+impl Box[T] { fn put(ref this, take v: T) { this.value = v; } }   // ownership moves in
+```
+
+To take an owned payload out of a generic value, consume it with a `match`
+under `take this` (`E::A(v) => { return v; }`).
+
 ---
 
 ## 5. Structs, enums, interfaces

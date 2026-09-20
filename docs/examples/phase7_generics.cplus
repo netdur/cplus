@@ -16,7 +16,10 @@ struct Pair[A, B] {
     second: B,
 }
 
-impl Pair[A, B] {
+// By-value getters say what they need: a `T` may own a destructor, so
+// returning a field out of a borrowed receiver is a partial move (E0509)
+// unless the parameter is bounded `Copy`.
+impl Pair[A: Copy, B: Copy] {
     fn first(this) -> A { return this.first; }
     fn second(this) -> B { return this.second; }
 }

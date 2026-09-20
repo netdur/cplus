@@ -673,6 +673,14 @@ per concrete type combination. Internal mangling (e.g. `Option__i32`) is
 an implementation detail; **source never spells a mangled name** — users
 always write `Option[i32]::Some(v)`, including in patterns.
 
+A generic body is type-checked once, against its template, with each type
+parameter abstract; the checks are the ones a concrete body gets, and they
+hold for every instantiation. An unbounded parameter is non-Copy (§6.1) and
+is treated as carrying drop (§6.4), so the move and partial-move rules
+(**E0337**, **E0509**) apply to `T`-typed values as they do to `Text`; a
+`[T: Copy]` bound makes `T` Copy inside the body. Instantiation substitutes
+the concrete types and performs no further checking.
+
 ---
 
 ## 11. Strings and interpolation

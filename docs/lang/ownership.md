@@ -27,6 +27,13 @@ every existing pass-by-value site a move site. The compiler will point at
 each (E0335/E0337); expect that churn when a struct grows its first owning
 field.
 
+Inside a generic body an unbounded `T` is treated the same way: move-only,
+and possibly owning a destructor, because the body must hold for every
+instantiation. Returning or storing a `T` field out of a borrowed receiver is
+E0509, and storing a bare `x: T` parameter is E0337, exactly as for a `Text`.
+Write `[T: Copy]` when the method is a bit-copy getter, `take` when ownership
+moves in, and a consuming `match` to take a payload out.
+
 ## 3. Choosing a parameter mode
 
 | Callee's need | Mode | Cost model |

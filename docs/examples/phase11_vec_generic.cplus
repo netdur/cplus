@@ -47,7 +47,7 @@ struct Vec[T, A: Allocator] {
 }
 
 impl Vec[T, A] {
-    fn with_capacity(alloc: A, cap: usize) -> Vec[T, A] {
+    fn with_capacity(take alloc: A, cap: usize) -> Vec[T, A] {
         let bytes: usize = cap *% #size_of::[T]();
         let buf: *u8 = alloc.allocate(bytes);
         return Vec[T, A] {
@@ -71,12 +71,7 @@ impl Vec[T, A] {
         return { base + i };
     }
 
-    fn get(this, i: usize) -> T {
-        let p: *T = this.elem_ptr(i);
-        return { *p };
-    }
-
-    fn set(ref this, i: usize, value: T) {
+    fn set(ref this, i: usize, take value: T) {
         let p: *T = this.elem_ptr(i);
         { *p = value; }
         return;
@@ -91,7 +86,7 @@ impl Vec[T, A] {
         return;
     }
 
-    fn push(ref this, value: T) {
+    fn push(ref this, take value: T) {
         if this.len == this.cap {
             this.grow();
         }
@@ -106,6 +101,15 @@ impl Vec[T, A] {
         let bytes: usize = this.cap *% #size_of::[T]();
         this.alloc.deallocate(this.ptr, bytes);
         return;
+    }
+}
+
+// Reading an element out by value is a bit-copy, so it is offered only
+// where `T: Copy` — the same split stdlib's `Vec` makes.
+impl Vec[T: Copy, A] {
+    fn get(this, i: usize) -> T {
+        let p: *T = this.elem_ptr(i);
+        return { *p };
     }
 }
 

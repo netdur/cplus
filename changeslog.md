@@ -3,6 +3,40 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## Unreleased
+
+### Toolchain
+
+- **A generic `impl`'s method bodies now report their errors.** Sema
+  type-checked every generic impl body against its template and then
+  discarded what it found, on the recorded belief that the body was checked
+  again per instantiation. Nothing checks a method body after that pass, so
+  a template could carry an unknown method or field (a compiler panic at
+  codegen), a wrong arity or a plain type mismatch (compiled), or `return 5`
+  in a `-> T` body instantiated at `bool` (linked, as `ret i1 5`). The
+  reports now land at the template's own line, with the codes a concrete
+  `impl` gets. Measured first: zero new errors across stdlib, facet and the
+  example apps, whose generic bodies already obeyed the rules.
+- **A template's `T` may own a destructor.** Inside a generic body a type
+  parameter answered "carries no drop", so `struct W[T] { v: T }` with
+  `fn get(this) -> T { return this.v; }` was not a partial move — and at
+  `W[Text]` the field was returned and then dropped again with the shell, a
+  double free written in the safe subset with no raw pointer in sight. An
+  unbounded `T` now counts as owning, so E0509 and E0337 apply to it as they
+  do to `Text`; a `[T: Copy]` bound keeps the bit-copy getter, and a
+  consuming `match` stays the way to take a payload out. E0509 also names
+  the type as spelled (`W[T]`, `(T, i32)`) instead of the internal
+  `W__Param_T` / `__Tuple[T, i32]`.
+- **A consuming method on an enum local is a move the drop scanner sees.**
+  `e.into_inner()` through a `take this` method left `e` classified as
+  never-moved, because the scanner consulted struct methods only: a debug
+  build of the compiler aborted on the guard that exists to catch exactly
+  that, and a release build dropped the moved-out shell again at the
+  caller's scope exit. That second drop had been cancelling a leak on the
+  callee's side — a `take this` method on an enum drops nothing it owns at
+  exit — so the counts looked right. The scanner consults enum methods now;
+  the callee-side leak is filed and is the next fix.
+
 ## v0.0.28 — 2026-09-18
 
 This release spans the language and toolchain, package management, the agent

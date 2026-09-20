@@ -3621,20 +3621,20 @@ fn mono_rewrites_generic_calls_and_self_in_every_position() {
     let (_dir, bin) = compile_program(
         "fn id_it[T](take x: T) -> T { return x; }\n\
          struct W { a: i32 }\n\
-         struct Holder[T] { v: T }\n\
-         impl Holder[T] {\n\
+         struct Holder[T] { v: T, n: i32 }\n\
+         impl Holder[T: Copy] {\n\
            fn spin(this) -> i32 {\n\
              loop {\n\
-               let h: Self = Self { v: this.v };\n\
-               return h.v;\n\
+               let h: Self = Self { v: this.v, n: this.n };\n\
+               return h.n;\n\
              }\n\
            }\n\
            fn deferred(this) -> i32 {\n\
              var n: i32 = 0;\n\
              {\n\
                defer n = n;\n\
-               let h: Self = Self { v: this.v };\n\
-               n = h.v;\n\
+               let h: Self = Self { v: this.v, n: this.n };\n\
+               n = h.n;\n\
              }\n\
              return n;\n\
            }\n\
@@ -3645,7 +3645,7 @@ fn mono_rewrites_generic_calls_and_self_in_every_position() {
            let t: (W, i32) = (W { a: id_it::[i32](7) }, 1);\n\
            var out: i64 = 0;\n\
            #asm(\"mov {v}, {o}\", o = out(reg) out, v = in(reg) id_it::[i64](2));\n\
-           let b: Holder[i32] = Holder[i32] { v: 3 };\n\
+           let b: Holder[i32] = Holder[i32] { v: 3, n: 3 };\n\
            return t.0.a + (out as i32) + b.spin() + b.deferred() + b.viaassoc() - 20;\n\
          }",
         false,
@@ -9505,9 +9505,13 @@ fn features_inside_a_generic_impl_body_reach_codegen_intact() {
             // bug-27 shape 4, open since 2026-08-02 and closed by the same
             // change: an inferred tuple literal has no `tuple_lit_elems`
             // record to replay unless the body is checked.
+            // 2026-09-20: `[T: Copy]` — moving `this.v` into the tuple is a
+            // partial move out of a borrowed receiver now that a template's
+            // `T` counts as owning (E0509); the tuple-literal record this
+            // case pins is the same either way.
             "inferred_tuple_literal",
             "struct Cell[T] { v: T }\n\
-             impl Cell[T] { fn go(this) -> i32 { let p = (this.v, 1); return p.1; } }\n\
+             impl Cell[T: Copy] { fn go(this) -> i32 { let p = (this.v, 1); return p.1; } }\n\
              fn main() -> i32 { let c: Cell[i32] = Cell[i32] { v: 3 }; return c.go() - 1; }",
         ),
         (
@@ -10956,9 +10960,9 @@ fn phase7_generic_typed_impl_mut_self_runs() {
     std::fs::write(
         &src,
         "struct Box[T] { value: T }\n\
-         impl Box[T] {\n\
+         impl Box[T: Copy] {\n\
              fn get(this) -> T { return this.value; }\n\
-             fn set(ref this, v: T) { this.value = v; }\n\
+             fn set(ref this, take v: T) { this.value = v; }\n\
          }\n\
          fn main() -> i32 {\n\
              var b: Box[i32] = Box[i32] { value: 0 };\n\
@@ -11499,7 +11503,7 @@ fn phase7_generic_typed_impl_runs() {
     std::fs::write(
         &src,
         "struct Box[T] { value: T }\n\
-         impl Box[T] {\n\
+         impl Box[T: Copy] {\n\
              fn get(this) -> T { return this.value; }\n\
          }\n\
          fn main() -> i32 {\n\
@@ -11653,7 +11657,7 @@ fn phase7_generic_method_on_generic_struct_uses_both_type_params() {
     std::fs::write(
         &src,
         "struct Box[T] { value: T }\n\
-         impl Box[T] {\n\
+         impl Box[T: Copy] {\n\
              fn get[U](this, x: U) -> T { return this.value; }\n\
          }\n\
          fn main() -> i32 {\n\
@@ -11804,7 +11808,7 @@ fn phase7_generic_assoc_fn_on_generic_struct_inferred() {
     std::fs::write(
         &src,
         "struct Box[T] { value: T }\n\
-         impl Box[T] { fn pick[U, V](a: U, b: V) -> V { return b; } }\n\
+         impl Box[T] { fn pick[U, V](a: U, take b: V) -> V { return b; } }\n\
          fn main() -> i32 { return Box[i32]::pick(true, 7); }\n",
     )
     .unwrap();
@@ -12719,9 +12723,9 @@ fn phase7_generic_type_assoc_fn_multi_args_runs() {
     std::fs::write(
         &src,
         "struct Pair[A, B] { first: A, second: B }\n\
-         impl Pair[A, B] {\n\
-             fn make(a: A, b: B) -> Pair[A, B] { return Pair[A, B] { first: a, second: b }; }\n\
-             fn sum_first_and_b(this) -> i32 { return this.first; }\n\
+         impl Pair[A: Copy, B] {\n\
+             fn make(take a: A, take b: B) -> Pair[A, B] { return Pair[A, B] { first: a, second: b }; }\n\
+             fn sum_first_and_b(this) -> A { return this.first; }\n\
          }\n\
          fn main() -> i32 {\n\
              let p: Pair[i32, bool] = Pair[i32, bool]::make(42, true);\n\
@@ -25107,7 +25111,7 @@ fn user_generic_named_iterator_is_not_a_coroutine() {
          \n\
          struct Token { v: i32 }\n\
          struct LineIterator[T] { cur: T }\n\
-         impl LineIterator[T] {\n\
+         impl LineIterator[T: Copy] {\n\
            fn next(this) -> T { return this.cur; }\n\
          }\n\
          \n\
@@ -26657,7 +26661,7 @@ fn extension_may_not_replace_an_existing_method_e0326() {
 fn tuple_types_naming_a_type_parameter_instantiate() {
     let (_dir, bin) = compile_program(
         "struct H[T] { v: T }\n\
-         impl H[T] {\n\
+         impl H[T: Copy] {\n\
            // Annotated tuple type in a generic impl-method body.\n\
            fn tup(this) -> i32 { let p: (T, i32) = (this.v, 1); return p.1; }\n\
            // Tuple in the SIGNATURE of a generic impl method.\n\
@@ -26670,7 +26674,7 @@ fn tuple_types_naming_a_type_parameter_instantiate() {
          fn snd[T](take p: (T, i32)) -> i32 { return p.1; }\n\
          // Tuple LITERAL with no annotation anywhere — element types come\n\
          // from the type parameter through inference.\n\
-         fn inferred[T](take a: T, take b: T) -> T { let p = (a, b); return p.0; }\n\
+         fn inferred[T: Copy](take a: T, take b: T) -> T { let p = (a, b); return p.0; }\n\
          fn main() -> i32 {\n\
            let h: H[i32] = H[i32] { v: 7 };\n\
            if h.tup() != 1 { return 1; }\n\
@@ -28387,4 +28391,159 @@ fn a_detached_task_that_owns_its_data_still_builds_and_runs() {
          }\n",
     );
     assert!(ok, "the owned spelling must still compile:\n{out}");
+}
+
+// 2026-09-20: a generic impl's method bodies were type-checked and every
+// diagnostic then discarded, on the belief that the body was re-checked per
+// instantiation. It never was. And a template's `T` answered "carries no
+// drop", so a `T`-typed field moved out of a borrowed receiver was not a
+// partial move: at a Drop instantiation the field was returned AND dropped
+// with the shell. bugs/closed/generic-impl-method-bodies-are-checked-and-
+// every-diagnostic-is-discarded.md
+
+#[test]
+fn generic_impl_double_drop_is_rejected_before_it_runs() {
+    // This program used to build, run, and exit 2: `h` dropped once in `eat`
+    // and once more with `w`. It is a partial move out of a Drop-owning
+    // receiver and must be E0509 at the template's line.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("dd.cplus");
+    std::fs::write(
+        &src,
+        "static DROPS: i32 = 0;\n\
+         struct H { n: i32 }\n\
+         impl H { fn drop(ref this) { DROPS = DROPS + 1; } }\n\
+         struct W[T] { v: T, h: H }\n\
+         fn eat(take h: H) { }\n\
+         impl W[T] {\n\
+             fn go(this) -> T { eat(this.h); return this.v; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             { let w: W[i32] = W[i32] { v: 3, h: H { n: 1 } }; let _v: i32 = w.go(); }\n\
+             return DROPS;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "expected rejection, got:\n{all}");
+    assert!(all.contains("E0509"), "expected E0509, got:\n{all}");
+    assert!(all.contains("dd.cplus:7:"), "E0509 must point at the template line, got:\n{all}");
+    assert!(!all.contains("panicked"), "compiler panicked:\n{all}");
+}
+
+#[test]
+fn generic_impl_error_is_reported_from_the_module_that_holds_it() {
+    // The unknown method lives in `w.cplus`; the diagnostic must say so, and
+    // must not be an ICE at codegen the way it was.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"gi\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./w\" as w;\n\
+         fn main() -> i32 { let x: w::W[i32] = w::W[i32] { v: 3 }; return x.twice(); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/w.cplus"),
+        "struct W[T] { v: T }\n\
+         impl W[T: Copy] {\n\
+             fn get(this) -> T { return this.v; }\n\
+             fn twice(this) -> T { return this.gett(); }\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").current_dir(&dir).output().expect("cpc");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "expected rejection, got:\n{all}");
+    assert!(all.contains("E0324"), "expected E0324, got:\n{all}");
+    assert!(all.contains("w.cplus:4:"), "must name the module and line that hold the call, got:\n{all}");
+    assert!(!all.contains("panicked"), "compiler panicked:\n{all}");
+}
+
+#[test]
+fn generic_enum_consuming_match_runs_and_drops_once() {
+    // The sanctioned way to take an owned payload out of a generic value: a
+    // consuming `match`. The enum now carries drop through `T`, so this pins
+    // that the consumed shell does NOT drop the payload a second time.
+    // Expected drops: `d` at `into_inner`'s exit (10) + `h` at the block's
+    // exit (1) = 11; a double drop of the payload would read 12.
+    //
+    // Written as a free fn on purpose: the same body as a `take this` METHOD
+    // on an enum leaks `d` today (bugs/a-take-this-method-on-an-enum-drops-
+    // nothing-it-owns.md), which is a separate defect with its own test.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("cm.cplus");
+    let bin = dir.join("cm");
+    std::fs::write(
+        &src,
+        "static DROPS: i32 = 0;\n\
+         struct H { n: i32 }\n\
+         impl H { fn drop(ref this) { DROPS = DROPS + this.n; } }\n\
+         enum E[T] { A(T), B }\n\
+         fn into_inner[T](take e: E[T], take d: T) -> T {\n\
+             match e { E::A(v) => { return v; } E::B => { return d; } }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             { let e: E[H] = E[H]::A(H { n: 1 }); let h: H = into_inner(e, H { n: 10 }); assert h.n == 1; }\n\
+             return DROPS;\n\
+         }\n",
+    )
+    .unwrap();
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "expected clean build, got:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run produced binary");
+    assert_eq!(run.code(), Some(11), "expected d (10) and h (1) dropped exactly once each");
+}
+
+#[test]
+fn a_consuming_method_on_an_enum_local_builds_without_tripping_the_move_guard() {
+    // 2026-09-20: codegen's move scanner consulted struct methods only, so a
+    // `take this` method called on an owned ENUM local left the local
+    // classified as never-moved, and the emission-time `mark_moved` tripped
+    // the `is_always_drop_binding` debug assertion — this suite runs the
+    // debug cpc, so the assertion is live here. Compile-only on purpose: what
+    // the method then drops is a separate defect (see the test above).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("em.cplus");
+    let bin = dir.join("em");
+    std::fs::write(
+        &src,
+        "struct H { n: i32 }\n\
+         impl H { fn drop(ref this) { } }\n\
+         enum E { A(H), B }\n\
+         impl E { fn shell(take this, take d: H) -> H { return d; } }\n\
+         fn main() -> i32 { let e: E = E::A(H { n: 1 }); let h: H = e.shell(H { n: 0 }); return h.n; }\n",
+    )
+    .unwrap();
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(!all.contains("panicked"), "compiler panicked:\n{all}");
+    assert!(compile.status.success(), "expected clean build, got:\n{all}");
 }
