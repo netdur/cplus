@@ -6900,6 +6900,21 @@ fn render_static_literal(
         } if name == "zero" && args.is_empty() && type_args.len() == 1 => {
             Some("zeroinitializer".to_string())
         }
+        // `#bitcast::[fN](<bits>)` — what lower folds a float static to when
+        // its pattern is one a literal cannot spell (a NaN payload the f64
+        // form drops). A constant `bitcast` of the integer keeps every bit.
+        ExprKind::Intrinsic { name, args, .. } if name == "bitcast" && args.len() == 1 => {
+            let ExprKind::IntLit(raw, _) = &args[0].kind else {
+                return None;
+            };
+            let int_ty = match ty {
+                Ty::F16 => "i16",
+                Ty::F32 => "i32",
+                Ty::F64 => "i64",
+                _ => return None,
+            };
+            Some(format!("bitcast ({int_ty} {raw} to {})", llvm_ty(ty, types)))
+        }
         _ => None,
     }
 }

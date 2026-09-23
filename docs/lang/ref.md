@@ -443,7 +443,7 @@ All spelled `#name(...)`:
 | `#addr_of(place)` | `*T` | place must be addressable |
 | `#addr(p)` | `usize` | pointer → integer, loudly |
 | `#zero::[T]()` | `T` | all-zero value; composes with field-sets |
-| `#bitcast::[T](v)` | `T` | same bits, other type: a float and a same-width integer (`f32`↔`u32`/`i32`, `f64`↔`u64`/`i64`, `f16`↔`u16`/`i16`). `as` converts the value; this keeps the bits. An unsuffixed literal takes the partner type, so `#bitcast::[f32](0xBF800000)` is `-1.0`. Folds in `const`/`static` |
+| `#bitcast::[T](v)` | `T` | same bits, other type: a float and a same-width integer (`f32`↔`u32`/`i32`, `f64`↔`u64`/`i64`, `f16`↔`u16`/`i16`). `as` converts the value; this keeps the bits. An unsuffixed literal takes the partner type, so `#bitcast::[f32](0xBF800000)` is `-1.0`. NaN payloads, infinities and `-0.0` are kept, in `const`/`static` too |
 | `#include_bytes("path")` | `*[u8; N]` | embeds the file; path relative to source |
 | `#include_str("path")` | `str` | embedded, UTF-8 checked at build |
 | `#env("NAME")` | `str` | build-time env var; E0876 if unset |

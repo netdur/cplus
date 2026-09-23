@@ -2671,7 +2671,10 @@ enum CScalar {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum CVal {
     Int { v: i128, ty: CInt },
-    Float { v: f64, bits: u8 },
+    /// `raw` is the exact bit pattern when the value came from `#bitcast`:
+    /// an f64 cannot hold every f16/f32 NaN payload, so the pattern rides
+    /// alongside and is what gets emitted. Arithmetic and `as` drop it.
+    Float { v: f64, bits: u8, raw: Option<u64> },
     Bool(bool),
 }
 
@@ -2799,9 +2802,9 @@ fn float_of_bits(raw: u64, bits: u8) -> f64 {
     }
 }
 
-/// The pattern codegen will emit for a folded float constant of this width —
-/// the same rendering a literal goes through, so a bitcast whose bits do not
-/// survive it (a NaN payload) is caught here rather than emitted wrong.
+/// The pattern codegen will emit for a float literal of this width — the same
+/// rendering a literal goes through. A folded bitcast whose bits this does not
+/// reproduce (a NaN payload) is written back as a bitcast, not a literal.
 fn bits_of_float(v: f64, bits: u8) -> u64 {
     match bits {
         16 => crate::codegen::f64_to_f16_bits(v) as u64,
@@ -2883,7 +2886,22 @@ fn cval_to_expr(v: CVal, span: Span) -> Expr {
                 })
             }
         }
-        CVal::Float { v, bits } => {
+        // A pattern a literal cannot spell (a NaN payload the f64 does not
+        // carry) goes back out as the bitcast it came from — exact, and
+        // lowered to one LLVM `bitcast` like any other.
+        CVal::Float { v, bits, raw: Some(r) } if bits_of_float(v, bits) != r => {
+            let unsigned = CInt { bits, signed: false, size: false };
+            e(ExprKind::Intrinsic {
+                name: "bitcast".to_string(),
+                type_args: vec![Type {
+                    kind: TypeKind::Path(cscalar_name(CScalar::Float(bits)).to_string()),
+                    span,
+                }],
+                args: vec![e(ExprKind::IntLit(r, suffix_of_cint(unsigned)))],
+                ret_ty: None,
+            })
+        }
+        CVal::Float { v, bits, .. } => {
             if v.is_sign_negative() {
                 e(ExprKind::Unary {
                     op: UnaryOp::Neg,
@@ -2996,7 +3014,7 @@ impl Lower {
                         );
                     }
                 }
-                Ok(CVal::Float { v: *v, bits })
+                Ok(CVal::Float { v: *v, bits, raw: None })
             }
             ExprKind::BoolLit(b) => {
                 if let Some(exp) = expected {
@@ -3052,7 +3070,12 @@ impl Lower {
                         }
                         Ok(CVal::Int { v: -v, ty })
                     }
-                    CVal::Float { v, bits } => Ok(CVal::Float { v: -v, bits }),
+                    CVal::Float { v, bits, raw } => Ok(CVal::Float {
+                        v: -v,
+                        bits,
+                        // Negation flips the sign bit and nothing else.
+                        raw: raw.map(|r| r ^ (1u64 << (bits - 1))),
+                    }),
                     CVal::Bool(_) => bail!(e.span, "unary `-` on a bool constant"),
                 },
                 UnaryOp::Not => match self.const_eval(operand, Some(CScalar::Bool), cx, quiet)? {
@@ -3208,7 +3231,7 @@ impl Lower {
                                 }
                                 Ok(CVal::Int { v, ty })
                             }
-                            CVal::Float { v: a, bits } => {
+                            CVal::Float { v: a, bits, .. } => {
                                 let CVal::Float { v: b, .. } =
                                     self.const_eval(rhs, Some(CScalar::Float(bits)), cx, quiet)?
                                 else {
@@ -3224,7 +3247,7 @@ impl Lower {
                                         "operator not supported on float constants"
                                     ),
                                 };
-                                Ok(CVal::Float { v, bits })
+                                Ok(CVal::Float { v, bits, raw: None })
                             }
                             CVal::Bool(_) => bail!(e.span, "arithmetic on a bool constant"),
                         }
@@ -3259,6 +3282,7 @@ impl Lower {
                     (CVal::Int { v, .. }, CScalar::Float(bits)) => Ok(CVal::Float {
                         v: v as f64,
                         bits,
+                        raw: None,
                     }),
                     (CVal::Float { v, .. }, CScalar::Int(t)) => {
                         let t0 = v.trunc();
@@ -3276,7 +3300,7 @@ impl Lower {
                     }
                     (CVal::Float { v, .. }, CScalar::Float(bits)) => {
                         let v = if bits == 32 { v as f32 as f64 } else { v };
-                        Ok(CVal::Float { v, bits })
+                        Ok(CVal::Float { v, bits, raw: None })
                     }
                     (CVal::Bool(b), CScalar::Int(t)) => Ok(CVal::Int {
                         v: if b { 1 } else { 0 },
@@ -3336,20 +3360,17 @@ impl Lower {
                         CScalar::Float(to),
                     ) if from == to => {
                         let raw = (v as u128 as u64) & width_mask(to);
-                        let f = float_of_bits(raw, to);
-                        if bits_of_float(f, to) != raw {
-                            bail!(
-                                arg.span,
-                                "`#bitcast` of 0x{raw:X} is a NaN whose payload a constant cannot carry; bitcast it at runtime instead"
-                            );
-                        }
-                        Ok(CVal::Float { v: f, bits: to })
+                        Ok(CVal::Float {
+                            v: float_of_bits(raw, to),
+                            bits: to,
+                            raw: Some(raw),
+                        })
                     }
                     (
-                        CVal::Float { v, bits: from },
+                        CVal::Float { v, bits: from, raw },
                         CScalar::Int(t @ CInt { bits: to, size: false, .. }),
                     ) if from == to => Ok(CVal::Int {
-                        v: cint_wrap(bits_of_float(v, from) as i128, t),
+                        v: cint_wrap(raw.unwrap_or_else(|| bits_of_float(v, from)) as i128, t),
                         ty: t,
                     }),
                     _ => bail!(

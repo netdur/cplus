@@ -2440,7 +2440,7 @@ fn main() -> i32 {
 
 ### E0921 · Invalid constant expression
 
-A `const`/`static` initializer or an array-length expression failed compile-time evaluation: arithmetic overflowed the declared type's width, a shift amount was out of range, a division by zero occurred, two consts reference each other in a cycle, operand types mixed without a cast, a `#bitcast` produced a NaN whose payload a folded float cannot carry (bitcast it at runtime instead), or the expression used a non-constant construct (a call, a field, a runtime name).
+A `const`/`static` initializer or an array-length expression failed compile-time evaluation: arithmetic overflowed the declared type's width, a shift amount was out of range, a division by zero occurred, two consts reference each other in a cycle, operand types mixed without a cast, or the expression used a non-constant construct (a call, a field, a runtime name).
 
 ```cplus
 const A: u8 = 255u8 + 1u8;

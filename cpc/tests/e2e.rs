@@ -20004,7 +20004,8 @@ fn g034_undefined_indexed_write_still_e0300() {
 /// `#bitcast::[T](v)`: a float and a same-width integer (either signedness)
 /// swap types with the bits untouched — at runtime, from an unsuffixed literal
 /// (which takes the partner type, so `0xBF800000` is a `u32` and not an
-/// out-of-range `i32`), and folded in `const`/`static` position. Every check
+/// out-of-range `i32`), and folded in `const`/`static` position — NaN payloads
+/// included, which a folded f64 cannot hold on its own. Every check
 /// compares BITS, so a lowering that converted instead of reinterpreting
 /// fails it. Debug and `--release` both run: -O3 folds these bitcasts itself.
 #[test]
@@ -20016,6 +20017,9 @@ const PI: f32 = #bitcast::[f32](PI_BITS);\n\
 const SIGN64: u64 = #bitcast::[u64](-0.0);\n\
 static SNAN64: f64 = #bitcast::[f64](0x7FF0000000000001);\n\
 static H_ONE: f16 = #bitcast::[f16](0x3C00);\n\
+const SNAN32: f32 = #bitcast::[f32](0x7F800001);\n\
+static SNAN32_S: f32 = #bitcast::[f32](0xFF800001);\n\
+static H_NAN: f16 = #bitcast::[f16](0x7E01);\n\
 fn f32_bits(x: f32) -> u32 { return #bitcast::[u32](x); }\n\
 fn main() -> i32 {\n\
     let u: u32 = 0x3F800000;\n\
@@ -20050,6 +20054,18 @@ fn main() -> i32 {\n\
     if SIGN64 != 0x8000000000000000 { return 16; }\n\
     if #bitcast::[u64](SNAN64) != 0x7FF0000000000001 { return 17; }\n\
     if #bitcast::[u16](H_ONE) != 0x3C00 { return 18; }\n\
+    // NaN payloads a literal cannot spell still fold exactly\n\
+    if #bitcast::[u32](SNAN32) != 0x7F800001 { return 19; }\n\
+    if #bitcast::[u32](SNAN32_S) != 0xFF800001 { return 20; }\n\
+    if #bitcast::[u16](H_NAN) != 0x7E01 { return 21; }\n\
+    // infinities and negative zero round-trip at runtime\n\
+    let pinf: u32 = 0x7F800000;\n\
+    let ninf: u64 = 0xFFF0000000000000;\n\
+    let nz: u32 = 0x80000000;\n\
+    if #bitcast::[u32](#bitcast::[f32](pinf)) != pinf { return 22; }\n\
+    if #bitcast::[u64](#bitcast::[f64](ninf)) != ninf { return 23; }\n\
+    if #bitcast::[u32](#bitcast::[f32](nz)) != nz { return 24; }\n\
+    if #bitcast::[f32](nz) != 0.0 { return 25; }\n\
     return 0;\n\
 }\n";
     let cpc = env!("CARGO_BIN_EXE_cpc");

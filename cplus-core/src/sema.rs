@@ -35469,6 +35469,8 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
     fn bitcast_refusals_name_the_reason() {
         for (src, code, needle) in [
             ("let x: f32 = 1.0; let y = #bitcast::[u64](x);", "E0302", "widths differ (32 vs 64 bits)"),
+            ("let x: u64 = 1; let y = #bitcast::[f32](x);", "E0302", "widths differ (64 vs 32 bits)"),
+            ("let x: *u32 = 0 as *u32; let y = #bitcast::[f64](x);", "E0302", "fixed-width integers"),
             ("let x: u64 = 1; let y = #bitcast::[i64](x);", "E0302", "one side must be a float"),
             ("let x: f32 = 1.0; let y = #bitcast::[f64](x);", "E0302", "one side must be a float"),
             ("let x: usize = 1; let y = #bitcast::[f64](x);", "E0302", "fixed-width integers"),
@@ -35500,19 +35502,25 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
     }
 
     #[test]
-    fn bitcast_const_refuses_a_nan_payload_it_cannot_carry_e0921() {
-        // A folded float travels as an f64 and is re-rendered at its width;
-        // an f32 signalling NaN and an f16 NaN payload do not survive that,
-        // so the const form refuses rather than emit other bits.
+    fn bitcast_const_folds_a_nan_payload_clean() {
+        // A folded float travels as an f64, which cannot hold an f32
+        // signalling NaN or an f16 NaN payload; the exact pattern rides
+        // alongside, so these fold instead of being refused.
         for src in [
-            "const K: f32 = #bitcast::[f32](0x7F800001);",
-            "const K: f16 = #bitcast::[f16](0x7E01);",
+            "const K: f32 = #bitcast::[f32](0x7F800001); fn main() -> i32 { return 0; }",
+            "const K: f16 = #bitcast::[f16](0x7E01); fn main() -> i32 { return 0; }",
+            "static K: f32 = #bitcast::[f32](0xFF800001); fn main() -> i32 { return 0; }",
         ] {
-            let codes = lowered_errors(src);
-            assert!(codes.iter().any(|c| c == "E0921"), "`{src}`: got {:?}", codes);
+            let diags = check_src_lowered(src);
+            assert!(diags.is_empty(), "`{src}`: got {:#?}", diags);
         }
-        // Widths that disagree are refused in const position too.
+    }
+
+    #[test]
+    fn bitcast_const_width_mismatch_rejected_e0921() {
         let codes = lowered_errors("const K: f64 = #bitcast::[f64](1u32);");
+        assert!(codes.iter().any(|c| c == "E0921"), "got {:?}", codes);
+        let codes = lowered_errors("const K: f32 = #bitcast::[f32](1u64);");
         assert!(codes.iter().any(|c| c == "E0921"), "got {:?}", codes);
     }
 
