@@ -18016,26 +18016,6 @@ impl<'a> FnState<'a> {
                 return Some(self.lang_string_or_string(sv));
             }
         }
-        // v0.0.12 G-045: blessed `to_bits()` on a float scalar → LLVM
-        // `bitcast` to the same-width unsigned int. Bit-preserving, zero-cost.
-        if name.name == "to_bits" && args.is_empty() {
-            let (rv, rt) = self.blessed_recv_value(receiver, &pre);
-            let uty = match rt {
-                Ty::F16 => Some(Ty::U16),
-                Ty::F32 => Some(Ty::U32),
-                Ty::F64 => Some(Ty::U64),
-                _ => None,
-            };
-            if let Some(u) = uty {
-                let r = self.next_tmp();
-                self.emit(&format!(
-                    "{r} = bitcast {} {rv} to {}",
-                    self.lty(&rt),
-                    self.lty(&u)
-                ));
-                return Some((r, u));
-            }
-        }
         // v0.0.4 Phase 4 Slice 4B: blessed `next()` on `Iterator[T]`.
         // Inline lowering: check coro.done → if done return None; else
         // read promise into v, resume coroutine, return Some(v).
@@ -18663,27 +18643,6 @@ impl<'a> FnState<'a> {
         // Phase 8 slice 8.STR.3: blessed string assoc fns.
         if type_name == "string" {
             return Some(self.gen_string_assoc_call(method_name, args));
-        }
-        // v0.0.12 G-045: blessed `fN::from_bits(uN)` → LLVM `bitcast` from the
-        // unsigned int to the float. Bit-preserving, zero-cost. Pairs with
-        // `.to_bits()`.
-        if method_name == "from_bits" {
-            let fty = match type_name.as_str() {
-                "f16" => Some(Ty::F16),
-                "f32" => Some(Ty::F32),
-                "f64" => Some(Ty::F64),
-                _ => None,
-            };
-            if let Some(f) = fty {
-                let (uv, ut) = self.gen_expr(&args[0]).expect("from_bits arg has value");
-                let r = self.next_tmp();
-                self.emit(&format!(
-                    "{r} = bitcast {} {uv} to {}",
-                    self.lty(&ut),
-                    self.lty(&f)
-                ));
-                return Some((r, f));
-            }
         }
         // v0.0.6 Slice 1B: SIMD associated functions — `f32x4::splat`,
         // `f32x4::new`, `f32x4::from_array`.

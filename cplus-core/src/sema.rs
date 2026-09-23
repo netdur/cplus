@@ -15006,23 +15006,23 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             };
         }
-        // v0.0.12 G-045 (llama.cplus): blessed `to_bits()` on a float scalar —
-        // bit-preserving reinterpret to the same-width unsigned int (LLVM
-        // `bitcast`). Pairs with `fN::from_bits(uN)`. Safe; no allocation.
-        if name.name == "to_bits" && args.is_empty() && recv_ty.is_float() {
-            if !type_args.is_empty() {
-                self.err(
-                    "E0501",
-                    "`to_bits` takes no type arguments".to_string(),
-                    call_span,
-                );
+        // `x.to_bits()` on a float was the unsigned half of `#bitcast`; it is
+        // gone so there is one spelling. Point at it rather than let the
+        // generic path report an unknown method on the wrong type.
+        if name.name == "to_bits" && recv_ty.is_float() {
+            let (uint, _) = float_bits_names(&recv_ty);
+            self.err(
+                "E0324",
+                format!(
+                    "floats have no `to_bits`; write `#bitcast::[{uint}](x)` to read a `{}`'s bits",
+                    recv_ty.name()
+                ),
+                call_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
             }
-            return match recv_ty {
-                Ty::F16 => Ty::U16,
-                Ty::F32 => Ty::U32,
-                Ty::F64 => Ty::U64,
-                _ => Ty::Error,
-            };
+            return bitcast_partner(&recv_ty, false).unwrap_or(Ty::Error);
         }
         // v0.0.4 Phase 4 Slice 4B: blessed `next()` on `Iterator[T]`
         // receiver — returns `Option[T]`. The method has no source-level
@@ -17058,58 +17058,27 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // (`text::new()` / `text::with_capacity(n)` / `text::from_str(s)`).
         // A source-level `string::...` now falls through to the unknown-type
         // path below (E0303 on the `string` segment).
-        // v0.0.12 G-045 (llama.cplus): blessed `fN::from_bits(uN)` — a
-        // bit-preserving reinterpret from the same-width unsigned int to the
-        // float (LLVM `bitcast`). Associated constructor on the float type;
-        // pairs with the `.to_bits()` instance method. Only `from_bits` is
-        // intercepted — any other `fN::x()` falls through to the normal
-        // (error) path.
-        if method_seg.name == "from_bits" {
-            let float_ty = match type_seg.name.as_str() {
-                "f16" => Some(Ty::F16),
-                "f32" => Some(Ty::F32),
-                "f64" => Some(Ty::F64),
-                _ => None,
+        // `fN::from_bits(uN)` went with `.to_bits()`: `#bitcast` is the one
+        // spelling. Point at it; the generic path would call `f32` unknown.
+        if method_seg.name == "from_bits" && matches!(type_seg.name.as_str(), "f16" | "f32" | "f64") {
+            let fty = match type_seg.name.as_str() {
+                "f16" => Ty::F16,
+                "f32" => Ty::F32,
+                _ => Ty::F64,
             };
-            if let Some(fty) = float_ty {
-                if !type_args.is_empty() {
-                    self.err(
-                        "E0501",
-                        "`from_bits` takes no type arguments".to_string(),
-                        call_span,
-                    );
-                }
-                let want = match fty {
-                    Ty::F16 => Ty::U16,
-                    Ty::F32 => Ty::U32,
-                    _ => Ty::U64,
-                };
-                if args.len() != 1 {
-                    self.err(
-                        "E0327",
-                        format!("`{}::from_bits` takes exactly one argument", type_seg.name),
-                        call_span,
-                    );
-                    for a in args {
-                        let _ = self.check_expr(a, None);
-                    }
-                    return Ty::Error;
-                }
-                let got = self.check_expr(&args[0], Some(want.clone()));
-                if got != want && got != Ty::Error {
-                    self.err(
-                        "E0302",
-                        format!(
-                            "`{}::from_bits` expects `{}`, got `{}`",
-                            type_seg.name,
-                            want.name(),
-                            got.name()
-                        ),
-                        args[0].span,
-                    );
-                }
-                return fty;
+            let (uint, _) = float_bits_names(&fty);
+            self.err(
+                "E0324",
+                format!(
+                    "`{0}::from_bits` does not exist; write `#bitcast::[{0}](bits)` with a `{uint}` or same-width signed integer",
+                    type_seg.name
+                ),
+                call_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
             }
+            return fty;
         }
         // v0.0.6 Slice 1B: SIMD type associated functions —
         // `f32x4::splat(s)`, `f32x4::new(a, b, c, d)`, `f32x4::from_array(a)`.
@@ -22640,6 +22609,15 @@ fn bitcast_width(t: &Ty) -> Option<u32> {
         Ty::I32 | Ty::U32 | Ty::F32 => Some(32),
         Ty::I64 | Ty::U64 | Ty::F64 => Some(64),
         _ => None,
+    }
+}
+
+/// The same-width unsigned and signed integer names for a float type.
+fn float_bits_names(t: &Ty) -> (&'static str, &'static str) {
+    match t {
+        Ty::F16 => ("u16", "i16"),
+        Ty::F32 => ("u32", "i32"),
+        _ => ("u64", "i64"),
     }
 }
 
@@ -35514,6 +35492,38 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
             let diags = check_src_lowered(src);
             assert!(diags.is_empty(), "`{src}`: got {:#?}", diags);
         }
+    }
+
+    #[test]
+    fn float_to_bits_and_from_bits_point_at_bitcast_e0324() {
+        // One spelling: the old unsigned-only pair is gone, and the error
+        // names what to write instead.
+        for (src, needle) in [
+            ("let x: f32 = 1.0; let b: u32 = x.to_bits();", "#bitcast::[u32](x)"),
+            ("let x: f16 = 1.0f16; let b: u16 = x.to_bits();", "#bitcast::[u16](x)"),
+            ("let b: u64 = 1; let x: f64 = f64::from_bits(b);", "#bitcast::[f64](bits)"),
+        ] {
+            let full = format!("fn main() -> i32 {{ {src} return 0; }}");
+            let diags = check_src(&full);
+            assert!(
+                diags.iter().any(|d| d.code.0 == "E0324" && d.message.contains(needle)),
+                "`{src}`: want E0324 naming {needle:?}, got {:#?}",
+                diags
+            );
+            assert_eq!(diags.len(), 1, "`{src}`: one error, no cascade: {:#?}", diags);
+        }
+    }
+
+    #[test]
+    fn derived_hash_over_float_fields_bitcasts_clean() {
+        // The derive used to emit `self.f.to_bits()`; it now emits
+        // `#bitcast::[uN](self.f)`, one width per float type.
+        let diags = check_src_lowered(
+            "struct P { x: f32, y: f64, h: f16 } \
+             impl P: Hash {} \
+             fn main() -> i32 { let p: P = P { x: 1.0, y: 2.0, h: 1.0f16 }; let _h: u64 = p.hash(); return 0; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
     }
 
     #[test]

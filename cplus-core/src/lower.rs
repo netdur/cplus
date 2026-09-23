@@ -3465,7 +3465,8 @@ impl Lower {
 //   Ord    — numerics via `<`/`>`, bool + payload-free enums via `as i64`,
 //            nominal via `.cmp()` fold, `str` via its blessed `compare`
 //   Hash   — FNV-1a 64 fold: ints/str via blessed `.hash()`, floats via
-//            `.to_bits()`, bool/enums via `as u64`, nominal via `.hash()`
+//            `#bitcast` to the same-width uint, bool/enums via `as u64`,
+//            nominal via `.hash()`
 //   Clone  — copyables verbatim, nominal via `.clone()`
 //   ToText — one interpolated literal `"Name { f: ${...}, ... }"`; nominal
 //            fields spelled `${this.f.to_text()}` (a bare struct part is
@@ -3493,7 +3494,8 @@ const FNV_PRIME: u64 = 0x100000001b3;
 #[derive(Clone, Copy, PartialEq)]
 enum DeriveFieldKind {
     Int,
-    Float,
+    /// The same-width unsigned integer `Hash` bitcasts the float to.
+    Float(&'static str),
     Bool,
     Str,
     PlainEnum,
@@ -3512,7 +3514,9 @@ fn classify_derive_field(
             "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize" => {
                 DeriveFieldKind::Int
             }
-            "f16" | "f32" | "f64" => DeriveFieldKind::Float,
+            "f16" => DeriveFieldKind::Float("u16"),
+            "f32" => DeriveFieldKind::Float("u32"),
+            "f64" => DeriveFieldKind::Float("u64"),
             "bool" => DeriveFieldKind::Bool,
             "str" => DeriveFieldKind::Str,
             _ => match enums_payload_free.get(p) {
@@ -3861,7 +3865,7 @@ impl Lower {
                     for (fname, kind) in &kinds {
                         let cond = match kind {
                             DeriveFieldKind::Int
-                            | DeriveFieldKind::Float
+                            | DeriveFieldKind::Float(_)
                             | DeriveFieldKind::Bool
                             | DeriveFieldKind::Str
                             | DeriveFieldKind::PlainEnum
@@ -3916,7 +3920,7 @@ impl Lower {
                     let mut stmts = Vec::new();
                     for (i, (fname, kind)) in kinds.iter().enumerate() {
                         match kind {
-                            DeriveFieldKind::Int | DeriveFieldKind::Float => {
+                            DeriveFieldKind::Int | DeriveFieldKind::Float(_) => {
                                 let minus_one = d_expr(
                                     ExprKind::Unary {
                                         op: UnaryOp::Neg,
@@ -4039,8 +4043,16 @@ impl Lower {
                             DeriveFieldKind::Int | DeriveFieldKind::Str => {
                                 Some(d_mcall(d_field("self", fname, span), "hash", vec![], span))
                             }
-                            DeriveFieldKind::Float => Some(d_cast(
-                                d_mcall(d_field("self", fname, span), "to_bits", vec![], span),
+                            DeriveFieldKind::Float(bits_ty) => Some(d_cast(
+                                d_expr(
+                                    ExprKind::Intrinsic {
+                                        name: "bitcast".to_string(),
+                                        type_args: vec![d_path_ty(bits_ty, span)],
+                                        args: vec![d_field("self", fname, span)],
+                                        ret_ty: None,
+                                    },
+                                    span,
+                                ),
                                 "u64",
                                 span,
                             )),
@@ -4093,7 +4105,7 @@ impl Lower {
                     for (fname, kind) in &kinds {
                         let value = match kind {
                             DeriveFieldKind::Int
-                            | DeriveFieldKind::Float
+                            | DeriveFieldKind::Float(_)
                             | DeriveFieldKind::Bool
                             | DeriveFieldKind::Str
                             | DeriveFieldKind::PlainEnum
@@ -4179,7 +4191,7 @@ impl Lower {
                     for (fname, kind) in &kinds {
                         let part = match kind {
                             DeriveFieldKind::Int
-                            | DeriveFieldKind::Float
+                            | DeriveFieldKind::Float(_)
                             | DeriveFieldKind::Bool
                             | DeriveFieldKind::Str => Some(d_field("self", fname, span)),
                             DeriveFieldKind::PlainEnum => {
