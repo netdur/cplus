@@ -6731,10 +6731,13 @@ fn emit_statics(
             None => {
                 // Defense-in-depth: lower + sema should have rejected
                 // any non-literal initializer before reaching codegen.
-                // Reaching this means a pass regression — emit a
-                // poisoned global so the IR fails to assemble loudly
-                // rather than silently miscompiling.
-                "poison".to_string()
+                // Reaching this means a pass regression, so the IR must
+                // fail to assemble. `poison` did not: `global float
+                // poison` is valid IR, and a folded `#bitcast` static
+                // with no rendering compiled and read garbage. The
+                // marker is not an LLVM token, so clang stops on this
+                // line and prints it.
+                "<cpc-bug:static-initializer-has-no-constant-form>".to_string()
             }
         };
         let storage = if info.is_mut { "global" } else { "constant" };
