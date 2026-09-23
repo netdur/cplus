@@ -100,17 +100,13 @@ impl JValue {
     // callee does not read, and a negative float would otherwise fill it with
     // ones for no reason.
     fn of_float(value: jfloat) -> JValue {
-        var v: jfloat = value;
-        let p: *u32 = { #addr_of(v) as *u32 };
-        let raw: u32 = { *p };
-        return JValue { _bits: { (raw as u64) as jlong } };
+        let raw: u32 = #bitcast::[u32](value);
+        return JValue { _bits: (raw as u64) as jlong };
     }
 
     // A `jvalue` carrying a Java `double`: all eight bytes, reinterpreted.
     fn of_double(value: jdouble) -> JValue {
-        var v: jdouble = value;
-        let p: *jlong = { #addr_of(v) as *jlong };
-        return JValue { _bits: { *p } };
+        return JValue { _bits: #bitcast::[jlong](value) };
     }
 
     // The raw 8-byte argument word as the JVM ABI sees it.

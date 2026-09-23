@@ -2758,6 +2758,58 @@ fn cint_wrap(v: i128, t: CInt) -> i128 {
     }
 }
 
+fn width_mask(bits: u8) -> u64 {
+    if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    }
+}
+
+/// `1`, `0x7F800000`, `-1.5` — a numeric literal with no suffix, negated or not.
+fn is_unsuffixed_num_lit(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_, NumSuffix::None) | ExprKind::FloatLit(_, NumSuffix::None) => true,
+        ExprKind::Unary {
+            op: UnaryOp::Neg,
+            operand,
+        } => is_unsuffixed_num_lit(operand),
+        _ => false,
+    }
+}
+
+/// The float a `bits`-wide pattern spells, held as the `f64` a folded
+/// float constant is carried in. Every f16 and f32 value is exact in f64.
+fn float_of_bits(raw: u64, bits: u8) -> f64 {
+    match bits {
+        16 => {
+            let h = raw as u16;
+            let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+            let exp = ((h >> 10) & 0x1f) as i32;
+            let mant = (h & 0x3ff) as f64;
+            match exp {
+                0 => sign * mant * 2f64.powi(-24),
+                0x1f if mant == 0.0 => sign * f64::INFINITY,
+                0x1f => f64::from_bits(0x7ff8_0000_0000_0000 | ((h as u64 & 0x3ff) << 42) | ((h as u64 & 0x8000) << 48)),
+                _ => sign * (1.0 + mant / 1024.0) * 2f64.powi(exp - 15),
+            }
+        }
+        32 => f32::from_bits(raw as u32) as f64,
+        _ => f64::from_bits(raw),
+    }
+}
+
+/// The pattern codegen will emit for a folded float constant of this width —
+/// the same rendering a literal goes through, so a bitcast whose bits do not
+/// survive it (a NaN payload) is caught here rather than emitted wrong.
+fn bits_of_float(v: f64, bits: u8) -> u64 {
+    match bits {
+        16 => crate::codegen::f64_to_f16_bits(v) as u64,
+        32 => (v as f32).to_bits() as u64,
+        _ => v.to_bits(),
+    }
+}
+
 fn cint_of_suffix(s: NumSuffix) -> Option<CInt> {
     let int = |bits, signed| Some(CInt { bits, signed, size: false });
     let size = |signed| Some(CInt { bits: 64, signed, size: true });
@@ -3239,9 +3291,76 @@ impl Lower {
                     }
                 }
             }
+            // `#bitcast::[T](v)` folds to the same bits at the other type.
+            // Sema checks the runtime form; this is the constant one, so it
+            // repeats the float-and-same-width-integer rule itself.
+            ExprKind::Intrinsic {
+                name,
+                type_args,
+                args,
+                ret_ty: None,
+            } if name == "bitcast" && type_args.len() == 1 && args.len() == 1 => {
+                let Some(target) = cscalar_of_type(&type_args[0]) else {
+                    bail!(e.span, "`#bitcast` in a constant expression must target a scalar type");
+                };
+                if let Some(exp) = expected {
+                    if exp != target {
+                        bail!(
+                            e.span,
+                            "type mismatch in constant expression: expected `{}`, bitcast produces `{}`",
+                            cscalar_name(exp),
+                            cscalar_name(target)
+                        );
+                    }
+                }
+                // An unsuffixed literal takes the partner type, as at runtime.
+                let arg = &args[0];
+                let negated = matches!(arg.kind, ExprKind::Unary { op: UnaryOp::Neg, .. });
+                let hint = if is_unsuffixed_num_lit(arg) {
+                    match target {
+                        CScalar::Float(bits) => {
+                            Some(CScalar::Int(CInt { bits, signed: negated, size: false }))
+                        }
+                        CScalar::Int(CInt { bits: bits @ (16 | 32 | 64), size: false, .. }) => {
+                            Some(CScalar::Float(bits))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let inner = self.const_eval(arg, hint, cx, quiet)?;
+                match (inner, target) {
+                    (
+                        CVal::Int { v, ty: CInt { bits: from, size: false, .. } },
+                        CScalar::Float(to),
+                    ) if from == to => {
+                        let raw = (v as u128 as u64) & width_mask(to);
+                        let f = float_of_bits(raw, to);
+                        if bits_of_float(f, to) != raw {
+                            bail!(
+                                arg.span,
+                                "`#bitcast` of 0x{raw:X} is a NaN whose payload a constant cannot carry; bitcast it at runtime instead"
+                            );
+                        }
+                        Ok(CVal::Float { v: f, bits: to })
+                    }
+                    (
+                        CVal::Float { v, bits: from },
+                        CScalar::Int(t @ CInt { bits: to, size: false, .. }),
+                    ) if from == to => Ok(CVal::Int {
+                        v: cint_wrap(bits_of_float(v, from) as i128, t),
+                        ty: t,
+                    }),
+                    _ => bail!(
+                        e.span,
+                        "`#bitcast` needs a float and a fixed-width integer of the same width"
+                    ),
+                }
+            }
             _ => bail!(
                 e.span,
-                "not a constant expression: const initializers allow literals, `const` names, arithmetic / bitwise / comparison operators, and `as` casts"
+                "not a constant expression: const initializers allow literals, `const` names, arithmetic / bitwise / comparison operators, `as` casts, and `#bitcast`"
             ),
         }
     }

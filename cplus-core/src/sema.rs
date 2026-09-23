@@ -9875,6 +9875,11 @@ impl SemaCx<'_> {
             // garbage from `malloc`. Safe — no memory access, just an
             // alloca + memset at codegen.
             "zero" => self.check_intrinsic_zero(type_args, args, ret_ty, span),
+            // `#bitcast::[T](v)` — reinterpret a float's bits as the
+            // same-width integer, or an integer's bits as the same-width
+            // float. No conversion: `#bitcast::[u32](1.0f32)` is
+            // `0x3F800000`, where `1.0f32 as u32` is `1`.
+            "bitcast" => self.check_intrinsic_bitcast(type_args, args, ret_ty, span),
             // v0.0.12 G-031 (llama.cplus G-030): `#cpu_relax()` — spin-loop
             // hint. Per-arch lowering at codegen (aarch64 `yield`, x86_64
             // `pause`, no-op elsewhere). No args, no type args, returns
@@ -10730,6 +10735,93 @@ impl SemaCx<'_> {
             }
         }
         self.resolve_type(&type_args[0])
+    }
+
+    // ---- `#bitcast::[T](v) -> T` ----
+    //
+    // Same bits, other type. One side is a float (`f16`/`f32`/`f64`), the
+    // other a fixed-width integer of the same width, signed or unsigned.
+    // `usize`/`isize` are refused: their width is the target's, so a cast
+    // that checks on one target would not on another. Int ↔ int and
+    // float ↔ float are refused too — those are what `as` is for.
+    fn check_intrinsic_bitcast(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if ret_ty.is_some() {
+            self.err(
+                "E0903",
+                "`#bitcast` does not accept a `-> T` return-type ascription".to_string(),
+                span,
+            );
+        }
+        if type_args.len() != 1 {
+            self.err(
+                "E0501",
+                format!(
+                    "`#bitcast` takes exactly 1 type argument, got {}",
+                    type_args.len()
+                ),
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Ty::Error;
+        }
+        let to = self.resolve_type(&type_args[0]);
+        if args.len() != 1 {
+            self.err(
+                "E0308",
+                format!("`#bitcast` takes exactly 1 argument, got {}", args.len()),
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return to;
+        }
+        // An unsuffixed literal takes the partner type, so a bit pattern
+        // reads as written: `#bitcast::[f32](0xBF800000)` is a `u32`, not
+        // an out-of-range `i32`. Only a literal: a typed value keeps its
+        // type, and either signedness is fine.
+        let hint = if is_unsuffixed_num_lit(&args[0]) {
+            bitcast_partner(&to, matches!(args[0].kind, ExprKind::Unary { .. }))
+        } else {
+            None
+        };
+        let from = self.check_expr(&args[0], hint);
+        if from == Ty::Error || to == Ty::Error {
+            return to;
+        }
+        let ok = match (bitcast_width(&from), bitcast_width(&to)) {
+            (Some(a), Some(b)) => a == b && from.is_float() != to.is_float(),
+            _ => false,
+        };
+        if !ok {
+            let why = match (bitcast_width(&from), bitcast_width(&to)) {
+                (Some(_), Some(_)) if from.is_float() == to.is_float() => {
+                    "one side must be a float and the other an integer; use `as` to convert between two integers or two floats"
+                        .to_string()
+                }
+                (Some(a), Some(b)) => format!("widths differ ({a} vs {b} bits)"),
+                _ => "only `f16`/`f32`/`f64` and the fixed-width integers `i8`..`u64` can be bitcast"
+                    .to_string(),
+            };
+            self.err(
+                "E0302",
+                format!(
+                    "cannot bitcast `{}` to `{}`: {why}",
+                    ty_display(&from),
+                    ty_display(&to)
+                ),
+                args[0].span,
+            );
+        }
+        to
     }
 
     // ---- v0.0.12 G-031: `#cpu_relax() -> ()` ----
@@ -22534,6 +22626,46 @@ fn int_lit_max_magnitude(t: &Ty, negated: bool) -> Option<u64> {
         Ty::I16 => Some(if negated { 1 << 15 } else { i16::MAX as u64 }),
         Ty::I32 => Some(if negated { 1 << 31 } else { i32::MAX as u64 }),
         Ty::I64 | Ty::Isize => Some(if negated { 1 << 63 } else { i64::MAX as u64 }),
+        _ => None,
+    }
+}
+
+/// Bit width of a type `#bitcast` can take on either side: the floats and
+/// the fixed-width integers. `usize`/`isize` answer `None` — their width is
+/// the target's.
+fn bitcast_width(t: &Ty) -> Option<u32> {
+    match t {
+        Ty::I8 | Ty::U8 => Some(8),
+        Ty::I16 | Ty::U16 | Ty::F16 => Some(16),
+        Ty::I32 | Ty::U32 | Ty::F32 => Some(32),
+        Ty::I64 | Ty::U64 | Ty::F64 => Some(64),
+        _ => None,
+    }
+}
+
+/// `1`, `0x7F800000`, `-1.5` — a numeric literal with no suffix, negated or not.
+fn is_unsuffixed_num_lit(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_, NumSuffix::None) | ExprKind::FloatLit(_, NumSuffix::None) => true,
+        ExprKind::Unary {
+            op: UnaryOp::Neg,
+            operand,
+        } => is_unsuffixed_num_lit(operand),
+        _ => false,
+    }
+}
+
+/// The type an unsuffixed literal argument to `#bitcast::[to]` should take:
+/// the same-width integer for a float target — unsigned, or signed when the
+/// literal is negated — and the same-width float for an integer target.
+fn bitcast_partner(to: &Ty, negated: bool) -> Option<Ty> {
+    match to {
+        Ty::F16 => Some(if negated { Ty::I16 } else { Ty::U16 }),
+        Ty::F32 => Some(if negated { Ty::I32 } else { Ty::U32 }),
+        Ty::F64 => Some(if negated { Ty::I64 } else { Ty::U64 }),
+        Ty::I16 | Ty::U16 => Some(Ty::F16),
+        Ty::I32 | Ty::U32 => Some(Ty::F32),
+        Ty::I64 | Ty::U64 => Some(Ty::F64),
         _ => None,
     }
 }
@@ -35296,6 +35428,92 @@ fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]:
              }",
         );
         assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    // ---- `#bitcast::[T](v)` ----
+
+    #[test]
+    fn bitcast_float_and_same_width_int_either_signedness_clean() {
+        let diags = check_src(
+            "fn main() -> i32 { \
+                 let u: u32 = 1; let i: i32 = 1; let U: u64 = 1; let I: i64 = 1; \
+                 let a: f32 = #bitcast::[f32](u); let b: f32 = #bitcast::[f32](i); \
+                 let c: u32 = #bitcast::[u32](a); let d: i32 = #bitcast::[i32](b); \
+                 let e: f64 = #bitcast::[f64](U); let f: f64 = #bitcast::[f64](I); \
+                 let g: u64 = #bitcast::[u64](e); let h: i64 = #bitcast::[i64](f); \
+                 let k: f16 = #bitcast::[f16](0x3C00); let m: i16 = #bitcast::[i16](k); \
+                 return 0; \
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn bitcast_unsuffixed_literal_takes_the_partner_type_clean() {
+        // `0xBF800000` is out of range for the default `i32`; as a `u32` it
+        // is -1.0's pattern. A negated literal takes the signed partner.
+        let diags = check_src(
+            "fn main() -> i32 { \
+                 let a: f32 = #bitcast::[f32](0xBF800000); \
+                 let b: f64 = #bitcast::[f64](0x7FF0000000000000); \
+                 let c: f32 = #bitcast::[f32](-1082130432); \
+                 let d: u32 = #bitcast::[u32](1.0); \
+                 let e: i64 = #bitcast::[i64](-2.5); \
+                 return 0; \
+             }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn bitcast_refusals_name_the_reason() {
+        for (src, code, needle) in [
+            ("let x: f32 = 1.0; let y = #bitcast::[u64](x);", "E0302", "widths differ (32 vs 64 bits)"),
+            ("let x: u64 = 1; let y = #bitcast::[i64](x);", "E0302", "one side must be a float"),
+            ("let x: f32 = 1.0; let y = #bitcast::[f64](x);", "E0302", "one side must be a float"),
+            ("let x: usize = 1; let y = #bitcast::[f64](x);", "E0302", "fixed-width integers"),
+            ("let x: f32 = 1.0; let y = #bitcast::[bool](x);", "E0302", "fixed-width integers"),
+            ("let x: f32 = 1.0; let y = #bitcast(x);", "E0501", "exactly 1 type argument"),
+            ("let x: f32 = 1.0; let y = #bitcast::[u32](x, x);", "E0308", "exactly 1 argument"),
+        ] {
+            let full = format!("fn main() -> i32 {{ {src} return 0; }}");
+            let diags = check_src(&full);
+            assert!(
+                diags.iter().any(|d| d.code.0 == code && d.message.contains(needle)),
+                "`{src}`: want {code} containing {needle:?}, got {:#?}",
+                diags
+            );
+        }
+    }
+
+    #[test]
+    fn bitcast_folds_in_const_and_static_clean() {
+        let diags = check_src_lowered(
+            "const INF: f32 = #bitcast::[f32](0x7F800000); \
+             const BITS: u32 = 0x40490FDB; \
+             const PI: f32 = #bitcast::[f32](BITS); \
+             const SIGN: u64 = #bitcast::[u64](-0.0); \
+             static NAN: f64 = #bitcast::[f64](0x7FF8000000000000); \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn bitcast_const_refuses_a_nan_payload_it_cannot_carry_e0921() {
+        // A folded float travels as an f64 and is re-rendered at its width;
+        // an f32 signalling NaN and an f16 NaN payload do not survive that,
+        // so the const form refuses rather than emit other bits.
+        for src in [
+            "const K: f32 = #bitcast::[f32](0x7F800001);",
+            "const K: f16 = #bitcast::[f16](0x7E01);",
+        ] {
+            let codes = lowered_errors(src);
+            assert!(codes.iter().any(|c| c == "E0921"), "`{src}`: got {:?}", codes);
+        }
+        // Widths that disagree are refused in const position too.
+        let codes = lowered_errors("const K: f64 = #bitcast::[f64](1u32);");
+        assert!(codes.iter().any(|c| c == "E0921"), "got {:?}", codes);
     }
 
     // v0.0.12 G-033: array literals + fill literals still rejected in

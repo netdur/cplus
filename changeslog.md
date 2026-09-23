@@ -5,6 +5,22 @@ earlier history lives in each version's archived plan.
 
 ## Unreleased
 
+### Language
+
+- **`#bitcast::[T](v)` reinterprets a float's bits.** A float and an
+  integer of the same width swap types with the bits unchanged:
+  `f32`↔`u32`/`i32`, `f64`↔`u64`/`i64`, `f16`↔`u16`/`i16`.
+  `#bitcast::[u32](1.0f32)` is `0x3F800000`, where `1.0f32 as u32` is `1`.
+  An unsuffixed literal takes the partner type, so
+  `#bitcast::[f32](0xBF800000)` is `-1.0` rather than an out-of-range
+  `i32`. It folds in `const`/`static` position (`const INF: f32 =
+  #bitcast::[f32](0x7F800000);`), except for a NaN whose payload a folded
+  float cannot carry, which is E0921 and must be bitcast at runtime.
+  `usize`/`isize`, int↔int and float↔float are refused (E0302): the first
+  pair's width depends on the target, and the others are what `as` is for.
+  `jni`'s `JValue::of_float` / `of_double`, which punned through a pointer
+  for want of this, now use it.
+
 ### Toolchain
 
 - **A generic `impl`'s method bodies now report their errors.** Sema

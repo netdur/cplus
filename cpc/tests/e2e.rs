@@ -20001,6 +20001,78 @@ fn g034_undefined_indexed_write_still_e0300() {
     assert!(stderr.contains("E0300"), "expected E0300, got: {stderr}");
 }
 
+/// `#bitcast::[T](v)`: a float and a same-width integer (either signedness)
+/// swap types with the bits untouched — at runtime, from an unsuffixed literal
+/// (which takes the partner type, so `0xBF800000` is a `u32` and not an
+/// out-of-range `i32`), and folded in `const`/`static` position. Every check
+/// compares BITS, so a lowering that converted instead of reinterpreting
+/// fails it. Debug and `--release` both run: -O3 folds these bitcasts itself.
+#[test]
+fn bitcast_intrinsic_reinterprets_bits_end_to_end() {
+    let src = "\
+const INF: f32 = #bitcast::[f32](0x7F800000);\n\
+const PI_BITS: u32 = 0x40490FDB;\n\
+const PI: f32 = #bitcast::[f32](PI_BITS);\n\
+const SIGN64: u64 = #bitcast::[u64](-0.0);\n\
+static SNAN64: f64 = #bitcast::[f64](0x7FF0000000000001);\n\
+static H_ONE: f16 = #bitcast::[f16](0x3C00);\n\
+fn f32_bits(x: f32) -> u32 { return #bitcast::[u32](x); }\n\
+fn main() -> i32 {\n\
+    let u: u32 = 0x3F800000;\n\
+    let i: i32 = -1082130432;\n\
+    let U: u64 = 0x3FF0000000000000;\n\
+    let I: i64 = -4616189618054758400;\n\
+    // the eight pairs\n\
+    let a: f32 = #bitcast::[f32](u);\n\
+    let b: f32 = #bitcast::[f32](i);\n\
+    let e: f64 = #bitcast::[f64](U);\n\
+    let g: f64 = #bitcast::[f64](I);\n\
+    if a != 1.0 { return 1; }\n\
+    if b != -1.0 { return 2; }\n\
+    if #bitcast::[u32](a) != 0x3F800000 { return 3; }\n\
+    if #bitcast::[i32](b) != -1082130432 { return 4; }\n\
+    if e != 1.0 { return 5; }\n\
+    if g != -1.0 { return 6; }\n\
+    if #bitcast::[u64](e) != 0x3FF0000000000000 { return 7; }\n\
+    if #bitcast::[i64](g) != -4616189618054758400 { return 8; }\n\
+    // a reinterpret, not a conversion\n\
+    if f32_bits(2.0) != 0x40000000 { return 9; }\n\
+    // unsuffixed literals take the partner type\n\
+    if #bitcast::[f32](0xBF800000) != -1.0 { return 10; }\n\
+    if #bitcast::[u32](-1.0) != 0xBF800000 { return 11; }\n\
+    if #bitcast::[i64](-2.5) != -4610560118520545280 { return 12; }\n\
+    // a NaN payload survives the runtime round trip\n\
+    let nan: u32 = 0x7F800001;\n\
+    if #bitcast::[u32](#bitcast::[f32](nan)) != nan { return 13; }\n\
+    // folded constants\n\
+    if #bitcast::[u32](INF) != 0x7F800000 { return 14; }\n\
+    if #bitcast::[u32](PI) != 0x40490FDB { return 15; }\n\
+    if SIGN64 != 0x8000000000000000 { return 16; }\n\
+    if #bitcast::[u64](SNAN64) != 0x7FF0000000000001 { return 17; }\n\
+    if #bitcast::[u16](H_ONE) != 0x3C00 { return 18; }\n\
+    return 0;\n\
+}\n";
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    for release in [false, true] {
+        let dir = tempdir();
+        let path = dir.join("bitcast.cplus");
+        let bin = dir.join("bitcast");
+        std::fs::write(&path, src).unwrap();
+        let mut cmd = Command::new(cpc);
+        if release {
+            cmd.arg("--release");
+        }
+        let compile = cmd.arg(&path).arg("-o").arg(&bin).output().expect("invoke cpc");
+        assert!(
+            compile.status.success(),
+            "release={release}: must compile: {}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let run = Command::new(&bin).status().expect("run bitcast");
+        assert_eq!(run.code(), Some(0), "release={release}: failing check is the exit code");
+    }
+}
+
 /// G-045 (llama.cplus): native `f16` scalar — `as` conversions (fpext/fptrunc),
 /// `from_bits`/`to_bits` (LLVM bitcast), struct/array storage, and arithmetic.
 /// This is the enabler for pure-C+ fp16↔fp32 (the "zero-`.c`" headline).

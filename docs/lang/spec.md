@@ -472,6 +472,8 @@ arithmetic without a cast is an error.
 **`as` casts** convert between numeric types, between integers and raw
 pointers, and between raw pointer types. Casts that the language forbids
 (e.g. integer ↔ function pointer) are errors (**E0315** and neighbors).
+A cast converts the value: `1.0f32 as u32` is `1`. To keep the bits
+instead, use `#bitcast::[u32](1.0f32)`, which is `0x3F800000` (§12).
 
 ---
 
@@ -707,6 +709,7 @@ and/or a return-type ascription. An unknown intrinsic is **E0905**.
 |---|---|
 | `#size_of::[T]()` / `#align_of::[T]()` | layout of `T` (`usize`) |
 | `#zero::[T]()` | a value of `T` with every byte zero |
+| `#bitcast::[T](v)` | `v`'s bits as a `T`: one of the two is a float, the other an integer of the same width |
 | `#addr_of(place)` | address of a place as a `*T` |
 | `#addr(p)` | raw pointer → `usize` (the loud ptr-to-int form) |
 | `#str_ptr(s)` / `#str_len(s)` / `#str_from_raw_parts(p, n)` | `str` ↔ raw parts |

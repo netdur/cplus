@@ -6904,6 +6904,49 @@ fn render_static_literal(
     }
 }
 
+/// The operand for an unsuffixed literal argument of `#bitcast::[to]`, typed
+/// the way sema typed it: at the same-width integer for a float target
+/// (signed when negated), at the same-width float for an integer target. `gen_expr` would
+/// give an unsuffixed literal its default type (`i32` / `f64`), so
+/// `#bitcast::[f64](0x7FF0000000000000)` would bitcast an `i32`. `None` for
+/// anything else — a typed value lowers through `gen_expr`.
+fn bitcast_literal_operand(e: &Expr, to: &Ty) -> Option<(String, Ty)> {
+    use crate::lexer::NumSuffix;
+    let (negated, lit) = match &e.kind {
+        ExprKind::Unary {
+            op: UnaryOp::Neg,
+            operand,
+        } => (true, &operand.kind),
+        k => (false, k),
+    };
+    match (lit, to) {
+        (ExprKind::IntLit(v, NumSuffix::None), Ty::F16 | Ty::F32 | Ty::F64) => {
+            let (ty, bits) = match (to, negated) {
+                (Ty::F16, false) => (Ty::U16, 16),
+                (Ty::F16, true) => (Ty::I16, 16),
+                (Ty::F32, false) => (Ty::U32, 32),
+                (Ty::F32, true) => (Ty::I32, 32),
+                (_, false) => (Ty::U64, 64),
+                (_, true) => (Ty::I64, 64),
+            };
+            let v = if negated { v.wrapping_neg() } else { *v };
+            // LLVM reads an integer constant as signed at the type's width.
+            let signed = ((v << (64 - bits)) as i64) >> (64 - bits);
+            Some((signed.to_string(), ty))
+        }
+        (ExprKind::FloatLit(v, NumSuffix::None), Ty::I16 | Ty::U16 | Ty::I32 | Ty::U32 | Ty::I64 | Ty::U64) => {
+            let ty = match to {
+                Ty::I16 | Ty::U16 => Ty::F16,
+                Ty::I32 | Ty::U32 => Ty::F32,
+                _ => Ty::F64,
+            };
+            let v = if negated { -*v } else { *v };
+            Some((render_static_float(v, NumSuffix::None, &ty)?, ty))
+        }
+        _ => None,
+    }
+}
+
 /// Render an integer literal as an LLVM pointer constant for a static
 /// initializer. `0` is the null pointer (`null`); any other value is an
 /// address built with `inttoptr` at pointer width (matching the runtime
@@ -6948,7 +6991,7 @@ fn render_static_float(v: f64, suf: crate::lexer::NumSuffix, ty: &Ty) -> Option<
 /// initializers. Handles zero, subnormals, overflow-to-infinity, and NaN.
 /// Mirrors the value `fptrunc double ... to half` would produce at runtime, so
 /// a `static`-position `1.5f16` matches a runtime one.
-fn f64_to_f16_bits(v: f64) -> u16 {
+pub(crate) fn f64_to_f16_bits(v: f64) -> u16 {
     let bits = v.to_bits();
     let sign = ((bits >> 48) & 0x8000) as u16;
     let exp = ((bits >> 52) & 0x7ff) as i64; // biased 11-bit exponent
@@ -13699,6 +13742,22 @@ impl<'a> FnState<'a> {
             // the memset is skipped (LLVM is fine with size=0, but it's
             // cleaner to avoid emitting the call entirely).
             "zero" => Some(self.gen_intrinsic_zero(type_args)),
+            // `#bitcast::[T](v)` — one LLVM `bitcast`; sema has checked the
+            // pair is a float and a same-width integer.
+            "bitcast" => {
+                let to = ty_from(&type_args[0], self.types);
+                let (v, from) = match bitcast_literal_operand(&args[0], &to) {
+                    Some(lit) => lit,
+                    None => self.gen_expr(&args[0])?,
+                };
+                let r = self.next_tmp();
+                self.emit(&format!(
+                    "{r} = bitcast {} {v} to {}",
+                    self.lty(&from),
+                    self.lty(&to)
+                ));
+                Some((r, to))
+            }
             // v0.0.12 G-031: `#cpu_relax()` — spin-loop hint, per-arch.
             // Returns no value (caller-side: dropped on the floor).
             "cpu_relax" => {

@@ -1460,7 +1460,7 @@ fn bad() -> str {
 }
 ```
 
-**Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. For a temporary owner, give it a name first — `let owner: Text = mk(); let s: str = owner;` — or keep the binding owned. At a kept argument the same two spellings apply: name the owner (`let owner: Text = "item ${i}".to_text(); names.append(owner);`) or own the element (`Vec[Text]` rather than `Vec[str]`). Literal-backed views ('static bytes) escape freely.
+**Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. For a temporary owner, give it a name first — `let owner: Text = mk(); let s: str = owner.view();` — or keep the binding owned. At a kept argument the same two spellings apply: name the owner (`let owner: Text = "item ${i}".to_text(); names.append(owner.view());`) or own the element (`Vec[Text]` rather than `Vec[str]`). Literal-backed views ('static bytes) escape freely.
 
 <sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules: check_return / flag_view_leaves / check_view_of_temp / check_view_of_rvalue_owner / check_captured_view_of_temp / check_store_escape / check_kept_arg_is_not_a_temporary / check_detached_arg) · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
 
@@ -2440,7 +2440,7 @@ fn main() -> i32 {
 
 ### E0921 · Invalid constant expression
 
-A `const`/`static` initializer or an array-length expression failed compile-time evaluation: arithmetic overflowed the declared type's width, a shift amount was out of range, a division by zero occurred, two consts reference each other in a cycle, operand types mixed without a cast, or the expression used a non-constant construct (a call, a field, a runtime name).
+A `const`/`static` initializer or an array-length expression failed compile-time evaluation: arithmetic overflowed the declared type's width, a shift amount was out of range, a division by zero occurred, two consts reference each other in a cycle, operand types mixed without a cast, a `#bitcast` produced a NaN whose payload a folded float cannot carry (bitcast it at runtime instead), or the expression used a non-constant construct (a call, a field, a runtime name).
 
 ```cplus
 const A: u8 = 255u8 + 1u8;

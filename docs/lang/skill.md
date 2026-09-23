@@ -1448,6 +1448,7 @@ no module to import. This is the whole set worth writing:
 |---|---|---|
 | `#size_of::[T]()` · `#align_of::[T]()` | `usize` | folded to a constant |
 | `#zero::[T]()` | `T` | the all-zero value; how a `static` struct is initialised |
+| `#bitcast::[T](v)` | `T` | a float's bits as the same-width integer, or back (`f32`↔`u32`/`i32`, `f64`↔`u64`/`i64`, `f16`↔`u16`/`i16`); `as` converts the value instead. Works in `const`/`static` |
 | `#addr_of(place)` | `*T` | the argument must be an addressable place |
 | `#addr(p)` | `usize` | pointer → int, deliberately loud |
 | `#include_bytes("path")` · `#include_str("path")` | `*[u8; N]` · `str` | path is relative to the source file; `_str` is UTF-8 validated at sema |
