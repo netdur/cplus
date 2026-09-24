@@ -20090,7 +20090,7 @@ fn main() -> i32 {\n\
 }
 
 /// G-045 (llama.cplus): native `f16` scalar — `as` conversions (fpext/fptrunc),
-/// `from_bits`/`to_bits` (LLVM bitcast), struct/array storage, and arithmetic.
+/// `#bitcast` to and from `u16` (LLVM bitcast), struct/array storage, and arithmetic.
 /// This is the enabler for pure-C+ fp16↔fp32 (the "zero-`.c`" headline).
 #[test]
 fn g045_f16_scalar_end_to_end() {
@@ -20100,24 +20100,24 @@ fn g045_f16_scalar_end_to_end() {
     let bin = dir.join("f16");
     std::fs::write(
         &src,
-        "fn fp16_to_fp32(bits: u16) -> f32 { return f16::from_bits(bits) as f32; }\n\
-         fn fp32_to_fp16(x: f32) -> u16 { return (x as f16).to_bits(); }\n\
+        "fn fp16_to_fp32(bits: u16) -> f32 { return #bitcast::[f16](bits) as f32; }\n\
+         fn fp32_to_fp16(x: f32) -> u16 { return #bitcast::[u16](x as f16); }\n\
          struct Block { d: f16, n: i32 }\n\
          fn main() -> i32 {\n\
              // `as` round-trip (fptrunc + fpext); 1.5 is exact in f16\n\
              let r: f32 = (1.5f32 as f16) as f32;\n\
              if r < 1.49f32 { return 1; }\n\
              if r > 1.51f32 { return 2; }\n\
-             // from_bits: IEEE half 0x3C00 == 1.0\n\
+             // bitcast: IEEE half 0x3C00 == 1.0\n\
              let one: f32 = fp16_to_fp32(0x3C00 as u16);\n\
              if one < 0.999f32 { return 3; }\n\
              if one > 1.001f32 { return 4; }\n\
-             // to_bits/from_bits round-trip through the u16 storage rep\n\
+             // bitcast round-trip through the u16 storage rep\n\
              let back: f32 = fp16_to_fp32(fp32_to_fp16(2.5f32));\n\
              if back < 2.49f32 { return 5; }\n\
              if back > 2.51f32 { return 6; }\n\
-             // f64.to_bits bit pattern of 1.0\n\
-             if (1.0f64).to_bits() != 0x3FF0000000000000u64 { return 7; }\n\
+             // f64 bit pattern of 1.0\n\
+             if #bitcast::[u64](1.0f64) != 0x3FF0000000000000u64 { return 7; }\n\
              // f16 as struct field + array storage\n\
              let b: Block = Block { d: 1.5f32 as f16, n: 0 };\n\
              if (b.d as f32) < 1.49f32 { return 8; }\n\
@@ -20143,16 +20143,17 @@ fn g045_f16_scalar_end_to_end() {
     assert!(run.success(), "G-045 program must exit 0, got {run}");
 }
 
-/// G-045 guard: `from_bits` is type-checked — `f16::from_bits` wants a `u16`,
-/// so passing a float is E0302 (the bitcast is bit-preserving, not a convert).
+/// G-045 guard: building an `f16` from bits wants a 16-bit integer, so a float
+/// argument is E0302 (the bitcast is bit-preserving, not a convert). Was
+/// `f16::from_bits(1.0f32)`; `#bitcast` is the one spelling now.
 #[test]
-fn g045_from_bits_wrong_arg_type_e0302() {
+fn g045_bitcast_float_arg_to_f16_rejected_e0302() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("f16neg.cplus");
     std::fs::write(
         &src,
-        "fn f() -> f16 { return f16::from_bits(1.0f32); }\nfn main() -> i32 { return 0; }",
+        "fn f() -> f16 { return #bitcast::[f16](1.0f32); }\nfn main() -> i32 { return 0; }",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -20162,7 +20163,7 @@ fn g045_from_bits_wrong_arg_type_e0302() {
         .expect("invoke cpc check");
     assert!(
         !out.status.success(),
-        "from_bits with float arg must be rejected"
+        "#bitcast of an f32 to f16 must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0302"), "expected E0302, got: {stderr}");
