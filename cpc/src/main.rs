@@ -2153,7 +2153,58 @@ fn ensure_one_prebuilt(
 /// `Ok(true)` means it compiled, `Ok(false)` that the slice on disk was
 /// reused — `--timings` reports the two differently, and a zero-cost row is
 /// only readable if it says which one it was.
+///
+/// Held under the package's prebuild lock, so two cpc processes never build
+/// one package at once. Without it, every process that read a stale
+/// fingerprint rebuilt too, and each rebuild opens by deleting the package's
+/// shared `target/<mode>/<name>.objs/` — under another process's running
+/// clang, whose `.o.tmp` rename then failed (bugs/concurrent-prebuilds-of-
+/// one-package-delete-each-others-objects.md). The fingerprint is read AFTER
+/// the lock is taken, so a process that waited finds the slice the winner
+/// just stamped and reuses it.
 fn ensure_one_slice(
+    vm: &manifest::Manifest,
+    vendor_dir: &Path,
+    link_triple: &str,
+    build_mode: BuildMode,
+    diag_mode: DiagMode,
+    sanitizers: &[&str],
+) -> Result<bool, String> {
+    let _lock = lock_package_prebuild(vendor_dir, &vm.package.name);
+    ensure_one_slice_locked(vm, vendor_dir, link_triple, build_mode, diag_mode, sanitizers)
+}
+
+/// Take the exclusive, cross-process prebuild lock of the package at
+/// `vendor_dir`; it is released when the returned file drops. One lock per
+/// package, not per slice: every slice and build mode shares the package's
+/// `target/` and `lib/`, and a prebuild is short next to a build that waits.
+///
+/// Best effort: `None` when the lock file cannot be created or locked (a
+/// read-only package directory), and the caller proceeds unlocked as it
+/// always did — a fresh slice needs no write, and failing the build over a
+/// lock would break exactly that case.
+fn lock_package_prebuild(vendor_dir: &Path, pkg: &str) -> Option<fs::File> {
+    let dir = vendor_dir.join("target");
+    fs::create_dir_all(&dir).ok()?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(".prebuild.lock"))
+        .ok()?;
+    match file.try_lock() {
+        Ok(()) => return Some(file),
+        // Say why the build stopped moving; the wait is otherwise silent.
+        Err(fs::TryLockError::WouldBlock) => {
+            eprintln!("cpc: waiting for another cpc to finish prebuilding `{pkg}`");
+        }
+        Err(fs::TryLockError::Error(_)) => return None,
+    }
+    file.lock().ok()?;
+    Some(file)
+}
+
+fn ensure_one_slice_locked(
     vm: &manifest::Manifest,
     vendor_dir: &Path,
     link_triple: &str,

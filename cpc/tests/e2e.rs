@@ -27378,6 +27378,81 @@ fn build_hides_dependency_warnings_but_never_dependency_errors() {
 ///
 /// The value is the assertion rather than a duration: an empty coroutine leaves
 /// the promise unwritten, so reading 41 back proves the archive's body ran.
+/// bugs/concurrent-prebuilds-of-one-package-delete-each-others-objects.md —
+/// every cpc that found a package's fingerprint stale rebuilt it, and each
+/// rebuild opens by deleting the package's shared `target/<mode>/<name>.objs/`
+/// under the others' running clangs (`unable to rename temporary …`). Eight
+/// consumers of one package now build at once: all succeed, and exactly ONE
+/// prebuilds — the rest wait on the package's lock, re-read the fingerprint
+/// and reuse the slice. The package has a dozen modules so its prebuild is
+/// long enough for the eight to overlap.
+#[test]
+fn concurrent_consumers_prebuild_a_shared_package_once() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let pkg = dir.join("vendor/shared");
+    std::fs::create_dir_all(pkg.join("src")).unwrap();
+    std::fs::write(
+        pkg.join("Cplus.toml"),
+        "[package]\nname = \"shared\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    for i in 0..12 {
+        let mut body = String::new();
+        for j in 0..40 {
+            body.push_str(&format!(
+                "fn f{i}_{j}(x: i32) -> i32 {{ return x *% {j} +% {i}; }}\n"
+            ));
+        }
+        std::fs::write(pkg.join(format!("src/m{i}.cplus")), body).unwrap();
+    }
+    const N: usize = 8;
+    let mut children = Vec::new();
+    for c in 0..N {
+        let proj = dir.join(format!("app{c}"));
+        std::fs::create_dir_all(proj.join("src")).unwrap();
+        std::fs::write(
+            proj.join("Cplus.toml"),
+            format!(
+                "[package]\nname = \"app{c}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+                 [dependencies]\nshared = \"*\"\n"
+            ),
+        )
+        .unwrap();
+        symlink_dir(dir.join("vendor"), proj.join("vendor")).unwrap();
+        std::fs::write(
+            proj.join("src/main.cplus"),
+            "import \"shared/m3\" as m3;\n\
+             fn main() -> i32 { if m3::f3_2(5) != 13 { return 1; } return 0; }\n",
+        )
+        .unwrap();
+        children.push(
+            Command::new(cpc)
+                .arg("build")
+                .current_dir(&proj)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("spawn cpc build"),
+        );
+    }
+    let mut prebuilt = 0;
+    for (c, child) in children.into_iter().enumerate() {
+        let out = child.wait_with_output().expect("wait cpc build");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "app{c} must build:\n{err}");
+        prebuilt += err
+            .lines()
+            .filter(|l| l.starts_with("cpc: prebuilding `shared` for"))
+            .count();
+        let run = Command::new(dir.join(format!("app{c}/target/debug/app{c}")))
+            .status()
+            .expect("run consumer");
+        assert_eq!(run.code(), Some(0), "app{c} must read the archive's code");
+    }
+    assert_eq!(prebuilt, 1, "one process builds the package; the others reuse it");
+}
+
 #[test]
 fn a_prebuilt_packages_async_fn_runs_the_archives_body() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
