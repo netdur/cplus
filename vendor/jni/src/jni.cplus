@@ -59,8 +59,8 @@ type JavaVM = *JNIInvokeInterface;
 //
 // Float and double are carried too, and they need a REINTERPRET rather than a
 // conversion: `1.0f32 as jlong` is the integer 1, but the JVM reads the slot's
-// raw bits as an IEEE float. C+ has no bitcast intrinsic, so the constructors
-// punt through a pointer. Without these, `setTextSize`, `setAlpha`,
+// raw bits as an IEEE float, so the constructors `#bitcast` the value into
+// the word. Without these, `setTextSize`, `setAlpha`,
 // `setTranslationX` and `setElevation` are unreachable from C+ — which is
 // exactly where the first Android probe stopped.
 //
