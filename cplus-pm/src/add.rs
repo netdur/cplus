@@ -174,7 +174,7 @@ pub fn add(
     // the packages the build had just compiled:
     //
     //     $ cpc pm add . facet_agent
-    //     error: failed to access ~/.cplus/cache/…/v0.0.28/source/vendor/
+    //     error: failed to access ~/.cplus/cache/…/v0.0.29/source/vendor/
     //            facet_agent/Cplus.toml: No such file or directory
     //
     // while `cpc build` in the same project resolved `facet_agent` without

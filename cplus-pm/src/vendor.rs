@@ -268,7 +268,7 @@ pub fn install(
         // `add` of a newly-split package died with
         //
         //     error: package `agent_uikit` was not found in the fetched repo
-        //            at ~/.cplus/cache/…/v0.0.28/source/vendor/agent_uikit
+        //            at ~/.cplus/cache/…/v0.0.29/source/vendor/agent_uikit
         //
         // for a package sitting compiled two directories away. Its own
         // dependencies are still walked, from ITS manifest, so a sibling that

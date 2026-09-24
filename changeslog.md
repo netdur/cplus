@@ -3,7 +3,25 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
-## Unreleased
+## v0.0.29 — 2026-09-24
+
+A compiler release: a bit-reinterpret intrinsic, four ownership and
+checking fixes in generic and enum code, and two toolchain defects that
+produced wrong output or failed builds without saying why.
+
+### Upgrade notes
+
+- `fN::from_bits(uN)` and a float's `.to_bits()` are removed; write
+  `#bitcast::[f32](bits)` and `#bitcast::[u32](x)` (either signedness of
+  the integer works). Both old spellings report E0324 naming the
+  replacement. A SIMD mask's `.to_bits()` is a different method and stays.
+- A generic `impl` body is now checked where it is written, so a template
+  that never type-checked reports its errors (E0302, E0324, …) at its own
+  line instead of compiling.
+- An unbounded `T` inside a generic body counts as owning a destructor, so
+  E0509 and E0337 apply to it as they do to `Text`: `struct W[T] { v: T }`
+  with `fn get(this) -> T { return this.v; }` is now refused. Bound it
+  `[T: Copy]`, or take the payload with a consuming `match`.
 
 ### Language
 
@@ -22,6 +40,10 @@ earlier history lives in each version's archived plan.
   pair's width depends on the target, and the others are what `as` is for.
   `jni`'s `JValue::of_float` / `of_double`, which punned through a pointer
   for want of this, now use it.
+- **`#bitcast` is the only spelling.** The unsigned-only
+  `fN::from_bits` / `.to_bits()` pair it replaces is gone (see the upgrade
+  notes); a derived `Hash` over float fields now bitcasts too, with the same
+  hash values.
 
 ### Toolchain
 
@@ -60,6 +82,21 @@ earlier history lives in each version's archived plan.
   struct emitter had always dropped both. Measured with a weighted
   counter across twelve receiver and parameter shapes, enum and struct,
   method and free function: each now drops exactly what it owns, once.
+- **A static with no constant form stops the build.** Codegen's fallback
+  for an initializer it could not render emitted `poison`, on the belief
+  that the IR would then fail to assemble. It does not: `global float
+  poison` is valid, so such a static compiled and read garbage. The
+  fallback now emits a marker clang rejects on that line
+  (`cpc-bug:static-initializer-has-no-constant-form`). Reaching it is a
+  compiler bug; no known program does.
+- **Concurrent builds no longer break each other's prebuilds.** Every cpc
+  that found a package's prebuilt slice stale rebuilt it, and each rebuild
+  began by deleting the package's shared object directory under the others'
+  running clangs (`unable to rename temporary …`). Any two builds sharing a
+  `vendor/` tree could hit it, and it failed 2–4 tests of every e2e run that
+  started with a cold stdlib. One process now prebuilds a package under a
+  per-package lock while the others wait and reuse its slice, printing
+  `cpc: waiting for another cpc to finish prebuilding `<pkg>``.
 
 ## v0.0.28 — 2026-09-18
 

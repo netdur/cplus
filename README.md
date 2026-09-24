@@ -6,7 +6,7 @@ borrow checker without a garbage collector, speaks the C ABI in both
 directions, and keeps high-level capabilities in ordinary vendored packages
 instead of growing the core language.
 
-Version **0.0.28** supports macOS, Windows, Linux, iOS, Android, ESP32, and
+Version **0.0.29** supports macOS, Windows, Linux, iOS, Android, ESP32, and
 WebAssembly. Facet supplies native AppKit, UIKit, Android, GTK, and Win32 UI
 backends.
 

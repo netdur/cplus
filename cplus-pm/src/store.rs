@@ -9,11 +9,11 @@
 //!   cache/                      # disposable git clones — safe to delete
 //!   tags/<repo>/<tag>          # first-seen commit per release tag (D8)
 //!   m2/<group>/<artifact>/…    # the local Maven repo (D18) — NOT tiered
-//!   v0.0.28/vendor/<name>/     # the store tier: one package set per line
+//!   v0.0.29/vendor/<name>/     # the store tier: one package set per line
 //! ```
 //!
 //! The tier is the compatibility line of the RUNNING toolchain: the exact
-//! version pre-1.0 (`v0.0.28` — every release its own universe), and
+//! version pre-1.0 (`v0.0.29` — every release its own universe), and
 //! `major.minor` post-1.0 (`v1.2` — patch fixes float within it, D14).
 //! `cplus-core` derives the same tier path for import resolution; the two
 //! must stay in lockstep (`cplus-core::resolver::store_vendor_dir`).
@@ -28,7 +28,7 @@ use std::path::PathBuf;
 pub struct ToolchainContext {
     /// `host/owner/repo` of the toolchain monorepo, e.g. `github.com/netdur/cplus`.
     pub repo: String,
-    /// The running toolchain's version, e.g. `0.0.28`.
+    /// The running toolchain's version, e.g. `0.0.29`.
     pub version: String,
     /// Directory inside the repo that holds the packages, e.g. `vendor`.
     pub package_root: String,
@@ -49,7 +49,7 @@ pub fn default_root() -> Option<PathBuf> {
 }
 
 /// The tier directory name for a toolchain version: the compatibility line.
-/// Pre-1.0 every release is its own universe (`v0.0.28`); from 1.0 the line
+/// Pre-1.0 every release is its own universe (`v0.0.29`); from 1.0 the line
 /// is `major.minor` (`v1.2`) and only patch fixes move within it (D14).
 pub fn tier(toolchain_version: &str) -> String {
     let mut parts = toolchain_version.split('.');

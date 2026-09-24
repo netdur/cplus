@@ -1,6 +1,6 @@
 # The C+ Language Specification
 
-Version 0.0.28 · normative reference.
+Version 0.0.29 · normative reference.
 
 **Project:** <https://cplus-lang.dev> · **Source:** <https://github.com/netdur/cplus>
 

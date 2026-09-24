@@ -1460,7 +1460,7 @@ fn classify_import_path(
 /// Kept in lockstep with `cplus-pm`'s `store` module — the pm writes the
 /// store, the resolver reads it; the shared vocabulary is deliberate (D16 in
 /// `cplus-pm/docs/decisions.md`). The tier is the compatibility line of the
-/// running toolchain: the exact version pre-1.0 (`v0.0.28`), `major.minor`
+/// running toolchain: the exact version pre-1.0 (`v0.0.29`), `major.minor`
 /// from 1.0 (`v1.2`, D13/D14). `$CPLUS_HOME` overrides the root — which is
 /// also how tests keep themselves hermetic from a populated `~/.cplus`.
 pub fn store_vendor_dir() -> Option<std::path::PathBuf> {
