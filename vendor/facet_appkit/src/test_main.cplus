@@ -12063,6 +12063,221 @@ fn writing_a_viewless_span_does_not_steal_focus_from_the_field() {
     app::reset_default_for_tests();
 }
 
+// Exactly `v` — not a descendant. `responder_is` asks `isDescendantOf:`, which
+// an NSWindow (the responder when nothing is focused) does not answer.
+fn first_responder_is(w: ak::Window, v: *u8) -> bool {
+    return match w.first_responder() {
+        option::Option[ak::Responder]::Some(r) => r.raw() == v,
+        option::Option[ak::Responder]::None => false,
+    };
+}
+
+// The NSTextView a text_area types into — the scroll view's document view.
+fn text_view_in(v: *u8) -> *u8 {
+    if v.is_null() { return 0 as *u8; }
+    return match ak::ScrollView::from_raw(v).document_view() {
+        option::Option[ak::View]::Some(d) => d.raw(),
+        option::Option[ak::View]::None => 0 as *u8,
+    };
+}
+
+#[test]
+fn a_window_opens_with_the_caret_in_its_first_field() {
+    backend::install();
+    app::reset_default_for_tests();
+
+    // The window became key BEFORE facet wired its key loop, so AppKit chose
+    // the first responder with its own geometric loop — which runs backwards
+    // in a flipped container — and a two-field form opened typing into the
+    // SECOND field. `initialFirstResponder` was right and arrived too late.
+    var b: core::Builder = core::Builder::new();
+    b.add(text_field::text_field("", key: "if:first"));
+    b.add(text_field::text_field("", key: "if:second"));
+    var root: core::Node = core::column(b, key: "if:root");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "first",
+                                                               width: 320.0f64, height: 200.0f64));
+    assert win.is_not_null();
+    let w: ak::Window = ak::Window::from_raw(win);
+    let first: *u8 = native_of(rp, "if:first");
+    let second: *u8 = native_of(rp, "if:second");
+    assert first.is_not_null() && second.is_not_null();
+
+    // A field's first responder is the shared field editor, inserted as the
+    // field's subview while it edits — so ask about the field's subtree.
+    assert responder_is(w, first);
+    assert !responder_is(w, second);
+
+    window::close_window(win);
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn focus_puts_the_caret_in_a_text_area() {
+    backend::install();
+    app::reset_default_for_tests();
+
+    // A text_area's node is backed by the enclosing NSScrollView, and what a
+    // person types into is the NSTextView inside it. `focus()` sends
+    // `makeFirstResponder:` to the scroll view and AppKit hands it on to the
+    // document view — measured, and pinned here because the key loop had to
+    // special-case the same scroll view. A field comes first so the window's
+    // initial responder is somewhere else to begin with.
+    var b: core::Builder = core::Builder::new();
+    b.add(text_field::text_field("", key: "fa:field"));
+    b.add(text_area::text_area("", key: "fa:area"));
+    var root: core::Node = core::column(b, key: "fa:root");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "focus",
+                                                               width: 320.0f64, height: 240.0f64));
+    assert win.is_not_null();
+    let w: ak::Window = ak::Window::from_raw(win);
+    w.make_key_and_order_front(0 as *u8);
+
+    let tv: *u8 = text_view_in(native_of(rp, "fa:area"));
+    assert tv.is_not_null();
+    assert !first_responder_is(w, tv);
+
+    match text_area::find("fa:area") {
+        option::Option[text_area::TextArea]::Some(a) => { let _a: text_area::TextArea = a.focus(); }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    mount::sync();
+    assert first_responder_is(w, tv);
+
+    // ...and blur hands it back: the window, not the text view, answers.
+    match text_area::find("fa:area") {
+        option::Option[text_area::TextArea]::Some(a) => { let _a: text_area::TextArea = a.blur(); }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    mount::sync();
+    assert !first_responder_is(w, tv);
+
+    window::close_window(win);
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn a_text_area_is_in_the_key_loop() {
+    backend::install();
+    app::reset_default_for_tests();
+
+    // The key loop asks each node's view whether it takes focus. A text_area's
+    // view is its scroll view, which says no — so the one control made for
+    // typing was skipped by Tab and never the window's first responder.
+    var b: core::Builder = core::Builder::new();
+    b.add(text_area::text_area("", key: "kl:area"));
+    b.add(text_field::text_field("", key: "kl:field"));
+    var root: core::Node = core::column(b, key: "kl:root");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "loop",
+                                                               width: 320.0f64, height: 240.0f64));
+    assert win.is_not_null();
+
+    let tv: *u8 = text_view_in(native_of(rp, "kl:area"));
+    let fv: *u8 = native_of(rp, "kl:field");
+    assert tv.is_not_null() && fv.is_not_null();
+
+    // First in document order, so the window opens with the caret in it...
+    assert { rt::msg_id(win, rt::sel(#str_ptr("initialFirstResponder\0"))) } == tv;
+    // ...and Tab goes area → field → area.
+    assert { rt::msg_id(tv, rt::sel(#str_ptr("nextKeyView\0"))) } == fv;
+    assert { rt::msg_id(fv, rt::sel(#str_ptr("nextKeyView\0"))) } == tv;
+
+    window::close_window(win);
+    app::reset_default_for_tests();
+}
+
+// A digits-only filter, written the way an application writes one: from the
+// field's own change handler, while the field editor owns the string.
+fn keep_digits(sender: *u8, ctx: *u8) {
+    match text_field::find("ed:digits") {
+        option::Option[text_field::TextField]::Some(f) => {
+            var kept: text::Text = text::new();
+            var caret: i64 = 0 as i64;
+            let typed: str = f.text();
+            var i: usize = 0 as usize;
+            while i < typed.count() {
+                match typed.byte_at(i) {
+                    option::Option[u8]::Some(c) => {
+                        if c >= (48 as u8) && c <= (57 as u8) {
+                            match typed.slice(i, i +% (1 as usize)) {
+                                option::Option[str]::Some(d) => { let _a: status::Status = kept.append(d); }
+                                option::Option[str]::None => { }
+                            }
+                            caret = caret + (1 as i64);
+                        }
+                    }
+                    option::Option[u8]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+            if kept.view() != typed {
+                let _f: text_field::TextField = f.set_text(kept.view()).set_cursor_position(caret);
+            }
+        }
+        option::Option[text_field::TextField]::None => { }
+    }
+}
+
+fn type_into(ed: *u8, ch: str) {
+    { rt::msg_void_id(ed, rt::sel(#str_ptr("keyDown:\0")),
+                      fake_key_event(0 as u16, ch, 0 as u64)) };
+    mount::sync();
+}
+
+#[test]
+fn set_text_from_the_change_handler_reaches_the_field_editor() {
+    backend::install();
+    app::reset_default_for_tests();
+
+    // A field that filters its own input rewrites itself from
+    // `on_text_changed`, which runs while the field editor owns the string.
+    // AppKit shows the EDITOR's copy, so a write that reached only the control
+    // left the rejected character on screen and the caret where it was.
+    let h: fn(*u8, *u8) = keep_digits;
+    var b: core::Builder = core::Builder::new();
+    b.add(text_field::text_field("", key: "ed:digits", on_text_changed: h));
+    var root: core::Node = core::column(b, key: "ed:root");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "edit",
+                                                               width: 320.0f64, height: 200.0f64));
+    assert win.is_not_null();
+    let w: ak::Window = ak::Window::from_raw(win);
+
+    let fv: *u8 = native_of(rp, "ed:digits");
+    assert fv.is_not_null();
+    let ed: *u8 = match focused_editor(w, fv) {
+        option::Option[ak::Text]::Some(e) => e.raw(),
+        option::Option[ak::Text]::None => 0 as *u8,
+    };
+    assert ed.is_not_null();
+
+    type_into(ed, "1");
+    type_into(ed, "2");
+    type_into(ed, "a");
+
+    // The editor shows the rewrite, the caret sits after it, and the field is
+    // still being edited.
+    let still: *u8 = { rt::msg_id(fv, rt::sel(#str_ptr("currentEditor\0"))) };
+    assert still == ed;
+    assert bridge::to_text(rt::msg_id(ed, rt::sel(#str_ptr("string\0")))).view() == "12";
+    let r: rt::Range = { rt::msg_range(ed, rt::sel(#str_ptr("selectedRange\0"))) };
+    assert r.location == (2 as u64);
+    assert r.length == (0 as u64);
+
+    // The next keystroke builds on the rewrite, not on what was rejected.
+    type_into(ed, "4");
+    assert bridge::to_text(rt::msg_id(ed, rt::sel(#str_ptr("string\0")))).view() == "124";
+    match text_field::find("ed:digits") {
+        option::Option[text_field::TextField]::Some(f) => { assert f.text() == "124"; }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+
+    window::close_window(win);
+    app::reset_default_for_tests();
+}
+
 // ---- the soft-keyboard band, read for what it carries besides a layout --------
 
 // A field's editor is the first responder while it is focused, not the field —
@@ -13192,6 +13407,19 @@ fn focus_and_blur_fire_and_is_focused_answers() {
         title: "focus", width: 300.0f64, height: 200.0f64));
     let w: ak::Window = ak::Window::from_raw(win);
     w.make_key_and_order_front(0 as *u8);
+
+    // The window opens with the caret in its FIRST field, which is "one" — so
+    // start from "two" and count from zero. (This test used to lean on the
+    // window opening in its LAST field, which was the bug.)
+    match core::find_in(rp, "two") {
+        option::Option[*core::Node]::Some(two) => {
+            let v2: *u8 = core::view_of(two);
+            let _g: bool = w.make_first_responder(ak::View::from_raw(v2).as_responder());
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    FOCUS_HITS = 0 as i64;
+    BLUR_HITS = 0 as i64;
 
     match core::find_in(rp, "one") {
         option::Option[*core::Node]::Some(one) => {

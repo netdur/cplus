@@ -420,10 +420,28 @@ given.
 No `relayout` is needed here and no `Cancellable` has to be kept alive: this
 is not a runtime write, it is a rule the pass already re-reads.
 
-### The one exception
+### A field being edited can be written
 
-**A text field being EDITED cannot be written** — its field editor owns the
-string. Swap that small subtree instead of setting its text.
+A field can rewrite itself while the user is typing in it — from its own
+`on_text_changed`, which is where an input filter lives. Write the text and put
+the caret back; do not swap the subtree, and do not reach for the native field
+editor:
+
+```cplus
+fn on_digits_changed(ref this, _sender: *u8) {
+    guard let option::Option[text_field::TextField]::Some(f) =
+        text_field::find("size:width") else { return; };
+    let kept: text::Text = digits_of(f.text());
+    if kept.view() != f.text() {
+        let _f: text_field::TextField =
+            f.set_text(kept.view()).set_cursor_position(kept.count() as i64);
+    }
+}
+```
+
+On AppKit the write reaches the field editor, the caret lands where it was put,
+and editing carries on (`set_text_from_the_change_handler_reaches_the_field_editor`
+in facet_appkit pins all three).
 
 ---
 

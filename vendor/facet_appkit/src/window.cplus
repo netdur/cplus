@@ -498,10 +498,30 @@ fn collects_focus(v: *u8) -> bool {
     return { rt::msg_i8(v, rt::sel(#str_ptr("acceptsFirstResponder\0"))) } != (0 as i8);
 }
 
+// The view in the loop for a node — its own, except for a text_area. That node
+// is backed by the enclosing NSScrollView, which answers NO to
+// `acceptsFirstResponder`, so asking it left the one control made for typing
+// out of Tab and never the window's first responder. The NSTextView inside is
+// what a person types into. Scoped to the kind rather than to "any scroll view
+// with a document view": a list's table is one too, and pulling every table
+// into the loop would change which control a window opens on.
+//
+// `focus()` needs none of this — `makeFirstResponder:` on the scroll view
+// already lands in its document view. Only this question is asked of the
+// scroll view itself.
+fn focus_view(v: *u8, n: *core::Node) -> *u8 {
+    if v.is_null() || n.is_null() { return v; }
+    if core::kind_of(n) != props::K_TEXT_AREA { return v; }
+    return match ak::ScrollView::from_raw(v).document_view() {
+        option::Option[ak::View]::Some(d) => d.raw(),
+        option::Option[ak::View]::None => v,
+    };
+}
+
 fn gather_focusables(n: *core::Node, ref out: vec::Vec[*u8]) {
     if n.is_null() { return; }
     if core::is_hidden(n) { return; }        // a hidden subtree is not tabbable
-    let v: *u8 = core::view_of(n);
+    let v: *u8 = focus_view(core::view_of(n), n);
     if v.is_not_null() && collects_focus(v) {
         let _s: status::Status = out.append(v);
     }
@@ -546,6 +566,14 @@ fn wire_key_loop(win: *u8, root: *core::Node) {
     match focusables.at(0 as usize) {
         option::Option[*u8]::Some(first) => {
             { rt::msg_void_id(win, rt::sel(#str_ptr("setInitialFirstResponder:\0")), first) };
+            // Naming it is not enough on its own: AppKit reads the initial
+            // responder when the window becomes KEY, and `open_window` makes
+            // it key before the tree is laid out and this loop exists. By then
+            // AppKit has chosen with its own geometric loop — backwards in a
+            // flipped container — so a form opened typing into its LAST field.
+            // Nothing can have been typed in between, so re-selecting here is
+            // what becoming key would have done had the loop been ready.
+            let _ok: i8 = { rt::msg_i8_id(win, rt::sel(#str_ptr("makeFirstResponder:\0")), first) };
         }
         option::Option[*u8]::None => { }
     }
