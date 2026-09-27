@@ -405,63 +405,95 @@ fn pump_until_answered() {
 // than a tree to walk.
 //
 // `GetOpenFileNameA` spins its own modal loop, which is the cost, and it is why
-// this is the blocking spelling and has no sheet form.
+// this is the blocking spelling and has no sheet form. `GetSaveFileNameA` is the
+// same call over the same struct.
 
-const OFN_BYTES: usize = 152 as usize;
-
-// OFN_FILEMUSTEXIST (0x1000) | OFN_PATHMUSTEXIST (0x0800) |
-// OFN_NOCHANGEDIR (0x0008) — the last one matters: without it the dialog
-// changes the PROCESS's working directory to wherever the user browsed, and
-// every relative path in the application silently starts resolving somewhere
-// else.
-fn ofn_flags() -> u32 { return 0x1808 as u32; }
+// OFN_NOCHANGEDIR (0x0008) matters on BOTH: without it the dialog changes the
+// PROCESS's working directory to wherever the user browsed, and every relative
+// path in the application silently starts resolving somewhere else.
+//
+// Open adds OFN_FILEMUSTEXIST (0x1000) | OFN_PATHMUSTEXIST (0x0800); save adds
+// OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT (0x0002), so choosing an existing
+// file asks before the application is handed a path it will overwrite.
+fn open_flags() -> u32 { return 0x1808 as u32; }
+fn save_flags() -> u32 { return 0x080A as u32; }
 
 extern fn GetOpenFileNameA(p: *u8) -> i32;
+extern fn GetSaveFileNameA(p: *u8) -> i32;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 extern fn memset(p: *u8, v: i32, n: usize) -> *u8;
+extern fn memcpy(d: *u8, s: *u8, n: usize) -> *u8;
 
-fn write_usize(p: *u8, at: usize, v: usize) {
-    let q: *usize = { (p + at) } as *usize;
-    { *q = v };
-    return;
+// OPENFILENAMEA, field for field, so the COMPILER lays it out. It used to be
+// written as byte offsets, and those skipped `nMaxCustFilter` and
+// `nFilterIndex`: the buffer pointer went into those two DWORDs, the buffer
+// SIZE went into `lpstrFile`, and the flags landed inside `lpstrInitialDir`.
+// `open_file_name_is_laid_out_as_commdlg_declares_it` pins the layout.
+struct OpenFileName {
+    struct_size: u32,
+    opaque owner: *u8,
+    opaque instance: *u8,
+    opaque filter: *u8,
+    opaque custom_filter: *u8,
+    max_custom_filter: u32,
+    filter_index: u32,
+    opaque file: *u8,
+    max_file: u32,
+    opaque file_title: *u8,
+    max_file_title: u32,
+    opaque initial_dir: *u8,
+    opaque title: *u8,
+    flags: u32,
+    file_offset: u16,
+    file_extension: u16,
+    opaque default_ext: *u8,
+    cust_data: i64,
+    opaque hook: *u8,
+    opaque template_name: *u8,
+    opaque reserved_ptr: *u8,
+    reserved: u32,
+    flags_ex: u32,
 }
 
-fn write_u32(p: *u8, at: usize, v: u32) {
-    let q: *u32 = { (p + at) } as *u32;
-    { *q = v };
-    return;
-}
+const PATH_CAP: usize = 1024 as usize;
 
-// The OPENFILENAMEA field offsets, for the 64-bit layout. Written out rather
-// than bound because `cpc-bindgen` did not carry the struct and it is four
-// fields out of eighteen that this call needs — the rest stay zero, which is
-// what `memset` guarantees.
-//
-//   0   lStructSize      DWORD
-//   8   hwndOwner        HWND
-//   40  lpstrFile        LPSTR    (the buffer, in AND out)
-//   48  nMaxFile         DWORD
-//   84  Flags            DWORD
-fn ofn_off_owner() -> usize { return 8 as usize; }
-fn ofn_off_file() -> usize { return 40 as usize; }
-fn ofn_off_max() -> usize { return 48 as usize; }
-fn ofn_off_flags() -> usize { return 84 as usize; }
-
-fn choose_file() -> option::Option[text::Text] {
-    let path_cap: usize = 1024 as usize;
-    let ofn: *u8 = { malloc(OFN_BYTES) };
-    if ofn.is_null() { return option::Option[text::Text]::None; }
-    let buf: *u8 = { malloc(path_cap) };
-    if buf.is_null() { { free(ofn) }; return option::Option[text::Text]::None; }
-    let _z: *u8 = { memset(ofn, 0 as i32, OFN_BYTES) };
-    let _b: *u8 = { memset(buf, 0 as i32, path_cap) };
-    write_u32(ofn, 0 as usize, OFN_BYTES as u32);
-    write_usize(ofn, ofn_off_owner(), { #addr(window::any_window()) });
-    write_usize(ofn, ofn_off_file(), { #addr(buf) });
-    write_u32(ofn, ofn_off_max(), path_cap as u32);
-    write_u32(ofn, ofn_off_flags(), ofn_flags());
-    let ok: i32 = { GetOpenFileNameA(ofn) };
+// Runs one file dialog. `name` seeds the file box (save only — an open dialog
+// shows it too, and nothing passes one); `extension`, when given, is the one
+// type offered and the extension appended to a name typed without it.
+fn run_file_dialog(save: bool, name: str, extension: str) -> option::Option[text::Text] {
+    let buf: *u8 = { malloc(PATH_CAP) };
+    if buf.is_null() { return option::Option[text::Text]::None; }
+    let _b: *u8 = { memset(buf, 0 as i32, PATH_CAP) };
+    // The file box is the buffer, in AND out, so a suggested name is written
+    // into it — clipped to leave its NUL.
+    var seeded: usize = name.count();
+    if seeded >= PATH_CAP { seeded = PATH_CAP -% (1 as usize); }
+    if seeded != (0 as usize) { let _c: *u8 = { memcpy(buf, #str_ptr(name), seeded) }; }
+    // "PNG\0*.png\0\0" — a filter is PAIRS of NUL-terminated strings, and the
+    // list ends with an empty one. Built as text so it owns its bytes for the
+    // length of the call.
+    let filter: text::Text = if extension.count() != (0 as usize) {
+        "${extension}\0*.${extension}\0\0"
+    } else {
+        text::new()
+    };
+    let ext: text::Text = "${extension}\0";
+    var ofn: OpenFileName = #zero::[OpenFileName]();
+    ofn.struct_size = #size_of::[OpenFileName]() as u32;
+    ofn.owner = window::any_window();
+    ofn.file = buf;
+    ofn.max_file = PATH_CAP as u32;
+    ofn.flags = if save { save_flags() } else { open_flags() };
+    if extension.count() != (0 as usize) {
+        ofn.filter = #str_ptr(filter.view());
+        ofn.default_ext = #str_ptr(ext.view());
+    }
+    let ok: i32 = if save {
+        { GetSaveFileNameA(#addr_of(ofn) as *u8) }
+    } else {
+        { GetOpenFileNameA(#addr_of(ofn) as *u8) }
+    };
     var out: option::Option[text::Text] = option::Option[text::Text]::None;
     if ok != (0 as i32) {
         let n: usize = { strlen_raw(buf) };
@@ -471,8 +503,17 @@ fn choose_file() -> option::Option[text::Text] {
         }
     }
     { free(buf) };
-    { free(ofn) };
     return out;
+}
+
+fn choose_file() -> option::Option[text::Text] {
+    return run_file_dialog(false, "", "");
+}
+
+// Where to save. `name` is the suggested file name; `extension` (no dot) is
+// the one type offered. None when the user cancelled.
+fn choose_save_path(name: str = "", extension: str = "") -> option::Option[text::Text] {
+    return run_file_dialog(true, name, extension);
 }
 
 extern fn strlen(s: *u8) -> usize;
@@ -589,6 +630,38 @@ fn the_open_dialog_does_not_move_the_process() {
     // directory to wherever the user browsed, and every relative path in the
     // application silently starts resolving somewhere else — a bug that shows
     // up long after the file was opened.
-    assert (ofn_flags() & (0x0008 as u32)) != (0 as u32);
+    assert (open_flags() & (0x0008 as u32)) != (0 as u32);
+    assert (save_flags() & (0x0008 as u32)) != (0 as u32);
+    return;
+}
+
+#[test]
+fn saving_over_a_file_asks_first() {
+    // OFN_OVERWRITEPROMPT. The application is about to write to whatever path
+    // comes back; choosing an existing file has to be a decision the user made.
+    assert (save_flags() & (0x0002 as u32)) != (0 as u32);
+    assert (open_flags() & (0x0002 as u32)) == (0 as u32);
+    return;
+}
+
+fn byte_offset(base: *u8, field: *u8) -> usize { return (field as usize) -% (base as usize); }
+
+#[test]
+fn open_file_name_is_laid_out_as_commdlg_declares_it() {
+    // The numbers are clang's for OPENFILENAMEA on x86_64-pc-windows-msvc. The
+    // byte offsets this replaced had `lpstrFile` at 40 — the two DWORDs before
+    // it were missing — so the dialog was handed its buffer SIZE as the buffer.
+    // One missing DWORD would hide in the padding before `lpstrFile`; two
+    // cannot, and neither can any field after it.
+    var o: OpenFileName = #zero::[OpenFileName]();
+    let base: *u8 = #addr_of(o) as *u8;
+    assert #size_of::[OpenFileName]() == (152 as usize);
+    assert byte_offset(base, #addr_of(o.owner) as *u8) == (8 as usize);
+    assert byte_offset(base, #addr_of(o.filter) as *u8) == (24 as usize);
+    assert byte_offset(base, #addr_of(o.file) as *u8) == (48 as usize);
+    assert byte_offset(base, #addr_of(o.max_file) as *u8) == (56 as usize);
+    assert byte_offset(base, #addr_of(o.title) as *u8) == (88 as usize);
+    assert byte_offset(base, #addr_of(o.flags) as *u8) == (96 as usize);
+    assert byte_offset(base, #addr_of(o.default_ext) as *u8) == (104 as usize);
     return;
 }

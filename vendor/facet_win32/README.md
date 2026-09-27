@@ -31,7 +31,7 @@ shadow       the band's drop shadow — a blurred DIB the PARENT blits
 scroller     a `scroll` that scrolls: the document's extent, the wheel, the bars
 swipe        swipe-to-reveal: a drag, and the strip of actions under the row
 menus        HMENU, and the one command-id table
-dialogs      alert / choose / prompt as facet trees, and the file chooser
+dialogs      alert / choose / prompt as facet trees, and the open and save file choosers
 sys          constants, and the UTF-8 <-> UTF-16 door every string goes through
 observers    size observation, for the resource tier
 ```
