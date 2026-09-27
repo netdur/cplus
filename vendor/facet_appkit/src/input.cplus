@@ -40,6 +40,7 @@ import "stdlib/option" as option;
 import "stdlib/io" as io;
 import "stdlib/env" as env;
 import "stdlib/text" as text;
+import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
@@ -691,7 +692,14 @@ fn drag_over_shim(sender: *u8, ctx: *u8) {
                                else { { (*g).on_drag_leave } };
     let c: *u8 = if entering { { (*g).on_drag_over_ctx } }
                  else { { (*g).on_drag_leave_ctx } };
-    let _took: bool = fire_of(ctx, h, c);
+    let took: bool = fire_of(ctx, h, c);
+    // An `on_drag_over` that answers false did not take the drag, so the drag
+    // is not taken here: no badge, and `on_drop` never fires for it. Only a
+    // handler that EXISTS can refuse — a zone with no `on_drag_over` accepts,
+    // as it always has.
+    if entering && h != gestures::no_gesture && !took {
+        akx::set_drop_refused(ctx, true);
+    }
 }
 
 // The class is SHARED by every view of the same backing kind, so nothing here
@@ -700,7 +708,9 @@ fn drag_over_shim(sender: *u8, ctx: *u8) {
 // (`add_input_methods`) and the gate is `registerForDraggedTypes:` — which is
 // AppKit's own gate, so a view that never asked is never offered a drag.
 fn arm_drop(v: *u8, g: *gestures::Gestures) {
-    if !{ (*g).allow_drop } { return; }
+    let text_drops: bool = { (*g).allow_drop };
+    let file_drops: bool = { (*g).allow_file_drop };
+    if !text_drops && !file_drops { return; }
     // The handlers appkit_ext's IMPs call. ctx is the VIEW, so the shim can get
     // back to the node without a second association.
     let dh: fn(*u8, *u8) = drop_shim;
@@ -709,18 +719,27 @@ fn arm_drop(v: *u8, g: *gestures::Gestures) {
     synth::set_associated(v, akx::drop_ctx_key(), v);
     synth::set_associated(v, akx::drag_target_key(), oh as *u8);
     synth::set_associated(v, akx::drag_over_ctx_key(), v);
-    // Text only, which is what facet's drop verb carries.
+    // Only what the node asked for: a text zone is never offered a file from
+    // the desktop, and a file zone is never offered a card.
     { rt::msg_void_id(v, rt::sel(#str_ptr("registerForDraggedTypes:\0")),
-                      dragged_types()) };
+                      dragged_types(text_drops, file_drops)) };
 }
 
-// NSPasteboardTypeString, in an NSArray. Built each time it is needed rather
-// than cached: arming happens once per gesture-bearing view, not per event.
-fn dragged_types() -> *u8 {
+// The pasteboard types a zone registers for, in an NSArray: plain text for
+// `allow_drop`, file URLs for `allow_file_drop`. Built each time it is needed
+// rather than cached: arming happens once per gesture-bearing view, not per
+// event.
+fn dragged_types(text_drops: bool, file_drops: bool) -> *u8 {
     let arr: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")),
                                 rt::sel(#str_ptr("array\0"))) };
-    { rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")),
-                      bridge::nsstring("public.utf8-plain-text")) };
+    if text_drops {
+        { rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")),
+                          bridge::nsstring("public.utf8-plain-text")) };
+    }
+    if file_drops {
+        { rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")),
+                          bridge::nsstring("public.file-url")) };
+    }
     return arr;
 }
 
@@ -1501,6 +1520,12 @@ fn dropped_text(sender: *u8) -> text::Text {
     return akx::drop_text_of(v);
 }
 
+fn dropped_files(sender: *u8) -> vec::Vec[text::Text] {
+    let v: *u8 = sender_view(sender);
+    if v.is_null() { return vec::new::[text::Text](); }
+    return akx::drop_files_of(v);
+}
+
 fn drag_targeted(sender: *u8) -> bool {
     let v: *u8 = sender_view(sender);
     if v.is_null() { return false; }
@@ -1513,6 +1538,7 @@ fn sender_readers() -> component::SenderReaders {
         key_of: key_of,
         item_of: item_of,
         dropped_text: dropped_text,
+        dropped_files: dropped_files,
         drop_position: drop_position,
         drag_targeted: drag_targeted,
     };

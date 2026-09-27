@@ -116,8 +116,8 @@ read half covers:
 | the gesture band | click · double-click · right-click · long press · press · release · hover · unhover · pointer move · pan · pinch · swipe — through GtkEventControllers, with the decline chain intact |
 | the key band | `on_key` on any focusable node, plus the four `KeyReader` readers (code / chars / modifiers / named) |
 | the control actions | button · text_button · icon_button · toggle · checkbox · radio · slider · stepper · text_field · search_field · text_area |
-| drag and drop | `on_drag_start` · `on_drag_over` · `on_drag_leave` · `on_drop` · `on_drop_completed`, through a GtkDragSource and a GtkDropTarget; the payload is the source node's key, and the drag icon is a live paintable of the node being dragged |
-| the sender readers | all six: `key_of` · `item_of` · `raise` · `dropped_text` · `drop_position` · `drag_targeted` |
+| drag and drop | `on_drag_start` · `on_drag_over` · `on_drag_leave` · `on_drop` · `on_drop_completed`, through a GtkDragSource and a GtkDropTarget; the payload is the source node's key, and the drag icon is a live paintable of the node being dragged. `allow_file_drop` types the target on GdkFileList (preloaded, so `on_drag_over` can read the files), and an `on_drag_over` answering false refuses the drag |
+| the sender readers | all seven: `key_of` · `item_of` · `raise` · `dropped_text` · `dropped_files` · `drop_position` · `drag_targeted` |
 | scroll | `observe_scrolled`, from both adjustments, with the position written back into the props before the handler runs |
 | the window tier | `close-request` → `should_close` / `will_close`; the app menu's items; the lifecycle observers, each a `notify::` on the window |
 | split | `on_move`, from the divider's own GtkGestureDrag, with the position written back into the props before the handler runs |

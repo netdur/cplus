@@ -22,6 +22,7 @@ import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
+import "stdlib/vec" as vec;
 import "facet/component" as component;
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
@@ -939,6 +940,7 @@ fn sender_readers() -> component::SenderReaders {
         key_of: key_of,
         item_of: item_of,
         dropped_text: 0 as fn(*u8) -> text::Text,
+        dropped_files: 0 as fn(*u8) -> vec::Vec[text::Text],
         drop_position: 0 as fn(*u8) -> option::Option[vocab::Point],
         drag_targeted: 0 as fn(*u8) -> bool,
     };

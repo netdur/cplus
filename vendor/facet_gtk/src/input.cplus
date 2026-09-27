@@ -80,6 +80,8 @@ import "facet/carousel" as carousel;
 import "facet/refreshable" as refreshable;
 import "gtk4/gtk4" as gtk;
 import "gdk/gdk" as gdk;
+import "gio/gio" as gio;
+import "stdlib/vec" as vec;
 import "gobject_gir/gobject_gir" as gobject_gir;
 import "gobject/runtime" as g;
 import "gobject/bridge" as bridge;
@@ -447,6 +449,83 @@ fn g_type_string() -> usize { return (16 as usize) *% (4 as usize); }
 fn action_copy() -> u32 { return 1 as u32; }
 fn action_none() -> u32 { return 0 as u32; }
 
+// ---- files -------------------------------------------------------------------
+//
+// A file drag arrives as a GdkFileList, which the GIR describes as a boxed
+// type with no methods — so its two calls are bound here, as the file dialog's
+// async pair is in dialogs.cplus.
+
+#[link_name = "gdk_file_list_get_type"]
+extern fn gdk_file_list_get_type() -> usize;
+#[link_name = "gdk_file_list_get_files"]
+extern fn gdk_file_list_get_files(list: *u8) -> *u8;
+#[link_name = "g_slist_free"]
+extern fn g_slist_free(list: *u8);
+#[link_name = "gtk_drop_target_set_gtypes"]
+extern fn gtk_drop_target_set_gtypes(target: *u8, types: *usize, n: usize);
+#[link_name = "g_type_check_value_holds"]
+extern fn g_type_check_value_holds(value: *u8, type_: usize) -> i32;
+
+// A GSList node: the data, then the next.
+struct SListNode {
+    opaque data: *u8,
+    opaque next: *SListNode,
+}
+
+// The paths in a GValue holding a GdkFileList — empty for any other value, a
+// string included, and for a file with no local path (a remote mount).
+fn files_of_value(value: *u8) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    if value == (0 as *u8) { return out; }
+    if { g_type_check_value_holds(value, gdk_file_list_get_type()) } == (0 as i32) { return out; }
+    let list: *u8 = gobject_gir::Value::from_raw(value).get_boxed();
+    if list == (0 as *u8) { return out; }
+    // The list is ours to free; the GFiles in it are the file list's.
+    let head: *SListNode = { gdk_file_list_get_files(list) } as *SListNode;
+    var node: *SListNode = head;
+    while node != (0 as *SListNode) {
+        match gio::File::from_raw({ (*node).data }).get_path() {
+            option::Option[text::Text]::Some(p) => { let _a: status::Status = out.append(p); }
+            option::Option[text::Text]::None => { }
+        }
+        node = { (*node).next };
+    }
+    { g_slist_free(head as *u8) };
+    return out;
+}
+
+// The files over, or last dropped on, ONE widget — the same one-record shape as
+// the drop position, and for the same reason: the readers are asked during the
+// widget's own callbacks, and every other widget's answer is "nothing".
+static DROP_FILES_WIDGET: usize = 0;
+static DROP_FILES: vec::Vec[text::Text] = #zero::[vec::Vec[text::Text]]();
+
+fn set_drop_files(v: *u8, take files: vec::Vec[text::Text]) {
+    DROP_FILES_WIDGET = { #addr(v) };
+    DROP_FILES = files;
+    return;
+}
+
+// What the target holds for the drag in progress. Preloaded only on a target
+// that takes files, so a text target reads nothing here and pays nothing.
+fn pending_files(target: *u8) -> vec::Vec[text::Text] {
+    return match gtk::DropTarget::from_raw(target).get_value() {
+        option::Option[gobject_gir::Value]::Some(val) => files_of_value(val.raw()),
+        option::Option[gobject_gir::Value]::None => vec::new::[text::Text](),
+    };
+}
+
+// `on_drag_over` answering false is a refusal: 0 is how a drop target says
+// "not this one", and GTK asks again on every motion, so a handler that
+// changes its mind is heard. Only a handler that EXISTS can refuse — a zone
+// with no `on_drag_over` accepts, as it always has.
+fn over_answer(n: *core::Node, gs: *gestures::Gestures) -> u32 {
+    let h: gestures::Handler = { (*gs).on_drag_over };
+    let took: bool = fire_of(n, h, { (*gs).on_drag_over_ctx });
+    if h != gestures::no_gesture && !took { return action_none(); }
+    return action_copy();
+}
+
 fn drop_text_key() -> *u8 { return #str_ptr("facet-gtk-drop-text\0"); }
 fn drag_targeted_key() -> *u8 { return #str_ptr("facet-gtk-drag-over\0"); }
 
@@ -476,30 +555,44 @@ fn set_drop_text(v: *u8, s: str) {
     return;
 }
 
+fn drop_target_for(text_drops: bool, file_drops: bool) -> gtk::DropTarget {
+    if !file_drops { return gtk::DropTarget::new(g_type_string(), action_copy()); }
+    var c: gtk::DropTarget = gtk::DropTarget::new(gdk_file_list_get_type(), action_copy());
+    if text_drops {
+        // Both: one target, two types, so one drag never reaches two
+        // controllers and fires `on_drag_over` twice.
+        var types: [usize; 2] = [g_type_string(), gdk_file_list_get_type()];
+        { gtk_drop_target_set_gtypes(c.raw(), #addr_of(types[0]), 2 as usize) };
+    }
+    // Preloaded, so the files can be read while the drag is still travelling.
+    c.set_preload(true);
+    return c;
+}
+
 fn set_targeted(v: *u8, on: bool) {
     g::set_data(v, drag_targeted_key(), if on { 1 as *u8 } else { 0 as *u8 });
     return;
 }
 
 // The destination's three hover callbacks. `enter` and `motion` answer an
-// ACTION, and 0 is the rejection — so a node whose `on_drag_over` declined is
-// told about again on the next motion rather than having the drag taken away
-// from it.
+// ACTION, and 0 is the rejection. The files are pinned before the handler
+// runs, so `dropped_files` reads the drag it is deciding about.
 fn drop_enter(target: *u8, x: f64, y: f64, user: *u8) -> u32 {
     let n: *core::Node = user as *core::Node;
     let gs: *gestures::Gestures = gestures_of_user(user);
     if gs == (0 as *gestures::Gestures) { return action_none(); }
-    set_targeted(core::view_of(n), true);
-    let _t: bool = fire_of(n, { (*gs).on_drag_over }, { (*gs).on_drag_over_ctx });
-    return action_copy();
+    let v: *u8 = core::view_of(n);
+    set_targeted(v, true);
+    set_drop_files(v, pending_files(target));
+    return over_answer(n, gs);
 }
 
 fn drop_motion(target: *u8, x: f64, y: f64, user: *u8) -> u32 {
     let n: *core::Node = user as *core::Node;
     let gs: *gestures::Gestures = gestures_of_user(user);
     if gs == (0 as *gestures::Gestures) { return action_none(); }
-    let _t: bool = fire_of(n, { (*gs).on_drag_over }, { (*gs).on_drag_over_ctx });
-    return action_copy();
+    set_drop_files(core::view_of(n), pending_files(target));
+    return over_answer(n, gs);
 }
 
 fn drop_leave(target: *u8, user: *u8) {
@@ -521,10 +614,17 @@ fn drop_performed(target: *u8, value: *u8, x: f64, y: f64, user: *u8) -> i32 {
     if gs == (0 as *gestures::Gestures) { return 0 as i32; }
     let v: *u8 = core::view_of(n);
     set_targeted(v, false);
-    match gobject_gir::Value::from_raw(value).get_string() {
-        option::Option[text::Text]::Some(t) => { set_drop_text(v, t.view()); }
-        option::Option[text::Text]::None => { set_drop_text(v, ""); }
+    // One target may take both kinds, so the VALUE says which arrived.
+    let files: vec::Vec[text::Text] = files_of_value(value);
+    if files.count() != (0 as usize) {
+        set_drop_text(v, "");
+    } else {
+        match gobject_gir::Value::from_raw(value).get_string() {
+            option::Option[text::Text]::Some(t) => { set_drop_text(v, t.view()); }
+            option::Option[text::Text]::None => { set_drop_text(v, ""); }
+        }
     }
+    set_drop_files(v, files);
     // x and y are already in the DROP TARGET's own coordinates, which is
     // exactly the space facet's `drop_position` is documented in — no
     // conversion, unlike AppKit where the point arrives in window space.
@@ -973,11 +1073,14 @@ fn arm(v: *u8, n: *core::Node) {
     }
 
     if !armed(v, k_drop()) {
-        if { (*gs).allow_drop } {
-            // Typed on G_TYPE_STRING because that is what facet's drag
-            // carries — a target that accepted every type would claim drags it
-            // cannot read.
-            let c: gtk::DropTarget = gtk::DropTarget::new(g_type_string(), action_copy());
+        let text_drops: bool = { (*gs).allow_drop };
+        let file_drops: bool = { (*gs).allow_file_drop };
+        if text_drops || file_drops {
+            // Typed on exactly what the node asked for — G_TYPE_STRING for
+            // facet's own drag, GdkFileList for files — because a target that
+            // accepted every type would claim drags it cannot read, and a text
+            // zone must not light up for a file from the desktop.
+            let c: gtk::DropTarget = drop_target_for(text_drops, file_drops);
             let _e: u64 = c.connect_enter(drop_enter, user);
             let _m: u64 = c.connect_motion(drop_motion, user);
             let _l: u64 = c.connect_leave(drop_leave, user);
@@ -2753,6 +2856,22 @@ fn dropped_text(sender: *u8) -> text::Text {
     return bridge::cstr_to_text(p);
 }
 
+fn dropped_files(sender: *u8) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let v: *u8 = drop_widget_of(sender);
+    if v == (0 as *u8) { return out; }
+    if { #addr(v) } != DROP_FILES_WIDGET { return out; }
+    var i: usize = 0 as usize;
+    while i < DROP_FILES.count() {
+        match DROP_FILES.at_ptr(i) {
+            option::Option[*text::Text]::Some(p) => { let _a: status::Status = out.append({ (*p).clone() }); }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
 fn drag_targeted(sender: *u8) -> bool {
     let v: *u8 = drop_widget_of(sender);
     if v == (0 as *u8) { return false; }
@@ -2787,6 +2906,7 @@ fn sender_readers() -> component::SenderReaders {
         key_of: key_of,
         item_of: item_of,
         dropped_text: dropped_text,
+        dropped_files: dropped_files,
         drop_position: drop_position,
         drag_targeted: drag_targeted,
     };

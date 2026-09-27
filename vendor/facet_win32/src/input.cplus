@@ -1130,6 +1130,7 @@ fn sender_readers() -> component::SenderReaders {
         // that is a different absence with a different reason (COM), recorded
         // in MANIFEST §2 rather than left as a zero here.
         dropped_text: dnd::dropped_text,
+        dropped_files: dnd::dropped_files,
         drop_position: dnd::drop_position,
         drag_targeted: dnd::drag_targeted,
     };

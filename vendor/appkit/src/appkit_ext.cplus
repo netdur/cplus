@@ -13,6 +13,7 @@ import "stdlib/io" as io;
 import "objc/bridge" as bridge;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 import "stdlib/option" as option;
 import "stdlib/string_map" as string_map;
 import "appkit/appkit" as ak;
@@ -990,6 +991,82 @@ fn drop_point_set_key() -> *u8 { return { 28695 as *u8 }; }
 fn drag_target_key() -> *u8 { return { 28702 as *u8 }; }
 fn drag_targeted_key() -> *u8 { return { 28703 as *u8 }; }
 fn drag_over_ctx_key() -> *u8 { return { 28704 as *u8 }; }
+// The FILES a drag carries, as a retained NSArray of path strings — read on
+// enter as well as on drop, so a handler can look before it accepts.
+fn drop_files_key() -> *u8 { return { 28790 as *u8 }; }
+// Set by an enter handler that answered "not this one": the drag is refused
+// for as long as it stays over the view (no badge, no drop).
+fn drop_refused_key() -> *u8 { return { 28791 as *u8 }; }
+
+// Refuse — or stop refusing — the drag currently over `drop_view`. Cleared
+// again at the next enter, so one refused drag does not refuse the next.
+fn set_drop_refused(drop_view: *u8, refused: bool) {
+    if drop_view == { 0 as *u8 } { return; }
+    synth::set_associated(drop_view, drop_refused_key(), if refused { 1 as *u8 } else { 0 as *u8 });
+    return;
+}
+
+fn drop_refused(drop_view: *u8) -> bool {
+    if drop_view == { 0 as *u8 } { return false; }
+    return synth::get_associated(drop_view, drop_refused_key()) != { 0 as *u8 };
+}
+
+// The file paths on a dragging pasteboard, in the order they were picked. A
+// `public.file-url` item is a URL STRING (percent-encoded), so it goes through
+// NSURL to become a path; a non-file URL is skipped rather than guessed at.
+fn file_paths_on(pasteboard: *u8) -> *u8 {
+    let out: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")),
+                                rt::sel(#str_ptr("array\0"))) };
+    if pasteboard == { 0 as *u8 } { return out; }
+    let items: *u8 = rt::msg_id(pasteboard, rt::sel(#str_ptr("pasteboardItems\0")));
+    if items == { 0 as *u8 } { return out; }
+    let count: u64 = rt::msg_u64(items, rt::sel(#str_ptr("count\0")));
+    var i: u64 = 0 as u64;
+    while i < count {
+        let item: *u8 = rt::msg_id_u64(items, rt::sel(#str_ptr("objectAtIndex:\0")), i);
+        let raw: *u8 = rt::msg_id_id(item, rt::sel(#str_ptr("stringForType:\0")),
+                                     bridge::nsstring("public.file-url"));
+        if raw != { 0 as *u8 } {
+            let url: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                                         rt::sel(#str_ptr("URLWithString:\0")), raw);
+            if url != { 0 as *u8 } && rt::msg_i8(url, rt::sel(#str_ptr("isFileURL\0"))) != (0 as i8) {
+                let path: *u8 = rt::msg_id(url, rt::sel(#str_ptr("path\0")));
+                if path != { 0 as *u8 } {
+                    rt::msg_void_id(out, rt::sel(#str_ptr("addObject:\0")), path);
+                }
+            }
+        }
+        i = i + (1 as u64);
+    }
+    return out;
+}
+
+// Pin the files `sender`'s drag carries on `drop_view`. A nil sender (a
+// programmatic enter) pins an empty list rather than keeping the last drag's.
+fn drop_store_files(drop_view: *u8, sender: *u8) {
+    var pb: *u8 = 0 as *u8;
+    if sender != { 0 as *u8 } {
+        pb = rt::msg_id(sender, rt::sel(#str_ptr("draggingPasteboard\0")));
+    }
+    synth::retain_associated(drop_view, drop_files_key(), file_paths_on(pb));
+    return;
+}
+
+// The paths of the files over or dropped on `drop_view` — empty for a text drag.
+fn drop_files_of(drop_view: *u8) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    if drop_view == { 0 as *u8 } { return out; }
+    let arr: *u8 = synth::get_associated(drop_view, drop_files_key());
+    if arr == { 0 as *u8 } { return out; }
+    let count: u64 = rt::msg_u64(arr, rt::sel(#str_ptr("count\0")));
+    var i: u64 = 0 as u64;
+    while i < count {
+        let _a: status::Status = out.append(bridge::to_text(
+            rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), i)));
+        i = i + (1 as u64);
+    }
+    return out;
+}
 
 // --- drag-over feedback ------------------------------------------------------
 // The one piece of feedback that tells you the drop will land: the lane
@@ -1022,9 +1099,18 @@ fn drop_set_targeted(self_obj: *u8, on: bool) {
     return;
 }
 
-// NSDragOperationCopy = 1.
+// NSDragOperationCopy = 1; NSDragOperationNone = 0 for a drag the enter
+// handler refused. The payload is pinned and the refusal cleared BEFORE the
+// handler runs, so it reads this drag and decides for this drag only — and
+// only on a real edge: re-entering a view that is already targeted keeps
+// whatever the first enter decided.
 fn drop_entered_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 {
+    if !drag_targeted(self_obj) {
+        drop_store_files(self_obj, sender);
+        set_drop_refused(self_obj, false);
+    }
     drop_set_targeted(self_obj, true);
+    if drop_refused(self_obj) { return 0 as u64; }
     return 1 as u64;
 }
 
@@ -1122,7 +1208,10 @@ fn autoscroll_clip(clip: *u8, win_pt: rt::Point) {
 // axes was asymmetric; the sizes were.
 // bugs/drag-autoscroll-only-on-an-overflowing-clip-view.md
 fn drop_updated_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 {
-    if sender == { 0 as *u8 } { return 1 as u64; }
+    // AppKit asks again on every move and believes the LATEST answer, so a
+    // refusal has to be repeated here or the badge comes back one move later.
+    let op: u64 = if drop_refused(self_obj) { 0 as u64 } else { 1 as u64 };
+    if sender == { 0 as *u8 } { return op; }
     let win_pt: rt::Point = rt::msg_point(sender, rt::sel(#str_ptr("draggingLocation\0")));
     // EVERY enclosing clip view, not just the nearest: a lane's cards and the
     // strip that holds the lanes are both on the chain, so a drag near the
@@ -1136,10 +1225,13 @@ fn drop_updated_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> u64 {
         }
         cur = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
     }
-    return 1 as u64;
+    return op;
 }
 
-fn drop_prepare_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 { return 1 as i8; }
+fn drop_prepare_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 {
+    if drop_refused(self_obj) { return 0 as i8; }
+    return 1 as i8;
+}
 
 // Pin `s` as `drop_view`'s current payload — the same association a performed
 // drop writes (drop_perform_imp), exposed for programmatic drops and tests.
@@ -1149,6 +1241,12 @@ fn set_drop_text(drop_view: *u8, s: str) {
 }
 
 fn drop_perform_imp(self_obj: *u8, cmd: *u8, sender: *u8) -> i8 {
+    // A refused drag never lands: no handler, and the highlight goes out.
+    if drop_refused(self_obj) {
+        drop_set_targeted(self_obj, false);
+        return 0 as i8;
+    }
+    drop_store_files(self_obj, sender);
     let pb: *u8 = rt::msg_id(sender, rt::sel(#str_ptr("draggingPasteboard\0")));
     let ns: *u8 = rt::msg_id_id(pb, rt::sel(#str_ptr("stringForType:\0")), bridge::nsstring("public.utf8-plain-text"));
     synth::retain_associated(self_obj, drop_text_key(), ns);   // keep for drop_text_of (nil is fine)

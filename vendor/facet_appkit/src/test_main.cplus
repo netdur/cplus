@@ -2829,6 +2829,206 @@ fn a_drop_zone_registers_only_when_it_asks_to() {
     views::view_release(vz);
 }
 
+// ---- file drops -------------------------------------------------------------
+// A drag is driven through a stand-in for NSDraggingInfo: an object answering
+// the two questions the destination asks — which pasteboard, and where.
+
+#[link_name = "class_addMethod"]
+extern fn fd_add_method_point_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> rt::Point,
+                                types: *u8) -> i8;
+
+fn fd_pasteboard_key() -> *u8 { return { 41901 as *u8 }; }
+
+fn fd_pasteboard_imp(self_obj: *u8, cmd: *u8) -> *u8 {
+    return synth::get_associated(self_obj, fd_pasteboard_key());
+}
+
+fn fd_location_imp(self_obj: *u8, cmd: *u8) -> rt::Point {
+    return rt::Point { x: 10.0f64, y: 10.0f64 };
+}
+
+fn fd_info_class() -> *u8 {
+    var cls: *u8 = rt::get_class(#str_ptr("FacetTestDraggingInfo\0"));
+    if cls.is_not_null() { return cls; }
+    cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
+                                     #str_ptr("FacetTestDraggingInfo\0"), 0 as usize);
+    let _p: i8 = synth::add_method_id_0id(cls, rt::sel(#str_ptr("draggingPasteboard\0")),
+                                          fd_pasteboard_imp, #str_ptr("@@:\0"));
+    let _l: i8 = { fd_add_method_point_0(cls, rt::sel(#str_ptr("draggingLocation\0")),
+                                         fd_location_imp, #str_ptr("{CGPoint=dd}@:\0")) };
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+// A drag carrying one pasteboard item per URL string, the shape Finder writes.
+fn fd_drag_of_urls(a: str, b: str) -> *u8 {
+    let pb: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSPasteboard\0")),
+                             rt::sel(#str_ptr("pasteboardWithUniqueName\0")));
+    let items: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")),
+                                rt::sel(#str_ptr("array\0")));
+    let first: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSPasteboardItem\0")), rt::sel(#str_ptr("new\0")));
+    let _f: i8 = rt::msg_i8_id_id(first, rt::sel(#str_ptr("setString:forType:\0")),
+                                  bridge::nsstring(a), bridge::nsstring("public.file-url"));
+    rt::msg_void_id(items, rt::sel(#str_ptr("addObject:\0")), first);
+    let second: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSPasteboardItem\0")), rt::sel(#str_ptr("new\0")));
+    let _s: i8 = rt::msg_i8_id_id(second, rt::sel(#str_ptr("setString:forType:\0")),
+                                  bridge::nsstring(b), bridge::nsstring("public.file-url"));
+    rt::msg_void_id(items, rt::sel(#str_ptr("addObject:\0")), second);
+    let _w: i8 = rt::msg_i8_id(pb, rt::sel(#str_ptr("writeObjects:\0")), items);
+    let info: *u8 = synth::alloc_init_class(fd_info_class());
+    synth::retain_associated(info, fd_pasteboard_key(), pb);
+    return info;
+}
+
+// A zone mounted in a window, so a handler's sender is the zone's VIEW — the
+// thing the readers resolve. (`views::create` alone leaves the node without
+// one, and the sender falls back to the node.)
+fn fd_open(root: *core::Node) -> *u8 {
+    return window::open_window(root, screen::Chrome::new(title: "drop",
+                                                         width: 240.0f64, height: 160.0f64));
+}
+
+static FD_OVER_ANSWER: bool = true;
+static FD_OVER_SAW: usize = 0 as usize;
+static FD_DROPS: i64 = 0 as i64;
+static FD_DROP_SAW: vec::Vec[text::Text] = #zero::[vec::Vec[text::Text]]();
+
+fn fd_over(sender: *u8, ctx: *u8) -> bool {
+    FD_OVER_SAW = component::dropped_files(sender).count();
+    return FD_OVER_ANSWER;
+}
+
+fn fd_drop(sender: *u8, ctx: *u8) -> bool {
+    FD_DROPS = FD_DROPS + (1 as i64);
+    FD_DROP_SAW = component::dropped_files(sender);
+    return true;
+}
+
+fn fd_h_over() -> gestures::Handler { let f: gestures::Handler = fd_over; return f; }
+fn fd_h_drop() -> gestures::Handler { let f: gestures::Handler = fd_drop; return f; }
+
+fn registered_types_include(v: *u8, uti: str) -> bool {
+    let a: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("registeredDraggedTypes\0"))) };
+    if a.is_null() { return false; }
+    return { rt::msg_i8_id(a, rt::sel(#str_ptr("containsObject:\0")), bridge::nsstring(uti)) } != (0 as i8);
+}
+
+#[test]
+fn a_zone_registers_for_exactly_the_kinds_it_asked_for() {
+    backend::install();
+    // A text zone (a board lane) must not light up for a file dragged in from
+    // the Finder, and a file zone must not for a card.
+    var t: core::Node = core::column(core::Builder::new(), key: "fd:t")
+        .gesture(on_drop: fd_h_drop(), allow_drop: true);
+    var f: core::Node = core::column(core::Builder::new(), key: "fd:f")
+        .gesture(on_drop: fd_h_drop(), allow_file_drop: true);
+    var both: core::Node = core::column(core::Builder::new(), key: "fd:b")
+        .gesture(on_drop: fd_h_drop(), allow_drop: true, allow_file_drop: true);
+    let vt: *u8 = views::create(0 as *u8, #addr_of(t));
+    let vf: *u8 = views::create(0 as *u8, #addr_of(f));
+    let vb: *u8 = views::create(0 as *u8, #addr_of(both));
+    assert registered_types_include(vt, "public.utf8-plain-text");
+    assert !registered_types_include(vt, "public.file-url");
+    assert registered_types_include(vf, "public.file-url");
+    assert !registered_types_include(vf, "public.utf8-plain-text");
+    assert registered_types_include(vb, "public.file-url");
+    assert registered_types_include(vb, "public.utf8-plain-text");
+    views::view_release(vt);
+    views::view_release(vf);
+    views::view_release(vb);
+}
+
+#[test]
+fn a_file_drop_hands_over_its_paths_while_hovering_and_on_drop() {
+    backend::install();
+    FD_OVER_ANSWER = true;
+    FD_OVER_SAW = 0 as usize;
+    FD_DROPS = 0 as i64;
+    FD_DROP_SAW = vec::new::[text::Text]();
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "fd:z")
+        .gesture(on_drag_over: fd_h_over(), on_drop: fd_h_drop(), allow_file_drop: true));
+    var root: core::Node = core::column(b, key: "fd:zroot");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = fd_open(rp);
+    let v: *u8 = native_of(rp, "fd:z");
+    assert v.is_not_null();
+    let info: *u8 = fd_drag_of_urls("file:///tmp/first%20image.png", "file:///tmp/second.png");
+
+    // Hovering: the handler already sees both files, and the drag is taken.
+    assert { rt::msg_u64_id(v, rt::sel(#str_ptr("draggingEntered:\0")), info) } == (1 as u64);
+    assert FD_OVER_SAW == (2 as usize);
+    assert { rt::msg_u64_id(v, rt::sel(#str_ptr("draggingUpdated:\0")), info) } == (1 as u64);
+
+    // Dropped: the paths arrive decoded, in the order they were picked.
+    assert { rt::msg_i8_id(v, rt::sel(#str_ptr("performDragOperation:\0")), info) } != (0 as i8);
+    assert FD_DROPS == (1 as i64);
+    assert FD_DROP_SAW.count() == (2 as usize);
+    match FD_DROP_SAW.remove_last() {
+        option::Option[text::Text]::Some(p) => { assert p.view() == "/tmp/second.png"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    match FD_DROP_SAW.remove_last() {
+        option::Option[text::Text]::Some(p) => { assert p.view() == "/tmp/first image.png"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    // A file is not text: the text reader stays empty.
+    assert component::dropped_text(v).view() == "";
+    window::close_window(win);
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn a_drag_over_that_answers_false_refuses_the_drag() {
+    backend::install();
+    FD_OVER_ANSWER = false;
+    FD_DROPS = 0 as i64;
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "fd:r")
+        .gesture(on_drag_over: fd_h_over(), on_drop: fd_h_drop(), allow_file_drop: true));
+    var root: core::Node = core::column(b, key: "fd:rroot");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = fd_open(rp);
+    let v: *u8 = native_of(rp, "fd:r");
+    assert v.is_not_null();
+    let info: *u8 = fd_drag_of_urls("file:///tmp/notes.txt", "file:///tmp/more.txt");
+
+    // No badge on enter, none on the next move, and the drop never lands.
+    assert { rt::msg_u64_id(v, rt::sel(#str_ptr("draggingEntered:\0")), info) } == (0 as u64);
+    assert { rt::msg_u64_id(v, rt::sel(#str_ptr("draggingUpdated:\0")), info) } == (0 as u64);
+    assert { rt::msg_i8_id(v, rt::sel(#str_ptr("prepareForDragOperation:\0")), info) } == (0 as i8);
+    assert { rt::msg_i8_id(v, rt::sel(#str_ptr("performDragOperation:\0")), info) } == (0 as i8);
+    assert FD_DROPS == (0 as i64);
+    assert component::drag_targeted(v) == false;
+
+    // The refusal was for THAT drag: the next one is asked again.
+    FD_OVER_ANSWER = true;
+    assert { rt::msg_u64_id(v, rt::sel(#str_ptr("draggingEntered:\0")), info) } == (1 as u64);
+    rt::msg_void_id(v, rt::sel(#str_ptr("draggingExited:\0")), info);
+    window::close_window(win);
+    app::reset_default_for_tests();
+}
+
+#[test]
+fn a_zone_with_no_drag_over_handler_accepts_as_before() {
+    backend::install();
+    FD_DROPS = 0 as i64;
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "fd:n")
+        .gesture(on_drop: fd_h_drop(), allow_file_drop: true));
+    var root: core::Node = core::column(b, key: "fd:nroot");
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = fd_open(rp);
+    let v: *u8 = native_of(rp, "fd:n");
+    assert v.is_not_null();
+    let info: *u8 = fd_drag_of_urls("file:///tmp/a.png", "file:///tmp/b.png");
+    assert { rt::msg_u64_id(v, rt::sel(#str_ptr("draggingEntered:\0")), info) } == (1 as u64);
+    assert { rt::msg_i8_id(v, rt::sel(#str_ptr("performDragOperation:\0")), info) } != (0 as i8);
+    assert FD_DROPS == (1 as i64);
+    window::close_window(win);
+    app::reset_default_for_tests();
+}
+
 // ---- web and hybrid_web ------------------------------------------------------
 // Stage 4 item 5's first two rows, unblocked by vendor/webkit. What is asserted
 // is that the contract REACHES WebKit; what a page then renders is WebKit's

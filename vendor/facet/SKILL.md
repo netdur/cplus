@@ -285,8 +285,9 @@ fn on_step(ref this, sender: *u8) {
 
 Also on `sender`: `component::item_index_of` (the row a TAP landed on — see
 "the two list verbs" below; a selection change hands you the sequence, not a
-row), `component::item_of`, `component::dropped_text`,
-`component::drop_position`.
+row), `component::item_of`, `component::dropped_text` (a drag's text),
+`component::dropped_files` (a file drop's paths, with
+`.gesture(allow_file_drop: true)`), `component::drop_position`.
 
 **Pass more than one handler BY NAME.** Each handler's context slot is the `*u8`
 immediately after it, so positionally the second handler lands in the first

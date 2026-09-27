@@ -141,6 +141,11 @@ struct Gestures {
     // -- the parameters the ledger carries on the recognizers themselves
     can_drag: bool,                  // DragGestureRecognizer.CanDrag
     allow_drop: bool,                // DropGestureRecognizer.AllowDrop
+    // FILES, separately from `allow_drop`'s text: a zone that takes a card
+    // must not light up for a file dragged in from the desktop, and a zone
+    // that takes files must not for a card. `component::dropped_files` reads
+    // what arrived.
+    allow_file_drop: bool,
     touch_points: i64,               // PanGestureRecognizer.TouchPoints
     long_press_seconds: f64,
     swipe_threshold: f64,            // SwipeGestureRecognizer.Threshold
@@ -177,7 +182,7 @@ impl Gestures {
             on_drag_leave_ctx: 0 as *u8, on_drop_ctx: 0 as *u8,
             on_drop_completed_ctx: 0 as *u8,
             on_key_ctx: 0 as *u8,
-            can_drag: false, allow_drop: false,
+            can_drag: false, allow_drop: false, allow_file_drop: false,
             touch_points: 1 as i64,
             long_press_seconds: 0.5f64,
             swipe_threshold: 100.0f64,
@@ -286,7 +291,7 @@ fn _build(ctx: *u8, on_click: Handler, on_double_click: Handler,
           on_drag_start_ctx: *u8, on_drag_over_ctx: *u8,
           on_drag_leave_ctx: *u8, on_drop_ctx: *u8,
           on_drop_completed_ctx: *u8, on_key_ctx: *u8,
-          can_drag: bool, allow_drop: bool,
+          can_drag: bool, allow_drop: bool, allow_file_drop: bool,
           touch_points: i64, long_press_seconds: f64, swipe_threshold: f64,
           hit: HitTest) -> Gestures {
     var g: Gestures = Gestures::new();
@@ -320,6 +325,7 @@ fn _build(ctx: *u8, on_click: Handler, on_double_click: Handler,
     g.on_drop_completed_ctx = _ctx_or(on_drop_completed_ctx, ctx);
     g.on_key_ctx = _ctx_or(on_key_ctx, ctx);
     g.can_drag = can_drag; g.allow_drop = allow_drop;
+    g.allow_file_drop = allow_file_drop;
     g.touch_points = touch_points;
     g.long_press_seconds = long_press_seconds;
     g.swipe_threshold = swipe_threshold;
@@ -386,6 +392,7 @@ impl flex::Node {
         on_key_ctx: *u8 = 0 as *u8,
         can_drag: bool = false,
         allow_drop: bool = false,
+        allow_file_drop: bool = false,
         touch_points: i64 = 1 as i64,
         long_press_seconds: f64 = 0.5f64,
         swipe_threshold: f64 = 100.0f64,
@@ -406,7 +413,8 @@ impl flex::Node {
                                     on_drag_start_ctx, on_drag_over_ctx,
                                     on_drag_leave_ctx, on_drop_ctx,
                                     on_drop_completed_ctx, on_key_ctx,
-                                    can_drag, allow_drop, touch_points,
+                                    can_drag, allow_drop, allow_file_drop,
+                                    touch_points,
                                     long_press_seconds, swipe_threshold, hit));
         return n;
     }

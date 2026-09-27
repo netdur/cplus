@@ -984,7 +984,7 @@ So the state of this band is read HERE and nowhere else:
 | `on_long_press` | wired, on a timer set on the pressed window. Suppresses the click that would otherwise follow — firing both is how a long press on a card also opens whatever a tap opens |
 | `on_pinch` | ctrl-wheel; see above |
 | `on_key` | wired on the focused window; `key_chars` is empty by decision (§1) |
-| `on_drop` | wired, for FILES — `WM_DROPFILES`, and the three sender readers (`dropped_text`, `drop_position`, `drag_targeted`) with it. See `dnd.cplus` and the entry below |
+| `on_drop` | wired, for FILES on a node that set `allow_file_drop` — `WM_DROPFILES`, with `dropped_files`, `drop_position` and `drag_targeted`; `dropped_text` stays empty, since this route carries no text. See `dnd.cplus` and the entry below |
 | `on_drag_over` / `on_drag_leave` | NOT wired — the shell sends ONE message, at the drop, and nothing while the pointer is travelling |
 | `on_drag_start` / `on_drop_completed` | NOT wired — the drag SOURCE half is `DoDragDrop`, which is COM |
 
@@ -1402,10 +1402,11 @@ is the only signature the grid changed.
 
 ### The drag half of drag-and-drop, and the two travelling edges
 
-`dnd.cplus` answers the receiving side through `WM_DROPFILES`: a node with an
-`on_drop` becomes a shell drop target, a dropped file's paths arrive as text
-(one per line, so three files is three lines rather than a container facet does
-not have), and the position comes back in the node's own coordinates.
+`dnd.cplus` answers the receiving side through `WM_DROPFILES`: a node with
+`allow_file_drop` and an `on_drop` becomes a shell drop target, the dropped
+paths arrive through `dropped_files`, and the position comes back in the node's
+own coordinates. (The paths once arrived as `dropped_text`, one per line; that
+made one reader mean text on AppKit and GTK and paths here.)
 
 Three of facet's five drag verbs are not answered, in two groups with different
 reasons.

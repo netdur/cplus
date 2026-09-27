@@ -5,6 +5,7 @@
 
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/vec" as vec;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 import "./vocabulary" as vocab;
@@ -225,6 +226,7 @@ struct SenderReaders {
     key_of: fn(*u8) -> text::Text,
     item_of: fn(*u8) -> *u8,
     dropped_text: fn(*u8) -> text::Text,
+    dropped_files: fn(*u8) -> vec::Vec[text::Text],
     // WHERE the drop landed, in the receiving node's own coordinate space.
     drop_position: fn(*u8) -> option::Option[vocab::Point],
     drag_targeted: fn(*u8) -> bool,
@@ -236,6 +238,7 @@ fn sender_readers_none() -> SenderReaders {
         key_of: 0 as fn(*u8) -> text::Text,
         item_of: 0 as fn(*u8) -> *u8,
         dropped_text: 0 as fn(*u8) -> text::Text,
+        dropped_files: 0 as fn(*u8) -> vec::Vec[text::Text],
         drop_position: 0 as fn(*u8) -> option::Option[vocab::Point],
         drag_targeted: 0 as fn(*u8) -> bool,
     };
@@ -281,6 +284,16 @@ fn item_index_of(sender: *u8) -> option::Option[usize] {
 fn dropped_text(sender: *u8) -> text::Text {
     let f: fn(*u8) -> text::Text = SENDER_READERS.dropped_text;
     if f.is_null() { return text::new(); }
+    return f(sender);
+}
+
+// The absolute paths of the files a drag carries — empty for a text drag, and
+// on a node that did not ask for files (`allow_file_drop`). Readable while the
+// drag is still over the node as well as in `on_drop`, so an `on_drag_over`
+// handler can look at what is coming and refuse it by answering false.
+fn dropped_files(sender: *u8) -> vec::Vec[text::Text] {
+    let f: fn(*u8) -> vec::Vec[text::Text] = SENDER_READERS.dropped_files;
+    if f.is_null() { return vec::new::[text::Text](); }
     return f(sender);
 }
 

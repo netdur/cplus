@@ -655,11 +655,41 @@ resolver underneath, the one the 42 typed finds share.
 `.gesture(...)` attaches a set to a node: `on_click`, `on_double_click`,
 `on_right_click`, `on_long_press`, `on_press`, `on_release`, `on_hover`,
 `on_unhover`, `on_pointer_move`, `on_pan`, `on_pinch`, `on_swipe`, `on_key`,
-plus `can_drag`, `allow_drop` and the drag family (`on_drag_start`,
-`on_drag_over`, `on_drag_leave`, `on_drop`, `on_drop_completed`).
+plus `can_drag`, `allow_drop`, `allow_file_drop` and the drag family
+(`on_drag_start`, `on_drag_over`, `on_drag_leave`, `on_drop`,
+`on_drop_completed`).
 
 A handler answers whether it TOOK the event. Declining lets the platform have
 it, which is how a control keeps its own behaviour under a gesture.
+
+### Drops: text and files
+
+`allow_drop` takes facet's own drag, which carries TEXT (the dragged node's
+key) — read it with `component::dropped_text(sender)`. `allow_file_drop` takes
+FILES from the desktop — read their absolute paths with
+`component::dropped_files(sender)`. The two are separate on purpose: a board
+lane must not light up for a file dragged in from the Finder, and a file zone
+must not for a card. A zone may ask for both.
+
+`on_drag_over` is where a zone decides. The files are readable there, while the
+drag is still travelling, and answering `false` REFUSES the drag: no drop badge,
+and `on_drop` does not fire for it. A zone with no `on_drag_over` accepts. The
+refusal lasts for that one drag.
+
+```cplus
+fn on_model_over(ref this, sender: *u8) -> bool {
+    let files: vec::Vec[text::Text] = component::dropped_files(sender);
+    return files.count() == (1 as usize) && is_model(files);
+}
+
+column(...).gesture(allow_file_drop: true,
+                    on_drag_over: this.on_model_over,
+                    on_drop: this.on_model_dropped)
+```
+
+Win32 delivers files at the drop and nothing while the pointer travels
+(`WM_DROPFILES`), so there `on_drag_over` never fires and `on_drop` answering
+`false` is the refusal. Android and iOS have no drops.
 
 A handler may be a component's own method — `.gesture(on_click: this.on_open)`
 — because each one carries its own context slot, the same shape a generated
