@@ -3672,6 +3672,16 @@ fn build_lib_project(
             cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
             cmd.arg("-fno-omit-frame-pointer");
         }
+        // The library's own objects come first, as they do on the executable
+        // link line. GNU ld resolves left to right: an archive (a dep's
+        // prebuilt slice, an `extra-objects` `.a`) is searched only for
+        // symbols already undefined when it is reached, and under
+        // `--as-needed` (Ubuntu's default) a `-l` shared library listed
+        // before its first user is dropped. With the objects last, every
+        // dependency was skipped and the .so linked with undefined symbols
+        // that only surfaced at load time. ld64 does not care about order,
+        // which is why macOS never showed it.
+        cmd.args(&objs);
         for fw in &lib.frameworks {
             cmd.arg("-framework").arg(fw);
         }
@@ -3698,7 +3708,7 @@ fn build_lib_project(
                 cmd.arg(obj);
             }
         }
-        let dylib_status = cmd.args(&objs).arg("-o").arg(&dylib_path).status();
+        let dylib_status = cmd.arg("-o").arg(&dylib_path).status();
         match dylib_status {
             Ok(s) if s.success() => {}
             Ok(s) => {
