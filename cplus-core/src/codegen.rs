@@ -6793,7 +6793,7 @@ fn render_static_literal(
                 return None;
             }
             let v = render_static_literal(fill, elem, types, sigs)?;
-            if v == "0" || v == "0x0000000000000000" {
+            if v == "0" || v == "0x0000000000000000" || v == "zeroinitializer" {
                 return Some("zeroinitializer".to_string());
             }
             let elem_ll = llvm_ty(elem, types);
@@ -6888,6 +6888,14 @@ fn render_static_literal(
         // Users should declare these as `const FOO: str = "..."` which
         // lower-substitutes the literal at every use site (no global
         // needed).
+        //
+        // The empty string is the exception: its `{ ptr, i64 }` header is
+        // `{ null, 0 }`, which needs no payload global. That is what makes
+        // `static NAMES: [str; N] = [""; N];` — a table of slots filled at
+        // run time — expressible; it lands in BSS like any zero fill.
+        ExprKind::StrLit(s) if s.is_empty() && matches!(ty, Ty::Str) => {
+            Some("zeroinitializer".to_string())
+        }
         ExprKind::StrLit(_) => None,
         // v0.0.12 G-033 (llama.cplus G-032): `#zero::[T]()` initializer.
         // LLVM's `zeroinitializer` lands the global in BSS (`.bss` /

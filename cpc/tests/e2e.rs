@@ -19912,6 +19912,42 @@ fn g043_static_array_initializer() {
     assert!(run.success(), "G-043 program must exit 0, got {run}");
 }
 
+/// A `str` array static of empty strings — a table of slots a program fills
+/// at run time — has a constant form: every `{ ptr, i64 }` header is
+/// `{ null, 0 }`. Both the fill and the element-list spelling used to render
+/// the "no constant form" marker, so the module failed to assemble.
+#[test]
+fn static_str_array_of_empty_strings() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("static_str_fill.cplus");
+    let bin = dir.join("static_str_fill");
+    std::fs::write(
+        &src,
+        "static NAMES: [str; 4] = [\"\"; 4];\n\
+         static PAIR: [str; 2] = [\"\", \"\"];\n\
+         fn main() -> i32 {\n\
+             if #str_len(NAMES[3 as usize]) != (0 as usize) { return 1; }\n\
+             if NAMES[0 as usize] != \"\" { return 2; }\n\
+             if PAIR[1 as usize] != \"\" { return 3; }\n\
+             NAMES[2 as usize] = \"slot\";\n\
+             if NAMES[2 as usize] != \"slot\" { return 4; }\n\
+             if NAMES[1 as usize] != \"\" { return 5; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "empty-str static array must compile: {compile}");
+    let run = Command::new(&bin).status().expect("run static_str_fill");
+    assert!(run.success(), "empty-str static array must exit 0, got {run}");
+}
+
 /// G-043 guard: `const` stays literal-only — an array initializer on a `const`
 /// is still E0911 (consts are inlined at use sites; arrays belong in `static`).
 #[test]
