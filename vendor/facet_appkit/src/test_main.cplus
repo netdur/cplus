@@ -5933,6 +5933,27 @@ fn window_of_key(key: str) -> *u8 {
 }
 
 #[test]
+fn a_save_panel_offers_the_name_and_the_one_type_it_was_given() {
+    backend::install();
+    // Read back rather than run: `runModal` would block the suite on a panel
+    // nobody is there to answer.
+    let p: ak::SavePanel = dialogs::save_panel_for("Qwen Image.png", "png");
+    assert p.name_field_string_value().view() == "Qwen Image.png";
+    var types: vec::Vec[text::Text] = p.allowed_file_types();
+    assert types.count() == (1 as usize);
+    match types.remove_last() {
+        option::Option[text::Text]::Some(t) => { assert t.view() == "png"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    assert p.can_create_directories();
+
+    // No extension given: no type restriction is set. (The name box then shows
+    // AppKit's own "Untitled", which is the platform's default, not facet's.)
+    let q: ak::SavePanel = dialogs::save_panel_for("", "");
+    assert q.allowed_file_types().count() == (0 as usize);
+}
+
+#[test]
 fn return_actually_reaches_the_default_button() {
     backend::install();
     // THE HALF THE LAST FIX DID NOT CHECK. `keyEquivalent` was set and asserted

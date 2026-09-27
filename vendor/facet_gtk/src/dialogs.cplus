@@ -372,6 +372,10 @@ extern fn gtk_file_dialog_open(dialog: *u8, parent: *u8, cancellable: *u8,
 extern fn gtk_file_dialog_select_folder(dialog: *u8, parent: *u8, cancellable: *u8,
                                         callback: fn(*u8, *u8, *u8), user: *u8);
 
+#[link_name = "gtk_file_dialog_save"]
+extern fn gtk_file_dialog_save(dialog: *u8, parent: *u8, cancellable: *u8,
+                               callback: fn(*u8, *u8, *u8), user: *u8);
+
 static CHOOSE_LOOP: usize = 0;
 static CHOSEN: text::Text = #zero::[text::Text]();
 static CHOSE_ONE: bool = false;
@@ -392,6 +396,12 @@ fn chose(path: option::Option[text::Text]) {
 fn open_done(source: *u8, result: *u8, user: *u8) {
     chose(path_of(gtk::FileDialog::from_raw(source)
         .open_finish(gio::AsyncResult::from_raw(result))));
+    return;
+}
+
+fn save_done(source: *u8, result: *u8, user: *u8) {
+    chose(path_of(gtk::FileDialog::from_raw(source)
+        .save_finish(gio::AsyncResult::from_raw(result))));
     return;
 }
 
@@ -425,6 +435,48 @@ fn choose_file() -> option::Option[text::Text] {
     d.set_title("Choose a file");
     { gtk_file_dialog_open(d.raw(), window::any_window(), 0 as *u8, open_done, 0 as *u8) };
     return wait_for_choice();
+}
+
+// A save dialog set up for `choose_save_path`, not yet shown.
+fn save_dialog_for(name: str, extension: str) -> gtk::FileDialog {
+    let d: gtk::FileDialog = gtk::FileDialog::new();
+    d.set_title("Save");
+    if name.count() != (0 as usize) { d.set_initial_name(name); }
+    if extension.count() != (0 as usize) {
+        let f: gtk::FileFilter = gtk::FileFilter::new();
+        f.set_name(extension);
+        f.add_suffix(extension);
+        d.set_default_filter(f);
+    }
+    return d;
+}
+
+// AppKit and Win32 put the offered extension on a name typed without it; GTK
+// does not, so it is done here and the verb means one thing everywhere.
+fn with_extension(take path: text::Text, extension: str) -> text::Text {
+    if extension.count() == (0 as usize) { return path; }
+    let tail: text::Text = ".${extension}";
+    let p: str = path.view();
+    if p.count() >= tail.count() {
+        match p.slice(p.count() -% tail.count(), p.count()) {
+            option::Option[str]::Some(end) => { if end == tail.view() { return path; } }
+            option::Option[str]::None => { }
+        }
+    }
+    return "${p}${tail.view()}";
+}
+
+// Where to save, or None when the user cancelled. GtkFileDialog asks before
+// overwriting a file the user picked.
+fn choose_save_path(name: str = "", extension: str = "") -> option::Option[text::Text] {
+    let d: gtk::FileDialog = save_dialog_for(name, extension);
+    { gtk_file_dialog_save(d.raw(), window::any_window(), 0 as *u8, save_done, 0 as *u8) };
+    match wait_for_choice() {
+        option::Option[text::Text]::Some(path) => {
+            return option::Option[text::Text]::Some(with_extension(path, extension));
+        }
+        option::Option[text::Text]::None => { return option::Option[text::Text]::None; }
+    }
 }
 
 fn choose_directory() -> option::Option[text::Text] {

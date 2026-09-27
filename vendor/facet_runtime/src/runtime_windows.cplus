@@ -184,6 +184,9 @@ fn alert_blocking(title: str, message: str, primary: str, secondary: str = "") -
 
 fn choose_directory() -> option::Option[text::Text] { return dialogs::choose_directory(); }
 fn choose_file() -> option::Option[text::Text] { return dialogs::choose_file(); }
+fn choose_save_path(name: str = "", extension: str = "") -> option::Option[text::Text] {
+    return dialogs::choose_save_path(name, extension);
+}
 
 // ---- clipboard ---------------------------------------------------------------
 // The portable half's contract, forwarded to the Win32 board. Both directions

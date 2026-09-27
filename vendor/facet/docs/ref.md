@@ -454,9 +454,15 @@ true of a text field YOU build — a Return in it reaches nothing unless you wir
 made before the process can go on with no window to attach to. An agent cannot
 reach it, which is why it is not the default.
 
-`choose_directory` and `choose_file` are the file pickers. They are the
-platform's own panel, which an agent cannot drive and which cannot be
-reimplemented — the panel is the sandbox door. **They also BLOCK**, so an app
+`choose_directory` and `choose_file` are the file pickers, and
+`choose_save_path(name:, extension:)` asks where to save — `name` is the
+suggested file name, `extension` (no dot) the one type offered, and the path
+that comes back carries it. The save panel asks before overwriting, so a path it
+answers is one the user agreed to replace. All three answer `None` for a cancel
+and on a platform without them (iOS, Android).
+
+They are the platform's own panel, which an agent cannot drive and which cannot
+be reimplemented — the panel is the sandbox door. **They also BLOCK**, so an app
 that must stay answerable while one is open should not use them; an application
 that needs an agent to choose a file has to offer a path some other way.
 

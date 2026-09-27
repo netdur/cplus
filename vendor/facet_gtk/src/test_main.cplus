@@ -4284,6 +4284,20 @@ fn a_sheet_is_tall_enough_for_the_message_it_carries() {
 }
 
 #[test]
+fn a_saved_path_carries_the_offered_extension() {
+    // AppKit and Win32 append it to a name typed without one; GtkFileDialog
+    // does not, so facet does, and `choose_save_path` means one thing.
+    assert dialogs::with_extension(text::from_str("/tmp/a"), "png").view() == "/tmp/a.png";
+    assert dialogs::with_extension(text::from_str("/tmp/a.png"), "png").view() == "/tmp/a.png";
+    // A different extension is the user's choice of name, not a missing one —
+    // but the file is still written as the offered type, so it is appended.
+    assert dialogs::with_extension(text::from_str("/tmp/a.jpg"), "png").view() == "/tmp/a.jpg.png";
+    // Nothing offered, nothing added.
+    assert dialogs::with_extension(text::from_str("/tmp/a"), "").view() == "/tmp/a";
+    return;
+}
+
+#[test]
 fn the_window_verbs_are_inert_with_no_window_up() {
     // NEGATIVE: a handler in a custom title bar fires before any window is
     // registered during teardown, and each of these must be a no-op rather

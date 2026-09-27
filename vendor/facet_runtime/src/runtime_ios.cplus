@@ -184,6 +184,11 @@ fn choose_file() -> option::Option[text::Text] {
     return option::Option[text::Text]::None;
 }
 
+fn choose_save_path(name: str = "", extension: str = "") -> option::Option[text::Text] {
+    not_on_ios("choose_save_path");
+    return option::Option[text::Text]::None;
+}
+
 // THE CLIPBOARD IS NOT ONE OF THE ABSENT ONES. A phone has no file picker of
 // this shape and it very much has a pasteboard, so these forward like any
 // other service rather than answering `not_on_ios`.

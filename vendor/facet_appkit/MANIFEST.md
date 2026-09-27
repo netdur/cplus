@@ -1042,13 +1042,13 @@ not carry: a length limit belongs on `text_field` before it belongs on the
 dialog, and a keyboard TYPE is a touch idiom that macOS has no answer for.
 
 **The file pickers stay native, and that is a hole.** `choose_file` and
-`choose_directory` are NSOpenPanel, which an agent cannot drive and which
+`choose_directory` are NSOpenPanel, `choose_save_path` is NSSavePanel, which an agent cannot drive and which
 cannot be reimplemented — the panel IS the sandbox door, and a facet-drawn
 imitation would grant nothing. An application that needs an agent to choose a
 file has to offer a path some other way.
 
 The argument above is about REIMPLEMENTING the panel and it holds. It does not
-cover the other half: `choose_file` and `choose_directory` still call
+cover the other half: all three pickers still call
 `run_modal`, which is application-modal, so the whole app stops — including the
 agent channel, whose own request is what would have to return. Presenting the
 same NSOpenPanel with `beginSheetModalForWindow:completionHandler:` would keep

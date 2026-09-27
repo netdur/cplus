@@ -215,6 +215,9 @@ fn alert_blocking(title: str, message: str, primary: str, secondary: str = "") -
 
 fn choose_directory() -> option::Option[text::Text] { return dialogs::choose_directory(); }
 fn choose_file() -> option::Option[text::Text] { return dialogs::choose_file(); }
+fn choose_save_path(name: str = "", extension: str = "") -> option::Option[text::Text] {
+    return dialogs::choose_save_path(name, extension);
+}
 
 fn copy_text(s: str) -> bool { return clipboard::copy_text(s); }
 // Answers `None` always on this backend: GTK4's clipboard read is async-only

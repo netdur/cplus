@@ -187,6 +187,11 @@ fn choose_file() -> option::Option[text::Text] {
     return option::Option[text::Text]::None;
 }
 
+fn choose_save_path(name: str = "", extension: str = "") -> option::Option[text::Text] {
+    no_backend("choose_save_path");
+    return option::Option[text::Text]::None;
+}
+
 // The clipboard IS here, unlike the file picker above: ClipboardManager is
 // framework and reachable through plain JNI, so this forwards like any other
 // service. See facet_android/clipboard.

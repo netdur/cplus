@@ -18,6 +18,7 @@ import "facet/label" as label;
 import "facet/button" as button;
 import "facet/text_field" as text_field;
 import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 
 import "facet/mount" as mount;
 import "stdlib/box" as box;
@@ -45,7 +46,11 @@ fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {
 fn modal_ok() -> i64 { return 1 as i64; }
 
 fn panel_path(panel: ak::OpenPanel) -> option::Option[text::Text] {
-    match panel.as_save_panel().u_r_l() {
+    return save_panel_path(panel.as_save_panel());
+}
+
+fn save_panel_path(panel: ak::SavePanel) -> option::Option[text::Text] {
+    match panel.u_r_l() {
         option::Option[ak::URL]::Some(u) => {
             let ns: *u8 = { rt::msg_id(u.raw(), rt::sel(#str_ptr("path\0"))) };
             if ns.is_null() { return option::Option[text::Text]::None; }
@@ -74,6 +79,33 @@ fn choose_file() -> option::Option[text::Text] {
     panel.set_allows_multiple_selection(false);
     if panel.as_save_panel().run_modal() != modal_ok() { return option::Option[text::Text]::None; }
     return panel_path(panel);
+}
+
+// A save panel set up for `choose_save_path`, and not yet shown — separate so
+// what it was told can be read back without running it modal.
+fn save_panel_for(name: str, extension: str) -> ak::SavePanel {
+    let panel: ak::SavePanel = ak::SavePanel::save_panel();
+    panel.set_can_create_directories(true);
+    if name.count() != (0 as usize) { panel.set_name_field_string_value(name); }
+    // One offered type. AppKit then appends it to a name typed without it and
+    // replaces a different one, which is what a caller writing that format
+    // wants.
+    if extension.count() != (0 as usize) {
+        var types: vec::Vec[text::Text] = vec::new::[text::Text]();
+        let _added: status::Status = types.append(text::from_str(extension));
+        panel.set_allowed_file_types(types);
+    }
+    return panel;
+}
+
+// Where to save: the chosen absolute path, or None when the user cancelled.
+// `name` is the suggested file name, `extension` (no dot) the one type
+// offered. The panel asks before overwriting, so a path that comes back is one
+// the user agreed to replace.
+fn choose_save_path(name: str = "", extension: str = "") -> option::Option[text::Text] {
+    let panel: ak::SavePanel = save_panel_for(name, extension);
+    if panel.run_modal() != modal_ok() { return option::Option[text::Text]::None; }
+    return save_panel_path(panel);
 }
 
 // ---- window verbs a custom titlebar drives -----------------------------------
