@@ -2,8 +2,8 @@
 #
 # framework = "CoreAI"
 # modules   = "CoreAIRuntime, CoreAIDelegates, CoreAIAsset"
-# sdk       = "unknown"
-# generator = "cpc-bindgen 0.0.25"
+# sdk       = "27.0"
+# generator = "cpc-bindgen 0.0.28"
 # reproduce = "cpc-bindgen --swift-module CoreAIRuntime --swift-module CoreAIDelegates --swift-module CoreAIAsset --link CoreAI --out vendor/coreai"
 #
 # NOTE: a pure-Swift framework has no C ABI; the generated modules are

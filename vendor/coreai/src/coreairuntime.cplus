@@ -84,11 +84,6 @@
 // SKIPPED InferenceValue.kind: property accessor — Swift calling convention
 // SKIPPED InferenceValue.ndArray: property accessor — Swift calling convention
 // SKIPPED InferenceValue.pixelBuffer: property accessor — Swift calling convention
-// SKIPPED Intent: plain enum, no integer raw values — no stable C ABI
-// SKIPPED Intent.!=(_:_:): operator — no C symbol
-// SKIPPED Intent.==(_:_:): operator — no C symbol
-// SKIPPED Intent.hash(into:): ownership/move-only (`inout`)
-// SKIPPED Intent.hashValue: property accessor — Swift calling convention
 // SKIPPED NDArray: Swift value type (no @repr(C) layout) — fields need a bridge
 // SKIPPED NDArray.InterleaveLayout: Swift value type (no @repr(C) layout) — fields need a bridge
 // SKIPPED NDArray.InterleaveLayout.!=(_:_:): operator — no C symbol
@@ -111,6 +106,7 @@
 // SKIPPED NDArray.MutableRawView.slice(at:): generic — no concrete C ABI
 // SKIPPED NDArray.MutableRawView.strides: property accessor — Swift calling convention
 // SKIPPED NDArray.MutableRawView.view(as:): generic — no concrete C ABI
+// SKIPPED NDArray.MutableRawView.withUnsafeMutableBytes(_:): throws — Swift error register has no C ABI
 // SKIPPED NDArray.MutableView: Swift value type (no @repr(C) layout) — fields need a bridge
 // SKIPPED NDArray.MutableView.contiguousElements: property accessor — Swift calling convention
 // SKIPPED NDArray.MutableView.copyElements(from:): generic — no concrete C ABI
@@ -126,6 +122,7 @@
 // SKIPPED NDArray.MutableView.slice(at:): generic — no concrete C ABI
 // SKIPPED NDArray.MutableView.slice(at:): generic — no concrete C ABI
 // SKIPPED NDArray.MutableView.strides: property accessor — Swift calling convention
+// SKIPPED NDArray.MutableView.subscript(scalarAt:): unhandled symbol kind `swift.subscript`
 // SKIPPED NDArray.MutableView.view: property accessor — Swift calling convention
 // SKIPPED NDArray.MutableView.withUnsafeMutablePointer(_:): throws — Swift error register has no C ABI
 // SKIPPED NDArray.RangeExpression: protocol (existential) — not C-representable
@@ -143,6 +140,7 @@
 // SKIPPED NDArray.RawView.slice(at:): generic — no concrete C ABI
 // SKIPPED NDArray.RawView.strides: property accessor — Swift calling convention
 // SKIPPED NDArray.RawView.view(as:): generic — no concrete C ABI
+// SKIPPED NDArray.RawView.withUnsafeBytes(_:): throws — Swift error register has no C ABI
 // SKIPPED NDArray.ScalarType: plain enum, no integer raw values — no stable C ABI
 // SKIPPED NDArray.ScalarType.!=(_:_:): operator — no C symbol
 // SKIPPED NDArray.ScalarType.==(_:_:): operator — no C symbol
@@ -161,6 +159,7 @@
 // SKIPPED NDArray.View.slice(at:): generic — no concrete C ABI
 // SKIPPED NDArray.View.slice(at:): generic — no concrete C ABI
 // SKIPPED NDArray.View.strides: property accessor — Swift calling convention
+// SKIPPED NDArray.View.subscript(scalarAt:): unhandled symbol kind `swift.subscript`
 // SKIPPED NDArray.View.withUnsafePointer(_:): throws — Swift error register has no C ABI
 // SKIPPED NDArray.init(descriptor:): ownership/move-only (`consuming`)
 // SKIPPED NDArray.init(scalars:shape:): generic — no concrete C ABI
@@ -190,7 +189,7 @@
 // SKIPPED NDArrayDescriptor.shape: property accessor — Swift calling convention
 
 // ── Summary ──────────────────────────────────────────────
-// 0 emitted, 183 skipped.
+// 0 emitted, 182 skipped.
 //      2  Swift reference type
 //     20  Swift value type
 //      3  async
@@ -198,13 +197,14 @@
 //     23  generic
 //     23  instance/type method
 //      3  opaque/existential parameter
-//     12  operator
-//     21  ownership/move-only
-//      3  plain enum, no integer raw values
-//     65  property accessor
+//     10  operator
+//     20  ownership/move-only
+//      2  plain enum, no integer raw values
+//     64  property accessor
 //      3  protocol
-//      3  throws
+//      5  throws
 //      1  typealias to a non-C type
+//      2  unhandled symbol kind
 // Nothing in this module has a C ABI. To call it from C+, write a
 // Swift @_cdecl bridge covering the symbols above, compile it to a
 // dylib, and run cpc-bindgen on the bridge's C header.
