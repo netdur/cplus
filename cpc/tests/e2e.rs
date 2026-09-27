@@ -7725,6 +7725,12 @@ fn orphan_source_file_warns_w0005_and_success_prints_module_count() {
         !stderr.contains("used_linux"),
         "platform variant is exempt: {stderr}"
     );
+    // ...and so is the reverse: on Linux `used_linux.cplus` replaces
+    // `used.cplus`, which stays the module every other target compiles.
+    assert!(
+        !stderr.contains("used.cplus"),
+        "a base shadowed by a loaded platform override is exempt: {stderr}"
+    );
     assert!(
         stdout.contains("ok: 2 modules"),
         "success names what it built: {stdout}"

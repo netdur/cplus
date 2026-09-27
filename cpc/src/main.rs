@@ -2712,7 +2712,10 @@ fn emit_extra_object_missing(diag_mode: DiagMode, obj: &Path, declared_in: &Path
 /// an undefined function appended to one still built exit-0. Platform-suffixed
 /// siblings (`runtime_linux.cplus` beside a loaded `runtime.cplus`) are the
 /// resolver's own convention for "reachable on another target", so they are
-/// exempt; everything else unloaded is dead on every target. The scan stays
+/// exempt — and so is the reverse, a base `runtime.cplus` shadowed on this
+/// target by a loaded `runtime_linux.cplus`: the base is what every platform
+/// without an override compiles. Everything else unloaded is dead on every
+/// target. The scan stays
 /// inside `src/` — a vendored dependency legitimately ships more modules than
 /// one consumer imports.
 fn warn_orphan_sources(loaded: &[PathBuf], root: &Path, diag_mode: DiagMode) {
@@ -2744,6 +2747,14 @@ fn warn_orphan_sources(loaded: &[PathBuf], root: &Path, diag_mode: DiagMode) {
                     .iter()
                     .any(|plat| stem.ends_with(&format!("_{plat}")))
                 {
+                    continue;
+                }
+                let shadowed = target::PLATFORMS.iter().any(|plat| {
+                    p.with_file_name(format!("{stem}_{plat}.cplus"))
+                        .canonicalize()
+                        .is_ok_and(|o| loaded_set.contains(&o))
+                });
+                if shadowed {
                     continue;
                 }
             }
