@@ -180,6 +180,14 @@ fn bytes_to_text(take bytes: vec::Vec[u8]) -> text::Text {
 // Spawn `argv[0]` (searched on PATH) with `argv` as its arguments, optionally in
 // working directory `cwd` (""  = inherit the parent's). Environment is inherited.
 // `None` if argv is empty, an argument/cwd holds an interior NUL, or fork fails.
+
+// This process's own id — the one a child would see as its parent. Beside
+// `Child.pid()`, which is a CHILD's.
+#[link_name = "getpid"]
+extern fn process_getpid() -> i32;
+
+fn current_id() -> i32 { return { process_getpid() }; }
+
 fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
     let argc: usize = argv.count();
     if argc == (0 as usize) { return option::Option[Child]::None; }
@@ -402,4 +410,11 @@ fn bytes_to_text_decodes_utf8_and_empty() {
     let _a: status::Status = hi.append('h' as u8);
     let _b: status::Status = hi.append('i' as u8);
     assert bytes_to_text(hi).view() == "hi";
+}
+
+#[test]
+fn the_current_process_has_an_id_and_it_is_stable() {
+    let a: i32 = current_id();
+    assert a > (0 as i32);
+    assert current_id() == a;
 }

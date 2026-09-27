@@ -92,6 +92,7 @@ Cross-module use inside stdlib is normal (`vec` imports `option`, `status`,
 | `net` | `TcpStream`, `TcpListener` |
 | `netsys` | Platform constants/errno for `net` (auto-overridden per OS) |
 | `env` | env vars and argv |
+| `process` | spawn a child from an argv (no shell); this process's own id |
 | `base64` | base64 and base64url, strict decoding |
 | `url` | take a URL apart — views, not copies; routing reads `segment`, not `path` |
 | `crypto` | SHA-2, HMAC, CSPRNG — over the platform's own (macOS today) |

@@ -32,6 +32,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`net`](#net) | `TcpStream`, `TcpListener` |
 | [`netsys`](#netsys) | platform errno / constants (for `net`) |
 | [`env`](#env) | `var`, `argc`, `arg` |
+| [`process`](#process) | `spawn`, `capture`, `current_id` |
 | [`platform`](#platform) | `Os`, `Arch`, `Version`, `os` / `arch` / `os_version` / `cpu_count` |
 | [`flags`](#flags) | `Flags` option-set over u64 bits |
 | [`slice`](#slice) | checked sub-views over `T[]` |
@@ -362,6 +363,20 @@ fn arg(index: usize) -> option::Option[text::Text]
 ```
 
 Owned `Text` for values; `None` if unset / out of range.
+
+---
+
+## process
+
+```cplus
+fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child]
+fn capture(argv: vec::Vec[text::Text], cwd: str = "") -> Output
+fn current_id() -> i32
+```
+
+`spawn` runs an argv with no shell; `Child.pid()` is the child's id.
+`current_id()` is this process's own — the one a child sees as its parent.
+On Windows `current_id` works and spawning is not built yet.
 
 ---
 

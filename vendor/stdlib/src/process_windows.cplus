@@ -92,6 +92,15 @@ struct Output {
     code: i32,
 }
 
+
+// This process's own id — the one a child would see as its parent. Beside
+// `Child.pid()`, which is a CHILD's. A Windows id is a DWORD; every one in
+// use fits an i32, which is the type `pid()` already answers in.
+#[link_name = "GetCurrentProcessId"]
+extern fn process_get_current_process_id() -> u32;
+
+fn current_id() -> i32 { return { process_get_current_process_id() } as i32; }
+
 fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
     unsupported(#str_ptr("spawn\0"));
     return option::Option[Child]::None;
@@ -164,4 +173,11 @@ fn spawning_is_refused_rather_than_attempted() {
     let out: Output = capture(argv);
     assert out.code == (127 as i32);
     assert out.stdout.is_empty();
+}
+
+#[test]
+fn the_current_process_has_an_id_and_it_is_stable() {
+    let a: i32 = current_id();
+    assert a > (0 as i32);
+    assert current_id() == a;
 }
