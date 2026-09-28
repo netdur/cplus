@@ -35,6 +35,7 @@ const P_TEXT_TRANSFORM: u64 = 16384u64;
 const P_TOGGLES: u64 = 32768u64;
 const P_ON: u64 = 65536u64;
 const P_BORDERED: u64 = 131072u64;
+const P_SYMBOL: u64 = 262144u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -66,6 +67,7 @@ fn button(
     toggles: bool = false,
     on: bool = false,
     bordered: bool = true,
+    symbol: u32 = 0u32,
     item: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::ButtonProps = props::ButtonProps::new();
@@ -93,6 +95,7 @@ fn button(
     p.toggles = toggles;
     p.on = on;
     p.bordered = bordered;
+    p.symbol = symbol;
     var n: core::Node = match box::new::[props::ButtonProps](p) {
         option::Option[box::Box[props::ButtonProps]]::Some(b) =>
             core::node_with(key, props::K_BUTTON, b.into_raw(), props::release_button_props),
@@ -408,6 +411,24 @@ impl Button {
         let p: *props::ButtonProps = this._props();
         if p == (0 as *props::ButtonProps) { return false; }
         return { (*p).bordered };
+    }
+
+    // A glyph from facet's bundled font, named by `facet/icons` so an
+    // unknown one is a compile error. It is drawn where the image goes —
+    // placed by the same layout, scaled by the same fit — and it takes the
+    // image's place when both are set. 0 is no glyph.
+    fn set_symbol(this, v: u32) -> Button {
+        let p: *props::ButtonProps = this._props();
+        if p == (0 as *props::ButtonProps) { return this; }
+        { (*p).symbol = v };
+        core::touch(this._p, P_SYMBOL);
+        return this;
+    }
+
+    fn symbol(this) -> u32 {
+        let p: *props::ButtonProps = this._props();
+        if p == (0 as *props::ButtonProps) { return 0u32; }
+        return { (*p).symbol };
     }
 
     // The flex node this cursor points at. The DOM division, and the

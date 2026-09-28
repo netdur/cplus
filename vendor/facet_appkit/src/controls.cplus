@@ -48,6 +48,7 @@ import "facet/spinner" as spinner;
 import "facet/stepper" as stepper;
 import "facet/icon_button" as icon_button;
 import "facet/symbol" as symbol;
+import "facet/icon_font" as icon_font;
 import "facet/text_area" as text_area;
 import "facet/search_field" as search_field;
 import "facet/popup" as popup;
@@ -253,11 +254,42 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
             option::Option[ak::Font]::None => { }
         }
     }
-    if (dirty & button::P_IMAGE) != (0 as u64) {
-        apply_control_image(b, { (*p).image.view() });
+    // The image slot holds the bundled glyph when there is one, and the image
+    // source otherwise. The glyph is sized by the title's font, so a font
+    // change re-draws it — which is why this runs AFTER the font is set.
+    let glyph_bits: u64 = button::P_SYMBOL | button::P_FONT_SIZE | button::P_FONT_WEIGHT
+        | button::P_FONT_FAMILY | button::P_IS_ITALIC | button::P_FONT_SCALES;
+    let has_glyph: bool = { (*p).symbol } != 0u32;
+    if (dirty & (button::P_IMAGE | button::P_SYMBOL)) != (0 as u64)
+       || (has_glyph && (dirty & glyph_bits) != (0 as u64)) {
+        if has_glyph {
+            match b.as_control().font() {
+                option::Option[ak::Font]::Some(fnt) => {
+                    match bundled_glyph_image({ (*p).symbol }, glyph_side_for(fnt)) {
+                        option::Option[ak::Image]::Some(img) => { b.set_image(img); }
+                        option::Option[ak::Image]::None => { b.set_image(ak::Image::from_raw(0 as *u8)); }
+                    }
+                }
+                option::Option[ak::Font]::None => { }
+            }
+        } else {
+            apply_control_image(b, { (*p).image.view() });
+        }
     }
-    if (dirty & (button::P_CONTENT_LAYOUT | button::P_IMAGE)) != (0 as u64) {
+    if (dirty & (button::P_CONTENT_LAYOUT | button::P_IMAGE | button::P_SYMBOL)) != (0 as u64) {
         b.set_image_position(ns_image_position({ (*p).content_layout }));
+    }
+    // The glyph is a TEMPLATE, so it takes the button's content tint. A
+    // `text_color` colours the title through its attributed string and
+    // nothing else, so the glyph is told the same colour here — a red
+    // "Delete" with a black trash can reads as two controls.
+    if (dirty & (button::P_TEXT_COLOR | button::P_SYMBOL)) != (0 as u64) && has_glyph {
+        let tc: vocab::Color = { (*p).text_color };
+        if tc.is_set() {
+            b.set_content_tint_color(paint::ns_color(tc));
+        } else {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setContentTintColor:\0")), 0 as *u8) };
+        }
     }
     if (dirty & button::P_LINE_BREAK) != (0 as u64) {
         match b.as_control().cell() {
@@ -1538,10 +1570,22 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
     if p.is_null() { return; }
     let b: ak::Button = ak::Button::from_raw(v);
-    if (dirty & icon_button::P_SOURCE) != (0 as u64) {
-        match resolve_image({ (*p).source.view() }) {
-            option::Option[ak::Image]::Some(img) => { b.set_image(img); }
-            option::Option[ak::Image]::None => { }
+    // A bundled glyph takes the image's place when both are set; clearing it
+    // hands the slot back to the source, or empties it when there is none.
+    if (dirty & (icon_button::P_SOURCE | icon_button::P_SYMBOL)) != (0 as u64) {
+        let src: str = { (*p).source.view() };
+        if { (*p).symbol } != 0u32 {
+            match bundled_glyph_image({ (*p).symbol }, icon_button_glyph_side()) {
+                option::Option[ak::Image]::Some(img) => { b.set_image(img); }
+                option::Option[ak::Image]::None => { b.set_image(ak::Image::from_raw(0 as *u8)); }
+            }
+        } else if src == "" {
+            b.set_image(ak::Image::from_raw(0 as *u8));
+        } else {
+            match resolve_image(src) {
+                option::Option[ak::Image]::Some(img) => { b.set_image(img); }
+                option::Option[ak::Image]::None => { }
+            }
         }
     }
     if (dirty & icon_button::P_FIT) != (0 as u64) {
@@ -1591,18 +1635,20 @@ fn create_symbol(n: *core::Node) -> *u8 {
 // `kCTFontManagerScopeProcess` is the whole mechanism, and it is undone when
 // the process exits.
 //
-// The font is found rather than assumed, in the order an application actually
-// ships one: its own bundle first (a packaged .app), then the vendored asset
-// (running from a source tree, which is every example today). A font that is
-// found nowhere leaves the label empty and says so ONCE — a symbol that fails
-// silently is indistinguishable from a symbol that is not there, and this verb
-// spent its whole life indistinguishable from working.
+// The font is asked for in the order an application actually ships one: its
+// own bundle first (a packaged .app), then the copy compiled into the binary
+// (`facet/icon_font`). The embedded copy replaced two paths relative to the
+// WORKING DIRECTORY — `vendor/facet/assets/...` and `../../vendor/...` —
+// which resolve inside the C+ tree and nowhere else, so an application built
+// against the package store drew every glyph blank. A font that still cannot
+// be registered says so ONCE — a symbol that fails silently is
+// indistinguishable from a symbol that is not there.
 
 #[link_name = "CTFontManagerRegisterFontsForURL"]
 extern fn ct_register_fonts_for_url(url: *u8, scope: u32, error: *u8) -> i8;
 
 fn ct_scope_process() -> u32 { return 1u32; }
-fn bundled_family() -> str { return "Material Symbols Outlined"; }
+fn bundled_family() -> str { return icon_font::family(); }
 
 static SYMBOL_FONT_TRIED: bool = false;
 static SYMBOL_FONT_OK: bool = false;
@@ -1616,10 +1662,40 @@ fn register_bundled_font() -> bool {
         option::Option[ak::Font]::None => { }
     }
     if register_font_url(bundle_font_url()) { SYMBOL_FONT_OK = true; return true; }
-    if register_font_at("vendor/facet/assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
-    if register_font_at("../../vendor/facet/assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
-    io::println("facet_appkit: the bundled symbol font was not found; symbol(icon:) renders nothing");
+    if register_embedded_font() { SYMBOL_FONT_OK = true; return true; }
+    io::println("facet_appkit: the bundled symbol font could not be registered; symbol(icon:) renders nothing");
     return false;
+}
+
+#[link_name = "CGDataProviderCreateWithData"]
+extern fn cg_data_provider_create_with_data(info: *u8, data: *u8, size: usize, release: *u8) -> *u8;
+#[link_name = "CGDataProviderRelease"]
+extern fn cg_data_provider_release(p: *u8);
+#[link_name = "CGFontCreateWithDataProvider"]
+extern fn cg_font_create_with_data_provider(p: *u8) -> *u8;
+#[link_name = "CGFontRelease"]
+extern fn cg_font_release(f: *u8);
+#[link_name = "CTFontManagerRegisterGraphicsFont"]
+extern fn ct_register_graphics_font(font: *u8, error: *u8) -> u8;
+
+// The copy compiled into the binary. The provider reads the bytes in place —
+// they are static, so there is nothing to free and no release callback — and
+// the registration is for this process only, like the URL form above.
+fn register_embedded_font() -> bool {
+    let provider: *u8 = { cg_data_provider_create_with_data(0 as *u8, icon_font::bytes(),
+                                                            icon_font::len(), 0 as *u8) };
+    if provider.is_null() { return false; }
+    let font: *u8 = { cg_font_create_with_data_provider(provider) };
+    { cg_data_provider_release(provider) };
+    if font.is_null() { return false; }
+    // A second registration answers "already registered", which is not a
+    // failure — so the answer is whether the family RESOLVES afterwards.
+    let _ok: bool = { ct_register_graphics_font(font, 0 as *u8) } != (0 as u8);
+    { cg_font_release(font) };
+    match ak::Font::font_with_name(bundled_family(), 12.0f64) {
+        option::Option[ak::Font]::Some(_f) => { return true; }
+        option::Option[ak::Font]::None => { return false; }
+    }
 }
 
 // The app bundle's own copy, as an NSURL, when there is a bundle. Answers the
@@ -1636,13 +1712,6 @@ fn bundle_font_url() -> *u8 {
     if p.is_null() { return 0 as *u8; }
     return { rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
                            rt::sel(#str_ptr("fileURLWithPath:\0")), p) };
-}
-
-fn register_font_at(path: str) -> bool {
-    if path == "" { return false; }
-    return register_font_url({ rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
-                                             rt::sel(#str_ptr("fileURLWithPath:\0")),
-                                             bridge::nsstring(path)) });
 }
 
 fn register_font_url(url: *u8) -> bool {
@@ -1887,6 +1956,95 @@ fn attach_symbol_image(f: ak::TextField, img: *u8) {
     { rt::release(att) };
     if s.is_null() { return; }
     { rt::msg_void_id(f.raw(), rt::sel(#str_ptr("setAttributedStringValue:\0")), s) };
+}
+
+// ---- a bundled glyph as a BUTTON'S image -------------------------------------
+// `button(symbol:)` and `icon_button(symbol:)` put the glyph where the image
+// goes, so it is an NSImage and not a run of text: NSButton then places it by
+// `imagePosition` (content_layout) and scales it by `imageScaling` (fit), the
+// same two dials an image source already answers to, and a TEMPLATE image
+// takes the button's content colour — dark mode, the pressed state and
+// `contentTintColor` included — with nothing drawn here in any colour.
+//
+// The image is DRAWN ON DEMAND (`imageWithSize:flipped:drawingHandler:`), so
+// it is re-rendered at whatever size and scale it is asked for: a glyph that
+// `fit` grows into a large button stays sharp, where a bitmap would blur. The
+// block's context IS the codepoint — the glyph always comes from the bundled
+// font — so the handler owns nothing and nothing has to outlive the image.
+
+#[link_name = "CTFontGetGlyphsForCharacters"]
+extern fn ct_glyphs_for_characters(font: *u8, chars: *u8, glyphs: *u8, count: i64) -> u8;
+#[link_name = "CTFontDrawGlyphs"]
+extern fn ct_draw_glyphs(font: *u8, glyphs: *u8, positions: *u8, count: usize, cg: *u8);
+
+// The glyph's side for a button: one line of its title. The glyph then reads
+// as part of the line it sits in rather than as a picture beside it.
+fn glyph_side_for(font: ak::Font) -> f64 {
+    let side: f64 = font.ascender() - font.descender() + font.leading();
+    if (side > 0.0f64) == false { return 16.0f64; }
+    return side;
+}
+
+// `icon_button` has no title to size by: 24pt, the size the font is drawn
+// for and `symbol`'s own default. A stated box grows or shrinks it by `fit`.
+fn icon_button_glyph_side() -> f64 { return 24.0f64; }
+
+fn bundled_glyph_image(cp: u32, side: f64) -> option::Option[ak::Image] {
+    if cp == 0u32 { return option::Option[ak::Image]::None; }
+    if !register_bundled_font() { return option::Option[ak::Image]::None; }
+    let raw: *u8 = ak::Image::image_with_size(rt::Size { w: side, h: side }, false,
+                                              draw_bundled_glyph, { (cp as u64) as *u8 });
+    if raw.is_null() { return option::Option[ak::Image]::None; }
+    let img: ak::Image = ak::Image::from_raw(raw);
+    img.set_template(true);
+    return option::some(img);
+}
+
+// The drawing handler. The font's em square is the glyph's box: every glyph is
+// drawn in 0..1 em above the baseline (measured from the font: 960 units per
+// em, bbox -12..972 x -14..961), so the baseline goes at the bottom of the
+// square and the square is centred in whatever rect is asked for. The rect is
+// UNFLIPPED — `flipped: false` above — which is CoreText's own orientation.
+fn draw_bundled_glyph(ctx: *u8, rect: rt::Rect) -> i8 {
+    let cp: u32 = (ctx as u64) as u32;
+    var s: f64 = rect.w;
+    if rect.h < s { s = rect.h; }
+    if (s > 0.0f64) == false { return 1 as i8; }
+    // UTF-16, because that is what CoreText maps: 106 of the icons live above
+    // U+FFFF (supplementary PUA-A) and need a surrogate pair. The pair yields
+    // ONE glyph, in the first slot.
+    var units: [u16; 2] = [0u16; 2];
+    var n: i64 = 1 as i64;
+    if cp < 0x10000u32 {
+        units[0 as usize] = cp as u16;
+    } else {
+        let v: u32 = cp - 0x10000u32;
+        units[0 as usize] = (0xD800u32 | (v >> 10u32)) as u16;
+        units[1 as usize] = (0xDC00u32 | (v & 0x3FFu32)) as u16;
+        n = 2 as i64;
+    }
+    match ak::Font::font_with_name(bundled_family(), s) {
+        option::Option[ak::Font]::Some(fnt) => {
+            var glyphs: [u16; 2] = [0u16; 2];
+            if { ct_glyphs_for_characters(fnt.raw(), #addr_of(units) as *u8,
+                                          #addr_of(glyphs) as *u8, n) } == (0 as u8) {
+                return 1 as i8;
+            }
+            match ak::GraphicsContext::current_context() {
+                option::Option[ak::GraphicsContext]::Some(g) => {
+                    let cg: *u8 = { rt::msg_id(g.raw(), rt::sel(#str_ptr("CGContext\0"))) };
+                    if cg.is_null() { return 1 as i8; }
+                    var at: rt::Point = rt::Point { x: rect.x + (rect.w - s) / 2.0f64,
+                                                    y: rect.y + (rect.h - s) / 2.0f64 };
+                    { ct_draw_glyphs(fnt.raw(), #addr_of(glyphs) as *u8, #addr_of(at) as *u8,
+                                     1 as usize, cg) };
+                }
+                option::Option[ak::GraphicsContext]::None => { }
+            }
+        }
+        option::Option[ak::Font]::None => { }
+    }
+    return 1 as i8;
 }
 
 // ---- text_area ---------------------------------------------------------------

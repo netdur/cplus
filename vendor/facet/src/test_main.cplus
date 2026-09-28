@@ -1468,6 +1468,60 @@ fn every_button_toggles_and_switches_its_border() {
     }
 }
 
+// A bundled glyph on a button. The table's constant goes straight in — the
+// name is checked at compile time — and 0 is "no glyph", which is what every
+// button that never asked for one must still say.
+#[test]
+fn a_button_carries_a_bundled_symbol() {
+    var b1: facet::Node = button::button("Delete", key: "b", symbol: icons::delete);
+    let p1: *facet::Node = #addr_of(b1);
+    match button::find("b", within: p1) {
+        option::Option[button::Button]::Some(x) => {
+            assert x.symbol() == icons::delete;
+            assert x.title() == "Delete";              // the title is untouched
+            facet::clear_dirty(p1);
+            let _s: button::Button = x.set_symbol(icons::home);
+            assert x.symbol() == icons::home;
+            // the write raises its OWN bit, and not the image's
+            assert (facet::dirty_of(p1) & button::P_SYMBOL) != (0 as u64);
+            assert (facet::dirty_of(p1) & button::P_IMAGE) == (0 as u64);
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    var plain: facet::Node = button::button("Save", key: "s");
+    match button::find("s", within: #addr_of(plain)) {
+        option::Option[button::Button]::Some(x) => { assert x.symbol() == 0u32; }
+        option::Option[button::Button]::None => { assert false; }
+    }
+}
+
+// An icon_button needs no image path to carry a glyph — `source` may be left
+// out — and a positional path still binds to `source` as it always did.
+#[test]
+fn an_icon_button_carries_a_symbol_without_a_source() {
+    var b1: facet::Node = ui::icon_button(symbol: icons::delete, key: "i");
+    let p1: *facet::Node = #addr_of(b1);
+    match icon_button::find("i", within: p1) {
+        option::Option[icon_button::IconButton]::Some(x) => {
+            assert x.symbol() == icons::delete;
+            assert x.source() == "";
+            facet::clear_dirty(p1);
+            let _s: icon_button::IconButton = x.set_symbol(0u32);
+            assert x.symbol() == 0u32;
+            assert (facet::dirty_of(p1) & icon_button::P_SYMBOL) != (0 as u64);
+        }
+        option::Option[icon_button::IconButton]::None => { assert false; }
+    }
+    var b2: facet::Node = ui::icon_button("hat.png", key: "h");
+    match icon_button::find("h", within: #addr_of(b2)) {
+        option::Option[icon_button::IconButton]::Some(x) => {
+            assert x.source() == "hat.png";
+            assert x.symbol() == 0u32;
+        }
+        option::Option[icon_button::IconButton]::None => { assert false; }
+    }
+}
+
 // A chip: describe the border once, switch it on and off with the toggle.
 #[test]
 fn a_text_button_toggles_and_switches_its_border() {

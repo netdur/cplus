@@ -27,6 +27,8 @@ import "facet/scroll" as scroll;
 import "facet/image" as image;
 import "facet/box" as box_view;
 import "facet/symbol" as symbol;
+import "facet/icons" as icons;
+import "facet/icon_button" as icon_button;
 import "facet/elements" as ui;
 import "facet/checkbox" as checkbox;
 import "facet/radio" as radio;
@@ -474,6 +476,167 @@ fn a_plain_button_keeps_its_bezel_instead_of_being_layer_backed() {
     views::view_release(pv);
     views::view_release(ev);
     views::view_release(rv);
+    app::reset_default_for_tests();
+}
+
+// ---- a bundled glyph on a button --------------------------------------------
+// Asserted AT THE PIXELS: the button's own image is drawn into a bitmap
+// through a real NSGraphicsContext, which runs the drawing handler exactly as
+// AppKit would. An image that exists but draws nothing — the font never
+// registered, the codepoint mapped to no glyph, the square placed off the
+// rect — is the failure that looks like success everywhere else.
+
+#[link_name = "objc_msgSend"]
+extern fn glyph_msg_void_rect(recv: *u8, sel: *u8, r: rt::Rect);
+#[link_name = "objc_msgSend"]
+extern fn glyph_msg_size(recv: *u8, sel: *u8) -> rt::Size;
+
+// Draws `img` into a 32x32 RGBA surface and counts the pixels with any ink.
+fn ink_of_image(img: *u8) -> usize {
+    var px: [u8; 4096] = [0u8; 4096];
+    let space: *u8 = CGColorSpaceCreateDeviceRGB();
+    if space.is_null() { return 0 as usize; }
+    let cg: *u8 = bitmap_context_create(#addr_of(px[0 as usize]), 32 as usize, 32 as usize,
+                                        8 as usize, 128 as usize, space, 1 as u32);
+    CGColorSpaceRelease(space);
+    if cg.is_null() { return 0 as usize; }
+    let gc: *u8 = { rt::msg_id_id_i8(rt::get_class(#str_ptr("NSGraphicsContext\0")),
+                                      rt::sel(#str_ptr("graphicsContextWithCGContext:flipped:\0")),
+                                      cg, 0 as i8) };
+    let saved: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSGraphicsContext\0")),
+                                  rt::sel(#str_ptr("currentContext\0"))) };
+    { rt::msg_void_id(rt::get_class(#str_ptr("NSGraphicsContext\0")),
+                      rt::sel(#str_ptr("setCurrentContext:\0")), gc) };
+    let whole: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 32.0f64, h: 32.0f64 };
+    { glyph_msg_void_rect(img, rt::sel(#str_ptr("drawInRect:\0")), whole) };
+    { rt::msg_void_id(rt::get_class(#str_ptr("NSGraphicsContext\0")),
+                      rt::sel(#str_ptr("setCurrentContext:\0")), saved) };
+    CGContextRelease(cg);
+    var n: usize = 0 as usize;
+    var i: usize = 3 as usize;
+    while i < (4096 as usize) {
+        if px[i] > (0 as u8) { n = n + (1 as usize); }
+        i = i + (4 as usize);
+    }
+    return n;
+}
+
+fn image_of_button(v: *u8) -> *u8 { return { rt::msg_id(v, rt::sel(#str_ptr("image\0"))) }; }
+
+#[test]
+fn a_buttons_symbol_is_its_image_and_draws_ink() {
+    app::reset_default_for_tests();
+    var n: core::Node = button::button("Delete", key: "btn:del", symbol: icons::delete);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    let img: *u8 = image_of_button(v);
+    assert img.is_not_null();
+    // a TEMPLATE, so the button's content colour draws it
+    assert { rt::msg_i8(img, rt::sel(#str_ptr("isTemplate\0"))) } == (1 as i8);
+    // square, and one line of the title tall — not a picture beside it
+    let sz: rt::Size = { glyph_msg_size(img, rt::sel(#str_ptr("size\0"))) };
+    assert sz.w == sz.h;
+    assert sz.h > 12.0f64 && sz.h < 24.0f64;
+    // and it draws: a trash can is a lot of pixels, not a stray few
+    assert ink_of_image(img) > (100 as usize);
+    // the title is still the title
+    assert ak::Button::from_raw(v).title() == "Delete";
+    core::set_view(p, v, views::view_release);
+    app::reset_default_for_tests();
+}
+
+// 106 of the icons live above U+FFFF and need a UTF-16 surrogate pair on the
+// way to CoreText. A codepoint the font does not carry draws NOTHING — a blank
+// is honest, a tofu box in some fallback font is not.
+#[test]
+fn a_glyph_above_the_bmp_draws_and_an_unmapped_codepoint_does_not() {
+    app::reset_default_for_tests();
+    assert icons::antigravity > 0xFFFFu32;
+    match controls::bundled_glyph_image(icons::antigravity, 32.0f64) {
+        option::Option[ak::Image]::Some(img) => { assert ink_of_image(img.raw()) > (50 as usize); }
+        option::Option[ak::Image]::None => { assert false; }
+    }
+    match controls::bundled_glyph_image(0xE000u32, 32.0f64) {
+        option::Option[ak::Image]::Some(img) => { assert ink_of_image(img.raw()) == (0 as usize); }
+        option::Option[ak::Image]::None => { assert false; }
+    }
+    // 0 is "no glyph", and asks for no image at all
+    match controls::bundled_glyph_image(0u32, 32.0f64) {
+        option::Option[ak::Image]::Some(_img) => { assert false; }
+        option::Option[ak::Image]::None => { }
+    }
+    app::reset_default_for_tests();
+}
+
+extern fn chdir(path: *u8) -> i32;
+extern fn getcwd(buf: *u8, size: usize) -> *u8;
+
+// The font comes out of the BINARY. It used to be found by a path relative to
+// the working directory, which resolved inside the C+ tree and nowhere else —
+// every application built against the package store drew its glyphs blank.
+// So: from `/`, where no relative path finds anything, it still registers.
+#[test]
+fn the_icon_font_registers_from_the_binary_whatever_the_working_directory() {
+    var here: [u8; 4096] = [0u8; 4096];
+    assert { getcwd(#addr_of(here[0 as usize]), 4096 as usize) }.is_not_null();
+    assert { chdir(#str_ptr("/\0")) } == (0 as i32);
+    let ok: bool = controls::register_embedded_font();
+    let drew: usize = match controls::bundled_glyph_image(icons::home, 32.0f64) {
+        option::Option[ak::Image]::Some(img) => ink_of_image(img.raw()),
+        option::Option[ak::Image]::None => 0 as usize,
+    };
+    assert { chdir(#addr_of(here[0 as usize])) } == (0 as i32);
+    assert ok;
+    assert drew > (100 as usize);
+}
+
+#[test]
+fn an_icon_buttons_symbol_takes_the_image_slot_and_gives_it_back() {
+    app::reset_default_for_tests();
+    var n: core::Node = ui::icon_button(symbol: icons::home, key: "ib:home");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    let img: *u8 = image_of_button(v);
+    assert img.is_not_null();
+    let sz: rt::Size = { glyph_msg_size(img, rt::sel(#str_ptr("size\0"))) };
+    assert sz.w == 24.0f64 && sz.h == 24.0f64;
+    assert ink_of_image(img) > (100 as usize);
+    // Clearing the glyph with no source empties the slot: a button left
+    // showing the last glyph after the app took it away would be lying.
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match icon_button::find("ib:home", within: p) {
+        option::Option[icon_button::IconButton]::Some(x) => {
+            let _s: icon_button::IconButton = x.set_symbol(0u32);
+        }
+        option::Option[icon_button::IconButton]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert image_of_button(v).is_null();
+    app::reset_default_for_tests();
+}
+
+// A red "Delete" with a black trash can reads as two controls. The title's
+// colour rides an attributed string; the glyph is told through the tint.
+#[test]
+fn a_buttons_text_color_reaches_its_symbol() {
+    app::reset_default_for_tests();
+    var n: core::Node = button::button("Delete", key: "btn:red", symbol: icons::delete,
+                                       text_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v.is_not_null();
+    assert { rt::msg_id(v, rt::sel(#str_ptr("contentTintColor\0"))) } != (0 as *u8);
+    // without a symbol, a text colour leaves the tint alone
+    var plain: core::Node = button::button("Save", key: "btn:plainred",
+                                           text_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let pp: *core::Node = #addr_of(plain);
+    let pv: *u8 = views::create(0 as *u8, pp);
+    assert { rt::msg_id(pv, rt::sel(#str_ptr("contentTintColor\0"))) } == (0 as *u8);
+    core::set_view(p, v, views::view_release);
+    core::set_view(pp, pv, views::view_release);
     app::reset_default_for_tests();
 }
 

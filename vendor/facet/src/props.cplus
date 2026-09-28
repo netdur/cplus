@@ -587,6 +587,7 @@ struct ButtonProps {
     toggles: bool,    // facet — a click FLIPS rather than fires; AppKit's PushOnPushOff holds it
     on: bool,    // facet — where the last click left it
     bordered: bool,    // facet — whether the described border is DRAWN. Separate from its width, so switching it off does not forget it
+    symbol: u32,    // facet — a bundled glyph (`facet/icons`), drawn where the image goes; 0 = none
 }
 
 impl ButtonProps {
@@ -617,6 +618,7 @@ impl ButtonProps {
             toggles: false,
             on: false,
             bordered: true,
+            symbol: 0u32,
         };
     }
 }
@@ -1059,6 +1061,7 @@ struct IconButtonProps {
     toggles: bool,    // facet — a click FLIPS rather than fires; AppKit's PushOnPushOff holds it
     on: bool,    // facet — where the last click left it
     bordered: bool,    // facet — whether the described border is DRAWN. Separate from its width, so switching it off does not forget it
+    symbol: u32,    // facet — a bundled glyph (`facet/icons`), drawn where the image goes; 0 = none
 }
 
 impl IconButtonProps {
@@ -1081,6 +1084,7 @@ impl IconButtonProps {
             toggles: false,
             on: false,
             bordered: true,
+            symbol: 0u32,
         };
     }
 }

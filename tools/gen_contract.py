@@ -483,6 +483,12 @@ PRIMARY = {
     "DatePicker": "date", "TimePicker": "time", "IndicatorView": "count",
 }
 
+# A primary that may be LEFT OUT. `icon_button`'s content is an image source OR
+# a bundled glyph (`symbol:`), so `icon_button(symbol: icons::delete)` has to
+# compile without a path in front of it. It stays first, so a positional
+# `icon_button("hat.png")` still binds to it.
+PRIMARY_OPTIONAL = {"ImageButton": '""'}
+
 # The ledger member names that collide with C+ keywords. Renamed once, here.
 RESERVED = {
     "loop": "wraps", "type": "kind", "match": "matches", "ref": "reference",
@@ -2543,6 +2549,8 @@ BUTTON_FIELDS = [
     ("bordered", "bool", "true",
      "facet — whether the described border is DRAWN. Separate from its width, so "
      "switching it off does not forget it"),
+    ("symbol", "u32", "0u32",
+     "facet — a bundled glyph (`facet/icons`), drawn where the image goes; 0 = none"),
 ]
 
 TAB_SOURCE = ("tabs",)
@@ -3057,7 +3065,7 @@ def ctor_params(row_type, writes, reads, events, owned=()):
                    + [w for w in writes if w[0] != primary])
         f0, t0, _m0, _s0, _p0 = ordered[0]
         p0 = "str" if t0 == "str" else cplus_type(t0)
-        params.append((verb_stem(f0, t0, taken), p0, None))
+        params.append((verb_stem(f0, t0, taken), p0, PRIMARY_OPTIONAL.get(row_type)))
         ordered = ordered[1:]
     params.append(("key", "str", '""'))
     for field, ty, _m, _s, _p in ordered:
@@ -3091,6 +3099,7 @@ def ctor_params(row_type, writes, reads, events, owned=()):
         params.append(("toggles", "bool", "false"))
         params.append(("on", "bool", "false"))
         params.append(("bordered", "bool", "true"))
+        params.append(("symbol", "u32", "0u32"))
     if MODULE.get(row_type) in TAB_SOURCE:
         params.append(("selected_index", "i64", "0 as i64"))
         params.append(("on_tab_changed", "fn(*u8, *u8)", "props::no_handler"))
@@ -3171,7 +3180,7 @@ def emit_control(row_type, merged):
             + (["SELECTED_INDEX"] if mod in TAB_SOURCE else [])
             + (["LABEL", "ITEM_ENABLED"] if mod in PICKER_LABEL else [])
             + (["STYLE_RUNS"] if mod in EDITOR_TIER else [])
-            + (["TOGGLES", "ON", "BORDERED"] if mod in BUTTONS else [])
+            + (["TOGGLES", "ON", "BORDERED", "SYMBOL"] if mod in BUTTONS else [])
             + (["SELECTABLE"] if mod in SELECTABLE_TEXT else []))
     for i, b in enumerate(bits):
         o.append(f"const P_{b}: u64 = {1 << i}u64;\n")
@@ -3204,6 +3213,7 @@ def emit_control(row_type, merged):
         o.append("    p.toggles = toggles;\n")
         o.append("    p.on = on;\n")
         o.append("    p.bordered = bordered;\n")
+        o.append("    p.symbol = symbol;\n")
     if mod in TAB_SOURCE:
         o.append("    p.selected_index = selected_index;\n")
         o.append("    p.on_tab_changed = on_tab_changed;\n")
@@ -3588,6 +3598,20 @@ def emit_control(row_type, merged):
         o.append(f"        let p: *props::{props} = this._props();\n")
         o.append(f"        if p == (0 as *props::{props}) {{ return false; }}\n")
         o.append("        return { (*p).bordered };\n    }\n")
+        o.append("\n    // A glyph from facet's bundled font, named by `facet/icons` so an\n")
+        o.append("    // unknown one is a compile error. It is drawn where the image goes —\n")
+        o.append("    // placed by the same layout, scaled by the same fit — and it takes the\n")
+        o.append("    // image's place when both are set. 0 is no glyph.\n")
+        o.append(f"    fn set_symbol(this, v: u32) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).symbol = v };\n")
+        o.append("        core::touch(this._p, P_SYMBOL);\n")
+        o.append("        return this;\n    }\n")
+        o.append(f"\n    fn symbol(this) -> u32 {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return 0u32; }}\n")
+        o.append("        return { (*p).symbol };\n    }\n")
 
     # ---- facet's own: text a person can pick up
     if mod in SELECTABLE_TEXT:
@@ -4403,6 +4427,12 @@ def emit_manifest(rows_by_control):
                 o.append(f"| `{name}` | shared band | {src}.{member} |\n")
             elif kind == "skip":
                 skipped.append((mod, src, member, name, detail))
+        if mod in BUTTONS:
+            o.append("| `set_toggles` / `toggles()` | bool | **facet's own** |\n")
+            o.append("| `set_on` / `is_on()` | bool | **facet's own** |\n")
+            o.append("| `set_bordered` / `is_bordered()` | bool | **facet's own** |\n")
+            o.append("| `set_symbol` / `symbol()` | u32 (`facet/icons`) | **facet's own** |\n")
+            total += 4
         if mod in TAB_SOURCE:
             o.append("| `set_selected_index` / `selected_index()` | i64 | **facet's own** |\n")
             o.append("| `on_tab_changed` | callback + ctx | **facet's own** |\n")

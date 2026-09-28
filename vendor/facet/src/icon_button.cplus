@@ -26,13 +26,14 @@ const P_SOURCE: u64 = 32u64;
 const P_TOGGLES: u64 = 64u64;
 const P_ON: u64 = 128u64;
 const P_BORDERED: u64 = 256u64;
+const P_SYMBOL: u64 = 512u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
 // parameter here, so passing it is a compile error.
 
 fn icon_button(
-    source: str,
+    source: str = "",
     key: str = "",
     fit: vocab::ImageFit = vocab::ImageFit::AspectFit,
     border_color: vocab::Color = vocab::Color::clear(),
@@ -48,6 +49,7 @@ fn icon_button(
     toggles: bool = false,
     on: bool = false,
     bordered: bool = true,
+    symbol: u32 = 0u32,
     item: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::IconButtonProps = props::IconButtonProps::new();
@@ -66,6 +68,7 @@ fn icon_button(
     p.toggles = toggles;
     p.on = on;
     p.bordered = bordered;
+    p.symbol = symbol;
     var n: core::Node = match box::new::[props::IconButtonProps](p) {
         option::Option[box::Box[props::IconButtonProps]]::Some(b) =>
             core::node_with(key, props::K_ICON_BUTTON, b.into_raw(), props::release_icon_button_props),
@@ -252,6 +255,24 @@ impl IconButton {
         let p: *props::IconButtonProps = this._props();
         if p == (0 as *props::IconButtonProps) { return false; }
         return { (*p).bordered };
+    }
+
+    // A glyph from facet's bundled font, named by `facet/icons` so an
+    // unknown one is a compile error. It is drawn where the image goes —
+    // placed by the same layout, scaled by the same fit — and it takes the
+    // image's place when both are set. 0 is no glyph.
+    fn set_symbol(this, v: u32) -> IconButton {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return this; }
+        { (*p).symbol = v };
+        core::touch(this._p, P_SYMBOL);
+        return this;
+    }
+
+    fn symbol(this) -> u32 {
+        let p: *props::IconButtonProps = this._props();
+        if p == (0 as *props::IconButtonProps) { return 0u32; }
+        return { (*p).symbol };
     }
 
     // The flex node this cursor points at. The DOM division, and the

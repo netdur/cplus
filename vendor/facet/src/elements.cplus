@@ -298,6 +298,7 @@ fn button(
     toggles: bool = false,
     on: bool = false,
     bordered: bool = true,
+    symbol: u32 = 0u32,
     item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_button::button(
@@ -326,6 +327,7 @@ fn button(
         toggles: toggles,
         on: on,
         bordered: bordered,
+        symbol: symbol,
         item: item,
     );
 }
@@ -1043,7 +1045,7 @@ fn scroll(
 }
 
 fn icon_button(
-    source: str,
+    source: str = "",
     key: str = "",
     fit: vocab::ImageFit = vocab::ImageFit::AspectFit,
     border_color: vocab::Color = vocab::Color::clear(),
@@ -1059,10 +1061,11 @@ fn icon_button(
     toggles: bool = false,
     on: bool = false,
     bordered: bool = true,
+    symbol: u32 = 0u32,
     item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_icon_button::icon_button(
-        source,
+        source: source,
         key: key,
         fit: fit,
         border_color: border_color,
@@ -1078,6 +1081,7 @@ fn icon_button(
         toggles: toggles,
         on: on,
         bordered: bordered,
+        symbol: symbol,
         item: item,
     );
 }

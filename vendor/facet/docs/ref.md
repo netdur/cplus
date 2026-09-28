@@ -133,6 +133,33 @@ thing: a text_button is a real button, so it activates from the keyboard when
 focused and from VoiceOver, and it reports `role=button` to an agent. The label
 is reachable by a pointer and nothing else.
 
+### An icon on a button
+
+`button` and `icon_button` take `symbol:`, a glyph from facet's bundled
+Material Symbols font, named by `facet/icons` exactly as `symbol(...)` takes
+it. So an unknown name is a compile error.
+
+```cplus
+button("Delete", key: "del", on_click: this.on_delete, symbol: icons::delete)
+
+// the glyph after the title, or above it
+button("Next", key: "next", on_click: this.on_next,
+       symbol: icons::arrow_forward, content_layout: vocab::ContentLayout::ImageRight)
+
+// an icon and nothing else — no image path needed
+icon_button(symbol: icons::settings, key: "prefs", on_clicked: this.on_prefs)
+```
+
+The glyph goes where the image goes: `content_layout` places it and `fit`
+scales it. When both `symbol` and `image` / `source` are set, the glyph
+takes the slot, and `set_symbol(0u32)` hands the slot back. On a `button`
+the glyph is one line of the title tall and takes the title's `text_color`;
+on an `icon_button` it is 24pt, the size the font is drawn for.
+
+The font is compiled into the binary (`facet/icon_font`). On AppKit an
+application ships nothing for it; the other backends still look for a copy the
+application ships.
+
 ### A split's bounds
 
 `split` holds two panes and a divider. Each pane takes a minimum and a maximum,

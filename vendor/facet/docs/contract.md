@@ -5,7 +5,7 @@ absent here does not exist: calling it is a compile error, never a
 silent no-op. What a backend cannot implement is recorded in that
 backend's own manifest, not here.
 
-410 declared verbs over 38 controls, plus the
+418 declared verbs over 38 controls, plus the
 shared band every element carries.
 
 
@@ -53,6 +53,10 @@ shared band every element carries.
 | `on_click` | callback + ctx | Button.Clicked |
 | `on_pressed` | callback + ctx | Button.Pressed |
 | `on_released` | callback + ctx | Button.Released |
+| `set_toggles` / `toggles()` | bool | **facet's own** |
+| `set_on` / `is_on()` | bool | **facet's own** |
+| `set_bordered` / `is_bordered()` | bool | **facet's own** |
+| `set_symbol` / `symbol()` | u32 (`facet/icons`) | **facet's own** |
 
 ## canvas — the ledger GraphicsView
 
@@ -201,6 +205,10 @@ shared band every element carries.
 | `on_clicked` | callback + ctx | ImageButton.Clicked |
 | `on_pressed` | callback + ctx | ImageButton.Pressed |
 | `on_released` | callback + ctx | ImageButton.Released |
+| `set_toggles` / `toggles()` | bool | **facet's own** |
+| `set_on` / `is_on()` | bool | **facet's own** |
+| `set_bordered` / `is_bordered()` | bool | **facet's own** |
+| `set_symbol` / `symbol()` | u32 (`facet/icons`) | **facet's own** |
 
 ## image — the ledger Image
 
