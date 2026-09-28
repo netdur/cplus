@@ -6,7 +6,7 @@ row can claim "facet already has this", and no row may be deleted because a
 platform cannot do it — that sentence belongs to facet_appkit, which answers
 the contract, not to facet, which writes it.
 
-So every row of the ledger spec (plans/facet/spec/ledger-spec.json, six bands)
+So every row of the ledger spec (tools/assets/ledger/ledger-spec.json, six bands)
 lands in exactly ONE of two buckets:
 
   ADOPT   facet declares it, under a facet name (naming_guideline.md)
@@ -32,7 +32,11 @@ import sys
 from collections import OrderedDict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPEC = os.path.join(ROOT, "plans", "facet", "spec", "ledger-spec.json")
+# The ledger inputs are TRACKED, in tools/assets/ledger: the spec and the
+# manifests it was extracted from. They sat in the ignored plans/ until
+# 2026-09-28, where no other checkout could regenerate or verify facet.
+SPEC_DIR = os.path.join(ROOT, "tools", "assets", "ledger")
+SPEC = os.path.join(SPEC_DIR, "ledger-spec.json")
 
 # ---- the three DROP reasons. This list does not grow. -----------------------
 MODEL = "the ledger's MVVM model — facet describes UI with components, keys, and fn-ptr handlers"
@@ -1146,6 +1150,7 @@ def main():
     # hit a PATH as well as the prose, so the map landed under a name nothing
     # else used and the previous `maui-map-draft.md` sat beside it looking
     # current. A generated file with two names is a generated file with none.
+    os.makedirs(os.path.join(ROOT, "plans", "facet"), exist_ok=True)
     path = os.path.join(ROOT, "plans", "facet", "ledger-map-draft.md")
     with open(path, "w") as f:
         f.writelines(out)

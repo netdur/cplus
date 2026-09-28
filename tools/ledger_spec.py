@@ -29,11 +29,11 @@ vocabulary — but it is a real path, so unlike the prose it cannot be scrubbed.
 It was, once: a find/replace turned `dotnet/maui` into `dotnet/row_type` and
 left a 404 for anyone refreshing. Leave this line alone.
   BASE=https://raw.githubusercontent.com/dotnet/maui/main/src/Controls/src/Core/PublicAPI/netstandard
-  curl -s $BASE/PublicAPI.Shipped.txt   -o plans/facet/spec/ledger_PublicAPI.Shipped.txt
-  curl -s $BASE/PublicAPI.Unshipped.txt -o plans/facet/spec/ledger_PublicAPI.Unshipped.txt
+  curl -s $BASE/PublicAPI.Shipped.txt   -o tools/assets/ledger/ledger_PublicAPI.Shipped.txt
+  curl -s $BASE/PublicAPI.Unshipped.txt -o tools/assets/ledger/ledger_PublicAPI.Unshipped.txt
 
 REFRESHING IS NOT A ONE-STEP OPERATION, and running this alone will break the
-stage after it. The committed `plans/facet/spec/ledger-spec.json` is dated
+stage after it. The committed `tools/assets/ledger/ledger-spec.json` is dated
 2026-07-31; the manifests beside it were updated in August. Regenerating from
 the current manifests produces a spec 2.2x larger, and `ledger_map.py` then
 exits 1 with **242 rows it has no rule for** — every one of which needs an
@@ -49,7 +49,7 @@ types). The two-manifest invocation is the one that passes.
 
 Usage:
   python3 tools/ledger_spec.py <manifest.txt> [<manifest2.txt> ...]
-Writes plans/facet/spec/ledger-spec.json + plans/facet/ledger-spec-report.md and
+Writes tools/assets/ledger/ledger-spec.json + plans/facet/ledger-spec-report.md and
 prints the per-type band counts.
 """
 import json
@@ -564,10 +564,11 @@ def main():
         md.append(f"\n**{len(by_reason[why])} types** — {why}\n\n")
         md.append("> " + ", ".join(sorted(by_reason[why])) + "\n")
 
-    spec_dir = os.path.join(ROOT, "plans", "facet", "spec")
+    spec_dir = os.path.join(ROOT, "tools", "assets", "ledger")
     os.makedirs(spec_dir, exist_ok=True)
     with open(os.path.join(spec_dir, "ledger-spec.json"), "w") as f:
         json.dump(out, f, indent=1)
+    os.makedirs(os.path.join(ROOT, "plans", "facet"), exist_ok=True)
     with open(os.path.join(ROOT, "plans", "facet", "ledger-spec-report.md"), "w") as f:
         f.writelines(md)
 
@@ -582,7 +583,7 @@ def main():
         print(f"{row_type:<26}{len(w):>7}{len(r):>7}{len(ev):>7}{len(me):>8}")
     print("-" * 55)
     print(f"{'TOTAL':<26}{totals[0]:>7}{totals[1]:>7}{totals[2]:>7}{totals[3]:>8}")
-    print("\nwrote plans/facet/spec/ledger-spec.json + plans/facet/ledger-spec-report.md")
+    print("\nwrote tools/assets/ledger/ledger-spec.json + plans/facet/ledger-spec-report.md")
 
 
 if __name__ == "__main__":

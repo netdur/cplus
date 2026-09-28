@@ -1,0 +1,2259 @@
+{
+ "Label": {
+  "facet_widget": "label",
+  "writes": {
+   "CharacterSpacing": "double",
+   "FontAttributes": "Microsoft.Maui.Controls.FontAttributes",
+   "FontAutoScalingEnabled": "bool",
+   "FontFamily": "string",
+   "FontSize": "double",
+   "FormattedText": "Microsoft.Maui.Controls.FormattedString",
+   "HorizontalTextAlignment": "Microsoft.Maui.TextAlignment",
+   "LineBreakMode": "Microsoft.Maui.LineBreakMode",
+   "LineHeight": "double",
+   "MaxLines": "int",
+   "Padding": "Microsoft.Maui.Thickness",
+   "Text": "string",
+   "TextColor": "Microsoft.Maui.Graphics.Color",
+   "TextDecorations": "Microsoft.Maui.TextDecorations",
+   "TextTransform": "Microsoft.Maui.TextTransform",
+   "TextType": "Microsoft.Maui.TextType",
+   "VerticalTextAlignment": "Microsoft.Maui.TextAlignment"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {
+   "GetChildElements": {
+    "params": "Microsoft.Maui.Graphics.Point point",
+    "returns": "System.Collections.Generic.IList<Microsoft.Maui.Controls.GestureElement>"
+   },
+   "MapLineBreakMode": {
+    "params": "Microsoft.Maui.Handlers.LabelHandler handler, Microsoft.Maui.Controls.Label label",
+    "returns": "void"
+   },
+   "MapMaxLines": {
+    "params": "Microsoft.Maui.Handlers.LabelHandler handler, Microsoft.Maui.Controls.Label label",
+    "returns": "void"
+   },
+   "MapText": {
+    "params": "Microsoft.Maui.Handlers.LabelHandler handler, Microsoft.Maui.Controls.Label label",
+    "returns": "void"
+   },
+   "MapTextType": {
+    "params": "Microsoft.Maui.Handlers.LabelHandler handler, Microsoft.Maui.Controls.Label label",
+    "returns": "void"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "UpdateFormsText": {
+    "params": "string source, Microsoft.Maui.TextTransform textTransform",
+    "returns": "string"
+   }
+  }
+ },
+ "Button": {
+  "facet_widget": "button",
+  "writes": {
+   "BorderColor": "Microsoft.Maui.Graphics.Color",
+   "BorderWidth": "double",
+   "CharacterSpacing": "double",
+   "Command": "System.Windows.Input.ICommand",
+   "CommandParameter": "object",
+   "ContentLayout": "Microsoft.Maui.Controls.Button.ButtonContentLayout",
+   "CornerRadius": "int",
+   "FontAttributes": "Microsoft.Maui.Controls.FontAttributes",
+   "FontAutoScalingEnabled": "bool",
+   "FontFamily": "string",
+   "FontSize": "double",
+   "ImageSource": "Microsoft.Maui.Controls.ImageSource",
+   "LineBreakMode": "Microsoft.Maui.LineBreakMode",
+   "Padding": "Microsoft.Maui.Thickness",
+   "Text": "string",
+   "TextColor": "Microsoft.Maui.Graphics.Color",
+   "TextTransform": "Microsoft.Maui.TextTransform"
+  },
+  "reads": {
+   "IsEnabledCore": "bool",
+   "IsPressed": "bool"
+  },
+  "events": {
+   "Clicked": "",
+   "Pressed": "",
+   "Released": ""
+  },
+  "methods": {
+   "ChangeVisualState": {
+    "params": "",
+    "returns": "void"
+   },
+   "MapContentLayout": {
+    "params": "Microsoft.Maui.Handlers.IButtonHandler handler, Microsoft.Maui.Controls.Button button",
+    "returns": "void"
+   },
+   "MapLineBreakMode": {
+    "params": "Microsoft.Maui.Handlers.IButtonHandler handler, Microsoft.Maui.Controls.Button button",
+    "returns": "void"
+   },
+   "MapText": {
+    "params": "Microsoft.Maui.Handlers.IButtonHandler handler, Microsoft.Maui.Controls.Button button",
+    "returns": "void"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnPropertyChanged": {
+    "params": "string propertyName = null",
+    "returns": "void"
+   },
+   "SendClicked": {
+    "params": "",
+    "returns": "void"
+   },
+   "SendPressed": {
+    "params": "",
+    "returns": "void"
+   },
+   "SendReleased": {
+    "params": "",
+    "returns": "void"
+   },
+   "UpdateFormsText": {
+    "params": "string source, Microsoft.Maui.TextTransform textTransform",
+    "returns": "string"
+   }
+  }
+ },
+ "Entry": {
+  "facet_widget": "text_field",
+  "writes": {
+   "ClearButtonVisibility": "Microsoft.Maui.ClearButtonVisibility",
+   "HorizontalTextAlignment": "Microsoft.Maui.TextAlignment",
+   "IsPassword": "bool",
+   "ReturnCommand": "System.Windows.Input.ICommand",
+   "ReturnCommandParameter": "object",
+   "ReturnType": "Microsoft.Maui.ReturnType",
+   "VerticalTextAlignment": "Microsoft.Maui.TextAlignment"
+  },
+  "reads": {},
+  "events": {
+   "Completed": ""
+  },
+  "methods": {
+   "MapText": {
+    "params": "Microsoft.Maui.Handlers.IEntryHandler handler, Microsoft.Maui.Controls.Entry entry",
+    "returns": "void"
+   },
+   "SendCompleted": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "Editor": {
+  "facet_widget": "text_area",
+  "writes": {
+   "AutoSize": "Microsoft.Maui.Controls.EditorAutoSizeOption",
+   "HorizontalTextAlignment": "Microsoft.Maui.TextAlignment",
+   "VerticalTextAlignment": "Microsoft.Maui.TextAlignment"
+  },
+  "reads": {},
+  "events": {
+   "Completed": ""
+  },
+  "methods": {
+   "ArrangeOverride": {
+    "params": "Microsoft.Maui.Graphics.Rect bounds",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "MapText": {
+    "params": "Microsoft.Maui.Handlers.IEditorHandler handler, Microsoft.Maui.Controls.Editor editor",
+    "returns": "void"
+   },
+   "MeasureOverride": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "OnHorizontalTextAlignmentPropertyChanged": {
+    "params": "Microsoft.Maui.TextAlignment oldValue, Microsoft.Maui.TextAlignment newValue",
+    "returns": "void"
+   },
+   "OnTextChanged": {
+    "params": "string oldValue, string newValue",
+    "returns": "void"
+   },
+   "SendCompleted": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "SearchBar": {
+  "facet_widget": "search_field",
+  "writes": {
+   "CancelButtonColor": "Microsoft.Maui.Graphics.Color",
+   "HorizontalTextAlignment": "Microsoft.Maui.TextAlignment",
+   "ReturnType": "Microsoft.Maui.ReturnType",
+   "SearchCommand": "System.Windows.Input.ICommand",
+   "SearchCommandParameter": "object",
+   "SearchIconColor": "Microsoft.Maui.Graphics.Color",
+   "VerticalTextAlignment": "Microsoft.Maui.TextAlignment"
+  },
+  "reads": {
+   "IsEnabledCore": "bool"
+  },
+  "events": {
+   "SearchButtonPressed": ""
+  },
+  "methods": {
+   "MapText": {
+    "params": "Microsoft.Maui.Handlers.SearchBarHandler handler, Microsoft.Maui.Controls.SearchBar searchBar",
+    "returns": "void"
+   },
+   "OnSearchButtonPressed": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "Picker": {
+  "facet_widget": "popup",
+  "writes": {
+   "CharacterSpacing": "double",
+   "FontAttributes": "Microsoft.Maui.Controls.FontAttributes",
+   "FontAutoScalingEnabled": "bool",
+   "FontFamily": "string",
+   "FontSize": "double",
+   "HorizontalTextAlignment": "Microsoft.Maui.TextAlignment",
+   "IsOpen": "bool",
+   "ItemDisplayBinding": "Microsoft.Maui.Controls.BindingBase",
+   "ItemsSource": "System.Collections.IList",
+   "SelectedIndex": "int",
+   "SelectedItem": "object",
+   "TextColor": "Microsoft.Maui.Graphics.Color",
+   "Title": "string",
+   "TitleColor": "Microsoft.Maui.Graphics.Color",
+   "VerticalTextAlignment": "Microsoft.Maui.TextAlignment"
+  },
+  "reads": {
+   "Items": "System.Collections.Generic.IList<string>"
+  },
+  "events": {
+   "Closed": "Microsoft.Maui.Controls.PickerClosedEventArgs",
+   "Opened": "Microsoft.Maui.Controls.PickerOpenedEventArgs",
+   "SelectedIndexChanged": ""
+  },
+  "methods": {
+   "OnHandlerChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "UpdateFormsText": {
+    "params": "string source, Microsoft.Maui.TextTransform textTransform",
+    "returns": "string"
+   }
+  }
+ },
+ "Slider": {
+  "facet_widget": "slider",
+  "writes": {
+   "DragCompletedCommand": "System.Windows.Input.ICommand",
+   "DragStartedCommand": "System.Windows.Input.ICommand",
+   "Maximum": "double",
+   "MaximumTrackColor": "Microsoft.Maui.Graphics.Color",
+   "Minimum": "double",
+   "MinimumTrackColor": "Microsoft.Maui.Graphics.Color",
+   "ThumbColor": "Microsoft.Maui.Graphics.Color",
+   "ThumbImageSource": "Microsoft.Maui.Controls.ImageSource",
+   "Value": "double"
+  },
+  "reads": {},
+  "events": {
+   "DragCompleted": "",
+   "DragStarted": "",
+   "ValueChanged": "Microsoft.Maui.Controls.ValueChangedEventArgs"
+  },
+  "methods": {}
+ },
+ "Stepper": {
+  "facet_widget": "stepper",
+  "writes": {
+   "Increment": "double",
+   "Maximum": "double",
+   "Minimum": "double",
+   "Value": "double"
+  },
+  "reads": {},
+  "events": {
+   "ValueChanged": "Microsoft.Maui.Controls.ValueChangedEventArgs"
+  },
+  "methods": {}
+ },
+ "Switch": {
+  "facet_widget": "toggle",
+  "writes": {
+   "IsToggled": "bool",
+   "OffColor": "Microsoft.Maui.Graphics.Color",
+   "OnColor": "Microsoft.Maui.Graphics.Color",
+   "ThumbColor": "Microsoft.Maui.Graphics.Color"
+  },
+  "reads": {},
+  "events": {
+   "Toggled": "Microsoft.Maui.Controls.ToggledEventArgs"
+  },
+  "methods": {
+   "ChangeVisualState": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnPropertyChanged": {
+    "params": "string propertyName = null",
+    "returns": "void"
+   }
+  }
+ },
+ "DatePicker": {
+  "facet_widget": "date_picker",
+  "writes": {
+   "CharacterSpacing": "double",
+   "Date": "System.DateTime",
+   "FontAttributes": "Microsoft.Maui.Controls.FontAttributes",
+   "FontAutoScalingEnabled": "bool",
+   "FontFamily": "string",
+   "FontSize": "double",
+   "Format": "string",
+   "IsOpen": "bool",
+   "MaximumDate": "System.DateTime",
+   "MinimumDate": "System.DateTime",
+   "TextColor": "Microsoft.Maui.Graphics.Color"
+  },
+  "reads": {},
+  "events": {
+   "Closed": "Microsoft.Maui.Controls.DatePickerClosedEventArgs",
+   "DateSelected": "Microsoft.Maui.Controls.DateChangedEventArgs",
+   "Opened": "Microsoft.Maui.Controls.DatePickerOpenedEventArgs"
+  },
+  "methods": {
+   "OnHandlerChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "UpdateFormsText": {
+    "params": "string source, Microsoft.Maui.TextTransform textTransform",
+    "returns": "string"
+   }
+  }
+ },
+ "TimePicker": {
+  "facet_widget": "time_picker",
+  "writes": {
+   "CharacterSpacing": "double",
+   "FontAttributes": "Microsoft.Maui.Controls.FontAttributes",
+   "FontAutoScalingEnabled": "bool",
+   "FontFamily": "string",
+   "FontSize": "double",
+   "Format": "string",
+   "IsOpen": "bool",
+   "TextColor": "Microsoft.Maui.Graphics.Color",
+   "Time": "System.TimeSpan"
+  },
+  "reads": {},
+  "events": {
+   "Closed": "Microsoft.Maui.Controls.TimePickerClosedEventArgs",
+   "Opened": "Microsoft.Maui.Controls.TimePickerOpenedEventArgs",
+   "TimeSelected": "Microsoft.Maui.Controls.TimeChangedEventArgs"
+  },
+  "methods": {
+   "OnHandlerChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "UpdateFormsText": {
+    "params": "string source, Microsoft.Maui.TextTransform textTransform",
+    "returns": "string"
+   }
+  }
+ },
+ "ProgressBar": {
+  "facet_widget": "progress",
+  "writes": {
+   "Progress": "double",
+   "ProgressColor": "Microsoft.Maui.Graphics.Color"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {
+   "ProgressTo": {
+    "params": "double value, uint length, Microsoft.Maui.Easing easing",
+    "returns": "System.Threading.Tasks.Task<bool>"
+   }
+  }
+ },
+ "ActivityIndicator": {
+  "facet_widget": "spinner",
+  "writes": {
+   "Color": "Microsoft.Maui.Graphics.Color",
+   "IsRunning": "bool"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {}
+ },
+ "Image": {
+  "facet_widget": "image",
+  "writes": {
+   "Aspect": "Microsoft.Maui.Aspect",
+   "IsAnimationPlaying": "bool",
+   "IsOpaque": "bool",
+   "Source": "Microsoft.Maui.Controls.ImageSource"
+  },
+  "reads": {
+   "IsLoading": "bool"
+  },
+  "events": {},
+  "methods": {
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   }
+  }
+ },
+ "CollectionView": {
+  "facet_widget": "grid/list",
+  "writes": {},
+  "reads": {},
+  "events": {},
+  "methods": {}
+ },
+ "ListView": {
+  "facet_widget": "list",
+  "writes": {
+   "Footer": "object",
+   "FooterTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "GroupDisplayBinding": "Microsoft.Maui.Controls.BindingBase",
+   "GroupHeaderTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "GroupShortNameBinding": "Microsoft.Maui.Controls.BindingBase",
+   "HasUnevenRows": "bool",
+   "Header": "object",
+   "HeaderTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "HorizontalScrollBarVisibility": "Microsoft.Maui.ScrollBarVisibility",
+   "IsGroupingEnabled": "bool",
+   "IsPullToRefreshEnabled": "bool",
+   "IsRefreshing": "bool",
+   "RefreshAllowed": "bool",
+   "RefreshCommand": "System.Windows.Input.ICommand",
+   "RefreshControlColor": "Microsoft.Maui.Graphics.Color",
+   "RowHeight": "int",
+   "SelectedItem": "object",
+   "SelectionMode": "Microsoft.Maui.Controls.ListViewSelectionMode",
+   "SeparatorColor": "Microsoft.Maui.Graphics.Color",
+   "SeparatorVisibility": "Microsoft.Maui.Controls.SeparatorVisibility",
+   "VerticalScrollBarVisibility": "Microsoft.Maui.ScrollBarVisibility"
+  },
+  "reads": {
+   "CachingStrategy": "Microsoft.Maui.Controls.ListViewCachingStrategy",
+   "FooterElement": "Microsoft.Maui.Controls.Element",
+   "HeaderElement": "Microsoft.Maui.Controls.Element"
+  },
+  "events": {
+   "ItemAppearing": "Microsoft.Maui.Controls.ItemVisibilityEventArgs",
+   "ItemDisappearing": "Microsoft.Maui.Controls.ItemVisibilityEventArgs",
+   "ItemSelected": "Microsoft.Maui.Controls.SelectedItemChangedEventArgs",
+   "ItemTapped": "Microsoft.Maui.Controls.ItemTappedEventArgs",
+   "Refreshing": "",
+   "ScrollToRequested": "Microsoft.Maui.Controls.ScrollToRequestedEventArgs",
+   "Scrolled": "Microsoft.Maui.Controls.ScrolledEventArgs"
+  },
+  "methods": {
+   "BeginRefresh": {
+    "params": "",
+    "returns": "void"
+   },
+   "CreateDefault": {
+    "params": "object item",
+    "returns": "Microsoft.Maui.Controls.Cell"
+   },
+   "CreateDefaultCell": {
+    "params": "object item",
+    "returns": "Microsoft.Maui.Controls.Cell"
+   },
+   "EndRefresh": {
+    "params": "",
+    "returns": "void"
+   },
+   "GetDisplayTextFromGroup": {
+    "params": "object cell",
+    "returns": "string"
+   },
+   "NotifyRowTapped": {
+    "params": "int index, Microsoft.Maui.Controls.Cell cell, bool isContextmenuRequested",
+    "returns": "void"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "ScrollTo": {
+    "params": "object item, object group, Microsoft.Maui.Controls.ScrollToPosition position, bool animated",
+    "returns": "void"
+   },
+   "SendCellAppearing": {
+    "params": "Microsoft.Maui.Controls.Cell cell",
+    "returns": "void"
+   },
+   "SendCellDisappearing": {
+    "params": "Microsoft.Maui.Controls.Cell cell",
+    "returns": "void"
+   },
+   "SendRefreshing": {
+    "params": "",
+    "returns": "void"
+   },
+   "SendScrolled": {
+    "params": "Microsoft.Maui.Controls.ScrolledEventArgs args",
+    "returns": "void"
+   },
+   "SetupContent": {
+    "params": "Microsoft.Maui.Controls.Cell content, int index",
+    "returns": "void"
+   },
+   "UnhookContent": {
+    "params": "Microsoft.Maui.Controls.Cell content",
+    "returns": "void"
+   },
+   "ValidateItemTemplate": {
+    "params": "Microsoft.Maui.Controls.DataTemplate template",
+    "returns": "bool"
+   }
+  }
+ },
+ "TableView": {
+  "facet_widget": "table",
+  "writes": {
+   "HasUnevenRows": "bool",
+   "Intent": "Microsoft.Maui.Controls.TableIntent",
+   "Model": "Microsoft.Maui.Controls.Internals.TableModel",
+   "Root": "Microsoft.Maui.Controls.TableRoot",
+   "RowHeight": "int"
+  },
+  "reads": {},
+  "events": {
+   "ModelChanged": ""
+  },
+  "methods": {
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "OnModelChanged": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "TabbedPage": {
+  "facet_widget": "tabs",
+  "writes": {
+   "BarBackground": "Microsoft.Maui.Controls.Brush",
+   "BarBackgroundColor": "Microsoft.Maui.Graphics.Color",
+   "BarTextColor": "Microsoft.Maui.Graphics.Color",
+   "SelectedTabColor": "Microsoft.Maui.Graphics.Color",
+   "UnselectedTabColor": "Microsoft.Maui.Graphics.Color"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {
+   "CreateDefault": {
+    "params": "object item",
+    "returns": "Microsoft.Maui.Controls.Page"
+   },
+   "LayoutChildren": {
+    "params": "double x, double y, double width, double height",
+    "returns": "void"
+   }
+  }
+ },
+ "CheckBox": {
+  "facet_widget": "checkbox",
+  "writes": {
+   "Color": "Microsoft.Maui.Graphics.Color",
+   "Command": "System.Windows.Input.ICommand",
+   "CommandParameter": "object",
+   "IsChecked": "bool"
+  },
+  "reads": {
+   "Foreground": "Microsoft.Maui.Graphics.Paint",
+   "IsEnabledCore": "bool"
+  },
+  "events": {
+   "CheckedChanged": "Microsoft.Maui.Controls.CheckedChangedEventArgs"
+  },
+  "methods": {
+   "ChangeVisualState": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "RadioButton": {
+  "facet_widget": "radio",
+  "writes": {
+   "BorderColor": "Microsoft.Maui.Graphics.Color",
+   "BorderWidth": "double",
+   "CharacterSpacing": "double",
+   "Content": "object",
+   "CornerRadius": "int",
+   "FontAttributes": "Microsoft.Maui.Controls.FontAttributes",
+   "FontAutoScalingEnabled": "bool",
+   "FontFamily": "string",
+   "FontSize": "double",
+   "GroupName": "string",
+   "IsChecked": "bool",
+   "TextColor": "Microsoft.Maui.Graphics.Color",
+   "TextTransform": "Microsoft.Maui.TextTransform",
+   "Value": "object"
+  },
+  "reads": {
+   "DefaultTemplate": "Microsoft.Maui.Controls.ControlTemplate"
+  },
+  "events": {
+   "CheckedChanged": "Microsoft.Maui.Controls.CheckedChangedEventArgs"
+  },
+  "methods": {
+   "ChangeVisualState": {
+    "params": "",
+    "returns": "void"
+   },
+   "ContentAsString": {
+    "params": "",
+    "returns": "string"
+   },
+   "MapContent": {
+    "params": "Microsoft.Maui.Handlers.RadioButtonHandler handler, Microsoft.Maui.Controls.RadioButton radioButton",
+    "returns": "void"
+   },
+   "OnApplyTemplate": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "OnPropertyChanged": {
+    "params": "string propertyName = null",
+    "returns": "void"
+   },
+   "UpdateFormsText": {
+    "params": "string source, Microsoft.Maui.TextTransform textTransform",
+    "returns": "string"
+   }
+  }
+ },
+ "BoxView": {
+  "facet_widget": "box",
+  "writes": {
+   "Color": "Microsoft.Maui.Graphics.Color",
+   "CornerRadius": "Microsoft.Maui.CornerRadius"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "OnPropertyChanged": {
+    "params": "string? propertyName = null",
+    "returns": "void"
+   }
+  }
+ },
+ "Border": {
+  "facet_widget": "bordered",
+  "writes": {
+   "Content": "Microsoft.Maui.Controls.View",
+   "Padding": "Microsoft.Maui.Thickness",
+   "SafeAreaEdges": "Microsoft.Maui.SafeAreaEdges",
+   "Stroke": "Microsoft.Maui.Controls.Brush",
+   "StrokeDashArray": "Microsoft.Maui.Controls.DoubleCollection",
+   "StrokeDashOffset": "double",
+   "StrokeLineCap": "Microsoft.Maui.Controls.Shapes.PenLineCap",
+   "StrokeLineJoin": "Microsoft.Maui.Controls.Shapes.PenLineJoin",
+   "StrokeMiterLimit": "double",
+   "StrokeShape": "Microsoft.Maui.Graphics.IShape",
+   "StrokeThickness": "double"
+  },
+  "reads": {
+   "StrokeDashPattern": "float[]"
+  },
+  "events": {},
+  "methods": {
+   "ContentChanged": {
+    "params": "Microsoft.Maui.Controls.BindableObject! bindable, object! oldValue, object! newValue",
+    "returns": "void"
+   },
+   "CrossPlatformArrange": {
+    "params": "Microsoft.Maui.Graphics.Rect bounds",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "CrossPlatformMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "OnPaddingPropertyChanged": {
+    "params": "Microsoft.Maui.Thickness oldValue, Microsoft.Maui.Thickness newValue",
+    "returns": "void"
+   },
+   "OnPropertyChanged": {
+    "params": "string? propertyName = null",
+    "returns": "void"
+   },
+   "PaddingDefaultValueCreator": {
+    "params": "",
+    "returns": "Microsoft.Maui.Thickness"
+   },
+   "StrokeThicknessChanged": {
+    "params": "Microsoft.Maui.Controls.BindableObject! bindable, object! oldValue, object! newValue",
+    "returns": "void"
+   }
+  }
+ },
+ "ScrollView": {
+  "facet_widget": "scroll",
+  "writes": {
+   "CascadeInputTransparent": "bool",
+   "Content": "Microsoft.Maui.Controls.View",
+   "HorizontalScrollBarVisibility": "Microsoft.Maui.ScrollBarVisibility",
+   "LayoutAreaOverride": "Microsoft.Maui.Graphics.Rect",
+   "Orientation": "Microsoft.Maui.ScrollOrientation",
+   "Padding": "Microsoft.Maui.Thickness",
+   "SafeAreaEdges": "Microsoft.Maui.SafeAreaEdges",
+   "VerticalScrollBarVisibility": "Microsoft.Maui.ScrollBarVisibility"
+  },
+  "reads": {
+   "Children": "System.Collections.Generic.IReadOnlyList<Microsoft.Maui.Controls.Element>",
+   "ContentSize": "Microsoft.Maui.Graphics.Size",
+   "ScrollX": "double",
+   "ScrollY": "double"
+  },
+  "events": {
+   "ScrollToRequested": "Microsoft.Maui.Controls.ScrollToRequestedEventArgs",
+   "Scrolled": "Microsoft.Maui.Controls.ScrolledEventArgs"
+  },
+  "methods": {
+   "ArrangeOverride": {
+    "params": "Microsoft.Maui.Graphics.Rect bounds",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "ComputeConstraintForView": {
+    "params": "Microsoft.Maui.Controls.View view",
+    "returns": "Microsoft.Maui.Controls.LayoutConstraint"
+   },
+   "GetScrollPositionForElement": {
+    "params": "Microsoft.Maui.Controls.VisualElement item, Microsoft.Maui.Controls.ScrollToPosition pos",
+    "returns": "Microsoft.Maui.Graphics.Point"
+   },
+   "InvalidateLayout": {
+    "params": "",
+    "returns": "void"
+   },
+   "LayoutChildren": {
+    "params": "double x, double y, double width, double height",
+    "returns": "void"
+   },
+   "LowerChild": {
+    "params": "Microsoft.Maui.Controls.View view",
+    "returns": "void"
+   },
+   "Measure": {
+    "params": "double widthConstraint, double heightConstraint, Microsoft.Maui.Controls.MeasureFlags flags = Microsoft.Maui.Controls.MeasureFlags.None",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "MeasureOverride": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "OnChildMeasureInvalidated": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "OnSizeAllocated": {
+    "params": "double width, double height",
+    "returns": "void"
+   },
+   "RaiseChild": {
+    "params": "Microsoft.Maui.Controls.View view",
+    "returns": "void"
+   },
+   "ScrollToAsync": {
+    "params": "Microsoft.Maui.Controls.Element element, Microsoft.Maui.Controls.ScrollToPosition position, bool animated",
+    "returns": "System.Threading.Tasks.Task"
+   },
+   "SendScrollFinished": {
+    "params": "",
+    "returns": "void"
+   },
+   "SetScrolledPosition": {
+    "params": "double x, double y",
+    "returns": "void"
+   },
+   "ShouldInvalidateOnChildAdded": {
+    "params": "Microsoft.Maui.Controls.View child",
+    "returns": "bool"
+   },
+   "ShouldInvalidateOnChildRemoved": {
+    "params": "Microsoft.Maui.Controls.View child",
+    "returns": "bool"
+   },
+   "UpdateChildrenLayout": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "ImageButton": {
+  "facet_widget": "icon_button",
+  "writes": {
+   "Aspect": "Microsoft.Maui.Aspect",
+   "BorderColor": "Microsoft.Maui.Graphics.Color",
+   "BorderWidth": "double",
+   "Command": "System.Windows.Input.ICommand",
+   "CommandParameter": "object",
+   "CornerRadius": "int",
+   "IsOpaque": "bool",
+   "Padding": "Microsoft.Maui.Thickness",
+   "Source": "Microsoft.Maui.Controls.ImageSource"
+  },
+  "reads": {
+   "IsEnabledCore": "bool",
+   "IsLoading": "bool",
+   "IsPressed": "bool"
+  },
+  "events": {
+   "Clicked": "",
+   "Pressed": "",
+   "Released": ""
+  },
+  "methods": {
+   "ChangeVisualState": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "OnPropertyChanged": {
+    "params": "string propertyName = null",
+    "returns": "void"
+   },
+   "PropagateUpClicked": {
+    "params": "",
+    "returns": "void"
+   },
+   "PropagateUpPressed": {
+    "params": "",
+    "returns": "void"
+   },
+   "PropagateUpReleased": {
+    "params": "",
+    "returns": "void"
+   },
+   "RaiseImageSourcePropertyChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "SendClicked": {
+    "params": "",
+    "returns": "void"
+   },
+   "SendPressed": {
+    "params": "",
+    "returns": "void"
+   },
+   "SendReleased": {
+    "params": "",
+    "returns": "void"
+   },
+   "SetIsLoading": {
+    "params": "bool isLoading",
+    "returns": "void"
+   },
+   "SetIsPressed": {
+    "params": "bool isPressed",
+    "returns": "void"
+   }
+  }
+ },
+ "WebView": {
+  "facet_widget": "web",
+  "writes": {
+   "Cookies": "System.Net.CookieContainer",
+   "Source": "Microsoft.Maui.Controls.WebViewSource",
+   "UserAgent": "string"
+  },
+  "reads": {
+   "CanGoBack": "bool",
+   "CanGoForward": "bool"
+  },
+  "events": {
+   "Navigated": "Microsoft.Maui.Controls.WebNavigatedEventArgs",
+   "Navigating": "Microsoft.Maui.Controls.WebNavigatingEventArgs",
+   "ProcessTerminated": "Microsoft.Maui.Controls.WebViewProcessTerminatedEventArgs"
+  },
+  "methods": {
+   "Eval": {
+    "params": "string script",
+    "returns": "void"
+   },
+   "EvaluateJavaScriptAsync": {
+    "params": "string script",
+    "returns": "System.Threading.Tasks.Task<string>"
+   },
+   "GoBack": {
+    "params": "",
+    "returns": "void"
+   },
+   "GoForward": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnPropertyChanged": {
+    "params": "string propertyName",
+    "returns": "void"
+   },
+   "OnSourceChanged": {
+    "params": "object sender, System.EventArgs e",
+    "returns": "void"
+   },
+   "Reload": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "HybridWebView": {
+  "facet_widget": "web (bridged)",
+  "writes": {
+   "DefaultFile": "string",
+   "HybridRoot": "string"
+  },
+  "reads": {},
+  "events": {
+   "RawMessageReceived": "Microsoft.Maui.Controls.HybridWebViewRawMessageReceivedEventArgs",
+   "WebResourceRequested": "Microsoft.Maui.Controls.WebViewWebResourceRequestedEventArgs",
+   "WebViewInitialized": "Microsoft.Maui.Controls.WebViewInitializedEventArgs",
+   "WebViewInitializing": "Microsoft.Maui.Controls.WebViewInitializingEventArgs"
+  },
+  "methods": {
+   "EvaluateJavaScriptAsync": {
+    "params": "string! script",
+    "returns": "System.Threading.Tasks.Task<string?>"
+   },
+   "InvokeJavaScriptAsync": {
+    "params": "string! methodName, object?[]? paramValues = null, System.Text.Json.Serialization.Metadata.JsonTypeInfo?[]? paramJsonTypeInfos = null",
+    "returns": "System.Threading.Tasks.Task"
+   },
+   "SendRawMessage": {
+    "params": "string! rawMessage",
+    "returns": "void"
+   }
+  }
+ },
+ "GraphicsView": {
+  "facet_widget": "canvas",
+  "writes": {
+   "Drawable": "Microsoft.Maui.Graphics.IDrawable"
+  },
+  "reads": {},
+  "events": {
+   "CancelInteraction": "",
+   "DragInteraction": "Microsoft.Maui.Controls.TouchEventArgs",
+   "EndHoverInteraction": "",
+   "EndInteraction": "Microsoft.Maui.Controls.TouchEventArgs",
+   "MoveHoverInteraction": "Microsoft.Maui.Controls.TouchEventArgs",
+   "StartHoverInteraction": "Microsoft.Maui.Controls.TouchEventArgs",
+   "StartInteraction": "Microsoft.Maui.Controls.TouchEventArgs"
+  },
+  "methods": {
+   "Invalidate": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "RefreshView": {
+  "facet_widget": "refreshable",
+  "writes": {
+   "Command": "System.Windows.Input.ICommand",
+   "CommandParameter": "object",
+   "IsRefreshEnabled": "bool",
+   "IsRefreshing": "bool",
+   "RefreshColor": "Microsoft.Maui.Graphics.Color"
+  },
+  "reads": {
+   "IsEnabledCore": "bool"
+  },
+  "events": {
+   "Refreshing": ""
+  },
+  "methods": {
+   "OnPropertyChanged": {
+    "params": "string propertyName = null",
+    "returns": "void"
+   }
+  }
+ },
+ "SwipeView": {
+  "facet_widget": "swipeable",
+  "writes": {
+   "BottomItems": "Microsoft.Maui.Controls.SwipeItems",
+   "LeftItems": "Microsoft.Maui.Controls.SwipeItems",
+   "RightItems": "Microsoft.Maui.Controls.SwipeItems",
+   "Threshold": "double",
+   "TopItems": "Microsoft.Maui.Controls.SwipeItems"
+  },
+  "reads": {},
+  "events": {
+   "CloseRequested": "Microsoft.Maui.Controls.CloseRequestedEventArgs",
+   "OpenRequested": "Microsoft.Maui.Controls.OpenRequestedEventArgs",
+   "SwipeChanging": "Microsoft.Maui.Controls.SwipeChangingEventArgs",
+   "SwipeEnded": "Microsoft.Maui.Controls.SwipeEndedEventArgs",
+   "SwipeStarted": "Microsoft.Maui.Controls.SwipeStartedEventArgs"
+  },
+  "methods": {
+   "Close": {
+    "params": "bool animated = true",
+    "returns": "void"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnChildAdded": {
+    "params": "Microsoft.Maui.Controls.Element! child",
+    "returns": "void"
+   },
+   "OnChildRemoved": {
+    "params": "Microsoft.Maui.Controls.Element! child, int oldLogicalIndex",
+    "returns": "void"
+   },
+   "Open": {
+    "params": "Microsoft.Maui.OpenSwipeItem openSwipeItem, bool animated = true",
+    "returns": "void"
+   }
+  }
+ },
+ "SwipeItem": {
+  "facet_widget": "swipe action",
+  "writes": {
+   "BackgroundColor": "Microsoft.Maui.Graphics.Color",
+   "IsVisible": "bool"
+  },
+  "reads": {},
+  "events": {
+   "Invoked": "System.EventArgs"
+  },
+  "methods": {}
+ },
+ "CarouselView": {
+  "facet_widget": "carousel",
+  "writes": {
+   "CurrentItem": "object",
+   "CurrentItemChangedCommand": "System.Windows.Input.ICommand",
+   "CurrentItemChangedCommandParameter": "object",
+   "IsBounceEnabled": "bool",
+   "IsScrollAnimated": "bool",
+   "IsScrolling": "bool",
+   "IsSwipeEnabled": "bool",
+   "ItemsLayout": "Microsoft.Maui.Controls.LinearItemsLayout",
+   "Loop": "bool",
+   "PeekAreaInsets": "Microsoft.Maui.Thickness",
+   "Position": "int",
+   "PositionChangedCommand": "System.Windows.Input.ICommand",
+   "PositionChangedCommandParameter": "object"
+  },
+  "reads": {
+   "AnimateCurrentItemChanges": "bool",
+   "AnimatePositionChanges": "bool",
+   "IsDragging": "bool",
+   "VisibleViews": "System.Collections.ObjectModel.ObservableCollection<Microsoft.Maui.Controls.View>"
+  },
+  "events": {
+   "CurrentItemChanged": "Microsoft.Maui.Controls.CurrentItemChangedEventArgs",
+   "PositionChanged": "Microsoft.Maui.Controls.PositionChangedEventArgs"
+  },
+  "methods": {
+   "OnCurrentItemChanged": {
+    "params": "System.EventArgs args",
+    "returns": "void"
+   },
+   "OnPositionChanged": {
+    "params": "Microsoft.Maui.Controls.PositionChangedEventArgs args",
+    "returns": "void"
+   },
+   "SetIsDragging": {
+    "params": "bool value",
+    "returns": "void"
+   }
+  }
+ },
+ "IndicatorView": {
+  "facet_widget": "page_dots",
+  "writes": {
+   "Count": "int",
+   "HideSingle": "bool",
+   "IndicatorColor": "Microsoft.Maui.Graphics.Color",
+   "IndicatorLayout": "Microsoft.Maui.Controls.IBindableLayout",
+   "IndicatorSize": "double",
+   "IndicatorTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "IndicatorsShape": "Microsoft.Maui.Controls.IndicatorShape",
+   "ItemsSource": "System.Collections.IEnumerable",
+   "MaximumVisible": "int",
+   "Position": "int",
+   "SelectedIndicatorColor": "Microsoft.Maui.Graphics.Color"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   }
+  }
+ },
+ "Span": {
+  "facet_widget": "span",
+  "writes": {
+   "BackgroundColor": "Microsoft.Maui.Graphics.Color",
+   "CharacterSpacing": "double",
+   "FontAttributes": "Microsoft.Maui.Controls.FontAttributes",
+   "FontAutoScalingEnabled": "bool",
+   "FontFamily": "string",
+   "FontSize": "double",
+   "LineHeight": "double",
+   "Style": "Microsoft.Maui.Controls.Style",
+   "Text": "string",
+   "TextColor": "Microsoft.Maui.Graphics.Color",
+   "TextDecorations": "Microsoft.Maui.TextDecorations",
+   "TextTransform": "Microsoft.Maui.TextTransform"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "UpdateFormsText": {
+    "params": "string source, Microsoft.Maui.TextTransform textTransform",
+    "returns": "string"
+   }
+  }
+ },
+ "MenuItem": {
+  "facet_widget": "menu_item",
+  "writes": {
+   "Command": "System.Windows.Input.ICommand",
+   "CommandParameter": "object",
+   "IconImageSource": "Microsoft.Maui.Controls.ImageSource",
+   "IsDestructive": "bool",
+   "IsEnabled": "bool",
+   "Text": "string"
+  },
+  "reads": {},
+  "events": {
+   "Clicked": ""
+  },
+  "methods": {
+   "OnClicked": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "MenuBarItem": {
+  "facet_widget": "menu",
+  "writes": {
+   "IsEnabled": "bool",
+   "Priority": "int",
+   "Text": "string"
+  },
+  "reads": {
+   "Count": "int",
+   "IsReadOnly": "bool"
+  },
+  "events": {},
+  "methods": {
+   "Add": {
+    "params": "Microsoft.Maui.IMenuElement item",
+    "returns": "void"
+   },
+   "Clear": {
+    "params": "",
+    "returns": "void"
+   },
+   "Contains": {
+    "params": "Microsoft.Maui.IMenuElement item",
+    "returns": "bool"
+   },
+   "CopyTo": {
+    "params": "Microsoft.Maui.IMenuElement[] array, int arrayIndex",
+    "returns": "void"
+   },
+   "GetEnumerator": {
+    "params": "",
+    "returns": "System.Collections.Generic.IEnumerator<Microsoft.Maui.IMenuElement>"
+   },
+   "IndexOf": {
+    "params": "Microsoft.Maui.IMenuElement item",
+    "returns": "int"
+   },
+   "Insert": {
+    "params": "int index, Microsoft.Maui.IMenuElement item",
+    "returns": "void"
+   },
+   "Remove": {
+    "params": "Microsoft.Maui.IMenuElement item",
+    "returns": "bool"
+   },
+   "RemoveAt": {
+    "params": "int index",
+    "returns": "void"
+   }
+  }
+ },
+ "MenuFlyout": {
+  "facet_widget": "context_menu",
+  "writes": {},
+  "reads": {
+   "Count": "int",
+   "IsReadOnly": "bool"
+  },
+  "events": {},
+  "methods": {
+   "Add": {
+    "params": "Microsoft.Maui.IMenuElement item",
+    "returns": "void"
+   },
+   "Clear": {
+    "params": "",
+    "returns": "void"
+   },
+   "Contains": {
+    "params": "Microsoft.Maui.IMenuElement item",
+    "returns": "bool"
+   },
+   "CopyTo": {
+    "params": "Microsoft.Maui.IMenuElement[] array, int arrayIndex",
+    "returns": "void"
+   },
+   "GetEnumerator": {
+    "params": "",
+    "returns": "System.Collections.Generic.IEnumerator<Microsoft.Maui.IMenuElement>"
+   },
+   "IndexOf": {
+    "params": "Microsoft.Maui.IMenuElement item",
+    "returns": "int"
+   },
+   "Insert": {
+    "params": "int index, Microsoft.Maui.IMenuElement item",
+    "returns": "void"
+   },
+   "Remove": {
+    "params": "Microsoft.Maui.IMenuElement item",
+    "returns": "bool"
+   },
+   "RemoveAt": {
+    "params": "int index",
+    "returns": "void"
+   }
+  }
+ },
+ "MenuFlyoutItem": {
+  "facet_widget": "context_menu_item",
+  "writes": {},
+  "reads": {
+   "KeyboardAccelerators": "System.Collections.Generic.IList<Microsoft.Maui.Controls.KeyboardAccelerator!>"
+  },
+  "events": {},
+  "methods": {}
+ },
+ "ToolbarItem": {
+  "facet_widget": "toolbar_item",
+  "writes": {
+   "Order": "Microsoft.Maui.Controls.ToolbarItemOrder",
+   "Priority": "int"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {}
+ },
+ "VisualElement": {
+  "applies_to": "every element",
+  "writes": {
+   "AnchorX": "double",
+   "AnchorY": "double",
+   "Background": "Microsoft.Maui.Controls.Brush",
+   "BackgroundColor": "Microsoft.Maui.Graphics.Color",
+   "Clip": "Microsoft.Maui.Controls.Shapes.Geometry",
+   "DesiredSize": "Microsoft.Maui.Graphics.Size",
+   "DisableLayout": "bool",
+   "FlowDirection": "Microsoft.Maui.FlowDirection",
+   "Frame": "Microsoft.Maui.Graphics.Rect",
+   "Handler": "Microsoft.Maui.IViewHandler",
+   "HeightRequest": "double",
+   "InputTransparent": "bool",
+   "IsEnabled": "bool",
+   "IsInPlatformLayout": "bool",
+   "IsPlatformEnabled": "bool",
+   "IsPlatformStateConsistent": "bool",
+   "IsVisible": "bool",
+   "MaximumHeightRequest": "double",
+   "MaximumWidthRequest": "double",
+   "MinimumHeightRequest": "double",
+   "MinimumWidthRequest": "double",
+   "Opacity": "double",
+   "Resources": "Microsoft.Maui.Controls.ResourceDictionary",
+   "Rotation": "double",
+   "RotationX": "double",
+   "RotationY": "double",
+   "Scale": "double",
+   "ScaleX": "double",
+   "ScaleY": "double",
+   "Shadow": "Microsoft.Maui.Controls.Shadow",
+   "TranslationX": "double",
+   "TranslationY": "double",
+   "Visual": "Microsoft.Maui.Controls.IVisual",
+   "WidthRequest": "double",
+   "ZIndex": "int"
+  },
+  "reads": {
+   "Batched": "bool",
+   "Behaviors": "System.Collections.Generic.IList<Microsoft.Maui.Controls.Behavior>",
+   "Bounds": "Microsoft.Maui.Graphics.Rect",
+   "Height": "double",
+   "IsEnabledCore": "bool",
+   "IsFocused": "bool",
+   "IsLoaded": "bool",
+   "Triggers": "System.Collections.Generic.IList<Microsoft.Maui.Controls.TriggerBase>",
+   "Width": "double",
+   "Window": "Microsoft.Maui.Controls.Window",
+   "X": "double",
+   "Y": "double"
+  },
+  "events": {
+   "BatchCommitted": "Microsoft.Maui.Controls.Internals.EventArg<Microsoft.Maui.Controls.VisualElement>",
+   "ChildrenReordered": "",
+   "FocusChangeRequested": "Microsoft.Maui.Controls.VisualElement.FocusRequestArgs",
+   "Focused": "Microsoft.Maui.Controls.FocusEventArgs",
+   "Loaded": "",
+   "MeasureInvalidated": "",
+   "SizeChanged": "",
+   "Unfocused": "Microsoft.Maui.Controls.FocusEventArgs",
+   "Unloaded": ""
+  },
+  "methods": {
+   "Arrange": {
+    "params": "Microsoft.Maui.Graphics.Rect bounds",
+    "returns": "void"
+   },
+   "ArrangeOverride": {
+    "params": "Microsoft.Maui.Graphics.Rect bounds",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "BatchBegin": {
+    "params": "",
+    "returns": "void"
+   },
+   "BatchCommit": {
+    "params": "",
+    "returns": "void"
+   },
+   "ChangeVisualState": {
+    "params": "",
+    "returns": "void"
+   },
+   "ComputeConstraintForView": {
+    "params": "Microsoft.Maui.Controls.View view",
+    "returns": "Microsoft.Maui.Controls.LayoutConstraint"
+   },
+   "Focus": {
+    "params": "",
+    "returns": "bool"
+   },
+   "InvalidateMeasure": {
+    "params": "",
+    "returns": "void"
+   },
+   "InvalidateMeasureNonVirtual": {
+    "params": "Microsoft.Maui.Controls.Internals.InvalidationTrigger trigger",
+    "returns": "void"
+   },
+   "InvalidateMeasureOverride": {
+    "params": "",
+    "returns": "void"
+   },
+   "Layout": {
+    "params": "Microsoft.Maui.Graphics.Rect bounds",
+    "returns": "void"
+   },
+   "MapBackgroundColor": {
+    "params": "Microsoft.Maui.IViewHandler handler, Microsoft.Maui.IView view",
+    "returns": "void"
+   },
+   "MapBackgroundImageSource": {
+    "params": "Microsoft.Maui.IViewHandler handler, Microsoft.Maui.IView view",
+    "returns": "void"
+   },
+   "Measure": {
+    "params": "double widthConstraint, double heightConstraint, Microsoft.Maui.Controls.MeasureFlags flags = Microsoft.Maui.Controls.MeasureFlags.None",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "MeasureOverride": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnChildAdded": {
+    "params": "Microsoft.Maui.Controls.Element child",
+    "returns": "void"
+   },
+   "OnChildRemoved": {
+    "params": "Microsoft.Maui.Controls.Element child, int oldLogicalIndex",
+    "returns": "void"
+   },
+   "OnChildrenReordered": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "OnSizeAllocated": {
+    "params": "double width, double height",
+    "returns": "void"
+   },
+   "PlatformSizeChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "RefreshIsEnabledProperty": {
+    "params": "",
+    "returns": "void"
+   },
+   "SizeAllocated": {
+    "params": "double width, double height",
+    "returns": "void"
+   },
+   "Unfocus": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "View": {
+  "applies_to": "every view",
+  "writes": {
+   "HorizontalOptions": "Microsoft.Maui.Controls.LayoutOptions",
+   "Margin": "Microsoft.Maui.Thickness",
+   "VerticalOptions": "Microsoft.Maui.Controls.LayoutOptions"
+  },
+  "reads": {
+   "GestureController": "Microsoft.Maui.Controls.Internals.IGestureController",
+   "GestureRecognizers": "System.Collections.Generic.IList<Microsoft.Maui.Controls.IGestureRecognizer>"
+  },
+  "events": {},
+  "methods": {
+   "ChangeVisualState": {
+    "params": "",
+    "returns": "void"
+   },
+   "GetChildElements": {
+    "params": "Microsoft.Maui.Graphics.Point point",
+    "returns": "System.Collections.Generic.IList<Microsoft.Maui.Controls.GestureElement>"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "InputView": {
+  "applies_to": "text inputs",
+  "writes": {
+   "CharacterSpacing": "double",
+   "CursorPosition": "int",
+   "FontAttributes": "Microsoft.Maui.Controls.FontAttributes",
+   "FontAutoScalingEnabled": "bool",
+   "FontFamily": "string",
+   "FontSize": "double",
+   "IsReadOnly": "bool",
+   "IsSpellCheckEnabled": "bool",
+   "IsTextPredictionEnabled": "bool",
+   "Keyboard": "Microsoft.Maui.Keyboard",
+   "MaxLength": "int",
+   "Placeholder": "string",
+   "PlaceholderColor": "Microsoft.Maui.Graphics.Color",
+   "SelectionLength": "int",
+   "Text": "string",
+   "TextColor": "Microsoft.Maui.Graphics.Color",
+   "TextTransform": "Microsoft.Maui.TextTransform"
+  },
+  "reads": {},
+  "events": {
+   "TextChanged": "Microsoft.Maui.Controls.TextChangedEventArgs"
+  },
+  "methods": {
+   "OnTextTransformChanged": {
+    "params": "Microsoft.Maui.TextTransform oldValue, Microsoft.Maui.TextTransform newValue",
+    "returns": "void"
+   },
+   "UpdateFormsText": {
+    "params": "string original, Microsoft.Maui.TextTransform transform",
+    "returns": "string"
+   }
+  }
+ },
+ "ItemsView": {
+  "applies_to": "collection views",
+  "writes": {
+   "EmptyView": "object",
+   "EmptyViewTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "HorizontalScrollBarVisibility": "Microsoft.Maui.ScrollBarVisibility",
+   "InternalItemsLayout": "Microsoft.Maui.Controls.IItemsLayout",
+   "ItemTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "ItemsSource": "System.Collections.IEnumerable",
+   "ItemsUpdatingScrollMode": "Microsoft.Maui.Controls.ItemsUpdatingScrollMode",
+   "RemainingItemsThreshold": "int",
+   "RemainingItemsThresholdReachedCommand": "System.Windows.Input.ICommand",
+   "RemainingItemsThresholdReachedCommandParameter": "object",
+   "VerticalScrollBarVisibility": "Microsoft.Maui.ScrollBarVisibility"
+  },
+  "reads": {},
+  "events": {
+   "RemainingItemsThresholdReached": "",
+   "ScrollToRequested": "Microsoft.Maui.Controls.ScrollToRequestEventArgs",
+   "Scrolled": "Microsoft.Maui.Controls.ItemsViewScrolledEventArgs"
+  },
+  "methods": {
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnMeasure": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.SizeRequest"
+   },
+   "OnRemainingItemsThresholdReached": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnScrollToRequested": {
+    "params": "Microsoft.Maui.Controls.ScrollToRequestEventArgs e",
+    "returns": "void"
+   },
+   "OnScrolled": {
+    "params": "Microsoft.Maui.Controls.ItemsViewScrolledEventArgs e",
+    "returns": "void"
+   },
+   "ScrollTo": {
+    "params": "int index, int groupIndex = -1, Microsoft.Maui.Controls.ScrollToPosition position = Microsoft.Maui.Controls.ScrollToPosition.MakeVisible, bool animate = true",
+    "returns": "void"
+   },
+   "SendRemainingItemsThresholdReached": {
+    "params": "",
+    "returns": "void"
+   },
+   "SendScrolled": {
+    "params": "Microsoft.Maui.Controls.ItemsViewScrolledEventArgs e",
+    "returns": "void"
+   }
+  }
+ },
+ "StructuredItemsView": {
+  "applies_to": "collection views (layout/header/footer)",
+  "writes": {
+   "Footer": "object",
+   "FooterTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "Header": "object",
+   "HeaderTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "ItemSizingStrategy": "Microsoft.Maui.Controls.ItemSizingStrategy",
+   "ItemsLayout": "Microsoft.Maui.Controls.IItemsLayout"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {}
+ },
+ "SelectableItemsView": {
+  "applies_to": "collection views (selection)",
+  "writes": {
+   "SelectedItem": "object",
+   "SelectedItems": "System.Collections.Generic.IList<object>",
+   "SelectionChangedCommand": "System.Windows.Input.ICommand",
+   "SelectionChangedCommandParameter": "object",
+   "SelectionMode": "Microsoft.Maui.Controls.SelectionMode"
+  },
+  "reads": {},
+  "events": {
+   "SelectionChanged": "Microsoft.Maui.Controls.SelectionChangedEventArgs"
+  },
+  "methods": {
+   "OnSelectionChanged": {
+    "params": "Microsoft.Maui.Controls.SelectionChangedEventArgs args",
+    "returns": "void"
+   },
+   "UpdateSelectedItems": {
+    "params": "System.Collections.Generic.IList<object> newSelection",
+    "returns": "void"
+   }
+  }
+ },
+ "GroupableItemsView": {
+  "applies_to": "collection views (grouping)",
+  "writes": {
+   "GroupFooterTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "GroupHeaderTemplate": "Microsoft.Maui.Controls.DataTemplate",
+   "IsGrouped": "bool"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {}
+ },
+ "ReorderableItemsView": {
+  "applies_to": "collection views (user reorder)",
+  "writes": {
+   "CanMixGroups": "bool",
+   "CanReorderItems": "bool"
+  },
+  "reads": {},
+  "events": {
+   "ReorderCompleted": ""
+  },
+  "methods": {
+   "SendReorderCompleted": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "GestureElement": {
+  "applies_to": "gesture hosts",
+  "writes": {},
+  "reads": {
+   "GestureRecognizers": "System.Collections.Generic.IList<Microsoft.Maui.Controls.IGestureRecognizer>"
+  },
+  "events": {},
+  "methods": {}
+ },
+ "TapGestureRecognizer": {
+  "role": "tap",
+  "writes": {
+   "Buttons": "Microsoft.Maui.Controls.ButtonsMask",
+   "Command": "System.Windows.Input.ICommand",
+   "CommandParameter": "object",
+   "NumberOfTapsRequired": "int"
+  },
+  "reads": {},
+  "events": {
+   "Tapped": "Microsoft.Maui.Controls.TappedEventArgs"
+  },
+  "methods": {}
+ },
+ "DragGestureRecognizer": {
+  "role": "drag source",
+  "writes": {
+   "CanDrag": "bool",
+   "DragStartingCommand": "System.Windows.Input.ICommand",
+   "DragStartingCommandParameter": "object",
+   "DropCompletedCommand": "System.Windows.Input.ICommand",
+   "DropCompletedCommandParameter": "object"
+  },
+  "reads": {},
+  "events": {
+   "DragStarting": "Microsoft.Maui.Controls.DragStartingEventArgs",
+   "DropCompleted": "Microsoft.Maui.Controls.DropCompletedEventArgs"
+  },
+  "methods": {}
+ },
+ "DropGestureRecognizer": {
+  "role": "drop target",
+  "writes": {
+   "AllowDrop": "bool",
+   "DragLeaveCommand": "System.Windows.Input.ICommand",
+   "DragLeaveCommandParameter": "object",
+   "DragOverCommand": "System.Windows.Input.ICommand",
+   "DragOverCommandParameter": "object",
+   "DropCommand": "System.Windows.Input.ICommand",
+   "DropCommandParameter": "object"
+  },
+  "reads": {},
+  "events": {
+   "DragLeave": "Microsoft.Maui.Controls.DragEventArgs",
+   "DragOver": "Microsoft.Maui.Controls.DragEventArgs",
+   "Drop": "Microsoft.Maui.Controls.DropEventArgs"
+  },
+  "methods": {
+   "SendDragOver": {
+    "params": "Microsoft.Maui.Controls.DragEventArgs args",
+    "returns": "void"
+   }
+  }
+ },
+ "PointerGestureRecognizer": {
+  "role": "pointer enter/exit/move",
+  "writes": {
+   "Buttons": "Microsoft.Maui.Controls.ButtonsMask",
+   "PointerEnteredCommand": "System.Windows.Input.ICommand",
+   "PointerEnteredCommandParameter": "object",
+   "PointerExitedCommand": "System.Windows.Input.ICommand",
+   "PointerExitedCommandParameter": "object",
+   "PointerMovedCommand": "System.Windows.Input.ICommand",
+   "PointerMovedCommandParameter": "object",
+   "PointerPressedCommand": "System.Windows.Input.ICommand",
+   "PointerPressedCommandParameter": "object",
+   "PointerReleasedCommand": "System.Windows.Input.ICommand",
+   "PointerReleasedCommandParameter": "object"
+  },
+  "reads": {},
+  "events": {
+   "PointerEntered": "Microsoft.Maui.Controls.PointerEventArgs",
+   "PointerExited": "Microsoft.Maui.Controls.PointerEventArgs",
+   "PointerMoved": "Microsoft.Maui.Controls.PointerEventArgs",
+   "PointerPressed": "Microsoft.Maui.Controls.PointerEventArgs",
+   "PointerReleased": "Microsoft.Maui.Controls.PointerEventArgs"
+  },
+  "methods": {}
+ },
+ "PinchGestureRecognizer": {
+  "role": "pinch zoom",
+  "writes": {},
+  "reads": {},
+  "events": {
+   "PinchUpdated": "Microsoft.Maui.Controls.PinchGestureUpdatedEventArgs"
+  },
+  "methods": {}
+ },
+ "PanGestureRecognizer": {
+  "role": "pan",
+  "writes": {
+   "TouchPoints": "int"
+  },
+  "reads": {
+   "CurrentId": "Microsoft.Maui.Controls.Internals.AutoId"
+  },
+  "events": {
+   "PanUpdated": "Microsoft.Maui.Controls.PanUpdatedEventArgs"
+  },
+  "methods": {}
+ },
+ "SwipeGestureRecognizer": {
+  "role": "swipe",
+  "writes": {
+   "Command": "System.Windows.Input.ICommand",
+   "CommandParameter": "object",
+   "Direction": "Microsoft.Maui.SwipeDirection",
+   "Threshold": "uint"
+  },
+  "reads": {},
+  "events": {
+   "Swiped": "Microsoft.Maui.Controls.SwipedEventArgs"
+  },
+  "methods": {
+   "SendSwiped": {
+    "params": "Microsoft.Maui.Controls.View sender, Microsoft.Maui.SwipeDirection direction",
+    "returns": "void"
+   }
+  }
+ },
+ "Window": {
+  "role": "the app window (X/Y/Width/Height, activation)",
+  "writes": {
+   "FlowDirection": "Microsoft.Maui.FlowDirection",
+   "Height": "double",
+   "IsMaximizable": "bool",
+   "IsMinimizable": "bool",
+   "MaximumHeight": "double",
+   "MaximumWidth": "double",
+   "MinimumHeight": "double",
+   "MinimumWidth": "double",
+   "Page": "Microsoft.Maui.Controls.Page",
+   "Title": "string",
+   "TitleBar": "Microsoft.Maui.ITitleBar",
+   "Width": "double",
+   "X": "double",
+   "Y": "double"
+  },
+  "reads": {
+   "DisplayDensity": "float",
+   "IsActivated": "bool",
+   "Overlays": "System.Collections.Generic.IReadOnlyCollection<Microsoft.Maui.IWindowOverlay!>",
+   "VisualDiagnosticsOverlay": "Microsoft.Maui.IVisualDiagnosticsOverlay"
+  },
+  "events": {
+   "Activated": "",
+   "Backgrounding": "Microsoft.Maui.Controls.BackgroundingEventArgs",
+   "Created": "",
+   "Deactivated": "",
+   "Destroying": "",
+   "DisplayDensityChanged": "Microsoft.Maui.Controls.DisplayDensityChangedEventArgs",
+   "ModalPopped": "Microsoft.Maui.Controls.ModalPoppedEventArgs",
+   "ModalPopping": "Microsoft.Maui.Controls.ModalPoppingEventArgs",
+   "ModalPushed": "Microsoft.Maui.Controls.ModalPushedEventArgs",
+   "ModalPushing": "Microsoft.Maui.Controls.ModalPushingEventArgs",
+   "PopCanceled": "",
+   "Resumed": "",
+   "SizeChanged": "",
+   "Stopped": ""
+  },
+  "methods": {
+   "AddOverlay": {
+    "params": "Microsoft.Maui.IWindowOverlay! overlay",
+    "returns": "bool"
+   },
+   "OnActivated": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnBackgrounding": {
+    "params": "Microsoft.Maui.IPersistedState! state",
+    "returns": "void"
+   },
+   "OnCreated": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnDeactivated": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnDestroying": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnDisplayDensityChanged": {
+    "params": "float displayDensity",
+    "returns": "void"
+   },
+   "OnPropertyChanged": {
+    "params": "string? propertyName = null",
+    "returns": "void"
+   },
+   "OnResumed": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnStopped": {
+    "params": "",
+    "returns": "void"
+   },
+   "RemoveOverlay": {
+    "params": "Microsoft.Maui.IWindowOverlay! overlay",
+    "returns": "bool"
+   }
+  }
+ },
+ "Application": {
+  "role": "the app tier",
+  "writes": {
+   "AccentColor": "Microsoft.Maui.Graphics.Color",
+   "Current": "Microsoft.Maui.Controls.Application",
+   "MainPage": "Microsoft.Maui.Controls.Page",
+   "Resources": "Microsoft.Maui.Controls.ResourceDictionary",
+   "UserAppTheme": "Microsoft.Maui.ApplicationModel.AppTheme"
+  },
+  "reads": {
+   "AppLinks": "Microsoft.Maui.Controls.IAppLinks",
+   "NavigationProxy": "Microsoft.Maui.Controls.Internals.NavigationProxy",
+   "PlatformAppTheme": "Microsoft.Maui.ApplicationModel.AppTheme",
+   "RequestedTheme": "Microsoft.Maui.ApplicationModel.AppTheme",
+   "Windows": "System.Collections.Generic.IReadOnlyList<Microsoft.Maui.Controls.Window!>"
+  },
+  "events": {
+   "ModalPopped": "Microsoft.Maui.Controls.ModalPoppedEventArgs",
+   "ModalPopping": "Microsoft.Maui.Controls.ModalPoppingEventArgs",
+   "ModalPushed": "Microsoft.Maui.Controls.ModalPushedEventArgs",
+   "ModalPushing": "Microsoft.Maui.Controls.ModalPushingEventArgs",
+   "PageAppearing": "Microsoft.Maui.Controls.Page",
+   "PageDisappearing": "Microsoft.Maui.Controls.Page",
+   "RequestedThemeChanged": "Microsoft.Maui.Controls.AppThemeChangedEventArgs"
+  },
+  "methods": {
+   "ActivateWindow": {
+    "params": "Microsoft.Maui.Controls.Window! window",
+    "returns": "void"
+   },
+   "CleanUp": {
+    "params": "",
+    "returns": "void"
+   },
+   "CloseWindow": {
+    "params": "Microsoft.Maui.Controls.Window! window",
+    "returns": "void"
+   },
+   "CreateWindow": {
+    "params": "Microsoft.Maui.IActivationState? activationState",
+    "returns": "Microsoft.Maui.Controls.Window"
+   },
+   "OnAppLinkRequestReceived": {
+    "params": "System.Uri! uri",
+    "returns": "void"
+   },
+   "OnParentSet": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnResume": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnSleep": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnStart": {
+    "params": "",
+    "returns": "void"
+   },
+   "OpenWindow": {
+    "params": "Microsoft.Maui.Controls.Window! window",
+    "returns": "void"
+   },
+   "Quit": {
+    "params": "",
+    "returns": "void"
+   },
+   "SendOnAppLinkRequestReceived": {
+    "params": "System.Uri! uri",
+    "returns": "void"
+   },
+   "SetAppIndexingProvider": {
+    "params": "Microsoft.Maui.Controls.IAppIndexingProvider! provider",
+    "returns": "void"
+   },
+   "SetCurrentApplication": {
+    "params": "Microsoft.Maui.Controls.Application! value",
+    "returns": "void"
+   }
+  }
+ },
+ "Page": {
+  "role": "a screen's base surface",
+  "writes": {
+   "BackgroundImageSource": "Microsoft.Maui.Controls.ImageSource",
+   "ContainerArea": "Microsoft.Maui.Graphics.Rect",
+   "IconImageSource": "Microsoft.Maui.Controls.ImageSource",
+   "IgnoresContainerArea": "bool",
+   "IsBusy": "bool",
+   "Padding": "Microsoft.Maui.Thickness",
+   "Title": "string"
+  },
+  "reads": {
+   "InternalChildren": "System.Collections.ObjectModel.ObservableCollection<Microsoft.Maui.Controls.Element>",
+   "MenuBarItems": "System.Collections.Generic.IList<Microsoft.Maui.Controls.MenuBarItem>",
+   "ToolbarItems": "System.Collections.Generic.IList<Microsoft.Maui.Controls.ToolbarItem>"
+  },
+  "events": {
+   "Appearing": "",
+   "Disappearing": "",
+   "LayoutChanged": "",
+   "NavigatedFrom": "Microsoft.Maui.Controls.NavigatedFromEventArgs",
+   "NavigatedTo": "Microsoft.Maui.Controls.NavigatedToEventArgs",
+   "NavigatingFrom": "Microsoft.Maui.Controls.NavigatingFromEventArgs"
+  },
+  "methods": {
+   "DisplayActionSheet": {
+    "params": "string title, string cancel, string destruction, params string[] buttons",
+    "returns": "System.Threading.Tasks.Task<string>"
+   },
+   "DisplayActionSheetAsync": {
+    "params": "string title, string cancel, string destruction, params string[] buttons",
+    "returns": "System.Threading.Tasks.Task<string>"
+   },
+   "DisplayAlert": {
+    "params": "string title, string message, string cancel",
+    "returns": "System.Threading.Tasks.Task"
+   },
+   "DisplayAlertAsync": {
+    "params": "string title, string message, string cancel",
+    "returns": "System.Threading.Tasks.Task"
+   },
+   "DisplayPromptAsync": {
+    "params": "string title, string message, string accept = \"OK\", string cancel = \"Cancel\", string placeholder = null, int maxLength = -1, Microsoft.Maui.Keyboard keyboard = null, string initialValue = \"\"",
+    "returns": "System.Threading.Tasks.Task<string>"
+   },
+   "ForceLayout": {
+    "params": "",
+    "returns": "void"
+   },
+   "GetParentWindow": {
+    "params": "",
+    "returns": "Microsoft.Maui.Controls.Window"
+   },
+   "LayoutChildren": {
+    "params": "double x, double y, double width, double height",
+    "returns": "void"
+   },
+   "OnAppearing": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnBackButtonPressed": {
+    "params": "",
+    "returns": "bool"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnChildMeasureInvalidated": {
+    "params": "object sender, System.EventArgs e",
+    "returns": "void"
+   },
+   "OnDisappearing": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnNavigatedFrom": {
+    "params": "Microsoft.Maui.Controls.NavigatedFromEventArgs args",
+    "returns": "void"
+   },
+   "OnNavigatedTo": {
+    "params": "Microsoft.Maui.Controls.NavigatedToEventArgs args",
+    "returns": "void"
+   },
+   "OnNavigatingFrom": {
+    "params": "Microsoft.Maui.Controls.NavigatingFromEventArgs args",
+    "returns": "void"
+   },
+   "OnParentSet": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnSizeAllocated": {
+    "params": "double width, double height",
+    "returns": "void"
+   },
+   "SendAppearing": {
+    "params": "",
+    "returns": "void"
+   },
+   "SendBackButtonPressed": {
+    "params": "",
+    "returns": "bool"
+   },
+   "SendDisappearing": {
+    "params": "",
+    "returns": "void"
+   },
+   "UpdateChildrenLayout": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "ContentPage": {
+  "role": "a screen with one content root",
+  "writes": {
+   "Content": "Microsoft.Maui.Controls.View",
+   "HideSoftInputOnTapped": "bool",
+   "SafeAreaEdges": "Microsoft.Maui.SafeAreaEdges"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {
+   "ArrangeOverride": {
+    "params": "Microsoft.Maui.Graphics.Rect bounds",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "InvalidateMeasureOverride": {
+    "params": "",
+    "returns": "void"
+   },
+   "LayoutChildren": {
+    "params": "double x, double y, double width, double height",
+    "returns": "void"
+   },
+   "MeasureOverride": {
+    "params": "double widthConstraint, double heightConstraint",
+    "returns": "Microsoft.Maui.Graphics.Size"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "Toolbar": {
+  "role": "the window toolbar",
+  "writes": {
+   "BackButtonEnabled": "bool",
+   "BackButtonTitle": "string",
+   "BackButtonVisible": "bool",
+   "BarBackground": "Microsoft.Maui.Controls.Brush",
+   "BarHeight": "double",
+   "BarTextColor": "Microsoft.Maui.Graphics.Color",
+   "DrawerToggleVisible": "bool",
+   "DynamicOverflowEnabled": "bool",
+   "Handler": "Microsoft.Maui.IElementHandler",
+   "IconColor": "Microsoft.Maui.Graphics.Color",
+   "IsVisible": "bool",
+   "Title": "string",
+   "TitleIcon": "Microsoft.Maui.Controls.ImageSource",
+   "TitleView": "Microsoft.Maui.Controls.VisualElement",
+   "ToolbarItems": "System.Collections.Generic.IEnumerable<Microsoft.Maui.Controls.ToolbarItem>"
+  },
+  "reads": {
+   "Parent": "Microsoft.Maui.IElement"
+  },
+  "events": {},
+  "methods": {}
+ },
+ "TitleBar": {
+  "role": "custom titlebar content",
+  "writes": {
+   "Content": "Microsoft.Maui.IView",
+   "ForegroundColor": "Microsoft.Maui.Graphics.Color",
+   "Icon": "Microsoft.Maui.Controls.ImageSource",
+   "LeadingContent": "Microsoft.Maui.IView",
+   "Subtitle": "string",
+   "Title": "string",
+   "TrailingContent": "Microsoft.Maui.IView"
+  },
+  "reads": {
+   "DefaultTemplate": "Microsoft.Maui.Controls.ControlTemplate",
+   "PassthroughElements": "System.Collections.Generic.IList<Microsoft.Maui.IView!>"
+  },
+  "events": {},
+  "methods": {
+   "OnApplyTemplate": {
+    "params": "",
+    "returns": "void"
+   },
+   "OnBindingContextChanged": {
+    "params": "",
+    "returns": "void"
+   }
+  }
+ },
+ "Shadow": {
+  "role": "the Shadow value",
+  "writes": {
+   "Brush": "Microsoft.Maui.Controls.Brush",
+   "Offset": "Microsoft.Maui.Graphics.Point",
+   "Opacity": "float",
+   "Radius": "float"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {}
+ },
+ "FontImageSource": {
+  "role": "an icon drawn from a font glyph",
+  "writes": {
+   "Color": "Microsoft.Maui.Graphics.Color",
+   "FontAutoScalingEnabled": "bool",
+   "FontFamily": "string",
+   "Glyph": "string",
+   "Size": "double"
+  },
+  "reads": {
+   "IsEmpty": "bool"
+  },
+  "events": {},
+  "methods": {}
+ },
+ "SemanticProperties": {
+  "role": "the accessibility band",
+  "writes": {},
+  "reads": {},
+  "events": {},
+  "methods": {
+   "GetDescription": {
+    "params": "Microsoft.Maui.Controls.BindableObject bindable",
+    "returns": "string"
+   },
+   "GetHeadingLevel": {
+    "params": "Microsoft.Maui.Controls.BindableObject bindable",
+    "returns": "Microsoft.Maui.SemanticHeadingLevel"
+   },
+   "GetHint": {
+    "params": "Microsoft.Maui.Controls.BindableObject bindable",
+    "returns": "string"
+   },
+   "SetDescription": {
+    "params": "Microsoft.Maui.Controls.BindableObject bindable, string value",
+    "returns": "void"
+   },
+   "SetHeadingLevel": {
+    "params": "Microsoft.Maui.Controls.BindableObject bindable, Microsoft.Maui.SemanticHeadingLevel value",
+    "returns": "void"
+   },
+   "SetHint": {
+    "params": "Microsoft.Maui.Controls.BindableObject bindable, string value",
+    "returns": "void"
+   }
+  }
+ },
+ "ToolTipProperties": {
+  "role": "a tooltip on any element",
+  "writes": {},
+  "reads": {},
+  "events": {},
+  "methods": {
+   "GetText": {
+    "params": "Microsoft.Maui.Controls.BindableObject! bindable",
+    "returns": "object"
+   },
+   "SetText": {
+    "params": "Microsoft.Maui.Controls.BindableObject! bindable, object! value",
+    "returns": "void"
+   }
+  }
+ },
+ "KeyboardAccelerator": {
+  "role": "a keyboard shortcut on a command",
+  "writes": {
+   "Key": "string",
+   "Modifiers": "Microsoft.Maui.KeyboardAcceleratorModifiers"
+  },
+  "reads": {},
+  "events": {},
+  "methods": {}
+ }
+}

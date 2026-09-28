@@ -749,7 +749,7 @@ impl WindowRef {
 // which the extraction never read. It read Controls and Core only, which is
 // the mechanical reason the entire vocabulary below was absent.
 //
-//   plans/facet/spec/ledger_Graphics_PublicAPI.Shipped.txt   the manifest
+//   tools/assets/ledger/ledger_Graphics_PublicAPI.Shipped.txt   the manifest
 //   src/Graphics/src/Graphics/{ICanvas,PathF,...}.cs       the rows it elides
 //
 // RECORDED, not immediate, because facet is retained everywhere else. The

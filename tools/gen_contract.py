@@ -357,9 +357,9 @@ HAND_ENUMS = {
 }
 
 MANIFESTS = [
-    os.path.join(ROOT, "plans", "facet", "spec", "ledger_PublicAPI.Shipped.txt"),
-    os.path.join(ROOT, "plans", "facet", "spec", "ledger_PublicAPI.Unshipped.txt"),
-    os.path.join(ROOT, "plans", "facet", "spec", "ledger_Core_PublicAPI.Shipped.txt"),
+    os.path.join(ledger_map.SPEC_DIR, "ledger_PublicAPI.Shipped.txt"),
+    os.path.join(ledger_map.SPEC_DIR, "ledger_PublicAPI.Unshipped.txt"),
+    os.path.join(ledger_map.SPEC_DIR, "ledger_Core_PublicAPI.Shipped.txt"),
 ]
 
 
@@ -1139,7 +1139,7 @@ impl WindowRef {
 // which the extraction never read. It read Controls and Core only, which is
 // the mechanical reason the entire vocabulary below was absent.
 //
-//   plans/facet/spec/ledger_Graphics_PublicAPI.Shipped.txt   the manifest
+//   tools/assets/ledger/ledger_Graphics_PublicAPI.Shipped.txt   the manifest
 //   src/Graphics/src/Graphics/{ICanvas,PathF,...}.cs       the rows it elides
 //
 // RECORDED, not immediate, because facet is retained everywhere else. The
@@ -4783,8 +4783,8 @@ def check(rows_by_control, by_type):
     # `MenuFlyout` (a submenu is not a flyout), `MenuBar` to `MenuBarItem` (the
     # item is not the bar), `SwipeItemView` to `SwipeItem`. They are UNBUILT
     # now, which is a fourth outcome those three words could not express.
-    manifests = [os.path.join(ROOT, "plans", "facet", "spec", f)
-                 for f in sorted(os.listdir(os.path.join(ROOT, "plans", "facet", "spec")))
+    manifests = [os.path.join(ledger_map.SPEC_DIR, f)
+                 for f in sorted(os.listdir(ledger_map.SPEC_DIR))
                  if f.endswith(".txt")]
     try:
         unbuilt = ledger_spec.check_handler_closure(manifests)
