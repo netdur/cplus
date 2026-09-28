@@ -1504,15 +1504,24 @@ fn popup_cell_setup(factory: *u8, item: *u8, user: *u8) {
 }
 
 // The BUTTON's content — what the popup reads when it is closed.
+//
+// The index comes from the list item, NOT from `selected_index`. A pick
+// rebinds the button (GtkDropDown follows the selection's `selected-item`)
+// BEFORE the drop-down emits `notify::selected`, and that notify is where
+// `popup_selected` writes the prop back — so the prop still held the previous
+// pick here, and the button read one choice behind: 3 picked as 6 stayed "3".
+// The button's list item carries the selected position itself.
 fn popup_button_bind(factory: *u8, item: *u8, user: *u8) {
     let n: *core::Node = user as *core::Node;
     let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
     if p == (0 as *props::PopupProps) { return; }
     let li: gtk::ListItem = gtk::ListItem::from_raw(item);
+    let raw: u32 = li.get_position();
+    var at: i64 = (0 as i64) -% (1 as i64);
+    if raw != gtk_invalid_position() { at = raw as i64; }
     match li.get_child() {
         option::Option[gtk::Widget]::Some(w) => {
-            gtk::Label::from_raw(w.raw())
-                .set_text(popup_button_text(p, { (*p).selected_index }));
+            gtk::Label::from_raw(w.raw()).set_text(popup_button_text(p, at));
         }
         option::Option[gtk::Widget]::None => { }
     }
@@ -1560,7 +1569,18 @@ extern fn sigc_notify(instance: *u8, detailed_signal: *u8,
                       handler: fn(*u8, *u8, *u8),
                       data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
 
+// Set while `controls::apply_popup` writes the drop-down. Replacing the model
+// makes GTK select row 0 and notify, and that is facet's own sync, not a pick:
+// written back, it would clobber the app's `selected_index` and hand
+// `on_selected_index_changed` a row nobody chose (the Qwen Image app saved
+// its steps as 3 on every launch that rebuilt the list).
+static POPUP_SYNCING: bool = false;
+
+fn begin_popup_sync() { POPUP_SYNCING = true; return; }
+fn end_popup_sync() { POPUP_SYNCING = false; return; }
+
 fn popup_selected(dropdown: *u8, pspec: *u8, user: *u8) {
+    if POPUP_SYNCING { return; }
     let n: *core::Node = user as *core::Node;
     let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
     if p == (0 as *props::PopupProps) { return; }

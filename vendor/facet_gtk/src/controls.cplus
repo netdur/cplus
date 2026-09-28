@@ -3047,6 +3047,12 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::PopupProps = popup_props(n);
     if p == (0 as *props::PopupProps) { return; }
     let dd: gtk::DropDown = gtk::DropDown::from_raw(v);
+    // Every notify GTK raises while this writes the drop-down is facet's own
+    // sync, not a pick: `set_model` alone selects row 0 and notifies, and
+    // written back that reset replaced the app's `selected_index` — a popup
+    // built with `selected_index: 2` opened showing row 0.
+    input::begin_popup_sync();
+    let at: i64 = { (*p).selected_index };
     if (dirty & popup::P_ITEMS) != (0 as u64) {
         // Rebuilt whole. A GtkStringList has `append` and `remove` and no
         // "replace these strings"; a diff would be more code than the rebuild
@@ -3061,7 +3067,6 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
         dd.set_model(model.as_list_model());
     }
     if (dirty & (popup::P_SELECTED_INDEX | popup::P_ITEMS)) != (0 as u64) {
-        let at: i64 = { (*p).selected_index };
         // GTK_INVALID_LIST_POSITION is how GTK says "nothing chosen"; facet
         // says -1, and the two have to be translated or a popup with no
         // selection shows row 0.
@@ -3074,6 +3079,7 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
         // re-setting the model is the only door GtkDropDown offers.
         dd.set_selected(dd.get_selected());
     }
+    input::end_popup_sync();
     if (dirty & popup::P_TEXT_ALIGN) != (0 as u64) {
         gtk::Widget::from_raw(v).set_halign(halign_of({ (*p).text_align }));
     }
