@@ -1,9 +1,12 @@
-// Reference: icon_button, symbol
+// Reference: icon_button, symbol, button(symbol:)
 //   import "facet/elements" as ui;
 //   import "facet/icons" as icons;
 //   ui::icon_button("gearshape", key: "…", on_clicked: …)
+//   ui::icon_button(symbol: icons::settings, key: "…", on_clicked: …)
+//   ui::button("Delete", key: "…", symbol: icons::delete, on_click: …)
 //   ui::symbol(icons::home, size: 20.0, color: …)
 
+import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
@@ -48,6 +51,20 @@ impl Icons: component::Component {
         body.add(core::row(row).gap(8.0));
         body.add(ui::label("icon_button clicks: 0", key: "ico:status",
             font_size: 13.0, text_color: vocab::Color::ink(0.7)));
+
+        body.add(shell::caption("button / icon_button  ·  symbol: a bundled glyph (facet/icons)"));
+        var sbtn: core::Builder = core::Builder::new();
+        sbtn.add(ui::button("Delete", key: "ico:b_del", symbol: icons::delete,
+            on_click: this.on_icon));
+        sbtn.add(ui::button("Next", key: "ico:b_next", symbol: icons::arrow_forward,
+            content_layout: vocab::ContentLayout::ImageRight, on_click: this.on_icon));
+        sbtn.add(ui::button("Download", key: "ico:b_dl", symbol: icons::download,
+            text_color: vocab::Color::primary(), on_click: this.on_icon));
+        sbtn.add(ui::icon_button(symbol: icons::settings, key: "ico:ib_set",
+            on_clicked: this.on_icon));
+        sbtn.add(ui::icon_button(symbol: icons::favorite, key: "ico:ib_fav",
+            bordered: false, on_clicked: this.on_icon).width(36.0).height(28.0));
+        body.add(core::row(sbtn).gap(8.0).align(flex::Align::Center));
 
         body.add(shell::caption("symbol  ·  Material Symbols codepoints (facet/icons)"));
         var syms: core::Builder = core::Builder::new();
