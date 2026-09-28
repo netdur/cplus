@@ -58,6 +58,9 @@ const MAX_WINDOWS: usize = 8;
 static ROOTS: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
 static FIXEDS: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
 static WINDOWS: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+// The size each window's tree was last laid out at — see `frame_laid_out`.
+static LAID_W: [f64; MAX_WINDOWS] = [0.0f64; MAX_WINDOWS];
+static LAID_H: [f64; MAX_WINDOWS] = [0.0f64; MAX_WINDOWS];
 static SHOULD_CLOSE: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
 static SHOULD_CLOSE_CTX: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
 static WILL_CLOSE: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
@@ -138,6 +141,32 @@ fn wants_header(c: *screen::Chrome) -> bool {
     };
 }
 
+// `Blended` is "the bar shares the content's surface". On AppKit that is a
+// transparent titlebar the content runs under, with the traffic lights adopted
+// by the application's own `window_buttons()`. GTK has no transparent header —
+// a GtkHeaderBar is a strip ABOVE the content, `flat` or not — so a window that
+// draws its own buttons gets NO strip: a decorated window whose titlebar is an
+// empty widget, which keeps GTK's client-side frame (shadow, rounded corners,
+// resize edges) and hands the whole surface to the content.
+//
+// This built the flat header for every Blended window, and an app that drew
+// its own group got BOTH — the system bar with its title and three buttons
+// above a sidebar with three more (qwen-image, 2026-09-28).
+//
+// The button question is the tree's, not the chrome's, because only the tree
+// knows: a Blended window WITHOUT a `window_buttons()` keeps the flat header,
+// since stripping it would leave a window that cannot be closed. Toolbar items
+// keep it too — the header is the only place a GTK window can put them.
+fn blends_into_content(c: *screen::Chrome, draws_own_buttons: bool,
+                       has_toolbar: bool) -> bool {
+    return match { (*c).bar } {
+        screen::Bar::Blended => draws_own_buttons && !has_toolbar,
+        screen::Bar::Native => false,
+        screen::Bar::Hidden => false,
+        screen::Bar::Custom => false,
+    };
+}
+
 // GTK's decoration layout is a string: what sits left of the title, a colon,
 // then what sits right. Naming only the buttons that are wanted is how a
 // window says it cannot be maximised — there is no per-button switch.
@@ -194,6 +223,15 @@ fn apply_chrome(win: gtk::Window, c: *screen::Chrome, root: *core::Node) {
         screen::Bar::Blended => { win.set_decorated(true); }
     }
     let toolbar: bool = chrome::has_toolbar_items(root);
+    if blends_into_content(c, chrome::has_window_buttons(root), toolbar) {
+        // A titlebar widget, not `set_decorated(false)`: HAVING one is what
+        // keeps GTK drawing the frame client-side. Hidden, so it takes no
+        // height; the content's own `.window_drag()` regions move the window.
+        let empty: gtk::Box = gtk::Box::new(0 as i32, 0 as i32);
+        empty.upcast().set_visible(false);
+        win.set_titlebar(empty.upcast());
+        return;
+    }
     if wants_header(c) || toolbar {
         let h: gtk::HeaderBar = gtk::HeaderBar::new();
         h.set_decoration_layout(decoration_layout(c).view());
@@ -345,6 +383,8 @@ fn release_slot(slot: usize) {
     ROOTS[slot] = 0 as usize;
     FIXEDS[slot] = 0 as usize;
     WINDOWS[slot] = 0 as usize;
+    LAID_W[slot] = 0.0f64;
+    LAID_H[slot] = 0.0f64;
     SHOULD_CLOSE[slot] = 0 as usize;
     SHOULD_CLOSE_CTX[slot] = 0 as usize;
     WILL_CLOSE[slot] = 0 as usize;
@@ -419,6 +459,8 @@ fn timing() -> bool {
 fn relayout(slot: usize, width: f64, height: f64) {
     let root: *core::Node = ROOTS[slot] as *core::Node;
     if root == (0 as *core::Node) { return; }
+    LAID_W[slot] = width;
+    LAID_H[slot] = height;
     let c0: i64 = if timing() { { g_get_monotonic_time() } } else { 0 as i64 };
     // The app's band vocabulary rides along, so a node carrying `hide`/`show`
     // rules is resolved against the box it actually sits in. Omitting it passes
@@ -1703,6 +1745,49 @@ fn resized(instance: *u8, pspec: *u8, user: *u8) {
     return;
 }
 
+// THE SURFACE NOTIFIES BEFORE GTK HAS ALLOCATED. `notify::width` fires while
+// the surface is being configured, and the content box read in `resized` is
+// whatever GTK had allocated so far — not the size it is about to have. On a
+// window whose shadow margins come and go that is visibly wrong: maximising a
+// client-side-decorated window drops the shadow, and the tree was laid out at
+// the maximised size PLUS the 28x29 margins it had just lost, so the content
+// ran off the right and bottom of the screen (qwen-image, 2026-09-28: 1498x861
+// laid into 1470x832). Nothing later corrected it, because nothing touched a
+// node.
+//
+// So the answer is read where GTK has already written it: the frame clock's
+// `layout` phase, connected AFTER GTK's own handler, is the moment every
+// allocation in the window is final. The check is one comparison per frame —
+// a window re-lays only when its content box is not the size the tree was last
+// laid out at — and `resized` stays as the early answer, which is right
+// whenever the allocation happened to be settled already.
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_clock(instance: *u8, detailed_signal: *u8,
+                     handler: fn(*u8, *u8),
+                     data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+#[link_name = "gtk_widget_get_frame_clock"]
+extern fn gtk_widget_get_frame_clock(widget: *u8) -> *u8;
+
+// Does a content box of this size need the tree laid out again?
+fn needs_relayout(slot: usize, width: f64, height: f64) -> bool {
+    if slot >= MAX_WINDOWS { return false; }
+    // An unallocated box has nothing to say yet.
+    if width <= (0.0 as f64) || height <= (0.0 as f64) { return false; }
+    return width != LAID_W[slot] || height != LAID_H[slot];
+}
+
+fn frame_laid_out(clock: *u8, user: *u8) {
+    let slot: usize = { #addr(user) } -% (1 as usize);
+    if slot >= MAX_WINDOWS { return; }
+    if ROOTS[slot] == (0 as usize) { return; }
+    let content: gtk::Widget = viewport_of(FIXEDS[slot] as *u8);
+    let cw: f64 = { content.get_width() } as f64;
+    let ch: f64 = { content.get_height() } as f64;
+    if needs_relayout(slot, cw, ch) { relayout(slot, cw, ch); }
+    return;
+}
+
 fn watch_for_resize(slot: usize) {
     let win: *u8 = WINDOWS[slot] as *u8;
     let surface: *u8 = surface_of(win);
@@ -1712,6 +1797,12 @@ fn watch_for_resize(slot: usize) {
                                 token, 0 as *u8, 0 as i32) };
     let _h: u64 = { sigc_notify(surface, #str_ptr("notify::height\0"), resized,
                                 token, 0 as *u8, 0 as i32) };
+    let clock: *u8 = { gtk_widget_get_frame_clock(win) };
+    if clock != (0 as *u8) {
+        // G_CONNECT_AFTER = 1: after GTK's own layout handler has allocated.
+        let _l: u64 = { sigc_clock(clock, #str_ptr("layout\0"), frame_laid_out,
+                                   token, 0 as *u8, 1 as i32) };
+    }
     return;
 }
 

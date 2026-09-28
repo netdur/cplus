@@ -120,6 +120,26 @@ fn has_toolbar_items(root: *core::Node) -> bool {
     return found.count() > (0 as usize);
 }
 
+// Does this tree draw its OWN close / minimise / maximise group? Asked for the
+// same reason and at the same moment as `has_toolbar_items`: it decides whether
+// a `Bar::Blended` window needs GTK's header at all — see `window::apply_chrome`.
+fn has_window_buttons(n: *core::Node) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    if core::kind_of(n) == window_chrome::K_WINDOW_BUTTONS { return true; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if has_window_buttons(c) { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
 fn raw_at(v: *vec::Vec[usize], i: usize) -> usize {
     return match { (*v).at(i) } {
         option::Option[usize]::Some(r) => r,
@@ -505,10 +525,30 @@ fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
 // through the native's own surface transform, which is the offset GTK keeps for
 // client-side shadows. Skipping either step makes a window jump by the width of
 // its drop shadow on the first pixel of every drag.
+//
+// THE MOVE STARTS PAST THE DRAG THRESHOLD, NOT ON PRESS. This began the move
+// from `drag-begin`, which fires on the press itself — and a region is where an
+// application puts its OWN titlebar controls. A GtkButton claims its sequence
+// on release, not on press, so the region's claim at press time cancelled every
+// click inside it: the window_buttons in a dragged header were three buttons
+// that did nothing (qwen-image's sidebar, 2026-09-28). GtkWindowHandle waits for
+// `gtk_drag_check_threshold` for exactly this reason, and so does this now.
 
-fn drag_begin(gesture: *u8, start_x: f64, start_y: f64, user: *u8) {
+fn drag_update(gesture: *u8, off_x: f64, off_y: f64, user: *u8) {
     let v: *u8 = user;
     if v == (0 as *u8) { return; }
+    if !gtk::Widget::from_raw(v).drag_check_threshold(0 as i32, 0 as i32,
+                                                      off_x as i32, off_y as i32) {
+        return;
+    }
+    var start_x: f64 = 0.0f64;
+    var start_y: f64 = 0.0f64;
+    if !gtk::GestureDrag::from_raw(gesture).get_start_point(start_x, start_y) { return; }
+    begin_window_move(gesture, v, start_x, start_y);
+    return;
+}
+
+fn begin_window_move(gesture: *u8, v: *u8, start_x: f64, start_y: f64) {
     let native: gtk::Native = match gtk::Widget::from_raw(v).get_native() {
         option::Option[gtk::Native]::Some(nv) => nv,
         option::Option[gtk::Native]::None => { return; }
@@ -532,12 +572,59 @@ fn drag_begin(gesture: *u8, start_x: f64, start_y: f64, user: *u8) {
     native.get_surface_transform(ox, oy);
     let button: u32 = gtk::GestureSingle::from_raw(gesture).get_current_button();
     let stamp: u32 = gtk::EventController::from_raw(gesture).get_current_event_time();
+    // Claimed BEFORE the move: the window manager owns the pointer from here,
+    // and an unclaimed sequence would let the button under it also act on a
+    // press that has already become a window move.
+    let _s: bool = gtk::Gesture::from_raw(gesture).set_state(1 as i32);
     gdk::Toplevel::from_raw(surface.raw()).begin_move(device, button as i32,
                                                       nx + ox, ny + oy, stamp);
-    // The window manager owns the pointer from here; leaving the sequence
-    // unclaimed would let the widget under it also act on a press that has
-    // already become a window move.
+    // The release goes to the window manager, so this gesture would otherwise
+    // sit mid-drag until the next press. GtkWindowHandle resets here too.
+    gtk::EventController::from_raw(gesture).reset();
+    return;
+}
+
+// ---- double-click zooms ----------------------------------------------------------
+// The titlebar gesture every desktop has, and on a region an application drew
+// itself it is the only way to get it: GTK's own handler lives on the header
+// bar a blended or custom window does not have. AppKit's `.window_drag()`
+// answers it the same way.
+//
+// A double-click on a BUTTON inside the region is the button's, not the
+// titlebar's — minimise then zoom is not what two clicks on minimise mean.
+
+fn press_is_on_a_button(v: *u8, x: f64, y: f64) -> bool {
+    var cur: *u8 = match gtk::Widget::from_raw(v).pick(x, y, 0u32) {
+        option::Option[gtk::Widget]::Some(w) => w.raw(),
+        option::Option[gtk::Widget]::None => 0 as *u8,
+    };
+    while cur != (0 as *u8) && cur != v {
+        if g::is_a(cur, #str_ptr("GtkButton\0")) { return true; }
+        cur = match gtk::Widget::from_raw(cur).get_parent() {
+            option::Option[gtk::Widget]::Some(p) => p.raw(),
+            option::Option[gtk::Widget]::None => 0 as *u8,
+        };
+    }
+    return false;
+}
+
+fn zoom_pressed(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
+    let v: *u8 = user;
+    if v == (0 as *u8) { return; }
+    if n_press != (2 as i32) { return; }
+    if press_is_on_a_button(v, x, y) { return; }
+    let w: *u8 = window_of(v);
+    if w == (0 as *u8) { return; }
     let _s: bool = gtk::Gesture::from_raw(gesture).set_state(1 as i32);
+    // The DRAG gesture still holds this press, and zooming moves the region
+    // under a pointer that has not moved — which it reads as a drag past the
+    // threshold. Unmaximising then began a window move with the pointer at the
+    // top edge, and GNOME answers a move released there by maximising again:
+    // double-click restored nothing. GtkWindowHandle resets its drag here too.
+    let drag: *u8 = g::get_data(v, k_window_drag());
+    if drag != (0 as *u8) { gtk::EventController::from_raw(drag).reset(); }
+    let win: gtk::Window = gtk::Window::from_raw(w);
+    if win.is_maximized() { win.unmaximize(); } else { win.maximize(); }
     return;
 }
 
@@ -551,9 +638,15 @@ fn arm_window_drag(v: *u8, n: *core::Node, phase: i32) {
     if g::get_data(v, k_window_drag()) != (0 as *u8) { return; }
     if !window_chrome::drags_window(n) { return; }
     let c: gtk::GestureDrag = gtk::GestureDrag::new();
-    let _b: u64 = c.connect_drag_begin(drag_begin, v);
+    let _b: u64 = c.connect_drag_update(drag_update, v);
     c.upcast().upcast().upcast().set_propagation_phase(phase);
     gtk::Widget::from_raw(v).add_controller(c.upcast().upcast().upcast());
-    g::set_data(v, k_window_drag(), 1 as *u8);
+    let z: gtk::GestureClick = gtk::GestureClick::new();
+    let _z: u64 = z.connect_pressed(zoom_pressed, v);
+    z.upcast().upcast().upcast().set_propagation_phase(phase);
+    gtk::Widget::from_raw(v).add_controller(z.upcast().upcast().upcast());
+    // The mark IS the drag gesture, so the zoom can cancel it; the widget owns
+    // the controller, and the mark only ever lives as long as the widget.
+    g::set_data(v, k_window_drag(), c.raw());
     return;
 }

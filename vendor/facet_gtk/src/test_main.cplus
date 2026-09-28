@@ -1397,6 +1397,30 @@ fn a_dotted_sf_name_is_a_symbol_and_not_a_path() {
     assert controls::freedesktop_name_for("assets/hat.png") == "";
 }
 
+// qwen-image, 2026-09-28: `plus.circle.fill` and `sparkles` were not in the
+// table and drew nothing. A composed variant is its base name.
+#[test]
+fn an_sf_variant_not_in_the_table_resolves_to_its_base_name() {
+    assert controls::freedesktop_name_for("plus.circle.fill") == "list-add-symbolic";
+    assert controls::freedesktop_name_for("plus.circle") == "list-add-symbolic";
+    assert controls::freedesktop_name_for("gearshape.circle") == "emblem-system-symbolic";
+    assert controls::freedesktop_name_for("folder.square.fill") == "folder-symbolic";
+    assert controls::freedesktop_name_for("sparkles") != "";
+}
+
+// NEGATIVE. The exact entry WINS over the peel — `trash.fill` is its own glyph
+// and must not come back as `trash` — and the peel never turns a path, an
+// unknown base, or a bare suffix into a name.
+#[test]
+fn the_variant_peel_keeps_exact_entries_and_refuses_what_is_not_a_symbol() {
+    assert controls::freedesktop_name_for("trash.fill") == "user-trash-full-symbolic";
+    assert controls::freedesktop_name_for("star.fill") == "starred-symbolic";
+    assert controls::freedesktop_name_for("no-such-icon.circle.fill") == "";
+    assert controls::freedesktop_name_for("assets/plus.fill") == "";
+    assert controls::freedesktop_name_for(".fill") == "";
+    assert controls::freedesktop_name_for(".circle.fill") == "";
+}
+
 // ---- a theme flip has to be heard, and has to reach the rows -------------------
 //
 // bugs/02. Two separate faults, and either alone leaves half a window stale.
@@ -4178,6 +4202,28 @@ fn a_header_bar_is_built_for_every_bar_that_has_one() {
     return;
 }
 
+// qwen-image, 2026-09-28: maximising a client-side-decorated window laid the
+// tree out at 1498x861 inside a 1470x832 box, because the surface's resize
+// notify is read before GTK allocates. The frame clock's layout phase re-asks,
+// and this is the question it asks.
+#[test]
+fn a_window_re_lays_only_when_its_content_box_changed() {
+    let slot: usize = window::MAX_WINDOWS -% (1 as usize);
+    window::LAID_W[slot] = 1498.0f64;
+    window::LAID_H[slot] = 861.0f64;
+    assert window::needs_relayout(slot, 1470.0f64, 832.0f64);
+    assert window::needs_relayout(slot, 1498.0f64, 832.0f64);
+    // NEGATIVE: the size it was laid at is one comparison and out — this runs
+    // on every frame of every window.
+    assert !window::needs_relayout(slot, 1498.0f64, 861.0f64);
+    // An unallocated box and an out-of-range slot say nothing.
+    assert !window::needs_relayout(slot, 0.0f64, 832.0f64);
+    assert !window::needs_relayout(window::MAX_WINDOWS, 1470.0f64, 832.0f64);
+    window::LAID_W[slot] = 0.0f64;
+    window::LAID_H[slot] = 0.0f64;
+    return;
+}
+
 #[test]
 fn the_app_appearance_starts_unspecified() {
     // `Unspecified` is "nobody chose", and it is what an app that never asked
@@ -4737,6 +4783,49 @@ fn the_window_button_group_spaces_itself_when_the_application_says_nothing() {
     // "no gap" — and reading it as no gap is how the three controls end up
     // touching each other.
     assert chrome::default_spacing() == (6 as i32);
+    return;
+}
+
+#[test]
+fn a_tree_that_draws_its_own_window_buttons_is_found_wherever_it_put_them() {
+    // Same walk as the toolbar's: an application puts its group in a sidebar
+    // header, which is several levels down and never the root.
+    var inner: core::Builder = core::Builder::new();
+    inner.add(window_chrome::window_buttons(key: "wb:group"));
+    var mid: core::Builder = core::Builder::new();
+    mid.add(core::row(inner, key: "wb:header"));
+    var outer: core::Builder = core::Builder::new();
+    outer.add(core::column(mid, key: "wb:sidebar"));
+    var root: core::Node = core::column(outer, key: "wb:root");
+    assert chrome::has_window_buttons(#addr_of(root));
+    // NEGATIVE: no group means the window keeps GTK's own buttons — answering
+    // true here strips the header off a window nobody can then close.
+    var bare: core::Node = core::column(core::Builder::new(), key: "wb:bare");
+    assert !chrome::has_window_buttons(#addr_of(bare));
+    assert !chrome::has_window_buttons(0 as *core::Node);
+    return;
+}
+
+#[test]
+fn a_blended_window_that_draws_its_own_buttons_has_no_header_strip() {
+    // qwen-image, 2026-09-28: a Blended window with a `window_buttons()` in its
+    // sidebar got GTK's flat header ANYWAY — a title and three buttons above
+    // the app's own three. Blended means the content owns the surface.
+    var blended: screen::Chrome = screen::Chrome::new(bar: screen::Bar::Blended);
+    assert window::blends_into_content(#addr_of(blended), true, false);
+    // NEGATIVE, both halves of the guard. No group of its own: keep the header,
+    // it is the only close button the window has.
+    assert !window::blends_into_content(#addr_of(blended), false, false);
+    // Toolbar items: keep the header, it is the only place they can go.
+    assert !window::blends_into_content(#addr_of(blended), true, true);
+    // And only Blended blends. Native keeps its bar whatever the tree draws;
+    // Hidden and Custom are undecorated and never reach this question.
+    var native: screen::Chrome = screen::Chrome::new(bar: screen::Bar::Native);
+    assert !window::blends_into_content(#addr_of(native), true, false);
+    var hidden: screen::Chrome = screen::Chrome::new(bar: screen::Bar::Hidden);
+    assert !window::blends_into_content(#addr_of(hidden), true, false);
+    var custom: screen::Chrome = screen::Chrome::new(bar: screen::Bar::Custom);
+    assert !window::blends_into_content(#addr_of(custom), true, false);
     return;
 }
 

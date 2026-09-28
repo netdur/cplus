@@ -33,6 +33,7 @@
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/str" as _;
 import "stdlib/io" as io;
 import "stdlib/fs" as fs;
 import "facet/facet" as core;
@@ -1032,7 +1033,39 @@ fn set_image_source(img: gtk::Image, source: str) {
 // `.fill` and `.circle` variants map to the same icon: freedesktop has one
 // glyph per concept and no fill axis. Where it has both (starred /
 // non-starred) the distinction is kept.
+//
+// A VARIANT NOT IN THE TABLE IS ITS BASE NAME. SF composes `plus` into
+// `plus.circle` and `plus.circle.fill`, and listing every composition was a
+// table that missed the one an app used: qwen-image's `plus.circle.fill` drew
+// nothing (2026-09-28). So an exact entry wins — which is how `star.fill` keeps
+// its own glyph — and otherwise the shape and fill suffixes come off one at a
+// time until a name the table knows is left. A path never gets here: it has a
+// separator, and the peel refuses one.
 fn freedesktop_name_for(sf: str) -> str {
+    // A name peels at most twice (`.circle.fill`); four covers anything SF
+    // composes without trusting the recursion to find its own end.
+    return peeled_to_known(sf, 4 as i32);
+}
+
+fn peeled_to_known(name: str, peels_left: i32) -> str {
+    let exact: str = freedesktop_exact(name);
+    if exact != "" { return exact; }
+    if peels_left <= (0 as i32) { return ""; }
+    if name.contains("/") { return ""; }
+    let base: str = without_variant_suffix(name);
+    if base == name || base == "" { return ""; }
+    return peeled_to_known(base, peels_left - (1 as i32));
+}
+
+// One SF variant suffix off the end, or the name unchanged when it has none.
+fn without_variant_suffix(name: str) -> str {
+    if name.has_suffix(".fill") { return name.removing_suffix(".fill"); }
+    if name.has_suffix(".circle") { return name.removing_suffix(".circle"); }
+    if name.has_suffix(".square") { return name.removing_suffix(".square"); }
+    return name;
+}
+
+fn freedesktop_exact(sf: str) -> str {
     if sf == "gear" { return "emblem-system-symbolic"; }
     if sf == "gearshape" { return "emblem-system-symbolic"; }
     if sf == "gearshape.fill" { return "emblem-system-symbolic"; }
@@ -1081,6 +1114,12 @@ fn freedesktop_name_for(sf: str) -> str {
     if sf == "stop.fill" { return "media-playback-stop-symbolic"; }
     if sf == "lock" { return "changes-prevent-symbolic"; }
     if sf == "lock.open" { return "changes-allow-symbolic"; }
+    // Freedesktop has no sparkle and no wand; a star is the nearest glyph the
+    // spec guarantees, and it reads as "make something" beside a prompt.
+    if sf == "sparkles" { return "starred-symbolic"; }
+    if sf == "wand.and.stars" { return "starred-symbolic"; }
+    if sf == "square.and.arrow.down" { return "document-save-symbolic"; }
+    if sf == "photo.on.rectangle" { return "image-x-generic-symbolic"; }
     return "";
 }
 
