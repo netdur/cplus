@@ -52,6 +52,7 @@ import "facet/scroll" as scroll;
 import "facet/symbol" as symbol;
 import "facet/icon_font" as icon_font;
 import "./shadow" as shadow;
+import "win32/graphics" as graphics;
 import "facet/window_chrome" as chrome;
 import "facet/icon_button" as icon_button;
 import "stdlib/io" as io;
@@ -535,7 +536,9 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     if cp != 0u32 && (dirty & (glyph_bits | button::P_IMAGE | button::P_CONTENT_LAYOUT)) != (0 as u64) {
         var has: bool = false;
         var fg: u32 = paint::resolve({ (*p).text_color }, #addr_of(has));
-        if !has { fg = { u::GetSysColor(18 as i32) }; }   // COLOR_BTNTEXT
+        // Ink over the button's ground, not `COLOR_BTNTEXT` — which stays
+        // black on a dark system.
+        if !has { fg = paint::ink_over(paint::effective_bg(v)); }
         var w: i32 = 0 as i32;
         var h: i32 = 0 as i32;
         let hbm: *u8 = glyph_bitmap(v, cp, fg, #addr_of(w), #addr_of(h));
@@ -2810,10 +2813,12 @@ fn draw_icon_button(di: *u8) -> bool {
     var has: bool = false;
     // AN ICON BUTTON HAS NO COLOUR VERB of its own — the ledger's ImageButton
     // carries a source and a border and no tint, because its content was always
-    // a bitmap. So the glyph takes the control text colour, which is what an
-    // unstyled button's label wears.
-    var fg: u32 = { u::GetSysColor(18 as i32) };   // COLOR_BTNTEXT
-    let _unused: bool = has;   // COLOR_BTNTEXT
+    // a bitmap. So the glyph takes the colour an unstyled button's label wears:
+    // ink over the background it sits on, as `draw_button_label` does — not
+    // `COLOR_BTNTEXT`, which `GetSysColor` answers BLACK on a dark system and
+    // drew a black glyph on a dark card.
+    var fg: u32 = paint::ink_over(paint::effective_bg(v));
+    let _unused: bool = has;
     if (state & ods_disabled()) != (0 as u32) { fg = { u::GetSysColor(17 as i32) }; }
     let _t: u32 = { gdi::SetTextColor(hdc, fg) };
     let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
@@ -4047,16 +4052,86 @@ fn draw_button(di: *u8) -> bool {
         let colour: u32 = if has { bc } else { { u::GetSysColor(16 as i32) } };
         paint::stroke_rect(hdc, r, colour, bw as i32, radius);
     }
-    draw_button_label(hdc, v, r, state, { (*p).title }.view(),
-                      { (*p).text_color }, { (*p).character_spacing },
-                      // A BUTTON DECLARES NO ALIGNMENT — its title is centred,
-                      // which is what a push button is. `text_button` is the
-                      // kind that has one.
-                      vocab::TextAlign::Center, { (*p).line_break });
+    if { (*p).symbol } != 0u32 {
+        draw_button_glyph_and_label(hdc, v, r, state, p);
+    } else {
+        draw_button_label(hdc, v, r, state, { (*p).title }.view(),
+                          { (*p).text_color }, { (*p).character_spacing },
+                          // A BUTTON DECLARES NO ALIGNMENT — its title is centred,
+                          // which is what a push button is. `text_button` is the
+                          // kind that has one.
+                          vocab::TextAlign::Center, { (*p).line_break });
+    }
     if (state & ods_focus()) != (0 as u32) && (state & ods_nofocusrect()) == (0 as u32) {
         let _fr: i32 = { u::DrawFocusRect(hdc, #addr_of(r)) };
     }
     return true;
+}
+
+// A DRAWN BUTTON'S SYMBOL IS DRAWN HERE TOO. `apply_button` hands the glyph to
+// the control's image list, which is what a themed push button paints from —
+// but a button this package draws (bordered, rounded, coloured) never reads
+// that list, so the glyph silently vanished from exactly the buttons that asked
+// for a look. It is the same bitmap `glyph_bitmap` makes for the list, placed
+// before the title and centred with it as one group, in the title's colour.
+fn draw_button_glyph_and_label(hdc: *u8, v: *u8, r: u::tagRECT, state: u32, p: *props::ButtonProps) {
+    var has: bool = false;
+    var fg: u32 = paint::resolve({ (*p).text_color }, #addr_of(has));
+    if !has { fg = paint::ink_over(paint::effective_bg(v)); }
+    if (state & ods_disabled()) != (0 as u32) { fg = { u::GetSysColor(17 as i32) }; }
+    var gw: i32 = 0 as i32;
+    var gh: i32 = 0 as i32;
+    let glyph: *u8 = glyph_bitmap(v, { (*p).symbol }, fg, #addr_of(gw), #addr_of(gh));
+    let title: str = { (*p).title }.view();
+    if glyph.is_null() {
+        draw_button_label(hdc, v, r, state, title, { (*p).text_color }, { (*p).character_spacing },
+                          vocab::TextAlign::Center, { (*p).line_break });
+        return;
+    }
+    // The title's width in the button's own font, to centre the pair.
+    var tw: i32 = 0 as i32;
+    let w16: *u16 = sys::to_wide(title);
+    if w16 != (0 as *u16) {
+        let font: *u8 = { u::SendMessageA(v, 0x0031 as u32, 0 as u64, 0 as i64) } as *u8;
+        var oldf: *u8 = 0 as *u8;
+        if font != (0 as *u8) { oldf = { gdi::SelectObject(hdc, font) }; }
+        var box: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32, right: 0 as i32, bottom: 0 as i32 };
+        let flags: u32 = sys::dt_calcrect() | sys::dt_singleline() | sys::dt_noprefix();
+        let _m: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32), #addr_of(box), flags) };
+        tw = box.right -% box.left;
+        if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
+        sys::free_wide(w16);
+    }
+    let gap: i32 = if tw > (0 as i32) { gw / (3 as i32) } else { 0 as i32 };
+    let total: i32 = gw +% gap +% tw;
+    var x: i32 = r.left +% ((r.right -% r.left) -% total) / (2 as i32);
+    if x < r.left { x = r.left; }
+    var y: i32 = r.top +% ((r.bottom -% r.top) -% gh) / (2 as i32);
+    // Pressed moves the glyph with the title, which `draw_button_label` nudges
+    // by the same pixel.
+    if (state & ods_selected()) != (0 as u32) {
+        x = x +% (1 as i32);
+        y = y +% (1 as i32);
+    }
+    let mem: *u8 = { gdi::CreateCompatibleDC(hdc) };
+    if mem != (0 as *u8) {
+        let old: *u8 = { gdi::SelectObject(mem, glyph) };
+        let bf: graphics::BlendFunction = graphics::blend_over(255 as u8, true);
+        let _b: i32 = graphics::alpha_blend(hdc, x, y, gw, gh, mem, 0 as i32, 0 as i32, gw, gh, bf);
+        let _s: *u8 = { gdi::SelectObject(mem, old) };
+        let _d: i32 = { gdi::DeleteDC(mem) };
+    }
+    let _o: i32 = { gdi::DeleteObject(glyph) };
+    if tw > (0 as i32) {
+        // The label keeps its own pressed nudge, so it starts from the
+        // un-nudged position.
+        var label_left: i32 = x +% gw +% gap;
+        if (state & ods_selected()) != (0 as u32) { label_left = label_left -% (1 as i32); }
+        let text_box: u::tagRECT = u::tagRECT { left: label_left, top: r.top, right: r.right, bottom: r.bottom };
+        draw_button_label(hdc, v, text_box, state, title, { (*p).text_color }, { (*p).character_spacing },
+                          vocab::TextAlign::Start, { (*p).line_break });
+    }
+    return;
 }
 
 // The label half, shared by all three — same font, same spacing rule, same
