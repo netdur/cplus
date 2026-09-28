@@ -34,6 +34,9 @@ import "./input" as input;
 import "./measure" as measure;
 import "./fonts" as fonts;
 import "facet/button" as button;
+import "facet/icon_button" as icon_button;
+import "facet/icons" as icons;
+import "facet/elements" as ui;
 import "facet/text_field" as text_field;
 import "facet/text_area" as text_area;
 import "facet/search_field" as search_field;
@@ -264,4 +267,57 @@ fn a_kind_with_no_font_asks_for_no_reapply() {
     assert fonts::font_bits(props::K_CHECKBOX) == (0 as u64);
     assert fonts::font_bits(props::K_SCROLL) == (0 as u64);
     return;
+}
+
+// ---- a bundled glyph on a button --------------------------------------------------
+
+#[link_name = "free"]
+extern fn test_glyph_free(p: *u8);
+
+// Above U+FFFF a glyph is a SURROGATE PAIR. `symbol_text` used to write one
+// unit on the claim that every Material codepoint sits in the BMP; 106 do not,
+// and the truncated unit named another glyph.
+#[test]
+fn a_glyph_above_the_bmp_is_a_surrogate_pair() {
+    let w: *u16 = controls::glyph_wide(icons::antigravity);   // U+FFFD2
+    assert w != (0 as *u16);
+    assert { *w } == (0xDBBFu32 as u16);
+    assert { *{ (w + (1 as usize)) } } == (0xDFD2u32 as u16);
+    assert { *{ (w + (2 as usize)) } } == (0 as u16);
+    { test_glyph_free(w as *u8) };
+    let b: *u16 = controls::glyph_wide(icons::home);          // U+E9B2
+    assert { *b } == (0xE9B2u32 as u16);
+    assert { *{ (b + (1 as usize)) } } == (0 as u16);
+    { test_glyph_free(b as *u8) };
+}
+
+// GDI's white-on-black coverage becomes the text colour AT that coverage,
+// premultiplied: full coverage is the colour, none is transparent black.
+#[test]
+fn glyph_coverage_becomes_premultiplied_alpha() {
+    var px: [u8; 8] = [255u8, 255u8, 255u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    // pure red as a COLORREF is 0x000000FF
+    controls::glyph_to_alpha(#addr_of(px[0 as usize]), 1 as i32, 0x000000FF as u32);
+    assert px[0 as usize] == (0 as u8);     // B
+    assert px[1 as usize] == (0 as u8);     // G
+    assert px[2 as usize] == (255 as u8);   // R
+    assert px[3 as usize] == (255 as u8);   // A
+    var half: [u8; 4] = [128u8, 128u8, 128u8, 0u8];
+    controls::glyph_to_alpha(#addr_of(half[0 as usize]), 1 as i32, 0x000000FF as u32);
+    assert half[2 as usize] == (128 as u8);
+    assert half[3 as usize] == (128 as u8);
+}
+
+// An icon_button carrying a glyph wears the ICON face at 24pt, and its font is
+// re-applied when the glyph changes.
+#[test]
+fn an_icon_buttons_symbol_takes_the_icon_face() {
+    var n: core::Node = ui::icon_button(symbol: icons::home, key: "ib");
+    let spec: fonts::FontSpec = fonts::spec_of(#addr_of(n));
+    assert spec.family.view() == controls::bundled_family();
+    assert spec.size == 24.0f64;
+    assert (fonts::font_bits(props::K_ICON_BUTTON) & icon_button::P_SYMBOL) != (0 as u64);
+    // NEGATIVE: a word in `source` keeps the UI font
+    var w: core::Node = ui::icon_button("Settings", key: "iw");
+    assert fonts::spec_of(#addr_of(w)).family.view() != controls::bundled_family();
 }

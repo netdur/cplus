@@ -50,6 +50,8 @@ import "facet/page_dots" as page_dots;
 import "facet/bordered" as bordered;
 import "facet/scroll" as scroll;
 import "facet/symbol" as symbol;
+import "facet/icon_font" as icon_font;
+import "./shadow" as shadow;
 import "facet/window_chrome" as chrome;
 import "facet/icon_button" as icon_button;
 import "stdlib/io" as io;
@@ -523,9 +525,126 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & looks) != (0 as u64) {
         set_owner_drawn(v, sys::bs_pushbutton(), button_wants_draw(p));
     }
-    if (dirty & (button::P_IMAGE | button::P_CONTENT_LAYOUT)) != (0 as u64) {
+    // The image slot holds the bundled glyph when there is one, and the image
+    // source otherwise. The glyph is sized by the button's font and coloured
+    // by its text colour, so either changing re-draws it.
+    let glyph_bits: u64 = button::P_SYMBOL | button::P_TEXT_COLOR | button::P_FONT_SIZE
+        | button::P_FONT_WEIGHT | button::P_FONT_FAMILY | button::P_IS_ITALIC
+        | button::P_FONT_SCALES;
+    let cp: u32 = { (*p).symbol };
+    if cp != 0u32 && (dirty & (glyph_bits | button::P_IMAGE | button::P_CONTENT_LAYOUT)) != (0 as u64) {
+        var has: bool = false;
+        var fg: u32 = paint::resolve({ (*p).text_color }, #addr_of(has));
+        if !has { fg = { u::GetSysColor(18 as i32) }; }   // COLOR_BTNTEXT
+        var w: i32 = 0 as i32;
+        var h: i32 = 0 as i32;
+        let hbm: *u8 = glyph_bitmap(v, cp, fg, #addr_of(w), #addr_of(h));
+        set_button_image_list(v, hbm, w, h, { (*p).content_layout });
+        // The list COPIED it; the bitmap is ours to free.
+        if hbm.is_not_null() { let _d: i32 = { gdi::DeleteObject(hbm) }; }
+    } else if (dirty & (button::P_IMAGE | button::P_CONTENT_LAYOUT | button::P_SYMBOL)) != (0 as u64) {
         apply_button_image(v, { (*p).image }.view(), { (*p).content_layout });
     }
+}
+
+// ---- a bundled glyph as a BUTTON'S image -----------------------------------------
+// A themed push button draws its picture from an IMAGE LIST, so the glyph
+// becomes a 32-bit bitmap with alpha and goes through the same list an image
+// source does — which is what keeps `content_layout` the button's own
+// alignment rather than something drawn here.
+//
+// GDI DRAWS TEXT WITHOUT ALPHA. So the glyph is drawn white on black with
+// greyscale antialiasing (ANTIALIASED_QUALITY, never ClearType, whose colour
+// fringes would read as a tint), and the brightness of each pixel becomes its
+// alpha, carrying the text colour premultiplied — which is what a 32-bit image
+// list composites.
+//
+// The square is ONE LINE OF THE BUTTON'S FONT (its cell height), and the icon
+// face is created at that EM height: every Material glyph fills 0..1 em above
+// its baseline, and with the face's own ascent and descent the centred line
+// puts the em square within a pixel of the bitmap.
+fn glyph_bitmap(v: *u8, cp: u32, fg: u32, out_w: *i32, out_h: *i32) -> *u8 {
+    if !register_bundled_font() { return 0 as *u8; }
+    let screen: *u8 = { u::GetDC(0 as *u8) };
+    if screen.is_null() { return 0 as *u8; }
+    // The button's own font, asked for its line height.
+    var side: i32 = 16 as i32;
+    let bf: *u8 = { u::SendMessageA(v, 0x0031 as u32, 0 as u64, 0 as i64) } as *u8;
+    var tm: [u8; 128] = [0u8; 128];
+    var prev: *u8 = 0 as *u8;
+    if bf.is_not_null() { prev = { gdi::SelectObject(screen, bf) }; }
+    if { gdi::GetTextMetricsW(screen, #addr_of(tm) as *gdi::tagTEXTMETRICW) } != (0 as i32) {
+        let tmh: i32 = { *(#addr_of(tm) as *i32) };
+        if tmh > (0 as i32) { side = tmh; }
+    }
+    if prev.is_not_null() { let _s: *u8 = { gdi::SelectObject(screen, prev) }; }
+    let dc: *u8 = { gdi::CreateCompatibleDC(screen) };
+    let _r: i32 = { u::ReleaseDC(0 as *u8, screen) };
+    if dc.is_null() { return 0 as *u8; }
+    var bits: *u8 = 0 as *u8;
+    let hbm: *u8 = shadow::make_dib(dc, side, side, #addr_of(bits));
+    if hbm.is_null() || bits.is_null() { let _d: i32 = { gdi::DeleteDC(dc) }; return 0 as *u8; }
+    let old_bm: *u8 = { gdi::SelectObject(dc, hbm) };
+    var face: *u8 = 0 as *u8;
+    match text::from_str(bundled_family()).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            // Negative height = the EM height in pixels; quality 4 =
+            // ANTIALIASED_QUALITY.
+            face = { gdi::CreateFontA((0 as i32) -% side, 0 as i32, 0 as i32, 0 as i32,
+                                      400 as i32, 0 as u32, 0 as u32, 0 as u32,
+                                      1 as u32, 0 as u32, 0 as u32, 4 as u32, 0 as u32,
+                                      cs.as_ptr() as *i8) };
+        }
+        option::Option[text::CString]::None => { }
+    }
+    if face.is_not_null() {
+        let old_f: *u8 = { gdi::SelectObject(dc, face) };
+        let _t: u32 = { gdi::SetTextColor(dc, 0x00FFFFFF as u32) };
+        let _m: i32 = { gdi::SetBkMode(dc, sys::bkmode_transparent()) };
+        var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                         right: side, bottom: side };
+        let g16: *u16 = glyph_wide(cp);
+        if g16 != (0 as *u16) {
+            let flags: u32 = sys::dt_center() | sys::dt_vcenter()
+                           | sys::dt_singleline() | sys::dt_noprefix();
+            let _d: i32 = { u::DrawTextW(dc, g16, (0 as i32) -% (1 as i32), #addr_of(r), flags) };
+            { glyph_free(g16 as *u8) };
+        }
+        let _g: i32 = { gdi::GdiFlush() };
+        let _s: *u8 = { gdi::SelectObject(dc, old_f) };
+        let _x: i32 = { gdi::DeleteObject(face) };
+    }
+    let _b: *u8 = { gdi::SelectObject(dc, old_bm) };
+    let _dd: i32 = { gdi::DeleteDC(dc) };
+    glyph_to_alpha(bits, side, fg);
+    { *out_w = side };
+    { *out_h = side };
+    return hbm;
+}
+
+// White-on-black coverage -> the text colour at that coverage, premultiplied.
+// BGRA in memory; a COLORREF is 0x00BBGGRR.
+fn glyph_to_alpha(bits: *u8, side: i32, fg: u32) {
+    let fr: u32 = fg & (0xFF as u32);
+    let fgc: u32 = (fg >> (8 as u32)) & (0xFF as u32);
+    let fb: u32 = (fg >> (16 as u32)) & (0xFF as u32);
+    let n: usize = (side as usize) * (side as usize);
+    var i: usize = 0 as usize;
+    while i < n {
+        let px: *u8 = { (bits + i * (4 as usize)) };
+        let b: u32 = { *px } as u32;
+        let g: u32 = { *{ (px + (1 as usize)) } } as u32;
+        let r: u32 = { *{ (px + (2 as usize)) } } as u32;
+        var a: u32 = r;
+        if g > a { a = g; }
+        if b > a { a = b; }
+        { *px = ((fb * a) / (255 as u32)) as u8 };
+        { *{ (px + (1 as usize)) } = ((fgc * a) / (255 as u32)) as u8 };
+        { *{ (px + (2 as usize)) } = ((fr * a) / (255 as u32)) as u8 };
+        { *{ (px + (3 as usize)) } = a as u8 };
+        i = i + (1 as usize);
+    }
+    return;
 }
 
 // ---- checkbox / toggle -------------------------------------------------------
@@ -2455,7 +2574,7 @@ extern fn AddFontResourceExA(file: *i8, flags: u32, reserved: *u8) -> i32;
 static SYMBOL_FONT_TRIED: bool = false;
 static SYMBOL_FONT_OK: bool = false;
 
-fn bundled_family() -> str { return "Material Symbols Outlined"; }
+fn bundled_family() -> str { return icon_font::family(); }
 
 // UP THE TREE, not at a guessed depth. A hard-coded `../../` is right for an
 // example run from `examples/<name>/` and wrong for everything else — the
@@ -2489,14 +2608,21 @@ fn register_bundled_font() -> bool {
         SYMBOL_FONT_OK = true;
         return true;
     }
-    if try_font_at("vendor/facet/assets/MaterialSymbolsOutlined.ttf") {
+    // THE COPY COMPILED INTO THE BINARY (`facet/icon_font`). It replaced a walk
+    // up from the working directory for `vendor/facet/assets/...`, which found
+    // the font inside the C+ tree and nowhere else. `AddFontMemResourceEx` is
+    // private to the process like `FR_PRIVATE`, and reads the bytes in place.
+    var faces: u32 = 0 as u32;
+    let h: *u8 = { gdi::AddFontMemResourceEx(icon_font::bytes(), icon_font::len() as u32,
+                                             0 as *u8, #addr_of(faces)) };
+    if h.is_not_null() && faces > (0 as u32) {
         SYMBOL_FONT_OK = true;
         return true;
     }
-    // ONCE, AND NAMING THE FILE. A symbol that fails silently is
-    // indistinguishable from a symbol that is not there — facet_gtk records
-    // that verb spending its whole life indistinguishable from working.
-    io::eprintln("facet_win32: the bundled symbol font was not found (assets/MaterialSymbolsOutlined.ttf, or vendor/facet/assets/) — symbol(icons::*) renders as codepoint boxes. Ship the font beside the binary to fix it.");
+    // ONCE. A symbol that fails silently is indistinguishable from a symbol
+    // that is not there — facet_gtk records that verb spending its whole life
+    // indistinguishable from working.
+    io::eprintln("facet_win32: the bundled symbol font could not be registered — symbol(icons::*) renders as codepoint boxes.");
     return false;
 }
 
@@ -2511,16 +2637,29 @@ fn create_symbol(n: *core::Node) -> *u8 {
                       sys::ss_notify() | sys::ss_center(), 0 as u32);
 }
 
-// The glyph as a string. A codepoint above the BMP would need a surrogate pair;
-// the Material Symbols range is entirely inside it, so one UTF-16 unit is the
-// whole character — and this is the one place this package builds a wide string
-// without converting from UTF-8, because the input IS a code unit.
-fn symbol_text(p: *symbol::SymbolProps) -> *u16 {
-    let buf: *u8 = { glyph_malloc(4 as usize) };
+fn symbol_text(p: *symbol::SymbolProps) -> *u16 { return glyph_wide({ (*p).icon }); }
+
+// A codepoint as a NUL-terminated wide string, freed with `glyph_free`.
+//
+// A SURROGATE PAIR ABOVE U+FFFF. This used to write one UTF-16 unit on the
+// claim that "the Material Symbols range is entirely inside" the BMP — it is
+// not: 106 of the 4,268 icons live in supplementary PUA-A (U+F0000..), and a
+// truncated unit named some other glyph entirely.
+fn glyph_wide(cp: u32) -> *u16 {
+    let buf: *u8 = { glyph_malloc(6 as usize) };
     if buf.is_null() { return 0 as *u16; }
     let w: *u16 = buf as *u16;
-    { *w = { (*p).icon } as u16 };
-    let term: *u16 = { (w + (1 as usize)) };
+    var end: usize = 1 as usize;
+    if cp < 0x10000u32 {
+        { *w = cp as u16 };
+    } else {
+        let v: u32 = cp - 0x10000u32;
+        { *w = (0xD800u32 | (v >> 10u32)) as u16 };
+        let lo: *u16 = { (w + (1 as usize)) };
+        { *lo = (0xDC00u32 | (v & 0x3FFu32)) as u16 };
+        end = 2 as usize;
+    }
+    let term: *u16 = { (w + end) };
     { *term = 0 as u16 };
     return w;
 }
@@ -2595,6 +2734,11 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::IconButtonProps) { return; }
     if (dirty & icon_button::P_SOURCE) != (0 as u64) {
         set_window_text(v, { (*p).source }.clone());
+    }
+    // The glyph's FACE is `fonts::spec_of`'s answer, re-applied off
+    // `font_bits`; this is the repaint that draws it.
+    if (dirty & icon_button::P_SYMBOL) != (0 as u64) {
+        let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
     if (dirty & icon_button::P_TOGGLES) != (0 as u64) {
         var style: u32 = { u::GetWindowLongPtrA(v, sys::gwl_style()) } as u32;
@@ -2685,7 +2829,20 @@ fn draw_icon_button(di: *u8) -> bool {
     // The picture is tried FIRST because the test is exact: `imaging::draw`
     // answers false for a string that is not a path to something it can read,
     // which is every glyph and every word.
-    if !imaging::draw(hdc, r, { (*p).source }.view(), { (*p).fit }) {
+    // A BUNDLED GLYPH (`symbol:`) takes the image's place when both are set.
+    // The face is already the icon font — `fonts::spec_of` says so for any
+    // icon_button with a symbol — so the glyph is text like any other.
+    let cp: u32 = { (*p).symbol };
+    if cp != 0u32 {
+        let g16: *u16 = glyph_wide(cp);
+        if g16 != (0 as *u16) {
+            let flags: u32 = sys::dt_center() | sys::dt_vcenter()
+                           | sys::dt_singleline() | sys::dt_noprefix();
+            let _d: i32 = { u::DrawTextW(hdc, g16, (0 as i32) -% (1 as i32),
+                                         #addr_of(r), flags) };
+            { glyph_free(g16 as *u8) };
+        }
+    } else if !imaging::draw(hdc, r, { (*p).source }.view(), { (*p).fit }) {
         let w16: *u16 = sys::to_wide({ (*p).source }.view());
         if w16 != (0 as *u16) {
             let flags: u32 = sys::dt_center() | sys::dt_vcenter()
@@ -3598,7 +3755,15 @@ fn align_of_layout(l: vocab::ContentLayout) -> u32 {
 fn apply_button_image(v: *u8, source: str, layout: vocab::ContentLayout) {
     var w: i32 = 0 as i32;
     var h: i32 = 0 as i32;
+    // The decoder's CACHE owns this bitmap; the list copies it.
     let hbm: *u8 = imaging::bitmap_for(source, #addr_of(w), #addr_of(h));
+    set_button_image_list(v, hbm, w, h, layout);
+    return;
+}
+
+// `hbm` onto the button through a fresh image list, or the list taken off when
+// there is no picture. The list COPIES `hbm`; the caller keeps what it owns.
+fn set_button_image_list(v: *u8, hbm: *u8, w: i32, h: i32, layout: vocab::ContentLayout) {
     let old: *u8 = { u::GetPropA(v, sys::prop_imagelist() as *i8) };
     if hbm == (0 as *u8) || w <= (0 as i32) || h <= (0 as i32) {
         // NO PICTURE IS A STATE, not a failure: an application clearing

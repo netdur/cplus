@@ -533,23 +533,22 @@ A codepoint is TEXT, so the bundled tier is a `UILabel` and the class is chosen
 at CREATE. That is safe here in a way it would not be for most props: the icon
 set has NO dirty bit, so it cannot change after construction.
 
-**The font ships with the APP, not with this package**, and on iOS the app
-declares it: the `.ttf` in the bundle plus a `UIAppFonts` array in Info.plist,
-which the system registers before any facet code runs. `[UIFont fontWithName:]`
-then answers it like any other family.
+**The font ships in the BINARY** (`facet/icon_font`). An app that declares its
+own copy — the `.ttf` in the bundle plus a `UIAppFonts` array in Info.plist —
+is still asked first; otherwise the embedded bytes are registered with
+`CTFontManagerRegisterGraphicsFont`.
 
-NOT `CTFontManagerRegisterFontsForURL`, which is what facet_appkit uses and what
-this was written with first. It works, and it is CoreText — a framework this
-package's consumers do not link. They name their frameworks by hand (see
-DEPLOYING.md, the Xcode project, the test runner), so referencing one symbol
-from a new one would break the link for EVERY app using this backend, including
-apps that never draw a symbol. A backend does not get to add a framework to its
-consumers for a feature they may not use.
+That call is CoreText, a framework this package's consumers do not LINK: they
+name their frameworks by hand (see DEPLOYING.md, the Xcode project, the test
+runner), so a direct reference would break the link for every app using this
+backend. So CoreText is reached by `dlsym`, not linked — UIKit is built on it,
+so it is loaded in every process that can reach this code. CoreGraphics, which
+makes the font from the bytes, is on every link line already.
 
-The obligation is the same one facet_android carries — there the app copies the
-font into `assets/` and `aapt2` packages it. Either way the font travels with
-the application. A family that is not registered leaves the glyph unset rather
-than drawing tofu, and says so once on stderr.
+`button(symbol:)` and `icon_button(symbol:)` draw the same glyph into a
+template UIImage through the same `dlsym`'d CoreText calls facet_appkit makes,
+so the two place a glyph identically. A family that cannot be registered
+leaves the glyph unset rather than drawing tofu, and says so once on stderr.
 
 ### Why `swipeable` is a pan and not the table-row API
 

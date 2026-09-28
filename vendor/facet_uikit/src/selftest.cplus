@@ -36,6 +36,8 @@ import "facet/tree" as tree;
 import "facet/vocabulary" as vocab;
 import "facet/list" as flist;
 import "facet/elements" as ui;
+import "facet/icons" as icons;
+import "facet/icon_button" as icon_button;
 import "objc/runtime" as rt;
 import "uikit/uikit" as uik;
 import "./paint" as paint;
@@ -81,6 +83,129 @@ fn check(name: str, ok: bool) {
     FAILED = FAILED + (1 as i32);
     io::eprintln(text::from_str("  FAIL ${name}"));
     return;
+}
+
+// ---- a bundled glyph on a button ------------------------------------------------
+// Asserted AT THE PIXELS: the button's own image is drawn into a bitmap. An
+// image that exists but draws nothing — the font never registered, the
+// codepoint mapped to no glyph, the flip left out so the glyph lands off the
+// square — is the failure that looks like success everywhere else.
+
+#[link_name = "CGBitmapContextCreate"]
+extern fn glyph_bitmap(data: *u8, w: usize, h: usize, bpc: usize, bpr: usize,
+                       space: *u8, info: u32) -> *u8;
+#[link_name = "CGColorSpaceCreateDeviceRGB"]
+extern fn glyph_rgb() -> *u8;
+#[link_name = "CGColorSpaceRelease"]
+extern fn glyph_rgb_release(cs: *u8);
+#[link_name = "CGContextRelease"]
+extern fn glyph_ctx_release(c: *u8);
+#[link_name = "CGContextDrawImage"]
+extern fn glyph_draw_image(c: *u8, r: rt::Rect, img: *u8);
+
+// Pixels with any ink when `img` (a UIImage) is drawn into 32x32 — and, via
+// `top_half`, how many of them are in the top half, which is where a glyph
+// drawn upside down or off its square gives itself away.
+fn ink_of_ui_image(img: *u8, top_half: bool) -> usize {
+    if img.is_null() { return 0 as usize; }
+    let cgimg: *u8 = { rt::msg_id(img, rt::sel(#str_ptr("CGImage\0"))) };
+    if cgimg.is_null() { return 0 as usize; }
+    var px: [u8; 4096] = [0u8; 4096];
+    let space: *u8 = { glyph_rgb() };
+    let cg: *u8 = { glyph_bitmap(#addr_of(px[0 as usize]), 32 as usize, 32 as usize,
+                                 8 as usize, 128 as usize, space, 1 as u32) };
+    { glyph_rgb_release(space) };
+    if cg.is_null() { return 0 as usize; }
+    { glyph_draw_image(cg, rt::Rect { x: 0.0f64, y: 0.0f64, w: 32.0f64, h: 32.0f64 }, cgimg) };
+    { glyph_ctx_release(cg) };
+    var n: usize = 0 as usize;
+    var i: usize = 3 as usize;
+    // bitmap row 0 is the TOP row
+    var end: usize = 4096 as usize;
+    if top_half { end = 2048 as usize; }
+    while i < end {
+        if px[i] > (0 as u8) { n = n + (1 as usize); }
+        i = i + (4 as usize);
+    }
+    return n;
+}
+
+fn button_image(v: *u8) -> *u8 {
+    return { rt::msg_id_u64(v, rt::sel(#str_ptr("imageForState:\0")), 0 as u64) };
+}
+
+fn a_buttons_symbol_is_a_template_image_that_draws_ink() -> bool {
+    var n: core::Node = ui::button("Delete", key: "st:del", symbol: icons::delete);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v.is_null() { return false; }
+    let img: *u8 = button_image(v);
+    // AlwaysTemplate (2): the tint draws it
+    let templ: bool = img.is_not_null()
+        && { rt::msg_i64(img, rt::sel(#str_ptr("renderingMode\0"))) } == (2 as i64);
+    let ink: usize = ink_of_ui_image(img, false);
+    views::view_release(v);
+    return templ && ink > (100 as usize);
+}
+
+// The trash can is mostly BELOW the lid, so an upright glyph puts less than
+// half its ink in the top half; the same glyph drawn with no flip is a
+// mirror image and puts more than half there. Measured against the same
+// glyph so the font's own shape is the reference.
+fn a_buttons_symbol_is_drawn_upright() -> bool {
+    match controls::bundled_glyph_image(icons::arrow_downward, 32.0f64) {
+        option::Option[uik::Image]::Some(img) => {
+            let all: usize = ink_of_ui_image(img.raw(), false);
+            let top: usize = ink_of_ui_image(img.raw(), true);
+            // an arrow pointing DOWN is widest at the bottom
+            return all > (50 as usize) && top * (2 as usize) < all;
+        }
+        option::Option[uik::Image]::None => { return false; }
+    }
+}
+
+fn a_glyph_above_the_bmp_draws_and_an_unmapped_codepoint_does_not() -> bool {
+    var ok: bool = true;
+    match controls::bundled_glyph_image(icons::antigravity, 32.0f64) {
+        option::Option[uik::Image]::Some(img) => { ok = ok && ink_of_ui_image(img.raw(), false) > (50 as usize); }
+        option::Option[uik::Image]::None => { ok = false; }
+    }
+    match controls::bundled_glyph_image(0xE000u32, 32.0f64) {
+        option::Option[uik::Image]::Some(img) => { ok = ok && ink_of_ui_image(img.raw(), false) == (0 as usize); }
+        option::Option[uik::Image]::None => { ok = false; }
+    }
+    match controls::bundled_glyph_image(0u32, 32.0f64) {
+        option::Option[uik::Image]::Some(_img) => { ok = false; }
+        option::Option[uik::Image]::None => { }
+    }
+    return ok;
+}
+
+fn an_icon_buttons_symbol_takes_the_slot_and_gives_it_back() -> bool {
+    var n: core::Node = ui::icon_button(symbol: icons::home, key: "st:home");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v.is_null() { return false; }
+    let had: bool = ink_of_ui_image(button_image(v), false) > (100 as usize);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match icon_button::find("st:home", within: p) {
+        option::Option[icon_button::IconButton]::Some(x) => {
+            let _s: icon_button::IconButton = x.set_symbol(0u32);
+        }
+        option::Option[icon_button::IconButton]::None => { return false; }
+    }
+    views::apply(0 as *u8, p);
+    let emptied: bool = button_image(v).is_null();
+    core::set_view(p, 0 as *u8, views::view_release);
+    views::view_release(v);
+    return had && emptied;
+}
+
+// The font is in the BINARY: a test runner installs no UIAppFonts and ships
+// no .ttf, so a glyph that draws here drew from the embedded copy.
+fn the_icon_font_registers_without_the_app_shipping_it() -> bool {
+    return controls::ensure_bundled_font();
 }
 
 // ---- the clipping bug ----------------------------------------------------------
@@ -3550,6 +3675,15 @@ fn run_all() -> i32 {
     RAN = 0 as i32;
     io::eprintln(text::from_str("facet_uikit selftest"));
 
+    check("the icon font registers without the app shipping it",
+          the_icon_font_registers_without_the_app_shipping_it());
+    check("a button's symbol is a template image that draws ink",
+          a_buttons_symbol_is_a_template_image_that_draws_ink());
+    check("a button's symbol is drawn upright", a_buttons_symbol_is_drawn_upright());
+    check("a glyph above the BMP draws and an unmapped codepoint does not",
+          a_glyph_above_the_bmp_draws_and_an_unmapped_codepoint_does_not());
+    check("an icon_button's symbol takes the slot and gives it back",
+          an_icon_buttons_symbol_takes_the_slot_and_gives_it_back());
     check("a relist reports its collection's count", a_relist_reports_its_collections_count());
     check("a realised row is found by its key", a_realised_row_is_found_by_its_key());
     check("a recycled cell forgets the row it held", a_recycled_cell_forgets_the_row_it_held());

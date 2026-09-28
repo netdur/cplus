@@ -159,6 +159,12 @@ fn spec_of(n: *core::Node) -> FontSpec {
     // codepoint is real, and Segoe UI simply has no glyph at it.
     if kind == props::K_ICON_BUTTON {
         let q: *props::IconButtonProps = p as *props::IconButtonProps;
+        // A BUNDLED GLYPH (`symbol:`) is the icon face at 24pt — the size the
+        // font is drawn for, and what the other backends draw it at.
+        if { (*q).symbol } != 0u32 {
+            return stated_spec(24.0f64, vocab::FontWeight::Default, false,
+                               text::from_str(controls::bundled_family()));
+        }
         if is_private_use_glyph({ (*q).source }.view()) {
             return stated_spec(0.0f64, vocab::FontWeight::Default, false,
                                text::from_str(controls::bundled_family()));
@@ -552,7 +558,7 @@ fn font_bits(kind: u32) -> u64 {
     // typography surface.
     // An icon button's face follows its SOURCE — see `spec_of` — so a change
     // of source is a change of font.
-    if kind == props::K_ICON_BUTTON { return icon_button::P_SOURCE; }
+    if kind == props::K_ICON_BUTTON { return icon_button::P_SOURCE | icon_button::P_SYMBOL; }
     if kind == props::K_DATE_PICKER {
         return date_picker::P_FONT_SIZE | date_picker::P_FONT_WEIGHT
              | date_picker::P_FONT_FAMILY | date_picker::P_IS_ITALIC

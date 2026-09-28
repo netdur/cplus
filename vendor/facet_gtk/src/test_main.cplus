@@ -20,6 +20,10 @@
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/fs" as fs;
+import "stdlib/result" as result;
+import "facet/icons" as icons;
+import "facet/icon_font" as icon_font;
 import "stdlib/vec" as vec;
 import "stdlib/io" as io;
 import "stdlib/status" as status;
@@ -2010,6 +2014,75 @@ fn an_sf_symbol_name_with_a_dot_reads_as_a_path() {
 fn find_up_walks_the_tree_and_gives_up() {
     assert controls::find_up("assets/hat.png").view() != "";
     assert controls::find_up("no/such/file/facet-suite-8817").view() == "";
+}
+
+// ---- a bundled glyph on a button ------------------------------------------------
+// Headless like the rest of this file: no widget, so these pin the parts a
+// display is not needed for — the markup the glyph label is given, the file
+// the embedded font is written to, and that fontconfig then knows the family.
+
+extern fn setenv(name: *u8, value: *u8, overwrite: i32) -> i32;
+extern fn chdir(path: *u8) -> i32;
+extern fn getcwd(buf: *u8, size: usize) -> *u8;
+
+#[test]
+fn a_button_glyph_is_the_codepoint_in_the_bundled_family() {
+    let m: text::Text = controls::glyph_markup(icons::delete, controls::button_glyph_size());
+    assert m.view().contains("font_family=\"Material Symbols Outlined\"");
+    assert m.view().contains("size=\"larger\"");
+    assert m.view().contains(input::utf8_of(icons::delete).view());
+    // an icon_button's glyph is 24pt, in Pango's 1024ths of a point
+    let i: text::Text = controls::glyph_markup(icons::home, controls::icon_button_glyph_size());
+    assert i.view().contains("size=\"24576\"");
+}
+
+// The embedded font becomes a FILE, because fontconfig adds nothing else: once,
+// at the right size, and reused after that. Under a scratch cache so the suite
+// never writes to the real one.
+#[test]
+fn the_embedded_font_is_written_once_and_reused() {
+    let base: text::Text = text::from_str("/tmp/facet-gtk-suite-cache-${getpid_of()}");
+    set_cache_home(base.view());
+    let first: text::Text = controls::embedded_font_file();
+    assert first.view() != "";
+    assert first.view().has_prefix(base.view());
+    let size: i64 = match fs::metadata(first.view()) {
+        result::Result[fs::Metadata, result::IoError]::Ok(m) => m.size,
+        result::Result[fs::Metadata, result::IoError]::Err(_e) => 0 as i64,
+    };
+    assert size == (icon_font::len() as i64);
+    assert controls::embedded_font_file().view() == first.view();
+    // NEGATIVE: nowhere writable answers "" rather than a path to nothing
+    set_cache_home("/dev/null/facet-cannot-be-here");
+    assert controls::embedded_font_file().view() == "";
+}
+
+// From `/`, where no relative path finds anything, the family still becomes
+// known — the font came out of the binary.
+#[test]
+fn the_icon_font_registers_from_the_binary_whatever_the_working_directory() {
+    let base: text::Text = text::from_str("/tmp/facet-gtk-suite-cache-${getpid_of()}");
+    set_cache_home(base.view());
+    var here: [u8; 4096] = [0u8; 4096];
+    assert { getcwd(#addr_of(here[0 as usize]), 4096 as usize) }.is_not_null();
+    assert { chdir(#str_ptr("/\0")) } == (0 as i32);
+    let path: text::Text = controls::embedded_font_file();
+    let added: bool = path.view() != "" && controls::add_app_font(path.view());
+    assert { chdir(#addr_of(here[0 as usize])) } == (0 as i32);
+    assert added;
+    assert controls::font_family_is_known(controls::bundled_family());
+}
+
+extern fn getpid() -> i32;
+fn getpid_of() -> i32 { return { getpid() }; }
+
+fn set_cache_home(v: str) {
+    match text::from_str(v).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let _r: i32 = { setenv(#str_ptr("XDG_CACHE_HOME\0"), cs.as_ptr(), 1 as i32) };
+        }
+        option::Option[text::CString]::None => { }
+    }
 }
 
 // ---- WebKit's sandbox ----------------------------------------------------------

@@ -37,6 +37,8 @@ import "stdlib/str" as _;
 import "stdlib/io" as io;
 import "stdlib/fs" as fs;
 import "stdlib/bundle" as bundle;
+import "stdlib/env" as env;
+import "stdlib/result" as result;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
@@ -75,6 +77,7 @@ import "facet/gestures" as gestures;
 import "facet/mount" as mount;
 import "flex_layout/flex_layout" as flex;
 import "facet/symbol" as symbol;
+import "facet/icon_font" as icon_font;
 import "facet/page_dots" as page_dots;
 import "gtk4/gtk4" as gtk;
 import "gio/gio" as gio;
@@ -982,19 +985,62 @@ fn ellipsize_of(b: vocab::LineBreak) -> i32 {
 fn btn_label_key() -> *u8 { return #str_ptr("facet-gtk-btn-label\0"); }
 fn btn_image_key() -> *u8 { return #str_ptr("facet-gtk-btn-image\0"); }
 fn btn_box_key() -> *u8 { return #str_ptr("facet-gtk-btn-box\0"); }
+fn btn_glyph_key() -> *u8 { return #str_ptr("facet-gtk-btn-glyph\0"); }
+
+// ---- a bundled glyph on a button ------------------------------------------------
+// `button(symbol:)` and `icon_button(symbol:)` put a glyph where the image goes.
+// On this backend a bundled glyph is TEXT — `symbol` draws it in a GtkLabel —
+// so the button's glyph is a label too, standing in the image's slot: it takes
+// the button's CSS `color` by inheritance, like the title beside it, and the
+// font rides Pango markup because the node's CSS document styles the BUTTON,
+// not a child of it.
+//
+// `size="larger"` is Pango's 1.2x, which makes the glyph one line of the title
+// tall — the size facet_appkit and facet_uikit draw it at. An icon_button has
+// no title and draws at 24pt, in Pango's 1024ths of a point.
+fn glyph_markup(cp: u32, size: str) -> text::Text {
+    return text::from_str("<span font_family=\"")
+        .appending(bundled_family())
+        .appending("\" size=\"")
+        .appending(size)
+        .appending("\">")
+        .appending(input::utf8_of(cp).view())
+        .appending("</span>");
+}
+
+fn button_glyph_size() -> str { return "larger"; }
+fn icon_button_glyph_size() -> str { return "24576"; }
+
+// Show `cp` in `glyph`, or hide it when there is none. Registering the font is
+// lazy and once, as it is for `symbol`.
+fn show_glyph(glyph: gtk::Label, cp: u32, size: str) {
+    if cp == 0u32 {
+        glyph.set_text("");
+        glyph.upcast().set_visible(false);
+        return;
+    }
+    let _ok: bool = register_bundled_font();
+    glyph.set_markup(glyph_markup(cp, size).view());
+    glyph.upcast().set_visible(true);
+    return;
+}
 
 // Build the image+label child and record where the pieces are.
 fn build_button_content(v: *u8) {
     // Orientation 0 = horizontal, spacing 6 = GTK's own icon/label gap.
     let bx: gtk::Box = gtk::Box::new(0 as i32, 6 as i32);
     let img: gtk::Image = gtk::Image::new();
+    let glyph: gtk::Label = gtk::Label::new("");
     let lbl: gtk::Label = gtk::Label::new("");
     bx.append(img.upcast());
+    bx.append(glyph.upcast());
     bx.append(lbl.upcast());
-    // An empty half must not consume the gap; visibility is set by `apply`.
+    // An empty part must not consume the gap; visibility is set by `apply`.
     img.upcast().set_visible(false);
+    glyph.upcast().set_visible(false);
     g::set_data(v, btn_box_key(), bx.raw());
     g::set_data(v, btn_image_key(), img.raw());
+    g::set_data(v, btn_glyph_key(), glyph.raw());
     g::set_data(v, btn_label_key(), lbl.raw());
     gtk::Button::from_raw(v).set_child(bx.upcast());
     return;
@@ -1142,25 +1188,33 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::ButtonProps) { return; }
     let lraw: *u8 = g::get_data(v, btn_label_key());
     let iraw: *u8 = g::get_data(v, btn_image_key());
+    let graw: *u8 = g::get_data(v, btn_glyph_key());
     let braw: *u8 = g::get_data(v, btn_box_key());
-    // A widget this package did not build has none of the three, and every
+    // A widget this package did not build has none of the four, and every
     // call below would be a GTK critical against a null instance.
-    if lraw == (0 as *u8) || iraw == (0 as *u8) || braw == (0 as *u8) { return; }
+    if lraw == (0 as *u8) || iraw == (0 as *u8) || graw == (0 as *u8)
+       || braw == (0 as *u8) { return; }
     let lbl: gtk::Label = gtk::Label::from_raw(lraw);
     let img: gtk::Image = gtk::Image::from_raw(iraw);
+    let glyph: gtk::Label = gtk::Label::from_raw(graw);
     let bx: gtk::Box = gtk::Box::from_raw(braw);
     if (dirty & button::P_TITLE) != (0 as u64) {
         let t: str = { (*p).title.view() };
         lbl.set_text(t);
         lbl.upcast().set_visible(t != "");
     }
-    if (dirty & button::P_IMAGE) != (0 as u64) {
+    // The glyph takes the image's slot when both are set, and hands it back
+    // when it is cleared.
+    if (dirty & (button::P_IMAGE | button::P_SYMBOL)) != (0 as u64) {
         let s: str = { (*p).image.view() };
+        let cp: u32 = { (*p).symbol };
         set_image_source(img, s);
-        img.upcast().set_visible(s != "");
+        img.upcast().set_visible(s != "" && cp == 0u32);
+        show_glyph(glyph, cp, button_glyph_size());
     }
     if (dirty & button::P_CONTENT_LAYOUT) != (0 as u64) {
-        arrange_content(bx, img.upcast(), lbl.upcast(), { (*p).content_layout });
+        arrange_content(bx, img.upcast(), glyph.upcast(), lbl.upcast(),
+                        { (*p).content_layout });
     }
     if (dirty & button::P_LINE_BREAK) != (0 as u64) {
         lbl.set_ellipsize(ellipsize_of({ (*p).line_break }));
@@ -1184,12 +1238,17 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
 // `content_layout` in one place: the box's axis, and which child leads.
 // GtkOrientation: 0 HORIZONTAL, 1 VERTICAL. `reorder_child_after` with a NULL
 // sibling is GTK's "move to the front".
-fn arrange_content(bx: gtk::Box, img: gtk::Widget, lbl: gtk::Widget,
+//
+// The image and the glyph are ONE slot — at most one of them is visible — so
+// they move together: the glyph goes to the front first and the image in
+// front of it, or the title goes to the front and both follow it.
+fn arrange_content(bx: gtk::Box, img: gtk::Widget, glyph: gtk::Widget, lbl: gtk::Widget,
                    layout: vocab::ContentLayout) {
     let nul: gtk::Widget = gtk::Widget::from_raw(0 as *u8);
     match layout {
         vocab::ContentLayout::ImageLeft => {
             bx.as_orientable().set_orientation(0 as i32);
+            bx.reorder_child_after(glyph, nul);
             bx.reorder_child_after(img, nul);
         }
         vocab::ContentLayout::ImageRight => {
@@ -1198,6 +1257,7 @@ fn arrange_content(bx: gtk::Box, img: gtk::Widget, lbl: gtk::Widget,
         }
         vocab::ContentLayout::ImageTop => {
             bx.as_orientable().set_orientation(1 as i32);
+            bx.reorder_child_after(glyph, nul);
             bx.reorder_child_after(img, nul);
         }
         vocab::ContentLayout::ImageBottom => {
@@ -1255,10 +1315,17 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
 fn create_icon_button(n: *core::Node) -> *u8 {
     let raw: *u8 = gtk::ToggleButton::new().upcast().raw();
     // An explicit GtkImage child rather than `set_icon_name`, because `fit`
-    // and a file source both need the image object itself.
+    // and a file source both need the image object itself. A glyph label sits
+    // beside it in one box, and at most one of the two is visible.
+    let bx: gtk::Box = gtk::Box::new(0 as i32, 0 as i32);
     let img: gtk::Image = gtk::Image::new();
+    let glyph: gtk::Label = gtk::Label::new("");
+    glyph.upcast().set_visible(false);
+    bx.append(img.upcast());
+    bx.append(glyph.upcast());
     g::set_data(raw, btn_image_key(), img.raw());
-    gtk::Button::from_raw(raw).set_child(img.upcast());
+    g::set_data(raw, btn_glyph_key(), glyph.raw());
+    gtk::Button::from_raw(raw).set_child(bx.upcast());
     input::arm_icon_button(raw, n);
     return gtk::Button::from_raw(raw).upcast().raw();
 }
@@ -1267,10 +1334,16 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
     if p == (0 as *props::IconButtonProps) { return; }
     let iraw: *u8 = g::get_data(v, btn_image_key());
-    if iraw == (0 as *u8) { return; }
+    let graw: *u8 = g::get_data(v, btn_glyph_key());
+    if iraw == (0 as *u8) || graw == (0 as *u8) { return; }
     let img: gtk::Image = gtk::Image::from_raw(iraw);
-    if (dirty & icon_button::P_SOURCE) != (0 as u64) {
+    // The glyph takes the image's place when both are set; clearing it hands
+    // the slot back to the source, or empties it when there is none.
+    if (dirty & (icon_button::P_SOURCE | icon_button::P_SYMBOL)) != (0 as u64) {
+        let cp: u32 = { (*p).symbol };
         set_image_source(img, { (*p).source.view() });
+        img.upcast().set_visible(cp == 0u32);
+        show_glyph(gtk::Label::from_raw(graw), cp, icon_button_glyph_size());
     }
     if (dirty & icon_button::P_FIT) != (0 as u64) {
         // A GtkImage scales its icon to the size it is given and has no
@@ -1997,18 +2070,24 @@ fn symbol_is_system(n: *core::Node) -> bool {
 // counterpart of AppKit's `CTFontManagerRegisterFontsForURL`, which
 // `facet_appkit/controls.cplus` calls in the same place for the same reason.
 //
-// THE FONT IS FOUND, NOT ASSUMED, in the order an application actually ships
-// one: its own `assets/` first (a packaged app, and the tree's own convention —
-// `assets/hat.png` sits beside it), then the vendored copy from a source tree.
-// Same search order as the AppKit backend, so an application that works there
-// works here.
+// THE FONT IS ASKED FOR in the order an application actually ships one: its
+// own `assets/` (up from the working directory, then beside the executable or
+// in its install prefix), then the copy compiled into the binary
+// (`facet/icon_font`). The embedded copy replaced a walk up from the working
+// directory for `vendor/facet/assets/...`, which found the font inside the C+
+// tree and nowhere else — an application built against the package store drew
+// its glyphs as boxes.
+//
+// Fontconfig adds application fonts from FILES only, so the embedded bytes are
+// written once to the user's cache directory, named by their length so a new
+// font is a new file, and added from there.
 
 #[link_name = "FcConfigGetCurrent"]
 extern fn fc_config_get_current() -> *u8;
 #[link_name = "FcConfigAppFontAddFile"]
 extern fn fc_config_app_font_add_file(config: *u8, file: *u8) -> i32;
 
-fn bundled_family() -> str { return "Material Symbols Outlined"; }
+fn bundled_family() -> str { return icon_font::family(); }
 
 static SYMBOL_FONT_TRIED: bool = false;
 static SYMBOL_FONT_OK: bool = false;
@@ -2020,13 +2099,12 @@ fn register_bundled_font() -> bool {
     // it again would give fontconfig two copies of one family.
     if font_family_is_known(bundled_family()) { SYMBOL_FONT_OK = true; return true; }
     if search_up("assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
-    if search_up("vendor/facet/assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
-    // Then beside the EXECUTABLE. Everything above is relative to the working
+    // Then beside the EXECUTABLE. The search above is relative to the working
     // directory, which is the source tree during development and `$HOME` for
-    // an installed app started from its desktop entry — so an installed app
-    // needs a place that travels with the binary: `assets/` beside it (an app
-    // shipped as a folder), or `share/facet/assets/` in its install prefix
-    // (`bin/app` in /usr, a Homebrew keg, a snap).
+    // an installed app started from its desktop entry — so an app that ships
+    // its own copy needs a place that travels with the binary: `assets/`
+    // beside it (an app shipped as a folder), or `share/facet/assets/` in its
+    // install prefix (`bin/app` in /usr, a Homebrew keg, a snap).
     let exe_dir: text::Text = bundle::dir();
     if exe_dir.view() != "" {
         if add_app_font_if_present("${exe_dir}/assets/MaterialSymbolsOutlined.ttf") {
@@ -2036,11 +2114,72 @@ fn register_bundled_font() -> bool {
             SYMBOL_FONT_OK = true; return true;
         }
     }
-    // ONCE, and naming the file — a symbol that fails silently is
-    // indistinguishable from a symbol that is not there, and on this backend
-    // that verb spent its whole life indistinguishable from working.
-    io::eprintln("facet_gtk: the bundled symbol font was not found (assets/MaterialSymbolsOutlined.ttf beside the working directory or the executable, share/facet/assets/ in the install prefix, or vendor/facet/assets/) — symbol(icons::*) renders as codepoint boxes. Ship the font with the binary to fix it.");
+    // Last, the copy compiled into the binary, which cannot be missing.
+    let cached: text::Text = embedded_font_file();
+    if cached.view() != "" && add_app_font(cached.view()) { SYMBOL_FONT_OK = true; return true; }
+    // ONCE — a symbol that fails silently is indistinguishable from a symbol
+    // that is not there, and on this backend that verb spent its whole life
+    // indistinguishable from working.
+    io::eprintln("facet_gtk: the bundled symbol font could not be registered — symbol(icons::*) renders as codepoint boxes.");
     return false;
+}
+
+extern fn fopen(path: *u8, mode: *u8) -> *u8;
+extern fn fwrite(p: *u8, size: usize, n: usize, f: *u8) -> usize;
+extern fn fclose(f: *u8) -> i32;
+extern fn rename(from: *u8, to: *u8) -> i32;
+extern fn getpid() -> i32;
+
+// The embedded font as a file fontconfig can read: `$XDG_CACHE_HOME/facet/`,
+// else `~/.cache/facet/`. Reused when it is already there at the right size;
+// otherwise written under a per-process name and RENAMED into place, so two
+// applications starting together never read half a font. "" when nowhere is
+// writable.
+fn embedded_font_file() -> text::Text {
+    var base: text::Text = text::from_str("");
+    match env::var("XDG_CACHE_HOME") {
+        option::Option[text::Text]::Some(x) => { base = x; }
+        option::Option[text::Text]::None => { }
+    }
+    if base.view() == "" {
+        match env::var("HOME") {
+            option::Option[text::Text]::Some(h) => { base = h.appending("/.cache"); }
+            option::Option[text::Text]::None => { return text::from_str(""); }
+        }
+    }
+    let n: usize = icon_font::len();
+    let dir: text::Text = base.appending("/facet");
+    let path: text::Text = dir.appending("/MaterialSymbolsOutlined-${n}.ttf");
+    match fs::metadata(path.view()) {
+        result::Result[fs::Metadata, result::IoError]::Ok(m) => {
+            if m.size == (n as i64) { return path; }
+        }
+        result::Result[fs::Metadata, result::IoError]::Err(_e) => { }
+    }
+    let _d: result::Result[bool, result::IoError] = fs::create_dir_all(dir.view());
+    let pid: i32 = { getpid() };
+    let tmp: text::Text = path.appending(".${pid}");
+    var wrote: bool = false;
+    match tmp.c_str() {
+        option::Option[text::CString]::Some(ct) => {
+            let f: *u8 = { fopen(ct.as_ptr(), #str_ptr("wb\0")) };
+            if f.is_not_null() {
+                wrote = { fwrite(icon_font::bytes(), 1 as usize, n, f) } == n;
+                wrote = ({ fclose(f) } == (0 as i32)) && wrote;
+            }
+            if wrote {
+                match path.c_str() {
+                    option::Option[text::CString]::Some(cp) => {
+                        wrote = { rename(ct.as_ptr(), cp.as_ptr()) } == (0 as i32);
+                    }
+                    option::Option[text::CString]::None => { wrote = false; }
+                }
+            }
+        }
+        option::Option[text::CString]::None => { }
+    }
+    if !wrote { return text::from_str(""); }
+    return path;
 }
 
 // UP THE TREE, not at a guessed depth. A hard-coded `../../` is right for an

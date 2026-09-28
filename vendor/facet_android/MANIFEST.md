@@ -670,17 +670,22 @@ rows has closed: what is left is PROPS on controls that already work.
   iOS one cannot: a Button is a TextView, so the twelve font verbs facet_uikit
   records as unreachable all reach it.
 
-- **A `symbol` has BOTH tiers, and one of them needs an asset.** The portable
+- **A `symbol` has BOTH tiers.** The portable
   tier — `symbol(icons::home)`, a codepoint in facet's own
   MaterialSymbolsOutlined — is a TextView carrying that font, loaded through
   `Typeface.Builder` so the FILL axis can be asked for; the system tier is an
   ImageView against `android.R.drawable`. A node whose SET changes after mount
   keeps the view it was created with.
 
-  The font is an APK ASSET, which is the standing it has in a macOS app's
-  bundle: `build_android.sh` copies it out of `vendor/facet/assets` and
-  `aapt2 -A` ships it. An app that ships no symbols can drop that line — the
-  backend warns once and draws nothing rather than failing.
+  The font is COMPILED INTO THE BINARY (`facet/icon_font`), so an app ships
+  nothing for it. An APK asset named `MaterialSymbolsOutlined.ttf` is still
+  asked first, as an app's own copy; otherwise the embedded bytes are written
+  once to the app's cache directory (`Typeface.Builder` reads a file, and
+  `Font.Builder(ByteBuffer)` is API 29 against this backend's floor of 26) and
+  the typeface is built from there, by plain JNI so the dex is unchanged.
+  `button(symbol:)` and `icon_button(symbol:)` draw the same glyph into a
+  bitmap drawable — the compound slot `content_layout` picks, and the
+  ImageButton's drawable — tinted by the view's text colours.
 
 - **An image is resolved but never CACHED.** All three doors are open — a file,
   an APK asset through the AssetManager, a drawable resource by name — and each

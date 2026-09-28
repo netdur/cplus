@@ -45,6 +45,7 @@ import "facet/date_picker" as date_picker;
 import "facet/time_picker" as time_picker;
 import "facet/refreshable" as refreshable;
 import "facet/symbol" as symbol;
+import "facet/icon_font" as icon_font;
 import "facet/text_button" as text_button;
 import "facet/split" as split;
 import "facet/tree" as tree;
@@ -730,7 +731,28 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // gives — and `contentLayout` is the side it goes on, which UIKit spells as
     // the semantic content attribute for leading/trailing and as an edge inset
     // flip for above/below.
-    if (dirty & button::P_IMAGE) != (0 as u64) {
+    // The image slot holds the bundled glyph when there is one, and the image
+    // source otherwise. The glyph is sized by the title's font, so a font
+    // change re-draws it — which is why this runs AFTER the font is set.
+    let has_glyph: bool = { (*p).symbol } != 0u32;
+    let glyph_bits: u64 = button::P_SYMBOL | button::P_FONT_SIZE | button::P_FONT_WEIGHT
+        | button::P_FONT_FAMILY | button::P_IS_ITALIC | button::P_FONT_SCALES;
+    if has_glyph && (dirty & (glyph_bits | button::P_IMAGE)) != (0 as u64) {
+        match bundled_glyph_image({ (*p).symbol }, glyph_side_for_button(v)) {
+            option::Option[ui::Image]::Some(img) => { b.set_image(img, 0 as u64); }
+            option::Option[ui::Image]::None => { b.set_image(ui::Image::from_raw(0 as *u8), 0 as u64); }
+        }
+    }
+    // A template glyph takes the button's TINT, and the title's colour rides
+    // `setTitleColor:` — so the glyph is told the same colour, or a red
+    // "Delete" gets a blue trash can.
+    if has_glyph && (dirty & (button::P_TEXT_COLOR | button::P_SYMBOL)) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setTintColor:\0")), paint::ui_color(c).raw()) };
+        }
+    }
+    if !has_glyph && (dirty & (button::P_IMAGE | button::P_SYMBOL)) != (0 as u64) {
         let src: str = { (*p).image.view() };
         if src == "" {
             b.set_image(ui::Image::from_raw(0 as *u8), 0 as u64);
@@ -959,7 +981,17 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
         }
     }
     let src: str = { (*p).source.view() };
-    if (dirty & icon_button::P_SOURCE) != (0 as u64) && src != "" {
+    // A bundled glyph takes the image's place when both are set; clearing it
+    // hands the slot back to the source, or empties it when there is none.
+    let slot_bits: u64 = icon_button::P_SOURCE | icon_button::P_SYMBOL;
+    if (dirty & slot_bits) != (0 as u64) && { (*p).symbol } != 0u32 {
+        match bundled_glyph_image({ (*p).symbol }, icon_button_glyph_side()) {
+            option::Option[ui::Image]::Some(img) => { b.set_image(img, 0 as u64); }
+            option::Option[ui::Image]::None => { b.set_image(ui::Image::from_raw(0 as *u8), 0 as u64); }
+        }
+    } else if (dirty & slot_bits) != (0 as u64) && src == "" {
+        b.set_image(ui::Image::from_raw(0 as *u8), 0 as u64);
+    } else if (dirty & slot_bits) != (0 as u64) {
         match image_named(src) {
             option::Option[ui::Image]::Some(img) => { b.set_image(img, 0 as u64); }
             option::Option[ui::Image]::None => {
@@ -1080,26 +1112,69 @@ fn content_mode_of(f: vocab::ImageFit) -> ui::ViewContentMode {
 // configuration, and moving it onto a label to match would be a rewrite of a
 // working path for symmetry.
 
-// THE FONT IS THE APP'S TO SHIP, and on iOS the app declares it: a `.ttf` in
-// the bundle plus a `UIAppFonts` array in Info.plist, and the system registers
-// it before any of this runs. `[UIFont fontWithName:]` then answers it like any
-// other family.
+// THE FONT SHIPS IN THE BINARY (`facet/icon_font`), and an app that declares
+// its own copy — a `.ttf` in the bundle plus a `UIAppFonts` array in
+// Info.plist — is still asked first: `[UIFont fontWithName:]` answers it like
+// any other family, and then nothing here runs.
 //
-// NOT `CTFontManagerRegisterFontsForURL`, which is what facet_appkit uses and
-// what this was written with first. It works — but it is CoreText, and this
-// package's consumers name their frameworks by hand on a link line (see
-// DEPLOYING.md, the Xcode project, the test runner). Referencing one symbol
-// from a new framework would break the link for EVERY app using this backend,
-// including apps that never draw a symbol. A backend does not get to add a
-// framework to its consumers for a feature they may not use.
-//
-// The obligation is the same one Android carries and is recorded beside it: on
-// that platform the app copies the font into `assets/`, here it declares it in
-// Info.plist. Either way the font ships with the app rather than the framework.
+// This used to be the app's obligation alone, and an app that missed it drew
+// every glyph blank. The reason it was left to the app still holds: the
+// registration is CoreText, and this package's consumers name their frameworks
+// by hand on a link line (see DEPLOYING.md, the Xcode project, the test
+// runner) — referencing one CoreText symbol would break the link for EVERY app
+// using this backend. So CoreText is not LINKED. It is looked up at run time
+// with `dlsym`: UIKit itself is built on CoreText, so the framework is loaded
+// in every process that can reach this code, and the lookup cannot fail where
+// a UIButton exists. CoreGraphics is on every link line already.
 
-fn bundled_family() -> str { return "Material Symbols Outlined"; }
+fn bundled_family() -> str { return icon_font::family(); }
 
 static SYMBOL_FONT_WARNED: bool = false;
+static SYMBOL_FONT_TRIED: bool = false;
+static SYMBOL_FONT_OK: bool = false;
+
+#[link_name = "dlsym"]
+extern fn glyph_dlsym(handle: *u8, name: *u8) -> *u8;
+#[link_name = "CGDataProviderCreateWithData"]
+extern fn cg_data_provider_create_with_data(info: *u8, data: *u8, size: usize, release: *u8) -> *u8;
+#[link_name = "CGDataProviderRelease"]
+extern fn cg_data_provider_release(p: *u8);
+#[link_name = "CGFontCreateWithDataProvider"]
+extern fn cg_font_create_with_data_provider(p: *u8) -> *u8;
+#[link_name = "CGFontRelease"]
+extern fn cg_font_release(f: *u8);
+
+// RTLD_DEFAULT: every image already loaded, which is where CoreText is.
+fn rtld_default() -> *u8 { return { ((0 as i64) - (2 as i64)) as *u8 }; }
+
+// The one CoreText entry point a caller names, resolved once per name.
+fn coretext(name: *u8) -> *u8 { return { glyph_dlsym(rtld_default(), name) }; }
+
+// Whether the bundled family resolves — registering the embedded copy the
+// first time it does not.
+fn ensure_bundled_font() -> bool {
+    if SYMBOL_FONT_TRIED { return SYMBOL_FONT_OK; }
+    SYMBOL_FONT_TRIED = true;
+    if font_named(bundled_family(), 12.0f64).is_not_null() {
+        SYMBOL_FONT_OK = true;
+        return true;
+    }
+    let reg: *u8 = coretext(#str_ptr("CTFontManagerRegisterGraphicsFont\0"));
+    if reg.is_null() { return false; }
+    let register: fn(*u8, *u8) -> u8 = { reg as fn(*u8, *u8) -> u8 };
+    let provider: *u8 = { cg_data_provider_create_with_data(0 as *u8, icon_font::bytes(),
+                                                            icon_font::len(), 0 as *u8) };
+    if provider.is_null() { return false; }
+    let font: *u8 = { cg_font_create_with_data_provider(provider) };
+    { cg_data_provider_release(provider) };
+    if font.is_null() { return false; }
+    // "Already registered" is not a failure, so the answer is whether the
+    // family resolves afterwards rather than what this call returned.
+    let _r: u8 = register(font, 0 as *u8);
+    { cg_font_release(font) };
+    SYMBOL_FONT_OK = font_named(bundled_family(), 12.0f64).is_not_null();
+    return SYMBOL_FONT_OK;
+}
 
 fn font_named(family: str, size: f64) -> *u8 {
     return { rt::msg_id_id_f64(rt::get_class(#str_ptr("UIFont\0")),
@@ -1173,7 +1248,7 @@ fn apply_bundled_glyph(v: *u8, p: *symbol::SymbolProps) {
     if cp == (0u32) { return; }
     let named: str = { (*p).font.view() };
     var family: str = bundled_family();
-    if named != "" { family = named; }
+    if named != "" { family = named; } else { let _ok: bool = ensure_bundled_font(); }
     var size: f64 = { (*p).size };
     if (size > 0.0f64) == false { size = 24.0f64; }
     let f: *u8 = font_named(family, size);
@@ -1186,7 +1261,7 @@ fn apply_bundled_glyph(v: *u8, p: *symbol::SymbolProps) {
             SYMBOL_FONT_WARNED = true;
             io::eprintln(text::from_str("facet_uikit: the font \"")
                 .appending(family)
-                .appending("\" is not registered — ship the .ttf in the app bundle and name it in Info.plist's UIAppFonts, or symbol(icon:) draws nothing"));
+                .appending("\" is not registered, so symbol(icon:) draws nothing"));
         }
         return;
     }
@@ -1253,6 +1328,93 @@ fn apply_symbol_config(v: *u8, size: f64, fill: f64) {
     if cfg == (0 as *u8) { return; }
     { rt::msg_void_id(v, rt::sel(#str_ptr("setPreferredSymbolConfiguration:\0")), cfg) };
     return;
+}
+
+// ---- a bundled glyph as a BUTTON'S image -------------------------------------
+// `button(symbol:)` and `icon_button(symbol:)` put the glyph where the image
+// goes, as a TEMPLATE UIImage: the button's tint colours it, `content_layout`
+// places it and `fit` scales it — the dials an image source already answers
+// to. Drawn the way facet_appkit draws it, through CoreText at an exact
+// baseline (reached by `dlsym`, above), so the two platforms place a glyph in
+// its square identically.
+
+#[link_name = "UIGraphicsBeginImageContextWithOptions"]
+extern fn ui_graphics_begin(size: rt::Size, is_opaque: i8, scale: f64);
+#[link_name = "UIGraphicsGetCurrentContext"]
+extern fn ui_graphics_context() -> *u8;
+#[link_name = "UIGraphicsGetImageFromCurrentImageContext"]
+extern fn ui_graphics_image() -> *u8;
+#[link_name = "UIGraphicsEndImageContext"]
+extern fn ui_graphics_end();
+#[link_name = "CGContextTranslateCTM"]
+extern fn glyph_translate(c: *u8, tx: f64, ty: f64);
+#[link_name = "CGContextScaleCTM"]
+extern fn glyph_scale(c: *u8, sx: f64, sy: f64);
+
+// `icon_button` has no title to size by: 24pt, the size the font is drawn for
+// and `symbol`'s own default.
+fn icon_button_glyph_side() -> f64 { return 24.0f64; }
+
+// A button's glyph is one line of its title tall.
+fn glyph_side_for_button(v: *u8) -> f64 {
+    let tl: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("titleLabel\0"))) };
+    if tl.is_not_null() {
+        let f: *u8 = { rt::msg_id(tl, rt::sel(#str_ptr("font\0"))) };
+        if f.is_not_null() {
+            let h: f64 = { rt::msg_f64(f, rt::sel(#str_ptr("lineHeight\0"))) };
+            if h > 0.0f64 { return h; }
+        }
+    }
+    return 20.0f64;
+}
+
+// The glyph `cp` in a `side`-point square, at the screen's scale, as a
+// template image. None for 0 ("no glyph") or when the font cannot be had; a
+// codepoint the font does not carry answers an EMPTY image — a blank is
+// honest, a fallback font's tofu box is not.
+fn bundled_glyph_image(cp: u32, side: f64) -> option::Option[ui::Image] {
+    if cp == 0u32 { return option::Option[ui::Image]::None; }
+    if !ensure_bundled_font() { return option::Option[ui::Image]::None; }
+    let lookup: *u8 = coretext(#str_ptr("CTFontGetGlyphsForCharacters\0"));
+    let draw: *u8 = coretext(#str_ptr("CTFontDrawGlyphs\0"));
+    if lookup.is_null() || draw.is_null() { return option::Option[ui::Image]::None; }
+    let font: *u8 = font_named(bundled_family(), side);
+    if font.is_null() { return option::Option[ui::Image]::None; }
+    // UTF-16, because that is what CoreText maps: 106 of the icons live above
+    // U+FFFF and need a surrogate pair, which yields ONE glyph, in slot 0.
+    var units: [u16; 2] = [0u16; 2];
+    var n: i64 = 1 as i64;
+    if cp < 0x10000u32 {
+        units[0 as usize] = cp as u16;
+    } else {
+        let w: u32 = cp - 0x10000u32;
+        units[0 as usize] = (0xD800u32 | (w >> 10u32)) as u16;
+        units[1 as usize] = (0xDC00u32 | (w & 0x3FFu32)) as u16;
+        n = 2 as i64;
+    }
+    var glyphs: [u16; 2] = [0u16; 2];
+    let get_glyphs: fn(*u8, *u8, *u8, i64) -> u8 = { lookup as fn(*u8, *u8, *u8, i64) -> u8 };
+    let found: bool = get_glyphs(font, #addr_of(units) as *u8, #addr_of(glyphs) as *u8, n)
+        != (0 as u8);
+    { ui_graphics_begin(rt::Size { w: side, h: side }, 0 as i8, 0.0f64) };
+    let cg: *u8 = { ui_graphics_context() };
+    if found && cg.is_not_null() {
+        // UIKit's context is y-DOWN and CoreText draws y-up: flip once, then
+        // every glyph sits in 0..1 em above its baseline (measured from the
+        // font: 960 units per em), so the baseline is the square's bottom.
+        { glyph_translate(cg, 0.0f64, side) };
+        { glyph_scale(cg, 1.0f64, -1.0f64) };
+        var at: rt::Point = rt::Point { x: 0.0f64, y: 0.0f64 };
+        let draw_glyphs: fn(*u8, *u8, *u8, usize, *u8) = { draw as fn(*u8, *u8, *u8, usize, *u8) };
+        draw_glyphs(font, #addr_of(glyphs) as *u8, #addr_of(at) as *u8, 1 as usize, cg);
+    }
+    let raw: *u8 = { ui_graphics_image() };
+    { ui_graphics_end() };
+    if raw.is_null() { return option::Option[ui::Image]::None; }
+    // AlwaysTemplate (2): the button's tint colours it.
+    let t: *u8 = { rt::msg_id_i64(raw, rt::sel(#str_ptr("imageWithRenderingMode:\0")), 2 as i64) };
+    if t.is_null() { return option::Option[ui::Image]::None; }
+    return option::some(ui::Image::from_raw(t));
 }
 
 // ---- scroll --------------------------------------------------------------------

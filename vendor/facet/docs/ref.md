@@ -156,9 +156,9 @@ takes the slot, and `set_symbol(0u32)` hands the slot back. On a `button`
 the glyph is one line of the title tall and takes the title's `text_color`;
 on an `icon_button` it is 24pt, the size the font is drawn for.
 
-The font is compiled into the binary (`facet/icon_font`). On AppKit an
-application ships nothing for it; the other backends still look for a copy the
-application ships.
+The font is compiled into the binary (`facet/icon_font`), so an application
+ships nothing for it. A copy the application does ship (an app bundle's
+resources, `UIAppFonts`, an APK or Linux `assets/`) is still asked first.
 
 ### A split's bounds
 
