@@ -3666,14 +3666,18 @@ fn build_lib_project(
 
     // Step 5 (cdylib): clang -shared -o libNAME.<ext> NAME.o + manifest frameworks/libs.
     if want_shared {
-        // Platform-correct extension: .dylib on macOS, .so on Linux/other.
+        // Platform-correct name: libNAME.dylib on macOS, NAME.dll on Windows
+        // (lld-link writes its import library beside it as NAME.lib, the name
+        // an MSVC consumer links), libNAME.so on Linux/other.
         // (Cross-compilation is out of scope; we use host triple via cfg.)
-        let dylib_ext = if cfg!(target_os = "macos") {
-            "dylib"
+        let dylib_file = if cfg!(target_os = "macos") {
+            format!("lib{}.dylib", lib.name)
+        } else if cfg!(windows) {
+            format!("{}.dll", lib.name)
         } else {
-            "so"
+            format!("lib{}.so", lib.name)
         };
-        let dylib_path = target_dir.join(format!("lib{}.{}", lib.name, dylib_ext));
+        let dylib_path = target_dir.join(dylib_file);
         let mut cmd = Command::new(clang_program());
         cmd.arg("-shared").arg(opt).arg("-Wno-override-module");
         // A cdylib IS linked here, so it needs the runtime as well as the
@@ -3698,6 +3702,18 @@ fn build_lib_project(
         }
         for ll in &lib.libs {
             cmd.arg(format!("-l{ll}"));
+        }
+        // The same system libraries an executable gets: stdlib's Windows
+        // modules call into them whether the program is an .exe or a .dll.
+        // And a DLL exports nothing unless told to: name the header's C ABI,
+        // so the import library lld-link writes beside it resolves it.
+        if cfg!(windows) {
+            for sys in WINDOWS_SYSTEM_LIBS {
+                cmd.arg(format!("-l{sys}"));
+            }
+            for name in c_export_names(&program) {
+                cmd.arg(format!("-Wl,/EXPORT:{name}"));
+            }
         }
         // Phase 2 Slice 2C: forward each transitive dep's link args to the
         // .dylib link line. (Static archives don't carry these — consumers
@@ -6166,6 +6182,32 @@ fn embed_windows_manifest(cmd: &mut Command, out: &Path) {
 
 #[cfg(not(windows))]
 fn embed_windows_manifest(_cmd: &mut Command, _out: &Path) {}
+
+// System libraries every Windows link gets, executable and DLL alike.
+//
+// The async reactor (reactor_windows.cplus) and the socket stack
+// (netsys_windows.cplus / net.cplus) call into Winsock — WSAPoll, WSAStartup,
+// recv/send/closesocket/ioctlsocket. ws2_32 is not auto-linked by the MSVC
+// driver, so request it here. Harmless (an import table entry) for programs
+// that don't touch sockets.
+//
+// shell32 is `CommandLineToArgvW`, the OS's own command-line splitter that
+// argv_sys_windows.cplus uses instead of re-deriving Windows' quoting
+// rules; bcrypt is CNG, which crypto_sys_windows.cplus binds for SHA-2,
+// HMAC and the system CSPRNG; ntdll is `RtlGetVersion`, the only call that
+// reports the real Windows version; winhttp is the http package's transport.
+// advapi32 is the Credential Manager (`CredWriteW`/`CredReadW`/…), the
+// Windows keychain the `securestore` backend binds; comdlg32 is
+// `GetOpenFileNameW`/`GetSaveFileNameW`, the file dialogs the `filepicker`
+// backend binds; user32 is `CreateWindowExW`/`LoadIconW`, the hidden window
+// the `notifications` backend files its tray icon under (a facet app pulls
+// user32 through win32 anyway — this covers the console-shaped consumer).
+// None is auto-linked, and each is the same import-table-only
+// cost as ws2_32 for a program that never calls into it.
+const WINDOWS_SYSTEM_LIBS: &[&str] = &[
+    "ws2_32", "shell32", "bcrypt", "ntdll", "winhttp", "advapi32", "comdlg32", "user32",
+];
+
 fn run_clang(
     input_ll: &Path,
     out: &Path,
@@ -6305,34 +6347,10 @@ fn run_clang(
     if cfg!(all(unix, not(target_os = "macos"))) {
         cmd.arg("-lm");
     }
-    // On Windows the async reactor (reactor_windows.cplus) and the socket
-    // stack (netsys_windows.cplus / net.cplus) call into Winsock — WSAPoll,
-    // WSAStartup, recv/send/closesocket/ioctlsocket. ws2_32 is not auto-
-    // linked by the MSVC driver, so request it here. Harmless (an import
-    // table entry) for programs that don't touch sockets.
-    //
-    // shell32 is `CommandLineToArgvW`, the OS's own command-line splitter that
-    // argv_sys_windows.cplus uses instead of re-deriving Windows' quoting
-    // rules; bcrypt is CNG, which crypto_sys_windows.cplus binds for SHA-2,
-    // HMAC and the system CSPRNG; ntdll is `RtlGetVersion`, the only call that
-    // reports the real Windows version; winhttp is the http package's transport.
-    // advapi32 is the Credential Manager (`CredWriteW`/`CredReadW`/…), the
-    // Windows keychain the `securestore` backend binds; comdlg32 is
-    // `GetOpenFileNameW`/`GetSaveFileNameW`, the file dialogs the `filepicker`
-    // backend binds; user32 is `CreateWindowExW`/`LoadIconW`, the hidden window
-    // the `notifications` backend files its tray icon under (a facet app pulls
-    // user32 through win32 anyway — this covers the console-shaped consumer).
-    // None is auto-linked, and each is the same import-table-only
-    // cost as ws2_32 for a program that never calls into it.
     if cfg!(windows) {
-        cmd.arg("-lws2_32");
-        cmd.arg("-lshell32");
-        cmd.arg("-lbcrypt");
-        cmd.arg("-lntdll");
-        cmd.arg("-lwinhttp");
-        cmd.arg("-ladvapi32");
-        cmd.arg("-lcomdlg32");
-        cmd.arg("-luser32");
+        for lib in WINDOWS_SYSTEM_LIBS {
+            cmd.arg(format!("-l{lib}"));
+        }
         // THE APPLICATION MANIFEST, embedded as an RT_MANIFEST resource.
         //
         // A Windows process gets Common Controls **5.82** by default — the 1995
@@ -6644,15 +6662,7 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
     // consumer couldn't write a matching signature anyway.
     for item in &program.items {
         if let ItemKind::Function(f) = &item.kind {
-            if !f.is_pub {
-                continue;
-            }
-            // Skip the parser-collapsed body for extern declarations
-            // (no body, decl form): those are imports, not exports.
-            if f.is_extern && f.body.stmts.is_empty() && f.body.tail.is_none() {
-                continue;
-            }
-            if !f.generic_params.is_empty() {
+            if !is_c_export_candidate(f) {
                 continue;
             }
             let Some(decl) = render_fn_decl(f) else {
@@ -6665,6 +6675,32 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
 
     out.push_str("\n#ifdef __cplusplus\n} // extern \"C\"\n#endif\n");
     out
+}
+
+/// An `export fn` or `export extern fn ... { body }` the C header may declare:
+/// public, defined here (an extern declaration without a body is an import),
+/// and not generic.
+fn is_c_export_candidate(f: &cplus_core::ast::Function) -> bool {
+    f.is_pub
+        && !(f.is_extern && f.body.stmts.is_empty() && f.body.tail.is_none())
+        && f.generic_params.is_empty()
+}
+
+/// The functions the generated header declares — the library's C ABI. A
+/// Windows DLL exports only what it is told to, so the shared link passes
+/// each of these to lld-link as `/EXPORT:`.
+fn c_export_names(program: &cplus_core::ast::Program) -> Vec<String> {
+    use cplus_core::ast::ItemKind;
+    program
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Function(f) if is_c_export_candidate(f) && render_fn_decl(f).is_some() => {
+                Some(f.name.name.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Render a `#[repr(C)] export struct Foo { ... }` as a C declaration.
