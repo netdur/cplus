@@ -36,6 +36,7 @@ import "facet/screen" as screen;
 import "facet/application" as app;
 import "facet/vocabulary" as vocab;
 import "win32/winuser" as u;
+import "win32/wingdi" as gdi;
 import "win32/libloaderapi" as ll;
 import "./sys" as sys;
 import "./paint" as paint;
@@ -148,6 +149,45 @@ fn refont_tree(n: *core::Node) {
 
 // ---- the shared WNDPROC ----------------------------------------------------------
 
+// AN IMAGE PAINTS OFF SCREEN AND LANDS IN ONE BLIT. Its paint was an erase to
+// the background (WM_ERASEBKGND) followed by a resampled StretchBlt of the
+// picture (WM_PAINT), and the moment between the two is a window showing no
+// picture at all. The compositor can present that moment, and a preview whose
+// window repainted on every status change flashed empty on every one of them.
+// So an image erases and draws into a bitmap of its own size, and the window
+// only ever receives the finished frame.
+fn is_buffered(n: *core::Node) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    return core::kind_of(n) == props::K_IMAGE;
+}
+
+fn paint_buffered(hwnd: *u8, n: *core::Node, hdc: *u8) {
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(hwnd, #addr_of(r)) } == (0 as i32) { return; }
+    let width: i32 = r.right -% r.left;
+    let height: i32 = r.bottom -% r.top;
+    if width <= (0 as i32) || height <= (0 as i32) { return; }
+    let mem: *u8 = { gdi::CreateCompatibleDC(hdc) };
+    let bitmap: *u8 = if mem != (0 as *u8) { { gdi::CreateCompatibleBitmap(hdc, width, height) } } else { 0 as *u8 };
+    if bitmap == (0 as *u8) {
+        // No memory for the frame: paint directly, as every other node does.
+        if mem != (0 as *u8) { let _d: i32 = { gdi::DeleteDC(mem) }; }
+        paint::erase(hwnd, hdc);
+        controls::paint_node(hwnd, n, hdc);
+        return;
+    }
+    let previous: *u8 = { gdi::SelectObject(mem, bitmap) };
+    paint::erase(hwnd, mem);
+    controls::paint_node(hwnd, n, mem);
+    let srccopy: u32 = 0x00CC0020u32;
+    let _b: i32 = { gdi::BitBlt(hdc, 0 as i32, 0 as i32, width, height, mem, 0 as i32, 0 as i32, srccopy) };
+    let _s: *u8 = { gdi::SelectObject(mem, previous) };
+    let _o: i32 = { gdi::DeleteObject(bitmap) };
+    let _d: i32 = { gdi::DeleteDC(mem) };
+    return;
+}
+
 fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
     // A CONTROL NOTIFICATION. lParam IS the sending control's HWND for a
     // control notification and 0 for a menu or accelerator — which is how the
@@ -253,6 +293,11 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
         let hdc: *u8 = { u::BeginPaint(hwnd, #addr_of(ps)) };
         if hdc != (0 as *u8) {
             let pn: *core::Node = input::node_of_window(hwnd);
+            if is_buffered(pn) {
+                paint_buffered(hwnd, pn, hdc);
+                let _e: i32 = { u::EndPaint(hwnd, #addr_of(ps)) };
+                return 0 as i64;
+            }
             controls::paint_node(hwnd, pn, hdc);
             // THE ROW FURNITURE IS PAINTED HERE rather than in `paint_node`,
             // and the reason is a cycle: `recycler` imports `controls`, so
@@ -291,6 +336,11 @@ fn wnd_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
     // over its old. wParam is the device context to paint into; returning
     // non-zero says the job is done and stops DefWindowProc redoing it.
     if msg == sys::wm_erasebkgnd() {
+        // A BUFFERED node erases inside its own paint instead — see
+        // `paint_buffered` — so answering "erased" here without touching a
+        // pixel is what keeps the old picture on screen until the new one is
+        // ready to replace it.
+        if is_buffered(input::node_of_window(hwnd)) { return 1 as i64; }
         paint::erase(hwnd, w as *u8);
         return 1 as i64;
     }
