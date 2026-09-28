@@ -36,6 +36,7 @@ import "stdlib/text" as text;
 import "stdlib/str" as _;
 import "stdlib/io" as io;
 import "stdlib/fs" as fs;
+import "stdlib/bundle" as bundle;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
@@ -2020,10 +2021,25 @@ fn register_bundled_font() -> bool {
     if font_family_is_known(bundled_family()) { SYMBOL_FONT_OK = true; return true; }
     if search_up("assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
     if search_up("vendor/facet/assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
+    // Then beside the EXECUTABLE. Everything above is relative to the working
+    // directory, which is the source tree during development and `$HOME` for
+    // an installed app started from its desktop entry — so an installed app
+    // needs a place that travels with the binary: `assets/` beside it (an app
+    // shipped as a folder), or `share/facet/assets/` in its install prefix
+    // (`bin/app` in /usr, a Homebrew keg, a snap).
+    let exe_dir: text::Text = bundle::dir();
+    if exe_dir.view() != "" {
+        if add_app_font_if_present("${exe_dir}/assets/MaterialSymbolsOutlined.ttf") {
+            SYMBOL_FONT_OK = true; return true;
+        }
+        if add_app_font_if_present("${exe_dir}/../share/facet/assets/MaterialSymbolsOutlined.ttf") {
+            SYMBOL_FONT_OK = true; return true;
+        }
+    }
     // ONCE, and naming the file — a symbol that fails silently is
     // indistinguishable from a symbol that is not there, and on this backend
     // that verb spent its whole life indistinguishable from working.
-    io::eprintln("facet_gtk: the bundled symbol font was not found (assets/MaterialSymbolsOutlined.ttf, or vendor/facet/assets/) — symbol(icons::*) renders as codepoint boxes. Ship the font beside the binary to fix it.");
+    io::eprintln("facet_gtk: the bundled symbol font was not found (assets/MaterialSymbolsOutlined.ttf beside the working directory or the executable, share/facet/assets/ in the install prefix, or vendor/facet/assets/) — symbol(icons::*) renders as codepoint boxes. Ship the font with the binary to fix it.");
     return false;
 }
 
@@ -2044,6 +2060,11 @@ fn find_up(suffix: str) -> text::Text {
         depth = depth +% (1 as i32);
     }
     return text::from_str("");
+}
+
+fn add_app_font_if_present(path: text::Text) -> bool {
+    if !fs::exists(path.view()) { return false; }
+    return add_app_font(path.view());
 }
 
 fn search_up(suffix: str) -> bool {
