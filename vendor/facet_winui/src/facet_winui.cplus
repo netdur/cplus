@@ -14,6 +14,7 @@ import "./native" as native;
 import "./scheduler" as scheduler;
 import "facet/theme" as theme;
 import "./style" as style;
+import "./presentation" as presentation;
 extern fn fflush(stream: *u8) -> i32;
 
 struct Host {
@@ -75,6 +76,7 @@ fn closed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     return rt::Status {code:0};
 }
 fn teardown(host: *Host) {
+    presentation::begin_shutdown();
     if (*host).mounted {
         // WebView2 and composition resources must close on the UI thread
         // before Application.run returns and XAML shuts down.

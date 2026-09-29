@@ -20,9 +20,13 @@ destination = args.out.resolve()
 destination.mkdir(parents=True, exist_ok=True)
 digest = hashlib.sha256(msix.read_bytes()).hexdigest()
 stamp = destination / 'runtime-source.json'
-source = {'package': package.name, 'sha256': digest, 'deployment_revision': 2}
+web_package = args.packages / 'Microsoft.Web.WebView2.1.0.3719.77'
+web_core = web_package / 'runtimes/win-x64/native_uap/Microsoft.Web.WebView2.Core.dll'
+source = {'package': package.name, 'sha256': digest, 'deployment_revision': 5,
+          'webview2_package': web_package.name,
+          'webview2_sha256': hashlib.sha256(web_core.read_bytes()).hexdigest()}
 if stamp.exists() and json.loads(stamp.read_text()) == source:
-    if all((destination / name).exists() for name in ('app.manifest', 'Microsoft.UI.Xaml.dll', 'resources.pri')):
+    if all((destination / name).exists() for name in ('app.manifest', 'Microsoft.UI.Xaml.dll', 'resources.pri', 'Microsoft.Web.WebView2.Core.dll', 'Microsoft.UI.Xaml/Assets/NoiseAsset_256x256_PNG.png')):
         print(f'Runtime already staged: {destination}')
         raise SystemExit(0)
 
@@ -40,7 +44,7 @@ ET.SubElement(settings, '{http://schemas.microsoft.com/SMI/2005/WindowsSettings}
 ET.SubElement(settings, '{http://schemas.microsoft.com/SMI/2016/WindowsSettings}dpiAwareness').text = 'PerMonitorV2'
 with zipfile.ZipFile(msix) as archive:
     for entry in archive.infolist():
-        if entry.is_dir() or Path(entry.filename).suffix.lower() not in ('.dll', '.pri', '.mui', '.exe'):
+        if entry.is_dir() or Path(entry.filename).suffix.lower() not in ('.dll', '.pri', '.mui', '.exe', '.png'):
             continue
         target = (destination / entry.filename).resolve()
         if not target.is_relative_to(destination):
@@ -57,6 +61,10 @@ with zipfile.ZipFile(msix) as archive:
                 'name': entry.attrib['ActivatableClassId'],
                 'threadingModel': entry.attrib['ThreadingModel'],
             })
+# WebView2's WinRT implementation is a separate SDK payload, not part of the
+# WindowsAppRuntime MSIX. Its loader is statically linked (Common.targets).
+# Its activation entries were already derived from the MSIX manifest above.
+shutil.copyfile(web_core, destination / web_core.name)
 # This code-built sample has no application PRI. Use WinUI's theme resources.
 shutil.copyfile(destination / 'Microsoft.UI.Xaml.Controls.pri', destination / 'resources.pri')
 for name in ('license.txt', 'NOTICE.txt'):

@@ -17,7 +17,7 @@ this is not a claim that every Facet property is implemented.
 | List/collection/relist | ScrollViewer with a viewport-sized set of owned Facet rows. Count/builder/bind, uniform row pitch, columns, scroll-to. Relist observable changes, keyed live rows, inherited sender item identity, deterministic release. |
 | Images | BitmapImage and ImageBrush, file/URL source, fit/fill/center modes. Bundled icon font staged with the app. |
 | Drawing | Native shapes for recorded rectangles/rounded rectangles, ellipses, lines and move/line/quad/cubic paths; text, fills, gradients, stroke width and opacity. |
-| Decorations | Semantic/theme colors in dark appearance, borders/corners, gradients, 2D transforms, timer-driven opacity/transform easing, composition rounded/ellipse clips and drop shadows. |
+| Decorations | Semantic/theme colors in dark appearance, borders/corners, gradients, 2D transforms, frame-synchronized opacity/transform easing, composition rounded/ellipse clips and drop shadows. |
 | Other gallery hosts | Page dots, table document container, WebView2 URL surface, swipe actions through native context menu. |
 | Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. |
 | Accessibility | Native WinUI peers, stable control AutomationIds, explicit accessibility name/help text. |

@@ -39644,6 +39644,27 @@ impl CompositeTransform {
     }
 }
 
+// Microsoft.UI.Xaml.Media.CompositionTarget
+fn composition_target_iid() -> rt::Guid { return rt::Guid { a: 2106819364u32, b: 58285 as u16, c: 22908 as u16, d: [147 as u8, 246 as u8, 82 as u8, 7 as u8, 37 as u8, 65 as u8, 14 as u8, 104 as u8] }; }
+struct CompositionTarget { _object: rt::Object }
+impl CompositionTarget {
+    fn query(value: rt::Object) -> result::Result[CompositionTarget, rt::Error] {
+        match value.query(composition_target_iid()) {
+            result::Result::Ok(o) => { return result::Result[CompositionTarget, rt::Error]::Ok(CompositionTarget { _object: o }); }
+            result::Result::Err(e) => { return result::Result[CompositionTarget, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> CompositionTarget { return CompositionTarget { _object: this._object.clone() }; }
+    fn i_composition_target_statics_factory() -> result::Result[ICompositionTargetStatics, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Media.CompositionTarget", i_composition_target_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[ICompositionTargetStatics, rt::Error]::Ok(ICompositionTargetStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[ICompositionTargetStatics, rt::Error]::Err(e); }
+        }
+    }
+}
+
 // Microsoft.UI.Xaml.Media.ElementCompositeMode
 type ElementCompositeMode = i32;
 const element_composite_mode_inherit: ElementCompositeMode = 0 as i32;
@@ -40816,6 +40837,103 @@ impl ICompositeTransformStatics {
     fn translate_y_property(this) -> result::Result[rt::Object, rt::Error] {
         var returned: usize = 0;
         let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 14) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Media.ICompositionTarget
+fn i_composition_target_iid() -> rt::Guid { return rt::Guid { a: 2106819364u32, b: 58285 as u16, c: 22908 as u16, d: [147 as u8, 246 as u8, 82 as u8, 7 as u8, 37 as u8, 65 as u8, 14 as u8, 104 as u8] }; }
+struct ICompositionTarget { _object: rt::Object }
+impl ICompositionTarget {
+    fn query(value: rt::Object) -> result::Result[ICompositionTarget, rt::Error] {
+        match value.query(i_composition_target_iid()) {
+            result::Result::Ok(o) => { return result::Result[ICompositionTarget, rt::Error]::Ok(ICompositionTarget { _object: o }); }
+            result::Result::Err(e) => { return result::Result[ICompositionTarget, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> ICompositionTarget { return ICompositionTarget { _object: this._object.clone() }; }
+}
+
+// Microsoft.UI.Xaml.Media.ICompositionTargetStatics
+const i_composition_target_statics_add_rendering_slot: usize = 6;
+const i_composition_target_statics_remove_rendering_slot: usize = 7;
+const i_composition_target_statics_add_rendered_slot: usize = 8;
+const i_composition_target_statics_remove_rendered_slot: usize = 9;
+const i_composition_target_statics_add_surface_contents_lost_slot: usize = 10;
+const i_composition_target_statics_remove_surface_contents_lost_slot: usize = 11;
+const i_composition_target_statics_get_compositor_for_current_thread_slot: usize = 12;
+fn i_composition_target_statics_iid() -> rt::Guid { return rt::Guid { a: 312786543u32, b: 28081 as u16, c: 20837 as u16, d: [182 as u8, 34 as u8, 213 as u8, 122 as u8, 183 as u8, 130 as u8, 116 as u8, 91 as u8] }; }
+struct ICompositionTargetStatics { _object: rt::Object }
+impl ICompositionTargetStatics {
+    fn query(value: rt::Object) -> result::Result[ICompositionTargetStatics, rt::Error] {
+        match value.query(i_composition_target_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[ICompositionTargetStatics, rt::Error]::Ok(ICompositionTargetStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[ICompositionTargetStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> ICompositionTargetStatics { return ICompositionTargetStatics { _object: this._object.clone() }; }
+    // ABI slot 6: add_Rendering
+    fn add_rendering(this, handler_0: rt::Object) -> result::Result[EventRegistrationToken, rt::Error] {
+        let q_0: rt::Object = match handler_0.query_nullable(rt::Guid { a: 3305674998u32, b: 50486 as u16, c: 24391 as u16, d: [133 as u8, 131 as u8, 139 as u8, 44 as u8, 36 as u8, 56 as u8, 161 as u8, 59 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[EventRegistrationToken, rt::Error]::Err(e); } };
+        var returned: EventRegistrationToken = #zero::[EventRegistrationToken]();
+        let call: fn(*u8, *u8, *EventRegistrationToken) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *u8, *EventRegistrationToken) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[EventRegistrationToken, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[EventRegistrationToken, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: remove_Rendering
+    fn remove_rendering(this, token_0: EventRegistrationToken) -> rt::Status {
+        var copy_0: EventRegistrationToken = token_0;
+        let call: fn(*u8, u64) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, u64) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64));
+        return rt::Status { code: hr };
+    }
+    // ABI slot 8: add_Rendered
+    fn add_rendered(this, handler_0: rt::Object) -> result::Result[EventRegistrationToken, rt::Error] {
+        let q_0: rt::Object = match handler_0.query_nullable(rt::Guid { a: 430511095u32, b: 38803 as u16, c: 23854 as u16, d: [185 as u8, 137 as u8, 126 as u8, 226 as u8, 108 as u8, 38 as u8, 58 as u8, 46 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[EventRegistrationToken, rt::Error]::Err(e); } };
+        var returned: EventRegistrationToken = #zero::[EventRegistrationToken]();
+        let call: fn(*u8, *u8, *EventRegistrationToken) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *u8, *EventRegistrationToken) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[EventRegistrationToken, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[EventRegistrationToken, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 9: remove_Rendered
+    fn remove_rendered(this, token_0: EventRegistrationToken) -> rt::Status {
+        var copy_0: EventRegistrationToken = token_0;
+        let call: fn(*u8, u64) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, u64) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64));
+        return rt::Status { code: hr };
+    }
+    // ABI slot 10: add_SurfaceContentsLost
+    fn add_surface_contents_lost(this, handler_0: rt::Object) -> result::Result[EventRegistrationToken, rt::Error] {
+        let q_0: rt::Object = match handler_0.query_nullable(rt::Guid { a: 3305674998u32, b: 50486 as u16, c: 24391 as u16, d: [133 as u8, 131 as u8, 139 as u8, 44 as u8, 36 as u8, 56 as u8, 161 as u8, 59 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[EventRegistrationToken, rt::Error]::Err(e); } };
+        var returned: EventRegistrationToken = #zero::[EventRegistrationToken]();
+        let call: fn(*u8, *u8, *EventRegistrationToken) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, *u8, *EventRegistrationToken) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[EventRegistrationToken, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[EventRegistrationToken, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 11: remove_SurfaceContentsLost
+    fn remove_surface_contents_lost(this, token_0: EventRegistrationToken) -> rt::Status {
+        var copy_0: EventRegistrationToken = token_0;
+        let call: fn(*u8, u64) -> i32 = rt::slot(this._object.raw(), 11) as fn(*u8, u64) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64));
+        return rt::Status { code: hr };
+    }
+    // ABI slot 12: GetCompositorForCurrentThread
+    fn get_compositor_for_current_thread(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 12) as fn(*u8, *usize) -> i32;
         let hr: i32 = call(this._object.raw(), #addr_of(returned));
         if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
         return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
@@ -42179,6 +42297,31 @@ impl IRectangleGeometryStatics {
         let hr: i32 = call(this._object.raw(), #addr_of(returned));
         if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
         return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Media.IRenderingEventArgs
+const i_rendering_event_args_get_rendering_time_slot: usize = 6;
+fn i_rendering_event_args_iid() -> rt::Guid { return rt::Guid { a: 2793181069u32, b: 6277 as u16, c: 24521 as u16, d: [151 as u8, 92 as u8, 144 as u8, 18 as u8, 36 as u8, 247 as u8, 155 as u8, 30 as u8] }; }
+struct IRenderingEventArgs { _object: rt::Object }
+impl IRenderingEventArgs {
+    fn query(value: rt::Object) -> result::Result[IRenderingEventArgs, rt::Error] {
+        match value.query(i_rendering_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[IRenderingEventArgs, rt::Error]::Ok(IRenderingEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IRenderingEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IRenderingEventArgs { return IRenderingEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_RenderingTime
+    fn rendering_time(this) -> result::Result[TimeSpan, rt::Error] {
+        var returned: TimeSpan = #zero::[TimeSpan]();
+        let call: fn(*u8, *TimeSpan) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *TimeSpan) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[TimeSpan, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[TimeSpan, rt::Error]::Ok(returned);
 
     }
 }
@@ -44186,6 +44329,30 @@ impl RectangleGeometry {
         let call: fn(*u8, *Rect) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *Rect) -> i32;
         let hr: i32 = call(this._object.raw(), aligned_0);
         return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Xaml.Media.RenderingEventArgs
+fn rendering_event_args_iid() -> rt::Guid { return rt::Guid { a: 2793181069u32, b: 6277 as u16, c: 24521 as u16, d: [151 as u8, 92 as u8, 144 as u8, 18 as u8, 36 as u8, 247 as u8, 155 as u8, 30 as u8] }; }
+struct RenderingEventArgs { _object: rt::Object }
+impl RenderingEventArgs {
+    fn query(value: rt::Object) -> result::Result[RenderingEventArgs, rt::Error] {
+        match value.query(rendering_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[RenderingEventArgs, rt::Error]::Ok(RenderingEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[RenderingEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> RenderingEventArgs { return RenderingEventArgs { _object: this._object.clone() }; }
+    // ABI slot 6: get_RenderingTime
+    fn rendering_time(this) -> result::Result[TimeSpan, rt::Error] {
+        var returned: TimeSpan = #zero::[TimeSpan]();
+        let call: fn(*u8, *TimeSpan) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *TimeSpan) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[TimeSpan, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[TimeSpan, rt::Error]::Ok(returned);
+
     }
 }
 
@@ -51572,6 +51739,43 @@ impl EventHandler_Microsoft_UI_Xaml_Controls_TimePickerValueChangedEventArgs {
     // ABI slot 3: Invoke
     fn invoke(this, sender_0: rt::Object, args_1: rt::Object) -> rt::Status {
         let q_1: rt::Object = match args_1.query_nullable(rt::Guid { a: 2073597247u32, b: 49738 as u16, c: 21446 as u16, d: [138 as u8, 58 as u8, 82 as u8, 5 as u8, 88 as u8, 80 as u8, 139 as u8, 8 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8, *u8) -> i32 = rt::slot(this._object.raw(), 3) as fn(*u8, *u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), sender_0.raw(), q_1.raw());
+        return rt::Status { code: hr };
+    }
+}
+
+// Windows.Foundation.EventHandler<Microsoft.UI.Xaml.Media.RenderedEventArgs>
+const event_handler_microsoft_ui_xaml_media_rendered_event_args_invoke_slot: usize = 3;
+fn event_handler_microsoft_ui_xaml_media_rendered_event_args_iid() -> rt::Guid { return rt::Guid { a: 430511095u32, b: 38803 as u16, c: 23854 as u16, d: [185 as u8, 137 as u8, 126 as u8, 226 as u8, 108 as u8, 38 as u8, 58 as u8, 46 as u8] }; }
+struct EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs { _object: rt::Object }
+impl EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs {
+    fn query(value: rt::Object) -> result::Result[EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs, rt::Error] {
+        match value.query(event_handler_microsoft_ui_xaml_media_rendered_event_args_iid()) {
+            result::Result::Ok(o) => { return result::Result[EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs, rt::Error]::Ok(EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs { return EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs { _object: this._object.clone() }; }
+    fn new(on_invoke: fn(rt::Object, rt::Object, *u8) -> rt::Status, on_invoke_ctx: *u8 = 0 as *u8, agile: bool = false) -> result::Result[EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs, rt::Error] {
+        let invoke: fn(*u8, *u8, *u8) -> i32 = EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs::dispatch;
+        match rt::delegate(event_handler_microsoft_ui_xaml_media_rendered_event_args_iid(), invoke as *u8, on_invoke as *u8, on_invoke_ctx, agile) {
+            result::Result::Ok(o) => { return result::Result[EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs, rt::Error]::Ok(EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs { _object: o }); }
+            result::Result::Err(e) => { return result::Result[EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs, rt::Error]::Err(e); }
+        }
+    }
+    fn dispatch(self: *u8, p0: *u8, p1: *u8) -> i32 {
+        let v0: rt::Object = rt::Object::retain(p0);
+        let v1: rt::Object = rt::Object::retain(p1);
+        let callback: fn(rt::Object, rt::Object, *u8) -> rt::Status = rt::delegate_callback(self) as fn(rt::Object, rt::Object, *u8) -> rt::Status;
+        let status: rt::Status = callback(v0, v1, rt::delegate_context(self));
+        return status.code;
+    }
+    // ABI slot 3: Invoke
+    fn invoke(this, sender_0: rt::Object, args_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match args_1.query_nullable(rt::Guid { a: 2993207429u32, b: 4493 as u16, c: 23398 as u16, d: [128 as u8, 153 as u8, 59 as u8, 107 as u8, 184 as u8, 100 as u8, 71 as u8, 38 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
         let call: fn(*u8, *u8, *u8) -> i32 = rt::slot(this._object.raw(), 3) as fn(*u8, *u8, *u8) -> i32;
         let hr: i32 = call(this._object.raw(), sender_0.raw(), q_1.raw());
         return rt::Status { code: hr };

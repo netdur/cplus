@@ -88,7 +88,9 @@
     "Microsoft.UI.Composition.CompositionGeometricClip",
     "Microsoft.UI.Xaml.Controls.Primitives.Thumb",
     "Microsoft.UI.Xaml.Controls.Primitives.DragDeltaEventArgs",
-    "Microsoft.UI.Xaml.Media.ImageBrush"
+    "Microsoft.UI.Xaml.Media.ImageBrush",
+    "Microsoft.UI.Xaml.Media.CompositionTarget",
+    "Microsoft.UI.Xaml.Media.RenderingEventArgs"
   ],
   "sources": [
     {
@@ -25503,6 +25505,13 @@
       "name": "CompositeTransform"
     },
     {
+      "iid": "7d938324-e3ad-597c-93f6-520725410e68",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Media.CompositionTarget",
+      "methods": [],
+      "name": "CompositionTarget"
+    },
+    {
       "kind": "Enum",
       "metadata": "Microsoft.UI.Xaml.Media.ElementCompositeMode",
       "methods": [],
@@ -26255,6 +26264,63 @@
         }
       ],
       "name": "ICompositeTransformStatics"
+    },
+    {
+      "iid": "7d938324-e3ad-597c-93f6-520725410e68",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Media.ICompositionTarget",
+      "methods": [],
+      "name": "ICompositionTarget"
+    },
+    {
+      "iid": "12a4be6f-6db1-5165-b622-d57ab782745b",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Media.ICompositionTargetStatics",
+      "methods": [
+        {
+          "name": "add_Rendering",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Rendering",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "add_Rendered",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_Rendered",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "add_SurfaceContentsLost",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "remove_SurfaceContentsLost",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "GetCompositorForCurrentThread",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        }
+      ],
+      "name": "ICompositionTargetStatics"
     },
     {
       "iid": "ababd262-d8e4-5b49-bce9-0108a5209d45",
@@ -27064,6 +27130,20 @@
         }
       ],
       "name": "IRectangleGeometryStatics"
+    },
+    {
+      "iid": "a67c8f8d-1885-5fc9-975c-901224f79b1e",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Media.IRenderingEventArgs",
+      "methods": [
+        {
+          "name": "get_RenderingTime",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IRenderingEventArgs"
     },
     {
       "iid": "d4686e7c-a374-5cac-8927-0ef07c5b254d",
@@ -28317,6 +28397,20 @@
         }
       ],
       "name": "RectangleGeometry"
+    },
+    {
+      "iid": "a67c8f8d-1885-5fc9-975c-901224f79b1e",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Media.RenderingEventArgs",
+      "methods": [
+        {
+          "name": "get_RenderingTime",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "RenderingEventArgs"
     },
     {
       "iid": "d4686e7c-a374-5cac-8927-0ef07c5b254d",
@@ -33490,6 +33584,21 @@
         }
       ],
       "name": "EventHandler_Microsoft_UI_Xaml_Controls_TimePickerValueChangedEventArgs"
+    },
+    {
+      "callback": "emitted",
+      "iid": "19a913f7-9793-5d2e-b989-7ee26c263a2e",
+      "kind": "Delegate",
+      "metadata": "Windows.Foundation.EventHandler<Microsoft.UI.Xaml.Media.RenderedEventArgs>",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 3,
+          "status": "emitted"
+        }
+      ],
+      "name": "EventHandler_Microsoft_UI_Xaml_Media_RenderedEventArgs"
     },
     {
       "callback": "emitted",

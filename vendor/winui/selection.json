@@ -87,6 +87,8 @@
     "Microsoft.UI.Composition.CompositionGeometricClip",
     "Microsoft.UI.Xaml.Controls.Primitives.Thumb",
     "Microsoft.UI.Xaml.Controls.Primitives.DragDeltaEventArgs",
-    "Microsoft.UI.Xaml.Media.ImageBrush"
+    "Microsoft.UI.Xaml.Media.ImageBrush",
+    "Microsoft.UI.Xaml.Media.CompositionTarget",
+    "Microsoft.UI.Xaml.Media.RenderingEventArgs"
   ]
 }

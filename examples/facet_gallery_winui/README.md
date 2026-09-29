@@ -35,6 +35,10 @@ checks, not for ordinary launching. Runtime staging uses the same pinned SDK
 packages as `examples/winui_standalone` and embeds its deployment manifest.
 `verify_walk.ps1` uses the existing build, visits all 36 pages, and verifies
 clean shutdown with the final page's list rows still mounted.
+The interaction check also opens the picker, verifies browser content, resets
+an animation, and closes mid-animation to check rendering-handler cleanup.
+Runtime staging includes WinUI's acrylic texture and WebView2's native SDK DLL;
+the installed Edge WebView2 browser runtime supplies the browser engine.
 
 Set `FACET_GALLERY_WALK=1` before launching to visit all 36 pages automatically.
 The completion line is in `out/run.log`; the window stays open. Unset the

@@ -36,7 +36,7 @@ type View = record::View;
 static LIVE: i64=0;
 static SUBSCRIPTIONS: i64=0;
 fn live_views() -> i64 { return LIVE; }
-fn live_subscriptions() -> i64 { return SUBSCRIPTIONS+outline::subscriptions()+choices::subscriptions()+editing::subscriptions()+pickers::subscriptions()+media::subscriptions()+items::subscriptions()+actions::subscriptions()+divider::subscriptions(); }
+fn live_subscriptions() -> i64 { return SUBSCRIPTIONS+outline::subscriptions()+choices::subscriptions()+editing::subscriptions()+pickers::subscriptions()+media::subscriptions()+items::subscriptions()+actions::subscriptions()+divider::subscriptions()+presentation::subscriptions(); }
 fn supports(n: *core::Node) -> bool {
     let kind: u32=core::kind_of(n); let count: usize=core::child_count_of(n);
     if kind!=props::K_TABLE && kind!=props::K_SWIPEABLE && kind!=props::K_CAROUSEL && kind!=core::K_NODE && kind!=props::K_LABEL && kind!=props::K_BUTTON && kind!=props::K_TEXT_FIELD && kind!=props::K_SCROLL && kind!=tree::K_TREE && kind!=split::K_SPLIT && kind!=props::K_SWIPE_ITEM && kind!=props::K_CANVAS && kind!=props::K_BOX && kind!=props::K_BORDERED && !items::supports(kind) && !media::supports(kind) && !pickers::supports(kind) && !editing::supports(kind) && !choices::supports(kind) { return false; }

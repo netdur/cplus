@@ -571,6 +571,13 @@
         }
       }
     },
+    "ICompositionTargetStatics": {
+      "iid": "12A4BE6F-6DB1-5165-B622-D57AB782745B",
+      "methods": {
+        "add_Rendering": {"slot": 6, "args": "void*, winrt::event_token*"},
+        "remove_Rendering": {"slot": 7, "args": "winrt::event_token"}
+      }
+    },
     "IFontFamilyFactory": {
       "iid": "61B88A77-D0F9-5E9E-8C28-EDA01FEDE22E",
       "methods": {

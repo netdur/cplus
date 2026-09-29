@@ -7,14 +7,24 @@ import "facet/props" as props;
 import "facet/vocabulary" as vocab;
 import "./record" as record;
 import "./native" as native;
-import "./scheduler" as scheduler;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
 import "./style" as style;
 extern fn cos(value: f64) -> f64;
 extern fn sin(value: f64) -> f64;
-extern fn GetTickCount64() -> u64;
+extern fn QueryPerformanceCounter(value: *i64) -> i32;
+extern fn QueryPerformanceFrequency(value: *i64) -> i32;
+static FREQUENCY: i64=0;
+static LIVE: i64=0;
+static SHUTTING_DOWN: bool=false;
+static UI_THREAD: u32=0;
+extern fn GetCurrentThreadId() -> u32;
+fn begin_shutdown() {assert UI_THREAD==0 || UI_THREAD==GetCurrentThreadId();SHUTTING_DOWN=true;return;}
+fn subscriptions() -> i64 {return LIVE;}
+fn now() -> f64 {if FREQUENCY==0 {let ok: i32=QueryPerformanceFrequency(#addr_of(FREQUENCY));assert ok!=0;}var value: i64=0;let ok: i32=QueryPerformanceCounter(#addr_of(value));assert ok!=0;return value as f64/FREQUENCY as f64;}
 extern fn pow(base: f64,power: f64) -> f64;
 struct Values {opacity: f64,sx: f64,sy: f64,rotation: f64,x: f64,y: f64}
-struct State {current: Values,from: Values,target: Values,transform: rt::Object,timer: u64,started: u64,duration: f64,easing: vocab::Easing,clipped: bool,shadowed: bool,shadow_host: rt::Object,shadow_entries: rt::Object}
+struct State {current: Values,from: Values,target: Values,transform: rt::Object,render_token: ui::EventRegistrationToken,render_factory: rt::Object,animating: bool,frames: u32,started: f64,duration: f64,easing: vocab::Easing,clipped: bool,shadowed: bool,shadow_host: rt::Object,shadow_entries: rt::Object}
 fn values(p: *props::CommonProps) -> Values {return Values {opacity:(*p).opacity,sx:(*p).scale*(*p).scale_x,sy:(*p).scale*(*p).scale_y,rotation:(*p).rotation,x:(*p).translation_x,y:(*p).translation_y};}
 fn state(r: *record::View) -> *State {return (*r).presentation as *State;}
 fn remove_shadow(s: *State) {
@@ -54,24 +64,40 @@ fn output(r: *record::View) {
     let tr: ui::ICompositeTransform=native::must::[ui::ICompositeTransform](ui::ICompositeTransform::query((*s).transform));native::check(tr.set_scale_x(v.sx));native::check(tr.set_scale_y(v.sy));native::check(tr.set_rotation(v.rotation));native::check(tr.set_translate_x(v.x));native::check(tr.set_translate_y(v.y));return;
 }
 fn mix(a: f64,b: f64,t: f64) -> f64 {return a+(b-a)*t;}
-fn tick(ctx: *u8) {
-    let r: *record::View=ctx as *record::View;let s: *State=state(r);(*s).timer=0;let elapsed: f64=(GetTickCount64()-(*s).started) as f64/1000.0f64;let t: f64=ease(elapsed/(*s).duration,(*s).easing);let a: Values=(*s).from;let b: Values=(*s).target;
-    (*s).current=Values {opacity:mix(a.opacity,b.opacity,t),sx:mix(a.sx,b.sx,t),sy:mix(a.sy,b.sy,t),rotation:mix(a.rotation,b.rotation,t),x:mix(a.x,b.x,t),y:mix(a.y,b.y,t)};output(r);
-    if elapsed<(*s).duration {(*s).timer=scheduler::after(0.016f64,tick,ctx);}return;
+fn stop(s: *State) {
+    if !(*s).animating {return;}
+    let target: ui::ICompositionTargetStatics=native::must::[ui::ICompositionTargetStatics](ui::ICompositionTargetStatics::query((*s).render_factory));
+    let removed: rt::Status=target.remove_rendering((*s).render_token);
+    // XAML can discard its thread's rendering event source before Closed.
+    // Native C++/WinRT event revokers are noexcept. Allow only this shutdown
+    // result, on the verified UI thread; normal unsubscribe errors still fail.
+    if !(SHUTTING_DOWN && removed.code==(0x8001010e as i32)) {native::check(removed);}
+    (*s).animating=false;LIVE=LIVE-1;return;
+}
+fn tick(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    // A teardown-time native dispatch must never dereference a released view.
+    if SHUTTING_DOWN {return rt::Status {code:0};}
+    let r: *record::View=ctx as *record::View;let s: *State=state(r);let elapsed: f64=now()-(*s).started;let t: f64=ease(elapsed/(*s).duration,(*s).easing);let a: Values=(*s).from;let b: Values=(*s).target;
+    (*s).current=Values {opacity:mix(a.opacity,b.opacity,t),sx:mix(a.sx,b.sx,t),sy:mix(a.sy,b.sy,t),rotation:mix(a.rotation,b.rotation,t),x:mix(a.x,b.x,t),y:mix(a.y,b.y,t)};output(r);(*s).frames=(*s).frames+1;
+    if elapsed>=(*s).duration {stop(s);if env::has_var("FACET_WINUI_TRACE_ANIMATION") {let frames: u32=(*s).frames;io::println("WinUI animation: ${frames} frames in ${elapsed}s");}}
+    return rt::Status {code:0};
 }
 fn apply(r: *record::View) {
+    if UI_THREAD==0 {UI_THREAD=GetCurrentThreadId();}
     let p: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);let target: Values=values(p);let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));
     if (*r).presentation.is_null() {
         let tr: ui::CompositeTransform=native::must::[ui::CompositeTransform](ui::CompositeTransform::new());native::check(element.set_render_transform(tr.object()));
-        let owner: box::Box[State]=match box::new::[State](State {current:target,from:target,target:target,transform:tr.object(),timer:0,started:0,duration:0.0f64,easing:vocab::Easing::Linear,clipped:false,shadowed:false,shadow_host:rt::Object::empty(),shadow_entries:rt::Object::empty()}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};(*r).presentation=owner.into_raw();
+        let owner: box::Box[State]=match box::new::[State](State {current:target,from:target,target:target,transform:tr.object(),render_token:#zero::[ui::EventRegistrationToken](),render_factory:rt::Object::empty(),animating:false,frames:0,started:0.0f64,duration:0.0f64,easing:vocab::Easing::Linear,clipped:false,shadowed:false,shadow_host:rt::Object::empty(),shadow_entries:rt::Object::empty()}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};(*r).presentation=owner.into_raw();
     }
     let s: *State=state(r);let dirty: u64=core::dirty_of((*r).node);let changed: bool=target.opacity!=(*s).target.opacity || target.sx!=(*s).target.sx || target.sy!=(*s).target.sy || target.rotation!=(*s).target.rotation || target.x!=(*s).target.x || target.y!=(*s).target.y;
     if changed || (dirty & props::C_CANCEL_ANIMATIONS)!=0 {
-        scheduler::cancel((*s).timer);(*s).timer=0;(*s).from=(*s).current;(*s).target=target;
+        stop(s);(*s).from=(*s).current;(*s).target=target;
         if (dirty & props::C_ANIMATE)!=0 && (*p).animate_channels!=0 && (*p).animate_duration.seconds>0.0f64 && (dirty & props::C_CANCEL_ANIMATIONS)==0 {
             if ((*p).animate_channels & props::ANIM_OPACITY)==0 {(*s).from.opacity=target.opacity;}
             if ((*p).animate_channels & props::ANIM_TRANSFORM)==0 {(*s).from.sx=target.sx;(*s).from.sy=target.sy;(*s).from.rotation=target.rotation;(*s).from.x=target.x;(*s).from.y=target.y;}
-            (*s).started=GetTickCount64();(*s).duration=(*p).animate_duration.seconds;(*s).easing=(*p).animate_easing;(*s).timer=scheduler::after(0.016f64,tick,r as *u8);
+            (*s).started=now();(*s).duration=(*p).animate_duration.seconds;(*s).easing=(*p).animate_easing;(*s).frames=0;
+            let target: ui::ICompositionTargetStatics=native::must::[ui::ICompositionTargetStatics](ui::CompositionTarget::i_composition_target_statics_factory());let handler: ui::EventHandler_Object=native::must::[ui::EventHandler_Object](ui::EventHandler_Object::new(tick,r as *u8));
+            (*s).render_factory=target.object();(*s).render_token=native::must::[ui::EventRegistrationToken](target.add_rendering(handler.object()));(*s).animating=true;LIVE=LIVE+1;
         } else {(*s).current=target;}
     }
     native::check(element.set_render_transform_origin(ui::Point {x:(*p).anchor_x as f32,y:(*p).anchor_y as f32}));output(r);
@@ -83,7 +109,7 @@ fn apply(r: *record::View) {
 fn detach(r: *record::View) {if !(*r).presentation.is_null() {remove_shadow(state(r));}return;}
 // Application shutdown has already closed XAML. Release references here;
 // live child removal detaches the sibling visual before removing its owner.
-fn release(r: *record::View) {if (*r).presentation.is_null() {return;}scheduler::cancel((*state(r)).timer);let owner: box::Box[State]=box::from_raw::[State]((*r).presentation);(*r).presentation=0 as *u8;return;}
+fn release(r: *record::View) {if (*r).presentation.is_null() {return;}stop(state(r));let owner: box::Box[State]=box::from_raw::[State]((*r).presentation);(*r).presentation=0 as *u8;return;}
 fn place(r: *record::View,width: f64,height: f64) {
     let s: *State=state(r);if s.is_null() {return;}let p: *props::CommonProps=#addr_of((*core::node_data((*r).node)).common);
     if (*p).clip.kind==0 && (*p).shadow.opacity<=0.0f64 && !(*s).clipped && !(*s).shadowed {return;}

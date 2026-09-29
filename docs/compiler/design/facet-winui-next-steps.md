@@ -105,6 +105,6 @@ The shared 36-page gallery now has a separate WinUI launcher in
 TreeView navigation, drawing, decorations and UI-thread scheduling are wired.
 The generator now projects non-aggregated parameterized composition factory
 calls (including FontFamily), releasing the additional inner reference.
-The selection has 729 metadata entries, 5,005 emitted methods and 135 skips.
+The selection has 735 metadata entries, 5,015 emitted methods and 135 skips.
 See `vendor/facet_winui/MANIFEST.md` for current limits; earlier slice counts
 above are historical. Full runtime-facade integration remains separate.

@@ -102,6 +102,28 @@ try:
     screenshot('verified-inputs.png')
     print('PASS: real keyboard input, search callback and password masking', flush=True)
 
+    nodes = inspect('navigate', 'Pickers')
+    click(node(nodes, 'pk:popup')['bounds']); time.sleep(.3)
+    screenshot('verified-picker-dropdown.png')
+    # Pick Green using the real keyboard and verify Facet's selection callback.
+    for key in (40, 13):
+        u.keybd_event(key, 0, 0, 0); u.keybd_event(key, 0, 2, 0)
+    assert node(inspect(), 'pk:popup_status')['name'] == 'Selected index: 1'
+    print('PASS: picker dropdown and selection callback', flush=True)
+
+    nodes = inspect('navigate', 'Web')
+    x, y, width, height = node(nodes, 'web:view')['bounds']
+    # Ignore the frame/scrollbar: the old missing runtime left a uniform blank
+    # interior. Allow time for browser startup and the sample's network request.
+    deadline = time.monotonic() + 20
+    while True:
+        time.sleep(.5)
+        content = ImageGrab.grab(bbox=tuple(round(v) for v in (x+40, y+40, x+width-40, y+height-40)))
+        if max(ImageStat.Stat(content).stddev) > 12: break
+        assert time.monotonic() < deadline, 'WebView remained blank'
+    screenshot('verified-web.png')
+    print('PASS: embedded browser paints page content', flush=True)
+
     inspect('navigate', 'Values')
     nodes = inspect('range', 'val:slider', '.8')
     assert node(nodes, 'val:readout')['name'] == 'Value: 80%'
@@ -142,6 +164,8 @@ try:
     inspect('invoke', 'ab:move'); time.sleep(.7)
     assert node(inspect(), 'ab:card_text')['bounds'][0] > before + 150
     screenshot('verified-animation.png')
+    inspect('invoke', 'ab:reset')
+    assert abs(node(inspect(), 'ab:card_text')['bounds'][0] - before) < 2
     nodes = inspect('navigate', 'Swipe')
     x, y, width, height = node(nodes, 'sw:title')['bounds']
     u.SetCursorPos(round(x + width/2), round(y + height/2)); time.sleep(.2)
@@ -157,6 +181,8 @@ try:
     print('PASS: resize and navigation after recycled rows are released', flush=True)
     # Close with a live composition shadow as well as native event handlers.
     inspect('navigate', 'Shadow'); inspect('invoke', 'sh:glow')
+    # Render callbacks must also unsubscribe when the window closes mid-flight.
+    inspect('navigate', 'Basics', 'last'); inspect('invoke', 'ab:slow'); inspect('invoke', 'ab:flourish')
     assert u.PostMessageW(hwnd, 0x10, 0, 0)
 finally:
     u.SetCursorPos(previous.x, previous.y)
