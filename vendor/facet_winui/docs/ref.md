@@ -20,7 +20,7 @@ fn live_views() -> i64;
 fn live_subscriptions() -> i64;
 ```
 
-UI-thread diagnostic counts for owned native view records and control click
+UI-thread diagnostic counts for owned native view records and control event
 subscriptions. Both must be zero after `run` returns. These are not counts of
 all internal allocations or COM references in the Windows App SDK.
 

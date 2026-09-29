@@ -1,8 +1,10 @@
 # WinUI generator checkpoint — 2026-09-29
 
 Resumed after the battery pause. The first generated standalone WinUI subset
-and first explicit Facet renderer slice are implemented. All work is saved locally; no commit or GitHub
-post was made. The unrelated user file `windows.todo.me` remains untouched.
+and explicit Facet renderer are implemented. The baseline was committed as
+`ec553469` at the user's request. Text-field/scroll work continues from that
+baseline. No push or GitHub post was made. The unrelated user file
+`windows.todo.me` remains untouched.
 
 ## Implemented
 
@@ -44,6 +46,17 @@ plain composition constructors, and 16-byte-aligned aggregate temporaries.
 
 ## Run or regenerate
 
+The next adapter increment adds native TextBox editing and ScrollViewer with
+an owned Canvas document. Input updates retained props before callbacks;
+programmatic text writes suppress duplicate notifications and equal text is
+not reassigned. Scroll axes/bars, content extent, offsets and observers are
+wired through the existing generated bindings; no generator changes were needed.
+Debug and release desktop checks passed for real typing, max length, read-only
+input, programmatic text changes, initial/live scroll offsets, wheel scrolling,
+offset preservation, button callback replacement, resize and zero records/event
+subscriptions on exit. Selection commands, submit/password/multiline editing,
+remaining controls and runtime integration are still deferred.
+
 From the repository root in PowerShell:
 
 ```powershell
@@ -78,4 +91,5 @@ Broader controls, services/timers, host interop, inspection and runtime facade
 integration remain future milestones. Keep the generated package independently
 usable. GUI evidence is in each example's ignored `out` folder.
 
-Do not commit, publish, or post GitHub comments without authorization.
+The user authorized committing and continuing. Publishing/pushing or posting
+GitHub comments has not been requested.

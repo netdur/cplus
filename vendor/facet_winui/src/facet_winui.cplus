@@ -69,6 +69,7 @@ fn closed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     return rt::Status {code:0};
 }
 fn loaded(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    schedule(0 as *u8);
     io::println("READY: facet_winui"); let _f: i32=fflush(0 as *u8); return rt::Status {code:0};
 }
 fn launched(app: rt::Object, context: *u8) -> rt::Status {

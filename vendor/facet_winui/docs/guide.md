@@ -23,7 +23,8 @@ the host drops. Queued renderer callbacks capture no host pointer.
 
 ## Layout and dispatch
 
-Every container is a Canvas. Facet/flex_layout computes frames in logical
+Ordinary containers are Canvas controls; a ScrollViewer owns a document Canvas.
+Facet/flex_layout computes frames in logical
 coordinates; the backend subtracts the parent's origin and applies dimensions.
 It does not let WinUI StackPanel/Grid compute a second portable layout.
 Native Measure/DesiredSize supplies leaf intrinsic sizes, with explicit native
@@ -40,6 +41,20 @@ machine's current scale and after window resizing; cross-monitor DPI changes
 are not yet an automated coverage claim.
 
 ## Scope
+
+TextBox changes update retained text before invoking the application handler.
+Programmatic writes suppress matching native notifications; applying other
+properties avoids assigning identical text and resetting selection. Selection
+properties are sampled during text edits only; selection setters and submit
+events are deferred. Password fields are rejected rather than displayed as
+ordinary editable text.
+
+Scroll document size is the union of its direct children's frames and the
+viewport. Offset writes are applied after native layout; initial writes wait
+until a viewport exists. User scrolling updates retained offsets before
+notifying observers. Unrelated dirty updates preserve the current offset.
+The application must give its content a scrollable layout extent, as shown by
+the sample's fixed-height document with shrink(0).
 
 Use the explicit host for this first slice. `facet_runtime` still selects
 Win32 on Windows. Before selecting this backend through that facade, implement

@@ -1,7 +1,7 @@
 # facet_winui
 
 Experimental Windows x64 renderer for retained Facet trees using generated
-WinUI bindings. This first slice supports containers, labels, and buttons.
+WinUI bindings. Supports containers, labels, buttons, text fields, and scrolling.
 
 ```toml
 [dependencies]
@@ -29,7 +29,8 @@ Run the integration checks from the repository root:
 & examples/facet_winui_smoke/run.ps1 -Verify -Release
 ```
 
-These test real pointer input, native label updates, intrinsic sizing, resize,
-control replacement during its callback, and cleanup. The existing Win32
+These test real pointer/keyboard/wheel input, text readback and programmatic
+updates, length limits and read-only fields, scrolling, resize, control
+replacement during its callback, and cleanup. The existing Win32
 backend and `facet_runtime` default are unchanged. This package is not yet a
 replacement for the full Windows runtime facade.

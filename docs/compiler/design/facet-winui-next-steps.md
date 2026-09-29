@@ -87,7 +87,13 @@ or lifecycle contracts. Test multiwindow ownership, cancellation, dispatch,
 and failures separately: the existing one-window click test does not establish
 those properties.
 
-The first Facet label/button renderer milestone is implemented. Remaining
+The first Facet label/button renderer milestone and basic text-field/scroll
+adapter are implemented. Text edits write back to Facet; programmatic text
+updates suppress duplicate edit callbacks. ScrollViewer owns a Canvas document,
+tracks native offsets, and applies Facet offset writes after layout. The desktop
+sample covers typing, max length, read-only input, wheel scrolling, offset
+preservation, and programmatic text/offset updates alongside the original checks.
+Remaining
 steps are broader native control/property coverage, host HWND interop, service
 scheduling and cancellation, inspection, and `facet_runtime` integration before
 changing the default. The generated package remains independently usable.

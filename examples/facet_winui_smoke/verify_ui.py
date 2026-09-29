@@ -1,4 +1,4 @@
-"""Real pointer input, native UIA label updates, resize, and reentrant removal."""
+"""Real pointer/keyboard/wheel input, UIA updates, resize and callback removal."""
 from pathlib import Path
 import ctypes as c
 from ctypes import wintypes as w
@@ -41,9 +41,54 @@ def inspect(count):
 def screenshot(name):
     rect = w.RECT(); assert u.GetWindowRect(hwnd,c.byref(rect))
     ImageGrab.grab(bbox=(rect.left,rect.top,rect.right,rect.bottom)).save(out/name)
+def click(bounds):
+    x,y,width,height = bounds
+    point = w.POINT(round(x+width/2),round(y+height/2))
+    assert u.GetAncestor(u.WindowFromPoint(point),2) == hwnd, 'Sample is obscured'
+    previous = w.POINT(); u.GetCursorPos(c.byref(previous))
+    u.SetCursorPos(point.x,point.y); time.sleep(0.15)
+    u.mouse_event(2,0,0,0,0); u.mouse_event(4,0,0,0,0)
+    u.SetCursorPos(previous.x,previous.y)
+class KeyInput(c.Structure):
+    _fields_ = [('vk',w.WORD),('scan',w.WORD),('flags',w.DWORD),('time',w.DWORD),('extra',c.c_size_t)]
+class InputUnion(c.Union):
+    _fields_ = [('key',KeyInput),('padding',c.c_byte*32)]
+class Input(c.Structure):
+    _fields_ = [('type',w.DWORD),('data',InputUnion)]
+u.SendInput.argtypes = [w.UINT,c.POINTER(Input),c.c_int]
+def type_text(value):
+    for char in value:
+        for flags in (4,6):
+            event = Input(type=1,data=InputUnion(key=KeyInput(scan=ord(char),flags=flags)))
+            assert u.SendInput(1,c.byref(event),c.sizeof(event)) == 1
+        time.sleep(0.1)
 state = inspect(0)
 time.sleep(0.5)
+state = inspect(0)
+assert state['scrollPercent'] > 0, 'Initial scroll offset was lost before loading'
+initial_scroll = state['scrollPercent']
 screenshot('before-click.png')
+click(state['edit'])
+time.sleep(0.4)
+type_text('WinUI!') # MaxLength=5 rejects the sixth character.
+time.sleep(0.4)
+state = inspect(0)
+assert state['text'] == 'WinUI' and state['echo'], state
+edit_count = (out/'run.log').read_text().count('EDIT:')
+assert edit_count > 0
+# An unrelated label update after every keystroke must not reset the caret.
+x,y,width,height = state['scroll']
+point = w.POINT(round(x+width/2),round(y+height/2))
+assert u.GetAncestor(u.WindowFromPoint(point),2) == hwnd
+previous = w.POINT(); u.GetCursorPos(c.byref(previous))
+u.SetCursorPos(point.x,point.y)
+u.mouse_event(0x800,0,0,c.c_uint32(-360).value,0)
+time.sleep(1)
+u.SetCursorPos(previous.x,previous.y)
+state = inspect(0)
+assert state['scrollPercent'] > initial_scroll, state
+wheel_scroll = state['scrollPercent']
+assert 'SCROLL:' in (out/'run.log').read_text()
 for count in range(1,4):
     x,y,width,height = state['button']
     point = w.POINT(round(x+width/2),round(y+height/2))
@@ -53,6 +98,19 @@ for count in range(1,4):
     u.mouse_event(2,0,0,0,0); u.mouse_event(4,0,0,0,0)
     u.SetCursorPos(previous.x,previous.y)
     state = inspect(count)
+    assert state['scrollPercent'] > 0, 'Unrelated sync reset scroll position'
+    expected = 'Programmatic update' if count == 3 else 'WinUI'
+    assert state['text'] == expected, state
+    assert (out/'run.log').read_text().count('EDIT:') == edit_count, 'Programmatic update fired user edit callback'
+    if count == 1:
+        click(state['edit']); time.sleep(0.3)
+        u.keybd_event(0x11,0,0,0); u.keybd_event(0x41,0,0,0)
+        u.keybd_event(0x41,0,2,0); u.keybd_event(0x11,0,2,0)
+        type_text('X'); time.sleep(0.3)
+        state = inspect(count)
+        assert state['text'] == 'WinUI', 'Read-only TextBox accepted typing'
+    if count == 3:
+        assert state['scrollPercent'] > wheel_scroll, 'Programmatic scroll offset did not apply'
     assert f'CLICK {count}:' in (out/'run.log').read_text()
     if count == 1:
         old_width = state['headingWidth']
@@ -65,7 +123,7 @@ for count in range(1,4):
         else: raise AssertionError('Native label did not follow window resize')
 time.sleep(0.5)
 screenshot('after-click.png')
-print('PASS: 3 real clicks, native label updates, resize, and replacement button events',flush=True)
+print('PASS: typing and Facet text readback, programmatic text update, wheel scrolling, 3 clicks, resize and callback replacement',flush=True)
 if '--keep-open' not in sys.argv:
     u.PostMessageW(hwnd,0x10,0,0)
     deadline = time.monotonic()+8

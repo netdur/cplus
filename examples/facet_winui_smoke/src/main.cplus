@@ -1,6 +1,9 @@
 import "facet/elements" as ui;
 import "facet/facet" as core;
 import "facet/label" as label;
+import "facet/text_field" as field;
+import "facet/scroll" as scroll;
+import "facet/vocabulary" as vocab;
 import "facet/component" as component;
 import "facet/mount" as mount;
 import "facet_winui/facet_winui" as host;
@@ -11,7 +14,7 @@ import "stdlib/io" as io;
 import "winrt/runtime" as rt;
 extern fn fflush(stream: *u8) -> i32;
 
-struct Counter { clicks: i32 }
+struct Counter { clicks: i32, edits: i32 }
 impl Counter {
     fn increment(ref this) -> core::Node {
         return @ui { button("Increment",key:"increment",on_click:this.clicked).width(300.0f64).height(52.0f64) };
@@ -25,15 +28,44 @@ impl Counter {
         }
         // Exercise removal while its native event callback is on the stack.
         // This replaces one test control, not the screen's retained tree.
-        match mount::find("root") {
-            option::Option::Some(root)=>{
-                match mount::replace_child(root,3 as usize,this.increment()) {
-                    option::Option::Some(old)=>{}, option::Option::None=>{assert false;}
+        match mount::replace("increment",this.increment()) {
+            option::Option::Some(old)=>{}, option::Option::None=>{assert false;}
+        }
+        assert host::live_views()==13; assert host::live_subscriptions()==3;
+        if count==1 || count==2 {
+            match field::find("input") {
+                option::Option::Some(value)=>{let updated: field::TextField=value.set_read_only(count==1);},option::Option::None=>{assert false;}
+            }
+        }
+        if count==3 {
+            match field::find("input") {
+                option::Option::Some(value)=>{let updated: field::TextField=value.set_max_length(0).set_text("Programmatic update");},option::Option::None=>{assert false;}
+            }
+            match scroll::find("scroll") {
+                option::Option::Some(value)=>{let updated: scroll::Scroll=value.set_scroll_y(120.0f64);},option::Option::None=>{assert false;}
+            }
+        }
+        io::println("CLICK ${count}: Facet handler updated retained label"); let _f: i32=fflush(0 as *u8);
+        return;
+    }
+    fn edited(ref this, sender: *u8) {
+        let key: text::Text=component::key_of(sender); assert key.view()=="input";
+        this.edits=this.edits+1;
+        match field::find("input") {
+            option::Option::Some(value)=>{
+                let contents: str=value.text();
+                match label::find("echo") {
+                    option::Option::Some(target)=>{let updated: label::Label=target.set_text("Typed: ${contents}");},option::Option::None=>{assert false;}
                 }
+                io::println("EDIT: ${contents}"); let _f: i32=fflush(0 as *u8);
             },option::Option::None=>{assert false;}
         }
-        assert host::live_views()==5; assert host::live_subscriptions()==1;
-        io::println("CLICK ${count}: Facet handler updated retained label"); let _f: i32=fflush(0 as *u8);
+        return;
+    }
+    fn scrolled(ref this, sender: *u8) {
+        match scroll::find("scroll") {
+            option::Option::Some(value)=>{let y: f64=value.scroll_y(); io::println("SCROLL: ${y}"); let _f: i32=fflush(0 as *u8);},option::Option::None=>{assert false;}
+        }
         return;
     }
     fn build(ref this) -> core::Node {
@@ -43,12 +75,30 @@ impl Counter {
                 label("A retained Facet tree using generated native bindings.",key:"description",font_size:16.0f64)
                 label("Facet clicked 0 times",key:"count",font_size:24.0f64)
                 this.increment()
-            }.padding(36.0f64).gap(16.0f64)
+                text_field("",key:"input",placeholder:"Type here",max_length:5,on_text_changed:this.edited).height(40.0f64)
+                label("Typed: ",key:"echo").height(24.0f64)
+                this.scroller()
+            }.padding(24.0f64).gap(10.0f64)
         };
+    }
+    fn scroller(ref this) -> core::Node {
+        let document: core::Node=@ui {
+            column(key:"document") {
+                label("Scroll content: first row").height(48.0f64)
+                label("Native WinUI scrolling").height(48.0f64)
+                label("More content below").height(48.0f64)
+                label("Scroll content: last row").height(48.0f64)
+            }.height(500.0f64).shrink(0.0f64)
+        };
+        var node: core::Node=ui::scroll(key:"scroll",axis:vocab::ScrollAxis::Vertical,scroll_y:24.0f64,observe_scrolled:this.scrolled).height(130.0f64).shrink(0.0f64);
+        match scroll::find("scroll",within:#addr_of(node)) {
+            option::Option::Some(value)=>{let updated: scroll::Scroll=value.set_content(document);},option::Option::None=>{assert false;}
+        }
+        return node;
     }
 }
 fn main() -> i32 {
-    let owner: box::Box[Counter]=match box::new::[Counter](Counter {clicks:0}) {
+    let owner: box::Box[Counter]=match box::new::[Counter](Counter {clicks:0,edits:0}) {
         option::Option::Some(v)=>{v},option::Option::None=>{return 1;}
     };
     let counter: *Counter=owner.ptr();
@@ -56,5 +106,6 @@ fn main() -> i32 {
     let clicks: i32=(*counter).clicks; let remaining: i64=host::live_views();
     let subscriptions: i64=host::live_subscriptions();
     io::println("CLEAN EXIT; clicks=${clicks}; live views=${remaining}; subscriptions=${subscriptions}"); let _f: i32=fflush(0 as *u8);
+    let edits: i32=(*counter).edits; io::println("USER EDITS: ${edits}"); let _f2: i32=fflush(0 as *u8);
     return if result.is_ok() {0} else {1};
 }

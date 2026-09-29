@@ -18,4 +18,21 @@ do {
 if (!$label -or !$button -or !$heading) { throw "Native UI did not show count $Count" }
 if (!$button.Current.IsEnabled) { throw 'Button is disabled' }
 $bounds = $button.Current.BoundingRectangle
-@{ button = @($bounds.X,$bounds.Y,$bounds.Width,$bounds.Height); headingWidth = $heading.Current.BoundingRectangle.Width } | ConvertTo-Json -Compress
+$editCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
+$edit = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+if (!$edit) { throw 'TextBox missing' }
+$editBounds = $edit.Current.BoundingRectangle
+$editValue = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+$scrollCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsScrollPatternAvailableProperty, $true)
+$scrollers = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $scrollCondition)
+$scroll = $null
+foreach ($candidate in $scrollers) {
+    $pattern = $candidate.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+    if ($pattern.Current.VerticallyScrollable) { $scroll = $candidate; $scrollState = $pattern.Current; break }
+}
+if (!$scroll) { throw 'No vertically scrollable native content' }
+$scrollBounds = $scroll.Current.BoundingRectangle
+@{ button = @($bounds.X,$bounds.Y,$bounds.Width,$bounds.Height); headingWidth = $heading.Current.BoundingRectangle.Width
+   edit = @($editBounds.X,$editBounds.Y,$editBounds.Width,$editBounds.Height); text = $editValue
+   scroll = @($scrollBounds.X,$scrollBounds.Y,$scrollBounds.Width,$scrollBounds.Height); scrollPercent = $scrollState.VerticalScrollPercent
+   echo = [bool](Find-Name 'Typed: WinUI') } | ConvertTo-Json -Compress
