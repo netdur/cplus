@@ -60,6 +60,7 @@ import "flex_layout/flex_layout" as flex;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
 import "stdlib/thread" as thread;
+import "./native_surface" as native_surface;
 
 static AGENT_SURFACE: agent_win32::Surface = #zero::[agent_win32::Surface]();
 static AGENT_SERVING: bool = false;
@@ -106,6 +107,7 @@ fn disable() {
 // compiled into this binary — see agent_inapp's header. It is the developer
 // bounding what MODEL OUTPUT can reach, in-process, on purpose.
 fn in_app() -> inapp::Session {
+    if native_surface::installed() { return native_surface::in_app(auth::operator()); }
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
     return inapp::open(surf, agent_win32::mcp_backend());
 }
@@ -117,6 +119,7 @@ fn in_app() -> inapp::Session {
 // one task should not outlive the task, and the shortest way to guarantee that
 // is for the authority to live in a value the app drops.
 fn in_app_with_grant(grant: auth::Grant) -> inapp::Session {
+    if native_surface::installed() { return native_surface::in_app(grant); }
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
     return inapp::open_with_grant(surf, agent_win32::mcp_backend(), grant);
 }
@@ -257,6 +260,9 @@ fn serve_main(take job: AgentServe) -> i32 {
 // Start the serve worker exactly once per process. The accept loop lives for
 // the app's life.
 fn serve_once(id: str) {
+    // The legacy HWND server calls its backend on a worker. A native XAML
+    // surface instead uses DispatcherQueue and handle_request on its UI thread.
+    if native_surface::installed() { native_surface::serve_once(id); return; }
     if AGENT_SERVING { return; }
     // Clear out what dead processes left behind. A descriptor carries the pid,
     // so a name is never reused and nothing else would ever remove these.

@@ -1,0 +1,120 @@
+// One process-wide MCP server, matching agent_mcp's protocol/descriptor state.
+// Socket I/O runs on a worker; protocol, policy and native verbs run on the UI.
+import "stdlib/atomic" as atomic;
+import "stdlib/thread" as thread;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/netsys" as netsys;
+import "agent_core/events" as events;
+import "agent_core/auth" as auth;
+import "agent_winui/agent_winui" as agent;
+import "agent_mcp/agent_mcp" as mcp;
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+
+extern fn Sleep(milliseconds: u32);
+extern fn GetCurrentThreadId() -> u32;
+
+enum Worker { Empty, Running(thread::JoinHandle[i32]) }
+static _WORKER: Worker=#zero::[Worker]();
+static _ACTIVE: bool=false;
+static _IN_CALLBACK: bool=false;
+static _OWNER: u32=0;
+static _EPOCH: usize=0;
+static _SURFACE: *u8=0 as *u8;
+static _POLICY: fn(auth::Request)->auth::Grant=0 as fn(auth::Request)->auth::Grant;
+static _SUB: events::Subscriber=#zero::[events::Subscriber]();
+// Single-slot handshake: worker publishes request with Release(1), UI publishes
+// reply with Release(2). Acquire loads transfer ownership of the payloads.
+// Storage is process-lived, so an abandoned queue callback never borrows freed
+// memory. Its epoch is a value, not a pointer to a worker's stack or a Surface.
+static _PHASE: i32=0;
+static _BODY: text::Text=#zero::[text::Text]();
+static _CLIENT: text::Text=#zero::[text::Text]();
+static _REPLY: mcp::DispatchReply=#zero::[mcp::DispatchReply]();
+
+struct Job { fd: i32, queue: rt::Object, epoch: usize }
+
+fn _run(context: *u8) -> rt::Status {
+    if !_ACTIVE || context as usize != _EPOCH { return rt::Status {code:0}; }
+    assert GetCurrentThreadId()==_OWNER;
+    if atomic::load_i32(#addr_of(_PHASE),atomic::Ordering::Acquire)!=1 { return rt::Status {code:0}; }
+    _IN_CALLBACK=true;
+    mcp::adopt_client(_CLIENT.clone());
+    let response: text::Text=mcp::handle_request(_SURFACE,agent::mcp_backend(),_SUB,auth::serve(_POLICY),_BODY.view());
+    _REPLY=mcp::DispatchReply {body:response,client:text::from_str(mcp::current_client())};
+    _IN_CALLBACK=false;
+    atomic::store_i32(#addr_of(_PHASE),2,atomic::Ordering::Release);
+    return rt::Status {code:0};
+}
+
+fn _dispatch(context: *u8,body: str,client: str) -> mcp::DispatchReply {
+    let job: *Job=context as *Job;
+    _BODY=text::from_str(body); _CLIENT=text::from_str(client);
+    atomic::store_i32(#addr_of(_PHASE),1,atomic::Ordering::Release);
+    let queued: bool=match agent::enqueue((*job).queue,_run,(*job).epoch as *u8) {
+        result::Result::Ok(v)=>v,result::Result::Err(_)=>false
+    };
+    if !queued {
+        return mcp::DispatchReply {body:text::from_str("{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"UI dispatcher unavailable\"}}"),client:text::from_str(client)};
+    }
+    loop {
+        if thread::cancelled() { return #zero::[mcp::DispatchReply](); }
+        if atomic::load_i32(#addr_of(_PHASE),atomic::Ordering::Acquire)==2 {
+            return mcp::DispatchReply {body:_REPLY.body.clone(),client:_REPLY.client.clone()};
+        }
+        Sleep(1);
+    }
+}
+
+fn _serve(take job: Job) -> i32 {
+    var unused: events::Subscriber=events::subscriber(events::everything(),1);
+    return mcp::accept_loop(0 as *u8,agent::mcp_backend(),unused,0 as fn(auth::Request)->auth::Grant,
+        job.fd,false,http:true,dispatcher:mcp::RequestDispatcher {context:#addr_of(job) as *u8,call:_dispatch});
+}
+
+// Call on the Surface's UI thread, after Window activation. Returns the bound
+// port, or a negative setup error. Surface must outlive stop(). Queue must be
+// the Window's own DispatcherQueue. A zero port chooses the PID-derived port.
+fn start(surface: *agent::Surface,queue: rt::Object,id: str,
+         policy: fn(auth::Request)->auth::Grant,port: u16=0) -> i32 {
+    if _ACTIVE || _IN_CALLBACK { return -10; }
+    if !mcp::valid_id(id) { return -11; }
+    let q: ui::IDispatcherQueue2=match ui::IDispatcherQueue2::query(queue) {
+        result::Result::Ok(v)=>v,result::Result::Err(_)=>{return -12;}
+    };
+    let access: bool=match q.has_thread_access() {result::Result::Ok(v)=>v,result::Result::Err(_)=>false};
+    if !access || surface.is_null() || policy==(0 as fn(auth::Request)->auth::Grant) { return -12; }
+    let chosen: u16=if port==0 {mcp::loopback_port(mcp::current_pid())} else {port};
+    let fd: i32=mcp::bind_tcp(chosen); if fd<0 { return fd; }
+    let address: text::Text="http://127.0.0.1:${chosen}/";
+    if !mcp::write_descriptor(id,mcp::current_pid(),"http",address.view()) {
+        let closed: i32=netsys::close_fd(fd); return -13;
+    }
+    _OWNER=GetCurrentThreadId(); _EPOCH=_EPOCH+1;
+    _SURFACE=surface as *u8; _POLICY=policy;
+    _SUB=events::subscriber(events::everything(),64);
+    _BODY=text::new(); _CLIENT=text::new(); _REPLY=#zero::[mcp::DispatchReply]();
+    atomic::store_i32(#addr_of(_PHASE),0,atomic::Ordering::Release);
+    mcp::set_server_name(id); mcp::forget_client(); _ACTIVE=true;
+    _WORKER=Worker::Running(thread::spawn_with::[Job,i32](Job {fd:fd,queue:queue.clone(),epoch:_EPOCH},_serve));
+    return chosen as i32;
+}
+
+// Safe even when called by an action's native event handler: cancellation
+// releases the worker's wait without needing another UI message to execute.
+fn stop() {
+    if !_ACTIVE { return; }
+    assert GetCurrentThreadId()==_OWNER;
+    _ACTIVE=false;
+    match _WORKER {
+        Worker::Running(worker)=>{worker.cancel(); let code: i32=worker.join();},
+        Worker::Empty=>{}
+    }
+    _WORKER=Worker::Empty;
+    mcp::unlink_descriptor();
+    // Leave payloads alive until a reentrant _run has returned. The next start
+    // replaces them; stale queued callbacks fail the active/epoch check.
+}
+fn running() -> bool { return _ACTIVE; }

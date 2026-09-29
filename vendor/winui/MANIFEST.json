@@ -1,6 +1,13 @@
 {
   "generator": "cpc-bindgen --winmd",
   "include": [
+    "Microsoft.UI.Xaml.Media.VisualTreeHelper",
+    "Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer",
+    "Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider",
+    "Microsoft.UI.Xaml.Automation.Provider.IToggleProvider",
+    "Microsoft.UI.Xaml.Automation.Provider.ISelectionItemProvider",
+    "Microsoft.UI.Xaml.Automation.Provider.IValueProvider",
+    "Microsoft.UI.Xaml.Automation.Provider.IRangeValueProvider",
     "Microsoft.UI.Xaml.Application",
     "Microsoft.UI.Xaml.Window",
     "Microsoft.UI.Xaml.IApplicationOverrides",
@@ -2725,6 +2732,12 @@
       "name": "AutomationProperties"
     },
     {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Automation.AutomationTextEditChangeType",
+      "methods": [],
+      "name": "AutomationTextEditChangeType"
+    },
+    {
       "iid": "525c6a71-dd8a-52a0-977b-db1b02f8e896",
       "kind": "Interface",
       "metadata": "Microsoft.UI.Xaml.Automation.IAutomationProperties",
@@ -3253,6 +3266,12 @@
     },
     {
       "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.AutomationEvents",
+      "methods": [],
+      "name": "AutomationEvents"
+    },
+    {
+      "kind": "Enum",
       "metadata": "Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel",
       "methods": [],
       "name": "AutomationHeadingLevel"
@@ -3268,6 +3287,1272 @@
       "metadata": "Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting",
       "methods": [],
       "name": "AutomationLiveSetting"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.AutomationNavigationDirection",
+      "methods": [],
+      "name": "AutomationNavigationDirection"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.AutomationNotificationKind",
+      "methods": [],
+      "name": "AutomationNotificationKind"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.AutomationNotificationProcessing",
+      "methods": [],
+      "name": "AutomationNotificationProcessing"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.AutomationOrientation",
+      "methods": [],
+      "name": "AutomationOrientation"
+    },
+    {
+      "iid": "e51d3e4e-34f0-568c-999f-6277e2afe6d7",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.AutomationPeer",
+      "methods": [
+        {
+          "name": "get_EventsSource",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_EventsSource",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPattern",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "RaiseAutomationEvent",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "RaisePropertyChangedEvent",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAcceleratorKey",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAccessKey",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAutomationControlType",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAutomationId",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "GetBoundingRectangle",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "GetChildren",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "Navigate",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "GetClassName",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "GetClickablePoint",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        },
+        {
+          "name": "GetHelpText",
+          "reason": null,
+          "slot": 20,
+          "status": "emitted"
+        },
+        {
+          "name": "GetItemStatus",
+          "reason": null,
+          "slot": 21,
+          "status": "emitted"
+        },
+        {
+          "name": "GetItemType",
+          "reason": null,
+          "slot": 22,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLabeledBy",
+          "reason": null,
+          "slot": 23,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLocalizedControlType",
+          "reason": null,
+          "slot": 24,
+          "status": "emitted"
+        },
+        {
+          "name": "GetName",
+          "reason": null,
+          "slot": 25,
+          "status": "emitted"
+        },
+        {
+          "name": "GetOrientation",
+          "reason": null,
+          "slot": 26,
+          "status": "emitted"
+        },
+        {
+          "name": "HasKeyboardFocus",
+          "reason": null,
+          "slot": 27,
+          "status": "emitted"
+        },
+        {
+          "name": "IsContentElement",
+          "reason": null,
+          "slot": 28,
+          "status": "emitted"
+        },
+        {
+          "name": "IsControlElement",
+          "reason": null,
+          "slot": 29,
+          "status": "emitted"
+        },
+        {
+          "name": "IsEnabled",
+          "reason": null,
+          "slot": 30,
+          "status": "emitted"
+        },
+        {
+          "name": "IsKeyboardFocusable",
+          "reason": null,
+          "slot": 31,
+          "status": "emitted"
+        },
+        {
+          "name": "IsOffscreen",
+          "reason": null,
+          "slot": 32,
+          "status": "emitted"
+        },
+        {
+          "name": "IsPassword",
+          "reason": null,
+          "slot": 33,
+          "status": "emitted"
+        },
+        {
+          "name": "IsRequiredForForm",
+          "reason": null,
+          "slot": 34,
+          "status": "emitted"
+        },
+        {
+          "name": "SetFocus",
+          "reason": null,
+          "slot": 35,
+          "status": "emitted"
+        },
+        {
+          "name": "GetParent",
+          "reason": null,
+          "slot": 36,
+          "status": "emitted"
+        },
+        {
+          "name": "InvalidatePeer",
+          "reason": null,
+          "slot": 37,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPeerFromPoint",
+          "reason": null,
+          "slot": 38,
+          "status": "emitted"
+        },
+        {
+          "name": "GetElementFromPoint",
+          "reason": null,
+          "slot": 39,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFocusedElement",
+          "reason": null,
+          "slot": 40,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLiveSetting",
+          "reason": null,
+          "slot": 41,
+          "status": "emitted"
+        },
+        {
+          "name": "ShowContextMenu",
+          "reason": null,
+          "slot": 42,
+          "status": "emitted"
+        },
+        {
+          "name": "GetControlledPeers",
+          "reason": null,
+          "slot": 43,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAnnotations",
+          "reason": null,
+          "slot": 44,
+          "status": "emitted"
+        },
+        {
+          "name": "SetParent",
+          "reason": null,
+          "slot": 45,
+          "status": "emitted"
+        },
+        {
+          "name": "RaiseTextEditTextChangedEvent",
+          "reason": null,
+          "slot": 46,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPositionInSet",
+          "reason": null,
+          "slot": 47,
+          "status": "emitted"
+        },
+        {
+          "name": "GetSizeOfSet",
+          "reason": null,
+          "slot": 48,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLevel",
+          "reason": null,
+          "slot": 49,
+          "status": "emitted"
+        },
+        {
+          "name": "RaiseStructureChangedEvent",
+          "reason": null,
+          "slot": 50,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLandmarkType",
+          "reason": null,
+          "slot": 51,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLocalizedLandmarkType",
+          "reason": null,
+          "slot": 52,
+          "status": "emitted"
+        },
+        {
+          "name": "IsPeripheral",
+          "reason": null,
+          "slot": 53,
+          "status": "emitted"
+        },
+        {
+          "name": "IsDataValidForForm",
+          "reason": null,
+          "slot": 54,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFullDescription",
+          "reason": null,
+          "slot": 55,
+          "status": "emitted"
+        },
+        {
+          "name": "GetCulture",
+          "reason": null,
+          "slot": 56,
+          "status": "emitted"
+        },
+        {
+          "name": "RaiseNotificationEvent",
+          "reason": null,
+          "slot": 57,
+          "status": "emitted"
+        },
+        {
+          "name": "GetHeadingLevel",
+          "reason": null,
+          "slot": 58,
+          "status": "emitted"
+        },
+        {
+          "name": "IsDialog",
+          "reason": null,
+          "slot": 59,
+          "status": "emitted"
+        }
+      ],
+      "name": "AutomationPeer"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.AutomationStructureChangeType",
+      "methods": [],
+      "name": "AutomationStructureChangeType"
+    },
+    {
+      "iid": "7dab4f24-605c-51cb-87db-3eed1b9fb37b",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer",
+      "methods": [
+        {
+          "name": "get_Owner",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "FrameworkElementAutomationPeer"
+    },
+    {
+      "iid": "e51d3e4e-34f0-568c-999f-6277e2afe6d7",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.IAutomationPeer",
+      "methods": [
+        {
+          "name": "get_EventsSource",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "put_EventsSource",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPattern",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "RaiseAutomationEvent",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "RaisePropertyChangedEvent",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAcceleratorKey",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAccessKey",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAutomationControlType",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAutomationId",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "GetBoundingRectangle",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "GetChildren",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "Navigate",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "GetClassName",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "GetClickablePoint",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        },
+        {
+          "name": "GetHelpText",
+          "reason": null,
+          "slot": 20,
+          "status": "emitted"
+        },
+        {
+          "name": "GetItemStatus",
+          "reason": null,
+          "slot": 21,
+          "status": "emitted"
+        },
+        {
+          "name": "GetItemType",
+          "reason": null,
+          "slot": 22,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLabeledBy",
+          "reason": null,
+          "slot": 23,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLocalizedControlType",
+          "reason": null,
+          "slot": 24,
+          "status": "emitted"
+        },
+        {
+          "name": "GetName",
+          "reason": null,
+          "slot": 25,
+          "status": "emitted"
+        },
+        {
+          "name": "GetOrientation",
+          "reason": null,
+          "slot": 26,
+          "status": "emitted"
+        },
+        {
+          "name": "HasKeyboardFocus",
+          "reason": null,
+          "slot": 27,
+          "status": "emitted"
+        },
+        {
+          "name": "IsContentElement",
+          "reason": null,
+          "slot": 28,
+          "status": "emitted"
+        },
+        {
+          "name": "IsControlElement",
+          "reason": null,
+          "slot": 29,
+          "status": "emitted"
+        },
+        {
+          "name": "IsEnabled",
+          "reason": null,
+          "slot": 30,
+          "status": "emitted"
+        },
+        {
+          "name": "IsKeyboardFocusable",
+          "reason": null,
+          "slot": 31,
+          "status": "emitted"
+        },
+        {
+          "name": "IsOffscreen",
+          "reason": null,
+          "slot": 32,
+          "status": "emitted"
+        },
+        {
+          "name": "IsPassword",
+          "reason": null,
+          "slot": 33,
+          "status": "emitted"
+        },
+        {
+          "name": "IsRequiredForForm",
+          "reason": null,
+          "slot": 34,
+          "status": "emitted"
+        },
+        {
+          "name": "SetFocus",
+          "reason": null,
+          "slot": 35,
+          "status": "emitted"
+        },
+        {
+          "name": "GetParent",
+          "reason": null,
+          "slot": 36,
+          "status": "emitted"
+        },
+        {
+          "name": "InvalidatePeer",
+          "reason": null,
+          "slot": 37,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPeerFromPoint",
+          "reason": null,
+          "slot": 38,
+          "status": "emitted"
+        },
+        {
+          "name": "GetElementFromPoint",
+          "reason": null,
+          "slot": 39,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFocusedElement",
+          "reason": null,
+          "slot": 40,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLiveSetting",
+          "reason": null,
+          "slot": 41,
+          "status": "emitted"
+        },
+        {
+          "name": "ShowContextMenu",
+          "reason": null,
+          "slot": 42,
+          "status": "emitted"
+        },
+        {
+          "name": "GetControlledPeers",
+          "reason": null,
+          "slot": 43,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAnnotations",
+          "reason": null,
+          "slot": 44,
+          "status": "emitted"
+        },
+        {
+          "name": "SetParent",
+          "reason": null,
+          "slot": 45,
+          "status": "emitted"
+        },
+        {
+          "name": "RaiseTextEditTextChangedEvent",
+          "reason": null,
+          "slot": 46,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPositionInSet",
+          "reason": null,
+          "slot": 47,
+          "status": "emitted"
+        },
+        {
+          "name": "GetSizeOfSet",
+          "reason": null,
+          "slot": 48,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLevel",
+          "reason": null,
+          "slot": 49,
+          "status": "emitted"
+        },
+        {
+          "name": "RaiseStructureChangedEvent",
+          "reason": null,
+          "slot": 50,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLandmarkType",
+          "reason": null,
+          "slot": 51,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLocalizedLandmarkType",
+          "reason": null,
+          "slot": 52,
+          "status": "emitted"
+        },
+        {
+          "name": "IsPeripheral",
+          "reason": null,
+          "slot": 53,
+          "status": "emitted"
+        },
+        {
+          "name": "IsDataValidForForm",
+          "reason": null,
+          "slot": 54,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFullDescription",
+          "reason": null,
+          "slot": 55,
+          "status": "emitted"
+        },
+        {
+          "name": "GetCulture",
+          "reason": null,
+          "slot": 56,
+          "status": "emitted"
+        },
+        {
+          "name": "RaiseNotificationEvent",
+          "reason": null,
+          "slot": 57,
+          "status": "emitted"
+        },
+        {
+          "name": "GetHeadingLevel",
+          "reason": null,
+          "slot": 58,
+          "status": "emitted"
+        },
+        {
+          "name": "IsDialog",
+          "reason": null,
+          "slot": 59,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAutomationPeer"
+    },
+    {
+      "iid": "a1af86a0-6ec6-5be2-858f-72808be6fddd",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.IAutomationPeerFactory",
+      "methods": [
+        {
+          "name": "CreateInstance",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAutomationPeerFactory"
+    },
+    {
+      "iid": "44f8f6df-1b60-512d-a295-dd8c276c4618",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.IAutomationPeerOverrides",
+      "methods": [
+        {
+          "name": "GetPatternCore",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAcceleratorKeyCore",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAccessKeyCore",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAutomationControlTypeCore",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAutomationIdCore",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "GetBoundingRectangleCore",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "GetChildrenCore",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "NavigateCore",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "GetClassNameCore",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "GetClickablePointCore",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "GetHelpTextCore",
+          "reason": null,
+          "slot": 16,
+          "status": "emitted"
+        },
+        {
+          "name": "GetItemStatusCore",
+          "reason": null,
+          "slot": 17,
+          "status": "emitted"
+        },
+        {
+          "name": "GetItemTypeCore",
+          "reason": null,
+          "slot": 18,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLabeledByCore",
+          "reason": null,
+          "slot": 19,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLocalizedControlTypeCore",
+          "reason": null,
+          "slot": 20,
+          "status": "emitted"
+        },
+        {
+          "name": "GetNameCore",
+          "reason": null,
+          "slot": 21,
+          "status": "emitted"
+        },
+        {
+          "name": "GetOrientationCore",
+          "reason": null,
+          "slot": 22,
+          "status": "emitted"
+        },
+        {
+          "name": "HasKeyboardFocusCore",
+          "reason": null,
+          "slot": 23,
+          "status": "emitted"
+        },
+        {
+          "name": "IsContentElementCore",
+          "reason": null,
+          "slot": 24,
+          "status": "emitted"
+        },
+        {
+          "name": "IsControlElementCore",
+          "reason": null,
+          "slot": 25,
+          "status": "emitted"
+        },
+        {
+          "name": "IsEnabledCore",
+          "reason": null,
+          "slot": 26,
+          "status": "emitted"
+        },
+        {
+          "name": "IsKeyboardFocusableCore",
+          "reason": null,
+          "slot": 27,
+          "status": "emitted"
+        },
+        {
+          "name": "IsOffscreenCore",
+          "reason": null,
+          "slot": 28,
+          "status": "emitted"
+        },
+        {
+          "name": "IsPasswordCore",
+          "reason": null,
+          "slot": 29,
+          "status": "emitted"
+        },
+        {
+          "name": "IsRequiredForFormCore",
+          "reason": null,
+          "slot": 30,
+          "status": "emitted"
+        },
+        {
+          "name": "SetFocusCore",
+          "reason": null,
+          "slot": 31,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPeerFromPointCore",
+          "reason": null,
+          "slot": 32,
+          "status": "emitted"
+        },
+        {
+          "name": "GetElementFromPointCore",
+          "reason": null,
+          "slot": 33,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFocusedElementCore",
+          "reason": null,
+          "slot": 34,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLiveSettingCore",
+          "reason": null,
+          "slot": 35,
+          "status": "emitted"
+        },
+        {
+          "name": "ShowContextMenuCore",
+          "reason": null,
+          "slot": 36,
+          "status": "emitted"
+        },
+        {
+          "name": "GetControlledPeersCore",
+          "reason": null,
+          "slot": 37,
+          "status": "emitted"
+        },
+        {
+          "name": "GetAnnotationsCore",
+          "reason": null,
+          "slot": 38,
+          "status": "emitted"
+        },
+        {
+          "name": "GetPositionInSetCore",
+          "reason": null,
+          "slot": 39,
+          "status": "emitted"
+        },
+        {
+          "name": "GetSizeOfSetCore",
+          "reason": null,
+          "slot": 40,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLevelCore",
+          "reason": null,
+          "slot": 41,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLandmarkTypeCore",
+          "reason": null,
+          "slot": 42,
+          "status": "emitted"
+        },
+        {
+          "name": "GetLocalizedLandmarkTypeCore",
+          "reason": null,
+          "slot": 43,
+          "status": "emitted"
+        },
+        {
+          "name": "IsPeripheralCore",
+          "reason": null,
+          "slot": 44,
+          "status": "emitted"
+        },
+        {
+          "name": "IsDataValidForFormCore",
+          "reason": null,
+          "slot": 45,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFullDescriptionCore",
+          "reason": null,
+          "slot": 46,
+          "status": "emitted"
+        },
+        {
+          "name": "GetDescribedByCore",
+          "reason": null,
+          "slot": 47,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFlowsToCore",
+          "reason": null,
+          "slot": 48,
+          "status": "emitted"
+        },
+        {
+          "name": "GetFlowsFromCore",
+          "reason": null,
+          "slot": 49,
+          "status": "emitted"
+        },
+        {
+          "name": "GetCultureCore",
+          "reason": null,
+          "slot": 50,
+          "status": "emitted"
+        },
+        {
+          "name": "GetHeadingLevelCore",
+          "reason": null,
+          "slot": 51,
+          "status": "emitted"
+        },
+        {
+          "name": "IsDialogCore",
+          "reason": null,
+          "slot": 52,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAutomationPeerOverrides"
+    },
+    {
+      "iid": "9663b2c3-8c1f-56d4-abd9-268082a9e8bc",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.IAutomationPeerProtected",
+      "methods": [
+        {
+          "name": "PeerFromProvider",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "ProviderFromPeer",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAutomationPeerProtected"
+    },
+    {
+      "iid": "90b157ff-18d5-5623-850c-612ceae576bd",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.IAutomationPeerStatics",
+      "methods": [
+        {
+          "name": "ListenerExists",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "GenerateRawElementProviderRuntimeId",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IAutomationPeerStatics"
+    },
+    {
+      "iid": "7dab4f24-605c-51cb-87db-3eed1b9fb37b",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.IFrameworkElementAutomationPeer",
+      "methods": [
+        {
+          "name": "get_Owner",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IFrameworkElementAutomationPeer"
+    },
+    {
+      "iid": "1682c3f8-238d-5c7e-a5a5-08cc3c10ac7c",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.IFrameworkElementAutomationPeerFactory",
+      "methods": [
+        {
+          "name": "CreateInstanceWithOwner",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IFrameworkElementAutomationPeerFactory"
+    },
+    {
+      "iid": "081f6fbe-6500-528a-a506-f5a4d41ddf6c",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.IFrameworkElementAutomationPeerStatics",
+      "methods": [
+        {
+          "name": "FromElement",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "CreatePeerForElement",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IFrameworkElementAutomationPeerStatics"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.PatternInterface",
+      "methods": [],
+      "name": "PatternInterface"
+    },
+    {
+      "kind": "Struct",
+      "metadata": "Microsoft.UI.Xaml.Automation.Peers.RawElementProviderRuntimeId",
+      "methods": [],
+      "name": "RawElementProviderRuntimeId"
+    },
+    {
+      "iid": "02481105-3378-544d-b4e1-a1b368afbc02",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider",
+      "methods": [
+        {
+          "name": "Invoke",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IInvokeProvider"
+    },
+    {
+      "iid": "729ae414-1e8f-5020-82bb-bb574d145fd8",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Provider.IRangeValueProvider",
+      "methods": [
+        {
+          "name": "get_IsReadOnly",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_LargeChange",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Maximum",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Minimum",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "get_SmallChange",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Value",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "SetValue",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        }
+      ],
+      "name": "IRangeValueProvider"
+    },
+    {
+      "iid": "c9dfdd81-d4ac-5d31-be7f-24fab16060e4",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Provider.ISelectionItemProvider",
+      "methods": [
+        {
+          "name": "get_IsSelected",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_SelectionContainer",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "AddToSelection",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "RemoveFromSelection",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "Select",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        }
+      ],
+      "name": "ISelectionItemProvider"
+    },
+    {
+      "iid": "021080c2-30a9-52ef-bc32-2b79847b6ba7",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Provider.IToggleProvider",
+      "methods": [
+        {
+          "name": "get_ToggleState",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "Toggle",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        }
+      ],
+      "name": "IToggleProvider"
+    },
+    {
+      "iid": "984f11cf-4611-588e-b52e-b96a12322c71",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Automation.Provider.IValueProvider",
+      "methods": [
+        {
+          "name": "get_IsReadOnly",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Value",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "SetValue",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        }
+      ],
+      "name": "IValueProvider"
+    },
+    {
+      "kind": "Enum",
+      "metadata": "Microsoft.UI.Xaml.Automation.ToggleState",
+      "methods": [],
+      "name": "ToggleState"
     },
     {
       "kind": "Enum",
@@ -27502,6 +28787,81 @@
       "name": "ITranslateTransformStatics"
     },
     {
+      "iid": "5f69ac1e-6504-5e3f-a11c-87684c1db814",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Media.IVisualTreeHelper",
+      "methods": [],
+      "name": "IVisualTreeHelper"
+    },
+    {
+      "iid": "5aece43c-7651-5bb5-855c-2198496e455e",
+      "kind": "Interface",
+      "metadata": "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics",
+      "methods": [
+        {
+          "name": "FindElementsInHostCoordinatesPoint",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "FindElementsInHostCoordinatesRect",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "FindAllElementsInHostCoordinatesPoint",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "FindAllElementsInHostCoordinatesRect",
+          "reason": null,
+          "slot": 9,
+          "status": "emitted"
+        },
+        {
+          "name": "GetChild",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "GetChildrenCount",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "GetParent",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "DisconnectChildrenRecursive",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "GetOpenPopups",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "GetOpenPopupsForXamlRoot",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        }
+      ],
+      "name": "IVisualTreeHelperStatics"
+    },
+    {
       "iid": "edcd91a3-a868-5ba6-9489-5b12b4c29d85",
       "kind": "Class",
       "metadata": "Microsoft.UI.Xaml.Media.ImageBrush",
@@ -28626,6 +29986,13 @@
         }
       ],
       "name": "TranslateTransform"
+    },
+    {
+      "iid": "5f69ac1e-6504-5e3f-a11c-87684c1db814",
+      "kind": "Class",
+      "metadata": "Microsoft.UI.Xaml.Media.VisualTreeHelper",
+      "methods": [],
+      "name": "VisualTreeHelper"
     },
     {
       "kind": "Enum",
@@ -31162,6 +32529,20 @@
       "name": "AsyncStatus"
     },
     {
+      "iid": "3513d61b-ff0f-523d-872c-a496adb9bca2",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IIterable<Microsoft.UI.Xaml.Automation.Peers.AutomationPeer>",
+      "methods": [
+        {
+          "name": "First",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        }
+      ],
+      "name": "IIterable_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer"
+    },
+    {
       "iid": "838a6966-6de6-5040-a14f-ba34d5425ab4",
       "kind": "Interface",
       "metadata": "Windows.Foundation.Collections.IIterable<Microsoft.UI.Xaml.DependencyObject>",
@@ -31300,6 +32681,38 @@
         }
       ],
       "name": "IIterable_Windows_Foundation_Point"
+    },
+    {
+      "iid": "f5322c8c-bc0a-56cf-812c-5fe140021f62",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IIterator<Microsoft.UI.Xaml.Automation.Peers.AutomationPeer>",
+      "methods": [
+        {
+          "name": "get_Current",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_HasCurrent",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "MoveNext",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        }
+      ],
+      "name": "IIterator_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer"
     },
     {
       "iid": "62e49306-76d0-5cd7-97d5-ef08c934fe9a",
@@ -31902,6 +33315,166 @@
         }
       ],
       "name": "IVector_Microsoft_UI_Xaml_Automation_AutomationAnnotation"
+    },
+    {
+      "iid": "91d7782f-c53a-5620-8ce1-0d9419249322",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVector<Microsoft.UI.Xaml.Automation.Peers.AutomationPeer>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetView",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        },
+        {
+          "name": "SetAt",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "InsertAt",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "RemoveAt",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "Append",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "RemoveAtEnd",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "Clear",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 16,
+          "status": "skipped"
+        },
+        {
+          "name": "ReplaceAll",
+          "reason": "array or byref parameter is not yet projected",
+          "slot": 17,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer"
+    },
+    {
+      "iid": "fe9ed1b7-7185-52e9-b037-bf9902ac3561",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVector<Microsoft.UI.Xaml.Automation.Peers.AutomationPeerAnnotation>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "GetView",
+          "reason": null,
+          "slot": 8,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        },
+        {
+          "name": "SetAt",
+          "reason": null,
+          "slot": 10,
+          "status": "emitted"
+        },
+        {
+          "name": "InsertAt",
+          "reason": null,
+          "slot": 11,
+          "status": "emitted"
+        },
+        {
+          "name": "RemoveAt",
+          "reason": null,
+          "slot": 12,
+          "status": "emitted"
+        },
+        {
+          "name": "Append",
+          "reason": null,
+          "slot": 13,
+          "status": "emitted"
+        },
+        {
+          "name": "RemoveAtEnd",
+          "reason": null,
+          "slot": 14,
+          "status": "emitted"
+        },
+        {
+          "name": "Clear",
+          "reason": null,
+          "slot": 15,
+          "status": "emitted"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 16,
+          "status": "skipped"
+        },
+        {
+          "name": "ReplaceAll",
+          "reason": "array or byref parameter is not yet projected",
+          "slot": 17,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation"
     },
     {
       "iid": "ebe273f7-4731-5ac8-8513-de764868fb9b",
@@ -33008,6 +34581,70 @@
       "name": "IVectorView_Microsoft_UI_Xaml_Automation_AutomationAnnotation"
     },
     {
+      "iid": "26501cc8-81ab-54e0-8049-2bbd47c9ff36",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Automation.Peers.AutomationPeer>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 8,
+          "status": "skipped"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer"
+    },
+    {
+      "iid": "7a5622c2-354b-5d4e-b86d-3482eb35513e",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Automation.Peers.AutomationPeerAnnotation>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 8,
+          "status": "skipped"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation"
+    },
+    {
       "iid": "f817bdda-4853-503a-86c3-062db99d0419",
       "kind": "Interface",
       "metadata": "Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase>",
@@ -33038,6 +34675,38 @@
         }
       ],
       "name": "IVectorView_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase"
+    },
+    {
+      "iid": "ef55f12e-1ca7-51f3-9955-46de4622f0aa",
+      "kind": "Interface",
+      "metadata": "Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Controls.Primitives.Popup>",
+      "methods": [
+        {
+          "name": "GetAt",
+          "reason": null,
+          "slot": 6,
+          "status": "emitted"
+        },
+        {
+          "name": "get_Size",
+          "reason": null,
+          "slot": 7,
+          "status": "emitted"
+        },
+        {
+          "name": "IndexOf",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 8,
+          "status": "skipped"
+        },
+        {
+          "name": "GetMany",
+          "reason": "additional out parameters: use a future multi-output projection",
+          "slot": 9,
+          "status": "skipped"
+        }
+      ],
+      "name": "IVectorView_Microsoft_UI_Xaml_Controls_Primitives_Popup"
     },
     {
       "iid": "f3c71a15-7999-5201-83e7-e019d76277cb",

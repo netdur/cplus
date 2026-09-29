@@ -1,5 +1,12 @@
 {
   "include": [
+    "Microsoft.UI.Xaml.Media.VisualTreeHelper",
+    "Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer",
+    "Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider",
+    "Microsoft.UI.Xaml.Automation.Provider.IToggleProvider",
+    "Microsoft.UI.Xaml.Automation.Provider.ISelectionItemProvider",
+    "Microsoft.UI.Xaml.Automation.Provider.IValueProvider",
+    "Microsoft.UI.Xaml.Automation.Provider.IRangeValueProvider",
     "Microsoft.UI.Xaml.Application",
     "Microsoft.UI.Xaml.Window",
     "Microsoft.UI.Xaml.IApplicationOverrides",

@@ -1729,6 +1729,7 @@ fn mcp_backend() -> mcpb::Backend {
         set_caret: mcp_set_caret,
         read_runs: mcp_read_runs,
         invoke_menu: mcp_invoke_menu,
+        text_version: 0 as fn(*u8, auth::Grant, str) -> option::Option[u64],
     };
 }
 

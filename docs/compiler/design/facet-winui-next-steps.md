@@ -108,3 +108,23 @@ calls (including FontFamily), releasing the additional inner reference.
 The selection has 735 metadata entries, 5,015 emitted methods and 135 skips.
 See `vendor/facet_winui/MANIFEST.md` for current limits; earlier slice counts
 above are historical. Full runtime-facade integration remains separate.
+
+## Agent checkpoint (2026-09-29)
+
+`agent_winui` is a standalone native backend over generated visual-tree and
+automation-peer bindings. `facet_agent_winui` is optional glue that installs it
+for `facet_agent::in_app()` without making the native package depend on Facet.
+Native and Facet smoke applications cover authorization, privacy inheritance,
+Unicode, text versions, callbacks, replacement and shutdown. The shared protocol
+now optionally returns text versions for optimistic editing.
+
+The generated selection has 770 metadata entries, 5,236 emitted methods and 148
+skips; independent C++/WinRT fixtures check 217 ABI slots. The existing Win32
+worker HTTP listener is not a WinUI transport. The optional `agent_winui_mcp`
+adapter now reuses shared HTTP framing while dispatching protocol and native
+calls onto the UI thread. Facet selects it through `facet_agent_winui`; shutdown
+cancels pending UI requests and socket reads before joining the worker and
+releasing the Surface. External tests cover standalone and Facet hosts, session
+identity, optimistic editing, cancellation/restart and discovery cleanup.
+Multiwindow aggregation, popup enumeration and broader agent
+verbs remain outside this slice. See `vendor/agent_winui/README.md`.

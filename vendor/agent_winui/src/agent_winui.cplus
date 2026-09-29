@@ -1,0 +1,262 @@
+// UI-thread-owned WinUI agent surface. Explicit pins curate the native tree;
+// AutomationId is accessibility metadata, never implicit authorization.
+import "stdlib/box" as box;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/text" as text;
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "agent_core/identity" as identity;
+import "agent_core/auth" as auth;
+import "agent_core/surface" as surface;
+import "agent_core/backend" as backend;
+import "./native" as native;
+
+extern fn GetCurrentThreadId() -> u32;
+
+struct _Version { value: u64 }
+fn _changed(sender: rt::Object, args: rt::Object, ctx: *u8) -> rt::Status {
+    let v: *_Version=ctx as *_Version; (*v).value=(*v).value+%1;
+    return rt::Status {code:0};
+}
+struct _Pin {
+    object: rt::Object,
+    id: text::Text,
+    policy: u32,
+    observe_only: bool,
+    exposed: bool,
+    version: box::Box[_Version],
+    token: ui::EventRegistrationToken,
+    event_kind: u32,
+}
+impl _Pin {
+    fn drop(ref this) {
+        // Detach before recursive field destruction frees the callback context.
+        if this.event_kind==1 {
+            if let result::Result::Ok(e)=ui::ITextBox::query(this.object) { assert e.remove_text_changing(this.token).is_ok(); }
+        }
+        if this.event_kind==2 {
+            if let result::Result::Ok(e)=ui::IPasswordBox::query(this.object) { assert e.remove_password_changing(this.token).is_ok(); }
+        }
+    }
+}
+struct Surface {
+    _window: rt::Object,
+    _pins: vec::Vec[_Pin],
+    _thread: u32,
+}
+// The Window must belong to the calling UI thread. Keep Surface on that thread
+// and close it during Window.Closed, before XAML runtime shutdown.
+fn open(window: rt::Object) -> result::Result[Surface,rt::Error] {
+    guard let result::Result::Ok(w)=ui::IWindow::query(window) else result::Result::Err(e) { return result::Result[Surface,rt::Error]::Err(e); };
+    guard let result::Result::Ok(q)=w.dispatcher_queue() else result::Result::Err(e) { return result::Result[Surface,rt::Error]::Err(e); };
+    guard let result::Result::Ok(access)=ui::IDispatcherQueue2::query(q) else result::Result::Err(e) { return result::Result[Surface,rt::Error]::Err(e); };
+    if !native::boolean(access.has_thread_access()) { return result::Result[Surface,rt::Error]::Err(rt::Error {code:0x8001010e as i32}); }
+    return result::Result[Surface,rt::Error]::Ok(Surface {_window:window.clone(),_pins:vec::new::[_Pin](),_thread:GetCurrentThreadId()});
+}
+impl Surface {
+    fn _check_thread(this) { assert this._thread==GetCurrentThreadId(); }
+    fn close(ref this) {
+        this._check_thread(); this._pins=vec::new::[_Pin](); this._window=rt::Object::empty();
+    }
+    fn _pin_for(this, o: rt::Object) -> option::Option[usize] {
+        var i: usize=0;
+        while i<this._pins.count() {
+            if let option::Option::Some(p)=this._pins.at_ptr(i) { if native::same((*p).object,o) { return option::Option[usize]::Some(i); } }
+            i=i+1;
+        }
+        return option::Option[usize]::None;
+    }
+    // Duplicate ids or re-pinning an object are refused; update policy separately.
+    // Ids are owned, so callers may pass temporary text. Pinning also retains the
+    // control until unpin/close; it does NOT keep a detached control actionable.
+    fn pin(ref this, o: rt::Object, id: str, policy: u32=0, observe_only: bool=false, exposed: bool=true) -> rt::Status {
+        this._check_thread();
+        if this._window.is_null() || id=="" || id=="app" || policy>identity::policy_exclude() { return rt::Status {code:0x80070057 as i32}; }
+        guard let result::Result::Ok(element)=ui::IFrameworkElement::query(o) else result::Result::Err(e) { return rt::Status {code:e.code}; };
+        var i: usize=0;
+        while i<this._pins.count() {
+            if let option::Option::Some(p)=this._pins.at_ptr(i) { if (*p).id.view()==id || native::same((*p).object,o) { return rt::Status {code:0x80070057 as i32}; } }
+            i=i+1;
+        }
+        guard let option::Option::Some(v)=box::new::[_Version](_Version {value:0}) else { return rt::Status {code:rt::out_of_memory()}; };
+        var pin: _Pin=_Pin {object:o.clone(),id:text::from_str(id),policy:policy,observe_only:observe_only,exposed:exposed,version:v,token:#zero::[ui::EventRegistrationToken](),event_kind:0};
+        if let result::Result::Ok(e)=ui::ITextBox::query(o) {
+            guard let result::Result::Ok(h)=ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TextBox_Microsoft_UI_Xaml_Controls_TextBoxTextChangingEventArgs::new(_changed,pin.version.ptr() as *u8) else result::Result::Err(err) { return rt::Status {code:err.code}; };
+            guard let result::Result::Ok(t)=e.add_text_changing(h.object()) else result::Result::Err(err) { return rt::Status {code:err.code}; };
+            pin.token=t; pin.event_kind=1;
+        }
+        if let result::Result::Ok(e)=ui::IPasswordBox::query(o) {
+            guard let result::Result::Ok(h)=ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_PasswordBox_Microsoft_UI_Xaml_Controls_PasswordBoxPasswordChangingEventArgs::new(_changed,pin.version.ptr() as *u8) else result::Result::Err(err) { return rt::Status {code:err.code}; };
+            guard let result::Result::Ok(t)=e.add_password_changing(h.object()) else result::Result::Err(err) { return rt::Status {code:err.code}; };
+            pin.token=t; pin.event_kind=2;
+        }
+        this._pins.append(pin); return rt::Status {code:0};
+    }
+    fn set_policy(ref this, id: str, policy: u32, observe_only: bool=false) -> bool {
+        this._check_thread(); if policy>identity::policy_exclude() { return false; }
+        var i: usize=0; while i<this._pins.count() {
+            if let option::Option::Some(p)=this._pins.at_ptr(i) { if (*p).id.view()==id { (*p).policy=policy; (*p).observe_only=observe_only; return true; } }
+            i=i+1;
+        }
+        return false;
+    }
+    fn unpin(ref this, o: rt::Object) -> bool {
+        this._check_thread();
+        guard let option::Option::Some(i)=this._pin_for(o) else { return false; };
+        let removed: option::Option[_Pin]=this._pins.remove(i); return true;
+    }
+    // Renderer integration: replaces an old native instance under a stable key.
+    fn update(ref this,o: rt::Object,id: str,policy: u32=0,observe_only: bool=false,exposed: bool=true) -> rt::Status {
+        this._check_thread(); var i: usize=0;
+        while i<this._pins.count() {
+            if let option::Option::Some(p)=this._pins.at_ptr(i) {
+                if (*p).id.view()==id {
+                    if native::same((*p).object,o) { (*p).policy=policy; (*p).observe_only=observe_only; (*p).exposed=exposed; return rt::Status {code:0}; }
+                    let old: option::Option[_Pin]=this._pins.remove(i); break;
+                }
+            }
+            i=i+1;
+        }
+        return this.pin(o,id,policy,observe_only,exposed);
+    }
+    fn text_version(this, id: str) -> u64 {
+        this._check_thread(); var i: usize=0;
+        while i<this._pins.count() {
+            if let option::Option::Some(p)=this._pins.at_ptr(i) { if (*p).id.view()==id { return (*(*p).version.ptr()).value; } }
+            i=i+1;
+        }
+        return 0;
+    }
+}
+struct _Node { object: rt::Object, peer: rt::Object, hidden: bool, secret: bool, pin: option::Option[usize] }
+struct _Snapshot { reg: identity::Registry, nodes: vec::Vec[_Node], valid: bool }
+fn _walk(s: Surface, ref snap: _Snapshot, tree: ui::IVisualTreeHelperStatics, o: rt::Object, parent: usize, hidden: bool, disabled: bool, secret_parent: bool, depth: usize) {
+    if depth>256 || snap.nodes.count()>20000 { snap.valid=false; return; }
+    let p: rt::Object=native::peer(o); let role: identity::Role=native::classify(o,p);
+    let pin_index: option::Option[usize]=s._pin_for(o);
+    var id: option::Option[str]=option::Option[str]::None;
+    if let option::Option::Some(i)=pin_index { if let option::Option::Some(pin)=s._pins.at_ptr(i) { id=option::Option[str]::Some((*pin).id.view()); } }
+    if let option::Option::Some(key)=id { if snap.reg.contains(key) { snap.valid=false; return; } }
+    let node: usize=snap.reg.add_child(parent,id,role);
+    let invisible: bool=hidden || !native::visible(o); let off: bool=disabled || !native::enabled(o);
+    snap.reg.set_enabled(node,!off && !invisible);
+    if let result::Result::Ok(edit)=ui::ITextBox::query(o) {
+        if native::boolean(edit.is_read_only(),true) { snap.reg.set_observe_only(node); }
+    }
+    if let option::Option::Some(i)=pin_index {
+        if let option::Option::Some(pin)=s._pins.at_ptr(i) {
+            snap.reg.set_policy(node,(*pin).policy);
+            snap.reg.set_exposed(node,(*pin).exposed);
+            if (*pin).observe_only { snap.reg.set_observe_only(node); }
+        }
+    }
+    // Password values are never read. Writing still follows the application's
+    // declared tier, matching agent_core's password/autofill contract.
+    let secret: bool=secret_parent || native::password(o);
+    snap.nodes.append(_Node {object:o.clone(),peer:p,hidden:invisible,secret:secret,pin:pin_index});
+    guard let result::Result::Ok(count)=tree.get_children_count(o) else { snap.valid=false; return; };
+    var i: i32=0; while i<count {
+        guard let result::Result::Ok(child)=tree.get_child(o,i) else { snap.valid=false; return; };
+        _walk(s,snap,tree,child,node,invisible,off,secret,depth+1); i=i+1;
+    }
+}
+fn _snapshot(s: Surface) -> _Snapshot {
+    s._check_thread();
+    var snap: _Snapshot=_Snapshot {reg:identity::new(),nodes:vec::new::[_Node](),valid:false};
+    snap.nodes.append(_Node {object:rt::Object::empty(),peer:rt::Object::empty(),hidden:false,secret:false,pin:option::Option[usize]::None});
+    guard let result::Result::Ok(w)=ui::IWindow::query(s._window) else { return snap; };
+    guard let result::Result::Ok(root)=w.content() else { return snap; };
+    guard let result::Result::Ok(e)=ui::IFrameworkElement::query(root) else { return snap; };
+    if !native::boolean(e.is_loaded()) { return snap; }
+    guard let result::Result::Ok(tree)=ui::VisualTreeHelper::i_visual_tree_helper_statics_factory() else { return snap; };
+    snap.valid=true; _walk(s,snap,tree,root,0,false,false,false,0);
+    // A developer id can collide with a generated diagnostic path. Refuse the
+    // ambiguous snapshot instead of letting the registry resolve the wrong node.
+    var i: usize=1; while i<snap.nodes.count() {
+        if let option::Option::Some(found)=snap.reg.lookup(snap.reg.resolved_id(i)) { if found!=i { snap.valid=false; } }
+        i=i+1;
+    }
+    return snap;
+}
+fn _describe(p: *u8, grant: auth::Grant, exposed: bool) -> vec::Vec[backend::UiNode] {
+    let s: *Surface=p as *Surface; let snap: _Snapshot=_snapshot(*s);
+    var out: vec::Vec[backend::UiNode]=vec::new::[backend::UiNode]();
+    if !snap.valid || !grant.has(auth::cap_read()) { return out; }
+    var mapping: vec::Vec[option::Option[usize]]=vec::new::[option::Option[usize]](); mapping.append(option::Option[usize]::None);
+    var i: usize=1; while i<snap.nodes.count() {
+        let parent: option::Option[usize]=match snap.reg.parent_of(i) { option::Option::Some(n)=>match mapping.at(n) {option::Option::Some(v)=>v,option::Option::None=>option::Option[usize]::None},option::Option::None=>option::Option[usize]::None };
+        if snap.reg.in_excluded_subtree(i) || (exposed && !snap.reg.is_exposed(i)) { mapping.append(parent); i=i+1; continue; }
+        mapping.append(option::Option[usize]::Some(out.count()));
+        if let option::Option::Some(n)=snap.nodes.at_ptr(i) {
+            let readable: bool=snap.reg.can_read_value_walked(grant,i) && !(*n).secret;
+            var name: text::Text=text::new(); var description: text::Text=text::new(); var cls: text::Text=text::new();
+            var frame: backend::Rect=backend::Rect {x:0.0f64,y:0.0f64,w:0.0f64,h:0.0f64};
+            if let result::Result::Ok(peer)=ui::IAutomationPeer::query((*n).peer) {
+                cls=native::string(peer.get_class_name());
+                if readable { name=native::string(peer.get_name()); description=native::string(peer.get_help_text()); }
+                if let result::Result::Ok(r)=peer.get_bounding_rectangle() { frame=backend::Rect {x:r.x as f64,y:r.y as f64,w:r.width as f64,h:r.height as f64}; }
+            }
+            let value: text::Text=if readable { native::value((*n).object,(*n).peer) } else { text::new() };
+            out.append(backend::UiNode {id:text::from_str(snap.reg.resolved_id(i)),role:snap.reg.role_of(i),class_name:cls,frame:frame,is_hidden:(*n).hidden,text:value,name:name,description:description,actionable:snap.reg.can_act(grant,i),clickable:native::clickable((*n).peer),wired:option::Option[bool]::None,tier:snap.reg.tier_of(i),readable:readable,parent:parent});
+        }
+        i=i+1;
+    }
+    return out;
+}
+fn _full(p: *u8, g: auth::Grant) -> vec::Vec[backend::UiNode] { return _describe(p,g,false); }
+fn _exposed(p: *u8, g: auth::Grant) -> vec::Vec[backend::UiNode] { return _describe(p,g,true); }
+fn _action(p: *u8, g: auth::Grant, id: str, kind: u32, value: str, base: u64) -> surface::Outcome {
+    let s: *Surface=p as *Surface; let snap: _Snapshot=_snapshot(*s);
+    if !snap.valid { return surface::Outcome::Stale; }
+    guard let option::Option::Some(i)=snap.reg.lookup(id) else { return surface::Outcome::NotFound; };
+    let allowed: surface::Outcome=if kind==2 { surface::authorize_read(snap.reg,g,i) } else { surface::authorize_action(snap.reg,g,i) };
+    if !surface::outcome_eq(allowed,surface::Outcome::Allowed) { return allowed; }
+    guard let option::Option::Some(n)=snap.nodes.at_ptr(i) else { return surface::Outcome::NotFound; };
+    // Local COM references keep the receiver alive if activation removes it.
+    let o: rt::Object=(*n).object.clone(); let peer: rt::Object=(*n).peer.clone();
+    var status: rt::Status=rt::Status {code:0x80004001 as i32};
+    if kind==0 { status=native::click(peer); }
+    if kind==1 {
+        if base!=(*s).text_version(id) { return surface::Outcome::VersionConflict; }
+        status=native::set_text(o,value);
+    }
+    if kind==2 {
+        if let result::Result::Ok(e)=ui::IUIElement::query(o) {
+            status=e.start_bring_into_view();
+            if status.is_ok() && !native::boolean(e.focus(ui::focus_state_programmatic)) { return surface::Outcome::NotActionable; }
+        }
+    }
+    return if status.is_ok() { surface::Outcome::Allowed } else { surface::Outcome::NotActionable };
+}
+fn _click(p: *u8,g: auth::Grant,id: str) -> surface::Outcome { return _action(p,g,id,0,"",0); }
+fn _text(p: *u8,g: auth::Grant,id: str,v: str,base: u64) -> surface::Outcome { return _action(p,g,id,1,v,base); }
+fn _navigate(p: *u8,g: auth::Grant,id: str) -> surface::Outcome { return _action(p,g,id,2,"",0); }
+fn _read_gate(p: *u8,g: auth::Grant,id: str,content: bool) -> surface::Outcome {
+    let s: *Surface=p as *Surface; let snap: _Snapshot=_snapshot(*s);
+    if !snap.valid { return surface::Outcome::Stale; }
+    guard let option::Option::Some(i)=snap.reg.lookup(id) else { return surface::Outcome::NotFound; };
+    return if content { surface::authorize_value_read(snap.reg,g,i) } else { surface::authorize_read(snap.reg,g,i) };
+}
+fn _hit(p: *u8,g: auth::Grant,id: str) -> surface::HitTest { return surface::hit_test_refused(_read_gate(p,g,id,false),false); }
+fn _runs(p: *u8,g: auth::Grant,id: str) -> surface::Runs { return surface::runs_refused(_read_gate(p,g,id,true),false); }
+fn _caret(p: *u8,g: auth::Grant,id: str,at: u64,length: u64) -> surface::Outcome { return surface::Outcome::NotActionable; }
+fn _menu(p: *u8,g: auth::Grant,path: str) -> surface::Outcome { return surface::Outcome::NotFound; }
+fn _version(p: *u8,g: auth::Grant,id: str) -> option::Option[u64] {
+    if !surface::outcome_eq(_read_gate(p,g,id,true),surface::Outcome::Allowed) { return option::Option[u64]::None; }
+    let s: *Surface=p as *Surface;
+    return option::Option[u64]::Some((*s).text_version(id));
+}
+fn mcp_backend() -> backend::Backend {
+    return backend::Backend {describe:_full,describe_exposed:_exposed,click:_click,set_text:_text,navigate:_navigate,hit_test:_hit,set_caret:_caret,read_runs:_runs,invoke_menu:_menu,text_version:_version};
+}
+// The synchronous Backend contract runs on the UI thread. Transports enqueue
+// requests with this helper and return their result from the callback. Context
+// must outlive delivery; false means shutdown rejected the request. Never block
+// the UI thread waiting for an enqueued request.
+fn enqueue(queue: rt::Object, callback: fn(*u8)->rt::Status, context: *u8=0 as *u8) -> result::Result[bool,rt::Error] {
+    guard let result::Result::Ok(q)=ui::IDispatcherQueue::query(queue) else result::Result::Err(e) { return result::Result[bool,rt::Error]::Err(e); };
+    guard let result::Result::Ok(h)=ui::DispatcherQueueHandler::new(callback,context,agile:true) else result::Result::Err(e) { return result::Result[bool,rt::Error]::Err(e); };
+    return q.try_enqueue(h.object());
+}

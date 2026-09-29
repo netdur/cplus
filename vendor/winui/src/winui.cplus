@@ -4215,6 +4215,12 @@ impl AutomationProperties {
     }
 }
 
+// Microsoft.UI.Xaml.Automation.AutomationTextEditChangeType
+type AutomationTextEditChangeType = i32;
+const automation_text_edit_change_type_none: AutomationTextEditChangeType = 0 as i32;
+const automation_text_edit_change_type_auto_correct: AutomationTextEditChangeType = 1 as i32;
+const automation_text_edit_change_type_composition: AutomationTextEditChangeType = 2 as i32;
+const automation_text_edit_change_type_composition_finalized: AutomationTextEditChangeType = 3 as i32;
 // Microsoft.UI.Xaml.Automation.IAutomationProperties
 fn i_automation_properties_iid() -> rt::Guid { return rt::Guid { a: 1381788273u32, b: 56714 as u16, c: 21152 as u16, d: [151 as u8, 123 as u8, 219 as u8, 27 as u8, 2 as u8, 248 as u8, 232 as u8, 150 as u8] }; }
 struct IAutomationProperties { _object: rt::Object }
@@ -5131,6 +5137,38 @@ const automation_control_type_separator: AutomationControlType = 38 as i32;
 const automation_control_type_semantic_zoom: AutomationControlType = 39 as i32;
 const automation_control_type_app_bar: AutomationControlType = 40 as i32;
 const automation_control_type_flip_view: AutomationControlType = 41 as i32;
+// Microsoft.UI.Xaml.Automation.Peers.AutomationEvents
+type AutomationEvents = i32;
+const automation_events_tool_tip_opened: AutomationEvents = 0 as i32;
+const automation_events_tool_tip_closed: AutomationEvents = 1 as i32;
+const automation_events_menu_opened: AutomationEvents = 2 as i32;
+const automation_events_menu_closed: AutomationEvents = 3 as i32;
+const automation_events_automation_focus_changed: AutomationEvents = 4 as i32;
+const automation_events_invoke_pattern_on_invoked: AutomationEvents = 5 as i32;
+const automation_events_selection_item_pattern_on_element_added_to_selection: AutomationEvents = 6 as i32;
+const automation_events_selection_item_pattern_on_element_removed_from_selection: AutomationEvents = 7 as i32;
+const automation_events_selection_item_pattern_on_element_selected: AutomationEvents = 8 as i32;
+const automation_events_selection_pattern_on_invalidated: AutomationEvents = 9 as i32;
+const automation_events_text_pattern_on_text_selection_changed: AutomationEvents = 10 as i32;
+const automation_events_text_pattern_on_text_changed: AutomationEvents = 11 as i32;
+const automation_events_async_content_loaded: AutomationEvents = 12 as i32;
+const automation_events_property_changed: AutomationEvents = 13 as i32;
+const automation_events_structure_changed: AutomationEvents = 14 as i32;
+const automation_events_drag_start: AutomationEvents = 15 as i32;
+const automation_events_drag_cancel: AutomationEvents = 16 as i32;
+const automation_events_drag_complete: AutomationEvents = 17 as i32;
+const automation_events_drag_enter: AutomationEvents = 18 as i32;
+const automation_events_drag_leave: AutomationEvents = 19 as i32;
+const automation_events_dropped: AutomationEvents = 20 as i32;
+const automation_events_live_region_changed: AutomationEvents = 21 as i32;
+const automation_events_input_reached_target: AutomationEvents = 22 as i32;
+const automation_events_input_reached_other_element: AutomationEvents = 23 as i32;
+const automation_events_input_discarded: AutomationEvents = 24 as i32;
+const automation_events_window_closed: AutomationEvents = 25 as i32;
+const automation_events_window_opened: AutomationEvents = 26 as i32;
+const automation_events_conversion_target_changed: AutomationEvents = 27 as i32;
+const automation_events_text_edit_text_changed: AutomationEvents = 28 as i32;
+const automation_events_layout_invalidated: AutomationEvents = 29 as i32;
 // Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel
 type AutomationHeadingLevel = i32;
 const automation_heading_level_none: AutomationHeadingLevel = 0 as i32;
@@ -5156,6 +5194,2090 @@ type AutomationLiveSetting = i32;
 const automation_live_setting_off: AutomationLiveSetting = 0 as i32;
 const automation_live_setting_polite: AutomationLiveSetting = 1 as i32;
 const automation_live_setting_assertive: AutomationLiveSetting = 2 as i32;
+// Microsoft.UI.Xaml.Automation.Peers.AutomationNavigationDirection
+type AutomationNavigationDirection = i32;
+const automation_navigation_direction_parent: AutomationNavigationDirection = 0 as i32;
+const automation_navigation_direction_next_sibling: AutomationNavigationDirection = 1 as i32;
+const automation_navigation_direction_previous_sibling: AutomationNavigationDirection = 2 as i32;
+const automation_navigation_direction_first_child: AutomationNavigationDirection = 3 as i32;
+const automation_navigation_direction_last_child: AutomationNavigationDirection = 4 as i32;
+// Microsoft.UI.Xaml.Automation.Peers.AutomationNotificationKind
+type AutomationNotificationKind = i32;
+const automation_notification_kind_item_added: AutomationNotificationKind = 0 as i32;
+const automation_notification_kind_item_removed: AutomationNotificationKind = 1 as i32;
+const automation_notification_kind_action_completed: AutomationNotificationKind = 2 as i32;
+const automation_notification_kind_action_aborted: AutomationNotificationKind = 3 as i32;
+const automation_notification_kind_other: AutomationNotificationKind = 4 as i32;
+// Microsoft.UI.Xaml.Automation.Peers.AutomationNotificationProcessing
+type AutomationNotificationProcessing = i32;
+const automation_notification_processing_important_all: AutomationNotificationProcessing = 0 as i32;
+const automation_notification_processing_important_most_recent: AutomationNotificationProcessing = 1 as i32;
+const automation_notification_processing_all: AutomationNotificationProcessing = 2 as i32;
+const automation_notification_processing_most_recent: AutomationNotificationProcessing = 3 as i32;
+const automation_notification_processing_current_then_most_recent: AutomationNotificationProcessing = 4 as i32;
+// Microsoft.UI.Xaml.Automation.Peers.AutomationOrientation
+type AutomationOrientation = i32;
+const automation_orientation_none: AutomationOrientation = 0 as i32;
+const automation_orientation_horizontal: AutomationOrientation = 1 as i32;
+const automation_orientation_vertical: AutomationOrientation = 2 as i32;
+// Microsoft.UI.Xaml.Automation.Peers.AutomationPeer
+fn automation_peer_iid() -> rt::Guid { return rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }; }
+struct AutomationPeer { _object: rt::Object }
+impl AutomationPeer {
+    fn query(value: rt::Object) -> result::Result[AutomationPeer, rt::Error] {
+        match value.query(automation_peer_iid()) {
+            result::Result::Ok(o) => { return result::Result[AutomationPeer, rt::Error]::Ok(AutomationPeer { _object: o }); }
+            result::Result::Err(e) => { return result::Result[AutomationPeer, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> AutomationPeer { return AutomationPeer { _object: this._object.clone() }; }
+    fn i_automation_peer_statics_factory() -> result::Result[IAutomationPeerStatics, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Automation.Peers.AutomationPeer", i_automation_peer_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IAutomationPeerStatics, rt::Error]::Ok(IAutomationPeerStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IAutomationPeerStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn i_automation_peer_factory_factory() -> result::Result[IAutomationPeerFactory, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Automation.Peers.AutomationPeer", i_automation_peer_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IAutomationPeerFactory, rt::Error]::Ok(IAutomationPeerFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IAutomationPeerFactory, rt::Error]::Err(e); }
+        }
+    }
+    // ABI slot 6: get_EventsSource
+    fn events_source(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: put_EventsSource
+    fn set_events_source(this, value_0: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match value_0.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 8: GetPattern
+    fn get_pattern(this, pattern_interface_0: i32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, i32, *usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, i32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), pattern_interface_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 9: RaiseAutomationEvent
+    fn raise_automation_event(this, event_id_0: i32) -> rt::Status {
+        let call: fn(*u8, i32) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, i32) -> i32;
+        let hr: i32 = call(this._object.raw(), event_id_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 10: RaisePropertyChangedEvent
+    fn raise_property_changed_event(this, automation_property_0: rt::Object, old_value_1: rt::Object, new_value_2: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match automation_property_0.query_nullable(rt::Guid { a: 1554428616u32, b: 65414 as u16, c: 23105 as u16, d: [170 as u8, 24 as u8, 105 as u8, 72 as u8, 250 as u8, 229 as u8, 146 as u8, 207 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8, *u8, *u8) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, *u8, *u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), old_value_1.raw(), new_value_2.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 11: GetAcceleratorKey
+    fn get_accelerator_key(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 11) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 12: GetAccessKey
+    fn get_access_key(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 12) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 13: GetAutomationControlType
+    fn get_automation_control_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 13) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 14: GetAutomationId
+    fn get_automation_id(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 14) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 15: GetBoundingRectangle
+    fn get_bounding_rectangle(this) -> result::Result[Rect, rt::Error] {
+        var returned: Rect = #zero::[Rect]();
+        let call: fn(*u8, *Rect) -> i32 = rt::slot(this._object.raw(), 15) as fn(*u8, *Rect) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Rect, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Rect, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 16: GetChildren
+    fn get_children(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 16) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 17: Navigate
+    fn navigate(this, direction_0: i32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, i32, *usize) -> i32 = rt::slot(this._object.raw(), 17) as fn(*u8, i32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), direction_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 18: GetClassName
+    fn get_class_name(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 18) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 19: GetClickablePoint
+    fn get_clickable_point(this) -> result::Result[Point, rt::Error] {
+        var returned: Point = #zero::[Point]();
+        let call: fn(*u8, *Point) -> i32 = rt::slot(this._object.raw(), 19) as fn(*u8, *Point) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Point, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Point, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 20: GetHelpText
+    fn get_help_text(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 20) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 21: GetItemStatus
+    fn get_item_status(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 21) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 22: GetItemType
+    fn get_item_type(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 22) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 23: GetLabeledBy
+    fn get_labeled_by(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 23) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 24: GetLocalizedControlType
+    fn get_localized_control_type(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 24) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 25: GetName
+    fn get_name(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 25) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 26: GetOrientation
+    fn get_orientation(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 26) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 27: HasKeyboardFocus
+    fn has_keyboard_focus(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 27) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 28: IsContentElement
+    fn is_content_element(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 28) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 29: IsControlElement
+    fn is_control_element(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 29) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 30: IsEnabled
+    fn is_enabled(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 30) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 31: IsKeyboardFocusable
+    fn is_keyboard_focusable(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 31) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 32: IsOffscreen
+    fn is_offscreen(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 32) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 33: IsPassword
+    fn is_password(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 33) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 34: IsRequiredForForm
+    fn is_required_for_form(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 34) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 35: SetFocus
+    fn set_focus(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 35) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 36: GetParent
+    fn get_parent(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 36) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 37: InvalidatePeer
+    fn invalidate_peer(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 37) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 38: GetPeerFromPoint
+    fn get_peer_from_point(this, point_0: Point) -> result::Result[rt::Object, rt::Error] {
+        var copy_0: Point = point_0;
+        var returned: usize = 0;
+        let call: fn(*u8, u64, *usize) -> i32 = rt::slot(this._object.raw(), 38) as fn(*u8, u64, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 39: GetElementFromPoint
+    fn get_element_from_point(this, point_in_window_coordinates_0: Point) -> result::Result[rt::Object, rt::Error] {
+        var copy_0: Point = point_in_window_coordinates_0;
+        var returned: usize = 0;
+        let call: fn(*u8, u64, *usize) -> i32 = rt::slot(this._object.raw(), 39) as fn(*u8, u64, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 40: GetFocusedElement
+    fn get_focused_element(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 40) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 41: GetLiveSetting
+    fn get_live_setting(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 41) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 42: ShowContextMenu
+    fn show_context_menu(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 42) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 43: GetControlledPeers
+    fn get_controlled_peers(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 43) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 44: GetAnnotations
+    fn get_annotations(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 44) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 45: SetParent
+    fn set_parent(this, peer_0: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match peer_0.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8) -> i32 = rt::slot(this._object.raw(), 45) as fn(*u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 46: RaiseTextEditTextChangedEvent
+    fn raise_text_edit_text_changed_event(this, automation_text_edit_change_type_0: i32, changed_data_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match changed_data_1.query_nullable(rt::Guid { a: 789823494u32, b: 41018 as u16, c: 24425 as u16, d: [176 as u8, 144 as u8, 117 as u8, 164 as u8, 62 as u8, 51 as u8, 66 as u8, 62 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, i32, *u8) -> i32 = rt::slot(this._object.raw(), 46) as fn(*u8, i32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), automation_text_edit_change_type_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 47: GetPositionInSet
+    fn get_position_in_set(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 47) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 48: GetSizeOfSet
+    fn get_size_of_set(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 48) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 49: GetLevel
+    fn get_level(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 49) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 50: RaiseStructureChangedEvent
+    fn raise_structure_changed_event(this, structure_change_type_0: i32, child_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match child_1.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, i32, *u8) -> i32 = rt::slot(this._object.raw(), 50) as fn(*u8, i32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), structure_change_type_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 51: GetLandmarkType
+    fn get_landmark_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 51) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 52: GetLocalizedLandmarkType
+    fn get_localized_landmark_type(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 52) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 53: IsPeripheral
+    fn is_peripheral(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 53) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 54: IsDataValidForForm
+    fn is_data_valid_for_form(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 54) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 55: GetFullDescription
+    fn get_full_description(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 55) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 56: GetCulture
+    fn get_culture(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 56) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 57: RaiseNotificationEvent
+    fn raise_notification_event(this, notification_kind_0: i32, notification_processing_1: i32, display_string_2: str, activity_id_3: str) -> rt::Status {
+        let h_2: rt::HString = match rt::HString::new(display_string_2) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let h_3: rt::HString = match rt::HString::new(activity_id_3) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, i32, i32, usize, usize) -> i32 = rt::slot(this._object.raw(), 57) as fn(*u8, i32, i32, usize, usize) -> i32;
+        let hr: i32 = call(this._object.raw(), notification_kind_0, notification_processing_1, h_2.raw(), h_3.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 58: GetHeadingLevel
+    fn get_heading_level(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 58) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 59: IsDialog
+    fn is_dialog(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 59) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.AutomationStructureChangeType
+type AutomationStructureChangeType = i32;
+const automation_structure_change_type_child_added: AutomationStructureChangeType = 0 as i32;
+const automation_structure_change_type_child_removed: AutomationStructureChangeType = 1 as i32;
+const automation_structure_change_type_children_invalidated: AutomationStructureChangeType = 2 as i32;
+const automation_structure_change_type_children_bulk_added: AutomationStructureChangeType = 3 as i32;
+const automation_structure_change_type_children_bulk_removed: AutomationStructureChangeType = 4 as i32;
+const automation_structure_change_type_children_reordered: AutomationStructureChangeType = 5 as i32;
+// Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer
+fn framework_element_automation_peer_iid() -> rt::Guid { return rt::Guid { a: 2108378916u32, b: 24668 as u16, c: 20939 as u16, d: [135 as u8, 219 as u8, 62 as u8, 237 as u8, 27 as u8, 159 as u8, 179 as u8, 123 as u8] }; }
+struct FrameworkElementAutomationPeer { _object: rt::Object }
+impl FrameworkElementAutomationPeer {
+    fn query(value: rt::Object) -> result::Result[FrameworkElementAutomationPeer, rt::Error] {
+        match value.query(framework_element_automation_peer_iid()) {
+            result::Result::Ok(o) => { return result::Result[FrameworkElementAutomationPeer, rt::Error]::Ok(FrameworkElementAutomationPeer { _object: o }); }
+            result::Result::Err(e) => { return result::Result[FrameworkElementAutomationPeer, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> FrameworkElementAutomationPeer { return FrameworkElementAutomationPeer { _object: this._object.clone() }; }
+    fn i_framework_element_automation_peer_statics_factory() -> result::Result[IFrameworkElementAutomationPeerStatics, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer", i_framework_element_automation_peer_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IFrameworkElementAutomationPeerStatics, rt::Error]::Ok(IFrameworkElementAutomationPeerStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IFrameworkElementAutomationPeerStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn i_framework_element_automation_peer_factory_factory() -> result::Result[IFrameworkElementAutomationPeerFactory, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer", i_framework_element_automation_peer_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IFrameworkElementAutomationPeerFactory, rt::Error]::Ok(IFrameworkElementAutomationPeerFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IFrameworkElementAutomationPeerFactory, rt::Error]::Err(e); }
+        }
+    }
+    // ABI slot 6: get_Owner
+    fn owner(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.IAutomationPeer
+const i_automation_peer_get_events_source_slot: usize = 6;
+const i_automation_peer_put_events_source_slot: usize = 7;
+const i_automation_peer_get_pattern_slot: usize = 8;
+const i_automation_peer_raise_automation_event_slot: usize = 9;
+const i_automation_peer_raise_property_changed_event_slot: usize = 10;
+const i_automation_peer_get_accelerator_key_slot: usize = 11;
+const i_automation_peer_get_access_key_slot: usize = 12;
+const i_automation_peer_get_automation_control_type_slot: usize = 13;
+const i_automation_peer_get_automation_id_slot: usize = 14;
+const i_automation_peer_get_bounding_rectangle_slot: usize = 15;
+const i_automation_peer_get_children_slot: usize = 16;
+const i_automation_peer_navigate_slot: usize = 17;
+const i_automation_peer_get_class_name_slot: usize = 18;
+const i_automation_peer_get_clickable_point_slot: usize = 19;
+const i_automation_peer_get_help_text_slot: usize = 20;
+const i_automation_peer_get_item_status_slot: usize = 21;
+const i_automation_peer_get_item_type_slot: usize = 22;
+const i_automation_peer_get_labeled_by_slot: usize = 23;
+const i_automation_peer_get_localized_control_type_slot: usize = 24;
+const i_automation_peer_get_name_slot: usize = 25;
+const i_automation_peer_get_orientation_slot: usize = 26;
+const i_automation_peer_has_keyboard_focus_slot: usize = 27;
+const i_automation_peer_is_content_element_slot: usize = 28;
+const i_automation_peer_is_control_element_slot: usize = 29;
+const i_automation_peer_is_enabled_slot: usize = 30;
+const i_automation_peer_is_keyboard_focusable_slot: usize = 31;
+const i_automation_peer_is_offscreen_slot: usize = 32;
+const i_automation_peer_is_password_slot: usize = 33;
+const i_automation_peer_is_required_for_form_slot: usize = 34;
+const i_automation_peer_set_focus_slot: usize = 35;
+const i_automation_peer_get_parent_slot: usize = 36;
+const i_automation_peer_invalidate_peer_slot: usize = 37;
+const i_automation_peer_get_peer_from_point_slot: usize = 38;
+const i_automation_peer_get_element_from_point_slot: usize = 39;
+const i_automation_peer_get_focused_element_slot: usize = 40;
+const i_automation_peer_get_live_setting_slot: usize = 41;
+const i_automation_peer_show_context_menu_slot: usize = 42;
+const i_automation_peer_get_controlled_peers_slot: usize = 43;
+const i_automation_peer_get_annotations_slot: usize = 44;
+const i_automation_peer_set_parent_slot: usize = 45;
+const i_automation_peer_raise_text_edit_text_changed_event_slot: usize = 46;
+const i_automation_peer_get_position_in_set_slot: usize = 47;
+const i_automation_peer_get_size_of_set_slot: usize = 48;
+const i_automation_peer_get_level_slot: usize = 49;
+const i_automation_peer_raise_structure_changed_event_slot: usize = 50;
+const i_automation_peer_get_landmark_type_slot: usize = 51;
+const i_automation_peer_get_localized_landmark_type_slot: usize = 52;
+const i_automation_peer_is_peripheral_slot: usize = 53;
+const i_automation_peer_is_data_valid_for_form_slot: usize = 54;
+const i_automation_peer_get_full_description_slot: usize = 55;
+const i_automation_peer_get_culture_slot: usize = 56;
+const i_automation_peer_raise_notification_event_slot: usize = 57;
+const i_automation_peer_get_heading_level_slot: usize = 58;
+const i_automation_peer_is_dialog_slot: usize = 59;
+fn i_automation_peer_iid() -> rt::Guid { return rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }; }
+struct IAutomationPeer { _object: rt::Object }
+impl IAutomationPeer {
+    fn query(value: rt::Object) -> result::Result[IAutomationPeer, rt::Error] {
+        match value.query(i_automation_peer_iid()) {
+            result::Result::Ok(o) => { return result::Result[IAutomationPeer, rt::Error]::Ok(IAutomationPeer { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IAutomationPeer, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IAutomationPeer { return IAutomationPeer { _object: this._object.clone() }; }
+    // ABI slot 6: get_EventsSource
+    fn events_source(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: put_EventsSource
+    fn set_events_source(this, value_0: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match value_0.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 8: GetPattern
+    fn get_pattern(this, pattern_interface_0: i32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, i32, *usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, i32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), pattern_interface_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 9: RaiseAutomationEvent
+    fn raise_automation_event(this, event_id_0: i32) -> rt::Status {
+        let call: fn(*u8, i32) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, i32) -> i32;
+        let hr: i32 = call(this._object.raw(), event_id_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 10: RaisePropertyChangedEvent
+    fn raise_property_changed_event(this, automation_property_0: rt::Object, old_value_1: rt::Object, new_value_2: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match automation_property_0.query_nullable(rt::Guid { a: 1554428616u32, b: 65414 as u16, c: 23105 as u16, d: [170 as u8, 24 as u8, 105 as u8, 72 as u8, 250 as u8, 229 as u8, 146 as u8, 207 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8, *u8, *u8) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, *u8, *u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), old_value_1.raw(), new_value_2.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 11: GetAcceleratorKey
+    fn get_accelerator_key(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 11) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 12: GetAccessKey
+    fn get_access_key(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 12) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 13: GetAutomationControlType
+    fn get_automation_control_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 13) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 14: GetAutomationId
+    fn get_automation_id(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 14) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 15: GetBoundingRectangle
+    fn get_bounding_rectangle(this) -> result::Result[Rect, rt::Error] {
+        var returned: Rect = #zero::[Rect]();
+        let call: fn(*u8, *Rect) -> i32 = rt::slot(this._object.raw(), 15) as fn(*u8, *Rect) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Rect, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Rect, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 16: GetChildren
+    fn get_children(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 16) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 17: Navigate
+    fn navigate(this, direction_0: i32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, i32, *usize) -> i32 = rt::slot(this._object.raw(), 17) as fn(*u8, i32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), direction_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 18: GetClassName
+    fn get_class_name(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 18) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 19: GetClickablePoint
+    fn get_clickable_point(this) -> result::Result[Point, rt::Error] {
+        var returned: Point = #zero::[Point]();
+        let call: fn(*u8, *Point) -> i32 = rt::slot(this._object.raw(), 19) as fn(*u8, *Point) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Point, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Point, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 20: GetHelpText
+    fn get_help_text(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 20) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 21: GetItemStatus
+    fn get_item_status(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 21) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 22: GetItemType
+    fn get_item_type(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 22) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 23: GetLabeledBy
+    fn get_labeled_by(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 23) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 24: GetLocalizedControlType
+    fn get_localized_control_type(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 24) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 25: GetName
+    fn get_name(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 25) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 26: GetOrientation
+    fn get_orientation(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 26) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 27: HasKeyboardFocus
+    fn has_keyboard_focus(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 27) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 28: IsContentElement
+    fn is_content_element(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 28) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 29: IsControlElement
+    fn is_control_element(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 29) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 30: IsEnabled
+    fn is_enabled(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 30) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 31: IsKeyboardFocusable
+    fn is_keyboard_focusable(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 31) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 32: IsOffscreen
+    fn is_offscreen(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 32) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 33: IsPassword
+    fn is_password(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 33) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 34: IsRequiredForForm
+    fn is_required_for_form(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 34) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 35: SetFocus
+    fn set_focus(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 35) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 36: GetParent
+    fn get_parent(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 36) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 37: InvalidatePeer
+    fn invalidate_peer(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 37) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 38: GetPeerFromPoint
+    fn get_peer_from_point(this, point_0: Point) -> result::Result[rt::Object, rt::Error] {
+        var copy_0: Point = point_0;
+        var returned: usize = 0;
+        let call: fn(*u8, u64, *usize) -> i32 = rt::slot(this._object.raw(), 38) as fn(*u8, u64, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 39: GetElementFromPoint
+    fn get_element_from_point(this, point_in_window_coordinates_0: Point) -> result::Result[rt::Object, rt::Error] {
+        var copy_0: Point = point_in_window_coordinates_0;
+        var returned: usize = 0;
+        let call: fn(*u8, u64, *usize) -> i32 = rt::slot(this._object.raw(), 39) as fn(*u8, u64, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 40: GetFocusedElement
+    fn get_focused_element(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 40) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 41: GetLiveSetting
+    fn get_live_setting(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 41) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 42: ShowContextMenu
+    fn show_context_menu(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 42) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 43: GetControlledPeers
+    fn get_controlled_peers(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 43) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 44: GetAnnotations
+    fn get_annotations(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 44) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 45: SetParent
+    fn set_parent(this, peer_0: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match peer_0.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8) -> i32 = rt::slot(this._object.raw(), 45) as fn(*u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 46: RaiseTextEditTextChangedEvent
+    fn raise_text_edit_text_changed_event(this, automation_text_edit_change_type_0: i32, changed_data_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match changed_data_1.query_nullable(rt::Guid { a: 789823494u32, b: 41018 as u16, c: 24425 as u16, d: [176 as u8, 144 as u8, 117 as u8, 164 as u8, 62 as u8, 51 as u8, 66 as u8, 62 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, i32, *u8) -> i32 = rt::slot(this._object.raw(), 46) as fn(*u8, i32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), automation_text_edit_change_type_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 47: GetPositionInSet
+    fn get_position_in_set(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 47) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 48: GetSizeOfSet
+    fn get_size_of_set(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 48) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 49: GetLevel
+    fn get_level(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 49) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 50: RaiseStructureChangedEvent
+    fn raise_structure_changed_event(this, structure_change_type_0: i32, child_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match child_1.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, i32, *u8) -> i32 = rt::slot(this._object.raw(), 50) as fn(*u8, i32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), structure_change_type_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 51: GetLandmarkType
+    fn get_landmark_type(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 51) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 52: GetLocalizedLandmarkType
+    fn get_localized_landmark_type(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 52) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 53: IsPeripheral
+    fn is_peripheral(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 53) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 54: IsDataValidForForm
+    fn is_data_valid_for_form(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 54) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 55: GetFullDescription
+    fn get_full_description(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 55) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 56: GetCulture
+    fn get_culture(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 56) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 57: RaiseNotificationEvent
+    fn raise_notification_event(this, notification_kind_0: i32, notification_processing_1: i32, display_string_2: str, activity_id_3: str) -> rt::Status {
+        let h_2: rt::HString = match rt::HString::new(display_string_2) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let h_3: rt::HString = match rt::HString::new(activity_id_3) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, i32, i32, usize, usize) -> i32 = rt::slot(this._object.raw(), 57) as fn(*u8, i32, i32, usize, usize) -> i32;
+        let hr: i32 = call(this._object.raw(), notification_kind_0, notification_processing_1, h_2.raw(), h_3.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 58: GetHeadingLevel
+    fn get_heading_level(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 58) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 59: IsDialog
+    fn is_dialog(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 59) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.IAutomationPeerFactory
+const i_automation_peer_factory_create_instance_slot: usize = 6;
+fn i_automation_peer_factory_iid() -> rt::Guid { return rt::Guid { a: 2712635040u32, b: 28358 as u16, c: 23522 as u16, d: [133 as u8, 143 as u8, 114 as u8, 128 as u8, 139 as u8, 230 as u8, 253 as u8, 221 as u8] }; }
+struct IAutomationPeerFactory { _object: rt::Object }
+impl IAutomationPeerFactory {
+    fn query(value: rt::Object) -> result::Result[IAutomationPeerFactory, rt::Error] {
+        match value.query(i_automation_peer_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IAutomationPeerFactory, rt::Error]::Ok(IAutomationPeerFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IAutomationPeerFactory, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IAutomationPeerFactory { return IAutomationPeerFactory { _object: this._object.clone() }; }
+    // ABI slot 6: CreateInstance
+    fn create_instance(this) -> result::Result[rt::Object, rt::Error] {
+        var inner: *u8 = 0 as *u8;
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, **u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *u8, **u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), 0 as *u8, #addr_of(inner), #addr_of(returned));
+        let inner_owner: rt::Object = rt::Object::adopt(inner);
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.IAutomationPeerOverrides
+const i_automation_peer_overrides_get_pattern_core_slot: usize = 6;
+const i_automation_peer_overrides_get_accelerator_key_core_slot: usize = 7;
+const i_automation_peer_overrides_get_access_key_core_slot: usize = 8;
+const i_automation_peer_overrides_get_automation_control_type_core_slot: usize = 9;
+const i_automation_peer_overrides_get_automation_id_core_slot: usize = 10;
+const i_automation_peer_overrides_get_bounding_rectangle_core_slot: usize = 11;
+const i_automation_peer_overrides_get_children_core_slot: usize = 12;
+const i_automation_peer_overrides_navigate_core_slot: usize = 13;
+const i_automation_peer_overrides_get_class_name_core_slot: usize = 14;
+const i_automation_peer_overrides_get_clickable_point_core_slot: usize = 15;
+const i_automation_peer_overrides_get_help_text_core_slot: usize = 16;
+const i_automation_peer_overrides_get_item_status_core_slot: usize = 17;
+const i_automation_peer_overrides_get_item_type_core_slot: usize = 18;
+const i_automation_peer_overrides_get_labeled_by_core_slot: usize = 19;
+const i_automation_peer_overrides_get_localized_control_type_core_slot: usize = 20;
+const i_automation_peer_overrides_get_name_core_slot: usize = 21;
+const i_automation_peer_overrides_get_orientation_core_slot: usize = 22;
+const i_automation_peer_overrides_has_keyboard_focus_core_slot: usize = 23;
+const i_automation_peer_overrides_is_content_element_core_slot: usize = 24;
+const i_automation_peer_overrides_is_control_element_core_slot: usize = 25;
+const i_automation_peer_overrides_is_enabled_core_slot: usize = 26;
+const i_automation_peer_overrides_is_keyboard_focusable_core_slot: usize = 27;
+const i_automation_peer_overrides_is_offscreen_core_slot: usize = 28;
+const i_automation_peer_overrides_is_password_core_slot: usize = 29;
+const i_automation_peer_overrides_is_required_for_form_core_slot: usize = 30;
+const i_automation_peer_overrides_set_focus_core_slot: usize = 31;
+const i_automation_peer_overrides_get_peer_from_point_core_slot: usize = 32;
+const i_automation_peer_overrides_get_element_from_point_core_slot: usize = 33;
+const i_automation_peer_overrides_get_focused_element_core_slot: usize = 34;
+const i_automation_peer_overrides_get_live_setting_core_slot: usize = 35;
+const i_automation_peer_overrides_show_context_menu_core_slot: usize = 36;
+const i_automation_peer_overrides_get_controlled_peers_core_slot: usize = 37;
+const i_automation_peer_overrides_get_annotations_core_slot: usize = 38;
+const i_automation_peer_overrides_get_position_in_set_core_slot: usize = 39;
+const i_automation_peer_overrides_get_size_of_set_core_slot: usize = 40;
+const i_automation_peer_overrides_get_level_core_slot: usize = 41;
+const i_automation_peer_overrides_get_landmark_type_core_slot: usize = 42;
+const i_automation_peer_overrides_get_localized_landmark_type_core_slot: usize = 43;
+const i_automation_peer_overrides_is_peripheral_core_slot: usize = 44;
+const i_automation_peer_overrides_is_data_valid_for_form_core_slot: usize = 45;
+const i_automation_peer_overrides_get_full_description_core_slot: usize = 46;
+const i_automation_peer_overrides_get_described_by_core_slot: usize = 47;
+const i_automation_peer_overrides_get_flows_to_core_slot: usize = 48;
+const i_automation_peer_overrides_get_flows_from_core_slot: usize = 49;
+const i_automation_peer_overrides_get_culture_core_slot: usize = 50;
+const i_automation_peer_overrides_get_heading_level_core_slot: usize = 51;
+const i_automation_peer_overrides_is_dialog_core_slot: usize = 52;
+fn i_automation_peer_overrides_iid() -> rt::Guid { return rt::Guid { a: 1157166815u32, b: 7008 as u16, c: 20781 as u16, d: [162 as u8, 149 as u8, 221 as u8, 140 as u8, 39 as u8, 108 as u8, 70 as u8, 24 as u8] }; }
+struct IAutomationPeerOverrides { _object: rt::Object }
+impl IAutomationPeerOverrides {
+    fn query(value: rt::Object) -> result::Result[IAutomationPeerOverrides, rt::Error] {
+        match value.query(i_automation_peer_overrides_iid()) {
+            result::Result::Ok(o) => { return result::Result[IAutomationPeerOverrides, rt::Error]::Ok(IAutomationPeerOverrides { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IAutomationPeerOverrides, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IAutomationPeerOverrides { return IAutomationPeerOverrides { _object: this._object.clone() }; }
+    // ABI slot 6: GetPatternCore
+    fn get_pattern_core(this, pattern_interface_0: i32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, i32, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, i32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), pattern_interface_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: GetAcceleratorKeyCore
+    fn get_accelerator_key_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 8: GetAccessKeyCore
+    fn get_access_key_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 9: GetAutomationControlTypeCore
+    fn get_automation_control_type_core(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 10: GetAutomationIdCore
+    fn get_automation_id_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 11: GetBoundingRectangleCore
+    fn get_bounding_rectangle_core(this) -> result::Result[Rect, rt::Error] {
+        var returned: Rect = #zero::[Rect]();
+        let call: fn(*u8, *Rect) -> i32 = rt::slot(this._object.raw(), 11) as fn(*u8, *Rect) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Rect, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Rect, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 12: GetChildrenCore
+    fn get_children_core(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 12) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 13: NavigateCore
+    fn navigate_core(this, direction_0: i32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, i32, *usize) -> i32 = rt::slot(this._object.raw(), 13) as fn(*u8, i32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), direction_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 14: GetClassNameCore
+    fn get_class_name_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 14) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 15: GetClickablePointCore
+    fn get_clickable_point_core(this) -> result::Result[Point, rt::Error] {
+        var returned: Point = #zero::[Point]();
+        let call: fn(*u8, *Point) -> i32 = rt::slot(this._object.raw(), 15) as fn(*u8, *Point) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[Point, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[Point, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 16: GetHelpTextCore
+    fn get_help_text_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 16) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 17: GetItemStatusCore
+    fn get_item_status_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 17) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 18: GetItemTypeCore
+    fn get_item_type_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 18) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 19: GetLabeledByCore
+    fn get_labeled_by_core(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 19) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 20: GetLocalizedControlTypeCore
+    fn get_localized_control_type_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 20) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 21: GetNameCore
+    fn get_name_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 21) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 22: GetOrientationCore
+    fn get_orientation_core(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 22) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 23: HasKeyboardFocusCore
+    fn has_keyboard_focus_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 23) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 24: IsContentElementCore
+    fn is_content_element_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 24) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 25: IsControlElementCore
+    fn is_control_element_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 25) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 26: IsEnabledCore
+    fn is_enabled_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 26) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 27: IsKeyboardFocusableCore
+    fn is_keyboard_focusable_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 27) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 28: IsOffscreenCore
+    fn is_offscreen_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 28) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 29: IsPasswordCore
+    fn is_password_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 29) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 30: IsRequiredForFormCore
+    fn is_required_for_form_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 30) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 31: SetFocusCore
+    fn set_focus_core(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 31) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 32: GetPeerFromPointCore
+    fn get_peer_from_point_core(this, point_0: Point) -> result::Result[rt::Object, rt::Error] {
+        var copy_0: Point = point_0;
+        var returned: usize = 0;
+        let call: fn(*u8, u64, *usize) -> i32 = rt::slot(this._object.raw(), 32) as fn(*u8, u64, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 33: GetElementFromPointCore
+    fn get_element_from_point_core(this, point_in_window_coordinates_0: Point) -> result::Result[rt::Object, rt::Error] {
+        var copy_0: Point = point_in_window_coordinates_0;
+        var returned: usize = 0;
+        let call: fn(*u8, u64, *usize) -> i32 = rt::slot(this._object.raw(), 33) as fn(*u8, u64, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 34: GetFocusedElementCore
+    fn get_focused_element_core(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 34) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 35: GetLiveSettingCore
+    fn get_live_setting_core(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 35) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 36: ShowContextMenuCore
+    fn show_context_menu_core(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 36) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 37: GetControlledPeersCore
+    fn get_controlled_peers_core(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 37) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 38: GetAnnotationsCore
+    fn get_annotations_core(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 38) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 39: GetPositionInSetCore
+    fn get_position_in_set_core(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 39) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 40: GetSizeOfSetCore
+    fn get_size_of_set_core(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 40) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 41: GetLevelCore
+    fn get_level_core(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 41) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 42: GetLandmarkTypeCore
+    fn get_landmark_type_core(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 42) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 43: GetLocalizedLandmarkTypeCore
+    fn get_localized_landmark_type_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 43) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 44: IsPeripheralCore
+    fn is_peripheral_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 44) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 45: IsDataValidForFormCore
+    fn is_data_valid_for_form_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 45) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 46: GetFullDescriptionCore
+    fn get_full_description_core(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 46) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 47: GetDescribedByCore
+    fn get_described_by_core(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 47) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 48: GetFlowsToCore
+    fn get_flows_to_core(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 48) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 49: GetFlowsFromCore
+    fn get_flows_from_core(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 49) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 50: GetCultureCore
+    fn get_culture_core(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 50) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 51: GetHeadingLevelCore
+    fn get_heading_level_core(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 51) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 52: IsDialogCore
+    fn is_dialog_core(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 52) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.IAutomationPeerProtected
+const i_automation_peer_protected_peer_from_provider_slot: usize = 6;
+const i_automation_peer_protected_provider_from_peer_slot: usize = 7;
+fn i_automation_peer_protected_iid() -> rt::Guid { return rt::Guid { a: 2523116227u32, b: 35871 as u16, c: 22228 as u16, d: [171 as u8, 217 as u8, 38 as u8, 128 as u8, 130 as u8, 169 as u8, 232 as u8, 188 as u8] }; }
+struct IAutomationPeerProtected { _object: rt::Object }
+impl IAutomationPeerProtected {
+    fn query(value: rt::Object) -> result::Result[IAutomationPeerProtected, rt::Error] {
+        match value.query(i_automation_peer_protected_iid()) {
+            result::Result::Ok(o) => { return result::Result[IAutomationPeerProtected, rt::Error]::Ok(IAutomationPeerProtected { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IAutomationPeerProtected, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IAutomationPeerProtected { return IAutomationPeerProtected { _object: this._object.clone() }; }
+    // ABI slot 6: PeerFromProvider
+    fn peer_from_provider(this, provider_0: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        let q_0: rt::Object = match provider_0.query_nullable(rt::Guid { a: 4178297401u32, b: 44514 as u16, c: 21961 as u16, d: [168 as u8, 56 as u8, 163 as u8, 176 as u8, 87 as u8, 151 as u8, 99 as u8, 197 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: ProviderFromPeer
+    fn provider_from_peer(this, peer_0: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        let q_0: rt::Object = match peer_0.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, *usize) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.IAutomationPeerStatics
+const i_automation_peer_statics_listener_exists_slot: usize = 6;
+const i_automation_peer_statics_generate_raw_element_provider_runtime_id_slot: usize = 7;
+fn i_automation_peer_statics_iid() -> rt::Guid { return rt::Guid { a: 2427541503u32, b: 6357 as u16, c: 22051 as u16, d: [133 as u8, 12 as u8, 97 as u8, 44 as u8, 234 as u8, 229 as u8, 118 as u8, 189 as u8] }; }
+struct IAutomationPeerStatics { _object: rt::Object }
+impl IAutomationPeerStatics {
+    fn query(value: rt::Object) -> result::Result[IAutomationPeerStatics, rt::Error] {
+        match value.query(i_automation_peer_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IAutomationPeerStatics, rt::Error]::Ok(IAutomationPeerStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IAutomationPeerStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IAutomationPeerStatics { return IAutomationPeerStatics { _object: this._object.clone() }; }
+    // ABI slot 6: ListenerExists
+    fn listener_exists(this, event_id_0: i32) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, i32, *bool) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, i32, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), event_id_0, #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: GenerateRawElementProviderRuntimeId
+    fn generate_raw_element_provider_runtime_id(this) -> result::Result[RawElementProviderRuntimeId, rt::Error] {
+        var returned: RawElementProviderRuntimeId = #zero::[RawElementProviderRuntimeId]();
+        let call: fn(*u8, *RawElementProviderRuntimeId) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *RawElementProviderRuntimeId) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[RawElementProviderRuntimeId, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[RawElementProviderRuntimeId, rt::Error]::Ok(returned);
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.IFrameworkElementAutomationPeer
+const i_framework_element_automation_peer_get_owner_slot: usize = 6;
+fn i_framework_element_automation_peer_iid() -> rt::Guid { return rt::Guid { a: 2108378916u32, b: 24668 as u16, c: 20939 as u16, d: [135 as u8, 219 as u8, 62 as u8, 237 as u8, 27 as u8, 159 as u8, 179 as u8, 123 as u8] }; }
+struct IFrameworkElementAutomationPeer { _object: rt::Object }
+impl IFrameworkElementAutomationPeer {
+    fn query(value: rt::Object) -> result::Result[IFrameworkElementAutomationPeer, rt::Error] {
+        match value.query(i_framework_element_automation_peer_iid()) {
+            result::Result::Ok(o) => { return result::Result[IFrameworkElementAutomationPeer, rt::Error]::Ok(IFrameworkElementAutomationPeer { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IFrameworkElementAutomationPeer, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IFrameworkElementAutomationPeer { return IFrameworkElementAutomationPeer { _object: this._object.clone() }; }
+    // ABI slot 6: get_Owner
+    fn owner(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.IFrameworkElementAutomationPeerFactory
+const i_framework_element_automation_peer_factory_create_instance_with_owner_slot: usize = 6;
+fn i_framework_element_automation_peer_factory_iid() -> rt::Guid { return rt::Guid { a: 377668600u32, b: 9101 as u16, c: 23678 as u16, d: [165 as u8, 165 as u8, 8 as u8, 204 as u8, 60 as u8, 16 as u8, 172 as u8, 124 as u8] }; }
+struct IFrameworkElementAutomationPeerFactory { _object: rt::Object }
+impl IFrameworkElementAutomationPeerFactory {
+    fn query(value: rt::Object) -> result::Result[IFrameworkElementAutomationPeerFactory, rt::Error] {
+        match value.query(i_framework_element_automation_peer_factory_iid()) {
+            result::Result::Ok(o) => { return result::Result[IFrameworkElementAutomationPeerFactory, rt::Error]::Ok(IFrameworkElementAutomationPeerFactory { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IFrameworkElementAutomationPeerFactory, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IFrameworkElementAutomationPeerFactory { return IFrameworkElementAutomationPeerFactory { _object: this._object.clone() }; }
+    // ABI slot 6: CreateInstanceWithOwner
+    fn create_instance_with_owner(this, owner_0: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        let q_0: rt::Object = match owner_0.query_nullable(rt::Guid { a: 4261998909u32, b: 56426 as u16, c: 21653 as u16, d: [173 as u8, 68 as u8, 194 as u8, 216 as u8, 210 as u8, 24 as u8, 99 as u8, 176 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var inner: *u8 = 0 as *u8;
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, *u8, **u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *u8, *u8, **u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), 0 as *u8, #addr_of(inner), #addr_of(returned));
+        let inner_owner: rt::Object = rt::Object::adopt(inner);
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.IFrameworkElementAutomationPeerStatics
+const i_framework_element_automation_peer_statics_from_element_slot: usize = 6;
+const i_framework_element_automation_peer_statics_create_peer_for_element_slot: usize = 7;
+fn i_framework_element_automation_peer_statics_iid() -> rt::Guid { return rt::Guid { a: 136277950u32, b: 25856 as u16, c: 21130 as u16, d: [165 as u8, 6 as u8, 245 as u8, 164 as u8, 212 as u8, 29 as u8, 223 as u8, 108 as u8] }; }
+struct IFrameworkElementAutomationPeerStatics { _object: rt::Object }
+impl IFrameworkElementAutomationPeerStatics {
+    fn query(value: rt::Object) -> result::Result[IFrameworkElementAutomationPeerStatics, rt::Error] {
+        match value.query(i_framework_element_automation_peer_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IFrameworkElementAutomationPeerStatics, rt::Error]::Ok(IFrameworkElementAutomationPeerStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IFrameworkElementAutomationPeerStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IFrameworkElementAutomationPeerStatics { return IFrameworkElementAutomationPeerStatics { _object: this._object.clone() }; }
+    // ABI slot 6: FromElement
+    fn from_element(this, element_0: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        let q_0: rt::Object = match element_0.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: CreatePeerForElement
+    fn create_peer_for_element(this, element_0: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        let q_0: rt::Object = match element_0.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, *usize) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Peers.PatternInterface
+type PatternInterface = i32;
+const pattern_interface_invoke: PatternInterface = 0 as i32;
+const pattern_interface_selection: PatternInterface = 1 as i32;
+const pattern_interface_value: PatternInterface = 2 as i32;
+const pattern_interface_range_value: PatternInterface = 3 as i32;
+const pattern_interface_scroll: PatternInterface = 4 as i32;
+const pattern_interface_scroll_item: PatternInterface = 5 as i32;
+const pattern_interface_expand_collapse: PatternInterface = 6 as i32;
+const pattern_interface_grid: PatternInterface = 7 as i32;
+const pattern_interface_grid_item: PatternInterface = 8 as i32;
+const pattern_interface_multiple_view: PatternInterface = 9 as i32;
+const pattern_interface_window: PatternInterface = 10 as i32;
+const pattern_interface_selection_item: PatternInterface = 11 as i32;
+const pattern_interface_dock: PatternInterface = 12 as i32;
+const pattern_interface_table: PatternInterface = 13 as i32;
+const pattern_interface_table_item: PatternInterface = 14 as i32;
+const pattern_interface_toggle: PatternInterface = 15 as i32;
+const pattern_interface_transform: PatternInterface = 16 as i32;
+const pattern_interface_text: PatternInterface = 17 as i32;
+const pattern_interface_item_container: PatternInterface = 18 as i32;
+const pattern_interface_virtualized_item: PatternInterface = 19 as i32;
+const pattern_interface_text2: PatternInterface = 20 as i32;
+const pattern_interface_text_child: PatternInterface = 21 as i32;
+const pattern_interface_text_range: PatternInterface = 22 as i32;
+const pattern_interface_annotation: PatternInterface = 23 as i32;
+const pattern_interface_drag: PatternInterface = 24 as i32;
+const pattern_interface_drop_target: PatternInterface = 25 as i32;
+const pattern_interface_object_model: PatternInterface = 26 as i32;
+const pattern_interface_spreadsheet: PatternInterface = 27 as i32;
+const pattern_interface_spreadsheet_item: PatternInterface = 28 as i32;
+const pattern_interface_styles: PatternInterface = 29 as i32;
+const pattern_interface_transform2: PatternInterface = 30 as i32;
+const pattern_interface_synchronized_input: PatternInterface = 31 as i32;
+const pattern_interface_text_edit: PatternInterface = 32 as i32;
+const pattern_interface_custom_navigation: PatternInterface = 33 as i32;
+// Microsoft.UI.Xaml.Automation.Peers.RawElementProviderRuntimeId
+#[repr(C)]
+struct RawElementProviderRuntimeId {
+    part1: u32,
+    part2: u32,
+}
+const raw_element_provider_runtime_id_size: usize = 8;
+const raw_element_provider_runtime_id_alignment: usize = 4;
+// Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider
+const i_invoke_provider_invoke_slot: usize = 6;
+fn i_invoke_provider_iid() -> rt::Guid { return rt::Guid { a: 38277381u32, b: 13176 as u16, c: 21581 as u16, d: [180 as u8, 225 as u8, 161 as u8, 179 as u8, 104 as u8, 175 as u8, 188 as u8, 2 as u8] }; }
+struct IInvokeProvider { _object: rt::Object }
+impl IInvokeProvider {
+    fn query(value: rt::Object) -> result::Result[IInvokeProvider, rt::Error] {
+        match value.query(i_invoke_provider_iid()) {
+            result::Result::Ok(o) => { return result::Result[IInvokeProvider, rt::Error]::Ok(IInvokeProvider { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IInvokeProvider, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IInvokeProvider { return IInvokeProvider { _object: this._object.clone() }; }
+    // ABI slot 6: Invoke
+    fn invoke(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Provider.IRangeValueProvider
+const i_range_value_provider_get_is_read_only_slot: usize = 6;
+const i_range_value_provider_get_large_change_slot: usize = 7;
+const i_range_value_provider_get_maximum_slot: usize = 8;
+const i_range_value_provider_get_minimum_slot: usize = 9;
+const i_range_value_provider_get_small_change_slot: usize = 10;
+const i_range_value_provider_get_value_slot: usize = 11;
+const i_range_value_provider_set_value_slot: usize = 12;
+fn i_range_value_provider_iid() -> rt::Guid { return rt::Guid { a: 1922753556u32, b: 7823 as u16, c: 20512 as u16, d: [130 as u8, 187 as u8, 187 as u8, 87 as u8, 77 as u8, 20 as u8, 95 as u8, 216 as u8] }; }
+struct IRangeValueProvider { _object: rt::Object }
+impl IRangeValueProvider {
+    fn query(value: rt::Object) -> result::Result[IRangeValueProvider, rt::Error] {
+        match value.query(i_range_value_provider_iid()) {
+            result::Result::Ok(o) => { return result::Result[IRangeValueProvider, rt::Error]::Ok(IRangeValueProvider { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IRangeValueProvider, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IRangeValueProvider { return IRangeValueProvider { _object: this._object.clone() }; }
+    // ABI slot 6: get_IsReadOnly
+    fn is_read_only(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: get_LargeChange
+    fn large_change(this) -> result::Result[f64, rt::Error] {
+        var returned: f64 = #zero::[f64]();
+        let call: fn(*u8, *f64) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *f64) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[f64, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[f64, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: get_Maximum
+    fn maximum(this) -> result::Result[f64, rt::Error] {
+        var returned: f64 = #zero::[f64]();
+        let call: fn(*u8, *f64) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *f64) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[f64, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[f64, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 9: get_Minimum
+    fn minimum(this) -> result::Result[f64, rt::Error] {
+        var returned: f64 = #zero::[f64]();
+        let call: fn(*u8, *f64) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, *f64) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[f64, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[f64, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 10: get_SmallChange
+    fn small_change(this) -> result::Result[f64, rt::Error] {
+        var returned: f64 = #zero::[f64]();
+        let call: fn(*u8, *f64) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, *f64) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[f64, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[f64, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 11: get_Value
+    fn value(this) -> result::Result[f64, rt::Error] {
+        var returned: f64 = #zero::[f64]();
+        let call: fn(*u8, *f64) -> i32 = rt::slot(this._object.raw(), 11) as fn(*u8, *f64) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[f64, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[f64, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 12: SetValue
+    fn set_value(this, value_0: f64) -> rt::Status {
+        let call: fn(*u8, f64) -> i32 = rt::slot(this._object.raw(), 12) as fn(*u8, f64) -> i32;
+        let hr: i32 = call(this._object.raw(), value_0);
+        return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Provider.ISelectionItemProvider
+const i_selection_item_provider_get_is_selected_slot: usize = 6;
+const i_selection_item_provider_get_selection_container_slot: usize = 7;
+const i_selection_item_provider_add_to_selection_slot: usize = 8;
+const i_selection_item_provider_remove_from_selection_slot: usize = 9;
+const i_selection_item_provider_select_slot: usize = 10;
+fn i_selection_item_provider_iid() -> rt::Guid { return rt::Guid { a: 3386891649u32, b: 54444 as u16, c: 23857 as u16, d: [190 as u8, 127 as u8, 36 as u8, 250 as u8, 177 as u8, 96 as u8, 96 as u8, 228 as u8] }; }
+struct ISelectionItemProvider { _object: rt::Object }
+impl ISelectionItemProvider {
+    fn query(value: rt::Object) -> result::Result[ISelectionItemProvider, rt::Error] {
+        match value.query(i_selection_item_provider_iid()) {
+            result::Result::Ok(o) => { return result::Result[ISelectionItemProvider, rt::Error]::Ok(ISelectionItemProvider { _object: o }); }
+            result::Result::Err(e) => { return result::Result[ISelectionItemProvider, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> ISelectionItemProvider { return ISelectionItemProvider { _object: this._object.clone() }; }
+    // ABI slot 6: get_IsSelected
+    fn is_selected(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: get_SelectionContainer
+    fn selection_container(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 8: AddToSelection
+    fn add_to_selection(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 9: RemoveFromSelection
+    fn remove_from_selection(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 10: Select
+    fn select(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Provider.IToggleProvider
+const i_toggle_provider_get_toggle_state_slot: usize = 6;
+const i_toggle_provider_toggle_slot: usize = 7;
+fn i_toggle_provider_iid() -> rt::Guid { return rt::Guid { a: 34635970u32, b: 12457 as u16, c: 21231 as u16, d: [188 as u8, 50 as u8, 43 as u8, 121 as u8, 132 as u8, 123 as u8, 107 as u8, 167 as u8] }; }
+struct IToggleProvider { _object: rt::Object }
+impl IToggleProvider {
+    fn query(value: rt::Object) -> result::Result[IToggleProvider, rt::Error] {
+        match value.query(i_toggle_provider_iid()) {
+            result::Result::Ok(o) => { return result::Result[IToggleProvider, rt::Error]::Ok(IToggleProvider { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IToggleProvider, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IToggleProvider { return IToggleProvider { _object: this._object.clone() }; }
+    // ABI slot 6: get_ToggleState
+    fn toggle_state(this) -> result::Result[i32, rt::Error] {
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *i32) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: Toggle
+    fn toggle(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.Provider.IValueProvider
+const i_value_provider_get_is_read_only_slot: usize = 6;
+const i_value_provider_get_value_slot: usize = 7;
+const i_value_provider_set_value_slot: usize = 8;
+fn i_value_provider_iid() -> rt::Guid { return rt::Guid { a: 2555318735u32, b: 17937 as u16, c: 22670 as u16, d: [181 as u8, 46 as u8, 185 as u8, 106 as u8, 18 as u8, 50 as u8, 44 as u8, 113 as u8] }; }
+struct IValueProvider { _object: rt::Object }
+impl IValueProvider {
+    fn query(value: rt::Object) -> result::Result[IValueProvider, rt::Error] {
+        match value.query(i_value_provider_iid()) {
+            result::Result::Ok(o) => { return result::Result[IValueProvider, rt::Error]::Ok(IValueProvider { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IValueProvider, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IValueProvider { return IValueProvider { _object: this._object.clone() }; }
+    // ABI slot 6: get_IsReadOnly
+    fn is_read_only(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 7: get_Value
+    fn value(this) -> result::Result[text::Text, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[text::Text, rt::Error]::Err(rt::Error { code: hr }); }
+        let owned: rt::HString = rt::HString::adopt(returned);
+        return owned.to_text();
+
+    }
+    // ABI slot 8: SetValue
+    fn set_value(this, value_0: str) -> rt::Status {
+        let h_0: rt::HString = match rt::HString::new(value_0) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, usize) -> i32;
+        let hr: i32 = call(this._object.raw(), h_0.raw());
+        return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Xaml.Automation.ToggleState
+type ToggleState = i32;
+const toggle_state_off: ToggleState = 0 as i32;
+const toggle_state_on: ToggleState = 1 as i32;
+const toggle_state_indeterminate: ToggleState = 2 as i32;
 // Microsoft.UI.Xaml.Controls.BackgroundSizing
 type BackgroundSizing = i32;
 const background_sizing_inner_border_edge: BackgroundSizing = 0 as i32;
@@ -42911,6 +45033,151 @@ impl ITranslateTransformStatics {
     }
 }
 
+// Microsoft.UI.Xaml.Media.IVisualTreeHelper
+fn i_visual_tree_helper_iid() -> rt::Guid { return rt::Guid { a: 1600760862u32, b: 25860 as u16, c: 24127 as u16, d: [161 as u8, 28 as u8, 135 as u8, 104 as u8, 76 as u8, 29 as u8, 184 as u8, 20 as u8] }; }
+struct IVisualTreeHelper { _object: rt::Object }
+impl IVisualTreeHelper {
+    fn query(value: rt::Object) -> result::Result[IVisualTreeHelper, rt::Error] {
+        match value.query(i_visual_tree_helper_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVisualTreeHelper, rt::Error]::Ok(IVisualTreeHelper { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVisualTreeHelper, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IVisualTreeHelper { return IVisualTreeHelper { _object: this._object.clone() }; }
+}
+
+// Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics
+const i_visual_tree_helper_statics_find_elements_in_host_coordinates_point_slot: usize = 6;
+const i_visual_tree_helper_statics_find_elements_in_host_coordinates_rect_slot: usize = 7;
+const i_visual_tree_helper_statics_find_all_elements_in_host_coordinates_point_slot: usize = 8;
+const i_visual_tree_helper_statics_find_all_elements_in_host_coordinates_rect_slot: usize = 9;
+const i_visual_tree_helper_statics_get_child_slot: usize = 10;
+const i_visual_tree_helper_statics_get_children_count_slot: usize = 11;
+const i_visual_tree_helper_statics_get_parent_slot: usize = 12;
+const i_visual_tree_helper_statics_disconnect_children_recursive_slot: usize = 13;
+const i_visual_tree_helper_statics_get_open_popups_slot: usize = 14;
+const i_visual_tree_helper_statics_get_open_popups_for_xaml_root_slot: usize = 15;
+fn i_visual_tree_helper_statics_iid() -> rt::Guid { return rt::Guid { a: 1525474364u32, b: 30289 as u16, c: 23477 as u16, d: [133 as u8, 92 as u8, 33 as u8, 152 as u8, 73 as u8, 110 as u8, 69 as u8, 94 as u8] }; }
+struct IVisualTreeHelperStatics { _object: rt::Object }
+impl IVisualTreeHelperStatics {
+    fn query(value: rt::Object) -> result::Result[IVisualTreeHelperStatics, rt::Error] {
+        match value.query(i_visual_tree_helper_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVisualTreeHelperStatics, rt::Error]::Ok(IVisualTreeHelperStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVisualTreeHelperStatics, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IVisualTreeHelperStatics { return IVisualTreeHelperStatics { _object: this._object.clone() }; }
+    // ABI slot 6: FindElementsInHostCoordinates
+    fn find_elements_in_host_coordinates_point(this, intersecting_point_0: Point, subtree_1: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        var copy_0: Point = intersecting_point_0;
+        let q_1: rt::Object = match subtree_1.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, u64, *u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, u64, *u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64), q_1.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: FindElementsInHostCoordinates
+    fn find_elements_in_host_coordinates_rect(this, intersecting_rect_0: Rect, subtree_1: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        var storage_0: [u8; 31] = #zero::[[u8; 31]]();
+        let aligned_0: *Rect = (((#addr_of(storage_0) as usize + 15) / 16) * 16) as *Rect;
+        *aligned_0 = intersecting_rect_0;
+        let q_1: rt::Object = match subtree_1.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *Rect, *u8, *usize) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *Rect, *u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), aligned_0, q_1.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 8: FindElementsInHostCoordinates
+    fn find_all_elements_in_host_coordinates_point(this, intersecting_point_0: Point, subtree_1: rt::Object, include_all_elements_2: bool) -> result::Result[rt::Object, rt::Error] {
+        var copy_0: Point = intersecting_point_0;
+        let q_1: rt::Object = match subtree_1.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, u64, *u8, bool, *usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, u64, *u8, bool, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), *(#addr_of(copy_0) as *u64), q_1.raw(), include_all_elements_2, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 9: FindElementsInHostCoordinates
+    fn find_all_elements_in_host_coordinates_rect(this, intersecting_rect_0: Rect, subtree_1: rt::Object, include_all_elements_2: bool) -> result::Result[rt::Object, rt::Error] {
+        var storage_0: [u8; 31] = #zero::[[u8; 31]]();
+        let aligned_0: *Rect = (((#addr_of(storage_0) as usize + 15) / 16) * 16) as *Rect;
+        *aligned_0 = intersecting_rect_0;
+        let q_1: rt::Object = match subtree_1.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *Rect, *u8, bool, *usize) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, *Rect, *u8, bool, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), aligned_0, q_1.raw(), include_all_elements_2, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 10: GetChild
+    fn get_child(this, reference_0: rt::Object, child_index_1: i32) -> result::Result[rt::Object, rt::Error] {
+        let q_0: rt::Object = match reference_0.query_nullable(rt::Guid { a: 3888033511u32, b: 5646 as u16, c: 20727 as u16, d: [135 as u8, 137 as u8, 214 as u8, 52 as u8, 99 as u8, 249 as u8, 121 as u8, 250 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, i32, *usize) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, *u8, i32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), child_index_1, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 11: GetChildrenCount
+    fn get_children_count(this, reference_0: rt::Object) -> result::Result[i32, rt::Error] {
+        let q_0: rt::Object = match reference_0.query_nullable(rt::Guid { a: 3888033511u32, b: 5646 as u16, c: 20727 as u16, d: [135 as u8, 137 as u8, 214 as u8, 52 as u8, 99 as u8, 249 as u8, 121 as u8, 250 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[i32, rt::Error]::Err(e); } };
+        var returned: i32 = #zero::[i32]();
+        let call: fn(*u8, *u8, *i32) -> i32 = rt::slot(this._object.raw(), 11) as fn(*u8, *u8, *i32) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[i32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[i32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 12: GetParent
+    fn get_parent(this, reference_0: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        let q_0: rt::Object = match reference_0.query_nullable(rt::Guid { a: 3888033511u32, b: 5646 as u16, c: 20727 as u16, d: [135 as u8, 137 as u8, 214 as u8, 52 as u8, 99 as u8, 249 as u8, 121 as u8, 250 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, *usize) -> i32 = rt::slot(this._object.raw(), 12) as fn(*u8, *u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 13: DisconnectChildrenRecursive
+    fn disconnect_children_recursive(this, element_0: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match element_0.query_nullable(rt::Guid { a: 3284144160u32, b: 12812 as u16, c: 23798 as u16, d: [157 as u8, 36 as u8, 211 as u8, 150 as u8, 187 as u8, 250 as u8, 77 as u8, 139 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8) -> i32 = rt::slot(this._object.raw(), 13) as fn(*u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 14: GetOpenPopups
+    fn get_open_popups(this, window_0: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        let q_0: rt::Object = match window_0.query_nullable(rt::Guid { a: 1643179129u32, b: 23890 as u16, c: 22197 as u16, d: [134 as u8, 251 as u8, 64 as u8, 250 as u8, 74 as u8, 242 as u8, 136 as u8, 176 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, *usize) -> i32 = rt::slot(this._object.raw(), 14) as fn(*u8, *u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 15: GetOpenPopupsForXamlRoot
+    fn get_open_popups_for_xaml_root(this, xaml_root_0: rt::Object) -> result::Result[rt::Object, rt::Error] {
+        let q_0: rt::Object = match xaml_root_0.query_nullable(rt::Guid { a: 1623925082u32, b: 44309 as u16, c: 21002 as u16, d: [139 as u8, 1 as u8, 68 as u8, 22 as u8, 130 as u8, 79 as u8, 4 as u8, 65 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return result::Result[rt::Object, rt::Error]::Err(e); } };
+        var returned: usize = 0;
+        let call: fn(*u8, *u8, *usize) -> i32 = rt::slot(this._object.raw(), 15) as fn(*u8, *u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
 // Microsoft.UI.Xaml.Media.ImageBrush
 fn image_brush_iid() -> rt::Guid { return rt::Guid { a: 3989672355u32, b: 43112 as u16, c: 23462 as u16, d: [148 as u8, 137 as u8, 91 as u8, 18 as u8, 180 as u8, 194 as u8, 157 as u8, 133 as u8] }; }
 struct ImageBrush { _object: rt::Object }
@@ -44721,6 +46988,27 @@ impl TranslateTransform {
         let call: fn(*u8, f64) -> i32 = rt::slot(this._object.raw(), 9) as fn(*u8, f64) -> i32;
         let hr: i32 = call(this._object.raw(), value_0);
         return rt::Status { code: hr };
+    }
+}
+
+// Microsoft.UI.Xaml.Media.VisualTreeHelper
+fn visual_tree_helper_iid() -> rt::Guid { return rt::Guid { a: 1600760862u32, b: 25860 as u16, c: 24127 as u16, d: [161 as u8, 28 as u8, 135 as u8, 104 as u8, 76 as u8, 29 as u8, 184 as u8, 20 as u8] }; }
+struct VisualTreeHelper { _object: rt::Object }
+impl VisualTreeHelper {
+    fn query(value: rt::Object) -> result::Result[VisualTreeHelper, rt::Error] {
+        match value.query(visual_tree_helper_iid()) {
+            result::Result::Ok(o) => { return result::Result[VisualTreeHelper, rt::Error]::Ok(VisualTreeHelper { _object: o }); }
+            result::Result::Err(e) => { return result::Result[VisualTreeHelper, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> VisualTreeHelper { return VisualTreeHelper { _object: this._object.clone() }; }
+    fn i_visual_tree_helper_statics_factory() -> result::Result[IVisualTreeHelperStatics, rt::Error] {
+        match rt::activation_factory("Microsoft.UI.Xaml.Media.VisualTreeHelper", i_visual_tree_helper_statics_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVisualTreeHelperStatics, rt::Error]::Ok(IVisualTreeHelperStatics { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVisualTreeHelperStatics, rt::Error]::Err(e); }
+        }
     }
 }
 
@@ -48536,6 +50824,31 @@ const async_status_canceled: AsyncStatus = 2 as i32;
 const async_status_completed: AsyncStatus = 1 as i32;
 const async_status_error: AsyncStatus = 3 as i32;
 const async_status_started: AsyncStatus = 0 as i32;
+// Windows.Foundation.Collections.IIterable<Microsoft.UI.Xaml.Automation.Peers.AutomationPeer>
+const i_iterable_microsoft_ui_xaml_automation_peers_automation_peer_first_slot: usize = 6;
+fn i_iterable_microsoft_ui_xaml_automation_peers_automation_peer_iid() -> rt::Guid { return rt::Guid { a: 890492443u32, b: 65295 as u16, c: 21053 as u16, d: [135 as u8, 44 as u8, 164 as u8, 150 as u8, 173 as u8, 185 as u8, 188 as u8, 162 as u8] }; }
+struct IIterable_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: rt::Object }
+impl IIterable_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer {
+    fn query(value: rt::Object) -> result::Result[IIterable_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error] {
+        match value.query(i_iterable_microsoft_ui_xaml_automation_peers_automation_peer_iid()) {
+            result::Result::Ok(o) => { return result::Result[IIterable_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error]::Ok(IIterable_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IIterable_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IIterable_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { return IIterable_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: this._object.clone() }; }
+    // ABI slot 6: First
+    fn first(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+}
+
 // Windows.Foundation.Collections.IIterable<Microsoft.UI.Xaml.DependencyObject>
 const i_iterable_microsoft_ui_xaml_dependency_object_first_slot: usize = 6;
 fn i_iterable_microsoft_ui_xaml_dependency_object_iid() -> rt::Guid { return rt::Guid { a: 2206886246u32, b: 28134 as u16, c: 20544 as u16, d: [161 as u8, 79 as u8, 186 as u8, 52 as u8, 213 as u8, 66 as u8, 90 as u8, 180 as u8] }; }
@@ -48784,6 +51097,53 @@ impl IIterable_Windows_Foundation_Point {
         return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
 
     }
+}
+
+// Windows.Foundation.Collections.IIterator<Microsoft.UI.Xaml.Automation.Peers.AutomationPeer>
+const i_iterator_microsoft_ui_xaml_automation_peers_automation_peer_get_current_slot: usize = 6;
+const i_iterator_microsoft_ui_xaml_automation_peers_automation_peer_get_has_current_slot: usize = 7;
+const i_iterator_microsoft_ui_xaml_automation_peers_automation_peer_move_next_slot: usize = 8;
+const i_iterator_microsoft_ui_xaml_automation_peers_automation_peer_get_many_slot: usize = 9;
+fn i_iterator_microsoft_ui_xaml_automation_peers_automation_peer_iid() -> rt::Guid { return rt::Guid { a: 4113706124u32, b: 48138 as u16, c: 22223 as u16, d: [129 as u8, 44 as u8, 95 as u8, 225 as u8, 64 as u8, 2 as u8, 31 as u8, 98 as u8] }; }
+struct IIterator_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: rt::Object }
+impl IIterator_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer {
+    fn query(value: rt::Object) -> result::Result[IIterator_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error] {
+        match value.query(i_iterator_microsoft_ui_xaml_automation_peers_automation_peer_iid()) {
+            result::Result::Ok(o) => { return result::Result[IIterator_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error]::Ok(IIterator_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IIterator_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IIterator_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { return IIterator_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: this._object.clone() }; }
+    // ABI slot 6: get_Current
+    fn current(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_HasCurrent
+    fn has_current(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: MoveNext
+    fn move_next(this) -> result::Result[bool, rt::Error] {
+        var returned: bool = #zero::[bool]();
+        let call: fn(*u8, *bool) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *bool) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[bool, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[bool, rt::Error]::Ok(returned);
+
+    }
+    // SKIPPED GetMany: additional out parameters: use a future multi-output projection
 }
 
 // Windows.Foundation.Collections.IIterator<Microsoft.UI.Xaml.DependencyObject>
@@ -49621,6 +51981,198 @@ impl IVector_Microsoft_UI_Xaml_Automation_AutomationAnnotation {
     // ABI slot 13: Append
     fn append(this, value_0: rt::Object) -> rt::Status {
         let q_0: rt::Object = match value_0.query_nullable(rt::Guid { a: 3268167341u32, b: 5140 as u16, c: 24347 as u16, d: [128 as u8, 138 as u8, 137 as u8, 229 as u8, 213 as u8, 61 as u8, 130 as u8, 254 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8) -> i32 = rt::slot(this._object.raw(), 13) as fn(*u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 14: RemoveAtEnd
+    fn remove_at_end(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 14) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 15: Clear
+    fn clear(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 15) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // SKIPPED GetMany: additional out parameters: use a future multi-output projection
+    // SKIPPED ReplaceAll: array or byref parameter is not yet projected
+}
+
+// Windows.Foundation.Collections.IVector<Microsoft.UI.Xaml.Automation.Peers.AutomationPeer>
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_get_at_slot: usize = 6;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_get_size_slot: usize = 7;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_get_view_slot: usize = 8;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_index_of_slot: usize = 9;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_set_at_slot: usize = 10;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_insert_at_slot: usize = 11;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_remove_at_slot: usize = 12;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_append_slot: usize = 13;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_remove_at_end_slot: usize = 14;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_clear_slot: usize = 15;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_get_many_slot: usize = 16;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_replace_all_slot: usize = 17;
+fn i_vector_microsoft_ui_xaml_automation_peers_automation_peer_iid() -> rt::Guid { return rt::Guid { a: 2446817327u32, b: 50490 as u16, c: 22048 as u16, d: [140 as u8, 225 as u8, 13 as u8, 148 as u8, 25 as u8, 36 as u8, 147 as u8, 34 as u8] }; }
+struct IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: rt::Object }
+impl IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer {
+    fn query(value: rt::Object) -> result::Result[IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error] {
+        match value.query(i_vector_microsoft_ui_xaml_automation_peers_automation_peer_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error]::Ok(IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { return IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: this._object.clone() }; }
+    // ABI slot 6: GetAt
+    fn get_at(this, index_0: u32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, u32, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, u32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_Size
+    fn size(this) -> result::Result[u32, rt::Error] {
+        var returned: u32 = #zero::[u32]();
+        let call: fn(*u8, *u32) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[u32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[u32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: GetView
+    fn get_view(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // SKIPPED IndexOf: additional out parameters: use a future multi-output projection
+    // ABI slot 10: SetAt
+    fn set_at(this, index_0: u32, value_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match value_1.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, u32, *u8) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, u32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 11: InsertAt
+    fn insert_at(this, index_0: u32, value_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match value_1.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, u32, *u8) -> i32 = rt::slot(this._object.raw(), 11) as fn(*u8, u32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 12: RemoveAt
+    fn remove_at(this, index_0: u32) -> rt::Status {
+        let call: fn(*u8, u32) -> i32 = rt::slot(this._object.raw(), 12) as fn(*u8, u32) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 13: Append
+    fn append(this, value_0: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match value_0.query_nullable(rt::Guid { a: 3843898958u32, b: 13552 as u16, c: 22156 as u16, d: [153 as u8, 159 as u8, 98 as u8, 119 as u8, 226 as u8, 175 as u8, 230 as u8, 215 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, *u8) -> i32 = rt::slot(this._object.raw(), 13) as fn(*u8, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), q_0.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 14: RemoveAtEnd
+    fn remove_at_end(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 14) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 15: Clear
+    fn clear(this) -> rt::Status {
+        let call: fn(*u8) -> i32 = rt::slot(this._object.raw(), 15) as fn(*u8) -> i32;
+        let hr: i32 = call(this._object.raw());
+        return rt::Status { code: hr };
+    }
+    // SKIPPED GetMany: additional out parameters: use a future multi-output projection
+    // SKIPPED ReplaceAll: array or byref parameter is not yet projected
+}
+
+// Windows.Foundation.Collections.IVector<Microsoft.UI.Xaml.Automation.Peers.AutomationPeerAnnotation>
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_get_at_slot: usize = 6;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_get_size_slot: usize = 7;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_get_view_slot: usize = 8;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_index_of_slot: usize = 9;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_set_at_slot: usize = 10;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_insert_at_slot: usize = 11;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_remove_at_slot: usize = 12;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_append_slot: usize = 13;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_remove_at_end_slot: usize = 14;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_clear_slot: usize = 15;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_get_many_slot: usize = 16;
+const i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_replace_all_slot: usize = 17;
+fn i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_iid() -> rt::Guid { return rt::Guid { a: 4271821239u32, b: 29061 as u16, c: 21225 as u16, d: [176 as u8, 55 as u8, 191 as u8, 153 as u8, 2 as u8, 172 as u8, 53 as u8, 97 as u8] }; }
+struct IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { _object: rt::Object }
+impl IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation {
+    fn query(value: rt::Object) -> result::Result[IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation, rt::Error] {
+        match value.query(i_vector_microsoft_ui_xaml_automation_peers_automation_peer_annotation_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation, rt::Error]::Ok(IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { return IVector_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { _object: this._object.clone() }; }
+    // ABI slot 6: GetAt
+    fn get_at(this, index_0: u32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, u32, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, u32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_Size
+    fn size(this) -> result::Result[u32, rt::Error] {
+        var returned: u32 = #zero::[u32]();
+        let call: fn(*u8, *u32) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[u32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[u32, rt::Error]::Ok(returned);
+
+    }
+    // ABI slot 8: GetView
+    fn get_view(this) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, *usize) -> i32 = rt::slot(this._object.raw(), 8) as fn(*u8, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // SKIPPED IndexOf: additional out parameters: use a future multi-output projection
+    // ABI slot 10: SetAt
+    fn set_at(this, index_0: u32, value_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match value_1.query_nullable(rt::Guid { a: 658028842u32, b: 9512 as u16, c: 23395 as u16, d: [151 as u8, 61 as u8, 210 as u8, 158 as u8, 176 as u8, 89 as u8, 54 as u8, 71 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, u32, *u8) -> i32 = rt::slot(this._object.raw(), 10) as fn(*u8, u32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 11: InsertAt
+    fn insert_at(this, index_0: u32, value_1: rt::Object) -> rt::Status {
+        let q_1: rt::Object = match value_1.query_nullable(rt::Guid { a: 658028842u32, b: 9512 as u16, c: 23395 as u16, d: [151 as u8, 61 as u8, 210 as u8, 158 as u8, 176 as u8, 89 as u8, 54 as u8, 71 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
+        let call: fn(*u8, u32, *u8) -> i32 = rt::slot(this._object.raw(), 11) as fn(*u8, u32, *u8) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, q_1.raw());
+        return rt::Status { code: hr };
+    }
+    // ABI slot 12: RemoveAt
+    fn remove_at(this, index_0: u32) -> rt::Status {
+        let call: fn(*u8, u32) -> i32 = rt::slot(this._object.raw(), 12) as fn(*u8, u32) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0);
+        return rt::Status { code: hr };
+    }
+    // ABI slot 13: Append
+    fn append(this, value_0: rt::Object) -> rt::Status {
+        let q_0: rt::Object = match value_0.query_nullable(rt::Guid { a: 658028842u32, b: 9512 as u16, c: 23395 as u16, d: [151 as u8, 61 as u8, 210 as u8, 158 as u8, 176 as u8, 89 as u8, 54 as u8, 71 as u8] }) { result::Result::Ok(v) => { v }, result::Result::Err(e) => { return rt::Status { code: e.code }; } };
         let call: fn(*u8, *u8) -> i32 = rt::slot(this._object.raw(), 13) as fn(*u8, *u8) -> i32;
         let hr: i32 = call(this._object.raw(), q_0.raw());
         return rt::Status { code: hr };
@@ -50964,6 +53516,84 @@ impl IVectorView_Microsoft_UI_Xaml_Automation_AutomationAnnotation {
     // SKIPPED GetMany: additional out parameters: use a future multi-output projection
 }
 
+// Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Automation.Peers.AutomationPeer>
+const i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_get_at_slot: usize = 6;
+const i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_get_size_slot: usize = 7;
+const i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_index_of_slot: usize = 8;
+const i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_get_many_slot: usize = 9;
+fn i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_iid() -> rt::Guid { return rt::Guid { a: 642784456u32, b: 33195 as u16, c: 21728 as u16, d: [128 as u8, 73 as u8, 43 as u8, 189 as u8, 71 as u8, 201 as u8, 255 as u8, 54 as u8] }; }
+struct IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: rt::Object }
+impl IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer {
+    fn query(value: rt::Object) -> result::Result[IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error] {
+        match value.query(i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error]::Ok(IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { return IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeer { _object: this._object.clone() }; }
+    // ABI slot 6: GetAt
+    fn get_at(this, index_0: u32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, u32, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, u32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_Size
+    fn size(this) -> result::Result[u32, rt::Error] {
+        var returned: u32 = #zero::[u32]();
+        let call: fn(*u8, *u32) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[u32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[u32, rt::Error]::Ok(returned);
+
+    }
+    // SKIPPED IndexOf: additional out parameters: use a future multi-output projection
+    // SKIPPED GetMany: additional out parameters: use a future multi-output projection
+}
+
+// Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Automation.Peers.AutomationPeerAnnotation>
+const i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_annotation_get_at_slot: usize = 6;
+const i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_annotation_get_size_slot: usize = 7;
+const i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_annotation_index_of_slot: usize = 8;
+const i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_annotation_get_many_slot: usize = 9;
+fn i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_annotation_iid() -> rt::Guid { return rt::Guid { a: 2052465346u32, b: 13643 as u16, c: 23886 as u16, d: [184 as u8, 109 as u8, 52 as u8, 130 as u8, 235 as u8, 53 as u8, 81 as u8, 62 as u8] }; }
+struct IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { _object: rt::Object }
+impl IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation {
+    fn query(value: rt::Object) -> result::Result[IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation, rt::Error] {
+        match value.query(i_vector_view_microsoft_ui_xaml_automation_peers_automation_peer_annotation_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation, rt::Error]::Ok(IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { return IVectorView_Microsoft_UI_Xaml_Automation_Peers_AutomationPeerAnnotation { _object: this._object.clone() }; }
+    // ABI slot 6: GetAt
+    fn get_at(this, index_0: u32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, u32, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, u32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_Size
+    fn size(this) -> result::Result[u32, rt::Error] {
+        var returned: u32 = #zero::[u32]();
+        let call: fn(*u8, *u32) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[u32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[u32, rt::Error]::Ok(returned);
+
+    }
+    // SKIPPED IndexOf: additional out parameters: use a future multi-output projection
+    // SKIPPED GetMany: additional out parameters: use a future multi-output projection
+}
+
 // Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Controls.MenuFlyoutItemBase>
 const i_vector_view_microsoft_ui_xaml_controls_menu_flyout_item_base_get_at_slot: usize = 6;
 const i_vector_view_microsoft_ui_xaml_controls_menu_flyout_item_base_get_size_slot: usize = 7;
@@ -50981,6 +53611,45 @@ impl IVectorView_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase {
     fn object(this) -> rt::Object { return this._object.clone(); }
     fn raw(this) -> *u8 { return this._object.raw(); }
     fn clone(this) -> IVectorView_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase { return IVectorView_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase { _object: this._object.clone() }; }
+    // ABI slot 6: GetAt
+    fn get_at(this, index_0: u32) -> result::Result[rt::Object, rt::Error] {
+        var returned: usize = 0;
+        let call: fn(*u8, u32, *usize) -> i32 = rt::slot(this._object.raw(), 6) as fn(*u8, u32, *usize) -> i32;
+        let hr: i32 = call(this._object.raw(), index_0, #addr_of(returned));
+        if hr < 0 { return result::Result[rt::Object, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[rt::Object, rt::Error]::Ok(rt::Object::adopt(returned as *u8));
+
+    }
+    // ABI slot 7: get_Size
+    fn size(this) -> result::Result[u32, rt::Error] {
+        var returned: u32 = #zero::[u32]();
+        let call: fn(*u8, *u32) -> i32 = rt::slot(this._object.raw(), 7) as fn(*u8, *u32) -> i32;
+        let hr: i32 = call(this._object.raw(), #addr_of(returned));
+        if hr < 0 { return result::Result[u32, rt::Error]::Err(rt::Error { code: hr }); }
+        return result::Result[u32, rt::Error]::Ok(returned);
+
+    }
+    // SKIPPED IndexOf: additional out parameters: use a future multi-output projection
+    // SKIPPED GetMany: additional out parameters: use a future multi-output projection
+}
+
+// Windows.Foundation.Collections.IVectorView<Microsoft.UI.Xaml.Controls.Primitives.Popup>
+const i_vector_view_microsoft_ui_xaml_controls_primitives_popup_get_at_slot: usize = 6;
+const i_vector_view_microsoft_ui_xaml_controls_primitives_popup_get_size_slot: usize = 7;
+const i_vector_view_microsoft_ui_xaml_controls_primitives_popup_index_of_slot: usize = 8;
+const i_vector_view_microsoft_ui_xaml_controls_primitives_popup_get_many_slot: usize = 9;
+fn i_vector_view_microsoft_ui_xaml_controls_primitives_popup_iid() -> rt::Guid { return rt::Guid { a: 4015386926u32, b: 7335 as u16, c: 20979 as u16, d: [153 as u8, 85 as u8, 70 as u8, 222 as u8, 70 as u8, 34 as u8, 240 as u8, 170 as u8] }; }
+struct IVectorView_Microsoft_UI_Xaml_Controls_Primitives_Popup { _object: rt::Object }
+impl IVectorView_Microsoft_UI_Xaml_Controls_Primitives_Popup {
+    fn query(value: rt::Object) -> result::Result[IVectorView_Microsoft_UI_Xaml_Controls_Primitives_Popup, rt::Error] {
+        match value.query(i_vector_view_microsoft_ui_xaml_controls_primitives_popup_iid()) {
+            result::Result::Ok(o) => { return result::Result[IVectorView_Microsoft_UI_Xaml_Controls_Primitives_Popup, rt::Error]::Ok(IVectorView_Microsoft_UI_Xaml_Controls_Primitives_Popup { _object: o }); }
+            result::Result::Err(e) => { return result::Result[IVectorView_Microsoft_UI_Xaml_Controls_Primitives_Popup, rt::Error]::Err(e); }
+        }
+    }
+    fn object(this) -> rt::Object { return this._object.clone(); }
+    fn raw(this) -> *u8 { return this._object.raw(); }
+    fn clone(this) -> IVectorView_Microsoft_UI_Xaml_Controls_Primitives_Popup { return IVectorView_Microsoft_UI_Xaml_Controls_Primitives_Popup { _object: this._object.clone() }; }
     // ABI slot 6: GetAt
     fn get_at(this, index_0: u32) -> result::Result[rt::Object, rt::Error] {
         var returned: usize = 0;

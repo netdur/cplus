@@ -20,13 +20,14 @@ this is not a claim that every Facet property is implemented.
 | Decorations | Semantic/theme colors in dark appearance, borders/corners, gradients, 2D transforms, frame-synchronized opacity/transform easing, composition rounded/ellipse clips and drop shadows. |
 | Other gallery hosts | Page dots, table document container, WebView2 URL surface, swipe actions through native context menu. |
 | Services | UI-thread delayed callbacks/cancellation, size observers, renderer dispatch, dark-theme query. |
+| Agent integration | Optional lifecycle/apply/release hooks; `facet_agent_winui` connects keyed controls and privacy policies to `agent_winui`. In-app sessions and UI-dispatched MCP requests. |
 | Accessibility | Native WinUI peers, stable control AutomationIds, explicit accessibility name/help text. |
 | Ownership | Native records owned by nodes, event removal before freeing callback contexts, row unrealise before drop, timers cancelled on release, zero view/subscription assertions on shutdown. |
 
 ## Limits
 
 - `facet_runtime` still selects Win32. Multiwindow host services, dialogs,
-  clipboard, jobs/worker-thread dispatch, Facet agent/inspection integration,
+  clipboard, jobs/worker-thread dispatch, external agent HTTP serving/inspection,
   general gesture/key readers and focus commands remain separate work.
   `run_on_main` currently queues only from the UI thread.
 - List/collection selection, grouping, reorder and variable-height layout are

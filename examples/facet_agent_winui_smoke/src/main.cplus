@@ -1,0 +1,94 @@
+import "stdlib/io" as io;
+import "stdlib/env" as env;
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "stdlib/vec" as vec;
+import "facet/elements" as ui;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/text_field" as field;
+import "facet/vocabulary" as vocab;
+import "facet/services" as services;
+import "facet_winui/facet_winui" as host;
+import "facet_agent/agent" as agent;
+import "facet_agent/native_surface" as selected;
+import "facet_agent_winui/facet_agent_winui" as connector;
+import "agent_core/surface" as surface;
+import "agent_core/backend" as backend;
+import "agent_core/auth" as auth;
+import "agent_inapp/agent_inapp" as inapp;
+import "winrt/runtime" as rt;
+import "agent_mcp/agent_mcp" as mcp;
+extern fn fflush(p: *u8) -> i32;
+
+struct Probe { clicks: i32, edited: bool, passed: bool, timer: services::Cancellable }
+impl Probe {
+    fn button(ref this) -> core::Node { return @ui { button("Increment and replace",key:"increment",on_click:this.clicked).height(48.0f64) }; }
+    fn clicked(ref this,sender: *u8) {
+        this.clicks=this.clicks+1;
+        let old: option::Option[core::Node]=mount::replace("increment",this.button());
+    }
+    fn changed(ref this,sender: *u8) { this.edited=true; }
+    fn close_http(ref this,sender: *u8) {
+        this.timer=services::after(0.5f64,this.finish_http);
+    }
+    fn finish_http(ref this) {
+        assert this.clicks==2; assert this.edited;
+        this.passed=true; assert host::close().is_ok();
+    }
+    fn build(ref this) -> core::Node {
+        var secret: core::Node=@ui { column { label("sensitive label",key:"secret") } };
+        secret.set_agent(vocab::Agent::Private);
+        return @ui { column(key:"root") {
+            this.button()
+            text_field("",key:"edit",on_text_changed:this.changed).height(40.0f64)
+            secret
+            button("Close HTTP test",key:"close",on_click:this.close_http)
+        }.padding(20.0f64).gap(10.0f64) };
+    }
+    fn ready(ref this) {
+        if env::has_var("CPLUS_AGENT_HTTP_TEST") {
+            // Exercise the existing facade route, not just connector::serve.
+            agent::serve_once("facet-agent-winui-http-test");
+            let port: u16=mcp::loopback_port(mcp::current_pid());
+            io::println("HTTP READY ${port}"); let f: i32=fflush(0 as *u8); return;
+        }
+        this.timer=services::after(0.1f64,this.first);
+    }
+    fn first(ref this) {
+        assert selected::installed();
+        let s: inapp::Session=agent::in_app();
+        let nodes: vec::Vec[backend::UiNode]=s.describe_ui();
+        var found: bool=false; var i: usize=0;
+        while i<nodes.count() { if let option::Option::Some(n)=nodes.at_ptr(i) { if (*n).id.view()=="secret" { found=true; assert !(*n).readable; assert (*n).text.is_empty(); } } i=i+1; }
+        assert found;
+        assert surface::outcome_eq(agent::in_app_with_grant(auth::reader()).click("increment"),surface::Outcome::NeedsGrant);
+        assert surface::outcome_eq(s.click("increment"),surface::Outcome::Allowed);
+        assert surface::outcome_eq(s.set_text("edit","Agent wrote through WinUI"),surface::Outcome::Allowed);
+        this.timer=services::after(0.2f64,this.second);
+    }
+    fn second(ref this) {
+        assert this.clicks==1;
+        assert this.edited;
+        if let option::Option::Some(edit)=field::find("edit") { assert edit.text()=="Agent wrote through WinUI"; } else { assert false; }
+        let s: inapp::Session=agent::in_app();
+        assert surface::outcome_eq(s.click("increment"),surface::Outcome::Allowed);
+        this.timer=services::after(0.2f64,this.finish);
+    }
+    fn finish(ref this) {
+        assert this.clicks==2;
+        this.passed=true;
+        io::println("PASS: Facet facade selected WinUI, callbacks, replacement, policy inheritance and text readback");
+        assert host::close().is_ok();
+    }
+}
+
+fn main() -> i32 {
+    let owner: box::Box[Probe]=match box::new::[Probe](Probe {clicks:0,edited:false,passed:false,timer:#zero::[services::Cancellable]()}) {option::Option::Some(v)=>v,option::Option::None=>{return 1;}};
+    let p: *Probe=owner.ptr(); connector::enable();
+    let status: rt::Status=host::run((*p).build(),"Facet WinUI agent verification",on_ready:(*p).ready);
+    assert status.is_ok(); assert (*p).passed; assert !selected::installed();
+    assert host::live_views()==0; assert host::live_subscriptions()==0;
+    connector::disable(); io::println("PASS: Facet agent detached and native resources released");
+    return 0;
+}

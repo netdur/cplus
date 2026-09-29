@@ -15,6 +15,7 @@ import "./scheduler" as scheduler;
 import "facet/theme" as theme;
 import "./style" as style;
 import "./presentation" as presentation;
+import "./agent_hooks" as agent_hooks;
 extern fn fflush(stream: *u8) -> i32;
 
 struct Host {
@@ -30,6 +31,8 @@ struct Host {
     pending: bool,
     width: f64,
     height: f64,
+    on_ready: fn(*u8),
+    opaque on_ready_ctx: *u8,
 }
 // Only a routing door is global; run owns the app state. Queued delegates
 // borrow no context, so deliveries after clearing this pointer are inert.
@@ -78,6 +81,7 @@ fn closed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
 fn teardown(host: *Host) {
     presentation::begin_shutdown();
     if (*host).mounted {
+        agent_hooks::closing();
         // WebView2 and composition resources must close on the UI thread
         // before Application.run returns and XAML shuts down.
         let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*host).window));
@@ -90,6 +94,11 @@ fn teardown(host: *Host) {
 }
 fn loaded(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     schedule(0 as *u8);
+    if CURRENT.is_not_null() {
+        let call: fn(*u8)=(*CURRENT).on_ready; let ctx: *u8=(*CURRENT).on_ready_ctx;
+        (*CURRENT).on_ready=0 as fn(*u8);
+        if call.is_not_null() { call(ctx); }
+    }
     io::println("READY: facet_winui"); let _f: i32=fflush(0 as *u8); return rt::Status {code:0};
 }
 fn launched(app: rt::Object, context: *u8) -> rt::Status {
@@ -98,6 +107,7 @@ fn launched(app: rt::Object, context: *u8) -> rt::Status {
     (*host).window=window.object(); native::check(window.set_title((*host).title.view()));
     (*host).queue=native::must::[rt::Object](window.dispatcher_queue());
     scheduler::install((*host).queue);theme::set_is_dark_fn(style::dark);
+    agent_hooks::opened((*host).window);
     mount::install(mount::Renderer {ctx:0 as *u8,create:views::create,view_release:views::release,apply:views::apply,
         insert:views::insert,remove:views::remove,schedule:schedule,redeclare:0 as fn(*u8,*core::Node,u32)});
     views::install_readers();
@@ -117,7 +127,7 @@ fn launched(app: rt::Object, context: *u8) -> rt::Status {
     return rt::Status {code:0};
 }
 // One window and one Application run per process. Callback owners outlive run.
-fn run(take tree: core::Node, title: str="Facet / WinUI") -> rt::Status {
+fn run(take tree: core::Node, title: str="Facet / WinUI",on_ready: fn(*u8)=0 as fn(*u8),on_ready_ctx: *u8=0 as *u8) -> rt::Status {
     if STARTED { return rt::Status {code:0x8000ffff as i32}; }
     if !views::supports(#addr_of(tree)) { return rt::Status {code:0x80004001 as i32}; }
     STARTED=true;
@@ -126,7 +136,7 @@ fn run(take tree: core::Node, title: str="Facet / WinUI") -> rt::Status {
     var status: rt::Status=rt::Status {code:0};
     {
         let owner: box::Box[Host]=match box::new::[Host](Host {root:tree,title:text::from_str(title),window:rt::Object::empty(),queue:rt::Object::empty(),
-            size_token:#zero::[ui::EventRegistrationToken](),close_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),mounted:false,closing:false,pending:false,width:900.0f64,height:600.0f64}) {
+            size_token:#zero::[ui::EventRegistrationToken](),close_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),mounted:false,closing:false,pending:false,width:900.0f64,height:600.0f64,on_ready:on_ready,on_ready_ctx:on_ready_ctx}) {
             option::Option::Some(v)=>{v}, option::Option::None=>{return rt::Status {code:rt::out_of_memory()};}
         };
         CURRENT=owner.ptr(); let host: *Host=CURRENT;
@@ -139,4 +149,9 @@ fn run(take tree: core::Node, title: str="Facet / WinUI") -> rt::Status {
     return status;
 }
 fn live_views() -> i64 { return views::live_views(); }
+fn close() -> rt::Status {
+    if CURRENT.is_null() || (*CURRENT).closing { return rt::Status {code:0}; }
+    let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*CURRENT).window));
+    return window.close();
+}
 fn live_subscriptions() -> i64 { return views::live_subscriptions(); }

@@ -1,0 +1,15 @@
+// Optional integration seam. The renderer never imports an agent package.
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+struct Hooks {
+    opened: fn(rt::Object),
+    closing: fn(),
+    apply: fn(rt::Object,*core::Node),
+    release: fn(rt::Object),
+}
+static _HOOKS: Hooks=#zero::[Hooks]();
+fn install(hooks: Hooks) { _HOOKS=hooks; }
+fn opened(window: rt::Object) { if _HOOKS.opened.is_not_null() { (_HOOKS.opened)(window); } }
+fn closing() { if _HOOKS.closing.is_not_null() { (_HOOKS.closing)(); } }
+fn apply(object: rt::Object,node: *core::Node) { if _HOOKS.apply.is_not_null() { (_HOOKS.apply)(object,node); } }
+fn release(object: rt::Object) { if _HOOKS.release.is_not_null() { (_HOOKS.release)(object); } }

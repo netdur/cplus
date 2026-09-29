@@ -49,6 +49,12 @@ fn handle_request(
 Parse JSON-RPC object from `line` → `dispatch` → response `Text`.  
 Parse failure → error envelope (-32700).
 
+`read_text` additionally returns `version` when the backend implements the
+optional `Backend.text_version` slot and this grant can read the value. Use that
+number as `set_text.base_version`. Absence means the backend supplies no version;
+it must not be interpreted as a reported version of zero. Existing backends may
+leave the slot null.
+
 ---
 
 ## Serialization helpers (internal style, public)
@@ -222,8 +228,21 @@ fn bind_tcp(port: u16) -> i32          // binds AND listens
 fn listen_on(fd: i32) -> i32           // 0, or -3
 fn bind_reason(code: i32) -> str       // the code as a sentence
 fn accept_loop(surf, vt, ref sub, policy, fd: i32,
-               unlink_on_exit: bool, http: bool = false) -> i32
+               unlink_on_exit: bool, http: bool = false,
+               dispatcher: RequestDispatcher = #zero::[RequestDispatcher]()) -> i32
 ```
+
+For a thread-affine backend, HTTP accepts an optional `RequestDispatcher` with
+a borrowed `context: *u8` and `call: fn(*u8, str, str) -> DispatchReply`. The call
+receives the request body and this connection's client name; it returns owned
+`body` and `client` text. It must restore client identity, dispatch the request,
+and capture the resulting identity on its target thread. With this hook present,
+the transport does not access shared protocol globals. The call must respond to
+worker cancellation so stopping does not depend on another UI callback running.
+See `agent_winui_mcp` for a DispatcherQueue implementation and lifecycle rules.
+
+Accepted Windows sockets use nonblocking I/O with bounded readiness waits, so
+cancellation also stops a client stalled partway through a request or response.
 
 | `serve_uds` return | meaning |
 |---|---|

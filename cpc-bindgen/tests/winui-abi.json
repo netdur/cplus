@@ -574,8 +574,14 @@
     "ICompositionTargetStatics": {
       "iid": "12A4BE6F-6DB1-5165-B622-D57AB782745B",
       "methods": {
-        "add_Rendering": {"slot": 6, "args": "void*, winrt::event_token*"},
-        "remove_Rendering": {"slot": 7, "args": "winrt::event_token"}
+        "add_Rendering": {
+          "slot": 6,
+          "args": "void*, winrt::event_token*"
+        },
+        "remove_Rendering": {
+          "slot": 7,
+          "args": "winrt::event_token"
+        }
       }
     },
     "IFontFamilyFactory": {
@@ -584,6 +590,382 @@
         "CreateInstanceWithName": {
           "slot": 6,
           "args": "void*, void*, void**, void**"
+        }
+      }
+    },
+    "IInvokeProvider": {
+      "iid": "02481105-3378-544D-B4E1-A1B368AFBC02",
+      "methods": {
+        "Invoke": {
+          "slot": 6,
+          "args": ""
+        }
+      }
+    },
+    "IToggleProvider": {
+      "iid": "021080C2-30A9-52EF-BC32-2B79847B6BA7",
+      "methods": {
+        "get_ToggleState": {
+          "slot": 6,
+          "args": "std::int32_t*"
+        },
+        "Toggle": {
+          "slot": 7,
+          "args": ""
+        }
+      }
+    },
+    "IValueProvider": {
+      "iid": "984F11CF-4611-588E-B52E-B96A12322C71",
+      "methods": {
+        "get_IsReadOnly": {
+          "slot": 6,
+          "args": "bool*"
+        },
+        "get_Value": {
+          "slot": 7,
+          "args": "void**"
+        },
+        "SetValue": {
+          "slot": 8,
+          "args": "void*"
+        }
+      }
+    },
+    "ISelectionItemProvider": {
+      "iid": "C9DFDD81-D4AC-5D31-BE7F-24FAB16060E4",
+      "methods": {
+        "get_IsSelected": {
+          "slot": 6,
+          "args": "bool*"
+        },
+        "get_SelectionContainer": {
+          "slot": 7,
+          "args": "void**"
+        },
+        "AddToSelection": {
+          "slot": 8,
+          "args": ""
+        },
+        "RemoveFromSelection": {
+          "slot": 9,
+          "args": ""
+        },
+        "Select": {
+          "slot": 10,
+          "args": ""
+        }
+      }
+    },
+    "IRangeValueProvider": {
+      "iid": "729AE414-1E8F-5020-82BB-BB574D145FD8",
+      "methods": {
+        "get_IsReadOnly": {
+          "slot": 6,
+          "args": "bool*"
+        },
+        "get_LargeChange": {
+          "slot": 7,
+          "args": "double*"
+        },
+        "get_Maximum": {
+          "slot": 8,
+          "args": "double*"
+        },
+        "get_Minimum": {
+          "slot": 9,
+          "args": "double*"
+        },
+        "get_SmallChange": {
+          "slot": 10,
+          "args": "double*"
+        },
+        "get_Value": {
+          "slot": 11,
+          "args": "double*"
+        },
+        "SetValue": {
+          "slot": 12,
+          "args": "double"
+        }
+      }
+    },
+    "IFrameworkElementAutomationPeerStatics": {
+      "iid": "081F6FBE-6500-528A-A506-F5A4D41DDF6C",
+      "methods": {
+        "FromElement": {
+          "slot": 6,
+          "args": "void*, void**"
+        },
+        "CreatePeerForElement": {
+          "slot": 7,
+          "args": "void*, void**"
+        }
+      }
+    },
+    "IAutomationPeer": {
+      "iid": "E51D3E4E-34F0-568C-999F-6277E2AFE6D7",
+      "methods": {
+        "get_EventsSource": {
+          "slot": 6,
+          "args": "void**"
+        },
+        "put_EventsSource": {
+          "slot": 7,
+          "args": "void*"
+        },
+        "GetPattern": {
+          "slot": 8,
+          "args": "std::int32_t, void**"
+        },
+        "RaiseAutomationEvent": {
+          "slot": 9,
+          "args": "std::int32_t"
+        },
+        "RaisePropertyChangedEvent": {
+          "slot": 10,
+          "args": "void*, void*, void*"
+        },
+        "GetAcceleratorKey": {
+          "slot": 11,
+          "args": "void**"
+        },
+        "GetAccessKey": {
+          "slot": 12,
+          "args": "void**"
+        },
+        "GetAutomationControlType": {
+          "slot": 13,
+          "args": "std::int32_t*"
+        },
+        "GetAutomationId": {
+          "slot": 14,
+          "args": "void**"
+        },
+        "GetBoundingRectangle": {
+          "slot": 15,
+          "args": "winrt::Windows::Foundation::Rect*"
+        },
+        "GetChildren": {
+          "slot": 16,
+          "args": "void**"
+        },
+        "Navigate": {
+          "slot": 17,
+          "args": "std::int32_t, void**"
+        },
+        "GetClassName": {
+          "slot": 18,
+          "args": "void**"
+        },
+        "GetClickablePoint": {
+          "slot": 19,
+          "args": "winrt::Windows::Foundation::Point*"
+        },
+        "GetHelpText": {
+          "slot": 20,
+          "args": "void**"
+        },
+        "GetItemStatus": {
+          "slot": 21,
+          "args": "void**"
+        },
+        "GetItemType": {
+          "slot": 22,
+          "args": "void**"
+        },
+        "GetLabeledBy": {
+          "slot": 23,
+          "args": "void**"
+        },
+        "GetLocalizedControlType": {
+          "slot": 24,
+          "args": "void**"
+        },
+        "GetName": {
+          "slot": 25,
+          "args": "void**"
+        },
+        "GetOrientation": {
+          "slot": 26,
+          "args": "std::int32_t*"
+        },
+        "HasKeyboardFocus": {
+          "slot": 27,
+          "args": "bool*"
+        },
+        "IsContentElement": {
+          "slot": 28,
+          "args": "bool*"
+        },
+        "IsControlElement": {
+          "slot": 29,
+          "args": "bool*"
+        },
+        "IsEnabled": {
+          "slot": 30,
+          "args": "bool*"
+        },
+        "IsKeyboardFocusable": {
+          "slot": 31,
+          "args": "bool*"
+        },
+        "IsOffscreen": {
+          "slot": 32,
+          "args": "bool*"
+        },
+        "IsPassword": {
+          "slot": 33,
+          "args": "bool*"
+        },
+        "IsRequiredForForm": {
+          "slot": 34,
+          "args": "bool*"
+        },
+        "SetFocus": {
+          "slot": 35,
+          "args": ""
+        },
+        "GetParent": {
+          "slot": 36,
+          "args": "void**"
+        },
+        "InvalidatePeer": {
+          "slot": 37,
+          "args": ""
+        },
+        "GetPeerFromPoint": {
+          "slot": 38,
+          "args": "winrt::Windows::Foundation::Point, void**"
+        },
+        "GetElementFromPoint": {
+          "slot": 39,
+          "args": "winrt::Windows::Foundation::Point, void**"
+        },
+        "GetFocusedElement": {
+          "slot": 40,
+          "args": "void**"
+        },
+        "GetLiveSetting": {
+          "slot": 41,
+          "args": "std::int32_t*"
+        },
+        "ShowContextMenu": {
+          "slot": 42,
+          "args": ""
+        },
+        "GetControlledPeers": {
+          "slot": 43,
+          "args": "void**"
+        },
+        "GetAnnotations": {
+          "slot": 44,
+          "args": "void**"
+        },
+        "SetParent": {
+          "slot": 45,
+          "args": "void*"
+        },
+        "RaiseTextEditTextChangedEvent": {
+          "slot": 46,
+          "args": "std::int32_t, void*"
+        },
+        "GetPositionInSet": {
+          "slot": 47,
+          "args": "std::int32_t*"
+        },
+        "GetSizeOfSet": {
+          "slot": 48,
+          "args": "std::int32_t*"
+        },
+        "GetLevel": {
+          "slot": 49,
+          "args": "std::int32_t*"
+        },
+        "RaiseStructureChangedEvent": {
+          "slot": 50,
+          "args": "std::int32_t, void*"
+        },
+        "GetLandmarkType": {
+          "slot": 51,
+          "args": "std::int32_t*"
+        },
+        "GetLocalizedLandmarkType": {
+          "slot": 52,
+          "args": "void**"
+        },
+        "IsPeripheral": {
+          "slot": 53,
+          "args": "bool*"
+        },
+        "IsDataValidForForm": {
+          "slot": 54,
+          "args": "bool*"
+        },
+        "GetFullDescription": {
+          "slot": 55,
+          "args": "void**"
+        },
+        "GetCulture": {
+          "slot": 56,
+          "args": "std::int32_t*"
+        },
+        "RaiseNotificationEvent": {
+          "slot": 57,
+          "args": "std::int32_t, std::int32_t, void*, void*"
+        },
+        "GetHeadingLevel": {
+          "slot": 58,
+          "args": "std::int32_t*"
+        },
+        "IsDialog": {
+          "slot": 59,
+          "args": "bool*"
+        }
+      }
+    },
+    "IVisualTreeHelperStatics": {
+      "iid": "5AECE43C-7651-5BB5-855C-2198496E455E",
+      "methods": {
+        "FindElementsInHostCoordinatesPoint": {
+          "slot": 6,
+          "args": "winrt::Windows::Foundation::Point, void*, void**"
+        },
+        "FindElementsInHostCoordinatesRect": {
+          "slot": 7,
+          "args": "winrt::Windows::Foundation::Rect, void*, void**"
+        },
+        "FindAllElementsInHostCoordinatesPoint": {
+          "slot": 8,
+          "args": "winrt::Windows::Foundation::Point, void*, bool, void**"
+        },
+        "FindAllElementsInHostCoordinatesRect": {
+          "slot": 9,
+          "args": "winrt::Windows::Foundation::Rect, void*, bool, void**"
+        },
+        "GetChild": {
+          "slot": 10,
+          "args": "void*, std::int32_t, void**"
+        },
+        "GetChildrenCount": {
+          "slot": 11,
+          "args": "void*, std::int32_t*"
+        },
+        "GetParent": {
+          "slot": 12,
+          "args": "void*, void**"
+        },
+        "DisconnectChildrenRecursive": {
+          "slot": 13,
+          "args": "void*"
+        },
+        "GetOpenPopups": {
+          "slot": 14,
+          "args": "void*, void**"
+        },
+        "GetOpenPopupsForXamlRoot": {
+          "slot": 15,
+          "args": "void*, void**"
         }
       }
     }

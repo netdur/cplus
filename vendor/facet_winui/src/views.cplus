@@ -31,6 +31,7 @@ import "./items" as items;
 import "./actions" as actions;
 import "./presentation" as presentation;
 import "./divider" as divider;
+import "./agent_hooks" as agent_hooks;
 
 type View = record::View;
 static LIVE: i64=0;
@@ -161,6 +162,9 @@ fn configure(record: *View, n: *core::Node) {
     let data: *core::Data=core::node_data(n);
     if data.is_null() { return; }
     let value: rt::Object=(*record).object.clone();
+    // Apply the privacy boundary before property changes can call application
+    // event handlers that themselves inspect the agent surface.
+    agent_hooks::apply(value,n);
     if env::has_var("FACET_WINUI_TRACE") {
         let key: str=(*n).key(); let opacity: f64=(*data).common.opacity; let visible: bool=(*data).common.is_visible;
         io::eprintln("WinUI props ${key}: opacity=${opacity} visible=${visible}");
@@ -279,6 +283,7 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     return record.into_raw();
 }
 fn release(view: *u8) {
+    agent_hooks::release(object(view));
     if view.is_null() { return; }
     let p: *View=view as *View;
     if env::has_var("FACET_WINUI_TRACE") {let kind: u32=(*p).kind;io::eprintln("WinUI release kind=${kind}");}

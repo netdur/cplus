@@ -100,6 +100,11 @@ impl Session {
         return (this.vt.set_text)(this.surf, this.grant, id, value, base_version);
     }
 
+    fn text_version(this, id: str) -> option::Option[u64] {
+        if this.vt.text_version.is_null() { return option::Option[u64]::None; }
+        return (this.vt.text_version)(this.surf, this.grant, id);
+    }
+
     fn scroll_to(this, id: str) -> surface::Outcome {
         return (this.vt.navigate)(this.surf, this.grant, id);
     }
