@@ -333,9 +333,18 @@ impl Generator {
         let ret=&signature.return_type;
         let params:Vec<_>=method.params().filter(|p|p.sequence()>0).collect();
         if params.len()!=signature.params.len() { return Err("metadata parameter count mismatch".into()); }
+        // Public composition factories can also take constructor arguments
+        // (FontFamily is one example). Project the non-aggregated form: null
+        // outer, and release the extra inner reference after the call.
+        let composition = _owner.ends_with("Factory") && params.len()>=2
+            && signature.params[params.len()-2]==Type::Object
+            && params.last().unwrap().flags().contains(ParamAttributes::Out)
+            && signature.params[params.len()-1]==Type::Object
+            && Self::is_object(ret);
+        let input_count=if composition {params.len()-2}else{params.len()};
         // Every method with complex byref/array output is retained in coverage
         // as unsupported until it has ownership-aware array/out projection.
-        for (p,t) in params.iter().zip(&signature.params) {
+        for (p,t) in params.iter().zip(&signature.params).take(input_count) {
             if p.flags().contains(ParamAttributes::Out) { return Err("additional out parameters: use a future multi-output projection".into()); }
             if matches!(t,Type::WinrtArray(_)|Type::WinrtArrayRef(_)|Type::MutPtr(_,_)|Type::ConstPtr(_,_)|Type::ConstRef(_)) { return Err("array or byref parameter is not yet projected".into()); }
         }
@@ -345,7 +354,7 @@ impl Generator {
         let result_type=if returns_void{"rt::Status".into()}else{format!("result::Result[{}, rt::Error]",self.projected(ret)?)};
         let failure=|expr:&str|if returns_void{format!("return rt::Status {{ code: {expr}.code }};")}else{format!("return {result_type}::Err({expr});")};
         let mut declarations=vec!["this".to_string()]; let mut abi_types=vec!["*u8".to_string()]; let mut abi_args=vec!["this._object.raw()".to_string()]; let mut setup=String::new();
-        for (i,(p,t)) in params.iter().zip(&signature.params).enumerate() {
+        for (i,(p,t)) in params.iter().zip(&signature.params).take(input_count).enumerate() {
             let pname=format!("{}_{}",snake(p.name()),i);
             if *t==Type::String {
                 declarations.push(format!("{pname}: str")); abi_types.push("usize".into()); abi_args.push(format!("h_{i}.raw()"));
@@ -375,6 +384,11 @@ impl Generator {
             }
         }
         let mut tail=String::new();
+        if composition {
+            writeln!(setup,"        var inner: *u8 = 0 as *u8;").unwrap();
+            abi_types.extend(["*u8".into(), "**u8".into()]);
+            abi_args.extend(["0 as *u8".into(), "#addr_of(inner)".into()]);
+        }
         if !returns_void {
             if Self::is_object(ret) || *ret==Type::String {
                 writeln!(setup,"        var returned: usize = 0;").unwrap(); abi_types.push("*usize".into());
@@ -390,6 +404,7 @@ impl Generator {
         let types=abi_types.join(", ");
         let mut code=format!("    // ABI slot {slot}: {}\n    fn {method_name}({}) -> {result_type} {{\n{setup}",method.name(),declarations.join(", "));
         writeln!(code,"        let call: fn({types}) -> i32 = rt::slot(this._object.raw(), {slot}) as fn({types}) -> i32;\n        let hr: i32 = call({});",abi_args.join(", ")).unwrap();
+        if composition { writeln!(code,"        let inner_owner: rt::Object = rt::Object::adopt(inner);").unwrap(); }
         if returns_void { writeln!(code,"        return rt::Status {{ code: hr }};").unwrap(); }
         else {
             writeln!(code,"        if hr < 0 {{ return {result_type}::Err(rt::Error {{ code: hr }}); }}\n{tail}").unwrap();

@@ -570,6 +570,15 @@
           "args": "void*, void*"
         }
       }
+    },
+    "IFontFamilyFactory": {
+      "iid": "61B88A77-D0F9-5E9E-8C28-EDA01FEDE22E",
+      "methods": {
+        "CreateInstanceWithName": {
+          "slot": 6,
+          "args": "void*, void*, void**, void**"
+        }
+      }
     }
   }
 }

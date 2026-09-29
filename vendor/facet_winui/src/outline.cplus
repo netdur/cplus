@@ -1,0 +1,110 @@
+import "stdlib/box" as box;
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+import "facet/tree" as tree;
+import "facet/vocabulary" as vocab;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "./native" as native;
+import "./record" as record;
+struct Entry { object: rt::Object, id: text::Text }
+struct State { entries: vec::Vec[Entry], invoked: ui::EventRegistrationToken, expanding: ui::EventRegistrationToken, collapsed: ui::EventRegistrationToken, built: bool }
+static LIVE: i64=0;
+fn subscriptions() -> i64 { return LIVE; }
+fn props(r: *record::View) -> *tree::TreeProps { return (*core::node_data((*r).node)).props as *tree::TreeProps; }
+fn lookup(n: *tree::TreeNode,id: str) -> *tree::TreeNode {
+    if (*n).id.view()==id { return n; }
+    var i: usize=0;
+    while i<(*n).child_count() {
+        match (*n).child_ptr(i) { option::Option::Some(child)=>{let found: *tree::TreeNode=lookup(child,id); if found.is_not_null() {return found;}},option::Option::None=>{} }
+        i=i+1;
+    }
+    return 0 as *tree::TreeNode;
+}
+fn invoked(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View; if (*r).applying {return rt::Status {code:0};}
+    let event: ui::ITreeViewItemInvokedEventArgs=native::must::[ui::ITreeViewItemInvokedEventArgs](ui::ITreeViewItemInvokedEventArgs::query(args));
+    let selected: rt::Object=native::must::[rt::Object](event.invoked_item());
+    let identity: rt::Object=native::must::[rt::Object](selected.query(rt::unknown_iid()));
+    let state: *State=(*r).extra as *State; var i: usize=0;
+    while i<(*state).entries.count() {
+        match (*state).entries.at_ptr(i) {
+            option::Option::Some(entry)=>{
+                let other: rt::Object=native::must::[rt::Object]((*entry).object.query(rt::unknown_iid()));
+                if other.raw()==identity.raw() {
+                    let p: *tree::TreeProps=props(r); let item: *tree::TreeNode=lookup(#addr_of((*p).root),(*entry).id.view());
+                    if item.is_null() {return rt::Status {code:0};}
+                    (*p).selected=text::from_str((*entry).id.view()); (*p).selection.clear();
+                    let added: status::Status=(*p).selection.add((*entry).id.view());
+                    let call: fn(*tree::TreeNode,*u8)=(*p).on_select;
+                    let context: *u8=if (*p).on_select_ctx.is_not_null() {(*p).on_select_ctx} else {(*p).ctx};
+                    if call!=tree::no_select {call(item,context);} return rt::Status {code:0};
+                }
+            },option::Option::None=>{}
+        }
+        i=i+1;
+    }
+    return rt::Status {code:0};
+}
+fn expanded(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View; if (*r).applying {return rt::Status {code:0};}
+    let state: *State=(*r).extra as *State; let p: *tree::TreeProps=props(r);
+    (*p).expanded.clear(); var i: usize=0;
+    while i<(*state).entries.count() {
+        match (*state).entries.at_ptr(i) { option::Option::Some(e)=>{
+            let node: ui::ITreeViewNode=native::must::[ui::ITreeViewNode](ui::ITreeViewNode::query((*e).object));
+            if native::must::[bool](node.is_expanded()) {let added: status::Status=(*p).expanded.add((*e).id.view());}
+        },option::Option::None=>{} } i=i+1;
+    }
+    return rt::Status {code:0};
+}
+fn append_node(state: *State,model: *tree::TreeNode,list: ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode) {
+    let node: ui::TreeViewNode=native::must::[ui::TreeViewNode](ui::TreeViewNode::new());
+    let factory: ui::IPropertyValueStatics=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());
+    native::check(node.set_content(native::must::[rt::Object](factory.create_string((*model).label.view()))));
+    let added: status::Status=(*state).entries.append(Entry {object:node.object(),id:text::from_str((*model).id.view())}); assert added==status::Status::Ok;
+    let children: ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(native::must::[rt::Object](node.children())));
+    var i: usize=0;
+    while i<(*model).child_count() {match (*model).child_ptr(i) {option::Option::Some(c)=>{append_node(state,c,children);},option::Option::None=>{}} i=i+1;}
+    native::check(list.append(node.object())); return;
+}
+fn apply(r: *record::View) {
+    let state: *State=(*r).extra as *State; let p: *tree::TreeProps=props(r);
+    let control: ui::ITreeView=native::must::[ui::ITreeView](ui::ITreeView::query((*r).object));
+    (*r).applying=true;
+    if !(*state).built || (core::dirty_of((*r).node)&tree::P_ROOT)!=0 {
+        let nodes: ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode=native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode](ui::IVector_Microsoft_UI_Xaml_Controls_TreeViewNode::query(native::must::[rt::Object](control.root_nodes())));
+        native::check(nodes.clear()); (*state).entries.remove_all();
+        var i: usize=0;
+        while i<(*p).root.child_count() {match (*p).root.child_ptr(i) {option::Option::Some(c)=>{append_node(state,c,nodes);},option::Option::None=>{}} i=i+1;}
+        (*state).built=true;
+    }
+    let selection: ui::ITreeView2=native::must::[ui::ITreeView2](ui::ITreeView2::query((*r).object));
+    native::check(selection.set_can_drag_items(false)); native::check(selection.set_can_reorder_items(false));
+    var i: usize=0;
+    while i<(*state).entries.count() {
+        match (*state).entries.at_ptr(i) {option::Option::Some(e)=>{
+            let node: ui::ITreeViewNode=native::must::[ui::ITreeViewNode](ui::ITreeViewNode::query((*e).object));
+            native::check(node.set_is_expanded((*p).expanded.has((*e).id.view())));
+            if (*p).selected.view()==(*e).id.view() {native::check(selection.set_selected_node((*e).object));}
+        },option::Option::None=>{}} i=i+1;
+    }
+    (*r).applying=false; return;
+}
+fn attach(r: *record::View) {
+    let control: ui::ITreeView=native::must::[ui::ITreeView](ui::ITreeView::query((*r).object));
+    let a: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewItemInvokedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewItemInvokedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewItemInvokedEventArgs::new(invoked,r as *u8));
+    let b: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewExpandingEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewExpandingEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewExpandingEventArgs::new(expanded,r as *u8));
+    let c: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewCollapsedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewCollapsedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_TreeView_Microsoft_UI_Xaml_Controls_TreeViewCollapsedEventArgs::new(expanded,r as *u8));
+    let owner: box::Box[State]=match box::new(State {entries:vec::new::[Entry](),invoked:native::must::[ui::EventRegistrationToken](control.add_item_invoked(a.object())),expanding:native::must::[ui::EventRegistrationToken](control.add_expanding(b.object())),collapsed:native::must::[ui::EventRegistrationToken](control.add_collapsed(c.object())),built:false}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};
+    (*r).extra=owner.into_raw(); LIVE=LIVE+3; return;
+}
+fn release(r: *record::View) {
+    let state: *State=(*r).extra as *State;
+    let control: ui::ITreeView=native::must::[ui::ITreeView](ui::ITreeView::query((*r).object));
+    native::check(control.remove_item_invoked((*state).invoked)); native::check(control.remove_expanding((*state).expanding)); native::check(control.remove_collapsed((*state).collapsed));
+    let owner: box::Box[State]=box::from_raw::[State]((*r).extra); (*r).extra=0 as *u8; LIVE=LIVE-3; return;
+}

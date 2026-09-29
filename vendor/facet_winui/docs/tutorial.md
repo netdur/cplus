@@ -2,7 +2,8 @@
 
 See [guide.md](guide.md) for lifetime rules and [ref.md](ref.md) for signatures.
 
-Start with [facet_winui_smoke](../../../examples/facet_winui_smoke/README.md).
+For the full gallery, use [facet_gallery_winui](../../../examples/facet_gallery_winui/README.md).
+For a smaller example, use [facet_winui_smoke](../../../examples/facet_winui_smoke/README.md).
 Its build script stages the SDK runtime, embeds activation and DPI declarations,
 and creates a local dependency junction. A plain executable without those
 deployment steps cannot activate WinUI reliably.

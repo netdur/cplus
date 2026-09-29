@@ -11,6 +11,9 @@ import "facet/mount" as mount;
 import "facet/component" as component;
 import "./views" as views;
 import "./native" as native;
+import "./scheduler" as scheduler;
+import "facet/theme" as theme;
+import "./style" as style;
 extern fn fflush(stream: *u8) -> i32;
 
 struct Host {
@@ -34,8 +37,11 @@ static STARTED: bool=false;
 fn relayout(host: *Host) {
     if !(*host).mounted || (*host).closing { return; }
     let root: *core::Node=#addr_of((*host).root);
+    views::prepare_layout(root);
     (*root).calculate_layout(width:(*host).width,height:(*host).height);
-    views::place(root,(*root).frame()); return;
+    views::prepare_layout(root);
+    (*root).calculate_layout(width:(*host).width,height:(*host).height);
+    views::place(root,(*root).frame()); scheduler::notify_sizes(); return;
 }
 fn tick(context: *u8) -> rt::Status {
     let host: *Host=CURRENT;
@@ -65,8 +71,20 @@ fn resized(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     relayout(host); return rt::Status {code:0};
 }
 fn closed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
-    if CURRENT.is_not_null() { (*CURRENT).closing=true; }
+    if CURRENT.is_not_null() { (*CURRENT).closing=true; teardown(CURRENT); }
     return rt::Status {code:0};
+}
+fn teardown(host: *Host) {
+    if (*host).mounted {
+        // WebView2 and composition resources must close on the UI thread
+        // before Application.run returns and XAML shuts down.
+        let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*host).window));
+        native::check(window.remove_size_changed((*host).size_token));native::check(window.remove_closed((*host).close_token));
+        let root: *core::Node=#addr_of((*host).root);
+        let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(views::object(core::view_of(root))));
+        native::check(element.remove_loaded((*host).loaded_token));mount::unmount(root);(*host).mounted=false;
+    }
+    scheduler::shutdown();return;
 }
 fn loaded(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
     schedule(0 as *u8);
@@ -77,6 +95,7 @@ fn launched(app: rt::Object, context: *u8) -> rt::Status {
     let window: ui::Window=native::must::[ui::Window](ui::Window::new());
     (*host).window=window.object(); native::check(window.set_title((*host).title.view()));
     (*host).queue=native::must::[rt::Object](window.dispatcher_queue());
+    scheduler::install((*host).queue);theme::set_is_dark_fn(style::dark);
     mount::install(mount::Renderer {ctx:0 as *u8,create:views::create,view_release:views::release,apply:views::apply,
         insert:views::insert,remove:views::remove,schedule:schedule,redeclare:0 as fn(*u8,*core::Node,u32)});
     views::install_readers();
@@ -110,14 +129,7 @@ fn run(take tree: core::Node, title: str="Facet / WinUI") -> rt::Status {
         };
         CURRENT=owner.ptr(); let host: *Host=CURRENT;
         status=application::run(launched); (*host).closing=true;
-        if (*host).mounted {
-            let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*host).window));
-            native::check(window.remove_size_changed((*host).size_token)); native::check(window.remove_closed((*host).close_token));
-            let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(views::object(core::view_of(#addr_of((*host).root)))));
-            native::check(element.remove_loaded((*host).loaded_token));
-            mount::unmount(#addr_of((*host).root));
-        }
-        CURRENT=0 as *Host; mount::uninstall(); component::uninstall_sender_readers();
+        teardown(host);theme::set_is_dark_fn(0 as fn()->bool); CURRENT=0 as *Host; mount::uninstall(); component::uninstall_sender_readers();
         // Owner drops the tree and its event subscriptions before Apartment.
     }
     assert views::live_views()==0;

@@ -1,0 +1,17 @@
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "facet/facet" as core;
+struct View {
+    object: rt::Object,
+    content: rt::Object,
+    opaque node: *core::Node,
+    kind: u32,
+    token: ui::EventRegistrationToken,
+    token2: ui::EventRegistrationToken,
+    subscribed: bool,
+    applying: bool,
+    scroll_pending: bool,
+    opaque extra: *u8,
+    opaque presentation: *u8,
+    opaque parent: *u8,
+}

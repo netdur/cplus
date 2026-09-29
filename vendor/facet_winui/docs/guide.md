@@ -23,7 +23,8 @@ the host drops. Queued renderer callbacks capture no host pointer.
 
 ## Layout and dispatch
 
-Ordinary containers are Canvas controls; a ScrollViewer owns a document Canvas.
+Ordinary containers are Borders with a Canvas document; a ScrollViewer owns
+a document Canvas.
 Facet/flex_layout computes frames in logical
 coordinates; the backend subtracts the parent's origin and applies dimensions.
 It does not let WinUI StackPanel/Grid compute a second portable layout.
@@ -33,7 +34,8 @@ width/height temporarily cleared during measurement and then restored.
 Renderer requests coalesce onto DispatcherQueue. The callback opts into
 IAgileObject because the queue requires it, captures no object/context, and
 executes only on that queue's UI thread. Ordinary control delegates remain
-non-agile. This does not implement `services::run_on_main`, timers, or jobs.
+non-agile. DispatcherQueueTimer implements delayed callbacks and cancellation;
+size observers run after layout. Worker-thread dispatch/jobs remain deferred.
 
 The deployment manifest declares PerMonitorV2 DPI awareness. WinUI SizeChanged
 supplies logical client dimensions for layout. Testing was performed at the
@@ -46,8 +48,7 @@ TextBox changes update retained text before invoking the application handler.
 Programmatic writes suppress matching native notifications; applying other
 properties avoids assigning identical text and resetting selection. Selection
 properties are sampled during text edits only; selection setters and submit
-events are deferred. Password fields are rejected rather than displayed as
-ordinary editable text.
+events are deferred. Secure fields use native PasswordBox controls.
 
 Scroll document size is the union of its direct children's frames and the
 viewport. Offset writes are applied after native layout; initial writes wait

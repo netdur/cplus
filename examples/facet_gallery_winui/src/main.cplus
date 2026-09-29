@@ -1,0 +1,16 @@
+import "facet/component" as component;
+import "facet/facet" as core;
+import "facet_winui/facet_winui" as host;
+import "winrt/runtime" as rt;
+import "stdlib/io" as io;
+import "./shared/gallery" as gallery;
+extern fn __acrt_iob_func(index: u32) -> *u8;
+extern fn setvbuf(stream: *u8,buffer: *u8,mode: i32,size: usize) -> i32;
+fn main() -> i32 {
+    let unbuffered: i32=setvbuf(__acrt_iob_func(1),0 as *u8,4,0);
+    let tree: core::Node=component::child(gallery::Gallery::new());
+    let result: rt::Status=host::run(tree,"Facet Gallery / WinUI");
+    let code: i32=result.code;
+    io::println("Gallery exit: ${code}");
+    return if result.is_ok() {0} else {1};
+}

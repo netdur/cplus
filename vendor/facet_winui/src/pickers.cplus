@@ -1,0 +1,69 @@
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/popup" as popup;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./native" as native;
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn supports(k: u32) -> bool {return k==props::K_POPUP || k==props::K_DATE_PICKER || k==props::K_TIME_PICKER;}
+fn create(k: u32) -> rt::Object {
+    if k==props::K_POPUP {let v: ui::ComboBox=native::must::[ui::ComboBox](ui::ComboBox::new());return v.object();}
+    if k==props::K_DATE_PICKER {let v: ui::CalendarDatePicker=native::must::[ui::CalendarDatePicker](ui::CalendarDatePicker::new());return v.object();}
+    let v: ui::TimePicker=native::must::[ui::TimePicker](ui::TimePicker::new());return v.object();
+}
+fn date_time(date: vocab::Date) -> ui::DateTime {
+    let calendar: ui::Calendar=native::must::[ui::Calendar](ui::Calendar::new());
+    native::check(calendar.change_calendar_system("GregorianCalendar"));native::check(calendar.set_day(1));native::check(calendar.set_year(date.year as i32));native::check(calendar.set_month(date.month as i32));native::check(calendar.set_day(date.day as i32));
+    return native::must::[ui::DateTime](calendar.get_date_time());
+}
+fn date(value: ui::DateTime) -> vocab::Date {
+    let calendar: ui::Calendar=native::must::[ui::Calendar](ui::Calendar::new());native::check(calendar.change_calendar_system("GregorianCalendar"));native::check(calendar.set_date_time(value));
+    return vocab::Date {year:native::must::[i32](calendar.year()) as i64,month:native::must::[i32](calendar.month()) as i64,day:native::must::[i32](calendar.day()) as i64};
+}
+fn apply(r: *record::View) {
+    let d: *core::Data=core::node_data((*r).node);let raw: *u8=(*d).props;let k: u32=(*r).kind;let value: rt::Object=(*r).object.clone();(*r).applying=true;
+    let control: ui::IControl=native::must::[ui::IControl](ui::IControl::query(value));native::check(control.set_is_enabled((*d).common.is_enabled));
+    let factory: ui::IPropertyValueStatics=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());
+    if k==props::K_POPUP {
+        let p: *props::PopupProps=raw as *props::PopupProps;
+        if !(*r).subscribed || (core::dirty_of((*r).node)&popup::P_ITEMS)!=0 {
+            let host: ui::IItemsControl=native::must::[ui::IItemsControl](ui::IItemsControl::query(value));let items: ui::IVector_Object=native::must::[ui::IVector_Object](ui::IVector_Object::query(native::must::[rt::Object](host.items())));native::check(items.clear());
+            var i: usize=0;while i<(*p).items.count() {native::check(items.append(native::must::[rt::Object](factory.create_string((*p).items.at(i)))));i=i+1;}
+        }
+        let selector: ui::ISelector=native::must::[ui::ISelector](ui::ISelector::query(value));native::check(selector.set_selected_index((*p).selected_index as i32));
+        let combo: ui::IComboBox=native::must::[ui::IComboBox](ui::IComboBox::query(value));native::check(combo.set_placeholder_text((*p).title.view()));native::check(combo.set_is_drop_down_open((*p).is_open));
+    }
+    if k==props::K_DATE_PICKER {
+        let p: *props::DatePickerProps=raw as *props::DatePickerProps;let picker: ui::ICalendarDatePicker=native::must::[ui::ICalendarDatePicker](ui::ICalendarDatePicker::query(value));
+        if (*p).maximum_date.year>0 {native::check(picker.set_max_date(date_time((*p).maximum_date)));}if (*p).minimum_date.year>0 {native::check(picker.set_min_date(date_time((*p).minimum_date)));}
+        if (*p).date.year>0 {native::check(picker.set_date(native::must::[rt::Object](factory.create_date_time(date_time((*p).date)))));}
+        native::check(picker.set_is_calendar_open((*p).is_open));
+    }
+    if k==props::K_TIME_PICKER {let p: *props::TimePickerProps=raw as *props::TimePickerProps;let picker: ui::ITimePicker=native::must::[ui::ITimePicker](ui::ITimePicker::query(value));native::check(picker.set_time(ui::TimeSpan {duration:((*p).time.seconds*10000000.0f64) as i64}));}
+    (*r).applying=false;(*(*r).node).mark_content_changed();return;
+}
+fn changed(sender: rt::Object,args: rt::Object,context: *u8) -> rt::Status {
+    let r: *record::View=context as *record::View;if (*r).applying {return rt::Status {code:0};}
+    let raw: *u8=(*core::node_data((*r).node)).props;let k: u32=(*r).kind;var call: fn(*u8,*u8)=props::no_handler;var ctx: *u8=0 as *u8;
+    if k==props::K_POPUP {let p: *props::PopupProps=raw as *props::PopupProps;let selector: ui::ISelector=native::must::[ui::ISelector](ui::ISelector::query(sender));let selected: i64=native::must::[i32](selector.selected_index()) as i64;if selected==(*p).selected_index {return rt::Status {code:0};};(*p).selected_index=selected;call=(*p).on_selected_index_changed;ctx=(*p).on_selected_index_changed_ctx;}
+    if k==props::K_DATE_PICKER {let p: *props::DatePickerProps=raw as *props::DatePickerProps;let picker: ui::ICalendarDatePicker=native::must::[ui::ICalendarDatePicker](ui::ICalendarDatePicker::query(sender));let value: rt::Object=native::must::[rt::Object](picker.date());if value.is_null() {return rt::Status {code:0};}let reference: ui::IReference_Windows_Foundation_DateTime=native::must::[ui::IReference_Windows_Foundation_DateTime](ui::IReference_Windows_Foundation_DateTime::query(value));let selected: vocab::Date=date(native::must::[ui::DateTime](reference.value()));if selected.year==(*p).date.year && selected.month==(*p).date.month && selected.day==(*p).date.day {return rt::Status {code:0};};(*p).date=selected;call=(*p).on_date_selected;ctx=(*p).on_date_selected_ctx;}
+    if k==props::K_TIME_PICKER {let p: *props::TimePickerProps=raw as *props::TimePickerProps;let picker: ui::ITimePicker=native::must::[ui::ITimePicker](ui::ITimePicker::query(sender));let time: ui::TimeSpan=native::must::[ui::TimeSpan](picker.time());let seconds: f64=time.duration as f64/10000000.0f64;if seconds==(*p).time.seconds {return rt::Status {code:0};};(*p).time=vocab::Duration {seconds:seconds};call=(*p).on_time_selected;ctx=(*p).on_time_selected_ctx;}
+    if call!=props::no_handler {call(context,ctx);}return rt::Status {code:0};
+}
+fn attach(r: *record::View) {
+    let value: rt::Object=(*r).object.clone();let k: u32=(*r).kind;
+    if k==props::K_POPUP {let v: ui::ISelector=native::must::[ui::ISelector](ui::ISelector::query(value));let h: ui::SelectionChangedEventHandler=native::must::[ui::SelectionChangedEventHandler](ui::SelectionChangedEventHandler::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](v.add_selection_changed(h.object()));}
+    if k==props::K_DATE_PICKER {let v: ui::ICalendarDatePicker=native::must::[ui::ICalendarDatePicker](ui::ICalendarDatePicker::query(value));let h: ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_CalendarDatePicker_Microsoft_UI_Xaml_Controls_CalendarDatePickerDateChangedEventArgs=native::must::[ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_CalendarDatePicker_Microsoft_UI_Xaml_Controls_CalendarDatePickerDateChangedEventArgs](ui::TypedEventHandler_Microsoft_UI_Xaml_Controls_CalendarDatePicker_Microsoft_UI_Xaml_Controls_CalendarDatePickerDateChangedEventArgs::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](v.add_date_changed(h.object()));}
+    if k==props::K_TIME_PICKER {let v: ui::ITimePicker=native::must::[ui::ITimePicker](ui::ITimePicker::query(value));let h: ui::EventHandler_Microsoft_UI_Xaml_Controls_TimePickerValueChangedEventArgs=native::must::[ui::EventHandler_Microsoft_UI_Xaml_Controls_TimePickerValueChangedEventArgs](ui::EventHandler_Microsoft_UI_Xaml_Controls_TimePickerValueChangedEventArgs::new(changed,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](v.add_time_changed(h.object()));}
+    (*r).subscribed=true;LIVE=LIVE+1;return;
+}
+fn release(r: *record::View) {
+    let value: rt::Object=(*r).object.clone();let k: u32=(*r).kind;
+    if k==props::K_POPUP {let v: ui::ISelector=native::must::[ui::ISelector](ui::ISelector::query(value));native::check(v.remove_selection_changed((*r).token));}
+    if k==props::K_DATE_PICKER {let v: ui::ICalendarDatePicker=native::must::[ui::ICalendarDatePicker](ui::ICalendarDatePicker::query(value));native::check(v.remove_date_changed((*r).token));}
+    if k==props::K_TIME_PICKER {let v: ui::ITimePicker=native::must::[ui::ITimePicker](ui::ITimePicker::query(value));native::check(v.remove_time_changed((*r).token));}
+    (*r).subscribed=false;LIVE=LIVE-1;return;
+}

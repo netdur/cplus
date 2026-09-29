@@ -97,3 +97,14 @@ Remaining
 steps are broader native control/property coverage, host HWND interop, service
 scheduling and cancellation, inspection, and `facet_runtime` integration before
 changing the default. The generated package remains independently usable.
+
+## Gallery checkpoint (2026-09-29)
+
+The shared 36-page gallery now has a separate WinUI launcher in
+`examples/facet_gallery_winui`. Native controls, viewport lists/relist,
+TreeView navigation, drawing, decorations and UI-thread scheduling are wired.
+The generator now projects non-aggregated parameterized composition factory
+calls (including FontFamily), releasing the additional inner reference.
+The selection has 729 metadata entries, 5,005 emitted methods and 135 skips.
+See `vendor/facet_winui/MANIFEST.md` for current limits; earlier slice counts
+above are historical. Full runtime-facade integration remains separate.

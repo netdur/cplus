@@ -44,6 +44,9 @@ for source, path in zip(manifest['sources'], [main] + refs):
 assert types['TypeName']['skipped']
 assert types['XmlnsDefinition']['skipped']
 assert types['RoutedEventHandler']['callback'] == 'emitted'
+font_constructor = types['IFontFamilyFactory']['methods'][0]
+assert font_constructor['name'] == 'CreateInstanceWithName'
+assert font_constructor['status'] == 'emitted', 'Parameterized composition constructor lost'
 invalid = test_root / 'invalid'
 failed = subprocess.run(command + ['--include', 'No.Such.Type', '--out', str(invalid)], capture_output=True, text=True)
 assert failed.returncode != 0 and 'did not match' in failed.stderr

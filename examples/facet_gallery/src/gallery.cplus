@@ -540,7 +540,7 @@ fn start_walk() {
 }
 
 fn walk_step(user: *u8) {
-    if WALK_AT > ID_A11Y {
+    if WALK_AT > ID_RELIST {
         io::println("gallery walk: visited ${WALK_AT} demos, no crash");
         // The walk ends by NOT re-arming, and the app is left running — a walk
         // that quit would take the exit code with it and hide anything printed

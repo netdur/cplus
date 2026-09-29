@@ -1,0 +1,19 @@
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "./record" as record;
+import "./native" as native;
+import "./style" as style;
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn menu(r: *record::View) -> ui::IMenuFlyout {
+    let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));
+    return native::must::[ui::IMenuFlyout](ui::IMenuFlyout::query(native::must::[rt::Object](element.context_flyout())));
+}
+fn entries(r: *record::View) -> ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase {return native::must::[ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase](ui::IVector_Microsoft_UI_Xaml_Controls_MenuFlyoutItemBase::query(native::must::[rt::Object](menu(r).items())));}
+fn host(r: *record::View) {let flyout: ui::MenuFlyout=native::must::[ui::MenuFlyout](ui::MenuFlyout::new());let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(element.set_context_flyout(flyout.object()));return;}
+fn apply(r: *record::View) {let p: *props::SwipeItemProps=(*core::node_data((*r).node)).props as *props::SwipeItemProps;let item: ui::IMenuFlyoutItem=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));native::check(item.set_text((*p).menu_item.text.view()));return;}
+fn clicked(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let r: *record::View=ctx as *record::View;let p: *props::SwipeItemProps=(*core::node_data((*r).node)).props as *props::SwipeItemProps;let call: fn(*u8,*u8)=(*p).menu_item.on_clicked;let context: *u8=(*p).menu_item.on_clicked_ctx;if call!=props::no_handler {call(ctx,context);}return rt::Status {code:0};}
+fn attach(r: *record::View) {let item: ui::IMenuFlyoutItem=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));let handler: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(clicked,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](item.add_click(handler.object()));LIVE=LIVE+1;return;}
+fn release(r: *record::View) {let item: ui::IMenuFlyoutItem=native::must::[ui::IMenuFlyoutItem](ui::IMenuFlyoutItem::query((*r).object));native::check(item.remove_click((*r).token));LIVE=LIVE-1;return;}

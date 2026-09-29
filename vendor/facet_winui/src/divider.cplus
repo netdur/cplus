@@ -1,0 +1,37 @@
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/split" as split;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./native" as native;
+import "./style" as style;
+struct State {thumb: rt::Object,token: ui::EventRegistrationToken,inserted: bool}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn dragged(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {
+    let r: *record::View=ctx as *record::View;let p: *split::SplitProps=(*core::node_data((*r).node)).props as *split::SplitProps;
+    let event: ui::IDragDeltaEventArgs=native::must::[ui::IDragDeltaEventArgs](ui::IDragDeltaEventArgs::query(args));
+    let delta: f64=if (*p).axis==split::SplitAxis::Columns {native::must::[f64](event.horizontal_change())} else {native::must::[f64](event.vertical_change())};
+    let frame=(*(*r).node).frame();let extent: f64=if (*p).axis==split::SplitAxis::Columns {frame.width} else {frame.height};var next: f64=(*p).position+delta;
+    if next<(*p).min_leading {next=(*p).min_leading;}if (*p).max_leading>0.0f64 && next>(*p).max_leading {next=(*p).max_leading;}if next>extent-(*p).min_trailing {next=extent-(*p).min_trailing;}if (*p).max_trailing>0.0f64 && next<extent-(*p).max_trailing {next=extent-(*p).max_trailing;}
+    (*p).position=next;core::touch((*r).node,split::P_POSITION);let call: fn(*u8,*u8)=(*p).on_move;let context: *u8=(*p).ctx;if call!=props::no_handler {call(ctx,context);}return rt::Status {code:0};
+}
+fn attach(r: *record::View) {
+    let thumb: ui::Thumb=native::must::[ui::Thumb](ui::Thumb::new());let handler: ui::DragDeltaEventHandler=native::must::[ui::DragDeltaEventHandler](ui::DragDeltaEventHandler::new(dragged,r as *u8));let token: ui::EventRegistrationToken=native::must::[ui::EventRegistrationToken](thumb.add_drag_delta(handler.object()));
+    let owner: box::Box[State]=match box::new::[State](State {thumb:thumb.object(),token:token,inserted:false}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();LIVE=LIVE+1;return;
+}
+fn place(r: *record::View,width: f64,height: f64) {
+    let s: *State=(*r).extra as *State;let p: *split::SplitProps=(*core::node_data((*r).node)).props as *split::SplitProps;
+    if !(*s).inserted {let panel: ui::IPanel=native::must::[ui::IPanel](ui::IPanel::query((*r).content));let children: ui::IVector_Microsoft_UI_Xaml_UIElement=native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));native::check(children.append((*s).thumb));(*s).inserted=true;}
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*s).thumb));let horizontal: bool=(*p).axis==split::SplitAxis::Columns;
+    var position: f64=(*p).position;match core::child_of((*r).node,0) {option::Option::Some(child)=>{let f=(*child).frame();position=if horizontal {f.width} else {f.height};},option::Option::None=>{}}
+    native::check(element.set_width(if horizontal {6.0f64} else {width}));native::check(element.set_height(if horizontal {height} else {6.0f64}));
+    let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left((*s).thumb,if horizontal {position-3.0f64} else {0.0f64}));native::check(canvas.set_top((*s).thumb,if horizontal {0.0f64} else {position-3.0f64}));native::check(canvas.set_z_index((*s).thumb,100));
+    let control: ui::IControl=native::must::[ui::IControl](ui::IControl::query((*s).thumb));native::check(control.set_background(style::brush(if (*p).divider_color.is_set() {(*p).divider_color} else {vocab::Color::outline()})));
+    let a: ui::IAutomationPropertiesStatics=native::must::[ui::IAutomationPropertiesStatics](ui::AutomationProperties::i_automation_properties_statics_factory());native::check(a.set_name((*s).thumb,"Resize panes"));return;
+}
+fn release(r: *record::View) {let s: *State=(*r).extra as *State;let thumb: ui::IThumb=native::must::[ui::IThumb](ui::IThumb::query((*s).thumb));native::check(thumb.remove_drag_delta((*s).token));let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;LIVE=LIVE-1;return;}

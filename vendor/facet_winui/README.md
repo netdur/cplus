@@ -1,7 +1,10 @@
 # facet_winui
 
 Experimental Windows x64 renderer for retained Facet trees using generated
-WinUI bindings. Supports containers, labels, buttons, text fields, and scrolling.
+WinUI bindings. Runs the shared 36-page Facet gallery, with native controls,
+text entry, graphics, scrolling, viewport-based lists, and decorations.
+
+Start with [the gallery launcher](../../examples/facet_gallery_winui/README.md).
 
 ```toml
 [dependencies]
@@ -27,6 +30,7 @@ Run the integration checks from the repository root:
 ```powershell
 & examples/facet_winui_smoke/run.ps1 -Verify
 & examples/facet_winui_smoke/run.ps1 -Verify -Release
+& examples/facet_gallery_winui/run.ps1 -Verify -Release
 ```
 
 These test real pointer/keyboard/wheel input, text readback and programmatic

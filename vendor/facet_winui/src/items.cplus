@@ -1,0 +1,69 @@
+// A viewport-sized set of owned Facet rows. Native ScrollViewer owns scrolling;
+// detached row lifecycles use Facet's existing realise/unrealise seam.
+import "stdlib/box" as box;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "winui/winui" as ui;
+import "winrt/runtime" as rt;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/relist" as relist;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "./record" as record;
+import "./native" as native;
+struct Row {node: box::Box[core::Node],index: usize}
+struct State {rows: vec::Vec[Row],invalid: bool,first: usize,last: usize,width: f64,row_height: f64,scroll_to: i64}
+static LIVE: i64=0;
+fn subscriptions() -> i64 {return LIVE;}
+fn supports(k: u32) -> bool {return k==props::K_LIST || k==props::K_COLLECTION || k==relist::K_RELIST;}
+fn state(r: *record::View) -> *State {return (*r).extra as *State;}
+fn scrolled(sender: rt::Object,args: rt::Object,ctx: *u8) -> rt::Status {let r: *record::View=ctx as *record::View;core::touch((*r).node,0u64);return rt::Status {code:0};}
+fn attach(r: *record::View) {
+    let owner: box::Box[State]=match box::new::[State](State {rows:vec::new::[Row](),invalid:true,first:0,last:0,width:0.0f64,row_height:0.0f64,scroll_to:-1}) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};(*r).extra=owner.into_raw();
+    let canvas: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new());(*r).content=canvas.object();
+    let content: ui::IContentControl=native::must::[ui::IContentControl](ui::IContentControl::query((*r).object));native::check(content.set_content((*r).content));
+    let scroll: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*r).object));native::check(scroll.set_horizontal_scroll_bar_visibility(ui::scroll_bar_visibility_disabled));native::check(scroll.set_vertical_scroll_bar_visibility(ui::scroll_bar_visibility_auto));
+    let handler: ui::EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs=native::must::[ui::EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs](ui::EventHandler_Microsoft_UI_Xaml_Controls_ScrollViewerViewChangedEventArgs::new(scrolled,r as *u8));(*r).token=native::must::[ui::EventRegistrationToken](scroll.add_view_changed(handler.object()));LIVE=LIVE+1;return;
+}
+fn apply(r: *record::View) {
+    let s: *State=state(r);(*s).invalid=true;let raw: *u8=(*core::node_data((*r).node)).props;
+    if (*r).kind==relist::K_RELIST {let p: *relist::RelistProps=raw as *relist::RelistProps;(*p).node=(*r).node;if (*p).scroll_to_index>=0 {(*s).scroll_to=(*p).scroll_to_index;(*p).scroll_to_index=-1;};(*p).has_pending=false;}
+    if (*r).kind==props::K_LIST {let p: *props::ListProps=raw as *props::ListProps;if (*p).scroll_to_index>=0 {(*s).scroll_to=(*p).scroll_to_index;(*p).scroll_to_index=-1;}}
+    return;
+}
+fn children(r: *record::View) -> ui::IVector_Microsoft_UI_Xaml_UIElement {let panel: ui::IPanel=native::must::[ui::IPanel](ui::IPanel::query((*r).content));return native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));}
+fn clear(r: *record::View,detach: bool=true) {
+    let s: *State=state(r);if detach {native::check(children(r).clear());}var i: usize=0;
+    while i<(*s).rows.count() {match (*s).rows.at_ptr(i) {option::Option::Some(row)=>{let n: *core::Node=(*row).node.ptr();if (*r).kind==relist::K_RELIST {relist::note_released((*r).node,n);}mount::unrealise(n);},option::Option::None=>{}}i=i+1;}
+    (*s).rows.remove_all();return;
+}
+fn release(r: *record::View) {
+    // The ScrollViewer owns the native children until it is destroyed. Do not
+    // mutate that collection during window shutdown; release row lifecycles.
+    let scroll: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*r).object));native::check(scroll.remove_view_changed((*r).token));LIVE=LIVE-1;clear(r,false);let owner: box::Box[State]=box::from_raw::[State]((*r).extra);(*r).extra=0 as *u8;return;
+}
+fn place(r: *record::View,width: f64,height: f64,layout: fn(*core::Node,f64,f64)->f64) {
+    if width<=0.0f64 || height<=0.0f64 {return;}
+    let s: *State=state(r);let raw: *u8=(*core::node_data((*r).node)).props;var count: usize=0;var columns: usize=1;var row_height: f64=56.0f64;var build: fn(usize,*u8)->core::Node=relist::no_builder;var ctx: *u8=0 as *u8;var bind: fn(usize,*core::Node,*u8)=props::no_bind;var bind_ctx: *u8=0 as *u8;
+    if (*r).kind==props::K_LIST {let p: *props::ListProps=raw as *props::ListProps;if (*p).count>0 {count=(*p).count as usize;}build=(*p).row;ctx=(*p).row_ctx;bind=(*p).bind;bind_ctx=(*p).bind_ctx;if (*p).row_height>0 {row_height=(*p).row_height as f64;}}
+    if (*r).kind==props::K_COLLECTION {let p: *props::CollectionProps=raw as *props::CollectionProps;if (*p).count>0 {count=(*p).count as usize;}build=(*p).row;ctx=(*p).row_ctx;bind=(*p).bind;bind_ctx=(*p).bind_ctx;columns=(*p).structured_items_view.columns;row_height=80.0f64;}
+    if (*r).kind==relist::K_RELIST {let p: *relist::RelistProps=raw as *relist::RelistProps;count=(*p).count_of((*p).rows);build=(*p).builder;ctx=(*p).builder_ctx;columns=(*p).columns;row_height=76.0f64;if (*p).row_height_of!=props::no_row_height_of {let h: f64=(*p).row_height_of(0,(*p).row_height_of_ctx);if h>0.0f64 {row_height=h;}}}
+    if columns<1 {columns=1;}
+    let usable: f64=if width>20.0f64 {width-16.0f64} else {width};let cell_width: f64=usable/(columns as f64);let lines: usize=(count+columns-1)/columns;
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query((*r).content));native::check(element.set_width(usable));native::check(element.set_height((lines as f64)*row_height));
+    let scroll: ui::IScrollViewer=native::must::[ui::IScrollViewer](ui::IScrollViewer::query((*r).object));
+    if (*s).scroll_to>=0 {let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query((*r).object));native::check(element.update_layout());if native::must::[f64](scroll.viewport_height())>0.0f64 {let factory: ui::IPropertyValueStatics=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());let offset: rt::Object=native::must::[rt::Object](factory.create_double((((*s).scroll_to as usize)/columns) as f64*row_height));let ok: bool=native::must::[bool](scroll.change_view_with_optional_animation(rt::Object::empty(),offset,rt::Object::empty(),true));(*s).scroll_to=-1;}}
+    let offset: f64=native::must::[f64](scroll.vertical_offset());var first: usize=(offset/row_height) as usize*columns;if first>=columns {first=first-columns;}var last: usize=first+(((height/row_height) as usize)+4)*columns;if last>count {last=count;}if first>last {first=last;}
+    if (*s).invalid || (*s).first!=first || (*s).last!=last || (*s).width!=width || (*s).row_height!=row_height {
+        clear(r);(*s).invalid=false;(*s).first=first;(*s).last=last;(*s).width=width;(*s).row_height=row_height;var i: usize=first;
+        while i<last {
+            let owner: box::Box[core::Node]=match box::new::[core::Node](build(i,ctx)) {option::Option::Some(v)=>{v},option::Option::None=>{assert false;return;}};let n: *core::Node=owner.ptr();core::set_item_index(n,i);if bind!=props::no_bind {bind(i,n,bind_ctx);}
+            let view: *u8=mount::realise(n);let h: f64=layout(n,cell_width,row_height);let value: rt::Object=(*(view as *record::View)).object.clone();native::check(children(r).append(value));
+            if (*r).kind==relist::K_RELIST {relist::note_realised((*r).node,n);}
+            let _a=(*s).rows.append(Row {node:owner,index:i});i=i+1;
+        }
+    }
+    var j: usize=0;while j<(*s).rows.count() {match (*s).rows.at_ptr(j) {option::Option::Some(row)=>{let n: *core::Node=(*row).node.ptr();mount::sync_from(n);let h: f64=layout(n,cell_width,row_height);let value: rt::Object=(*(core::view_of(n) as *record::View)).object.clone();let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());native::check(canvas.set_left(value,((*row).index%columns) as f64*cell_width));native::check(canvas.set_top(value,((*row).index/columns) as f64*row_height));},option::Option::None=>{}}j=j+1;}
+    return;
+}
