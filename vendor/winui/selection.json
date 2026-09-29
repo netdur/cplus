@@ -1,0 +1,33 @@
+{
+  "include": [
+    "Microsoft.UI.Xaml.Application",
+    "Microsoft.UI.Xaml.Window",
+    "Microsoft.UI.Xaml.IApplicationOverrides",
+    "Microsoft.UI.Xaml.ApplicationInitializationCallback",
+    "Microsoft.UI.Xaml.RoutedEventHandler",
+    "Microsoft.UI.Xaml.Markup.IXamlMetadataProvider",
+    "Microsoft.UI.Xaml.XamlTypeInfo.XamlControlsXamlMetaDataProvider",
+    "Microsoft.UI.Xaml.Controls.XamlControlsResources",
+    "Microsoft.UI.Xaml.Controls.Canvas",
+    "Microsoft.UI.Xaml.Controls.UIElementCollection",
+    "Microsoft.UI.Xaml.Controls.Button",
+    "Microsoft.UI.Xaml.Controls.TextBlock",
+    "Microsoft.UI.Xaml.Controls.TextBox",
+    "Microsoft.UI.Xaml.Controls.CheckBox",
+    "Microsoft.UI.Xaml.Controls.ToggleSwitch",
+    "Microsoft.UI.Xaml.Controls.Slider",
+    "Microsoft.UI.Xaml.Controls.StackPanel",
+    "Microsoft.UI.Xaml.Controls.Grid",
+    "Microsoft.UI.Xaml.Controls.Border",
+    "Microsoft.UI.Xaml.Controls.ScrollViewer",
+    "Microsoft.UI.Xaml.Controls.Image",
+    "Microsoft.UI.Xaml.Controls.ComboBox",
+    "Microsoft.UI.Xaml.Controls.ProgressRing",
+    "Microsoft.UI.Xaml.Media.SolidColorBrush",
+    "Windows.Foundation.PropertyValue",
+    "Microsoft.UI.Dispatching.DispatcherQueue",
+    "Microsoft.UI.Dispatching.DispatcherQueueTimer",
+    "Microsoft.UI.Xaml.WindowEventArgs",
+    "Microsoft.UI.Xaml.WindowSizeChangedEventArgs"
+  ]
+}

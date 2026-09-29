@@ -1,0 +1,193 @@
+// Native records are owned by Facet Data.view_release, not by the WinUI tree.
+// An event context borrows its record; unsubscribe before destroying the record.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/env" as env;
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/component" as component;
+import "flex_layout/flex_layout" as flex;
+import "./native" as native;
+
+struct View {
+    object: rt::Object,
+    opaque node: *core::Node,
+    kind: u32,
+    token: ui::EventRegistrationToken,
+    subscribed: bool,
+}
+static LIVE: i64=0;
+static SUBSCRIPTIONS: i64=0;
+fn live_views() -> i64 { return LIVE; }
+fn live_subscriptions() -> i64 { return SUBSCRIPTIONS; }
+fn supports(n: *core::Node) -> bool {
+    let kind: u32=core::kind_of(n); let count: usize=core::child_count_of(n);
+    if kind!=core::K_NODE && kind!=props::K_LABEL && kind!=props::K_BUTTON { return false; }
+    if core::view_of(n).is_not_null() || (kind!=core::K_NODE && count!=0) { return false; }
+    var i: usize=0;
+    while i<count {
+        match core::child_of(n,i) { option::Option::Some(child)=>{if !supports(child) {return false;}},option::Option::None=>{} }
+        i=i+1;
+    }
+    return true;
+}
+fn measure(ctx: *u8, width: f64, wm: flex::MeasureMode, height: f64, hm: flex::MeasureMode) -> flex::Size {
+    let value: rt::Object=object(ctx);
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));
+    let old_width: f64=native::must::[f64](element.width()); let old_height: f64=native::must::[f64](element.height());
+    let automatic: f64=#bitcast::[f64](0x7ff8000000000000u64);
+    native::check(element.set_width(automatic)); native::check(element.set_height(automatic));
+    let layout: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));
+    let infinity: f32=#bitcast::[f32](0x7f800000u32);
+    native::check(layout.measure(ui::Size {width:if wm==flex::MeasureMode::Undefined {infinity} else {width as f32},height:if hm==flex::MeasureMode::Undefined {infinity} else {height as f32}}));
+    let size: ui::Size=native::must::[ui::Size](layout.desired_size());
+    native::check(element.set_width(old_width)); native::check(element.set_height(old_height));
+    var w: f64=size.width as f64; var h: f64=size.height as f64;
+    if wm==flex::MeasureMode::Exactly || (wm==flex::MeasureMode::AtMost && w>width) {w=width;}
+    if hm==flex::MeasureMode::Exactly || (hm==flex::MeasureMode::AtMost && h>height) {h=height;}
+    return flex::Size {width:w,height:h};
+}
+
+fn clicked(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let record: *View=context as *View;
+    let n: *core::Node=(*record).node;
+    let data: *core::Data=core::node_data(n);
+    if data.is_null() || !(*data).common.is_enabled { return rt::Status {code:0}; }
+    let p: *props::ButtonProps=(*data).props as *props::ButtonProps;
+    // Copy both before invoking: the handler may remove and destroy this node.
+    let call: fn(*u8,*u8)=(*p).on_click; let ctx: *u8=(*p).on_click_ctx;
+    if call!=props::no_handler { call(context,ctx); }
+    return rt::Status {code:0};
+}
+
+fn object(view: *u8) -> rt::Object {
+    if view.is_null() { return rt::Object::empty(); }
+    return (*(view as *View)).object.clone();
+}
+fn children(view: *u8) -> ui::IVector_Microsoft_UI_Xaml_UIElement {
+    let panel: ui::IPanel=native::must::[ui::IPanel](ui::IPanel::query(object(view)));
+    return native::must::[ui::IVector_Microsoft_UI_Xaml_UIElement](ui::IVector_Microsoft_UI_Xaml_UIElement::query(native::must::[rt::Object](panel.children())));
+}
+fn configure(record: *View, n: *core::Node) {
+    let data: *core::Data=core::node_data(n);
+    if data.is_null() { return; }
+    let value: rt::Object=(*record).object.clone();
+    if env::has_var("FACET_WINUI_TRACE") {
+        let key: str=(*n).key(); let opacity: f64=(*data).common.opacity; let visible: bool=(*data).common.is_visible;
+        io::eprintln("WinUI props ${key}: opacity=${opacity} visible=${visible}");
+    }
+    let element: ui::IUIElement=native::must::[ui::IUIElement](ui::IUIElement::query(value));
+    native::check(element.set_opacity((*data).common.opacity));
+    native::check(element.set_is_hit_test_visible(!(*data).common.input_transparent));
+    native::check(element.set_visibility(if (*data).common.is_visible {0 as i32} else {1 as i32}));
+    if (*record).kind==props::K_LABEL {
+        let p: *props::LabelProps=(*data).props as *props::LabelProps;
+        let label: ui::ITextBlock=native::must::[ui::ITextBlock](ui::ITextBlock::query(value));
+        native::check(label.set_text((*p).text.view()));
+        if (*p).font_size>0.0f64 { native::check(label.set_font_size((*p).font_size)); }
+    }
+    if (*record).kind==props::K_BUTTON {
+        let p: *props::ButtonProps=(*data).props as *props::ButtonProps;
+        let factory: ui::IPropertyValueStatics=native::must::[ui::IPropertyValueStatics](ui::PropertyValue::i_property_value_statics_factory());
+        let content: ui::IContentControl=native::must::[ui::IContentControl](ui::IContentControl::query(value));
+        native::check(content.set_content(native::must::[rt::Object](factory.create_string((*p).title.view()))));
+        let control: ui::IControl=native::must::[ui::IControl](ui::IControl::query(value));
+        native::check(control.set_is_enabled((*data).common.is_enabled));
+        if (*p).font_size>0.0f64 { native::check(control.set_font_size((*p).font_size)); }
+    }
+    if (*record).kind==props::K_LABEL || (*record).kind==props::K_BUTTON { (*n).mark_content_changed(); }
+    return;
+}
+fn create(ctx: *u8, n: *core::Node) -> *u8 {
+    let kind: u32=core::kind_of(n);
+    var value: rt::Object=rt::Object::empty();
+    if kind==props::K_LABEL { let v: ui::TextBlock=native::must::[ui::TextBlock](ui::TextBlock::new()); value=v.object(); }
+    else if kind==props::K_BUTTON { let v: ui::Button=native::must::[ui::Button](ui::Button::new()); value=v.object(); }
+    else if kind==core::K_NODE { let v: ui::Canvas=native::must::[ui::Canvas](ui::Canvas::new()); value=v.object(); }
+    else { io::eprintln("facet_winui unsupported node kind ${kind}"); assert false; return 0 as *u8; }
+    let record: box::Box[View]=match box::new::[View](View {object:value,node:n,kind:kind,token:#zero::[ui::EventRegistrationToken](),subscribed:false}) {
+        option::Option::Some(v)=>{v}, option::Option::None=>{assert false; return 0 as *u8;}
+    };
+    let p: *View=record.ptr(); configure(p,n);
+    if kind==props::K_LABEL || kind==props::K_BUTTON {
+        (*n).set_context(p as *u8); (*n).set_measure(measure); (*n).mark_content_changed();
+    }
+    if kind==props::K_BUTTON {
+        let button: ui::IButtonBase=native::must::[ui::IButtonBase](ui::IButtonBase::query((*p).object));
+        let callback: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(clicked,p as *u8));
+        (*p).token=native::must::[ui::EventRegistrationToken](button.add_click(callback.object()));
+        (*p).subscribed=true; SUBSCRIPTIONS=SUBSCRIPTIONS+1;
+    }
+    LIVE=LIVE+1;
+    return record.into_raw();
+}
+fn release(view: *u8) {
+    if view.is_null() { return; }
+    let p: *View=view as *View;
+    if (*p).subscribed {
+        let button: ui::IButtonBase=native::must::[ui::IButtonBase](ui::IButtonBase::query((*p).object));
+        native::check(button.remove_click((*p).token)); (*p).subscribed=false; SUBSCRIPTIONS=SUBSCRIPTIONS-1;
+    }
+    (*p).node=0 as *core::Node;
+    let owner: box::Box[View]=box::from_raw::[View](view);
+    LIVE=LIVE-1;
+    return;
+}
+fn apply(ctx: *u8, n: *core::Node) {
+    let v: *u8=core::view_of(n); if v.is_not_null() { configure(v as *View,n); }
+    return;
+}
+fn insert(ctx: *u8, host: *u8, child: *u8, index: usize) {
+    let list: ui::IVector_Microsoft_UI_Xaml_UIElement=children(host);
+    native::check(list.insert_at(index as u32,object(child)));
+    if env::has_var("FACET_WINUI_TRACE") { let count: u32=native::must::[u32](list.size()); io::eprintln("WinUI children=${count}"); }
+    return;
+}
+fn remove(ctx: *u8, host: *u8, child: *u8) {
+    let list: ui::IVector_Microsoft_UI_Xaml_UIElement=children(host);
+    let count: u32=native::must::[u32](list.size());
+    let target: rt::Object=native::must::[rt::Object](object(child).query(rt::unknown_iid()));
+    var i: u32=0;
+    while i<count {
+        let item: rt::Object=native::must::[rt::Object](list.get_at(i));
+        let identity: rt::Object=native::must::[rt::Object](item.query(rt::unknown_iid()));
+        if identity.raw()==target.raw() { native::check(list.remove_at(i)); return; }
+        i=i+1;
+    }
+    return;
+}
+fn place(n: *core::Node, parent: flex::Frame) {
+    let frame: flex::Frame=(*n).frame(); let value: rt::Object=object(core::view_of(n));
+    if env::has_var("FACET_WINUI_TRACE") {
+        let key: str=(*n).key(); let x: f64=frame.left; let y: f64=frame.top; let w: f64=frame.width; let h: f64=frame.height;
+        io::eprintln("WinUI frame ${key}: ${x},${y} ${w}x${h}");
+    }
+    if value.is_null() { return; }
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(value));
+    native::check(element.set_width(frame.width)); native::check(element.set_height(frame.height));
+    let canvas: ui::ICanvasStatics=native::must::[ui::ICanvasStatics](ui::Canvas::i_canvas_statics_factory());
+    native::check(canvas.set_left(value,frame.left-parent.left)); native::check(canvas.set_top(value,frame.top-parent.top));
+    var i: usize=0;
+    while i<core::child_count_of(n) {
+        match core::child_of(n,i) { option::Option::Some(child)=>{place(child,frame);},option::Option::None=>{} }
+        i=i+1;
+    }
+    return;
+}
+fn sender_key(sender: *u8) -> text::Text {
+    let n: *core::Node=(*(sender as *View)).node;
+    return text::from_str((*n).key());
+}
+fn sender_item(sender: *u8) -> *u8 {
+    let n: *core::Node=(*(sender as *View)).node;
+    return core::item_of(n);
+}
+fn install_readers() {
+    var readers: component::SenderReaders=component::sender_readers_none();
+    readers.key_of=sender_key; readers.item_of=sender_item; component::install_sender_readers(readers);
+    return;
+}

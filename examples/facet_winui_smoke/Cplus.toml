@@ -1,0 +1,16 @@
+[package]
+name = "facet_winui_smoke"
+version = "0.0.1"
+edition = "2026"
+
+[build]
+prebuild = false
+
+[dependencies]
+stdlib = "*"
+facet = "*"
+flex_layout = "*"
+events = "*"
+winrt = "*"
+winui = "*"
+facet_winui = "*"

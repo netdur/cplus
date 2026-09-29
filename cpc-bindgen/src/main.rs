@@ -27,12 +27,20 @@ mod gir;
 mod java;
 mod objc;
 mod swift;
+mod winmd;
 
 use std::process::Command;
 
 fn main() {
     // Flags (`--objc`, `--prefix P`) precede the header; clang args follow `--`.
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.iter().any(|arg| arg == "--winmd") {
+        if let Err(error) = winmd::run(&raw) {
+            eprintln!("cpc-bindgen --winmd: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let mut objc_mode = false;
     let mut gobject_mode = false;
     // `--use <Namespace>=<package>` maps a foreign GIR namespace to the C+

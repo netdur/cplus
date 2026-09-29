@@ -1,0 +1,127 @@
+// Explicit experimental WinUI host. Native records are owned by Facet nodes.
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "winrt/runtime" as rt;
+import "winui/winui" as ui;
+import "winui/application" as application;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/component" as component;
+import "./views" as views;
+import "./native" as native;
+extern fn fflush(stream: *u8) -> i32;
+
+struct Host {
+    root: core::Node,
+    title: text::Text,
+    window: rt::Object,
+    queue: rt::Object,
+    size_token: ui::EventRegistrationToken,
+    close_token: ui::EventRegistrationToken,
+    loaded_token: ui::EventRegistrationToken,
+    mounted: bool,
+    closing: bool,
+    pending: bool,
+    width: f64,
+    height: f64,
+}
+// Only a routing door is global; run owns the app state. Queued delegates
+// borrow no context, so deliveries after clearing this pointer are inert.
+static CURRENT: *Host=0 as *Host;
+static STARTED: bool=false;
+fn relayout(host: *Host) {
+    if !(*host).mounted || (*host).closing { return; }
+    let root: *core::Node=#addr_of((*host).root);
+    (*root).calculate_layout(width:(*host).width,height:(*host).height);
+    views::place(root,(*root).frame()); return;
+}
+fn tick(context: *u8) -> rt::Status {
+    let host: *Host=CURRENT;
+    if host.is_null() { return rt::Status {code:0}; }
+    (*host).pending=false;
+    if !(*host).closing { mount::sync(); relayout(host); }
+    return rt::Status {code:0};
+}
+fn schedule(context: *u8) {
+    let host: *Host=CURRENT;
+    if host.is_null() || (*host).closing || (*host).pending || (*host).queue.is_null() { return; }
+    (*host).pending=true;
+    // This callback captures no object; DispatcherQueue invokes it on its UI
+    // thread. Its immutable delegate record can be transferred across threads.
+    let callback: ui::DispatcherQueueHandler=native::must::[ui::DispatcherQueueHandler](ui::DispatcherQueueHandler::new(tick,agile:true));
+    let queue: ui::IDispatcherQueue=native::must::[ui::IDispatcherQueue](ui::IDispatcherQueue::query((*host).queue));
+    let accepted: bool=native::must::[bool](queue.try_enqueue(callback.object()));
+    if !accepted { (*host).pending=false; }
+    return;
+}
+fn resized(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    let host: *Host=CURRENT;
+    if host.is_null() || (*host).closing { return rt::Status {code:0}; }
+    let event: ui::IWindowSizeChangedEventArgs=native::must::[ui::IWindowSizeChangedEventArgs](ui::IWindowSizeChangedEventArgs::query(args));
+    let size: ui::Size=native::must::[ui::Size](event.size());
+    (*host).width=size.width as f64; (*host).height=size.height as f64;
+    relayout(host); return rt::Status {code:0};
+}
+fn closed(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    if CURRENT.is_not_null() { (*CURRENT).closing=true; }
+    return rt::Status {code:0};
+}
+fn loaded(sender: rt::Object, args: rt::Object, context: *u8) -> rt::Status {
+    io::println("READY: facet_winui"); let _f: i32=fflush(0 as *u8); return rt::Status {code:0};
+}
+fn launched(app: rt::Object, context: *u8) -> rt::Status {
+    let host: *Host=CURRENT;
+    let window: ui::Window=native::must::[ui::Window](ui::Window::new());
+    (*host).window=window.object(); native::check(window.set_title((*host).title.view()));
+    (*host).queue=native::must::[rt::Object](window.dispatcher_queue());
+    mount::install(mount::Renderer {ctx:0 as *u8,create:views::create,view_release:views::release,apply:views::apply,
+        insert:views::insert,remove:views::remove,schedule:schedule,redeclare:0 as fn(*u8,*core::Node,u32)});
+    views::install_readers();
+    let size_handler: ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowSizeChangedEventArgs=native::must::[ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowSizeChangedEventArgs](ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowSizeChangedEventArgs::new(resized));
+    let close_handler: ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowEventArgs=native::must::[ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowEventArgs](ui::TypedEventHandler_Object_Microsoft_UI_Xaml_WindowEventArgs::new(closed));
+    (*host).size_token=native::must::[ui::EventRegistrationToken](window.add_size_changed(size_handler.object()));
+    (*host).close_token=native::must::[ui::EventRegistrationToken](window.add_closed(close_handler.object()));
+    let root: *core::Node=#addr_of((*host).root);
+    assert mount::mount(root); (*host).mounted=true;
+    let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(views::object(core::view_of(root))));
+    let loaded_handler: ui::RoutedEventHandler=native::must::[ui::RoutedEventHandler](ui::RoutedEventHandler::new(loaded));
+    (*host).loaded_token=native::must::[ui::EventRegistrationToken](element.add_loaded(loaded_handler.object()));
+    native::check(window.set_content(views::object(core::view_of(root))));
+    let bounds: ui::Rect=native::must::[ui::Rect](window.bounds());
+    (*host).width=bounds.width as f64; (*host).height=bounds.height as f64;
+    relayout(host); native::check(window.activate()); schedule(0 as *u8);
+    return rt::Status {code:0};
+}
+// One window and one Application run per process. Callback owners outlive run.
+fn run(take tree: core::Node, title: str="Facet / WinUI") -> rt::Status {
+    if STARTED { return rt::Status {code:0x8000ffff as i32}; }
+    if !views::supports(#addr_of(tree)) { return rt::Status {code:0x80004001 as i32}; }
+    STARTED=true;
+    native::check(rt::load_runtime("Microsoft.WindowsAppRuntime.dll"));
+    let apartment: rt::Apartment=native::must::[rt::Apartment](rt::Apartment::sta());
+    var status: rt::Status=rt::Status {code:0};
+    {
+        let owner: box::Box[Host]=match box::new::[Host](Host {root:tree,title:text::from_str(title),window:rt::Object::empty(),queue:rt::Object::empty(),
+            size_token:#zero::[ui::EventRegistrationToken](),close_token:#zero::[ui::EventRegistrationToken](),loaded_token:#zero::[ui::EventRegistrationToken](),mounted:false,closing:false,pending:false,width:900.0f64,height:600.0f64}) {
+            option::Option::Some(v)=>{v}, option::Option::None=>{return rt::Status {code:rt::out_of_memory()};}
+        };
+        CURRENT=owner.ptr(); let host: *Host=CURRENT;
+        status=application::run(launched); (*host).closing=true;
+        if (*host).mounted {
+            let window: ui::IWindow=native::must::[ui::IWindow](ui::IWindow::query((*host).window));
+            native::check(window.remove_size_changed((*host).size_token)); native::check(window.remove_closed((*host).close_token));
+            let element: ui::IFrameworkElement=native::must::[ui::IFrameworkElement](ui::IFrameworkElement::query(views::object(core::view_of(#addr_of((*host).root)))));
+            native::check(element.remove_loaded((*host).loaded_token));
+            mount::unmount(#addr_of((*host).root));
+        }
+        CURRENT=0 as *Host; mount::uninstall(); component::uninstall_sender_readers();
+        // Owner drops the tree and its event subscriptions before Apartment.
+    }
+    assert views::live_views()==0;
+    assert views::live_subscriptions()==0;
+    return status;
+}
+fn live_views() -> i64 { return views::live_views(); }
+fn live_subscriptions() -> i64 { return views::live_subscriptions(); }

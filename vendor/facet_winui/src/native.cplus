@@ -1,0 +1,17 @@
+// Internal error boundary for this experimental backend. Native failures are
+// fatal with their HRESULT; never continue with a null control or partial tree.
+import "stdlib/result" as result;
+import "stdlib/io" as io;
+import "winrt/runtime" as rt;
+extern fn abort();
+fn must[T](take value: result::Result[T,rt::Error]) -> T {
+    match value {
+        result::Result::Ok(v)=>{return v;}
+        result::Result::Err(e)=>{io::eprintln("facet_winui HRESULT ${e.code}"); abort();}
+    }
+    return #zero::[T]();
+}
+fn check(value: rt::Status) {
+    if value.is_err() { io::eprintln("facet_winui HRESULT ${value.code}"); abort(); }
+    return;
+}
